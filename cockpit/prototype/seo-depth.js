@@ -1,0 +1,43 @@
+/* Offline prototype. Article clicks and topic/day attribution are not available. */
+const seoStages=["草稿","待审核","已审核待发布","已发布"];
+function seoNext(r){return r.status==='已发布'?'安排发布后复查':r.status==='待审核'?'安排内容审核':r.status==='已审核待发布'?'确认发布安排':'补齐内容草稿';}
+const seoListState=new Map();
+function seoList(scope,subset=''){
+ const scopeKey=JSON.stringify({topic:scope.topic,start:scope.start,end:scope.end}),query=seoListState.get(scopeKey)?.query||'';seoListState.set(scopeKey,{query,subset});
+ const rows=pRows('content',scope),filtered=subset?rows.filter(r=>r.status===subset):rows;
+ return `<div class="seo-library" data-seo-library data-seo-list-key="${esc(scopeKey)}"><div class="seo-stages">${seoStages.map(status=>`<div><b>${rows.filter(r=>r.status===status).length}</b><span>${status}</span></div>`).join('')}</div><p>${pScope(scope)} · ${subset||'全部阶段'} · ${filtered.length} 篇。日期筛选按内容事件日期。</p><label class="seo-search">查找文章<input type="search" data-seo-search value="${esc(query)}" placeholder="文章名称、负责人或编号"></label><div class="seo-articles">${filtered.map(r=>`<button ${!(r.title+' '+r.owner+' '+r.id).toLowerCase().includes(query.toLowerCase())?'hidden':''} data-seo-open="${r.id}" data-seo-scope="${esc(JSON.stringify(scope))}" data-seo-match="${esc(r.title+' '+r.owner+' '+r.id)}"><span><small>${r.id} · ${r.date} · ${r.owner}</small><b>${esc(r.title)}</b></span><span><em>${r.status}</em><small>${seoNext(r)} ↗</small></span></button>`).join('')}</div><p data-seo-empty ${filtered.some(r=>(r.title+' '+r.owner+' '+r.id).toLowerCase().includes(query.toLowerCase()))?'hidden':''}>没有匹配文章，可调整搜索或日期范围。</p><details><summary>这些数字说明什么</summary><p>数字只统计当前演示文章；已审核待发布单独展示。发布失败按平台记录查看，不能由文章状态推算。发布成功也不代表已收录或产生线索。</p></details></div>`;
+}
+const seoDetails=pDetails;pDetails=function(key,scope,subset=''){return key==='content'?`<h2>内容与搜索工作台</h2>${seoList(scope,subset)}`:seoDetails(key,scope,subset);};
+const seoCard=pCardBody;pCardBody=function(key,...args){const body=seoCard(key,...args);return key==='content'?body+'<button class="seo-entry" data-seo-library-open>逐篇查看 · 页面与搜索依据 ↗</button>':body;};
+let seoView=null;
+const seoTabs=[['overview','内容进度'],['checks','页面检查'],['search','搜索依据'],['publication','发布记录']];
+function seoBody(){
+ const {id,scope,tab}=seoView,r=panoramaData.content.find(x=>x.id===id),published=r.status==='已发布';
+ if(tab==='overview')return `<div class="seo-flow">${seoStages.map((s,i)=>`<div class="${s===r.status?'current':''}"><b>0${i+1}</b><span>${s}</span>${s===r.status?'<small>当前状态</small>':''}</div>`).join('')}</div><h3>${seoNext(r)}</h3><p>${published?'发布状态已记录，下一步复查页面能否正常打开、抓取与收录；流量效果另行观察。':r.status==='待审核'?'请负责人核对业务事实、案例依据与图片授权，先完成审核。':r.status==='已审核待发布'?'内容审核已完成，下一步确认发布平台和安排；尚不能记为发布成功。':'补充文章内容、案例来源和目标读者，完成后再进入审核。'}</p><dl class="seo-facts"><dt>负责角色（演示）</dt><dd>${r.owner}</dd><dt>内容事件日期</dt><dd>${r.date}</dd><dt>页面路径</dt><dd>${r.url}${published?'':' · 规划路径'}</dd><dt>完成要求</dt><dd>${r.criterion}</dd></dl>`;
+ if(tab==='checks')return `<h3>页面复查清单</h3><p>以下为待采集的检查项，未执行真实抓取。</p><div class="seo-checks">${['页面响应与抓取时间','标题与标题层级检查','图片说明文字检查','链接与目标地址检查','搜索收录依据（另行核实）'].map(x=>`<div><span>${x}</span><b>${published?'待复查':'发布后检查'}</b></div>`).join('')}</div><p>抓取成功不等于真人访问，图片说明文字不证明图片加载正常；允许收录也不等于已收录。缺少结果时保留待核实。</p>`;
+ if(tab==='publication')return `<h3>工作流原始记录</h3><div class="seo-receipt"><b>${r.date} · ${r.status}</b><p>${r.id} · ${r.source}</p><p>${published?'已有“已发布”状态；原场景没有独立 HTTP 回执、平台任务号或失败重试记录。':'尚未记录发布成功。没有发布请求回执，不显示执行成功。'}</p></div><dl class="seo-facts"><dt>发布结果记录</dt><dd>待补充</dd><dt>页面能否正常打开</dt><dd>未核实</dd><dt>搜索收录</dt><dd>未核实</dd><dt>客户来源</dt><dd>未建立</dd></dl>`;
+ const s={...scope,topic:r.topic},kw=pRows('keywords',s);
+ return `<div class="seo-search-kpis"><div><b>—</b><span>本篇搜索点击 · 未接入</span></div><div><b>—</b><span>业务每日点击 · 暂不支持</span></div><div><b>—</b><span>本篇咨询 · 来源未确认</span></div></div><p>目前只能读取站点一段时间内的搜索汇总，不能分给某篇文章，也不能拆成业务每日点击。这里的空值不是零。</p><h3>相关业务的关键词排名 · 演示记录</h3><p>${pScope(s)} · 百度 PC / 全国。关键词关联用于运营查看，不代表文章带来的访问。</p>${kw.length?`<div class="seo-ranks">${kw.map(x=>`<button data-seo-evidence="${x.id}"><span>${esc(x.title)}</span><b>${x.previous} → ${x.rank}</b><small>${x.previous>x.rank?'上升 '+(x.previous-x.rank):x.previous<x.rank?'下降 '+(x.rank-x.previous):'持平'} · 09.06 记录</small></button>`).join('')}</div>`:'<p>当前日期范围不含 09.06，没有排名记录。不是排名为零。</p>'}<p>排名、发布和页面检查分别判断；不能由其中一项推定文章效果。</p>`;
+
+}
+function seoOpen(id,scope=pSnapshot(),tab='overview'){
+ const r=panoramaData.content.find(x=>x.id===id);if(!r)return;seoView={id,scope:{topic:scope.topic,start:scope.start,end:scope.end},tab,listSubset:seoListState.get(JSON.stringify({topic:scope.topic,start:scope.start,end:scope.end}))?.subset||''};
+ showDialog('内容与搜索 / 文章详情',`<div class="seo-depth"><small>演示内容 · ${r.id}</small><h2>${esc(r.title)}</h2><p>${pScope(scope)} · 保留打开时的日期范围</p><div class="seo-depth-tabs" role="tablist" aria-label="内容分析维度">${seoTabs.map(([k,l])=>`<button id="seo-tab-${k}" role="tab" aria-controls="seo-panel" aria-selected="${k===tab}" tabindex="${k===tab?0:-1}" data-seo-tab="${k}">${l}</button>`).join('')}</div><section id="seo-panel" role="tabpanel" aria-labelledby="seo-tab-${tab}">${seoBody()}</section><div class="seo-actions"><button data-seo-discuss>带着文章继续讨论</button><button data-seo-plan>${seoNext(r)}</button><button data-seo-back>返回文章列表</button></div></div>`);
+}
+function seoTab(tab){seoView.tab=tab;$('#seo-panel').innerHTML=seoBody();$('#seo-panel').setAttribute('aria-labelledby','seo-tab-'+tab);$$('[data-seo-tab]').forEach(b=>{b.setAttribute('aria-selected',String(b.dataset.seoTab===tab));b.tabIndex=b.dataset.seoTab===tab?0:-1;});}
+const seoObject=pObject;pObject=function(id){if(id.startsWith('CT-'))return seoOpen(id);return seoObject(id);};
+window.addEventListener('input',e=>{if(!e.target.matches('[data-seo-search]'))return;const root=e.target.closest('[data-seo-library]'),q=e.target.value.trim().toLowerCase();const saved=seoListState.get(root.dataset.seoListKey);if(saved)saved.query=e.target.value.trim();let count=0;root.querySelectorAll('[data-seo-match]').forEach(b=>{b.hidden=!b.dataset.seoMatch.toLowerCase().includes(q);if(!b.hidden)count++;});root.querySelector('[data-seo-empty]').hidden=count>0;});
+window.addEventListener('keydown',e=>{const b=e.target.closest('[data-seo-tab]');if(!b||!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const index=seoTabs.findIndex(([k])=>k===b.dataset.seoTab),next=e.key==='Home'?0:e.key==='End'?3:(index+(e.key==='ArrowRight'?1:3))%4;seoTab(seoTabs[next][0]);$('#seo-tab-'+seoTabs[next][0]).focus();});
+window.addEventListener('click',e=>{
+ const b=e.target.closest('[data-seo-open],[data-seo-library-open],[data-seo-tab],[data-seo-back],[data-seo-return],[data-seo-evidence],[data-seo-discuss],[data-seo-plan]');if(!b)return;e.preventDefault();e.stopImmediatePropagation();
+ if(b.hasAttribute('data-seo-library-open')){pOpen('content');return;}
+ if(b.dataset.seoOpen){seoOpen(b.dataset.seoOpen,JSON.parse(b.dataset.seoScope));return;}
+ if(b.dataset.seoTab){seoTab(b.dataset.seoTab);return;}
+ if(b.hasAttribute('data-seo-back')){showDialog('SEO / 文章列表',seoList(seoView.scope,seoView.listSubset));return;}
+ if(b.hasAttribute('data-seo-return')){seoOpen(seoView.id,seoView.scope,seoView.tab);return;}
+ if(b.dataset.seoEvidence){seoObject(b.dataset.seoEvidence);$('#dialogBody').insertAdjacentHTML('beforeend','<button class="seo-entry" data-seo-return>返回文章搜索分析</button>');return;}
+ const {id,scope}=seoView,r=panoramaData.content.find(x=>x.id===id);closeDialog();
+ if(b.hasAttribute('data-seo-discuss')){showChat();addMessage('user','查看文章：'+r.title);addMessage('assistant',`<p><strong>${esc(r.title)}</strong> · ${r.status}</p><p>${pScope(scope)}。负责角色：${r.owner}。下一步：${seoNext(r)}。</p><p>${r.status==='已发布'?'发布状态已有记录，但页面能否正常打开、收录和流量效果尚未核实。':r.status==='已审核待发布'?'审核已完成，接下来确认平台、发布时间和发布记录。':'先补齐事实、案例与审核依据，再推进发布。'} 目前没有本篇或业务每日搜索点击；相关关键词排名不代表本篇带来的咨询。</p><button class="seo-entry" data-seo-open="${id}" data-seo-scope="${esc(JSON.stringify(scope))}">返回文章并安排跟进 ↗</button>`);return;}
+ pChange(scope);pPlan('content',id);const f=$('#pPlanForm');f.elements.title.value=seoNext(r)+'：'+r.title;f.elements.owner.value=r.owner;f.elements.note.value=`${id} / ${r.title}，${pScope(scope)}。当前状态：${r.status}。${r.status==='已发布'?'复查页面访问、标题、图片、链接与收录，逐项补充证据。':r.status==='已审核待发布'?'确认发布平台、计划时间和页面地址，保留已有审核结论；实际发布结果另行确认。':'核对内容事实、案例来源与发布条件，记录审核意见。'} 不操作真实发布平台。`;f.elements.criterion.value=r.status==='已发布'?'每个检查项有结果、时间与依据；未确认项保留待补充依据。页面通过与流量效果分别验收。':r.status==='已审核待发布'?'发布平台、计划时间与跟进角色已确认；实际发布记录、页面检查分别核实，安排完成不代表发布成功。':'审核项逐项有结论，需修改内容有负责人；审核通过不等于发布成功。';
+},true);
+renderPanorama();

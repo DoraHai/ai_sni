@@ -1,0 +1,15 @@
+.dashboard-jumps{display:flex;gap:7px;margin:4px 0 8px;flex-wrap:wrap}
+.dashboard-jumps button{display:flex;gap:10px;align-items:center;border:1px solid #314c68;border-radius:7px;padding:7px 11px;background:#142b42;color:#c0d9ef;font-size:11px}
+.dashboard-jumps small{font-size:10px;color:#90b7d9;background:#203e58;border-radius:4px;padding:1px 5px}
+.dashboard-jumps button:hover{border-color:#77b5e4;background:#224766}
+.dashboard-group{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;gap:10px;border-bottom:1px solid #2a425c;padding:15px 0 10px;margin:2px 0 0}
+.dashboard-group>div{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.dashboard-group span{font-size:11px;color:#83b8df;font-variant-numeric:tabular-nums}
+.dashboard-group h2{font-size:15px;color:#dfedfa;margin:0}
+.dashboard-group small{font-size:10px;color:#92abc2}
+.dashboard-group button{font-size:10px;color:#9fc6e6;white-space:nowrap;background:transparent}
+.p-card{transition:border-color .18s,box-shadow .18s}
+.p-card.is-focused{border-color:#81bce5!important;box-shadow:0 0 0 1px #81bce526}
+.p-card:focus-visible,.dashboard-jumps button:focus-visible,.dashboard-group button:focus-visible{outline:2px solid #90c7ef;outline-offset:3px}
+@container(max-width:520px){.dashboard-group small{width:100%;padding-left:23px}.dashboard-jumps{gap:5px}.dashboard-jumps button{padding:7px 8px;gap:6px;font-size:10px}}
+@media(prefers-reduced-motion:reduce){.p-card{transition:none}}
