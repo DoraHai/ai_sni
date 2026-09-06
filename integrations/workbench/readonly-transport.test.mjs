@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createReadonlyTransport } from './readonly-transport.mjs'
+import { createSemReadonlyClient } from '../sem-cockpit/readonly-client.mjs'
+import { readFileSync } from 'node:fs'
 
 const route = '/api/v1/dashboard/cockpit?start_date=2026-09-05&end_date=2026-09-05'
 function fixture(fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ value: 0 }) })) {
@@ -60,4 +62,25 @@ test('invalidation aborts in-flight requests even if transport ignores cancellat
   assert.equal(signal.aborted, true)
   complete({ ok: true, status: 200 })
   await assert.rejects(pending, { code: 'STALE_SESSION' })
+})
+
+test('real SEM consumer composes with transport for all four resources', async () => {
+  const examples = JSON.parse(readFileSync(new URL('../sem-cockpit/examples.synthetic.json', import.meta.url), 'utf8')).examples
+  for (const example of examples) {
+    let request
+    const boundary = fixture(async (...args) => { request = args; return { ok: true, status: 200, json: async () => example.response } })
+    const client = createSemReadonlyClient({ transport: boundary.transport, onClear() {} })
+    client.setContext({ tenantId: 1, userId: 2, authorizationRevision: 'test-1', allowedReads: ['report', 'keywords', 'keywordDetail', 'searchTerms'] })
+    await client.read(example.resource, example.consumer_params)
+    const url = new URL(request[0])
+    assert.equal(url.origin, 'https://example.invalid')
+    assert.equal(url.searchParams.get('tenant_id'), '1')
+    assert.equal(request[1].headers.Authorization, 'Bearer synthetic-session')
+  }
+})
+
+test('duplicate tenant or filter parameters cannot reach the network', async () => {
+  const client = fixture(async () => assert.fail('network should not run'))
+  await assert.rejects(client.transport(`${route}&tenant_id=1&tenant_id=2`, { method: 'GET' }), { code: 'QUERY_DENIED' })
+  await assert.rejects(client.transport(`${route}&page=1&page=2`, { method: 'GET' }), { code: 'QUERY_DENIED' })
 })
