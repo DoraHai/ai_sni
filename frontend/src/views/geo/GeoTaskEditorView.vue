@@ -3329,6 +3329,7 @@ onMounted(load)
             事实绑定 · 已绑 {{ boundFacts.length }} / 需≥3
             <router-link class="ed-link" to="/geo/knowledge">管理知识库</router-link>
           </div>
+          <GeoGenerationEvidence :evidence="task?.generation_evidence" />
           <el-input v-model="factQuery" clearable size="small" placeholder="搜索材料" class="mb" />
           <div class="ed-fact-list">
             <label
@@ -3343,7 +3344,7 @@ onMounted(load)
                   <span class="ed-fact-title">{{ f.title || '未命名' }}</span>
                 </div>
                 <div class="ed-fact-sum">{{ factSnippet(f, 72) || '无摘要' }}</div>
-                <div class="ed-fact-cite">{{ isFactCited(f.id) ? '已引用' : '未引用' }}</div>
+                <div class="ed-fact-cite">{{ isFactCited(f.id) ? '已关联证据线索（仍需核验正文）' : '未关联正文证据（不代表资料不合格）' }}</div>
               </div>
             </label>
             <div v-if="!filteredTrustedFacts.length" class="ed-empty">
@@ -3449,7 +3450,6 @@ onMounted(load)
                   <span :class="{ ok: briefFilled }">{{ briefFilled ? '✓' : '·' }} 创作要求</span>
                 </div>
               </section>
-              <GeoGenerationEvidence :evidence="task?.generation_evidence" />
               <div class="ed-gen-actions">
                 <div>
                   <span>✦</span>

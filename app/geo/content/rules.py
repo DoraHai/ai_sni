@@ -445,17 +445,16 @@ def check_sentence_evidence(data: RuleInput) -> RuleCheck:
         strip_citation_appendix,
     )
 
-    rows = (data.outline or {}).get("sentence_citations")
-    if not isinstance(rows, list) or not rows:
-        rows = build_sentence_citations(
-            strip_citation_appendix(data.body_markdown or ""), data.facts or []
-        )
+    # Saved citation metadata may predate edits or newer evidence checks.
+    rows = build_sentence_citations(
+        strip_citation_appendix(data.body_markdown or ""), data.facts or []
+    )
     verdict = citation_verdict(rows)
     if verdict["ok"]:
         return RuleCheck(
             code="sentence_evidence",
             passed=True,
-            message=f"主张句已闭环（已挂 {verdict['cited']}/{verdict['total']}）",
+            message=f"未检出规则可识别的无依据主张（关联线索 {verdict['cited']}/{verdict['total']}，仍需客户核验）",
             action="",
         )
     return RuleCheck(

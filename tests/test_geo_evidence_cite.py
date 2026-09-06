@@ -12,7 +12,7 @@ class EvidenceCiteTests(unittest.TestCase):
         self.assertTrue(all(len(p) >= 8 for p in parts))
 
     def test_cites_overlapping_fact(self):
-        md = "Udesk 支持全渠道客服接入，可覆盖网页与社交渠道。这句话完全无关的内容随便写写。"
+        md = "Udesk 支持全渠道客服接入。这句话完全无关的内容随便写写。"
         facts = [
             {
                 "id": 11,

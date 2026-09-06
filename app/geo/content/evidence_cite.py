@@ -13,7 +13,7 @@ _APPENDIX = re.compile(r"\n+## 逐句证据\s*\n[\s\S]*\Z")
 
 def split_sentences(text: str) -> list[str]:
     parts = [p.strip() for p in _SENT_SPLIT.split(text or "") if p and p.strip()]
-    return [p for p in parts if len(p) >= 8 and not p.startswith("#") and not p.startswith("*")]
+    return [p for p in parts if len(p) >= 8]
 
 
 def strip_citation_appendix(markdown: str) -> str:
@@ -28,7 +28,7 @@ def _score(sentence: str, fact: dict[str, Any]) -> float:
     if not q or not ftok:
         return 0.0
     hit = q & ftok
-    return len(hit) / max(3, min(len(q), 12))
+    return len(hit) / max(3, len(q))
 
 
 def _sentence_is_claim(sentence: str, facts: list[dict[str, Any]]) -> bool:
@@ -46,7 +46,7 @@ def build_sentence_citations(
     rows: list[dict[str, Any]] = []
     if not body.strip():
         return rows
-    for sent in split_sentences(body)[:40]:
+    for sent in split_sentences(body):
         cited = False
         fact: dict[str, Any] | None = None
         score = 0.0
@@ -55,6 +55,10 @@ def build_sentence_citations(
             score, fact = ranked[0]
             cited = score >= min_score
         is_claim = _sentence_is_claim(sent, facts)
+        # Similarity is only a retrieval hint. It cannot override a known
+        # unsupported assertion, even when the rest repeats a fact verbatim.
+        if is_claim:
+            cited = False
         rows.append(
             {
                 "sentence": sent[:180],
@@ -64,7 +68,7 @@ def build_sentence_citations(
                 "score": round(score, 3),
                 "cited": cited,
                 "is_claim": is_claim,
-                "needs_fact": (not cited) and is_claim,
+                "needs_fact": is_claim,
             }
         )
     return rows

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from app.geo.content.variants import GeoContentError
@@ -139,8 +140,6 @@ def normalize_article_payload(
             continue
         if fid in allowed:
             used.append(fid)
-    if not used:
-        used = list(allowed)
 
     clean_sections: list[dict[str, Any]] = []
     for sec in sections:
@@ -177,7 +176,7 @@ def normalize_article_payload(
         "sections": clean_sections,
         "used_fact_ids": used,
         "disclaimer": disclaimer,
-        "updated_at": str(data.get("updated_at") or date.today().isoformat()),
+        "updated_at": datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat(),
         "_source": data.get("_source") or "ai",
     }
 
@@ -218,7 +217,7 @@ def to_markdown(payload: dict[str, Any]) -> str:
         parts.append("")
         parts.append(conclusion)
         parts.append("")
-    parts.append(f"*更新时间：{payload.get('updated_at') or date.today().isoformat()}*")
+    parts.append(f"*草稿生成日期：{payload.get('updated_at') or date.today().isoformat()}（非来源更新日期）*")
     parts.append("")
     parts.append(payload.get("disclaimer") or "")
     return "\n".join(parts).strip() + "\n"
@@ -337,6 +336,8 @@ async def generate_master_article(
         "【数字禁令】禁止编造百分比、坐席数、时长、识别率、并发、满意度等具体数字；"
         "禁止写成功案例、头部客户、标杆项目，除非该名称或案例原文出现在事实卡。"
         "事实卡里没有出现的数字、案例名、性能指标、竞品能力一律不得写入。"
+        "行业适用性、设备举例、故障机理、寿命与选型结论也必须有事实原文支撑；不得用行业常识补写。"
+        "brief 是写作需求，不是事实证据；资料不足时缩短正文，不得为了篇幅补充推断。"
         "事实卡只有泛化官网介绍时，正文只能复述这些介绍，不得补行业常见数据。"
         "【GEO 品牌硬标准】user.brand 是本品品牌名：direct_answer（开篇直接答案）与 conclusion 结论段"
         "必须自然点名该品牌（至少各出现 1 次）；全文禁止写成无品牌的纯品类科普——"
@@ -421,9 +422,9 @@ async def generate_master_article(
                     "quality_issues": [format_ungrounded(invented)],
                     "previous_direct_answer": payload.get("direct_answer"),
                     "instruction": (
-                        "上一版写了事实卡没有的数字、性能或案例。请整篇重写 JSON："
+                        "上一版包含事实卡未能支撑的数字、性能、案例、适用性或机理。请整篇重写 JSON："
                         "只复述事实卡原文能支撑的内容；删掉所有无依据数字、识别率/满意度/并发、"
-                        "成功案例/头部客户。没有的数据就写「以官方公开资料为准」，不要补行业常见值。"
+                        "成功案例/头部客户、行业适用性、设备示例及故障机理。资料不足就缩短正文，不能用免责声明保留无依据结论。"
                     ),
                 }
                 data3 = await chat_json(
@@ -436,9 +437,12 @@ async def generate_master_article(
                 pass
         if invented:
             raise GeoContentError(
-                "母稿写了事实卡没有的数字/性能/案例，已拦截："
+                "母稿存在事实卡未能支撑的表述，已拦截："
                 + format_ungrounded(invented)
             )
+        final_brand_issues = payload_brand_issues(payload, brand)
+        if final_brand_issues:
+            raise GeoContentError("母稿改写后未满足品牌标准：" + "；".join(final_brand_issues[:4]))
         payload["_evidence"] = evidence_meta
         payload["_brief"] = brief_norm
         payload["_strategy_richness"] = strategy_richness(brief_norm)

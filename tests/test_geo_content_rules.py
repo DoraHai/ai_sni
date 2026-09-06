@@ -216,7 +216,8 @@ class GeoGenerateDeterministicTests(unittest.TestCase):
         md = to_markdown(payload)
         self.assertTrue("## FAQ" in md or "## 常见问题" in md)
         self.assertTrue("## 结论" in md or "## 结论与建议" in md)
-        self.assertIn("更新时间", md)
+        self.assertIn("草稿生成日期", md)
+        self.assertIn("非来源更新日期", md)
         self.assertGreaterEqual(len(payload["sections"]), 3)
 
 

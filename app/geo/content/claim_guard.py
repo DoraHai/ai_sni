@@ -39,6 +39,46 @@ _CASE_TERMS = (
     "落地案例",
 )
 
+# Qualitative assertions also need evidence. Match assertion spans, not a list
+# of industries: a familiar product name is not proof of the added application
+# or causal explanation. Conservative matching deliberately requires review of
+# paraphrases/translations that cannot be established from the stored statement.
+_QUALITATIVE = re.compile(
+    r"(?:适用于|适合于|可用于|可覆盖|可成为|广泛用于|例如|比如|如[：:]|诸如)[^。！？!?；;\n]{2,100}"
+    r"|(?:包括|例如|如)[^。！？!?；;\n]{2,60}(?:设备|机械|机)[^。！？!?；;\n]{0,40}"
+    r"|[^。！？!?；;\n]{0,45}(?:导致|防止|直接影响|决定了|有效降低|延长|缩短)[^。！？!?；;\n]{2,100}"
+)
+
+
+def qualitative_claims(text: str, facts: list[dict[str, Any]]) -> list[dict[str, str]]:
+    def compact(value: str) -> str:
+        return re.sub(r"[\s*]+", "", value).casefold()
+
+    # Titles and source labels are not verified statements.
+    statements = [compact(str(f.get('statement') or '')) for f in facts or []]
+    def supported(span: str) -> bool:
+        needle = compact(span)
+        for statement in statements:
+            for found in re.finditer(re.escape(needle), statement):
+                prefix = re.split(r'[。！？!?；;\n]', statement[:found.start()])[-1]
+                suffix = statement[found.end():]
+                # Do not drop a source's negation, restriction or trailing
+                # condition and turn a qualified statement into a guarantee.
+                if re.search(r'不|未|仅|只|限|假设|如果|可能', prefix):
+                    continue
+                if suffix and suffix[0] not in '。！？!?；;':
+                    continue
+                return True
+        return False
+
+    hits = []
+    body = re.sub(r"[（(]来源[：:][^）)\n]*[）)]", "", text or '')
+    for match in _QUALITATIVE.finditer(body):
+        span = match.group().strip()
+        if not supported(span):
+            hits.append({'kind': 'qualitative', 'token': span, 'excerpt': span[:180]})
+    return hits
+
 
 def _norm_num(raw: str) -> str:
     return raw.replace("％", "%").strip()
@@ -153,12 +193,14 @@ def ungrounded_claims(text: str, facts: list[dict[str, Any]]) -> list[dict[str, 
         if term in body and term not in blob:
             _add("case", term, term)
 
+    hits.extend(qualitative_claims(body, facts))
+
     return hits
 
 
 def format_ungrounded(claims: list[dict[str, str]], *, limit: int = 8) -> str:
     parts: list[str] = []
-    labels = {"number": "数字", "performance": "性能表述", "case": "案例表述"}
+    labels = {"number": "数字", "performance": "性能表述", "case": "案例表述", "qualitative": "适用性或机理表述"}
     for c in claims[:limit]:
         parts.append(f"{labels.get(c['kind'], c['kind'])}「{c['token']}」")
     return "、".join(parts)

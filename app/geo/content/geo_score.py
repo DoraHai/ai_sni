@@ -406,8 +406,8 @@ def compute_geo_score(
         a2 = list(a2) + [
             {
                 "code": "geo_evidence_ungrounded",
-                "message": "存在无依据数字、性能或案例，不能标可发布",
-                "action": "删掉事实卡没有的数据后再检查",
+                "message": "存在未核实表述（含适用性或机理），不能标可发布",
+                "action": "删改无依据表述或补核验资料后再检查",
             }
         ]
     actions = a1 + a2 + a3 + a4 + a5 + a6 + a7

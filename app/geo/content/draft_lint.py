@@ -85,6 +85,10 @@ def lint_draft(
                     "excerpt": token,
                 }
             )
+        elif kind == "qualitative":
+            issues.append({"level": "高", "code": "unverified_qualitative",
+                           "type": "待核实适用性或机理", "detail": f"「{token}」未能由绑定事实原文支撑，请删改或补核验资料",
+                           "excerpt": claim.get("excerpt") or token})
         elif kind == "case":
             issues.append(
                 {
