@@ -502,3 +502,6 @@ export function downloadSeoPublicationMaterials(id,payload) {
 export const analyzeSeoQaSemantic = payload => requestSeoAi('/api/v1/seo/qa/planning/semantic', {
   ...payload, items: [...payload.items].sort((a,b) => a.id-b.id),
 })
+
+export const extractSeoQaDocument = payload => requestSeoAi('/api/v1/seo/qa/research/extract',payload)
+export const analyzeSeoQaQuality = payload => requestSeoAi('/api/v1/seo/qa/research/quality',payload)

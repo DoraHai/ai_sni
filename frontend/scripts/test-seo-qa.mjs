@@ -9,7 +9,7 @@ async function mount(api={},canEdit=true) {
   const source=await readFile(new URL('../src/views/seo/SeoQaWorkbenchView.vue',import.meta.url),'utf8')
   const compiled=compileScript(parse(source).descriptor,{id:'qa',genDefaultAs:'component'}).content
   const tenant=Vue.ref(1),site=Vue.ref(10),writes=[]
-  const bindings={...Vue,SeoQaPlanning:{},publisherZip:()=>null,qaRunnerSource:'',runnerSource:'',runnerRequirements:'',currentTenantId:tenant,siteId:site,session:{canEdit:()=>canEdit},useRouter:()=>({push(){}}),ElMessage:{success(){}},
+  const bindings={...Vue,SeoQaResearch:{},SeoQaPlanning:{},publisherZip:()=>null,qaRunnerSource:'',runnerSource:'',runnerRequirements:'',currentTenantId:tenant,siteId:site,session:{canEdit:()=>canEdit},useRouter:()=>({push(){}}),ElMessage:{success(){}},
     seoQaGet:async path=>path==='questions'?{items:[],total:0}:path==='maintenance'?{items:[]}:path==='capabilities'?{platforms:[]}:[],
     seoQaPost:async(...args)=>{writes.push(args);return {created:1,merged:0}},seoQaPatch:async()=>({}),assistSeoContent:async()=>({content:'草稿'}),
     submitSeoContentReview:async(...args)=>writes.push(args),decideSeoContentReview:async()=>({}),...api}
@@ -335,4 +335,37 @@ test('coverage gap filter includes stale and draft answers but excludes valid co
     {id:3,title:'有效',topic:'主题',answer_count:1,valid_answer_count:1}]}]}]}
   const m=await mountPlanning({seoQaGet:async()=>sample})
   try {m.state.flags.coverageGap=true;assert.deepEqual(m.state.groups[0].intents[0].questions.map(q=>q.id),[1,2])}finally{m.app.unmount()}
+})
+
+
+async function mountResearch(api={},options={}) {
+  const source=await readFile(new URL('../src/views/seo/SeoQaResearch.vue',import.meta.url),'utf8')
+  const compiled=compileScript(parse(source).descriptor,{id:'research',genDefaultAs:'component'}).content
+  const props=Vue.reactive({tenantId:1,siteId:10,canEdit:true,mode:'extract',answerId:7,contentVersion:2,questionVersion:3,blocked:false,...options}),writes=[]
+  const bindings={...Vue,seoQaGet:async()=>({items:[]}),seoQaPost:async(...args)=>{writes.push(args);return {accepted:{0:{question_id:4,fact_id:5}}}},extractSeoQaDocument:async()=>({action:'qa_extract',operation_id:'extract-op',candidates:[{index:0,question:'如何使用',quote:'使用前先确认条件'}],accepted:{}}),analyzeSeoQaQuality:async()=>({action:'qa_quality',answer_id:7,content_version:2,question_version:3,issues:[]}),...api}
+  const names=Object.keys(bindings).filter(k=>/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k))
+  const component=new Function('b',`const {${names.join(',')}}=b;${compiled.replace(/^import .* from .*$/gm,'')};return component`)(bindings)
+  component.render=()=>null
+  const app=renderer.createApp({render:()=>Vue.h(component,props)}),root=app.mount({});await flush()
+  return {app,state:root.$.subTree.component.setupState,props,writes}
+}
+test('document analysis is a preview; explicit selected acceptance is scoped',async()=>{
+  const m=await mountResearch()
+  try{await m.state.analyze();assert.equal(m.writes.length,0);m.state.chosen=[0];await m.state.accept();assert.deepEqual(m.writes[0],['research/extract-op/accept',{tenant_id:1,site_id:10,indices:[0]}]);assert.equal(m.state.result.accepted[0].fact_id,5)}finally{m.app.unmount()}
+})
+test('read-only research cannot charge AI or import facts',async()=>{
+  let charged=0;const m=await mountResearch({extractSeoQaDocument:async()=>{charged++}},{canEdit:false})
+  try{await m.state.analyze();m.state.result={operation_id:'op'};m.state.chosen=[0];await m.state.accept();assert.equal(charged,0);assert.equal(m.writes.length,0)}finally{m.app.unmount()}
+})
+test('research drops late AI responses and clears source text on site switch',async()=>{
+  let resolve;const m=await mountResearch({extractSeoQaDocument:()=>new Promise(r=>{resolve=r})})
+  try{m.state.source.text='资料';await flush();const work=m.state.analyze();m.props.siteId=20;await flush();resolve({operation_id:'old',candidates:[]});await work;assert.equal(m.state.result,null);assert.equal(m.state.source.text,'')}finally{m.app.unmount()}
+})
+test('quality suggestions become historical when saved version changes',async()=>{
+  const m=await mountResearch({}, {mode:'quality'})
+  try{await m.state.analyze();assert.equal(m.state.current,true);m.props.contentVersion=3;await flush();assert.equal(m.state.current,false);assert.equal(m.writes.length,0);m.props.blocked=true;await m.state.analyze();assert.equal(m.state.result.content_version,2)}finally{m.app.unmount()}
+})
+test('research recovery refuses another answer or operation kind',async()=>{
+  const m=await mountResearch({seoQaGet:async()=>({action:'qa_extract',answer_id:8})},{mode:'quality'})
+  try{await m.state.recover({id:'other',has_result:true});assert.equal(m.state.result,null);assert.ok(m.state.error)}finally{m.app.unmount()}
 })
