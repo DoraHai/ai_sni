@@ -1,6 +1,38 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { MODULES, moduleScope, scopedMetrics, taskInModuleScope, taskScopeReference, planInModuleScope } from './module-scope.mjs';
+import { MODULES, moduleScope, scopedMetrics, taskInModuleScope, taskScopeReference, planInModuleScope, panelInModuleScope, navigationAccess } from './module-scope.mjs';
+
+test('partial navigation keeps common pages and exposes budget only with SEM', () => {
+  for (let mask = 1; mask < 8; mask++) {
+    const enabled = MODULES.filter((_, index) => mask & (1 << index));
+    const full = enabled.length === MODULES.length;
+    for (const page of ['panorama', 'tasks', 'quality']) {
+      assert.equal(navigationAccess(page, enabled).allowed, true);
+    }
+    assert.equal(navigationAccess('acquisition', enabled).allowed, enabled.includes('sem'));
+    for (const page of ['dashboard', 'overview', 'module']) {
+      assert.equal(navigationAccess(page, enabled).allowed, full);
+    }
+  }
+  assert.deepEqual(navigationAccess('acquisition', ['seo']), {
+    allowed: false,
+    reason: '预算试算需要开通 SEM。',
+  });
+  assert.equal(navigationAccess('future', MODULES).allowed, false);
+  assert.equal(navigationAccess('panorama', []).allowed, false);
+});
+
+test('panel reopening and nested destinations obey current module scope', () => {
+  assert.equal(panelInModuleScope('spend', null, ['seo']), false);
+  assert.equal(panelInModuleScope('sem:3', null, ['seo']), false);
+  assert.equal(panelInModuleScope('seo:6', null, ['seo']), true);
+  assert.equal(panelInModuleScope('results', null, ['sem', 'seo']), false);
+  assert.equal(panelInModuleScope('pano_old', { card: 'trend' }, ['seo']), false);
+  assert.equal(panelInModuleScope('pano_new', { card: 'content' }, ['seo']), true);
+  assert.equal(panelInModuleScope('pano_mix', { card: 'journey' }, ['sem', 'seo']), false);
+  assert.equal(panelInModuleScope('unknown', null, []), false);
+  assert.equal(panelInModuleScope('spend', null, MODULES), true);
+});
 
 test('all seven customer combinations expose only their own cards and suggestions', () => {
   for (let mask = 1; mask < 8; mask++) {

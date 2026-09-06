@@ -61,3 +61,31 @@ export function planInModuleScope(type, entitlements) {
   if (!Object.hasOwn(types, type)) return false;
   return taskInModuleScope({ modules: types[type] }, entitlements);
 }
+
+export function panelInModuleScope(key, snapshot, entitlements) {
+  const scope = moduleScope(entitlements);
+  if (scope.empty) return false;
+  if (scope.enabled.length === MODULES.length) return true;
+  if (snapshot) return scope.cards.includes(snapshot.card) || snapshot.card === 'execution';
+  const module = /^(sem|seo|geo):\d+$/.exec(key)?.[1];
+  if (module) return scope.enabled.includes(module);
+  const legacy = { spend: 'sem', organic: 'seo', visibility: 'geo' };
+  return Object.hasOwn(legacy, key) && scope.enabled.includes(legacy[key]);
+}
+
+export function navigationAccess(page, entitlements) {
+  const scope = moduleScope(entitlements);
+  const requirements = {
+    panorama: [], tasks: [], quality: [],
+    acquisition: ['sem'],
+    dashboard: MODULES, overview: MODULES, module: MODULES,
+  };
+  if (!Object.hasOwn(requirements, page) || scope.empty) {
+    return { allowed: false, reason: '当前入口不可用。' };
+  }
+  const allowed = requirements[page].every(module => scope.enabled.includes(module));
+  if (allowed) return { allowed: true, reason: null };
+  if (page === 'acquisition') return { allowed: false, reason: '预算试算需要开通 SEM。' };
+  if (page === 'module') return { allowed: false, reason: '旧模块页尚未完成当前组合的范围适配，请使用全景工作台。' };
+  return { allowed: false, reason: '该入口仍包含多个模块，当前组合暂未开放，请使用全景工作台。' };
+}

@@ -1,4 +1,4 @@
-import { MODULES, moduleScope, taskInModuleScope, taskScopeReference, planInModuleScope } from './module-scope.mjs?v=20260907-57';
+import { MODULES, moduleScope, taskInModuleScope, taskScopeReference, planInModuleScope, panelInModuleScope, navigationAccess } from './module-scope.mjs?v=20260907-59';
 
 // Local customer-profile rehearsal. This selection never grants API permissions.
 let enabled = [...MODULES];
@@ -27,6 +27,26 @@ function suggestions() {
   if (welcome) welcome.textContent = enabled.map(module => names[module]).join('、') + ' ↗';
 }
 
+function decorateNavigation() {
+  document.querySelectorAll('.page-tabs [data-page]').forEach(button => {
+    const access = navigationAccess(button.dataset.page, enabled);
+    if (!button.dataset.scopeLabel) button.dataset.scopeLabel = button.textContent.trim();
+    if (access.allowed) {
+      if (button.dataset.scopeDisabled === 'true') button.textContent = button.dataset.scopeLabel;
+      button.disabled = false;
+      delete button.dataset.scopeDisabled;
+      button.removeAttribute('title');
+      button.removeAttribute('aria-label');
+      return;
+    }
+    button.disabled = true;
+    button.dataset.scopeDisabled = 'true';
+    button.textContent = `${button.dataset.scopeLabel} · ${button.dataset.page === 'acquisition' ? '需 SEM' : '暂未开放'}`;
+    button.title = access.reason;
+    button.setAttribute('aria-label', `${button.dataset.scopeLabel}，${access.reason}`);
+  });
+}
+
 function scopedView() {
   if (!partial()) {
     panoPage.querySelector('.p-controls')?.insertAdjacentHTML('beforeend', selector());
@@ -47,6 +67,11 @@ const originalRender = renderPanorama;
 renderPanorama = function(...args) { originalRender(...args); scopedView(); };
 
 const originalOpen = pOpen;
+const originalPanelOpen = openPanel;
+openPanel = function(key, ...args) {
+  if (!panelInModuleScope(key, panoSnapshots.get(key), enabled)) return toast('该详情不属于当前开通模块。');
+  return originalPanelOpen(key, ...args);
+};
 pOpen = function(key, ...args) {
   if (partial() && key === 'health') return showDialog('当前模块数据情况', `<h2>当前数据能说明什么？</h2>${scopedHealth()}`);
   if (partial() && ![...profile().cards, 'execution'].includes(key)) return toast('当前客户未开通对应模块。');
@@ -75,10 +100,8 @@ pSuggestions = function(...args) { originalSuggestions(...args); suggestions(); 
 
 const originalNavigate = navigate;
 navigate = function(page, ...args) {
-  if (partial() && !['panorama', 'tasks', 'quality'].includes(page)) {
-    toast('当前组合请从全景工作台查看已开通模块。');
-    return originalNavigate('panorama');
-  }
+  const access = navigationAccess(page, enabled);
+  if (!access.allowed) return toast(access.reason);
   return originalNavigate(page, ...args);
 };
 const originalQuality = renderQuality;
@@ -129,10 +152,14 @@ window.addEventListener('change', event => {
   pano.compare = null;
   pano.history = [];
   closeDialog();
-  panels.forEach(panel => { panel.el.hidden = true; });
+  // Discard all old windows: even a still-enabled module can contain old mixed-scope content.
+  panels.forEach(panel => panel.el.remove());
+  panels.clear();
+  focusedPanel = null;
   dock();
   renderPanorama();
   renderTasks();
+  decorateNavigation();
   pSuggestions();
   if (!partial()) {
     const welcome = document.querySelector('.first-welcome .first-starts button span');
@@ -142,6 +169,23 @@ window.addEventListener('change', event => {
 }, true);
 
 window.addEventListener('click', event => {
+  const brand = event.target.closest('a.brand');
+  if (brand && partial()) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    navigate('panorama');
+    return;
+  }
+  const restore = event.target.closest('[data-restore]');
+  if (restore) {
+    const panel = panels.get(restore.dataset.restore);
+    if (!panel || !panelInModuleScope(panel.key, panoSnapshots.get(panel.key), enabled)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      toast('开通组合已变化，请从当前看板重新打开详情。');
+      return;
+    }
+  }
   const button = event.target.closest('[data-profile-open], [data-profile-discuss], [data-profile-question]');
   if (!button) return;
   event.preventDefault();
@@ -150,3 +194,4 @@ window.addEventListener('click', event => {
   else pTalk(button.dataset.profileDiscuss || 'overview', button.textContent);
 }, true);
 renderPanorama();
+decorateNavigation();
