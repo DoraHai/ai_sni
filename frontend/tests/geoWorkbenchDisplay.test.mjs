@@ -122,6 +122,42 @@ test('official metric values expose stable localized unit labels and trend text'
   assert.equal(count.trend.changeAbsText, '+12 次')
 })
 
+test('formatting never turns tiny non-zero values or fractional counts into zero', () => {
+  const tiny = officialMetricDisplay({
+    metric_key: 'geo.visibility.ai_mention_rate_7d',
+    value: 0.00001,
+    unit: 'percent',
+    trend_7d: { direction: 'up', change_pct: 0.00001, change_abs: -0.00001 },
+  }, { comparison: { comparable: true } })
+  assert.equal(tiny.valueText, '<0.0001')
+  assert.equal(tiny.trend.changePctText, '<0.0001%')
+  assert.equal(tiny.trend.changeAbsText, '>-0.0001 个百分点')
+
+  const fractionalCount = officialMetricDisplay({
+    metric_key: metricKey,
+    value: 1.25,
+    unit: 'count',
+    trend_7d: null,
+  })
+  assert.equal(fractionalCount.value, 1.25)
+  assert.equal(fractionalCount.valueText, '1.25')
+  assert.equal(fractionalCount.unitLabel, '次')
+})
+
+test('unknown prototype-like units use the fallback formatter safely', () => {
+  for (const unit of ['__proto__', 'constructor']) {
+    const result = officialMetricDisplay({
+      metric_key: 'geo.visibility.future_metric',
+      value: 2.5,
+      unit,
+      trend_7d: { direction: 'up', change_pct: 5, change_abs: 1 },
+    }, { comparison: { comparable: true } })
+    assert.equal(result.valueText, '2.5')
+    assert.equal(result.unitLabel, unit)
+    assert.equal(result.trend.changeAbsText, `+1 ${unit}`)
+  }
+})
+
 test('explicitly incomparable context suppresses contradictory or non-finite trend values', () => {
   const contradictory = officialMetricDisplay(
     {

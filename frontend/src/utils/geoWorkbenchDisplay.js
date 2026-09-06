@@ -60,22 +60,34 @@ const ABSOLUTE_CHANGE_UNIT_LABELS = {
 }
 
 const NUMBER_FORMATTERS = {
-  count: new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 }),
+  count: new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 20 }),
   percent: new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 4 }),
   score: new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 4 }),
   default: new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 4 }),
 }
 
+function ownValue(values, key) {
+  return typeof key === 'string' && Object.prototype.hasOwnProperty.call(values, key)
+    ? values[key]
+    : null
+}
+
 function unitLabel(unit, absoluteChange = false) {
   const labels = absoluteChange ? ABSOLUTE_CHANGE_UNIT_LABELS : UNIT_LABELS
-  return labels[unit] || unit || null
+  return ownValue(labels, unit) || unit || null
 }
 
 function formatNumber(value, unit = null, signed = false) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null
-  const formatter = NUMBER_FORMATTERS[unit] || NUMBER_FORMATTERS.default
-  const formatted = formatter.format(value)
-  return signed && value > 0 ? `+${formatted}` : formatted
+  const absolute = Math.abs(value)
+  let formatted
+  if (absolute > 0 && absolute < 0.0001) {
+    formatted = value > 0 ? '<0.0001' : '>-0.0001'
+  } else {
+    const formatter = ownValue(NUMBER_FORMATTERS, unit) || NUMBER_FORMATTERS.default
+    formatted = formatter.format(value)
+  }
+  return signed && value > 0 && !formatted.startsWith('<') ? `+${formatted}` : formatted
 }
 
 function formatChange(value, unit, absoluteChange = false) {
