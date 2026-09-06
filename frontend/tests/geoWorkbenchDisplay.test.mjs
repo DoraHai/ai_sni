@@ -81,6 +81,45 @@ test('official null is unavailable while a measured zero remains zero', () => {
   })
 })
 
+test('explicitly incomparable context suppresses contradictory or non-finite trend values', () => {
+  const contradictory = officialMetricDisplay(
+    {
+      metric_key: metricKey,
+      value: 12,
+      unit: 'count',
+      as_of: '2026-08-31T00:00:00+08:00',
+      trend_7d: { direction: 'up', change_pct: 20, change_abs: 2 },
+    },
+    { comparison: { comparable: false, reason_codes: ['model_distribution_changed'] } },
+  )
+  assert.deepEqual(contradictory.trend, {
+    state: 'incomparable',
+    direction: null,
+    changePct: null,
+    changeAbs: null,
+    reasons: [{
+      code: 'model_distribution_changed',
+      scope: 'comparison',
+      message: '前后周模型分布不一致',
+    }],
+  })
+
+  const invalidNumbers = officialMetricDisplay(
+    {
+      metric_key: metricKey,
+      value: 12,
+      unit: 'count',
+      as_of: '2026-08-31T00:00:00+08:00',
+      trend_7d: { direction: 'up', change_pct: Number.NaN, change_abs: Number.POSITIVE_INFINITY },
+    },
+    { comparison: { comparable: true, reason_codes: [] } },
+  )
+  assert.equal(invalidNumbers.trend.state, 'available')
+  assert.equal(invalidNumbers.trend.direction, 'up')
+  assert.equal(invalidNumbers.trend.changePct, null)
+  assert.equal(invalidNumbers.trend.changeAbs, null)
+})
+
 test('official week uses server boundaries and explicit timezone unchanged', () => {
   const result = officialWeekDisplay({
     timezone: 'Asia/Shanghai',
@@ -116,4 +155,3 @@ test('stale observation preserves stored status instead of inventing failure', (
   assert.match(result.hint, /保留状态“处理中”/)
   assert.notEqual(result.label, '失败')
 })
-
