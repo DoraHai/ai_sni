@@ -6,6 +6,7 @@
   "notes": [
     "全部ID、正文、时间、URL为虚构，仅离线消费；example.com路径不用于平台发布或核验。",
     "raw为现有接口字段节选，不是完整HTTP响应；expected_workbench是工作台适配断言，不是已上线SEO接口字段。",
+    "consumer_input只承载调用方已经掌握的显式上下文，不是SEO接口返回字段。",
     "候选页面ID仅构造多候选场景，不代表SEO已提供自动URL关联接口。"
   ],
   "scenarios": [
@@ -173,6 +174,20 @@
     },
     {
       "id": "ambiguous_url",
+      "consumer_input": {
+        "page_candidates": [
+          {
+            "id": 93001,
+            "tenant_id": 99001,
+            "site_id": 99002
+          },
+          {
+            "id": 93002,
+            "tenant_id": 99001,
+            "site_id": 99002
+          }
+        ]
+      },
       "raw": {
         "content": {
           "id": 91001,

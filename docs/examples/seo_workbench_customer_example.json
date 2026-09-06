@@ -1,0 +1,566 @@
+{
+  "schema": "seo_workbench_customer_example_v1",
+  "synthetic": true,
+  "source_schema": "seo_phase1_fixture_v1",
+  "item_count": 8,
+  "items": [
+    {
+      "scenario_id": "approved_unpublished",
+      "scope": {
+        "tenant_id": 99001,
+        "site_id": 99002
+      },
+      "view": {
+        "content": {
+          "id": 91001,
+          "title": "虚构文章：设备安装检查",
+          "state": "ready",
+          "label": "已审核待发布",
+          "version": 2,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        },
+        "review": {
+          "state": "approved",
+          "label": "审核通过",
+          "independent": true,
+          "reviewed_at": "2026-09-06T06:00:00Z"
+        },
+        "publications": [],
+        "publication_summary": {
+          "record_count": 0,
+          "successful_count": 0,
+          "failed_count": 0
+        },
+        "page_evidence": {
+          "mapping_state": "not_linked",
+          "page_id": null,
+          "candidate_count": 0,
+          "check_state": "not_checked",
+          "checked_at": null,
+          "latest_snapshot_id": null,
+          "http_status": null,
+          "failure": null,
+          "passed": null
+        },
+        "search_performance": {
+          "article_clicks": null,
+          "state": "unavailable",
+          "reason": "SEO 当前没有可靠的单篇文章点击数据，不能从业务总点击或关键词推断。"
+        }
+      },
+      "customer_messages": [
+        {
+          "kind": "review",
+          "text": "审核通过"
+        },
+        {
+          "kind": "publication",
+          "text": "尚无分平台发布记录。"
+        },
+        {
+          "kind": "page_check",
+          "text": "尚未关联发布页面，页面检查状态未知。"
+        },
+        {
+          "kind": "search_performance",
+          "text": "单篇文章点击数据当前不可用，不从业务总点击或关键词关系推算。"
+        }
+      ]
+    },
+    {
+      "scenario_id": "multi_platform_mixed",
+      "scope": {
+        "tenant_id": 99001,
+        "site_id": 99002
+      },
+      "view": {
+        "content": {
+          "id": 91001,
+          "title": "虚构文章：设备安装检查",
+          "state": "published",
+          "label": "已有发布记录",
+          "version": 2,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        },
+        "review": {
+          "state": "approved",
+          "label": "审核通过",
+          "independent": true,
+          "reviewed_at": "2026-09-06T06:00:00Z"
+        },
+        "publications": [
+          {
+            "id": 92001,
+            "platform_code": "zhihu",
+            "publish_mode": "manual",
+            "state": "published",
+            "published_at": "2026-09-06T06:10:00Z",
+            "page_url": "https://example.com/platform-a/article-1",
+            "failure": null,
+            "latest_attempt": null
+          },
+          {
+            "id": 92002,
+            "platform_code": "csdn",
+            "publish_mode": "manual",
+            "state": "failed",
+            "published_at": null,
+            "page_url": null,
+            "failure": "虚构故障：发布接口未确认",
+            "latest_attempt": null
+          }
+        ],
+        "publication_summary": {
+          "record_count": 2,
+          "successful_count": 1,
+          "failed_count": 1
+        },
+        "page_evidence": {
+          "mapping_state": "unmapped",
+          "page_id": null,
+          "candidate_count": 0,
+          "check_state": "not_checked",
+          "checked_at": null,
+          "latest_snapshot_id": null,
+          "http_status": null,
+          "failure": null,
+          "passed": null
+        },
+        "search_performance": {
+          "article_clicks": null,
+          "state": "unavailable",
+          "reason": "SEO 当前没有可靠的单篇文章点击数据，不能从业务总点击或关键词推断。"
+        }
+      },
+      "customer_messages": [
+        {
+          "kind": "review",
+          "text": "审核通过"
+        },
+        {
+          "kind": "publication",
+          "text": "共 2 条分平台发布记录：成功 1 条，失败 1 条。"
+        },
+        {
+          "kind": "page_check",
+          "text": "已有发布地址，但尚未关联 SEO 页面记录，暂时无法展示页面检查。"
+        },
+        {
+          "kind": "search_performance",
+          "text": "单篇文章点击数据当前不可用，不从业务总点击或关键词关系推算。"
+        }
+      ]
+    },
+    {
+      "scenario_id": "missing_url",
+      "scope": {
+        "tenant_id": 99001,
+        "site_id": 99002
+      },
+      "view": {
+        "content": {
+          "id": 91001,
+          "title": "虚构文章：设备安装检查",
+          "state": "ready",
+          "label": "已有发布记录",
+          "version": 2,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        },
+        "review": {
+          "state": "approved",
+          "label": "审核通过",
+          "independent": true,
+          "reviewed_at": "2026-09-06T06:00:00Z"
+        },
+        "publications": [
+          {
+            "id": 92001,
+            "platform_code": "zhihu",
+            "publish_mode": "manual",
+            "state": "published",
+            "published_at": "2026-09-06T06:10:00Z",
+            "page_url": null,
+            "failure": null,
+            "latest_attempt": null
+          }
+        ],
+        "publication_summary": {
+          "record_count": 1,
+          "successful_count": 1,
+          "failed_count": 0
+        },
+        "page_evidence": {
+          "mapping_state": "missing_url",
+          "page_id": null,
+          "candidate_count": 0,
+          "check_state": "not_checked",
+          "checked_at": null,
+          "latest_snapshot_id": null,
+          "http_status": null,
+          "failure": null,
+          "passed": null
+        },
+        "search_performance": {
+          "article_clicks": null,
+          "state": "unavailable",
+          "reason": "SEO 当前没有可靠的单篇文章点击数据，不能从业务总点击或关键词推断。"
+        }
+      },
+      "customer_messages": [
+        {
+          "kind": "review",
+          "text": "审核通过"
+        },
+        {
+          "kind": "publication",
+          "text": "共 1 条分平台发布记录：成功 1 条，失败 0 条。"
+        },
+        {
+          "kind": "page_check",
+          "text": "发布记录没有发布地址，暂时无法检查对应页面。"
+        },
+        {
+          "kind": "search_performance",
+          "text": "单篇文章点击数据当前不可用，不从业务总点击或关键词关系推算。"
+        }
+      ]
+    },
+    {
+      "scenario_id": "unmapped_url",
+      "scope": {
+        "tenant_id": 99001,
+        "site_id": 99002
+      },
+      "view": {
+        "content": {
+          "id": 91001,
+          "title": "虚构文章：设备安装检查",
+          "state": "ready",
+          "label": "已有发布记录",
+          "version": 2,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        },
+        "review": {
+          "state": "approved",
+          "label": "审核通过",
+          "independent": true,
+          "reviewed_at": "2026-09-06T06:00:00Z"
+        },
+        "publications": [
+          {
+            "id": 92001,
+            "platform_code": "zhihu",
+            "publish_mode": "manual",
+            "state": "published",
+            "published_at": "2026-09-06T06:10:00Z",
+            "page_url": "https://example.com/platform-a/article-1",
+            "failure": null,
+            "latest_attempt": null
+          }
+        ],
+        "publication_summary": {
+          "record_count": 1,
+          "successful_count": 1,
+          "failed_count": 0
+        },
+        "page_evidence": {
+          "mapping_state": "unmapped",
+          "page_id": null,
+          "candidate_count": 0,
+          "check_state": "not_checked",
+          "checked_at": null,
+          "latest_snapshot_id": null,
+          "http_status": null,
+          "failure": null,
+          "passed": null
+        },
+        "search_performance": {
+          "article_clicks": null,
+          "state": "unavailable",
+          "reason": "SEO 当前没有可靠的单篇文章点击数据，不能从业务总点击或关键词推断。"
+        }
+      },
+      "customer_messages": [
+        {
+          "kind": "review",
+          "text": "审核通过"
+        },
+        {
+          "kind": "publication",
+          "text": "共 1 条分平台发布记录：成功 1 条，失败 0 条。"
+        },
+        {
+          "kind": "page_check",
+          "text": "已有发布地址，但尚未关联 SEO 页面记录，暂时无法展示页面检查。"
+        },
+        {
+          "kind": "search_performance",
+          "text": "单篇文章点击数据当前不可用，不从业务总点击或关键词关系推算。"
+        }
+      ]
+    },
+    {
+      "scenario_id": "ambiguous_url",
+      "scope": {
+        "tenant_id": 99001,
+        "site_id": 99002
+      },
+      "view": {
+        "content": {
+          "id": 91001,
+          "title": "虚构文章：设备安装检查",
+          "state": "ready",
+          "label": "已有发布记录",
+          "version": 2,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        },
+        "review": {
+          "state": "approved",
+          "label": "审核通过",
+          "independent": true,
+          "reviewed_at": "2026-09-06T06:00:00Z"
+        },
+        "publications": [
+          {
+            "id": 92001,
+            "platform_code": "zhihu",
+            "publish_mode": "manual",
+            "state": "published",
+            "published_at": "2026-09-06T06:10:00Z",
+            "page_url": "https://example.com/platform-a/article-1",
+            "failure": null,
+            "latest_attempt": null
+          }
+        ],
+        "publication_summary": {
+          "record_count": 1,
+          "successful_count": 1,
+          "failed_count": 0
+        },
+        "page_evidence": {
+          "mapping_state": "ambiguous",
+          "page_id": null,
+          "candidate_count": 2,
+          "check_state": "not_checked",
+          "checked_at": null,
+          "latest_snapshot_id": null,
+          "http_status": null,
+          "failure": null,
+          "passed": null
+        },
+        "search_performance": {
+          "article_clicks": null,
+          "state": "unavailable",
+          "reason": "SEO 当前没有可靠的单篇文章点击数据，不能从业务总点击或关键词推断。"
+        }
+      },
+      "customer_messages": [
+        {
+          "kind": "review",
+          "text": "审核通过"
+        },
+        {
+          "kind": "publication",
+          "text": "共 1 条分平台发布记录：成功 1 条，失败 0 条。"
+        },
+        {
+          "kind": "page_check",
+          "text": "发布地址对应多个候选页面，需要先确认正确页面。"
+        },
+        {
+          "kind": "search_performance",
+          "text": "单篇文章点击数据当前不可用，不从业务总点击或关键词关系推算。"
+        }
+      ]
+    },
+    {
+      "scenario_id": "matched_not_checked",
+      "scope": {
+        "tenant_id": 99001,
+        "site_id": 99002
+      },
+      "view": {
+        "content": {
+          "id": 91001,
+          "title": "虚构文章：设备安装检查",
+          "state": "ready",
+          "label": "已审核待发布",
+          "version": 2,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        },
+        "review": {
+          "state": "approved",
+          "label": "审核通过",
+          "independent": true,
+          "reviewed_at": "2026-09-06T06:00:00Z"
+        },
+        "publications": [],
+        "publication_summary": {
+          "record_count": 0,
+          "successful_count": 0,
+          "failed_count": 0
+        },
+        "page_evidence": {
+          "mapping_state": "source_page_only",
+          "page_id": null,
+          "candidate_count": 0,
+          "check_state": "not_checked",
+          "checked_at": null,
+          "latest_snapshot_id": null,
+          "http_status": null,
+          "failure": null,
+          "passed": null
+        },
+        "search_performance": {
+          "article_clicks": null,
+          "state": "unavailable",
+          "reason": "SEO 当前没有可靠的单篇文章点击数据，不能从业务总点击或关键词推断。"
+        }
+      },
+      "customer_messages": [
+        {
+          "kind": "review",
+          "text": "审核通过"
+        },
+        {
+          "kind": "publication",
+          "text": "尚无分平台发布记录。"
+        },
+        {
+          "kind": "page_check",
+          "text": "当前只有内容任务的来源或承接页，不能当作实际发布页面。"
+        },
+        {
+          "kind": "search_performance",
+          "text": "单篇文章点击数据当前不可用，不从业务总点击或关键词关系推算。"
+        }
+      ]
+    },
+    {
+      "scenario_id": "latest_failed_old_success",
+      "scope": {
+        "tenant_id": 99001,
+        "site_id": 99002
+      },
+      "view": {
+        "content": {
+          "id": 91001,
+          "title": "虚构文章：设备安装检查",
+          "state": "ready",
+          "label": "已审核待发布",
+          "version": 2,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        },
+        "review": {
+          "state": "approved",
+          "label": "审核通过",
+          "independent": true,
+          "reviewed_at": "2026-09-06T06:00:00Z"
+        },
+        "publications": [],
+        "publication_summary": {
+          "record_count": 0,
+          "successful_count": 0,
+          "failed_count": 0
+        },
+        "page_evidence": {
+          "mapping_state": "source_page_only",
+          "page_id": null,
+          "candidate_count": 0,
+          "check_state": "not_checked",
+          "checked_at": null,
+          "latest_snapshot_id": null,
+          "http_status": null,
+          "failure": null,
+          "passed": null
+        },
+        "search_performance": {
+          "article_clicks": null,
+          "state": "unavailable",
+          "reason": "SEO 当前没有可靠的单篇文章点击数据，不能从业务总点击或关键词推断。"
+        }
+      },
+      "customer_messages": [
+        {
+          "kind": "review",
+          "text": "审核通过"
+        },
+        {
+          "kind": "publication",
+          "text": "尚无分平台发布记录。"
+        },
+        {
+          "kind": "page_check",
+          "text": "当前只有内容任务的来源或承接页，不能当作实际发布页面。"
+        },
+        {
+          "kind": "search_performance",
+          "text": "单篇文章点击数据当前不可用，不从业务总点击或关键词关系推算。"
+        }
+      ]
+    },
+    {
+      "scenario_id": "historical_self_review",
+      "scope": {
+        "tenant_id": 99001,
+        "site_id": 99002
+      },
+      "view": {
+        "content": {
+          "id": 91001,
+          "title": "虚构文章：设备安装检查",
+          "state": "ready",
+          "label": "已审核待发布",
+          "version": 2,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        },
+        "review": {
+          "state": "approved",
+          "label": "历史审核，独立性未确认",
+          "independent": false,
+          "reviewed_at": "2026-09-06T06:00:00Z"
+        },
+        "publications": [],
+        "publication_summary": {
+          "record_count": 0,
+          "successful_count": 0,
+          "failed_count": 0
+        },
+        "page_evidence": {
+          "mapping_state": "not_linked",
+          "page_id": null,
+          "candidate_count": 0,
+          "check_state": "not_checked",
+          "checked_at": null,
+          "latest_snapshot_id": null,
+          "http_status": null,
+          "failure": null,
+          "passed": null
+        },
+        "search_performance": {
+          "article_clicks": null,
+          "state": "unavailable",
+          "reason": "SEO 当前没有可靠的单篇文章点击数据，不能从业务总点击或关键词推断。"
+        }
+      },
+      "customer_messages": [
+        {
+          "kind": "review",
+          "text": "历史审核，独立性未确认"
+        },
+        {
+          "kind": "publication",
+          "text": "尚无分平台发布记录。"
+        },
+        {
+          "kind": "page_check",
+          "text": "尚未关联发布页面，页面检查状态未知。"
+        },
+        {
+          "kind": "search_performance",
+          "text": "单篇文章点击数据当前不可用，不从业务总点击或关键词关系推算。"
+        }
+      ]
+    }
+  ]
+}
