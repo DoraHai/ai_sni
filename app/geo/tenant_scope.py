@@ -8,10 +8,14 @@ from __future__ import annotations
 
 from datetime import date
 
+from fastapi import Depends
 from sqlalchemy import BigInteger, Date, String, and_, column, or_, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import get_session
+from app.module_scope import ensure_module_access
 from app.models import Tenant
+from app.security.auth import AuthContext, require_scoped_auth
 
 
 _TENANT_MODULES = table(
@@ -63,3 +67,13 @@ async def list_geo_tenants_for_auth(
     if bound_tenant_id is None:
         return tenants
     return [tenant for tenant in tenants if tenant.id == bound_tenant_id]
+
+
+async def require_geo_read_entitlement(
+    tenant_id: int,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> AuthContext:
+    """Require the selected tenant's shared GEO module entitlement."""
+    await ensure_module_access(session, ctx, tenant_id, "geo")
+    return ctx
