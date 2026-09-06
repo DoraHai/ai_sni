@@ -48,7 +48,7 @@ async function exportBatch(kind){
 async function open(row){
   if(acting.value||loading.value||props.disabled)return
   const ticket=generation,scope=scopeKey.value
-  try{const value=await seoQaGet(`questions/${row.question_id}/detail`,params());if(ticket===generation&&scope===scopeKey.value)emit('open',value.question)}
+  try{const value=await seoQaGet(`questions/${row.question_id}/detail`,params());if(ticket===generation&&scope===scopeKey.value)emit('open',{...value.question, preferred_answer_id:row.answer_id})}
   catch(e){if(ticket===generation)error.value=detail(e)}
 }
 watch(scopeKey,()=>{++generation;result.value=null;exportMessage.value='';notes.value={};rowErrors.value={};filter.value='all';load(true)},{immediate:true})
@@ -82,7 +82,7 @@ onBeforeUnmount(()=>{++generation})
           <p v-if="row.review_note">上次审核意见：{{ row.review_note }}</p>
           <el-input v-if="['planned','drafting','review'].includes(row.status)" v-model="notes[key(row)]" type="textarea" :rows="2" maxlength="2000" placeholder="审核意见，退回时必填" :disabled="!canEdit||acting||loading||disabled"/>
           <p v-if="rowErrors[key(row)]" class="review-warning">{{ rowErrors[key(row)] }}</p>
-          <div class="review-actions"><el-button v-if="['planned','drafting'].includes(row.status)" :disabled="!canEdit||acting||loading||disabled||!!row.problems.length" @click="review(row,'submit')">提交本条审核</el-button><template v-if="row.status==='review'"><el-button type="success" :disabled="!canEdit||acting||loading||disabled||!!row.problems.length||row.can_approve===false" @click="review(row,'approve')">本条审核通过</el-button><el-button :disabled="!canEdit||acting||loading||disabled" @click="review(row,'reject')">退回本条修改</el-button></template><el-button :disabled="acting||loading||disabled" @click="open(row)">打开问题编辑</el-button></div>
+          <div class="review-actions"><el-button v-if="['planned','drafting'].includes(row.status)" :disabled="!canEdit||acting||loading||disabled||!!row.problems.length" @click="review(row,'submit')">提交本条审核</el-button><template v-if="row.status==='review'"><el-button type="success" :disabled="!canEdit||acting||loading||disabled||!!row.problems.length||row.can_approve===false" @click="review(row,'approve')">本条审核通过</el-button><el-button :disabled="!canEdit||acting||loading||disabled" @click="review(row,'reject')">退回本条修改</el-button></template><el-button :disabled="acting||loading||disabled" @click="open(row)">{{ ['ready','published'].includes(row.status) ? '打开回答准备分发' : '打开问题编辑' }}</el-button></div>
         </template>
         <p v-else>{{ row.generation_error||row.reason }}。请在批次进度中处理生成或保存失败。</p>
       </details>

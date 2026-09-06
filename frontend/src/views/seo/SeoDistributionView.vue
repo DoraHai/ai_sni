@@ -952,7 +952,7 @@ onMounted(loadSites)
     <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon />
 
     <section class="summary-grid">
-      <article><span>分发账号</span><strong>{{ connectedCount }}</strong><small>已配置，可准备分发任务</small></article>
+      <article><span>可用渠道配置</span><strong>{{ connectedCount }}</strong><small>已配置，可准备分发任务</small></article>
       <article><span>发布记录</span><strong>{{ published.length }}</strong><small>人工确认或接口返回；不等于已核验</small></article>
       <article><span>待处理任务</span><strong>{{ activeTasks.length }}</strong><small>失败与人工确认均可追踪</small></article>
       <article><span>内容覆盖率</span><strong>{{ coverage }}%</strong><small>{{ publishedContentCount }}/{{ contents.length }}  篇当前列表内容已有发布记录</small></article>
@@ -969,9 +969,9 @@ onMounted(loadSites)
     <SeoVideoPublishing v-show="activeTab==='video'" :tenant-id="currentTenantId" :site-id="siteId" :contents="contents" :can-edit="canEdit" @authorized="activeTab='video'"/>
     <template v-if="activeTab === 'video'"></template>
     <template v-else-if="activeTab === 'channels'">
-      <section class="domestic-guide"><b>准备专属稿 → 审核 → 官方平台填稿 → 回填链接</b><p>浏览器渠道无需提供账号密码；请在自己的浏览器登录目标账号。公众号也可选择官方接口通道。填稿助手仅填写文字，配图和发布状态以平台为准。</p></section>
+      <section class="domestic-guide"><b>准备专属稿 → 审核 → 官方平台填稿 → 回填链接</b><p>渠道配置不代表保险柜已有账号，也不证明已登录；浏览器渠道无需提供账号密码；请在自己的浏览器登录目标账号。公众号也可选择官方接口通道。填稿助手仅填写文字，配图和发布状态以平台为准。</p></section>
       <section class="channel-toolbar">
-        <el-segmented v-model="channelFilter" :options="[{ label: '全部国内渠道', value: 'all' }, { label: '已连接', value: 'connected' }, { label: '可接入', value: 'available' }]" />
+        <el-segmented v-model="channelFilter" :options="[{ label: '全部国内渠道', value: 'all' }, { label: '已配置', value: 'connected' }, { label: '可接入', value: 'available' }]" />
         <el-input v-model="query" clearable placeholder="搜索平台或连接名称" />
         <el-button @click="load">刷新状态</el-button>
       </section>
@@ -981,7 +981,7 @@ onMounted(loadSites)
             <span class="channel-logo">{{ item.name.slice(0, 1) }}</span>
             <div><strong>{{ item.name }}</strong><small>{{ item.content_format }} · {{ modeName(item.mode) }}</small></div>
             <el-tag :type="item.connections.length ? 'success' : item.available ? 'primary' : 'info'" effect="light">
-              {{ item.connections.length ? `${item.connections.length} 个账号` : item.available ? '支持配置' : '规划中' }}
+              {{ item.connections.length ? `${item.connections.length} 个渠道配置` : item.available ? '支持配置' : '规划中' }}
             </el-tag>
           </header>
           <p>{{ item.help }}</p><p>{{ channelBoundary(item) }}</p>
@@ -989,7 +989,7 @@ onMounted(loadSites)
           <div v-if="item.connections.length" class="connection-list">
             <div v-for="connection in item.connections" :key="connection.id">
               <span><b>{{ connection.name }}</b><small>{{ connection.base_url || '无需站点地址' }} · {{ connection.last_tested_at ? `最近测试 ${date(connection.last_tested_at)}` : connection.mode === 'api' ? '尚未测试' : '无需测试' }}</small><small v-if="connection.last_error" class="connection-error">{{ connection.last_error }}</small></span>
-              <el-tag size="small" :type="connection.status === 'failed' ? 'danger' : ['connected', 'ready'].includes(connection.status) ? 'success' : 'warning'">{{ ({ connected: '已连接', ready: '待浏览器核对', configured: '待测试', failed: '连接失败' })[connection.status] || connection.status }}</el-tag>
+              <el-tag size="small" :type="connection.status === 'failed' ? 'danger' : ['connected', 'ready'].includes(connection.status) ? 'success' : 'warning'">{{ ({ connected: '已连接', ready: '辅助渠道已配置 · 登录未核验', configured: '待测试', failed: '连接失败' })[connection.status] || connection.status }}</el-tag>
               <el-button v-if="canEdit" link type="primary" @click="editConnection(connection)">编辑</el-button>
               <el-button v-if="canEdit && connection.mode === 'api'" link type="primary" :loading="connectionTestingId === connection.id" @click="testConnection(connection)">测试</el-button>
               <el-switch v-if="canEdit" :model-value="connection.enabled" :loading="connectionTogglingId === connection.id" @change="value => toggleConnection(connection, value)" />
@@ -997,7 +997,7 @@ onMounted(loadSites)
           </div>
           <footer>
             <span>发布记录 {{ item.published }} 条</span>
-            <el-button v-if="canEdit && item.available" type="primary" plain @click="openConnection(item)">添加账号</el-button>
+            <el-button v-if="canEdit && item.available" type="primary" plain @click="openConnection(item)">添加渠道</el-button>
             <el-button v-else-if="!item.available" disabled>暂未接入</el-button>
           </footer>
         </article>
