@@ -1,10 +1,13 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import logo from '../../assets/g-snipers-purple-logo.png'
+import { useReportReadingMotion } from './useReportReadingMotion'
+import './report-reading-motion.css'
 
 const props = defineProps({ audit: Object, brand: Object, user: Object, loading: Boolean, activeAsset: String, assetTitle: String, competitor: Boolean, siteAudit: Boolean, pageCount: Number })
 const emit = defineEmits(['new', 'export', 'asset', 'section'])
 const root = ref(null)
+useReportReadingMotion(root)
 const active = ref('flow-overview')
 const tabs = computed(() => [
   { id: 'flow-overview', label: '概览' },
@@ -50,6 +53,7 @@ onBeforeUnmount(() => { cancelAnimationFrame(frame); window.removeEventListener(
 
 <template>
   <div ref="root" class="report-shell">
+    <div v-if="audit && !activeAsset" class="report-reading-line" aria-hidden="true" />
     <header class="rs-global">
       <div class="rs-global-inner">
         <a class="rs-logo" href="/deal-sniper/portal"><img :src="logo" alt=""><span>获客狙击手<small>G-SNIPERS</small></span></a>

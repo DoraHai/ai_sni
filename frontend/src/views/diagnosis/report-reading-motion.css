@@ -1,0 +1,45 @@
+/* No default opacity: content remains readable without observers or animation. */
+.report-shell .report-reading-line {
+  position:fixed; z-index:100; top:0; left:0; width:100%; height:3px;
+  background:#793bd7; transform:scaleX(var(--report-read,0));
+  transform-origin:left; pointer-events:none;
+}
+@media screen and (prefers-reduced-motion:no-preference) {
+  .report-shell .flow-stage-heading.report-read-enter {
+    animation:report-section-enter 460ms cubic-bezier(.22,1,.36,1) backwards;
+  }
+  .report-shell :is(.dashboard-radar,.radar-wrap).report-read-enter .radar-value {
+    transform-box:fill-box; transform-origin:center;
+    animation:report-chart-enter 700ms cubic-bezier(.22,1,.36,1) backwards;
+  }
+  .report-shell .seo-core-grid.report-read-enter article > i b {
+    transform-origin:left;
+    animation:report-bar-enter 650ms cubic-bezier(.22,1,.36,1) backwards;
+  }
+  .report-shell .evidence-detail {
+    animation:report-section-enter 220ms ease-out backwards;
+  }
+}
+@media screen and (prefers-reduced-motion:no-preference) and (hover:hover) and (pointer:fine) {
+  .report-shell .diagnosis-highlights article {
+    transition:transform 180ms ease-out, border-color 180ms ease-out;
+  }
+  .report-shell .diagnosis-highlights article:hover {
+    transform:translateY(-2px); border-color:#cbb8e5;
+  }
+}
+@keyframes report-section-enter {
+  from { opacity:.35; translate:0 10px; }
+  to { opacity:1; translate:0 0; }
+}
+@keyframes report-chart-enter {
+  from { opacity:.3; transform:scale(.82); }
+  to { opacity:1; transform:scale(1); }
+}
+@keyframes report-bar-enter { from { transform:scaleX(0); } to { transform:scaleX(1); } }
+@media(max-width:700px) {
+  .report-shell .flow-stage-heading.report-read-enter { animation-duration:260ms; }
+}
+@media print, (prefers-reduced-motion:reduce) {
+  .report-shell .report-reading-line { display:none; }
+}
