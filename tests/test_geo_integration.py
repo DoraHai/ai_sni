@@ -418,3 +418,37 @@ def test_capture_baseline_reports_waiting_without_overwriting_evidence():
     assert exc.value.status_code==409 and '等待周一' in exc.value.detail
     assert row.baseline_snapshot==old
     session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize('day,expected', [(date(2026,9,6),date(2026,8,31)),(date(2026,9,7),date(2026,9,7))])
+def test_baseline_windows_use_one_shanghai_week_boundary(day,expected):
+    from datetime import timedelta
+    from app.geo.integration_metrics import baseline_window_readiness
+    session=NS()
+    async def load(_session,tenant,end):
+        assert _session is session and tenant==7
+        return build_weekly_snapshot([],['brand.example'],end)
+    with patch('app.geo.integration_metrics.shanghai_today',return_value=day) as today, patch('app.geo.integration_metrics._load_snapshot_window',AsyncMock(side_effect=load)) as loader:
+        result=asyncio.run(baseline_window_readiness(session,7,MENTIONS))
+    today.assert_called_once()
+    assert [call.args[2] for call in loader.await_args_list]==[expected,expected+timedelta(days=7)]
+    assert result['closed_week_as_of'].startswith(expected.isoformat())
+    assert 'metrics' not in result and 'value' not in result
+
+
+def test_open_week_remains_inaccessible_through_public_metric_loader():
+    from app.geo.integration_metrics import load_weekly_snapshot
+    with patch('app.geo.integration_metrics.closed_week_end',return_value=date(2026,8,31)), patch('app.geo.integration_metrics._load_snapshot_window',AsyncMock()) as loader:
+        with pytest.raises(ValueError):
+            asyncio.run(load_weekly_snapshot(NS(),7,date(2026,9,7)))
+    loader.assert_not_awaited()
+
+
+def test_baseline_diagnostic_rejects_cross_tenant_before_lookup_or_aggregation():
+    from app.geo.integration import baseline_readiness
+    ctx=NS(ensure_tenant=Mock(side_effect=HTTPException(403,'无权访问')))
+    with patch('app.geo.integration.ticket',AsyncMock()) as lookup, patch('app.geo.integration_metrics.baseline_window_readiness',AsyncMock()) as aggregate:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(baseline_readiness(10,8,ctx,NS()))
+    assert exc.value.status_code==403
+    lookup.assert_not_awaited();aggregate.assert_not_awaited()
