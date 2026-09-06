@@ -51,6 +51,10 @@ function showFlowReport() {
   quickUrl.value = audit.value?.final_url || url.value
   window.scrollTo({ top:0 })
 }
+// Automatic completion follows the same report navigation as the former button.
+watch(() => flow.stage.value, (stage) => {
+  if (stage === 'report') showFlowReport()
+}, { flush: 'post' })
 
 const reportNav = [
   { key: 'overview', label: '网站体检', icon: '◉' },

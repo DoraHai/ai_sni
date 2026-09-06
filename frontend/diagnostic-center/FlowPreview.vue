@@ -31,8 +31,8 @@ onMounted(async()=>{
       document.querySelector('.fd-secondary').click();await nextTick();check(document.querySelectorAll('.fd-editor label').length===7,'完整七项字段可编辑');
       document.querySelector('.fd-secondary').click();await nextTick();
       document.querySelector('.fd-actions .fd-primary').click();await new Promise(r=>setTimeout(r,50));await nextTick();
-      check(!!document.querySelector('.fd-complete'),'完成摘要可见');check(calls.sample===1,'自动抽样只执行一次');
-      check(document.querySelector('.fd-complete>.fd-primary').textContent.includes('已有'),'附加检测未完成时可查看基础报告');
+      check(flow.stage.value==='report','诊断成功直接进入报告');check(calls.sample===1,'自动抽样只执行一次');
+      check(!document.querySelector('.fd-complete'),'不显示完成中间页');
       check(document.documentElement.scrollWidth<=innerWidth,'无横向溢出');
       checks.value='PASS '+passed.join('；')
     }catch(e){checks.value='FAIL '+e.message}

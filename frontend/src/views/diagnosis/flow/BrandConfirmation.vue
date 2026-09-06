@@ -105,6 +105,31 @@ const host = computed(() => { try { return new URL(props.draft.website).hostname
 .free-diagnosis .fd-confirm .bc-back { color: var(--fd-muted); font-size: 12px; padding: 8px 0; min-height: 36px; }
 .free-diagnosis .fd-confirm .bc-back:hover { color: var(--fd-ink); }
 @keyframes bc-reveal { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+/* Fit the default confirmation into laptop viewports; never clip longer data
+   or the expanded editor to enforce a fixed height. */
+@media (min-width: 701px) {
+  :global(.free-diagnosis:has(.fd-confirm) .fd-header) { margin: 0 auto; padding-block: clamp(10px, 1.5svh, 18px); }
+  :global(.free-diagnosis:has(.fd-confirm) .fd-brand img) { width: 40px; height: 40px; }
+  :global(.free-diagnosis:has(.fd-confirm) .fd-body) { padding-block: clamp(8px, 1.5svh, 20px); }
+  :global(.free-diagnosis:has(.fd-confirm) .fd-footer) { padding-block: 8px; }
+  .bc-heading { margin-bottom: clamp(14px, 2svh, 22px); }
+  .bc-status { margin-bottom: 8px; }
+  .free-diagnosis .bc-heading h1 { font-size: clamp(28px, 4.6svh, 38px); margin-bottom: 8px; }
+  .free-diagnosis .bc-heading .fd-intro { line-height: 1.6; }
+  .free-diagnosis .fd-confirm .fd-brand-summary { padding: 18px 26px 14px; }
+  .bc-avatar { width: 48px; height: 48px; flex-basis: 48px; font-size: 25px; }
+  .free-diagnosis .fd-confirm .bc-name h2 { font-size: 22px; margin-bottom: 3px; }
+  .free-diagnosis .fd-confirm dl { gap: 12px; margin-block: 18px; }
+  .free-diagnosis .fd-confirm .bc-source { padding-top: 10px; }
+  .bc-next { padding: 18px 24px; }
+  .bc-next h2 { margin-bottom: 12px; }
+  .bc-next ul { gap: clamp(8px, 1.4svh, 14px); }
+  .bc-next h3 { margin-bottom: 2px; }
+  .free-diagnosis .fd-confirm .fd-actions { display: grid; grid-template-columns: auto auto; justify-content: center; column-gap: 24px; margin-top: 16px; }
+  .free-diagnosis .fd-confirm .fd-primary { grid-column: 1 / -1; justify-self: center; min-height: 48px; }
+  .bc-edit-prompt { margin: 4px 0 0; }
+  .free-diagnosis .fd-confirm .bc-back { margin-top: 4px; }
+}
 @media (max-width: 700px) {
   :global(.free-diagnosis:has(.fd-confirm) .fd-body) { padding: 28px 20px 16px; }
   .bc-heading { margin-bottom: 24px; }

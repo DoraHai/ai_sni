@@ -85,7 +85,7 @@ export function useFreeDiagnosisFlow({ tenantId, audit, pageSpeed, brandProfile,
     try {
       const result = await api.runGeoAudit({ tenantId:tenant, url:url.value, scope:'single' })
       if (!current(g, tenant)) return
-      audit.value = result; statuses.audit = 'success'; stage.value = 'complete'
+      audit.value = result; statuses.audit = 'success'; stage.value = 'report'
     } catch (e) {
       if (current(g, tenant)) { statuses.audit = 'error'; error.value = e.message || '网站诊断失败，请重试' }
     }
