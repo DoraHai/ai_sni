@@ -8,7 +8,7 @@ import re
 from urllib.parse import urlparse
 from runner import allowed_frame, fill_empty
 
-HOSTS = {'zhihu':'www.zhihu.com','csdn_qa':'ask.csdn.net'}
+HOSTS = {'zhihu':{'www.zhihu.com','zhihu.com'},'csdn_qa':{'ask.csdn.net'}}
 
 
 def validate_task(task, *, require_fresh=True):
@@ -17,14 +17,16 @@ def validate_task(task, *, require_fresh=True):
     for key in ['tenant_id','site_id','placement_id','content_version']:
         if type(task.get(key)) is not int or task[key]<=0: raise ValueError('任务编号或版本无效')
     platform=task.get('platform')
-    if platform not in HOSTS: raise ValueError('仅支持知乎与 CSDN 问答')
-    url=urlparse(task.get('question_url',''))
-    pattern=r'/question/\d+' if platform=='zhihu' else r'/questions/\d+/?'
-    if url.scheme!='https' or url.hostname!=HOSTS[platform] or url.username or url.password or url.port or url.query or url.fragment or not re.fullmatch(pattern,url.path):
+    if not isinstance(platform,str) or platform not in HOSTS: raise ValueError('仅支持知乎与 CSDN 问答')
+    if not isinstance(task.get('question_url'),str): raise ValueError('任务问题网址无效')
+    url=urlparse(task['question_url'])
+    pattern=r'/question/\d+/?' if platform=='zhihu' else r'/questions/\d+/?'
+    if url.scheme!='https' or url.hostname not in HOSTS[platform] or url.username or url.password or url.port or url.query or url.fragment or not re.fullmatch(pattern,url.path):
         raise ValueError('任务必须指向对应平台的指定问题页')
     body=task.get('body')
     if not isinstance(body,str) or not body.strip() or len(body)>200000: raise ValueError('回答正文无效')
-    expires=datetime.fromisoformat(task.get('expires_at','').replace('Z','+00:00'))
+    if not isinstance(task.get('expires_at'),str): raise ValueError('任务有效期无效')
+    expires=datetime.fromisoformat(task['expires_at'].replace('Z','+00:00'))
     if expires.tzinfo is None or (require_fresh and expires<=datetime.now(timezone.utc)): raise ValueError('任务已过期，请从工作台重新下载')
     return task
 
@@ -32,12 +34,12 @@ def validate_task(task, *, require_fresh=True):
 def prepare_answer(page,task):
     validate_task(task)
     actual,expected=urlparse(page.url),urlparse(task['question_url'])
-    if actual.scheme!='https' or actual.hostname!=expected.hostname or actual.username or actual.password or actual.port or actual.path.rstrip('/')!=expected.path.rstrip('/'):
+    if actual.scheme!='https' or actual.hostname not in HOSTS[task['platform']] or actual.username or actual.password or actual.port or actual.path.rstrip('/')!=expected.path.rstrip('/'):
         raise ValueError('当前页面不是任务指定的问题，未填稿')
     candidates=[]
     for frame in page.frames:
-        if not allowed_frame(frame,expected.hostname): continue
-        active=frame.locator('textarea:focus,[contenteditable="true"]:focus')
+        if not allowed_frame(frame,actual.hostname): continue
+        active=frame.locator('textarea:focus,[contenteditable="true"]:focus,[contenteditable=""]:focus')
         for element in active.all():
             if element.is_visible() and element.is_enabled(): candidates.append(element)
     if len(candidates)!=1: raise ValueError('请先点击唯一的回答正文编辑区，不要选评论框')
@@ -56,7 +58,7 @@ def make_receipt(task, answer_url):
     question_path = expected.path.rstrip('/')
     valid_path = (bool(re.fullmatch(re.escape(question_path) + r'/answer/\d+/?', actual.path))
                   if task['platform'] == 'zhihu' else actual.path.rstrip('/') == question_path)
-    if (actual.scheme != 'https' or actual.hostname != expected.hostname or actual.username or
+    if (actual.scheme != 'https' or actual.hostname not in HOSTS[task['platform']] or actual.username or
             actual.password or actual.port or not valid_path or len(answer_url) > 2000):
         raise ValueError('回答网址必须属于当前平台的指定问题，不接受编辑页')
     return {**{key: task[key] for key in ['tenant_id','site_id','placement_id','version',

@@ -303,3 +303,39 @@ def test_receipt_only_cli_recovers_expired_task_without_browser_or_journal(tmp_p
     {'platform':'website'},{'placement_id':True},{'body':''},{'expires_at':'invalid'}])
 def test_receipt_recovery_still_validates_task_structure(change):
     with pytest.raises(ValueError): qa_module().validate_task({**qa_task(),**change}, require_fresh=False)
+
+
+@pytest.mark.parametrize('change', [{'question_url':None},{'question_url':{}},{'platform':[]},{'expires_at':None}])
+def test_qa_malformed_task_fields_raise_readable_validation_error(change):
+    with pytest.raises(ValueError): qa_module().validate_task({**qa_task(),**change})
+
+
+def test_qa_server_accepted_zhihu_alias_and_trailing_slash_work_locally():
+    qa=qa_module();task={**qa_task(),'version':1,'question_url':'https://zhihu.com/question/12/'}
+    qa.validate_task(task)
+    assert qa.make_receipt(task,'https://www.zhihu.com/question/12/answer/34')['answer_url'].endswith('/34')
+    with pytest.raises(ValueError): qa.make_receipt(task,'https://zhihu.com.evil.example/question/12/answer/34')
+
+
+def test_qa_real_browser_empty_contenteditable_after_official_host_redirect():
+    import os
+    if not os.environ.get('SEO_RUNNER_BROWSER_TEST'): pytest.skip('opt-in Chromium fixture, no live platform login')
+    from playwright.sync_api import sync_playwright
+    qa=qa_module();task={**qa_task(),'question_url':'https://zhihu.com/question/12/'}
+    with sync_playwright() as p:
+        browser=p.chromium.launch(headless=True,channel='chromium')
+        try:
+            page=browser.new_page()
+            page.route('**/*',lambda route:route.fulfill(content_type='text/html; charset=utf-8',
+                body='<div id="answer" contenteditable=""></div><div contenteditable="" aria-label="评论"></div><button onclick="window.published=true">发布</button>'))
+            page.goto('https://www.zhihu.com/question/12')
+            page.locator('#answer').focus();qa.prepare_answer(page,task)
+            assert page.locator('#answer').inner_text()==task['body']
+            assert page.evaluate('window.published') is None
+            page.locator('[aria-label="评论"]').focus()
+            with pytest.raises(ValueError): qa.prepare_answer(page,task)
+            page.locator('#answer').fill('已有内容');page.locator('#answer').focus()
+            with pytest.raises(ValueError): qa.prepare_answer(page,task)
+            page.goto('https://www.zhihu.com.evil.example/question/12');page.locator('#answer').focus()
+            with pytest.raises(ValueError): qa.prepare_answer(page,task)
+        finally: browser.close()
