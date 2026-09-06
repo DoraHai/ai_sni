@@ -4,11 +4,15 @@ on:
   pull_request:
     paths:
       - 'integrations/sem-cockpit/**'
+      - 'integrations/workbench/readonly-transport.mjs'
+      - 'integrations/workbench/readonly-transport.test.mjs'
       - '.github/workflows/sem-cockpit-consumer-check.yml'
   push:
     branches: [main]
     paths:
       - 'integrations/sem-cockpit/**'
+      - 'integrations/workbench/readonly-transport.mjs'
+      - 'integrations/workbench/readonly-transport.test.mjs'
       - '.github/workflows/sem-cockpit-consumer-check.yml'
 
 permissions:
@@ -24,4 +28,4 @@ jobs:
         with:
           node-version: '24'
       - name: Validate consumer and display boundaries offline
-        run: node --test integrations/sem-cockpit/readonly-client.test.mjs integrations/sem-cockpit/display.test.mjs
+        run: node --test integrations/sem-cockpit/readonly-client.test.mjs integrations/sem-cockpit/display.test.mjs integrations/sem-cockpit/authorization-context.test.mjs integrations/workbench/readonly-transport.test.mjs
