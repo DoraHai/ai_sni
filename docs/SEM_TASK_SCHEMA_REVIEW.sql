@@ -1,9 +1,11 @@
 -- REVIEW ONLY. Not registered with Alembic or invoked by any deployment.
--- Production revision/schema has NOT been inspected. Do NOT run in production.
+-- Based on operator's 2026-09-06 read-only report, not independent DB access.
+-- Shared production revision: 0093_seo_qa; tenants.id BIGINT; sem_tasks absent.
+-- Still REVIEW ONLY: migration lineage/installation require separate approval.
 -- Candidate DDL matches SemTask metadata; no existing table/data is modified.
 CREATE TABLE sem_tasks (
     id BIGSERIAL NOT NULL PRIMARY KEY,
-    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+    tenant_id BIGINT NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
     module VARCHAR(8) NOT NULL,
     action_type VARCHAR(64) NOT NULL,
     title VARCHAR(300) NOT NULL,

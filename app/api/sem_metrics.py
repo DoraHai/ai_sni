@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import BigInteger, bindparam, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -111,7 +111,15 @@ async def snapshot(
     if not (ctx.can_view("monitor.dashboard") and ctx.can_view("verify.adjustments")):
         raise HTTPException(403, "需要数据看板及效果验证查看权限")
     await ensure_module_access(session, ctx, tenant_id, "sem")
-    tenant = await session.get(Tenant, tenant_id)
+    # Keep the old small-ID path compatible; bind large IDs explicitly because
+    # the shared Tenant ORM still declares INTEGER while production is BIGINT.
+    # Do not alter that shared model (or SEO/GEO) as part of this SEM change.
+    if tenant_id > 2**31 - 1:
+        tenant = await session.scalar(select(Tenant).where(
+            Tenant.id == bindparam("sem_metric_tenant_id", tenant_id, type_=BigInteger),
+        ))
+    else:
+        tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "客户不存在")
     now = datetime.now(TZ)
