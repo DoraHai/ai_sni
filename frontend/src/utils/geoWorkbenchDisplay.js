@@ -120,7 +120,7 @@ export function officialMetricDisplay(metric, periodContext = null, definition =
   const trendState = comparable === false
     ? 'incomparable'
     : trend == null ? 'unavailable' : 'available'
-  const trendReasons = comparable === false
+  const trendReasons = trendState !== 'available'
     ? normalizedReasons(periodContext?.comparison?.reason_codes, 'comparison')
     : []
   const showTrend = trendState === 'available'
