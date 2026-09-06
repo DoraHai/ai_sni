@@ -225,14 +225,6 @@ def start_geo_scheduler() -> bool:
         coalesce=True,
     )
     scheduler.add_job(
-        run_geo_stale_reconciliation,
-        CronTrigger(minute="*", second=20),
-        id="geo_stale_reconciliation",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-    scheduler.add_job(
         run_geo_daily_metrics_nightly,
         CronTrigger(hour=0, minute=40),
         id="geo_daily_metrics_nightly",

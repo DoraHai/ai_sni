@@ -13,7 +13,7 @@ def test_geo_scheduler_exports():
     assert scheduler_status() in ("stopped", "running", "skipped")
 
 
-def test_geo_scheduler_registers_background_reconciliation():
+def test_geo_scheduler_keeps_patrol_and_metrics_jobs_isolated():
     from types import SimpleNamespace
     from unittest.mock import Mock, patch
 
@@ -33,6 +33,28 @@ def test_geo_scheduler_registers_background_reconciliation():
     ids = [call.kwargs["id"] for call in scheduler.add_job.call_args_list]
     assert ids == [
         "geo_visibility_patrols",
-        "geo_stale_reconciliation",
         "geo_daily_metrics_nightly",
     ]
+
+
+def test_independent_geo_process_keeps_recovery_alive_without_scheduler_ownership():
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    import pytest
+
+    from app.geo_main import _supervise_stale_reconciliation
+
+    with (
+        patch(
+            "asyncio.sleep",
+            AsyncMock(side_effect=[None, None, asyncio.CancelledError]),
+        ),
+        patch(
+            "app.geo.content.geo_scheduler.run_geo_stale_reconciliation",
+            AsyncMock(side_effect=[RuntimeError("temporary db error"), None]),
+        ) as reconcile,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(_supervise_stale_reconciliation())
+    assert reconcile.await_count == 2

@@ -45,6 +45,7 @@ PATROL_INTERVAL_HOURS_CHOICES = (1, 2, 3, 4, 6, 8, 12, 24)
 # Stuck-run recovery (async workers / process restart)
 STALE_PENDING_SECONDS = 90
 STALE_RUNNING_SECONDS = 45 * 60
+PATROL_EXECUTION_PROTOCOL = "advisory_v1"
 
 
 def _naive_utc(dt: datetime | None) -> datetime | None:
@@ -121,6 +122,8 @@ async def reconcile_stale_patrol_run(
     stale, _reason = patrol_stale_view(row)
     if not stale:
         return row
+    if row.status == "running" and not patrol_has_advisory_owner(row):
+        return row
     async with patrol_execution_lock(row.id) as acquired:
         if not acquired:
             return row
@@ -149,6 +152,11 @@ def patrol_stale_view(row: GeoVisibilityPatrolRun) -> tuple[bool, str | None]:
     if row.status == "running" and age >= STALE_RUNNING_SECONDS:
         return True, f"巡检运行超时（>{STALE_RUNNING_SECONDS // 60} 分钟）已自动结束。请缩小机会词/引擎后重试。"
     return False, None
+
+
+def patrol_has_advisory_owner(row: GeoVisibilityPatrolRun) -> bool:
+    summary = row.summary if isinstance(row.summary, dict) else {}
+    return summary.get("execution_protocol") == PATROL_EXECUTION_PROTOCOL
 
 
 def patrol_read_payload(row: GeoVisibilityPatrolRun) -> dict[str, Any]:
@@ -228,7 +236,12 @@ async def recover_patrol_runs_on_startup() -> dict[str, int]:
 
     from app.database import async_session_factory
 
-    stats = {"failed_running": 0, "failed_stale_pending": 0, "requeued": 0}
+    stats = {
+        "failed_running": 0,
+        "failed_stale_pending": 0,
+        "requeued": 0,
+        "legacy_running_deferred": 0,
+    }
     requeue_ids: list[int] = []
     async with async_session_factory() as session:
         rows = list(
@@ -244,6 +257,9 @@ async def recover_patrol_runs_on_startup() -> dict[str, int]:
                     continue
                 await session.refresh(row)
                 if row.status == "running":
+                    if not patrol_has_advisory_owner(row):
+                        stats["legacy_running_deferred"] += 1
+                        continue
                     await mark_patrol_run_failed(
                         session,
                         row.id,
@@ -441,10 +457,15 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
     row.status = "running"
     row.started_at = datetime.utcnow()
     row.error = None
+    row.summary = {
+        **(row.summary if isinstance(row.summary, dict) else {}),
+        "execution_protocol": PATROL_EXECUTION_PROTOCOL,
+    }
     await session.commit()
 
     items: list[dict[str, Any]] = []
     summary = {
+        "execution_protocol": PATROL_EXECUTION_PROTOCOL,
         "prompts": 0,
         "engines": 0,
         "cells_ok": 0,

@@ -133,6 +133,7 @@ def test_live_patrol_lock_prevents_timeout_reconciliation():
             yield False
 
         row = _patrol()
+        row.summary = {"execution_protocol": patrol.PATROL_EXECUTION_PROTOCOL}
         session = Mock(refresh=AsyncMock(), commit=AsyncMock())
         with patch.object(patrol, "patrol_execution_lock", busy):
             result = await patrol.reconcile_stale_patrol_run(session, row)
@@ -217,6 +218,7 @@ def test_orphan_task_recovery_only_accepts_content_generation_jobs_as_live():
 def test_patrol_startup_fails_interrupted_run_and_requeues_pending():
     async def scenario():
         running = _patrol("running")
+        running.summary = {"execution_protocol": patrol.PATROL_EXECUTION_PROTOCOL}
         pending = _patrol("pending")
         pending.id = 8
         pending.created_at = datetime.utcnow()
@@ -242,7 +244,32 @@ def test_patrol_startup_fails_interrupted_run_and_requeues_pending():
         ):
             stats = await patrol.recover_patrol_runs_on_startup()
         assert running.status == "failed"
-        assert stats == {"failed_running": 1, "failed_stale_pending": 0, "requeued": 1}
+        assert stats == {
+            "failed_running": 1,
+            "failed_stale_pending": 0,
+            "requeued": 1,
+            "legacy_running_deferred": 0,
+        }
         create_task.assert_called_once()
+
+    asyncio.run(scenario())
+
+
+def test_legacy_running_patrol_is_reported_stale_but_never_auto_failed():
+    async def scenario():
+        row = _patrol("running")
+        session = Mock(refresh=AsyncMock(), commit=AsyncMock())
+
+        @asynccontextmanager
+        async def forbidden(_run_id):
+            raise AssertionError("legacy worker does not share the advisory protocol")
+            yield
+
+        with patch.object(patrol, "patrol_execution_lock", forbidden):
+            result = await patrol.reconcile_stale_patrol_run(session, row)
+        assert result.status == "running"
+        assert patrol.patrol_read_payload(row)["stale"]
+        session.refresh.assert_not_awaited()
+        session.commit.assert_not_awaited()
 
     asyncio.run(scenario())

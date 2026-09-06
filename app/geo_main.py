@@ -31,6 +31,20 @@ from app.security.prod_guard import enforce_production_secrets
 settings = get_settings()
 
 
+async def _supervise_stale_reconciliation() -> None:
+    """Run recovery in the independent GEO service even when another scheduler owns its lock."""
+    from app.geo.content.geo_scheduler import run_geo_stale_reconciliation
+
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await run_geo_stale_reconciliation()
+        except Exception:  # noqa: BLE001 — keep the next recovery tick alive
+            import logging
+
+            logging.getLogger("geo-api").exception("stale reconciliation tick failed")
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     # Productization must-do: refuse demo keys when APP_ENV=prod|production
@@ -61,9 +75,13 @@ async def _lifespan(_app: FastAPI):
         logging.getLogger("geo-api").exception("patrol recover on startup failed")
     start_geo_scheduler()
     followup_supervisor = asyncio.create_task(supervise_geo_followups())
+    stale_supervisor = asyncio.create_task(_supervise_stale_reconciliation())
     try:
         yield
     finally:
+        stale_supervisor.cancel()
+        with suppress(asyncio.CancelledError):
+            await stale_supervisor
         followup_supervisor.cancel()
         with suppress(asyncio.CancelledError):
             await followup_supervisor
