@@ -678,6 +678,9 @@ def _sem_identity_repair_preview_payload(
         "warnings": warnings,
         "proposed_operations": operations,
         "excluded_scope": [
+            # Task baselines embed tenant identity; never suggest a blind reassignment.
+            # Table may not exist until separately approved schema installation.
+            "sem_tasks",
             "tenant_modules",
             "users",
             "api_audit_logs",
@@ -685,6 +688,7 @@ def _sem_identity_repair_preview_payload(
             "geo_*",
         ],
         "required_reviews": [
+            "sem_task_baseline_provenance_review",
             "customer_identity_owner_confirmation",
             "unique_constraint_and_foreign_key_review",
             "database_backup_and_rollback_plan",

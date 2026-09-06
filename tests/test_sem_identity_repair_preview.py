@@ -769,11 +769,13 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         tenant_scoped_tables = {
             name for name, table in Base.metadata.tables.items() if "tenant_id" in table.c
         }
-        explicitly_non_sem = {
+        explicitly_excluded = {
             name
             for name in tenant_scoped_tables
             if name.startswith(("seo_", "geo_"))
-            or name in {"tenant_modules", "users", "api_audit_logs"}
+            # SemTask carries immutable tenant-specific evidence; excluded from
+            # reassignment/counting even while its optional schema is absent.
+            or name in {"tenant_modules", "users", "api_audit_logs", "sem_tasks"}
         }
 
         self.assertTrue(table_names)
@@ -782,7 +784,8 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertNotIn("users", table_names)
         self.assertNotIn("api_audit_logs", table_names)
         self.assertFalse(any(name.startswith(("seo_", "geo_")) for name in table_names))
-        self.assertEqual(tenant_scoped_tables, table_names | explicitly_non_sem)
+        self.assertNotIn("sem_tasks", table_names)
+        self.assertEqual(tenant_scoped_tables, table_names | explicitly_excluded)
 
     def test_frontend_contract_exposes_only_read_only_get_calls(self):
         api_source = (ROOT / "frontend/src/api/moduleAssets.js").read_text(
