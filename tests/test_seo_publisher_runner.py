@@ -214,3 +214,50 @@ def test_real_browser_simulated_editor_fill_upload_and_no_implicit_publish(platf
             with pytest.raises(ValueError):runner.prepare(page,item,[])
         finally:
             browser.close()
+
+
+
+def qa_module():
+    import sys
+    spec=importlib.util.spec_from_file_location('qa_local_runner',Path(__file__).resolve().parents[1]/'frontend/src/views/seo/publisher-runner/qa_runner.py')
+    module=importlib.util.module_from_spec(spec)
+    with patch.dict(sys.modules,{'runner':runner}): spec.loader.exec_module(module)
+    return module
+
+
+def qa_task():
+    from datetime import datetime,timedelta,timezone
+    return {'kind':'seo_qa_assist','schema_version':1,'tenant_id':1,'site_id':1,'placement_id':1,
+        'content_version':2,'platform':'zhihu','question_url':'https://www.zhihu.com/question/12',
+        'body':'这是经过审核的回答正文，用于验证本地填稿。','expires_at':(datetime.now(timezone.utc)+timedelta(minutes=30)).isoformat()}
+
+
+@pytest.mark.parametrize('field,value',[('question_url','https://www.zhihu.com.evil.test/question/12'),
+    ('question_url','https://www.zhihu.com/question/12/answer/34'),('platform','website'),
+    ('expires_at','2000-01-01T00:00:00Z'),('placement_id',True)])
+def test_qa_assistant_rejects_wrong_target_and_expired_tasks(field,value):
+    with pytest.raises(ValueError): qa_module().validate_task({**qa_task(),field:value})
+
+
+@pytest.mark.parametrize('platform,url', [('zhihu','https://www.zhihu.com/question/12'),('csdn_qa','https://ask.csdn.net/questions/12')])
+def test_qa_assistant_browser_only_fills_selected_empty_answer(tmp_path,platform,url):
+    import os
+    if not os.environ.get('SEO_RUNNER_BROWSER_TEST'): pytest.skip('opt-in Chromium fixture, no live platform login')
+    from playwright.sync_api import sync_playwright
+    qa=qa_module();task={**qa_task(),'platform':platform,'question_url':url}
+    with sync_playwright() as p:
+        browser=p.chromium.launch(headless=True,channel='chromium')
+        page=browser.new_page()
+        page.route('**/*',lambda route:route.fulfill(body='<textarea id="answer"></textarea><textarea placeholder="评论"></textarea><button onclick="window.published=true">发布</button>',content_type='text/html; charset=utf-8'))
+        page.goto(task['question_url'])
+        with pytest.raises(ValueError): qa.prepare_answer(page,task)
+        page.locator('[placeholder="评论"]').focus()
+        with pytest.raises(ValueError): qa.prepare_answer(page,task)
+        page.locator('#answer').focus();qa.prepare_answer(page,task)
+        assert page.locator('#answer').input_value()==task['body']
+        assert page.evaluate('window.published') is None
+        page.locator('#answer').fill('已有其他内容')
+        with pytest.raises(ValueError): qa.prepare_answer(page,task)
+        page.goto(url[:-2]+'13');page.locator('#answer').focus()
+        with pytest.raises(ValueError): qa.prepare_answer(page,task)
+        browser.close()

@@ -7,6 +7,10 @@ import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
 import './seo-suite.css'
 import SeoQaPlanning from './SeoQaPlanning.vue'
+import { publisherZip } from './seoPublisher'
+import qaRunnerSource from './publisher-runner/qa_runner.py?raw'
+import runnerSource from './publisher-runner/runner.py?raw'
+import runnerRequirements from './publisher-runner/requirements.txt?raw'
 
 const router = useRouter()
 const canEdit = computed(() => session.canEdit('seo.content'))
@@ -80,6 +84,19 @@ function downloadDemandTemplate() {
   const value='\ufefftitle,topic,source_kind,source_name,count,metric,period_start,period_end,definition,source_url\r\n设备无法启动如何排查,故障排查,customer,客服工单导出,12,inquiries,2026-01-01,2026-01-07,指定产品有效工单按工单编号去重,\r\n'
   const url=URL.createObjectURL(new Blob([value],{type:'text/csv;charset=utf-8'}))
   const a=document.createElement('a');a.href=url;a.download='需求数据模板-示例请替换.csv';a.click();URL.revokeObjectURL(url)
+}
+async function downloadQaAssistant(row) {
+  if(busy.value || !canEdit.value) return
+  const key=scopeKey.value
+  busy.value=true;error.value=''
+  try {
+    const task=await seoQaGet(`placements/${row.id}/assistant-task`,{...scope.value})
+    if(key!==scopeKey.value)return
+    const readme='问答本地填稿试用包（知乎 / CSDN）\n安装 Python 3.11+，运行 pip install -r requirements.txt，再运行 python -m playwright install chromium。\n运行 python qa_runner.py task.json --account "你的账号标签"。登录后手动打开指定问题的回答编辑器，点击正文输入区后回车。\n仅填入正文，不点击保存或发布；已有不同文字或疑似评论框会停止。首次操作请人工确认编辑框。任务30分钟有效，过期重新下载；下载后审核稿若有变化请丢弃旧包。\n平台可能自动保存草稿，请自行检查。发布后回工作台回填网址并核验。账号登录状态仅保存在本机 .qa-assistant 目录。真实账号编辑器仍待验收。\n'
+    const url=URL.createObjectURL(publisherZip({'qa_runner.py':qaRunnerSource,'runner.py':runnerSource,'requirements.txt':runnerRequirements,'task.json':JSON.stringify(task,null,2),'README.txt':readme}))
+    const a=document.createElement('a');a.href=url;a.download=`问答填稿-${row.id}.zip`;a.click();URL.revokeObjectURL(url)
+  } catch(e){if(key===scopeKey.value)error.value=messageOf(e)}
+  finally{busy.value=false}
 }
 function backlinkSummary(observation) {
   const result = observation?.backlink_discovery
@@ -289,7 +306,7 @@ watch(scopeKey, () => {
       <el-empty v-if="!placements.length" description="回答审核通过后，点击“准备分发”建立记录。"/>
       <article class="qa-placement" v-for="row in visiblePlacements" :key="row.id">
         <div class="qa-toolbar"><strong>#{{ row.id }} · {{ platformName(row.platform) }}</strong><el-tag>{{ labels[row.status] }}</el-tag><span class="qa-hint">稿件版本 {{ row.content_version }} · 计划 {{ row.scheduled_at?date(row.scheduled_at):'未设置' }}</span></div>
-        <div class="qa-toolbar"><a v-if="href(row.question_url)" :href="href(row.question_url)" target="_blank" rel="noopener noreferrer">打开指定问题 ↗</a><a v-if="href(row.answer_url)" :href="href(row.answer_url)" target="_blank" rel="noopener noreferrer">查看回答 ↗</a><el-button :disabled="!row.publishable" @click="copy(row)">复制审核稿</el-button><el-button :disabled="!row.publishable" @click="download(row)">下载文本</el-button><el-button :disabled="!canEdit || busy" @click="Object.assign(receiptForm,{id:row.id,answer_url:row.answer_url||'',version:row.version});dialog='receipt'">回填网址</el-button><el-button :disabled="!canEdit || busy || !row.answer_url" @click="verify(row)">核验正文与外链</el-button><el-button :disabled="!canEdit || busy" @click="Object.assign(metricsForm,{id:row.id,version:row.version,views:null,likes:null,comments:null,source_url:row.answer_url||'',as_of:null});dialog='metrics'">录入平台数据</el-button></div>
+        <div class="qa-toolbar"><a v-if="href(row.question_url)" :href="href(row.question_url)" target="_blank" rel="noopener noreferrer">打开指定问题 ↗</a><a v-if="href(row.answer_url)" :href="href(row.answer_url)" target="_blank" rel="noopener noreferrer">查看回答 ↗</a><el-button :disabled="!row.publishable" @click="copy(row)">复制审核稿</el-button><el-button :disabled="!row.publishable" @click="download(row)">下载文本</el-button><el-button v-if="['zhihu','csdn_qa'].includes(row.platform)" :disabled="!canEdit || busy || !row.publishable" @click="downloadQaAssistant(row)">本地填稿包（试用）</el-button><el-button :disabled="!canEdit || busy" @click="Object.assign(receiptForm,{id:row.id,answer_url:row.answer_url||'',version:row.version});dialog='receipt'">回填网址</el-button><el-button :disabled="!canEdit || busy || !row.answer_url" @click="verify(row)">核验正文与外链</el-button><el-button :disabled="!canEdit || busy" @click="Object.assign(metricsForm,{id:row.id,version:row.version,views:null,likes:null,comments:null,source_url:row.answer_url||'',as_of:null});dialog='metrics'">录入平台数据</el-button></div>
         <p class="qa-hint">{{ row.reported_metrics ? `人工录入：阅读 ${row.reported_metrics.views ?? '未知'} · 赞同 ${row.reported_metrics.likes ?? '未知'} · 评论 ${row.reported_metrics.comments ?? '未知'} · ${date(row.reported_metrics.as_of)}` : '阅读 / 赞同 / 评论：未知' }}</p>
         <p v-for="reason in row.followup?.reasons || []" :key="reason" class="qa-warning">{{ reason }}</p>
         <p>{{ backlinkSummary(latestBacklink(row)) }}<span v-if="latestBacklink(row)" class="qa-hint"> · 外链观测 {{ date(latestBacklink(row).checked_at) }}</span></p><p class="qa-hint">外链按页面中的真实链接统计；不代表链接属于该回答，也不保证传递排名权重。链接属性保存在外链核验记录中。</p>

@@ -125,6 +125,15 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
             duplicate = await api.prepare_placement(req, CTX, db)
             assert duplicate['id'] == placement['id'] and placement['status'] == 'prepared'
             assert (await api.publication_draft(placement['id'], 1, 1, CTX, db))['body'] == fact['statement']
+            exported=await api.assistant_task(placement['id'],1,1,CTX,db)
+            assert exported['body']==fact['statement'] and exported['platform']=='zhihu'
+            viewer=AuthContext(8,'viewer','view',1,{'seo.content':'view'})
+            with pytest.raises(HTTPException) as denied:
+                await api.assistant_task(placement['id'],1,1,viewer,db)
+            assert denied.value.status_code==403
+            with pytest.raises(HTTPException):
+                await api.assistant_task(placement['id'],2,2,CTX,db)
+            assert exported['kind']=='seo_qa_assist' and exported['content_version']==content.version_count
             with pytest.raises(HTTPException):
                 await api.receipt(placement['id'], api.ReceiptInput(tenant_id=1, site_id=1, version=1,
                     answer_url='https://www.zhihu.com/question/13/answer/14'), CTX, db)
@@ -151,6 +160,8 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
             assert not stale[0]['publishable']
             with pytest.raises(HTTPException):
                 await api.publication_draft(placement['id'], 1, 1, CTX, db)
+            with pytest.raises(HTTPException):
+                await api.assistant_task(placement['id'],1,1,CTX,db)
     database(scenario)
 
 

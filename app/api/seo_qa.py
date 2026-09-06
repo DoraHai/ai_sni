@@ -800,3 +800,16 @@ async def semantic_result(operation_id: str, tenant_id: PositiveInt, site_id: Po
     if row.status != 'succeeded':
         raise HTTPException(409, '分析尚未完成或已退款，请刷新记录')
     return {**retained_result(row), 'action':'qa_semantic'}
+
+
+@router.get('/placements/{placement_id}/assistant-task')
+async def assistant_task(placement_id: int, tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, session=Db):
+    await access(session,ctx,tenant_id,site_id,True)
+    draft = await publication_draft(placement_id,tenant_id,site_id,ctx,session)
+    row = await record(session,SeoQaPlacement,placement_id,tenant_id,site_id)
+    if row.platform not in {'zhihu','csdn_qa'} or not row.question_url:
+        raise HTTPException(422,'本地问答填稿目前支持知乎和 CSDN 指定问题页')
+    return {'kind':'seo_qa_assist','schema_version':1,'tenant_id':tenant_id,'site_id':site_id,
+            'placement_id':row.id,'content_version':draft['content_version'],'platform':row.platform,
+            'question_url':row.question_url,'body':draft['body'],
+            'expires_at':(datetime.now(timezone.utc)+timedelta(minutes=30)).isoformat()}
