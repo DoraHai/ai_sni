@@ -1,0 +1,2717 @@
+{
+  "synthetic": true,
+  "description": "Entirely fictional SQLite fixtures; not customer data or deployment evidence.",
+  "examples": [
+    {
+      "resource": "report",
+      "consumer_params": {
+        "start_date": "2026-09-01",
+        "end_date": "2026-09-03",
+        "baidu_account_id": 11
+      },
+      "response": {
+        "contract_version": "sem-cockpit-v1",
+        "module": "sem",
+        "is_demo": false,
+        "read_only": true,
+        "tenant_id": 1,
+        "window": {
+          "start": "2026-09-01",
+          "end": "2026-09-03",
+          "timezone": "Asia/Shanghai",
+          "inclusive": true
+        },
+        "account_scope": {
+          "mode": "single",
+          "baidu_account_id": 11,
+          "includes_unassigned": false
+        },
+        "source": "kw_report_snapshots",
+        "source_scope": "keyword_report_only",
+        "units": {
+          "cost": "CNY",
+          "click": "count",
+          "impression": "count",
+          "ctr": "ratio",
+          "cpc": "CNY/click"
+        },
+        "retrieved_at": "2026-09-06T00:00:00+00:00",
+        "coverage": {
+          "status": "observed",
+          "completeness": "unknown",
+          "observed_days": 2,
+          "missing_dates": [
+            "2026-09-02"
+          ],
+          "latest_report_date": "2026-09-03",
+          "updated_at": "2026-09-04T01:00:00+00:00"
+        },
+        "metrics": {
+          "cost": 10.0,
+          "click": 2,
+          "impression": 100,
+          "ctr": 0.02,
+          "cpc": 5.0
+        },
+        "accounts": [
+          {
+            "baidu_account_id": 11,
+            "status": "active",
+            "metrics": {
+              "cost": 10.0,
+              "click": 2,
+              "impression": 100,
+              "ctr": 0.02,
+              "cpc": 5.0
+            },
+            "coverage": {
+              "status": "observed",
+              "completeness": "unknown",
+              "observed_days": 2,
+              "missing_dates": [
+                "2026-09-02"
+              ],
+              "latest_report_date": "2026-09-03",
+              "updated_at": "2026-09-04T01:00:00+00:00"
+            }
+          }
+        ],
+        "trend": [
+          {
+            "date": "2026-09-01",
+            "status": "observed",
+            "cost": 10.0,
+            "click": 2,
+            "impression": 100,
+            "ctr": 0.02,
+            "cpc": 5.0
+          },
+          {
+            "date": "2026-09-02",
+            "status": "no_data",
+            "cost": null,
+            "click": null,
+            "impression": null,
+            "ctr": null,
+            "cpc": null
+          },
+          {
+            "date": "2026-09-03",
+            "status": "observed",
+            "cost": 0.0,
+            "click": 0,
+            "impression": 0,
+            "ctr": null,
+            "cpc": null
+          }
+        ],
+        "devices": [
+          {
+            "device": 0,
+            "label": "PC",
+            "cost": 10.0,
+            "click": 2,
+            "impression": 100,
+            "ctr": 0.02,
+            "cpc": 5.0
+          },
+          {
+            "device": 1,
+            "label": "移动",
+            "cost": 0.0,
+            "click": 0,
+            "impression": 0,
+            "ctr": null,
+            "cpc": null
+          }
+        ],
+        "unavailable": {
+          "phone_button_clicks": "历史同步可能将缺失转化置零，暂不作为可信指标",
+          "valid_consultations": "尚无已核实有效咨询口径",
+          "account_balance": "本接口不调用实时账户 API"
+        }
+      }
+    },
+    {
+      "resource": "keywords",
+      "consumer_params": {
+        "start_date": "2026-09-01",
+        "end_date": "2026-09-03",
+        "baidu_account_id": 11
+      },
+      "response": {
+        "contract_version": "sem-cockpit-v1",
+        "tenant_id": 1,
+        "module": "sem",
+        "read_only": true,
+        "is_demo": false,
+        "source": "keywords+kw_report_snapshots",
+        "account_scope": {
+          "mode": "single",
+          "baidu_account_id": 11,
+          "configured_account_ids": [
+            11
+          ],
+          "observed_account_ids": [
+            11
+          ]
+        },
+        "retrieved_at": "2026-09-06T00:00:00+00:00",
+        "units": {
+          "cost": "CNY",
+          "click": "count",
+          "impression": "count",
+          "ctr": "ratio",
+          "cpc": "CNY/click"
+        },
+        "window": {
+          "start": "2026-09-01",
+          "end": "2026-09-03",
+          "timezone": "Asia/Shanghai",
+          "inclusive": true,
+          "mode": "explicit"
+        },
+        "filters": {
+          "q": null,
+          "campaign_id": null
+        },
+        "page": 1,
+        "page_size": 20,
+        "total": 2,
+        "items": [
+          {
+            "keyword_id": 100,
+            "baidu_account_id": 11,
+            "keyword": "test%词",
+            "campaign_id": 7,
+            "adgroup_id": 8,
+            "price": 1.0,
+            "pause": false,
+            "asset_updated_at": "2026-09-04T01:00:00+00:00",
+            "metrics": {
+              "cost": 10.0,
+              "click": 2,
+              "impression": 100,
+              "ctr": 0.02,
+              "cpc": 5.0
+            },
+            "coverage": {
+              "status": "observed",
+              "completeness": "unknown",
+              "latest_report_date": "2026-09-03",
+              "updated_at": "2026-09-04T01:00:00+00:00",
+              "observed_days": 2,
+              "missing_dates": [
+                "2026-09-02"
+              ]
+            },
+            "phone_button_clicks": {
+              "value": null,
+              "known_subtotal": 2,
+              "unit": "count",
+              "source_field": "ocpcConversionsDetail2",
+              "status": "partial",
+              "stored_rows": 2,
+              "known_rows": 1,
+              "unknown_rows": 1,
+              "completeness": "unknown"
+            }
+          },
+          {
+            "keyword_id": 101,
+            "baidu_account_id": 11,
+            "keyword": "no report",
+            "campaign_id": null,
+            "adgroup_id": null,
+            "price": null,
+            "pause": null,
+            "asset_updated_at": null,
+            "metrics": {
+              "cost": null,
+              "click": null,
+              "impression": null,
+              "ctr": null,
+              "cpc": null
+            },
+            "coverage": {
+              "status": "no_data",
+              "completeness": "unknown",
+              "latest_report_date": null,
+              "updated_at": null,
+              "observed_days": 0,
+              "missing_dates": [
+                "2026-09-01",
+                "2026-09-02",
+                "2026-09-03"
+              ]
+            },
+            "phone_button_clicks": {
+              "value": null,
+              "known_subtotal": null,
+              "unit": "count",
+              "source_field": "ocpcConversionsDetail2",
+              "status": "no_data",
+              "stored_rows": 0,
+              "known_rows": 0,
+              "unknown_rows": 0,
+              "completeness": "unknown"
+            }
+          }
+        ],
+        "scope_note": "关键词资产列表；只关联相同账户与关键词ID的报告，未归属记录不推断到其他账户"
+      }
+    },
+    {
+      "resource": "keywordDetail",
+      "consumer_params": {
+        "start_date": "2026-09-01",
+        "end_date": "2026-09-03",
+        "baidu_account_id": 11,
+        "keyword_id": 100
+      },
+      "response": {
+        "contract_version": "sem-cockpit-v1",
+        "module": "sem",
+        "is_demo": false,
+        "read_only": true,
+        "tenant_id": 1,
+        "window": {
+          "start": "2026-09-01",
+          "end": "2026-09-03",
+          "timezone": "Asia/Shanghai",
+          "inclusive": true
+        },
+        "account_scope": {
+          "mode": "single",
+          "baidu_account_id": 11,
+          "includes_unassigned": false
+        },
+        "source": "kw_report_snapshots",
+        "source_scope": "keyword_report_only",
+        "units": {
+          "cost": "CNY",
+          "click": "count",
+          "impression": "count",
+          "ctr": "ratio",
+          "cpc": "CNY/click"
+        },
+        "retrieved_at": "2026-09-06T00:00:00+00:00",
+        "coverage": {
+          "status": "observed",
+          "completeness": "unknown",
+          "observed_days": 2,
+          "missing_dates": [
+            "2026-09-02"
+          ],
+          "latest_report_date": "2026-09-03",
+          "updated_at": "2026-09-04T01:00:00+00:00"
+        },
+        "metrics": {
+          "cost": 10.0,
+          "click": 2,
+          "impression": 100,
+          "ctr": 0.02,
+          "cpc": 5.0
+        },
+        "accounts": [
+          {
+            "baidu_account_id": 11,
+            "status": "active",
+            "metrics": {
+              "cost": 10.0,
+              "click": 2,
+              "impression": 100,
+              "ctr": 0.02,
+              "cpc": 5.0
+            },
+            "coverage": {
+              "status": "observed",
+              "completeness": "unknown",
+              "observed_days": 2,
+              "missing_dates": [
+                "2026-09-02"
+              ],
+              "latest_report_date": "2026-09-03",
+              "updated_at": "2026-09-04T01:00:00+00:00"
+            },
+            "phone_button_clicks": {
+              "value": null,
+              "known_subtotal": 2,
+              "unit": "count",
+              "source_field": "ocpcConversionsDetail2",
+              "status": "partial",
+              "stored_rows": 2,
+              "known_rows": 1,
+              "unknown_rows": 1,
+              "completeness": "unknown"
+            }
+          }
+        ],
+        "trend": [
+          {
+            "date": "2026-09-01",
+            "status": "observed",
+            "cost": 10.0,
+            "click": 2,
+            "impression": 100,
+            "ctr": 0.02,
+            "cpc": 5.0
+          },
+          {
+            "date": "2026-09-02",
+            "status": "no_data",
+            "cost": null,
+            "click": null,
+            "impression": null,
+            "ctr": null,
+            "cpc": null
+          },
+          {
+            "date": "2026-09-03",
+            "status": "observed",
+            "cost": 0.0,
+            "click": 0,
+            "impression": 0,
+            "ctr": null,
+            "cpc": null
+          }
+        ],
+        "devices": [
+          {
+            "device": 0,
+            "label": "PC",
+            "cost": 10.0,
+            "click": 2,
+            "impression": 100,
+            "ctr": 0.02,
+            "cpc": 5.0
+          },
+          {
+            "device": 1,
+            "label": "移动",
+            "cost": 0.0,
+            "click": 0,
+            "impression": 0,
+            "ctr": null,
+            "cpc": null
+          }
+        ],
+        "unavailable": {
+          "valid_consultations": "尚无已核实有效咨询口径",
+          "account_balance": "本接口不调用实时账户 API"
+        },
+        "phone_button_clicks": {
+          "value": null,
+          "known_subtotal": 2,
+          "unit": "count",
+          "source_field": "ocpcConversionsDetail2",
+          "status": "partial",
+          "stored_rows": 2,
+          "known_rows": 1,
+          "unknown_rows": 1,
+          "completeness": "unknown"
+        },
+        "keyword_id": 100,
+        "keyword_assets": [
+          {
+            "baidu_account_id": 11,
+            "keyword": "test%词",
+            "asset_updated_at": "2026-09-04T01:00:00+00:00"
+          }
+        ],
+        "dimensions": {
+          "region": {
+            "source": "keyword_region_reports",
+            "window": {
+              "start": "2026-09-01",
+              "end": "2026-09-03",
+              "timezone": "Asia/Shanghai",
+              "inclusive": true,
+              "mode": "explicit"
+            },
+            "coverage": {
+              "status": "observed",
+              "completeness": "unknown",
+              "latest_report_date": "2026-09-01",
+              "updated_at": "2026-09-02T01:00:00+00:00",
+              "observed_days": 1,
+              "missing_dates": [
+                "2026-09-02",
+                "2026-09-03"
+              ]
+            },
+            "accounts": [
+              {
+                "baidu_account_id": 11,
+                "coverage": {
+                  "status": "observed",
+                  "completeness": "unknown",
+                  "latest_report_date": "2026-09-01",
+                  "updated_at": "2026-09-02T01:00:00+00:00",
+                  "observed_days": 1,
+                  "missing_dates": [
+                    "2026-09-02",
+                    "2026-09-03"
+                  ]
+                }
+              }
+            ],
+            "rows": [
+              {
+                "region_level": "city",
+                "region_name": "市A",
+                "metrics": {
+                  "cost": 10.0,
+                  "click": 2,
+                  "impression": 100,
+                  "ctr": 0.02,
+                  "cpc": 5.0
+                }
+              },
+              {
+                "region_level": "province",
+                "region_name": "省A",
+                "metrics": {
+                  "cost": 10.0,
+                  "click": 2,
+                  "impression": 100,
+                  "ctr": 0.02,
+                  "cpc": 5.0
+                }
+              }
+            ],
+            "totals_by_level": [
+              {
+                "region_level": "city",
+                "metrics": {
+                  "cost": 10.0,
+                  "click": 2,
+                  "impression": 100,
+                  "ctr": 0.02,
+                  "cpc": 5.0
+                }
+              },
+              {
+                "region_level": "province",
+                "metrics": {
+                  "cost": 10.0,
+                  "click": 2,
+                  "impression": 100,
+                  "ctr": 0.02,
+                  "cpc": 5.0
+                }
+              }
+            ],
+            "scope_note": "单关键词省/市分别统计，不跨层级相加"
+          },
+          "schedule": {
+            "source": "keyword_hourly_reports",
+            "window": {
+              "start": "2026-09-01",
+              "end": "2026-09-03",
+              "timezone": "Asia/Shanghai",
+              "inclusive": true,
+              "mode": "explicit"
+            },
+            "coverage": {
+              "status": "observed",
+              "completeness": "unknown",
+              "latest_report_date": "2026-09-01",
+              "updated_at": "2026-09-02T02:00:00+00:00",
+              "observed_days": 1,
+              "missing_dates": [
+                "2026-09-02",
+                "2026-09-03"
+              ]
+            },
+            "accounts": [
+              {
+                "baidu_account_id": 11,
+                "coverage": {
+                  "status": "observed",
+                  "completeness": "unknown",
+                  "latest_report_date": "2026-09-01",
+                  "updated_at": "2026-09-02T02:00:00+00:00",
+                  "observed_days": 1,
+                  "missing_dates": [
+                    "2026-09-02",
+                    "2026-09-03"
+                  ]
+                }
+              }
+            ],
+            "dimension": "weekday_hour",
+            "cells": [
+              {
+                "weekday": 1,
+                "hour": 0,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 1,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 2,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 3,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 4,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 5,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 6,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 7,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 8,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 9,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 10,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 11,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 12,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 13,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 14,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 15,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 16,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 17,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 18,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 19,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 20,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 21,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 22,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 1,
+                "hour": 23,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 0,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 1,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 2,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 3,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 4,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 5,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 6,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 7,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 8,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 9,
+                "status": "observed",
+                "metrics": {
+                  "cost": 0.0,
+                  "click": 0,
+                  "impression": 0,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 10,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 11,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 12,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 13,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 14,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 15,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 16,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 17,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 18,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 19,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 20,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 21,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 22,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 2,
+                "hour": 23,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 0,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 1,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 2,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 3,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 4,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 5,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 6,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 7,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 8,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 9,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 10,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 11,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 12,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 13,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 14,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 15,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 16,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 17,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 18,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 19,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 20,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 21,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 22,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 3,
+                "hour": 23,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 0,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 1,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 2,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 3,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 4,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 5,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 6,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 7,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 8,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 9,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 10,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 11,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 12,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 13,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 14,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 15,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 16,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 17,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 18,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 19,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 20,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 21,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 22,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 4,
+                "hour": 23,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 0,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 1,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 2,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 3,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 4,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 5,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 6,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 7,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 8,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 9,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 10,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 11,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 12,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 13,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 14,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 15,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 16,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 17,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 18,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 19,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 20,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 21,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 22,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 5,
+                "hour": 23,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 0,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 1,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 2,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 3,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 4,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 5,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 6,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 7,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 8,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 9,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 10,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 11,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 12,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 13,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 14,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 15,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 16,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 17,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 18,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 19,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 20,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 21,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 22,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 6,
+                "hour": 23,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 0,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 1,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 2,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 3,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 4,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 5,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 6,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 7,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 8,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 9,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 10,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 11,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 12,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 13,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 14,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 15,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 16,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 17,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 18,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 19,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 20,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 21,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 22,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              },
+              {
+                "weekday": 7,
+                "hour": 23,
+                "status": "no_data",
+                "metrics": {
+                  "cost": null,
+                  "click": null,
+                  "impression": null,
+                  "ctr": null,
+                  "cpc": null
+                }
+              }
+            ],
+            "metrics": {
+              "cost": 0.0,
+              "click": 0,
+              "impression": 0,
+              "ctr": null,
+              "cpc": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "resource": "searchTerms",
+      "consumer_params": {},
+      "response": {
+        "contract_version": "sem-cockpit-v1",
+        "tenant_id": 1,
+        "module": "sem",
+        "read_only": true,
+        "is_demo": false,
+        "source": "search_term_reports",
+        "account_scope": {
+          "mode": "all",
+          "baidu_account_id": null,
+          "configured_account_ids": [
+            11,
+            12
+          ],
+          "observed_account_ids": [
+            11,
+            12
+          ]
+        },
+        "retrieved_at": "2026-09-06T00:00:00+00:00",
+        "units": {
+          "cost": "CNY",
+          "click": "count",
+          "impression": "count",
+          "ctr": "ratio",
+          "cpc": "CNY/click"
+        },
+        "filters": {
+          "q": null,
+          "campaign_id": null,
+          "adgroup_id": null
+        },
+        "windows": [
+          {
+            "baidu_account_id": 11,
+            "start": "2026-09-01",
+            "end": "2026-09-03",
+            "timezone": "Asia/Shanghai",
+            "inclusive": true,
+            "mode": "sync_snapshot",
+            "stored_rows": 2,
+            "updated_at": "2026-09-04T01:00:00+00:00",
+            "oldest_updated_at": "2026-09-04T01:00:00+00:00",
+            "unknown_timestamp_rows": 0,
+            "completeness": "unknown"
+          },
+          {
+            "baidu_account_id": 12,
+            "start": "2026-08-01",
+            "end": "2026-08-31",
+            "timezone": "Asia/Shanghai",
+            "inclusive": true,
+            "mode": "sync_snapshot",
+            "stored_rows": 1,
+            "updated_at": "2026-09-04T01:00:00+00:00",
+            "oldest_updated_at": "2026-09-04T01:00:00+00:00",
+            "unknown_timestamp_rows": 0,
+            "completeness": "unknown"
+          }
+        ],
+        "mixed_windows": true,
+        "status": "observed",
+        "completeness": "unknown",
+        "page": 1,
+        "page_size": 50,
+        "total": 3,
+        "items": [
+          {
+            "id": 1,
+            "baidu_account_id": 11,
+            "query_word": "搜索%词",
+            "trigger_keyword": "test%词",
+            "campaign_id": 7,
+            "adgroup_id": 8,
+            "metrics": {
+              "cost": 10.0,
+              "click": 2,
+              "impression": 100,
+              "ctr": 0.02,
+              "cpc": 5.0
+            },
+            "window": {
+              "start": "2026-09-01",
+              "end": "2026-09-03",
+              "timezone": "Asia/Shanghai",
+              "inclusive": true,
+              "mode": "sync_snapshot"
+            },
+            "updated_at": "2026-09-04T01:00:00+00:00"
+          },
+          {
+            "id": 2,
+            "baidu_account_id": 12,
+            "query_word": "搜索%词",
+            "trigger_keyword": "test%词",
+            "campaign_id": 7,
+            "adgroup_id": 8,
+            "metrics": {
+              "cost": 10.0,
+              "click": null,
+              "impression": 100,
+              "ctr": null,
+              "cpc": null
+            },
+            "window": {
+              "start": "2026-08-01",
+              "end": "2026-08-31",
+              "timezone": "Asia/Shanghai",
+              "inclusive": true,
+              "mode": "sync_snapshot"
+            },
+            "updated_at": "2026-09-04T01:00:00+00:00"
+          },
+          {
+            "id": 3,
+            "baidu_account_id": 11,
+            "query_word": "别词",
+            "trigger_keyword": "test%词",
+            "campaign_id": 7,
+            "adgroup_id": 8,
+            "metrics": {
+              "cost": 10.0,
+              "click": 0,
+              "impression": 0,
+              "ctr": null,
+              "cpc": null
+            },
+            "window": {
+              "start": "2026-09-01",
+              "end": "2026-09-03",
+              "timezone": "Asia/Shanghai",
+              "inclusive": true,
+              "mode": "sync_snapshot"
+            },
+            "updated_at": "2026-09-04T01:00:00+00:00"
+          }
+        ],
+        "scope_note": "仅同步窗口快照，无每日历史；触发词文本不是点击级归因；不返回跨窗口总量"
+      }
+    }
+  ]
+}
