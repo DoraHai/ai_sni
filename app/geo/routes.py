@@ -1095,3 +1095,6 @@ router.include_router(integration_router)
 
 from app.geo.read_routes import router as read_router
 router.include_router(read_router)
+
+from app.geo.question_read_routes import router as question_read_router
+router.include_router(question_read_router)
