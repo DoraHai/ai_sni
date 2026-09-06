@@ -65,16 +65,20 @@ def _required_id(value: Any, label: str) -> int:
     return result
 
 
-def _timestamp(value: Any) -> datetime:
-    if not value:
-        return datetime.min
+def _parse_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or "T" not in value:
+        return None
     try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         if parsed.tzinfo is not None:
             parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
         return parsed
     except ValueError:
-        return datetime.min
+        return None
+
+
+def _timestamp(value: Any) -> datetime:
+    return _parse_timestamp(value) or datetime.min
 
 
 def _review(content: Mapping[str, Any]) -> dict[str, Any]:
@@ -86,9 +90,10 @@ def _review(content: Mapping[str, Any]) -> dict[str, Any]:
 
     submitted_by = actor_id(content.get("review_submitted_by"))
     reviewed_by = actor_id(content.get("reviewed_by"))
-    reviewed_at = content.get("reviewed_at")
+    raw_reviewed_at = content.get("reviewed_at")
+    reviewed_at = raw_reviewed_at if _parse_timestamp(raw_reviewed_at) is not None else None
     status = str(content.get("status") or "")
-    approved = status in {"ready", "published"} and bool(reviewed_at)
+    approved = status in {"ready", "published"} and reviewed_at is not None
     independent = bool(
         approved
         and submitted_by is not None
@@ -263,7 +268,18 @@ def _page_evidence(
         raise WorkbenchPayloadError("页面详情地址与显式页面关联不一致")
     diagnostic = page.get("diagnostic") if isinstance(page.get("diagnostic"), Mapping) else {}
     latest = page_detail.get("latest_snapshot")
-    latest = latest if isinstance(latest, Mapping) else None
+    if latest is not None and not isinstance(latest, Mapping):
+        raise WorkbenchPayloadError("页面快照格式无效")
+    latest_snapshot_id = None
+    if latest is not None:
+        latest_snapshot_id = _required_id(latest.get("id"), "页面快照")
+        snapshot_urls = {
+            value
+            for value in (latest.get("url"), latest.get("final_url"))
+            if isinstance(value, str) and value
+        }
+        if binding_url not in snapshot_urls:
+            raise WorkbenchPayloadError("最新页面快照与显式页面关联不一致")
     check_state = str(diagnostic.get("assessment_state") or "not_checked")
     failure = None
     if latest:
@@ -274,7 +290,7 @@ def _page_evidence(
         "candidate_count": 1,
         "check_state": check_state,
         "checked_at": diagnostic.get("checked_at"),
-        "latest_snapshot_id": latest.get("id") if latest else None,
+        "latest_snapshot_id": latest_snapshot_id,
         "http_status": diagnostic.get("http_status"),
         "failure": failure,
         # Existing diagnostic payload proves that an assessment ran. It does

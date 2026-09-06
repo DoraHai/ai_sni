@@ -43,6 +43,8 @@ JSON 中 `attempts_by_publication` 的对象键天然是字符串；离线入口
 
 审核、发布、页面检查始终是三个状态。页面 `assessment_state=assessed` 只证明检查执行完成；当前接口没有全页面“通过”字段，因此 `passed=null` 表示未知。搜索效果中的 `article_clicks=null` 也表示未知，不能把业务总点击、关键词点击或同一主题点击分摊给某篇文章。
 
+`reviewed_at` 只有在字段为 API 输出的 ISO 日期时间时才能支持“审核通过”；空值、无效日期或只有日期都按未审核展示。明确关联页面有最新快照时，快照的 `url` 或 `final_url` 必须与关联页面地址一致；不一致的快照不能作为该页面的检查证据。
+
 ## 仍需协调的输入
 
 - **工作台开发**：在实际请求层维护 request ID，组装 `attempts_by_publication`，并只在已有可靠关联时传 `page_binding`。
