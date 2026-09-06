@@ -5,4 +5,3 @@ export function isPersistedGeoRow(row) {
 export function persistedGeoRows(rows) {
   return (Array.isArray(rows) ? rows : []).filter(isPersistedGeoRow)
 }
-

@@ -33,4 +33,3 @@ test('account selectors contain only persisted customer channels', () => {
   )
   assert.deepEqual(persistedGeoRows(null), [])
 })
-
