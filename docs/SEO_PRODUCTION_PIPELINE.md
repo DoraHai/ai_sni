@@ -136,17 +136,17 @@ not a database rollback.
 The latest SEM confirmation supersedes the earlier framework release instruction.
 PR #369 must remain Draft: do not merge, deploy or execute a migration. The
 allowlist stays current-only until the formal version contract is reviewed.
-The current database and SEO baseline are `0094_seo_qa_batches`. No SemTask target
-revision or approved parent has been assigned, and no formal migration file has
-been provided. `0094_seo_qa_batches` is a candidate parent based on the current single
-head, not an approved new migration parent. Do not allocate a guessed `0095` or
-rewrite deployed migration history.
+The current database and SEO baseline are `0094_seo_qa_batches`. SEM has now
+submitted candidate `0095_sem_tasks`, parent `0094_seo_qa_batches`, in Draft
+[PR #370](https://github.com/DoraHai/ai_sni/pull/370), commit
+`d587ac47b737f342960a5b1bd1c2aa3202c4a01c`. These are candidate identifiers,
+not an approved formal migration contract. Do not rewrite deployed history.
 
 The health implementation keeps `required_schema_revision` as the SEO baseline,
 adds a code-reviewed explicit `compatible_schema_revisions` set, requires exactly
 one Alembic version row, and rejects empty, duplicate, multiple, stale and unknown
-versions. For now the set contains only 0094. The test-only target is not a real
-migration ID and is never in the application allowlist.
+versions. For now the set contains only 0094. Tests patch the set to simulate the candidate 0095; the actual application
+allowlist still rejects 0095. This does not grant approval for the candidate.
 
 Before reporting healthy, a read-only pg_catalog query follows the connection's
 search_path via to_regclass and checks all mapped column names on 12 critical SEO
@@ -170,10 +170,10 @@ Remaining gates for accepting the SemTask migration target:
 1. The shared migration owner identifies the exact target revision/down_revision,
    migration source commit and reviewed additive DDL (including lineage evidence).
 2. Review compatibility and add only that exact target to the allowlist after review;
-   replace/supplement the test-only target case with a test for the actual value.
+   the candidate value is already exercised using a test-only patched allowlist.
 3. Test current and target structures, missing critical fields, unknown and multiple
    revision rows. The current unit tests exercise the algorithm only; they are not
-   acceptance of an unassigned SemTask target or execution of its migration.
+   acceptance of the candidate SemTask target or execution of its migration.
 4. Independently authorize deployment of the compatibility release, then independently
    authorize the shared migration. This Draft does not satisfy target-version
    compatibility or authorize deployment or database changes. Do not roll the
@@ -187,7 +187,7 @@ folder. The contacted task "1.0" clarified it is GEO and cannot confirm SemTask'
 owner or migration IDs. Shared-owner confirmation remains outstanding.
 
 
-SEM confirmation received for PR #369:
+Earlier SEM confirmation received for PR #369 (identifier status superseded below):
 
 - Revision is unassigned. `0094_seo_qa_batches` remains a candidate parent, not an
   approved `down_revision`.
@@ -199,3 +199,30 @@ SEM confirmation received for PR #369:
 - Keep #369 Draft and do not add a target revision. SEM will provide the exact
   version contract after formal migration and shared-history integration review.
 - #369 was restored to Draft before merge; no deployment or migration was executed.
+
+
+### Candidate review update: Draft #370
+
+The candidate file is `docs/migration_proposals/0095_sem_tasks.py`, outside the
+formal migration directory. SHA-256 of its raw bytes at the pinned commit:
+`e3fba9e91dc09500943ecf4c7909ac6e17da84b56fabfa480530040387047e1d`.
+Static AST inspection found only one create_table call (`sem_tasks`) and two
+create_index calls (`ix_sem_tasks_action`, `ix_sem_tasks_queue`) in upgrade.
+No SEO table alteration or customer-row mutation is present. Tenant foreign key
+RESTRICT means tenants with SemTask references cannot be deleted; this shared
+behavior is intentional in the proposal and must remain part of owner review.
+
+Combining the candidate with the SEO migration graph pinned at
+`4e83611aabc8c3d9bb6ecee1a6aff37a2fbfbe21` produces a single head
+`0095_sem_tasks`, with no duplicate revisions or missing parents. This is a
+static graph result, not evidence that historical migrations were executed.
+The shared main and SEO histories differ around 0087; the final shared package,
+source checksums and lineage integration still require review. The runner must
+also pin/verify the intended schema/search_path, since the candidate uses
+unqualified table names. Do not copy it into the formal tree before those gates.
+
+Unit tests cover candidate acceptance only with a patched allowlist, rejection
+of missing tables/columns, incorrect integer/JSONB types and catalog denial at
+both versions, and rejection of 0095 by the unchanged runtime allowlist.
+No candidate code was imported or executed for this static review; no Alembic,
+DDL, version-table change, merge or deployment was performed. PR #369 remains Draft.
