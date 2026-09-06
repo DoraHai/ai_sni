@@ -5817,8 +5817,16 @@ async def verify_social_account(
         creds = decrypt_credentials_json(row.credentials_encrypted)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, str(exc)) from exc
+    if row.auth_type == "webhook":
+        from app.geo.content.connectors.webhook import normalize_webhook_credentials
+
+        try:
+            normalize_webhook_credentials(creds)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True, "provider": "webhook", "check_scope": "configuration"}
     provider = resolve_provider(creds)
-    detail: dict[str, Any] = {"provider": provider, "platform": creds.get("platform")}
+    detail: dict[str, Any] = {"provider": provider, "platform": creds.get("platform"), "check_scope": "configuration"}
     if provider == "wechat_mp":
         try:
             token, patch = await ensure_wechat_access_token(creds)
@@ -5831,7 +5839,7 @@ async def verify_social_account(
             row.status = "active"
             await session.commit()
             detail["ok"] = True
-            detail["token_prefix"] = (token[:8] + "…") if token else None
+            detail["check_scope"] = "authorization"
             detail["mock"] = bool(str(creds.get("app_id") or "").startswith("mock_"))
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(400, str(exc)) from exc

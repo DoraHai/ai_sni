@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createGeoChannelAccount,
@@ -14,6 +14,8 @@ import {
   startSocialOAuth,
   verifySocialAccount,
 } from '../../api/geoContent'
+import GeoAccountCredentials from '../../components/GeoAccountCredentials.vue'
+import { buildAccountCredentials, credentialCheckMessage } from '../../utils/geoAccountCredentials'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
@@ -29,6 +31,8 @@ const accountForm = ref(emptyAccountForm())
 const typeFilter = ref('全部平台')
 const verifying = ref(false)
 const oauthBusy = ref('')
+const savingAccount = ref(false)
+let contextEpoch = 0
 const SOCIAL_AUTH = new Set(['oauth2', 'social_api'])
 function isOAuthAccount(account) { return SOCIAL_AUTH.has(account?.auth_type) }
 
@@ -43,7 +47,7 @@ function emptyChannelForm() {
   return { id: null, name: '', channel_type: 'website', publish_mode: 'draft_then_manual', base_url: '', enabled: true, source_role: '', citation_potential: '中', strategy: '', engines: '' }
 }
 function emptyAccountForm() {
-  return { id: null, channel_id: null, display_name: '', auth_type: 'manual', status: 'active', webhook_url: '' }
+  return { id: null, channel_id: null, display_name: '', auth_type: 'manual', status: 'active', provider: 'gateway', credential_values: {}, replace_credentials: false, original_auth_type: 'manual' }
 }
 function channelLabel(key) { return CHANNEL_CN[key] || key || '—' }
 function rulesOf(channel) { return channel?.content_rules && typeof channel.content_rules === 'object' ? channel.content_rules : {} }
@@ -56,7 +60,7 @@ function channelStatus(channel) {
   if (!channel.enabled) return { label: '未启用', type: 'info' }
   const linked = accounts.value.filter((account) => account.channel_id === channel.id)
   if (!linked.length) return { label: '待添加账号', type: 'warning' }
-  if (linked.some((account) => account.status === 'active' && account.has_credentials)) return { label: '可推送', type: 'success' }
+  if (linked.some((account) => account.status === 'active' && account.has_credentials)) return { label: '凭据已配置', type: 'success' }
   return { label: '待配置凭证', type: 'warning' }
 }
 
@@ -84,7 +88,10 @@ const filteredChannels = computed(() => {
 
 async function loadConfiguration() {
   if (!tenantId.value) { channels.value = []; accounts.value = []; return }
-  const [channelResult, accountResult] = await Promise.all([listGeoPublishingChannels(tenantId.value, false), listGeoChannelAccounts(tenantId.value)])
+  const tenant = tenantId.value
+  const epoch = contextEpoch
+  const [channelResult, accountResult] = await Promise.all([listGeoPublishingChannels(tenant, false), listGeoChannelAccounts(tenant)])
+  if (epoch !== contextEpoch) return
   channels.value = channelResult.items || []
   accounts.value = accountResult.items || []
 }
@@ -98,18 +105,24 @@ async function refreshConnectionStatus() {
   if (!tenantId.value) { error.value = '请先选择客户或配置本地 API Key'; return }
   verifying.value = true
   error.value = ''
-  const oauthAccounts = accounts.value.filter(isOAuthAccount)
+  const checkTenant = tenantId.value
+  const checkEpoch = contextEpoch
+  const oauthAccounts = accounts.value.filter(a => a.auth_type !== 'manual')
   const notes = []
   for (const account of oauthAccounts) {
     try {
-      const result = await verifySocialAccount(tenantId.value, account.id)
-      notes.push(`${account.display_name}：${result?.oauth_authorized === false ? '未授权' : '校验通过'}`)
+      if (checkEpoch !== contextEpoch) return
+      const result = await verifySocialAccount(checkTenant, account.id)
+      if (checkEpoch !== contextEpoch) return
+      notes.push(`${account.display_name}：${credentialCheckMessage(result)}`)
     } catch (e) {
       notes.push(`${account.display_name}：${e.message || '校验失败'}`)
     }
   }
+  if (checkEpoch !== contextEpoch) return
   try {
     await loadConfiguration()
+    if (checkEpoch !== contextEpoch) return
     ElMessage.success(notes.length ? notes.join('；') : '已刷新平台与账号状态')
   } catch (e) {
     error.value = e.message || '加载失败'
@@ -136,15 +149,18 @@ async function goOAuth(account) {
 }
 
 async function doVerifySocial(account) {
+  const epoch = contextEpoch
+  const tenant = tenantId.value
   oauthBusy.value = `verify-${account.id}`
   try {
-    const result = await verifySocialAccount(tenantId.value, account.id)
-    ElMessage.success(result?.oauth_authorized === false ? '尚未完成授权' : '凭证校验通过')
+    const result = await verifySocialAccount(tenant, account.id)
+    if (epoch !== contextEpoch) return
+    ElMessage.success(credentialCheckMessage(result))
     await loadConfiguration()
   } catch (e) {
-    ElMessage.error(e.message || '校验失败')
+    if (epoch === contextEpoch) ElMessage.error(e.message || '校验失败')
   } finally {
-    oauthBusy.value = ''
+    if (epoch === contextEpoch) oauthBusy.value = ''
   }
 }
 
@@ -213,24 +229,30 @@ async function removeChannel(channel) {
 }
 
 function openCreateAccount(channelId = null) { accountForm.value = { ...emptyAccountForm(), channel_id: channelId || channels.value[0]?.id || null }; accountDialogOpen.value = true }
-function openEditAccount(account) { accountForm.value = { id: account.id, channel_id: account.channel_id, display_name: account.display_name || '', auth_type: account.auth_type || 'manual', status: account.status || 'active', webhook_url: '' }; accountDialogOpen.value = true }
-function accountCredentials() {
-  const url = accountForm.value.webhook_url.trim()
-  if (!url) return undefined
-  if (accountForm.value.auth_type === 'webhook' && !url.startsWith('https://')) throw new Error('Webhook URL 必须使用 https://')
-  return accountForm.value.auth_type === 'webhook' ? { webhook_url: url, method: 'POST' } : { endpoint: url }
+function openEditAccount(account) {
+  accountForm.value = { ...emptyAccountForm(), id: account.id, channel_id: account.channel_id, display_name: account.display_name || '', auth_type: account.auth_type || 'manual', original_auth_type: account.auth_type || 'manual', status: account.status || 'active', provider: account.provider || 'gateway' }
+  accountDialogOpen.value = true
 }
 async function saveAccount() {
+  if (savingAccount.value) return
+  const tenant = tenantId.value
+  const epoch = contextEpoch
   try {
     const form = accountForm.value
-    if (!form.channel_id || !form.display_name.trim()) throw new Error('请选择平台并填写账号名称')
-    const credentials = accountCredentials()
-    if (form.id) await patchGeoChannelAccount(tenantId.value, form.id, { display_name: form.display_name.trim(), auth_type: form.auth_type, status: form.status, ...(credentials ? { credentials } : {}) })
-    else await createGeoChannelAccount({ tenant_id: tenantId.value, channel_id: form.channel_id, display_name: form.display_name.trim(), auth_type: form.auth_type, ...(credentials ? { credentials } : {}) })
-    ElMessage.success(form.id ? '账号已保存' : '已添加渠道账号')
+    if (!tenant || !form.channel_id || !form.display_name.trim()) throw new Error('请选择客户、平台并填写账号名称')
+    const platform = channels.value.find(c => c.id === form.channel_id)?.channel_type
+    if (!platform) throw new Error('平台不属于当前客户，请刷新后重试')
+    const credentials = buildAccountCredentials(form, platform)
+    savingAccount.value = true
+    if (form.id) await patchGeoChannelAccount(tenant, form.id, { display_name: form.display_name.trim(), auth_type: form.auth_type, status: credentials ? 'active' : form.status, ...(credentials ? { credentials } : {}) })
+    else await createGeoChannelAccount({ tenant_id: tenant, channel_id: form.channel_id, display_name: form.display_name.trim(), auth_type: form.auth_type, ...(credentials ? { credentials } : {}) })
+    if (epoch !== contextEpoch) return
+    ElMessage.success('账号已保存，请继续检查凭据或完成授权')
     accountDialogOpen.value = false
+    accountForm.value = emptyAccountForm()
     await refresh()
-  } catch (e) { ElMessage.error(e.message || '保存账号失败') }
+  } catch (e) { if (epoch === contextEpoch) ElMessage.error(e.message || '保存账号失败') }
+  finally { savingAccount.value = false }
 }
 async function removeAccount(account) {
   try {
@@ -240,7 +262,9 @@ async function removeAccount(account) {
   } catch (e) { if (e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '删除账号失败') }
 }
 
-watch(tenantId, refresh)
+watch(accountDialogOpen, open => { if (!open) accountForm.value = emptyAccountForm() })
+watch(tenantId, () => { contextEpoch++; verifying.value = false; oauthBusy.value = ''; accountDialogOpen.value = false; channelDialogOpen.value = false; accountForm.value = emptyAccountForm(); channels.value = []; accounts.value = []; refresh() })
+onBeforeUnmount(() => { contextEpoch++; accountForm.value = emptyAccountForm() })
 onMounted(refresh)
 </script>
 
@@ -255,11 +279,11 @@ onMounted(refresh)
         <button v-for="tab in TYPE_TABS" :key="tab" class="geo-filter" :class="{ active: typeFilter === tab }" type="button" @click="typeFilter = tab">{{ tab }}</button>
       </div>
       <section class="gd-card mb"><div class="gd-hd"><h3>平台账号与授权</h3><div class="header-actions"><button class="gd-btn" type="button" @click="openCreateAccount()">添加渠道账号</button></div></div><div class="gd-bd" style="padding:0"><el-table :data="filteredChannels" empty-text="暂无分发平台，请先添加平台" class="full-table"><el-table-column label="平台" min-width="150"><template #default="{ row }"><b>{{ row.name || channelLabel(row.channel_type) }}</b><div class="muted">{{ row.base_url || channelLabel(row.channel_type) }}</div></template></el-table-column><el-table-column label="平台类型" width="120"><template #default="{ row }">{{ channelLabel(row.channel_type) }}</template></el-table-column><el-table-column label="发布方式" width="120"><template #default="{ row }"><el-tag size="small" effect="plain" type="info">{{ publishModeLabel(row.publish_mode) }}</el-tag></template></el-table-column><el-table-column label="账号" width="90"><template #default="{ row }">{{ accountCount(row.id) }} 个</template></el-table-column><el-table-column label="当前状态" width="120"><template #default="{ row }"><el-tag size="small" :type="channelStatus(row).type">{{ channelStatus(row).label }}</el-tag></template></el-table-column><el-table-column label="操作" width="250" fixed="right"><template #default="{ row }"><div class="channel-actions"><el-button link @click="openCreateAccount(row.id)">添加账号</el-button><el-button link type="primary" @click="openEditChannel(row)">配置</el-button><el-button link type="danger" @click="removeChannel(row)">删除</el-button></div></template></el-table-column></el-table></div></section>
-      <section class="gd-card mb"><div class="gd-hd"><h3>渠道账号</h3><span class="muted">账号授权与 SEO 共用</span></div><div class="gd-bd" style="padding:0"><el-table :data="accounts" empty-text="暂无渠道账号" class="full-table"><el-table-column label="账号" prop="display_name" min-width="180" /><el-table-column label="所属平台" min-width="130"><template #default="{ row }">{{ channels.find((c) => c.id === row.channel_id)?.name || `#${row.channel_id}` }}</template></el-table-column><el-table-column label="授权方式" prop="auth_type" width="120" /><el-table-column label="状态" width="100"><template #default="{ row }"><el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">{{ row.status || '—' }}</el-tag></template></el-table-column><el-table-column label="操作" width="260" fixed="right"><template #default="{ row }"><el-button v-if="isOAuthAccount(row)" link type="primary" :loading="oauthBusy === `oauth-${row.id}`" @click="goOAuth(row)">授权</el-button><el-button v-if="isOAuthAccount(row)" link :loading="oauthBusy === `verify-${row.id}`" @click="doVerifySocial(row)">校验</el-button><el-button v-if="isOAuthAccount(row)" link :loading="oauthBusy === `refresh-${row.id}`" @click="doRefreshOAuth(row)">刷新令牌</el-button><el-button link type="primary" @click="openEditAccount(row)">编辑</el-button><el-button link type="danger" @click="removeAccount(row)">删除</el-button></template></el-table-column></el-table></div></section>
+      <section class="gd-card mb"><div class="gd-hd"><h3>渠道账号</h3><span class="muted">账号授权与 SEO 共用</span></div><div class="gd-bd" style="padding:0"><el-table :data="accounts" empty-text="暂无渠道账号" class="full-table"><el-table-column label="账号" prop="display_name" min-width="180" /><el-table-column label="所属平台" min-width="130"><template #default="{ row }">{{ channels.find((c) => c.id === row.channel_id)?.name || `#${row.channel_id}` }}</template></el-table-column><el-table-column label="授权方式" prop="auth_type" width="120" /><el-table-column label="状态" width="100"><template #default="{ row }"><el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">{{ row.status || '—' }}</el-tag></template></el-table-column><el-table-column label="操作" width="260" fixed="right"><template #default="{ row }"><el-button v-if="isOAuthAccount(row)" link type="primary" :loading="oauthBusy === `oauth-${row.id}`" @click="goOAuth(row)">授权</el-button><el-button v-if="row.auth_type !== 'manual'" link :loading="oauthBusy === `verify-${row.id}`" @click="doVerifySocial(row)">检查凭据</el-button><el-button v-if="isOAuthAccount(row)" link :loading="oauthBusy === `refresh-${row.id}`" @click="doRefreshOAuth(row)">刷新令牌</el-button><el-button link type="primary" @click="openEditAccount(row)">编辑</el-button><el-button link type="danger" @click="removeAccount(row)">删除</el-button></template></el-table-column></el-table></div></section>
       <section class="gd-card mb"><div class="gd-hd"><h3>GEO 发布与信源策略</h3><span class="muted">优先选择具备稳定抓取、明确作者和可核验事实的平台</span></div><div class="gd-bd" style="padding:0"><el-table :data="filteredChannels" empty-text="配置平台后可维护 GEO 策略" class="full-table"><el-table-column label="平台" min-width="140"><template #default="{ row }">{{ row.name || channelLabel(row.channel_type) }}</template></el-table-column><el-table-column label="信源角色" min-width="130"><template #default="{ row }">{{ ruleValue(row, 'source_role') }}</template></el-table-column><el-table-column label="AI 引用潜力" width="120"><template #default="{ row }">{{ ruleValue(row, 'citation_potential') }}</template></el-table-column><el-table-column label="内容策略" min-width="230"><template #default="{ row }">{{ ruleValue(row, 'strategy') }}</template></el-table-column><el-table-column label="适配引擎" min-width="140"><template #default="{ row }">{{ ruleValue(row, 'engines') }}</template></el-table-column><el-table-column label="当前状态" width="105"><template #default="{ row }"><el-tag size="small" :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '策略可用' : '未启用' }}</el-tag></template></el-table-column></el-table></div></section>
     </div>
     <el-dialog v-model="channelDialogOpen" :title="channelForm.id ? '配置分发平台' : '添加分发平台'" width="560px"><el-form label-width="110px"><el-form-item label="平台名称"><el-input v-model="channelForm.name" placeholder="例如：行业技术媒体" /></el-form-item><el-form-item label="平台类型"><el-select v-model="channelForm.channel_type" style="width:100%"><el-option v-for="[value, label] in CHANNEL_TYPES" :key="value" :value="value" :label="label" /></el-select></el-form-item><el-form-item label="发布方式"><el-select v-model="channelForm.publish_mode" style="width:100%"><el-option label="自动发布" value="auto_publish" /><el-option label="出稿后人工发" value="draft_then_manual" /><el-option label="仅人工" value="manual_only" /></el-select></el-form-item><el-form-item label="接口 / 主页"><el-input v-model="channelForm.base_url" placeholder="https:// 或 API Endpoint" /></el-form-item><el-divider>GEO 发布与信源策略</el-divider><el-form-item label="信源角色"><el-input v-model="channelForm.source_role" placeholder="如：品牌事实底座" /></el-form-item><el-form-item label="AI 引用潜力"><el-select v-model="channelForm.citation_potential" style="width:100%"><el-option label="高" value="高" /><el-option label="中" value="中" /><el-option label="低" value="低" /></el-select></el-form-item><el-form-item label="内容策略"><el-input v-model="channelForm.strategy" type="textarea" placeholder="如：原创首发、明确作者、可核验事实" /></el-form-item><el-form-item label="适配引擎"><el-input v-model="channelForm.engines" placeholder="如：DeepSeek, Kimi" /></el-form-item><el-form-item label="启用"><el-switch v-model="channelForm.enabled" /></el-form-item></el-form><template #footer><el-button @click="channelDialogOpen = false">取消</el-button><el-button type="primary" @click="saveChannel">保存平台</el-button></template></el-dialog>
-    <el-dialog v-model="accountDialogOpen" :title="accountForm.id ? '编辑渠道账号' : '添加渠道账号'" width="520px"><el-form label-width="105px"><el-form-item label="所属平台"><el-select v-model="accountForm.channel_id" style="width:100%"><el-option v-for="channel in channels" :key="channel.id" :label="channel.name || channelLabel(channel.channel_type)" :value="channel.id" /></el-select></el-form-item><el-form-item label="账号名称"><el-input v-model="accountForm.display_name" placeholder="账号名称或 App ID" /></el-form-item><el-form-item label="授权方式"><el-select v-model="accountForm.auth_type" style="width:100%"><el-option label="人工回填" value="manual" /><el-option label="Webhook" value="webhook" /><el-option label="API Key" value="api_key" /><el-option label="OAuth2" value="oauth2" /><el-option label="社交直发" value="social_api" /></el-select></el-form-item><el-form-item label="Webhook / 接口"><el-input v-model="accountForm.webhook_url" placeholder="Webhook 需为 https://" /></el-form-item><el-form-item v-if="accountForm.id" label="状态"><el-select v-model="accountForm.status" style="width:100%"><el-option label="有效" value="active" /><el-option label="未配置" value="unconfigured" /><el-option label="已禁用" value="disabled" /></el-select></el-form-item></el-form><template #footer><el-button @click="accountDialogOpen = false">取消</el-button><el-button type="primary" @click="saveAccount">保存账号</el-button></template></el-dialog>
+    <el-dialog :close-on-click-modal="!savingAccount" :close-on-press-escape="!savingAccount" :show-close="!savingAccount" v-model="accountDialogOpen" :title="accountForm.id ? '编辑渠道账号' : '添加渠道账号'" width="520px"><el-form label-width="115px" :disabled="savingAccount"><el-form-item label="所属平台"><el-select v-model="accountForm.channel_id" :disabled="!!accountForm.id || savingAccount" style="width:100%"><el-option v-for="channel in channels" :key="channel.id" :label="channel.name || channelLabel(channel.channel_type)" :value="channel.id" /></el-select></el-form-item><el-form-item label="账号名称"><el-input v-model="accountForm.display_name" placeholder="账号名称或 App ID" /></el-form-item><el-form-item label="授权方式"><el-select v-model="accountForm.auth_type" style="width:100%"><el-option label="人工回填" value="manual" /><el-option label="Webhook" value="webhook" /><el-option label="OAuth2" value="oauth2" /><el-option label="社交直发" value="social_api" /></el-select></el-form-item><GeoAccountCredentials :form="accountForm" /><el-form-item v-if="accountForm.id" label="状态"><el-select v-model="accountForm.status" style="width:100%"><el-option label="有效" value="active" /><el-option label="未配置" value="unconfigured" /><el-option label="已禁用" value="disabled" /></el-select></el-form-item></el-form><template #footer><el-button :disabled="savingAccount" @click="accountDialogOpen = false">取消</el-button><el-button type="primary"  :loading="savingAccount" @click="saveAccount">保存账号</el-button></template></el-dialog>
   </GeoWorkbenchPage>
 </template>
 
