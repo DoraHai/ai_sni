@@ -6,6 +6,8 @@
 
 `scripts/render_seo_workbench_example.py` 是可执行的离线示例。它读取纯合成 fixture，调用正式适配器，并输出客户可读 JSON。它不是线上 API，也不是第二套状态适配器。
 
+`frontend/src/utils/seoWorkbenchDisplay.js` 只消费上述适配结果，将发布、页面检查和搜索表现转成三个独立展示区块。它不读取接口、不触发任务，也不根据发布地址、尝试结果或其他指标补出结论。数据未提供时返回 `null`/“—”；只有明确返回的数值 `0` 才展示为零。
+
 ```powershell
 python scripts/render_seo_workbench_example.py `
   --input tests/fixtures/seo_phase1_workbench.json `
