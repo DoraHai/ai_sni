@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +27,7 @@ from app.models import (
 )
 from app.security.auth import AuthContext, require_scoped_auth
 from app.security.crypto import decrypt
+from app.sem_cockpit_readonly import read_report, validate_query
 
 logger = logging.getLogger(__name__)
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
@@ -40,6 +41,22 @@ router = APIRouter(
 # 百度报告 device 落库为 int（见 sync._device_to_int）：0=计算机 1=移动设备
 # 文档 0299 新版口径，与旧版数字不一致；返回中文 value 在同步层已转 int
 DEVICE_LABELS = {0: "PC", 1: "移动"}
+
+
+@router.get("/cockpit")
+async def cockpit_report(
+    request: Request,
+    tenant_id: int = Query(..., gt=0),
+    start_date: date = Query(...),
+    end_date: date = Query(...),
+    baidu_account_id: int | None = Query(None, gt=0),
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict:
+    """工作台关键词报告只读聚合；缺报不补零，不查询实时账户。"""
+    ctx.ensure_tenant(tenant_id)
+    validate_query(request.query_params, {"tenant_id", "start_date", "end_date", "baidu_account_id"})
+    return await read_report(session, tenant_id, start_date, end_date, baidu_account_id)
 
 
 def _f(v: Any) -> float:
