@@ -2705,6 +2705,7 @@ button { color: inherit; }
 </style>
 
 <style scoped src="./report-shell-layout.css"></style>
+<style scoped src="./report-motion.css"></style>
 
 <style>
 @media print {

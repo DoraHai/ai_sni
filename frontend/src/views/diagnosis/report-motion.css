@@ -1,0 +1,71 @@
+/* Presentation only: no timers, score interpolation or request lifecycle changes. */
+@media screen {
+  .diagnosis-center .overview-screen > .ai-conclusion-card {
+    position:relative;
+    isolation:isolate;
+    border-color:#d5c8e9;
+    box-shadow:0 12px 36px #3824570d, inset 0 1px 0 #fff;
+  }
+  .diagnosis-center .overview-screen > .ai-conclusion-card::before {
+    content:"";
+    position:absolute;
+    z-index:-1;
+    pointer-events:none;
+    inset:-25%;
+    background:
+      radial-gradient(ellipse at 80% 20%,#b9a1e72b,transparent 45%),
+      radial-gradient(ellipse at 20% 90%,#99dcd22b,transparent 42%);
+    transform:translateX(3%);
+  }
+}
+@media screen and (prefers-reduced-motion: no-preference) {
+  .diagnosis-center .overview-screen > .ai-conclusion-card::before {
+    animation:report-light-drift 4800ms ease-out backwards;
+  }
+  .diagnosis-center .overview-screen .readiness-progress {
+    animation:report-ring-draw 1100ms cubic-bezier(.22,1,.36,1) 180ms backwards;
+  }
+  .diagnosis-center .overview-screen .conclusion-findings > article {
+    animation:report-finding-enter 480ms cubic-bezier(.22,1,.36,1) 240ms backwards;
+  }
+  .diagnosis-center .overview-screen .conclusion-findings > article:nth-child(2) { animation-delay:340ms; }
+  .diagnosis-center .overview-screen .conclusion-findings > article:nth-child(3) { animation-delay:440ms; }
+  .diagnosis-center .overview-screen > .flow-stage-heading {
+    animation:report-enter 320ms ease-out both;
+  }
+  .diagnosis-center .overview-screen > .ai-conclusion-card {
+    animation:report-enter 420ms cubic-bezier(.22,1,.36,1) 60ms both;
+  }
+  .diagnosis-center .overview-dashboard {
+    animation:report-enter 420ms cubic-bezier(.22,1,.36,1) 120ms both;
+  }
+  .diagnosis-center .conclusion-findings > article {
+    transition:transform 180ms ease-out, border-color 180ms ease-out;
+  }
+  .diagnosis-center .diagnosis-content button:not(:disabled) {
+    transition:transform 150ms ease-out, background-color 150ms ease-out, border-color 150ms ease-out;
+  }
+  .diagnosis-center .diagnosis-content button:not(:disabled):active {
+    transform:translateY(1px);
+  }
+}
+@media screen and (prefers-reduced-motion: no-preference) and (hover:hover) and (pointer:fine) {
+  .diagnosis-center .conclusion-findings > article:hover {
+    transform:translateY(-2px);
+  }
+}
+@keyframes report-enter {
+  from { opacity:0; transform:translateY(8px); }
+  to { opacity:1; transform:translateY(0); }
+}
+@keyframes report-ring-draw {
+  from { stroke-dasharray:0 490; }
+}
+@keyframes report-finding-enter {
+  from { opacity:0; transform:translateY(14px); }
+  to { opacity:1; transform:translateY(0); }
+}
+@keyframes report-light-drift {
+  from { opacity:.2; transform:translateX(-10%) scale(.94); }
+  to { opacity:1; transform:translateX(3%) scale(1); }
+}

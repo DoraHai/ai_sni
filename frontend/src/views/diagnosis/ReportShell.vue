@@ -137,6 +137,19 @@ summary::-webkit-details-marker { display:none; }
 .rs-tabs a.active { color:var(--rs-purple); border-bottom-color:var(--rs-purple); font-weight:650; }
 .rs-mobile { display:none; }
 .rs-print-url { display:none; overflow-wrap:anywhere; }
+@media screen and (prefers-reduced-motion: no-preference) {
+  .rs-tools > button, .rs-menu > summary {
+    transition:background-color 160ms ease-out, transform 160ms ease-out;
+  }
+  .rs-tools > button:not(:disabled):active, .rs-menu > summary:active {
+    transform:translateY(1px);
+  }
+  .rs-menu[open] .rs-menu-panel { animation:rs-menu-enter 160ms ease-out; }
+}
+@keyframes rs-menu-enter {
+  from { opacity:0; transform:translateY(-4px); }
+  to { opacity:1; transform:translateY(0); }
+}
 /* Keep report identity for export and headings for settings, not the report screen. */
 @media screen {
   .rs-report-identity, .rs-tabs { display:none; }
