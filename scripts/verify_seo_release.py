@@ -11,6 +11,9 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "app/seo_qa_documents.py",
+    "tests/test_seo_qa_documents.py",
+    "requirements.txt",
     "app/models/seo_qa.py",
     "app/api/seo_qa.py",
     "app/seo_qa.py",

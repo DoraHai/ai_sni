@@ -505,3 +505,8 @@ export const analyzeSeoQaSemantic = payload => requestSeoAi('/api/v1/seo/qa/plan
 
 export const extractSeoQaDocument = payload => requestSeoAi('/api/v1/seo/qa/research/extract',payload)
 export const analyzeSeoQaQuality = payload => requestSeoAi('/api/v1/seo/qa/research/quality',payload)
+
+export const previewSeoQaFile = (params,file) => {
+  const data=new FormData();data.append("file",file)
+  return client.post("/api/v1/seo/qa/research/file-preview",data,{params,timeout:35000})
+}

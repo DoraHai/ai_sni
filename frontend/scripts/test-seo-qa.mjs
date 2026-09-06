@@ -342,7 +342,7 @@ async function mountResearch(api={},options={}) {
   const source=await readFile(new URL('../src/views/seo/SeoQaResearch.vue',import.meta.url),'utf8')
   const compiled=compileScript(parse(source).descriptor,{id:'research',genDefaultAs:'component'}).content
   const props=Vue.reactive({tenantId:1,siteId:10,canEdit:true,mode:'extract',answerId:7,contentVersion:2,questionVersion:3,blocked:false,...options}),writes=[]
-  const bindings={...Vue,seoQaGet:async()=>({items:[]}),seoQaPost:async(...args)=>{writes.push(args);return {accepted:{0:{question_id:4,fact_id:5}}}},extractSeoQaDocument:async()=>({action:'qa_extract',operation_id:'extract-op',candidates:[{index:0,question:'如何使用',quote:'使用前先确认条件'}],accepted:{}}),analyzeSeoQaQuality:async()=>({action:'qa_quality',answer_id:7,content_version:2,question_version:3,issues:[]}),...api}
+  const bindings={...Vue,previewSeoQaFile:async()=>({text:'解析原文'.repeat(10),warnings:['请核对']}),seoQaGet:async()=>({items:[]}),seoQaPost:async(...args)=>{writes.push(args);return {accepted:{0:{question_id:4,fact_id:5}}}},extractSeoQaDocument:async()=>({action:'qa_extract',operation_id:'extract-op',candidates:[{index:0,question:'如何使用',quote:'使用前先确认条件'}],accepted:{}}),analyzeSeoQaQuality:async()=>({action:'qa_quality',answer_id:7,content_version:2,question_version:3,issues:[]}),...api}
   const names=Object.keys(bindings).filter(k=>/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k))
   const component=new Function('b',`const {${names.join(',')}}=b;${compiled.replace(/^import .* from .*$/gm,'')};return component`)(bindings)
   component.render=()=>null
@@ -368,4 +368,17 @@ test('quality suggestions become historical when saved version changes',async()=
 test('research recovery refuses another answer or operation kind',async()=>{
   const m=await mountResearch({seoQaGet:async()=>({action:'qa_extract',answer_id:8})},{mode:'quality'})
   try{await m.state.recover({id:'other',has_result:true});assert.equal(m.state.result,null);assert.ok(m.state.error)}finally{m.app.unmount()}
+})
+
+test('file preview only parses, resets source provenance and never calls AI',async()=>{
+  let charged=0;const m=await mountResearch({extractSeoQaDocument:async()=>{charged++}})
+  try{m.state.source.source_url='https://old.example';await m.state.readText({target:{files:[{name:'手册.docx',size:123}],value:'x'}});assert.equal(m.state.source.source_name,'手册.docx');assert.equal(m.state.source.source_url,'');assert.ok(m.state.source.text);assert.equal(charged,0);assert.deepEqual([...m.state.fileWarnings],['请核对']);assert.equal(m.writes.length,0)}finally{m.app.unmount()}
+})
+test('late file preview cannot populate another site',async()=>{
+  let resolve;const m=await mountResearch({previewSeoQaFile:()=>new Promise(r=>{resolve=r})})
+  try{const work=m.state.readText({target:{files:[{name:'手册.pdf',size:123}]}});m.props.siteId=20;await flush();resolve({text:'旧站点资料',warnings:[]});await work;assert.equal(m.state.source.text,'')}finally{m.app.unmount()}
+})
+test('oversize and read-only file selection never upload',async()=>{
+  let count=0;const m=await mountResearch({previewSeoQaFile:async()=>{count++}})
+  try{await m.state.readText({target:{files:[{name:'大.pdf',size:6*1024*1024}]}});assert.ok(m.state.error);m.props.canEdit=false;await flush();await m.state.readText({target:{files:[{name:'手册.pdf',size:1}]}});assert.equal(count,0)}finally{m.app.unmount()}
 })
