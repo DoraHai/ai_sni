@@ -1,0 +1,53 @@
+name: GEO production questions verify-only
+
+on:
+  push:
+    branches:
+      - codex/production-geo-questions-verify
+
+permissions:
+  contents: read
+
+jobs:
+  verify-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: geo_ci
+          POSTGRES_PASSWORD: geo_ci_test
+          POSTGRES_DB: geo_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U geo_ci -d geo_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt pytest
+      - name: Run production GEO checks with disposable PostgreSQL
+        env:
+          GEO_TEST_POSTGRES_URL: postgresql+asyncpg://geo_ci:geo_ci_test@127.0.0.1:5432/geo_ci
+        shell: bash
+        run: |
+          set +e
+          python ops/run_geo_checks.py --postgres 2>&1 | tee "$RUNNER_TEMP/geo-verify.log"
+          test_status=${PIPESTATUS[0]}
+          if [[ "$test_status" -ne 0 ]]; then
+            failure_tail="$(tail -n 40 "$RUNNER_TEMP/geo-verify.log")"
+            failure_tail="${failure_tail//'%'/'%25'}"
+            failure_tail="${failure_tail//$'\r'/'%0D'}"
+            failure_tail="${failure_tail//$'\n'/'%0A'}"
+            echo "::error title=GEO production candidate verification failed::$failure_tail"
+          fi
+          exit "$test_status"
