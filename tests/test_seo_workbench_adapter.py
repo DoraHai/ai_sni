@@ -63,7 +63,7 @@ def test_review_publication_and_page_states_stay_independent():
     }
     assert approved["publication_summary"]["record_count"] == 0
     assert approved["page_evidence"]["check_state"] == "not_checked"
-    assert approved["page_evidence"]["passed"] is False
+    assert approved["page_evidence"]["passed"] is None
 
     mixed = adapt("multi_platform_mixed")
     assert mixed["publication_summary"] == {
@@ -81,7 +81,7 @@ def test_review_publication_and_page_states_stay_independent():
         ("missing_url", (), "missing_url"),
         ("unmapped_url", (), "unmapped"),
         ("ambiguous_url", (93001, 93002), "ambiguous"),
-        ("matched_not_checked", (), "matched"),
+        ("matched_not_checked", (), "source_page_only"),
     ],
 )
 def test_page_mapping_requires_explicit_evidence(name, candidates, expected):
@@ -96,10 +96,24 @@ def test_page_mapping_requires_explicit_evidence(name, candidates, expected):
 
 
 def test_latest_failed_snapshot_is_current_and_old_success_is_not_reused():
-    result = adapt("latest_failed_old_success")
+    raw = deepcopy(scenario("latest_failed_old_success")["raw"])
+    page_url = raw["page_detail"]["page"]["url"]
+    raw["content"]["page_url"] = page_url
+    result = adapt_seo_workbench_item(
+        raw,
+        expected_context=CONTEXT,
+        response_context=CONTEXT,
+        page_binding={
+            "tenant_id": 99001,
+            "site_id": 99002,
+            "page_id": 93001,
+            "target_kind": "content_page_url",
+            "page_url": page_url,
+        },
+    )
     evidence = result["page_evidence"]
     assert evidence["check_state"] == "unavailable"
-    assert evidence["passed"] is False
+    assert evidence["passed"] is None
     assert evidence["latest_snapshot_id"] == 94002
     assert evidence["http_status"] is None
     assert evidence["failure"] == "虚构超时"
@@ -201,6 +215,7 @@ def test_publication_failure_and_latest_attempt_are_not_conflated():
         {"publications": ["invalid"]},
         {"publications": [{"id": 1, "tenant_id": "invalid", "content_id": 91001}]},
         {"page_detail": "invalid"},
+        {"page_detail": {"page": "invalid"}},
     ],
 )
 def test_malformed_scoped_rows_fail_closed(overrides):
@@ -220,6 +235,112 @@ def test_fractional_scope_id_is_not_truncated_into_current_tenant():
     raw["content"]["tenant_id"] = 99001.5
     with pytest.raises(WorkbenchPayloadError):
         adapt_seo_workbench_item(raw, expected_context=CONTEXT, response_context=CONTEXT)
+
+
+@pytest.mark.parametrize("bad_content_id", [91001.9, True])
+def test_publication_content_id_uses_strict_integer_validation(bad_content_id):
+    raw = deepcopy(scenario("multi_platform_mixed")["raw"])
+    raw["publications"][0]["content_id"] = bad_content_id
+    with pytest.raises(WorkbenchPayloadError):
+        adapt_seo_workbench_item(raw, expected_context=CONTEXT, response_context=CONTEXT)
+
+
+@pytest.mark.parametrize(
+    ("submitted_by", "reviewed_by", "independent"),
+    [(1, "1", False), (1, "2", True), (True, 2, False), (None, 2, False)],
+)
+def test_review_actor_ids_are_normalized_before_independence_check(
+    submitted_by, reviewed_by, independent
+):
+    raw = deepcopy(scenario("approved_unpublished")["raw"])
+    raw["content"]["review_submitted_by"] = submitted_by
+    raw["content"]["reviewed_by"] = reviewed_by
+    result = adapt_seo_workbench_item(raw, expected_context=CONTEXT, response_context=CONTEXT)
+    assert result["review"]["independent"] is independent
+
+
+def test_assessed_without_explicit_pass_basis_remains_unknown():
+    raw = deepcopy(scenario("matched_not_checked")["raw"])
+    page_url = raw["page_detail"]["page"]["url"]
+    raw["content"]["page_url"] = page_url
+    raw["page_detail"]["page"]["diagnostic"].update(
+        assessment_state="assessed", checked_at="2026-09-06T08:00:00Z", http_status=200
+    )
+    result = adapt_seo_workbench_item(
+        raw,
+        expected_context=CONTEXT,
+        response_context=CONTEXT,
+        page_binding={
+            "tenant_id": 99001,
+            "site_id": 99002,
+            "page_id": 93001,
+            "target_kind": "content_page_url",
+            "page_url": page_url,
+        },
+    )
+    assert result["page_evidence"]["check_state"] == "assessed"
+    assert result["page_evidence"]["passed"] is None
+
+
+def test_source_page_detail_is_not_used_as_publication_page_evidence():
+    result = adapt("latest_failed_old_success")
+    assert result["page_evidence"] == {
+        "mapping_state": "source_page_only",
+        "page_id": None,
+        "candidate_count": 0,
+        "check_state": "not_checked",
+        "checked_at": None,
+        "latest_snapshot_id": None,
+        "http_status": None,
+        "failure": None,
+        "passed": None,
+    }
+
+
+def test_platform_page_check_requires_an_explicit_publication_binding():
+    raw = deepcopy(scenario("multi_platform_mixed")["raw"])
+    page_url = raw["publications"][0]["page_url"]
+    raw["page_detail"] = {
+        "page": {
+            "id": 93001,
+            "tenant_id": 99001,
+            "site_id": 99002,
+            "url": page_url,
+            "diagnostic": {
+                "assessment_state": "assessed",
+                "checked_at": "2026-09-06T08:00:00Z",
+                "http_status": 200,
+            },
+        },
+        "latest_snapshot": {"id": 94003, "status_code": 200, "fetch_error": None},
+    }
+    binding = {
+        "tenant_id": 99001,
+        "site_id": 99002,
+        "page_id": 93001,
+        "target_kind": "publication_page_url",
+        "publication_id": 92001,
+        "page_url": page_url,
+    }
+    result = adapt_seo_workbench_item(
+        raw,
+        expected_context=CONTEXT,
+        response_context=CONTEXT,
+        page_binding=binding,
+    )
+    assert result["page_evidence"]["mapping_state"] == "matched"
+    assert result["page_evidence"]["check_state"] == "assessed"
+    assert result["page_evidence"]["passed"] is None
+
+    bad = deepcopy(binding)
+    bad["page_url"] = "https://example.com/different"
+    with pytest.raises(WorkbenchPayloadError):
+        adapt_seo_workbench_item(
+            raw,
+            expected_context=CONTEXT,
+            response_context=CONTEXT,
+            page_binding=bad,
+        )
 
 
 def test_attempt_order_normalizes_timezone_offsets():

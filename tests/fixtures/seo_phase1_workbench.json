@@ -253,9 +253,10 @@
         }
       },
       "expected_workbench": {
-        "mapping_state": "matched",
+        "mapping_state": "source_page_only",
         "check_state": "not_checked",
-        "not_passed": true
+        "page_passed": null,
+        "source_page_is_not_publication_binding": true
       }
     },
     {
@@ -309,9 +310,11 @@
         }
       },
       "expected_workbench": {
-        "mapping_state": "matched",
-        "check_state": "unavailable",
-        "must_not_use_previous_as_current": true
+        "mapping_state": "source_page_only",
+        "check_state": "not_checked",
+        "page_passed": null,
+        "source_page_is_not_publication_binding": true,
+        "source_page_snapshots_are_not_publication_evidence": true
       }
     },
     {
