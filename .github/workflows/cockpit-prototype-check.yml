@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - 'cockpit/prototype/**'
+      - 'integrations/sem-cockpit/display.mjs'
       - '.github/workflows/cockpit-prototype-check.yml'
   push:
     branches: [main]
     paths:
       - 'cockpit/prototype/**'
+      - 'integrations/sem-cockpit/display.mjs'
       - '.github/workflows/cockpit-prototype-check.yml'
 
 permissions:
@@ -37,3 +39,5 @@ jobs:
         run: node cockpit/prototype/demo-finish.test.cjs
       - name: Check customer module combinations
         run: node --test cockpit/prototype/module-scope.test.mjs
+      - name: Check SEM evidence display copy and scenarios
+        run: node --test cockpit/prototype/sem-evidence-preview.test.mjs
