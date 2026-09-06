@@ -5,7 +5,7 @@ import hashlib
 import asyncio
 from datetime import date, datetime, timezone, timedelta
 from typing import Literal, Annotated
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator, model_validator, ValidationError, StringConstraints
 from sqlalchemy import select, func
 from sqlalchemy.dialects.postgresql import insert
@@ -20,6 +20,26 @@ from app.seo_qa import (PLATFORMS, fingerprint, public_url, platform_url, parse_
 router = APIRouter(prefix='/qa', tags=['SEO questions'])
 Auth = Depends(require_scoped_auth)
 Db = Depends(get_session)
+
+
+@router.post('/research/file-preview')
+async def preview_research_file(tenant_id: PositiveInt, site_id: PositiveInt,
+                                file: UploadFile = File(...), session=Db, ctx=Auth):
+    from app.seo_qa_documents import MAX_BYTES, preview_document
+    try:
+        await access(session, ctx, tenant_id, site_id, write=True)
+        kind = (file.filename or '').rsplit('.', 1)[-1].lower()
+        if kind not in {'pdf', 'docx'}:
+            raise HTTPException(422, '仅支持 PDF 或 DOCX；旧版 DOC 请另存为 DOCX')
+        data = await file.read(MAX_BYTES + 1)
+        if len(data) > MAX_BYTES:
+            raise HTTPException(413, '文件不能超过 5MB')
+        try:
+            return await preview_document(data, kind)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+    finally:
+        await file.close()
 
 
 class Scoped(BaseModel):

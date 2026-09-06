@@ -1,10 +1,10 @@
 <script setup>
 import { computed, reactive, ref, watch, onBeforeUnmount } from 'vue'
-import { seoQaGet, seoQaPost, extractSeoQaDocument, analyzeSeoQaQuality } from '../../api/seo'
+import { seoQaGet, seoQaPost, extractSeoQaDocument, analyzeSeoQaQuality, previewSeoQaFile } from '../../api/seo'
 const props=defineProps({tenantId:Number,siteId:Number,canEdit:Boolean,mode:{type:String,default:'extract'},answerId:Number,contentVersion:Number,questionVersion:Number,blocked:Boolean})
 const emit=defineEmits(['changed'])
 const source=reactive({source_name:'',source_url:'',text:''})
-const result=ref(null),history=ref([]),chosen=ref([]),busy=ref(false),reading=ref(false),error=ref('')
+const result=ref(null),history=ref([]),chosen=ref([]),busy=ref(false),reading=ref(false),error=ref(''), fileWarnings=ref([])
 const scopeKey=computed(()=>`${props.tenantId}:${props.siteId}:${props.mode}:${props.answerId||''}`)
 const current=computed(()=>props.mode==='extract'||(result.value?.current!==false&&result.value?.answer_id===props.answerId&&result.value?.content_version===props.contentVersion&&result.value?.question_version===props.questionVersion&&!props.blocked))
 const issueLabels={missing_answer:'问题覆盖不足',missing_condition:'适用条件不全',unsupported_claim:'引用支持不足',contradiction:'可能与资料矛盾'}
@@ -47,14 +47,20 @@ async function readText(event){
   if(!file||!props.canEdit||busy.value||reading.value)return
   const ticket=generation,key=scopeKey.value;reading.value=true;error.value=''
   try{
-    if(!/\.(txt|md)$/i.test(file.name)||file.size>120000)throw new Error('请选择 120KB 以内的 UTF-8 TXT 或 Markdown 文件')
-    const text=(await file.text()).replace(/^\uFEFF/,'')
+    let text,warnings=[]
+    if(/\.(pdf|docx)$/i.test(file.name)){
+      if(file.size>5*1024*1024)throw new Error('PDF / DOCX 文件不能超过 5MB')
+      const value=await previewSeoQaFile(params(),file);text=value.text;warnings=value.warnings||[]
+    }else{
+      if(!/\.(txt|md)$/i.test(file.name)||file.size>120000)throw new Error('请选择 5MB 以内 PDF/DOCX，或 120KB 以内 UTF-8 TXT/Markdown')
+      text=(await file.text()).replace(/^\uFEFF/,'')
+    }
     if(text.includes('\uFFFD')||text.includes('\u0000'))throw new Error('无法按 UTF-8 文本读取，请转换编码后重试')
     if(text.length>30000)throw new Error('原文最多 3 万字，请按章节拆分')
-    if(ticket===generation&&key===scopeKey.value){source.text=text;if(!source.source_name)source.source_name=file.name}
+    if(ticket===generation&&key===scopeKey.value){source.text=text;source.source_name=file.name.slice(0,240);source.source_url='';fileWarnings.value=warnings}
   }catch(e){if(ticket===generation&&key===scopeKey.value)error.value=message(e)}finally{reading.value=false}
 }
-watch(scopeKey,()=>{++generation;result.value=null;history.value=[];chosen.value=[];error.value='';Object.assign(source,{source_name:'',source_url:'',text:''})})
+watch(scopeKey,()=>{++generation;result.value=null;history.value=[];chosen.value=[];error.value='';fileWarnings.value=[];Object.assign(source,{source_name:'',source_url:'',text:''})})
 watch(()=>[source.text,source.source_name,source.source_url],()=>{result.value=null;chosen.value=[]})
 onBeforeUnmount(()=>{++generation})
 </script>
@@ -67,8 +73,11 @@ onBeforeUnmount(()=>{++generation})
       <el-form label-position="top" :disabled="!canEdit||busy||reading">
         <el-form-item label="资料名称"><el-input v-model="source.source_name" maxlength="240" placeholder="例如：产品手册 v2 · 使用条件章节"/></el-form-item>
         <el-form-item label="原文网址（可选）"><el-input v-model="source.source_url" maxlength="2000"/></el-form-item>
-        <el-form-item label="资料原文"><input type="file" accept=".txt,.md,text/plain,text/markdown" :disabled="!canEdit||busy||reading" @change="readText"/><el-input v-model="source.text" type="textarea" :rows="8" maxlength="30000" show-word-limit placeholder="粘贴产品手册或官网原文，保留条件、单位及出处。也可读取 UTF-8 TXT/Markdown；本批不解析 PDF、Word 或扫描件。"/></el-form-item>
+        <el-form-item label="资料原文"><input type="file" accept=".txt,.md,.pdf,.docx" :disabled="!canEdit||busy||reading" @change="readText"/><el-input v-model="source.text" type="textarea" :rows="8" maxlength="30000" show-word-limit placeholder="粘贴产品手册或官网原文，保留条件、单位及出处。支持 PDF、DOCX、UTF-8 TXT/Markdown。请先核对解析原文，再点击提取候选；扫描件需先 OCR。"/></el-form-item>
       </el-form>
+      <p class="research-note">读取文件不消耗 AI 用量。PDF/DOCX 会上传到服务器临时解析，不保存原文件；最多 5MB、PDF 100 页、原文 3 万字。</p>
+      <p v-if="reading">正在解析文件，请稍候…</p>
+      <p v-for="warning in fileWarnings" :key="warning" class="research-warning">{{ warning }}</p>
     </template>
     <p v-else class="research-note">检查问题遗漏、适用条件、断言与引用支持关系。仅分析已保存版本；正文最多 2 万字，引用原文合计最多 3 万字。</p>
     <p v-if="blocked" class="research-warning">请先保存修改并修复事实关联，再分析当前版本。</p>
