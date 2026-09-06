@@ -105,8 +105,8 @@ async function materialize() {
   busy.value = 'materialize'
   try {
     const id = await ensureAuditId()
-    await materializeGeoAuditTickets(tenantId.value, id, false)
-    ElMessage.success('已从诊断生成工单')
+    const result = await materializeGeoAuditTickets(tenantId.value, id, false)
+    ElMessage.success(`新增 ${result.created || 0} 个工单，关联已有 ${result.merged || 0} 个`)
     await load()
   } catch (e) {
     ElMessage.error(e.message || '生成失败')
@@ -148,7 +148,7 @@ async function verifyOne(row, recrawl = true) {
 async function manualPass(row, pass) {
   const owner = tenantId.value
   let verification_note
-  if (row.advice_code?.startsWith('workqueue:v1:')) {
+  if (row.advice_code?.startsWith('workqueue:v1:') || row.advice_code?.startsWith('review:v1:')) {
     try {
       const result = await ElMessageBox.prompt('请填写执行结果与核验依据', pass ? '人工验收通过' : '记录未达标', {
         inputType: 'textarea', inputValidator: (value) => !!value?.trim() && value.trim().length <= 4000 || '请填写 1–4000 字的核验记录',
@@ -306,11 +306,12 @@ onMounted(load)
                   link
                   type="primary"
                   :loading="busy === `verify-${row.id}`"
-                  v-if="!row.advice_code?.startsWith('workqueue:v1:')"
+                  v-if="!['workqueue:v1:', 'monitor:v1:', 'review:v1:'].some(prefix => row.advice_code?.startsWith(prefix))"
                   @click="verifyOne(row, true)"
                 >重抓验收</el-button>
-                <el-button link :loading="busy === `manual-${row.id}`" @click="manualPass(row, true)">通过</el-button>
-                <el-button link :loading="busy === `manual-${row.id}`" @click="manualPass(row, false)">驳回</el-button>
+                <router-link v-if="row.advice_code?.startsWith('monitor:v1:')" :to="`/geo/tasks/${row.content_task_id}/distribution`">检查发布页</router-link>
+                <el-button v-if="!row.advice_code?.startsWith('monitor:v1:')" link :loading="busy === `manual-${row.id}`" @click="manualPass(row, true)">通过</el-button>
+                <el-button v-if="!row.advice_code?.startsWith('monitor:v1:')" link :loading="busy === `manual-${row.id}`" @click="manualPass(row, false)">驳回</el-button>
               </template>
             </el-table-column>
           </el-table>

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.deepseek import is_enabled as ai_enabled
 from app.database import get_session
 from app.geo.audit import GeoAuditError, audit_url
+from app.geo.diagnosis_merge import audit_ticket_filter
 from app.geo.generate import ai_advice, generate_json_ld, generate_llms_text
 from app.geo.tenant_scope import list_geo_tenants_for_auth
 from app.geo.verify import (
@@ -345,6 +346,9 @@ async def _ticket_for_tenant(
 
 async def _work_ticket_for_update(session: AsyncSession, ticket_id: int, tenant_id: int) -> GeoActionTicket:
     row = await _ticket_for_tenant(session, ticket_id, tenant_id)
+    if (row.advice_code or '').startswith(('monitor:v1:', 'review:v1:')):
+        await session.refresh(row, with_for_update=True)
+        return row
     if not (row.advice_code or '').startswith('workqueue:v1:'):
         return row
     # Same lock order as creation. Reload after waiting so history is not based
@@ -681,53 +685,44 @@ async def materialize_tickets(
 ) -> dict:
     """从诊断 advice / 失败 findings 生成验收工单。"""
     ctx.ensure_tenant(tenant_id)
+    from app.geo.diagnosis_merge import page_identity, link_diagnosis
+    # Different audits of the same tenant must share the same serialization lock.
+    await session.execute(select(Tenant.id).where(Tenant.id == tenant_id).with_for_update())
     run = await _run_for_tenant(session, audit_id, tenant_id)
-    # Serialize generation for the same diagnosis before reading existing tickets.
     await session.refresh(run, with_for_update=True)
     specs = materialize_ticket_specs(advice=run.advice, findings=run.findings or [])
     if not specs:
-        return {"created": 0, "items": [], "audit_id": audit_id}
-
-    existing = (
-        await session.scalars(
-            select(GeoActionTicket).where(
-                GeoActionTicket.tenant_id == tenant_id,
-                GeoActionTicket.audit_id == audit_id,
-            )
-        )
-    ).all()
-    existing_codes = {t.advice_code for t in existing if t.advice_code}
-    if replace_open:
-        for t in existing:
-            if t.status in {"todo", "doing", "reopened", "blocked"}:
-                await session.delete(t)
-                if t.advice_code:
-                    existing_codes.discard(t.advice_code)
-        await session.flush()
-
-    created: list[GeoActionTicket] = []
+        return {"created": 0, "merged": 0, "items": [], "audit_id": audit_id}
+    page = page_identity(run.final_url or run.url)
+    candidates = (await session.execute(
+        select(GeoActionTicket, GeoAuditRun).join(GeoAuditRun, GeoAuditRun.id == GeoActionTicket.audit_id)
+        .where(GeoActionTicket.tenant_id == tenant_id, GeoAuditRun.tenant_id == tenant_id,
+               GeoActionTicket.advice_code.in_([s.get('advice_code') for s in specs]))
+        .order_by(GeoActionTicket.id).with_for_update(of=GeoActionTicket)
+    )).all()
+    created, merged = [], []
     for spec in specs:
-        code = spec.get("advice_code")
-        if code and code in existing_codes:
+        code = spec.get('advice_code')
+        same = next((t for t, audit in candidates if t.advice_code == code and (
+            t.audit_id == audit_id or audit_id in ((t.baseline_snapshot or {}).get('diagnosis_ids') or []) or (page and t.status in {'todo', 'doing', 'reopened', 'blocked'}
+                and page_identity(audit.final_url or audit.url) == page))), None)
+        if same is not None:
+            # replace_open now safely reuses work: never delete assignments or evidence.
+            link_diagnosis(same, audit_id)
+            if same not in merged:
+                merged.append(same)
             continue
-        row = GeoActionTicket(
-            tenant_id=tenant_id,
-            audit_id=audit_id,
-            created_by=getattr(ctx, "user_id", None),
-            **spec,
-        )
+        row = GeoActionTicket(tenant_id=tenant_id, audit_id=audit_id,
+                              created_by=getattr(ctx, 'user_id', None), **spec)
+        link_diagnosis(row, audit_id)
         session.add(row)
         created.append(row)
-        if code:
-            existing_codes.add(code)
+        candidates.append((row, run))
     await session.commit()
-    for row in created:
+    for row in created + merged:
         await session.refresh(row)
-    return {
-        "audit_id": audit_id,
-        "created": len(created),
-        "items": [ticket_public_dict(r) for r in created],
-    }
+    return {'audit_id': audit_id, 'created': len(created), 'merged': len(merged),
+            'items': [ticket_public_dict(r) for r in created + merged]}
 
 
 @router.post("/audits/{audit_id}/verify")
@@ -775,7 +770,7 @@ async def verify_audit_tickets(
         await session.scalars(
             select(GeoActionTicket).where(
                 GeoActionTicket.tenant_id == tenant_id,
-                GeoActionTicket.audit_id == audit_id,
+                audit_ticket_filter(GeoActionTicket, audit_id),
                 GeoActionTicket.status.in_(
                     ["todo", "doing", "done", "reopened", "blocked"]
                 ),
@@ -844,7 +839,7 @@ async def list_action_tickets(
     if status:
         stmt = stmt.where(GeoActionTicket.status == status)
     if audit_id is not None:
-        stmt = stmt.where(GeoActionTicket.audit_id == audit_id)
+        stmt = stmt.where(audit_ticket_filter(GeoActionTicket, audit_id))
     stmt = stmt.order_by(GeoActionTicket.id.desc())
     rows = (await session.scalars(stmt)).all()
     return {"items": [ticket_public_dict(r) for r in rows], "total": len(rows)}
@@ -858,6 +853,8 @@ async def create_action_ticket(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
+    if (req.advice_code or "").startswith(("monitor:v1:", "review:v1:")):
+        raise HTTPException(400, "系统监测工单不可手工创建")
     if (req.advice_code or "").startswith("cockpit:v1:"):
         raise HTTPException(400, "统一任务请通过 integration/tasks 创建")
     if (req.advice_code or '').startswith('workqueue:v1:'):
@@ -916,9 +913,17 @@ async def patch_action_ticket(
     if (row.advice_code or '').startswith('cockpit:v1:'):
         raise HTTPException(409, '统一任务请使用 integration/tasks 接口核验真实指标')
     data = req.model_dump(exclude_unset=True)
+    if (row.advice_code or '').startswith('monitor:v1:'):
+        if set(data) - {'owner_name', 'due_date', 'status', 'operation_note'} or ('status' in data and data['status'] not in {'todo', 'doing', 'blocked'}):
+            raise HTTPException(409, '发布异常工单须在分发页重新抓取确认恢复，仅可调整分工或处理中状态')
     manual_pass = data.pop("manual_pass", None)
     verification_note = (data.pop("verification_note", None) or '').strip()
     operation_note = (data.pop('operation_note', None) or '').strip()
+    if (row.advice_code or '').startswith('review:v1:'):
+        if any(k.startswith('acceptance_') for k in data) or (data.get('status') == 'done' and manual_pass is not True):
+            raise HTTPException(409, '请记录复盘结论和下一步行动后，通过人工验收完成复盘')
+        if manual_pass is not None and not verification_note:
+            raise HTTPException(400, '请填写复盘结论和下一步行动')
     if 'owner_name' in data:
         data['owner_name'] = (data['owner_name'] or '').strip() or None
     queue_ticket = (row.advice_code or '').startswith('workqueue:v1:')
@@ -1016,6 +1021,8 @@ async def verify_one_ticket(
     ticket = await _ticket_for_tenant(session, ticket_id, tenant_id)
     if (ticket.advice_code or '').startswith('cockpit:v1:'):
         raise HTTPException(409, '统一任务请使用 integration/tasks 接口核验真实指标')
+    if (ticket.advice_code or '').startswith('monitor:v1:'):
+        raise HTTPException(409, '请在分发页重新检查实际发布页')
     if (ticket.advice_code or '').startswith('workqueue:v1:'):
         raise HTTPException(400, '请在执行待办中填写结果并人工验收')
     media = await _media_rows(session, tenant_id)

@@ -7781,11 +7781,13 @@ async def export_variant(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
+    await session.refresh(task, with_for_update=True)
     variants = {v.channel: v for v in await _variants(session, task.id)}
     variant = variants.get(channel)
     if variant is None:
         raise HTTPException(404, f"渠道版本不存在: {channel}")
-    variant.status = "exported"
+    if variant.status != "published":
+        variant.status = "exported"
     if task.status in {"ready", "editing", "needs_fix"}:
         task.status = "exported"
     await _sync_task_pipeline(session, task)
@@ -7950,6 +7952,9 @@ async def _write_publication(
         note=note,
     )
     session.add(pub)
+    await session.flush()
+    from app.geo.publication_monitor import initial_state, store_state
+    store_state(variant, pub, {**initial_state(variant), 'baseline_source': 'publication_registration'})
     variant.status = "published"
     task.status = "published"
     await _sync_task_pipeline(session, task)
@@ -9762,3 +9767,19 @@ async def get_deliverable_archive(
         "markdown": row.markdown,
         "created_at": _iso(row.created_at),
     }
+
+
+@router.get('/content-tasks/{task_id}/publication-monitor')
+async def publication_monitor_list(task_id: int, tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session)):
+    from app.geo.publication_monitor import list_monitor
+    ctx.ensure_tenant(tenant_id)
+    return await list_monitor(session, tenant_id, task_id)
+
+
+@router.post('/content-tasks/{task_id}/publication-monitor/{publication_id}/check')
+async def publication_monitor_check(task_id: int, publication_id: int, tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session)):
+    from app.geo.publication_monitor import check_publication
+    ctx.ensure_tenant(tenant_id)
+    return await check_publication(session, tenant_id, task_id, publication_id)

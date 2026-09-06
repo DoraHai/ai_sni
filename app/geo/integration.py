@@ -210,7 +210,7 @@ async def get_task(task_id: int, tenant_id: int = Query(...), ctx=Depends(requir
     return task_payload(await ticket(session, tenant_id, task_id))
 
 
-def completion_evidence(row, current, publication_proof=None):
+def completion_evidence(row, current, publication_proof=None, *, require_target=True):
     params = row.progress_first['params']
     key = params.get('metric_key', MENTIONS)
     baseline = row.baseline_snapshot or {}
@@ -236,7 +236,7 @@ def completion_evidence(row, current, publication_proof=None):
             raise HTTPException(409, '后测周须完整位于已核实发布之后')
     delta = after['value'] - before['value']
     signed = delta if params.get('direction','increase') == 'increase' else -delta
-    if signed <= 0 or signed < params.get('min_delta', 0):
+    if require_target and (signed <= 0 or signed < params.get('min_delta', 0)):
         raise HTTPException(409, '真实指标变化尚未达到任务目标')
     return dict(metric_key=key, before=before, after=after, delta=round(delta,4),
                 before_snapshot_ids=baseline['sample_ids'], after_snapshot_ids=current['sample_ids'],
@@ -422,6 +422,7 @@ async def execution_readiness(task_id: int, tenant_id: int = Query(...),
             'retest_blocker': retest_blocker, 'can_retest': bool(plan and not terminal and not retest_blocker),
             'latest_retest': latest_retest, 'publication_candidates': publication_candidates,
             'publication_evidence': (row.progress or {}).get('publication_evidence'),
+            'outcome_review': (row.progress or {}).get('outcome_review'),
             'publishing': matrix, 'completion_evidence': (row.progress or {}).get('completion_evidence')}
 
 

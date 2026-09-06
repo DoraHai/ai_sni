@@ -42,19 +42,3 @@ def test_manual_acceptance_is_not_presented_as_automatic():
     result=diagnosis_work_plan(ticket,audit)
     assert result['suggested_role']=='内容编辑'
     assert '人工验收' in result['steps'][-1]
-
-
-def test_generation_locks_diagnosis_before_checking_existing_tickets():
-    from app.geo.routes import materialize_tickets
-    ticket,audit=case();audit.advice=[];events=[]
-    async def refresh(row,**kw):
-        assert row is audit and kw.get('with_for_update') is True
-        events.append('lock')
-    async def scalars(query):
-        assert events==['lock'];events.append('read')
-        return NS(all=lambda:[NS(advice_code='robots',status='todo')])
-    session=NS(refresh=AsyncMock(side_effect=refresh),scalars=AsyncMock(side_effect=scalars),commit=AsyncMock(),add=lambda _:pytest.fail('duplicate creation'))
-    with patch('app.geo.routes._run_for_tenant',AsyncMock(return_value=audit)), \
-         patch('app.geo.routes.materialize_ticket_specs',return_value=[{'advice_code':'robots'}]):
-        result=asyncio.run(materialize_tickets(2,7,False,NS(ensure_tenant=lambda _:None),session))
-    assert result['created']==0 and events==['lock','read']

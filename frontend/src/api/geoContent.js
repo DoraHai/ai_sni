@@ -1008,3 +1008,10 @@ export function listGeoDeliveries(taskId, tenantId) {
 export function resolveGeoDelivery(taskId, variantId, key, payload) {
   return client.post(`/api/v1/geo/content-tasks/${taskId}/deliveries/${variantId}/${key}/resolve`, payload)
 }
+
+export function listGeoPublicationMonitor(taskId, tenantId) {
+  return client.get(`/api/v1/geo/content-tasks/${taskId}/publication-monitor`, { params: { tenant_id: tenantId } })
+}
+export function checkGeoPublicationMonitor(taskId, tenantId, publicationId) {
+  return client.post(`/api/v1/geo/content-tasks/${taskId}/publication-monitor/${publicationId}/check`, null, { params: { tenant_id: tenantId } })
+}

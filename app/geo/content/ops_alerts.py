@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    GeoActionTicket,
     GeoChannelAccount,
     GeoChannelVariant,
     GeoContentTask,
@@ -84,6 +85,14 @@ async def build_ops_alerts(
                 "title": f"文章 #{variant.task_id} 有发布记录需要核对",
                 "detail": "连接失败可重试；发送中或结果未确认时，请先核对渠道后台，避免重复发布。",
                 "href": f"/geo/tasks/{variant.task_id}/distribution"})
+
+    followups = list(await session.scalars(select(GeoActionTicket).where(
+        GeoActionTicket.tenant_id == tenant_id, GeoActionTicket.status != 'done',
+        GeoActionTicket.advice_code.like('monitor:v1:%') | GeoActionTicket.advice_code.like('review:v1:%'))
+        .order_by(GeoActionTicket.id.desc()).limit(20)))
+    for work in followups:
+        alerts.append({'level': 'warning', 'code': 'geo_followup_required', 'title': work.title,
+                       'detail': work.last_note or work.action, 'href': '/geo/tickets'})
 
     # ---- patrol ----
     day_limit = int(getattr(get_settings(), "geo_patrol_max_runs_per_day", 24) or 24)

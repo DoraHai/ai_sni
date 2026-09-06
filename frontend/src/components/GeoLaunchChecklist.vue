@@ -81,6 +81,7 @@ onBeforeUnmount(() => { epoch++ })
       <p v-if="linked.length === 200">当前显示前 200 个关联任务，其余请到指标验收列表查看。</p>
       <p><b>5. 上线核验：</b>{{ currentProof ? '当前母稿已有抓取核验记录，验收时仍会重新检查' : '尚未核实当前版本上线；回填链接不等于核验通过' }} <el-button link @click="distribution">发布 / 回填 / 恢复</el-button></p>
       <p><b>6. 复测与验收：</b>{{ next ? `${next.stage}：${next.next}` : '建立验收任务后查看同题同模型复测条件' }} <el-button v-if="selected" link @click="openEvidence">处理指标验收</el-button></p>
+      <p v-if="detail?.outcome_review"><b>7. 效果复盘：</b>{{ {waiting:'待观察',needs_review:'完整周指标未达目标，已生成复盘工单',target_met:'观察指标已达到目标，仍需完成原任务验收'}[detail.outcome_review.state] }} {{ detail.outcome_review.reason || '' }} <el-button link @click="router.push('/geo/tickets')">查看复盘工单</el-button></p>
     </div>
     </div>
     <GeoCreateEvidenceTask v-if="createOpen" :tenant-id="tenantId" :content="task" @close="createOpen = false; load()" />

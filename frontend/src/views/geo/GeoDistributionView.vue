@@ -10,6 +10,7 @@ import {
   publishGeoVariant,
   pushGeoVariantWebhook,
 } from '../../api/geoContent'
+import GeoPublicationMonitor from '../../components/GeoPublicationMonitor.vue'
 import GeoDeliveryRecovery from '../../components/GeoDeliveryRecovery.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
@@ -240,6 +241,7 @@ onMounted(load)
         </div>
       </section>
       <GeoDeliveryRecovery :tenant-id="tenantId" :task-id="taskId" @resolved="load" />
+      <GeoPublicationMonitor :tenant-id="tenantId" :task-id="taskId" :revision="task?.publications?.length || 0" />
       <section class="gd-card" :class="{ focus: focusMode === 'manual' }">
         <div class="gd-hd"><h3>URL 回填</h3></div>
         <div class="actions">
