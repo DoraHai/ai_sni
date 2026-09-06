@@ -3,6 +3,16 @@
 这是交付给工作台负责人的ES模块和**虚构测试样例**，不启动网页、不提供默认网络连接。
 当前驾驶舱原型不修改。服务身份/模块资格及实际部署版本确认后才能接真实transport。
 
+身份和模块资格接线使用`authorization-context.mjs`，并与
+`../workbench/readonly-transport.mjs`组合。transport只允许审核过的SEM GET路由，使用宿主提供的
+普通用户Bearer，不使用Cookie鉴权、管理员Key或URL Key。`connect(tenantId)`依次读取
+`/api/v1/auth/me`、`/api/v1/auth/modules`、
+`/api/v1/auth/tenants?module=sem`，确认用户、SEM模块资格及客户范围后，才给只读客户端设置
+context。业务资源按现有角色权限映射：`monitor.dashboard`→report，
+`optimize.keywords`→keywords/keywordDetail，`optimize.searchterms`→searchTerms。
+生产建议与现有SEM前端部署在同一origin，由Nginx转发`/api/v1/`；跨源部署须另行核对明确的
+CORS白名单。当前transport要求显式HTTPS origin，且拒绝请求中的跨源绝对URL。
+
 ```js
 import { createSemReadonlyClient } from './readonly-client.mjs'
 

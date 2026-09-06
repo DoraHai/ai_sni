@@ -84,3 +84,20 @@ test('duplicate tenant or filter parameters cannot reach the network', async () 
   await assert.rejects(client.transport(`${route}&tenant_id=1&tenant_id=2`, { method: 'GET' }), { code: 'QUERY_DENIED' })
   await assert.rejects(client.transport(`${route}&page=1&page=2`, { method: 'GET' }), { code: 'QUERY_DENIED' })
 })
+
+test('allows only the three exact SEM authorization preflight requests', async () => {
+  const requests = []
+  const client = fixture(async url => { requests.push(url); return { ok: true, status: 200, json: async () => ({}) } })
+  for (const path of ['/api/v1/auth/me', '/api/v1/auth/modules', '/api/v1/auth/tenants?module=sem']) {
+    await client.transport(path, { method: 'GET' })
+  }
+  assert.deepEqual(requests, [
+    'https://example.invalid/api/v1/auth/me',
+    'https://example.invalid/api/v1/auth/modules',
+    'https://example.invalid/api/v1/auth/tenants?module=sem',
+  ])
+  for (const path of ['/api/v1/auth/login', '/api/v1/auth/me?tenant_id=16', '/api/v1/auth/tenants',
+    '/api/v1/auth/tenants?module=seo', '/api/v1/auth/tenants?module=sem&module=sem']) {
+    await assert.rejects(client.transport(path, { method: 'GET' }))
+  }
+})

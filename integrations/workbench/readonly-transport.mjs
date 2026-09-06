@@ -1,6 +1,9 @@
 // Network boundary only. Module clients still validate identity, permission and data.
 // The host supplies its ordinary login session; this module never logs in or stores it.
 const paths = [
+  /^\/api\/v1\/auth\/me$/,
+  /^\/api\/v1\/auth\/modules$/,
+  /^\/api\/v1\/auth\/tenants$/,
   /^\/api\/v1\/dashboard\/cockpit$/,
   /^\/api\/v1\/keywords\/cockpit$/,
   /^\/api\/v1\/keywords\/cockpit\/[1-9]\d*$/,
@@ -28,10 +31,14 @@ export function createReadonlyTransport({ origin, fetchImpl, getSession }) {
     const url = new URL(path, base)
     // Reject normalization tricks and credentials in query strings as well as unknown routes.
     if (url.origin !== origin || path.split('?')[0] !== url.pathname || !paths.some(rule => rule.test(url.pathname))) reject('ROUTE_DENIED')
-    const allowed = new Set(['tenant_id', 'start_date', 'end_date', 'baidu_account_id', 'q', 'campaign_id', 'adgroup_id', 'page', 'page_size'])
+    const authTenants = url.pathname === '/api/v1/auth/tenants'
+    const authNoQuery = url.pathname === '/api/v1/auth/me' || url.pathname === '/api/v1/auth/modules'
+    const allowed = new Set(authTenants ? ['module'] : authNoQuery ? []
+      : ['tenant_id', 'start_date', 'end_date', 'baidu_account_id', 'q', 'campaign_id', 'adgroup_id', 'page', 'page_size'])
     for (const key of url.searchParams.keys()) {
       if (!allowed.has(key) || url.searchParams.getAll(key).length !== 1) reject('QUERY_DENIED')
     }
+    if (authTenants && (url.searchParams.size !== 1 || url.searchParams.get('module') !== 'sem')) reject('QUERY_DENIED')
     const session = getSession()
     if (!session || typeof session.token !== 'string' || !session.token || /\s/.test(session.token) || !Number.isSafeInteger(session.revision)) reject('NO_SESSION')
     const revision = session.revision
