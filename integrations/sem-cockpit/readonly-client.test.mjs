@@ -5,9 +5,9 @@ import { createSemReadonlyClient } from './readonly-client.mjs'
 
 const dates = { start_date: '2026-09-01', end_date: '2026-09-03' }
 const context = { tenantId: 1, userId: 2, authorizationRevision: 'test-1', allowedReads: ['report', 'keywords', 'keywordDetail', 'searchTerms'] }
-const payload = { tenant_id: 1, module: 'sem', read_only: true, is_demo: false, contract_version: 'sem-cockpit-v1',
-  source: 'kw_report_snapshots', account_scope: { mode: 'all', baidu_account_id: null },
-  window: { start: dates.start_date, end: dates.end_date }, metrics: { cost: null } }
+const fixtures = JSON.parse(readFileSync(new URL('./examples.synthetic.json', import.meta.url), 'utf8'))
+const examples = Object.fromEntries(fixtures.examples.map(example => [example.resource, example]))
+const payload = examples.report.response
 const response = (data = payload) => ({ status: 200, ok: true, json: async () => data })
 
 test('no network until context is confirmed; only GET and whitelisted path', async () => {
@@ -16,7 +16,7 @@ test('no network until context is confirmed; only GET and whitelisted path', asy
   await assert.rejects(client.read('report', dates), { code: 'NOT_AUTHORIZED' })
   assert.equal(calls.length, 0)
   client.setContext(context)
-  assert.equal((await client.read('report', dates)).metrics.cost, null)
+  assert.equal((await client.read('report', examples.report.consumer_params)).metrics.cost, 10)
   assert.equal(calls[0][1].method, 'GET')
   assert.equal(calls[0][1].cache, 'no-store')
   assert.match(calls[0][0], /^\/api\/v1\/dashboard\/cockpit\?tenant_id=1&/)
@@ -31,15 +31,15 @@ test('all resources route without fabricated defaults or a sync call', async () 
   const calls = []
   const client = createSemReadonlyClient({ onClear() {}, transport: async (url) => {
     calls.push(url)
-    return response({ ...payload, keyword_id: 100,
-      source: url.includes('search-terms') ? 'search_term_reports' : url.includes('/100') ? 'kw_report_snapshots' : 'keywords+kw_report_snapshots',
-      account_scope: url.includes('baidu_account_id=12') ? { mode: 'single', baidu_account_id: 12 } : payload.account_scope })
+    if (url.includes('search-terms')) return response(examples.searchTerms.response)
+    if (url.includes('/100')) return response(examples.keywordDetail.response)
+    return response(examples.keywords.response)
   } })
   client.setContext(context)
-  await client.read('keywords', { baidu_account_id: 12 })
-  await client.read('keywordDetail', { ...dates, keyword_id: 100, baidu_account_id: 12 })
-  await client.read('searchTerms', { q: '测试' })
-  assert.match(calls[0], /^\/api\/v1\/keywords\/cockpit\?tenant_id=1&baidu_account_id=12$/)
+  await client.read('keywords', examples.keywords.consumer_params)
+  await client.read('keywordDetail', examples.keywordDetail.consumer_params)
+  await client.read('searchTerms', examples.searchTerms.consumer_params)
+  assert.match(calls[0], /^\/api\/v1\/keywords\/cockpit\?tenant_id=1&start_date=2026-09-01&end_date=2026-09-03&baidu_account_id=11$/)
   assert.match(calls[1], /^\/api\/v1\/keywords\/cockpit\/100\?/)
   assert.match(calls[2], /^\/api\/v1\/search-terms\/cockpit\?/)
 })
@@ -61,8 +61,8 @@ test('late response after filter change cannot replace latest result', async () 
   const client = createSemReadonlyClient({ onClear() {}, transport: () => new Promise(resolve => finishes.push(resolve)) })
   client.setContext(context)
   const first = client.read('report', dates)
-  const second = client.read('report', { ...dates, baidu_account_id: 12 })
-  finishes[1](response({ ...payload, account_scope: { mode: 'single', baidu_account_id: 12 } }))
+  const second = client.read('report', { ...dates, baidu_account_id: 11 })
+  finishes[1](response())
   await second
   finishes[0](response())
   await assert.rejects(first, { code: 'STALE_RESPONSE' })
@@ -102,7 +102,6 @@ test('incorrect account or date response cannot populate a filtered view', async
 })
 
 test('all synthetic API responses are accepted by the actual consumer contract', async () => {
-  const fixtures = JSON.parse(readFileSync(new URL('./examples.synthetic.json', import.meta.url), 'utf8'))
   assert.equal(fixtures.synthetic, true)
   for (const example of fixtures.examples) {
     const client = createSemReadonlyClient({ onClear() {}, transport: async () => response(example.response) })
@@ -119,4 +118,82 @@ test('late transport errors after invalidation are classified as stale', async (
   client.invalidate()
   rejectRequest(new Error('old request failed'))
   await assert.rejects(pending, { code: 'STALE_RESPONSE' })
+})
+
+async function rejectsContract(resource, mutate, params = examples[resource].consumer_params) {
+  const data = structuredClone(examples[resource].response)
+  mutate(data)
+  const client = createSemReadonlyClient({ onClear() {}, transport: async () => response(data) })
+  client.setContext(context)
+  await assert.rejects(client.read(resource, params), { code: 'CONTRACT_MISMATCH' })
+  await assert.rejects(client.read(resource, params), { code: 'NOT_AUTHORIZED' })
+}
+
+test('CTR remains a ratio and missing dates cannot be fabricated as zero', async () => {
+  await rejectsContract('report', data => { data.metrics.ctr = 2 })
+  await rejectsContract('report', data => { data.trend[1].cost = 0 })
+  await rejectsContract('report', data => { data.coverage.missing_dates = [] })
+})
+
+test('partial phone evidence cannot be presented as a complete value', async () => {
+  await rejectsContract('keywords', data => { data.items[0].phone_button_clicks.value = 2 })
+  await rejectsContract('keywordDetail', data => { data.phone_button_clicks.unknown_rows = 0 })
+})
+
+test('dimension and search-window shapes reject incomplete or mixed summaries', async () => {
+  await rejectsContract('keywordDetail', data => { data.dimensions.schedule.cells.pop() })
+  await rejectsContract('keywordDetail', data => { data.dimensions.region.accounts[0].baidu_account_id = 12 })
+  await rejectsContract('searchTerms', data => { data.mixed_windows = false })
+  await rejectsContract('searchTerms', data => { data.items[0].window.start = '2026-01-01' })
+})
+
+test('echoed filters and JSON shape must match the active request', async () => {
+  await rejectsContract('keywords', data => { data.filters.campaign_id = 999 })
+  await rejectsContract('keywords', data => { data.items[0].baidu_account_id = 12 })
+  await rejectsContract('report', data => { data.retrieved_at = null })
+  const client = createSemReadonlyClient({ onClear() {}, transport: async () => ({ status: 200, ok: true, json: async () => undefined }) })
+  client.setContext(context)
+  await assert.rejects(client.read('report', examples.report.consumer_params), { code: 'CONTRACT_MISMATCH' })
+})
+
+test('late 401 from an aborted filter does not clear the current request', async () => {
+  const finishes = []
+  const client = createSemReadonlyClient({ onClear() {}, transport: () => new Promise(resolve => finishes.push(resolve)) })
+  client.setContext(context)
+  const old = client.read('report', dates)
+  const current = client.read('report', examples.report.consumer_params)
+  finishes[0]({ status: 401, ok: false })
+  await assert.rejects(old, { code: 'STALE_RESPONSE' })
+  finishes[1](response())
+  assert.equal((await current).tenant_id, 1)
+})
+
+test('all-account mode preserves an explicit unassigned bucket', async () => {
+  const data = structuredClone(examples.report.response)
+  data.account_scope = { mode: 'all', baidu_account_id: null, includes_unassigned: true }
+  data.accounts.push({
+    baidu_account_id: null,
+    status: 'unassigned',
+    metrics: { cost: null, click: null, impression: null, ctr: null, cpc: null },
+    coverage: { status: 'no_data', completeness: 'unknown', observed_days: 0,
+      missing_dates: ['2026-09-01', '2026-09-02', '2026-09-03'], latest_report_date: null, updated_at: null },
+  })
+  const client = createSemReadonlyClient({ onClear() {}, transport: async () => response(data) })
+  client.setContext(context)
+  assert.equal((await client.read('report', dates)).account_scope.includes_unassigned, true)
+})
+
+test('keyword default window can truthfully return no report anchor', async () => {
+  const data = structuredClone(examples.keywords.response)
+  data.account_scope = { mode: 'all', baidu_account_id: null, configured_account_ids: [11, 12], observed_account_ids: [] }
+  data.window = { start: null, end: null, timezone: 'Asia/Shanghai', inclusive: true, mode: 'latest_report_7d' }
+  data.total = 0
+  data.items = []
+  const client = createSemReadonlyClient({ onClear() {}, transport: async () => response(data) })
+  client.setContext(context)
+  assert.equal((await client.read('keywords')).window.start, null)
+  await rejectsContract('keywords', response => {
+    response.window = { start: '2026-09-01', end: '2026-09-03', timezone: 'Asia/Shanghai', inclusive: true, mode: 'latest_report_7d' }
+    response.account_scope = { mode: 'all', baidu_account_id: null, configured_account_ids: [11, 12], observed_account_ids: [11] }
+  }, {})
 })

@@ -39,8 +39,15 @@ onClear必须清理工作台SEM视图及派生搜索/对话上下文；本包不
 异步catch遇STALE_RESPONSE可静默丢弃；ACCESS_REVOKED/CONTRACT_MISMATCH需重取资格，不回退数据。
 READ_FAILED显示失败，保留范围说明，不补0、不发重同步。服务器仍执行所有客户/模块/身份/菜单校验。
 
+客户端在交给视图前校验已发布的`sem-cockpit-v1`响应：CTR单位必须是ratio；缺报日必须保留
+`no_data + null`，不能与真实0混淆；电话`partial`只能提供`known_subtotal`；地域和168个
+星期×小时单元必须保留同一账户范围；搜索词逐条窗口必须能对应`windows`且不跨窗口汇总。
+筛选回显、账户、日期或这些字段不一致时返回CONTRACT_MISMATCH并清理SEM上下文。
+旧请求的迟到响应和迟到401/403先按STALE_RESPONSE丢弃，不能覆盖或清空较新的同资源请求。
+
 `examples.synthetic.json`包含四组真实路由对合成内存数据的响应，外层synthetic=true。
 可用于本地mock transport和工作台联调准备，不可当生产结果。响应内is_demo=false是接口形状。
 
-测试：`node --test integrations/sem-cockpit/readonly-client.test.mjs`。
+测试：`node --test integrations/sem-cockpit/readonly-client.test.mjs`。测试全部使用本地合成响应，
+不建立网络连接。
 更多账户/字段/缺失规则见 `../../docs/SEM_COCKPIT_READONLY_DETAILS.md`。
