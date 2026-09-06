@@ -71,8 +71,8 @@ async function verifySiteScope({ transport, tenantId, siteId, permissions, signa
     fail('PREFLIGHT_CONTRACT_MISMATCH', 'SEO 站点核验响应结构无效')
   }
   for (const item of data.items) {
-    if (!object(item) || item.tenant_id !== tenantId || item.site_id !== siteId) {
-      fail('PREFLIGHT_CONTRACT_MISMATCH', 'SEO 站点核验返回了其他客户或站点的数据')
+    if (!object(item) || !positive(item.id) || item.tenant_id !== tenantId || item.site_id !== siteId) {
+      fail('PREFLIGHT_CONTRACT_MISMATCH', 'SEO 站点核验返回了无效对象或其他客户/站点的数据')
     }
   }
   if (useContents && (!countObject(data.status_counts) ||

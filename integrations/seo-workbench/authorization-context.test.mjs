@@ -103,6 +103,14 @@ test('site probe rejects a nonempty response from another scope', async () => {
   } }), tenantId: 16, siteId: 3 }), { code: 'PREFLIGHT_CONTRACT_MISMATCH' })
 })
 
+test('site probe rejects an unsafe or missing item identity', async () => {
+  for (const id of [undefined, 0, 9007199254740992]) {
+    await assert.rejects(resolveSeoReadonlyContext({ transport: preflightTransport({ site: {
+      items: [{ id, tenant_id: 16, site_id: 3 }], total: 1, page: 1, page_size: 1, status_counts: { ready: 1 },
+    } }), tenantId: 16, siteId: 3 }), { code: 'PREFLIGHT_CONTRACT_MISMATCH' })
+  }
+})
+
 test('site probe rejects incomplete aggregate evidence', async () => {
   await assert.rejects(resolveSeoReadonlyContext({ transport: preflightTransport({ site: {
     items: [], total: 1, page: 1, page_size: 1, status_counts: {},
