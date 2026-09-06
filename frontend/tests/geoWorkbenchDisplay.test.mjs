@@ -65,6 +65,7 @@ test('official null is unavailable while a measured zero remains zero', () => {
     context,
   )
   assert.equal(missing.valueText, '—')
+  assert.equal(missing.unitLabel, '次')
   assert.equal(missing.state, 'unavailable')
   assert.equal(missing.reasons[0].code, 'insufficient_samples')
   assert.equal(missing.trend.state, 'incomparable')
@@ -77,8 +78,48 @@ test('official null is unavailable while a measured zero remains zero', () => {
   assert.equal(zero.valueText, '0')
   assert.equal(zero.state, 'available')
   assert.deepEqual(zero.trend, {
-    state: 'available', direction: 'flat', changePct: null, changeAbs: 0, reasons: [],
+    state: 'available',
+    direction: 'flat',
+    changePct: null,
+    changePctText: null,
+    changeAbs: 0,
+    changeAbsText: '0 次',
+    changeAbsUnitLabel: '次',
+    reasons: [],
   })
+})
+
+test('official metric values expose stable localized unit labels and trend text', () => {
+  const percent = officialMetricDisplay({
+    metric_key: 'geo.visibility.ai_mention_rate_7d',
+    value: 33.3333,
+    unit: 'percent',
+    trend_7d: { direction: 'up', change_pct: 10.5, change_abs: 2.5 },
+  }, { comparison: { comparable: true } })
+  assert.equal(percent.valueText, '33.3333')
+  assert.equal(percent.unitLabel, '%')
+  assert.equal(percent.trend.changePctText, '+10.5%')
+  assert.equal(percent.trend.changeAbsText, '+2.5 个百分点')
+
+  const score = officialMetricDisplay({
+    metric_key: 'geo.visibility.score_7d',
+    value: 82.5,
+    unit: 'score',
+    trend_7d: { direction: 'down', change_pct: -1.25, change_abs: -1 },
+  }, { comparison: { comparable: true } })
+  assert.equal(score.valueText, '82.5')
+  assert.equal(score.unitLabel, '分')
+  assert.equal(score.trend.changeAbsText, '-1 分')
+
+  const count = officialMetricDisplay({
+    metric_key: metricKey,
+    value: 1234,
+    unit: 'count',
+    trend_7d: { direction: 'up', change_pct: 20, change_abs: 12 },
+  }, { comparison: { comparable: true } })
+  assert.equal(count.valueText, '1,234')
+  assert.equal(count.unitLabel, '次')
+  assert.equal(count.trend.changeAbsText, '+12 次')
 })
 
 test('explicitly incomparable context suppresses contradictory or non-finite trend values', () => {
@@ -96,7 +137,10 @@ test('explicitly incomparable context suppresses contradictory or non-finite tre
     state: 'incomparable',
     direction: null,
     changePct: null,
+    changePctText: null,
     changeAbs: null,
+    changeAbsText: null,
+    changeAbsUnitLabel: '次',
     reasons: [{
       code: 'model_distribution_changed',
       scope: 'comparison',
@@ -117,7 +161,9 @@ test('explicitly incomparable context suppresses contradictory or non-finite tre
   assert.equal(invalidNumbers.trend.state, 'available')
   assert.equal(invalidNumbers.trend.direction, 'up')
   assert.equal(invalidNumbers.trend.changePct, null)
+  assert.equal(invalidNumbers.trend.changePctText, null)
   assert.equal(invalidNumbers.trend.changeAbs, null)
+  assert.equal(invalidNumbers.trend.changeAbsText, null)
 })
 
 test('missing trend keeps supplied comparison reasons when comparability is unspecified', () => {
@@ -135,7 +181,10 @@ test('missing trend keeps supplied comparison reasons when comparability is unsp
     state: 'unavailable',
     direction: null,
     changePct: null,
+    changePctText: null,
     changeAbs: null,
+    changeAbsText: null,
+    changeAbsUnitLabel: '次',
     reasons: [{
       code: 'model_metadata_missing',
       scope: 'comparison',
@@ -178,4 +227,12 @@ test('stale observation preserves stored status instead of inventing failure', (
   assert.equal(result.stale, true)
   assert.match(result.hint, /保留状态“处理中”/)
   assert.notEqual(result.label, '失败')
+})
+
+test('progress display accepts only finite percentages inside the API range', () => {
+  assert.equal(progressDisplay({ progress_pct: 0 }).progressPct, 0)
+  assert.equal(progressDisplay({ progress_pct: 100 }).progressPct, 100)
+  for (const progress_pct of [-1, 101, Number.NaN, Number.POSITIVE_INFINITY, '45']) {
+    assert.equal(progressDisplay({ progress_pct }).progressPct, null)
+  }
 })

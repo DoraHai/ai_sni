@@ -47,6 +47,44 @@ const REASON_LABELS = {
   sample_distribution_changed: '前后周样本分布不一致',
 }
 
+const UNIT_LABELS = {
+  count: '次',
+  percent: '%',
+  score: '分',
+}
+
+const ABSOLUTE_CHANGE_UNIT_LABELS = {
+  count: '次',
+  percent: '个百分点',
+  score: '分',
+}
+
+const NUMBER_FORMATTERS = {
+  count: new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 }),
+  percent: new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 4 }),
+  score: new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 4 }),
+  default: new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 4 }),
+}
+
+function unitLabel(unit, absoluteChange = false) {
+  const labels = absoluteChange ? ABSOLUTE_CHANGE_UNIT_LABELS : UNIT_LABELS
+  return labels[unit] || unit || null
+}
+
+function formatNumber(value, unit = null, signed = false) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  const formatter = NUMBER_FORMATTERS[unit] || NUMBER_FORMATTERS.default
+  const formatted = formatter.format(value)
+  return signed && value > 0 ? `+${formatted}` : formatted
+}
+
+function formatChange(value, unit, absoluteChange = false) {
+  const number = formatNumber(value, absoluteChange ? unit : 'percent', true)
+  if (number == null) return null
+  const label = absoluteChange ? unitLabel(unit, true) : '%'
+  return label ? `${number}${label === '%' ? '' : ' '}${label}` : number
+}
+
 function normalizedReasons(reasons = [], scope = null) {
   return (Array.isArray(reasons) ? reasons : []).map((item) => {
     const row = typeof item === 'string' ? { code: item } : (item || {})
@@ -115,6 +153,7 @@ function metricReasons(metric, periodContext) {
 
 export function officialMetricDisplay(metric, periodContext = null, definition = null) {
   const hasValue = typeof metric?.value === 'number' && Number.isFinite(metric.value)
+  const unit = metric?.unit || null
   const trend = metric?.trend_7d
   const comparable = periodContext?.comparison?.comparable
   const trendState = comparable === false
@@ -127,11 +166,14 @@ export function officialMetricDisplay(metric, periodContext = null, definition =
   const direction = showTrend && ['up', 'down', 'flat'].includes(trend?.direction)
     ? trend.direction
     : null
+  const changePct = showTrend && Number.isFinite(trend?.change_pct) ? trend.change_pct : null
+  const changeAbs = showTrend && Number.isFinite(trend?.change_abs) ? trend.change_abs : null
   return {
     metricKey: metric?.metric_key || null,
     value: hasValue ? metric.value : null,
-    valueText: hasValue ? String(metric.value) : '—',
-    unit: metric?.unit || null,
+    valueText: hasValue ? formatNumber(metric.value, unit) : '—',
+    unit,
+    unitLabel: unitLabel(unit),
     asOf: metric?.as_of || null,
     state: hasValue ? 'available' : 'unavailable',
     reasons: hasValue ? [] : metricReasons(metric, periodContext),
@@ -139,8 +181,11 @@ export function officialMetricDisplay(metric, periodContext = null, definition =
     trend: {
       state: trendState,
       direction,
-      changePct: showTrend && Number.isFinite(trend?.change_pct) ? trend.change_pct : null,
-      changeAbs: showTrend && Number.isFinite(trend?.change_abs) ? trend.change_abs : null,
+      changePct,
+      changePctText: formatChange(changePct, unit),
+      changeAbs,
+      changeAbsText: formatChange(changeAbs, unit, true),
+      changeAbsUnitLabel: unitLabel(unit, true),
       reasons: trendReasons,
     },
   }
@@ -164,13 +209,19 @@ export function officialWeekDisplay(periodContext) {
 export function progressDisplay(row, subject = '后台任务') {
   const storedStatus = row?.stored_status || row?.status || 'unknown'
   const stale = row?.stale === true && ['pending', 'running'].includes(storedStatus)
+  const progressPct = typeof row?.progress_pct === 'number'
+    && Number.isFinite(row.progress_pct)
+    && row.progress_pct >= 0
+    && row.progress_pct <= 100
+    ? row.progress_pct
+    : null
   return {
     storedStatus,
     label: STATUS_LABELS[storedStatus] || storedStatus,
     stale,
     staleReason: stale ? (row?.stale_reason || 'elapsed_threshold_exceeded') : null,
     hint: stale ? `${subject}疑似超时，仍保留状态“${STATUS_LABELS[storedStatus] || storedStatus}”，等待后台恢复确认` : '',
-    progressPct: typeof row?.progress_pct === 'number' ? row.progress_pct : null,
+    progressPct,
     progressLabel: row?.progress_label || null,
     error: row?.error || null,
   }
