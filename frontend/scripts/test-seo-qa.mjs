@@ -386,33 +386,33 @@ test('oversize and read-only file selection never upload',async()=>{
 async function mountBatch(api={},options={}){
   const source=await readFile(new URL('../src/views/seo/SeoQaBatchDrafts.vue',import.meta.url),'utf8')
   const compiled=compileScript(parse(source).descriptor,{id:'batch',genDefaultAs:'component'}).content
-  const props=Vue.reactive({tenantId:1,siteId:10,canEdit:true,questions:[{id:1,version:1,title:'问题一'},{id:2,version:2,title:'问题二'}],...options}),writes=[],generated=[]
-  const bindings={...Vue,seoQaGet:async()=>[{id:3,version:4,current:true,title:'手册'}],seoQaPost:async(path,payload)=>{writes.push(payload);return {id:10+payload.question_id}},generateSeoQaDraft:async payload=>{generated.push(payload);return {question_id:payload.question.id,expected_question_version:payload.question.version,body:'生成原文[F3]',format:payload.format,fact_ids:[3],expected_facts:[{id:3,version:4}]}},...api}
+  const props=Vue.reactive({tenantId:1,siteId:10,canEdit:true,questions:[{id:1,version:2,title:'问题'}],...options}),writes=[]
+  const batch={id:8,status:'queued',items:[{question_id:1,title:'问题',state:'pending'}]}
+  const bindings={...Vue,seoQaGet:async path=>path==='facts'?[{id:3,version:4,current:true,title:'手册'}]:path==='batches'?{items:[batch]}:batch,seoQaPost:async(path,payload)=>{writes.push([path,payload]);return batch},...api}
   const names=Object.keys(bindings).filter(k=>/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k))
   const component=new Function('b',`const {${names.join(',')}}=b;${compiled.replace(/^import .* from .*$/gm,'')};return component`)(bindings)
   component.render=()=>null
   const app=renderer.createApp({render:()=>Vue.h(component,props)}),root=app.mount({});await flush()
   const state=root.$.subTree.component.setupState
-  await state.prepare();for(const row of state.rows)row.factIds=[3]
-  return {app,state,props,writes,generated}
+  return {app,state,props,writes}
 }
-test('batch creates separate drafts with selected evidence and never reviews',async()=>{
-  const m=await mountBatch();try{await m.state.run();assert.equal(m.generated.length,2);assert.equal(m.writes.length,2);assert.ok(m.state.rows.every(r=>r.state==='done'));assert.deepEqual(m.writes[1].expected_facts,[{id:3,version:4}]);assert.equal(m.writes[1].expected_question_version,2);await m.state.run();assert.equal(m.generated.length,2)}finally{m.app.unmount()}
+test('durable batch submits versions once without browser AI generation',async()=>{
+  const m=await mountBatch();try{await m.state.prepare();m.state.rows[0].factIds=[3];await m.state.submit();assert.equal(m.writes[0][0],'batches');assert.deepEqual(m.writes[0][1].items,[{question:{id:1,version:2},facts:[{id:3,version:4}],format:'short'}]);assert.ok(m.writes[0][1].request_id);assert.equal(m.state.current.id,8);assert.equal(m.state.rows.length,0)}finally{m.app.unmount()}
 })
-test('batch isolates a save failure and retries only saving without AI',async()=>{
-  let fail=true,saves=0;const m=await mountBatch({seoQaPost:async()=>{saves++;if(fail){fail=false;throw Error('断网')}return {id:9}}})
-  try{await m.state.run();assert.equal(m.state.rows[0].state,'failed');assert.equal(m.state.rows[1].state,'done');await m.state.run(1);assert.equal(m.generated.length,2);assert.equal(saves,3);assert.equal(m.state.rows[0].state,'done')}finally{m.app.unmount()}
+test('uncertain batch submission retries with the same durable request key',async()=>{
+  const ids=[];const m=await mountBatch({seoQaPost:async(p,v)=>{ids.push(v.request_id);throw Error('断网')}})
+  try{await m.state.prepare();m.state.rows[0].factIds=[3];await m.state.submit();await m.state.submit();assert.equal(ids.length,2);assert.equal(ids[0],ids[1])}finally{m.app.unmount()}
 })
-test('batch pauses after current question; subsequent run continues pending rows',async()=>{
-  const m=await mountBatch();let release
-  // Pause while the first save is in flight.
-  const n=await mountBatch({seoQaPost:()=>new Promise(r=>{release=r})})
-  try{const work=n.state.run();await flush();n.state.stop=true;release({id:7});await work;assert.equal(n.generated.length,1);assert.equal(n.state.rows[0].state,'done');assert.equal(n.state.rows[1].state,'pending')}finally{m.app.unmount();n.app.unmount()}
+test('read-only batch view can recover server progress but cannot enqueue or control',async()=>{
+  const m=await mountBatch({}, {canEdit:false});try{await m.state.prepare();assert.equal(m.state.rows.length,0);await m.state.selectBatch(8);assert.equal(m.state.current.id,8);await m.state.control('pause');assert.equal(m.writes.length,0)}finally{m.app.unmount()}
 })
-test('batch never saves late AI output after changing site',async()=>{
-  let release;const m=await mountBatch({generateSeoQaDraft:()=>new Promise(r=>{release=r})})
-  try{const work=m.state.run();m.props.siteId=99;await flush();release({question_id:1,expected_question_version:1,body:'旧站点'});await work;assert.equal(m.writes.length,0);assert.equal(m.state.rows.length,0)}finally{m.app.unmount()}
+test('batch controls address only selected scope and question',async()=>{
+  const m=await mountBatch();try{await m.state.selectBatch(8);await m.state.control('retry',1);assert.deepEqual(m.writes[0],['batches/8/control',{tenant_id:1,site_id:10,action:'retry',question_id:1}])}finally{m.app.unmount()}
 })
-test('batch missing evidence and read-only state prevent generation',async()=>{
-  const m=await mountBatch();try{m.state.rows[1].factIds=[];await m.state.run();assert.equal(m.generated.length,0);assert.ok(m.state.error);m.state.rows[1].factIds=[3];m.props.canEdit=false;await flush();await m.state.run();assert.equal(m.generated.length,0)}finally{m.app.unmount()}
+test('late recovered batch does not enter a different site',async()=>{
+  let release;const m=await mountBatch({seoQaGet:async path=>path==='batches'?{items:[]}:new Promise(r=>{release=r})})
+  try{const work=m.state.selectBatch(8);m.props.siteId=99;await flush();release({id:8,items:[]});await work;assert.equal(m.state.current,null)}finally{m.app.unmount()}
+})
+test('fresh mount lists previously submitted batches without starting work',async()=>{
+  const m=await mountBatch();try{assert.equal(m.state.history[0].id,8);assert.equal(m.writes.length,0);await m.state.selectBatch(8);assert.equal(m.state.current.items[0].state,'pending')}finally{m.app.unmount()}
 })

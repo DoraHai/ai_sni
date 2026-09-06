@@ -15,7 +15,7 @@ from app.api import seo_qa as api
 from app.models.module_workspace import SeoSite
 from app.models.seo import SeoContentAsset, SeoSerpResult, SeoContentReviewEvent, SeoBacklink, SeoAiOperation
 from app.models.seo_cockpit import SeoTask
-from app.models.seo_qa import SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement
+from app.models.seo_qa import SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement, SeoQaBatch
 from app.security.auth import AuthContext
 from app.seo_qa import fingerprint, parse_questions_csv, platform_url, observe_answer, answer_checks
 
@@ -69,7 +69,7 @@ def database(scenario):
         try:
             async with engine.begin() as conn:
                 await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
-                for model in [SeoAiOperation, SeoBacklink, SeoSite, SeoContentAsset, SeoContentReviewEvent, SeoTask, SeoSerpResult, SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement]:
+                for model in [SeoAiOperation, SeoBacklink, SeoSite, SeoContentAsset, SeoContentReviewEvent, SeoTask, SeoSerpResult, SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement, SeoQaBatch]:
                     table = model.__table__.to_metadata(MetaData())
                     for fk in list(table.foreign_key_constraints):
                         table.constraints.remove(fk)
@@ -765,3 +765,82 @@ def test_batch_draft_versions_permissions_and_save_retry(mode):
                 assert len(list(await db.scalars(select(SeoQaAnswer))))==1
                 refund.assert_not_awaited()
     database(scenario)
+
+@pytest.mark.parametrize('mode',['normal','save_lost_response','revoked','pause','cancel','restart'])
+def test_durable_batch_worker_and_controls(mode):
+    from app import seo_qa_batches as worker
+    async def scenario(sessions):
+        async with sessions() as db:
+            imported=await api.import_questions(api.ImportQuestions(tenant_id=1,site_id=1,items=[{'title':'后台任务如何选型？'},{'title':'运行环境有什么限制？'}]),CTX,db)
+            fact=await api.create_fact(api.FactInput(tenant_id=1,site_id=1,title='说明',statement='仅在室内使用，先检查设备型号、工作条件和电源参数，再参照说明书选型。',source_name='说明书'),CTX,db)
+            req=api.BatchSubmission(tenant_id=1,site_id=1,request_id='durable-test-123',items=[{'question':{'id':id,'version':1},'facts':[{'id':fact['id'],'version':1}]} for id in imported['ids']])
+            batch=await api.create_batch(req,CTX,db)
+            assert (await api.create_batch(req,CTX,db))['id']==batch['id']
+            assert len(list(await db.scalars(select(SeoQaBatch))))==1
+            with pytest.raises(HTTPException): await api.get_batch(batch['id'],2,2,CTX,db)
+            with pytest.raises(HTTPException): await api.get_batch(batch['id'],1,1,AuthContext(8,'other','operator',1,{'seo.content':'edit'}),db)
+            if mode in ('pause','cancel'):
+                await api.control_batch(batch['id'],api.BatchCommand(tenant_id=1,site_id=1,action=mode),CTX,db)
+            if mode=='restart':
+                row=await db.get(SeoQaBatch,batch['id']);items=[dict(i) for i in row.items];items[0]['state']='generating';row.items=items;row.status='running';await db.commit()
+        async def generate(req,ctx,session):
+            return {'action':'qa_draft','operation_id':'fixture','question_id':req.question.id,'expected_question_version':req.question.version,
+                'expected_facts':[f.model_dump() for f in req.facts],'fact_ids':[f.id for f in req.facts],'format':req.format,'body':fact['statement']+f'[F{fact["id"]}]'}
+        real_save=api.create_answer;calls=0
+        async def save(req,ctx,session):
+            nonlocal calls
+            result=await real_save(req,ctx,session);calls+=1
+            if mode=='save_lost_response' and calls==1: raise ConnectionError('response lost after commit')
+            return result
+        actor=AsyncMock(side_effect=HTTPException(403,'disabled')) if mode=='revoked' else AsyncMock(return_value=CTX)
+        with patch.object(worker,'current_actor',actor),patch.object(api,'generate_question_draft',AsyncMock(side_effect=generate)) as ai,patch.object(api,'create_answer',AsyncMock(side_effect=save)):
+            await worker.process_next(sessions)
+            if mode in ('pause','cancel'):
+                ai.assert_not_awaited()
+                if mode=='cancel': return
+                async with sessions() as db: await api.control_batch(batch['id'],api.BatchCommand(tenant_id=1,site_id=1,action='resume'),CTX,db)
+            await worker.process_next(sessions)
+            await worker.process_next(sessions)
+            async with sessions() as db:
+                result=await api.get_batch(batch['id'],1,1,CTX,db)
+                assert result['status']=='completed'
+                if mode=='revoked':
+                    ai.assert_not_awaited();assert all(i['state']=='failed' for i in result['items']);return
+                if mode=='save_lost_response':
+                    assert result['items'][0]['state']=='failed' and result['items'][0]['draft']
+                    await api.control_batch(batch['id'],api.BatchCommand(tenant_id=1,site_id=1,action='retry',question_id=imported['ids'][0]),CTX,db)
+            if mode=='save_lost_response': await worker.process_next(sessions)
+            async with sessions() as db:
+                result=await api.get_batch(batch['id'],1,1,CTX,db)
+                assert all(i['state']=='done' for i in result['items'])
+                assert len(list(await db.scalars(select(SeoQaAnswer))))==2
+                assert ai.await_count==2
+    database(scenario)
+
+
+def test_durable_worker_database_lock_excludes_second_worker():
+    from app import seo_qa_batches as worker
+    async def scenario(sessions):
+        started=asyncio.Event();release=asyncio.Event()
+        async def work(): started.set();await release.wait()
+        with patch.object(worker,'engine',sessions.kw['bind']),patch.object(worker,'process_next',AsyncMock(side_effect=work)) as process:
+            first=asyncio.create_task(worker.run_qa_batches());await started.wait()
+            await worker.run_qa_batches()
+            assert process.await_count==1
+            release.set();await first
+            await worker.run_qa_batches();assert process.await_count==2
+    database(scenario)
+
+@pytest.mark.parametrize('mode',['inactive','readonly','other_tenant','allowed'])
+def test_batch_worker_reloads_live_account_permissions(mode):
+    from app.seo_qa_batches import current_actor
+    async def scenario():
+        user=SimpleNamespace(id=7,username='worker-owner',role_id=1,tenant_id=2 if mode=='other_tenant' else 1,is_active=mode!='inactive')
+        role=SimpleNamespace(name='operator',permissions={'seo.content':'view' if mode=='readonly' else 'edit'})
+        session=SimpleNamespace(get=AsyncMock(side_effect=[user,role]))
+        batch=SimpleNamespace(actor='7',tenant_id=1)
+        if mode=='allowed': assert (await current_actor(session,batch)).can_edit('seo.content')
+        else:
+            with pytest.raises(HTTPException) as exc: await current_actor(session,batch)
+            assert exc.value.status_code==403
+    asyncio.run(scenario())

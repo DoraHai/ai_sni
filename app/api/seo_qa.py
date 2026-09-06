@@ -1140,3 +1140,122 @@ async def accept_document_candidates(operation_id:str,req:AcceptCandidates,ctx=A
     row.result={**saved,'accepted':accepted}
     await session.commit()
     return {'accepted':accepted,'meaning':'仅创建问题和原文事实，未生成或审核回答；同一候选重复确认不会重复入库'}
+
+class BatchQuestion(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    question: QuestionRef
+    facts: list[QuestionRef] = Field(min_length=1,max_length=20)
+    format: Literal['short','detailed','steps','comparison','faq'] = 'short'
+
+
+class BatchSubmission(ResearchRequest):
+    items: list[BatchQuestion] = Field(min_length=1,max_length=20)
+
+    @model_validator(mode='after')
+    def unique_questions(self):
+        if len({item.question.id for item in self.items}) != len(self.items):
+            raise ValueError('问题不能重复')
+        return self
+
+
+class BatchCommand(Scoped):
+    action: Literal['pause','resume','retry','cancel']
+    question_id: PositiveInt | None = None
+
+
+def batch_data(row, full=False):
+    return {'id':row.id,'status':row.status,'created_at':row.created_at,'updated_at':row.updated_at,
+            'items':[{k:v for k,v in item.items() if full or k!='draft'} for item in row.items]}
+
+
+async def owned_batch(session,ctx,tenant_id,site_id,batch_id,lock=False):
+    from app.models.seo_qa import SeoQaBatch
+    from app.seo_task_center import actor_key
+    query=select(SeoQaBatch).where(SeoQaBatch.id==batch_id,SeoQaBatch.tenant_id==tenant_id,
+        SeoQaBatch.site_id==site_id,SeoQaBatch.actor==actor_key(ctx)).execution_options(populate_existing=True)
+    row=await session.scalar(query.with_for_update() if lock else query)
+    if row is None: raise HTTPException(404,'未找到本人在当前站点的批次')
+    return row
+
+
+@router.post('/batches')
+async def create_batch(req:BatchSubmission,ctx=Auth,session=Db):
+    from uuid import uuid4
+    from app.models.seo_qa import SeoQaBatch
+    from app.models.module_workspace import SeoSite
+    from app.seo_ai_operations import request_fingerprint
+    from app.seo_task_center import actor_key
+    await access(session,ctx,req.tenant_id,req.site_id,True)
+    # Serialize duplicate submissions and active-batch limits without charging AI.
+    await session.scalar(select(SeoSite).where(SeoSite.id==req.site_id,SeoSite.tenant_id==req.tenant_id).with_for_update())
+    actor=actor_key(ctx);digest=request_fingerprint([i.model_dump() for i in req.items])
+    existing=await session.scalar(select(SeoQaBatch).where(SeoQaBatch.tenant_id==req.tenant_id,
+        SeoQaBatch.site_id==req.site_id,SeoQaBatch.actor==actor,SeoQaBatch.request_key==req.request_id))
+    if existing:
+        if existing.request_hash!=digest: raise HTTPException(409,'批次标识已用于其他内容')
+        return batch_data(existing,True)
+    count=await session.scalar(select(func.count()).select_from(SeoQaBatch).where(SeoQaBatch.tenant_id==req.tenant_id,
+        SeoQaBatch.site_id==req.site_id,SeoQaBatch.actor==actor,SeoQaBatch.status.in_(['queued','running','paused'])))
+    if count>=3: raise HTTPException(409,'每个站点本人最多保留 3 个活动批次，请先完成或取消旧批次')
+    items=[]
+    for item in req.items:
+        request=DraftRequest(**req.model_dump(exclude={'items','request_id'}),request_id=uuid4().hex,**item.model_dump())
+        question=await record(session,SeoQuestion,item.question.id,req.tenant_id,req.site_id)
+        check_version(question,item.question.version)
+        if question.status=='archived': raise HTTPException(409,'归档问题请先恢复')
+        facts=await fact_snapshots(session,req.tenant_id,req.site_id,[f.id for f in item.facts])
+        if {(f['id'],f['version']) for f in facts}!={(f.id,f.version) for f in item.facts}:
+            raise HTTPException(409,'事实版本已变化，请重新准备批次')
+        if sum(len(f['statement']) for f in facts)>30000: raise HTTPException(422,'单题事实原文合计最多 3 万字')
+        items.append({'question_id':question.id,'title':question.title,'request':request.model_dump(),
+            'state':'pending','draft':None,'answer_id':None,'error':None})
+    row=SeoQaBatch(tenant_id=req.tenant_id,site_id=req.site_id,actor=actor,request_key=req.request_id,
+        request_hash=digest,status='queued',items=items)
+    session.add(row);await session.commit();await session.refresh(row)
+    return batch_data(row,True)
+
+
+@router.get('/batches')
+async def list_batches(tenant_id:PositiveInt,site_id:PositiveInt,ctx=Auth,session=Db):
+    from app.models.seo_qa import SeoQaBatch
+    from app.seo_task_center import actor_key
+    await access(session,ctx,tenant_id,site_id)
+    rows=await session.scalars(select(SeoQaBatch).where(SeoQaBatch.tenant_id==tenant_id,
+        SeoQaBatch.site_id==site_id,SeoQaBatch.actor==actor_key(ctx)).order_by(SeoQaBatch.id.desc()).limit(20))
+    return {'items':[batch_data(row) for row in rows]}
+
+
+@router.get('/batches/{batch_id}')
+async def get_batch(batch_id:int,tenant_id:PositiveInt,site_id:PositiveInt,ctx=Auth,session=Db):
+    await access(session,ctx,tenant_id,site_id)
+    return batch_data(await owned_batch(session,ctx,tenant_id,site_id,batch_id),True)
+
+
+@router.post('/batches/{batch_id}/control')
+async def control_batch(batch_id:int,req:BatchCommand,ctx=Auth,session=Db):
+    from copy import deepcopy
+    from uuid import uuid4
+    from app.models.seo import SeoAiOperation
+    await access(session,ctx,req.tenant_id,req.site_id,True)
+    row=await owned_batch(session,ctx,req.tenant_id,req.site_id,batch_id,True)
+    if row.status=='cancelled': raise HTTPException(409,'已取消批次不能恢复，请重新准备')
+    items=deepcopy(row.items)
+    if req.action=='pause':
+        if row.status not in ('queued','running','paused'): raise HTTPException(409,'批次已结束')
+        row.status='paused'
+    elif req.action=='resume':
+        if row.status!='paused': raise HTTPException(409,'只能恢复已暂停批次')
+        row.status='queued'
+    elif req.action=='cancel': row.status='cancelled'
+    else:
+        failed=[i for i in items if i['state']=='failed' and (req.question_id is None or i['question_id']==req.question_id)]
+        if not failed: raise HTTPException(409,'没有可重试的失败题目')
+        for item in failed:
+            if not item['draft']:
+                op=await session.scalar(select(SeoAiOperation).where(SeoAiOperation.tenant_id==row.tenant_id,
+                    SeoAiOperation.request_key==item['request']['request_id']))
+                if op is not None and op.status=='refunded': item['request']['request_id']=uuid4().hex
+            item['state']='pending';item['error']=None
+        row.items=items;row.status='queued'
+    await session.commit();await session.refresh(row)
+    return batch_data(row,True)

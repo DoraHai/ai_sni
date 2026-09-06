@@ -62,3 +62,12 @@ class SeoQaPlacement(QaScope, Base):
     reported_metrics: Mapped[dict | None] = mapped_column(JSONB)
     version: Mapped[int] = mapped_column(Integer, default=1)
     __table_args__ = (UniqueConstraint('answer_id', 'platform', 'content_version', name='uq_seo_qa_placement_version'),)
+
+class SeoQaBatch(QaScope, Base):
+    __tablename__ = 'seo_qa_batches'
+    actor: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default='queued', index=True)
+    items: Mapped[list] = mapped_column(JSONB, nullable=False)
+    __table_args__ = (UniqueConstraint('tenant_id','site_id','actor','request_key',name='uq_seo_qa_batch_request'),)

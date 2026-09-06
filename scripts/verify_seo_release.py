@@ -11,6 +11,8 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "app/seo_qa_batches.py",
+    "migrations/versions/20260906_0094_seo_qa_batches.py",
     "app/seo_qa_documents.py",
     "tests/test_seo_qa_documents.py",
     "requirements.txt",

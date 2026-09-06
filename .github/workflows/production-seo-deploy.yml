@@ -125,7 +125,7 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0093_seo_qa (head)'
+          printf '%s\n' "$heads" | grep -F '0094_seo_qa_batches (head)'
 
       - working-directory: frontend
         run: npm ci --no-audit
