@@ -1,0 +1,39 @@
+name: Cockpit prototype checks
+
+on:
+  pull_request:
+    paths:
+      - 'cockpit/prototype/**'
+      - '.github/workflows/cockpit-prototype-check.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'cockpit/prototype/**'
+      - '.github/workflows/cockpit-prototype-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  prototype:
+    name: Prototype syntax and regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            node --check "$file"
+          done < <(find cockpit/prototype -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.cjs' \) -print0)
+      - name: Check dashboard data boundaries
+        run: node cockpit/prototype/panorama.test.cjs
+      - name: Check rehearsal reset boundaries
+        run: node cockpit/prototype/demo-finish.test.cjs
+      - name: Check customer module combinations
+        run: node --test cockpit/prototype/module-scope.test.mjs
