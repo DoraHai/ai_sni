@@ -19,6 +19,8 @@ const scopeKey = computed(() => `${scope.value.tenant_id}:${scope.value.site_id}
 const tab = ref('questions'), busy = ref(false), loading = ref(false), error = ref('')
 const items = ref([]), facts = ref([]), placements = ref([]), maintenance = ref([]), platforms = ref([])
 const total = ref(0), page = ref(1), query = ref(''), status = ref('')
+const questionDetail = ref(null)
+const coverageLabels = {unanswered:'尚无回答',draft_only:'尚无有效审核回答',needs_update:'需要更新证据或正文',reviewed_current:'已有有效审核回答',observed:'当前版本已有公开正文匹配'}
 const selected = ref(null), answerItems = ref([]), dialog = ref(''), importing = ref('')
 const importPreview = ref(null)
 const previewActions = {new_question:'新增问题',new_source:'新增来源',correction:'修正统计',unchanged:'无需更改'}
@@ -178,20 +180,21 @@ async function act(work, success) {
 function resetAnswer() { Object.assign(answerForm, { id: null, content_id: null, content_version: null, body: '', format: 'short', fact_ids: [], status: 'drafting' }); reviewNote.value = '' }
 async function openQuestion(row) {
   if (busy.value) return
+  questionDetail.value=null
   selected.value = row; Object.assign(questionForm, row); resetAnswer(); answerItems.value = []
   const seq = ++answerSequence, key = scopeKey.value
   try {
-    const result = await seoQaGet('answers', { ...scope.value, question_id: row.id })
-    if (seq === answerSequence && key === scopeKey.value) answerItems.value = result
+    const [result,detail] = await Promise.all([seoQaGet('answers', { ...scope.value, question_id: row.id }),seoQaGet(`questions/${row.id}/detail`,{...scope.value})])
+    if (seq === answerSequence && key === scopeKey.value) {answerItems.value = result;questionDetail.value=detail}
   } catch (e) { if (seq === answerSequence && key === scopeKey.value) error.value = messageOf(e) }
 }
 function editAnswer(row) { Object.assign(answerForm, row, { fact_ids: row.fact_snapshots.map(f => f.id) }); reviewNote.value = '' }
 async function refreshAnswers(id) {
   if (!selected.value) return
-  const key = scopeKey.value, questionId = selected.value.id
-  const result = await seoQaGet('answers', { ...scope.value, question_id: questionId })
-  if (key !== scopeKey.value || selected.value?.id !== questionId) return
-  answerItems.value = result
+  const key = scopeKey.value, questionId = selected.value.id, seq=++answerSequence
+  const [result,detail] = await Promise.all([seoQaGet('answers', { ...scope.value, question_id: questionId }),seoQaGet(`questions/${questionId}/detail`,{...scope.value})])
+  if (seq!==answerSequence || key !== scopeKey.value || selected.value?.id !== questionId) return
+  answerItems.value = result;questionDetail.value=detail
   if (id) { const answer = result.find(a => a.id === id); if (answer) editAnswer(answer) }
 }
 function importPayload() {
@@ -216,7 +219,8 @@ function discover() { return act(p => seoQaPost('questions/discover', p), r => E
 function saveQuestion() {
   const id = selected.value.id
   const payload = Object.fromEntries(['topic', 'intent', 'relevance', 'owner', 'status', 'version'].map(k => [k, questionForm[k]]))
-  return act(p => seoQaPatch(`questions/${id}`, { ...p, ...payload }), row => { selected.value = row; Object.assign(questionForm, row) })
+  return act(p => seoQaPatch(`questions/${id}`, { ...p, ...payload }), row => { questionDetail.value=null
+  selected.value = row; Object.assign(questionForm, row) })
 }
 function openFact(row) {
   Object.assign(factForm, row || { id: null, title: '', statement: '', source_name: '', source_url: '', expires_at: null, status: 'active', version: 1 })
@@ -295,7 +299,7 @@ watch([dialog,scopeKey,()=>receiptForm.id],()=>{++receiptReadSequence;assistantR
 watch([importing,sourceKind,sourceName,sourceUrl,dialog,scopeKey],()=>{importPreview.value=null})
 watch(scopeKey, () => {
   batchStop.value = true; batchResults.value = []; followupOnly.value = false
-  ++answerSequence; selected.value = null; items.value = []; facts.value = []; placements.value = []; maintenance.value = []; platforms.value = []
+  ++answerSequence; questionDetail.value=null; selected.value = null; items.value = []; facts.value = []; placements.value = []; maintenance.value = []; platforms.value = []
   total.value = 0; page.value = 1; dialog.value = ''; resetAnswer(); load()
 }, { immediate: true })
 </script>
@@ -348,6 +352,14 @@ watch(scopeKey, () => {
     <el-drawer :model-value="!!selected" title="问题与回答" size="min(960px, 96vw)" :close-on-click-modal="false" :close-on-press-escape="!busy" :show-close="!busy" @close="selected=null;++answerSequence">
       <template v-if="selected"><el-alert v-if="error" :title="error" type="error" :closable="false"/><h2>{{ selected.title }}</h2><div class="qa-provenance" v-for="(source,i) in selected.sources" :key="i"><el-tag size="small">{{ kinds[source.kind] }}</el-tag> {{ source.name }} · {{ date(source.captured_at) }} <a v-if="href(source.url)" :href="href(source.url)" target="_blank" rel="noopener noreferrer">查看来源 ↗</a></div>
         <el-form label-position="top" :disabled="!canEdit || busy" class="qa-metadata"><el-form-item label="主题"><el-input v-model="questionForm.topic" maxlength="120"/></el-form-item><el-form-item label="意图"><el-select v-model="questionForm.intent"><el-option v-for="[key,label] in [['learn','了解'],['compare','对比'],['buy','购买'],['troubleshoot','排障']]" :key="key" :value="key" :label="label"/></el-select></el-form-item><el-form-item label="业务相关性 0–5"><el-input-number v-model="questionForm.relevance" :min="0" :max="5"/></el-form-item><el-form-item label="负责人"><el-input v-model="questionForm.owner" maxlength="120"/></el-form-item><el-form-item label="状态"><el-select v-model="questionForm.status"><el-option v-for="s in ['open','selected','archived']" :key="s" :value="s" :label="labels[s]"/></el-select></el-form-item><el-form-item label="选题管理"><el-button @click="saveQuestion">保存选题</el-button></el-form-item></el-form>
+        <section v-if="questionDetail?.coverage" class="qa-review">
+          <h3>问题覆盖与下一步</h3><p>{{ coverageLabels[questionDetail.coverage.state] }}</p>
+          <p>全部回答 {{ questionDetail.coverage.answer_count }} · 有效审核回答 {{ questionDetail.coverage.valid_answer_count }} · 需更新 {{ questionDetail.coverage.stale_answer_count }} · 当前版本公开匹配 {{ questionDetail.coverage.observed_answer_count }}</p>
+          <p>{{ questionDetail.next_action }}</p><p class="qa-hint">{{ questionDetail.meaning }}</p>
+          <p v-for="(source,i) in demandRecords(questionDetail.question)" :key="i" class="qa-hint">需求依据：{{ demandText(source) }}</p>
+          <p v-if="!demandRecords(questionDetail.question).length" class="qa-hint">尚无导入的需求频次，需求量未知。</p>
+          <details><summary>相关分发记录（{{ questionDetail.placement_total }}）</summary><p v-if="questionDetail.placements_truncated">仅展示最近 200 条，覆盖统计包含全部关联回答。</p><p v-for="p in questionDetail.placements" :key="p.id">#{{ p.id }} · {{ platformName(p.platform) }} · {{ labels[p.status] }} · 稿件版本 {{ p.content_version }} <a v-if="href(p.answer_url)" :href="href(p.answer_url)" target="_blank" rel="noopener noreferrer">查看公开页面</a><span v-if="p.observations?.length"> · 最近观测 {{ date(p.observations.at(-1).checked_at) }}</span></p></details>
+        </section>
         <div class="qa-toolbar"><h3>回答版本</h3><el-button :disabled="!canEdit || busy" @click="resetAnswer">新建回答</el-button></div><div class="qa-answer-list"><button v-for="a in answerItems" :key="a.id" :disabled="busy" :class="{active:answerForm.id===a.id}" @click="editAnswer(a)">#{{ a.id }} {{ formats[a.format] }} · {{ labels[a.status] }}<span v-if="a.problems.length"> · 需修复</span></button></div>
         <el-form label-position="top" :disabled="!canEdit || busy || answerForm.status==='review'">
           <el-form-item label="回答形式"><el-select v-model="answerForm.format"><el-option v-for="(label,key) in formats" :key="key" :value="key" :label="label"/></el-select></el-form-item>
@@ -357,6 +369,19 @@ watch(scopeKey, () => {
           <el-form-item label="回答正文 · 关键事实后使用 [F编号] 引用"><el-input v-model="answerForm.body" type="textarea" :rows="14" maxlength="80000" placeholder="先直接回答，再说明条件与步骤。字数不计分，事实与相关性优先。"/></el-form-item>
           <el-button type="primary" :disabled="!answerForm.body.trim()" @click="saveAnswer">{{ answerForm.id?'保存并重新进入草稿':'保存回答草稿' }}</el-button>
         </el-form>
+        <section v-if="answerItems.find(a=>a.id===answerForm.id)?.quality" class="qa-review">
+          <h3>已保存版本的质量检查</h3><p v-if="dirtyAnswer" class="qa-warning">正文有未保存修改，以下仍为上次保存版本的检查结果。</p>
+          <template v-for="quality in [answerItems.find(a=>a.id===answerForm.id).quality]" :key="quality.checked_at">
+            <p class="qa-hint">{{ quality.meaning }} · {{ date(quality.checked_at) }}</p>
+            <p>关联事实 {{ quality.linked_fact_count }} 条 · 正文引用 {{ quality.cited_fact_count }} 条</p>
+            <p v-for="issue in quality.blocking_issues" :key="issue" class="qa-warning">需修复：{{ issue }}</p>
+            <p v-for="(hint,i) in quality.hints" :key="i" class="qa-warning">第 {{ hint.paragraph }} 段：{{ hint.message }}<br/>{{ hint.excerpt }}</p>
+            <p v-if="quality.hints_total > quality.hints.length">仅显示前 {{ quality.hints.length }} 条，共 {{ quality.hints_total }} 条提示。</p>
+            <p v-if="!quality.blocking_issues.length && !quality.hints.length">程序未发现上述类型问题，仍需人工核对下列事项。</p>
+            <p v-for="item in quality.manual_review" :key="item">人工核对：{{ item }}</p>
+          </template>
+          <details><summary>本回答保存时的引用原文</summary><p v-for="f in answerItems.find(a=>a.id===answerForm.id).fact_snapshots" :key="f.id">[F{{ f.id }}] {{ f.title }} · 版本 {{ f.version }}<br/>{{ f.statement }}<br/>来源：{{ f.source_name }} <a v-if="href(f.source_url)" :href="href(f.source_url)" target="_blank" rel="noopener noreferrer">查看出处</a></p></details>
+        </section>
         <div v-if="answerForm.id" class="qa-review"><p v-if="dirtyAnswer" class="qa-warning">有未保存的修改。请保存后再提交审核或准备分发。</p><p v-for="p in answerItems.find(a=>a.id===answerForm.id)?.problems||[]" :key="p" class="qa-warning">{{ p }}</p><el-input v-model="reviewNote" placeholder="审核意见，退回时必填" :disabled="!canEdit || busy"/><div class="qa-toolbar"><el-button v-if="['planned','drafting'].includes(answerForm.status)" :disabled="!canEdit || busy" @click="review('submit')">提交已保存版本审核</el-button><template v-if="answerForm.status==='review'"><el-button type="success" :disabled="!canEdit || busy" @click="review('approve')">审核通过</el-button><el-button :disabled="!canEdit || busy || !reviewNote.trim()" @click="review('reject')">退回修改</el-button></template><el-button v-if="['ready','published'].includes(answerForm.status)" type="primary" :disabled="!canEdit || busy" @click="openPlacement">准备分发</el-button></div></div>
       </template>
     </el-drawer>

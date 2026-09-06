@@ -316,3 +316,23 @@ test('late receipt read is discarded after closing and reopening dialog',async()
     assert.equal(m.state.assistantReceipt,null);assert.equal(m.state.receiptForm.answer_url,'')
   }finally{m.app.unmount()}
 })
+
+
+test('question detail and quality responses never cross selected questions',async()=>{
+  const pending=[]
+  const m=await mount({seoQaGet:(path)=>path==='answers'||path.endsWith('/detail')?new Promise(resolve=>pending.push({path,resolve})):Promise.resolve(path==='questions'?{items:[],total:0}:[])})
+  try {
+    const first=m.state.openQuestion({id:1,sources:[]}),second=m.state.openQuestion({id:2,sources:[]})
+    pending[2].resolve([{id:22,quality:{method:'rules'}}]);pending[3].resolve({question:{id:2},coverage:{state:'draft_only'}});await second
+    pending[0].resolve([{id:11}]);pending[1].resolve({question:{id:1}});await first
+    assert.equal(m.state.questionDetail.question.id,2);assert.equal(m.state.answerItems[0].id,22)
+  }finally{m.app.unmount()}
+})
+test('coverage gap filter includes stale and draft answers but excludes valid coverage',async()=>{
+  const sample={groups:[{topic:'主题',intents:[{intent:'learn',questions:[
+    {id:1,title:'草稿',topic:'主题',answer_count:1,valid_answer_count:0},
+    {id:2,title:'过期',topic:'主题',answer_count:1,valid_answer_count:0},
+    {id:3,title:'有效',topic:'主题',answer_count:1,valid_answer_count:1}]}]}]}
+  const m=await mountPlanning({seoQaGet:async()=>sample})
+  try {m.state.flags.coverageGap=true;assert.deepEqual(m.state.groups[0].intents[0].questions.map(q=>q.id),[1,2])}finally{m.app.unmount()}
+})
