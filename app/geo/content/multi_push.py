@@ -393,15 +393,17 @@ async def tenant_auto_push_matrix(
     session: AsyncSession,
     *,
     tenant_id: int,
+    channels: list[GeoPublishingChannel] | None = None,
 ) -> dict[str, Any]:
     """Tenant-level readiness matrix (no task): config checklist for ops."""
-    channels = list(
-        await session.scalars(
-            select(GeoPublishingChannel)
-            .where(GeoPublishingChannel.tenant_id == tenant_id)
-            .order_by(GeoPublishingChannel.sort_order, GeoPublishingChannel.id)
+    if channels is None:
+        channels = list(
+            await session.scalars(
+                select(GeoPublishingChannel)
+                .where(GeoPublishingChannel.tenant_id == tenant_id)
+                .order_by(GeoPublishingChannel.sort_order, GeoPublishingChannel.id)
+            )
         )
-    )
     accounts = list(
         await session.scalars(
             select(GeoChannelAccount).where(GeoChannelAccount.tenant_id == tenant_id)
@@ -417,7 +419,8 @@ async def tenant_auto_push_matrix(
         ctype = str(ch.channel_type or "").lower()
         if ctype not in AUTO_PUSH_TYPES:
             continue
-        accs = by_ch.get(int(ch.id), [])
+        channel_id = int(ch.id) if ch.id is not None else None
+        accs = by_ch.get(channel_id, []) if channel_id is not None else []
         pushable = [
             a
             for a in accs
@@ -443,6 +446,7 @@ async def tenant_auto_push_matrix(
         rows.append(
             {
                 "channel_id": ch.id,
+                "virtual_default": ch.id is None,
                 "name": ch.name,
                 "channel_type": ctype,
                 "enabled": bool(ch.enabled),
@@ -474,6 +478,8 @@ async def tenant_auto_push_matrix(
         )
     return {
         "tenant_id": tenant_id,
+        "configuration_initialized": bool(channels)
+        and all(ch.id is not None for ch in channels),
         "items": rows,
         "ready_count": ready_n,
         "total_auto_types": len(rows),

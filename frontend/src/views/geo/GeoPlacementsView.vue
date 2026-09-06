@@ -19,6 +19,7 @@ import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { engineDisplay, fmtInt, pipelineLabel, taskStatusLabel } from '../../utils/geoReportLabels'
+import { isPersistedGeoRow } from '../../utils/geoVirtualDefaults'
 
 const { tenantId } = useGeoTenant()
 const loading = ref(false)
@@ -327,7 +328,7 @@ function openCreate(prefill = null) {
 }
 
 function openEdit(row) {
-  editing.value = row
+  editing.value = isPersistedGeoRow(row) ? row : null
   form.value = {
     name: row.name || '',
     channel_type: row.channel_type || 'website',
@@ -361,7 +362,7 @@ async function submitForm() {
       priority: Number(form.value.priority) || 0,
       authority_note: form.value.authority_note.trim() || null,
     }
-    if (editing.value) {
+    if (isPersistedGeoRow(editing.value)) {
       await patchGeoMediaPlacement(tenantId.value, editing.value.id, payload)
       ElMessage.success('已保存')
     } else {
@@ -379,11 +380,29 @@ async function submitForm() {
 
 async function saveRow(row) {
   try {
-    await patchGeoMediaPlacement(tenantId.value, row.id, {
-      status: row.status,
-      published_url: row.published_url || null,
-    })
-    ElMessage.success('已保存')
+    if (isPersistedGeoRow(row)) {
+      await patchGeoMediaPlacement(tenantId.value, row.id, {
+        status: row.status,
+        published_url: row.published_url || null,
+      })
+      ElMessage.success('已保存')
+    } else {
+      await createGeoMediaPlacement({
+        tenant_id: tenantId.value,
+        name: row.name,
+        channel_type: row.channel_type || 'other',
+        channel_key: row.channel_key || null,
+        target_url: row.target_url || null,
+        authority_note: row.authority_note || null,
+        status: row.status || 'planned',
+        published_url: row.published_url || null,
+        priority: Number(row.priority) || 0,
+        priority_band: row.priority_band || null,
+        fits_groups: row.fits_groups || [],
+        citation_national: row.citation_national ?? null,
+      })
+      ElMessage.success('已加入信源计划')
+    }
     await load()
   } catch (e) {
     ElMessage.error(e.message || '更新失败')
@@ -391,6 +410,10 @@ async function saveRow(row) {
 }
 
 async function remove(row) {
+  if (!isPersistedGeoRow(row)) {
+    ElMessage.warning('这是尚未保存的默认建议，无需删除')
+    return
+  }
   try {
     await ElMessageBox.confirm(`删除信源「${row.name}」？`, '删除', {
       type: 'warning',
@@ -557,9 +580,9 @@ onMounted(load)
           </el-table-column>
           <el-table-column label="操作" width="140" fixed="right">
             <template #default="{ row }">
-              <el-button link type="primary" @click="saveRow(row)">保存</el-button>
+              <el-button link type="primary" @click="saveRow(row)">{{ row.virtual_default ? '加入计划' : '保存' }}</el-button>
               <el-button link @click="openEdit(row)">编辑</el-button>
-              <el-button link type="danger" @click="remove(row)">删除</el-button>
+              <el-button v-if="!row.virtual_default" link type="danger" @click="remove(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>

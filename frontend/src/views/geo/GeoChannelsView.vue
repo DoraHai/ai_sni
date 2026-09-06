@@ -16,6 +16,7 @@ import {
 } from '../../api/geoContent'
 import GeoAccountCredentials from '../../components/GeoAccountCredentials.vue'
 import { buildAccountCredentials, credentialCheckMessage } from '../../utils/geoAccountCredentials'
+import { isPersistedGeoRow, persistedGeoRows } from '../../utils/geoVirtualDefaults'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
@@ -57,6 +58,7 @@ function publishModeLabel(mode) {
   return ({ auto_publish: '自动发布', draft_then_manual: '审核后发布', manual_only: '仅手动发布' })[mode] || '未设置'
 }
 function channelStatus(channel) {
+  if (!isPersistedGeoRow(channel)) return { label: '默认建议', type: 'info' }
   if (!channel.enabled) return { label: '未启用', type: 'info' }
   const linked = accounts.value.filter((account) => account.channel_id === channel.id)
   if (!linked.length) return { label: '待添加账号', type: 'warning' }
@@ -64,7 +66,8 @@ function channelStatus(channel) {
   return { label: '待配置凭证', type: 'warning' }
 }
 
-const connectedCount = computed(() => channels.value.filter((channel) => channel.enabled).length)
+const persistedChannels = computed(() => persistedGeoRows(channels.value))
+const connectedCount = computed(() => persistedChannels.value.filter((channel) => channel.enabled).length)
 const readyAccountCount = computed(() => accounts.value.filter((account) => account.status === 'active' && account.has_credentials).length)
 const strategyCount = computed(() => channels.value.filter((channel) => rulesOf(channel).source_role).length)
 const TYPE_TABS = ['全部平台', '自有渠道', '内容平台', '新闻媒体', '外链渠道', '待接入']
@@ -180,7 +183,7 @@ async function doRefreshOAuth(account) {
 function openCreateChannel() { channelForm.value = emptyChannelForm(); channelDialogOpen.value = true }
 function openEditChannel(channel) {
   const rules = rulesOf(channel)
-  channelForm.value = { id: channel.id, name: channel.name || '', channel_type: channel.channel_type, publish_mode: channel.publish_mode || 'manual_only', base_url: channel.base_url || '', enabled: !!channel.enabled, source_role: rules.source_role || '', citation_potential: rules.citation_potential || '中', strategy: rules.strategy || '', engines: Array.isArray(rules.engines) ? rules.engines.join(', ') : rules.engines || '' }
+  channelForm.value = { id: isPersistedGeoRow(channel) ? channel.id : null, name: channel.name || '', channel_type: channel.channel_type, publish_mode: channel.publish_mode || 'manual_only', base_url: channel.base_url || '', enabled: !!channel.enabled, source_role: rules.source_role || '', citation_potential: rules.citation_potential || '中', strategy: rules.strategy || '', engines: Array.isArray(rules.engines) ? rules.engines.join(', ') : rules.engines || '' }
   channelDialogOpen.value = true
 }
 function channelPayload() {
@@ -213,14 +216,19 @@ function channelPayload() {
 async function saveChannel() {
   try {
     const payload = channelPayload()
-    if (channelForm.value.id) await patchGeoPublishingChannel(tenantId.value, channelForm.value.id, payload)
+    const updating = isPersistedGeoRow(channelForm.value)
+    if (updating) await patchGeoPublishingChannel(tenantId.value, channelForm.value.id, payload)
     else await createGeoPublishingChannel({ tenant_id: tenantId.value, ...payload })
-    ElMessage.success(channelForm.value.id ? '平台策略已保存' : '已添加分发平台')
+    ElMessage.success(updating ? '平台策略已保存' : '已添加分发平台')
     channelDialogOpen.value = false
     await refresh()
   } catch (e) { ElMessage.error(e.message || '保存平台失败') }
 }
 async function removeChannel(channel) {
+  if (!isPersistedGeoRow(channel)) {
+    ElMessage.warning('这是尚未保存的默认平台，无需删除')
+    return
+  }
   try {
     await ElMessageBox.confirm(`删除平台「${channel.name}」及其账号？`, '删除分发平台', { type: 'warning' })
     await deleteGeoPublishingChannel(tenantId.value, channel.id, true)
@@ -228,7 +236,16 @@ async function removeChannel(channel) {
   } catch (e) { if (e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '删除平台失败') }
 }
 
-function openCreateAccount(channelId = null) { accountForm.value = { ...emptyAccountForm(), channel_id: channelId || channels.value[0]?.id || null }; accountDialogOpen.value = true }
+function openCreateAccount(channelId = null) {
+  const selected = persistedChannels.value.find((channel) => channel.id === channelId)
+    || persistedChannels.value[0]
+  if (!selected) {
+    ElMessage.warning('请先保存一个分发平台，再添加账号')
+    return
+  }
+  accountForm.value = { ...emptyAccountForm(), channel_id: selected.id }
+  accountDialogOpen.value = true
+}
 function openEditAccount(account) {
   accountForm.value = { ...emptyAccountForm(), id: account.id, channel_id: account.channel_id, display_name: account.display_name || '', auth_type: account.auth_type || 'manual', original_auth_type: account.auth_type || 'manual', status: account.status || 'active', provider: account.provider || 'gateway' }
   accountDialogOpen.value = true
@@ -278,12 +295,12 @@ onMounted(refresh)
       <div class="filter-row mb">
         <button v-for="tab in TYPE_TABS" :key="tab" class="geo-filter" :class="{ active: typeFilter === tab }" type="button" @click="typeFilter = tab">{{ tab }}</button>
       </div>
-      <section class="gd-card mb"><div class="gd-hd"><h3>平台账号与授权</h3><div class="header-actions"><button class="gd-btn" type="button" @click="openCreateAccount()">添加渠道账号</button></div></div><div class="gd-bd" style="padding:0"><el-table :data="filteredChannels" empty-text="暂无分发平台，请先添加平台" class="full-table"><el-table-column label="平台" min-width="150"><template #default="{ row }"><b>{{ row.name || channelLabel(row.channel_type) }}</b><div class="muted">{{ row.base_url || channelLabel(row.channel_type) }}</div></template></el-table-column><el-table-column label="平台类型" width="120"><template #default="{ row }">{{ channelLabel(row.channel_type) }}</template></el-table-column><el-table-column label="发布方式" width="120"><template #default="{ row }"><el-tag size="small" effect="plain" type="info">{{ publishModeLabel(row.publish_mode) }}</el-tag></template></el-table-column><el-table-column label="账号" width="90"><template #default="{ row }">{{ accountCount(row.id) }} 个</template></el-table-column><el-table-column label="当前状态" width="120"><template #default="{ row }"><el-tag size="small" :type="channelStatus(row).type">{{ channelStatus(row).label }}</el-tag></template></el-table-column><el-table-column label="操作" width="250" fixed="right"><template #default="{ row }"><div class="channel-actions"><el-button link @click="openCreateAccount(row.id)">添加账号</el-button><el-button link type="primary" @click="openEditChannel(row)">配置</el-button><el-button link type="danger" @click="removeChannel(row)">删除</el-button></div></template></el-table-column></el-table></div></section>
+      <section class="gd-card mb"><div class="gd-hd"><h3>平台账号与授权</h3><div class="header-actions"><button class="gd-btn" type="button" @click="openCreateAccount()">添加渠道账号</button></div></div><div class="gd-bd" style="padding:0"><el-table :data="filteredChannels" empty-text="暂无分发平台，请先添加平台" class="full-table"><el-table-column label="平台" min-width="150"><template #default="{ row }"><b>{{ row.name || channelLabel(row.channel_type) }}</b><el-tag v-if="row.virtual_default" size="small" effect="plain" type="info" class="ml">默认建议</el-tag><div class="muted">{{ row.base_url || channelLabel(row.channel_type) }}</div></template></el-table-column><el-table-column label="平台类型" width="120"><template #default="{ row }">{{ channelLabel(row.channel_type) }}</template></el-table-column><el-table-column label="发布方式" width="120"><template #default="{ row }"><el-tag size="small" effect="plain" type="info">{{ publishModeLabel(row.publish_mode) }}</el-tag></template></el-table-column><el-table-column label="账号" width="90"><template #default="{ row }">{{ accountCount(row.id) }} 个</template></el-table-column><el-table-column label="当前状态" width="120"><template #default="{ row }"><el-tag size="small" :type="channelStatus(row).type">{{ channelStatus(row).label }}</el-tag></template></el-table-column><el-table-column label="操作" width="250" fixed="right"><template #default="{ row }"><div class="channel-actions"><el-button v-if="!row.virtual_default" link @click="openCreateAccount(row.id)">添加账号</el-button><el-button link type="primary" @click="openEditChannel(row)">{{ row.virtual_default ? '保存平台' : '配置' }}</el-button><el-button v-if="!row.virtual_default" link type="danger" @click="removeChannel(row)">删除</el-button></div></template></el-table-column></el-table></div></section>
       <section class="gd-card mb"><div class="gd-hd"><h3>渠道账号</h3><span class="muted">账号授权与 SEO 共用</span></div><div class="gd-bd" style="padding:0"><el-table :data="accounts" empty-text="暂无渠道账号" class="full-table"><el-table-column label="账号" prop="display_name" min-width="180" /><el-table-column label="所属平台" min-width="130"><template #default="{ row }">{{ channels.find((c) => c.id === row.channel_id)?.name || `#${row.channel_id}` }}</template></el-table-column><el-table-column label="授权方式" prop="auth_type" width="120" /><el-table-column label="状态" width="100"><template #default="{ row }"><el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">{{ row.status || '—' }}</el-tag></template></el-table-column><el-table-column label="操作" width="260" fixed="right"><template #default="{ row }"><el-button v-if="isOAuthAccount(row)" link type="primary" :loading="oauthBusy === `oauth-${row.id}`" @click="goOAuth(row)">授权</el-button><el-button v-if="row.auth_type !== 'manual'" link :loading="oauthBusy === `verify-${row.id}`" @click="doVerifySocial(row)">检查凭据</el-button><el-button v-if="isOAuthAccount(row)" link :loading="oauthBusy === `refresh-${row.id}`" @click="doRefreshOAuth(row)">刷新令牌</el-button><el-button link type="primary" @click="openEditAccount(row)">编辑</el-button><el-button link type="danger" @click="removeAccount(row)">删除</el-button></template></el-table-column></el-table></div></section>
       <section class="gd-card mb"><div class="gd-hd"><h3>GEO 发布与信源策略</h3><span class="muted">优先选择具备稳定抓取、明确作者和可核验事实的平台</span></div><div class="gd-bd" style="padding:0"><el-table :data="filteredChannels" empty-text="配置平台后可维护 GEO 策略" class="full-table"><el-table-column label="平台" min-width="140"><template #default="{ row }">{{ row.name || channelLabel(row.channel_type) }}</template></el-table-column><el-table-column label="信源角色" min-width="130"><template #default="{ row }">{{ ruleValue(row, 'source_role') }}</template></el-table-column><el-table-column label="AI 引用潜力" width="120"><template #default="{ row }">{{ ruleValue(row, 'citation_potential') }}</template></el-table-column><el-table-column label="内容策略" min-width="230"><template #default="{ row }">{{ ruleValue(row, 'strategy') }}</template></el-table-column><el-table-column label="适配引擎" min-width="140"><template #default="{ row }">{{ ruleValue(row, 'engines') }}</template></el-table-column><el-table-column label="当前状态" width="105"><template #default="{ row }"><el-tag size="small" :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '策略可用' : '未启用' }}</el-tag></template></el-table-column></el-table></div></section>
     </div>
     <el-dialog v-model="channelDialogOpen" :title="channelForm.id ? '配置分发平台' : '添加分发平台'" width="560px"><el-form label-width="110px"><el-form-item label="平台名称"><el-input v-model="channelForm.name" placeholder="例如：行业技术媒体" /></el-form-item><el-form-item label="平台类型"><el-select v-model="channelForm.channel_type" style="width:100%"><el-option v-for="[value, label] in CHANNEL_TYPES" :key="value" :value="value" :label="label" /></el-select></el-form-item><el-form-item label="发布方式"><el-select v-model="channelForm.publish_mode" style="width:100%"><el-option label="自动发布" value="auto_publish" /><el-option label="出稿后人工发" value="draft_then_manual" /><el-option label="仅人工" value="manual_only" /></el-select></el-form-item><el-form-item label="接口 / 主页"><el-input v-model="channelForm.base_url" placeholder="https:// 或 API Endpoint" /></el-form-item><el-divider>GEO 发布与信源策略</el-divider><el-form-item label="信源角色"><el-input v-model="channelForm.source_role" placeholder="如：品牌事实底座" /></el-form-item><el-form-item label="AI 引用潜力"><el-select v-model="channelForm.citation_potential" style="width:100%"><el-option label="高" value="高" /><el-option label="中" value="中" /><el-option label="低" value="低" /></el-select></el-form-item><el-form-item label="内容策略"><el-input v-model="channelForm.strategy" type="textarea" placeholder="如：原创首发、明确作者、可核验事实" /></el-form-item><el-form-item label="适配引擎"><el-input v-model="channelForm.engines" placeholder="如：DeepSeek, Kimi" /></el-form-item><el-form-item label="启用"><el-switch v-model="channelForm.enabled" /></el-form-item></el-form><template #footer><el-button @click="channelDialogOpen = false">取消</el-button><el-button type="primary" @click="saveChannel">保存平台</el-button></template></el-dialog>
-    <el-dialog :close-on-click-modal="!savingAccount" :close-on-press-escape="!savingAccount" :show-close="!savingAccount" v-model="accountDialogOpen" :title="accountForm.id ? '编辑渠道账号' : '添加渠道账号'" width="520px"><el-form label-width="115px" :disabled="savingAccount"><el-form-item label="所属平台"><el-select v-model="accountForm.channel_id" :disabled="!!accountForm.id || savingAccount" style="width:100%"><el-option v-for="channel in channels" :key="channel.id" :label="channel.name || channelLabel(channel.channel_type)" :value="channel.id" /></el-select></el-form-item><el-form-item label="账号名称"><el-input v-model="accountForm.display_name" placeholder="账号名称或 App ID" /></el-form-item><el-form-item label="授权方式"><el-select v-model="accountForm.auth_type" style="width:100%"><el-option label="人工回填" value="manual" /><el-option label="Webhook" value="webhook" /><el-option label="OAuth2" value="oauth2" /><el-option label="社交直发" value="social_api" /></el-select></el-form-item><GeoAccountCredentials :form="accountForm" /><el-form-item v-if="accountForm.id" label="状态"><el-select v-model="accountForm.status" style="width:100%"><el-option label="有效" value="active" /><el-option label="未配置" value="unconfigured" /><el-option label="已禁用" value="disabled" /></el-select></el-form-item></el-form><template #footer><el-button :disabled="savingAccount" @click="accountDialogOpen = false">取消</el-button><el-button type="primary"  :loading="savingAccount" @click="saveAccount">保存账号</el-button></template></el-dialog>
+    <el-dialog :close-on-click-modal="!savingAccount" :close-on-press-escape="!savingAccount" :show-close="!savingAccount" v-model="accountDialogOpen" :title="accountForm.id ? '编辑渠道账号' : '添加渠道账号'" width="520px"><el-form label-width="115px" :disabled="savingAccount"><el-form-item label="所属平台"><el-select v-model="accountForm.channel_id" :disabled="!!accountForm.id || savingAccount" style="width:100%"><el-option v-for="channel in persistedChannels" :key="channel.id" :label="channel.name || channelLabel(channel.channel_type)" :value="channel.id" /></el-select></el-form-item><el-form-item label="账号名称"><el-input v-model="accountForm.display_name" placeholder="账号名称或 App ID" /></el-form-item><el-form-item label="授权方式"><el-select v-model="accountForm.auth_type" style="width:100%"><el-option label="人工回填" value="manual" /><el-option label="Webhook" value="webhook" /><el-option label="OAuth2" value="oauth2" /><el-option label="社交直发" value="social_api" /></el-select></el-form-item><GeoAccountCredentials :form="accountForm" /><el-form-item v-if="accountForm.id" label="状态"><el-select v-model="accountForm.status" style="width:100%"><el-option label="有效" value="active" /><el-option label="未配置" value="unconfigured" /><el-option label="已禁用" value="disabled" /></el-select></el-form-item></el-form><template #footer><el-button :disabled="savingAccount" @click="accountDialogOpen = false">取消</el-button><el-button type="primary"  :loading="savingAccount" @click="saveAccount">保存账号</el-button></template></el-dialog>
   </GeoWorkbenchPage>
 </template>
 

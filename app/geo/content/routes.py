@@ -873,7 +873,7 @@ async def _latest_variant_polish(session: AsyncSession, task: GeoContentTask) ->
 
 
 async def _channel_options_payload(session: AsyncSession, tenant_id: int) -> list[dict]:
-    rows = await _ensure_default_publishing_channels(session, tenant_id)
+    rows = await _publishing_channel_view_rows(session, tenant_id)
     return channel_options_from_registry(registry_row_dicts(rows))
 
 
@@ -945,16 +945,24 @@ async def get_channel_profiles(
     return {"items": list_profiles()}
 
 
-@router.get("/publishing-channel-options")
+@router.get(
+    "/publishing-channel-options",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def get_publishing_channel_options(
     tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(geo_read_session),
 ) -> dict:
     """Enabled registry channels mapped to adapt profiles (editor picker)."""
     ctx.ensure_tenant(tenant_id)
     options = await _channel_options_payload(session, tenant_id)
-    return {"items": options}
+    return {
+        "items": options,
+        "configuration_initialized": bool(options) and all(
+            not option["virtual_default"] for option in options
+        ),
+    }
 
 
 # ---------- 优化业务 / 单元（三级结构）----------
@@ -4465,13 +4473,15 @@ async def business_dashboard(
     }
 
 
-@router.get("/monitoring-stance")
+@router.get(
+    "/monitoring-stance", dependencies=[Depends(require_geo_read_entitlement)]
+)
 async def get_monitoring_stance(
     tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(geo_read_session),
 ) -> dict:
-    from app.geo.content.ai_settings import ensure_ai_setting
+    from app.geo.content.ai_settings import get_ai_setting_row
     from app.geo.content.monitoring_stance import (
         STANCES,
         build_skip_preview,
@@ -4481,7 +4491,7 @@ async def get_monitoring_stance(
     from app.models import GeoTrackingEngine
 
     ctx.ensure_tenant(tenant_id)
-    row = await ensure_ai_setting(session, tenant_id)
+    row = await get_ai_setting_row(session, tenant_id)
     stance = normalize_stance(getattr(row, "monitoring_stance", None))
     engines = list(
         await session.scalars(
@@ -4500,6 +4510,7 @@ async def get_monitoring_stance(
     skip_preview = build_skip_preview(engines, monitoring_stance=stance)
     return {
         "tenant_id": tenant_id,
+        "configuration_initialized": row is not None,
         "monitoring_stance": stance,
         "options": list(STANCES.values()),
         "banner": banner,
@@ -5269,6 +5280,7 @@ def _engine_payload(row: GeoTrackingEngine) -> dict[str, Any]:
     configured = bool(platform["configured"])
     return {
         "id": row.id,
+        "virtual_default": row.id is None,
         "tenant_id": row.tenant_id,
         "engine_key": row.engine_key,
         "display_name": row.display_name,
@@ -5327,15 +5339,37 @@ async def _ensure_default_engines(
     return rows
 
 
-@router.get("/tracking-engines")
+async def _tracking_engine_view_rows(
+    session: AsyncSession, tenant_id: int
+) -> list[GeoTrackingEngine]:
+    """Return stored engines plus transient defaults without writing from GET."""
+    rows = list(
+        await session.scalars(
+            select(GeoTrackingEngine)
+            .where(GeoTrackingEngine.tenant_id == tenant_id)
+            .order_by(GeoTrackingEngine.sort_order, GeoTrackingEngine.id)
+        )
+    )
+    existing = {str(row.engine_key) for row in rows}
+    rows.extend(
+        GeoTrackingEngine(**item)
+        for item in default_engine_rows(tenant_id)
+        if item["engine_key"] not in existing
+    )
+    return sorted(rows, key=lambda row: (row.sort_order, row.id or 0))
+
+
+@router.get(
+    "/tracking-engines", dependencies=[Depends(require_geo_read_entitlement)]
+)
 async def list_tracking_engines(
     tenant_id: int = Query(...),
     enabled_only: bool = Query(False),
     ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(geo_read_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
-    rows = await _ensure_default_engines(session, tenant_id)
+    rows = await _tracking_engine_view_rows(session, tenant_id)
     if enabled_only:
         rows = [r for r in rows if r.enabled]
     from app.geo.content.engine_providers import tencent_wsa_public_status
@@ -5343,6 +5377,8 @@ async def list_tracking_engines(
     return {
         "items": [_engine_payload(r) for r in rows],
         "support_services": [tencent_wsa_public_status()],
+        "configuration_initialized": bool(rows)
+        and all(r.id is not None for r in rows),
     }
 
 
@@ -5405,6 +5441,7 @@ async def put_tracking_engines(
 def _channel_payload(row: GeoPublishingChannel) -> dict:
     return {
         "id": row.id,
+        "virtual_default": row.id is None,
         "tenant_id": row.tenant_id,
         "name": row.name,
         "channel_type": row.channel_type,
@@ -5498,6 +5535,26 @@ async def _ensure_default_publishing_channels(
     return rows
 
 
+async def _publishing_channel_view_rows(
+    session: AsyncSession, tenant_id: int
+) -> list[GeoPublishingChannel]:
+    """Return stored channels plus transient defaults without writing from GET."""
+    rows = list(
+        await session.scalars(
+            select(GeoPublishingChannel)
+            .where(GeoPublishingChannel.tenant_id == tenant_id)
+            .order_by(GeoPublishingChannel.sort_order, GeoPublishingChannel.id)
+        )
+    )
+    existing_types = {str(row.channel_type or "").lower() for row in rows}
+    rows.extend(
+        GeoPublishingChannel(**item)
+        for item in default_channel_rows(tenant_id)
+        if str(item.get("channel_type") or "").lower() not in existing_types
+    )
+    return sorted(rows, key=lambda row: (row.sort_order, row.id or 0))
+
+
 async def _get_publishing_channel(
     session: AsyncSession, channel_id: int, tenant_id: int
 ) -> GeoPublishingChannel:
@@ -5516,32 +5573,43 @@ async def _get_channel_account(
     return row
 
 
-@router.get("/publishing-channels")
+@router.get(
+    "/publishing-channels", dependencies=[Depends(require_geo_read_entitlement)]
+)
 async def list_publishing_channels(
     tenant_id: int = Query(...),
     enabled_only: bool = Query(False),
     ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(geo_read_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
-    rows = await _ensure_default_publishing_channels(session, tenant_id)
+    rows = await _publishing_channel_view_rows(session, tenant_id)
     if enabled_only:
         rows = [row for row in rows if row.enabled]
-    return {"items": [_channel_payload(row) for row in rows]}
+    return {
+        "items": [_channel_payload(row) for row in rows],
+        "configuration_initialized": bool(rows)
+        and all(row.id is not None for row in rows),
+    }
 
 
-@router.get("/publishing-channels/auto-push-status")
+@router.get(
+    "/publishing-channels/auto-push-status",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def publishing_auto_push_status(
     tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(geo_read_session),
 ) -> dict:
     """Multi-media auto-push config matrix (what is ready vs missing credentials)."""
     from app.geo.content.multi_push import tenant_auto_push_matrix
 
     ctx.ensure_tenant(tenant_id)
-    await _ensure_default_publishing_channels(session, tenant_id)
-    return await tenant_auto_push_matrix(session, tenant_id=tenant_id)
+    channels = await _publishing_channel_view_rows(session, tenant_id)
+    return await tenant_auto_push_matrix(
+        session, tenant_id=tenant_id, channels=channels
+    )
 
 
 @router.post("/publishing-channels/enable-multi-media-auto")
@@ -5894,6 +5962,7 @@ async def delete_channel_account(
 def _media_payload(row: GeoMediaPlacement) -> dict[str, Any]:
     return {
         "id": row.id,
+        "virtual_default": row.id is None,
         "tenant_id": row.tenant_id,
         "name": row.name,
         "channel_type": row.channel_type,
@@ -5934,6 +6003,24 @@ async def _ensure_default_media_placements(
     return created
 
 
+async def _media_placement_view_rows(
+    session: AsyncSession, tenant_id: int
+) -> list[GeoMediaPlacement]:
+    """Return persisted placements or transient blueprint defaults for GET."""
+    rows = list(
+        await session.scalars(
+            select(GeoMediaPlacement)
+            .where(GeoMediaPlacement.tenant_id == tenant_id)
+            .order_by(GeoMediaPlacement.priority.desc(), GeoMediaPlacement.id.desc())
+        )
+    )
+    if rows:
+        return rows
+    return [
+        GeoMediaPlacement(**item) for item in default_media_placement_rows(tenant_id)
+    ]
+
+
 async def _get_media_placement(
     session: AsyncSession, placement_id: int, tenant_id: int
 ) -> GeoMediaPlacement:
@@ -5943,20 +6030,22 @@ async def _get_media_placement(
     return row
 
 
-@router.get("/media-placements")
+@router.get(
+    "/media-placements", dependencies=[Depends(require_geo_read_entitlement)]
+)
 async def list_media_placements(
     tenant_id: int = Query(...),
     status: str | None = Query(None),
     seed_defaults: bool = Query(
         True,
-        description="When empty, seed CN citation blueprint placements (D1)",
+        description="When empty, include transient CN citation blueprint defaults",
     ),
     ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(geo_read_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     if seed_defaults:
-        rows = await _ensure_default_media_placements(session, tenant_id)
+        rows = await _media_placement_view_rows(session, tenant_id)
     else:
         rows = list(
             await session.scalars(
@@ -5967,22 +6056,27 @@ async def list_media_placements(
         )
     if status:
         rows = [r for r in rows if r.status == status]
-    return {"items": [_media_payload(r) for r in rows]}
+    return {
+        "items": [_media_payload(r) for r in rows],
+        "configuration_initialized": bool(rows)
+        and all(r.id is not None for r in rows),
+    }
 
 
-@router.get("/channel-blueprint")
+@router.get(
+    "/channel-blueprint", dependencies=[Depends(require_geo_read_entitlement)]
+)
 async def get_channel_blueprint(
     tenant_id: int = Query(...),
     group: str | None = Query(None, description="问题组：推荐/比较/替代/…"),
     ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(geo_read_session),
 ) -> dict:
     """CN citation-weighted channel recommendations (GeoLook D1)."""
     ctx.ensure_tenant(tenant_id)
-    await _ensure_tenant_exists(session, tenant_id)
     payload = blueprint_payload(group=normalize_question_group(group))
     # Annotate with tenant placement coverage by channel_key
-    placements = await _ensure_default_media_placements(session, tenant_id)
+    placements = await _media_placement_view_rows(session, tenant_id)
     by_key = {p.channel_key: p for p in placements if p.channel_key}
     for item in payload["channels"]:
         row = by_key.get(item["channel_key"])
@@ -5993,6 +6087,9 @@ async def get_channel_blueprint(
         row = by_key.get(item["channel_key"])
         item["placement_status"] = row.status if row else None
         item["placement_id"] = row.id if row else None
+    payload["configuration_initialized"] = bool(placements) and all(
+        placement.id is not None for placement in placements
+    )
     return payload
 
 
@@ -6644,12 +6741,15 @@ async def delete_content_task(
     }
 
 
-@router.get("/content-tasks/{task_id}")
+@router.get(
+    "/content-tasks/{task_id}",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def get_task(
     task_id: int,
     tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(geo_read_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
