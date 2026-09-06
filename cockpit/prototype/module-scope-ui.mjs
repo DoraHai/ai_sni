@@ -41,7 +41,7 @@ function decorateNavigation() {
     }
     button.disabled = true;
     button.dataset.scopeDisabled = 'true';
-    button.textContent = `${button.dataset.scopeLabel} · ${button.dataset.page === 'acquisition' ? '需 SEM' : '需全模块'}`;
+    button.textContent = `${button.dataset.scopeLabel} · ${button.dataset.page === 'acquisition' ? '需 SEM' : '暂未开放'}`;
     button.title = access.reason;
     button.setAttribute('aria-label', `${button.dataset.scopeLabel}，${access.reason}`);
   });
