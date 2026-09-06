@@ -937,20 +937,17 @@ async def tenant_readiness(session: Any, tenant_id: int) -> dict[str, Any]:
         or 0
     )
     stance = normalize_stance(getattr(setting, "monitoring_stance", None) if setting else None)
-    default_biz_id = await session.scalar(
-        select(GeoOptimizationBusiness.id)
+    orphan_meta = await session.scalars(
+        select(GeoFact.meta)
         .where(
-            GeoOptimizationBusiness.tenant_id == tenant_id,
-            GeoOptimizationBusiness.status == "active",
+            GeoFact.tenant_id == tenant_id,
+            GeoFact.status == "active",
+            GeoFact.business_id.is_(None),
         )
-        .order_by(GeoOptimizationBusiness.id.asc())
-        .limit(1)
     )
-    if default_biz_id:
-        await attach_orphan_onboarding_facts(
-            session, tenant_id=tenant_id, business_id=int(default_biz_id)
-        )
-        await session.commit()
+    # A readiness GET must not assign historical facts to a business. Normal
+    # onboarding submission still performs assignment in its explicit write path.
+    orphan_count = sum(1 for meta in orphan_meta if isinstance(meta, dict) and meta.get("from_onboarding"))
     payload = build_readiness_items(
         has_brand_terms=bool(tenant.brand_terms),
         business_count=biz_n,
@@ -966,4 +963,9 @@ async def tenant_readiness(session: Any, tenant_id: int) -> dict[str, Any]:
     )
     payload["tenant_id"] = tenant_id
     payload["tenant_name"] = tenant.name
+    payload["unassigned_onboarding_facts"] = {
+        "count": orphan_count,
+        "automatic_assignment": False,
+        "message": "历史开户资料尚未关联业务，请在资料中核对归属" if orphan_count else "无待核对的历史开户资料",
+    }
     return payload

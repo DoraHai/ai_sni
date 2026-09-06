@@ -28,7 +28,7 @@ class FrozenDate(date):
 
 
 @asynccontextmanager
-async def environment():
+async def environment(*, extra_models=(), legacy_routes=False):
     from ops.run_geo_checks import validate_ci_database
     from app.database import get_session
     from app.geo import read_routes as api
@@ -47,7 +47,7 @@ async def environment():
     metadata = MetaData(schema=schema)
     for model in (Tenant, GeoAnswerSnapshot, GeoPrompt, GeoVisibilityPatrolRun, GeoTrackingEngine,
                   GeoPublishingChannel, GeoContentTask, GeoArticleVersion, GeoChannelVariant,
-                  GeoPublication, GeoAsyncJob, GeoActionTicket, GeoAiSetting):
+                  GeoPublication, GeoAsyncJob, GeoActionTicket, GeoAiSetting, *extra_models):
         Table(model.__tablename__, metadata, *(Column(c.name, c.type, nullable=True)
                                                for c in model.__table__.columns))
     Table('tenant_modules', metadata, Column('tenant_id', BigInteger), Column('module_code', String),
@@ -73,6 +73,11 @@ async def environment():
         app = FastAPI()  # Deliberately no production app/lifespan/schedulers.
         app.include_router(api.router, prefix='/api/v1/geo')
         app.include_router(metrics, prefix='/api/v1/geo')
+        if legacy_routes:
+            from app.geo.content.routes import router as legacy
+            app.include_router(legacy, prefix='/api/v1/geo')
+        identity['app'] = app
+        identity['sessions'] = sessions
         app.dependency_overrides[get_session] = query_session
         app.dependency_overrides[require_auth] = lambda: identity['ctx']
         with patch.object(api, 'async_session_factory', sessions), patch('app.geo.tenant_scope.date', FrozenDate):

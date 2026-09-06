@@ -13,6 +13,8 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
+from app.geo.read_routes import read_session as geo_read_session
+from app.geo.tenant_scope import require_geo_read_entitlement
 from app.geo.content.bridge import (
     create_and_bind_diagnosis_facts,
     create_task_from_diagnosis,
@@ -4075,11 +4077,11 @@ async def geo_onboarding_apply(
     }
 
 
-@router.get("/onboarding/readiness")
+@router.get("/onboarding/readiness", dependencies=[Depends(require_geo_read_entitlement)])
 async def geo_onboarding_readiness(
     tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(geo_read_session),
 ) -> dict:
     """开户完成后的「还差什么」检查表。"""
     from app.geo.content.onboarding import tenant_readiness
