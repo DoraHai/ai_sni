@@ -166,3 +166,7 @@ export function verifyGeoAuditTickets(tenantId, auditId, recrawl = true) {
     timeout: 120000,
   })
 }
+
+export function fetchGeoDiagnosisWork(tenantId, ticketId) {
+  return client.get(`/api/v1/geo/action-tickets/${ticketId}/implementation-plan`, { params: { tenant_id: tenantId } })
+}

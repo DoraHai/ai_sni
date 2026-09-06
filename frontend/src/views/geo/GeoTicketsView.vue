@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -12,6 +12,7 @@ import {
   verifyGeoAuditTickets,
 } from '../../api/geo'
 import { listGeoMediaPlacements } from '../../api/geoContent'
+import GeoDiagnosisWorkCard from '../../components/GeoDiagnosisWorkCard.vue'
 import GeoEvidenceTasks from '../../components/GeoEvidenceTasks.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
@@ -55,7 +56,12 @@ const auditIdNum = computed(() => {
 
 const unsupportedReason = '当前后端未提供该操作'
 
+let loadEpoch = 0
+let loadedTenant = null
+onBeforeUnmount(() => { loadEpoch++ })
 async function load() {
+  const run = ++loadEpoch, owner = tenantId.value
+  if (loadedTenant !== owner) { items.value = []; mediaItems.value = []; mediaPick.value = null; loadedTenant = owner }
   if (!tenantId.value) {
     error.value = '请先选择客户'
     items.value = []
@@ -71,16 +77,18 @@ async function load() {
       listGeoActionTickets(tenantId.value, params),
       listGeoMediaPlacements(tenantId.value).catch(() => ({ items: [] })),
     ])
+    if (run !== loadEpoch) return
     items.value = (tickets.items || []).filter((row) => !String(row.advice_code || '').startsWith('cockpit:v1:'))
     mediaItems.value = media.items || []
     if (!mediaPick.value && mediaItems.value.length) {
       mediaPick.value = mediaItems.value[0].id
     }
   } catch (e) {
+    if (run !== loadEpoch) return
     error.value = e.message || '加载失败'
     items.value = []
   } finally {
-    loading.value = false
+    if (run === loadEpoch) loading.value = false
   }
 }
 
@@ -258,6 +266,12 @@ onMounted(load)
         <div class="gd-hd"><h3>工单列表</h3></div>
         <div class="gd-bd" style="padding:0">
           <el-table :data="items" empty-text="暂无验收工单" size="small">
+            <el-table-column type="expand">
+              <template #default="{ row }">
+                <GeoDiagnosisWorkCard v-if="row.audit_id && !row.advice_code?.startsWith('workqueue:v1:')" :tenant-id="tenantId" :ticket="row" :disabled="!!busy || loading" @saved="load" />
+                <p v-else class="pad">此项没有页面诊断关联，请查看对应的内容执行任务。</p>
+              </template>
+            </el-table-column>
             <el-table-column prop="id" label="ID" width="72" />
             <el-table-column prop="priority" label="优先级" width="90" />
             <el-table-column label="标题" min-width="240">
@@ -294,7 +308,7 @@ onMounted(load)
                   :loading="busy === `verify-${row.id}`"
                   v-if="!row.advice_code?.startsWith('workqueue:v1:')"
                   @click="verifyOne(row, true)"
-                >验收</el-button>
+                >重抓验收</el-button>
                 <el-button link :loading="busy === `manual-${row.id}`" @click="manualPass(row, true)">通过</el-button>
                 <el-button link :loading="busy === `manual-${row.id}`" @click="manualPass(row, false)">驳回</el-button>
               </template>

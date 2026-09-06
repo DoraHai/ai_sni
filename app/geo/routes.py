@@ -682,6 +682,8 @@ async def materialize_tickets(
     """从诊断 advice / 失败 findings 生成验收工单。"""
     ctx.ensure_tenant(tenant_id)
     run = await _run_for_tenant(session, audit_id, tenant_id)
+    # Serialize generation for the same diagnosis before reading existing tickets.
+    await session.refresh(run, with_for_update=True)
     specs = materialize_ticket_specs(advice=run.advice, findings=run.findings or [])
     if not specs:
         return {"created": 0, "items": [], "audit_id": audit_id}
@@ -813,6 +815,20 @@ async def verify_audit_tickets(
         "summary": {"pass": passed, "fail": failed, "manual": manual},
         "results": results,
     }
+
+
+@router.get('/action-tickets/{ticket_id}/implementation-plan')
+async def get_diagnosis_implementation_plan(
+    ticket_id: int, tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session),
+) -> dict:
+    from app.geo.diagnosis_work import diagnosis_work_plan
+    ctx.ensure_tenant(tenant_id)
+    ticket = await _ticket_for_tenant(session, ticket_id, tenant_id)
+    if not ticket.audit_id:
+        raise HTTPException(404, '此工单没有关联页面诊断')
+    audit = await _run_for_tenant(session, ticket.audit_id, tenant_id)
+    return diagnosis_work_plan(ticket, audit)
 
 
 @router.get("/action-tickets")

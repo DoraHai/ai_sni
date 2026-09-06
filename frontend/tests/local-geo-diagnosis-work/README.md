@@ -1,0 +1,1 @@
+运行 `node frontend/tests/local-geo-evidence/server.mjs` 后打开 `/tests/local-geo-diagnosis-work/index.html`。所有请求为内存模拟，检查执行安排和开始处理不会自动完成任务。
