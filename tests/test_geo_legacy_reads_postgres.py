@@ -27,7 +27,8 @@ def test_legacy_progress_gets_are_read_only_and_background_recovery_persists():
                     id=14, tenant_id=1, prompt_id=1, title='fixture', status='generating', updated_at=old))
                 await conn.execute(tables['geo_async_jobs'].insert().values(
                     id=9, tenant_id=1, kind='generate_article', status='running',
-                    ref_type='content_task', ref_id=14, created_at=old, started_at=old))
+                    ref_type='content_task', ref_id=14, created_at=old, started_at=old,
+                    request_meta={'execution_protocol': 'advisory_v1'}))
                 await conn.execute(tables['geo_visibility_patrol_runs'].insert().values(
                     id=7, tenant_id=1, status='running', trigger='manual', created_at=old, started_at=old,
                     summary={'execution_protocol': 'advisory_v1'}))
