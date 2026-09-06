@@ -4,7 +4,8 @@ This process intentionally mounts only GEO routes. Deploying or restarting it
 does not restart the SEM scheduler or expose unrelated SEM endpoints.
 """
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,7 +23,7 @@ from app.geo.content.geo_scheduler import (
 )
 from app.geo.scheduler import (
     geo_scheduler as followup_scheduler,
-    start_geo_followup_scheduler,
+    supervise_geo_followups,
     shutdown_geo_scheduler as shutdown_geo_followup_scheduler,
 )
 from app.security.prod_guard import enforce_production_secrets
@@ -47,10 +48,13 @@ async def _lifespan(_app: FastAPI):
 
         logging.getLogger("geo-api").exception("async job recover on startup failed")
     start_geo_scheduler()
-    start_geo_followup_scheduler()
+    followup_supervisor = asyncio.create_task(supervise_geo_followups())
     try:
         yield
     finally:
+        followup_supervisor.cancel()
+        with suppress(asyncio.CancelledError):
+            await followup_supervisor
         shutdown_geo_followup_scheduler()
         shutdown_geo_scheduler()
 

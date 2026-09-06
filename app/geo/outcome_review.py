@@ -1,12 +1,13 @@
 """Create review work only from comparable, closed-week observations."""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.geo.integration import completion_evidence, metric, snapshot
 from app.geo.verify import append_evidence
 from app.models import GeoActionTicket
+from app.geo.followup_lifecycle import active_review_source
 
 
 async def assess_outcome(session, row):
@@ -28,7 +29,7 @@ async def assess_outcome(session, row):
 
 async def update_outcome_review(session, task_id):
     row = await session.scalar(select(GeoActionTicket).where(GeoActionTicket.id == task_id,
-        GeoActionTicket.advice_code.like('cockpit:v1:%'), GeoActionTicket.status.in_(['todo', 'doing']))
+        GeoActionTicket.advice_code.like('cockpit:v1:%'), GeoActionTicket.status.in_(['todo', 'doing']), active_review_source())
         .with_for_update(skip_locked=True))
     if row is None or not (row.progress_first or {}).get('params', {}).get('content_task_id'):
         return
@@ -38,7 +39,8 @@ async def update_outcome_review(session, task_id):
         if exc.status_code != 409:
             raise
         assessment = {'state': 'waiting', 'reason': exc.detail, 'checked_at': datetime.utcnow().isoformat() + 'Z'}
-    row.progress = {**(row.progress or {}), 'outcome_review': assessment}
+    row.progress = {**(row.progress or {}), 'outcome_review': assessment, 'outcome_review_error': None,
+                    'outcome_review_next_at': (datetime.utcnow() + timedelta(hours=24)).isoformat() + 'Z'}
     if assessment['state'] == 'needs_review':
         code = 'review:v1:' + str(row.id)
         follow = await session.scalar(select(GeoActionTicket).where(
@@ -79,15 +81,28 @@ async def update_outcome_review(session, task_id):
 async def run_outcome_reviews():
     from app.database import async_session_factory
     import logging
-    # Least recently assessed first; repeated runs drain larger tenants fairly.
+    due = func.coalesce(GeoActionTicket.progress['outcome_review_next_at'].astext, '')
+    now = datetime.utcnow().isoformat() + 'Z'
     async with async_session_factory() as session:
         ids = list(await session.scalars(select(GeoActionTicket.id).where(
             GeoActionTicket.advice_code.like('cockpit:v1:%'), GeoActionTicket.status.in_(['todo', 'doing']),
-            GeoActionTicket.progress_first['params']['content_task_id'].astext.is_not(None))
-            .order_by(GeoActionTicket.progress['outcome_review']['checked_at'].astext.asc().nullsfirst(), GeoActionTicket.id).limit(100)))
+            active_review_source(), due <= now)
+            .order_by(due, GeoActionTicket.id).limit(100)))
     for task_id in ids:
         try:
             async with async_session_factory() as session:
                 await update_outcome_review(session, task_id)
         except Exception:
             logging.getLogger(__name__).exception('GEO outcome review failed for task %s', task_id)
+            try:
+                async with async_session_factory() as session:
+                    row = await session.scalar(select(GeoActionTicket).where(
+                        GeoActionTicket.id == task_id, GeoActionTicket.advice_code.like('cockpit:v1:%'))
+                        .with_for_update(skip_locked=True))
+                    if row is not None:
+                        now = datetime.utcnow()
+                        row.progress = {**(row.progress or {}), 'outcome_review_error': '本次评估执行失败，稍后自动重试',
+                                        'outcome_review_next_at': (now + timedelta(hours=1)).isoformat() + 'Z'}
+                        await session.commit()
+            except Exception:
+                logging.getLogger(__name__).exception('Could not defer GEO outcome task %s', task_id)

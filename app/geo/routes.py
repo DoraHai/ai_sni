@@ -842,7 +842,15 @@ async def list_action_tickets(
         stmt = stmt.where(audit_ticket_filter(GeoActionTicket, audit_id))
     stmt = stmt.order_by(GeoActionTicket.id.desc())
     rows = (await session.scalars(stmt)).all()
-    return {"items": [ticket_public_dict(r) for r in rows], "total": len(rows)}
+    from app.geo.followup_lifecycle import active_followup_condition
+    followups = [r.id for r in rows if (r.advice_code or '').startswith(('monitor:v1:', 'review:v1:'))]
+    active = set(await session.scalars(select(GeoActionTicket.id).where(
+        GeoActionTicket.tenant_id == tenant_id, GeoActionTicket.id.in_(followups), active_followup_condition()))) if followups else set()
+    items = [ticket_public_dict(r) for r in rows]
+    for item in items:
+        if item['id'] in followups:
+            item['followup_active'] = item['id'] in active
+    return {'items': items, 'total': len(rows)}
 
 
 @router.post("/action-tickets")

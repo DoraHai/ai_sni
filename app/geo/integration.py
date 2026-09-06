@@ -423,6 +423,7 @@ async def execution_readiness(task_id: int, tenant_id: int = Query(...),
             'latest_retest': latest_retest, 'publication_candidates': publication_candidates,
             'publication_evidence': (row.progress or {}).get('publication_evidence'),
             'outcome_review': (row.progress or {}).get('outcome_review'),
+            'outcome_review_error': (row.progress or {}).get('outcome_review_error'),
             'publishing': matrix, 'completion_evidence': (row.progress or {}).get('completion_evidence')}
 
 

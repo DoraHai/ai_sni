@@ -106,6 +106,19 @@ def test_cancelled_fetch_does_not_commit_success_or_failure():
     assert v.adapt_meta['publication_monitor'][str(p.id)]==old
 
 
+def test_failed_worker_defers_without_fabricating_a_page_failure():
+    from app.geo.publication_monitor import defer_monitor_failure
+    v,p,_,s=fixture()
+    old={**initial_state(v),'state':'healthy','checked_at':'2026-09-01T00:00:00Z','observed_sha256':'real-proof','failures':0}
+    store_state(v,p,old)
+    asyncio.run(defer_monitor_failure(s,7,5,4))
+    result=v.adapt_meta['publication_monitor']['4']
+    assert result['state']=='healthy' and result['failures']==0
+    assert result['checked_at']==old['checked_at'] and result['observed_sha256']=='real-proof'
+    assert result['last_error']['kind']=='check_incomplete' and result['next_check_at']
+    s.commit.assert_awaited_once()
+
+
 def test_monitor_cannot_be_manually_marked_complete():
     from app.geo.routes import patch_action_ticket,TicketUpdate
     row=NS(advice_code='monitor:v1:4')

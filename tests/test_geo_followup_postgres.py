@@ -12,7 +12,7 @@ from app.models import GeoActionTicket, GeoChannelVariant
 
 
 @pytest.mark.skipif(not os.getenv('GEO_TEST_POSTGRES_URL'), reason='requires isolated PostgreSQL')
-@pytest.mark.parametrize('scenario', ['diagnosis_merge','publication_monitor','cancelled_monitor','outcome_review'])
+@pytest.mark.parametrize('scenario', ['diagnosis_merge','publication_monitor','cancelled_monitor','outcome_review','lifecycle','failure_backoff','review_backlog'])
 def test_followup_real_concurrency(scenario):
     async def run():
         schema='geo_followup_test_'+uuid4().hex
@@ -64,6 +64,59 @@ def test_followup_real_concurrency(scenario):
                     rows=list(await s.scalars(select(GeoActionTicket)))
                     assert len(rows)==1 and sorted(rows[0].baseline_snapshot['diagnosis_ids'])==[1,2]
                     assert await s.scalar(select(GeoActionTicket.id).where(audit_ticket_filter(GeoActionTicket,2)))==rows[0].id
+            elif scenario in {'lifecycle','failure_backoff','review_backlog'}:
+                from app.geo.followup_lifecycle import active_followup_condition
+                from app.geo.publication_monitor import run_monitor_batch,check_publication,list_monitor
+                from app.geo.outcome_review import run_outcome_reviews,update_outcome_review
+                async with sessions() as s:
+                    await s.execute(text("INSERT INTO geo_action_tickets(id,tenant_id,advice_code,status,progress_first,progress) VALUES(50,7,'cockpit:v1:test','doing',:meta,'{}')"),{'meta':'{"params":{"content_task_id":12}}'})
+                    await s.commit()
+                if scenario=='lifecycle':
+                    async with sessions() as s:
+                        await s.execute(text("INSERT INTO geo_action_tickets(id,tenant_id,content_task_id,advice_code,status) VALUES(51,7,12,'monitor:v1:4','todo'),(52,7,12,'review:v1:50','todo'),(53,8,12,'monitor:v1:4','todo')"))
+                        await s.commit()
+                        async def active():return set(await s.scalars(select(GeoActionTicket.id).where(active_followup_condition())))
+                        assert await active()=={51,52}
+                        await s.execute(text("UPDATE geo_publications SET status='deleted' WHERE id=4"))
+                        assert await active()=={52}
+                        await s.execute(text("UPDATE geo_action_tickets SET status='done' WHERE id=50"))
+                        assert await active()==set()
+                        await s.execute(text("UPDATE geo_action_tickets SET status='doing' WHERE id=50"))
+                        await s.execute(text("UPDATE geo_publications SET status='published' WHERE id=4"))
+                        await s.execute(text("UPDATE geo_content_tasks SET status='archived' WHERE id=12"))
+                        await s.commit()
+                        assert await active()==set()
+                        assert (await list_monitor(s,7,12))['monitoring_active'] is False
+                        with patch('app.geo.publication_monitor.safe_fetch',AsyncMock()) as fetch, patch('app.geo.outcome_review.assess_outcome',AsyncMock()) as assess:
+                            assert await check_publication(s,7,12,4,scheduled=True) is None
+                            await update_outcome_review(s,50)
+                            fetch.assert_not_awaited();assess.assert_not_awaited()
+                        await s.execute(text('DELETE FROM geo_content_tasks WHERE id=12'))
+                        await s.commit();assert await active()==set()
+                elif scenario=='failure_backoff':
+                    with patch('app.database.async_session_factory',sessions):
+                        with patch('app.geo.publication_monitor.check_publication',AsyncMock(side_effect=RuntimeError('isolated worker error'))):
+                            await run_monitor_batch()
+                        with patch('app.geo.publication_monitor.check_publication',AsyncMock()) as check:
+                            await run_monitor_batch();check.assert_not_awaited()
+                        with patch('app.geo.outcome_review.update_outcome_review',AsyncMock(side_effect=RuntimeError('isolated worker error'))):
+                            await run_outcome_reviews()
+                        with patch('app.geo.outcome_review.update_outcome_review',AsyncMock()) as review:
+                            await run_outcome_reviews();review.assert_not_awaited()
+                    async with sessions() as s:
+                        row=await s.get(GeoActionTicket,50)
+                        assert row.progress['outcome_review_error'] and not row.progress.get('completion_evidence')
+                        state=(await s.get(GeoChannelVariant,3)).adapt_meta['publication_monitor']['4']
+                        assert state['state']=='pending' and state['failures']==0 and state['last_error']
+                else:
+                    async with sessions() as s:
+                        await s.execute(text('DELETE FROM geo_action_tickets WHERE id=50'))
+                        await s.execute(text("INSERT INTO geo_action_tickets(id,tenant_id,advice_code,status,progress_first,progress) SELECT n,7,'cockpit:v1:test','doing',cast(:meta as jsonb),'{}' FROM generate_series(1000,1100) n"),{'meta':'{"params":{"content_task_id":12}}'})
+                        await s.commit()
+                    with patch('app.database.async_session_factory',sessions), patch('app.geo.outcome_review.assess_outcome',AsyncMock(return_value={'state':'waiting','reason':'isolated missing data'})) as assess:
+                        await run_outcome_reviews();assert assess.await_count==100
+                        await run_outcome_reviews();assert assess.await_count==101
+                        await run_outcome_reviews();assert assess.await_count==101
             elif scenario=='outcome_review':
                 from app.geo.outcome_review import update_outcome_review
                 async with sessions() as s:

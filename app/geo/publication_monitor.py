@@ -37,7 +37,7 @@ def store_state(variant, pub, state):
 def outcome(previous, state, now, **evidence):
     failures = 0 if state == 'healthy' else int(previous.get('failures') or 0) + 1
     stamp = now.isoformat() + 'Z'
-    clean = {k: v for k, v in previous.items() if k not in {'expected_sha256', 'observed_sha256', 'observed_url', 'matched_passages', 'total_passages'}}
+    clean = {k: v for k, v in previous.items() if k not in {'expected_sha256', 'observed_sha256', 'observed_url', 'matched_passages', 'total_passages', 'last_error'}}
     return {**clean, **evidence, 'state': state, 'checked_at': stamp, 'failures': failures,
             'next_check_at': (now + timedelta(hours=24 if state == 'healthy' else 1)).isoformat() + 'Z',
             'history': [*(previous.get('history') or []), {'at': stamp, 'state': state}][-30:]}
@@ -78,7 +78,7 @@ async def check_publication(session, tenant_id, task_id, publication_id, *, sche
     # ownership through the bounded fetch; a crash rolls it back without a stuck lease.
     content = await session.scalar(select(GeoContentTask).where(
         GeoContentTask.id == task_id, GeoContentTask.tenant_id == tenant_id,
-        GeoContentTask.status != 'archived').with_for_update(skip_locked=scheduled))
+        GeoContentTask.status.notin_(['archived', 'cancelled'])).with_for_update(skip_locked=scheduled))
     if content is None:
         if scheduled:
             return None
@@ -127,7 +127,7 @@ async def check_publication(session, tenant_id, task_id, publication_id, *, sche
 
 
 async def list_monitor(session, tenant_id, task_id):
-    exists = await session.scalar(select(GeoContentTask.id).where(
+    exists = await session.scalar(select(GeoContentTask.status).where(
         GeoContentTask.id == task_id, GeoContentTask.tenant_id == tenant_id))
     if exists is None:
         raise HTTPException(404, '内容任务不存在')
@@ -135,8 +135,9 @@ async def list_monitor(session, tenant_id, task_id):
         GeoChannelVariant, GeoChannelVariant.id == GeoPublication.variant_id).where(
         GeoChannelVariant.task_id == task_id, GeoPublication.status == 'published')
         .order_by(GeoPublication.id.desc()).limit(100))).all()
-    return {'items': [{'publication_id': p.id, 'url': p.published_url, 'channel': p.channel,
-                       **(state_for(v, p) or {'state': 'pending'})} for p, v in rows]}
+    return {'monitoring_active': exists not in {'archived', 'cancelled'}, 'items': [{'publication_id': p.id, 'url': p.published_url, 'channel': p.channel,
+                       **(state_for(v, p) or {'state': 'pending'}),
+                       'can_check': bool(p.published_url) and exists not in {'archived', 'cancelled'}} for p, v in rows]}
 
 
 async def run_monitor_batch():
@@ -149,7 +150,7 @@ async def run_monitor_batch():
         rows = (await session.execute(select(GeoContentTask.tenant_id, GeoContentTask.id, GeoPublication.id)
             .join(GeoChannelVariant, GeoChannelVariant.task_id == GeoContentTask.id)
             .join(GeoPublication, GeoPublication.variant_id == GeoChannelVariant.id)
-            .where(GeoContentTask.status != 'archived', GeoPublication.status == 'published',
+            .where(GeoContentTask.status.notin_(['archived', 'cancelled']), GeoPublication.status == 'published',
                    GeoPublication.published_url.is_not(None), due <= now)
             .order_by(due, GeoPublication.id).limit(25))).all()
     for tenant_id, task_id, publication_id in rows:
@@ -158,3 +159,30 @@ async def run_monitor_batch():
                 await check_publication(session, tenant_id, task_id, publication_id, scheduled=True)
         except Exception:
             logging.getLogger(__name__).exception('GEO publication monitor failed for record %s', publication_id)
+            try:
+                async with async_session_factory() as session:
+                    await defer_monitor_failure(session, tenant_id, task_id, publication_id)
+            except Exception:
+                logging.getLogger(__name__).exception('Could not defer GEO publication %s', publication_id)
+
+
+async def defer_monitor_failure(session, tenant_id, task_id, publication_id):
+    content = await session.scalar(select(GeoContentTask).where(
+        GeoContentTask.id == task_id, GeoContentTask.tenant_id == tenant_id,
+        GeoContentTask.status.notin_(['archived', 'cancelled'])).with_for_update(skip_locked=True))
+    if content is None:
+        return
+    result = (await session.execute(select(GeoPublication, GeoChannelVariant).join(
+        GeoChannelVariant, GeoChannelVariant.id == GeoPublication.variant_id).where(
+        GeoPublication.id == publication_id, GeoChannelVariant.task_id == task_id,
+        GeoPublication.status == 'published').with_for_update(of=[GeoPublication, GeoChannelVariant])
+        .execution_options(populate_existing=True))).first()
+    if not result:
+        return
+    pub, variant = result
+    old = state_for(variant, pub) or {**initial_state(variant), 'baseline_source': 'first_monitor_current_variant'}
+    now = datetime.utcnow()
+    # Keep the last actual observation. A failed worker is not a failed public page.
+    store_state(variant, pub, {**old, 'last_error': {'at': now.isoformat() + 'Z', 'kind': 'check_incomplete'},
+                              'next_check_at': (now + timedelta(hours=1)).isoformat() + 'Z'})
+    await session.commit()

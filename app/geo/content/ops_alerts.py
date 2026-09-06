@@ -86,7 +86,9 @@ async def build_ops_alerts(
                 "detail": "连接失败可重试；发送中或结果未确认时，请先核对渠道后台，避免重复发布。",
                 "href": f"/geo/tasks/{variant.task_id}/distribution"})
 
+    from app.geo.followup_lifecycle import active_followup_condition
     followups = list(await session.scalars(select(GeoActionTicket).where(
+        active_followup_condition(),
         GeoActionTicket.tenant_id == tenant_id, GeoActionTicket.status != 'done',
         GeoActionTicket.advice_code.like('monitor:v1:%') | GeoActionTicket.advice_code.like('review:v1:%'))
         .order_by(GeoActionTicket.id.desc()).limit(20)))

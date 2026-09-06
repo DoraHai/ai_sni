@@ -206,12 +206,30 @@ def start_geo_followup_scheduler() -> bool:
         return True
     if not _acquire_scheduler_lock():
         return False
-    from app.geo.publication_monitor import run_monitor_batch
-    from app.geo.outcome_review import run_outcome_reviews
-    geo_scheduler.add_job(run_monitor_batch, CronTrigger(minute='*/10', timezone=ZoneInfo('Asia/Shanghai')),
-                          id='geo_publication_monitor', replace_existing=True, max_instances=1, coalesce=True)
-    geo_scheduler.add_job(run_outcome_reviews, CronTrigger(hour=9, minute=15, timezone=ZoneInfo('Asia/Shanghai')),
-                          id='geo_outcome_reviews', replace_existing=True, max_instances=1, coalesce=True)
-    geo_scheduler.start()
+    try:
+        from app.geo.publication_monitor import run_monitor_batch
+        from app.geo.outcome_review import run_outcome_reviews
+        now = datetime.now(ZoneInfo('Asia/Shanghai'))
+        geo_scheduler.add_job(run_monitor_batch, CronTrigger(minute='*/10', timezone=ZoneInfo('Asia/Shanghai')),
+                              id='geo_publication_monitor', replace_existing=True, max_instances=1, coalesce=True,
+                              next_run_time=now)
+        geo_scheduler.add_job(run_outcome_reviews, CronTrigger(minute=15, timezone=ZoneInfo('Asia/Shanghai')),
+                              id='geo_outcome_reviews', replace_existing=True, max_instances=1, coalesce=True,
+                              next_run_time=now)
+        geo_scheduler.start()
+    except Exception:
+        _release_scheduler_lock()
+        raise
     logger.info('[geo-followup-scheduler] started publication monitoring and outcome reviews')
     return True
+
+
+async def supervise_geo_followups():
+    """Standby workers retry ownership; OS locks release when the owner exits."""
+    import asyncio
+    while True:
+        try:
+            start_geo_followup_scheduler()
+        except Exception:
+            logger.exception('[geo-followup-scheduler] startup failed, will retry')
+        await asyncio.sleep(30)

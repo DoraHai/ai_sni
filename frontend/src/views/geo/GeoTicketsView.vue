@@ -302,6 +302,7 @@ onMounted(load)
             </el-table-column>
             <el-table-column label="操作" width="220" fixed="right">
               <template #default="{ row }">
+                <span v-if="row.followup_active === false">已停止跟进 · 历史记录</span>
                 <el-button
                   link
                   type="primary"
@@ -309,9 +310,9 @@ onMounted(load)
                   v-if="!['workqueue:v1:', 'monitor:v1:', 'review:v1:'].some(prefix => row.advice_code?.startsWith(prefix))"
                   @click="verifyOne(row, true)"
                 >重抓验收</el-button>
-                <router-link v-if="row.advice_code?.startsWith('monitor:v1:')" :to="`/geo/tasks/${row.content_task_id}/distribution`">检查发布页</router-link>
-                <el-button v-if="!row.advice_code?.startsWith('monitor:v1:')" link :loading="busy === `manual-${row.id}`" @click="manualPass(row, true)">通过</el-button>
-                <el-button v-if="!row.advice_code?.startsWith('monitor:v1:')" link :loading="busy === `manual-${row.id}`" @click="manualPass(row, false)">驳回</el-button>
+                <router-link v-if="row.advice_code?.startsWith('monitor:v1:') && row.followup_active !== false" :to="`/geo/tasks/${row.content_task_id}/distribution`">检查发布页</router-link>
+                <el-button v-if="!row.advice_code?.startsWith('monitor:v1:') && row.followup_active !== false" link :loading="busy === `manual-${row.id}`" @click="manualPass(row, true)">通过</el-button>
+                <el-button v-if="!row.advice_code?.startsWith('monitor:v1:') && row.followup_active !== false" link :loading="busy === `manual-${row.id}`" @click="manualPass(row, false)">驳回</el-button>
               </template>
             </el-table-column>
           </el-table>
