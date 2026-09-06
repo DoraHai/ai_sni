@@ -11,6 +11,7 @@ from app.security.auth import _required
         ("/api/v1/geo/integration/metrics/snapshot", "GET", ({"geo.content"}, False)),
         ("/api/v1/geo/integration/metrics/dictionary", "HEAD", ({"geo.content"}, False)),
         ("/api/v1/geo/integration/read/period-context", "GET", ({"geo.content"}, False)),
+        ("/api/v1/geo/integration/read/questions", "GET", ({"geo.content"}, False)),
         ("/api/v1/geo/integration/read/answers", "OPTIONS", ({"geo.content"}, False)),
         ("/api/v1/geo/integration/read/answers/8", "GET", ({"geo.content"}, False)),
         ("/api/v1/geo/integration/read/capabilities", "GET", ({"geo.content"}, False)),

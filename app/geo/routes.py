@@ -597,5 +597,7 @@ async def verify_one_ticket(
 
 # 内容工作台路由（机会/事实/任务/生成/发布回填）
 from app.geo.content.routes import router as content_router  # noqa: E402
+from app.geo.question_read_routes import router as question_read_router  # noqa: E402
 
 router.include_router(content_router)
+router.include_router(question_read_router)

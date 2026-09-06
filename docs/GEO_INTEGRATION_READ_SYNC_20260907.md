@@ -50,3 +50,68 @@
 
 该增量只读 `geo_prompts`、`geo_optimization_units` 和
 `geo_optimization_businesses`，不会初始化配置、创建问题、采集回答或触发生成。
+
+### 请求与分页
+
+```http
+GET /api/v1/geo/integration/read/questions?tenant_id=16&limit=50&before_id=120
+```
+
+可选过滤参数为 `status`、`is_brand_probe`、`unit_id` 和 `business_id`。结果按问题 ID
+倒序，使用 `before_id` 做稳定的游标分页；有下一页时，客户端把
+`pagination.next_before_id` 原样传回。`limit` 范围为 1–200，越过最后一页返回空
+`items`，不报错也不回绕。
+
+```json
+{
+  "tenant_id": 16,
+  "evaluated_at": "2026-09-07T09:00:00Z",
+  "pagination": {
+    "limit": 50,
+    "has_more": false,
+    "next_before_id": null
+  },
+  "items": [
+    {
+      "ref": {"module": "geo", "type": "question", "id": 14},
+      "current_text": "工业齿轮箱如何选型？",
+      "language": "zh-CN",
+      "status": "active",
+      "question_source": "manual",
+      "question_group": "selection",
+      "market": "cn",
+      "is_brand_probe": false,
+      "priority": 10,
+      "tags": ["选型"],
+      "unit_ref": {
+        "module": "geo",
+        "type": "optimization_unit",
+        "id": 8,
+        "name": "工业齿轮箱",
+        "status": "active"
+      },
+      "business_ref": {
+        "module": "geo",
+        "type": "optimization_business",
+        "id": 3,
+        "name": "驱动产品",
+        "status": "active"
+      },
+      "created_at": "2026-09-01T01:00:00Z",
+      "updated_at": "2026-09-06T08:00:00Z"
+    }
+  ]
+}
+```
+
+`question_source` 只说明问题本身如何录入，不是回答的供应商、模型或采集来源。这个接口
+没有回答正式准入结论，也不能作为正式指标样本清单。正式指标仍只读取
+`/integration/metrics/snapshot`；回答详情必须单独保留真实、人工、模拟、未知来源以及
+逐条排除原因。
+
+### 隔离与只读保证
+
+- 绑定客户的普通 `geo.content=view` 用户只能读取自己的 `tenant_id`。
+- 查询前检查 GEO 模块存在、状态为 `active`/`trial`，且到期日为空或不早于当天。
+- 问题、优化单元和优化业务三张表分别带租户约束，异常跨租户关联不会被展开。
+- 数据查询使用数据库强制的只读事务；接口代码没有提交、写入、初始化或执行入口。
