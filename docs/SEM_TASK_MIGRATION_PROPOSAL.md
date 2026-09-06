@@ -91,4 +91,6 @@ BIGINT 四组边界、真实模块/指标查询、FK、并发验收；不读取�
 
 见 `docs/SEM_TASK_CONTROLLED_MIGRATION_REVIEW.md`：记录两侧审核边界、正式入口契约、
 结构对账、备份/PITR、停并发和失败处置。新增 `preflight-readonly.psql` 供审核后只读核验。
-此阶段仅交付设计和核验脚本，不是生产 apply 实现；本地入口限制保持原样。
+后续已在独立 `controlled.py` / `controlled/env.py` 实现受控入口草案，见
+`ops/sem-task-migration/CONTROLLED_ENTRY.md`。本地入口限制保持原样；新入口仅开发测试，
+未安装、未获准用于生产，仍待生产身份/备份/停并发/结构对账及独立审核。

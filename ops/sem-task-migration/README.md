@@ -46,7 +46,7 @@ python -m pytest -q tests/test_sem_task_migration_bundle.py
 
 1. SEM/SEO/共享迁移负责人审核候选图、历史证据缺口及完整当前结构对账。
 2. SEO #369 加入该目标的兼容测试，独立获批后先部署兼容版。
-3. 审核正式生产执行入口（此处未提供）、备份/PITR、权限、并发变更管控和失败处理。
+3. 审核独立受控入口候选（见 CONTROLLED_ENTRY.md）、备份/PITR、权限、并发变更管控和失败处理。
 4. 单独明确批准迁移；SemTask 开关及应用重启另行批准。
 
 不修改现有发布 workflow，不让普通应用发布运行迁移；普通发布仍为 `migration=not-run`。
