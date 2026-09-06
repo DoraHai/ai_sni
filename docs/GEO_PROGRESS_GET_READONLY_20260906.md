@@ -42,4 +42,4 @@ GET 不获取任务执行锁，不调用 reconcile，不 commit，也不释放�
 
 ## main 同步边界
 
-当前 `origin/main` 与 `codex/production-geo` 从共同基点后分别有大量提交，生产侧 GEO 差异涉及 109 个相关文件。只把本批或 PR 380 的末端提交 cherry-pick 到 main 会缺失模型、路由、前端和测试依赖，不能作为安全同步方案。应单独建立 GEO subtree 同步 PR，以生产 GEO 为来源、main 为目标，冻结精确生产 SHA 后审查完整路径差异并跑 GEO 全量门禁；在该 PR 完成前，任何 main 发布流程都不得覆盖 `/opt/geo-service` 或 `/opt/geo-frontend`。
+以共同基点 `cdfee3337f8838672b9dd6b2bb998c38b010f300`、`origin/main` 与生产基线 `56b1df39622573ffa158e21e224f77f0138242bd` 复核，生产侧共有 250 个严格 GEO 相关文件发生过变化：82 个文件 main 也修改过，168 个仅生产侧修改。后 168 个中，94 个属于运行时代码、迁移或运维入口，74 个属于后端/前端测试；94 个只能作为“生产侧独有运行文件”的盘点下限，不能脱离那 82 个双边修改文件直接同步。只把本批或 PR 380 的末端提交 cherry-pick 到 main 会缺失模型、路由、前端和测试依赖，也不能作为安全同步方案。应单独建立 GEO 同步 PR，以生产 GEO 为来源、main 为目标，冻结精确生产 SHA 后逐文件处理双边差异并跑 GEO 全量门禁；不能整棵覆盖，也不能改动 SEM、SEO、共享认证或部署配置。在该 PR 完成前，任何 main 发布流程都不得覆盖 `/opt/geo-service` 或 `/opt/geo-frontend`。
