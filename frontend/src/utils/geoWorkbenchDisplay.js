@@ -117,12 +117,16 @@ export function officialMetricDisplay(metric, periodContext = null, definition =
   const hasValue = typeof metric?.value === 'number' && Number.isFinite(metric.value)
   const trend = metric?.trend_7d
   const comparable = periodContext?.comparison?.comparable
-  let trendState = 'available'
-  let trendReasons = []
-  if (trend == null) {
-    trendState = comparable === false ? 'incomparable' : 'unavailable'
-    trendReasons = normalizedReasons(periodContext?.comparison?.reason_codes, 'comparison')
-  }
+  const trendState = comparable === false
+    ? 'incomparable'
+    : trend == null ? 'unavailable' : 'available'
+  const trendReasons = trendState !== 'available'
+    ? normalizedReasons(periodContext?.comparison?.reason_codes, 'comparison')
+    : []
+  const showTrend = trendState === 'available'
+  const direction = showTrend && ['up', 'down', 'flat'].includes(trend?.direction)
+    ? trend.direction
+    : null
   return {
     metricKey: metric?.metric_key || null,
     value: hasValue ? metric.value : null,
@@ -134,9 +138,9 @@ export function officialMetricDisplay(metric, periodContext = null, definition =
     definition: definition || null,
     trend: {
       state: trendState,
-      direction: trend?.direction || null,
-      changePct: typeof trend?.change_pct === 'number' ? trend.change_pct : null,
-      changeAbs: typeof trend?.change_abs === 'number' ? trend.change_abs : null,
+      direction,
+      changePct: showTrend && Number.isFinite(trend?.change_pct) ? trend.change_pct : null,
+      changeAbs: showTrend && Number.isFinite(trend?.change_abs) ? trend.change_abs : null,
       reasons: trendReasons,
     },
   }
@@ -171,4 +175,3 @@ export function progressDisplay(row, subject = '后台任务') {
     error: row?.error || null,
   }
 }
-
