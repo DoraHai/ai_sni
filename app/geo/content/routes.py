@@ -7716,17 +7716,29 @@ async def update_variant(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
+    await session.refresh(task, with_for_update=True)
     channel_key = str(channel or "").strip().lower()
     existing = {v.channel: v for v in await _variants(session, task.id)}
     variant = existing.get(channel_key)
     if variant is None:
         raise HTTPException(404, f"渠道版本不存在: {channel_key}")
+    changed = (
+        req.title is not None and req.title.strip() != variant.title
+    ) or (req.body_markdown is not None and req.body_markdown != variant.body_markdown)
+    if not changed:
+        await session.commit()
+        return await _task_payload(session, task, detail=True)
+    if variant.status == "published":
+        raise HTTPException(409, "已发布渠道稿不能直接覆盖，请建立新的稿件版本")
     if req.title is not None:
         variant.title = req.title.strip()
     if req.body_markdown is not None:
         variant.body_markdown = req.body_markdown
     meta = dict(variant.adapt_meta or {})
     meta["manually_edited"] = True
+    meta["quality"] = "adapted_draft_not_publishable"
+    meta["publishable"] = False
+    meta["delivery"] = "html_preview_only"
     # Re-render HTML 正稿 so UI/export never sticks on raw MD markers
     if req.body_markdown is not None:
         from app.geo.content.md_to_html import (
@@ -7740,9 +7752,10 @@ async def update_variant(
         meta["body_plain"] = html_to_plain(body_html)
         meta["has_table"] = ensure_comparison_table_hint(variant.body_markdown or "")
         meta["export_format"] = "html"
-        meta["delivery"] = "html_publish_ready"
         variant.export_format = "html"
     variant.adapt_meta = meta
+    variant.status = "draft"
+    invalidate_review(task)
     await _sync_task_pipeline(session, task)
     await session.commit()
     await session.refresh(task)
@@ -7811,6 +7824,7 @@ async def submit_task_review(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
+    await session.refresh(task, with_for_update=True)
     article = await _latest_article(session, task.id)
     if article is None:
         raise HTTPException(400, "请先生成母稿后再提交审校")
@@ -7834,6 +7848,7 @@ async def decide_task_review(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
+    await session.refresh(task, with_for_update=True)
     try:
         apply_decision(
             task,

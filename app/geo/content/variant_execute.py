@@ -70,6 +70,8 @@ async def execute_variants_for_task(
     task = await session.get(GeoContentTask, task_id)
     if task is None or task.tenant_id != tenant_id:
         raise ValueError("内容任务不存在")
+    # Serialize regeneration with manual edits and review decisions.
+    await session.refresh(task, with_for_update=True)
     article = await _latest_article(session, task.id)
     if article is None:
         raise ValueError("请先生成或保存母稿")
@@ -256,6 +258,11 @@ async def execute_variants_for_task(
         )
 
     task.target_channels = sorted(set((task.target_channels or []) + created))
+    if created:
+        from app.geo.content.review import invalidate_review
+
+        invalidate_review(task)
+
     # Soft status: stay editing/needs_fix until explicit check; don't mark generating
     if task.status == "generating":
         task.status = "editing"
