@@ -1259,3 +1259,67 @@ async def control_batch(batch_id:int,req:BatchCommand,ctx=Auth,session=Db):
         row.items=items;row.status='queued'
     await session.commit();await session.refresh(row)
     return batch_data(row,True)
+
+@router.get('/batches/{batch_id}/review')
+async def batch_review(batch_id:int,tenant_id:PositiveInt,site_id:PositiveInt,ctx=Auth,session=Db):
+    await access(session,ctx,tenant_id,site_id)
+    batch=await owned_batch(session,ctx,tenant_id,site_id,batch_id)
+    ids=[item['answer_id'] for item in batch.items if item.get('answer_id')]
+    records=(await session.execute(select(SeoQaAnswer,SeoContentAsset,SeoQuestion)
+        .join(SeoContentAsset,SeoContentAsset.id==SeoQaAnswer.content_id)
+        .join(SeoQuestion,SeoQuestion.id==SeoQaAnswer.question_id)
+        .where(SeoQaAnswer.id.in_(ids),SeoQaAnswer.tenant_id==tenant_id,SeoQaAnswer.site_id==site_id,
+               SeoContentAsset.tenant_id==tenant_id,SeoContentAsset.site_id==site_id,
+               SeoQuestion.tenant_id==tenant_id,SeoQuestion.site_id==site_id))).all() if ids else []
+    by_id={answer.id:(answer,content,question) for answer,content,question in records}
+    fact_ids={f['id'] for answer,_,_ in records for f in answer.fact_snapshots}
+    facts=await session.scalars(select(SeoQaFact).where(SeoQaFact.id.in_(fact_ids),SeoQaFact.tenant_id==tenant_id,SeoQaFact.site_id==site_id))
+    fact_map={f.id:f for f in facts}
+    items=[];counts={'draft':0,'review':0,'needs_fix':0,'approved':0,'not_saved':0}
+    for item in batch.items:
+        entry={'question_id':item['question_id'],'title':item['title'],'generation_state':item['state'],
+               'generation_error':item.get('error'),'answer_id':item.get('answer_id')}
+        found=by_id.get(item.get('answer_id'))
+        if not found or found[0].question_id!=item['question_id']:
+            entry.update(bucket='not_saved',available=False,reason='尚无可验收回答，或原记录已删除')
+        else:
+            answer,content,question=found;body=content.humanized_content or content.draft or ''
+            problems=await evidence_problems(session,answer,content,fact_map)
+            if question.status=='archived': problems.append('问题已归档，请先恢复问题')
+            bucket='needs_fix' if problems else 'approved' if content.status in ('ready','published') else 'review' if content.status=='review' else 'draft'
+            entry.update(available=True,title=question.title,question_version=question.version,
+                question_changed=question.version!=item['request']['question']['version'],
+                content_id=content.id,content_version=content.version_count,status=content.status,
+                bucket=bucket,body=body,problems=problems,quality=answer_quality(body,answer.fact_snapshots,problems),
+                facts=[{**f,'current':f['id'] in fact_map and fact_is_current(fact_map[f['id']]) and fact_map[f['id']].version==f['version']} for f in answer.fact_snapshots],
+                review_note=content.review_note)
+        counts[entry['bucket']]+=1;items.append(entry)
+    return {'batch_id':batch.id,'batch_status':batch.status,'items':items,'counts':counts,
+        'meaning':'统计本批已保存回答的当前正文、审核状态及证据有效性；任务已保存不等于审核通过，审核通过不等于已公开发布。'}
+
+
+class BatchReviewDecision(Scoped):
+    content_version:PositiveInt
+    question_version:PositiveInt
+    action:Literal['submit','approve','reject']
+    note:str|None=Field(None,max_length=2000)
+
+
+@router.post('/batches/{batch_id}/answers/{answer_id}/review')
+async def review_batch_answer(batch_id:int,answer_id:int,req:BatchReviewDecision,ctx=Auth,session=Db):
+    from app.api.seo import ContentReviewSubmit,ContentReviewDecision,submit_content_review,decide_content_review
+    await access(session,ctx,req.tenant_id,req.site_id,True)
+    batch=await owned_batch(session,ctx,req.tenant_id,req.site_id,batch_id)
+    item=next((item for item in batch.items if item.get('answer_id')==answer_id),None)
+    if item is None: raise HTTPException(404,'回答不属于当前批次')
+    # Match draft creation's question -> content lock order.
+    question=await record(session,SeoQuestion,item['question_id'],req.tenant_id,req.site_id,True)
+    check_version(question,req.question_version)
+    answer=await record(session,SeoQaAnswer,answer_id,req.tenant_id,req.site_id)
+    if answer.question_id!=question.id: raise HTTPException(404,'批次问题与回答不匹配')
+    content=await record(session,SeoContentAsset,answer.content_id,req.tenant_id,req.site_id,True)
+    if content.version_count!=req.content_version: raise HTTPException(409,'正文已更新，请刷新验收内容后再操作')
+    if req.action!='reject' and question.status=='archived': raise HTTPException(409,'归档问题请先恢复')
+    if req.action=='submit':
+        return await submit_content_review(content.id,req.tenant_id,ContentReviewSubmit(note=req.note),session,ctx)
+    return await decide_content_review(content.id,req.tenant_id,ContentReviewDecision(decision=req.action,note=req.note),session,ctx)

@@ -1,4 +1,5 @@
 <script setup>
+import SeoQaBatchReview from './SeoQaBatchReview.vue'
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { seoQaGet, seoQaPost } from '../../api/seo'
 const props=defineProps({tenantId:Number,siteId:Number,canEdit:Boolean,questions:{type:Array,default:()=>[]}})
@@ -7,7 +8,7 @@ const rows=ref([]),facts=ref([]),busy=ref(false),loading=ref(false),error=ref(''
 const current=ref(null),history=ref([]),requestId=ref('')
 const scopeKey=computed(()=>`${props.tenantId}:${props.siteId}`)
 const statusLabels={queued:'排队中',running:'执行中',paused:'已暂停',completed:'本轮处理结束',cancelled:'已取消'}
-const itemLabels={pending:'待处理',generating:'生成中',saving:'保存中',done:'草稿已保存 · 待审核',failed:'失败 · 可重试'}
+const itemLabels={pending:'待处理',generating:'生成中',saving:'保存中',done:'草稿已保存（审核状态见下方验收）',failed:'失败 · 可重试'}
 let generation=0,refreshing=false
 function params(){return {tenant_id:props.tenantId,site_id:props.siteId}}
 function detail(e){const d=e?.response?.data?.detail;return typeof d==='string'?d:d?.message||e.message||'操作失败，请稍后重试'}
@@ -87,7 +88,8 @@ onBeforeUnmount(()=>{++generation;clearInterval(poll)})
     <template v-if="current">
       <h4>批次 #{{ current.id }} · {{ statusLabels[current.status] }}</h4>
       <div class="batch-actions"><el-button v-if="['queued','running'].includes(current.status)" :disabled="busy||!canEdit" @click="control('pause')">暂停后续题目</el-button><el-button v-if="current.status==='paused'" :disabled="busy||!canEdit" @click="control('resume')">恢复后台处理</el-button><el-button v-if="current.items.some(i=>i.state==='failed')&&current.status!=='cancelled'" :disabled="busy||!canEdit" @click="control('retry')">重试失败题目</el-button><el-button v-if="['queued','running','paused'].includes(current.status)" :disabled="busy||!canEdit" @click="control('cancel')">取消批次</el-button></div>
-      <article v-for="item in current.items" :key="item.question_id"><strong>{{ item.title }}</strong><span>{{ itemLabels[item.state] }}</span><p v-if="item.error" class="batch-error">{{ item.error }}。资料或问题版本变化时，请刷新规划并重新准备批次。</p><details v-if="item.draft"><summary>查看生成正文</summary><pre>{{ item.draft.body }}</pre></details><div class="batch-actions"><el-button v-if="item.state==='failed'&&current.status!=='cancelled'" :disabled="busy||!canEdit" @click="control('retry',item.question_id)">{{ item.draft?'只重试保存（不调用 AI）':'重试本题' }}</el-button><el-button v-if="item.answer_id" @click="openQuestion(item)">打开问题逐条审核</el-button></div></article>
+      <article v-for="item in current.items" :key="item.question_id"><strong>{{ item.title }}</strong><span>{{ itemLabels[item.state] }}</span><p v-if="item.error" class="batch-error">{{ item.error }}。资料或问题版本变化时，请刷新规划并重新准备批次。</p><details v-if="item.draft"><summary>生成时正文（历史快照）</summary><pre>{{ item.draft.body }}</pre></details><div class="batch-actions"><el-button v-if="item.state==='failed'&&current.status!=='cancelled'" :disabled="busy||!canEdit" @click="control('retry',item.question_id)">{{ item.draft?'只重试保存（不调用 AI）':'重试本题' }}</el-button><el-button v-if="item.answer_id" @click="openQuestion(item)">打开问题逐条审核</el-button></div></article>
+      <SeoQaBatchReview :key="current.id" :tenant-id="tenantId" :site-id="siteId" :batch-id="current.id" :can-edit="canEdit" :disabled="busy" @changed="emit('changed')" @open="row=>emit('open',row)"/>
     </template>
   </section>
 </template>
