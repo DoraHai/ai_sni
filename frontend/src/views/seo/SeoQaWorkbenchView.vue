@@ -118,7 +118,7 @@ async function downloadQaAssistant(row) {
   try {
     const task=await seoQaGet(`placements/${row.id}/assistant-task`,{...scope.value})
     if(key!==scopeKey.value)return
-    const readme='问答本地填稿试用包（知乎 / CSDN）\n安装 Python 3.11+，运行 pip install -r requirements.txt，再运行 python -m playwright install chromium。\n运行 python qa_runner.py task.json --account "你的账号标签"。登录后手动打开指定问题的回答编辑器，点击正文输入区后回车。\n仅填入正文，不点击保存或发布；已有不同文字或疑似评论框会停止。首次操作请人工确认编辑框。任务30分钟有效，过期重新下载；下载后审核稿若有变化请丢弃旧包。\n平台可能自动保存草稿，请自行检查。发布后在终端粘贴公开网址生成回执 JSON，回工作台“回填网址”导入、检查后保存并核验。账号登录状态仅保存在本机 .qa-assistant 目录。真实账号编辑器仍待验收。\n'
+    const readme='问答本地填稿试用包（知乎 / CSDN）\n安装 Python 3.11+，运行 pip install -r requirements.txt，再运行 python -m playwright install chromium。\n运行 python qa_runner.py task.json --account "你的账号标签"。登录后手动打开指定问题的回答编辑器，点击正文输入区后回车。\n仅填入正文，不点击保存或发布；已有不同文字或疑似评论框会停止。首次操作请人工确认编辑框。任务30分钟有效，过期重新下载；下载后审核稿若有变化请丢弃旧包。\n平台可能自动保存草稿，请自行检查。发布后在终端粘贴公开网址生成回执 JSON，回工作台“回填网址”导入、检查后保存并核验。如浏览器已关闭或任务过期，可运行 python qa_runner.py task.json --receipt-only --answer-url "公开回答网址"，只补生成回执，不打开浏览器；目标文件不同会拒绝覆盖，可用 --output 指定新文件。账号登录状态仅保存在本机 .qa-assistant 目录。真实账号编辑器仍待验收。\n'
     const url=URL.createObjectURL(publisherZip({'qa_runner.py':qaRunnerSource,'runner.py':runnerSource,'requirements.txt':runnerRequirements,'task.json':JSON.stringify(task,null,2),'README.txt':readme}))
     const a=document.createElement('a');a.href=url;a.download=`问答填稿-${row.id}.zip`;a.click();URL.revokeObjectURL(url)
   } catch(e){if(key===scopeKey.value)error.value=messageOf(e)}
