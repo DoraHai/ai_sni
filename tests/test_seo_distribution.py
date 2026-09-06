@@ -1358,7 +1358,7 @@ def test_distribution_frontend_exposes_guided_publish_flow() -> None:
     view = (root / "frontend/src/views/seo/SeoDistributionView.vue").read_text(encoding="utf-8")
     api = (root / "frontend/src/api/seo.js").read_text(encoding="utf-8")
 
-    for label in ("平台连接", "编辑分发账号", "保存并测试", "发布预检", "优先创建草稿", "平台专属稿", "AI 生成平台专属稿", "目标关键词覆盖", "保存草稿", "提交审核", "专属稿审核", "修订记录", "批量生成基础稿", "AI 批量生成并提交审核", "国内平台发布交接台", "复制正文（保留格式）", "打开官方编辑器", "确认后重试", "发布尝试记录", "同一文章可保留多个平台链接", "正在转存"):
+    for label in ("平台连接", "编辑分发账号", "保存并测试", "发布预检", "优先创建草稿", "平台专属稿", "AI 生成平台专属稿", "目标关键词覆盖", "保存草稿", "提交审核", "专属稿审核", "修订记录", "批量生成基础稿", "AI 批量生成并提交审核", "国内平台发布交接台", "复制正文（保留格式）", "打开官方编辑器", "确认后重试", "发布尝试记录", "发布成功记录", "发布依据", "不代表页面正文、外链或搜索收录已核验", "正在转存"):
         assert label in view
     for function_name in (
         "fetchSeoDistributionConnections",
