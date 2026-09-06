@@ -7507,6 +7507,11 @@ async def decide_content_review(
     previous_status = row.status
     target_status = "ready" if req.decision == "approve" else "drafting"
     if req.decision == 'approve':
+        if row.content_type in {'qa', 'faq'} and (
+            ctx.user_id is None or row.review_submitted_by is None
+            or ctx.user_id == row.review_submitted_by
+        ):
+            raise HTTPException(403, '问答必须由另一位实名账号审核通过；提交人不能自审，包括超级管理员')
         from app.api.seo_qa import require_answer_evidence
         await require_answer_evidence(session, row)
     row.status = target_status

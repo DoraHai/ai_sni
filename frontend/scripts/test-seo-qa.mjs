@@ -482,3 +482,11 @@ test('coverage uses current list scope and deduplicates platforms',()=>{
   assert.equal(countPublishedListedContents([{id:1},{id:2}],rows),1)
   assert.equal(countPublishedListedContents([],rows),0)
 })
+
+
+test('shared batch cannot be controlled by another site editor',async()=>{
+  const m=await mountBatch();try{await m.state.selectBatch(8);m.state.current.can_control=false;await m.state.control('cancel');await m.state.control('retry');assert.equal(m.writes.length,0)}finally{m.app.unmount()}
+})
+test('submitter cannot approve but can return the answer for editing',async()=>{
+  const m=await mountBatchReview();try{m.row.can_approve=false;await m.state.review(m.row,'approve');assert.equal(m.writes.length,0);m.state.notes[m.state.key(m.row)]='请修改';await m.state.review(m.row,'reject');assert.equal(m.writes[0][1].action,'reject')}finally{m.app.unmount()}
+})

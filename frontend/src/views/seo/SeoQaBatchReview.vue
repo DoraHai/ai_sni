@@ -23,7 +23,7 @@ async function review(row,action){
   if(!props.canEdit||props.disabled||acting.value||loading.value||!row.available)return
   if(action==='submit'&&(!['planned','drafting'].includes(row.status)||row.problems.length))return
   if(['approve','reject'].includes(action)&&row.status!=='review')return
-  if(action==='approve'&&row.problems.length)return
+  if(action==='approve'&&(row.problems.length||row.can_approve===false))return
   const rowKey=key(row),note=(notes.value[rowKey]||'').trim()
   if(action==='reject'&&!note){rowErrors.value[rowKey]='退回时请填写修改意见';return}
   const ticket=generation,scope=scopeKey.value;acting.value=true;rowErrors.value[rowKey]=''
@@ -70,7 +70,7 @@ onBeforeUnmount(()=>{++generation})
         <template v-if="row.available">
           <p>当前问题 v{{ row.question_version }} · {{ labels[row.status]||row.status }}</p>
           <p v-if="row.question_changed" class="review-warning">问题在生成后已修改，请按上方当前问题重新核对回答是否适用。</p>
-          <h4>当前回答正文</h4><pre>{{ row.body }}</pre>
+          <p v-if="row.status==='review'&&row.can_approve===false" class="review-warning">提交人不能自审，请另一位有内容编辑权限的实名账号在站点批次中审核。</p><h4>当前回答正文</h4><pre>{{ row.body }}</pre>
           <p v-for="problem in row.problems" :key="problem" class="review-warning">需修复：{{ problem }}</p>
           <h4>保存时的事实引用</h4>
           <blockquote v-for="fact in row.facts" :key="fact.id"><strong>[F{{ fact.id }}] {{ fact.title }} · v{{ fact.version }}</strong><p v-if="!fact.current" class="review-warning">此引用版本已变化、失效或删除</p><pre>{{ fact.statement }}</pre><p>来源：{{ fact.source_name }} <a v-if="href(fact.source_url)" :href="href(fact.source_url)" target="_blank" rel="noopener noreferrer">查看出处</a></p></blockquote>
@@ -82,7 +82,7 @@ onBeforeUnmount(()=>{++generation})
           <p v-if="row.review_note">上次审核意见：{{ row.review_note }}</p>
           <el-input v-if="['planned','drafting','review'].includes(row.status)" v-model="notes[key(row)]" type="textarea" :rows="2" maxlength="2000" placeholder="审核意见，退回时必填" :disabled="!canEdit||acting||loading||disabled"/>
           <p v-if="rowErrors[key(row)]" class="review-warning">{{ rowErrors[key(row)] }}</p>
-          <div class="review-actions"><el-button v-if="['planned','drafting'].includes(row.status)" :disabled="!canEdit||acting||loading||disabled||!!row.problems.length" @click="review(row,'submit')">提交本条审核</el-button><template v-if="row.status==='review'"><el-button type="success" :disabled="!canEdit||acting||loading||disabled||!!row.problems.length" @click="review(row,'approve')">本条审核通过</el-button><el-button :disabled="!canEdit||acting||loading||disabled" @click="review(row,'reject')">退回本条修改</el-button></template><el-button :disabled="acting||loading||disabled" @click="open(row)">打开问题编辑</el-button></div>
+          <div class="review-actions"><el-button v-if="['planned','drafting'].includes(row.status)" :disabled="!canEdit||acting||loading||disabled||!!row.problems.length" @click="review(row,'submit')">提交本条审核</el-button><template v-if="row.status==='review'"><el-button type="success" :disabled="!canEdit||acting||loading||disabled||!!row.problems.length||row.can_approve===false" @click="review(row,'approve')">本条审核通过</el-button><el-button :disabled="!canEdit||acting||loading||disabled" @click="review(row,'reject')">退回本条修改</el-button></template><el-button :disabled="acting||loading||disabled" @click="open(row)">打开问题编辑</el-button></div>
         </template>
         <p v-else>{{ row.generation_error||row.reason }}。请在批次进度中处理生成或保存失败。</p>
       </details>

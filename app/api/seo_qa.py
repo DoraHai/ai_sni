@@ -1168,11 +1168,12 @@ def batch_data(row, full=False):
             'items':[{k:v for k,v in item.items() if full or k!='draft'} for item in row.items]}
 
 
-async def owned_batch(session,ctx,tenant_id,site_id,batch_id,lock=False):
+async def owned_batch(session,ctx,tenant_id,site_id,batch_id,lock=False,shared=False):
     from app.models.seo_qa import SeoQaBatch
     from app.seo_task_center import actor_key
     query=select(SeoQaBatch).where(SeoQaBatch.id==batch_id,SeoQaBatch.tenant_id==tenant_id,
-        SeoQaBatch.site_id==site_id,SeoQaBatch.actor==actor_key(ctx)).execution_options(populate_existing=True)
+        SeoQaBatch.site_id==site_id).execution_options(populate_existing=True)
+    if not shared: query=query.where(SeoQaBatch.actor==actor_key(ctx))
     row=await session.scalar(query.with_for_update() if lock else query)
     if row is None: raise HTTPException(404,'未找到本人在当前站点的批次')
     return row
@@ -1220,15 +1221,20 @@ async def list_batches(tenant_id:PositiveInt,site_id:PositiveInt,ctx=Auth,sessio
     from app.models.seo_qa import SeoQaBatch
     from app.seo_task_center import actor_key
     await access(session,ctx,tenant_id,site_id)
-    rows=await session.scalars(select(SeoQaBatch).where(SeoQaBatch.tenant_id==tenant_id,
-        SeoQaBatch.site_id==site_id,SeoQaBatch.actor==actor_key(ctx)).order_by(SeoQaBatch.id.desc()).limit(20))
-    return {'items':[batch_data(row) for row in rows]}
+    scope=(SeoQaBatch.tenant_id==tenant_id, SeoQaBatch.site_id==site_id)
+    active=['queued','running','paused']
+    running=list(await session.scalars(select(SeoQaBatch).where(*scope,SeoQaBatch.status.in_(active)).order_by(SeoQaBatch.id.desc())))
+    recent=list(await session.scalars(select(SeoQaBatch).where(*scope,~SeoQaBatch.status.in_(active)).order_by(SeoQaBatch.id.desc()).limit(20)))
+    return {'items':[{**batch_data(row),'can_control':row.actor==actor_key(ctx)} for row in running+recent]}
+
 
 
 @router.get('/batches/{batch_id}')
 async def get_batch(batch_id:int,tenant_id:PositiveInt,site_id:PositiveInt,ctx=Auth,session=Db):
     await access(session,ctx,tenant_id,site_id)
-    return batch_data(await owned_batch(session,ctx,tenant_id,site_id,batch_id),True)
+    from app.seo_task_center import actor_key
+    row=await owned_batch(session,ctx,tenant_id,site_id,batch_id,shared=True)
+    return {**batch_data(row,True),'can_control':row.actor==actor_key(ctx)}
 
 
 @router.post('/batches/{batch_id}/control')
@@ -1237,6 +1243,11 @@ async def control_batch(batch_id:int,req:BatchCommand,ctx=Auth,session=Db):
     from uuid import uuid4
     from app.models.seo import SeoAiOperation
     await access(session,ctx,req.tenant_id,req.site_id,True)
+    from app.models.module_workspace import SeoSite
+    from app.models.seo_qa import SeoQaBatch
+    from app.seo_task_center import actor_key
+    # Match creation admission lock order: site before batch.
+    await session.scalar(select(SeoSite).where(SeoSite.id==req.site_id,SeoSite.tenant_id==req.tenant_id).with_for_update())
     row=await owned_batch(session,ctx,req.tenant_id,req.site_id,batch_id,True)
     if row.status=='cancelled': raise HTTPException(409,'已取消批次不能恢复，请重新准备')
     items=deepcopy(row.items)
@@ -1250,6 +1261,11 @@ async def control_batch(batch_id:int,req:BatchCommand,ctx=Auth,session=Db):
     else:
         failed=[i for i in items if i['state']=='failed' and (req.question_id is None or i['question_id']==req.question_id)]
         if not failed: raise HTTPException(409,'没有可重试的失败题目')
+        if row.status not in ('queued','running','paused'):
+            count=await session.scalar(select(func.count()).select_from(SeoQaBatch).where(
+                SeoQaBatch.tenant_id==req.tenant_id,SeoQaBatch.site_id==req.site_id,
+                SeoQaBatch.actor==actor_key(ctx),SeoQaBatch.status.in_(['queued','running','paused'])))
+            if count>=3: raise HTTPException(409,'每个站点本人最多保留 3 个活动批次，请先完成或取消旧批次')
         for item in failed:
             if not item['draft']:
                 op=await session.scalar(select(SeoAiOperation).where(SeoAiOperation.tenant_id==row.tenant_id,
@@ -1263,7 +1279,7 @@ async def control_batch(batch_id:int,req:BatchCommand,ctx=Auth,session=Db):
 @router.get('/batches/{batch_id}/review')
 async def batch_review(batch_id:int,tenant_id:PositiveInt,site_id:PositiveInt,ctx=Auth,session=Db):
     await access(session,ctx,tenant_id,site_id)
-    batch=await owned_batch(session,ctx,tenant_id,site_id,batch_id)
+    batch=await owned_batch(session,ctx,tenant_id,site_id,batch_id,shared=True)
     ids=[item['answer_id'] for item in batch.items if item.get('answer_id')]
     records=(await session.execute(select(SeoQaAnswer,SeoContentAsset,SeoQuestion)
         .join(SeoContentAsset,SeoContentAsset.id==SeoQaAnswer.content_id)
@@ -1293,6 +1309,7 @@ async def batch_review(batch_id:int,tenant_id:PositiveInt,site_id:PositiveInt,ct
             entry.update(available=True,title=question.title,question_version=question.version,
                 question_changed=question.version!=item['request']['question']['version'],
                 content_id=content.id,content_version=content.version_count,status=content.status,
+                can_approve=ctx.user_id is not None and content.review_submitted_by is not None and ctx.user_id!=content.review_submitted_by,
                 bucket=bucket,body=body,problems=problems,quality=answer_quality(body,answer.fact_snapshots,problems),
                 facts=[{**f,'current':f['id'] in fact_map and fact_is_current(fact_map[f['id']]) and fact_map[f['id']].version==f['version']} for f in answer.fact_snapshots],
                 review_note=content.review_note)
@@ -1312,7 +1329,7 @@ class BatchReviewDecision(Scoped):
 async def review_batch_answer(batch_id:int,answer_id:int,req:BatchReviewDecision,ctx=Auth,session=Db):
     from app.api.seo import ContentReviewSubmit,ContentReviewDecision,submit_content_review,decide_content_review
     await access(session,ctx,req.tenant_id,req.site_id,True)
-    batch=await owned_batch(session,ctx,req.tenant_id,req.site_id,batch_id)
+    batch=await owned_batch(session,ctx,req.tenant_id,req.site_id,batch_id,shared=True)
     item=next((item for item in batch.items if item.get('answer_id')==answer_id),None)
     if item is None: raise HTTPException(404,'回答不属于当前批次')
     # Match draft creation's question -> content lock order.
@@ -1327,7 +1344,7 @@ async def review_batch_answer(batch_id:int,answer_id:int,req:BatchReviewDecision
         return await submit_content_review(content.id,req.tenant_id,ContentReviewSubmit(note=req.note),session,ctx)
     if req.action=='approve':
         from copy import deepcopy
-        batch=await owned_batch(session,ctx,req.tenant_id,req.site_id,batch_id,True)
+        batch=await owned_batch(session,ctx,req.tenant_id,req.site_id,batch_id,True,shared=True)
         items=deepcopy(batch.items)
         for item in items:
             if item.get('answer_id')==answer_id:
