@@ -16,7 +16,7 @@ from app.security.auth import AuthContext, require_auth
 
 MAX_ID = 2**63 - 1
 TaskId = Annotated[int, Path(gt=0, le=MAX_ID)]
-TenantId = Annotated[int, Query(gt=0, le=2**31 - 1)]
+TenantId = Annotated[int, Query(gt=0, le=MAX_ID)]
 Status = Literal["open", "in_progress", "done", "cancelled"]
 Role = Literal["operator", "admin"]
 # Only current-state metrics with an unambiguous scope are supported initially.
