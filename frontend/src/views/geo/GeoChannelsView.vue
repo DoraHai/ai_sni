@@ -216,9 +216,10 @@ function channelPayload() {
 async function saveChannel() {
   try {
     const payload = channelPayload()
-    if (channelForm.value.id) await patchGeoPublishingChannel(tenantId.value, channelForm.value.id, payload)
+    const updating = isPersistedGeoRow(channelForm.value)
+    if (updating) await patchGeoPublishingChannel(tenantId.value, channelForm.value.id, payload)
     else await createGeoPublishingChannel({ tenant_id: tenantId.value, ...payload })
-    ElMessage.success(channelForm.value.id ? '平台策略已保存' : '已添加分发平台')
+    ElMessage.success(updating ? '平台策略已保存' : '已添加分发平台')
     channelDialogOpen.value = false
     await refresh()
   } catch (e) { ElMessage.error(e.message || '保存平台失败') }
