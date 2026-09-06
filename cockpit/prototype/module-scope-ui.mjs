@@ -1,4 +1,4 @@
-import { MODULES, moduleScope, taskInModuleScope, taskScopeReference, planInModuleScope, panelInModuleScope, navigationAccess } from './module-scope.mjs?v=20260907-59';
+import { MODULES, moduleScope, taskInModuleScope, taskScopeReference, planInModuleScope, panelInModuleScope, navigationAccess, moduleEntryAccess, scopedCapabilities } from './module-scope.mjs?v=20260907-61';
 
 // Local customer-profile rehearsal. This selection never grants API permissions.
 let enabled = [...MODULES];
@@ -8,8 +8,8 @@ const partial = () => enabled.length !== 3;
 const rawTasks = allTasks;
 allTasks = () => rawTasks().filter(task => taskInModuleScope(taskScopeReference(task), enabled));
 
-function selector() {
-  return `<label>演示客户已开通 <select id="customerModuleProfile" aria-label="演示客户开通组合">${Array.from({ length: 7 }, (_, i) => {
+function selector(id = 'customerModuleProfile', label = '全景客户开通组合') {
+  return `<label>演示客户已开通 <select id="${id}" aria-label="${label}">${Array.from({ length: 7 }, (_, i) => {
     const modules = MODULES.filter((_, index) => (i + 1) & (1 << index));
     return `<option value="${modules.join(',')}" ${modules.join(',') === enabled.join(',') ? 'selected' : ''}>${modules.map(module => module.toUpperCase()).join(' + ')}</option>`;
   }).join('')}</select></label>`;
@@ -63,6 +63,37 @@ function scopedView() {
   suggestions();
 }
 
+function scopedCapabilityGrid(query = '') {
+  const rows = scopedCapabilities(capabilities, enabled, query);
+  if (!rows.length) {
+    const term = String(query).trim();
+    return `<div class="empty-state"><p>${term ? `当前已开通模块中没有与“${esc(term)}”匹配的能力。` : '当前没有可展示的模块能力。'}</p>${term ? '<button class="text-button" data-profile-clear-search>清空搜索</button>' : ''}</div>`;
+  }
+  return enabled.map(module => {
+    const items = rows.filter(row => row.module === module);
+    if (!items.length) return '';
+    return `<div class="cap-column" data-capability-module="${module}"><h3 style="color:${colors[module]}">${module.toUpperCase()}</h3>${items.map(({ index, name }) => openButton(`${module}:${index}`, `${String(index + 1).padStart(2, '0')} · ${name}`)).join('')}</div>`;
+  }).join('');
+}
+
+function scopedCapabilitiesView(query = '') {
+  const cards = { sem: 'trend', seo: 'content', geo: 'heatmap' };
+  $('#page-dashboard').innerHTML = `<div class="dashboard-header"><div><p class="eyebrow">AVAILABLE CAPABILITIES / 已开通能力</p><h1>全部功能</h1><p>${enabled.map(module => names[module]).join(' · ')}。这里只展示当前客户已开通模块的能力入口。</p></div><button class="secondary-button" data-page="panorama">← 返回全景工作台</button></div><div class="p-controls">${selector('capabilityModuleProfile', '全部功能客户开通组合')}</div><section class="cap-explorer"><header><div><h2>能力索引 · ${enabled.reduce((count, module) => count + capabilities[module].length, 0)} 项</h2><p class="scope-label">能力名称与操作指引来自现有模块演示；原型没有连接真实数据接口。</p></div><input class="cap-search" id="capSearch" type="search" value="${esc(query)}" placeholder="搜索当前已开通能力…" aria-label="搜索当前已开通模块能力"></header><div class="dash-links">${enabled.map(module => `<button data-profile-open="${cards[module]}">查看${names[module]}明细 ↗</button>`).join('')}</div><div class="cap-grid" id="capGrid">${scopedCapabilityGrid(query)}</div></section>`;
+}
+
+const originalDashboardRender = renderDashboard;
+renderDashboard = function(...args) {
+  if (!partial()) return originalDashboardRender(...args);
+  const query = $('#capSearch')?.value || '';
+  scopedCapabilitiesView(query);
+};
+const originalCapabilityRender = renderCapabilities;
+renderCapabilities = function(...args) {
+  if (!partial()) return originalCapabilityRender(...args);
+  const grid = $('#capGrid');
+  if (grid) grid.innerHTML = scopedCapabilityGrid($('#capSearch')?.value || '');
+};
+
 const originalRender = renderPanorama;
 renderPanorama = function(...args) { originalRender(...args); scopedView(); };
 
@@ -89,7 +120,13 @@ pTalk = function(key = 'overview', question = '', ...args) {
     seo: `内容 ${pRows('content').length} 篇，搜索点击 ${pOrganic(stats.organic)}；发布、页面检查和搜索表现分别确认。`,
     geo: `模拟回答 ${stats.a.length} 条，提到品牌 ${stats.mentions} 条；不计入正式可见度。`,
   };
-  addMessage('assistant', `<p><strong>当前开通：${enabled.map(module => names[module]).join('、')}</strong> · ${pScope()}</p>${enabled.map(module => `<p>${summary[module]}</p>`).join('')}<p>请选择下方问题或看板记录继续查看。这里是范围联动演示，没有调用真实 AI 或执行业务操作。</p>`);
+  const cardModule = {
+    trend: 'sem', semkeywords: 'sem', mix: 'sem', funnel: 'sem', device: 'sem',
+    organic: 'seo', content: 'seo', ranking: 'seo',
+    heatmap: 'geo', citations: 'geo', competition: 'geo',
+  }[key];
+  const responseModules = cardModule && enabled.includes(cardModule) ? [cardModule] : enabled;
+  addMessage('assistant', `<p><strong>当前查看：${responseModules.map(module => names[module]).join('、')}</strong> · ${pScope()}</p>${responseModules.map(module => `<p>${summary[module]}</p>`).join('')}<p>请选择下方问题或看板记录继续查看。这里是范围联动演示，没有调用真实 AI 或执行业务操作。</p>`);
   suggestions();
 };
 
@@ -122,7 +159,7 @@ pPlan = function(type = 'verify', ...args) {
 };
 
 window.addEventListener('change', event => {
-  if (event.target.id !== 'customerModuleProfile') return;
+  if (!['customerModuleProfile', 'capabilityModuleProfile'].includes(event.target.id)) return;
   const next = moduleScope(event.target.value.split(',')).enabled;
   if (!next.length) return;
   const oldMessages = [...$('#chatStream').children].filter(node => !node.hasAttribute('data-profile-history') && !node.querySelector('.first-welcome'));
@@ -158,6 +195,7 @@ window.addEventListener('change', event => {
   focusedPanel = null;
   dock();
   renderPanorama();
+  renderDashboard();
   renderTasks();
   decorateNavigation();
   pSuggestions();
@@ -169,6 +207,18 @@ window.addEventListener('change', event => {
 }, true);
 
 window.addEventListener('click', event => {
+  const moduleButton = event.target.closest('[data-module]');
+  const moduleDiscuss = event.target.closest('[data-action="moduleDiscuss"]');
+  if (moduleButton || moduleDiscuss) {
+    const module = moduleButton?.dataset.module ?? moduleDiscuss.dataset.key;
+    const access = moduleEntryAccess(module, enabled);
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!access.allowed) return toast(access.reason);
+    navigate('panorama');
+    if (moduleDiscuss) return pTalk(access.card, `讨论${names[module]}的依据`);
+    return pOpen(access.card);
+  }
   const brand = event.target.closest('a.brand');
   if (brand && partial()) {
     event.preventDefault();
@@ -186,6 +236,16 @@ window.addEventListener('click', event => {
       return;
     }
   }
+  const clearSearch = event.target.closest('[data-profile-clear-search]');
+  if (clearSearch) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const search = $('#capSearch');
+    if (search) search.value = '';
+    renderCapabilities();
+    search?.focus();
+    return;
+  }
   const button = event.target.closest('[data-profile-open], [data-profile-discuss], [data-profile-question]');
   if (!button) return;
   event.preventDefault();
@@ -194,4 +254,5 @@ window.addEventListener('click', event => {
   else pTalk(button.dataset.profileDiscuss || 'overview', button.textContent);
 }, true);
 renderPanorama();
+renderDashboard();
 decorateNavigation();
