@@ -131,13 +131,14 @@ downgrade or a pre-migration database snapshot; changing code symlinks alone is
 not a database rollback.
 
 
-## Shared SemTask revision compatibility review — 2026-09-06 (framework release)
+## Shared SemTask revision compatibility review — 2026-09-06 (DRAFT — awaiting shared migration review)
 
-The user authorized merging and deploying the current-only compatibility framework.
-This release does not authorize a shared migration or accept its unassigned target.
+The latest SEM confirmation supersedes the earlier framework release instruction.
+PR #369 must remain Draft: do not merge, deploy or execute a migration. The
+allowlist stays current-only until the formal version contract is reviewed.
 The current database and SEO baseline are `0094_seo_qa_batches`. No SemTask target
-revision, parent, migration file or responsible shared-migration owner has been
-confirmed. `0094_seo_qa_batches` is a candidate parent based on the current single
+revision or approved parent has been assigned, and no formal migration file has
+been provided. `0094_seo_qa_batches` is a candidate parent based on the current single
 head, not an approved new migration parent. Do not allocate a guessed `0095` or
 rewrite deployed migration history.
 
@@ -168,14 +169,14 @@ Remaining gates for accepting the SemTask migration target:
 
 1. The shared migration owner identifies the exact target revision/down_revision,
    migration source commit and reviewed additive DDL (including lineage evidence).
-2. Review compatibility and add only that exact target to the allowlist in a follow-up PR;
+2. Review compatibility and add only that exact target to the allowlist after review;
    replace/supplement the test-only target case with a test for the actual value.
 3. Test current and target structures, missing critical fields, unknown and multiple
    revision rows. The current unit tests exercise the algorithm only; they are not
    acceptance of an unassigned SemTask target or execution of its migration.
 4. Independently authorize deployment of the compatibility release, then independently
-   authorize the shared migration. The current framework release does not satisfy
-   target-version compatibility or authorize database changes. Do not roll the
+   authorize the shared migration. This Draft does not satisfy target-version
+   compatibility or authorize deployment or database changes. Do not roll the
    application back to a 0094-only health checker after advancing the database;
    retain an explicitly compatible rollback release, and do not stamp/downgrade the
    shared version table to make an incompatible application look healthy.
@@ -184,3 +185,17 @@ SEM handoff reviewed: `SEM_TASK_SCHEMA_COMPATIBILITY_REVIEW_REQUIRED.md` and
 `SEM_TASK_MIGRATION_EVIDENCE_UPDATE_20260906.md` in the local sem-acceptance-results
 folder. The contacted task "1.0" clarified it is GEO and cannot confirm SemTask's
 owner or migration IDs. Shared-owner confirmation remains outstanding.
+
+
+SEM confirmation received for PR #369:
+
+- Revision is unassigned. `0094_seo_qa_batches` remains a candidate parent, not an
+  approved `down_revision`.
+- Reviewed DDL draft: [PR #363](https://github.com/DoraHai/ai_sni/pull/363), main
+  commit `e6a5185c750bd79b7eb25a096e0fa711db3b8311`, file
+  `docs/SEM_TASK_SCHEMA_REVIEW.sql`. It is not a formal Alembic migration.
+- Intended scope: add `sem_tasks`, its sequence, indexes and constraints only;
+  no SEO table or customer data changes. Tenant FK uses `ON DELETE RESTRICT`.
+- Keep #369 Draft and do not add a target revision. SEM will provide the exact
+  version contract after formal migration and shared-history integration review.
+- #369 was restored to Draft before merge; no deployment or migration was executed.
