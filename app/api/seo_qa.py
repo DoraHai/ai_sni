@@ -978,7 +978,7 @@ async def generate_question_draft(req: DraftRequest, ctx=Auth, session=Db):
                'facts': facts, 'format': req.format}
     def validate(raw):
         body = raw.get('body') if isinstance(raw, dict) else None
-        if not isinstance(body, str) or not 30 <= len(body.strip()) <= 20000 or answer_checks(body, facts):
+        if not isinstance(body, str) or not (8 if req.format=='short' else 30) <= len(body.strip()) <= 20000 or answer_checks(body, facts):
             raise ValueError('回答为空、过长或事实引用无效')
         return {'body': body, 'question_id': question.id, 'format': req.format,
                 'expected_question_version': req.question.version,

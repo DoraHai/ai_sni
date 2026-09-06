@@ -732,7 +732,7 @@ def test_semantic_quality_uses_saved_scoped_evidence_without_mutation(mode):
             assert content.status=='drafting' and content.version_count==answer['content_version']
     database(scenario)
 
-@pytest.mark.parametrize('mode', ['success','question_changed','fact_changed','invalid_ai','readonly','other_tenant'])
+@pytest.mark.parametrize('mode', ['success','short_factual','short_invalid','question_changed','fact_changed','invalid_ai','readonly','other_tenant'])
 def test_batch_draft_versions_permissions_and_save_retry(mode):
     async def scenario(sessions):
         async with sessions() as db:
@@ -741,13 +741,13 @@ def test_batch_draft_versions_permissions_and_save_retry(mode):
             req=api.DraftRequest(tenant_id=2 if mode=='other_tenant' else 1,site_id=1,question={'id':imported['ids'][0],'version':99 if mode=='question_changed' else 1},facts=[{'id':fact['id'],'version':99 if mode=='fact_changed' else fact['version']}],request_id='batch-test-123')
             async def generate(*args,**kwargs):
                 kwargs['usage_receipt'].update(operation_id='batch-op',date='2026-09-06')
-                return {'body':fact['statement']+('[F999]' if mode=='invalid_ai' else f'[F{fact["id"]}]')}
+                return {'body':(f'额定功率为1.5kW[F{fact["id"]}]' if mode=='short_factual' else '额定功率为1.5kW[F999]' if mode=='short_invalid' else fact['statement']+('[F999]' if mode=='invalid_ai' else f'[F{fact["id"]}]'))}
             async def settle(*args,**kwargs): return kwargs['result']
             actor=AuthContext(8,'reader','operator',1,{'seo.content':'view'}) if mode=='readonly' else CTX
             with patch('app.ai.deepseek.is_enabled',return_value=True),patch('app.api.seo._limited_seo_chat_json',new=AsyncMock(side_effect=generate)) as ai,patch('app.api.seo._refund_failed_seo_ai_request',new=AsyncMock()) as refund,patch('app.seo_ai_operations.settle_seo_ai_operation',new=AsyncMock(side_effect=settle)):
-                if mode!='success':
+                if mode not in ('success','short_factual'):
                     with pytest.raises(HTTPException): await api.generate_question_draft(req,actor,db)
-                    if mode=='invalid_ai': refund.assert_awaited_once()
+                    if mode in ('invalid_ai','short_invalid'): refund.assert_awaited_once()
                     else: ai.assert_not_awaited()
                     return
                 result=await api.generate_question_draft(req,actor,db)
@@ -930,3 +930,36 @@ def test_handoff_pending_csv_is_formula_safe():
         assert all(row[1].startswith("'") for row in cells[1:4])
         assert cells[4][1]=='正常问题'
         assert all(row[-1].startswith("'") for row in cells[1:])
+
+
+def test_full_batch_and_concurrent_review_requests():
+    from app import seo_qa_batches as worker
+    async def scenario(sessions):
+        async with sessions() as db:
+            imported=await api.import_questions(api.ImportQuestions(tenant_id=1,site_id=1,items=[{'title':f'第{i}号设备运行条件是什么？'} for i in range(20)]),CTX,db)
+            fact=await api.create_fact(api.FactInput(tenant_id=1,site_id=1,title='条件',statement='设备仅用于室内，使用前必须断电，并由具备资质的人员完成安装。',source_name='验收资料'),CTX,db)
+        req=api.BatchSubmission(tenant_id=1,site_id=1,request_id='concurrent-full-batch',items=[{'question':{'id':qid,'version':1},'facts':[{'id':fact['id'],'version':1}]} for qid in imported['ids']])
+        async def submit():
+            async with sessions() as db:return await api.create_batch(req,CTX,db)
+        a,b=await asyncio.gather(submit(),submit());assert a['id']==b['id']
+        async def generate(req,ctx,session):
+            return {'question_id':req.question.id,'format':'short','body':fact['statement']+f'[F{fact["id"]}]','fact_ids':[fact['id']],'expected_question_version':1,'expected_facts':[{'id':fact['id'],'version':1}]}
+        with patch.object(worker,'current_actor',new=AsyncMock(return_value=CTX)),patch.object(api,'generate_question_draft',new=AsyncMock(side_effect=generate)) as ai:
+            for _ in range(20):await worker.process_next(sessions)
+            assert ai.await_count==20
+        async with sessions() as db:
+            batch=await api.get_batch(a['id'],1,1,CTX,db)
+            assert batch['status']=='completed' and len(list(await db.scalars(select(SeoQaAnswer))))==20
+            answer_id=batch['items'][0]['answer_id']
+        async def review(action):
+            async with sessions() as db:
+                try:return await api.review_batch_answer(a['id'],answer_id,api.BatchReviewDecision(tenant_id=1,site_id=1,content_version=1,question_version=1,action=action),CTX,db)
+                except HTTPException as exc:return exc.status_code
+        with patch('app.api.seo_cockpit.metric_values',new=AsyncMock(return_value={'seo.content.published_7d_count':0})):
+            for action in ['submit','approve']:
+                results=await asyncio.gather(review(action),review(action))
+                assert sum(isinstance(r,int) and r==409 for r in results)==1
+        async with sessions() as db:
+            events=list(await db.scalars(select(SeoContentReviewEvent)))
+            assert len(events)==2 and [e.action for e in events]==['submit','approve']
+    database(scenario)
