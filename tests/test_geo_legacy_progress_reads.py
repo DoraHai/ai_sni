@@ -295,4 +295,3 @@ def test_owned_patrol_wrapper_is_the_only_marker_entry_point():
         )
 
     asyncio.run(scenario())
-
