@@ -882,14 +882,26 @@
         var t = document.getElementById('title').value;
         var b = document.getElementById('body').value;
         await navigator.clipboard.writeText('# ' + t + '\n\n' + b);
-        alert('已复制母稿到剪贴板');
+        alert('已复制母稿当前编辑内容；未执行保存');
         return;
       }
-      var data = await GeoAPI.exportVariant(taskId, channel);
+      var savedVariant = (task.variants || []).find(function (v) { return v.channel === channel; });
+      if (!savedVariant) throw new Error('请刷新稿件后重新复制');
+      var currentTitle = document.getElementById('title').value;
+      var currentBody = document.getElementById('body').value;
+      if (currentTitle !== (savedVariant.title || '') || currentBody !== (savedVariant.body_markdown || '')) {
+        throw new Error('当前渠道稿有未保存修改，请先保存后复制');
+      }
+      var copyTenant = GeoAPI.getTenantId();
+      var copyTaskId = taskId;
+      var data = await GeoAPI.previewVariantExport(copyTaskId, channel);
+      if (GeoAPI.getTenantId() !== copyTenant || taskId !== copyTaskId || activeTab !== channel) throw new Error('页面已切换，请重新复制');
+      if (document.getElementById('title').value !== currentTitle || document.getElementById('body').value !== currentBody) {
+        throw new Error('复制期间稿件发生修改，请先保存后重新复制');
+      }
+      if (data.title !== currentTitle || data.body_markdown !== currentBody) throw new Error('服务端稿件已更新，请刷新后重新复制');
       await navigator.clipboard.writeText('# ' + data.title + '\n\n' + data.body_markdown);
-      alert('已复制 ' + channel + ' 版本到剪贴板');
-      task = await GeoAPI.getTask(taskId);
-      renderAll();
+      alert('已复制 ' + channel + ' 已保存内容；未登记导出');
     } catch (e) { GeoWB.showError(err, e); }
   };
   document.getElementById('btnChannels').onclick = function () {
