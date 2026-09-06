@@ -25,6 +25,20 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      sem-test-postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sem_test
+          POSTGRES_PASSWORD: sem_ci_only
+          POSTGRES_DB: sem_writeback_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sem_test -d sem_writeback_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -41,6 +55,8 @@ jobs:
 
       - name: Run tests
         env:
+          # Disposable CI service; application DATABASE_URL stays separate.
+          SEM_ALERT_TEST_DATABASE_URL: postgresql+asyncpg://sem_test:sem_ci_only@127.0.0.1:5432/sem_writeback_test
           DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
           BAIDU_APP_ID: ci-dummy
           BAIDU_SECRET_KEY: ci-dummy-secret1
