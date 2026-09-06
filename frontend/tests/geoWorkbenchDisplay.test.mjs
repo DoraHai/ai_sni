@@ -120,6 +120,30 @@ test('explicitly incomparable context suppresses contradictory or non-finite tre
   assert.equal(invalidNumbers.trend.changeAbs, null)
 })
 
+test('missing trend keeps supplied comparison reasons when comparability is unspecified', () => {
+  const result = officialMetricDisplay(
+    {
+      metric_key: metricKey,
+      value: 12,
+      unit: 'count',
+      as_of: '2026-08-31T00:00:00+08:00',
+      trend_7d: null,
+    },
+    { comparison: { reason_codes: ['model_metadata_missing'] } },
+  )
+  assert.deepEqual(result.trend, {
+    state: 'unavailable',
+    direction: null,
+    changePct: null,
+    changeAbs: null,
+    reasons: [{
+      code: 'model_metadata_missing',
+      scope: 'comparison',
+      message: '模型或供应商历史信息不完整',
+    }],
+  })
+})
+
 test('official week uses server boundaries and explicit timezone unchanged', () => {
   const result = officialWeekDisplay({
     timezone: 'Asia/Shanghai',
