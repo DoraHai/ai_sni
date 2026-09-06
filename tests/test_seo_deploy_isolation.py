@@ -1,4 +1,5 @@
 import asyncio
+import pytest
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,7 +27,9 @@ class _HealthConnection:
     def __init__(self, revisions: list[str]):
         self.revisions = revisions
 
-    async def execute(self, statement):
+    async def execute(self, statement, parameters=None):
+        if "pg_attribute" in str(statement):
+            return [(table, column, kind or "text") for (table, column), kind in seo_main.SEO_REQUIRED_COLUMNS.items()]
         return _HealthResult(self.revisions if "alembic_version" in str(statement) else [])
 
 
@@ -210,3 +213,62 @@ def test_frontend_exposes_explicit_seo_build_contract() -> None:
     package = _read("frontend/package.json")
     assert '"build:seo"' in package
     assert '"verify:seo-build"' in package
+
+
+@pytest.mark.parametrize('revisions', [[], ['0093_seo_qa'], ['9999_unknown'],
+    ['0094_seo_qa_batches', '0095_sem_tasks'], ['0095_sem_tasks', '9999_unknown'],
+    ['0095_sem_tasks', '0095_sem_tasks'],
+    ['0094_seo_qa_batches', '9999_unknown'], ['0094_seo_qa_batches', '0094_seo_qa_batches']])
+def test_health_rejects_unknown_empty_or_multiple_revisions(revisions):
+    response = Response()
+    with patch.object(seo_main, 'engine', _HealthEngine(revisions)), patch.object(seo_main, '_check_seo_structure') as structure:
+        result = asyncio.run(seo_main.seo_health(response))
+    assert response.status_code == 503 and result['schema'] == 'error'
+    structure.assert_not_called()
+
+
+@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_sem_tasks'])
+def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
+    response = Response()
+    with patch.object(seo_main, 'engine', _HealthEngine([revision])):
+        result = asyncio.run(seo_main.seo_health(response))
+    assert response.status_code == 200 and result['schema'] == 'ok'
+    assert result['db'] == 'ok' and result['db_error'] is None
+    assert result['schema_revision'] == revision
+    assert result['required_schema_revision'] == '0094_seo_qa_batches'
+    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_sem_tasks']
+
+
+@pytest.mark.parametrize('failure', ['missing_table','missing_column','wrong_bigint','wrong_jsonb','catalog_denied'])
+@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_sem_tasks'])
+def test_health_rejects_incomplete_schema_even_at_allowed_revision(failure, revision):
+    async def execute(self, statement, parameters=None):
+        if 'pg_attribute' not in str(statement):
+            return _HealthResult(self.revisions if 'alembic_version' in str(statement) else [])
+        if failure == 'catalog_denied': raise PermissionError('catalog access denied')
+        rows = [(table, column, kind or 'text') for (table, column), kind in seo_main.SEO_REQUIRED_COLUMNS.items()]
+        if failure == 'missing_table': rows = [r for r in rows if r[0] != 'seo_qa_batches']
+        if failure == 'missing_column': rows = [r for r in rows if r[:2] != ('seo_qa_batches','items')]
+        if failure == 'wrong_bigint': rows = [(t,c,'int4' if (t,c)==('seo_qa_batches','tenant_id') else k) for t,c,k in rows]
+        if failure == 'wrong_jsonb': rows = [(t,c,'text' if (t,c)==('seo_tasks','completion_evidence') else k) for t,c,k in rows]
+        return rows
+    response = Response()
+    with patch.object(_HealthConnection, 'execute', execute), patch.object(seo_main, 'engine', _HealthEngine([revision])):
+        result = asyncio.run(seo_main.seo_health(response))
+    assert response.status_code == 503 and result['schema'] == 'error'
+
+
+def test_schema_catalog_check_is_read_only_and_search_path_aware():
+    sql = str(seo_main.SEO_SCHEMA_COLUMNS_SQL)
+    assert 'to_regclass(requested.name)' in sql and 'NOT a.attisdropped' in sql
+    assert not any(word in sql.upper().split() for word in ('INSERT','UPDATE','DELETE','CREATE','ALTER','DROP'))
+
+
+def test_structure_contract_preserves_smallint_fields():
+    assert seo_main.SEO_REQUIRED_COLUMNS[('seo_content_assets', 'rewrite_progress')] == 'int2'
+    assert seo_main.SEO_REQUIRED_COLUMNS[('seo_content_assets', 'originality_score')] == 'int2'
+    assert seo_main.SEO_REQUIRED_COLUMNS[('seo_qa_batches', 'tenant_id')] == 'int8'
+
+
+def test_runtime_allowlist_contains_only_exact_reviewed_versions():
+    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_sem_tasks'})

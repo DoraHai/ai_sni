@@ -129,3 +129,172 @@ Database migrations are never applied by this workflow. If a separately
 approved migration is ever executed, its rollback requires a reviewed Alembic
 downgrade or a pre-migration database snapshot; changing code symlinks alone is
 not a database rollback.
+
+
+## Shared SemTask compatibility: current Draft implementation
+
+Development of the actual two-version allowlist is now authorized. PR #369
+remains Draft: do not merge, deploy or execute a migration. This supersedes the
+current-only/test-patched allowlist described in the historical review notes below.
+
+The runtime allowlist contains exactly `0094_seo_qa_batches` and `0095_sem_tasks`.
+The required SEO baseline stays `0094_seo_qa_batches`. A healthy result requires
+exactly one allowed revision row AND the existing necessary SEO structure checks.
+Unknown, empty, duplicate or multiple rows fail, including a row for each of the
+two individually allowed versions. Tests use the actual allowlist without patching.
+Missing tables/columns, integer/JSONB mismatches and catalog errors still fail.
+
+Source contract: #370 at `a62a003262f53fab1d1e8ec69175e747266b9469`, direct
+parent `0094_seo_qa_batches` to target `0095_sem_tasks`. Relative to reviewed
+`66455f1`, only execution-design documentation, a read-only preflight script and
+its offline tests were added; candidate migration, source lock, builder and env
+are unchanged. The preflight script has not been executed by this SEO task.
+This is compatibility implementation, not approval of the production executor.
+
+### Separate approval and rollback requirements
+
+1. Independently approve and deploy the SEO compatibility release first. Record
+   its exact commit, artifact checksum and successful health result against the
+   current 0094 database. Development approval is not deployment approval.
+2. Before separately approving the database migration, retain an independently
+   reviewed, tested and deployable rollback artifact that also accepts BOTH 0094
+   and 0095 and preserves the required structure checks. Record its exact commit
+   and checksum in the release record. No rollback artifact is designated by
+   this Draft, and a generic previous-release symlink is insufficient evidence.
+3. Only after separate migration approval may the database advance to 0095.
+   After that, never roll SEO back to an older 0094-only health checker (including
+   backend baseline `4e83611`). Application rollback must use the recorded
+   compatible artifact; do not stamp/downgrade the version table or drop SemTask
+   audit data to make an older application appear healthy.
+4. If no eligible rollback artifact is available, the migration is not ready
+   for execution approval. Shared schema reconciliation, production execution
+   review and SemTask enablement remain separate gates.
+
+## Historical review log (superseded where noted above)
+
+## Shared SemTask revision compatibility review — 2026-09-06 (DRAFT — awaiting shared migration review)
+
+The latest SEM confirmation supersedes the earlier framework release instruction.
+PR #369 must remain Draft: do not merge, deploy or execute a migration. The
+allowlist stays current-only until the formal version contract is reviewed.
+The current database and SEO baseline are `0094_seo_qa_batches`. SEM has now
+submitted candidate `0095_sem_tasks`, parent `0094_seo_qa_batches`, in Draft
+[PR #370](https://github.com/DoraHai/ai_sni/pull/370), commit
+`d587ac47b737f342960a5b1bd1c2aa3202c4a01c`. These are candidate identifiers,
+not an approved formal migration contract. Do not rewrite deployed history.
+
+The health implementation keeps `required_schema_revision` as the SEO baseline,
+adds a code-reviewed explicit `compatible_schema_revisions` set, requires exactly
+one Alembic version row, and rejects empty, duplicate, multiple, stale and unknown
+versions. For now the set contains only 0094. Tests patch the set to simulate the candidate 0095; the actual application
+allowlist still rejects 0095. This does not grant approval for the candidate.
+
+Before reporting healthy, a read-only pg_catalog query follows the connection's
+search_path via to_regclass and checks all mapped column names on 12 critical SEO
+tables: sites, content assets, AI operations, metric snapshots, image reviews and
+verification queue, SEO tasks, and five question/answer tables. Integer widths
+(SMALLINT/INTEGER/BIGINT) and JSONB types are checked. Missing tables/columns,
+incompatible checked types and catalog errors fail with HTTP 503. This is a
+minimum runtime contract, not validation of all indexes, foreign keys, checks,
+string lengths, nullability or migration contents; migration review must cover
+those separately. Extra columns/tables are allowed only at an explicitly accepted
+revision. No new dependency on sem_tasks is introduced.
+
+Validation: 2026-09-06 production read-only transaction, 5-second statement timeout,
+12 tables/172 columns, actual single revision 0094, no incompatibilities. No DDL,
+version-table writes, customer-row reads, service changes or deployment were used.
+An initial test implementation confused SMALLINT with INTEGER inheritance; this
+was corrected before PR and covered by a dedicated regression test.
+
+Remaining gates for accepting the SemTask migration target:
+
+1. The shared migration owner identifies the exact target revision/down_revision,
+   migration source commit and reviewed additive DDL (including lineage evidence).
+2. Review compatibility and add only that exact target to the allowlist after review;
+   the candidate value is already exercised using a test-only patched allowlist.
+3. Test current and target structures, missing critical fields, unknown and multiple
+   revision rows. The current unit tests exercise the algorithm only; they are not
+   acceptance of the candidate SemTask target or execution of its migration.
+4. Independently authorize deployment of the compatibility release, then independently
+   authorize the shared migration. This Draft does not satisfy target-version
+   compatibility or authorize deployment or database changes. Do not roll the
+   application back to a 0094-only health checker after advancing the database;
+   retain an explicitly compatible rollback release, and do not stamp/downgrade the
+   shared version table to make an incompatible application look healthy.
+
+SEM handoff reviewed: `SEM_TASK_SCHEMA_COMPATIBILITY_REVIEW_REQUIRED.md` and
+`SEM_TASK_MIGRATION_EVIDENCE_UPDATE_20260906.md` in the local sem-acceptance-results
+folder. The contacted task "1.0" clarified it is GEO and cannot confirm SemTask's
+owner or migration IDs. Shared-owner confirmation remains outstanding.
+
+
+Earlier SEM confirmation received for PR #369 (identifier status superseded below):
+
+- Revision is unassigned. `0094_seo_qa_batches` remains a candidate parent, not an
+  approved `down_revision`.
+- Reviewed DDL draft: [PR #363](https://github.com/DoraHai/ai_sni/pull/363), main
+  commit `e6a5185c750bd79b7eb25a096e0fa711db3b8311`, file
+  `docs/SEM_TASK_SCHEMA_REVIEW.sql`. It is not a formal Alembic migration.
+- Intended scope: add `sem_tasks`, its sequence, indexes and constraints only;
+  no SEO table or customer data changes. Tenant FK uses `ON DELETE RESTRICT`.
+- Keep #369 Draft and do not add a target revision. SEM will provide the exact
+  version contract after formal migration and shared-history integration review.
+- #369 was restored to Draft before merge; no deployment or migration was executed.
+
+
+### Candidate review update: Draft #370
+
+The candidate file is `docs/migration_proposals/0095_sem_tasks.py`, outside the
+formal migration directory. SHA-256 of its raw bytes at the pinned commit:
+`e3fba9e91dc09500943ecf4c7909ac6e17da84b56fabfa480530040387047e1d`.
+Static AST inspection found only one create_table call (`sem_tasks`) and two
+create_index calls (`ix_sem_tasks_action`, `ix_sem_tasks_queue`) in upgrade.
+No SEO table alteration or customer-row mutation is present. Tenant foreign key
+RESTRICT means tenants with SemTask references cannot be deleted; this shared
+behavior is intentional in the proposal and must remain part of owner review.
+
+Combining the candidate with the SEO migration graph pinned at
+`4e83611aabc8c3d9bb6ecee1a6aff37a2fbfbe21` produces a single head
+`0095_sem_tasks`, with no duplicate revisions or missing parents. This is a
+static graph result, not evidence that historical migrations were executed.
+The shared main and SEO histories differ around 0087; the final shared package,
+source checksums and lineage integration still require review. The runner must
+also pin/verify the intended schema/search_path, since the candidate uses
+unqualified table names. Do not copy it into the formal tree before those gates.
+
+Unit tests cover candidate acceptance only with a patched allowlist, rejection
+of missing tables/columns, incorrect integer/JSONB types and catalog denial at
+both versions, and rejection of 0095 by the unchanged runtime allowlist.
+No candidate code was imported or executed for this static review; no Alembic,
+DDL, version-table change, merge or deployment was performed. PR #369 remains Draft.
+
+
+### Independent SEO source review: #370 at 66455f1
+
+Reviewed exact commit `66455f1f81c1eee69db9e75369930534ceb7bb92`:
+`ops/sem-task-migration/SOURCE_LOCK.json`, builder/verifier, local-only env,
+rehearsal tests and candidate. Independently compared all 116 locked files with
+Git blobs at `4e83611aabc8c3d9bb6ecee1a6aff37a2fbfbe21`; all SHA-256 values
+match, including the complete inventory of 111 historical migration files.
+The candidate bytes and SHA-256 are unchanged from the preceding review.
+Static graph inspection confirms the sole head `0095_sem_tasks` and direct
+parent `0094_seo_qa_batches`, with no duplicate IDs or missing parents.
+
+SEO source-level conclusion: no blocking issue found in the pinned independent
+source package or the proposed one-step contract. Keeping this package separate
+from main avoids rewriting the conflicting historical 0087 parent. This finding
+is scoped to these exact source bytes, not approval of historical execution
+provenance, production schema reconciliation or migration execution.
+
+The verifier checks complete inventory and hashes before Alembic imports;
+the runner fixes the one-step target, rejects other starting revisions and
+existing target objects, and uses one transaction with bounded lock/statement
+waits. The provided entry is explicitly local-only, not a production runner.
+Independent no-database test run: 4 passed, 11 explicitly skipped. Actual local
+Alembic rehearsals reported by SEM were inspected in source, not re-executed
+by this SEO review. No production or local database was connected.
+
+Next gates remain current-schema reconciliation, review of a production entry
+and operational prerequisites, and explicit release/execution authorization.
+#369 remains Draft with its 0094-only runtime allowlist; candidate compatibility
+is still simulated only in tests. No merge, deployment or migration occurred.
