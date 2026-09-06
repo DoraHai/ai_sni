@@ -124,6 +124,100 @@ def test_export_get_is_read_only_and_post_requires_edit_without_approving_or_pub
     asyncio.run(run())
 
 
+def test_default_configuration_gets_render_defaults_without_persisting_rows():
+    from app.models import GeoChannelAccount, GeoFact, GeoMediaPlacement, GeoTaskFact
+
+    async def run():
+        async with environment(
+            extra_models=(GeoChannelAccount, GeoFact, GeoMediaPlacement, GeoTaskFact),
+            legacy_routes=True,
+        ) as (
+            client,
+            engine,
+            tables,
+            identity,
+        ):
+            identity["ctx"].permissions = {
+                "geo.content": "view",
+                "geo.diagnosis": "view",
+            }
+            async with engine.begin() as conn:
+                await conn.execute(
+                    tables["tenants"].insert().values(id=1, name="fixture")
+                )
+                await conn.execute(
+                    tables["tenant_modules"].insert().values(
+                        tenant_id=1, module_code="geo", status="active"
+                    )
+                )
+                await conn.execute(
+                    tables["geo_prompts"].insert().values(
+                        id=1, tenant_id=1, question="Fixture question"
+                    )
+                )
+                await conn.execute(
+                    tables["geo_content_tasks"].insert().values(
+                        id=14, tenant_id=1, prompt_id=1, title="Fixture"
+                    )
+                )
+
+            paths = (
+                "/publishing-channel-options",
+                "/publishing-channels",
+                "/publishing-channels/auto-push-status",
+                "/tracking-engines",
+                "/monitoring-stance",
+                "/media-placements",
+                "/channel-blueprint",
+                "/content-tasks/14",
+            )
+            payloads = {}
+            for path in paths:
+                response = await client.get(
+                    "/api/v1/geo" + path, params={"tenant_id": 1}
+                )
+                assert response.status_code == 200, (path, response.text)
+                payloads[path] = response.json()
+
+            assert payloads["/publishing-channels"]["configuration_initialized"] is False
+            assert all(
+                item["virtual_default"]
+                for item in payloads["/publishing-channels"]["items"]
+            )
+            assert all(
+                item["virtual_default"]
+                for item in payloads["/tracking-engines"]["items"]
+            )
+            assert payloads["/monitoring-stance"]["configuration_initialized"] is False
+            assert payloads["/media-placements"]["configuration_initialized"] is False
+            assert all(
+                item["virtual_default"]
+                for item in payloads["/publishing-channel-options"]["items"]
+            )
+
+            async with engine.connect() as conn:
+                counts = {
+                    name: await conn.scalar(
+                        select(text("count(*)")).select_from(tables[name])
+                    )
+                    for name in (
+                        "geo_publishing_channels",
+                        "geo_tracking_engines",
+                        "geo_ai_settings",
+                        "geo_media_placements",
+                    )
+                }
+            assert counts == {name: 0 for name in counts}
+
+            assert (
+                await client.get(
+                    "/api/v1/geo/tracking-engines", params={"tenant_id": 2}
+                )
+            ).status_code == 403
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize('change', ['body', 'article', 'monitor'])
 def test_export_waits_for_task_lock_and_rechecks_revision_or_preserves_new_monitor(change):
     from app.models import GeoFact, GeoTaskFact
