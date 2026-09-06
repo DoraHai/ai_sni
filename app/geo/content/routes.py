@@ -780,6 +780,8 @@ async def _task_payload(
         return payload
 
     facts = await _task_facts(session, task.id)
+    from app.geo.content.evidence import generation_evidence_readiness
+    payload['generation_evidence'] = generation_evidence_readiness(_fact_dicts(facts))
     article = await _latest_article(session, task.id)
     variants = await _variants(session, task.id)
     pubs: list[dict[str, Any]] = []

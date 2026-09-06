@@ -1,4 +1,5 @@
 <script setup>
+import GeoGenerationEvidence from '../../components/GeoGenerationEvidence.vue'
 import { geoSnapshotLink } from '../../utils/geoRoutes'
 /**
  * Vue 母稿编辑器
@@ -994,6 +995,9 @@ function validateBeforeGenerate() {
   if (missing.length) {
     return `Brief 缺少：${missing.join('、')}。请填齐并保存 Brief 后再生成`
   }
+  if (task.value?.generation_evidence?.ok === false) {
+    return task.value.generation_evidence.blocking_message
+  }
   const nBound = (task.value?.facts || []).length
   const nSelected = selectedFactIds.value.length
   if (nBound < 3 && nSelected < 3 && libraryVerifiedCount.value < 3) {
@@ -1225,7 +1229,7 @@ async function generate() {
   error.value = ''
   generateHint.value = '正在生成母稿…'
   if (!(await editorRequest.wait(ensurePrototypeMaterials()))) {
-    const msg = '未能关联足够的可信材料，请先到知识库检查资料'
+    const msg = task.value?.generation_evidence?.blocking_message || '未能关联足够的可信材料，请先到知识库检查资料'
     error.value = msg
     generateHint.value = msg
     ElMessage.warning(msg)
@@ -3445,6 +3449,7 @@ onMounted(load)
                   <span :class="{ ok: briefFilled }">{{ briefFilled ? '✓' : '·' }} 创作要求</span>
                 </div>
               </section>
+              <GeoGenerationEvidence :evidence="task?.generation_evidence" />
               <div class="ed-gen-actions">
                 <div>
                   <span>✦</span>

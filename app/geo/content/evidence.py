@@ -135,3 +135,15 @@ def generation_evidence_error_message(meta: dict[str, Any]) -> str:
     if action:
         parts.append(action)
     return "。".join(parts)
+
+
+def generation_evidence_readiness(facts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Editor preview of the same evidence rules enforced before generation.
+
+    This only describes stored facts; it neither verifies nor modifies sources.
+    """
+    _, meta = prepare_facts_for_generation(facts, min_eligible=3)
+    titles = {f.get('id'): f.get('title') or '未命名事实' for f in facts}
+    return {**meta,
+            'excluded': [{**row, 'title': titles.get(row['id'], '未命名事实')} for row in meta['excluded']],
+            'blocking_message': '' if meta['ok'] else generation_evidence_error_message(meta)}
