@@ -1,6 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { MODULES, moduleScope, scopedMetrics, taskInModuleScope, taskScopeReference, planInModuleScope, panelInModuleScope, navigationAccess } from './module-scope.mjs';
+import { MODULES, moduleScope, scopedMetrics, taskInModuleScope, taskScopeReference, planInModuleScope, panelInModuleScope, navigationAccess, moduleEntryAccess } from './module-scope.mjs';
+
+test('module entries map only entitled modules to reviewed cards', () => {
+  const cards = { sem: 'trend', seo: 'content', geo: 'heatmap' };
+  for (let mask = 1; mask < 8; mask++) {
+    const enabled = MODULES.filter((_, index) => mask & (1 << index));
+    for (const module of MODULES) {
+      const access = moduleEntryAccess(module, enabled);
+      assert.equal(access.allowed, enabled.includes(module));
+      assert.equal(access.card, enabled.includes(module) ? cards[module] : null);
+    }
+  }
+  assert.deepEqual(moduleEntryAccess('future', MODULES), {
+    allowed: false,
+    card: null,
+    reason: '未知模块入口，未打开任何数据。',
+  });
+  assert.equal(moduleEntryAccess('seo', []).allowed, false);
+});
 
 test('partial navigation keeps common pages and exposes budget only with SEM', () => {
   for (let mask = 1; mask < 8; mask++) {
@@ -10,9 +28,10 @@ test('partial navigation keeps common pages and exposes budget only with SEM', (
       assert.equal(navigationAccess(page, enabled).allowed, true);
     }
     assert.equal(navigationAccess('acquisition', enabled).allowed, enabled.includes('sem'));
-    for (const page of ['dashboard', 'overview', 'module']) {
+    for (const page of ['dashboard', 'overview']) {
       assert.equal(navigationAccess(page, enabled).allowed, full);
     }
+    assert.equal(navigationAccess('module', enabled).allowed, false);
   }
   assert.deepEqual(navigationAccess('acquisition', ['seo']), {
     allowed: false,

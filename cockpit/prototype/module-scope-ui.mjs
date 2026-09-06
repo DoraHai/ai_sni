@@ -1,4 +1,4 @@
-import { MODULES, moduleScope, taskInModuleScope, taskScopeReference, planInModuleScope, panelInModuleScope, navigationAccess } from './module-scope.mjs?v=20260907-59';
+import { MODULES, moduleScope, taskInModuleScope, taskScopeReference, planInModuleScope, panelInModuleScope, navigationAccess, moduleEntryAccess } from './module-scope.mjs?v=20260907-60';
 
 // Local customer-profile rehearsal. This selection never grants API permissions.
 let enabled = [...MODULES];
@@ -89,7 +89,13 @@ pTalk = function(key = 'overview', question = '', ...args) {
     seo: `内容 ${pRows('content').length} 篇，搜索点击 ${pOrganic(stats.organic)}；发布、页面检查和搜索表现分别确认。`,
     geo: `模拟回答 ${stats.a.length} 条，提到品牌 ${stats.mentions} 条；不计入正式可见度。`,
   };
-  addMessage('assistant', `<p><strong>当前开通：${enabled.map(module => names[module]).join('、')}</strong> · ${pScope()}</p>${enabled.map(module => `<p>${summary[module]}</p>`).join('')}<p>请选择下方问题或看板记录继续查看。这里是范围联动演示，没有调用真实 AI 或执行业务操作。</p>`);
+  const cardModule = {
+    trend: 'sem', semkeywords: 'sem', mix: 'sem', funnel: 'sem', device: 'sem',
+    organic: 'seo', content: 'seo', ranking: 'seo',
+    heatmap: 'geo', citations: 'geo', competition: 'geo',
+  }[key];
+  const responseModules = cardModule && enabled.includes(cardModule) ? [cardModule] : enabled;
+  addMessage('assistant', `<p><strong>当前查看：${responseModules.map(module => names[module]).join('、')}</strong> · ${pScope()}</p>${responseModules.map(module => `<p>${summary[module]}</p>`).join('')}<p>请选择下方问题或看板记录继续查看。这里是范围联动演示，没有调用真实 AI 或执行业务操作。</p>`);
   suggestions();
 };
 
@@ -169,6 +175,18 @@ window.addEventListener('change', event => {
 }, true);
 
 window.addEventListener('click', event => {
+  const moduleButton = event.target.closest('[data-module]');
+  const moduleDiscuss = event.target.closest('[data-action="moduleDiscuss"]');
+  if (moduleButton || moduleDiscuss) {
+    const module = moduleButton?.dataset.module ?? moduleDiscuss.dataset.key;
+    const access = moduleEntryAccess(module, enabled);
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!access.allowed) return toast(access.reason);
+    navigate('panorama');
+    if (moduleDiscuss) return pTalk(access.card, `讨论${names[module]}的依据`);
+    return pOpen(access.card);
+  }
   const brand = event.target.closest('a.brand');
   if (brand && partial()) {
     event.preventDefault();
