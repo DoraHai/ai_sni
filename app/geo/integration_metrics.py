@@ -104,27 +104,36 @@ def build_weekly_snapshot(rows, own_domains, week_end, tracked_names=()):
                 competitor_names={competitor_key(name): name for name in names})
 
 
+def patrol_evidence_reasons(row, run, cell):
+    """Same evidence checks for official metrics and the read-only workbench."""
+    from app.geo.content.snapshots import extract_cited_urls_from_text, normalize_competitors, normalize_cited_urls
+    if not run or not cell or getattr(row, 'tenant_id', None) != getattr(run, 'tenant_id', None):
+        return ['missing_server_evidence']
+    if run.status != 'completed' or not run.started_at or not run.finished_at:
+        return ['patrol_not_completed']
+    if not row.captured_at or not (to_utc_naive(run.started_at) <= to_utc_naive(row.captured_at) <= to_utc_naive(run.finished_at)):
+        return ['capture_outside_patrol']
+    if (not cell.get('ok') or cell.get('sample_mode') != 'openai_compat' or cell.get('simulated')
+            or cell.get('sampling_method') != 'unprimed_json_v2' or cell.get('analysis_status') != 'completed'
+            or cell.get('prompt_id') != row.prompt_id or cell.get('engine') != row.engine
+            or str(cell.get('raw_text') or '').strip() != str(row.raw_text or '').strip()
+            or cell.get('suggested_mentions_brand') is None
+            or bool(cell['suggested_mentions_brand']) != bool(row.mentions_brand)
+            or sorted(normalize_competitors(cell.get('competitors'))) != sorted(normalize_competitors(row.competitors))
+            or sorted(normalize_cited_urls(extract_cited_urls_from_text(row.raw_text or ''))) != sorted(normalize_cited_urls(row.cited_urls))):
+        return ['snapshot_patrol_mismatch']
+    return []
+
+
 def verified_patrol_rows(rows, runs):
     """Manual metadata cannot impersonate the immutable server patrol result."""
-    from app.geo.content.snapshots import extract_cited_urls_from_text, normalize_competitors, normalize_cited_urls
     by_id = {run.id: run for run in runs}
     cells = {run.id: {cell.get('snapshot_id'): cell for cell in (run.items or [])} for run in runs}
     result = []
     for row in rows:
         run = by_id.get(row.patrol_run_id)
         cell = cells.get(row.patrol_run_id, {}).get(row.id)
-        if not run or not cell or run.status != 'completed' or not run.started_at or not run.finished_at:
-            continue
-        if not (to_utc_naive(run.started_at) <= to_utc_naive(row.captured_at) <= to_utc_naive(run.finished_at)):
-            continue
-        if (not cell.get('ok') or cell.get('sample_mode') != 'openai_compat' or cell.get('simulated')
-                or cell.get('sampling_method') != 'unprimed_json_v2' or cell.get('analysis_status') != 'completed'
-                or cell.get('prompt_id') != row.prompt_id or cell.get('engine') != row.engine
-                or str(cell.get('raw_text') or '').strip() != row.raw_text.strip()
-                or cell.get('suggested_mentions_brand') is None
-                or bool(cell['suggested_mentions_brand']) != bool(row.mentions_brand)
-                or sorted(normalize_competitors(cell.get('competitors'))) != sorted(normalize_competitors(row.competitors))
-                or sorted(normalize_cited_urls(extract_cited_urls_from_text(row.raw_text))) != sorted(normalize_cited_urls(row.cited_urls))):
+        if patrol_evidence_reasons(row, run, cell):
             continue
         row._source_question = cell.get('prompt_question') or ''
         row._source_provider = cell.get('provider') or ''

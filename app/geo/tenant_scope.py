@@ -12,6 +12,9 @@ from sqlalchemy import BigInteger, Date, String, and_, column, or_, select, tabl
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Tenant
+from fastapi import Depends, HTTPException
+from app.database import get_session
+from app.security.auth import require_scoped_auth
 
 
 _TENANT_MODULES = table(
@@ -63,3 +66,16 @@ async def list_geo_tenants_for_auth(
     if bound_tenant_id is None:
         return tenants
     return [tenant for tenant in tenants if tenant.id == bound_tenant_id]
+
+
+async def require_geo_read_entitlement(tenant_id: int, ctx=Depends(require_scoped_auth),
+                                       session=Depends(get_session)):
+    """Check selected-customer entitlement even for a bookmarked ID or admin key.
+
+    Reuse the existing active/trial and inclusive date boundary without changing
+    cross-module policy. Database errors propagate (never grant on lookup failure).
+    """
+    ctx.ensure_tenant(tenant_id)
+    if await session.scalar(geo_tenant_query(tenant_id=tenant_id).limit(1)) is None:
+        raise HTTPException(403, {'code': 'geo_not_available', 'message': '该客户未开通 GEO、已停用或已到期'})
+    return ctx

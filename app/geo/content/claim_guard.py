@@ -39,6 +39,52 @@ _CASE_TERMS = (
     "落地案例",
 )
 
+_CASE_PATTERN = re.compile('|'.join(map(re.escape, _CASE_TERMS)))
+_CASE_QUALIFIER = r'(?:(?:可核验|可验证|已核验|已验证|公开|相关|对应|更多)(?:的)?)*'
+
+
+def _case_is_evidence_request(clause: str, term: str) -> bool:
+    """Exempt only a complete, narrow evidence-status/request clause.
+
+    Never skip a whole paragraph merely because it contains 请/暂无/如果.
+    Unknown wording stays reviewable instead of implying a proven case.
+    """
+    clause = re.sub(r'^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)、]\s*)', '', clause)
+    value = re.sub(r'[\s*]', '', clause).strip('：:')
+    context = r'(?:(?:目前|当前|现阶段|本文|现有资料中|现有资料|所提供资料中|我们))*'
+    absence = context + r'(?:暂无|尚无|尚未提供|未提供|缺少|缺乏)'
+    request = r'(?:请|请您|建议)(?:提供|补充|提交|核验|确认)'
+    tail = r'(?:资料|材料|证据|原文|链接|记录|信息)?(?:供核验|以供核验|用于核验|以便核验)?'
+    return bool(re.fullmatch(r'(?:' + absence + '|' + request + ')' + _CASE_QUALIFIER + re.escape(term) + tail, value))
+
+
+def case_claims(text: str, facts: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Keep full source sentences; a keyword in a title is not evidence."""
+    def clean(value):
+        value = re.sub(r'[（(]来源[：:][^）)\n]*[）)]', '', value)
+        return re.sub(r'[\s*]', '', value).lstrip('#-')
+
+    verified_sentences = {clean(sentence) for fact in facts or []
+                          for sentence in re.findall(r'[^。！？!?；;\n]+', str(fact.get('statement') or ''))}
+    hits = []
+    seen = set()
+    for sentence_match in re.finditer(r'[^。！？!?；;\n]+[。！？!?；;]?', text or ''):
+        sentence = sentence_match.group().strip()
+        content = sentence.rstrip('。！？!?；;')
+        if clean(content) in verified_sentences:
+            continue
+        for clause in re.split(r'[，,]', content):
+            for match in _CASE_PATTERN.finditer(clause):
+                term = match.group()
+                if _case_is_evidence_request(clause, term):
+                    continue
+                key = (term, sentence)
+                if key not in seen:
+                    seen.add(key)
+                    hits.append({'kind': 'case', 'token': term, 'excerpt': sentence,
+                                 'review_reason': 'unsupported_case_claim'})
+    return hits
+
 # Qualitative assertions also need evidence. Match assertion spans, not a list
 # of industries: a familiar product name is not proof of the added application
 # or causal explanation. Conservative matching deliberately requires review of
@@ -48,6 +94,9 @@ _QUALITATIVE = re.compile(
     r"|(?:包括|例如|如(?!果|需|有|您|你|何))[^。！？!?；;\n]{2,60}(?:设备|机械|机)[^。！？!?；;\n]{0,40}"
     r"|[^。！？!?；;\n]{0,45}(?:导致|防止|直接影响|决定了|有效降低|延长|缩短)[^。！？!?；;\n]{2,100}"
     r"|[^。！？!?；;\n]{0,60}(?:寿命|效率|产能|性能)[^。！？!?；;\n]{0,12}(?:翻番|翻倍|倍增)"
+)
+_EN_QUALITATIVE = re.compile(
+    r'\b(?:suitable for|designed for|can be used in|prevents|reduces|extends|doubles)\b[^.!?;\n]{2,100}', re.I
 )
 
 
@@ -65,16 +114,16 @@ def qualitative_claims(text: str, facts: list[dict[str, Any]]) -> list[dict[str,
                 suffix = statement[found.end():]
                 # Do not drop a source's negation, restriction or trailing
                 # condition and turn a qualified statement into a guarantee.
-                if re.search(r'不|未|仅|只|限|假设|如果|可能', prefix):
+                if re.search(r'不|未|仅|只|限|假设|如果|可能|not|never|only|unless|might|may|^if', prefix):
                     continue
-                if suffix and suffix[0] not in '。！？!?；;':
+                if suffix and suffix[0] not in '。！？!?；;.':
                     continue
                 return True
         return False
 
     hits = []
     body = re.sub(r"[（(]来源[：:][^）)\n]*[）)]", "", text or '')
-    for match in _QUALITATIVE.finditer(body):
+    for match in [*_QUALITATIVE.finditer(body), *_EN_QUALITATIVE.finditer(body)]:
         span = match.group().strip()
         # Exact reproduction of the entire source sentence keeps its subject,
         # negation and conditions. Never exempt just a matching predicate.
@@ -85,7 +134,9 @@ def qualitative_claims(text: str, facts: list[dict[str, Any]]) -> list[dict[str,
                for clause in re.split(r'[。！？!?；;]', source)):
             continue
         if not supported(span):
-            hits.append({'kind': 'qualitative', 'token': span, 'excerpt': span[:180]})
+            from app.geo.content.cross_language import evidence_candidates
+            hits.append({'kind': 'qualitative', 'token': span, 'excerpt': span[:180],
+                         'review_reason': 'cross_language_unverified' if evidence_candidates(span, facts) else 'unsupported_claim'})
     return hits
 
 
@@ -229,9 +280,7 @@ def ungrounded_claims(text: str, facts: list[dict[str, Any]]) -> list[dict[str, 
         if term in body and term not in blob:
             _add("performance", term, term)
 
-    for term in _CASE_TERMS:
-        if term in body and term not in blob:
-            _add("case", term, term)
+    hits.extend(case_claims(body, facts))
 
     quantities = {key for fact in facts or [] for key, _ in engineering_quantities(str(fact.get('statement') or ''))}
     for key, raw in engineering_quantities(body):
@@ -247,5 +296,9 @@ def format_ungrounded(claims: list[dict[str, str]], *, limit: int = 8) -> str:
     parts: list[str] = []
     labels = {"number": "数字", "performance": "性能表述", "case": "案例表述", "qualitative": "适用性或机理表述"}
     for c in claims[:limit]:
-        parts.append(f"{labels.get(c['kind'], c['kind'])}「{c['token']}」")
+        suffix = '（存在异语言资料，翻译对应关系待核验，并非已判定编造）' if c.get('review_reason') == 'cross_language_unverified' else ''
+        display = (c.get('excerpt') or c['token']) if c['kind'] == 'case' else c['token']
+        parts.append(f"{labels.get(c['kind'], c['kind'])}「{display}」{suffix}")
+    if len(claims) > limit:
+        parts.append(f'另有 {len(claims) - limit} 项待核验')
     return "、".join(parts)

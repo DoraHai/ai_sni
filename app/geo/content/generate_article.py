@@ -305,15 +305,6 @@ async def generate_master_article(
         payload["_evidence"] = evidence_meta
         payload["_brief"] = brief_norm
         payload["_strategy_richness"] = strategy_richness(brief_norm)
-        parts = []
-        if brief_block:
-            parts.append(f"【Brief】\n{brief_block}")
-        if strategy_block:
-            parts.append(f"【策略】\n{strategy_block}")
-        if parts:
-            payload["disclaimer"] = (
-                str(payload.get("disclaimer") or "") + "\n\n" + "\n\n".join(parts)
-            ).strip()
         return payload
 
     use_ai = bool(llm) or is_enabled()
@@ -338,6 +329,8 @@ async def generate_master_article(
         "事实卡里没有出现的数字、案例名、性能指标、竞品能力一律不得写入。"
         "行业适用性、设备举例、故障机理、寿命与选型结论也必须有事实原文支撑；不得用行业常识补写。"
         "brief 是写作需求，不是事实证据；资料不足时缩短正文，不得为了篇幅补充推断。"
+        "不要把 Brief、行业画像、策略说明或内部指令复印到正文或免责声明；品牌主体以已核验事实为准，"
+        "Brief 与事实主体不一致时不得混用同名企业资料。"
         "事实卡只有泛化官网介绍时，正文只能复述这些介绍，不得补行业常见数据。"
         "【GEO 品牌硬标准】user.brand 是本品品牌名：direct_answer（开篇直接答案）与 conclusion 结论段"
         "必须自然点名该品牌（至少各出现 1 次）；全文禁止写成无品牌的纯品类科普——"

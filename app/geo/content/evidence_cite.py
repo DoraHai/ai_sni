@@ -59,6 +59,8 @@ def build_sentence_citations(
         # unsupported assertion, even when the rest repeats a fact verbatim.
         if is_claim:
             cited = False
+        from app.geo.content.cross_language import evidence_candidates
+        candidates = evidence_candidates(sent, facts) if is_claim else []
         rows.append(
             {
                 "sentence": sent[:180],
@@ -69,6 +71,9 @@ def build_sentence_citations(
                 "cited": cited,
                 "is_claim": is_claim,
                 "needs_fact": is_claim,
+                "review_status": "needs_review" if is_claim else "not_required",
+                "review_reason": "cross_language_unverified" if candidates else ("unsupported_claim" if is_claim else None),
+                "evidence_candidates": candidates,
             }
         )
     return rows

@@ -39,13 +39,25 @@ def sample_provenance(snapshot: Any) -> dict[str, str]:
     }
 
 
-def eligible_visibility_sample(snapshot):
-    """Evidence population for comparable visibility numbers (prompt filtering is also required)."""
+def sample_exclusion_reasons(snapshot):
+    """Shared row-level reasons; weekly coverage is deliberately separate."""
     from types import SimpleNamespace
     if isinstance(snapshot, dict):
         snapshot = SimpleNamespace(**snapshot)
     source = sample_provenance(snapshot)
-    return (source['sample_kind'] == 'real' and source['sampling_method'] == 'unprimed_json_v2'
-            and source['analysis_status'] == 'completed'
-            and getattr(snapshot, 'citation_accuracy', None) != 'inaccurate'
-            and not getattr(snapshot, 'is_brand_probe', False))
+    reasons = []
+    if source['sample_kind'] != 'real':
+        reasons.append({'manual': 'manual_sample', 'simulated': 'simulated_sample'}.get(source['sample_kind'], 'unknown_source'))
+    if source['sampling_method'] != 'unprimed_json_v2':
+        reasons.append('unsupported_sampling_method')
+    if source['analysis_status'] != 'completed':
+        reasons.append('analysis_incomplete')
+    if getattr(snapshot, 'citation_accuracy', None) == 'inaccurate':
+        reasons.append('citation_inaccurate')
+    if getattr(snapshot, 'is_brand_probe', False):
+        reasons.append('brand_probe')
+    return reasons
+
+
+def eligible_visibility_sample(snapshot):
+    return not sample_exclusion_reasons(snapshot)

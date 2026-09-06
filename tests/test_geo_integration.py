@@ -184,8 +184,11 @@ def test_http_task_and_snapshot_contract_and_permissions():
     rows=[]
     session=NS(commit=AsyncMock(),refresh=AsyncMock())
     def add(row): row.id=10;rows.append(row)
+    entitlement_active = [True]
     async def scalar(query):
         params=query.compile().params
+        if 'tenant_modules' in str(query):
+            return NS(id=7) if entitlement_active[0] and params.get('id_1') == 7 else None
         return rows[0] if rows and params.get('id_1')==10 and params.get('tenant_id_1')==7 else None
     session.add=add;session.scalar=scalar;session.get=AsyncMock(return_value=NS(id=7))
     app.dependency_overrides[require_scoped_auth]=lambda:ctx
@@ -204,6 +207,8 @@ def test_http_task_and_snapshot_contract_and_permissions():
         before=session.commit.await_count
         result=client.get('/api/v1/geo/integration/metrics/snapshot?tenant_id=7')
         assert result.status_code==200 and isinstance(result.json(),list)
+        entitlement_active[0] = False
+        assert client.get('/api/v1/geo/integration/metrics/snapshot?tenant_id=7').status_code == 403
         assert session.commit.await_count==before
         assert client.get('/api/v1/geo/integration/tasks/99?tenant_id=7').status_code==404
     assert _required('/api/v1/geo/integration/tasks','POST')==({'geo.content'},True)

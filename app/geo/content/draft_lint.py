@@ -87,7 +87,9 @@ def lint_draft(
             )
         elif kind == "qualitative":
             issues.append({"level": "高", "code": "unverified_qualitative",
-                           "type": "待核实适用性或机理", "detail": f"「{token}」未能由绑定事实原文支撑，请删改或补核验资料",
+                           "type": "待核实适用性或机理", "detail": f"「{token}」未能由绑定事实原文支撑，请删改或补核验资料" +
+                           ('；存在异语言资料，翻译对应关系待核验，并非已判定编造' if claim.get('review_reason') == 'cross_language_unverified' else ''),
+                           "review_reason": claim.get('review_reason'),
                            "excerpt": claim.get("excerpt") or token})
         elif kind == "case":
             issues.append(
@@ -96,7 +98,7 @@ def lint_draft(
                     "code": "unverified_case",
                     "type": "未核实案例",
                     "detail": f"出现「{token}」但事实卡没有对应案例",
-                    "excerpt": token,
+                    "excerpt": claim.get("excerpt") or token,
                 }
             )
 

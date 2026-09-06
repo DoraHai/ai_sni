@@ -100,7 +100,11 @@ class GenerateBriefGateTests(unittest.IsolatedAsyncioTestCase):
                 brief=brief,
             )
         self.assertEqual(payload["_brief"]["cta"], "预约演示")
-        self.assertIn("Brief", payload.get("disclaimer") or "")
+        from app.geo.content.generate_article import to_markdown
+        self.assertNotIn("Brief", payload.get("disclaimer") or "")
+        self.assertNotIn("B2B SaaS", to_markdown(payload))
+        self.assertNotIn("运营负责人", to_markdown(payload))
+        self.assertEqual(payload["_brief"]["industry"], "B2B SaaS")
 
 
 class AuthPathTests(unittest.TestCase):

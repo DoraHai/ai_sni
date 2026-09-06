@@ -1,5 +1,6 @@
 <script setup>
 import GeoGenerationEvidence from '../../components/GeoGenerationEvidence.vue'
+import { articleVersionLabel } from '../../utils/geoArticleVersion'
 import { geoSnapshotLink } from '../../utils/geoRoutes'
 /**
  * Vue 母稿编辑器
@@ -2814,7 +2815,7 @@ const editorFlow = computed(() => {
     },
     {
       key: 'draft',
-      label: '生成母稿 V1',
+      label: hasDraft ? articleVersionLabel(task.value?.article) : '生成母稿',
       state: hasDraft ? 'done' : generating || briefFilled.value ? 'active' : '',
     },
     {
@@ -2849,6 +2850,7 @@ const generationSummary = computed(() => ({
 }))
 const versionMetaLine = computed(() => {
   const parts = [
+    articleVersionLabel(task.value?.article),
     `${bodyWordCount.value} 字`,
     boundFacts.value.length ? `已绑 ${boundFacts.value.length} 条事实` : '',
     trustedSourceCount.value ? `可信来源 ${trustedSourceCount.value}` : '',
@@ -3565,6 +3567,14 @@ onMounted(load)
             </div>
           </div>
           <template v-if="docTab === 'master'">
+            <details v-if="sentenceCites.some(c => c.review_reason === 'cross_language_unverified')" class="generation-evidence">
+              <summary>跨语言证据待核实（不代表已判定编造）</summary>
+              <p>保留原文中的主体、型号、数字、否定和条件；候选资料不代表已支持正文。请补充核验后的中文事实或修改正文，仍由客户统一审核。</p>
+              <div v-for="(cite, index) in sentenceCites.filter(c => c.review_reason === 'cross_language_unverified')" :key="index">
+                <p>{{ cite.sentence }}</p>
+                <blockquote v-for="candidate in cite.evidence_candidates" :key="candidate.fact_id">事实 #{{ candidate.fact_id }}：{{ candidate.source_statement }}（{{ candidate.source_name || '来源未填' }}）</blockquote>
+              </div>
+            </details>
             <RichTextMarkdownEditor
               key="master-body"
               v-model="article.body_markdown"

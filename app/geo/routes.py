@@ -1092,3 +1092,6 @@ router.include_router(content_router)
 
 from app.geo.integration import router as integration_router
 router.include_router(integration_router)
+
+from app.geo.read_routes import router as read_router
+router.include_router(read_router)

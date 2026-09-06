@@ -1,0 +1,162 @@
+{
+  "example_notice": "拟定接口契约；全部 ID、正文、数量为虚构示例，不是生产数据。各 response 为独立接口返回示例，外层不是 HTTP 返回格式。",
+  "prototype_version": "20260906-45",
+  "period_context_example": {
+    "request": "GET /api/v1/geo/integration/read/period-context?tenant_id=1&week_end=2026-08-31",
+    "response": {
+      "tenant_id": 1,
+      "evaluated_at": "2026-09-06T06:40:00Z",
+      "timezone": "Asia/Shanghai",
+      "week_end": "2026-08-31",
+      "current": {
+        "start": "2026-08-24T00:00:00+08:00",
+        "end": "2026-08-31T00:00:00+08:00",
+        "closed": true,
+        "status": "insufficient",
+        "qualified_counts": {"samples": 7, "questions": 3, "engines": 2},
+        "reasons": [{"code": "insufficient_samples", "scope": "week", "message": "本周合格样本 7 条，少于 8 条门槛；不改变单条样本资格。"}]
+      },
+      "previous": {
+        "start": "2026-08-17T00:00:00+08:00",
+        "end": "2026-08-24T00:00:00+08:00",
+        "closed": true,
+        "status": "insufficient",
+        "qualified_counts": {"samples": 0, "questions": 0, "engines": 0},
+        "reasons": [
+          {"code": "insufficient_samples", "scope": "week", "message": "前周合格样本不足 8 条。"},
+          {"code": "insufficient_questions", "scope": "week", "message": "前周有效问题不足 3 个。"},
+          {"code": "insufficient_engines", "scope": "week", "message": "前周有效引擎不足 2 个。"}
+        ]
+      },
+      "minimum_counts": {"samples": 8, "questions": 3, "engines": 2},
+      "own_domain_configured": true,
+      "metric_status": [
+        {"metric_key": "geo.visibility.ai_mention_count_7d", "status": "unavailable", "reason_codes": ["insufficient_samples"]},
+        {"metric_key": "geo.visibility.ai_mention_rate_7d", "status": "unavailable", "reason_codes": ["insufficient_samples"]},
+        {"metric_key": "geo.visibility.ai_visibility_score", "status": "unavailable", "reason_codes": ["insufficient_samples"]}
+      ],
+      "comparison": {
+        "comparable": false,
+        "reason_codes": ["current_week_insufficient", "previous_week_insufficient"],
+        "checks": {
+          "current_week_sufficient": false,
+          "previous_week_sufficient": false,
+          "same_cohort": null,
+          "same_historical_questions": null,
+          "complete_model_metadata": null,
+          "same_model_distribution": null,
+          "same_sample_distribution": null
+        }
+      },
+      "metrics_url": "/api/v1/geo/integration/metrics/snapshot?tenant_id=1&week_end=2026-08-31",
+      "dictionary_url": "/api/v1/geo/integration/metrics/dictionary?tenant_id=1&week_end=2026-08-31"
+    }
+  },
+  "canonical_metrics_example": {
+    "request": "GET /api/v1/geo/integration/metrics/snapshot?tenant_id=1&week_end=2026-08-31",
+    "response": [
+      {"metric_key": "geo.visibility.ai_mention_count_7d", "value": null, "unit": "count", "as_of": "2026-08-31T00:00:00+08:00", "trend_7d": null},
+      {"metric_key": "geo.visibility.ai_mention_rate_7d", "value": null, "unit": "percent", "as_of": "2026-08-31T00:00:00+08:00", "trend_7d": null},
+      {"metric_key": "geo.visibility.ai_visibility_score", "value": null, "unit": "score", "as_of": "2026-08-31T00:00:00+08:00", "trend_7d": null}
+    ]
+  },
+  "answers_example": {
+    "request": "GET /api/v1/geo/integration/read/answers?tenant_id=1&week_end=2026-08-31&captured_from=2026-08-24T00:00:00%2B08:00&captured_to=2026-08-31T00:00:00%2B08:00&limit=2",
+    "response": {
+      "tenant_id": 1,
+      "evaluated_at": "2026-09-06T06:40:00Z",
+      "timezone": "Asia/Shanghai",
+      "observation_window": {"start": "2026-08-24T00:00:00+08:00", "end": "2026-08-31T00:00:00+08:00"},
+      "official_week_end": "2026-08-31",
+      "unknown_time_count": 0,
+      "period_context_url": "/api/v1/geo/integration/read/period-context?tenant_id=1&week_end=2026-08-31",
+      "pagination": {"limit": 2, "has_more": true, "next_cursor": "EXAMPLE_OPAQUE_CURSOR_NOT_A_REAL_TOKEN", "watermark_max_id": 9010},
+      "items": [
+        {
+          "ref": {"module": "geo", "type": "answer_snapshot", "id": 9010},
+          "question": {"id": 9071, "historical_text": "示例问题：工业减速机选型需要核对哪些参数？", "current_text": "示例问题：工业减速机选型需要核对哪些参数？", "historical_text_source": "patrol_item"},
+          "engine": {"key": "deepseek", "provider": "deepseek", "model": "deepseek-chat", "model_revision": null, "metadata_source": "patrol_item"},
+          "captured_at": "2026-08-29T02:15:00Z",
+          "captured_at_local": "2026-08-29T10:15:00+08:00",
+          "time_basis": "stored_utc",
+          "source": {"kind": "real", "stored_sample_mode": "openai_compat", "simulated": false, "sampling_method": "unprimed_json_v2", "analysis_status": "completed", "verified_server_record": true},
+          "answer_excerpt": "这是契约演示文本，包含示例品牌的提及；不是实测回答。",
+          "detail_url": "/api/v1/geo/integration/read/answers/9010?tenant_id=1&week_end=2026-08-31",
+          "mentions_brand": true,
+          "cited_urls": [],
+          "competitors": [],
+          "sample_eligibility": {"eligible": true, "reasons": []},
+          "week_membership": {"within_window": true, "included_in_cohort": true, "reasons": []},
+          "metric_adoption": [
+            {"metric_key": "geo.visibility.ai_mention_count_7d", "status": "unavailable", "reasons": [{"code": "insufficient_samples", "scope": "week", "message": "本条合格，但整周仅 7 条合格样本，正式指标暂不出数。"}]},
+            {"metric_key": "geo.visibility.ai_mention_rate_7d", "status": "unavailable", "reasons": [{"code": "insufficient_samples", "scope": "week", "message": "整周样本不足。"}]},
+            {"metric_key": "geo.visibility.ai_visibility_score", "status": "unavailable", "reasons": [{"code": "insufficient_samples", "scope": "week", "message": "整周样本不足。"}]}
+          ],
+          "comparison_metadata": {"complete": true, "reason_codes": [], "model_identity_basis": "recorded_request_model_alias", "exact_model_revision_known": false},
+          "relations": [{"relation": "captured_by", "target": {"module": "geo", "type": "patrol_run", "id": 9031}}]
+        },
+        {
+          "ref": {"module": "geo", "type": "answer_snapshot", "id": 9009},
+          "question": {"id": 9071, "historical_text": null, "current_text": "示例问题：工业减速机选型需要核对哪些参数？", "historical_text_source": null},
+          "engine": {"key": "deepseek", "provider": null, "model": null, "model_revision": null, "metadata_source": null},
+          "captured_at": "2026-08-28T02:15:00Z",
+          "captured_at_local": "2026-08-28T10:15:00+08:00",
+          "time_basis": "stored_utc",
+          "source": {"kind": "simulated", "stored_sample_mode": "mock_persona", "simulated": true, "sampling_method": null, "analysis_status": "completed", "verified_server_record": false},
+          "answer_excerpt": "这是明确标记为模拟的契约演示文本，不是实测回答。",
+          "detail_url": "/api/v1/geo/integration/read/answers/9009?tenant_id=1&week_end=2026-08-31",
+          "mentions_brand": true,
+          "cited_urls": [],
+          "competitors": [],
+          "sample_eligibility": {"eligible": false, "reasons": [{"code": "simulated_sample", "scope": "sample", "message": "模拟回答不进入正式指标。"}]},
+          "week_membership": {"within_window": true, "included_in_cohort": false, "reasons": [{"code": "simulated_sample", "scope": "sample", "message": "本条不是正式合格样本。"}]},
+          "metric_adoption": [
+            {"metric_key": "geo.visibility.ai_mention_count_7d", "status": "excluded", "reasons": [{"code": "simulated_sample", "scope": "sample", "message": "模拟回答不能计入提及次数。"}]},
+            {"metric_key": "geo.visibility.ai_mention_rate_7d", "status": "excluded", "reasons": [{"code": "simulated_sample", "scope": "sample", "message": "模拟回答不能计入分子或分母。"}]},
+            {"metric_key": "geo.visibility.ai_visibility_score", "status": "excluded", "reasons": [{"code": "simulated_sample", "scope": "sample", "message": "模拟回答不能参与评分。"}]}
+          ],
+          "comparison_metadata": {"complete": false, "reason_codes": ["model_metadata_missing"], "model_identity_basis": null, "exact_model_revision_known": false},
+          "relations": []
+        }
+      ]
+    }
+  },
+  "answer_detail_example": {
+    "request": "GET /api/v1/geo/integration/read/answers/9010?tenant_id=1&week_end=2026-08-31",
+    "response_shape_note": "返回 tenant_id、evaluated_at、official_week_end、period_context_url 和 item；item 为列表相同字段再增加 raw_text 完整原文，避免详情与列表另立来源/准入规则。",
+    "additional_item_fields": {"raw_text": "这是契约演示文本，包含示例品牌的提及；不是实测回答。"}
+  },
+  "typed_relationship_example": {
+    "objects": [
+      {"module": "geo", "type": "metric_task", "id": 9042},
+      {"module": "geo", "type": "content_task", "id": 9014},
+      {"module": "geo", "type": "patrol_run", "id": 9031},
+      {"module": "geo", "type": "async_job", "id": 9031},
+      {"module": "geo", "type": "article_version", "id": 9018}
+    ],
+    "edges": [
+      {"from": {"module": "geo", "type": "metric_task", "id": 9042}, "to": {"module": "geo", "type": "content_task", "id": 9014}, "basis": "params.content_task_id"},
+      {"from": {"module": "geo", "type": "metric_task", "id": 9042}, "to": {"module": "geo", "type": "patrol_run", "id": 9031}, "basis": "progress.retest_runs"},
+      {"from": {"module": "geo", "type": "async_job", "id": 9031}, "to": {"module": "geo", "type": "content_task", "id": 9014}, "basis": "ref_type/ref_id"},
+      {"from": {"module": "geo", "type": "article_version", "id": 9018}, "to": {"module": "geo", "type": "async_job", "id": 9031}, "basis": "generation_meta.async_job_id"}
+    ],
+    "note": "只演示有类型引用；巡检和异步任务都为 9031 也不是同一对象。关系必须来自真实持久化字段并通过租户校验；不由题目相同推断。"
+  },
+  "async_progress_example": {
+    "request": "GET /api/v1/geo/integration/read/async-jobs/9032?tenant_id=1",
+    "response": {
+      "tenant_id": 1,
+      "evaluated_at": "2026-09-06T06:40:00Z",
+      "ref": {"module": "geo", "type": "async_job", "id": 9032},
+      "stored_status": "running",
+      "stale": true,
+      "stale_reason": "elapsed_threshold_exceeded",
+      "progress_pct": 45,
+      "progress_label": "生成中",
+      "error": null,
+      "result_refs": [],
+      "relations": [{"relation": "generates_for", "target": {"module": "geo", "type": "content_task", "id": 9014}}],
+      "note": "仅读取，耗时超限不证明 worker 已失活；未获取执行锁或将任务改为 failed。结果为空，不能将旧稿当成本次新产物。"
+    }
+  }
+}

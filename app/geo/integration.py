@@ -10,6 +10,7 @@ from app.database import get_session
 from app.models import GeoActionTicket, Tenant
 from app.security.auth import require_scoped_auth
 from app.geo.integration_metrics import load_weekly_snapshot, metric_dictionary, MENTIONS, RATE, SCORE
+from app.geo.tenant_scope import require_geo_read_entitlement
 
 router = APIRouter(prefix='/integration', tags=['GEO shared contract'])
 PREFIX = 'cockpit:v1:'
@@ -121,14 +122,14 @@ def metric(state, key):
     return next((m for m in state['metrics'] if m['metric_key'] == key), None)
 
 
-@router.get('/metrics/snapshot', response_model=list[MetricSnapshot])
+@router.get('/metrics/snapshot', response_model=list[MetricSnapshot], dependencies=[Depends(require_geo_read_entitlement)])
 async def metrics_snapshot(tenant_id: int = Query(...), week_end: date | None = None,
                            ctx=Depends(require_scoped_auth), session=Depends(get_session)):
     ctx.ensure_tenant(tenant_id)
     return (await snapshot(session, tenant_id, week_end))['metrics']
 
 
-@router.get('/metrics/dictionary')
+@router.get('/metrics/dictionary', dependencies=[Depends(require_geo_read_entitlement)])
 async def metrics_dictionary(tenant_id: int = Query(...), week_end: date | None = None,
                              ctx=Depends(require_scoped_auth), session=Depends(get_session)):
     ctx.ensure_tenant(tenant_id)
