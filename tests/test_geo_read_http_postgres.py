@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from sqlalchemy import BigInteger, Column, Date, MetaData, String, Table, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -62,10 +62,13 @@ async def environment(*, extra_models=(), legacy_routes=False):
             'search_path': schema, 'statement_timeout': '10000'}})
         sessions = async_sessionmaker(engine, expire_on_commit=False)
 
-        async def query_session():
+        async def query_session(request: Request):
             async with sessions(autoflush=False) as session:
                 async with session.begin():
-                    await session.execute(text('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY'))
+                    if request.method in {'GET', 'HEAD'}:
+                        await session.execute(text('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY'))
+                    else:
+                        await session.execute(text("SET LOCAL application_name='geo_fixture_post'"))
                     yield session
 
         identity = {'ctx': AuthContext(user_id=9001, username='fixture', role_name='fixture',

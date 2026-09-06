@@ -1914,7 +1914,16 @@ async function exportCurrentVariant() {
   }
   busy.value = 'export'
   try {
-    const res = await editorRequest.wait(exportGeoVariant(tenantId.value, taskId.value, docTab.value))
+    if (reviewDraftChanged.value) {
+      ElMessage.warning('请先保存当前稿件，再导出')
+      return false
+    }
+    const saved = (task.value?.variants || []).find(v => v.channel === docTab.value)
+    if (!saved?.export_revision) {
+      ElMessage.warning('请刷新稿件后重新导出')
+      return false
+    }
+    const res = await editorRequest.wait(exportGeoVariant(tenantId.value, taskId.value, docTab.value, saved.export_revision))
     await editorRequest.wait(load())
     applyVariantFromTask()
     if (res.body_html) {
@@ -1923,7 +1932,7 @@ async function exportCurrentVariant() {
     }
     ElMessage.success(
       res.export_format === 'html'
-        ? `已导出 HTML 正稿 ${res.channel}${res.has_table ? '（含表格）' : ''}`
+        ? `已导出 HTML 内容 ${res.channel}${res.has_table ? '（含表格）' : ''}，发布前仍需通过客户审核与检查`
         : `已导出 ${res.channel}（status=${res.status}）`,
     )
   } catch (e) {

@@ -420,8 +420,10 @@
         body: body,
       });
     },
-    exportVariant: function (id, channel) {
+    exportVariant: function (id, channel, expectedRevision) {
       return api('/content-tasks/' + id + '/export', {
+        method: 'POST',
+        body: { expected_revision: expectedRevision },
         query: Object.assign(withTenantQuery(), { channel: channel || 'website' }),
       });
     },

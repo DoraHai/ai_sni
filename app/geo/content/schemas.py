@@ -8,6 +8,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+class VariantExportRequest(BaseModel):
+    expected_revision: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+
+
 class PromptCreate(BaseModel):
     tenant_id: int
     question: str = Field(..., min_length=4, max_length=500)

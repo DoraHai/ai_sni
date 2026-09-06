@@ -3,7 +3,7 @@ import asyncio
 import os
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from test_geo_read_http_postgres import environment
 
@@ -49,4 +49,125 @@ def test_readiness_reports_orphans_without_assigning_and_write_helper_still_assi
                 values = dict((await conn.execute(select(tables['geo_facts'].c.id, tables['geo_facts'].c.business_id))).all())
             assert values == {1: 42, 2: 42, 3: None, 4: None, 5: None, 6: 99}
             assert (await client.get(url, params={'tenant_id': 2})).status_code == 403
+    asyncio.run(run())
+
+
+async def seed_export(engine, tables):
+    async with engine.begin() as conn:
+        await conn.execute(tables['tenants'].insert().values(id=1, name='fixture'))
+        await conn.execute(tables['tenant_modules'].insert().values(tenant_id=1, module_code='geo', status='active'))
+        await conn.execute(tables['geo_prompts'].insert().values(id=1, tenant_id=1, question='Fixture question'))
+        await conn.execute(tables['geo_content_tasks'].insert().values(
+            id=14, tenant_id=1, prompt_id=1, title='Fixture', status='editing', review_status='approved', reviewed_by=9001))
+        await conn.execute(tables['geo_article_versions'].insert().values(id=18, task_id=14, version_no=1))
+        await conn.execute(tables['geo_channel_variants'].insert().values(
+            id=20, task_id=14, article_version_id=18, channel='website', title='Fixture title',
+            body_markdown='# Heading\n\n| A | B |\n| --- | --- |\n| one | two |\n\n## FAQ\n\nQ: Test?\n\nA: Fixture.',
+            status='draft', export_format='markdown', adapt_meta={
+                'delivery': 'adapted_draft_not_publishable', 'publication_monitor': {'state': 'pending'},
+                'push_deliveries': {'fixture': {'state': 'unknown'}}}))
+
+
+async def stored_export_state(engine, tables):
+    async with engine.connect() as conn:
+        return {name: [dict(r) for r in (await conn.execute(select(tables[name]))).mappings()]
+                for name in ('geo_content_tasks', 'geo_channel_variants', 'geo_prompts', 'geo_publications')}
+
+
+def test_export_get_is_read_only_and_post_requires_edit_without_approving_or_publishing():
+    from app.models import GeoFact, GeoTaskFact
+
+    async def run():
+        async with environment(extra_models=(GeoFact, GeoTaskFact), legacy_routes=True) as (client, engine, tables, identity):
+            await seed_export(engine, tables)
+            path = '/api/v1/geo/content-tasks/14/export'
+            params = {'tenant_id': 1, 'channel': 'website'}
+            before = await stored_export_state(engine, tables)
+            # A pure GET must finish even while another transaction owns the task write lock.
+            async with engine.begin() as locker:
+                await locker.execute(select(tables['geo_content_tasks']).with_for_update())
+                preview = await asyncio.wait_for(client.get(path, params=params), timeout=3)
+            assert preview.status_code == 200, preview.text
+            view = preview.json()
+            assert view['read_only'] and '<table' in view['body_html'] and 'FAQ' in view['body_html']
+            assert view['quality'] == 'unknown' and view['status'] == 'draft'
+            assert await stored_export_state(engine, tables) == before
+            body = {'expected_revision': view['export_revision']}
+            assert (await client.post(path, params=params, json=body)).status_code == 403
+            identity['ctx'].permissions = {'geo.content': 'edit'}
+            assert (await client.post(path, params=params, json={})).status_code == 422
+            result = await client.post(path, params=params, json=body)
+            assert result.status_code == 200, result.text
+            assert not result.json()['read_only'] and result.json()['status'] == 'exported'
+            after = await stored_export_state(engine, tables)
+            task = after['geo_content_tasks'][0]
+            variant = after['geo_channel_variants'][0]
+            assert task['review_status'] == 'approved' and task['reviewed_by'] == 9001
+            assert variant['adapt_meta']['delivery'] == 'adapted_draft_not_publishable'
+            assert variant['adapt_meta']['publication_monitor'] == {'state': 'pending'}
+            assert variant['adapt_meta']['push_deliveries'] == {'fixture': {'state': 'unknown'}}
+            assert after['geo_publications'] == []
+            assert (await client.post(path, params=params, json=body)).status_code == 409
+            # Export an already published representation without demoting it or its review.
+            async with engine.begin() as conn:
+                await conn.execute(tables['geo_content_tasks'].update().values(status='published'))
+                await conn.execute(tables['geo_channel_variants'].update().values(status='published'))
+            preview = (await client.get(path, params=params)).json()
+            result = await client.post(path, params=params, json={'expected_revision': preview['export_revision']})
+            assert result.status_code == 200 and result.json()['status'] == 'published'
+            assert (await stored_export_state(engine, tables))['geo_content_tasks'][0]['status'] == 'published'
+            assert (await client.get(path, params={'tenant_id': 2})).status_code == 403
+            async with engine.begin() as conn:
+                await conn.execute(tables['tenant_modules'].update().values(status='disabled'))
+            assert (await client.get(path, params=params)).status_code == 403
+            assert (await client.post(path, params=params, json={'expected_revision': preview['export_revision']})).status_code == 403
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('change', ['body', 'article', 'monitor'])
+def test_export_waits_for_task_lock_and_rechecks_revision_or_preserves_new_monitor(change):
+    from app.models import GeoFact, GeoTaskFact
+
+    async def run():
+        async with environment(extra_models=(GeoFact, GeoTaskFact), legacy_routes=True) as (client, engine, tables, identity):
+            await seed_export(engine, tables)
+            identity['ctx'].permissions = {'geo.content': 'edit'}
+            path = '/api/v1/geo/content-tasks/14/export'
+            params = {'tenant_id': 1, 'channel': 'website'}
+            preview = (await client.get(path, params=params)).json()
+            pending = None
+            try:
+                async with engine.begin() as locker:
+                    await locker.execute(select(tables['geo_content_tasks']).with_for_update())
+                    pending = asyncio.create_task(client.post(path, params=params, json={'expected_revision': preview['export_revision']}))
+                    blocked = False
+                    for _ in range(100):
+                        async with engine.connect() as inspect:
+                            blocked = await inspect.scalar(text("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name='geo_fixture_post' AND cardinality(pg_blocking_pids(pid))>0)"))
+                        if blocked:
+                            break
+                        await asyncio.sleep(.02)
+                    assert blocked, 'POST did not wait on the actual PostgreSQL task lock'
+                    if change == 'article':
+                        await locker.execute(tables['geo_article_versions'].insert().values(id=19, task_id=14, version_no=2))
+                    else:
+                        updates = {'body_markdown': 'Updated body'} if change == 'body' else {
+                            'adapt_meta': {'delivery': 'adapted_draft_not_publishable', 'publication_monitor': {'state': 'healthy'},
+                                           'push_deliveries': {'fixture': {'state': 'unknown'}}}}
+                        await locker.execute(tables['geo_channel_variants'].update().values(**updates))
+                result = await asyncio.wait_for(pending, timeout=5)
+                assert result.status_code == (200 if change == 'monitor' else 409), result.text
+                state = await stored_export_state(engine, tables)
+                assert state['geo_content_tasks'][0]['review_status'] == 'approved'
+                if change in {'body', 'article'}:
+                    assert state['geo_channel_variants'][0]['status'] == 'draft'
+                    if change == 'body':
+                        assert state['geo_channel_variants'][0]['body_markdown'] == 'Updated body'
+                else:
+                    assert state['geo_channel_variants'][0]['adapt_meta']['publication_monitor']['state'] == 'healthy'
+                assert state['geo_publications'] == []
+            finally:
+                if pending and not pending.done():
+                    pending.cancel()
+                    await asyncio.gather(pending, return_exceptions=True)
     asyncio.run(run())

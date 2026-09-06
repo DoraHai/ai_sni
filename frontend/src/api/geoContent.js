@@ -667,8 +667,8 @@ export function patchGeoVariant(tenantId, taskId, channel, body) {
   })
 }
 
-export function exportGeoVariant(tenantId, taskId, channel = 'website') {
-  return client.get(`/api/v1/geo/content-tasks/${taskId}/export`, {
+export function exportGeoVariant(tenantId, taskId, channel = 'website', expectedRevision) {
+  return client.post(`/api/v1/geo/content-tasks/${taskId}/export`, { expected_revision: expectedRevision }, {
     params: { tenant_id: tenantId, channel },
   })
 }

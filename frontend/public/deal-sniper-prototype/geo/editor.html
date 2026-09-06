@@ -885,7 +885,9 @@
         alert('已复制母稿到剪贴板');
         return;
       }
-      var data = await GeoAPI.exportVariant(taskId, channel);
+      var savedVariant = (task.variants || []).find(function (v) { return v.channel === channel; });
+      if (!savedVariant || !savedVariant.export_revision) throw new Error('请刷新稿件后重新导出');
+      var data = await GeoAPI.exportVariant(taskId, channel, savedVariant.export_revision);
       await navigator.clipboard.writeText('# ' + data.title + '\n\n' + data.body_markdown);
       alert('已复制 ' + channel + ' 版本到剪贴板');
       task = await GeoAPI.getTask(taskId);

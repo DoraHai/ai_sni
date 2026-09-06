@@ -292,13 +292,15 @@ def main() -> int:
         if fails:
             print(f"[WARN] still failing checks: {fails} — push may 400 on gate")
 
-    exp = must(
+    preview = must(
         *req(
             "GET",
             f"/api/v1/geo/content-tasks/{tid}/export?tenant_id={TENANT_ID}&channel=website",
         ),
-        label="export website variant",
+        label="preview website variant",
     )
+    exp = must(*req("POST", f"/api/v1/geo/content-tasks/{tid}/export?tenant_id={TENANT_ID}&channel=website",
+                    {"expected_revision": preview["export_revision"]}), label="register website export")
     print(f"  export status={exp.get('status')}")
 
     must(

@@ -130,11 +130,14 @@ def test_monitor_cannot_be_manually_marked_complete():
 
 def test_export_never_downgrades_published_variant_or_drops_monitor_state():
     from app.geo.content.routes import export_variant
+    from app.geo.content.schemas import VariantExportRequest
+    from app.geo.content.export_view import export_revision
     v,_,c,s=fixture();v.channel='website';v.status='published';c.status='published'
     v.adapt_meta['body_html']='<p>body</p>';s.refresh=AsyncMock()
     with patch('app.geo.content.routes._get_task',AsyncMock(return_value=c)), \
          patch('app.geo.content.routes._variants',AsyncMock(return_value=[v])), \
+         patch('app.geo.content.routes._latest_article',AsyncMock(return_value=NS(id=3))), \
          patch('app.geo.content.routes._sync_task_pipeline',AsyncMock()):
-        result=asyncio.run(export_variant(5,7,'website',NS(ensure_tenant=lambda _:None),s))
+        result=asyncio.run(export_variant(5,VariantExportRequest(expected_revision=export_revision(v,3)),7,'website',NS(ensure_tenant=lambda _:None),s))
     assert result['status']=='published' and 'publication_monitor' in v.adapt_meta
     s.refresh.assert_awaited_once_with(c,with_for_update=True)

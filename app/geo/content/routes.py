@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_session
 from app.geo.read_routes import read_session as geo_read_session
 from app.geo.tenant_scope import require_geo_read_entitlement
+from app.geo.content.export_view import export_revision, export_view
+from app.geo.content.schemas import VariantExportRequest
 from app.geo.content.bridge import (
     create_and_bind_diagnosis_facts,
     create_task_from_diagnosis,
@@ -834,6 +836,7 @@ async def _task_payload(
                     "has_table": bool((v.adapt_meta or {}).get("has_table")),
                     "quality": (v.adapt_meta or {}).get("quality"),
                     "article_version_id": v.article_version_id,
+                    "export_revision": export_revision(v, article.id if article else None),
                     "adapt_meta": v.adapt_meta or {},
                     "stale": bool(
                         article is not None and v.article_version_id != article.id
@@ -7775,9 +7778,27 @@ async def update_variant(
     return await _task_payload(session, task, detail=True)
 
 
-@router.get("/content-tasks/{task_id}/export")
+@router.get("/content-tasks/{task_id}/export", dependencies=[Depends(require_geo_read_entitlement)])
+async def preview_variant_export(
+    task_id: int,
+    tenant_id: int = Query(...),
+    channel: str = Query("website"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(geo_read_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    variant = next((v for v in await _variants(session, task.id) if v.channel == channel), None)
+    if variant is None:
+        raise HTTPException(404, f"渠道版本不存在: {channel}")
+    article = await _latest_article(session, task.id)
+    return {**export_view(variant, article.id if article else None), "read_only": True}
+
+
+@router.post("/content-tasks/{task_id}/export", dependencies=[Depends(require_geo_read_entitlement)])
 async def export_variant(
     task_id: int,
+    req: VariantExportRequest,
     tenant_id: int = Query(...),
     channel: str = Query("website"),
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -7790,43 +7811,29 @@ async def export_variant(
     variant = variants.get(channel)
     if variant is None:
         raise HTTPException(404, f"渠道版本不存在: {channel}")
+    article = await _latest_article(session, task.id)
+    current_article_id = article.id if article else None
+    if req.expected_revision != export_revision(variant, current_article_id):
+        raise HTTPException(409, "稿件版本已变化，请刷新后重新导出")
+    rendered = export_view(variant, current_article_id)
     if variant.status != "published":
         variant.status = "exported"
     if task.status in {"ready", "editing", "needs_fix"}:
         task.status = "exported"
     await _sync_task_pipeline(session, task)
-    # Ensure HTML 正稿 exists (含表格渲染)
+    # Persist only the explicit export representation. Export is not approval
+    # and must not promote adapted_draft_not_publishable or unknown quality.
     meta = dict(variant.adapt_meta or {})
     body_html = meta.get("body_html")
     if not body_html:
-        from app.geo.content.md_to_html import (
-            ensure_comparison_table_hint,
-            html_to_plain,
-            markdown_to_publish_html,
-        )
-
-        body_html = markdown_to_publish_html(variant.body_markdown or "", wrap_article=True)
-        meta["body_html"] = body_html
-        meta["body_plain"] = html_to_plain(body_html)
-        meta["has_table"] = ensure_comparison_table_hint(variant.body_markdown or "")
+        meta["body_html"] = rendered["body_html"]
+        meta["body_plain"] = rendered["body_plain"]
+        meta["has_table"] = rendered["has_table"]
         meta["export_format"] = "html"
-        meta["delivery"] = "html_publish_ready"
         variant.adapt_meta = meta
     variant.export_format = "html"
     await session.commit()
-    return {
-        "channel": channel,
-        "title": variant.title,
-        # 对外发布以 HTML 正稿为准；markdown 仅作中间态/兼容
-        "body_html": body_html,
-        "body_plain": meta.get("body_plain"),
-        "body_markdown": variant.body_markdown,
-        "export_format": "html",
-        "has_table": bool(meta.get("has_table")),
-        "quality": meta.get("quality") or "publish_ready",
-        "status": variant.status,
-        "copy_hint": "请复制 body_html 到渠道后台（含表格的正式正稿，非 MD）",
-    }
+    return {**export_view(variant, current_article_id), "read_only": False}
 
 
 @router.post("/content-tasks/{task_id}/submit-review")
