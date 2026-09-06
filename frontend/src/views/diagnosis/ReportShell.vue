@@ -76,7 +76,7 @@ onBeforeUnmount(() => { cancelAnimationFrame(frame); window.removeEventListener(
       </div>
     </header>
 
-    <header class="rs-report-header">
+    <header class="rs-report-header" :class="{ 'rs-report-identity': !activeAsset }">
       <template v-if="!activeAsset">
         <p class="rs-brand-name">{{ brandName }}</p>
         <h1>网站诊断报告</h1>
@@ -137,6 +137,10 @@ summary::-webkit-details-marker { display:none; }
 .rs-tabs a.active { color:var(--rs-purple); border-bottom-color:var(--rs-purple); font-weight:650; }
 .rs-mobile { display:none; }
 .rs-print-url { display:none; overflow-wrap:anywhere; }
+/* Keep report identity for export and headings for settings, not the report screen. */
+@media screen {
+  .rs-report-identity, .rs-tabs { display:none; }
+}
 @media(max-width:700px) {
   .report-shell { --rs-header-height:64px; }
   .rs-global-inner { padding-inline:18px; gap:10px; }
