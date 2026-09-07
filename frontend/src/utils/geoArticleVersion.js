@@ -26,6 +26,12 @@ export function formatArticleTime(value) {
   }).format(timestamp)
 }
 
+export function mergeTaskJobLists(...lists) {
+  const rows = lists.flat().filter(Boolean)
+  return [...new Map(rows.map((job) => [Number(job.id), job])).values()]
+    .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))
+}
+
 export function latestGenerationFailure(article, jobs = []) {
   if (!article?.id) return null
   const latest = [...jobs]

@@ -109,6 +109,20 @@ def test_legacy_async_list_does_not_release_tasks_or_reconcile_jobs():
     asyncio.run(scenario())
 
 
+def test_legacy_async_list_can_filter_generation_before_limiting():
+    async def scenario():
+        session = Mock(scalars=AsyncMock(return_value=[_job()]), commit=AsyncMock())
+        result = await routes.list_async_jobs(
+            1, "content_task", 14, 1, Mock(), session, async_jobs.KIND_GENERATE
+        )
+        statement = session.scalars.await_args.args[0]
+        assert "geo_async_jobs.kind" in str(statement)
+        assert result["items"][0]["kind"] == async_jobs.KIND_GENERATE
+        session.commit.assert_not_awaited()
+
+    asyncio.run(scenario())
+
+
 def test_legacy_patrol_list_reports_stored_timeout_without_writing():
     async def scenario():
         session = Mock(scalars=AsyncMock(return_value=[_patrol()]), commit=AsyncMock())

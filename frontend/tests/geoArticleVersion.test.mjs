@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { articleVersionLabel, latestGenerationFailure } from '../src/utils/geoArticleVersion.js'
+import { articleVersionLabel, latestGenerationFailure, mergeTaskJobLists } from '../src/utils/geoArticleVersion.js'
 
 test('manual saved version is not presented as successful AI generation', () => {
   const label = articleVersionLabel({ id: 19, version_no: 2, generation_meta: { source: 'manual_edit', from_version: 1 } })
@@ -32,4 +32,16 @@ test('old failures do not shadow a newer saved article', () => {
   assert.equal(latestGenerationFailure(article, [
     { id: 6, kind: 'generate_article', status: 'failed', finished_at: '2026-09-07T00:57:21Z' },
   ]), null)
+})
+
+test('a filtered generation result survives more than twenty newer channel jobs', () => {
+  const generation = { id: 6, kind: 'generate_article', status: 'failed' }
+  const channelJobs = Array.from({ length: 25 }, (_, index) => ({
+    id: 7 + index,
+    kind: 'create_variants',
+    status: 'succeeded',
+  }))
+  const rows = mergeTaskJobLists([generation], channelJobs)
+  assert.equal(rows.length, 26)
+  assert.equal(rows.find((job) => job.kind === 'generate_article'), generation)
 })
