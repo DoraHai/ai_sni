@@ -14,8 +14,10 @@ import { fetchTenants } from '../../api/auth'
 import { session } from '../../store/session'
 import diagnosticLogo from '../../assets/g-snipers-purple-logo.png'
 import DiagnosisAssetsView from './DiagnosisAssetsView.vue'
+import { canViewCockpit } from '../workspace/cockpit/scope.mjs'
 
 const tenantId = computed(() => session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null))
+const canOpenCockpit = computed(() => canViewCockpit(key => session.canView(key)))
 
 const url = ref('')
 const quickMode = ref('own')
@@ -1035,7 +1037,7 @@ onMounted(async () => {
       <a class="sidebar-item module-link" href="/deal-sniper/seo/dashboard"><span>⌕</span>去 SEO 模块</a>
       <a class="sidebar-item module-link" href="/deal-sniper/geo/dashboard"><span>✦</span>去 GEO 模块</a>
       <div class="sidebar-bottom">
-        <a href="/deal-sniper/hub/dashboard">⌂ 全域驾驶舱</a>
+        <a v-if="canOpenCockpit" href="/workspace/cockpit">⌂ G-Snipers 获客工作台</a>
         <a href="/deal-sniper/portal">← 平台门户</a>
       </div>
     </aside>

@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { isSecureCockpitRuntime, resolveTenantModuleCodes } from '../src/views/workspace/cockpit/scope.mjs'
+import {
+  COCKPIT_PERMISSION_KEYS,
+  canViewCockpit,
+  isSecureCockpitRuntime,
+  resolveTenantModuleCodes,
+} from '../src/views/workspace/cockpit/scope.mjs'
 
 const moduleMeta = {
   sem: { permission: ['monitor.dashboard'] },
@@ -39,4 +44,11 @@ test('permissions still narrow a customer-enabled module', () => {
     tenantsByModule: { sem: [{ id: 16 }] },
   })
   assert.deepEqual([...result], [])
+})
+
+test('cockpit entry is hidden for diagnosis-only access and shown for every cockpit permission', () => {
+  assert.equal(canViewCockpit(key => key === 'geo.diagnosis'), false)
+  for (const permission of COCKPIT_PERMISSION_KEYS) {
+    assert.equal(canViewCockpit(key => key === permission), true, permission)
+  }
 })
