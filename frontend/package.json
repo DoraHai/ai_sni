@@ -18,6 +18,7 @@
     "test:sem-action-ledger": "node scripts/test-sem-action-ledger.mjs",
     "test:chunk-recovery": "node scripts/test-chunk-recovery.mjs",
     "test:sem-identity-repair-requests": "node scripts/test-sem-identity-repair-requests.mjs",
+    "test:workbench-session": "node scripts/test-workbench-session.mjs",
     "deploy:sem": "bash scripts/deploy-sem.sh",
     "deploy:login": "bash scripts/deploy-auth.sh",
     "dev:diagnostic-center": "vite --config vite.diagnostic-center.config.js",
