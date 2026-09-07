@@ -160,6 +160,15 @@ test('derived metrics require the exact contracted rounding precision', async ()
   assert.deepEqual(rounded.items[0].metrics, { cost: 10, click: 3, impression: 9, ctr: 0.333333, cpc: 3.33 })
 })
 
+test('derived metrics use the backend Python half-even rounding contract', async () => {
+  for (const [cost, click, cpc] of [[2.25, 2, 1.12], [1, 8, 0.12], [11, 8, 1.38]]) {
+    const result = await acceptsContract('keywords', data => {
+      data.items[0].metrics = { cost, click, impression: 16, ctr: click / 16, cpc }
+    })
+    assert.equal(result.items[0].metrics.cpc, cpc)
+  }
+})
+
 test('derived metrics tolerate only floating representation noise and preserve null denominators', async () => {
   const floating = await acceptsContract('keywords', data => {
     data.items[0].metrics = { cost: 0.3, click: 3, impression: 30,
