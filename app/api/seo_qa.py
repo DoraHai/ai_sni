@@ -809,7 +809,7 @@ async def placement_candidates(tenant_id: PositiveInt, site_id: PositiveInt, ctx
 @router.post('/placements/{placement_id}/receipt')
 async def receipt(placement_id: int, req: ReceiptInput, ctx=Auth, session=Db):
     site = await access(session, ctx, req.tenant_id, req.site_id, True)
-    row = await record(session, SeoQaPlacement, placement_id, req.tenant_id, req.site_id, True)
+    row, _ = await publication_context(session, placement_id, req.tenant_id, req.site_id, lock=True)
     try:
         url = platform_url(row.platform, req.answer_url, answer=True, question_url=row.question_url, domain=site.canonical_domain)
     except ValueError as exc:
@@ -817,7 +817,6 @@ async def receipt(placement_id: int, req: ReceiptInput, ctx=Auth, session=Db):
     # Revalidate the reviewed content before accepting even an identical replay.
     # A response may be lost after commit, but only the immediately preceding
     # request version is an unambiguous replay of the current URL.
-    await publication_draft(placement_id, req.tenant_id, req.site_id, ctx, session)
     if row.answer_url == url:
         if req.version in {row.version, row.version - 1}:
             return data(row)
@@ -836,13 +835,27 @@ async def receipt(placement_id: int, req: ReceiptInput, ctx=Auth, session=Db):
 @router.get('/placements/{placement_id}/draft')
 async def publication_draft(placement_id: int, tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, session=Db):
     await access(session, ctx, tenant_id, site_id)
-    row = await record(session, SeoQaPlacement, placement_id, tenant_id, site_id)
-    answer = await record(session, SeoQaAnswer, row.answer_id, tenant_id, site_id)
-    content = await session.get(SeoContentAsset, answer.content_id)
+    row, content = await publication_context(session, placement_id, tenant_id, site_id)
+    return {'id': row.id, 'body': row.body, 'content_version': row.content_version}
+
+
+async def publication_context(session, placement_id, tenant_id, site_id, *, lock=False):
+    """Load current reviewed content before its placement, preserving one lock order."""
+    content_id = await session.scalar(select(SeoContentAsset.id)
+        .join(SeoQaAnswer, SeoQaAnswer.content_id == SeoContentAsset.id)
+        .join(SeoQaPlacement, SeoQaPlacement.answer_id == SeoQaAnswer.id)
+        .where(SeoQaPlacement.id == placement_id,
+               SeoQaPlacement.tenant_id == tenant_id, SeoQaPlacement.site_id == site_id,
+               SeoQaAnswer.tenant_id == tenant_id, SeoQaAnswer.site_id == site_id,
+               SeoContentAsset.tenant_id == tenant_id, SeoContentAsset.site_id == site_id))
+    if content_id is None:
+        raise HTTPException(404, '当前网站下未找到此记录')
+    content = await record(session, SeoContentAsset, content_id, tenant_id, site_id, lock)
+    row = await record(session, SeoQaPlacement, placement_id, tenant_id, site_id, lock)
     if content.status not in {'ready', 'published'} or content.version_count != row.content_version:
         raise HTTPException(409, '审核稿版本已失效，请重新审核并准备分发')
     await require_answer_evidence(session, content)
-    return {'id': row.id, 'body': row.body, 'content_version': row.content_version}
+    return row, content
 
 
 @router.post('/placements/{placement_id}/verify')
@@ -883,7 +896,7 @@ async def verify(placement_id: int, req: Scoped, ctx=Auth, session=Db):
 @router.post('/placements/{placement_id}/metrics')
 async def report_metrics(placement_id: int, req: MetricsInput, ctx=Auth, session=Db):
     site = await access(session, ctx, req.tenant_id, req.site_id, True)
-    row = await record(session, SeoQaPlacement, placement_id, req.tenant_id, req.site_id, True)
+    row, _ = await publication_context(session, placement_id, req.tenant_id, req.site_id, lock=True)
     if not row.answer_url:
         raise HTTPException(409, '请先回填回答网址并核验正文')
     try:
@@ -903,7 +916,9 @@ async def report_metrics(placement_id: int, req: MetricsInput, ctx=Auth, session
     comparable = {key: current.get(key) for key in metrics if key != 'actor'}
     expected = {key: value for key, value in metrics.items() if key != 'actor'}
     if comparable == expected:
-        return {'saved': True, 'source': 'user_reported', 'version': row.version, 'replayed': True}
+        if req.version in {row.version, row.version - 1}:
+            return {'saved': True, 'source': 'user_reported', 'version': row.version, 'replayed': True}
+        raise HTTPException(409, '记录已更新，请刷新后重试')
     check_version(row, req.version)
     row.reported_metrics = metrics
     row.version += 1
@@ -1010,7 +1025,7 @@ async def assistant_task(placement_id: int, tenant_id: PositiveInt, site_id: Pos
 @router.post('/placements/{placement_id}/assistant-receipt')
 async def assistant_receipt(placement_id: int, req: AssistantReceiptInput, ctx=Auth, session=Db):
     await access(session, ctx, req.tenant_id, req.site_id, True)
-    row = await record(session, SeoQaPlacement, placement_id, req.tenant_id, req.site_id, True)
+    row = await record(session, SeoQaPlacement, placement_id, req.tenant_id, req.site_id)
     if (req.placement_id != row.id or req.platform != row.platform or
             req.question_url != row.question_url or req.content_version != row.content_version):
         raise HTTPException(409, '回执与分发记录不匹配，请核对问题和稿件版本')

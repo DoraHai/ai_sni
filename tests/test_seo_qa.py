@@ -210,6 +210,16 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
             replayed_metrics = await api.report_metrics(placement['id'], metric_input, CTX, db)
             assert saved_metrics['replayed'] is False and replayed_metrics['replayed'] is True
             assert saved_metrics['version'] == replayed_metrics['version']
+            with pytest.raises(HTTPException) as old_metric_replay:
+                await api.report_metrics(placement['id'], api.MetricsInput(tenant_id=1, site_id=1,
+                    version=1, views=10, source_url=url, as_of=metric_input.as_of), CTX, db)
+            assert old_metric_replay.value.status_code == 409
+            content.status = 'drafting'; await db.flush()
+            with pytest.raises(HTTPException, match='审核稿版本已失效'):
+                await api.report_metrics(placement['id'], api.MetricsInput(tenant_id=1, site_id=1,
+                    version=saved_metrics['version'], views=10, source_url=url,
+                    as_of=metric_input.as_of), CTX, db)
+            content.status = 'ready'; await db.flush()
             with pytest.raises(HTTPException, match='当前回答网址一致'):
                 await api.report_metrics(placement['id'], api.MetricsInput(tenant_id=1, site_id=1,
                     version=saved_metrics['version'], views=11,
@@ -274,6 +284,56 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
                 await api.publication_draft(placement['id'], 1, 1, CTX, db)
             with pytest.raises(HTTPException):
                 await api.assistant_task(placement['id'],1,1,CTX,db)
+    database(scenario)
+
+
+@pytest.mark.parametrize('transition', ['reject', 'new_version'])
+def test_receipt_serializes_with_concurrent_content_transition(transition):
+    async def scenario(sessions):
+        async with sessions() as setup:
+            imported = await api.import_questions(api.ImportQuestions(tenant_id=1, site_id=1,
+                items=[{'title': '并发发布如何处理？'}]), CTX, setup)
+            fact = await api.create_fact(api.FactInput(tenant_id=1, site_id=1, title='发布依据',
+                statement='发布前必须使用当前已审核的正文。', source_name='验收资料'), CTX, setup)
+            body = fact['statement'] + f'[F{fact["id"]}]'
+            answer = await api.create_answer(api.AnswerInput(tenant_id=1, site_id=1,
+                question_id=imported['ids'][0], body=body, fact_ids=[fact['id']]), CTX, setup)
+            content = await setup.get(SeoContentAsset, answer['content_id'])
+            content.status = 'ready'
+            await setup.commit()
+            placement = await api.prepare_placement(api.PlacementInput(tenant_id=1, site_id=1,
+                answer_id=answer['id'], platform='zhihu',
+                question_url='https://www.zhihu.com/question/77'), CTX, setup)
+            content_id, placement_id = content.id, placement['id']
+
+        async with sessions() as editor:
+            content = await editor.get(SeoContentAsset, content_id, with_for_update=True)
+            if transition == 'reject':
+                content.status = 'drafting'
+            else:
+                content.version_count += 1
+            await editor.flush()
+
+            async def publish():
+                async with sessions() as publisher:
+                    try:
+                        return await api.receipt(placement_id, api.ReceiptInput(tenant_id=1,
+                            site_id=1, version=1,
+                            answer_url='https://www.zhihu.com/question/77/answer/88'), CTX, publisher)
+                    except HTTPException as exc:
+                        await publisher.rollback()
+                        return exc
+
+            task = asyncio.create_task(publish())
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task), timeout=.1)
+            await editor.commit()
+            result = await asyncio.wait_for(task, timeout=5)
+
+        assert isinstance(result, HTTPException) and result.status_code == 409
+        async with sessions() as check:
+            stored = await check.get(SeoQaPlacement, placement_id)
+            assert stored.answer_url is None and stored.status == 'prepared'
     database(scenario)
 
 
