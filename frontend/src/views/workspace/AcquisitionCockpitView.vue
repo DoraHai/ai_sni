@@ -13,6 +13,7 @@ import { createSeoAuthorizedClient } from '../../../../integrations/seo-workbenc
 import { seoSummaryCards } from '../../../../integrations/seo-workbench/summary.mjs'
 import { currentSeoSiteId } from '../seo/seoSiteContext'
 import { isSecureCockpitRuntime, resolveTenantModuleCodes } from './cockpit/scope.mjs'
+import { urgencyReply } from './cockpit/status-copy.mjs'
 
 const router = useRouter()
 const messagesEl = ref(null)
@@ -47,7 +48,7 @@ const availableModules = computed(() => session.modules.filter(item => tenantMod
 const customerName = computed(() => session.tenants.find(item => item.id === session.tenantId)?.name
   || session.user?.display_name || '当前客户')
 const unresolvedModules = computed(() => availableModules.value.filter(item => moduleState.value[item.module_code] !== 'ready').length)
-const urgentItems = computed(() => unresolvedModules.value + cards.value.reduce((sum, item) => sum + (Number.isSafeInteger(item.urgentCount) ? item.urgentCount : 0), 0))
+const urgentItems = computed(() => cards.value.reduce((sum, item) => sum + (Number.isSafeInteger(item.urgentCount) ? item.urgentCount : 0), 0))
 const readyModules = computed(() => availableModules.value.filter(item => moduleState.value[item.module_code] === 'ready').length)
 const statusLabel = status => ({ ready: '数据已读取', loading: '读取中', needs_scope: '需要选择业务对象', denied: '无查看权限', error: '读取失败', waiting: '等待读取' }[status] || '待确认')
 const moduleUrgent = code => cards.value.filter(item => item.moduleCode === code).reduce((sum, item) => sum + (Number.isSafeInteger(item.urgentCount) ? item.urgentCount : 0), 0)
@@ -225,7 +226,8 @@ function answerFor(text) {
   if (!availableModules.value.length) return '当前账号没有可查看的获客模块，请联系管理员确认模块和查看权限。'
   if (text.includes('SEM') && moduleState.value.sem === 'ready') return `已按 ${dateStart.value} 至 ${dateEnd.value} 读取 SEM 数据。点击任意数字可以看每日明细和数据依据。`
   if (text.includes('SEO') && moduleState.value.seo === 'ready') return '已读取当前 SEO 网站的内容和页面检查数字。审核、发布、页面检查分别判断，单篇搜索点击仍明确标为未接入。'
-  if (urgentItems.value) return `现在有 ${urgentItems.value} 个模块还需要补齐读取范围或处理读取异常。先看右侧“紧迫事项”，我不会把缺失数据当成零。`
+  const urgency = urgencyReply({ unresolvedModules: unresolvedModules.value, businessUrgentItems: urgentItems.value })
+  if (urgency) return `${urgency} 我不会把缺失数据当成零。`
   return '当前已开通模块的数据状态正常。你可以点击具体指标，再选择“带着这项数据继续提问”。'
 }
 async function send(text = question.value) {
