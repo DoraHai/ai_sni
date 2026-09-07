@@ -196,11 +196,16 @@ jobs:
               "test_batch_negative_recomputes_from_latest_list_after_intent_commit",
               "test_pause_final_commit_failure_keeps_durable_pre_send_audit",
           }
-          names = {case.attrib["name"] for case in root.iter("testcase")}
-          tests = int(root.attrib["tests"])
-          skipped = int(root.attrib.get("skipped", 0))
-          assert tests == len(expected) and names == expected and skipped == 0, (
-              tests, skipped, sorted(expected - names), sorted(names - expected)
+          cases = list(root.iter("testcase"))
+          names = {case.attrib["name"] for case in cases}
+          skipped = sum(case.find("skipped") is not None for case in cases)
+          failed = sum(
+              case.find("failure") is not None or case.find("error") is not None
+              for case in cases
+          )
+          assert len(cases) == len(expected) and names == expected and skipped == failed == 0, (
+              len(cases), skipped, failed,
+              sorted(expected - names), sorted(names - expected)
           )
           PY
 
