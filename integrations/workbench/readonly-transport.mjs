@@ -19,6 +19,15 @@ const seoRoutes = [
   [/^\/api\/v1\/seo\/site-pages\/image-evidence$/, ['tenant_id', 'site_id', 'page_id', 'snapshot_id']],
 ]
 
+const geoRoutes = [
+  [/^\/api\/v1\/geo\/tenants$/, []],
+  [/^\/api\/v1\/geo\/integration\/read\/period-context$/, ['tenant_id', 'week_end']],
+  [/^\/api\/v1\/geo\/integration\/metrics\/(snapshot|dictionary)$/, ['tenant_id', 'week_end']],
+  [/^\/api\/v1\/geo\/integration\/read\/answers$/, ['tenant_id', 'week_end', 'prompt_id', 'engine_key', 'patrol_run_id', 'source_kind', 'captured_from', 'captured_to', 'limit', 'cursor']],
+  [/^\/api\/v1\/geo\/integration\/read\/answers\/[1-9]\d*$/, ['tenant_id', 'week_end']],
+  [/^\/api\/v1\/geo\/integration\/read\/questions$/, ['tenant_id', 'status', 'is_brand_probe', 'unit_id', 'business_id', 'limit', 'before_id']],
+]
+
 function reject(code) { const error = new Error(code); error.code = code; throw error }
 
 export function createReadonlyTransport({ origin, fetchImpl, getSession }) {
@@ -40,15 +49,25 @@ export function createReadonlyTransport({ origin, fetchImpl, getSession }) {
     const url = new URL(path, base)
     // Reject normalization tricks and credentials in query strings as well as unknown routes.
     const seoRoute = seoRoutes.find(([rule]) => rule.test(url.pathname))
-    if (url.origin !== origin || path.split('?')[0] !== url.pathname || (!seoRoute && !paths.some(rule => rule.test(url.pathname)))) reject('ROUTE_DENIED')
+    const geoRoute = geoRoutes.find(([rule]) => rule.test(url.pathname))
+    if (url.origin !== origin || path.split('?')[0] !== url.pathname || (!seoRoute && !geoRoute && !paths.some(rule => rule.test(url.pathname)))) reject('ROUTE_DENIED')
     const authTenants = url.pathname === '/api/v1/auth/tenants'
     const authNoQuery = url.pathname === '/api/v1/auth/me' || url.pathname === '/api/v1/auth/modules'
-    const allowed = new Set(seoRoute ? seoRoute[1] : authTenants ? ['module'] : authNoQuery ? []
+    const allowed = new Set(geoRoute ? geoRoute[1] : seoRoute ? seoRoute[1] : authTenants ? ['module'] : authNoQuery ? []
       : ['tenant_id', 'start_date', 'end_date', 'baidu_account_id', 'q', 'campaign_id', 'adgroup_id', 'page', 'page_size'])
     for (const key of url.searchParams.keys()) {
       if (!allowed.has(key) || url.searchParams.getAll(key).length !== 1) reject('QUERY_DENIED')
     }
     if (authTenants && (url.searchParams.size !== 1 || !['sem', 'seo'].includes(url.searchParams.get('module')))) reject('QUERY_DENIED')
+    if (geoRoute && geoRoute[1].includes('tenant_id')) {
+      const tenant = url.searchParams.get('tenant_id')
+      if (!/^[1-9]\d*$/.test(tenant ?? '') || !Number.isSafeInteger(Number(tenant))) reject('QUERY_DENIED')
+      if (geoRoute[1].includes('week_end')) {
+        const week = url.searchParams.get('week_end')
+        const instant = new Date(`${week}T00:00:00Z`)
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(week ?? '') || !Number.isFinite(instant.getTime()) || instant.toISOString().slice(0, 10) !== week || instant.getUTCDay() !== 1) reject('QUERY_DENIED')
+      }
+    }
     if (seoRoute) {
       const required = seoRoute[1].includes('site_id') ? ['tenant_id', 'site_id'] : ['tenant_id']
       if (url.pathname.endsWith('/image-evidence')) required.push('page_id')
