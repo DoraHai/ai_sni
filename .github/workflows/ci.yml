@@ -179,8 +179,27 @@ jobs:
         run: |
           python -m pytest -q tests/test_sem_nonfunds_writeback_postgres.py \
             --junitxml="$RUNNER_TEMP/sem-nonfunds-writeback.xml"
-          python -c 'import sys, xml.etree.ElementTree as ET; root=ET.parse(sys.argv[1]).getroot(); tests=int(root.attrib["tests"]); skipped=int(root.attrib.get("skipped", 0)); assert tests >= 5 and skipped == 0, (tests, skipped)' \
-            "$RUNNER_TEMP/sem-nonfunds-writeback.xml"
+          python - "$RUNNER_TEMP/sem-nonfunds-writeback.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          expected = {
+              "test_reconciler_wins_during_commit_relock_gap_and_executor_stays_stopped",
+              "test_schedule_intent_blocks_concurrent_campaign_pause_domain",
+              "test_full_list_sync_in_commit_relock_gap_blocks_stale_remote_overwrite",
+              "test_add_word_success_in_commit_relock_gap_blocks_duplicate_remote_call",
+              "test_add_word_recheck_sees_other_session_success_before_remote_call",
+              "test_two_live_add_word_attempts_from_empty_state_call_remote_once",
+              "test_match_combo_sync_in_commit_relock_gap_blocks_remote_overwrite",
+          }
+          names = {case.attrib["name"] for case in root.iter("testcase")}
+          tests = int(root.attrib["tests"])
+          skipped = int(root.attrib.get("skipped", 0))
+          assert tests == len(expected) and names == expected and skipped == 0, (
+              tests, skipped, sorted(expected - names), sorted(names - expected)
+          )
+          PY
 
       - name: Run tests
         env:

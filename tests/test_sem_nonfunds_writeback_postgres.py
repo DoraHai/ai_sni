@@ -21,6 +21,7 @@ from app.baidu.writeback import (
     _persist_funds_intent,
     _relock_action_intent,
     apply_add_word_writeback,
+    apply_match_type_writeback,
     apply_negative_writeback,
 )
 from app.models import Adgroup, BaiduAccount, Campaign, Keyword, WritebackAction
@@ -108,6 +109,23 @@ def adgroup_row() -> Adgroup:
         adgroup_name="disposable-test",
         negative_words=[],
         exact_negative_words=[],
+    )
+
+
+def keyword_row() -> Keyword:
+    return Keyword(
+        id=401,
+        tenant_id=3,
+        baidu_account_id=17,
+        keyword_id=404,
+        keyword="工业泵",
+        campaign_id=202,
+        adgroup_id=303,
+        match_type=1,
+        phrase_type=1,
+        pause=False,
+        total_impression=0,
+        category_source="auto",
     )
 
 
@@ -459,5 +477,70 @@ def test_two_live_add_word_attempts_from_empty_state_call_remote_once():
                 records = (await check.scalars(select(WritebackAction))).all()
                 assert len(records) == 1
                 assert records[0].status == "success"
+
+    asyncio.run(exercise())
+
+
+def test_match_combo_sync_in_commit_relock_gap_blocks_remote_overwrite():
+    async def exercise():
+        async with database() as engine:
+            async with AsyncSession(engine, expire_on_commit=False) as setup:
+                setup.add_all([account_row(), campaign_row(), adgroup_row(), keyword_row()])
+                await setup.commit()
+
+            intent_committed = asyncio.Event()
+            sync_finished = asyncio.Event()
+            remote = AsyncMock()
+
+            async def persist_with_gap(session, record, *, dry_run, asset, account):
+                await _persist_funds_intent(session, record, dry_run=dry_run)
+                intent_committed.set()
+                await asyncio.wait_for(sync_finished.wait(), 5)
+                await _relock_action_intent(session, record, asset=asset, account=account)
+
+            async def sync_match_combo():
+                await asyncio.wait_for(intent_committed.wait(), 5)
+                async with AsyncSession(engine, expire_on_commit=False) as sync_session:
+                    row = await sync_session.scalar(
+                        select(Keyword).where(Keyword.id == 401).with_for_update()
+                    )
+                    row.match_type = 2
+                    row.phrase_type = 1
+                    await sync_session.commit()
+                sync_finished.set()
+
+            async with AsyncSession(engine, expire_on_commit=False) as executor:
+                sync_task = asyncio.create_task(sync_match_combo())
+                with (
+                    patch("app.baidu.writeback._persist_action_intent", new=persist_with_gap),
+                    patch("app.baidu.writeback._account_client", return_value=object()),
+                    patch("app.baidu.writeback.KeywordService.update_word_match_type", remote),
+                    patch(
+                        "app.baidu.writeback.get_settings",
+                        return_value=SimpleNamespace(
+                            baidu_write_dry_run=False,
+                            baidu_write_is_dry_run=lambda tenant_id, account_id, scope: False,
+                        ),
+                    ),
+                ):
+                    with pytest.raises(WritebackError, match="关键词匹配模式已变化"):
+                        await apply_match_type_writeback(
+                            executor,
+                            3,
+                            404,
+                            2,
+                            3,
+                            operator_user_id=9,
+                            operator_name="tester",
+                        )
+                await asyncio.wait_for(sync_task, 5)
+
+            remote.assert_not_awaited()
+            async with AsyncSession(engine) as check:
+                record = await check.scalar(select(WritebackAction))
+                keyword = await check.get(Keyword, 401)
+                assert record.status == "failed"
+                assert record.old_value == 1
+                assert (keyword.match_type, keyword.phrase_type) == (2, 1)
 
     asyncio.run(exercise())

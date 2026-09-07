@@ -963,7 +963,6 @@ async def apply_pause_writeback(
     if kw is None:
         raise WritebackError("关键词不在维度表中，请先执行关键词维度同步")
     acc = await _active_account(session, tenant_id, _asset_account_id(kw, "关键词"))
-
     dry_run = _effective_dry_run(tenant_id, acc.id, "keyword_pause")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
@@ -1032,6 +1031,7 @@ async def apply_match_type_writeback(
     if kw is None:
         raise WritebackError("关键词不在维度表中，请先执行关键词维度同步")
     acc = await _active_account(session, tenant_id, _asset_account_id(kw, "关键词"))
+    old_match_combo = (kw.match_type, kw.phrase_type)
 
     dry_run = _effective_dry_run(tenant_id, acc.id, "keyword_match_type")
     if not dry_run:
@@ -1062,6 +1062,8 @@ async def apply_match_type_writeback(
     await _persist_action_intent(
         session, rec, dry_run=dry_run, asset=kw, account=acc
     )
+    if not dry_run and (kw.match_type, kw.phrase_type) != old_match_combo:
+        await _fail_action_preflight(session, rec, "关键词匹配模式已变化，请核对后重试")
     try:
         svc = KeywordService(_account_client(acc))
         resp = await svc.update_word_match_type(keyword_id, match_type, phrase_type)

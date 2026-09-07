@@ -5,6 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("BAIDU_APP_ID", "test-app")
 os.environ.setdefault("BAIDU_SECRET_KEY", "1234567890abcdefsecret")
@@ -16,9 +18,11 @@ os.environ.setdefault("CRYPTO_MASTER_KEY_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.baidu.writeback import (
+    WritebackError,
     apply_adgroup_landing_url_writeback,
     apply_adgroup_pause_writeback,
     apply_campaign_pause_writeback,
+    apply_match_type_writeback,
 )
 
 
@@ -335,3 +339,56 @@ def test_landing_url_snapshot_change_after_intent_commit_blocks_remote() -> None
     remote.assert_not_awaited()
     assert captured[0].status == "failed"
     assert session.commit.await_count == 2
+
+
+def test_match_combo_change_after_intent_commit_blocks_remote() -> None:
+    keyword = SimpleNamespace(
+        baidu_account_id=88,
+        keyword_id=55,
+        keyword="工业泵",
+        campaign_id=12,
+        adgroup_id=44,
+        match_type=1,
+        phrase_type=1,
+    )
+    account = SimpleNamespace(id=88, status="active")
+    captured = []
+
+    async def refresh(row, **_kwargs):
+        if row is keyword:
+            keyword.match_type = 2
+            keyword.phrase_type = 1
+
+    session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[keyword, None]),
+        add=lambda record: captured.append(record),
+        flush=AsyncMock(),
+        refresh=AsyncMock(side_effect=refresh),
+        commit=AsyncMock(),
+    )
+    remote = AsyncMock()
+
+    async def run():
+        with (
+            patch("app.baidu.writeback._active_account", new=AsyncMock(return_value=account)),
+            patch("app.baidu.writeback.KeywordService.update_word_match_type", remote),
+            patch("app.baidu.writeback.get_settings", return_value=_live_settings()),
+        ):
+            return await apply_match_type_writeback(
+                session,
+                7,
+                55,
+                2,
+                3,
+                operator_user_id=3,
+                operator_name="tester",
+            )
+
+    with pytest.raises(WritebackError, match="关键词匹配模式已变化"):
+        asyncio.run(run())
+
+    remote.assert_not_awaited()
+    assert captured[0].status == "failed"
+    assert captured[0].old_value == 1
+    assert keyword.match_type == 2
+    assert keyword.phrase_type == 1
