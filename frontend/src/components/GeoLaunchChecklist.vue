@@ -57,7 +57,7 @@ onBeforeUnmount(() => { epoch++ })
 </script>
 <template>
   <section id="geo-launch-checklist" class="launch-checklist" aria-label="发布前检查清单">
-    <header><h3>发布前检查清单 · 客户审核一次</h3><el-button @click="expanded = !expanded">{{ expanded ? '收起' : '展开' }}</el-button><el-button :disabled="loading || busy || disabled" @click="load">刷新检查</el-button></header>
+    <header><h3>发布前检查清单 · 客户审核一次</h3><el-button @click="expanded = !expanded">{{ expanded ? '收起' : '展开' }}</el-button><el-button :disabled="loading || busy || disabled" @click="load">刷新发布检查</el-button></header>
     <div v-show="expanded">
     <p>发布只需客户这一道人审，技术检查仍需通过。AI 检查提供修改建议，不代替客户确认。审核前请先保存母稿和渠道稿。</p>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />

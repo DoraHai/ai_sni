@@ -479,7 +479,14 @@ async function load() {
     }
     // Never clobber an in-progress AI Brief draft with empty server brief
     applyTaskPayload(t, { skipBrief: briefLocalDraft.value || busy.value === 'suggest' })
-    scoredDraftSnapshot.value = t?.rule_result?.article_fingerprint ? currentDraftSnapshot() : ''
+    const storedBrand = t?.rule_result?.brand_validation?.brand || ''
+    const currentBrand = t?.current_brand_validation?.brand || ''
+    const storedCheckIsCurrent =
+      !!t?.rule_result?.checked_at &&
+      !t?.rule_result?.article_changed_since_check &&
+      Number(t?.rule_result?.article_id || 0) === Number(t?.article?.id || 0) &&
+      storedBrand === currentBrand
+    scoredDraftSnapshot.value = storedCheckIsCurrent ? currentDraftSnapshot() : ''
     if (hasMasterDraft.value && !generatingMaster.value) leftTab.value = 'score'
     else if (!hasMasterDraft.value) leftTab.value = 'brief'
     await editorRequest.wait(loadPushTargets())
@@ -504,6 +511,7 @@ async function load() {
         geo_subscores: rr.geo_subscores,
         geo_actions: rr.geo_actions || [],
         ai_review: rr.ai_review,
+        brand_validation: rr.brand_validation,
         // Keep stored fix patches so rail buttons survive reload
         patches: rr.patches || [],
       }
@@ -2446,7 +2454,8 @@ const brandValidationWarning = computed(() => {
     ? checkResult.value?.brand_validation || task.value?.rule_result?.brand_validation
     : null
   const generated = task.value?.article?.generation_meta?.brand_validation
-  const value = checked || generated
+  const current = task.value?.current_brand_validation
+  const value = checked || current || generated
   return value?.passed === false ? value : null
 })
 const geoActions = computed(
@@ -3622,7 +3631,8 @@ onMounted(load)
             <b>证据原文稿已保存，品牌标准仍待处理</b>
             <span>当前配置品牌：{{ brandValidationWarning.brand || '未配置' }}</span>
             <small>{{ (brandValidationWarning.issues || ['开篇与结论尚未使用有证据支持的品牌名'])[0] }}</small>
-            <small>核对品牌配置或修改正文后，请点“重新检查”；未通过前不会标记就绪。</small>
+            <small>核对品牌配置或修改正文后，请按当前品牌重新检查；未通过前不会标记就绪。</small>
+            <el-button size="small" :loading="busy === 'check'" @click="runCheck">按当前品牌重新检查</el-button>
           </div>
           <template v-if="docTab === 'master'">
             <details v-if="sentenceCites.some(c => c.review_reason === 'cross_language_unverified')" class="generation-evidence">
