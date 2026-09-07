@@ -13,7 +13,7 @@ from app.geo.content.rules import RuleInput, build_fix_patches, is_ready, run_ch
 
 RICH_BODY = (
     "数据分析平台是一种用于汇聚业务数据的系统。\n"
-    "覆盖 80% 场景，实施约 14 天，服务 120 家客户。\n"
+    "覆盖 80% 场景。实施约 14 天。服务 120 家客户。\n"
     "与传统报表工具相比，自助分析更适合跨部门协作。\n"
     "步骤 1：明确场景。\n步骤 2：核验事实。\n步骤 3：试点上线。\n"
     "## FAQ\n\n"
