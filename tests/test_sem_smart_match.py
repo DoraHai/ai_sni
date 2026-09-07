@@ -198,6 +198,7 @@ def test_add_word_duplicate_guard_includes_recent_dry_run_records() -> None:
             tenant_id=3,
             adgroup_id=202,
             word="工业泵",
+            dry_run=True,
         )
     )
 
@@ -209,3 +210,22 @@ def test_add_word_duplicate_guard_includes_recent_dry_run_records() -> None:
         if isinstance(value, (list, tuple, set))
     }
     assert frozenset({"success", "dry_run"}) in status_sets
+
+    live_session = QueryCaptureSession()
+    asyncio.run(
+        _ensure_add_word_not_duplicate(
+            live_session,
+            tenant_id=3,
+            adgroup_id=202,
+            word="工业泵",
+            dry_run=False,
+        )
+    )
+    live_params = live_session.statements[1].compile().params
+    live_status_sets = {
+        frozenset(value)
+        for value in live_params.values()
+        if isinstance(value, (list, tuple, set))
+    }
+    assert frozenset({"success"}) in live_status_sets
+    assert frozenset({"success", "dry_run"}) not in live_status_sets

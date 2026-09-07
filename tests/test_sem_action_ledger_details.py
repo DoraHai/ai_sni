@@ -16,7 +16,7 @@ os.environ.setdefault(
 )
 os.environ.setdefault("ADMIN_API_KEY", "ci-admin-key")
 
-from app.api.search_terms import _action_dict  # noqa: E402
+from app.api.search_terms import _action_dict, _match_change  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,3 +63,79 @@ def test_action_ledger_renders_budget_details_without_exposing_raw_response():
     assert "actionAccountLabel(row)" in source
     assert "仅记录台账，未修改百度账户" in source
     assert "row.baidu_response" not in source
+
+
+def test_action_api_exposes_live_execution_context():
+    row = SimpleNamespace(
+        id=42,
+        baidu_account_id=8,
+        action_type="set_adgroup_bid",
+        word="测试单元",
+        match_mode=None,
+        price=None,
+        old_value=None,
+        new_value=3.5,
+        campaign_name="测试计划",
+        adgroup_id=19,
+        adgroup_name="测试单元",
+        dry_run=False,
+        status="success",
+        error_msg=None,
+        operator_name="operator",
+        created_at=datetime(2026, 9, 1, 21, 0),
+    )
+
+    result = _action_dict(row)
+
+    assert result["old_value"] is None
+    assert result["new_value"] == 3.5
+    assert result["execution_mode"] == "live"
+    assert result["execution_mode_label"] == "真实执行"
+
+
+def test_action_api_exposes_complete_match_combo_without_raw_response():
+    row = SimpleNamespace(
+        id=43,
+        baidu_account_id=8,
+        action_type="set_match_type",
+        word="工业泵",
+        match_mode="smart",
+        price=None,
+        old_value=2,
+        new_value=2,
+        baidu_response=(
+            '{"schema":"sem.match_change","version":1,'
+            '"old":{"matchType":2,"phraseType":1},'
+            '"new":{"matchType":2,"phraseType":3},"baidu":{"ok":true}}'
+        ),
+        campaign_name="测试计划",
+        adgroup_id=19,
+        adgroup_name="测试单元",
+        dry_run=False,
+        status="success",
+        error_msg=None,
+        operator_name="operator",
+        created_at=datetime(2026, 9, 7, 12, 0),
+    )
+
+    result = _action_dict(row)
+
+    assert result["match_change"] == {
+        "old": {"matchType": 2, "phraseType": 1},
+        "new": {"matchType": 2, "phraseType": 3},
+    }
+    assert "baidu_response" not in result
+
+
+def test_action_api_ignores_unmarked_or_invalid_match_metadata():
+    base = SimpleNamespace(
+        action_type="set_match_type",
+        baidu_response='{"old":{"matchType":2,"phraseType":1},"new":{"matchType":2,"phraseType":3}}',
+    )
+    assert _match_change(base) is None
+    base.baidu_response = (
+        '{"schema":"sem.match_change","version":1,'
+        '"old":{"matchType":2,"phraseType":1},'
+        '"new":{"matchType":9,"phraseType":9}}'
+    )
+    assert _match_change(base) is None

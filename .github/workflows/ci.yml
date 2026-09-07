@@ -84,6 +84,52 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
 
+      - name: Run SEM non-funds native writeback races without skips
+        env:
+          SEM_ALERT_TEST_DATABASE_URL: postgresql+asyncpg://sem_test:sem_ci_only@127.0.0.1:5432/sem_writeback_test
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
+          BAIDU_APP_ID: ci-dummy
+          BAIDU_SECRET_KEY: ci-dummy-secret1
+          BAIDU_DEFAULT_USERNAME: ci-dummy
+          BAIDU_DEFAULT_UCID: "1"
+          BAIDU_SELF_ACCESS_TOKEN: ci-dummy
+          BAIDU_SELF_TOKEN_EXPIRES_AT: "2099-01-01T00:00:00+00:00"
+          CRYPTO_MASTER_KEY_B64: j/QGqbWO8IVw9cCVeAq+u/alTyjLsSQXjROH9uW/3tA=
+          ADMIN_API_KEY: ci-admin-key
+        run: |
+          python -m pytest -q tests/test_sem_nonfunds_writeback_postgres.py \
+            --junitxml="$RUNNER_TEMP/sem-nonfunds-writeback.xml"
+          python - "$RUNNER_TEMP/sem-nonfunds-writeback.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          expected = {
+              "test_reconciler_wins_during_commit_relock_gap_and_executor_stays_stopped",
+              "test_account_disable_after_manual_reconciliation_preserves_decision",
+              "test_schedule_intent_blocks_concurrent_campaign_pause_domain",
+              "test_full_list_sync_in_commit_relock_gap_blocks_stale_remote_overwrite",
+              "test_add_word_success_in_commit_relock_gap_blocks_duplicate_remote_call",
+              "test_add_word_recheck_sees_other_session_success_before_remote_call",
+              "test_two_live_add_word_attempts_from_empty_state_call_remote_once",
+              "test_match_combo_sync_in_commit_relock_gap_blocks_remote_overwrite",
+              "test_dry_run_add_word_does_not_block_later_live_request",
+              "test_batch_negative_recomputes_from_latest_list_after_intent_commit",
+              "test_pause_final_commit_failure_keeps_durable_pre_send_audit",
+          }
+          cases = list(root.iter("testcase"))
+          names = {case.attrib["name"] for case in cases}
+          skipped = sum(case.find("skipped") is not None for case in cases)
+          failed = sum(
+              case.find("failure") is not None or case.find("error") is not None
+              for case in cases
+          )
+          assert len(cases) == len(expected) and names == expected and skipped == failed == 0, (
+              len(cases), skipped, failed,
+              sorted(expected - names), sorted(names - expected)
+          )
+          PY
+
       - name: Run tests
         env:
           # Disposable CI service; application DATABASE_URL stays separate.
