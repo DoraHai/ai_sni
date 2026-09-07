@@ -586,6 +586,8 @@ async def _sync_task_pipeline(
 
 
 def _fact_dicts(facts: list[GeoFact]) -> list[dict[str, Any]]:
+    from app.geo.content.cross_language import verified_translation_texts
+
     return [
         {
             "id": f.id,
@@ -599,6 +601,9 @@ def _fact_dicts(facts: list[GeoFact]) -> list[dict[str, Any]]:
             "author_name": f.author_name,
             "observed_at": f.observed_at.isoformat() if f.observed_at else None,
             "expires_at": f.expires_at.isoformat() if f.expires_at else None,
+            "_verified_translation_texts": verified_translation_texts(
+                {"statement": f.statement, "meta": f.meta or {}}
+            ),
         }
         for f in facts
     ]

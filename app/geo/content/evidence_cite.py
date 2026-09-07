@@ -9,6 +9,11 @@ from app.geo.content.fact_retrieve import tokenize
 
 _SENT_SPLIT = re.compile(r"(?<=[。！？!?；;\n])")
 _APPENDIX = re.compile(r"\n+## 逐句证据\s*\n[\s\S]*\Z")
+_PRESENTATION = re.compile(
+    r"^\s*(?:#{1,6}\s|[-*+]\s*\*{0,2}(?:问|Q)[：:]|"
+    r"(?:行业|受众|内容类型|CTA|建议章节顺序)[：:])",
+    re.I,
+)
 
 
 def split_sentences(text: str) -> list[str]:
@@ -21,14 +26,64 @@ def strip_citation_appendix(markdown: str) -> str:
     return _APPENDIX.sub("", markdown or "").rstrip()
 
 
+def is_presentation_sentence(sentence: str) -> bool:
+    value = str(sentence or "").strip()
+    return not value or value.endswith(("?", "？")) or bool(_PRESENTATION.search(value))
+
+
 def _score(sentence: str, fact: dict[str, Any]) -> float:
     q = set(tokenize(sentence))
-    blob = f"{fact.get('title') or ''} {fact.get('statement') or ''}"
+    from app.geo.content.cross_language import verified_translation_texts
+
+    blob = " ".join(
+        [
+            str(fact.get("title") or ""),
+            str(fact.get("statement") or ""),
+            *verified_translation_texts(fact),
+        ]
+    )
     ftok = set(tokenize(blob))
     if not q or not ftok:
         return 0.0
     hit = q & ftok
     return len(hit) / max(3, len(q))
+
+
+def _support_basis(sentence: str, fact: dict[str, Any]) -> str | None:
+    """Require evidence overlap beyond a coincidental number or brand token."""
+    from app.geo.content.cross_language import (
+        _measurements,
+        _product_phrases,
+        language,
+        verified_translation_texts,
+    )
+
+    def compact(value: str) -> str:
+        return re.sub(r"[\s*#`]+", "", value or "").casefold()
+
+    source_values = [str(fact.get("statement") or ""), *verified_translation_texts(fact)]
+    sent = compact(sentence)
+    for value in source_values:
+        statement = compact(value)
+        if len(statement) >= 8 and statement in sent:
+            return "exact_statement"
+
+    sent_tokens = {t for t in tokenize(sentence) if not t.isdigit()}
+    for value in source_values:
+        if language(sentence) != language(value) or language(value) == "unknown":
+            continue
+        fact_tokens = {t for t in tokenize(value) if not t.isdigit()}
+        shared = sent_tokens & fact_tokens
+        if len(shared) >= 2 and len(shared) / max(3, len(sent_tokens)) >= 0.3:
+            return "statement_overlap"
+
+    source = str(fact.get("statement") or "")
+    if (
+        _measurements(sentence) & _measurements(source)
+        and _product_phrases(sentence) & _product_phrases(source)
+    ):
+        return "measurement_and_entity"
+    return None
 
 
 def _sentence_is_claim(sentence: str, facts: list[dict[str, Any]]) -> bool:
@@ -51,9 +106,21 @@ def build_sentence_citations(
         fact: dict[str, Any] | None = None
         score = 0.0
         if facts:
-            ranked = sorted(((_score(sent, f), f) for f in facts), key=lambda x: -x[0])
-            score, fact = ranked[0]
-            cited = score >= min_score
+            ranked = []
+            for candidate in facts:
+                candidate_score = _score(sent, candidate)
+                candidate_basis = _support_basis(sent, candidate)
+                ranked.append((candidate_basis is not None, candidate_score, candidate, candidate_basis))
+            _supported, score, fact, support_basis = sorted(
+                ranked, key=lambda item: (not item[0], -item[1])
+            )[0]
+            cited = (
+                not is_presentation_sentence(sent)
+                and score >= min_score
+                and support_basis is not None
+            )
+        else:
+            support_basis = None
         is_claim = _sentence_is_claim(sent, facts)
         # Similarity is only a retrieval hint. It cannot override a known
         # unsupported assertion, even when the rest repeats a fact verbatim.
@@ -68,6 +135,7 @@ def build_sentence_citations(
                 "fact_title": fact.get("title") if cited and fact else None,
                 "source_name": fact.get("source_name") if cited and fact else None,
                 "score": round(score, 3),
+                "support_basis": support_basis if cited else None,
                 "cited": cited,
                 "is_claim": is_claim,
                 "needs_fact": is_claim,

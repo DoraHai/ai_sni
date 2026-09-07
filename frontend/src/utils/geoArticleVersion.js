@@ -9,3 +9,38 @@ export function articleVersionLabel(article) {
   const parent = meta.from_version == null ? '' : ` · 基于 V${meta.from_version}`
   return `${version} · ${source} · 文章 #${article.id}${parent}`
 }
+
+function apiTime(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return NaN
+  return Date.parse(/[zZ]$|[+-]\d\d:\d\d$/.test(raw) ? raw : `${raw}Z`)
+}
+
+export function formatArticleTime(value) {
+  const timestamp = apiTime(value)
+  if (!Number.isFinite(timestamp)) return '时间未记录'
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(timestamp)
+}
+
+export function latestGenerationFailure(article, jobs = []) {
+  if (!article?.id) return null
+  const latest = [...jobs]
+    .filter((job) => job?.kind === 'generate_article')
+    .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))[0]
+  if (!latest || latest.status !== 'failed') return null
+  const failedAt = latest.finished_at || latest.created_at
+  const articleAt = article.created_at
+  if (failedAt && articleAt && apiTime(failedAt) <= apiTime(articleAt)) return null
+  return {
+    jobId: latest.id,
+    title: `最新生成任务 #${latest.id} 失败，当前显示历史稿`,
+    detail: latest.error || '生成失败，未创建新版本',
+    articleLabel: articleVersionLabel(article),
+    articleTime: formatArticleTime(articleAt),
+    failedAt: formatArticleTime(failedAt),
+  }
+}

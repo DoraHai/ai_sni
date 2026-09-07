@@ -97,7 +97,6 @@ def _sub_evidence_use(
 ) -> tuple[float, list[dict[str, str]]]:
     actions: list[dict[str, str]] = []
     facts = rule_input.facts or []
-    body = _body_blob(rule_input)
     n = len(facts)
     if n <= 0:
         actions.append(
@@ -109,19 +108,24 @@ def _sub_evidence_use(
         )
         return 0.0, actions
 
-    # coverage: how many fact titles/source fragments appear
-    hits = 0
-    for f in facts:
-        title = str(f.get("title") or "").strip()
-        source = str(f.get("source_name") or "").strip()
-        stmt = str(f.get("statement") or "").strip()[:24]
-        if title and title in body:
-            hits += 1
-        elif source and source in body:
-            hits += 1
-        elif stmt and len(stmt) >= 6 and stmt in body:
-            hits += 1
-    cover = hits / n
+    # Coverage comes from traceable sentence citations. Titles, questions and
+    # Brief metadata are presentation text and cannot prove a fact was used.
+    fact_ids = {f.get("id") for f in facts if f.get("id") is not None}
+    cited_ids: set[Any] = set()
+    rows = (rule_input.outline or {}).get("sentence_citations") or []
+    from app.geo.content.evidence_cite import is_presentation_sentence
+
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or not row.get("cited") or row.get("needs_fact"):
+            continue
+        sentence = str(row.get("sentence") or "").strip()
+        if is_presentation_sentence(sentence):
+            continue
+        if not row.get("support_basis") or float(row.get("score") or 0) < 0.4:
+            continue
+        if row.get("fact_id") in fact_ids:
+            cited_ids.add(row.get("fact_id"))
+    cover = len(cited_ids) / n
     qty = min(1.0, n / 3.0)
     score = 0.55 * cover + 0.35 * qty
     if lint_ok is False:
@@ -137,8 +141,8 @@ def _sub_evidence_use(
         actions.append(
             {
                 "code": "geo_evidence_cover",
-                "message": "正文较少点名事实标题/来源",
-                "action": "在定义/结论中引用事实来源名",
+                "message": "正文中可追溯的事实引用覆盖不足",
+                "action": "用事实原文或已核验译文支撑正文主张",
             }
         )
     return min(1.0, score), actions
