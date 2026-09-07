@@ -169,3 +169,62 @@ def test_unresolved_live_nonfunds_action_blocks_remote_call() -> None:
 
     remote.assert_not_awaited()
     session.commit.assert_not_awaited()
+
+
+def test_intent_reconciled_during_commit_gap_never_calls_remote() -> None:
+    campaign = SimpleNamespace(
+        baidu_account_id=88,
+        campaign_id=12,
+        campaign_name="品牌计划",
+        pause=False,
+    )
+    account = SimpleNamespace(id=88, status="active")
+    captured = []
+
+    async def refresh(row, **_kwargs):
+        if row in captured:
+            row.id = 901
+            row.status = "failed"
+            row.reconciliation_result = "confirmed_not_executed"
+
+    session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[campaign, None]),
+        add=lambda record: captured.append(record),
+        flush=AsyncMock(),
+        refresh=AsyncMock(side_effect=refresh),
+        commit=AsyncMock(),
+    )
+    remote = AsyncMock()
+
+    async def run():
+        with (
+            patch("app.baidu.writeback._active_account", new=AsyncMock(return_value=account)),
+            patch("app.baidu.writeback.CampaignService.update_campaign_pause", remote),
+            patch(
+                "app.baidu.writeback.get_settings",
+                return_value=SimpleNamespace(
+                    baidu_write_dry_run=False,
+                    baidu_write_is_dry_run=lambda tenant_id, account_id, scope: False,
+                ),
+            ),
+        ):
+            return await apply_campaign_pause_writeback(
+                session,
+                7,
+                12,
+                True,
+                operator_user_id=3,
+                operator_name="tester",
+            )
+
+    try:
+        asyncio.run(run())
+    except Exception as exc:
+        assert "#901" in str(exc)
+        assert "failed" in str(exc)
+    else:
+        raise AssertionError("a reconciled intent must not resume")
+
+    remote.assert_not_awaited()
+    assert captured[0].status == "failed"
+    assert captured[0].reconciliation_result == "confirmed_not_executed"
