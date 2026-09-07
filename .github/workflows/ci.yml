@@ -65,7 +65,17 @@ jobs:
 
       - name: Test SEM identity repair request cancellation
         working-directory: frontend
-        run: npm run test:sem-identity-repair-requests
+        run: npm run test:sem-identity-repair-requests && npm run test:workbench-session && npm run test:workbench-evidence
+
+      - name: Test acquisition workbench read-only contracts
+        working-directory: frontend
+        run: |
+          npm run test:workbench-cockpit-scope
+          npm run test:workbench-seo-summary
+          npm run test:workbench-site-selection
+          npm run test:workbench-geo-summary
+          npm run test:workbench-status-copy
+          node --test ../integrations/workbench/*.test.mjs ../integrations/sem-cockpit/*.test.mjs ../integrations/seo-workbench/*.test.mjs ../integrations/geo-workbench/*.test.mjs
 
       - name: Test SEM date and UI contracts
         working-directory: frontend
