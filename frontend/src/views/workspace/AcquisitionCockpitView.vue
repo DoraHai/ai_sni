@@ -10,9 +10,11 @@ import { createWorkbenchViewState } from '../../../../integrations/workbench/vie
 import { createSemAuthorizedClient } from '../../../../integrations/sem-cockpit/authorization-context.mjs'
 import { semMetric } from '../../../../integrations/sem-cockpit/display.mjs'
 import { createSeoAuthorizedClient } from '../../../../integrations/seo-workbench/authorization-context.mjs'
+import { readSeoSiteScope } from '../../../../integrations/seo-workbench/site-scope.mjs'
 import { seoSummaryCards } from '../../../../integrations/seo-workbench/summary.mjs'
 import { currentSeoSiteId } from '../seo/seoSiteContext'
 import { isSecureCockpitRuntime, resolveTenantModuleCodes } from './cockpit/scope.mjs'
+import { resolveSeoSiteSelection } from './cockpit/site-selection.mjs'
 import { urgencyReply } from './cockpit/status-copy.mjs'
 
 const router = useRouter()
@@ -29,6 +31,7 @@ const initialConversation = () => [
 const conversation = ref(initialConversation())
 const moduleState = ref({ sem: 'waiting', seo: 'waiting', geo: 'waiting' })
 const tenantModuleCodes = ref(new Set())
+const seoSites = ref([])
 const secureRuntime = isSecureCockpitRuntime(window.location)
 const viewState = createWorkbenchViewState()
 let workbenchSession
@@ -84,6 +87,7 @@ function invalidateEvidence({ clearConversation = false } = {}) {
   seoClient?.invalidate()
   viewState.invalidate()
   clearCards()
+  seoSites.value = []
   moduleState.value = { sem: 'waiting', seo: 'waiting', geo: 'waiting' }
   lastReadAt.value = null
   if (clearConversation) resetDerivedConversation()
@@ -148,16 +152,25 @@ async function loadSeo(generation) {
   const authRevision = session.authRevision
   const isCurrent = () => generation === loadGeneration && tenantId === session.tenantId
     && siteId === currentSeoSiteId.value && authRevision === session.authRevision
-  if (!siteId) {
-    moduleState.value.seo = 'needs_scope'
-    return
-  }
-  if (!seoClient) {
+  if (!seoClient || !boundary) {
     moduleState.value.seo = 'error'
     return
   }
   moduleState.value.seo = 'loading'
   try {
+    const scope = await readSeoSiteScope({ transport: boundary.transport, tenantId })
+    if (!isCurrent()) return
+    seoSites.value = [...scope.sites]
+    const selection = resolveSeoSiteSelection({ sites: scope.sites, currentSiteId: siteId })
+    if (selection.siteId !== siteId) {
+      currentSeoSiteId.value = selection.siteId
+      moduleState.value.seo = 'needs_scope'
+      return
+    }
+    if (!selection.siteId) {
+      moduleState.value.seo = 'needs_scope'
+      return
+    }
     const context = await seoClient.connect({ tenantId, siteId })
     if (!isCurrent()) return
     const [contents, pages] = await Promise.all([
@@ -250,6 +263,10 @@ function openModule(code) {
   if (code === 'geo') window.location.assign(path)
   else router.push(path)
 }
+function selectSeoSite(event) {
+  const value = Number(event.target.value)
+  currentSeoSiteId.value = Number.isSafeInteger(value) && value > 0 ? value : null
+}
 
 try {
   if (secureRuntime) {
@@ -273,6 +290,14 @@ onBeforeUnmount(() => { ++loadGeneration; ++prepareGeneration; workbenchSession?
     <header class="command-bar">
       <div><button class="back-link" type="button" @click="router.push('/workspace')">← 返回模块工作台</button><p>G-SNIPERS ACQUISITION DESK</p><h1>G-Snipers 获客工作台</h1><span>获客推广AI智能体</span></div>
       <div class="command-controls">
+        <label v-if="availableModules.some(item => item.module_code === 'seo')">SEO 网站
+          <select :value="currentSeoSiteId || ''" aria-label="选择 SEO 网站" @change="selectSeoSite">
+            <option value="">{{ seoSites.some(site => site.status === 'active') ? '请选择网站' : '暂无可用网站' }}</option>
+            <option v-for="site in seoSites" :key="site.id" :value="site.id" :disabled="site.status !== 'active'">
+              {{ site.name }} · {{ site.domain }}{{ site.status === 'active' ? '' : '（已停用）' }}
+            </option>
+          </select>
+        </label>
         <label>开始日期<input v-model="dateStart" type="date" :max="dateEnd"></label>
         <label>结束日期<input v-model="dateEnd" type="date" :min="dateStart"></label>
         <button type="button" @click="loadAll">刷新数据</button>
@@ -328,5 +353,5 @@ onBeforeUnmount(() => { ++loadGeneration; ++prepareGeneration; workbenchSession?
 </template>
 
 <style scoped>
-.cockpit-shell{box-sizing:border-box;min-height:100vh;padding:22px;background:radial-gradient(circle at 75% 0,#12324a 0,transparent 34%),#07111d;color:#eef7ff;font-variant-numeric:tabular-nums}.command-bar,.pulse-strip,.operations-grid,.section-heading,.agent-head,.module-tabs button,.ledger article{display:flex;align-items:center}.command-bar{justify-content:space-between;gap:24px;margin-bottom:16px}.back-link{margin:0 0 12px;padding:0;border:0;background:none;color:#7ea3b9;font-size:11px;cursor:pointer}.command-bar p,.section-heading span{margin:0;color:#66d9cf;font-size:10px;font-weight:800;letter-spacing:.16em}.command-bar h1{margin:5px 0 2px;font-size:26px}.command-bar>div>span{color:#91a8bc;font-size:12px}.command-controls{display:flex;align-items:end;gap:8px}.command-controls label{display:grid;gap:5px;color:#839bb0;font-size:10px}.command-controls input,.command-controls button{height:36px;border:1px solid #294259;border-radius:9px;background:#0d1d2c;color:#e9f5ff;padding:0 11px}.command-controls button{background:#1e806f;cursor:pointer}.pulse-strip{display:grid;grid-template-columns:1.4fr repeat(4,1fr);gap:1px;overflow:hidden;border:1px solid #233a4e;border-radius:15px;background:#233a4e}.pulse-strip div{min-height:72px;padding:13px 17px;background:#0d1b2a;display:grid;align-content:center;gap:6px}.pulse-strip span{color:#7890a5;font-size:10px}.pulse-strip strong{font-size:20px}.pulse-strip .urgent strong{color:#ffb469}.operations-grid{align-items:stretch;display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;margin-top:16px}.data-stage,.agent-panel{border:1px solid #21394d;border-radius:20px;background:#091725}.data-stage{padding:20px}.section-heading{justify-content:space-between;margin-bottom:13px}.section-heading h2{margin:4px 0 0;font-size:18px}.section-heading small{color:#7890a5}.module-tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:14px}.module-tabs button{justify-content:space-between;border:1px solid #294258;border-radius:11px;background:#102235;color:#eef7ff;padding:11px 13px;cursor:pointer}.module-tabs span{color:#79a8b8;font-size:10px}.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(235px,1fr));gap:12px}.data-empty{min-height:240px;border:1px dashed #2a455d;border-radius:16px;display:grid;place-content:center;text-align:center;gap:7px;color:#8ca4b8}.data-empty strong{color:#dfeaf4}.ledger{margin-top:20px}.ledger article{gap:12px;padding:13px 4px;border-top:1px solid #1b3042;font-size:12px}.ledger i{width:7px;height:7px;border-radius:50%;background:#edb568}.ledger i.ready{background:#5ed5bd;box-shadow:0 0 12px #5ed5bd}.ledger article span{flex:1;color:#91a6b9}.ledger button{border:0;background:none;color:#70d8cd;cursor:pointer}.agent-panel{display:flex;flex-direction:column;min-height:690px;overflow:hidden}.agent-head{gap:11px;padding:18px;border-bottom:1px solid #1d3447}.agent-head div:nth-child(2){display:grid;gap:3px}.agent-head span{font-size:10px;color:#829bad}.agent-head strong{font-size:16px}.agent-head em{margin-left:auto;color:#66d9cf;font-size:10px;font-style:normal}.agent-orb{width:34px;height:34px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#d5fff8 0 8%,#42d6c2 17%,#146a7d 55%,#0c2438 70%);box-shadow:0 0 22px #4bdcca70;animation:pulse 2.6s ease-in-out infinite}.messages{flex:1;max-height:410px;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:12px}.message{max-width:90%;padding:11px 13px;border-radius:14px;background:#122638}.message.user{align-self:flex-end;background:#1b665e}.message small{color:#70d8cd;font-size:9px}.message p{margin:5px 0 0;font-size:12px;line-height:1.65}.guides{padding:0 15px 10px;display:flex;gap:6px;flex-wrap:wrap}.guides button{border:1px solid #29465d;border-radius:999px;background:#0d2030;color:#a9bfd0;padding:7px 9px;font-size:10px;cursor:pointer}.composer{margin:0 14px;position:relative}.composer textarea{box-sizing:border-box;width:100%;resize:none;border:1px solid #315068;border-radius:14px;background:#07131e;color:#f0f8ff;padding:12px 92px 12px 12px}.composer button{position:absolute;right:8px;bottom:9px;border:0;border-radius:9px;background:#2a9b88;color:#fff;padding:8px 10px;cursor:pointer}.agent-note{margin:8px 16px 14px;color:#607b90;font-size:9px;line-height:1.5}@keyframes pulse{50%{transform:scale(1.07);box-shadow:0 0 34px #4bdcca99}}@media(prefers-reduced-motion:reduce){.agent-orb{animation:none}}@media(max-width:1080px){.operations-grid{grid-template-columns:1fr}.agent-panel{min-height:560px}.messages{max-height:300px}}@media(max-width:720px){.cockpit-shell{padding:12px}.command-bar{align-items:flex-start;flex-direction:column}.command-controls{flex-wrap:wrap}.pulse-strip{grid-template-columns:repeat(2,1fr)}.pulse-strip div:first-child{grid-column:1/-1}.metric-grid{grid-template-columns:1fr}}
+.cockpit-shell{box-sizing:border-box;min-height:100vh;padding:22px;background:radial-gradient(circle at 75% 0,#12324a 0,transparent 34%),#07111d;color:#eef7ff;font-variant-numeric:tabular-nums}.command-bar,.pulse-strip,.operations-grid,.section-heading,.agent-head,.module-tabs button,.ledger article{display:flex;align-items:center}.command-bar{justify-content:space-between;gap:24px;margin-bottom:16px}.back-link{margin:0 0 12px;padding:0;border:0;background:none;color:#7ea3b9;font-size:11px;cursor:pointer}.command-bar p,.section-heading span{margin:0;color:#66d9cf;font-size:10px;font-weight:800;letter-spacing:.16em}.command-bar h1{margin:5px 0 2px;font-size:26px}.command-bar>div>span{color:#91a8bc;font-size:12px}.command-controls{display:flex;align-items:end;gap:8px}.command-controls label{display:grid;gap:5px;color:#839bb0;font-size:10px}.command-controls input,.command-controls select,.command-controls button{height:36px;border:1px solid #294259;border-radius:9px;background:#0d1d2c;color:#e9f5ff;padding:0 11px}.command-controls select{max-width:230px}.command-controls button{background:#1e806f;cursor:pointer}.pulse-strip{display:grid;grid-template-columns:1.4fr repeat(4,1fr);gap:1px;overflow:hidden;border:1px solid #233a4e;border-radius:15px;background:#233a4e}.pulse-strip div{min-height:72px;padding:13px 17px;background:#0d1b2a;display:grid;align-content:center;gap:6px}.pulse-strip span{color:#7890a5;font-size:10px}.pulse-strip strong{font-size:20px}.pulse-strip .urgent strong{color:#ffb469}.operations-grid{align-items:stretch;display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;margin-top:16px}.data-stage,.agent-panel{border:1px solid #21394d;border-radius:20px;background:#091725}.data-stage{padding:20px}.section-heading{justify-content:space-between;margin-bottom:13px}.section-heading h2{margin:4px 0 0;font-size:18px}.section-heading small{color:#7890a5}.module-tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:14px}.module-tabs button{justify-content:space-between;border:1px solid #294258;border-radius:11px;background:#102235;color:#eef7ff;padding:11px 13px;cursor:pointer}.module-tabs span{color:#79a8b8;font-size:10px}.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(235px,1fr));gap:12px}.data-empty{min-height:240px;border:1px dashed #2a455d;border-radius:16px;display:grid;place-content:center;text-align:center;gap:7px;color:#8ca4b8}.data-empty strong{color:#dfeaf4}.ledger{margin-top:20px}.ledger article{gap:12px;padding:13px 4px;border-top:1px solid #1b3042;font-size:12px}.ledger i{width:7px;height:7px;border-radius:50%;background:#edb568}.ledger i.ready{background:#5ed5bd;box-shadow:0 0 12px #5ed5bd}.ledger article span{flex:1;color:#91a6b9}.ledger button{border:0;background:none;color:#70d8cd;cursor:pointer}.agent-panel{display:flex;flex-direction:column;min-height:690px;overflow:hidden}.agent-head{gap:11px;padding:18px;border-bottom:1px solid #1d3447}.agent-head div:nth-child(2){display:grid;gap:3px}.agent-head span{font-size:10px;color:#829bad}.agent-head strong{font-size:16px}.agent-head em{margin-left:auto;color:#66d9cf;font-size:10px;font-style:normal}.agent-orb{width:34px;height:34px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#d5fff8 0 8%,#42d6c2 17%,#146a7d 55%,#0c2438 70%);box-shadow:0 0 22px #4bdcca70;animation:pulse 2.6s ease-in-out infinite}.messages{flex:1;max-height:410px;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:12px}.message{max-width:90%;padding:11px 13px;border-radius:14px;background:#122638}.message.user{align-self:flex-end;background:#1b665e}.message small{color:#70d8cd;font-size:9px}.message p{margin:5px 0 0;font-size:12px;line-height:1.65}.guides{padding:0 15px 10px;display:flex;gap:6px;flex-wrap:wrap}.guides button{border:1px solid #29465d;border-radius:999px;background:#0d2030;color:#a9bfd0;padding:7px 9px;font-size:10px;cursor:pointer}.composer{margin:0 14px;position:relative}.composer textarea{box-sizing:border-box;width:100%;resize:none;border:1px solid #315068;border-radius:14px;background:#07131e;color:#f0f8ff;padding:12px 92px 12px 12px}.composer button{position:absolute;right:8px;bottom:9px;border:0;border-radius:9px;background:#2a9b88;color:#fff;padding:8px 10px;cursor:pointer}.agent-note{margin:8px 16px 14px;color:#607b90;font-size:9px;line-height:1.5}@keyframes pulse{50%{transform:scale(1.07);box-shadow:0 0 34px #4bdcca99}}@media(prefers-reduced-motion:reduce){.agent-orb{animation:none}}@media(max-width:1080px){.operations-grid{grid-template-columns:1fr}.agent-panel{min-height:560px}.messages{max-height:300px}}@media(max-width:720px){.cockpit-shell{padding:12px}.command-bar{align-items:flex-start;flex-direction:column}.command-controls{flex-wrap:wrap}.pulse-strip{grid-template-columns:repeat(2,1fr)}.pulse-strip div:first-child{grid-column:1/-1}.metric-grid{grid-template-columns:1fr}}
 </style>
