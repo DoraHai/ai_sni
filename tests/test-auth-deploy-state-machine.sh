@@ -11,6 +11,7 @@ esac
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 module="$repo_root/ops/platform-deploy/modules/auth"
 installer="$repo_root/ops/platform-deploy/install-auth.sh"
+reviewed_base_dispatcher="$repo_root/tests/fixtures/platform-deploy-auth-reviewed-base"
 sandbox="$(mktemp -d)"
 deploy_pid=''
 cleanup_test() {
@@ -235,8 +236,7 @@ cmp -s "$sandbox/unknown-enabled.before" "$install_root/etc/platform-deploy/enab
 [[ ! -e "$install_root/var/backups/platform-deploy" ]]
 
 # The reviewed base upgrades once; the reviewed candidate can be installed repeatedly.
-git -C "$repo_root" show eaa2c93c6ddb839e2bfdf4acabb06eb2910cd01e:ops/platform-deploy/platform-deploy \
-  > "$install_root/usr/local/sbin/platform-deploy"
+cp "$reviewed_base_dispatcher" "$install_root/usr/local/sbin/platform-deploy"
 chmod +x "$install_root/usr/local/sbin/platform-deploy"
 AUTH_INSTALL_TEST_ROOT="$install_root" "$installer" --enable >/dev/null
 AUTH_INSTALL_TEST_ROOT="$install_root" "$installer" --enable >/dev/null
@@ -251,7 +251,7 @@ enabled_backup_count="$(find "$install_root/var/backups/platform-deploy" -mindep
 [[ "$dispatcher_backup_count" == 2 ]]
 [[ "$module_backup_count" == 2 ]]
 [[ "$enabled_backup_count" == 2 ]]
-base_dispatcher_sha256="$(git -C "$repo_root" show eaa2c93c6ddb839e2bfdf4acabb06eb2910cd01e:ops/platform-deploy/platform-deploy | sha256sum | cut -d' ' -f1)"
+base_dispatcher_sha256="$(sha256sum "$reviewed_base_dispatcher" | cut -d' ' -f1)"
 candidate_dispatcher_sha256="$(sha256sum "$repo_root/ops/platform-deploy/platform-deploy" | cut -d' ' -f1)"
 find "$install_root/var/backups/platform-deploy" -mindepth 2 -maxdepth 2 -type f -name 'platform-deploy' -exec sha256sum {} + \
   | cut -d' ' -f1 > "$sandbox/dispatcher-backup-sha256s"

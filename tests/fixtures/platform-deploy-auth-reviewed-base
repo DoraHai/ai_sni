@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+config_root="/etc/platform-deploy"
+module_root="$config_root/modules"
+enabled_root="$config_root/enabled"
+upload_root="/home/platform-deploy/uploads"
+
+fail() {
+  printf 'platform-deploy: %s\n' "$*" >&2
+  exit 64
+}
+
+show_status() {
+  printf 'platform-deploy=ok\n'
+  printf 'upload_root=%s\n' "$upload_root"
+  for module in geo seo sem diagnostic platform; do
+    if [[ -x "$module_root/$module" && -f "$enabled_root/$module" ]]; then
+      printf '%s=enabled\n' "$module"
+    elif [[ -x "$module_root/$module" ]]; then
+      printf '%s=locked\n' "$module"
+    else
+      printf '%s=not-configured\n' "$module"
+    fi
+  done
+}
+
+apply_module() {
+  local module="${1:-}"
+  shift || true
+
+  case "$module" in
+    geo|seo|sem|diagnostic|platform) ;;
+    *) fail "unsupported module '$module'" ;;
+  esac
+
+  [[ -x "$module_root/$module" ]] || fail "$module deploy entry is not configured"
+  [[ -f "$enabled_root/$module" ]] || fail "$module deploy entry is locked"
+
+  exec "$module_root/$module" "$@"
+}
+
+case "${1:-}" in
+  status)
+    [[ "$#" -eq 1 ]] || fail 'status takes no arguments'
+    show_status
+    ;;
+  apply)
+    shift
+    apply_module "$@"
+    ;;
+  *)
+    fail 'usage: platform-deploy status | platform-deploy apply <module> ...'
+    ;;
+esac
