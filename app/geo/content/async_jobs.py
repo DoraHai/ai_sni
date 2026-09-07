@@ -444,7 +444,25 @@ async def run_job_in_background(job_id: int) -> None:
             await _run_owned_job(job_id, connection=acquired)
 
 
-async def _run_owned_job(job_id: int, *, connection=None) -> None:
+async def run_job_synchronously(job_id: int) -> dict[str, Any]:
+    """Execute a reserved job now while using the same durable ownership protocol.
+
+    Synchronous HTTP compatibility endpoints must not call the business executor
+    directly: doing so would bypass the live-job reservation used by background
+    workers.  The advisory lock remains held across all business-session commits
+    and the remote model call.
+    """
+    async with job_execution_lock(job_id) as acquired:
+        if not acquired:
+            return {
+                "status": "conflict",
+                "error": "作业已由其他执行器接管",
+                "error_type": "JobOwnershipConflict",
+            }
+        return await _run_owned_job(job_id, connection=acquired)
+
+
+async def _run_owned_job(job_id: int, *, connection=None) -> dict[str, Any]:
     from app.database import async_session_factory
 
     try:
@@ -457,7 +475,12 @@ async def _run_owned_job(job_id: int, *, connection=None) -> None:
             )
             await session.commit()
             if claimed is None:
-                return
+                return {
+                    "status": "conflict",
+                    "error": "作业不是待执行状态",
+                    "error_type": "JobNotPending",
+                    "result_meta": {},
+                }
             row = await session.get(GeoAsyncJob, job_id)
             meta = dict(row.request_meta or {})
             meta["execution_protocol"] = JOB_EXECUTION_PROTOCOL
@@ -465,7 +488,11 @@ async def _run_owned_job(job_id: int, *, connection=None) -> None:
             await session.commit()
             if row is not None and cancel_requested(row):
                 await mark_job(session, job_id, status="cancelled", error="已取消")
-                return
+                return {
+                    "status": "cancelled",
+                    "error": "已取消",
+                    "error_type": "JobCancelled",
+                }
             try:
                 if row.kind == KIND_GENERATE:
                     result = await _execute_generate(session, row)
@@ -476,6 +503,7 @@ async def _run_owned_job(job_id: int, *, connection=None) -> None:
                 else:
                     raise ValueError(f"未知作业类型: {row.kind}")
                 await mark_job(session, job_id, status="succeeded", result_meta=result)
+                return {"status": "succeeded", "error": None, "result_meta": result}
             except Exception as exc:  # noqa: BLE001
                 live = await session.get(GeoAsyncJob, job_id) or row
                 cancelled = str(exc) == "已取消" or cancel_requested(live)
@@ -489,16 +517,31 @@ async def _run_owned_job(job_id: int, *, connection=None) -> None:
                         await session.commit()
                 if cancelled:
                     await mark_job(session, job_id, status="cancelled", error="已取消")
-                    return
+                    return {
+                        "status": "cancelled",
+                        "error": "已取消",
+                        "error_type": type(exc).__name__,
+                    }
                 logger.exception("geo async job failed id=%s", job_id)
                 await mark_job(
                     session,
                     job_id,
                     status="failed",
                     error=str(exc),
+                    result_meta={"error_type": type(exc).__name__},
                 )
+                return {
+                    "status": "failed",
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                }
     except Exception:  # noqa: BLE001
         logger.exception("geo async job session failed id=%s", job_id)
+        return {
+            "status": "failed",
+            "error": "作业执行会话失败",
+            "error_type": "JobSessionError",
+        }
 
 
 async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str, Any]:
