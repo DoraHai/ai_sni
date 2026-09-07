@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - codex/production-geo
+      - codex/geo-generation-pg-verify-20260907
   pull_request:
     paths:
       - "app/geo/**"
