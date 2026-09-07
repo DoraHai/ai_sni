@@ -527,6 +527,8 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
             )
         ).scalars()
     )
+    from app.geo.content.cross_language import verified_translation_texts
+
     fact_dicts = [
         {
             "id": f.id,
@@ -536,6 +538,9 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
             "source_name": f.source_name,
             "source_url": f.source_url,
             "trust_level": f.trust_level,
+            "_verified_translation_texts": verified_translation_texts(
+                {"statement": f.statement, "meta": f.meta or {}}
+            ),
         }
         for f in facts
     ]

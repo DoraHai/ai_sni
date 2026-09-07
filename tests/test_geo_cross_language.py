@@ -1,5 +1,6 @@
 from app.geo.content.evidence_cite import build_sentence_citations, citation_verdict
 from app.geo.content.claim_guard import ungrounded_claims, format_ungrounded
+from app.geo.content.cross_language import evidence_candidates
 
 
 def test_translation_candidates_preserve_qualification_and_do_not_pass_gate():
@@ -32,3 +33,41 @@ def test_english_negation_cannot_be_dropped():
     facts = [{'id': 1, 'statement': 'MAXXDRIVE is not suitable for belt conveyors.'}]
     assert ungrounded_claims('MAXXDRIVE is suitable for belt conveyors.', facts)
     assert not ungrounded_claims(facts[0]['statement'], facts)
+
+
+def test_candidates_require_and_prefer_specific_stable_anchor():
+    facts = [
+        {'id': 4, 'statement': 'MAXXDRIVE industrial units support continuous operation.'},
+        {'id': 5, 'statement': 'ACME units provide 20,000 Nm output torque.'},
+        {'id': 6, 'statement': 'The MAXXDRIVE XT features a heavily ribbed housing.'},
+    ]
+    rows = evidence_candidates('MAXXDRIVE XT采用强化肋片外壳。', facts)
+    assert [row['fact_id'] for row in rows] == [6]
+    assert rows[0]['match_basis'] == 'shared_stable_anchor'
+    assert rows[0]['matched_anchors'] == ['maxxdrive xt']
+    assert evidence_candidates('连续运行会导致内部温度升高。', facts) == []
+
+
+def test_verified_translation_must_be_linked_to_current_source_statement():
+    statement = 'MAXXDRIVE XT features a heavily ribbed housing.'
+    record = {
+        'status': 'verified',
+        'verified_at': '2026-09-07T00:00:00Z',
+        'verified_by': 5,
+        'source_statement': statement,
+        'text': 'MAXXDRIVE XT 采用强化肋片外壳。',
+    }
+    fact = {'id': 6, 'statement': statement, 'meta': {'verified_translations': [record]}}
+    assert not ungrounded_claims(record['text'], [fact])
+    rows = build_sentence_citations(record['text'], [fact])
+    assert rows[0]['cited'] and rows[0]['support_basis'] == 'exact_statement'
+
+    changed = {**fact, 'statement': statement + ' Updated.'}
+    assert ungrounded_claims(record['text'], [changed])
+
+
+def test_same_number_without_same_entity_is_not_a_citation():
+    facts = [{'id': 1, 'statement': 'ACME mention rate is 60%.', 'title': 'Mention rate'}]
+    rows = build_sentence_citations('MAXXDRIVE accuracy is 60%.', facts)
+    assert not rows[0]['cited']
+    assert rows[0]['support_basis'] is None
