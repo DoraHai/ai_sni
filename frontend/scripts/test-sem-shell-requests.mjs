@@ -8,6 +8,7 @@ function badgeHarness({ permissions, alerts, candidates }) {
   const calls = []
   const badges = { alerts: 0, alertsToday: 0, expand: 0 }
   const context = vm.createContext({
+    insecureCockpitPreview: { value: false },
     session: { tenantId: 3, isLoggedIn: true, tenants: [{ id: 3 }], canView: (key) => permissions.includes(key) },
     tenantModuleScope: { value: 'sem' }, badges,
     resetBadges: () => Object.assign(badges, { alerts: 0, alertsToday: 0, expand: 0 }),
@@ -44,6 +45,7 @@ const tenantBody = app.slice(app.indexOf('async function loadTenants()'), app.in
 let rejectOld
 let calls = 0
 const tenantContext = vm.createContext({
+  insecureCockpitPreview: { value: false },
   session: { isLoggedIn: true, setTenants: () => {} },
   tenantModuleScope: { value: 'sem' }, bootstrapError: { value: '' },
   loadBadges: () => {}, loadWritebackMode: () => {},
@@ -55,4 +57,19 @@ await vm.runInContext('loadTenants()', tenantContext)
 rejectOld(new Error('stale failed request'))
 await oldTenantRequest
 assert.equal(tenantContext.bootstrapError.value, '', 'old failure cannot overwrite a newer successful load')
+
+const offlineBadge = badgeHarness({ permissions: ['monitor.alerts', 'optimize.expand'], alerts: successAlerts, candidates: successCandidates })
+offlineBadge.context.insecureCockpitPreview.value = true
+await offlineBadge.load()
+assert.deepEqual(offlineBadge.calls, [], 'HTTP cockpit preview must not read badge endpoints')
+
+const offlineTenantContext = vm.createContext({
+  insecureCockpitPreview: { value: true },
+  session: { isLoggedIn: true, setTenants: () => { throw new Error('must stay offline') } },
+  tenantModuleScope: { value: null }, bootstrapError: { value: '' },
+  loadBadges: () => {}, loadWritebackMode: () => {},
+  fetchTenants: () => { throw new Error('must stay offline') },
+})
+vm.runInContext('let tenantLoadGeneration = 0; ' + tenantBody, offlineTenantContext)
+await vm.runInContext('loadTenants()', offlineTenantContext)
 console.log('SEM shell request permission, partial failure and stale tenant checks passed')

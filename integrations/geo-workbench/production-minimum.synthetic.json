@@ -1,0 +1,161 @@
+{
+  "fixture_notice": "由 production GEO 路由与序列化源码整理的最小契约合成数据；不是生产请求、生产数据或线上验收结果。",
+  "production_reference": "codex/production-geo@36b1b23e3153d50abc61e7b9e7dac6cee59c98eb",
+  "sources": {
+    "periodContext": "app/geo/read_routes.py:get_period_context -> app/geo/read_model.py:period_context",
+    "metrics": "app/geo/integration.py:metrics_snapshot -> app/geo/integration_metrics.py:build_weekly_snapshot",
+    "dictionary": "app/geo/integration.py:metrics_dictionary -> app/geo/integration_metrics.py:metric_dictionary",
+    "answers": "app/geo/read_routes.py:get_answers -> app/geo/read_model.py:answer_payload",
+    "answerDetail": "app/geo/read_routes.py:get_answer -> app/geo/read_model.py:answer_payload(detail=True)",
+    "questions": "app/geo/question_read_routes.py:list_questions -> question_page"
+  },
+  "core_metric_guarantee": "weekly_values always initializes MENTIONS, RATE and SCORE before adding dynamic competitor keys; build_weekly_snapshot serializes every current_values entry.",
+  "context": {
+    "tenantId": 16,
+    "userId": 5,
+    "weekEnd": "2026-08-31",
+    "authorizationRevision": "synthetic-role-revision",
+    "allowedReads": ["periodContext", "metrics", "dictionary", "answers", "answerDetail", "questions"]
+  },
+  "responses": {
+    "periodContext": {
+      "tenant_id": 16,
+      "evaluated_at": "2026-09-06T08:00:00Z",
+      "timezone": "Asia/Shanghai",
+      "week_end": "2026-08-31",
+      "current": {
+        "start": "2026-08-24T00:00:00+08:00",
+        "end": "2026-08-31T00:00:00+08:00",
+        "closed": true,
+        "status": "ready",
+        "qualified_counts": {"samples": 8, "questions": 3, "engines": 2},
+        "reasons": []
+      },
+      "previous": {
+        "start": "2026-08-17T00:00:00+08:00",
+        "end": "2026-08-24T00:00:00+08:00",
+        "closed": true,
+        "status": "insufficient",
+        "qualified_counts": {"samples": 0, "questions": 0, "engines": 0},
+        "reasons": [{"code": "insufficient_samples", "scope": "week", "message": "前周合格样本不足 8 条。"}]
+      },
+      "minimum_counts": {"samples": 8, "questions": 3, "engines": 2},
+      "own_domain_configured": true,
+      "metric_status": [
+        {"metric_key": "geo.visibility.ai_mention_count_7d", "status": "available", "reason_codes": []},
+        {"metric_key": "geo.visibility.ai_mention_rate_7d", "status": "available", "reason_codes": []},
+        {"metric_key": "geo.visibility.ai_visibility_score", "status": "available", "reason_codes": []}
+      ],
+      "comparison": {
+        "comparable": false,
+        "reason_codes": ["previous_week_insufficient"],
+        "checks": {
+          "current_week_sufficient": true,
+          "previous_week_sufficient": false,
+          "same_cohort": false,
+          "same_historical_questions": false,
+          "complete_model_metadata": false,
+          "same_model_distribution": false,
+          "same_sample_distribution": false
+        }
+      },
+      "metrics_url": "/api/v1/geo/integration/metrics/snapshot?tenant_id=16&week_end=2026-08-31",
+      "dictionary_url": "/api/v1/geo/integration/metrics/dictionary?tenant_id=16&week_end=2026-08-31"
+    },
+    "metrics": [
+      {"metric_key": "geo.visibility.ai_mention_count_7d", "value": 0, "unit": "count", "as_of": "2026-08-31T00:00:00+08:00", "trend_7d": null},
+      {"metric_key": "geo.visibility.ai_mention_rate_7d", "value": 0, "unit": "percent", "as_of": "2026-08-31T00:00:00+08:00", "trend_7d": null},
+      {"metric_key": "geo.visibility.ai_visibility_score", "value": 0, "unit": "score", "as_of": "2026-08-31T00:00:00+08:00", "trend_7d": null}
+    ],
+    "dictionary": {
+      "geo.visibility.ai_mention_count_7d": "上海时区完整自然周的合格回答中，mentions_brand=true 的回答条数，每条回答至多计1次。",
+      "geo.visibility.ai_mention_rate_7d": "上海时区完整自然周的品牌提及回答数除以合格回答数乘100。",
+      "geo.visibility.ai_visibility_score": "上海时区完整自然周按50×品牌提及率+50×自有域引用率计算的综合分。"
+    },
+    "answers": {
+      "tenant_id": 16,
+      "evaluated_at": "2026-09-06T08:00:00Z",
+      "timezone": "Asia/Shanghai",
+      "official_week_end": "2026-08-31",
+      "observation_window": {"start": null, "end": null},
+      "unknown_time_count": 0,
+      "period_context_url": "/api/v1/geo/integration/read/period-context?tenant_id=16&week_end=2026-08-31",
+      "pagination": {"limit": 1, "has_more": false, "next_cursor": null, "watermark_max_id": 9010},
+      "items": [{
+        "ref": {"module": "geo", "type": "answer_snapshot", "id": 9010},
+        "question": {"id": 9071, "historical_text": "示例历史问题", "current_text": "示例当前问题", "historical_text_source": "patrol_item"},
+        "engine": {"key": "deepseek", "provider": "deepseek", "model": "deepseek-chat", "model_revision": null, "metadata_source": "patrol_item"},
+        "captured_at": "2026-08-29T02:15:00Z",
+        "captured_at_local": "2026-08-29T10:15:00+08:00",
+        "time_basis": "stored_utc",
+        "source": {"kind": "real", "stored_sample_mode": "openai_compat", "simulated": false, "sampling_method": "unprimed_json_v2", "analysis_status": "completed", "verified_server_record": true},
+        "answer_excerpt": "合成回答摘要。",
+        "mentions_brand": false,
+        "cited_urls": [],
+        "competitors": [],
+        "sample_eligibility": {"eligible": true, "reasons": []},
+        "week_membership": {"within_window": true, "included_in_cohort": true, "reasons": []},
+        "metric_adoption": [
+          {"metric_key": "geo.visibility.ai_mention_count_7d", "status": "included", "reasons": []},
+          {"metric_key": "geo.visibility.ai_mention_rate_7d", "status": "included", "reasons": []},
+          {"metric_key": "geo.visibility.ai_visibility_score", "status": "included", "reasons": []}
+        ],
+        "comparison_metadata": {"complete": true, "reason_codes": [], "model_identity_basis": "recorded_request_model_alias", "exact_model_revision_known": false},
+        "relations": [{"relation": "captured_by", "target": {"module": "geo", "type": "patrol_run", "id": 9031}}],
+        "detail_url": "/api/v1/geo/integration/read/answers/9010?tenant_id=16&week_end=2026-08-31"
+      }]
+    },
+    "answerDetail": {
+      "tenant_id": 16,
+      "evaluated_at": "2026-09-06T08:00:00Z",
+      "official_week_end": "2026-08-31",
+      "period_context_url": "/api/v1/geo/integration/read/period-context?tenant_id=16&week_end=2026-08-31",
+      "item": {
+        "ref": {"module": "geo", "type": "answer_snapshot", "id": 9010},
+        "question": {"id": 9071, "historical_text": "示例历史问题", "current_text": "示例当前问题", "historical_text_source": "patrol_item"},
+        "engine": {"key": "deepseek", "provider": "deepseek", "model": "deepseek-chat", "model_revision": null, "metadata_source": "patrol_item"},
+        "captured_at": "2026-08-29T02:15:00Z",
+        "captured_at_local": "2026-08-29T10:15:00+08:00",
+        "time_basis": "stored_utc",
+        "source": {"kind": "real", "stored_sample_mode": "openai_compat", "simulated": false, "sampling_method": "unprimed_json_v2", "analysis_status": "completed", "verified_server_record": true},
+        "answer_excerpt": "合成回答摘要。",
+        "raw_text": "合成回答原文；不是生产回答。",
+        "mentions_brand": false,
+        "cited_urls": [],
+        "competitors": [],
+        "sample_eligibility": {"eligible": true, "reasons": []},
+        "week_membership": {"within_window": true, "included_in_cohort": true, "reasons": []},
+        "metric_adoption": [
+          {"metric_key": "geo.visibility.ai_mention_count_7d", "status": "included", "reasons": []},
+          {"metric_key": "geo.visibility.ai_mention_rate_7d", "status": "included", "reasons": []},
+          {"metric_key": "geo.visibility.ai_visibility_score", "status": "included", "reasons": []}
+        ],
+        "comparison_metadata": {"complete": true, "reason_codes": [], "model_identity_basis": "recorded_request_model_alias", "exact_model_revision_known": false},
+        "relations": [{"relation": "captured_by", "target": {"module": "geo", "type": "patrol_run", "id": 9031}}],
+        "detail_url": "/api/v1/geo/integration/read/answers/9010?tenant_id=16&week_end=2026-08-31"
+      }
+    },
+    "questions": {
+      "tenant_id": 16,
+      "evaluated_at": "2026-09-06T08:00:00Z",
+      "pagination": {"limit": 1, "has_more": false, "next_before_id": null},
+      "items": [{
+        "ref": {"module": "geo", "type": "question", "id": 9071},
+        "current_text": "示例当前问题",
+        "language": "zh-CN",
+        "status": "active",
+        "question_source": "manual",
+        "question_group": null,
+        "market": "CN",
+        "is_brand_probe": false,
+        "priority": 1,
+        "tags": [],
+        "unit_ref": null,
+        "business_ref": null,
+        "created_at": "2026-08-20T12:00:00",
+        "updated_at": "2026-08-21T12:00:00",
+        "timestamp_source_timezone": "unknown"
+      }]
+    }
+  }
+}
