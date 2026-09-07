@@ -2511,6 +2511,99 @@ async def list_site_pages(
     }
 
 
+@router.get("/site-pages/{page_id}/detail")
+async def get_site_page_detail(
+    page_id: int,
+    tenant_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Return stored crawl and internal-link evidence without starting collection."""
+    row = await _site_page(session, page_id, tenant_id)
+    if row.site_id is None:
+        raise HTTPException(422, "请先将页面关联到 SEO 网站")
+    await _seo_site(session, tenant_id, row.site_id)
+
+    snapshots = list(
+        await session.scalars(
+            select(SeoPageSnapshot)
+            .where(
+                SeoPageSnapshot.tenant_id == tenant_id,
+                SeoPageSnapshot.site_id == row.site_id,
+                or_(
+                    SeoPageSnapshot.url == row.url,
+                    SeoPageSnapshot.final_url == row.url,
+                ),
+            )
+            .order_by(SeoPageSnapshot.fetched_at.desc(), SeoPageSnapshot.id.desc())
+            .limit(2)
+        )
+    )
+    latest_snapshot = snapshots[0] if snapshots else None
+    previous_snapshot = snapshots[1] if len(snapshots) > 1 else None
+
+    edge_scope = (
+        SeoInternalLink.tenant_id == tenant_id,
+        SeoInternalLink.site_id == row.site_id,
+    )
+    incoming = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(SeoInternalLink)
+            .where(*edge_scope, SeoInternalLink.target_page_id == row.id)
+        )
+        or 0
+    )
+    outgoing = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(SeoInternalLink)
+            .where(*edge_scope, SeoInternalLink.source_page_id == row.id)
+        )
+        or 0
+    )
+    incoming_rows = (
+        await session.execute(
+            select(SeoInternalLink, SeoSitePage)
+            .join(SeoSitePage, SeoSitePage.id == SeoInternalLink.source_page_id)
+            .where(
+                *edge_scope,
+                SeoInternalLink.target_page_id == row.id,
+                SeoSitePage.tenant_id == tenant_id,
+                SeoSitePage.site_id == row.site_id,
+            )
+            .order_by(SeoInternalLink.discovered_at.desc(), SeoInternalLink.id.desc())
+            .limit(200)
+        )
+    ).all()
+    incoming_sources = [
+        {
+            "source_page_id": edge.source_page_id,
+            "source_url": source.url,
+            "source_title": source.title,
+            "anchor_text": edge.anchor_text,
+            "discovered_at": _database_iso(edge.discovered_at),
+        }
+        for edge, source in incoming_rows
+    ]
+    return {
+        "page": _page_payload(row),
+        "latest_snapshot": (
+            _page_snapshot_payload(latest_snapshot) if latest_snapshot else None
+        ),
+        "previous_snapshot": (
+            _page_snapshot_payload(previous_snapshot) if previous_snapshot else None
+        ),
+        "internal_links": {
+            "incoming": incoming,
+            "outgoing": outgoing,
+            "incoming_sources": incoming_sources,
+            "incoming_sources_truncated": incoming > len(incoming_sources),
+        },
+        "comparison": None,
+        "read_only": True,
+    }
+
+
 def _page_topic(row: SeoSitePage) -> str:
     for value in (row.h1, row.title):
         normalized = " ".join(str(value or "").split()).strip()
