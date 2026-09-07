@@ -172,7 +172,7 @@ async def _persist_funds_intent(
     *,
     dry_run: bool,
 ) -> None:
-    """真实资金操作先持久化审批消费和 pending 台账，再调用百度。
+    """真实写操作先持久化 pending 台账及可能存在的审批消费，再调用百度。
 
     这样即使外部调用后进程退出或最终状态提交失败，审批也不会回到可重复消费状态，
     pending 台账会明确要求人工对账。演练模式不需要拆分事务。
@@ -181,6 +181,22 @@ async def _persist_funds_intent(
     await session.flush()
     if not dry_run:
         await session.commit()
+
+
+async def _persist_action_intent(
+    session: AsyncSession,
+    record: WritebackAction,
+    *,
+    dry_run: bool,
+    asset: Any,
+    account: BaiduAccount,
+) -> None:
+    """Persist a non-funds live intent, then reacquire the released locks."""
+    await _persist_funds_intent(session, record, dry_run=dry_run)
+    if not dry_run:
+        await session.refresh(asset, with_for_update=True)
+        await _relock_funds_account(session, account, record)
+        await session.refresh(record, with_for_update=True)
 
 
 async def _relock_funds_account(
@@ -204,7 +220,7 @@ async def _ensure_no_unresolved_funds_writeback(
     model: Any,
     *conditions: Any,
 ) -> None:
-    """同一资金对象存在未决真实写回时，禁止再次发起，避免重复扣款或改价。"""
+    """同一对象存在未决真实写回时，禁止再次发起，避免重复执行。"""
     unresolved_id = await session.scalar(
         select(model.id).where(
             model.dry_run.is_(False),
@@ -493,6 +509,15 @@ async def apply_negative_writeback(
     new_list = current + [word]
 
     dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_negative_words")
+    if not dry_run:
+        await _ensure_no_unresolved_funds_writeback(
+            session,
+            WritebackAction,
+            WritebackAction.tenant_id == tenant_id,
+            WritebackAction.adgroup_id == adgroup_id,
+            WritebackAction.match_mode == match_mode,
+            WritebackAction.action_type.in_(("negative", "remove_negative")),
+        )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="negative",
         word=word, match_mode=match_mode,
@@ -500,8 +525,9 @@ async def apply_negative_writeback(
         dry_run=dry_run, status="pending",
         operator_user_id=operator_user_id, operator_name=operator_name,
     )
-    session.add(rec)
-    await session.flush()
+    await _persist_action_intent(
+        session, rec, dry_run=dry_run, asset=adg, account=acc
+    )
 
     try:
         svc = AdgroupService(_account_client(acc))
@@ -517,14 +543,10 @@ async def apply_negative_writeback(
         if not dry_run:
             setattr(adg, field, new_list)
     except BaiduAPIError as e:
-        rec.status = "failed"
-        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.warning("加否词失败 adgroup=%s word=%s: %s", adgroup_id, word, e)
     except Exception as e:
-        rec.status = "failed"
-        rec.error_msg = str(e)[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.exception("加否词异常 adgroup=%s word=%s", adgroup_id, word)
 
     await session.commit()
@@ -546,7 +568,7 @@ async def apply_negative_batch_writeback(
 
     百度 updateAdgroup 本身是全量覆盖接口；批量操作必须在同一把行锁内
     合并词表后只调用一次，避免浏览器超时后服务端继续串行写入。
-    本函数不提交事务，由 API 在更新候选词状态后一次性提交。
+    真实模式会在调用百度前提交 pending 台账；候选词状态仍由 API 另行提交。
     """
     normalized_words = [(word or "").strip() for word in words]
     if not normalized_words or any(not word for word in normalized_words):
@@ -568,6 +590,15 @@ async def apply_negative_batch_writeback(
     current_words = set(current)
     new_words: list[str] = []
     dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_negative_words")
+    if not dry_run:
+        await _ensure_no_unresolved_funds_writeback(
+            session,
+            WritebackAction,
+            WritebackAction.tenant_id == tenant_id,
+            WritebackAction.adgroup_id == adgroup_id,
+            WritebackAction.match_mode == match_mode,
+            WritebackAction.action_type.in_(("negative", "remove_negative")),
+        )
     results: list[NegativeBatchWritebackResult] = []
     results_by_word: dict[str, NegativeBatchWritebackResult] = {}
     pending_results: list[NegativeBatchWritebackResult] = []
@@ -614,6 +645,15 @@ async def apply_negative_batch_writeback(
 
     await session.flush()
     if pending_results:
+        if not dry_run:
+            await session.commit()
+            await session.refresh(adg, with_for_update=True)
+            first_record = pending_results[0].record
+            assert first_record is not None
+            await _relock_funds_account(session, acc, first_record)
+            for result in pending_results:
+                assert result.record is not None
+                await session.refresh(result.record, with_for_update=True)
         try:
             kwargs = (
                 {"exact_negative_words": current + new_words}
@@ -636,37 +676,32 @@ async def apply_negative_batch_writeback(
             if not dry_run:
                 setattr(adg, field, current + new_words)
         except BaiduAPIError as exc:
-            error_msg = f"[{exc.code}] {exc.message}"[:2000]
-            executed_at = datetime.utcnow()
             for result in pending_results:
                 rec = result.record
                 assert rec is not None
-                rec.status = "failed"
-                rec.error_msg = error_msg
-                rec.executed_at = executed_at
-                result.status = "failed"
-                result.error_msg = error_msg
+                _record_writeback_exception(rec, exc, dry_run=dry_run)
+                result.status = rec.status
+                result.error_msg = rec.error_msg
             logger.warning(
                 "批量加否词失败 adgroup=%s count=%s: %s",
                 adgroup_id,
                 len(pending_results),
                 exc,
             )
-        except Exception:
-            executed_at = datetime.utcnow()
+        except Exception as exc:
             for result in pending_results:
                 rec = result.record
                 assert rec is not None
-                rec.status = "failed"
-                rec.error_msg = "未知错误"
-                rec.executed_at = executed_at
-                result.status = "failed"
-                result.error_msg = "未知错误"
+                _record_writeback_exception(rec, exc, dry_run=dry_run)
+                result.status = rec.status
+                result.error_msg = rec.error_msg
             logger.exception(
                 "批量加否词异常 adgroup=%s count=%s",
                 adgroup_id,
                 len(pending_results),
             )
+        if not dry_run:
+            await session.commit()
 
     return results
 
@@ -707,6 +742,16 @@ async def apply_negative_writeback_campaign(
     new_list = current + [word]
 
     dry_run = _effective_dry_run(tenant_id, acc.id, "campaign_negative_words")
+    if not dry_run:
+        await _ensure_no_unresolved_funds_writeback(
+            session,
+            WritebackAction,
+            WritebackAction.tenant_id == tenant_id,
+            WritebackAction.campaign_id == campaign_id,
+            WritebackAction.adgroup_id.is_(None),
+            WritebackAction.match_mode == match_mode,
+            WritebackAction.action_type.in_(("negative", "remove_negative")),
+        )
     rec = WritebackAction(
         tenant_id=tenant_id,
         baidu_account_id=acc.id,
@@ -720,8 +765,9 @@ async def apply_negative_writeback_campaign(
         operator_user_id=operator_user_id,
         operator_name=operator_name,
     )
-    session.add(rec)
-    await session.flush()
+    await _persist_action_intent(
+        session, rec, dry_run=dry_run, asset=camp, account=acc
+    )
 
     try:
         kwargs = (
@@ -739,14 +785,10 @@ async def apply_negative_writeback_campaign(
         if not dry_run:
             setattr(camp, field, new_list)
     except BaiduAPIError as e:
-        rec.status = "failed"
-        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.warning("计划级加否词失败 campaign=%s word=%s: %s", campaign_id, word, e)
     except Exception as e:
-        rec.status = "failed"
-        rec.error_msg = str(e)[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.exception("计划级加否词异常 campaign=%s word=%s", campaign_id, word)
 
     await session.commit()
@@ -801,8 +843,9 @@ async def apply_add_word_writeback(
         dry_run=dry_run, status="pending",
         operator_user_id=operator_user_id, operator_name=operator_name,
     )
-    session.add(rec)
-    await session.flush()
+    await _persist_action_intent(
+        session, rec, dry_run=dry_run, asset=adg, account=acc
+    )
 
     try:
         svc = KeywordService(_account_client(acc))
@@ -812,14 +855,10 @@ async def apply_add_word_writeback(
         rec.baidu_response = str(resp)[:2000]
         rec.executed_at = datetime.utcnow()
     except BaiduAPIError as e:
-        rec.status = "failed"
-        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.warning("转拓词失败 adgroup=%s word=%s: %s", adgroup_id, word, e)
     except Exception as e:
-        rec.status = "failed"
-        rec.error_msg = str(e)[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.exception("转拓词异常 adgroup=%s word=%s", adgroup_id, word)
 
     await session.commit()
@@ -845,6 +884,16 @@ async def apply_pause_writeback(
     acc = await _active_account(session, tenant_id, _asset_account_id(kw, "关键词"))
 
     dry_run = _effective_dry_run(tenant_id, acc.id, "keyword_pause")
+    if not dry_run:
+        await _ensure_no_unresolved_funds_writeback(
+            session,
+            WritebackAction,
+            WritebackAction.tenant_id == tenant_id,
+            WritebackAction.baidu_account_id == acc.id,
+            WritebackAction.word == kw.keyword,
+            WritebackAction.adgroup_id == kw.adgroup_id,
+            WritebackAction.action_type.in_(("pause", "enable")),
+        )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id,
         action_type="pause" if pause else "enable",
@@ -852,8 +901,9 @@ async def apply_pause_writeback(
         dry_run=dry_run, status="pending",
         operator_user_id=operator_user_id, operator_name=operator_name,
     )
-    session.add(rec)
-    await session.flush()
+    await _persist_action_intent(
+        session, rec, dry_run=dry_run, asset=kw, account=acc
+    )
     try:
         svc = KeywordService(_account_client(acc))
         resp = await svc.update_word_pause(keyword_id, pause)
@@ -863,14 +913,10 @@ async def apply_pause_writeback(
         if not dry_run:
             kw.pause = pause
     except BaiduAPIError as e:
-        rec.status = "failed"
-        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.warning("启停失败 keyword_id=%s pause=%s: %s", keyword_id, pause, e)
-    except Exception:
-        rec.status = "failed"
-        rec.error_msg = "未知错误"
-        rec.executed_at = datetime.utcnow()
+    except Exception as e:
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.exception("启停异常 keyword_id=%s", keyword_id)
 
     await session.commit()
@@ -907,6 +953,16 @@ async def apply_match_type_writeback(
     acc = await _active_account(session, tenant_id, _asset_account_id(kw, "关键词"))
 
     dry_run = _effective_dry_run(tenant_id, acc.id, "keyword_match_type")
+    if not dry_run:
+        await _ensure_no_unresolved_funds_writeback(
+            session,
+            WritebackAction,
+            WritebackAction.tenant_id == tenant_id,
+            WritebackAction.baidu_account_id == acc.id,
+            WritebackAction.word == kw.keyword,
+            WritebackAction.adgroup_id == kw.adgroup_id,
+            WritebackAction.action_type == "set_match_type",
+        )
     rec = WritebackAction(
         tenant_id=tenant_id,
         baidu_account_id=acc.id,
@@ -922,8 +978,9 @@ async def apply_match_type_writeback(
         operator_user_id=operator_user_id,
         operator_name=operator_name,
     )
-    session.add(rec)
-    await session.flush()
+    await _persist_action_intent(
+        session, rec, dry_run=dry_run, asset=kw, account=acc
+    )
     try:
         svc = KeywordService(_account_client(acc))
         resp = await svc.update_word_match_type(keyword_id, match_type, phrase_type)
@@ -934,14 +991,10 @@ async def apply_match_type_writeback(
             kw.match_type = match_type
             kw.phrase_type = phrase_type
     except BaiduAPIError as e:
-        rec.status = "failed"
-        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.warning("改匹配模式失败 keyword_id=%s: %s", keyword_id, e)
-    except Exception:
-        rec.status = "failed"
-        rec.error_msg = "未知错误"
-        rec.executed_at = datetime.utcnow()
+    except Exception as e:
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.exception("改匹配模式异常 keyword_id=%s", keyword_id)
 
     await session.commit()
@@ -977,6 +1030,15 @@ async def apply_remove_negative_writeback(
     new_list = [w for w in current if w != word]
 
     dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_negative_words")
+    if not dry_run:
+        await _ensure_no_unresolved_funds_writeback(
+            session,
+            WritebackAction,
+            WritebackAction.tenant_id == tenant_id,
+            WritebackAction.adgroup_id == adgroup_id,
+            WritebackAction.match_mode == match_mode,
+            WritebackAction.action_type.in_(("negative", "remove_negative")),
+        )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="remove_negative",
         word=word, match_mode=match_mode,
@@ -984,8 +1046,9 @@ async def apply_remove_negative_writeback(
         dry_run=dry_run, status="pending",
         operator_user_id=operator_user_id, operator_name=operator_name,
     )
-    session.add(rec)
-    await session.flush()
+    await _persist_action_intent(
+        session, rec, dry_run=dry_run, asset=adg, account=acc
+    )
     try:
         svc = AdgroupService(_account_client(acc))
         kwargs = (
@@ -1000,14 +1063,10 @@ async def apply_remove_negative_writeback(
         if not dry_run:
             setattr(adg, field, new_list)
     except BaiduAPIError as e:
-        rec.status = "failed"
-        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.warning("删否词失败 adgroup=%s word=%s: %s", adgroup_id, word, e)
-    except Exception:
-        rec.status = "failed"
-        rec.error_msg = "未知错误"
-        rec.executed_at = datetime.utcnow()
+    except Exception as e:
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.exception("删否词异常 adgroup=%s word=%s", adgroup_id, word)
 
     await session.commit()
@@ -1159,6 +1218,14 @@ async def apply_campaign_pause_writeback(
     acc = await _active_account(session, tenant_id, _asset_account_id(camp, "计划"))
 
     dry_run = _effective_dry_run(tenant_id, acc.id, "campaign_pause")
+    if not dry_run:
+        await _ensure_no_unresolved_funds_writeback(
+            session,
+            WritebackAction,
+            WritebackAction.tenant_id == tenant_id,
+            WritebackAction.campaign_id == campaign_id,
+            WritebackAction.action_type.in_(("campaign_pause", "campaign_enable")),
+        )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id,
         action_type="campaign_pause" if pause else "campaign_enable",
@@ -1167,8 +1234,9 @@ async def apply_campaign_pause_writeback(
         dry_run=dry_run, status="pending",
         operator_user_id=operator_user_id, operator_name=operator_name,
     )
-    session.add(rec)
-    await session.flush()
+    await _persist_action_intent(
+        session, rec, dry_run=dry_run, asset=camp, account=acc
+    )
     try:
         resp = await CampaignService(_account_client(acc)).update_campaign_pause(
             campaign_id, pause
@@ -1179,14 +1247,10 @@ async def apply_campaign_pause_writeback(
         if not dry_run:
             camp.pause = pause
     except BaiduAPIError as e:
-        rec.status = "failed"
-        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.warning("计划启停失败 campaign=%s pause=%s: %s", campaign_id, pause, e)
-    except Exception:
-        rec.status = "failed"
-        rec.error_msg = "未知错误"
-        rec.executed_at = datetime.utcnow()
+    except Exception as e:
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.exception("计划启停异常 campaign=%s", campaign_id)
 
     await session.commit()
@@ -1249,6 +1313,14 @@ async def apply_campaign_schedule_writeback(
     acc = await _active_account(session, tenant_id, camp.baidu_account_id)
     old_schedule = list(camp.schedule_price_factors or [])
     dry_run = _effective_dry_run(tenant_id, acc.id, "campaign_schedule")
+    if not dry_run:
+        await _ensure_no_unresolved_funds_writeback(
+            session,
+            WritebackAction,
+            WritebackAction.tenant_id == tenant_id,
+            WritebackAction.campaign_id == campaign_id,
+            WritebackAction.action_type == "campaign_schedule",
+        )
     rec = WritebackAction(
         tenant_id=tenant_id,
         baidu_account_id=acc.id,
@@ -1263,8 +1335,9 @@ async def apply_campaign_schedule_writeback(
         operator_user_id=operator_user_id,
         operator_name=operator_name,
     )
-    session.add(rec)
-    await session.flush()
+    await _persist_action_intent(
+        session, rec, dry_run=dry_run, asset=camp, account=acc
+    )
     try:
         resp = await CampaignService(_account_client(acc)).update_campaign_schedule(
             campaign_id, normalized, pause=pause
@@ -1277,13 +1350,9 @@ async def apply_campaign_schedule_writeback(
             if pause:
                 camp.pause = True
     except BaiduAPIError as exc:
-        rec.status = "failed"
-        rec.error_msg = f"[{exc.code}] {exc.message}"[:2000]
-        rec.executed_at = datetime.utcnow()
-    except Exception:  # noqa: BLE001
-        rec.status = "failed"
-        rec.error_msg = "未知错误"
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, exc, dry_run=dry_run)
+    except Exception as exc:  # noqa: BLE001
+        _record_writeback_exception(rec, exc, dry_run=dry_run)
         logger.exception("投放时段写回异常 campaign=%s", campaign_id)
     await session.commit()
     await session.refresh(rec)
@@ -1368,6 +1437,14 @@ async def apply_campaign_region_writeback(
 
     old_regions = list(camp.region_target or [])
     dry_run = _effective_dry_run(tenant_id, acc.id, "campaign_region")
+    if not dry_run:
+        await _ensure_no_unresolved_funds_writeback(
+            session,
+            WritebackAction,
+            WritebackAction.tenant_id == tenant_id,
+            WritebackAction.campaign_id == campaign_id,
+            WritebackAction.action_type == "set_campaign_region",
+        )
     rec = WritebackAction(
         tenant_id=tenant_id,
         baidu_account_id=acc.id,
@@ -1382,8 +1459,9 @@ async def apply_campaign_region_writeback(
         operator_user_id=operator_user_id,
         operator_name=operator_name,
     )
-    session.add(rec)
-    await session.flush()
+    await _persist_action_intent(
+        session, rec, dry_run=dry_run, asset=camp, account=acc
+    )
 
     try:
         resp = await CampaignService(_account_client(acc)).update_campaign_region(
@@ -1402,13 +1480,9 @@ async def apply_campaign_region_writeback(
             if geo_location_status is not None:
                 camp.geo_location_status = geo_location_status
     except BaiduAPIError as exc:
-        rec.status = "failed"
-        rec.error_msg = f"[{exc.code}] {exc.message}"[:2000]
-        rec.executed_at = datetime.utcnow()
-    except Exception:  # noqa: BLE001
-        rec.status = "failed"
-        rec.error_msg = "未知错误"
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, exc, dry_run=dry_run)
+    except Exception as exc:  # noqa: BLE001
+        _record_writeback_exception(rec, exc, dry_run=dry_run)
         logger.exception("地域写回异常 campaign=%s", campaign_id)
 
     await session.commit()
@@ -1436,6 +1510,14 @@ async def apply_adgroup_pause_writeback(
     acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
 
     dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_pause")
+    if not dry_run:
+        await _ensure_no_unresolved_funds_writeback(
+            session,
+            WritebackAction,
+            WritebackAction.tenant_id == tenant_id,
+            WritebackAction.adgroup_id == adgroup_id,
+            WritebackAction.action_type.in_(("adgroup_pause", "adgroup_enable")),
+        )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id,
         action_type="adgroup_pause" if pause else "adgroup_enable",
@@ -1444,8 +1526,9 @@ async def apply_adgroup_pause_writeback(
         dry_run=dry_run, status="pending",
         operator_user_id=operator_user_id, operator_name=operator_name,
     )
-    session.add(rec)
-    await session.flush()
+    await _persist_action_intent(
+        session, rec, dry_run=dry_run, asset=adg, account=acc
+    )
     try:
         resp = await AdgroupService(_account_client(acc)).update_adgroup_fields(
             adgroup_id, pause=pause
@@ -1456,14 +1539,10 @@ async def apply_adgroup_pause_writeback(
         if not dry_run:
             adg.pause = pause
     except BaiduAPIError as e:
-        rec.status = "failed"
-        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.warning("单元启停失败 adgroup=%s pause=%s: %s", adgroup_id, pause, e)
-    except Exception:
-        rec.status = "failed"
-        rec.error_msg = "未知错误"
-        rec.executed_at = datetime.utcnow()
+    except Exception as e:
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.exception("单元启停异常 adgroup=%s", adgroup_id)
 
     await session.commit()
@@ -1646,6 +1725,14 @@ async def apply_adgroup_landing_url_writeback(
         raise WritebackError("落地页设置没有变化")
 
     dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_landing_url")
+    if not dry_run:
+        await _ensure_no_unresolved_funds_writeback(
+            session,
+            WritebackAction,
+            WritebackAction.tenant_id == tenant_id,
+            WritebackAction.adgroup_id == adgroup_id,
+            WritebackAction.action_type == "set_adgroup_url",
+        )
     rec = WritebackAction(
         tenant_id=tenant_id,
         baidu_account_id=acc.id,
@@ -1660,8 +1747,9 @@ async def apply_adgroup_landing_url_writeback(
         operator_user_id=operator_user_id,
         operator_name=operator_name,
     )
-    session.add(rec)
-    await session.flush()
+    await _persist_action_intent(
+        session, rec, dry_run=dry_run, asset=adg, account=acc
+    )
     try:
         resp = await AdgroupService(_account_client(acc)).update_adgroup_fields(
             adgroup_id,
@@ -1683,14 +1771,10 @@ async def apply_adgroup_landing_url_writeback(
             adg.pc_track_template = pc_track_template
             adg.mobile_track_template = mobile_track_template
     except BaiduAPIError as e:
-        rec.status = "failed"
-        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.warning("单元落地页写回失败 adgroup=%s: %s", adgroup_id, e)
-    except Exception:
-        rec.status = "failed"
-        rec.error_msg = "未知错误"
-        rec.executed_at = datetime.utcnow()
+    except Exception as e:
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.exception("单元落地页写回异常 adgroup=%s", adgroup_id)
 
     await session.commit()
