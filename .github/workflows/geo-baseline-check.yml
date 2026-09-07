@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - codex/production-geo
+      - codex/geo-h1-production-pg-verify-20260907
   pull_request:
     paths:
       - "app/geo/**"
@@ -57,7 +58,41 @@ jobs:
       - name: Run all GEO regressions including PostgreSQL concurrency
         env:
           GEO_TEST_POSTGRES_URL: postgresql+asyncpg://geo_ci:geo_ci_test@127.0.0.1:5432/geo_ci
-        run: python ops/run_geo_checks.py --postgres
+        run: |
+          status=0
+          python ops/run_geo_checks.py --postgres --junitxml="$RUNNER_TEMP/geo-junit.xml" || status=$?
+          if [ -f "$RUNNER_TEMP/geo-junit.xml" ]; then
+            python - "$RUNNER_TEMP/geo-junit.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          cases = list(root.iter("testcase"))
+          tests = len(cases)
+          skipped = sum(c.find("skipped") is not None for c in cases)
+          pg_cases = [
+              c for c in root.iter("testcase")
+              if c.get("classname", "").endswith("test_geo_generation_postgres")
+          ]
+          pg_skipped = sum(c.find("skipped") is not None for c in pg_cases)
+          print(f"GEO_JUNIT tests={tests} skipped={skipped} pg_cases={len(pg_cases)} pg_skipped={pg_skipped}")
+          gate_failed = bool(skipped or len(pg_cases) != 10 or pg_skipped)
+          if gate_failed:
+              print("::error title=GEO PostgreSQL collection gate::Expected 10 generation PostgreSQL cases and zero skips")
+          for case in root.iter("testcase"):
+              failure = case.find("failure")
+              if failure is None:
+                  failure = case.find("error")
+              if failure is None:
+                  continue
+              name = f"{case.get('classname', '')}.{case.get('name', '')}".strip(".")
+              message = (failure.get("message") or failure.text or "pytest failure").strip()
+              message = message[:1500].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error title={name}::{message}")
+          raise SystemExit(1 if gate_failed else 0)
+          PY
+          fi
+          exit "$status"
 
 
   frontend-build:

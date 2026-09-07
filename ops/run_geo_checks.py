@@ -63,6 +63,10 @@ async def initialize_postgres(url):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--postgres', action='store_true')
+    parser.add_argument(
+        '--junitxml',
+        help='Optional pytest JUnit report path for CI diagnostics.',
+    )
     args = parser.parse_args()
     postgres_url = os.environ.pop('GEO_TEST_POSTGRES_URL', None)
     prepare_environment()
@@ -78,7 +82,10 @@ def main():
     import pytest
     files = sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'tests').glob('test_geo*.py'))
     files += ['tests/test_metric_service.py', 'tests/test_md_to_html_tables.py', 'tests/test_channel_article_quality.py']
-    return pytest.main(['-q', '--tb=short', *files])
+    pytest_args = ['-q', '--tb=short']
+    if args.junitxml:
+        pytest_args.append(f'--junitxml={args.junitxml}')
+    return pytest.main([*pytest_args, *files])
 
 
 if __name__ == '__main__':
