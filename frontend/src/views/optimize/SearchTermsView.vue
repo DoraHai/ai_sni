@@ -1,22 +1,33 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { addNegative, expandKeyword, fetchSearchTerms, syncSearchTerms } from '../../api/searchTerms'
 import { session } from '../../store/session'
 import { formatUtcTimestamp } from '../../utils/dateTime'
 import { createLatestRequestGuard } from '../../utils/latestRequest'
+import { canWriteScopedAsset, chooseSemAccount } from '../../utils/accountScope'
 
 const TENANT_ID = computed(() => session.tenantId)
 const currentTenant = computed(() => session.tenants.find((row) => row.id === TENANT_ID.value))
-const activeAccounts = computed(() => (currentTenant.value?.sem_accounts || []).filter((row) => row.status === 'active'))
+const readableAccounts = computed(() => (currentTenant.value?.sem_accounts || []).filter((row) => row.status !== 'archived'))
+const activeAccounts = computed(() => readableAccounts.value.filter((row) => row.status === 'active'))
 const selectedAccountId = ref(null)
 const loading = ref(false)
 const syncing = ref(false)
 const error = ref('')
 const data = ref(null)
 const negDialogVisible = ref(false)
-const loadGuard = createLatestRequestGuard(() => ({ tenantId: TENANT_ID.value, accountId: selectedAccountId.value }))
-const syncGuard = createLatestRequestGuard(() => ({ tenantId: TENANT_ID.value, accountId: selectedAccountId.value }))
+const scopedContext = () => ({ tenantId: TENANT_ID.value, accountId: selectedAccountId.value, authRevision: session.authRevision })
+const loadGuard = createLatestRequestGuard(scopedContext)
+const syncGuard = createLatestRequestGuard(scopedContext)
+const actionGuard = createLatestRequestGuard(scopedContext)
+const selectedAccountIsActive = computed(() => activeAccounts.value.some((row) => row.id === selectedAccountId.value))
+const canWriteRow = (row) => canWriteScopedAsset({
+  scope: data.value?.account_scope,
+  selectedAccountId: selectedAccountId.value,
+  activeAccountIds: new Set(activeAccounts.value.map((account) => Number(account.id))),
+  assetAccountId: row?.baidu_account_id,
+})
 const emptyDiagnosis = computed(() => {
   if (!data.value || data.value.total) return null
   if (!data.value.window?.synced_at) return '搜索词尚未同步。该数据来自百度读取，与回写开关无关；请执行近 30 天同步。'
@@ -62,7 +73,7 @@ async function load() {
 async function runSync() {
   const attempt = syncGuard.begin()
   const { tenantId, accountId } = attempt.context
-  if (!tenantId || (activeAccounts.value.length > 1 && !accountId)) {
+  if (!tenantId || !accountId || !activeAccounts.value.some((row) => row.id === accountId)) {
     ElMessage.warning('请先选择要同步的推广账户')
     return
   }
@@ -84,19 +95,37 @@ watch(() => [filters.status, filters.hasClick], () => { filters.page = 1; load()
 let qTimer = null
 watch(() => filters.q, () => { clearTimeout(qTimer); qTimer = setTimeout(() => { filters.page = 1; load() }, 400) })
 watch(() => [filters.page, filters.pageSize], load)
-watch([TENANT_ID, activeAccounts], ([, accounts]) => {
+watch([TENANT_ID, readableAccounts, () => session.tenantListRevision], ([, accounts]) => {
   loadGuard.invalidate()
   syncGuard.invalidate()
+  actionGuard.invalidate()
   data.value = null
   error.value = ''
   syncing.value = false
   negDialogVisible.value = false
-  const currentExists = accounts.some((row) => row.id === selectedAccountId.value)
-  selectedAccountId.value = currentExists ? selectedAccountId.value : (accounts[0]?.id ?? null)
+  const previousAccountId = selectedAccountId.value
+  const nextAccountId = chooseSemAccount(accounts, previousAccountId)
+  selectedAccountId.value = nextAccountId
   filters.page = 1
+  if (nextAccountId === previousAccountId) load()
 }, { immediate: true })
-watch([TENANT_ID, selectedAccountId], load, { immediate: true })
-onMounted(load)
+watch(selectedAccountId, () => {
+  loadGuard.invalidate()
+  syncGuard.invalidate()
+  actionGuard.invalidate()
+  data.value = null
+  error.value = ''
+  syncing.value = false
+  negDialogVisible.value = false
+  filters.page = 1
+  load()
+})
+onBeforeUnmount(() => {
+  loadGuard.invalidate()
+  syncGuard.invalidate()
+  actionGuard.invalidate()
+  clearTimeout(qTimer)
+})
 
 const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
 const fmtMoney = (v) => (v == null ? '—' : '¥' + Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 }))
@@ -110,6 +139,9 @@ const negForm = ref({
   adgroupName: '',
   campaignId: null,
   campaignName: '',
+  baiduAccountId: null,
+  tenantId: null,
+  authRevision: null,
 })
 
 // C 辅助：未加成关键词 + 有展现 + 零点击 → 疑似可否（烧展现没点击）
@@ -123,6 +155,7 @@ function dryRunTip(res, okMsg) {
 }
 
 function addNeg(row) {
+  if (!canWriteRow(row)) return ElMessage.warning('请先选择该搜索词所属的可用推广账户')
   if (!row.adgroup_id && !row.campaign_id) {
     return ElMessage.warning('该搜索词无所属计划/单元，无法加否词')
   }
@@ -134,32 +167,46 @@ function addNeg(row) {
     adgroupName: row.adgroup_name,
     campaignId: row.campaign_id,
     campaignName: row.campaign_name,
+    baiduAccountId: row.baidu_account_id,
+    tenantId: TENANT_ID.value,
+    authRevision: session.authRevision,
   }
   negDialogVisible.value = true
 }
 
 async function submitNegative() {
-  const f = negForm.value
+  const attempt = actionGuard.begin()
+  const f = { ...negForm.value }
+  if (!attempt.isCurrent() || f.tenantId !== attempt.context.tenantId
+      || f.authRevision !== attempt.context.authRevision || !canWriteRow({ baidu_account_id: f.baiduAccountId })) {
+    ElMessage.error('当前客户或推广账户已变化，请重新选择搜索词')
+    return
+  }
   if (f.scope === 'adgroup' && !f.adgroupId) return ElMessage.warning('单元级否词需要单元')
   if (f.scope === 'campaign' && !f.campaignId) return ElMessage.warning('计划级否词需要计划')
   try {
     const res = await addNegative({
-      tenantId: TENANT_ID.value,
+      tenantId: f.tenantId,
       word: f.word,
       scope: f.scope,
       adgroupId: f.scope === 'adgroup' ? f.adgroupId : undefined,
       campaignId: f.scope === 'campaign' ? f.campaignId : undefined,
       matchMode: f.matchMode,
     })
+    if (!attempt.isCurrent()) return
     dryRunTip(res, '已加否词')
     negDialogVisible.value = false
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
+    if (attempt.isCurrent()) ElMessage.error(e.response?.data?.detail || e.message)
   }
 }
 
 async function expand(row) {
   if (!row.adgroup_id) return ElMessage.warning('该搜索词无所属单元，无法转拓词')
+  if (!canWriteRow(row)) return ElMessage.warning('请先选择该搜索词所属的可用推广账户')
+  const attempt = actionGuard.begin()
+  const { tenantId } = attempt.context
+  const asset = { accountId: row.baidu_account_id, adgroupId: row.adgroup_id, word: row.query_word }
   let value
   try {
     const r = await ElMessageBox.prompt(
@@ -171,11 +218,13 @@ async function expand(row) {
     )
     value = r.value
   } catch { return }
+  if (!attempt.isCurrent() || Number(asset.accountId) !== Number(selectedAccountId.value)) return
   try {
-    const res = await expandKeyword({ tenantId: TENANT_ID.value, word: row.query_word, adgroupId: row.adgroup_id, price: Number(value), matchMode: 'phrase' })
+    const res = await expandKeyword({ tenantId, word: asset.word, adgroupId: asset.adgroupId, price: Number(value), matchMode: 'phrase' })
+    if (!attempt.isCurrent()) return
     dryRunTip(res, '已转为关键词')
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
+    if (attempt.isCurrent()) ElMessage.error(e.response?.data?.detail || e.message)
   }
 }
 
@@ -203,7 +252,7 @@ const statCards = computed(() => {
           <template v-if="data?.window?.synced_at"> · 同步于 {{ fmtTime(data.window.synced_at) }}</template>
         </div>
       </div>
-      <el-button type="primary" :loading="syncing" @click="runSync">同步搜索词（近 30 天）</el-button>
+      <el-button type="primary" :loading="syncing" :disabled="!selectedAccountIsActive" @click="runSync">同步搜索词（近 30 天）</el-button>
     </div>
     <el-alert v-if="emptyDiagnosis" type="warning" :title="emptyDiagnosis" :closable="false" show-icon style="margin-bottom: 12px" />
 
@@ -218,8 +267,8 @@ const statCards = computed(() => {
     </div>
 
     <div class="filter-row">
-      <el-select v-if="activeAccounts.length > 1" v-model="selectedAccountId" placeholder="选择推广账户" style="width: 240px">
-        <el-option v-for="account in activeAccounts" :key="account.id" :label="`${account.username} · ${account.ucid}`" :value="account.id" />
+      <el-select v-if="readableAccounts.length > 1 || !selectedAccountIsActive" v-model="selectedAccountId" clearable placeholder="全部账户（只读）" style="width: 240px">
+        <el-option v-for="account in readableAccounts" :key="account.id" :label="`${account.username} · ${account.ucid}${account.status === 'active' ? '' : ' · 已停用（历史）'}`" :value="account.id" />
       </el-select>
       <div class="view-tabs">
         <div
@@ -318,8 +367,8 @@ const statCards = computed(() => {
         <el-table-column label="操作" min-width="156">
           <template #default="{ row }">
             <div class="search-term-actions">
-              <el-button class="search-action is-negative" size="small" :disabled="!row.adgroup_id && !row.campaign_id" @click="addNeg(row)">待回写否词</el-button>
-              <el-button class="search-action is-expand" size="small" :disabled="row.is_added || !row.adgroup_id" @click="expand(row)">待回写关键词</el-button>
+              <el-button class="search-action is-negative" size="small" :disabled="(!row.adgroup_id && !row.campaign_id) || !canWriteRow(row)" @click="addNeg(row)">待回写否词</el-button>
+              <el-button class="search-action is-expand" size="small" :disabled="row.is_added || !row.adgroup_id || !canWriteRow(row)" @click="expand(row)">待回写关键词</el-button>
             </div>
           </template>
         </el-table-column>

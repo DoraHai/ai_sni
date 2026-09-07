@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   fetchCampaigns, fetchRegionOptions, setCampaignBudget, setCampaignPause,
@@ -8,8 +8,14 @@ import {
 import { WRITEBACK_CONFIRMATION } from '../../api/writeback'
 import { session } from '../../store/session'
 import { createLatestRequestGuard } from '../../utils/latestRequest'
+import { chooseSemAccount } from '../../utils/accountScope'
 
 const TENANT_ID = computed(() => session.tenantId)
+const currentTenant = computed(() => session.tenants.find((row) => row.id === TENANT_ID.value))
+const readableAccounts = computed(() => (currentTenant.value?.sem_accounts || []).filter((row) => row.status !== 'archived'))
+const activeAccountIds = computed(() => new Set(
+  (currentTenant.value?.sem_accounts || []).filter((row) => row.status === 'active').map((row) => Number(row.id)),
+))
 
 const loading = ref(false)
 const error = ref('')
@@ -18,7 +24,7 @@ const savingId = ref(null)
 const accountId = ref(null)
 const selectedCampaigns = ref([])
 const scheduleVisible = ref(false)
-const scheduleForm = ref({ campaignId: null, campaignIds: [], campaignName: '', template: 'all', pause: false, days: [] })
+const scheduleForm = ref({ campaignId: null, campaignIds: [], campaignName: '', accountId: null, template: 'all', pause: false, days: [] })
 const batchResult = ref(null)
 const regions = ref([])
 const regionVisible = ref(false)
@@ -27,7 +33,14 @@ const regionForm = ref({
   campaignId: null, campaignIds: [], campaignName: '', accountId: null, accountName: '',
   regionTarget: [], factors: {}, geoLocationStatus: 0,
 })
-const loadGuard = createLatestRequestGuard(() => ({ tenantId: TENANT_ID.value, accountId: accountId.value }))
+const scopedContext = () => ({ tenantId: TENANT_ID.value, accountId: accountId.value, authRevision: session.authRevision })
+const loadGuard = createLatestRequestGuard(scopedContext)
+const actionGuard = createLatestRequestGuard(scopedContext)
+const canWriteAccount = (value) => value != null
+  && Number(value) === Number(accountId.value)
+  && activeAccountIds.value.has(Number(value))
+const batchSelectionWritable = computed(() => selectedCampaigns.value.length > 0
+  && selectedCampaigns.value.every((row) => canWriteAccount(row.baidu_account_id)))
 
 const WEEK_DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 const ALL_REGIONS_ID = 9999999
@@ -66,14 +79,45 @@ async function load() {
 
 watch(TENANT_ID, () => {
   loadGuard.invalidate()
+  actionGuard.invalidate()
   data.value = null
-  accountId.value = null
+  savingId.value = null
+  const previousAccountId = accountId.value
+  const activeIds = [...activeAccountIds.value]
+  accountId.value = activeIds.length === 1 ? activeIds[0] : null
   selectedCampaigns.value = []
   scheduleVisible.value = false
   regionVisible.value = false
+  batchResult.value = null
+  regionBatchResult.value = null
+  if (accountId.value === previousAccountId) load()
+}, { immediate: true })
+watch(accountId, () => {
+  loadGuard.invalidate()
+  actionGuard.invalidate()
+  data.value = null
+  savingId.value = null
+  selectedCampaigns.value = []
+  scheduleVisible.value = false
+  regionVisible.value = false
+  batchResult.value = null
+  regionBatchResult.value = null
   load()
 })
-watch(accountId, load)
+watch(() => session.tenantListRevision, () => {
+  loadGuard.invalidate()
+  actionGuard.invalidate()
+  data.value = null
+  savingId.value = null
+  selectedCampaigns.value = []
+  scheduleVisible.value = false
+  regionVisible.value = false
+  batchResult.value = null
+  regionBatchResult.value = null
+  const previousAccountId = accountId.value
+  accountId.value = chooseSemAccount(readableAccounts.value, previousAccountId)
+  if (accountId.value === previousAccountId) load()
+})
 async function loadRegions() {
   try {
     regions.value = (await fetchRegionOptions()).regions || []
@@ -82,7 +126,7 @@ async function loadRegions() {
   }
 }
 
-onMounted(async () => { await Promise.all([load(), loadRegions()]) })
+onMounted(loadRegions)
 
 const fmtMoney = (v) => (v == null ? '不限' : '¥' + Number(v).toFixed(2))
 const min = computed(() => data.value?.min_budget ?? 50)
@@ -131,11 +175,13 @@ function applyScheduleTemplate(templateName) {
 }
 
 function openSchedule(row) {
+  if (!canWriteAccount(row.baidu_account_id)) return ElMessage.warning('请先选择该计划所属的可用推广账户')
   batchResult.value = null
   scheduleForm.value = {
     campaignId: row.campaign_id,
     campaignIds: [row.campaign_id],
     campaignName: row.campaign_name || `#${row.campaign_id}`,
+    accountId: row.baidu_account_id,
     template: 'custom',
     pause: false,
     days: emptyScheduleDays(),
@@ -167,11 +213,14 @@ function openBatchSchedule() {
     ElMessage.warning('批量设置只能选择同一个百度账户下的计划')
     return
   }
+  const selectedAccount = [...accountIds][0]
+  if (!canWriteAccount(selectedAccount)) return ElMessage.warning('请先选择这些计划所属的可用推广账户')
   batchResult.value = null
   scheduleForm.value = {
     campaignId: null,
     campaignIds: selectedCampaigns.value.map((row) => row.campaign_id),
     campaignName: `${selectedCampaigns.value.length} 个计划`,
+    accountId: selectedAccount,
     template: 'all',
     pause: false,
     days: emptyScheduleDays(),
@@ -180,9 +229,9 @@ function openBatchSchedule() {
   scheduleVisible.value = true
 }
 
-function buildScheduleFactors() {
+function buildScheduleFactors(days = scheduleForm.value.days) {
   const factors = []
-  for (const day of scheduleForm.value.days) {
+  for (const day of days) {
     if (!day.enabled) continue
     const start = Number(day.start)
     const end = Number(day.end)
@@ -197,39 +246,44 @@ function buildScheduleFactors() {
 }
 
 async function saveSchedule() {
+  const attempt = actionGuard.begin()
+  const form = structuredClone(scheduleForm.value)
+  if (!attempt.isCurrent() || !canWriteAccount(form.accountId)) return
   let factors
   try {
-    factors = buildScheduleFactors()
+    factors = buildScheduleFactors(form.days)
   } catch (e) {
     ElMessage.warning(e.message)
     return
   }
-  if (!factors.length && !scheduleForm.value.pause) {
+  if (!factors.length && !form.pause) {
     ElMessage.warning('请至少启用一个投放日，或选择“节假日停投”模板')
     return
   }
-  const campaignIds = scheduleForm.value.campaignIds.length
-    ? scheduleForm.value.campaignIds
-    : [scheduleForm.value.campaignId]
+  const campaignIds = form.campaignIds.length ? form.campaignIds : [form.campaignId]
   savingId.value = campaignIds.length > 1 ? 'batch-schedule' : campaignIds[0]
   batchResult.value = null
   try {
     const results = []
     for (const campaignId of campaignIds) {
+      if (!attempt.isCurrent()) return
       try {
         const res = await setCampaignSchedule({
-          tenantId: TENANT_ID.value,
+          tenantId: attempt.context.tenantId,
           campaignId,
           schedulePriceFactors: factors,
-          pause: scheduleForm.value.pause,
+          pause: form.pause,
         })
+        if (!attempt.isCurrent()) return
         results.push({ campaignId, ...res })
       } catch (e) {
+        if (!attempt.isCurrent()) return
         results.push({ campaignId, status: 'failed', error_msg: e.response?.data?.detail || e.message })
       }
     }
     const failed = results.filter((item) => item.status === 'failed')
     const succeeded = results.length - failed.length
+    if (!attempt.isCurrent()) return
     batchResult.value = { total: results.length, succeeded, failed }
     if (failed.length) {
       ElMessage.warning(`时段设置完成：成功 ${succeeded} 个，失败 ${failed.length} 个`)
@@ -240,7 +294,7 @@ async function saveSchedule() {
     }
     await load()
   } finally {
-    savingId.value = null
+    if (attempt.isCurrent()) savingId.value = null
   }
 }
 
@@ -265,6 +319,7 @@ function regionSummary(row) {
 }
 
 function openRegion(row) {
+  if (!canWriteAccount(row.baidu_account_id)) return ElMessage.warning('请先选择该计划所属的可用推广账户')
   regionBatchResult.value = null
   regionForm.value = {
     campaignId: row.campaign_id,
@@ -290,6 +345,7 @@ function openBatchRegion() {
     return
   }
   const first = selectedCampaigns.value[0]
+  if (!canWriteAccount(first.baidu_account_id)) return ElMessage.warning('请先选择这些计划所属的可用推广账户')
   regionBatchResult.value = null
   regionForm.value = {
     campaignId: null,
@@ -323,7 +379,9 @@ function handleRegionChange(value) {
 }
 
 async function saveRegion() {
-  const form = regionForm.value
+  const attempt = actionGuard.begin()
+  const form = structuredClone(regionForm.value)
+  if (!attempt.isCurrent() || !canWriteAccount(form.accountId)) return
   if (!form.regionTarget.length) {
     ElMessage.warning('请至少选择一个地域')
     return
@@ -349,30 +407,35 @@ async function saveRegion() {
       { confirmButtonText: '加入待回写', cancelButtonText: '取消', type: 'warning' },
     )
   } catch { return }
+  if (!attempt.isCurrent()) return
   savingId.value = campaignIds.length > 1 ? 'batch-region' : campaignIds[0]
   regionBatchResult.value = null
   try {
     const results = []
     for (const campaignId of campaignIds) {
+      if (!attempt.isCurrent()) return
       try {
         const res = await setCampaignRegion({
-          tenantId: TENANT_ID.value,
+          tenantId: attempt.context.tenantId,
           campaignId,
           regionTarget: form.regionTarget,
           regionPriceFactor: factors,
           geoLocationStatus: form.geoLocationStatus,
         })
+        if (!attempt.isCurrent()) return
         if (res.baidu_account_id !== form.accountId) {
           results.push({ campaignId, status: 'failed', error_msg: '后端返回的百度账户与所选账户不一致' })
         } else {
           results.push({ campaignId, ...res })
         }
       } catch (e) {
+        if (!attempt.isCurrent()) return
         results.push({ campaignId, status: 'failed', error_msg: e.response?.data?.detail || e.message })
       }
     }
     const failed = results.filter((item) => item.status === 'failed')
     const succeeded = results.length - failed.length
+    if (!attempt.isCurrent()) return
     regionBatchResult.value = { total: results.length, succeeded, failed }
     if (failed.length) {
       ElMessage.warning(`地域设置完成：成功 ${succeeded} 个，失败 ${failed.length} 个`)
@@ -383,37 +446,49 @@ async function saveRegion() {
     }
     await load()
   } finally {
-    savingId.value = null
+    if (attempt.isCurrent()) savingId.value = null
   }
 }
 
 async function editBudget(row) {
+  if (!canWriteAccount(row.baidu_account_id)) return ElMessage.warning('请先选择该计划所属的可用推广账户')
+  const attempt = actionGuard.begin()
+  const asset = {
+    campaignId: row.campaign_id,
+    accountId: row.baidu_account_id,
+    name: row.campaign_name,
+    budget: row.budget,
+    minBudget: min.value,
+    maxBudget: max.value,
+  }
   const { value } = await ElMessageBox.prompt(
-    `计划「${row.campaign_name}」当前日预算 ${fmtMoney(row.budget)}。\n输入新的日预算（¥${min.value} ~ 不超过账户日预算）。实际执行模式由当前客户、推广账户和动作门禁决定。`,
+    `计划「${asset.name}」当前日预算 ${fmtMoney(asset.budget)}。\n输入新的日预算（¥${min.value} ~ 不超过账户日预算）。实际执行模式由当前客户、推广账户和动作门禁决定。`,
     '修改计划日预算',
     {
       confirmButtonText: '加入待回写',
       cancelButtonText: '取消',
-      inputValue: row.budget != null ? String(row.budget) : '',
+      inputValue: asset.budget != null ? String(asset.budget) : '',
       inputPattern: /^\d+(\.\d{1,2})?$/,
       inputErrorMessage: '请输入合法金额（最多两位小数）',
     },
   ).catch(() => ({ value: null }))
   if (value == null) return
+  if (!attempt.isCurrent() || !canWriteAccount(asset.accountId)) return
 
   const v = Number(value)
-  if (!Number.isFinite(v) || v < min.value || v > max.value) {
-    ElMessage.warning(`日预算需在 ¥${min.value} ~ ¥${max.value} 之间`)
+  if (!Number.isFinite(v) || v < asset.minBudget || v > asset.maxBudget) {
+    ElMessage.warning(`日预算需在 ¥${asset.minBudget} ~ ¥${asset.maxBudget} 之间`)
     return
   }
-  savingId.value = row.campaign_id
+  savingId.value = asset.campaignId
   try {
     const res = await setCampaignBudget({
-      tenantId: TENANT_ID.value,
-      campaignId: row.campaign_id,
+      tenantId: attempt.context.tenantId,
+      campaignId: asset.campaignId,
       budget: v,
       confirmation: WRITEBACK_CONFIRMATION,
     })
+    if (!attempt.isCurrent()) return
     if (res.status === 'dry_run') {
       ElMessage.success(`演练完成：${fmtMoney(res.old_budget)} → ${fmtMoney(res.new_budget)}（未真改，已记台账）`)
     } else if (res.status === 'success') {
@@ -425,35 +500,45 @@ async function editBudget(row) {
     }
     await load()
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
+    if (attempt.isCurrent()) ElMessage.error(e.response?.data?.detail || e.message)
   } finally {
-    savingId.value = null
+    if (attempt.isCurrent()) savingId.value = null
   }
 }
 
 async function togglePause(row) {
-  const paused = row.pause || row.status === 23
+  if (!canWriteAccount(row.baidu_account_id)) return ElMessage.warning('请先选择该计划所属的可用推广账户')
+  const attempt = actionGuard.begin()
+  const asset = { campaignId: row.campaign_id, accountId: row.baidu_account_id, name: row.campaign_name, pause: row.pause, status: row.status }
+  const paused = asset.pause || asset.status === 23
   const toPause = !paused
   try {
     await ElMessageBox.confirm(
-      `确认${toPause ? '暂停' : '恢复投放'}计划「${row.campaign_name}」？实际执行模式由当前客户、推广账户和动作门禁决定，真实执行会修改百度账户。`,
+      `确认${toPause ? '暂停' : '恢复投放'}计划「${asset.name}」？实际执行模式由当前客户、推广账户和动作门禁决定，真实执行会修改百度账户。`,
       toPause ? '暂停计划' : '恢复投放',
       { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' },
     )
   } catch { return }
-  savingId.value = row.campaign_id
+  if (!attempt.isCurrent() || !canWriteAccount(asset.accountId)) return
+  savingId.value = asset.campaignId
   try {
-    const res = await setCampaignPause({ tenantId: TENANT_ID.value, campaignId: row.campaign_id, pause: toPause })
+    const res = await setCampaignPause({ tenantId: attempt.context.tenantId, campaignId: asset.campaignId, pause: toPause })
+    if (!attempt.isCurrent()) return
     const tag = res.dry_run ? '（演练：未真改）' : ''
     if (res.status === 'failed') ElMessage.error('失败：' + (res.error_msg || '未知错误'))
     else ElMessage.success(`已${toPause ? '暂停' : '恢复投放'}${tag}`)
     await load()
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
+    if (attempt.isCurrent()) ElMessage.error(e.response?.data?.detail || e.message)
   } finally {
-    savingId.value = null
+    if (attempt.isCurrent()) savingId.value = null
   }
 }
+
+onBeforeUnmount(() => {
+  loadGuard.invalidate()
+  actionGuard.invalidate()
+})
 </script>
 
 <template>
@@ -480,11 +565,11 @@ async function togglePause(row) {
       <div class="account-toolbar">
         <div class="account-filter">
           <span>百度账户</span>
-          <el-select v-model="accountId" clearable placeholder="全部账户" style="width: 240px">
+          <el-select v-model="accountId" clearable placeholder="全部账户（只读）" style="width: 240px">
             <el-option
-              v-for="account in data?.accounts || []"
+              v-for="account in readableAccounts"
               :key="account.id"
-              :label="account.name || ('账户 #' + account.id)"
+              :label="`${account.username || account.name || ('账户 #' + account.id)}${account.status === 'active' ? '' : ' · 已停用（历史）'}`"
               :value="account.id"
             />
           </el-select>
@@ -493,14 +578,14 @@ async function togglePause(row) {
           <span>已选择 {{ selectedCampaigns.length }} 个计划</span>
           <el-button
             type="primary"
-            :disabled="!selectedCampaigns.length"
+            :disabled="!batchSelectionWritable"
             :loading="savingId === 'batch-schedule'"
             @click="openBatchSchedule"
           >批量设置时段</el-button>
           <el-button
             type="primary"
             plain
-            :disabled="!selectedCampaigns.length"
+            :disabled="!batchSelectionWritable"
             :loading="savingId === 'batch-region'"
             @click="openBatchRegion"
           >批量设置地域</el-button>
@@ -532,11 +617,12 @@ async function togglePause(row) {
         </el-table-column>
         <el-table-column label="操作" width="390" align="center">
           <template #default="{ row }">
-            <el-button size="small" :loading="savingId === row.campaign_id" @click="editBudget(row)">预算建议</el-button>
-            <el-button size="small" :loading="savingId === row.campaign_id" @click="openSchedule(row)">时段建议</el-button>
-            <el-button size="small" :loading="savingId === row.campaign_id" @click="openRegion(row)">地域建议</el-button>
+            <el-button size="small" :disabled="!canWriteAccount(row.baidu_account_id)" :loading="savingId === row.campaign_id" @click="editBudget(row)">预算建议</el-button>
+            <el-button size="small" :disabled="!canWriteAccount(row.baidu_account_id)" :loading="savingId === row.campaign_id" @click="openSchedule(row)">时段建议</el-button>
+            <el-button size="small" :disabled="!canWriteAccount(row.baidu_account_id)" :loading="savingId === row.campaign_id" @click="openRegion(row)">地域建议</el-button>
             <el-button
               size="small"
+              :disabled="!canWriteAccount(row.baidu_account_id)"
               :type="(row.pause || row.status === 23) ? 'success' : 'warning'"
               plain
               :loading="savingId === row.campaign_id"

@@ -16,6 +16,7 @@
     "test:sem-date-time": "node scripts/test-sem-date-time.mjs",
     "test:sem-ui-contracts": "node scripts/test-sem-ui-contracts.mjs",
     "test:sem-latest-request": "node scripts/test-latest-request.mjs",
+    "test:sem-classic-components": "vitest run scripts/test-sem-classic-components.test.js --environment jsdom",
     "test:sem-action-ledger": "node scripts/test-sem-action-ledger.mjs",
     "test:chunk-recovery": "node scripts/test-chunk-recovery.mjs",
     "test:sem-identity-repair-requests": "node scripts/test-sem-identity-repair-requests.mjs",
@@ -40,8 +41,10 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.6",
+    "@vue/test-utils": "^2.4.6",
     "jsdom": "30.0.1",
     "unplugin-vue-components": "^32.1.0",
-    "vite": "^8.0.12"
+    "vite": "^8.0.12",
+    "vitest": "^4.1.0"
   }
 }
