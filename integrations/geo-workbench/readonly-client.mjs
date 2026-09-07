@@ -101,7 +101,7 @@ function validateRef(ref, type, tenantId) {
   if (Object.hasOwn(ref, 'tenant_id')) contract(ref.tenant_id === tenantId)
 }
 
-function validatePeriod(data, active) {
+export function validateGeoPeriodContext(data, active) {
   contract(object(data) && data.tenant_id === active.tenantId && data.week_end === active.weekEnd && data.timezone === 'Asia/Shanghai')
   contract(object(data.current) && object(data.previous) && object(data.comparison) && Array.isArray(data.metric_status))
   contract(data.current.closed === true && data.previous.closed === true && typeof data.comparison.comparable === 'boolean')
@@ -231,7 +231,7 @@ export function createGeoReadonlyClient({ transport, onClear }) {
   }
 
   function accept(resource, data, params, active) {
-    if (resource === 'periodContext') { validatePeriod(data, active); period = data }
+    if (resource === 'periodContext') { validateGeoPeriodContext(data, active); period = data }
     else if (resource === 'metrics') {
       contract(Array.isArray(data)); data.forEach(item => validateMetric(item, active))
       const keys = data.map(item => item.metric_key)
