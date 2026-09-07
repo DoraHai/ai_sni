@@ -1,0 +1,32 @@
+name: GEO workbench consumer checks
+
+on:
+  pull_request:
+    paths:
+      - 'integrations/geo-workbench/**'
+      - 'frontend/src/utils/geoWorkbenchDisplay.js'
+      - 'frontend/tests/geoWorkbenchDisplay.test.mjs'
+      - '.github/workflows/geo-workbench-consumer-check.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'integrations/geo-workbench/**'
+      - 'frontend/src/utils/geoWorkbenchDisplay.js'
+      - 'frontend/tests/geoWorkbenchDisplay.test.mjs'
+      - '.github/workflows/geo-workbench-consumer-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  consumer:
+    name: GEO readonly consumer and formatter
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate GEO readonly consumer and existing formatter offline
+        run: node --test integrations/geo-workbench/readonly-client.test.mjs frontend/tests/geoWorkbenchDisplay.test.mjs
