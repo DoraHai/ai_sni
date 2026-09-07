@@ -22,3 +22,16 @@ context. Never supply an administrator key or use this module as an arbitrary pr
 The returned response intentionally exposes only `ok`, `status`, and guarded `json()`.
 
 Run offline: `node --test integrations/workbench/readonly-transport.test.mjs`
+
+`view-state.mjs` provides page-local card and discussion-reference lifecycle. It is
+not yet mounted on the formal page. Register its `invalidate()` with the host
+session adapter; also invalidate on account/date/site changes. Begin a card read
+before fetching to clear its prior data immediately. Supply already-authorized,
+validated metrics with the returned view revision. Use that same view revision
+for `MetricEvidenceCard`; do not mix it with the session adapter's revision.
+On permission failure invalidate the module/host authorization and clear the page,
+not merely the failed card. Discussion UI must resolve references at render/send
+time and remove any copied answers or text containing old evidence on invalidation.
+This state does not validate module responses or prove a user has access.
+
+Run lifecycle regressions: `node --test integrations/workbench/view-state.test.mjs`.
