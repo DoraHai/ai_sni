@@ -303,6 +303,16 @@ const routes = [
   },
   { path: '/settings', redirect: '/settings/accounts' },
   {
+    path: '/workspace/cockpit',
+    component: () => import('../views/workspace/AcquisitionCockpitView.vue'),
+    meta: {
+      title: 'G-Snipers 获客工作台',
+      documentTitle: 'G-Snipers 获客工作台 · 获客推广AI智能体',
+      bare: true,
+      perm: ['monitor.dashboard', 'optimize.keywords', 'optimize.searchterms', 'seo.site', 'seo.content', 'geo.content'],
+    },
+  },
+  {
     path: '/workspace',
     component: () => import('../views/workspace/ModuleWorkspaceView.vue'),
     meta: { title: '我的工作台' },
@@ -390,7 +400,8 @@ export function revalidateSessionRoute() {
 }
 router.afterEach((to) => {
   clearChunkRecoveryMarker()
-  const productName = to.path.startsWith('/seo') ? 'SEO 工作台' : 'SEM 智投平台'
+  const productName = to.path.startsWith('/workspace/cockpit') ? 'G-Snipers 获客工作台'
+    : to.path.startsWith('/seo') ? 'SEO 工作台' : 'SEM 智投平台'
   document.title = to.meta.documentTitle || (to.meta.title ? to.meta.title + ' · ' : '') + productName
 })
 router.onError((error) => {

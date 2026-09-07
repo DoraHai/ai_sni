@@ -39,6 +39,10 @@ const modules = computed(() => session.modules
 const customerName = computed(() => session.user?.tenant_id
   ? session.tenants.find((item) => item.id === session.user.tenant_id)?.name || session.user?.display_name
   : '平台管理员')
+const canOpenCockpit = computed(() => [
+  'monitor.dashboard', 'optimize.keywords', 'optimize.searchterms',
+  'seo.site', 'seo.content', 'geo.content',
+].some(key => session.canView(key)))
 
 async function load() {
   loading.value = true
@@ -68,6 +72,9 @@ onMounted(load)
         <div class="eyebrow">MY WORKSPACE</div>
         <h1>{{ customerName }}，选择要进入的工作台</h1>
         <p>使用同一个账号进入已开通模块；进入模块后，再选择该模块下的网站、品牌项目或推广账号。</p>
+        <el-button v-if="modules.length && canOpenCockpit" class="cockpit-entry" type="primary" @click="router.push('/workspace/cockpit')">
+          打开 G-Snipers 获客工作台
+        </el-button>
       </div>
       <div class="identity-card">
         <span>当前身份</span>
@@ -105,6 +112,7 @@ onMounted(load)
 <style scoped>
 .workspace{padding:28px;max-width:1180px}.workspace-hero{display:flex;align-items:stretch;justify-content:space-between;gap:32px;padding:28px 30px;border:1px solid #dfe7f0;border-radius:16px;background:linear-gradient(135deg,#fff 0%,#f4f8fd 100%);box-shadow:0 12px 32px rgba(31,62,96,.06)}
 .eyebrow{color:#2f6fa7;font-size:11px;font-weight:800;letter-spacing:1.4px}.workspace-hero h1{margin:9px 0 10px;color:#172b3f;font-size:27px}.workspace-hero p{max-width:720px;margin:0;color:#647487;font-size:14px;line-height:1.7}.identity-card{min-width:190px;padding:16px 18px;border-radius:12px;background:#163a5b;color:#fff;display:flex;flex-direction:column;justify-content:center}.identity-card span{font-size:11px;color:#a9c0d6}.identity-card strong{margin:5px 0;font-size:18px}.identity-card small{color:#d2deea}
+.cockpit-entry{margin-top:18px}
 .module-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:22px}.module-card{min-height:290px;padding:22px;border:1px solid #e0e7ef;border-radius:15px;background:#fff;display:flex;flex-direction:column;box-shadow:0 9px 24px rgba(31,62,96,.05);transition:transform .16s ease,box-shadow .16s ease}.module-card:hover{transform:translateY(-2px);box-shadow:0 14px 34px rgba(31,62,96,.1)}.module-top{display:flex;align-items:center;justify-content:space-between}.module-mark{width:52px;height:52px;border-radius:13px;display:grid;place-items:center;color:#fff;font-size:14px;font-weight:800;letter-spacing:.5px}.module-sem .module-mark{background:#2166a6}.module-seo .module-mark{background:#168265}.module-geo .module-mark{background:#7a55bd}.module-card h2{margin:19px 0 8px;color:#172b3f;font-size:21px}.module-card>p{min-height:46px;margin:0;color:#6b7a8c;font-size:13px;line-height:1.65}.module-scope{margin-top:18px;padding:12px 14px;border-radius:9px;background:#f5f8fb;display:flex;flex-direction:column;gap:4px}.module-scope span{color:#8795a5;font-size:11px}.module-scope strong{color:#31485e;font-size:13px}.module-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:auto;padding-top:20px;color:#8996a5;font-size:11px}
 @media(max-width:900px){.module-grid{grid-template-columns:1fr}.workspace-hero{flex-direction:column}.identity-card{min-width:0}.workspace{padding:18px}}
 </style>

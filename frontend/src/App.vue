@@ -16,18 +16,22 @@ import {
 } from './constants/semCapabilities'
 import { parseUtcTimestamp } from './utils/dateTime'
 import { SEM_PLANNED_CHANNELS, semChannelPath } from './constants/semChannels'
+import { isSecureCockpitRuntime } from './views/workspace/cockpit/scope.mjs'
 
 const route = useRoute()
 const router = useRouter()
 const currentTitle = computed(() => route.meta.title || '')
 const currentWorkflow = computed(() => route.meta.workflow || '')
 const bare = computed(() => route.meta.bare) // 门户、诊断等无框页面
+const insecureCockpitPreview = computed(() => (
+  route.path === '/workspace/cockpit' && !isSecureCockpitRuntime(window.location)
+))
 const tenantModuleScope = computed(() => {
   if (route.path.startsWith('/seo')) return 'seo'
   if (route.path.startsWith('/geo')) return 'geo'
   if (
     route.path.startsWith('/deal-sniper')
-    || route.path === '/workspace'
+    || route.path.startsWith('/workspace')
     || route.path === '/growth-sniper'
   ) return null
   return 'sem'
@@ -37,6 +41,7 @@ const showSemAccountContext = computed(() => (
   && !route.path.startsWith('/seo')
   && !route.path.startsWith('/geo')
   && !route.path.startsWith('/deal-sniper')
+  && !route.path.startsWith('/workspace')
 ))
 const tenantPopoverOpen = ref(false)
 const bootstrapError = ref('')
@@ -59,6 +64,7 @@ const liveWriteAccounts = computed(() => (
 ))
 
 async function loadWritebackMode() {
+  if (insecureCockpitPreview.value) return
   const tenantId = Number(session.tenantId) || null
   const generation = ++writebackModeGeneration
   writebackMode.value = { mode: 'dry_run', live_scopes: [] }
@@ -100,6 +106,7 @@ function resetBadges() {
 }
 
 async function loadBadges() {
+  if (insecureCockpitPreview.value) return
   const tenantId = Number(session.tenantId) || null
   const generation = ++badgeLoadGeneration
   resetBadges()
@@ -275,6 +282,7 @@ function tenantTone(id) {
 }
 
 async function loadTenants() {
+  if (insecureCockpitPreview.value) return
   if (!session.isLoggedIn) return
   const moduleScope = tenantModuleScope.value
   const generation = ++tenantLoadGeneration
@@ -293,6 +301,7 @@ async function loadTenants() {
 
 // 刷新当前用户（角色权限可能被管理员改过 → 侧边栏/按钮即时更新）
 async function refreshMe() {
+  if (insecureCockpitPreview.value) return
   if (!session.isLoggedIn) return
   try {
     const r = await fetchMe()
