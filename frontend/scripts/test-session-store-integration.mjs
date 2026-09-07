@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { AUTH_ENVELOPE_KEY } from '../src/store/sessionStorage.js'
-import { installAuthContextRouting, leaveUnauthorizedWorkspace } from '../src/router/authContextRouting.js'
+import { installAuthContextRouting, leaveUnauthorizedWorkspace } from '../src/authContextRouting.js'
 
 class MemoryStorage {
   constructor(initial = {}) { this.values = new Map(Object.entries(initial)) }
