@@ -94,6 +94,7 @@ jobs:
           tests/test_campaign_region_management.py
           tests/test_campaign_schedule_management.py
           tests/test_keyword_refresh.py
+          tests/test_module_permission_registry.py
           tests/test_prod_guard.py
           tests/test_scheduler_account_iteration.py
           tests/test_sem_identity_repair_preview.py

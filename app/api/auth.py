@@ -225,7 +225,10 @@ _MODULE_PERMISSION_KEYS = {
         "manage.adgroups", "manage.ocpc", "delivery.report",
         "settings.customers",
     ),
-    "seo": ("seo.assets", "seo.dashboard", "seo.keywords", "seo.content", "seo.site"),
+    "seo": (
+        "seo.assets", "seo.dashboard", "seo.alerts", "seo.keywords",
+        "seo.content", "seo.site", "seo.links", "seo.competitors",
+    ),
     "geo": ("geo.assets", "geo.content", "geo.diagnosis"),
 }
 
