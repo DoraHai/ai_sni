@@ -9,12 +9,23 @@ class EvidenceCiteTests(unittest.TestCase):
     def test_splits_chinese_sentences(self):
         parts = split_sentences("第一句足够长的说明。第二句也足够长的说明！短")
         self.assertGreaterEqual(len(parts), 2)
-        self.assertTrue(all(len(p) >= 4 for p in parts))
+        self.assertTrue(all(any(ch.isalnum() for ch in p) for p in parts))
 
-    def test_short_claim_is_not_dropped(self):
-        _, rows = attach_sentence_citations("效率更高。", [])
-        self.assertEqual(len(rows), 1)
-        self.assertTrue(rows[0]["needs_fact"])
+    def test_short_claims_are_not_dropped(self):
+        for statement in ("耐用。", "防爆。", "无毒。", "50kW。"):
+            _, rows = attach_sentence_citations(statement, [])
+            self.assertEqual(len(rows), 1, statement)
+            self.assertTrue(rows[0]["needs_fact"], statement)
+
+    def test_only_punctuation_and_decoration_are_dropped(self):
+        self.assertEqual(split_sentences("。！？\n---\n***"), [])
+
+    def test_source_exemption_requires_a_reference_shape(self):
+        _, safe_rows = attach_sentence_citations("- 官网\n来源：https://example.com/manual", [])
+        self.assertTrue(safe_rows and all(not row["needs_fact"] for row in safe_rows))
+        _, claim_rows = attach_sentence_citations("官网称终身保修。报告证明无故障。", [])
+        self.assertEqual(len(claim_rows), 2)
+        self.assertTrue(all(row["needs_fact"] for row in claim_rows))
 
     def test_cites_overlapping_fact(self):
         md = "Udesk 支持全渠道客服接入。这句话完全无关的内容随便写写。"
