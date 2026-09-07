@@ -27,7 +27,7 @@ const tenantModuleScope = computed(() => {
   if (route.path.startsWith('/geo')) return 'geo'
   if (
     route.path.startsWith('/deal-sniper')
-    || route.path === '/workspace'
+    || route.path.startsWith('/workspace')
     || route.path === '/growth-sniper'
   ) return null
   return 'sem'
@@ -37,6 +37,7 @@ const showSemAccountContext = computed(() => (
   && !route.path.startsWith('/seo')
   && !route.path.startsWith('/geo')
   && !route.path.startsWith('/deal-sniper')
+  && !route.path.startsWith('/workspace')
 ))
 const tenantPopoverOpen = ref(false)
 const bootstrapError = ref('')
