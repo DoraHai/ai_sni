@@ -26,12 +26,13 @@ def test_real_delivery_serialization(scenario):
     async def run():
         url=os.environ['GEO_TEST_POSTGRES_URL']; schema='geo_delivery_test_'+uuid4().hex
         admin=create_async_engine(url); engine=None; created=False
-        tables=['tenant_modules','geo_content_tasks','geo_channel_variants','geo_channel_accounts','geo_publishing_channels','geo_article_versions']
+        tables=['tenants','tenant_modules','geo_content_tasks','geo_channel_variants','geo_channel_accounts','geo_publishing_channels','geo_article_versions']
         try:
             async with admin.begin() as c:
                 await c.execute(text(f'CREATE SCHEMA {schema}'))
                 for table in tables:
                     await c.execute(text(f'CREATE TABLE {schema}.{table} AS SELECT * FROM public.{table} WITH NO DATA'))
+                await c.execute(text(f"INSERT INTO {schema}.tenants(id,name) VALUES(7,'测试租户')"))
                 await c.execute(text(f"INSERT INTO {schema}.tenant_modules(tenant_id,module_code,status) VALUES(7,'geo','active')"))
                 await c.execute(text(f"INSERT INTO {schema}.geo_content_tasks(id,tenant_id,review_status,title,status) VALUES(12,7,'approved','title','ready')"))
                 await c.execute(text(f"INSERT INTO {schema}.geo_article_versions(id,task_id,version_no,title,body_markdown) VALUES(16,12,1,'title','body')"))
@@ -74,7 +75,14 @@ def test_real_delivery_serialization(scenario):
                  patch('app.geo.content.multi_push._perform_single_push',side_effect=send):
                 a=asyncio.create_task(call(4));b=asyncio.create_task(call(6 if scenario=='different_accounts' else 4,True))
                 try:
-                    await asyncio.wait_for(second_ready.wait(),10)
+                    ready=asyncio.create_task(second_ready.wait())
+                    done,_=await asyncio.wait((a,b,ready),timeout=10,return_when=asyncio.FIRST_COMPLETED)
+                    if a in done or b in done:
+                        failed=a if a in done else b
+                        await failed
+                        raise AssertionError('delivery worker exited before reaching the lock check')
+                    if ready not in done:
+                        raise TimeoutError('second delivery worker did not reach the lock check')
                     async with admin.connect() as c:
                         for _ in range(100):
                             blockers=await c.scalar(text('SELECT pg_blocking_pids(:pid)'),{'pid':pids['second']})
@@ -84,9 +92,9 @@ def test_real_delivery_serialization(scenario):
                     release.set();results=await asyncio.wait_for(asyncio.gather(a,b),15)
                 finally:
                     release.set()
-                    for worker in (a,b):
+                    for worker in (a,b,ready):
                         if not worker.done():worker.cancel()
-                    await asyncio.gather(a,b,return_exceptions=True)
+                    await asyncio.gather(a,b,ready,return_exceptions=True)
             async with sessions() as s:
                 journal=(await s.get(GeoChannelVariant,3)).adapt_meta['push_deliveries']
                 if scenario=='different_accounts':
