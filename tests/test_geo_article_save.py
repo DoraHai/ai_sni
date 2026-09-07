@@ -4,8 +4,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import HTTPException
-from app.geo.content.routes import save_article
-from app.geo.content.schemas import ArticleUpdate
+from app.geo.content.routes import apply_patch as apply_content_patch, save_article
+from app.geo.content.rules import RuleInput
+from app.geo.content.schemas import ApplyPatchRequest, ArticleUpdate
 
 
 def fixture(*, expected=11, body='new body', existing=True):
@@ -84,3 +85,87 @@ def test_save_during_generation_does_not_release_generation_reservation():
 
     asyncio.run(exercise())
     assert task.status == 'generating'
+
+
+def test_save_drops_client_authored_outline_identity_and_scans_body_claim():
+    malicious = '本产品终身保修且采用钛合金齿轮'
+    task = NS(id=100, title='title', status='editing')
+    latest = NS(
+        id=11,
+        version_no=3,
+        title='title',
+        body_markdown='saved body',
+        outline={},
+        author_name=None,
+    )
+    session = NS(refresh=AsyncMock(), commit=AsyncMock(), add=Mock())
+    req = ArticleUpdate(
+        title='title',
+        body_markdown=f'*作者：{malicious}*',
+        outline={'author_name': malicious},
+        expected_article_id=11,
+    )
+
+    async def exercise():
+        with patch('app.geo.content.routes._get_task', AsyncMock(return_value=task)), \
+             patch('app.geo.content.routes._latest_article', AsyncMock(return_value=latest)), \
+             patch('app.geo.content.routes._task_payload', AsyncMock(return_value={'id': 100})), \
+             patch('app.geo.content.routes._task_facts', AsyncMock(return_value=[])), \
+             patch('app.geo.content.routes.invalidate_review'), \
+             patch('app.geo.content.routes._sync_task_pipeline', AsyncMock()):
+            await save_article(
+                100,
+                req,
+                7,
+                NS(ensure_tenant=lambda value: None, user_id=9),
+                session,
+            )
+
+    asyncio.run(exercise())
+    saved = session.add.call_args.args[0]
+    assert 'author_name' not in saved.outline
+    assert saved.author_name is None
+    rows = saved.outline['sentence_citations']
+    assert rows[0]['needs_fact'] is True
+
+
+def test_apply_patch_rejects_client_supplied_author_identity():
+    malicious = '本产品终身保修且采用钛合金齿轮'
+    task = NS(id=100, tenant_id=7, title='title', status='editing')
+    article = NS(
+        id=11,
+        version_no=3,
+        title='title',
+        body_markdown='正文',
+        outline={},
+        author_name=None,
+    )
+    rule_input = RuleInput(
+        question='问题',
+        title='title',
+        body_markdown='正文',
+        outline={},
+        facts=[],
+        target_channels=[],
+        variants=[],
+        author_name=None,
+        default_author=None,
+    )
+    session = NS(add=Mock())
+
+    async def exercise():
+        with patch('app.geo.content.routes._get_task', AsyncMock(return_value=task)), \
+             patch('app.geo.content.routes._latest_article', AsyncMock(return_value=article)), \
+             patch('app.geo.content.routes._build_rule_input', AsyncMock(return_value=rule_input)):
+            await apply_content_patch(
+                100,
+                ApplyPatchRequest(code='author_visible', author_name=malicious),
+                7,
+                NS(ensure_tenant=lambda value: None, user_id=9),
+                session,
+            )
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(exercise())
+    assert error.value.status_code == 400
+    session.add.assert_not_called()

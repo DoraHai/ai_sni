@@ -36,24 +36,14 @@ class EvidenceCiteTests(unittest.TestCase):
         self.assertEqual(len(claim_rows), 3)
         self.assertTrue(all(row["needs_fact"] for row in claim_rows))
 
-    def test_author_metadata_must_match_structured_author_exactly(self):
-        author = "*作者：内容编辑*"
-        _, trusted = attach_sentence_citations(author, [], author_name="内容编辑")
-        self.assertEqual(len(trusted), 1)
-        self.assertFalse(trusted[0]["needs_fact"])
-
+    def test_body_author_lines_never_receive_a_metadata_exemption(self):
         for value in (
-            author,
+            "*作者：内容编辑*",
             "*作者：本产品终身保修且采用钛合金齿轮*",
         ):
-            _, rows = attach_sentence_citations(value, [], author_name="内容编辑")
-            if value == author:
-                continue
+            _, rows = attach_sentence_citations(value, [])
             self.assertEqual(len(rows), 1)
             self.assertTrue(rows[0]["needs_fact"])
-
-        _, untrusted = attach_sentence_citations(author, [])
-        self.assertTrue(untrusted[0]["needs_fact"])
 
     def test_fixed_generation_chrome_does_not_block_grounded_content(self):
         statement = "MAXXDRIVE XT features a ribbed housing."

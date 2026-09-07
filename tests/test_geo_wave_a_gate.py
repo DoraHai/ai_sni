@@ -22,9 +22,9 @@ def _ready_input(**kwargs) -> RuleInput:
             "## 结论\n\n优先核验来源后再决策。\n\n"
             "## 来源\n\n- 白皮书\n\n"
             "覆盖 80% 场景。实施约 14 天。服务 120 家客户。\n\n"
-            "*作者：Demo*\n*更新时间：2026-07-28*\n"
+            "*更新时间：2026-07-28*\n"
         ),
-        outline={"direct_answer": "应结合场景与可核验事实选择数据分析平台。", "author_name": "Demo", "updated_at": "2026-07-28"},
+        outline={"direct_answer": "应结合场景与可核验事实选择数据分析平台。", "updated_at": "2026-07-28"},
         facts=[
             {"id": 1, "statement": "覆盖 80% 场景", "source_name": "s", "trust_level": "verified", "status": "active"},
             {"id": 2, "statement": "实施约 14 天", "source_name": "s", "trust_level": "verified", "status": "active"},
@@ -34,6 +34,7 @@ def _ready_input(**kwargs) -> RuleInput:
         ],
         target_channels=["website"],
         variants=["website"],
+        author_name="Demo",
     )
     data.update(kwargs)
     return RuleInput(**data)

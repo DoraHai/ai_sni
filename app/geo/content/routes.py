@@ -622,9 +622,7 @@ def _refresh_article_citations(
     body = strip_citation_appendix(article.body_markdown or "")
     if article.body_markdown != body:
         article.body_markdown = body
-    outline = article.outline if isinstance(article.outline, dict) else {}
-    structured_author = article.author_name or outline.get("author_name")
-    cites = build_sentence_citations(body, facts, author_name=structured_author)
+    cites = build_sentence_citations(body, facts)
     outline = dict(article.outline or {})
     outline["sentence_citations"] = cites
     article.outline = outline
@@ -7306,6 +7304,9 @@ async def save_article(
 
     body = strip_citation_appendix(req.body_markdown)
     outline = dict(req.outline or (latest.outline if latest else {}) or {})
+    # Author identity is stored in the dedicated server-controlled column.
+    # Client-supplied outline metadata must never create an evidence exemption.
+    outline.pop("author_name", None)
     if (latest and latest.title == req.title.strip() and strip_citation_appendix(latest.body_markdown) == body
             and (latest.outline or {}) == outline):
         await session.commit()
@@ -7489,11 +7490,10 @@ async def apply_patch(
     if new_body.strip() == old_body.strip():
         raise HTTPException(400, "这次修改没有改变正文，请手工编辑或重新检查")
 
-    author_name = req.author_name or article.author_name
-    if req.code == "author_visible" and req.author_name:
-        author_name = req.author_name
+    author_name = article.author_name
     # Drop stale outline FAQ/sections that can mask body-based detectors
     outline = dict(article.outline or {}) if isinstance(article.outline, dict) else {}
+    outline.pop("author_name", None)
     if req.code == "faq_min" and isinstance(outline.get("faq"), list):
         outline.pop("faq", None)
     if req.code in {"definition", "conclusion_extractable"} and isinstance(
