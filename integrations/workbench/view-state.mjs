@@ -46,13 +46,14 @@ export function createWorkbenchViewState() {
     if (!metric || !['available', 'partial'].includes(metric.state)) return null
     // Discussion stores a reference, not a second cached copy of the evidence.
     const ref = Object.freeze({ module, metricId: id, contextRevision: revision })
-    references.set(key, ref)
+    if (!references.has(key)) references.set(key, new Set())
+    references.get(key).add(ref)
     return ref
   }
   function resolve(ref) {
     if (!ref || disposed || ref.contextRevision !== revision) return null
     const key = keyOf(ref.module, ref.metricId)
-    if (references.get(key) !== ref) return null
+    if (!references.get(key)?.has(ref)) return null
     const metric = cards.get(key)
     return metric ? structuredClone(metric) : null
   }
