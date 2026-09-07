@@ -35,7 +35,11 @@ def _ctx(*, tenant_id=7, permissions=None):
         username="viewer",
         role_name="viewer",
         tenant_id=tenant_id,
-        permissions=permissions or {"seo.content": "view"},
+        permissions=(
+            permissions
+            if permissions is not None
+            else {"seo.content": "view", "seo.site": "view"}
+        ),
     )
 
 
@@ -161,19 +165,23 @@ def _db(*, rows, attempts, pages, total=1):
 def test_url_normalization_contract_is_conservative_and_deterministic():
     assert api._normalize_workbench_publication_url(
         "HTTPS://Example.COM:443/Article/?b=2&a=1&a=#section"
-    ) == "https://example.com/Article?a=1&a=&b=2"
+    ) == "https://example.com/Article/?b=2&a=1&a="
     assert api._normalize_workbench_publication_url(
         "https://example.com/Article?a=1&a=2"
     ) != api._normalize_workbench_publication_url(
         "https://example.com/Article?a=2&a=1"
     )
-    assert api._normalize_workbench_publication_url("http://EXAMPLE.com:80") == "http://example.com/"
+    assert api._normalize_workbench_publication_url("http://EXAMPLE.com:80") == "http://example.com"
+    assert api._normalize_workbench_publication_url(
+        "https://EXAMPLE.com:443/report?a=1#section"
+    ) == "https://example.com/report?a=1"
     assert api._normalize_workbench_publication_url("https://example.com:8443/a") == "https://example.com:8443/a"
     assert api._normalize_workbench_publication_url("https://example.com/Article") != (
         api._normalize_workbench_publication_url("https://example.com/article")
     )
     assert api._normalize_workbench_publication_url("ftp://example.com/a") is None
     assert api._normalize_workbench_publication_url("https://user:secret@example.com/a") is None
+    assert api._normalize_workbench_publication_url("https://@example.com/a") is None
     assert api._normalize_workbench_publication_url("https://example.com/%zz") is None
 
 
@@ -188,15 +196,29 @@ def test_association_distinguishes_missing_no_match_unique_and_multiple():
     )
     assert no_match["association_status"] == "no_match" and selected is None
 
+    trailing_slash, selected = api._associate_workbench_publication_page(
+        "https://example.com/article/",
+        [_page(url="https://example.com/article")],
+        inventory_complete=True,
+    )
+    assert trailing_slash["association_status"] == "no_match" and selected is None
+
+    reordered_query, selected = api._associate_workbench_publication_page(
+        "https://example.com/article?b=2&a=1&a=",
+        [_page(url="https://example.com/article?a=1&a=&b=2")],
+        inventory_complete=True,
+    )
+    assert reordered_query["association_status"] == "no_match" and selected is None
+
     unique, selected = api._associate_workbench_publication_page(
-        "HTTPS://EXAMPLE.COM:443/article/?b=2&a=1#x",
+        "HTTPS://EXAMPLE.COM:443/article?a=1&b=2#x",
         [_page(url="https://example.com/article?a=1&b=2")],
         inventory_complete=True,
     )
     assert unique["association_status"] == "exact_unique"
     assert selected.id == 31
 
-    candidates = [_page(page_id=index, url="https://example.com/article") for index in range(1, 8)]
+    candidates = [_page(page_id=index, url="https://example.com/article/") for index in range(1, 8)]
     multiple, selected = api._associate_workbench_publication_page(
         "https://example.com/article/", candidates, inventory_complete=True
     )
@@ -358,24 +380,66 @@ def test_endpoint_rejects_cross_tenant_and_missing_permissions_before_database(m
         )
     assert cross_tenant.value.status_code == 403
 
-    with pytest.raises(HTTPException) as no_permission:
-        asyncio.run(
-            api.list_workbench_publication_page_evidence(
-                tenant_id=7,
-                site_id=9,
-                content_id=None,
-                publication_id=None,
-                page=1,
-                page_size=20,
-                session=db,
-                ctx=_ctx(permissions={"seo.dashboard": "view"}),
+    for permissions in (
+        {"seo.content": "view"},
+        {"seo.site": "view"},
+        {"seo.dashboard": "view"},
+        {},
+    ):
+        with pytest.raises(HTTPException) as no_permission:
+            asyncio.run(
+                api.list_workbench_publication_page_evidence(
+                    tenant_id=7,
+                    site_id=9,
+                    content_id=None,
+                    publication_id=None,
+                    page=1,
+                    page_size=20,
+                    session=db,
+                    ctx=_ctx(permissions=permissions),
+                )
             )
-        )
-    assert no_permission.value.status_code == 403
+        assert no_permission.value.status_code == 403
     module_guard.assert_not_awaited()
     db.scalar.assert_not_awaited()
     db.execute.assert_not_awaited()
     db.scalars.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("content_level", "site_level"),
+    [("view", "view"), ("view", "edit"), ("edit", "view"), ("edit", "edit")],
+)
+def test_endpoint_accepts_all_content_and_site_view_edit_combinations(
+    monkeypatch, content_level, site_level
+):
+    db = _db(rows=[], attempts=[], pages=[], total=0)
+    monkeypatch.setattr(api, "ensure_module_access", AsyncMock())
+    monkeypatch.setattr(api, "_tenant", AsyncMock(return_value=SimpleNamespace(id=7)))
+    monkeypatch.setattr(
+        api, "_seo_site", AsyncMock(return_value=SimpleNamespace(id=9, tenant_id=7))
+    )
+
+    result = asyncio.run(
+        api.list_workbench_publication_page_evidence(
+            tenant_id=7,
+            site_id=9,
+            content_id=None,
+            publication_id=None,
+            page=1,
+            page_size=20,
+            session=db,
+            ctx=_ctx(
+                permissions={
+                    "seo.content": content_level,
+                    "seo.site": site_level,
+                }
+            ),
+        )
+    )
+
+    assert result["total"] == 0
+    assert result["read_only"] is True
 
 
 def test_endpoint_stops_when_seo_module_is_unavailable(monkeypatch):

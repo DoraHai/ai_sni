@@ -11,7 +11,7 @@ task, or infer that search performance improved.
 Required query parameters are `tenant_id` and `site_id`. Optional `content_id`
 and `publication_id` filters are combined with AND. `page` starts at 1;
 `page_size` defaults to 20 and is limited to 100. The authenticated identity
-must belong to the tenant, have `seo.content` or `seo.site` view access, and the
+must belong to the tenant, have both `seo.content` and `seo.site` view access, and the
 tenant must have an available SEO module. The site must belong to that tenant.
 
 The endpoint returns only stored rows from `seo_content_assets`,
@@ -27,15 +27,17 @@ limited:
 - lowercase the HTTP/HTTPS scheme and host;
 - remove port 80 for HTTP and port 443 for HTTPS;
 - ignore the fragment;
-- treat an empty path as `/` and ignore trailing slashes on non-root paths;
-- sort query pairs by name while preserving the original order of repeated
-  values, duplicate names, and blank values;
-- retain every query parameter, non-default port, path character, path escape,
-  and path letter case.
+- retain the path exactly, including an empty path, a trailing slash, path
+  escapes, and letter case;
+- retain the complete query exactly, including parameter order, repeated
+  parameters, blank values, and escape spelling;
+- retain every non-default port.
 
-Malformed URLs, credentials in URLs, non-HTTP schemes, and more than 200 query
-fields are not eligible. Title, keyword, similar path, canonical URL, and newest
-page are never used as fallback associations.
+Malformed URLs, credentials in URLs, and non-HTTP schemes are not eligible.
+Title, keyword, similar path, canonical URL, query reordering, trailing-slash
+guessing, and newest page are never used as fallback associations. A future
+canonical or redirect evidence source may establish additional equivalence,
+but this endpoint does not infer it from the current rows.
 
 `association_status` has these values:
 

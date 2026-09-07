@@ -10,7 +10,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from time import monotonic
 from typing import Any, Literal
-from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlparse, urlsplit, urlunsplit
+from urllib.parse import quote, urljoin, urlparse, urlsplit, urlunsplit
 from uuid import uuid4
 
 from app.seo_backlinks import apply_backlink_evidence, discover_backlinks, fetch_backlink_page
@@ -5408,10 +5408,10 @@ _INVALID_URL_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 def _normalize_workbench_publication_url(value: str | None) -> str | None:
     """Return the documented conservative URL identity used by the workbench.
 
-    Scheme and host are lower-cased, default ports and fragments are removed,
-    a non-root trailing slash is ignored, and query pairs are sorted while
-    preserving duplicate keys and blank values.  Path case, path escapes,
-    non-default ports, and query parameters are never discarded.
+    Scheme and host are lower-cased, default ports and fragments are removed.
+    Path spelling (including a trailing slash), query order, duplicate query
+    parameters, escapes, and non-default ports are preserved.  Redirect or
+    canonical evidence is required before treating any other URLs as equal.
     """
     raw = str(value or "")
     if not raw or raw != raw.strip() or _INVALID_URL_ESCAPE.search(raw):
@@ -5422,12 +5422,12 @@ def _normalize_workbench_publication_url(value: str | None) -> str | None:
         if (
             scheme not in {"http", "https"}
             or not parsed.hostname
-            or parsed.username
-            or parsed.password
+            or parsed.username is not None
+            or parsed.password is not None
         ):
             return None
         port = parsed.port
-        hostname = parsed.hostname.encode("idna").decode("ascii").lower()
+        hostname = parsed.hostname.lower()
         display_host = f"[{hostname}]" if ":" in hostname else hostname
         netloc = display_host
         if port is not None and not (
@@ -5435,16 +5435,8 @@ def _normalize_workbench_publication_url(value: str | None) -> str | None:
             or (scheme == "https" and port == 443)
         ):
             netloc = f"{display_host}:{port}"
-        path = parsed.path or "/"
-        if path != "/":
-            path = path.rstrip("/") or "/"
-        query_pairs = parse_qsl(
-            parsed.query,
-            keep_blank_values=True,
-            strict_parsing=False,
-            max_num_fields=200,
-        )
-        query = urlencode(sorted(query_pairs, key=lambda pair: pair[0]), doseq=True)
+        path = parsed.path
+        query = parsed.query
     except (UnicodeError, ValueError):
         return None
     return urlunsplit((scheme, netloc, path, query, ""))
@@ -6575,8 +6567,10 @@ async def list_workbench_publication_page_evidence(
 ) -> dict[str, Any]:
     """Join stored publication and page-check evidence without starting work."""
     ctx.ensure_tenant(tenant_id)
-    if not ctx.can_view("seo.content", "seo.site"):
-        raise HTTPException(403, "当前账号没有 SEO 内容或页面查看权限")
+    if not (
+        ctx.can_view("seo.content") and ctx.can_view("seo.site")
+    ):
+        raise HTTPException(403, "当前账号需要同时具有 SEO 内容和页面查看权限")
     await ensure_module_access(session, ctx, tenant_id, "seo")
     await _tenant(session, tenant_id)
     await _seo_site(session, tenant_id, site_id)
