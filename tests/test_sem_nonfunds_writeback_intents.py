@@ -20,6 +20,7 @@ os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.baidu.writeback import (
     WritebackError,
+    _relock_action_intent,
     apply_adgroup_landing_url_writeback,
     apply_adgroup_pause_writeback,
     apply_campaign_pause_writeback,
@@ -43,6 +44,39 @@ NON_FUNDS_ACTIONS = {
     "apply_adgroup_pause_writeback",
     "apply_adgroup_landing_url_writeback",
 }
+
+
+def test_disabled_account_cannot_overwrite_reconciled_action() -> None:
+    asset = SimpleNamespace(baidu_account_id=88)
+    account = SimpleNamespace(id=88, status="active")
+    record = SimpleNamespace(
+        id=15,
+        status="pending",
+        reconciliation_result=None,
+        error_msg=None,
+        executed_at=None,
+    )
+
+    async def refresh(row, **_kwargs):
+        if row is account:
+            account.status = "disabled"
+        elif row is record:
+            record.status = "success"
+            record.reconciliation_result = "confirmed_executed"
+            record.error_msg = "manual reconciliation preserved"
+
+    session = SimpleNamespace(refresh=AsyncMock(side_effect=refresh), commit=AsyncMock())
+    with pytest.raises(WritebackError, match="已被处理为 success"):
+        asyncio.run(
+            _relock_action_intent(
+                session, record, asset=asset, account=account
+            )
+        )
+
+    assert record.status == "success"
+    assert record.reconciliation_result == "confirmed_executed"
+    assert record.error_msg == "manual reconciliation preserved"
+    session.commit.assert_not_awaited()
 
 
 def test_every_nonfunds_action_persists_live_intent_and_classifies_uncertain_errors() -> None:

@@ -186,6 +186,7 @@ jobs:
           root = ET.parse(sys.argv[1]).getroot()
           expected = {
               "test_reconciler_wins_during_commit_relock_gap_and_executor_stays_stopped",
+              "test_account_disable_after_manual_reconciliation_preserves_decision",
               "test_schedule_intent_blocks_concurrent_campaign_pause_domain",
               "test_full_list_sync_in_commit_relock_gap_blocks_stale_remote_overwrite",
               "test_add_word_success_in_commit_relock_gap_blocks_duplicate_remote_call",

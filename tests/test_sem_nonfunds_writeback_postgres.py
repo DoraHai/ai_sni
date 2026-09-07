@@ -222,6 +222,43 @@ def test_reconciler_wins_during_commit_relock_gap_and_executor_stays_stopped():
     asyncio.run(exercise())
 
 
+def test_account_disable_after_manual_reconciliation_preserves_decision():
+    async def exercise():
+        async with database() as engine:
+            async with AsyncSession(engine, expire_on_commit=False) as setup:
+                setup.add_all([account_row(), campaign_row()])
+                await setup.commit()
+
+            async with AsyncSession(engine, expire_on_commit=False) as executor:
+                campaign = await executor.get(Campaign, 101)
+                account = await executor.get(BaiduAccount, 17)
+                record = action_row("campaign_pause")
+                await _persist_funds_intent(executor, record, dry_run=False)
+
+                async with AsyncSession(engine, expire_on_commit=False) as reconciler:
+                    decided = await reconciler.get(WritebackAction, record.id)
+                    disabled = await reconciler.get(BaiduAccount, 17)
+                    decided.status = "success"
+                    decided.reconciliation_result = "confirmed_executed"
+                    decided.error_msg = "manual reconciliation preserved"
+                    disabled.status = "disabled"
+                    await reconciler.commit()
+
+                with pytest.raises(WritebackError, match="已被处理为 success"):
+                    await _relock_action_intent(
+                        executor, record, asset=campaign, account=account
+                    )
+                await executor.rollback()
+
+            async with AsyncSession(engine) as check:
+                preserved = await check.get(WritebackAction, record.id)
+                assert preserved.status == "success"
+                assert preserved.reconciliation_result == "confirmed_executed"
+                assert preserved.error_msg == "manual reconciliation preserved"
+
+    asyncio.run(exercise())
+
+
 def test_schedule_intent_blocks_concurrent_campaign_pause_domain():
     async def exercise():
         async with database() as engine:

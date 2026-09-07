@@ -236,12 +236,6 @@ async def _relock_action_intent(
     await _relock_funds_account(
         session, account, record, related_records=related_records
     )
-    for item in records:
-        await session.refresh(item, with_for_update=True)
-        if item.status != "pending":
-            raise WritebackError(
-                f"回写台账 #{item.id} 已被处理为 {item.status}，本次不再调用百度"
-            )
     if getattr(asset, "baidu_account_id", None) != account.id:
         for item in records:
             item.status = "failed"
@@ -271,9 +265,18 @@ async def _relock_funds_account(
 ) -> None:
     """intent 提交后重新锁定并复核账户，避免停用账户继续真实回写。"""
     await session.refresh(account, with_for_update=True)
+    records = [record, *(related_records or [])]
+    # Reconciliation may finish in the commit→relock gap.  Lock and verify the
+    # ledger before an account-state rejection writes anything, otherwise a
+    # stale executor can overwrite a confirmed manual decision with ``failed``.
+    for item in sorted(records, key=lambda value: int(value.id or 0)):
+        await session.refresh(item, with_for_update=True)
+        if item.status != "pending":
+            raise WritebackError(
+                f"回写台账 #{item.id} 已被处理为 {item.status}，本次不再调用百度"
+            )
     if account.status == "active":
         return
-    records = [record, *(related_records or [])]
     for item in records:
         item.status = "failed"
         item.error_msg = "执行前复核失败：推广账户授权已停用或归属状态已变化"
