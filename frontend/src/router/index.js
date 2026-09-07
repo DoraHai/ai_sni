@@ -308,6 +308,7 @@ const routes = [
     meta: {
       title: 'G-Snipers 获客工作台',
       documentTitle: 'G-Snipers 获客工作台 · 获客推广AI智能体',
+      bare: true,
       perm: ['monitor.dashboard', 'optimize.keywords', 'optimize.searchterms', 'seo.site', 'seo.content', 'geo.content'],
     },
   },
