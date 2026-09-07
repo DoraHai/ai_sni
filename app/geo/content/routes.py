@@ -7428,6 +7428,15 @@ async def save_article(
     session.add(article)
     task.title = req.title.strip()
     invalidate_review(task)
+    previous_rules_raw = getattr(task, "rule_result", None)
+    previous_rules = previous_rules_raw if isinstance(previous_rules_raw, dict) else {}
+    task.rule_result = {
+        **previous_rules,
+        "ready": False,
+        "checks": [],
+        "brand_validation": None,
+        "article_changed_since_check": True,
+    }
     if task.status in {"draft", "facts_bound", "failed"}:
         task.status = "editing"
     await _sync_task_pipeline(session, task)
@@ -8200,8 +8209,10 @@ async def record_publication(
         raise HTTPException(400, "请先生成该渠道版本")
     article = await _latest_article(session, task.id)
     rule_input = await _build_rule_input(session, task, article)
+    tenant = await _ensure_tenant_exists(session, task.tenant_id)
+    brand, _ = await _brand_context_for_task(session, task, tenant)
     try:
-        assert_can_publish(rule_input, task=task)
+        assert_can_publish(rule_input, task=task, brand=brand)
     except PublishGateError as exc:
         raise HTTPException(400, str(exc)) from exc
     registry_rows = registry_row_dicts(
@@ -8320,8 +8331,10 @@ async def push_variant_webhook(
 
     article = await _latest_article(session, task.id)
     rule_input = await _build_rule_input(session, task, article)
+    tenant = await _ensure_tenant_exists(session, task.tenant_id)
+    brand, _ = await _brand_context_for_task(session, task, tenant)
     try:
-        assert_can_publish(rule_input, task=task)
+        assert_can_publish(rule_input, task=task, brand=brand)
     except PublishGateError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -8416,8 +8429,10 @@ async def push_variant_batch(
 
     article = await _latest_article(session, task.id)
     rule_input = await _build_rule_input(session, task, article)
+    tenant = await _ensure_tenant_exists(session, task.tenant_id)
+    brand, _ = await _brand_context_for_task(session, task, tenant)
     try:
-        assert_can_publish(rule_input, task=task)
+        assert_can_publish(rule_input, task=task, brand=brand)
     except PublishGateError as exc:
         raise HTTPException(400, str(exc)) from exc
 

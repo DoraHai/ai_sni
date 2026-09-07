@@ -17,6 +17,7 @@ def assert_can_publish(
     rule_input: RuleInput,
     *,
     task: Any | None = None,
+    brand: str | None = None,
 ) -> list:
     from app.geo.content.draft_lint import lint_draft, lint_summary
 
@@ -48,6 +49,16 @@ def assert_can_publish(
             )
 
     if task is not None:
+        from app.geo.content.brand_geo import markdown_brand_validation
+
+        current_brand = markdown_brand_validation(
+            brand=brand or getattr(rule_input, "default_author", None),
+            title=getattr(rule_input, "title", "") or "",
+            body_markdown=getattr(rule_input, "body_markdown", "") or "",
+        )
+        if current_brand.get("passed") is False:
+            issues = current_brand.get("issues") or ["品牌标准未满足"]
+            raise PublishGateError("品牌标准未通过：" + str(issues[0]))
         from app.geo.content.review import assert_review_approved
         try:
             assert_review_approved(task)
@@ -56,9 +67,9 @@ def assert_can_publish(
         rr = getattr(task, "rule_result", None) or {}
         if not isinstance(rr, dict):
             rr = {}
-        brand_validation = rr.get("brand_validation")
-        if isinstance(brand_validation, dict) and brand_validation.get("passed") is False:
-            issues = brand_validation.get("issues") or ["品牌标准未满足"]
+        stored_brand = rr.get("brand_validation")
+        if isinstance(stored_brand, dict) and stored_brand.get("passed") is False:
+            issues = stored_brand.get("issues") or ["品牌标准未满足"]
             raise PublishGateError("品牌标准未通过：" + str(issues[0]))
         score_payload = {
             "geo_score": rr.get("geo_score"),
