@@ -153,6 +153,22 @@ def test_search_windows_cover_all_filtered_pages_without_summing(client):
     assert filtered["items"][0]["metrics"]["ctr"] is None
 
 
+def test_classic_search_terms_exposes_filtered_account_windows(client):
+    data = get(client, "search-terms", tenant_id=1, page_size=1)
+    assert data["total"] == 3 and len(data["search_terms"]) == 1
+    assert data["mixed_windows"] is True and data["summary_comparable"] is False
+    assert data["window"] is None
+    assert sum(row["stored_rows"] for row in data["windows"]) == data["total"]
+    assert {row["baidu_account_id"] for row in data["windows"]} == {11, 12}
+    assert data["search_terms"][0]["baidu_account_id"] in {11, 12}
+
+    filtered = get(client, "search-terms", tenant_id=1, baidu_account_id=12)
+    assert filtered["account_scope"] == {"mode": "single", "baidu_account_id": 12}
+    assert filtered["mixed_windows"] is False and filtered["summary_comparable"] is True
+    assert filtered["window"]["baidu_account_id"] == 12
+    assert all(row["baidu_account_id"] == 12 for row in filtered["search_terms"])
+
+
 PATHS=["keywords/cockpit","keywords/cockpit/100","search-terms/cockpit"]
 
 
