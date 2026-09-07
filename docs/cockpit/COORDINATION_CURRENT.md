@@ -1,4 +1,4 @@
-# Current coordination — 2026-09-07 15:43 Asia/Shanghai
+# Current coordination — 2026-09-07 16:03 Asia/Shanghai
 
 This is the authoritative continuation checkpoint. Historical pause documents are superseded by the current user instruction to continue development and coordinate the existing SEM, SEO and GEO tasks.
 
@@ -14,9 +14,9 @@ This is the authoritative continuation checkpoint. Historical pause documents ar
 
 - SEM backend: PR430 deployed as `3cadafae1cab7b8380f243c865305ca08d0dd386`, workflow `34093369715`, verify job `101651452893`, deploy job `101651564257`. Public `/health`=200, exact release and db=ok. Rollback `554934d6cbb2921f10f1fe165cbaf62f5b2544f8`.
 - SEM frontend: PR427 deployed as `afcc63c270e9bcffe08d0295a416902ba6594a42`, workflow `34092436470`, deploy job `101648692353`. Coordinator independently rechecked `/health`=200 with backend `554934d6...`/db=ok and `/onboarding`=200 with the app shell. Rollback `ee3bf6c9077b99836a95f607abd44f2a9ac99264`.
-- GEO: follow-up PR428 fixed the post-deploy review findings and deployed as `882802b44821db4bc1f8c9fc80cdf68931b80885`, workflow `34093141048`, migration=not-run. `/geo-health` and dashboard returned 200; db=ok. Rollback `eb1e05d40a73dc2b79ad25832a065462ba97b316`.
+- GEO: current production is PR434 merge `f694ddbdeba8026271860089a3d16cfd534b8627`, deployment workflow `34097293229` and baseline `34097293203` succeeded, migration=not-run. `/geo-health`=200, db=ok, both schedulers running and dashboard=200. It retains the PR428 final gate fixes and adds current-brand recheck for the existing V3 without regeneration.
 - SEO frontend: PR419 exact `a083b1687612883a5e488d4e8b0660ba84898149` passed independent review and five checks, merged as `e220900567fd191704bd6b44c5957cb10fb2d531`. Production SEO frontend workflow `34096271870` and baseline workflow `34096272471` succeeded. Post-release server/rollback evidence is being collected by the SEO owner.
-- Formal workbench is now on main through PR432 merge `d1feded223af2b52815db07aac9126c040d0c5cd`. It is not yet in SEM frontend production.
+- Formal workbench is now on main through GEO summary PR435 merge `d93acd8bde4cd1cfdb73c980dd1d75d99f32f5a0`. It is not yet in SEM frontend production.
 
 No migration was run. Coordinator/module tasks did not operate GEO task14, approve content, publish content or perform new real-customer writes.
 
@@ -52,6 +52,7 @@ GEO fixed all three on exact reviewed head `4da1183dcbd5b47e0b15cd945c7e0765ffef
 - The original gap was that a fresh ordinary SEO read-only user could not list/select sites because existing `/api/v1/seo/sites` requires `seo.assets`; the summary slice could only reuse an already selected scoped site.
 - PR431 resolved that gap: exact `a42db9050ab45c7319d00e7d255fcb86a1d41cc2` exposed the tenant-qualified GET-only site list and merged as `b3db70ac648e4387047cf58bb29f883f520f393e`.
 - Workbench PR432 added the customer-facing site selector and merged as `d1feded223af2b52815db07aac9126c040d0c5cd` from exact `26a266e33c9e8573c654a7a1c19e4a5bfa3aeb97`. Independent SEM review found and drove fixes for two P1 state transitions: invalidated sites cannot silently switch on the second reactive load, and the block remains isolated per tenant across A→B→A switching. Final review PASS P1=0/P2=0; 52 related contracts, frontend build and artifact verification passed.
+- Workbench PR435 merged as `d93acd8bde4cd1cfdb73c980dd1d75d99f32f5a0` from exact `72111a00e4ebf01144a01498ae18f065c6a13504`. It mounts the reviewed GEO GET-only transport and GEO-owned authorization context, then shows six complete-week cards: AI mentions, mention rate, visibility score, qualified answers, valid questions and covered engines. Simulated/manual/unknown/excluded/insufficient data remain unavailable and answer rows are not re-aggregated. Independent SEM review PASS P1=0/P2=0; all PR CI passed.
 
 ## Ownership and next action
 
@@ -62,6 +63,6 @@ GEO fixed all three on exact reviewed head `4da1183dcbd5b47e0b15cd945c7e0765ffef
 
 ## Human, database and administrator queue
 
-- Human: the production `882802b...` retest generated V3/article #20 as an evidence-only fallback and preserved V1/V2, so the code mechanism passed. H1 remains blocked only because the task business profile uses `product_name=工业齿轮箱` while its facts/body use NORD/MAXXDRIVE. An authorized business user must change the profile's outward-facing brand/product name to `MAXXDRIVE`, place `NORD` in the brand description, then click only “重新检查” on existing V3. Do not regenerate, approve, create channel copy or publish. Return the resulting brand check, opening/conclusion checks, status, timestamp and screenshots. H2-H4 remain blocked until this passes.
+- Human: on production `f694ddb...`, an authorized tester must open tenant 诺德 → GEO task #14 → existing V3/article #20 and click exactly once “按当前品牌重新检查”. Do not edit/regenerate the draft, approve, create channel copy or publish. Return the full brand check, opening/conclusion checks, V3 status, timestamp, screenshots and any console/network error. This is H1 acceptance only; H2-H4 remain separate.
 - Database: no action now. No schema change is active.
 - Administrator: no action now. Production workflows and health endpoints are available; request assistance only if a controlled workflow, credential retrieval or server evidence cannot be completed by the module owner.
