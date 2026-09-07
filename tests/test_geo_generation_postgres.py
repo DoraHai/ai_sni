@@ -101,9 +101,9 @@ async def _prepare_database():
             await connection.execute(
                 text(
                     f'INSERT INTO "{schema}".geo_task_facts'
-                    "(task_id,fact_id,sort_order) VALUES (12,:id,:id)"
+                    "(task_id,fact_id,sort_order) VALUES (12,:fact_id,:sort_order)"
                 ),
-                {"id": ident},
+                {"fact_id": ident, "sort_order": ident},
             )
     engine = create_async_engine(
         url,
