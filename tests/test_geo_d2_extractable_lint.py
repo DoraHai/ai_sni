@@ -13,11 +13,11 @@ from app.geo.content.rules import RuleInput, build_fix_patches, is_ready, run_ch
 
 RICH_BODY = (
     "数据分析平台是一种用于汇聚业务数据的系统。\n"
-    "覆盖 80% 场景，实施约 14 天，服务 120 家客户。\n"
+    "覆盖 80% 场景。实施约 14 天。服务 120 家客户。\n"
     "与传统报表工具相比，自助分析更适合跨部门协作。\n"
     "步骤 1：明确场景。\n步骤 2：核验事实。\n步骤 3：试点上线。\n"
     "## FAQ\n\n"
-    "- **Q：** 如何验证？\n  **A：** 核对事实卡。\n"
+    "- **Q：** 如何验证？\n  **A：** 建议核对事实卡。\n"
 )
 
 
@@ -90,10 +90,9 @@ class RulesIntegrationTests(unittest.TestCase):
             title="怎么选",
             body_markdown=RICH_BODY
             + "\n## 结论\n\n优先核验。\n\n## 来源\n\n- 白皮书\n\n"
-            "*作者：Demo*\n*更新时间：2026-07-28*\n",
+            "*更新时间：2026-07-28*\n",
             outline={
                 "direct_answer": "应结合场景与可核验事实选择。",
-                "author_name": "Demo",
                 "updated_at": "2026-07-28",
                 "sections": [
                     {
@@ -126,9 +125,24 @@ class RulesIntegrationTests(unittest.TestCase):
                     "trust_level": "verified",
                     "status": "active",
                 },
+                {
+                    "id": 4,
+                    "statement": "数据分析平台是一种用于汇聚业务数据的系统",
+                    "source_name": "定义",
+                    "trust_level": "verified",
+                    "status": "active",
+                },
+                {
+                    "id": 5,
+                    "statement": "与传统报表工具相比，自助分析更适合跨部门协作",
+                    "source_name": "对比",
+                    "trust_level": "verified",
+                    "status": "active",
+                },
             ],
             target_channels=["website"],
             variants=["website"],
+            author_name="Demo",
         )
         data.update(kwargs)
         return RuleInput(**data)

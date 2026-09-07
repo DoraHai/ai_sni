@@ -11,6 +11,7 @@ from app.geo.content.ai_reviewer import (
     _normalize_issues,
 )
 from app.geo.content.geo_score import compute_geo_score, score_blocks_ready
+from app.geo.content.evidence_cite import build_sentence_citations
 from app.geo.content.rules import RuleInput
 from app.security.auth import _required
 
@@ -90,6 +91,49 @@ def _rule(
 
 
 class GeoScoreTests(unittest.TestCase):
+    def test_unsupported_low_similarity_statements_do_not_raise_evidence_score(self):
+        facts = [{"id": 6, "statement": "MAXXDRIVE XT features a ribbed housing."}]
+        body = (
+            "The gearbox uses titanium gears. "
+            "This machine is painted blue. "
+            "Operators receive a lifetime warranty."
+        )
+        rows = build_sentence_citations(body, facts)
+        self.assertTrue(rows and all(row["needs_fact"] for row in rows))
+        outline = {"direct_answer": "", "sections": [], "sentence_citations": rows}
+        out = compute_geo_score(_rule(body=body, outline=outline, facts=facts), lint_ok=True)
+        self.assertAlmostEqual(out["geo_subscores"]["evidence_use"], 0.117, places=3)
+
+    def test_evidence_score_uses_traceable_body_citations_only(self):
+        facts = [
+            {"id": 1, "title": "A", "statement": "ACME output is 20,000 Nm", "source_name": "Manual"},
+            {"id": 2, "title": "B", "statement": "ACME has a ribbed housing", "source_name": "Manual"},
+            {"id": 3, "title": "C", "statement": "ACME supports mode C", "source_name": "Manual"},
+        ]
+        outline = {
+            "direct_answer": "ACME output is 20,000 Nm",
+            "sections": [],
+            "sentence_citations": [
+                {"sentence": "# ACME has a ribbed housing", "cited": True, "fact_id": 2, "score": 1, "support_basis": "exact_statement"},
+                {"sentence": "- **Q:** ACME supports mode C?", "cited": True, "fact_id": 3, "score": 1, "support_basis": "exact_statement"},
+                {"sentence": "ACME output is 20,000 Nm", "cited": True, "fact_id": 1, "score": 1, "support_basis": "exact_statement"},
+            ],
+        }
+        out = compute_geo_score(_rule(body="ACME output is 20,000 Nm", outline=outline, facts=facts), lint_ok=True)
+        self.assertAlmostEqual(out["geo_subscores"]["evidence_use"], 0.533, places=3)
+
+    def test_evidence_score_rejects_number_only_pseudo_citation(self):
+        facts = [{"id": 1, "title": "转化", "statement": "ACME 转化率为 60%", "source_name": "报告"}]
+        outline = {
+            "direct_answer": "",
+            "sections": [],
+            "sentence_citations": [
+                {"sentence": "ACME 准确率为 60%", "cited": True, "fact_id": 1, "score": 1, "support_basis": None},
+            ],
+        }
+        out = compute_geo_score(_rule(body="ACME 准确率为 60%", outline=outline, facts=facts), lint_ok=True)
+        self.assertAlmostEqual(out["geo_subscores"]["evidence_use"], 0.117, places=3)
+
     def test_strong_draft_scores_high(self):
         ri = _rule()
         brief = {

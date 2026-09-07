@@ -586,6 +586,8 @@ async def _sync_task_pipeline(
 
 
 def _fact_dicts(facts: list[GeoFact]) -> list[dict[str, Any]]:
+    from app.geo.content.cross_language import verified_translation_texts
+
     return [
         {
             "id": f.id,
@@ -599,6 +601,9 @@ def _fact_dicts(facts: list[GeoFact]) -> list[dict[str, Any]]:
             "author_name": f.author_name,
             "observed_at": f.observed_at.isoformat() if f.observed_at else None,
             "expires_at": f.expires_at.isoformat() if f.expires_at else None,
+            "_verified_translation_texts": verified_translation_texts(
+                {"statement": f.statement, "meta": f.meta or {}}
+            ),
         }
         for f in facts
     ]
@@ -4657,6 +4662,7 @@ async def list_async_jobs(
     limit: int = Query(20, ge=1, le=100),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(geo_read_session),
+    kind: str | None = None,
 ) -> dict:
     from app.geo.content.async_jobs import job_read_payload
 
@@ -4666,6 +4672,8 @@ async def list_async_jobs(
         stmt = stmt.where(GeoAsyncJob.ref_type == ref_type)
     if ref_id is not None:
         stmt = stmt.where(GeoAsyncJob.ref_id == ref_id)
+    if kind:
+        stmt = stmt.where(GeoAsyncJob.kind == kind)
     stmt = stmt.order_by(GeoAsyncJob.id.desc()).limit(limit)
     rows = list(await session.scalars(stmt))
     return {
@@ -7296,6 +7304,9 @@ async def save_article(
 
     body = strip_citation_appendix(req.body_markdown)
     outline = dict(req.outline or (latest.outline if latest else {}) or {})
+    # Author identity is stored in the dedicated server-controlled column.
+    # Client-supplied outline metadata must never create an evidence exemption.
+    outline.pop("author_name", None)
     if (latest and latest.title == req.title.strip() and strip_citation_appendix(latest.body_markdown) == body
             and (latest.outline or {}) == outline):
         await session.commit()
@@ -7479,11 +7490,10 @@ async def apply_patch(
     if new_body.strip() == old_body.strip():
         raise HTTPException(400, "这次修改没有改变正文，请手工编辑或重新检查")
 
-    author_name = req.author_name or article.author_name
-    if req.code == "author_visible" and req.author_name:
-        author_name = req.author_name
+    author_name = article.author_name
     # Drop stale outline FAQ/sections that can mask body-based detectors
     outline = dict(article.outline or {}) if isinstance(article.outline, dict) else {}
+    outline.pop("author_name", None)
     if req.code == "faq_min" and isinstance(outline.get("faq"), list):
         outline.pop("faq", None)
     if req.code in {"definition", "conclusion_extractable"} and isinstance(

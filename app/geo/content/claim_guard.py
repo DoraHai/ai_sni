@@ -95,6 +95,11 @@ _QUALITATIVE = re.compile(
     r"|[^。！？!?；;\n]{0,45}(?:导致|防止|直接影响|决定了|有效降低|延长|缩短)[^。！？!?；;\n]{2,100}"
     r"|[^。！？!?；;\n]{0,60}(?:寿命|效率|产能|性能)[^。！？!?；;\n]{0,12}(?:翻番|翻倍|倍增)"
 )
+_PRODUCT_FEATURE = re.compile(
+    r"[^。！？!?；;\n]{0,30}(?<![A-Za-z0-9])[A-Z][A-Z0-9®™._+-]{2,}"
+    r"(?:\s+[A-Z][A-Z0-9®™._+-]{1,})?[^。！？!?；;\n]{0,16}"
+    r"(?:采用|配备|具有|提供|覆盖|满足)[^。！？!?；;\n]{2,100}"
+)
 _EN_QUALITATIVE = re.compile(
     r'\b(?:suitable for|designed for|can be used in|prevents|reduces|extends|doubles)\b[^.!?;\n]{2,100}', re.I
 )
@@ -105,7 +110,14 @@ def qualitative_claims(text: str, facts: list[dict[str, Any]]) -> list[dict[str,
         return re.sub(r"[\s*]+", "", value).casefold()
 
     # Titles and source labels are not verified statements.
-    statements = [compact(str(f.get('statement') or '')) for f in facts or []]
+    from app.geo.content.cross_language import verified_translation_texts
+
+    statements = [
+        compact(value)
+        for f in facts or []
+        for value in [str(f.get('statement') or ''), *verified_translation_texts(f)]
+        if str(value).strip()
+    ]
     def supported(span: str) -> bool:
         needle = compact(span)
         for statement in statements:
@@ -123,7 +135,11 @@ def qualitative_claims(text: str, facts: list[dict[str, Any]]) -> list[dict[str,
 
     hits = []
     body = re.sub(r"[（(]来源[：:][^）)\n]*[）)]", "", text or '')
-    for match in [*_QUALITATIVE.finditer(body), *_EN_QUALITATIVE.finditer(body)]:
+    for match in [
+        *_QUALITATIVE.finditer(body),
+        *_PRODUCT_FEATURE.finditer(body),
+        *_EN_QUALITATIVE.finditer(body),
+    ]:
         span = match.group().strip()
         # Exact reproduction of the entire source sentence keeps its subject,
         # negation and conditions. Never exempt just a matching predicate.
@@ -135,8 +151,9 @@ def qualitative_claims(text: str, facts: list[dict[str, Any]]) -> list[dict[str,
             continue
         if not supported(span):
             from app.geo.content.cross_language import evidence_candidates
+            source_sentence = body[start:end]
             hits.append({'kind': 'qualitative', 'token': span, 'excerpt': span[:180],
-                         'review_reason': 'cross_language_unverified' if evidence_candidates(span, facts) else 'unsupported_claim'})
+                         'review_reason': 'cross_language_unverified' if evidence_candidates(source_sentence, facts) else 'unsupported_claim'})
     return hits
 
 

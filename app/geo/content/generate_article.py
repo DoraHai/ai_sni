@@ -294,6 +294,8 @@ async def generate_master_article(
             "observed_at": f.get("observed_at"),
             "trust_level": f.get("trust_level"),
             "expires_at": f.get("expires_at"),
+            "verified_translations": f.get("_verified_translation_texts") or [],
+            "_verified_translation_texts": f.get("_verified_translation_texts") or [],
         }
         for f in eligible
     ]
@@ -328,6 +330,9 @@ async def generate_master_article(
         "禁止写成功案例、头部客户、标杆项目，除非该名称或案例原文出现在事实卡。"
         "事实卡里没有出现的数字、案例名、性能指标、竞品能力一律不得写入。"
         "行业适用性、设备举例、故障机理、寿命与选型结论也必须有事实原文支撑；不得用行业常识补写。"
+        "【跨语言证据】事实卡原文不是中文且没有 verified_translations 时，只能保留并引用该官方原句，"
+        "不得自行翻译成中文事实，也不得从部件结构推导散热、防故障、寿命、效率或适用场景。"
+        "已核验译文也只能复述其完整限定范围，不能省略否定、条件或主体。"
         "brief 是写作需求，不是事实证据；资料不足时缩短正文，不得为了篇幅补充推断。"
         "不要把 Brief、行业画像、策略说明或内部指令复印到正文或免责声明；品牌主体以已核验事实为准，"
         "Brief 与事实主体不一致时不得混用同名企业资料。"
@@ -418,6 +423,7 @@ async def generate_master_article(
                         "上一版包含事实卡未能支撑的数字、性能、案例、适用性或机理。请整篇重写 JSON："
                         "只复述事实卡原文能支撑的内容；删掉所有无依据数字、识别率/满意度/并发、"
                         "成功案例/头部客户、行业适用性、设备示例及故障机理。资料不足就缩短正文，不能用免责声明保留无依据结论。"
+                        "外文事实没有已核验译文时，直接保留官方原句并标明来源，不要自行翻译或解释其功效。"
                     ),
                 }
                 data3 = await chat_json(

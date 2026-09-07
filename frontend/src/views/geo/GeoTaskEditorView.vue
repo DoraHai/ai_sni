@@ -1,6 +1,6 @@
 <script setup>
 import GeoGenerationEvidence from '../../components/GeoGenerationEvidence.vue'
-import { articleVersionLabel } from '../../utils/geoArticleVersion'
+import { articleVersionLabel, latestGenerationFailure, mergeTaskJobLists } from '../../utils/geoArticleVersion'
 import { geoSnapshotLink } from '../../utils/geoRoutes'
 /**
  * Vue 母稿编辑器
@@ -1024,6 +1024,7 @@ async function ensurePrototypeMaterials() {
 
 const generateHint = ref('')
 const activeJob = ref(null)
+const recentTaskJobs = ref([])
 const variantFails = ref([])
 
 function jobStorageKey() {
@@ -1129,18 +1130,28 @@ async function resumeActiveJob() {
   if (!tenantId.value || !taskId.value) return
   try {
     const stored = Number(sessionStorage.getItem(jobStorageKey()) || 0)
-    const listed = await editorRequest.wait(listGeoAsyncJobs(tenantId.value, {
-      ref_type: 'content_task',
-      ref_id: taskId.value,
-      limit: 5,
-    }).catch(() => ({ items: [] })))
-    const open = (listed.items || []).find((j) =>
+    const [listed, latestGeneration] = await editorRequest.wait(Promise.all([
+      listGeoAsyncJobs(tenantId.value, {
+        ref_type: 'content_task',
+        ref_id: taskId.value,
+        limit: 20,
+      }).catch(() => ({ items: [] })),
+      listGeoAsyncJobs(tenantId.value, {
+        ref_type: 'content_task',
+        ref_id: taskId.value,
+        kind: 'generate_article',
+        limit: 1,
+      }).catch(() => ({ items: [] })),
+    ]))
+    recentTaskJobs.value = mergeTaskJobLists(latestGeneration.items || [], listed.items || [])
+    const open = recentTaskJobs.value.find((j) =>
       ['pending', 'running'].includes(j.status),
     )
     const jobId = open?.id || stored
     if (!jobId) return
     const job = await editorRequest.wait(getGeoAsyncJob(tenantId.value, jobId))
     activeJob.value = job
+    recentTaskJobs.value = [job, ...recentTaskJobs.value.filter((item) => item.id !== job.id)]
     if (['pending', 'running'].includes(job.status)) {
       persistJobId(job.id)
       generateHint.value = staleProgressHint(job) || job.progress_label || `后台任务 #${job.id} ${job.status}`
@@ -1172,6 +1183,7 @@ async function followJob(jobId, { maxMs = 12 * 60 * 1000 } = {}) {
       onTick: (j) => {
         if (!editorRequest.active()) return
         activeJob.value = j
+        recentTaskJobs.value = [j, ...recentTaskJobs.value.filter((item) => item.id !== j.id)]
         if (j.cancel_requested) {
           generateHint.value = '已请求取消，等待当前步骤结束…'
         } else {
@@ -1181,6 +1193,7 @@ async function followJob(jobId, { maxMs = 12 * 60 * 1000 } = {}) {
       },
     }))
     activeJob.value = job
+    recentTaskJobs.value = [job, ...recentTaskJobs.value.filter((item) => item.id !== job.id)]
     if (['pending', 'running'].includes(job.status)) {
       generateHint.value = staleProgressHint(job)
         || `后台任务 #${job.id} 仍在跑，完成后刷新即可看到全部渠道稿`
@@ -2865,9 +2878,13 @@ const versionMetaLine = computed(() => {
     `${bodyWordCount.value} 字`,
     boundFacts.value.length ? `已绑 ${boundFacts.value.length} 条事实` : '',
     trustedSourceCount.value ? `可信来源 ${trustedSourceCount.value}` : '',
+    task.value?.article?.author_name ? `作者 ${task.value.article.author_name}` : '',
   ].filter(Boolean)
   return parts.join(' · ')
 })
+const generationFailureNotice = computed(() =>
+  latestGenerationFailure(task.value?.article, recentTaskJobs.value),
+)
 
 function isFactCited(id) {
   return (sentenceCites.value || []).some((c) => Number(c.fact_id) === Number(id))
@@ -3576,6 +3593,12 @@ onMounted(load)
               <b>母稿</b>
               <small>{{ versionMetaLine }}</small>
             </div>
+          </div>
+          <div v-if="generationFailureNotice" class="ed-generation-failure" role="status">
+            <b>{{ generationFailureNotice.title }}</b>
+            <span>{{ generationFailureNotice.articleLabel }}</span>
+            <span>当前稿保存于 {{ generationFailureNotice.articleTime }}；失败任务结束于 {{ generationFailureNotice.failedAt }}（上海时间）</span>
+            <small>{{ generationFailureNotice.detail }}</small>
           </div>
           <template v-if="docTab === 'master'">
             <details v-if="sentenceCites.some(c => c.review_reason === 'cross_language_unverified')" class="generation-evidence">
@@ -4335,6 +4358,19 @@ onMounted(load)
 .ed-version-bar > div { display: flex; align-items: center; gap: 7px; }
 .ed-version-bar b { color: #3d4856; font-size: 12px; }
 .ed-version-bar small { color: #9aa2ad; font-size: 11px; }
+.ed-generation-failure {
+  display: grid;
+  gap: 3px;
+  margin: 0 16px 8px;
+  padding: 9px 12px;
+  border: 1px solid #f1c8c8;
+  border-radius: 8px;
+  background: #fff7f7;
+  color: #8f3131;
+  font-size: 12px;
+}
+.ed-generation-failure span { color: #5b6572; }
+.ed-generation-failure small { color: #9a4e4e; overflow-wrap: anywhere; }
 .ed-live-dot {
   width: 7px;
   height: 7px;

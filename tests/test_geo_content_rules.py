@@ -19,14 +19,13 @@ def _base(**kwargs) -> RuleInput:
             "步骤 3：完成试点验证。\n\n"
             "## FAQ\n\n"
             "- **Q：** 需要关注什么？\n"
-            "  **A：** 来源与时效。\n"
+            "  **A：** 建议核验来源与时效。\n"
             "- **Q：** 如何验证？\n"
-            "  **A：** 核对应事实卡。\n\n"
+            "  **A：** 建议核对应事实卡。\n\n"
             "## 结论\n\n优先核验来源后再决策。\n\n"
             "## 来源\n\n"
             "- 白皮书\n- 文档\n- 案例\n\n"
-            "覆盖 80% 场景，实施约 14 天，服务 120 家客户。\n\n"
-            "*作者：GEO Demo*\n"
+            "支持私有化部署，覆盖 80% 场景。标准实施约 14 天。已服务 120 家制造客户。\n\n"
             "*更新时间：2026-07-28*\n"
         ),
         outline={
@@ -54,9 +53,12 @@ def _base(**kwargs) -> RuleInput:
             {"id": 1, "statement": "支持私有化部署，覆盖 80% 场景", "source_name": "白皮书", "trust_level": "verified", "status": "active"},
             {"id": 2, "statement": "标准实施约 14 天", "source_name": "文档", "trust_level": "verified", "status": "active"},
             {"id": 3, "statement": "已服务 120 家制造客户", "source_name": "案例", "trust_level": "verified", "status": "active"},
+            {"id": 4, "statement": "数据分析平台是一种用于汇聚与分析业务数据的系统", "source_name": "定义", "trust_level": "verified", "status": "active"},
+            {"id": 5, "statement": "与传统报表工具相比，自助分析平台更适合跨部门协作", "source_name": "对比", "trust_level": "verified", "status": "active"},
         ],
         target_channels=["website", "zhihu"],
         variants=["website", "zhihu"],
+        author_name="GEO Demo",
     )
     data.update(kwargs)
     return RuleInput(**data)
@@ -132,7 +134,23 @@ class GeoContentRulesTests(unittest.TestCase):
     def test_channel_optional_for_ready(self):
         checks = run_checks(_base(variants=[]))
         self.assertTrue(is_ready(checks, require_channels=False))
-        self.assertFalse(is_ready(checks, require_channels=True))
+
+    def test_client_authored_outline_and_body_cannot_bypass_evidence(self):
+        malicious = "本产品终身保修且采用钛合金齿轮"
+        data = _base(
+            body_markdown=f"*作者：{malicious}*",
+            outline={"author_name": malicious},
+            author_name=None,
+            default_author=None,
+            facts=[],
+        )
+        checks = {check.code: check for check in run_checks(data)}
+        self.assertFalse(checks["sentence_evidence"].passed)
+        self.assertFalse(checks["author_visible"].passed)
+        self.assertFalse(
+            any(patch["code"] == "author_visible" for patch in build_fix_patches(data))
+        )
+        self.assertFalse(is_ready(list(checks.values()), require_channels=True))
 
     def test_channel_variant_ready_normalizes_aliases(self):
         from app.geo.content.rules import check_channel_variant_ready
