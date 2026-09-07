@@ -13,7 +13,7 @@ This is the authoritative continuation checkpoint. Historical pause documents ar
 ## Production state
 
 - SEM backend: `554934d6cbb2921f10f1fe165cbaf62f5b2544f8`, workflow `34085269523`, public health exact release and db=ok. Rollback `22fcb30`.
-- SEM frontend: `ee3bf6c9077b99836a95f607abd44f2a9ac99264`, workflow `34084823098`. Rollback `b07e32d`.
+- SEM frontend: PR427 deployed as `afcc63c270e9bcffe08d0295a416902ba6594a42`, workflow `34092436470`, deploy job `101648692353`. Coordinator independently rechecked `/health`=200 with backend `554934d6...`/db=ok and `/onboarding`=200 with the app shell. Rollback `ee3bf6c9077b99836a95f607abd44f2a9ac99264`.
 - GEO: PR425 merged to production as `eb1e05d40a73dc2b79ad25832a065462ba97b316`; workflow `34091281245`, verify job `101645084484`, deploy job `101645313364`, baseline workflow `34091281266`, migration=not-run. `/geo-health` and dashboard returned 200 after deploy. Release directories report `20260907T063356Z-eb1e05d40a73`. This production revision is NOT accepted: independent post-deploy review found three P1/P2 paths below.
 - Formal workbench PR426 merged to main as `086e73da78528e5910172190ef813b48460834a4` from exact business head `5b09683ae6164c11cb198c0fcce3c5cc94c8bd32`. It is not yet in SEM frontend production.
 
@@ -34,8 +34,8 @@ SEO independently reproduced the first path and reviewed the other two. Positive
 ### SEM production sync
 
 - Main PR420 merged as `e79795a03cf3cdc4b49d6497ed20f5b70d8d3038` from exact `973afb94e1ece797faac503a9fa9a050aa48ae0b`; main CI `34091358903` succeeded.
-- SEM prepared Draft PR427 for `codex/production-sem`: exact `8df187a780da0978feb31ac070913bb18de6d97a`, base/rollback `ee3bf6c9077b99836a95f607abd44f2a9ac99264`. It selects the five SEM commits and the reviewed auth/session prerequisites; it excludes backend, SEO main/router and database work. Reported local checks: 6/6 components, session tests, SEM contracts, build/verify (91 assets, 390528 bytes) and audit0.
-- PR427 awaits SEO independent review. Only after exact-head PASS and green CI may it become ready, merge and deploy. Record production SHA, workflow, migration=not-run, health/assets and rollback.
+- PR427 exact `8df187a780da0978feb31ac070913bb18de6d97a` passed independent review and CI, merged and deployed as recorded above. It selected the SEM fixes and reviewed auth/session prerequisites, excluding backend, SEO main/router and database work.
+- Post-release audit found the deployed backend search-term list still lacks account filtering. Draft PR430 exact `a66fa9dfb0019492e4e39587345c368d6507372c`, base/rollback `554934d6cbb2921f10f1fe165cbaf62f5b2544f8`, changes only `app/api/search_terms.py` and two tests. Reported 57 tests pass; all current GitHub checks are green and mergeability is clean. It awaits independent review and remains unmerged/unreleased.
 
 ### SEO
 
@@ -50,13 +50,14 @@ SEO independently reproduced the first path and reviewed the other two. Positive
 - Adds module-only view invalidation so SEO permission/site failure clears SEO cards and discussion references without erasing valid SEM evidence. Site/customer/auth revision changes reject late results.
 - Local validation: 48 SEO/workbench contract tests; cockpit scope, session, evidence-card and SEM UI suites; production build; `verify:sem-build` over 104 assets; diff check clean.
 - PR429 is queued for SEO data-contract review and SEM session/invalidation review. Do not merge until both exact-head reviews and CI pass.
+- PR429 GitHub checks are all green and mergeability is clean. Product gap still open: a fresh ordinary SEO read-only user cannot list/select sites because existing `/api/v1/seo/sites` requires `seo.assets`; current slice can only reuse an already selected scoped site. SEO owns a separate minimal GET-only site-scope endpoint/permission solution before this slice is considered production-complete.
 
 ## Ownership and next action
 
 - Coordinator: keep exact-SHA/CI gates, independently inspect release diffs, maintain this file, and continue workbench slices. Do not turn the old prototype into production evidence.
 - GEO: hotfix the three production review findings, obtain independent re-review, then controlled deploy; afterward interpret H1 result and define any next human test.
 - SEO: review GEO hotfix first, then PR429; continue PR419 and `ec85f51...` without publishing or waiting on customer image feedback.
-- SEM: finish PR427 independent review/release first, then review PR429's SEM/session isolation. Smart Builder can remain deferred; no new real writeback test beyond the already authorized Open Tiger boundary.
+- SEM: finish PR430 independent review/release, then review PR429's SEM/session isolation. Smart Builder can remain deferred; no new real writeback test beyond the already authorized Open Tiger boundary.
 
 ## Human, database and administrator queue
 
