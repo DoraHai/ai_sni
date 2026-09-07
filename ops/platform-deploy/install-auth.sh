@@ -21,7 +21,7 @@ enabled_target="$config_root/enabled/auth"
 backup_parent="$install_root/var/backups/platform-deploy"
 auth_root="$install_root/opt/auth-frontend"
 reviewed_base_dispatcher_sha256='ed0c8ece980a0a9c5905f77a8c8cf2ba28d05bb5de45f38c992e12182dab549a'
-reviewed_candidate_dispatcher_sha256='3940c4710e6f5e77f1a0a4f9c121f4be88cb31fcc18c96c6a9f0dea27bea545d'
+reviewed_candidate_dispatcher_sha256='0330e2c14f2ff7074df140e02d56136aa2a5248ebce296d9c35007437c09937a'
 
 [[ -f "$dispatcher_source" && -f "$module_source" ]] || { echo 'Reviewed Auth deploy sources are missing' >&2; exit 1; }
 [[ -x "$dispatcher_target" ]] || { echo 'Base platform-deploy helper is missing' >&2; exit 1; }
