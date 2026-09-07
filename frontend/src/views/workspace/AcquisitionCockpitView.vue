@@ -15,9 +15,9 @@ import { seoSummaryCards } from '../../../../integrations/seo-workbench/summary.
 import { createGeoAuthorizedClient } from '../../../../integrations/geo-workbench/authorization-context.mjs'
 import { currentSeoSiteId } from '../seo/seoSiteContext'
 import { isSecureCockpitRuntime, resolveTenantModuleCodes } from './cockpit/scope.mjs'
-import { completedWeekEnd, geoSummaryCards } from './cockpit/geo-summary.mjs'
+import { completedWeekEnd, completedWeekInclusiveEnd, geoSummaryCards } from './cockpit/geo-summary.mjs'
 import { createSeoSiteSelectionGuard, resolveSeoSiteSelection } from './cockpit/site-selection.mjs'
-import { urgencyReply } from './cockpit/status-copy.mjs'
+import { geoReadyReply, urgencyReply } from './cockpit/status-copy.mjs'
 
 const router = useRouter()
 const messagesEl = ref(null)
@@ -58,6 +58,7 @@ const unresolvedModules = computed(() => availableModules.value.filter(item => m
 const urgentItems = computed(() => cards.value.reduce((sum, item) => sum + (Number.isSafeInteger(item.urgentCount) ? item.urgentCount : 0), 0))
 const readyModules = computed(() => availableModules.value.filter(item => moduleState.value[item.module_code] === 'ready').length)
 const geoWeekEnd = computed(() => completedWeekEnd(dateEnd.value))
+const geoWeekInclusiveEnd = computed(() => completedWeekInclusiveEnd(geoWeekEnd.value))
 const statusLabel = status => ({ ready: '数据已读取', loading: '读取中', needs_scope: '需要选择业务对象', denied: '无查看权限', error: '读取失败', waiting: '等待读取' }[status] || '待确认')
 const moduleUrgent = code => cards.value.filter(item => item.moduleCode === code).reduce((sum, item) => sum + (Number.isSafeInteger(item.urgentCount) ? item.urgentCount : 0), 0)
 const moduleStatusLabel = code => moduleState.value[code] === 'ready' && moduleUrgent(code) > 0 ? `${moduleUrgent(code)} 项待处理` : statusLabel(moduleState.value[code])
@@ -278,7 +279,7 @@ function answerFor(text) {
   if (!availableModules.value.length) return '当前账号没有可查看的获客模块，请联系管理员确认模块和查看权限。'
   if (text.includes('SEM') && moduleState.value.sem === 'ready') return `已按 ${dateStart.value} 至 ${dateEnd.value} 读取 SEM 数据。点击任意数字可以看每日明细和数据依据。`
   if (text.includes('SEO') && moduleState.value.seo === 'ready') return '已读取当前 SEO 网站的内容和页面检查数字。审核、发布、页面检查分别判断，单篇搜索点击仍明确标为未接入。'
-  if (text.includes('GEO') && moduleState.value.geo === 'ready') return `已按截至 ${geoWeekEnd.value} 的最近完整自然周读取 GEO 正式指标。模拟回答、人工记录和不合格样本没有算入数字。`
+  if (text.includes('GEO') && moduleState.value.geo === 'ready') return geoReadyReply(geoWeekInclusiveEnd.value)
   const urgency = urgencyReply({ unresolvedModules: unresolvedModules.value, businessUrgentItems: urgentItems.value })
   if (urgency) return `${urgency} 我不会把缺失数据当成零。`
   return '当前已开通模块的数据状态正常。你可以点击具体指标，再选择“带着这项数据继续提问”。'
