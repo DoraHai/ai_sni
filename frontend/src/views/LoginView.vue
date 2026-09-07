@@ -3,6 +3,7 @@ import { reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { login, fetchTenants } from '../api/auth'
+import { resolvePostLoginPath } from '../auth/postLoginRedirect.mjs'
 import { session } from '../store/session'
 import loginBackground from '../assets/login-bg.jpg'
 
@@ -37,12 +38,10 @@ async function submit() {
     const t = await fetchTenants()
     session.setTenants(t.tenants)
     ElMessage.success(`欢迎，${resp.user.display_name}`)
-    const redirect = String(route.query.redirect || '')
-    if (redirect.startsWith('/') && !redirect.startsWith('//')) {
-      window.location.assign(redirect)
-    } else {
-      window.location.assign('/')
-    }
+    window.location.assign(resolvePostLoginPath(
+      route.query.redirect,
+      key => session.canView(key),
+    ))
   } catch (e) {
     ElMessage.error(e.message)
     genCaptcha()

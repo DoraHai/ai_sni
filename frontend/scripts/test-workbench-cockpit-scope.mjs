@@ -7,6 +7,7 @@ import {
   isSecureCockpitRuntime,
   resolveTenantModuleCodes,
 } from '../src/views/workspace/cockpit/scope.mjs'
+import { resolvePostLoginPath } from '../src/auth/postLoginRedirect.mjs'
 
 const moduleMeta = {
   sem: { permission: ['monitor.dashboard'] },
@@ -51,4 +52,14 @@ test('cockpit entry is hidden for diagnosis-only access and shown for every cock
   for (const permission of COCKPIT_PERMISSION_KEYS) {
     assert.equal(canViewCockpit(key => key === permission), true, permission)
   }
+})
+
+test('login defaults to the cockpit only when the session can view it', () => {
+  assert.equal(resolvePostLoginPath('', key => key === 'monitor.dashboard'), '/workspace/cockpit')
+  assert.equal(resolvePostLoginPath('', key => key === 'geo.diagnosis'), '/workspace')
+})
+
+test('a valid same-origin login redirect has priority over the permission default', () => {
+  assert.equal(resolvePostLoginPath('/seo/dashboard?tab=sites', () => false), '/seo/dashboard?tab=sites')
+  assert.equal(resolvePostLoginPath('//example.com/escape', () => true), '/workspace/cockpit')
 })
