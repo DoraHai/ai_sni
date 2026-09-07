@@ -14,11 +14,14 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.geo.content.async_jobs import (
     KIND_GENERATE,
+    KIND_VARIANTS,
     create_job,
     reconcile_stale_job,
     request_cancel,
+    run_job_in_background,
 )
-from app.geo.content.routes import generate_task_article
+from app.geo.content.routes import create_variants, generate_task_article
+from app.geo.content.schemas import VariantsCreate
 from app.models import GeoAsyncJob, GeoContentTask
 
 
@@ -128,6 +131,24 @@ async def _cleanup(admin, engine, schema, tables):
 
 def _ctx():
     return NS(user_id=9, ensure_tenant=lambda _: None)
+
+
+def _variant_route_patches():
+    return (
+        patch(
+            "app.geo.content.routes._latest_article",
+            return_value=NS(id=20, title="母稿", body_markdown="正文", outline={}),
+        ),
+        patch(
+            "app.geo.content.routes._ensure_default_publishing_channels",
+            return_value=None,
+        ),
+        patch("app.geo.content.routes._evaluate_and_store_rules", return_value=None),
+        patch(
+            "app.geo.content.routes._task_payload",
+            return_value={"id": 12, "status": "editing"},
+        ),
+    )
 
 
 def test_concurrent_generate_requests_create_exactly_one_job():
@@ -364,6 +385,215 @@ def test_generation_reservation_is_released_by_existing_recovery(recovery):
                 job = await session.scalar(select(GeoAsyncJob))
                 assert task.status == "editing"
                 assert job.status == ("cancelled" if recovery == "cancel" else "failed")
+        finally:
+            await _cleanup(admin, engine, schema, tables)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("second_async", [False, True])
+def test_sync_variant_generation_blocks_sync_and_async_competitors(second_async):
+    async def run():
+        admin, engine, schema, tables = await _prepare_database()
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        executor_entered = asyncio.Event()
+        release_executor = asyncio.Event()
+
+        async def slow_variants(session, job):
+            executor_entered.set()
+            await asyncio.wait_for(release_executor.wait(), 10)
+            task = await session.get(GeoContentTask, job.ref_id)
+            task.status = "editing"
+            await session.commit()
+            return {"task_id": task.id, "channels": ["website"], "failed": []}
+
+        async def call_sync():
+            async with sessions() as session:
+                return await create_variants(
+                    12,
+                    VariantsCreate(channels=["website"], use_llm=True),
+                    tenant_id=7,
+                    run_async=False,
+                    background_tasks=BackgroundTasks(),
+                    ctx=_ctx(),
+                    session=session,
+                )
+
+        try:
+            route_patches = _variant_route_patches()
+            with (
+                patch("app.database.engine", engine),
+                patch(
+                    "app.geo.content.async_jobs._execute_variants",
+                    side_effect=slow_variants,
+                ),
+                route_patches[0],
+                route_patches[1],
+                route_patches[2],
+                route_patches[3],
+            ):
+                first = asyncio.create_task(call_sync())
+                await asyncio.wait_for(executor_entered.wait(), 10)
+                async with sessions() as session:
+                    with pytest.raises(HTTPException) as error:
+                        await create_variants(
+                            12,
+                            VariantsCreate(channels=["website"], use_llm=True),
+                            tenant_id=7,
+                            run_async=second_async,
+                            background_tasks=BackgroundTasks(),
+                            ctx=_ctx(),
+                            session=session,
+                        )
+                    assert error.value.status_code == 409
+                release_executor.set()
+                result = await asyncio.wait_for(first, 15)
+                assert result["async"] is False
+
+            async with sessions() as session:
+                assert await session.scalar(select(func.count(GeoAsyncJob.id))) == 1
+                job = await session.scalar(select(GeoAsyncJob))
+                assert job.status == "succeeded"
+                assert job.request_meta["execution_mode"] == "sync"
+        finally:
+            release_executor.set()
+            await _cleanup(admin, engine, schema, tables)
+
+    asyncio.run(run())
+
+
+def test_sync_variant_generation_is_blocked_by_live_master_job():
+    async def run():
+        admin, engine, schema, tables = await _prepare_database()
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        master_entered = asyncio.Event()
+        release_master = asyncio.Event()
+
+        async def slow_master(session, job):
+            master_entered.set()
+            await asyncio.wait_for(release_master.wait(), 10)
+            task = await session.get(GeoContentTask, job.ref_id)
+            task.status = "editing"
+            await session.commit()
+            return {"task_id": task.id}
+
+        try:
+            async with sessions() as session:
+                task = await session.get(GeoContentTask, 12)
+                task.status = "generating"
+                job = await create_job(
+                    session,
+                    tenant_id=7,
+                    kind=KIND_GENERATE,
+                    ref_type="content_task",
+                    ref_id=12,
+                    request_meta={"execution_mode": "async"},
+                    created_by=9,
+                )
+
+            route_patches = _variant_route_patches()
+            with (
+                patch("app.database.engine", engine),
+                patch(
+                    "app.geo.content.async_jobs._execute_generate",
+                    side_effect=slow_master,
+                ),
+                route_patches[0],
+                route_patches[1],
+                route_patches[2],
+                route_patches[3],
+            ):
+                worker = asyncio.create_task(run_job_in_background(job.id))
+                await asyncio.wait_for(master_entered.wait(), 10)
+                # A mutable display status must not bypass the durable live job.
+                async with sessions() as session:
+                    task = await session.get(GeoContentTask, 12)
+                    task.status = "editing"
+                    await session.commit()
+                async with sessions() as session:
+                    with pytest.raises(HTTPException) as error:
+                        await create_variants(
+                            12,
+                            VariantsCreate(channels=["website"], use_llm=True),
+                            tenant_id=7,
+                            run_async=False,
+                            background_tasks=BackgroundTasks(),
+                            ctx=_ctx(),
+                            session=session,
+                        )
+                    assert error.value.status_code == 409
+                release_master.set()
+                await asyncio.wait_for(worker, 15)
+        finally:
+            release_master.set()
+            await _cleanup(admin, engine, schema, tables)
+
+    asyncio.run(run())
+
+
+def test_failed_sync_variant_job_releases_task_and_allows_retry():
+    async def run():
+        admin, engine, schema, tables = await _prepare_database()
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+        async def fail_variants(session, job):
+            raise ValueError("simulated variant failure")
+
+        try:
+            route_patches = _variant_route_patches()
+            with (
+                patch("app.database.engine", engine),
+                patch(
+                    "app.geo.content.async_jobs._execute_variants",
+                    side_effect=fail_variants,
+                ),
+                route_patches[0],
+                route_patches[1],
+                route_patches[2],
+                route_patches[3],
+            ):
+                async with sessions() as session:
+                    with pytest.raises(HTTPException) as error:
+                        await create_variants(
+                            12,
+                            VariantsCreate(channels=["website"], use_llm=True),
+                            tenant_id=7,
+                            run_async=False,
+                            background_tasks=BackgroundTasks(),
+                            ctx=_ctx(),
+                            session=session,
+                        )
+                    assert error.value.status_code == 400
+                    assert "simulated variant failure" in str(error.value.detail)
+
+            async with sessions() as session:
+                first_job = await session.scalar(
+                    select(GeoAsyncJob).order_by(GeoAsyncJob.id.asc())
+                )
+                assert first_job.status == "failed"
+                assert first_job.result_meta["error_type"] == "ValueError"
+                assert (await session.get(GeoContentTask, 12)).status == "editing"
+
+            route_patches = _variant_route_patches()
+            with (
+                route_patches[0],
+                route_patches[1],
+                route_patches[2],
+                route_patches[3],
+            ):
+                async with sessions() as session:
+                    retry = await create_variants(
+                        12,
+                        VariantsCreate(channels=["website"], use_llm=True),
+                        tenant_id=7,
+                        run_async=True,
+                        background_tasks=BackgroundTasks(),
+                        ctx=_ctx(),
+                        session=session,
+                    )
+                    assert retry["job"]["status"] == "pending"
+            async with sessions() as session:
+                assert await session.scalar(select(func.count(GeoAsyncJob.id))) == 2
         finally:
             await _cleanup(admin, engine, schema, tables)
 

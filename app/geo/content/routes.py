@@ -7648,23 +7648,24 @@ async def generate_task_article(
         raise HTTPException(409, "母稿正在生成，请等待当前任务完成")
     task.status = "generating"
 
-    if run_async:
-        from app.geo.content.async_jobs import (
-            KIND_GENERATE,
-            create_job,
-            job_payload,
-            run_job_in_background,
-        )
+    from app.geo.content.async_jobs import (
+        KIND_GENERATE,
+        create_job,
+        job_payload,
+        run_job_in_background,
+        run_job_synchronously,
+    )
 
-        job = await create_job(
-            session,
-            tenant_id=tenant_id,
-            kind=KIND_GENERATE,
-            ref_type="content_task",
-            ref_id=task.id,
-            request_meta={},
-            created_by=ctx.user_id,
-        )
+    job = await create_job(
+        session,
+        tenant_id=tenant_id,
+        kind=KIND_GENERATE,
+        ref_type="content_task",
+        ref_id=task.id,
+        request_meta={"execution_mode": "async" if run_async else "sync"},
+        created_by=ctx.user_id,
+    )
+    if run_async:
         # create_job commits the task transition and job reservation together.
         background_tasks.add_task(run_job_in_background, job.id)
         return {
@@ -7674,69 +7675,22 @@ async def generate_task_article(
             "message": "母稿生成已排队，请轮询 /async-jobs/{id}",
         }
 
-    await session.commit()
-    try:
-        llm = await resolve_llm_credentials(session, tenant_id)
-        biz_row = None
-        if getattr(task, "business_id", None):
-            biz_row = await session.get(GeoOptimizationBusiness, task.business_id)
-        from app.geo.content.business_profile import display_brand
-
-        payload = await generate_master_article(
-            tenant_name=display_brand(
-                getattr(biz_row, "profile", None) if biz_row else None,
-                fallback=tenant.name,
-            ),
-            question=prompt.question,
-            facts=fact_dicts,
-            llm=llm,
-            brief=brief_norm,
-        )
-        body = to_markdown(payload)
-        outline = outline_from_payload(payload)
-        from app.geo.content.evidence_cite import attach_sentence_citations
-
-        body, cites = attach_sentence_citations(body, fact_dicts)
-        outline = dict(outline or {})
-        outline["sentence_citations"] = cites
-        latest = await _latest_article(session, task.id)
-        version_no = (latest.version_no + 1) if latest else 1
-        evidence_meta = payload.get("_evidence") or evidence_preview
-        article = GeoArticleVersion(
-            task_id=task.id,
-            version_no=version_no,
-            kind="master",
-            title=payload["title"],
-            body_markdown=body,
-            outline=outline,
-            generation_meta={
-                "source": payload.get("_source"),
-                "used_fact_ids": payload.get("used_fact_ids"),
-                "evidence": evidence_meta,
-                "brief": payload.get("_brief") or brief_norm,
-                "sentence_citations": cites,
-            },
-            created_by=ctx.user_id,
-        )
-        session.add(article)
-        task.title = payload["title"]
-        task.status = "editing"
-        invalidate_review(task)
-        await session.commit()
-    except GeoContentError as exc:
-        task.status = "failed"
-        await session.commit()
-        raise HTTPException(400, str(exc)) from exc
-    except HTTPException:
-        task.status = "failed"
-        await session.commit()
-        raise
-    except Exception as exc:
-        task.status = "failed"
-        await session.commit()
-        raise HTTPException(500, f"生成失败: {exc}") from exc
+    outcome = await run_job_synchronously(job.id)
+    if outcome.get("status") != "succeeded":
+        message = str(outcome.get("error") or "生成失败")
+        error_type = str(outcome.get("error_type") or "")
+        if outcome.get("status") == "conflict":
+            raise HTTPException(409, message)
+        if outcome.get("status") == "cancelled" or error_type in {
+            "ValueError",
+            "GeoContentError",
+            "ArticleQualityError",
+        }:
+            raise HTTPException(400, message)
+        raise HTTPException(500, f"生成失败: {message}")
 
     # auto-check without requiring channels
+    session.expire_all()
     await session.refresh(task)
     article = await _latest_article(session, task.id)
     rule_input = await _build_rule_input(session, task, article)
@@ -7780,33 +7734,35 @@ async def create_variants(
     await _ensure_default_publishing_channels(session, tenant_id)
 
     channels = normalize_channels(req.channels or list(task.target_channels or []))
+    from app.geo.content.async_jobs import (
+        KIND_VARIANTS,
+        create_job,
+        job_payload,
+        run_job_in_background,
+        run_job_synchronously,
+    )
+
+    await session.refresh(task, with_for_update=True)
+    if task.status in {"generating", "adapting"} or await _has_live_content_job(
+        session, task
+    ):
+        raise HTTPException(409, "渠道稿正在生成，请等待当前任务完成")
+    task.status = "adapting"
+
+    job = await create_job(
+        session,
+        tenant_id=tenant_id,
+        kind=KIND_VARIANTS,
+        ref_type="content_task",
+        ref_id=task.id,
+        request_meta={
+            "channels": channels,
+            "use_llm": bool(req.use_llm),
+            "execution_mode": "async" if run_async else "sync",
+        },
+        created_by=ctx.user_id,
+    )
     if run_async:
-        from app.geo.content.async_jobs import (
-            KIND_VARIANTS,
-            create_job,
-            job_payload,
-            run_job_in_background,
-        )
-
-        await session.refresh(task, with_for_update=True)
-        if task.status in {"generating", "adapting"} or await _has_live_content_job(
-            session, task
-        ):
-            raise HTTPException(409, "渠道稿正在生成，请等待当前任务完成")
-        task.status = "adapting"
-
-        job = await create_job(
-            session,
-            tenant_id=tenant_id,
-            kind=KIND_VARIANTS,
-            ref_type="content_task",
-            ref_id=task.id,
-            request_meta={
-                "channels": channels,
-                "use_llm": bool(req.use_llm),
-            },
-            created_by=ctx.user_id,
-        )
         background_tasks.add_task(run_job_in_background, job.id)
         return {
             "async": True,
@@ -7815,19 +7771,22 @@ async def create_variants(
             "message": "渠道稿生成已排队，请轮询 /async-jobs/{id}",
         }
 
-    from app.geo.content.variant_execute import execute_variants_for_task
+    outcome = await run_job_synchronously(job.id)
+    if outcome.get("status") != "succeeded":
+        message = str(outcome.get("error") or "渠道稿生成失败")
+        error_type = str(outcome.get("error_type") or "")
+        if outcome.get("status") == "conflict":
+            raise HTTPException(409, message)
+        if outcome.get("status") == "cancelled" or error_type in {
+            "ValueError",
+            "GeoContentError",
+            "ArticleQualityError",
+        }:
+            raise HTTPException(400, message)
+        raise HTTPException(500, f"渠道稿生成失败: {message}")
+    result = outcome.get("result_meta") or {}
 
-    try:
-        result = await execute_variants_for_task(
-            session,
-            task_id=task.id,
-            tenant_id=tenant_id,
-            channels=channels,
-            use_llm=bool(req.use_llm),
-        )
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
+    session.expire_all()
     task = await _get_task(session, task_id, tenant_id)
     article = await _latest_article(session, task.id)
     # Prefer full evaluate for sync path (richer score/lint)

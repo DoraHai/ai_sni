@@ -2,7 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace as NS
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException
@@ -138,3 +138,88 @@ def test_generate_rejects_while_channel_variants_are_running():
     assert error.value.status_code == 409
     session.scalar.assert_not_awaited()
     create.assert_not_awaited()
+
+
+def test_sync_generate_uses_the_same_reserved_job_executor():
+    task = NS(
+        id=12,
+        tenant_id=7,
+        prompt_id=3,
+        status="editing",
+        brief={
+            "industry": "工业传动",
+            "audience": "采购",
+            "intent": "scenario",
+            "content_type": "thought_leadership",
+            "cta": "咨询选型",
+        },
+        rule_result={},
+        ready_at=None,
+    )
+    article = NS(id=20)
+    session = NS(
+        refresh=AsyncMock(),
+        commit=AsyncMock(),
+        scalar=AsyncMock(return_value=None),
+        expire_all=Mock(),
+    )
+
+    async def reserve(*args, **kwargs):
+        assert task.status == "generating"
+        assert kwargs["request_meta"] == {"execution_mode": "sync"}
+        return job()
+
+    with (
+        patch("app.geo.content.routes._get_task", AsyncMock(return_value=task)),
+        patch(
+            "app.geo.content.routes._ensure_tenant_exists",
+            AsyncMock(return_value=NS(id=7, name="示例客户")),
+        ),
+        patch(
+            "app.geo.content.routes._get_prompt",
+            AsyncMock(return_value=NS(id=3, question="产品特点是什么？")),
+        ),
+        patch(
+            "app.geo.content.routes._task_facts",
+            AsyncMock(return_value=[fact(1), fact(2), fact(3)]),
+        ),
+        patch(
+            "app.geo.content.evidence.prepare_facts_for_generation",
+            return_value=([], {"ok": True}),
+        ),
+        patch("app.geo.content.async_jobs.create_job", AsyncMock(side_effect=reserve)) as create,
+        patch(
+            "app.geo.content.async_jobs.run_job_synchronously",
+            AsyncMock(
+                return_value={
+                    "status": "succeeded",
+                    "error": None,
+                    "result_meta": {"article_id": 20},
+                }
+            ),
+        ) as execute,
+        patch("app.geo.content.routes._latest_article", AsyncMock(return_value=article)),
+        patch("app.geo.content.routes._build_rule_input", AsyncMock(return_value=NS())),
+        patch("app.geo.content.routes.run_checks", return_value=[]),
+        patch("app.geo.content.routes.is_ready", return_value=False),
+        patch("app.geo.content.routes._sync_task_pipeline", AsyncMock()),
+        patch(
+            "app.geo.content.routes._task_payload",
+            AsyncMock(return_value={"id": 12, "status": "needs_fix"}),
+        ),
+    ):
+        result = asyncio.run(
+            generate_task_article(
+                12,
+                tenant_id=7,
+                run_async=False,
+                background_tasks=BackgroundTasks(),
+                ctx=NS(user_id=9, ensure_tenant=lambda _: None),
+                session=session,
+            )
+        )
+
+    assert result == {"id": 12, "status": "needs_fix"}
+    create.assert_awaited_once()
+    execute.assert_awaited_once_with(88)
+    session.expire_all.assert_called_once_with()
