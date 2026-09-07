@@ -248,8 +248,14 @@ backup_count="$(find "$install_root/var/backups/platform-deploy" -mindepth 1 -ma
 dispatcher_backup_count="$(find "$install_root/var/backups/platform-deploy" -mindepth 2 -maxdepth 2 -type f -name 'platform-deploy' | wc -l | tr -d ' ')"
 module_backup_count="$(find "$install_root/var/backups/platform-deploy" -mindepth 2 -maxdepth 2 -type f -name 'auth.module' | wc -l | tr -d ' ')"
 enabled_backup_count="$(find "$install_root/var/backups/platform-deploy" -mindepth 2 -maxdepth 2 -type f -name 'auth.enabled' | wc -l | tr -d ' ')"
-[[ "$dispatcher_backup_count" == 1 ]]
+[[ "$dispatcher_backup_count" == 2 ]]
 [[ "$module_backup_count" == 2 ]]
 [[ "$enabled_backup_count" == 2 ]]
+base_dispatcher_sha256="$(git -C "$repo_root" show eaa2c93c6ddb839e2bfdf4acabb06eb2910cd01e:ops/platform-deploy/platform-deploy | sha256sum | cut -d' ' -f1)"
+candidate_dispatcher_sha256="$(sha256sum "$repo_root/ops/platform-deploy/platform-deploy" | cut -d' ' -f1)"
+find "$install_root/var/backups/platform-deploy" -mindepth 2 -maxdepth 2 -type f -name 'platform-deploy' -exec sha256sum {} + \
+  | cut -d' ' -f1 > "$sandbox/dispatcher-backup-sha256s"
+grep -Fxq "$base_dispatcher_sha256" "$sandbox/dispatcher-backup-sha256s"
+grep -Fxq "$candidate_dispatcher_sha256" "$sandbox/dispatcher-backup-sha256s"
 
 printf '%s\n' 'Auth deploy state machine tests passed'
