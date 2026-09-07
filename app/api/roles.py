@@ -18,6 +18,7 @@ from app.permissions import (
     normalize_permissions,
 )
 from app.security.auth import AuthContext, require_admin
+from app.security.platform_admin import acquire_platform_admin_lock
 
 router = APIRouter(
     prefix="/api/v1/roles",
@@ -87,6 +88,7 @@ async def update_role(
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_admin),
 ) -> dict:
+    await acquire_platform_admin_lock(session)
     role = await session.get(Role, role_id)
     if role is None:
         raise HTTPException(404, "角色不存在")

@@ -174,8 +174,9 @@ async function save() {
 function effectiveModuleState(row, code) {
   const item = moduleRow(row, code)
   if (!item) return { label: '未开通', type: 'info' }
-  const expired = item.expires_at && item.expires_at < new Date().toISOString().slice(0, 10)
-  if (expired && ['active', 'trial'].includes(item.status)) return { label: '已过期', type: 'warning' }
+  if (['active', 'trial'].includes(item.status) && item.available !== true) {
+    return { label: '已过期', type: 'warning' }
+  }
   return {
     label: moduleStatusLabels[item.status] || '状态未知',
     type: item.available ? 'success' : item.status === 'suspended' ? 'warning' : 'info',
