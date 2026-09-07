@@ -48,11 +48,15 @@ _GUIDANCE = re.compile(
     r"^(?:应|可|建议|优先)(?:先|结合|根据)?[^。！？]*"
     r"(?:核对|核验|验证|检查|选择|比较|决策)[^。！？]*[。.!！]?$"
 )
+_SOURCE_REFERENCE = re.compile(
+    r"^(?:https?://\S+|[^。！？]{0,24}(?:白皮书|文档|报告|官网|标准|手册|案例集|案例))$",
+    re.I,
+)
 
 
 def split_sentences(text: str) -> list[str]:
     parts = [p.strip() for p in _SENT_SPLIT.split(text or "") if p and p.strip()]
-    return [p for p in parts if len(p) >= 8]
+    return [p for p in parts if len(p) >= 4]
 
 
 def strip_citation_appendix(markdown: str) -> str:
@@ -93,6 +97,7 @@ def is_evidence_exempt(sentence: str) -> bool:
         or _CTA.fullmatch(plain)
         or _PROCESS_INSTRUCTION.fullmatch(plain)
         or _GUIDANCE.fullmatch(plain)
+        or _SOURCE_REFERENCE.fullmatch(plain)
     )
 
 
