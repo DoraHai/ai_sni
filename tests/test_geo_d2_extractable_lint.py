@@ -17,7 +17,7 @@ RICH_BODY = (
     "与传统报表工具相比，自助分析更适合跨部门协作。\n"
     "步骤 1：明确场景。\n步骤 2：核验事实。\n步骤 3：试点上线。\n"
     "## FAQ\n\n"
-    "- **Q：** 如何验证？\n  **A：** 核对事实卡。\n"
+    "- **Q：** 如何验证？\n  **A：** 建议核对事实卡。\n"
 )
 
 
@@ -123,6 +123,20 @@ class RulesIntegrationTests(unittest.TestCase):
                     "id": 3,
                     "statement": "服务 120 家客户",
                     "source_name": "案例",
+                    "trust_level": "verified",
+                    "status": "active",
+                },
+                {
+                    "id": 4,
+                    "statement": "数据分析平台是一种用于汇聚业务数据的系统",
+                    "source_name": "定义",
+                    "trust_level": "verified",
+                    "status": "active",
+                },
+                {
+                    "id": 5,
+                    "statement": "与传统报表工具相比，自助分析更适合跨部门协作",
+                    "source_name": "对比",
                     "trust_level": "verified",
                     "status": "active",
                 },
