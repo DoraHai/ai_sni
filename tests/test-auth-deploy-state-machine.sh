@@ -238,10 +238,11 @@ AUTH_INSTALL_TEST_ROOT="$install_root" "$installer" --enable >/dev/null
 cmp -s "$module" "$install_root/etc/platform-deploy/modules/auth"
 backup_count="$(find "$install_root/var/backups/platform-deploy" -mindepth 1 -maxdepth 1 -type d -name 'auth-*' | wc -l | tr -d ' ')"
 [[ "$backup_count" == 2 ]]
-upgrade_backup="$(find "$install_root/var/backups/platform-deploy" -mindepth 2 -maxdepth 2 -type f -name 'auth.module' -printf '%h\n')"
-[[ -n "$upgrade_backup" ]]
-[[ -f "$upgrade_backup/platform-deploy" ]]
-[[ -f "$upgrade_backup/auth.module" ]]
-[[ -f "$upgrade_backup/auth.enabled" ]]
+dispatcher_backup_count="$(find "$install_root/var/backups/platform-deploy" -mindepth 2 -maxdepth 2 -type f -name 'platform-deploy' | wc -l | tr -d ' ')"
+module_backup_count="$(find "$install_root/var/backups/platform-deploy" -mindepth 2 -maxdepth 2 -type f -name 'auth.module' | wc -l | tr -d ' ')"
+enabled_backup_count="$(find "$install_root/var/backups/platform-deploy" -mindepth 2 -maxdepth 2 -type f -name 'auth.enabled' | wc -l | tr -d ' ')"
+[[ "$dispatcher_backup_count" == 1 ]]
+[[ "$module_backup_count" == 2 ]]
+[[ "$enabled_backup_count" == 2 ]]
 
 printf '%s\n' 'Auth deploy state machine tests passed'
