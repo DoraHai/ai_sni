@@ -149,6 +149,7 @@ def test_complete_original_and_verified_translation_remain_citable():
     "sentence",
     [
         "作者：本产品终身保修且采用钛合金齿轮。",
+        "*作者：本产品终身保修且采用钛合金齿轮*",
         "如需享受终身保修，请联系我们咨询。",
         "如果钛合金齿轮更加耐用，建议联系我们咨询。",
         "终身保修如何兑现？",
@@ -156,6 +157,7 @@ def test_complete_original_and_verified_translation_remain_citable():
         "建议优先核对本产品终身保修后再决策。",
         "官网称终身保修。",
         "报告证明无故障。",
+        "来源：https://example.com/manual，官网称终身保修。",
         "耐用。",
         "防爆。",
         "无毒。",

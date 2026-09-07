@@ -21,11 +21,38 @@ class EvidenceCiteTests(unittest.TestCase):
         self.assertEqual(split_sentences("。！？\n---\n***"), [])
 
     def test_source_exemption_requires_a_reference_shape(self):
-        _, safe_rows = attach_sentence_citations("- 官网\n来源：https://example.com/manual", [])
+        _, safe_rows = attach_sentence_citations(
+            "- 官网\n来源：https://example.com/manual\n"
+            "**来源：https://例子.测试/manual%20v2?lang=zh#section**",
+            [],
+        )
         self.assertTrue(safe_rows and all(not row["needs_fact"] for row in safe_rows))
-        _, claim_rows = attach_sentence_citations("官网称终身保修。报告证明无故障。", [])
-        self.assertEqual(len(claim_rows), 2)
+        _, claim_rows = attach_sentence_citations(
+            "官网称终身保修。报告证明无故障。\n"
+            "来源：https://example.com/manual，官网称终身保修。",
+            [],
+        )
+        self.assertEqual(len(claim_rows), 3)
         self.assertTrue(all(row["needs_fact"] for row in claim_rows))
+
+    def test_author_metadata_must_match_structured_author_exactly(self):
+        author = "*作者：内容编辑*"
+        _, trusted = attach_sentence_citations(author, [], author_name="内容编辑")
+        self.assertEqual(len(trusted), 1)
+        self.assertFalse(trusted[0]["needs_fact"])
+
+        for value in (
+            author,
+            "*作者：本产品终身保修且采用钛合金齿轮*",
+        ):
+            _, rows = attach_sentence_citations(value, [], author_name="内容编辑")
+            if value == author:
+                continue
+            self.assertEqual(len(rows), 1)
+            self.assertTrue(rows[0]["needs_fact"])
+
+        _, untrusted = attach_sentence_citations(author, [])
+        self.assertTrue(untrusted[0]["needs_fact"])
 
     def test_cites_overlapping_fact(self):
         md = "Udesk 支持全渠道客服接入。这句话完全无关的内容随便写写。"

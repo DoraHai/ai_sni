@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.geo.content.fact_retrieve import tokenize
 
@@ -15,9 +16,9 @@ _GENERIC_HEADING = re.compile(
     re.I,
 )
 _METADATA = re.compile(
-    r"^(?:\*作者[：:][^*：:。.!！?？\n]{1,40}\*|"
-    r"\*(?:更新时间|发布日期)[：:]\d{4}-\d{2}-\d{2}\*)$"
+    r"^\*(?:更新时间|发布日期)[：:]\d{4}-\d{2}-\d{2}\*$"
 )
+_AUTHOR_METADATA = re.compile(r"^\*作者[：:]([^*\n]+)\*$")
 _PURE_TRANSITION = re.compile(
     r"^(?:以下|下面|接下来)(?:将|按|从)?(?:依据|围绕|按照|基于)?(?:已核验)?(?:事实|资料|来源)?"
     r"(?:逐项|分别)?(?:说明|介绍|分析|展开|讨论)[。.!！]?$|"
@@ -51,14 +52,27 @@ _SOURCE_REFERENCE = re.compile(
     r"^(?:白皮书|文档|报告|官网|标准|手册|案例集|案例)$",
     re.I,
 )
-_SOURCE_METADATA = re.compile(
-    r"^\*{0,2}来源[：:]\s*(?:https?://\S+|(?:白皮书|文档|报告|官网|标准|手册|案例集|案例))\*{0,2}$",
+_SOURCE_METADATA_NAME = re.compile(
+    r"^\*{0,2}来源[：:]\s*(?:白皮书|文档|报告|官网|标准|手册|案例集|案例)\*{0,2}$",
     re.I,
 )
+_SOURCE_PREFIX = re.compile(r"^\*{0,2}来源[：:]\s*", re.I)
+_URL_DISALLOWED = re.compile(r"[\s，。；！？、*]")
 
 
 def split_sentences(text: str) -> list[str]:
-    parts = [p.strip() for p in _SENT_SPLIT.split(text or "") if p and p.strip()]
+    parts: list[str] = []
+    for line in (text or "").splitlines():
+        value = line.strip()
+        if not value:
+            continue
+        # Query delimiters inside a standalone URL are URL syntax, not prose.
+        if _is_standalone_url_reference(value):
+            parts.append(value)
+            continue
+        parts.extend(
+            p.strip() for p in _SENT_SPLIT.split(value) if p and p.strip()
+        )
     return [p for p in parts if re.search(r"[A-Za-z0-9\u4e00-\u9fff]", p)]
 
 
@@ -67,11 +81,38 @@ def strip_citation_appendix(markdown: str) -> str:
     return _APPENDIX.sub("", markdown or "").rstrip()
 
 
-def is_presentation_sentence(sentence: str) -> bool:
+def _is_author_metadata(value: str, author_name: str | None) -> bool:
+    match = _AUTHOR_METADATA.fullmatch(value)
+    return bool(
+        match
+        and author_name
+        and match.group(1).strip().casefold() == str(author_name).strip().casefold()
+    )
+
+
+def _is_standalone_url_reference(value: str) -> bool:
+    candidate = value.strip()
+    for marker in ("**", "*"):
+        if candidate.startswith(marker) and candidate.endswith(marker):
+            candidate = candidate[len(marker) : -len(marker)].strip()
+            break
+    candidate = _SOURCE_PREFIX.sub("", candidate).strip()
+    if _URL_DISALLOWED.search(candidate):
+        return False
+    try:
+        parsed = urlsplit(candidate)
+    except ValueError:
+        return False
+    return parsed.scheme.casefold() in {"http", "https"} and bool(parsed.netloc)
+
+
+def is_presentation_sentence(
+    sentence: str, *, author_name: str | None = None
+) -> bool:
     value = str(sentence or "").strip()
     if not value:
         return True
-    if _METADATA.search(value):
+    if _METADATA.fullmatch(value) or _is_author_metadata(value, author_name):
         return True
     if _PURE_TRANSITION.fullmatch(value):
         return True
@@ -82,13 +123,17 @@ def is_presentation_sentence(sentence: str) -> bool:
     return False
 
 
-def is_evidence_exempt(sentence: str) -> bool:
+def is_evidence_exempt(
+    sentence: str, *, author_name: str | None = None
+) -> bool:
     """Return true only for syntax that does not assert a product/world fact."""
     value = str(sentence or "").strip()
     if (
         not value
-        or _METADATA.search(value)
-        or _SOURCE_METADATA.fullmatch(value)
+        or _METADATA.fullmatch(value)
+        or _is_author_metadata(value, author_name)
+        or _SOURCE_METADATA_NAME.fullmatch(value)
+        or _is_standalone_url_reference(value)
         or _PURE_TRANSITION.fullmatch(value)
     ):
         return True
@@ -109,7 +154,6 @@ def is_evidence_exempt(sentence: str) -> bool:
             bool(re.match(r"^(?:[-*+]\s*|\d+[.)、]\s*)", value))
             and bool(_SOURCE_REFERENCE.fullmatch(plain))
         )
-        or bool(re.fullmatch(r"https?://\S+", plain, re.I))
     )
 
 
@@ -156,7 +200,11 @@ def _sentence_is_claim(sentence: str, facts: list[dict[str, Any]]) -> bool:
 
 
 def build_sentence_citations(
-    markdown: str, facts: list[dict[str, Any]], *, min_score: float = 0.22
+    markdown: str,
+    facts: list[dict[str, Any]],
+    *,
+    min_score: float = 0.22,
+    author_name: str | None = None,
 ) -> list[dict[str, Any]]:
     """Match sentences to facts without inventing facts or rewriting the body."""
     facts = [f for f in facts or [] if f.get("id") is not None]
@@ -178,14 +226,15 @@ def build_sentence_citations(
                 ranked, key=lambda item: (not item[0], -item[1])
             )[0]
             cited = (
-                not is_presentation_sentence(sent)
+                not is_presentation_sentence(sent, author_name=author_name)
                 and score >= min_score
                 and support_basis is not None
             )
         else:
             support_basis = None
         is_claim = _sentence_is_claim(sent, facts) or bool(
-            not is_evidence_exempt(sent) and support_basis is None
+            not is_evidence_exempt(sent, author_name=author_name)
+            and support_basis is None
         )
         # Similarity is only a retrieval hint. It cannot override a known
         # unsupported assertion, even when the rest repeats a fact verbatim.
@@ -237,11 +286,17 @@ def format_citation_appendix(rows: list[dict[str, Any]]) -> str:
 
 
 def attach_sentence_citations(
-    markdown: str, facts: list[dict[str, Any]], *, min_score: float = 0.22
+    markdown: str,
+    facts: list[dict[str, Any]],
+    *,
+    min_score: float = 0.22,
+    author_name: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Return a de-duplicated body and its structured citation metadata."""
     body = strip_citation_appendix(markdown)
-    return body, build_sentence_citations(body, facts, min_score=min_score)
+    return body, build_sentence_citations(
+        body, facts, min_score=min_score, author_name=author_name
+    )
 
 
 def citation_verdict(rows: list[dict[str, Any]]) -> dict[str, Any]:
