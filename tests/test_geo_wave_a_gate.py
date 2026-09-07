@@ -17,8 +17,8 @@ def _ready_input(**kwargs) -> RuleInput:
             "## 操作步骤\n\n"
             "步骤 1：明确场景。\n步骤 2：核对事实。\n步骤 3：试点上线。\n\n"
             "## FAQ\n\n"
-            "- **Q：** 需要关注什么？\n  **A：** 来源与时效。\n"
-            "- **Q：** 如何验证？\n  **A：** 核对应事实卡。\n\n"
+            "- **Q：** 需要关注什么？\n  **A：** 建议核验来源与时效。\n"
+            "- **Q：** 如何验证？\n  **A：** 建议核对应事实卡。\n\n"
             "## 结论\n\n优先核验来源后再决策。\n\n"
             "## 来源\n\n- 白皮书\n\n"
             "覆盖 80% 场景。实施约 14 天。服务 120 家客户。\n\n"
@@ -29,6 +29,8 @@ def _ready_input(**kwargs) -> RuleInput:
             {"id": 1, "statement": "覆盖 80% 场景", "source_name": "s", "trust_level": "verified", "status": "active"},
             {"id": 2, "statement": "实施约 14 天", "source_name": "s", "trust_level": "verified", "status": "active"},
             {"id": 3, "statement": "服务 120 家客户", "source_name": "s", "trust_level": "verified", "status": "active"},
+            {"id": 4, "statement": "数据分析平台是一种用于汇聚与分析业务数据的系统", "source_name": "s", "trust_level": "verified", "status": "active"},
+            {"id": 5, "statement": "与传统报表工具相比，自助分析更适合跨部门协作", "source_name": "s", "trust_level": "verified", "status": "active"},
         ],
         target_channels=["website"],
         variants=["website"],

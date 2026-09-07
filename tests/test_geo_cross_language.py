@@ -91,3 +91,55 @@ def test_overlap_cannot_cite_added_effect_negation_or_opposite(sentence):
     assert not row["cited"]
     assert row["needs_fact"]
     assert row["support_basis"] is None
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "The gearbox uses titanium gears.",
+        "This machine is painted blue.",
+        "Operators receive a lifetime warranty.",
+        "该产品采用钛合金齿轮。",
+        "为何钛合金齿轮更耐用？",
+        "## 钛合金齿轮更耐用",
+    ],
+)
+def test_unverified_statements_and_presuppositions_fail_closed(sentence):
+    fact = {"id": 6, "statement": "MAXXDRIVE XT features a ribbed housing."}
+    row = build_sentence_citations(sentence, [fact])[0]
+    assert not row["cited"]
+    assert row["is_claim"] and row["needs_fact"]
+    assert not citation_verdict([row])["ok"]
+
+
+def test_neutral_transition_and_question_are_narrowly_exempt():
+    facts = [{"id": 6, "statement": "MAXXDRIVE XT features a ribbed housing."}]
+    rows = build_sentence_citations(
+        "下面按已核验事实逐项说明。\n需要关注什么？",
+        facts,
+    )
+    assert rows and all(not row["cited"] and not row["needs_fact"] for row in rows)
+    assert citation_verdict(rows)["ok"]
+
+
+def test_complete_original_and_verified_translation_remain_citable():
+    statement = "MAXXDRIVE XT features a ribbed housing."
+    fact = {
+        "id": 6,
+        "statement": statement,
+        "meta": {
+            "verified_translations": [{
+                "status": "verified",
+                "verified_at": "2026-09-07T00:00:00Z",
+                "verified_by": 5,
+                "source_statement": statement,
+                "text": "MAXXDRIVE XT 采用强化肋片外壳。",
+            }],
+        },
+    }
+    rows = build_sentence_citations(
+        "MAXXDRIVE XT features a ribbed housing.\nMAXXDRIVE XT 采用强化肋片外壳。",
+        [fact],
+    )
+    assert len(rows) == 2
+    assert all(row["cited"] and not row["needs_fact"] for row in rows)

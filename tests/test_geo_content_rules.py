@@ -19,9 +19,9 @@ def _base(**kwargs) -> RuleInput:
             "步骤 3：完成试点验证。\n\n"
             "## FAQ\n\n"
             "- **Q：** 需要关注什么？\n"
-            "  **A：** 来源与时效。\n"
+            "  **A：** 建议核验来源与时效。\n"
             "- **Q：** 如何验证？\n"
-            "  **A：** 核对应事实卡。\n\n"
+            "  **A：** 建议核对应事实卡。\n\n"
             "## 结论\n\n优先核验来源后再决策。\n\n"
             "## 来源\n\n"
             "- 白皮书\n- 文档\n- 案例\n\n"
@@ -54,6 +54,8 @@ def _base(**kwargs) -> RuleInput:
             {"id": 1, "statement": "支持私有化部署，覆盖 80% 场景", "source_name": "白皮书", "trust_level": "verified", "status": "active"},
             {"id": 2, "statement": "标准实施约 14 天", "source_name": "文档", "trust_level": "verified", "status": "active"},
             {"id": 3, "statement": "已服务 120 家制造客户", "source_name": "案例", "trust_level": "verified", "status": "active"},
+            {"id": 4, "statement": "数据分析平台是一种用于汇聚与分析业务数据的系统", "source_name": "定义", "trust_level": "verified", "status": "active"},
+            {"id": 5, "statement": "与传统报表工具相比，自助分析平台更适合跨部门协作", "source_name": "对比", "trust_level": "verified", "status": "active"},
         ],
         target_channels=["website", "zhihu"],
         variants=["website", "zhihu"],

@@ -11,6 +11,7 @@ from app.geo.content.ai_reviewer import (
     _normalize_issues,
 )
 from app.geo.content.geo_score import compute_geo_score, score_blocks_ready
+from app.geo.content.evidence_cite import build_sentence_citations
 from app.geo.content.rules import RuleInput
 from app.security.auth import _required
 
@@ -90,6 +91,19 @@ def _rule(
 
 
 class GeoScoreTests(unittest.TestCase):
+    def test_unsupported_low_similarity_statements_do_not_raise_evidence_score(self):
+        facts = [{"id": 6, "statement": "MAXXDRIVE XT features a ribbed housing."}]
+        body = (
+            "The gearbox uses titanium gears. "
+            "This machine is painted blue. "
+            "Operators receive a lifetime warranty."
+        )
+        rows = build_sentence_citations(body, facts)
+        self.assertTrue(rows and all(row["needs_fact"] for row in rows))
+        outline = {"direct_answer": "", "sections": [], "sentence_citations": rows}
+        out = compute_geo_score(_rule(body=body, outline=outline, facts=facts), lint_ok=True)
+        self.assertAlmostEqual(out["geo_subscores"]["evidence_use"], 0.117, places=3)
+
     def test_evidence_score_uses_traceable_body_citations_only(self):
         facts = [
             {"id": 1, "title": "A", "statement": "ACME output is 20,000 Nm", "source_name": "Manual"},

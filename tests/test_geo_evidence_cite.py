@@ -47,7 +47,7 @@ class EvidenceCiteTests(unittest.TestCase):
         self.assertEqual(out, md)
         self.assertEqual(len(rows), 1)
         self.assertFalse(rows[0]["cited"])
-        self.assertFalse(rows[0]["needs_fact"])
+        self.assertTrue(rows[0]["needs_fact"])
 
 
 if __name__ == "__main__":
