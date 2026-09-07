@@ -11,6 +11,7 @@ from app.database import get_session
 from app.models import Role, Tenant, User
 from app.permissions import effective_role_permissions, has_full_platform_admin
 from app.security.auth import AuthContext, hash_password, require_admin
+from app.security.platform_admin import acquire_platform_admin_lock
 
 router = APIRouter(
     prefix="/api/v1/users",
@@ -136,6 +137,7 @@ async def update_user(
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_admin),
 ) -> dict:
+    await acquire_platform_admin_lock(session)
     user = await session.get(User, user_id)
     if user is None:
         raise HTTPException(404, "用户不存在")
@@ -162,7 +164,7 @@ async def update_user(
         and next_tenant_id is None
         and has_full_platform_admin(next_permissions)
     )
-    if user.id == ctx.user_id and not remains_platform_admin:
+    if user.id == ctx.user_id and currently_platform_admin and not remains_platform_admin:
         raise HTTPException(400, "不能让当前账号失去平台管理能力")
     if (
         currently_platform_admin

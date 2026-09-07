@@ -64,6 +64,9 @@ class _Session:
     async def scalar(self, _statement):
         return 0
 
+    async def execute(self, _statement):
+        return None
+
     async def commit(self):
         self.commits += 1
 
@@ -191,6 +194,25 @@ def test_current_and_last_platform_admin_cannot_self_lock():
         )
 
 
+def test_accounts_only_admin_can_edit_own_non_privilege_fields():
+    role = _role(
+        name="账号管理员",
+        is_system=False,
+        permissions={"settings.accounts": "edit"},
+    )
+    actor = _user(role_id=role.id)
+    ctx = AuthContext(actor.id, actor.username, role.name, None, role.permissions)
+    session = _Session(roles=[role], users=[actor])
+
+    result = asyncio.run(
+        update_user(actor.id, UpdateUserRequest(display_name="新显示名"), session, ctx)
+    )
+
+    assert result == {"status": "ok"}
+    assert actor.display_name == "新显示名"
+    assert session.commits == 1
+
+
 def test_password_reset_is_separate_and_never_serializes_password_or_hash(monkeypatch):
     role = _role()
     user = _user()
@@ -246,3 +268,5 @@ def test_customer_status_and_connection_completeness_are_not_inferred():
     assert '"completeness": "not_evaluated"' in backend
     assert "客户状态" in frontend and "未提供" in frontend
     assert "完整性未评估" in frontend
+    assert "new Date().toISOString().slice(0, 10)" not in frontend
+    assert "item.available !== true" in frontend
