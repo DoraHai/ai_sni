@@ -83,3 +83,23 @@ The candidate correctly commits a live `pending` intent before the remote call a
 The candidate's focused tests passed (`88 passed`). A full run excluding `tests/test_geo_brand_profile.py` passed with `2091 passed, 47 skipped`. The isolated GEO brand-profile test failed identically on both this candidate and baseline `9fc891e4c596e92e2af0ab5c567fc3f505c21d62`, so it was not introduced by the candidate. The 47 skipped tests do not include a PostgreSQL concurrency test for this change.
 
 The next review requires a disposable PostgreSQL test with two independent sessions. It must prove same-action and cross-action serialization, no-row guard behavior, add-word retry behavior, a reconciliation attempt during the post-commit/relock interval, and correct payload reconstruction after a concurrent snapshot refresh.
+
+### Follow-up candidate `cd8cf8e`
+
+Candidate `cd8cf8ef1cf703d6702c973cde7feb03e67ea42f` remains blocked.
+
+- The record-state check now stops a record that was reconciled in the post-commit interval, and add-word/campaign conflict checks were expanded.
+- A landing-URL snapshot check was inserted into `apply_adgroup_pause_writeback` instead of the landing-URL function. It references undefined `old_snapshot`; a live adgroup pause therefore fails after committing its pending intent and before entering the remote-call `try` block. The landing-URL action still lacks the intended post-commit snapshot check.
+- The two new PostgreSQL tests execute their sessions sequentially. One commits reconciliation before starting the executor; the other commits a pending row before the second session queries it. They do not test two transactions starting with no pending row, lock waiting, the commit/relock interval, add-word success before candidate/dimension persistence, or a full-list synchronization race.
+
+The focused run was `89 passed, 2 skipped`. Zero skips for these two tests would still be insufficient until they use explicit two-session barriers and exercise the proven races.
+
+## Re-review of shared session candidate
+
+Candidate `codex/session-storage-sync-20260907` at `0ad7b9adf47f9b510a72879303ac4904c58189db` closes the original mixed token/user storage-event race by publishing a single `sem_auth_v1` envelope. It is still blocked:
+
+1. `App.vue` starts `refreshMe`, tenant loading, badges, and writeback-mode loading concurrently. A successful `refreshMe` unconditionally increments `authRevision`, so responses started under the same valid identity are rejected as `AUTH_CONTEXT_CHANGED`. An offline reproduction completed `me`, refreshed the identical user, and then completed the tenant request; the tenant request was rejected. The bootstrap has no retry for this path.
+2. Legacy-client logout compatibility is incomplete. When an envelope exists, removing only legacy `sem_token`/`sem_user` keys returns `undefined` from `persistentAuthForEvent`, leaving the envelope valid. An older open tab can log out locally and then recover the supposedly logged-out session from the envelope on reload. The supplied test omits the envelope and therefore does not model a mixed-version rollout.
+3. When all SEO permissions are removed, the SEO route decision returns `false`. The revalidation wrapper only replaces truthy non-`true` decisions, so the already rendered protected page remains visible.
+
+The candidate's session tests, workbench-session test, auth build, main build, and SEM build verification all passed in the review environment; those checks do not cover the three paths above.
