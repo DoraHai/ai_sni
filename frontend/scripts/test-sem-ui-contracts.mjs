@@ -48,7 +48,7 @@ assert.match(keywordWorkbench, /已禁止修改匹配模式/)
 assert.match(keywordWorkbench, /已禁止暂停或启用/)
 assert.match(keywordWorkbench, /已禁止批量暂停或启用/)
 assert.match(keywordWorkbench, /generation !== writebackModeGeneration \|\| tenantId !== TENANT_ID\.value/)
-assert.match(keywordWorkbench, /watch\(TENANT_ID,[\s\S]*tableRef\.value\?\.clearSelection\(\)[\s\S]*selection\.value = \[\]/)
+assert.match(keywordWorkbench, /watch\(TENANT_ID,[\s\S]*tableRef\.value\?\.clearSelection(?:\?\.)?\(\)[\s\S]*selection\.value = \[\]/)
 
 const roles = await source('src/views/settings/AccountsRolesView.vue')
 assert.match(roles, /tenantOptions\.value = tenants\.tenants \|\| \[\]/)

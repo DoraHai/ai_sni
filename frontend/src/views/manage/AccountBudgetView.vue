@@ -1,15 +1,19 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAccountBudget, setAccountBudget } from '../../api/manage'
 import { WRITEBACK_CONFIRMATION } from '../../api/writeback'
 import { session } from '../../store/session'
+import { createLatestRequestGuard } from '../../utils/latestRequest'
+import { chooseSemAccount } from '../../utils/accountScope'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
 const currentTenant = computed(() => session.tenants.find((row) => row.id === TENANT_ID.value))
-const activeAccounts = computed(() => (
+const readableAccounts = computed(() => (
   currentTenant.value?.sem_accounts || []
-).filter((row) => row.status === 'active'))
+).filter((row) => row.status !== 'archived'))
+const activeAccounts = computed(() => readableAccounts.value.filter((row) => row.status === 'active'))
+const selectedAccountIsActive = computed(() => activeAccounts.value.some((row) => row.id === selectedAccountId.value))
 const selectedAccountId = ref(null)
 
 const loading = ref(false)
@@ -17,30 +21,77 @@ const error = ref('')
 const data = ref(null)
 const saving = ref(false)
 const input = ref(null) // 待写回的预算输入
+const loadGuard = createLatestRequestGuard(() => ({
+  tenantId: TENANT_ID.value,
+  accountId: selectedAccountId.value,
+  authRevision: session.authRevision,
+}))
+const saveGuard = createLatestRequestGuard(() => ({
+  tenantId: TENANT_ID.value,
+  accountId: selectedAccountId.value,
+  authRevision: session.authRevision,
+}))
 
 async function load() {
-  if (!TENANT_ID.value) return
-  if (activeAccounts.value.length > 1 && !selectedAccountId.value) return
+  const attempt = loadGuard.begin()
+  const { tenantId, accountId } = attempt.context
+  if (!session.canView('manage.account') || !tenantId || !accountId) {
+    data.value = null
+    error.value = ''
+    loading.value = false
+    return
+  }
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchAccountBudget({
-      tenantId: TENANT_ID.value,
-      baiduAccountId: selectedAccountId.value,
-    })
+    const result = await fetchAccountBudget({ tenantId, baiduAccountId: accountId })
+    if (!attempt.isCurrent()) return
+    data.value = result
     if (data.value?.status === 'ok') input.value = data.value.budget
   } catch (e) {
-    error.value = e.message
+    if (attempt.isCurrent()) error.value = e.message
   } finally {
-    loading.value = false
+    if (attempt.isCurrent()) loading.value = false
   }
 }
 
-watch([TENANT_ID, activeAccounts], ([, accounts]) => {
-  const currentExists = accounts.some((row) => row.id === selectedAccountId.value)
-  selectedAccountId.value = currentExists ? selectedAccountId.value : (accounts[0]?.id ?? null)
+watch([TENANT_ID, readableAccounts, () => session.tenantListRevision], ([, accounts]) => {
+  loadGuard.invalidate()
+  saveGuard.invalidate()
+  data.value = null
+  error.value = ''
+  loading.value = false
+  saving.value = false
+  input.value = null
+  const previousAccountId = selectedAccountId.value
+  const nextAccountId = chooseSemAccount(accounts, previousAccountId)
+  selectedAccountId.value = nextAccountId
+  if (nextAccountId === previousAccountId) load()
 }, { immediate: true })
-watch([TENANT_ID, selectedAccountId], load, { immediate: true })
+watch(selectedAccountId, () => {
+  loadGuard.invalidate()
+  saveGuard.invalidate()
+  data.value = null
+  error.value = ''
+  loading.value = false
+  saving.value = false
+  input.value = null
+  load()
+})
+watch(() => session.authRevision, () => {
+  loadGuard.invalidate()
+  saveGuard.invalidate()
+  data.value = null
+  error.value = ''
+  loading.value = false
+  saving.value = false
+  input.value = null
+  if (session.canView('manage.account')) load()
+})
+onBeforeUnmount(() => {
+  loadGuard.invalidate()
+  saveGuard.invalidate()
+})
 
 const fmtMoney = (v) => (v == null ? '—' : '¥' + Number(v).toFixed(2))
 const min = computed(() => data.value?.min_budget ?? 50)
@@ -56,29 +107,42 @@ const changeHint = computed(() => {
 })
 
 async function save() {
+  if (!session.canEdit('manage.account')) return
+  const attempt = saveGuard.begin()
+  const { tenantId, accountId } = attempt.context
+  const budgetSnapshot = data.value
+  if (!tenantId || !accountId || !budgetSnapshot || !selectedAccountIsActive.value) return
+  if (Number(budgetSnapshot.baidu_account_id) !== Number(accountId)) {
+    ElMessage.error('当前预算数据与所选推广账户不一致，请重新读取后再提交')
+    return
+  }
   const v = Number(input.value)
-  if (!Number.isFinite(v) || v < min.value || v > max.value) {
-    ElMessage.warning(`日预算需在 ¥${min.value} ~ ¥${max.value} 之间`)
+  const minBudget = Number(budgetSnapshot.min_budget ?? 50)
+  const maxBudget = Number(budgetSnapshot.max_budget ?? 10000000)
+  if (!Number.isFinite(v) || v < minBudget || v > maxBudget) {
+    ElMessage.warning(`日预算需在 ¥${minBudget} ~ ¥${maxBudget} 之间`)
     return
   }
   const modeNote = '系统将按当前客户、推广账户和账户预算动作门禁决定演练或真实执行；真实执行会修改百度账户。'
   try {
     await ElMessageBox.confirm(
-      `确认把账户日预算从 ${fmtMoney(data.value.budget)} 改为 ¥${v.toFixed(2)}？\n${modeNote}`,
+      `确认把账户日预算从 ${fmtMoney(budgetSnapshot.budget)} 改为 ¥${v.toFixed(2)}？\n${modeNote}`,
       '确认修改账户日预算',
       { confirmButtonText: '确认提交', cancelButtonText: '取消', type: 'warning' },
     )
   } catch {
     return // 用户取消
   }
+  if (!attempt.isCurrent()) return
   saving.value = true
   try {
     const res = await setAccountBudget({
-      tenantId: TENANT_ID.value,
-      baiduAccountId: selectedAccountId.value,
+      tenantId,
+      baiduAccountId: accountId,
       budget: v,
       confirmation: WRITEBACK_CONFIRMATION,
     })
+    if (!attempt.isCurrent()) return
     if (res.status === 'dry_run') {
       ElMessage.success(`已加入待回写：日预算 ${fmtMoney(res.old_budget)} → ${fmtMoney(res.new_budget)}（百度账户未修改）`)
     } else if (res.status === 'success') {
@@ -90,9 +154,9 @@ async function save() {
     }
     await load()
   } catch (e) {
-    ElMessage.error(e.message)
+    if (attempt.isCurrent()) ElMessage.error(e.message)
   } finally {
-    saving.value = false
+    if (attempt.isCurrent()) saving.value = false
   }
 }
 </script>
@@ -118,13 +182,13 @@ async function save() {
       title="账户预算回写受客户、推广账户和动作门禁保护；已开放动作会真实修改百度账户。"
     />
 
-    <div v-if="activeAccounts.length > 1" class="account-selector">
+    <div v-if="readableAccounts.length > 1 || !selectedAccountIsActive" class="account-selector">
       <span>推广账户</span>
-      <el-select v-model="selectedAccountId" style="width: 260px">
+      <el-select v-model="selectedAccountId" clearable placeholder="全部账户（只读）" style="width: 260px">
         <el-option
-          v-for="account in activeAccounts"
+          v-for="account in readableAccounts"
           :key="account.id"
-          :label="`${account.username} · ${account.ucid}`"
+          :label="`${account.username} · ${account.ucid}${account.status === 'active' ? '' : ' · 已停用（历史）'}`"
           :value="account.id"
         />
       </el-select>
@@ -174,7 +238,7 @@ async function save() {
             controls-position="right"
             style="width: 200px"
           />
-          <el-button type="primary" :loading="saving" @click="save">加入待回写</el-button>
+          <el-button type="primary" :loading="saving" :disabled="!selectedAccountIsActive" @click="save">加入待回写</el-button>
           <span v-if="changeHint" class="change-hint" :class="{ big: changeHint.big }">
             {{ changeHint.pct > 0 ? '+' : '' }}{{ changeHint.pct }}%
             <template v-if="changeHint.big">⚠ 调整幅度较大，请确认</template>

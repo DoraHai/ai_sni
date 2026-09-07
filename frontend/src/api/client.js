@@ -1,6 +1,6 @@
 import axios from 'axios'
-import { session } from '../store/session'
-import { redirectToLogin } from '../auth/loginRedirect'
+import { session } from '../store/session.js'
+import { redirectToLogin } from '../auth/loginRedirect.js'
 
 // 同源 /api 路径：开发期由 vite proxy 转发，生产由 Nginx 反代
 const client = axios.create({
@@ -9,6 +9,7 @@ const client = axios.create({
 })
 
 client.interceptors.request.use((config) => {
+  config._authRevision = session.authRevision
   if (session.token) {
     config.headers.Authorization = `Bearer ${session.token}`
   } else if (import.meta.env.VITE_API_KEY) {
@@ -31,8 +32,20 @@ function normalizeDetail(detail) {
 }
 
 client.interceptors.response.use(
-  (resp) => resp.data,
+  (resp) => {
+    if (resp.config?._authRevision !== session.authRevision) {
+      const stale = new Error('登录身份或权限已变化，已忽略旧请求结果')
+      stale.code = 'AUTH_CONTEXT_CHANGED'
+      return Promise.reject(stale)
+    }
+    return resp.data
+  },
   (error) => {
+    if (error.config?._authRevision !== undefined && error.config._authRevision !== session.authRevision) {
+      const stale = new Error('登录身份或权限已变化，已忽略旧请求结果')
+      stale.code = 'AUTH_CONTEXT_CHANGED'
+      return Promise.reject(stale)
+    }
     if (error.response?.status === 401 && session.isLoggedIn) {
       session.logout()
       redirectToLogin()
