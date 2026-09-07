@@ -322,7 +322,13 @@ async def execute_single_push(session, *, task, variant, channel_row, account, m
             session, task, tenant, fresh=fresh
         )
         assert_can_publish(
-            await _build_rule_input(session, task, current_article),
+            await _build_rule_input(
+                session,
+                task,
+                current_article,
+                fresh=fresh,
+                refresh_citations=False,
+            ),
             task=task,
             brand=brand,
         )

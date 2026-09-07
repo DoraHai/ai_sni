@@ -86,12 +86,12 @@ def test_review_uses_state_refreshed_under_task_lock():
 @pytest.mark.parametrize('published', [False, True])
 def test_regeneration_invalidates_review_only_when_draft_is_saved(published):
     task, variant = task_fixture(), variant_fixture('published' if published else 'draft')
-    article = NS(id=15, title='title', body_markdown='body', outline={}, author_name=None)
+    article = NS(id=15, title='title', body_markdown='brand 正文。\n\n## 结论\n选择 brand。', outline={}, author_name=None)
     session = NS(get=AsyncMock(side_effect=[task, NS(name='brand')]), refresh=AsyncMock(),
                  scalars=AsyncMock(return_value=[]), execute=AsyncMock(return_value=NS(
                      scalars=lambda: [])), flush=AsyncMock(), commit=AsyncMock())
 
-    async def latest(*args):
+    async def latest(*args, **kwargs):
         session.refresh.assert_awaited_once_with(task, with_for_update=True)
         return article
 
@@ -100,12 +100,14 @@ def test_regeneration_invalidates_review_only_when_draft_is_saved(published):
             '_latest_article': latest, '_list_variants': AsyncMock(return_value=[variant]),
             'enabled_types_from_rows': Mock(return_value=['website']),
             'resolve_for_channel': AsyncMock(return_value={}),
-            'adapt_or_polish_for_channel': AsyncMock(return_value=('new title', 'new body',
+            'adapt_or_polish_for_channel': AsyncMock(return_value=('new title', 'brand 新正文。\n\n## 结论\n选择 brand。',
                 {'quality': 'adapted_draft_not_publishable', 'fallback': True})),
         }.items():
             stack.enter_context(patch.object(variant_execute, name, replacement))
         stack.enter_context(patch('app.geo.content.rules.run_checks', return_value=[]))
         stack.enter_context(patch('app.geo.content.rules.is_ready', return_value=False))
+        stack.enter_context(patch('app.geo.content.routes._ensure_tenant_exists', AsyncMock(return_value=NS(name='brand'))))
+        stack.enter_context(patch('app.geo.content.routes._brand_context_for_task', AsyncMock(return_value=('brand',['brand']))))
         run = variant_execute.execute_variants_for_task(session, task_id=12, tenant_id=1,
                                                        channels=['website'], use_llm=False)
         if published:
@@ -116,7 +118,7 @@ def test_regeneration_invalidates_review_only_when_draft_is_saved(published):
         else:
             asyncio.run(run)
             assert task.review_status == 'none' and task.reviewed_by is None
-            assert variant.body_markdown == 'new body'
+            assert variant.body_markdown == 'brand 新正文。\n\n## 结论\n选择 brand。'
             session.commit.assert_awaited_once()
 
 
@@ -145,9 +147,13 @@ def test_variant_generation_recomputes_brand_when_rule_result_is_missing():
             stack.enter_context(patch.object(variant_execute, name, replacement))
         stack.enter_context(patch('app.geo.content.rules.run_checks', return_value=[]))
         stack.enter_context(patch('app.geo.content.rules.is_ready', return_value=True))
-        asyncio.run(variant_execute.execute_variants_for_task(
-            session, task_id=12, tenant_id=1, channels=['website'], use_llm=False,
-        ))
+        stack.enter_context(patch('app.geo.content.routes._ensure_tenant_exists', AsyncMock(return_value=NS(name='工业齿轮箱'))))
+        brand_context = AsyncMock(return_value=('工业齿轮箱',['工业齿轮箱']))
+        stack.enter_context(patch('app.geo.content.routes._brand_context_for_task', brand_context))
+        with pytest.raises(ValueError, match='品牌标准'):
+            asyncio.run(variant_execute.execute_variants_for_task(
+                session, task_id=12, tenant_id=1, channels=['website'], use_llm=False,
+            ))
 
     assert task.status == 'needs_fix'
     assert task.rule_result['ready'] is False
@@ -156,3 +162,4 @@ def test_variant_generation_recomputes_brand_when_rule_result_is_missing():
         row['code'] == 'geo_brand_standard' and row['passed'] is False
         for row in task.rule_result['checks']
     )
+    assert brand_context.await_args.kwargs['fresh'] is True

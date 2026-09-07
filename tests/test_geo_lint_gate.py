@@ -81,7 +81,7 @@ class LintGateTests(unittest.TestCase):
         ):
             assert_can_publish(self._ready_input("对比工具A与工具B"))
 
-    def test_brand_validation_blocks_publish_even_when_score_gate_is_off(self):
+    def test_current_brand_pass_overrides_stored_brand_failure(self):
         settings = SimpleNamespace(
             geo_lint_gate=False,
             geo_score_gate=False,
@@ -104,8 +104,13 @@ class LintGateTests(unittest.TestCase):
             patch("app.geo.content.gate.run_checks", return_value=[]),
             patch("app.geo.content.review.assert_review_approved", return_value=None),
         ):
-            with self.assertRaisesRegex(PublishGateError, "品牌标准未通过"):
-                assert_can_publish(self._ready_input("合格正文"), task=task)
+            assert_can_publish(
+                self._ready_input(
+                    "工业齿轮箱用于传递动力。\n\n## 结论\n可按工况选择工业齿轮箱。"
+                ),
+                task=task,
+                brand="工业齿轮箱",
+            )
 
     def test_current_article_brand_check_rejects_missing_or_stale_saved_result(self):
         settings = SimpleNamespace(
