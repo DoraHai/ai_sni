@@ -17,7 +17,14 @@ cleanup_test() {
   if [[ -n "$deploy_pid" ]]; then kill "$deploy_pid" 2>/dev/null || true; fi
   rm -rf -- "$sandbox"
 }
+report_failure() {
+  local status=$?
+  trap - ERR
+  printf 'Auth deploy state machine failed at line %s: %s\n' "${BASH_LINENO[0]}" "$BASH_COMMAND" >&2
+  exit "$status"
+}
 trap cleanup_test EXIT
+trap report_failure ERR
 
 commit='1234567890abcdef1234567890abcdef12345678'
 upload_root="$sandbox/uploads"
