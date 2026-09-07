@@ -814,10 +814,14 @@ async def receipt(placement_id: int, req: ReceiptInput, ctx=Auth, session=Db):
         url = platform_url(row.platform, req.answer_url, answer=True, question_url=row.question_url, domain=site.canonical_domain)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    # A response may be lost after commit. Replaying the same normalized URL is
-    # safe and must not force an operator to manufacture a new receipt version.
+    # Revalidate the reviewed content before accepting even an identical replay.
+    # A response may be lost after commit, but only the immediately preceding
+    # request version is an unambiguous replay of the current URL.
+    await publication_draft(placement_id, req.tenant_id, req.site_id, ctx, session)
     if row.answer_url == url:
-        return data(row)
+        if req.version in {row.version, row.version - 1}:
+            return data(row)
+        raise HTTPException(409, '记录已更新，请刷新后重试')
     check_version(row, req.version)
     if row.answer_url != url:
         row.answer_url, row.status = url, 'reported'
@@ -889,9 +893,9 @@ async def report_metrics(placement_id: int, req: MetricsInput, ctx=Auth, session
         raise HTTPException(422, str(exc)) from exc
     if source_url != row.answer_url:
         raise HTTPException(409, '平台数据网址必须与当前回答网址一致')
-    if not any(item.get('state') == 'content_observed' and
-               item.get('body_hash') == body_hash(row.body)
-               for item in (row.observations or [])):
+    latest = row.observations[-1] if row.observations else None
+    if (not latest or latest.get('state') != 'content_observed' or
+            latest.get('body_hash') != body_hash(row.body)):
         raise HTTPException(409, '请先核验当前审核正文与公开页面一致')
     metrics = {**req.model_dump(mode='json', exclude={'tenant_id', 'site_id', 'version'}),
                'source_url': source_url, 'source': 'user_reported', 'actor': ctx.user_id}
@@ -1005,20 +1009,11 @@ async def assistant_task(placement_id: int, tenant_id: PositiveInt, site_id: Pos
 
 @router.post('/placements/{placement_id}/assistant-receipt')
 async def assistant_receipt(placement_id: int, req: AssistantReceiptInput, ctx=Auth, session=Db):
-    site = await access(session, ctx, req.tenant_id, req.site_id, True)
+    await access(session, ctx, req.tenant_id, req.site_id, True)
     row = await record(session, SeoQaPlacement, placement_id, req.tenant_id, req.site_id, True)
     if (req.placement_id != row.id or req.platform != row.platform or
             req.question_url != row.question_url or req.content_version != row.content_version):
         raise HTTPException(409, '回执与分发记录不匹配，请核对问题和稿件版本')
-    try:
-        normalized_url = platform_url(row.platform, req.answer_url, answer=True,
-            question_url=row.question_url, domain=site.canonical_domain)
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    if row.answer_url == normalized_url:
-        return data(row)
-    await publication_draft(placement_id, req.tenant_id, req.site_id, ctx, session)
-    check_version(row, req.version)
     return await receipt(placement_id, ReceiptInput(tenant_id=req.tenant_id, site_id=req.site_id,
         version=req.version, answer_url=req.answer_url), ctx, session)
 

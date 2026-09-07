@@ -188,6 +188,14 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
             replayed_receipt = await api.assistant_receipt(placement['id'],api.AssistantReceiptInput(**payload),CTX,db)
             assert replayed_receipt['id'] == receipt['id'] and replayed_receipt['version'] == receipt['version']
             assert receipt['status'] == 'reported' and receipt['observations'] == []
+            content.status = 'drafting'; await db.flush()
+            with pytest.raises(HTTPException, match='审核稿版本已失效'):
+                await api.receipt(placement['id'], api.ReceiptInput(tenant_id=1, site_id=1,
+                    version=payload['version'], answer_url=url), CTX, db)
+            content.status = 'ready'; content.version_count += 1; await db.flush()
+            with pytest.raises(HTTPException, match='审核稿版本已失效'):
+                await api.assistant_receipt(placement['id'],api.AssistantReceiptInput(**payload),CTX,db)
+            content.version_count -= 1; await db.flush()
             metric_input = api.MetricsInput(tenant_id=1, site_id=1, version=receipt['version'], views=10,
                 source_url=url, as_of=datetime.now(timezone.utc))
             with pytest.raises(HTTPException, match='核验'):
@@ -207,6 +215,20 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
                     version=saved_metrics['version'], views=11,
                     source_url='https://www.zhihu.com/question/12/answer/15',
                     as_of=datetime.now(timezone.utc)), CTX, db)
+            stored = await db.get(SeoQaPlacement, placement['id'])
+            stored.observations = [*stored.observations, {
+                'state':'not_observed', 'body_hash':api.body_hash(stored.body),
+                'checked_at':datetime.now(timezone.utc).isoformat()}]
+            await db.flush()
+            next_metrics = api.MetricsInput(tenant_id=1, site_id=1,
+                version=saved_metrics['version'], views=11, source_url=url,
+                as_of=datetime.now(timezone.utc))
+            with pytest.raises(HTTPException, match='核验'):
+                await api.report_metrics(placement['id'], next_metrics, CTX, db)
+            stored.observations = [*stored.observations, observed['observations'][-1]]
+            await db.flush()
+            latest_metrics = await api.report_metrics(placement['id'], next_metrics, CTX, db)
+            assert latest_metrics['saved'] is True and latest_metrics['replayed'] is False
             detail=await api.question_detail(question_id,1,1,CTX,db)
             assert detail['coverage']['state']=='observed' and detail['placement_total']==1
             assert (await api.planning(1,1,CTX,db))['observed_question_count']==1
@@ -224,6 +246,16 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
                 await api.verify(placement['id'], api.Scoped(tenant_id=1, site_id=1), CTX, db)
             assert rate.value.status_code == 429
             await db.rollback()
+            current = await db.get(SeoQaPlacement, placement['id'])
+            changed_url = 'https://www.zhihu.com/question/12/answer/15'
+            changed = await api.receipt(placement['id'], api.ReceiptInput(tenant_id=1, site_id=1,
+                version=current.version, answer_url=changed_url), CTX, db)
+            assert changed['answer_url'] == changed_url and changed['observations'] == []
+            assert changed['reported_metrics'] is None
+            with pytest.raises(HTTPException) as old_replay:
+                await api.receipt(placement['id'], api.ReceiptInput(tenant_id=1, site_id=1,
+                    version=1, answer_url=changed_url), CTX, db)
+            assert old_replay.value.status_code == 409
             await api.edit_fact(fact['id'], api.FactEdit(tenant_id=1, site_id=1, version=1,
                 title='新手册', statement='资料已经更新', source_name='v2'), CTX, db)
             content = await db.get(SeoContentAsset, answer['content_id'])

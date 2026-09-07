@@ -43,7 +43,7 @@ const visiblePlacements = computed(() => followupOnly.value ? placements.value.f
 const batchRunning = ref(false), batchStop = ref(false), batchResults = ref([])
 const batchCandidates = computed(() => visiblePlacements.value.filter(row => row.answer_url).slice(0, 20))
 function hasObservedBody(row) {
-  return (row.observations || []).some(item => item.state === 'content_observed')
+  return row.observations?.at(-1)?.state === 'content_observed'
 }
 function latestBacklink(row) {
   return [...(row.observations || [])].reverse().find(o => o.backlink_discovery && o.backlink_discovery.state !== 'not_checked')

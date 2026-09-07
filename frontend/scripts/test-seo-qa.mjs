@@ -191,6 +191,8 @@ test('platform metrics stay disabled until the frozen answer body was observed',
     assert.equal(m.state.hasObservedBody({observations:[]}),false)
     assert.equal(m.state.hasObservedBody({observations:[{state:'unavailable'},{state:'not_observed'}]}),false)
     assert.equal(m.state.hasObservedBody({observations:[{state:'content_observed'}]}),true)
+    assert.equal(m.state.hasObservedBody({observations:[{state:'content_observed'},{state:'not_observed'}]}),false)
+    assert.equal(m.state.hasObservedBody({observations:[{state:'not_observed'},{state:'content_observed'}]}),true)
   }finally{m.app.unmount()}
 })
 
