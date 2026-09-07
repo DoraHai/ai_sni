@@ -1,18 +1,52 @@
 import { computed, reactive } from 'vue'
+import {
+  AUTH_CONTEXT_EVENT,
+  clearStoredAuth,
+  persistentAuthForEvent,
+  selectStoredAuth,
+  writeAuthEnvelope,
+} from './sessionStorage.js'
 
 // 轻量会话 store(规模不大,不引 pinia)。token/user 持久化 localStorage,
 // 当前客户(tenantId)持久化 sessionStorage(每个标签页可以看不同客户)。
 // 权限：user.permissions = {菜单key: 'view'|'edit'}（自定义角色 RBAC）。
 // 「记住我」：勾选=localStorage(跨重启)，不勾=sessionStorage(关页即失效)
-const _activeStore = () => (localStorage.getItem('sem_token') ? localStorage : sessionStorage)
+const initialAuth = selectStoredAuth(localStorage, sessionStorage)
+let authStorage = initialAuth?.storage ?? null
+const _activeStore = () => (authStorage === 'local' ? localStorage : sessionStorage)
+const initialTenantId = Number(sessionStorage.getItem('sem_tenant_id')) || null
 const state = reactive({
-  token: localStorage.getItem('sem_token') || sessionStorage.getItem('sem_token') || '',
-  user: JSON.parse(localStorage.getItem('sem_user') || sessionStorage.getItem('sem_user') || 'null'),
+  token: initialAuth?.token ?? '',
+  user: initialAuth?.user ?? null,
   tenants: [],
-  tenantId: Number(sessionStorage.getItem('sem_tenant_id')) || null,
+  tenantId: initialAuth ? (initialAuth.user.tenant_id || initialTenantId) : null,
   modules: [],
   tenantListRevision: 0,
+  authRevision: 0,
 })
+
+function notifyAuthContext(kind) {
+  state.authRevision += 1
+  if (typeof window === 'undefined') return
+  const event = new Event(AUTH_CONTEXT_EVENT)
+  Object.defineProperty(event, 'detail', { value: { kind, revision: state.authRevision } })
+  window.dispatchEvent(event)
+}
+
+function permissionsEqual(left = {}, right = {}) {
+  const leftKeys = Object.keys(left).sort()
+  const rightKeys = Object.keys(right).sort()
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key])
+}
+
+function authContextChangeKind(previousToken, previousUser, nextToken, nextUser) {
+  if (previousToken !== nextToken
+      || previousUser?.id !== nextUser?.id
+      || previousUser?.tenant_id !== nextUser?.tenant_id) return 'identity'
+  if (!permissionsEqual(previousUser?.permissions, nextUser?.permissions)) return 'permissions'
+  return null
+}
 
 export const session = {
   get token() { return state.token },
@@ -21,6 +55,7 @@ export const session = {
   get tenantId() { return state.tenantId },
   get modules() { return state.modules },
   get tenantListRevision() { return state.tenantListRevision },
+  get authRevision() { return state.authRevision },
 
   get isLoggedIn() { return !!state.token },
   get permissions() { return state.user?.permissions || {} },
@@ -33,23 +68,30 @@ export const session = {
   get canManage() { return state.user?.permissions?.['settings.accounts'] === 'edit' },
 
   setAuth(token, user, remember = true) {
-    state.token = token
-    state.user = user
+    const previousUserId = state.user?.id
     const store = remember ? localStorage : sessionStorage
     const other = remember ? sessionStorage : localStorage
-    store.setItem('sem_token', token)
-    store.setItem('sem_user', JSON.stringify(user))
-    other.removeItem('sem_token')
-    other.removeItem('sem_user')
+    // Persist the pair before publishing it to reactive consumers. Storage
+    // listeners always re-read both values and never combine different stores.
+    writeAuthEnvelope(store, token, user)
+    clearStoredAuth(other)
+    authStorage = remember ? 'local' : 'session'
+    state.token = token
+    state.user = user
     // 绑定了单客户的账号锁定该客户
     if (user?.tenant_id) this.setTenant(user.tenant_id)
+    else if (previousUserId !== user?.id) this.setTenant(null)
+    notifyAuthContext('identity')
   },
 
   // 登录态校验后用最新 user 刷新（角色权限可能被管理员改过，即时生效）
   refreshUser(user) {
+    const previous = state.user
+    const changeKind = authContextChangeKind(state.token, previous, state.token, user)
     state.user = user
-    _activeStore().setItem('sem_user', JSON.stringify(user))
+    writeAuthEnvelope(_activeStore(), state.token, user)
     if (user?.tenant_id) this.setTenant(user.tenant_id)
+    if (changeKind) notifyAuthContext(changeKind)
   },
 
   setTenants(list) {
@@ -78,14 +120,57 @@ export const session = {
   },
 
   logout() {
+    authStorage = null
     state.token = ''
     state.user = null
     state.tenants = []
-    for (const s of [localStorage, sessionStorage]) {
-      s.removeItem('sem_token')
-      s.removeItem('sem_user')
-    }
+    state.modules = []
+    state.tenantId = null
+    for (const s of [localStorage, sessionStorage]) clearStoredAuth(s)
+    sessionStorage.removeItem('sem_tenant_id')
+    notifyAuthContext('logout')
   },
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    const next = persistentAuthForEvent({
+      event,
+      localStore: localStorage,
+      sessionStore: sessionStorage,
+      currentStorage: authStorage,
+    })
+    if (next === undefined) return
+    if (next === null) {
+      if (!state.token && !state.user) return
+      authStorage = null
+      state.token = ''
+      state.user = null
+      state.tenants = []
+      state.modules = []
+      state.tenantId = null
+      sessionStorage.removeItem('sem_tenant_id')
+      notifyAuthContext('logout')
+      return
+    }
+    const previousToken = state.token
+    const previousUser = state.user
+    const previousUserId = previousUser?.id
+    const previousTenantId = state.tenantId
+    const changeKind = authContextChangeKind(previousToken, previousUser, next.token, next.user)
+    authStorage = 'local'
+    state.token = next.token
+    state.user = next.user
+    if (!changeKind) return
+    state.tenants = []
+    state.modules = []
+    state.tenantId = next.user.tenant_id
+      || (previousUserId === next.user.id ? previousTenantId : null)
+    if (state.tenantId) sessionStorage.setItem('sem_tenant_id', String(state.tenantId))
+    else sessionStorage.removeItem('sem_tenant_id')
+    state.tenantListRevision += 1
+    notifyAuthContext(changeKind)
+  })
 }
 
 // 视图里 watch 用:当前客户变化触发重新拉数
