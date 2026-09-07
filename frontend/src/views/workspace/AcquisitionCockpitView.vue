@@ -12,8 +12,10 @@ import { semMetric } from '../../../../integrations/sem-cockpit/display.mjs'
 import { createSeoAuthorizedClient } from '../../../../integrations/seo-workbench/authorization-context.mjs'
 import { readSeoSiteScope } from '../../../../integrations/seo-workbench/site-scope.mjs'
 import { seoSummaryCards } from '../../../../integrations/seo-workbench/summary.mjs'
+import { createGeoAuthorizedClient } from '../../../../integrations/geo-workbench/authorization-context.mjs'
 import { currentSeoSiteId } from '../seo/seoSiteContext'
 import { isSecureCockpitRuntime, resolveTenantModuleCodes } from './cockpit/scope.mjs'
+import { completedWeekEnd, geoSummaryCards } from './cockpit/geo-summary.mjs'
 import { createSeoSiteSelectionGuard, resolveSeoSiteSelection } from './cockpit/site-selection.mjs'
 import { urgencyReply } from './cockpit/status-copy.mjs'
 
@@ -39,6 +41,7 @@ let workbenchSession
 let boundary
 let semClient
 let seoClient
+let geoClient
 let loadGeneration = 0
 let prepareGeneration = 0
 
@@ -54,6 +57,7 @@ const customerName = computed(() => session.tenants.find(item => item.id === ses
 const unresolvedModules = computed(() => availableModules.value.filter(item => moduleState.value[item.module_code] !== 'ready').length)
 const urgentItems = computed(() => cards.value.reduce((sum, item) => sum + (Number.isSafeInteger(item.urgentCount) ? item.urgentCount : 0), 0))
 const readyModules = computed(() => availableModules.value.filter(item => moduleState.value[item.module_code] === 'ready').length)
+const geoWeekEnd = computed(() => completedWeekEnd(dateEnd.value))
 const statusLabel = status => ({ ready: '数据已读取', loading: '读取中', needs_scope: '需要选择业务对象', denied: '无查看权限', error: '读取失败', waiting: '等待读取' }[status] || '待确认')
 const moduleUrgent = code => cards.value.filter(item => item.moduleCode === code).reduce((sum, item) => sum + (Number.isSafeInteger(item.urgentCount) ? item.urgentCount : 0), 0)
 const moduleStatusLabel = code => moduleState.value[code] === 'ready' && moduleUrgent(code) > 0 ? `${moduleUrgent(code)} 项待处理` : statusLabel(moduleState.value[code])
@@ -86,6 +90,7 @@ function invalidateEvidence({ clearConversation = false } = {}) {
   boundary?.invalidate()
   semClient?.invalidate()
   seoClient?.invalidate()
+  geoClient?.invalidate()
   viewState.invalidate()
   clearCards()
   seoSites.value = []
@@ -194,12 +199,38 @@ async function loadSeo(generation) {
     conversation.value.push({ role: 'assistant', text: `SEO 数据暂未读取：${error?.message || '请稍后重试'}。我没有改用演示数据或推算文章点击。` })
   }
 }
+async function loadGeo(generation) {
+  if (!session.tenantId || !geoWeekEnd.value || !availableModules.value.some(item => item.module_code === 'geo')) return
+  if (!geoClient) { moduleState.value.geo = 'error'; return }
+  const tenantId = session.tenantId
+  const weekEnd = geoWeekEnd.value
+  const authRevision = session.authRevision
+  const isCurrent = () => generation === loadGeneration && tenantId === session.tenantId
+    && weekEnd === geoWeekEnd.value && authRevision === session.authRevision
+  moduleState.value.geo = 'loading'
+  try {
+    await geoClient.connect({ tenantId, weekEnd })
+    if (!isCurrent()) return
+    await Promise.all([
+      geoClient.read('periodContext'), geoClient.read('metrics'), geoClient.read('dictionary'),
+    ])
+    if (!isCurrent()) return
+    const snapshot = geoClient.officialSnapshot()
+    for (const card of geoSummaryCards({ snapshot, contextRevision: viewState.revision })) publishCard(card)
+    moduleState.value.geo = 'ready'
+    lastReadAt.value = new Date()
+  } catch (error) {
+    if (!isCurrent() || ['STALE_SESSION', 'STALE_AUTHORIZATION', 'STALE_RESPONSE'].includes(error?.code)) return
+    moduleState.value.geo = ['NOT_AUTHORIZED', 'NO_GEO_READS', 'TENANT_NOT_ALLOWED', 'GEO_SCOPE_NOT_ALLOWED', 'ACCESS_REVOKED'].includes(error?.code) ? 'denied' : 'error'
+    conversation.value.push({ role: 'assistant', text: `GEO 数据暂未读取：${error?.message || '请稍后重试'}。我没有把模拟回答、人工记录或样本不足改成正式数字。` })
+  }
+}
 async function loadAll() {
   invalidateEvidence({ clearConversation: true })
   const generation = loadGeneration
   loading.value = true
-  for (const item of availableModules.value) moduleState.value[item.module_code] = ['sem', 'seo'].includes(item.module_code) ? 'loading' : 'needs_scope'
-  await Promise.allSettled([loadSem(generation), loadSeo(generation)])
+  for (const item of availableModules.value) moduleState.value[item.module_code] = ['sem', 'seo', 'geo'].includes(item.module_code) ? 'loading' : 'needs_scope'
+  await Promise.allSettled([loadSem(generation), loadSeo(generation), loadGeo(generation)])
   if (generation === loadGeneration) loading.value = false
 }
 async function prepare() {
@@ -246,6 +277,7 @@ function answerFor(text) {
   if (!availableModules.value.length) return '当前账号没有可查看的获客模块，请联系管理员确认模块和查看权限。'
   if (text.includes('SEM') && moduleState.value.sem === 'ready') return `已按 ${dateStart.value} 至 ${dateEnd.value} 读取 SEM 数据。点击任意数字可以看每日明细和数据依据。`
   if (text.includes('SEO') && moduleState.value.seo === 'ready') return '已读取当前 SEO 网站的内容和页面检查数字。审核、发布、页面检查分别判断，单篇搜索点击仍明确标为未接入。'
+  if (text.includes('GEO') && moduleState.value.geo === 'ready') return `已按截至 ${geoWeekEnd.value} 的最近完整自然周读取 GEO 正式指标。模拟回答、人工记录和不合格样本没有算入数字。`
   const urgency = urgencyReply({ unresolvedModules: unresolvedModules.value, businessUrgentItems: urgentItems.value })
   if (urgency) return `${urgency} 我不会把缺失数据当成零。`
   return '当前已开通模块的数据状态正常。你可以点击具体指标，再选择“带着这项数据继续提问”。'
@@ -281,7 +313,8 @@ try {
     boundary = createReadonlyTransport({ origin: window.location.origin, fetchImpl: window.fetch.bind(window), getSession: () => workbenchSession?.getTransportSession() })
     semClient = createSemAuthorizedClient({ transport: boundary.transport, onClear: () => clearModuleCards('sem') })
     seoClient = createSeoAuthorizedClient({ transport: boundary.transport, onClear: () => clearModuleCards('seo') })
-    workbenchSession = useWorkbenchSession({ session, invalidatables: [boundary, semClient, seoClient, viewState] })
+    geoClient = createGeoAuthorizedClient({ transport: boundary.transport, onClear: () => clearModuleCards('geo') })
+    workbenchSession = useWorkbenchSession({ session, invalidatables: [boundary, semClient, seoClient, geoClient, viewState] })
   }
 } catch {
   // Local HTTP preview deliberately cannot create the authenticated production transport.

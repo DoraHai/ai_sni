@@ -26,6 +26,7 @@
     "test:workbench-cockpit-scope": "node --test scripts/test-workbench-cockpit-scope.mjs",
     "test:workbench-seo-summary": "node --test ../integrations/seo-workbench/summary.test.mjs",
     "test:workbench-site-selection": "node --test src/views/workspace/cockpit/site-selection.test.mjs",
+    "test:workbench-geo-summary": "node --test src/views/workspace/cockpit/geo-summary.test.mjs",
     "test:workbench-status-copy": "node --test src/views/workspace/cockpit/status-copy.test.mjs",
     "deploy:sem": "bash scripts/deploy-sem.sh",
     "deploy:login": "bash scripts/deploy-auth.sh",
