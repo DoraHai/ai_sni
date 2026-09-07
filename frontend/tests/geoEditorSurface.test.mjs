@@ -8,6 +8,7 @@ import {
   getGeoPrototypePageSurface,
 } from '../src/utils/geoEditorSurface.js'
 import * as editorSurfaceModule from '../src/utils/geoEditorSurface.js'
+import { canViewCockpit, COCKPIT_PERMISSION_KEYS } from '../src/utils/cockpitAccess.js'
 
 const editorSource = readFileSync(
   fileURLToPath(new URL('../src/views/geo/GeoTaskEditorView.vue', import.meta.url)),
@@ -124,6 +125,27 @@ test('publishing checklist refresh is not confused with article readiness rechec
 test('GEO workspace links to the production acquisition cockpit', () => {
   assert.ok(workspaceShellSource.includes('href="/workspace/cockpit"'))
   assert.ok(workspaceShellSource.includes('G‑Snipers 获客工作台'))
+  assert.ok(workspaceShellSource.includes('v-if="showCockpitShortcut"'))
   assert.ok(!workspaceShellSource.includes('href="/deal-sniper/portal"'))
   assert.ok(!workspaceShellSource.includes('返回平台门户'))
+})
+
+test('GEO cockpit shortcut follows the shared six-permission visibility contract', () => {
+  assert.deepEqual(COCKPIT_PERMISSION_KEYS, [
+    'monitor.dashboard',
+    'optimize.keywords',
+    'optimize.searchterms',
+    'seo.content',
+    'seo.site',
+    'geo.content',
+  ])
+
+  assert.equal(canViewCockpit({ 'geo.assets': 'view' }), false)
+  assert.equal(canViewCockpit({ 'geo.diagnosis': 'edit' }), false)
+  assert.equal(canViewCockpit({ 'geo.content': 'view' }), true)
+  for (const permission of COCKPIT_PERMISSION_KEYS.slice(0, -1)) {
+    assert.equal(canViewCockpit({ [permission]: 'view' }), true, permission)
+  }
+  assert.equal(canViewCockpit({ 'monitor.dashboard': 'edit' }), true)
+  assert.equal(canViewCockpit({ 'geo.content': 'none' }), false)
 })

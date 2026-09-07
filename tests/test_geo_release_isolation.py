@@ -225,6 +225,7 @@ def test_geo_sidebar_keeps_cross_product_shortcuts_aligned_with_seo():
     assert positions == sorted(positions)
     for label in ("搜索广告工作台", "SEO 内容工作台", "诊断中心", "G‑Snipers 获客工作台"):
         assert label in shell
+    assert 'v-if="showCockpitShortcut"' in shell
     assert ".geo-shell-links .portal-link" in shell
 
 
