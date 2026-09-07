@@ -34,7 +34,7 @@ def test_sem_business_surfaces_hide_archived_account_history():
     assert "filter((item) => item.status !== 'archived')" in onboarding
 
 
-def test_sem_shell_switcher_keeps_settings_routes_in_sem_scope():
+def test_platform_admin_uses_global_tenant_options_outside_sem_scope():
     app_shell = _read("frontend/src/App.vue")
     session_store = _read("frontend/src/store/session.js")
     customer_modules = _read("frontend/src/views/settings/CustomerModulesView.vue")
@@ -47,7 +47,7 @@ def test_sem_shell_switcher_keeps_settings_routes_in_sem_scope():
     assert "tenantListRevision" in session_store
     assert "watch(() => session.tenantListRevision, loadTenants)" in app_shell
     assert "session.requestTenantReload()" in customer_modules
-    assert "fetchTenants()" in account_roles
+    assert "users.tenant_options" in account_roles
     assert 'v-for="t in tenantOptions"' in account_roles
     assert 'v-for="t in session.tenants"' not in account_roles
 
@@ -115,7 +115,7 @@ def test_permission_failures_are_actionable():
     accounts = _read("frontend/src/views/settings/AccountsRolesView.vue")
 
     assert "PERMISSION_DENIED" in client
-    assert "账号与权限" in router
+    assert "角色与权限" in router
     assert "settings.accounts" in accounts
     assert "这不是数据为空" in accounts
 

@@ -1,7 +1,7 @@
 """自定义角色管理（账号与权限页 · 角色 tab）。需 settings.accounts edit。
 
 权限点 = 菜单（app/permissions.py），每个角色对每个菜单授 view/edit。内置角色不可删；
-「管理员」不可移除 settings.accounts edit（防锁死管理入口）。
+受信任的内置「管理员」不可移除两项平台管理编辑权。
 """
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -10,8 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.models import Role, User
-from app.permissions import MENUS, normalize_permissions
-from app.security.auth import require_admin
+from app.permissions import (
+    ADMIN_ROLE_NAME,
+    MENUS,
+    effective_role_permissions,
+    has_full_platform_admin,
+    normalize_permissions,
+)
+from app.security.auth import AuthContext, require_admin
 
 router = APIRouter(
     prefix="/api/v1/roles",
@@ -19,15 +25,12 @@ router = APIRouter(
     dependencies=[Depends(require_admin)],
 )
 
-ADMIN_ROLE = "管理员"
-
-
 def _payload(r: Role, user_counts: dict[int, int]) -> dict:
     return {
         "id": r.id,
         "name": r.name,
         "description": r.description,
-        "permissions": r.permissions or {},
+        "permissions": effective_role_permissions(r.name, r.is_system, r.permissions),
         "is_system": r.is_system,
         "user_count": user_counts.get(r.id, 0),
     }
@@ -79,7 +82,10 @@ class UpdateRoleRequest(BaseModel):
 
 @router.patch("/{role_id}")
 async def update_role(
-    role_id: int, req: UpdateRoleRequest, session: AsyncSession = Depends(get_session)
+    role_id: int,
+    req: UpdateRoleRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_admin),
 ) -> dict:
     role = await session.get(Role, role_id)
     if role is None:
@@ -94,9 +100,47 @@ async def update_role(
         role.description = req.description
     if req.permissions is not None:
         perms = normalize_permissions(req.permissions)
-        # 防锁死：管理员角色必须保留账号与权限的编辑权
-        if role.name == ADMIN_ROLE and perms.get("settings.accounts") != "edit":
-            raise HTTPException(400, "「管理员」角色必须保留账号与权限的编辑权")
+        trusted_admin = role.is_system and role.name == ADMIN_ROLE_NAME
+        if trusted_admin and not has_full_platform_admin(perms):
+            raise HTTPException(400, "内置管理员必须保留客户与账号两项平台管理编辑权")
+
+        current = effective_role_permissions(role.name, role.is_system, role.permissions)
+        actor = await session.get(User, ctx.user_id) if ctx.user_id is not None else None
+        if actor is not None and actor.role_id == role.id and perms.get("settings.accounts") != "edit":
+            raise HTTPException(400, "不能移除当前账号管理角色所需的账号编辑权")
+        if (
+            actor is not None
+            and actor.role_id == role.id
+            and has_full_platform_admin(current)
+            and not has_full_platform_admin(perms)
+        ):
+            raise HTTPException(400, "不能让当前账号失去平台管理能力")
+
+        if has_full_platform_admin(current) and not has_full_platform_admin(perms):
+            roles = list((await session.scalars(select(Role))).all())
+            full_role_ids = {
+                item.id
+                for item in roles
+                if item.id != role.id
+                and has_full_platform_admin(
+                    effective_role_permissions(item.name, item.is_system, item.permissions)
+                )
+            }
+            has_other = False
+            if full_role_ids:
+                has_other = bool(
+                    await session.scalar(
+                        select(func.count())
+                        .select_from(User)
+                        .where(
+                            User.role_id.in_(full_role_ids),
+                            User.is_active.is_(True),
+                            User.tenant_id.is_(None),
+                        )
+                    )
+                )
+            if not has_other:
+                raise HTTPException(400, "不能移除最后一个平台管理员角色的完整权限")
         role.permissions = perms
     await session.commit()
     return {"status": "ok"}

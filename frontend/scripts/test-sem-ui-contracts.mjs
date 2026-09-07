@@ -51,13 +51,11 @@ assert.match(keywordWorkbench, /generation !== writebackModeGeneration \|\| tena
 assert.match(keywordWorkbench, /watch\(TENANT_ID,[\s\S]*tableRef\.value\?\.clearSelection(?:\?\.)?\(\)[\s\S]*selection\.value = \[\]/)
 
 const roles = await source('src/views/settings/AccountsRolesView.vue')
-assert.match(roles, /:data="tenantOptions"/)
+assert.match(roles, /tenantOptions\.value = users\.tenant_options \|\| \[\]/)
+assert.match(roles, /v-for="t in tenantOptions"/)
 assert.doesNotMatch(roles, /session\.setTenants/)
 assert.doesNotMatch(roles, /GEO 开户向导/)
-const submitTenant = roles.slice(roles.indexOf('async function submitTenant'), roles.indexOf('function openCreateUser'))
-assert.doesNotMatch(submitTenant, /await fetchTenants\(\)/)
-assert.match(submitTenant, /session\.requestTenantReload\(\)/)
-assert.match(submitTenant, /tenantDialog\.value = false\s+await load\(\)/)
+assert.doesNotMatch(roles, /fetchTenants|createTenant|submitTenant|tenantDialog/)
 
 const client = await source('src/api/client.js')
 assert.doesNotMatch(client, /Docker Desktop|数据库未启动/)
