@@ -2,9 +2,48 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createReadonlyTransport } from './readonly-transport.mjs'
 import { createSemReadonlyClient } from '../sem-cockpit/readonly-client.mjs'
+import { createGeoReadonlyClient } from '../geo-workbench/readonly-client.mjs'
 import { readFileSync } from 'node:fs'
 
 const route = '/api/v1/dashboard/cockpit?start_date=2026-09-05&end_date=2026-09-05'
+test('GEO six resources pass through the real transport with synthetic source contracts', async () => {
+  const data = JSON.parse(readFileSync(new URL('../geo-workbench/production-minimum.synthetic.json', import.meta.url), 'utf8'))
+  const resources = { 'read/period-context': 'periodContext', 'metrics/snapshot': 'metrics', 'metrics/dictionary': 'dictionary', 'read/answers': 'answers', 'read/answers/9010': 'answerDetail', 'read/questions': 'questions' }
+  const calls = []
+  const boundary = fixture(async (url, options) => {
+    calls.push(url)
+    assert.equal(options.method, 'GET')
+    const resource = resources[new URL(url).pathname.replace('/api/v1/geo/integration/', '')]
+    assert.ok(resource)
+    return { ok: true, status: 200, json: async () => data.responses[resource] }
+  })
+  const client = createGeoReadonlyClient({ transport: boundary.transport, onClear() {} })
+  client.setContext(data.context)
+  for (const name of ['periodContext', 'metrics', 'dictionary']) await client.read(name)
+  await client.read('answers', { limit: 1 })
+  await client.read('answerDetail', { snapshotId: 9010 })
+  await client.read('questions', { limit: 1 })
+  assert.equal(calls.length, 6)
+  assert.equal(client.officialSnapshot().metrics.length, 3)
+})
+
+test('GEO rejects legacy side-effect routes, missing scope and cross-resource filters before fetching', async () => {
+  let calls = 0
+  const boundary = fixture(async () => { calls++; return { ok: true, status: 200 } })
+  const scope = '?tenant_id=16&week_end=2026-08-31'
+  for (const path of [
+    '/api/v1/geo/visibility-patrol/runs/1', '/api/v1/geo/ai-settings',
+    '/api/v1/geo/tenants?tenant_id=16', '/api/v1/geo/integration/read/answers',
+    '/api/v1/geo/integration/read/answers?tenant_id=16&week_end=2026-09-01',
+    `/api/v1/geo/integration/read/answers${scope}&tenant_id=17`,
+    `/api/v1/geo/integration/read/answers${scope}&api_key=synthetic`,
+    `/api/v1/geo/integration/read/answers/9010${scope}&cursor=opaque`,
+    `/api/v1/geo/integration/read/questions${scope}`,
+  ]) await assert.rejects(boundary.transport(path, { method: 'GET' }))
+  assert.equal(calls, 0)
+  await boundary.transport('/api/v1/geo/tenants', { method: 'GET' })
+  assert.equal(calls, 1)
+})
 function fixture(fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ value: 0 }) })) {
   let session = { token: 'synthetic-session', revision: 1 }
   const client = createReadonlyTransport({ origin: 'https://example.invalid', fetchImpl, getSession: () => session })
