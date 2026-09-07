@@ -6,3 +6,8 @@ export function installAuthContextRouting(browser, eventName, revalidate) {
   browser.addEventListener(eventName, handler)
   return () => browser.removeEventListener(eventName, handler)
 }
+
+export function leaveUnauthorizedWorkspace(browser, destination = '/deal-sniper/portal') {
+  browser.location.assign(destination)
+  return false
+}

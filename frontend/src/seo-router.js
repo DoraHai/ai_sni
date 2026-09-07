@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { loginUrl } from './auth/loginRedirect'
 import { session } from './store/session'
+import { leaveUnauthorizedWorkspace } from './router/authContextRouting'
 
 const seoChildren = [
   { path: '', redirect: '/seo/dashboard' },
@@ -144,7 +145,7 @@ function sessionRouteDecision(to) {
   if (devBypass || !to.meta.perm || session.canView(to.meta.perm)) return true
   const destination = firstAllowedSeoPath()
   if (destination && destination !== to.path) return { path: destination }
-  return false
+  return leaveUnauthorizedWorkspace(window)
 }
 router.beforeEach((to) => sessionRouteDecision(to))
 

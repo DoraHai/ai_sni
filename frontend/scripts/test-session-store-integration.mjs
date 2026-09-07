@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { AUTH_ENVELOPE_KEY } from '../src/store/sessionStorage.js'
-import { installAuthContextRouting } from '../src/router/authContextRouting.js'
+import { installAuthContextRouting, leaveUnauthorizedWorkspace } from '../src/router/authContextRouting.js'
 
 class MemoryStorage {
   constructor(initial = {}) { this.values = new Map(Object.entries(initial)) }
@@ -90,14 +90,29 @@ assert.ok(routeRevalidations > 0)
 session.setAuth('late-token', user(6, 60), false)
 const { default: client } = await import('../src/api/client.js')
 let finishRequest
-const oldRequest = client.get('/api/v1/test-stale-auth', {
+const request = () => client.get('/api/v1/test-stale-auth', {
   adapter: config => new Promise(resolve => {
     finishRequest = () => resolve({ data: { secret: true }, status: 200, statusText: 'OK', headers: {}, config })
   }),
 })
+const sameIdentityRequest = request()
+await new Promise(resolve => setTimeout(resolve, 0))
+const revisionBeforeRefresh = session.authRevision
+session.refreshUser(user(6, 60))
+assert.equal(session.authRevision, revisionBeforeRefresh)
+finishRequest()
+assert.deepEqual(await sameIdentityRequest, { secret: true })
+
+const oldRequest = request()
 await new Promise(resolve => setTimeout(resolve, 0))
 session.refreshUser(user(6, 60, 'edit'))
 finishRequest()
 await assert.rejects(oldRequest, error => error.code === 'AUTH_CONTEXT_CHANGED')
+
+let unauthorizedDestination = null
+assert.equal(leaveUnauthorizedWorkspace({
+  location: { assign: value => { unauthorizedDestination = value } },
+}), false)
+assert.equal(unauthorizedDestination, '/deal-sniper/portal')
 
 console.log('Session store pairing and cross-tab synchronization passed')
