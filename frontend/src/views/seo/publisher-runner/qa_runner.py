@@ -57,7 +57,8 @@ def make_receipt(task, answer_url):
     actual, expected = urlparse(answer_url.strip()), urlparse(task['question_url'])
     question_path = expected.path.rstrip('/')
     valid_path = (bool(re.fullmatch(re.escape(question_path) + r'/answer/\d+/?', actual.path))
-                  if task['platform'] == 'zhihu' else actual.path.rstrip('/') == question_path)
+                  if task['platform'] == 'zhihu' else
+                  actual.path.rstrip('/') == question_path and bool(re.fullmatch(r'answer_\d+', actual.fragment)))
     if (actual.scheme != 'https' or actual.hostname not in HOSTS[task['platform']] or actual.username or
             actual.password or actual.port or not valid_path or len(answer_url) > 2000):
         raise ValueError('回答网址必须属于当前平台的指定问题，不接受编辑页')

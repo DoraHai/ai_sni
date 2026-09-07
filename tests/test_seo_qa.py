@@ -33,12 +33,29 @@ def test_dedup_import_and_url_boundaries():
         api.ImportQuestions(tenant_id=1, site_id=1, items=[{'title': '??'}])
     assert platform_url('zhihu', 'https://www.zhihu.com/question/12/answer/34', answer=True,
                         question_url='https://www.zhihu.com/question/12').endswith('/answer/34')
+    assert platform_url('csdn_qa', 'https://ask.csdn.net/questions/12#answer_34', answer=True,
+                        question_url='https://ask.csdn.net/questions/12').endswith('#answer_34')
     for value in ['https://www.zhihu.com/question/13/answer/34', 'https://zhuanlan.zhihu.com/p/12',
                   'https://www.zhihu.com.evil.example/question/12/answer/34', 'http://127.0.0.1/question/12']:
         with pytest.raises(ValueError):
             platform_url('zhihu', value, answer=True, question_url='https://www.zhihu.com/question/12')
     with pytest.raises(ValueError):
         platform_url('website', 'https://evil.example/faq', domain='brand.example', answer=True)
+    with pytest.raises(ValueError):
+        platform_url('csdn_qa', 'https://ask.csdn.net/questions/12', answer=True,
+                     question_url='https://ask.csdn.net/questions/12')
+    with pytest.raises(ValidationError):
+        api.MetricsInput(tenant_id=1, site_id=1, version=1,
+            source_url='https://www.zhihu.com/question/12/answer/34',
+            as_of=datetime.now(timezone.utc))
+    with pytest.raises(ValidationError):
+        api.MetricsInput(tenant_id=1, site_id=1, version=1, views=True,
+            source_url='https://www.zhihu.com/question/12/answer/34',
+            as_of=datetime.now(timezone.utc))
+    metrics = api.MetricsInput(tenant_id=1, site_id=1, version=1, views=0,
+        source_url='https://ask.csdn.net/questions/12#answer_34',
+        as_of=datetime.now(timezone.utc))
+    assert metrics.source_url.endswith('#answer_34')
 
 
 def test_observation_never_turns_blocked_or_redirected_pages_into_success():
@@ -168,14 +185,28 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
             with pytest.raises(HTTPException):
                 await api.assistant_receipt(placement['id'],api.AssistantReceiptInput(**{**payload,'tenant_id':2,'site_id':2}),CTX,db)
             receipt = await api.assistant_receipt(placement['id'],api.AssistantReceiptInput(**payload),CTX,db)
-            with pytest.raises(HTTPException) as stale_receipt:
-                await api.assistant_receipt(placement['id'],api.AssistantReceiptInput(**payload),CTX,db)
-            assert stale_receipt.value.status_code==409
+            replayed_receipt = await api.assistant_receipt(placement['id'],api.AssistantReceiptInput(**payload),CTX,db)
+            assert replayed_receipt['id'] == receipt['id'] and replayed_receipt['version'] == receipt['version']
             assert receipt['status'] == 'reported' and receipt['observations'] == []
+            metric_input = api.MetricsInput(tenant_id=1, site_id=1, version=receipt['version'], views=10,
+                source_url=url, as_of=datetime.now(timezone.utc))
+            with pytest.raises(HTTPException, match='核验'):
+                await api.report_metrics(placement['id'], metric_input, CTX, db)
             page = SimpleNamespace(body=f'<p>{fact["statement"]}</p>', final_url=url, status_code=200, error_type=None)
             with patch('app.seo_backlinks.fetch_backlink_page', new=AsyncMock(return_value=page)):
                 observed = await api.verify(placement['id'], api.Scoped(tenant_id=1, site_id=1), CTX, db)
             assert observed['status'] == 'content_observed' and content.status == 'ready'
+            metric_input = api.MetricsInput(tenant_id=1, site_id=1, version=observed['version'], views=10,
+                source_url=url, as_of=datetime.now(timezone.utc))
+            saved_metrics = await api.report_metrics(placement['id'], metric_input, CTX, db)
+            replayed_metrics = await api.report_metrics(placement['id'], metric_input, CTX, db)
+            assert saved_metrics['replayed'] is False and replayed_metrics['replayed'] is True
+            assert saved_metrics['version'] == replayed_metrics['version']
+            with pytest.raises(HTTPException, match='当前回答网址一致'):
+                await api.report_metrics(placement['id'], api.MetricsInput(tenant_id=1, site_id=1,
+                    version=saved_metrics['version'], views=11,
+                    source_url='https://www.zhihu.com/question/12/answer/15',
+                    as_of=datetime.now(timezone.utc)), CTX, db)
             detail=await api.question_detail(question_id,1,1,CTX,db)
             assert detail['coverage']['state']=='observed' and detail['placement_total']==1
             assert (await api.planning(1,1,CTX,db))['observed_question_count']==1

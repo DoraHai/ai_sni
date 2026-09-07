@@ -185,6 +185,15 @@ test('follow-up filter shows only flagged placements and updates after verificat
   }finally{m.app.unmount()}
 })
 
+test('platform metrics stay disabled until the frozen answer body was observed',async()=>{
+  const m=await mount()
+  try {
+    assert.equal(m.state.hasObservedBody({observations:[]}),false)
+    assert.equal(m.state.hasObservedBody({observations:[{state:'unavailable'},{state:'not_observed'}]}),false)
+    assert.equal(m.state.hasObservedBody({observations:[{state:'content_observed'}]}),true)
+  }finally{m.app.unmount()}
+})
+
 
 test('bulk verification is capped, sequential and keeps per-row errors',async()=>{
   let active=0,maxActive=0,calls=[]

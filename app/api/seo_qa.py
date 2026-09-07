@@ -5,6 +5,7 @@ import hashlib
 import asyncio
 from datetime import date, datetime, timezone, timedelta
 from typing import Literal, Annotated
+from urllib.parse import urlsplit, urlunsplit
 from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator, model_validator, ValidationError, StringConstraints
 from sqlalchemy import select, func, exists
@@ -246,16 +247,18 @@ class AssistantReceiptInput(ReceiptInput):
 
 class MetricsInput(Scoped):
     version: PositiveInt
-    views: int | None = Field(None, ge=0)
-    likes: int | None = Field(None, ge=0)
-    comments: int | None = Field(None, ge=0)
+    views: int | None = Field(None, strict=True, ge=0)
+    likes: int | None = Field(None, strict=True, ge=0)
+    comments: int | None = Field(None, strict=True, ge=0)
     source_url: str = Field(min_length=1, max_length=2000)
     as_of: datetime
 
     @field_validator('source_url')
     @classmethod
     def safe_url(cls, value):
-        return public_url(value)
+        fragment = urlsplit(value).fragment
+        parsed = urlsplit(public_url(value))
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, fragment))
 
     @field_validator('as_of')
     @classmethod
@@ -263,6 +266,12 @@ class MetricsInput(Scoped):
         if value.tzinfo is None or value > datetime.now(timezone.utc) + timedelta(minutes=5):
             raise ValueError('观测时间必须包含时区且不能晚于当前时间')
         return value
+
+    @model_validator(mode='after')
+    def has_metric(self):
+        if self.views is None and self.likes is None and self.comments is None:
+            raise ValueError('阅读、赞同、评论至少填写一项')
+        return self
 
 
 async def access(db, ctx, tenant_id, site_id, write=False):
@@ -801,11 +810,15 @@ async def placement_candidates(tenant_id: PositiveInt, site_id: PositiveInt, ctx
 async def receipt(placement_id: int, req: ReceiptInput, ctx=Auth, session=Db):
     site = await access(session, ctx, req.tenant_id, req.site_id, True)
     row = await record(session, SeoQaPlacement, placement_id, req.tenant_id, req.site_id, True)
-    check_version(row, req.version)
     try:
         url = platform_url(row.platform, req.answer_url, answer=True, question_url=row.question_url, domain=site.canonical_domain)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    # A response may be lost after commit. Replaying the same normalized URL is
+    # safe and must not force an operator to manufacture a new receipt version.
+    if row.answer_url == url:
+        return data(row)
+    check_version(row, req.version)
     if row.answer_url != url:
         row.answer_url, row.status = url, 'reported'
         row.observations = []
@@ -865,14 +878,33 @@ async def verify(placement_id: int, req: Scoped, ctx=Auth, session=Db):
 
 @router.post('/placements/{placement_id}/metrics')
 async def report_metrics(placement_id: int, req: MetricsInput, ctx=Auth, session=Db):
-    await access(session, ctx, req.tenant_id, req.site_id, True)
+    site = await access(session, ctx, req.tenant_id, req.site_id, True)
     row = await record(session, SeoQaPlacement, placement_id, req.tenant_id, req.site_id, True)
+    if not row.answer_url:
+        raise HTTPException(409, '请先回填回答网址并核验正文')
+    try:
+        source_url = platform_url(row.platform, req.source_url, answer=True,
+            question_url=row.question_url, domain=site.canonical_domain)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if source_url != row.answer_url:
+        raise HTTPException(409, '平台数据网址必须与当前回答网址一致')
+    if not any(item.get('state') == 'content_observed' and
+               item.get('body_hash') == body_hash(row.body)
+               for item in (row.observations or [])):
+        raise HTTPException(409, '请先核验当前审核正文与公开页面一致')
+    metrics = {**req.model_dump(mode='json', exclude={'tenant_id', 'site_id', 'version'}),
+               'source_url': source_url, 'source': 'user_reported', 'actor': ctx.user_id}
+    current = row.reported_metrics or {}
+    comparable = {key: current.get(key) for key in metrics if key != 'actor'}
+    expected = {key: value for key, value in metrics.items() if key != 'actor'}
+    if comparable == expected:
+        return {'saved': True, 'source': 'user_reported', 'version': row.version, 'replayed': True}
     check_version(row, req.version)
-    row.reported_metrics = {**req.model_dump(mode='json', exclude={'tenant_id', 'site_id', 'version'}),
-                            'source': 'user_reported', 'actor': ctx.user_id}
+    row.reported_metrics = metrics
     row.version += 1
     await session.commit()
-    return {'saved': True, 'source': 'user_reported'}
+    return {'saved': True, 'source': 'user_reported', 'version': row.version, 'replayed': False}
 
 
 @router.get('/maintenance')
@@ -973,11 +1005,18 @@ async def assistant_task(placement_id: int, tenant_id: PositiveInt, site_id: Pos
 
 @router.post('/placements/{placement_id}/assistant-receipt')
 async def assistant_receipt(placement_id: int, req: AssistantReceiptInput, ctx=Auth, session=Db):
-    await access(session, ctx, req.tenant_id, req.site_id, True)
+    site = await access(session, ctx, req.tenant_id, req.site_id, True)
     row = await record(session, SeoQaPlacement, placement_id, req.tenant_id, req.site_id, True)
     if (req.placement_id != row.id or req.platform != row.platform or
             req.question_url != row.question_url or req.content_version != row.content_version):
         raise HTTPException(409, '回执与分发记录不匹配，请核对问题和稿件版本')
+    try:
+        normalized_url = platform_url(row.platform, req.answer_url, answer=True,
+            question_url=row.question_url, domain=site.canonical_domain)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if row.answer_url == normalized_url:
+        return data(row)
     await publication_draft(placement_id, req.tenant_id, req.site_id, ctx, session)
     check_version(row, req.version)
     return await receipt(placement_id, ReceiptInput(tenant_id=req.tenant_id, site_id=req.site_id,
