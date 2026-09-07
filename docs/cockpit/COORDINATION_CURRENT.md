@@ -15,6 +15,10 @@ This is the authoritative continuation checkpoint. Historical pause documents ar
 ## Operating instructions
 
 - Keep the workbench and the three module tasks moving independently. Use exact-SHA review, cross-window review and green CI before merge. Use only controlled repository workflows for deployment.
+- Module-owner boundary is strict. SEM owns SEM code, SEO owns SEO code, and GEO owns GEO code. Each owner develops and tests only its assigned module and reports directly to the coordinator. An owner must not edit another module, declare another module complete, coordinate database/admin/human work, or widen a production release without an explicit coordinator assignment.
+- The coordinator owns cross-module contracts, workbench integration, task assignment, review assignment, merge order, deployment coordination, human/database/admin requests and the authoritative continuation record. A module owner reports a cross-module finding as evidence and a proposed contract; the coordinator decides where the fix belongs.
+- Cross-review is allowed only when explicitly assigned by the coordinator. A reviewer reports P1/P2 findings against an exact SHA and does not take ownership of the reviewed module or make unrequested edits.
+- Every module handoff must name: objective and boundary, branch/PR, exact head/base/merge SHA, files changed, tests and CI, review result, deployment/current/rollback state, unresolved items, dependencies, and any requested human/database/admin action. Separate verified facts from assumptions and pending checks.
 - Preserve the product boundary: discovery/read evidence and explanation/action are separate. Never turn missing, stale, simulated, site-level or estimated data into customer facts.
 - Database work and human tests require a concrete request to the user first: exact object, operation, expected result, prohibited actions and evidence to return. Work that does not need either must continue.
 - Inspect the three tasks about every five minutes. Routine report about every fifteen minutes; material completion, failure or production risk is immediate.
