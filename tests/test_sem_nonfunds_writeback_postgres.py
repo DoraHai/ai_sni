@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import ForeignKeyConstraint, MetaData, select
+from sqlalchemy import BigInteger, Column, ForeignKeyConstraint, MetaData, Table, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.schema import CreateSchema, DropSchema
@@ -49,12 +49,29 @@ async def database():
         async with engine.begin() as conn:
             await conn.execute(CreateSchema(schema))
             metadata = MetaData()
+            # ``Table.to_metadata`` retains column-level ForeignKey objects even
+            # after their table constraints are removed below.  Register the
+            # external targets so SQLAlchemy can sort/compile this isolated
+            # subset without creating the rest of the application schema.
+            for name in (
+                "tenants",
+                "baidu_oauth_grants",
+                "writeback_approvals",
+                "users",
+            ):
+                Table(name, metadata, Column("id", BigInteger, primary_key=True))
+            fixture_tables = []
             for model in (BaiduAccount, Campaign, Adgroup, Keyword, WritebackAction):
                 table = model.__table__.to_metadata(metadata)
+                fixture_tables.append(table)
                 for constraint in list(table.constraints):
                     if isinstance(constraint, ForeignKeyConstraint):
                         table.constraints.remove(constraint)
-            await conn.run_sync(metadata.create_all)
+            await conn.run_sync(
+                lambda sync_conn: metadata.create_all(
+                    sync_conn, tables=fixture_tables
+                )
+            )
         created = True
         yield engine
     finally:
