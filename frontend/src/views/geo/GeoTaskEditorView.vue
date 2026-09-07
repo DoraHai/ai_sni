@@ -3159,6 +3159,13 @@ onMounted(load)
 
         <div v-show="leftTab === 'score'" class="ed-pane ed-score-pane">
           <section class="ed-score-card">
+            <el-alert
+              v-if="generationFailureNotice"
+              type="warning"
+              :closable="false"
+              :title="`当前评分对应 ${generationFailureNotice.articleLabel}，不属于失败任务 #${generationFailureNotice.jobId}`"
+              class="mb"
+            />
             <div class="ed-score-card-head">
               <h3>GEO内容评分</h3>
               <span>{{ scoreGrade.badge }}</span>

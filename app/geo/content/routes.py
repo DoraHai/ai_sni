@@ -337,6 +337,22 @@ def _validate_fact_source(source_name: str, trust_level: str) -> None:
         raise HTTPException(400, "事实卡必须填写来源名称")
 
 
+_PROTECTED_FACT_META_KEYS = {
+    "verification",
+    "verified_translations",
+    "verified_at",
+    "verified_by",
+    "source_excerpt",
+    "excerpt_locator",
+}
+
+
+def _untrusted_fact_meta(value: Any) -> dict[str, Any]:
+    """Keep descriptive metadata but reserve verification evidence for /verify."""
+    raw = value if isinstance(value, dict) else {}
+    return {key: item for key, item in raw.items() if key not in _PROTECTED_FACT_META_KEYS}
+
+
 async def _ensure_tenant_exists(session: AsyncSession, tenant_id: int) -> Tenant:
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
@@ -6259,7 +6275,7 @@ async def create_fact(
         trust_level=req.trust_level,
         author_name=req.author_name,
         business_id=req.business_id,
-        meta=req.meta,
+        meta=_untrusted_fact_meta(req.meta),
         created_by=ctx.user_id,
     )
     session.add(row)
@@ -6278,12 +6294,27 @@ async def update_fact(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     row = await _get_fact(session, fact_id, tenant_id)
+    await session.refresh(row, with_for_update=True)
     data = req.model_dump(exclude_unset=True)
     trust = data.get("trust_level", row.trust_level)
     source_name = data.get("source_name", row.source_name)
     if data.get("trust_level") == "verified" and row.trust_level != "verified":
         raise HTTPException(400, "请走「核验」并填写摘录依据与定位，不能直接改为已核验")
     _validate_fact_source(source_name or "", trust)
+    evidence_changed = any(
+        key in data and str(data.get(key) or "").strip() != str(getattr(row, key, None) or "").strip()
+        for key in ("statement", "source_name", "source_url")
+    )
+    if "meta" in data:
+        current_meta = dict(row.meta or {})
+        current_meta.update(_untrusted_fact_meta(data.pop("meta")))
+        data["meta"] = current_meta
+    if evidence_changed:
+        cleaned_meta = dict(data.get("meta", row.meta or {}))
+        for key in _PROTECTED_FACT_META_KEYS:
+            cleaned_meta.pop(key, None)
+        data["meta"] = cleaned_meta
+        data["trust_level"] = "needs_review"
     for key, value in data.items():
         if isinstance(value, str) and key in {"title", "statement", "source_name"}:
             value = value.strip()
@@ -6303,8 +6334,22 @@ async def verify_fact(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     row = await _get_fact(session, fact_id, tenant_id)
+    # Serialize fact edits and verification. The complete source snapshot is
+    # checked only after the lock has refreshed this row to its current value.
+    await session.refresh(row, with_for_update=True)
     _validate_fact_source(row.source_name, "verified")
     stmt = (row.statement or "").strip()
+    expected_source = (req.expected_source_statement or "").strip()
+    expected_name = (req.expected_source_name or "").strip()
+    expected_url = (req.expected_source_url or "").strip()
+    if req.verified_translation and not (expected_source and expected_name and expected_url):
+        raise HTTPException(400, "核验译文必须携带已审阅的完整原文与来源快照")
+    if expected_source and expected_source != stmt:
+        raise HTTPException(409, "事实原文已被修改，请刷新后重新核验译文")
+    if expected_name and expected_name != str(row.source_name or "").strip():
+        raise HTTPException(409, "事实来源名称已被修改，请刷新后重新核验译文")
+    if expected_url and expected_url != str(row.source_url or "").strip():
+        raise HTTPException(409, "事实来源 URL 已被修改，请刷新后重新核验译文")
     if len(stmt) < 8:
         raise HTTPException(400, "陈述过短，无法核验")
     if len(stmt) > 220:
@@ -6317,6 +6362,16 @@ async def verify_fact(
     source_url = (req.source_url or row.source_url or "").strip()
     if not source_url:
         raise HTTPException(400, "核验必须填写来源 URL")
+    translation = (req.verified_translation or "").strip()
+    if translation:
+        from app.geo.content.cross_language import language
+
+        source_language = language(stmt)
+        translation_language = language(translation)
+        if source_language == "unknown" or translation_language == "unknown":
+            raise HTTPException(400, "原文或译文语言无法识别，请保留完整句子")
+        if source_language == translation_language:
+            raise HTTPException(400, "已核验译文必须与事实原文使用不同语言")
     others = list(
         await session.scalars(
             select(GeoFact).where(
@@ -6346,6 +6401,21 @@ async def verify_fact(
     meta["verified_by"] = ctx.user_id
     meta["source_excerpt"] = excerpt[:160]
     meta["excerpt_locator"] = req.excerpt_locator.strip()
+    if translation:
+        meta["verified_translations"] = [
+            {
+                "fact_id": row.id,
+                "text": translation,
+                "source_statement": stmt,
+                "status": "verified",
+                "verified_at": now,
+                "verified_by": ctx.user_id,
+            }
+        ]
+    elif "verified_translation" in req.model_fields_set:
+        # Re-verification without a translation must not preserve an old
+        # translation that may no longer have been reviewed in this action.
+        meta.pop("verified_translations", None)
     row.meta = meta
     if not row.source_url:
         row.source_url = source_url

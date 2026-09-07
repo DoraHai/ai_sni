@@ -50,18 +50,21 @@ def deterministic_article(
     question: str,
     facts: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """无 AI 时的可演示模板稿（严格只用事实卡）。"""
+    """无 AI 或模型两次越界时的事实原文稿。"""
+    from app.geo.content.cross_language import verified_translation_texts
+
     fact_lines = []
     faq_items = []
+    display_statements: list[str] = []
     for fact in facts[:6]:
-        fact_lines.append(
-            f"- **{fact.get('title') or '事实'}**：{fact.get('statement')} "
-            f"（来源：{fact.get('source_name')}）"
-        )
+        translations = verified_translation_texts(fact)
+        statement = translations[0] if translations else str(fact.get("statement") or "").strip()
+        display_statements.append(statement)
+        fact_lines.append(statement)
         faq_items.append(
             {
-                "q": f"关于「{fact.get('title') or '该点'}」有什么依据？",
-                "a": f"{fact.get('statement')}（来源：{fact.get('source_name')}）",
+                "q": "需要关注什么？",
+                "a": statement,
             }
         )
     while len(faq_items) < 2:
@@ -72,18 +75,12 @@ def deterministic_article(
             }
         )
 
-    direct = (
-        f"针对「{question}」，结合 {tenant_name} 已核验资料，"
-        f"可从以下可验证事实理解其能力边界与适用场景。"
-    )
-    definition = (
-        f"{tenant_name} 相关能力与产品信息应以已绑定事实卡为准，"
-        "下文只复述带来源的陈述，不引入未提供的数据或排名承诺。"
-    )
-    conclusion = (
-        f"综合已提供事实，评估「{question}」时应优先核对来源时效与适用边界；"
-        f"本文结论仅基于 {tenant_name} 提供的可核验资料。"
-    )
+    # The fallback contains no model-authored factual prose. Repetition is
+    # intentional: direct answer, definition and conclusion remain citable
+    # exact statements instead of becoming uncited marketing transitions.
+    direct = display_statements[0] if display_statements else "暂无已核验资料。"
+    definition = direct
+    conclusion = display_statements[-1] if display_statements else direct
     sections = [
         {
             "type": "definition",
@@ -107,7 +104,7 @@ def deterministic_article(
         },
     ]
     return {
-        "title": question if len(question) <= 80 else question[:77] + "…",
+        "title": "参考资料",
         "direct_answer": direct,
         "sections": sections,
         "used_fact_ids": [f["id"] for f in facts if f.get("id") is not None],
@@ -435,10 +432,27 @@ async def generate_master_article(
             except DeepSeekError:
                 pass
         if invented:
-            raise GeoContentError(
-                "母稿存在事实卡未能支撑的表述，已拦截："
-                + format_ungrounded(invented)
+            # Do not ask the customer to repeat generation until a stochastic
+            # model happens to comply. Fall back to a deterministic draft made
+            # only from exact source statements or human-verified translations.
+            payload = normalize_article_payload(
+                deterministic_article(
+                    tenant_name=tenant_name, question=question, facts=compact
+                ),
+                compact,
             )
+            payload["_source"] = "rules_after_claim_guard"
+            payload["_guard_fallback"] = {
+                "model_attempts": 2,
+                "reason": "unsupported_claims_after_rewrite",
+                "rejected_claims": format_ungrounded(invented),
+            }
+            fallback_issues = ungrounded_claims(to_markdown(payload), compact)
+            if fallback_issues:
+                raise GeoContentError(
+                    "母稿存在事实卡未能支撑的表述，已拦截："
+                    + format_ungrounded(fallback_issues)
+                )
         final_brand_issues = payload_brand_issues(payload, brand)
         if final_brand_issues:
             raise GeoContentError("母稿改写后未满足品牌标准：" + "；".join(final_brand_issues[:4]))

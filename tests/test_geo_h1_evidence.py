@@ -83,13 +83,83 @@ def test_publish_gate_blocks_qualitative_claim_with_stale_metadata():
         assert_can_publish(data)
 
 
-def test_generation_rejects_unsupported_rewrite():
+def test_generation_falls_back_to_exact_evidence_after_two_unsupported_rewrites():
     bad = payload('产品适用于矿业和港口。')
     with patch('app.geo.content.generate_article.chat_json', new=AsyncMock(return_value=bad)) as model:
-        with pytest.raises(GeoContentError, match='已拦截'):
-            asyncio.run(generate_master_article(tenant_name='示例品牌', question='产品有什么特点？', facts=FACTS, brief={'industry':'工业传动','audience':'采购','intent':'scenario','content_type':'thought_leadership','cta':'咨询选型'},
-                                         llm={'api_key': 'dummy', 'base_url': 'http://invalid', 'model': 'test'}))
+        result = asyncio.run(generate_master_article(tenant_name='示例品牌', question='产品有什么特点？', facts=FACTS, brief={'industry':'工业传动','audience':'采购','intent':'scenario','content_type':'thought_leadership','cta':'咨询选型'},
+                                             llm={'api_key': 'dummy', 'base_url': 'http://invalid', 'model': 'test'}))
         assert model.await_count == 2
+        assert result['_source'] == 'rules_after_claim_guard'
+        assert result['_guard_fallback']['model_attempts'] == 2
+        assert '矿业' in result['_guard_fallback']['rejected_claims']
+        rendered = __import__('app.geo.content.generate_article', fromlist=['to_markdown']).to_markdown(result)
+        assert '矿业' not in rendered and '港口' not in rendered
+        assert not ungrounded_claims(rendered, FACTS)
+
+
+def test_h1_cross_language_fallback_uses_verified_translation_without_expanding_scope():
+    english_facts = [
+        {
+            'id': 1, 'title': '扭矩范围',
+            'statement': 'MAXXDRIVE XT covers a torque range from 15,000 to 282,000 Nm.',
+            'source_name': 'NORD official', 'trust_level': 'verified', 'status': 'active',
+            '_verified_translation_texts': ['MAXXDRIVE XT 的扭矩范围为 15,000 至 282,000 Nm。'],
+        },
+        {
+            'id': 2, 'title': '散热结构',
+            'statement': 'The MAXXDRIVE XT has a heavily ribbed housing, axial fan and air guide cover.',
+            'source_name': 'NORD official', 'trust_level': 'verified', 'status': 'active',
+            '_verified_translation_texts': ['MAXXDRIVE XT 配有加强肋壳体、轴向风扇和导风罩。'],
+        },
+        {
+            'id': 3, 'title': '产品资料',
+            'statement': 'MAXXDRIVE XT is an industrial gear unit.',
+            'source_name': 'NORD official', 'trust_level': 'verified', 'status': 'active',
+            '_verified_translation_texts': ['MAXXDRIVE XT 是工业齿轮箱。'],
+        },
+    ]
+    bad = payload('本产品适用于所有重载设备，加强肋壳体可防止故障。')
+    bad['direct_answer'] = 'MAXXDRIVE XT 适用于所有重载设备。'
+    bad['sections'][-1]['body'] = 'MAXXDRIVE XT 的加强肋壳体可防止故障。'
+    with patch('app.geo.content.generate_article.chat_json', new=AsyncMock(return_value=bad)) as model:
+        result = asyncio.run(generate_master_article(
+            tenant_name='MAXXDRIVE XT', question='MAXXDRIVE XT 有哪些已核验资料？', facts=english_facts,
+            brief={'industry':'工业传动','audience':'采购','intent':'scenario','content_type':'thought_leadership','cta':'咨询选型'},
+            llm={'api_key': 'dummy', 'base_url': 'http://invalid', 'model': 'test'}))
+    rendered = __import__('app.geo.content.generate_article', fromlist=['to_markdown']).to_markdown(result)
+    assert model.await_count == 2
+    assert result['_source'] == 'rules_after_claim_guard'
+    assert '适用于所有' not in rendered and '防止故障' not in rendered
+    assert '加强肋壳体、轴向风扇和导风罩' in rendered
+    assert not ungrounded_claims(rendered, english_facts)
+    assert not any(row['needs_fact'] for row in build_sentence_citations(rendered, english_facts))
+
+
+def test_cross_language_fallback_keeps_untranslated_source_visible_as_source_language():
+    facts = [
+        {
+            'id': i,
+            'title': 'Official specification',
+            'statement': f'MAXXDRIVE XT official specification statement number {i}.',
+            'source_name': 'NORD official',
+            'trust_level': 'verified',
+            'status': 'active',
+        }
+        for i in range(1, 4)
+    ]
+    bad = payload('本产品适用于所有重载设备。')
+    bad['direct_answer'] = 'MAXXDRIVE XT 适用于所有重载设备。'
+    bad['sections'][-1]['body'] = 'MAXXDRIVE XT 适用于所有重载设备。'
+    with patch('app.geo.content.generate_article.chat_json', new=AsyncMock(return_value=bad)):
+        result = asyncio.run(generate_master_article(
+            tenant_name='MAXXDRIVE XT', question='What is verified?', facts=facts,
+            brief={'industry':'industrial','audience':'buyer','intent':'scenario','content_type':'thought_leadership','cta':'consult'},
+            llm={'api_key': 'dummy', 'base_url': 'http://invalid', 'model': 'test'}))
+    rendered = __import__('app.geo.content.generate_article', fromlist=['to_markdown']).to_markdown(result)
+    assert 'official specification statement number 1' in rendered
+    assert '适用于所有' not in rendered
+    assert result['_source'] == 'rules_after_claim_guard'
+    assert not any(row['needs_fact'] for row in build_sentence_citations(rendered, facts))
 
 
 def test_generation_accepts_grounded_rewrite():

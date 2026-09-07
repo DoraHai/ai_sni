@@ -25,6 +25,8 @@ const creating = ref(false)
 const importingCsv = ref(false)
 const csvInput = ref(null)
 const verifyingId = ref(null)
+const verifyOpen = ref(false)
+const verifyForm = ref({ fact: null, excerpt: '', excerpt_locator: '事实库陈述', verified_translation: '' })
 
 function emptyForm() {
   return {
@@ -110,20 +112,46 @@ async function submitCreate() {
   }
 }
 
-async function verifyFact(row) {
+function currentVerifiedTranslation(row) {
+  const rows = Array.isArray(row?.meta?.verified_translations) ? row.meta.verified_translations : []
+  const source = String(row?.statement || '').trim()
+  return String(rows.find((item) => item?.status === 'verified' && item?.source_statement === source)?.text || '')
+}
+
+function openVerify(row) {
   const statement = String(row.statement || '').trim()
   if (statement.length < 8 || !row.source_url) {
     ElMessage.warning('核验需要至少 8 字的陈述和来源 URL')
     return
   }
+  verifyForm.value = {
+    fact: row,
+    excerpt: statement.slice(0, 400),
+    excerpt_locator: row.verification?.excerpt_locator || '事实库陈述',
+    verified_translation: currentVerifiedTranslation(row),
+  }
+  verifyOpen.value = true
+}
+
+async function submitVerify() {
+  const row = verifyForm.value.fact
+  if (!row || !verifyForm.value.excerpt.trim() || !verifyForm.value.excerpt_locator.trim()) {
+    ElMessage.warning('请填写原文摘录与定位')
+    return
+  }
   verifyingId.value = row.id
   try {
     await verifyGeoFact(tenantId.value, row.id, {
-      excerpt: statement.slice(0, 400),
-      excerpt_locator: '事实库陈述',
+      excerpt: verifyForm.value.excerpt.trim(),
+      excerpt_locator: verifyForm.value.excerpt_locator.trim(),
       source_url: row.source_url,
+      verified_translation: verifyForm.value.verified_translation.trim() || null,
+      expected_source_statement: String(row.statement || '').trim(),
+      expected_source_name: String(row.source_name || '').trim(),
+      expected_source_url: String(row.source_url || '').trim(),
     })
     ElMessage.success(`已核验 #${row.id}`)
+    verifyOpen.value = false
     await load()
   } catch (e) {
     ElMessage.error(e.message || '核验失败')
@@ -265,7 +293,10 @@ onMounted(load)
                 </template>
               </el-table-column>
               <el-table-column label="陈述" min-width="200" show-overflow-tooltip>
-                <template #default="{ row }">{{ row.statement || '—' }}</template>
+                <template #default="{ row }">
+                  <div>{{ row.statement || '—' }}</div>
+                  <div v-if="currentVerifiedTranslation(row)" class="sub">已核验译文：{{ currentVerifiedTranslation(row) }}</div>
+                </template>
               </el-table-column>
               <el-table-column label="来源" min-width="140">
                 <template #default="{ row }">
@@ -290,7 +321,7 @@ onMounted(load)
                     link
                     type="primary"
                     :loading="verifyingId === row.id"
-                    @click="verifyFact(row)"
+                    @click="openVerify(row)"
                   >核验</el-button>
                   <el-button link @click="openEdit(row)">编辑</el-button>
                   <el-button
@@ -405,6 +436,35 @@ onMounted(load)
       <template #footer>
         <el-button @click="editOpen = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="submitEdit">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="verifyOpen" title="核验事实与译文" width="640px">
+      <el-alert
+        type="info"
+        :closable="false"
+        title="外文事实需在这里人工确认对应译文；未核验译文不会进入中文正文。"
+        class="mb"
+      />
+      <el-form label-position="top">
+        <el-form-item label="原文摘录" required>
+          <el-input v-model="verifyForm.excerpt" type="textarea" :rows="4" />
+        </el-form-item>
+        <el-form-item label="摘录定位" required>
+          <el-input v-model="verifyForm.excerpt_locator" placeholder="如：产品页技术参数段" />
+        </el-form-item>
+        <el-form-item label="已核验译文（可选）">
+          <el-input
+            v-model="verifyForm.verified_translation"
+            type="textarea"
+            :rows="4"
+            placeholder="完整保留主体、数字、范围、否定和限定条件"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="verifyOpen = false">取消</el-button>
+        <el-button type="primary" :loading="verifyingId === verifyForm.fact?.id" @click="submitVerify">确认核验</el-button>
       </template>
     </el-dialog>
   </GeoWorkbenchPage>
