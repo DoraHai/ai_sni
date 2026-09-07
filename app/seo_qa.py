@@ -80,6 +80,7 @@ def public_url(value):
 
 def platform_url(platform, value, *, answer=False, question_url=None, domain=None):
     from app.seo_backlinks import belongs_to_site
+    raw_fragment = urlsplit(str(value or '').strip()).fragment
     url = public_url(value)
     parsed = urlsplit(url)
     host = (parsed.hostname or '').lower()
@@ -96,12 +97,14 @@ def platform_url(platform, value, *, answer=False, question_url=None, domain=Non
     elif platform == 'csdn_qa':
         valid = host == 'ask.csdn.net' and bool(re.fullmatch(r'/questions/\d+/?', parsed.path))
         if answer and question_url:
-            valid = valid and parsed.path.rstrip('/') == urlsplit(question_url).path.rstrip('/')
+            valid = (valid and parsed.path.rstrip('/') == urlsplit(question_url).path.rstrip('/')
+                     and bool(re.fullmatch(r'answer_\d+', raw_fragment)))
     else:
         valid = False
     if not valid:
         raise ValueError('网址必须属于所选平台和指定问题；官网网址必须属于当前网站')
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, '', parsed.fragment if answer else ''))
+    fragment = raw_fragment if answer and platform == 'csdn_qa' else ''
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, '', fragment))
 
 
 def parse_questions_csv(value):

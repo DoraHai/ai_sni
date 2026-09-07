@@ -276,6 +276,8 @@ def test_qa_receipt_only_records_operator_url_without_success_claim(platform,que
     for bad in ['https://evil.example/questions/12',question.replace('/12','/99'),
                 'javascript:alert(1)','https://user:pass@'+question[8:]]:
         with pytest.raises(ValueError): qa.make_receipt(task,bad)
+    if platform == 'csdn_qa':
+        with pytest.raises(ValueError): qa.make_receipt(task, question)
     with pytest.raises(ValueError): qa.make_receipt({**task,'version':None},answer)
 
 

@@ -33,12 +33,29 @@ def test_dedup_import_and_url_boundaries():
         api.ImportQuestions(tenant_id=1, site_id=1, items=[{'title': '??'}])
     assert platform_url('zhihu', 'https://www.zhihu.com/question/12/answer/34', answer=True,
                         question_url='https://www.zhihu.com/question/12').endswith('/answer/34')
+    assert platform_url('csdn_qa', 'https://ask.csdn.net/questions/12#answer_34', answer=True,
+                        question_url='https://ask.csdn.net/questions/12').endswith('#answer_34')
     for value in ['https://www.zhihu.com/question/13/answer/34', 'https://zhuanlan.zhihu.com/p/12',
                   'https://www.zhihu.com.evil.example/question/12/answer/34', 'http://127.0.0.1/question/12']:
         with pytest.raises(ValueError):
             platform_url('zhihu', value, answer=True, question_url='https://www.zhihu.com/question/12')
     with pytest.raises(ValueError):
         platform_url('website', 'https://evil.example/faq', domain='brand.example', answer=True)
+    with pytest.raises(ValueError):
+        platform_url('csdn_qa', 'https://ask.csdn.net/questions/12', answer=True,
+                     question_url='https://ask.csdn.net/questions/12')
+    with pytest.raises(ValidationError):
+        api.MetricsInput(tenant_id=1, site_id=1, version=1,
+            source_url='https://www.zhihu.com/question/12/answer/34',
+            as_of=datetime.now(timezone.utc))
+    with pytest.raises(ValidationError):
+        api.MetricsInput(tenant_id=1, site_id=1, version=1, views=True,
+            source_url='https://www.zhihu.com/question/12/answer/34',
+            as_of=datetime.now(timezone.utc))
+    metrics = api.MetricsInput(tenant_id=1, site_id=1, version=1, views=0,
+        source_url='https://ask.csdn.net/questions/12#answer_34',
+        as_of=datetime.now(timezone.utc))
+    assert metrics.source_url.endswith('#answer_34')
 
 
 def test_observation_never_turns_blocked_or_redirected_pages_into_success():
@@ -168,14 +185,60 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
             with pytest.raises(HTTPException):
                 await api.assistant_receipt(placement['id'],api.AssistantReceiptInput(**{**payload,'tenant_id':2,'site_id':2}),CTX,db)
             receipt = await api.assistant_receipt(placement['id'],api.AssistantReceiptInput(**payload),CTX,db)
-            with pytest.raises(HTTPException) as stale_receipt:
-                await api.assistant_receipt(placement['id'],api.AssistantReceiptInput(**payload),CTX,db)
-            assert stale_receipt.value.status_code==409
+            replayed_receipt = await api.assistant_receipt(placement['id'],api.AssistantReceiptInput(**payload),CTX,db)
+            assert replayed_receipt['id'] == receipt['id'] and replayed_receipt['version'] == receipt['version']
             assert receipt['status'] == 'reported' and receipt['observations'] == []
+            content.status = 'drafting'; await db.flush()
+            with pytest.raises(HTTPException, match='审核稿版本已失效'):
+                await api.receipt(placement['id'], api.ReceiptInput(tenant_id=1, site_id=1,
+                    version=payload['version'], answer_url=url), CTX, db)
+            content.status = 'ready'; content.version_count += 1; await db.flush()
+            with pytest.raises(HTTPException, match='审核稿版本已失效'):
+                await api.assistant_receipt(placement['id'],api.AssistantReceiptInput(**payload),CTX,db)
+            content.version_count -= 1; await db.flush()
+            metric_input = api.MetricsInput(tenant_id=1, site_id=1, version=receipt['version'], views=10,
+                source_url=url, as_of=datetime.now(timezone.utc))
+            with pytest.raises(HTTPException, match='核验'):
+                await api.report_metrics(placement['id'], metric_input, CTX, db)
             page = SimpleNamespace(body=f'<p>{fact["statement"]}</p>', final_url=url, status_code=200, error_type=None)
             with patch('app.seo_backlinks.fetch_backlink_page', new=AsyncMock(return_value=page)):
                 observed = await api.verify(placement['id'], api.Scoped(tenant_id=1, site_id=1), CTX, db)
             assert observed['status'] == 'content_observed' and content.status == 'ready'
+            metric_input = api.MetricsInput(tenant_id=1, site_id=1, version=observed['version'], views=10,
+                source_url=url, as_of=datetime.now(timezone.utc))
+            saved_metrics = await api.report_metrics(placement['id'], metric_input, CTX, db)
+            replayed_metrics = await api.report_metrics(placement['id'], metric_input, CTX, db)
+            assert saved_metrics['replayed'] is False and replayed_metrics['replayed'] is True
+            assert saved_metrics['version'] == replayed_metrics['version']
+            with pytest.raises(HTTPException) as old_metric_replay:
+                await api.report_metrics(placement['id'], api.MetricsInput(tenant_id=1, site_id=1,
+                    version=1, views=10, source_url=url, as_of=metric_input.as_of), CTX, db)
+            assert old_metric_replay.value.status_code == 409
+            content.status = 'drafting'; await db.flush()
+            with pytest.raises(HTTPException, match='审核稿版本已失效'):
+                await api.report_metrics(placement['id'], api.MetricsInput(tenant_id=1, site_id=1,
+                    version=saved_metrics['version'], views=10, source_url=url,
+                    as_of=metric_input.as_of), CTX, db)
+            content.status = 'ready'; await db.flush()
+            with pytest.raises(HTTPException, match='当前回答网址一致'):
+                await api.report_metrics(placement['id'], api.MetricsInput(tenant_id=1, site_id=1,
+                    version=saved_metrics['version'], views=11,
+                    source_url='https://www.zhihu.com/question/12/answer/15',
+                    as_of=datetime.now(timezone.utc)), CTX, db)
+            stored = await db.get(SeoQaPlacement, placement['id'])
+            stored.observations = [*stored.observations, {
+                'state':'not_observed', 'body_hash':api.body_hash(stored.body),
+                'checked_at':datetime.now(timezone.utc).isoformat()}]
+            await db.flush()
+            next_metrics = api.MetricsInput(tenant_id=1, site_id=1,
+                version=saved_metrics['version'], views=11, source_url=url,
+                as_of=datetime.now(timezone.utc))
+            with pytest.raises(HTTPException, match='核验'):
+                await api.report_metrics(placement['id'], next_metrics, CTX, db)
+            stored.observations = [*stored.observations, observed['observations'][-1]]
+            await db.flush()
+            latest_metrics = await api.report_metrics(placement['id'], next_metrics, CTX, db)
+            assert latest_metrics['saved'] is True and latest_metrics['replayed'] is False
             detail=await api.question_detail(question_id,1,1,CTX,db)
             assert detail['coverage']['state']=='observed' and detail['placement_total']==1
             assert (await api.planning(1,1,CTX,db))['observed_question_count']==1
@@ -193,6 +256,16 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
                 await api.verify(placement['id'], api.Scoped(tenant_id=1, site_id=1), CTX, db)
             assert rate.value.status_code == 429
             await db.rollback()
+            current = await db.get(SeoQaPlacement, placement['id'])
+            changed_url = 'https://www.zhihu.com/question/12/answer/15'
+            changed = await api.receipt(placement['id'], api.ReceiptInput(tenant_id=1, site_id=1,
+                version=current.version, answer_url=changed_url), CTX, db)
+            assert changed['answer_url'] == changed_url and changed['observations'] == []
+            assert changed['reported_metrics'] is None
+            with pytest.raises(HTTPException) as old_replay:
+                await api.receipt(placement['id'], api.ReceiptInput(tenant_id=1, site_id=1,
+                    version=1, answer_url=changed_url), CTX, db)
+            assert old_replay.value.status_code == 409
             await api.edit_fact(fact['id'], api.FactEdit(tenant_id=1, site_id=1, version=1,
                 title='新手册', statement='资料已经更新', source_name='v2'), CTX, db)
             content = await db.get(SeoContentAsset, answer['content_id'])
@@ -211,6 +284,56 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
                 await api.publication_draft(placement['id'], 1, 1, CTX, db)
             with pytest.raises(HTTPException):
                 await api.assistant_task(placement['id'],1,1,CTX,db)
+    database(scenario)
+
+
+@pytest.mark.parametrize('transition', ['reject', 'new_version'])
+def test_receipt_serializes_with_concurrent_content_transition(transition):
+    async def scenario(sessions):
+        async with sessions() as setup:
+            imported = await api.import_questions(api.ImportQuestions(tenant_id=1, site_id=1,
+                items=[{'title': '并发发布如何处理？'}]), CTX, setup)
+            fact = await api.create_fact(api.FactInput(tenant_id=1, site_id=1, title='发布依据',
+                statement='发布前必须使用当前已审核的正文。', source_name='验收资料'), CTX, setup)
+            body = fact['statement'] + f'[F{fact["id"]}]'
+            answer = await api.create_answer(api.AnswerInput(tenant_id=1, site_id=1,
+                question_id=imported['ids'][0], body=body, fact_ids=[fact['id']]), CTX, setup)
+            content = await setup.get(SeoContentAsset, answer['content_id'])
+            content.status = 'ready'
+            await setup.commit()
+            placement = await api.prepare_placement(api.PlacementInput(tenant_id=1, site_id=1,
+                answer_id=answer['id'], platform='zhihu',
+                question_url='https://www.zhihu.com/question/77'), CTX, setup)
+            content_id, placement_id = content.id, placement['id']
+
+        async with sessions() as editor:
+            content = await editor.get(SeoContentAsset, content_id, with_for_update=True)
+            if transition == 'reject':
+                content.status = 'drafting'
+            else:
+                content.version_count += 1
+            await editor.flush()
+
+            async def publish():
+                async with sessions() as publisher:
+                    try:
+                        return await api.receipt(placement_id, api.ReceiptInput(tenant_id=1,
+                            site_id=1, version=1,
+                            answer_url='https://www.zhihu.com/question/77/answer/88'), CTX, publisher)
+                    except HTTPException as exc:
+                        await publisher.rollback()
+                        return exc
+
+            task = asyncio.create_task(publish())
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task), timeout=.1)
+            await editor.commit()
+            result = await asyncio.wait_for(task, timeout=5)
+
+        assert isinstance(result, HTTPException) and result.status_code == 409
+        async with sessions() as check:
+            stored = await check.get(SeoQaPlacement, placement_id)
+            assert stored.answer_url is None and stored.status == 'prepared'
     database(scenario)
 
 
