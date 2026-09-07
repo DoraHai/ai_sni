@@ -15,21 +15,19 @@ _GENERIC_HEADING = re.compile(
     re.I,
 )
 _METADATA = re.compile(
-    r"^\*{0,2}(?:作者|更新时间|发布日期|来源|行业|受众|内容类型|CTA|建议章节顺序)[：:]",
-    re.I,
+    r"^(?:\*作者[：:][^*：:。.!！?？\n]{1,40}\*|"
+    r"\*(?:更新时间|发布日期)[：:]\d{4}-\d{2}-\d{2}\*)$"
 )
 _PURE_TRANSITION = re.compile(
     r"^(?:以下|下面|接下来)(?:将|按|从)?(?:依据|围绕|按照|基于)?(?:已核验)?(?:事实|资料|来源)?"
     r"(?:逐项|分别)?(?:说明|介绍|分析|展开|讨论)[。.!！]?$|"
     r"^基于(?:以上|上述)(?:已核验)?(?:事实|资料|来源)[，,]?(?:下文)?(?:逐项)?(?:说明|展开)[。.!！]?$",
 )
-_QUESTION_PRESET = re.compile(
-    r"(?:为何|为什么|怎么会|更(?:高|低|好|快|强|耐用|稳定)|"
-    r"导致|提高|提升|降低|减少|延长|防止|避免|适合|最佳|首选|成功|"
-    r"故障|失效|寿命|效率|性能|保证|保障|已经|仍然|依然|"
-    r"\bwhy\b|\bhow does\b|\bmore\b|\bbetter\b|\bimprov(?:e|es|ed)\b|"
-    r"\breduc(?:e|es|ed)\b|\bprevent(?:s|ed)?\b)",
-    re.I,
+_NEUTRAL_QUESTION = re.compile(
+    r"^(?:需要关注什么|如何(?:验证|核验|检查|选择|比较|操作|开始|处理|评估|改进)|"
+    r"如何为具体设备进行选型|"
+    r"怎么(?:验证|核验|检查|选择|比较|操作|开始|处理)|"
+    r"有哪些(?:步骤|注意事项|需要关注的事项))[?？]$"
 )
 _EVIDENCE_NOTICE = re.compile(
     r"^(?:(?:目前)?(?:暂无|尚未提供)[^。！？]*(?:案例|事实|资料|原文)|"
@@ -37,26 +35,31 @@ _EVIDENCE_NOTICE = re.compile(
     r"暂无[^。！？]*[，,](?:请|建议)(?:提供|补充|核验)[^。！？]*)[。.!！]?$"
 )
 _CTA = re.compile(
-    r"^(?:(?:如果|如需|如有)[^。！？]*(?:建议|请)[^。！？]*(?:预约|咨询|联系)[^。！？]*|"
-    r"(?:建议|请)(?:预约|咨询|联系)[^。！？]*)[。.!！]?$"
+    r"^(?:如果您正在为具体设备进行选型[，,]建议预约诊断或咨询专业选型服务[，,]以获取针对性的方案|"
+    r"如需了解设备选型[，,]请联系专业团队|如有设备选型问题[，,]请向专业团队咨询|"
+    r"建议咨询专业团队)[。.!！]?$"
 )
 _PROCESS_INSTRUCTION = re.compile(
     r"^(?:步骤\s*\d+|第[一二三四五六七八九十]+步)[：:]\s*"
     r"(?:明确|核对|核验|验证|检查|完成|开展|进行|试点)[^。！？]*[。.!！]?$"
 )
 _GUIDANCE = re.compile(
-    r"^(?:应|可|建议|优先)(?:先|结合|根据)?[^。！？]*"
-    r"(?:核对|核验|验证|检查|选择|比较|决策)[^。！？]*[。.!！]?$"
+    r"^(?:应结合场景与可核验事实选择[^，,。！？]{0,20}|"
+    r"建议核验来源与时效|建议核对应?事实卡|优先核验|优先核验来源后再决策)[。.!！]?$"
 )
 _SOURCE_REFERENCE = re.compile(
-    r"^(?:https?://\S+|[^。！？]{0,24}(?:白皮书|文档|报告|官网|标准|手册|案例集|案例))$",
+    r"^(?:白皮书|文档|报告|官网|标准|手册|案例集|案例)$",
+    re.I,
+)
+_SOURCE_METADATA = re.compile(
+    r"^\*{0,2}来源[：:]\s*(?:https?://\S+|(?:白皮书|文档|报告|官网|标准|手册|案例集|案例))\*{0,2}$",
     re.I,
 )
 
 
 def split_sentences(text: str) -> list[str]:
     parts = [p.strip() for p in _SENT_SPLIT.split(text or "") if p and p.strip()]
-    return [p for p in parts if len(p) >= 4]
+    return [p for p in parts if re.search(r"[A-Za-z0-9\u4e00-\u9fff]", p)]
 
 
 def strip_citation_appendix(markdown: str) -> str:
@@ -82,7 +85,12 @@ def is_presentation_sentence(sentence: str) -> bool:
 def is_evidence_exempt(sentence: str) -> bool:
     """Return true only for syntax that does not assert a product/world fact."""
     value = str(sentence or "").strip()
-    if not value or _METADATA.search(value) or _PURE_TRANSITION.fullmatch(value):
+    if (
+        not value
+        or _METADATA.search(value)
+        or _SOURCE_METADATA.fullmatch(value)
+        or _PURE_TRANSITION.fullmatch(value)
+    ):
         return True
     heading = re.match(r"^#{1,6}\s*(.*?)\s*$", value)
     if heading:
@@ -91,13 +99,17 @@ def is_evidence_exempt(sentence: str) -> bool:
     plain = re.sub(r"^(?:[-*+]\s*|\d+[.)、]\s*)", "", plain)
     if plain.endswith(("?", "？")):
         question = re.sub(r"^\*{0,2}(?:问|Q)[：:]\*{0,2}\s*", "", plain, flags=re.I)
-        return not bool(_QUESTION_PRESET.search(question))
+        return bool(_NEUTRAL_QUESTION.fullmatch(question))
     return bool(
         _EVIDENCE_NOTICE.fullmatch(plain)
         or _CTA.fullmatch(plain)
         or _PROCESS_INSTRUCTION.fullmatch(plain)
         or _GUIDANCE.fullmatch(plain)
-        or _SOURCE_REFERENCE.fullmatch(plain)
+        or (
+            bool(re.match(r"^(?:[-*+]\s*|\d+[.)、]\s*)", value))
+            and bool(_SOURCE_REFERENCE.fullmatch(plain))
+        )
+        or bool(re.fullmatch(r"https?://\S+", plain, re.I))
     )
 
 
