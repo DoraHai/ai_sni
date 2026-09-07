@@ -298,10 +298,29 @@ async def execute_variants_for_task(
         checks = run_checks(ri)
         ready = is_ready(checks, require_channels=False)
         prev = task.rule_result if isinstance(task.rule_result, dict) else {}
+        brand_validation = prev.get("brand_validation")
+        check_dicts = [c.to_dict() for c in checks]
+        if isinstance(brand_validation, dict):
+            brand_ok = bool(brand_validation.get("passed"))
+            check_dicts.append(
+                {
+                    "code": "geo_brand_standard",
+                    "passed": brand_ok,
+                    "message": (
+                        f"开篇与结论已点名品牌「{brand_validation.get('brand') or '当前品牌'}」"
+                        if brand_ok
+                        else str((brand_validation.get("issues") or ["品牌标准未满足"])[0])
+                    ),
+                    "action": "核对品牌配置，并在开篇与结论中使用有证据支持的品牌名",
+                    "details": list(brand_validation.get("issues") or []),
+                }
+            )
+            if not brand_ok:
+                ready = False
         task.rule_result = {
             **prev,
             "ready": ready,
-            "checks": [c.to_dict() for c in checks],
+            "checks": check_dicts,
             "variant_polish": {
                 **polish_stats,
                 "failed": failed,

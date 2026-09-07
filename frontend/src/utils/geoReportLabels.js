@@ -97,6 +97,7 @@ export const CHECK_LABEL = {
   channel_variant_ready: '渠道稿已生成',
   fabrication_lint: '编造风险扫描',
   sentence_evidence: '逐句证据',
+  geo_brand_standard: '品牌提及标准',
 }
 
 export const REVIEW_STATUS_LABEL = {

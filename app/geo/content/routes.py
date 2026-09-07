@@ -701,17 +701,41 @@ async def _evaluate_and_store_rules(
     blocks = blocks_payload(rule_input.body_markdown or "")
     lint_ok = bool(lint.get("blocks_ready")) if isinstance(lint, dict) else None
     tenant_for_score = await _ensure_tenant_exists(session, task.tenant_id)
+    brand = (
+        (await _brand_context_for_task(session, task, tenant_for_score))[0]
+        if tenant_for_score
+        else None
+    )
     score_payload = compute_geo_score(
         rule_input,
         brief=task.brief if isinstance(task.brief, dict) else {},
         lint_ok=lint_ok,
         rule_checks=checks,
-        brand=(
-            (await _brand_context_for_task(session, task, tenant_for_score))[0]
-            if tenant_for_score
-            else None
-        ),
+        brand=brand,
     )
+    from app.geo.content.brand_geo import markdown_brand_validation
+
+    brand_validation = markdown_brand_validation(
+        brand=brand,
+        title=rule_input.title,
+        body_markdown=rule_input.body_markdown,
+    )
+    brand_message = (
+        f"开篇与结论已点名品牌「{brand_validation.get('brand') or '当前品牌'}」"
+        if brand_validation["passed"]
+        else str((brand_validation.get("issues") or ["品牌标准未满足"])[0])
+    )
+    check_dicts.append(
+        {
+            "code": "geo_brand_standard",
+            "passed": bool(brand_validation["passed"]),
+            "message": brand_message,
+            "action": "核对品牌配置，并在开篇与结论中使用有证据支持的品牌名",
+            "details": list(brand_validation.get("issues") or []),
+        }
+    )
+    if not brand_validation["passed"]:
+        ready = False
     settings = get_settings()
     score_ok, score_msg = score_blocks_ready(
         score_payload,
@@ -735,6 +759,7 @@ async def _evaluate_and_store_rules(
         "geo_score_gate": bool(getattr(settings, "geo_score_gate", False)),
         "geo_score_threshold": int(getattr(settings, "geo_score_threshold", 60) or 60),
         "geo_score_gate_message": score_msg or None,
+        "brand_validation": brand_validation,
         "ai_review": ai_review,
         "checked_at": datetime.utcnow().isoformat(),
         "variant_channels": list(rule_input.variants or []),
@@ -760,6 +785,7 @@ async def _evaluate_and_store_rules(
         "geo_actions": score_payload["geo_actions"],
         "geo_score_gate": bool(getattr(settings, "geo_score_gate", False)),
         "geo_score_threshold": int(getattr(settings, "geo_score_threshold", 60) or 60),
+        "brand_validation": brand_validation,
         "variant_channels": list(rule_input.variants or []),
         "target_channels": list(rule_input.target_channels or []),
     }
@@ -7609,17 +7635,40 @@ async def apply_patch(
     blocks = blocks_payload(rule_input.body_markdown or "")
     lint_ok = bool(lint.get("blocks_ready")) if isinstance(lint, dict) else None
     tenant_for_score = await _ensure_tenant_exists(session, task.tenant_id)
+    brand = (
+        (await _brand_context_for_task(session, task, tenant_for_score))[0]
+        if tenant_for_score
+        else None
+    )
     score_payload = compute_geo_score(
         rule_input,
         brief=task.brief if isinstance(task.brief, dict) else {},
         lint_ok=lint_ok,
         rule_checks=checks,
-        brand=(
-            (await _brand_context_for_task(session, task, tenant_for_score))[0]
-            if tenant_for_score
-            else None
-        ),
+        brand=brand,
     )
+    from app.geo.content.brand_geo import markdown_brand_validation
+
+    brand_validation = markdown_brand_validation(
+        brand=brand,
+        title=rule_input.title,
+        body_markdown=rule_input.body_markdown,
+    )
+    check_dicts.append(
+        {
+            "code": "geo_brand_standard",
+            "passed": bool(brand_validation["passed"]),
+            "message": (
+                f"开篇与结论已点名品牌「{brand_validation.get('brand') or '当前品牌'}」"
+                if brand_validation["passed"]
+                else str((brand_validation.get("issues") or ["品牌标准未满足"])[0])
+            ),
+            "action": "核对品牌配置，并在开篇与结论中使用有证据支持的品牌名",
+            "details": list(brand_validation.get("issues") or []),
+        }
+    )
+    if not brand_validation["passed"]:
+        ready = False
     settings = get_settings()
     score_ok, score_msg = score_blocks_ready(
         score_payload,
@@ -7646,6 +7695,7 @@ async def apply_patch(
         "geo_score_gate": bool(getattr(settings, "geo_score_gate", False)),
         "geo_score_threshold": int(getattr(settings, "geo_score_threshold", 60) or 60),
         "geo_score_gate_message": score_msg or None,
+        "brand_validation": brand_validation,
         "ai_review": ai_review,
         "last_patch": {
             "code": req.code,
@@ -7674,6 +7724,7 @@ async def apply_patch(
         "geo_score": score_payload["geo_score"],
         "geo_subscores": score_payload["geo_subscores"],
         "geo_actions": score_payload["geo_actions"],
+        "brand_validation": brand_validation,
         "task": task_payload,
         "article": (task_payload or {}).get("article"),
     }
@@ -7773,19 +7824,9 @@ async def generate_task_article(
     session.expire_all()
     await session.refresh(task)
     article = await _latest_article(session, task.id)
-    rule_input = await _build_rule_input(session, task, article)
-    checks = run_checks(rule_input)
-    ready = is_ready(checks, require_channels=False)
-    task.rule_result = {
-        "ready": ready,
-        "require_channels": False,
-        "checks": [c.to_dict() for c in checks],
-        "checked_at": datetime.utcnow().isoformat(),
-    }
-    task.status = "ready" if ready else "needs_fix"
-    if ready:
-        task.ready_at = task.ready_at or datetime.utcnow()
-    await _sync_task_pipeline(session, task, checks=[c.to_dict() for c in checks])
+    await _evaluate_and_store_rules(
+        session, task, article, require_channels=False
+    )
     await session.commit()
     await session.refresh(task)
     return await _task_payload(session, task, detail=True)

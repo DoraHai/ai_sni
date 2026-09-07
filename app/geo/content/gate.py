@@ -56,6 +56,10 @@ def assert_can_publish(
         rr = getattr(task, "rule_result", None) or {}
         if not isinstance(rr, dict):
             rr = {}
+        brand_validation = rr.get("brand_validation")
+        if isinstance(brand_validation, dict) and brand_validation.get("passed") is False:
+            issues = brand_validation.get("issues") or ["品牌标准未满足"]
+            raise PublishGateError("品牌标准未通过：" + str(issues[0]))
         score_payload = {
             "geo_score": rr.get("geo_score"),
             "geo_subscores": rr.get("geo_subscores"),
