@@ -206,25 +206,13 @@ def _bid_coefficients(
     else:
         mobile_min = mobile_max = 1.0
 
-    # 整层未配置时按 1.0 计算；但已配时段而当前时段未投放时，
-    # current_factor 保持 None，不能误报为正在投放。
-    effective_schedule_factor = current_factor if sched else 1.0
-    effective_region_factors = region_factors or [1.0]
     effective = None
-    if effective_schedule_factor is not None:
+    if current_factor is not None and region_factors:
         cur_min = round(
-            base_price
-            * effective_schedule_factor
-            * min(effective_region_factors)
-            * mobile_min,
-            2,
+            base_price * current_factor * min(region_factors) * mobile_min, 2
         )
         cur_max = round(
-            base_price
-            * effective_schedule_factor
-            * max(effective_region_factors)
-            * ranking_cap
-            * mobile_max,
+            base_price * current_factor * max(region_factors) * ranking_cap * mobile_max,
             2,
         )
         effective = {
@@ -232,11 +220,7 @@ def _bid_coefficients(
             "current_max": cur_max,
             # 业务阈值：倍数 > 3 橙色提示，> 4 红色预警（原型规则）
             "max_multiplier": round(
-                effective_schedule_factor
-                * max(effective_region_factors)
-                * ranking_cap
-                * mobile_max,
-                2,
+                current_factor * max(region_factors) * ranking_cap * mobile_max, 2
             ),
         }
 
@@ -588,8 +572,30 @@ async def cockpit_keywords(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
-    validate_query(request.query_params, {"tenant_id", "baidu_account_id", "start_date", "end_date", "q", "campaign_id", "page", "page_size"})
-    return await read_keywords(session, tenant_id, baidu_account_id, start_date, end_date, q, campaign_id, page, page_size)
+    validate_query(
+        request.query_params,
+        {
+            "tenant_id",
+            "baidu_account_id",
+            "start_date",
+            "end_date",
+            "q",
+            "campaign_id",
+            "page",
+            "page_size",
+        },
+    )
+    return await read_keywords(
+        session,
+        tenant_id,
+        baidu_account_id,
+        start_date,
+        end_date,
+        q,
+        campaign_id,
+        page,
+        page_size,
+    )
 
 
 @router.get("/cockpit/{keyword_id}")
@@ -604,8 +610,18 @@ async def cockpit_keyword_detail(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
-    validate_query(request.query_params, {"tenant_id", "baidu_account_id", "start_date", "end_date"})
-    return await read_keyword_detail(session, tenant_id, baidu_account_id, keyword_id, start_date, end_date)
+    validate_query(
+        request.query_params,
+        {"tenant_id", "baidu_account_id", "start_date", "end_date"},
+    )
+    return await read_keyword_detail(
+        session,
+        tenant_id,
+        baidu_account_id,
+        keyword_id,
+        start_date,
+        end_date,
+    )
 
 
 @router.get("")
@@ -844,7 +860,6 @@ async def list_keywords(
         rows.append(
             {
                 "keyword_id": k.keyword_id,
-                "baidu_account_id": k.baidu_account_id,
                 "keyword": k.keyword,
                 "category": _category_payload(k.category, k.category_source),
                 "campaign_id": k.campaign_id,
@@ -1020,10 +1035,8 @@ class BatchCategoryRequest(BaseModel):
 async def batch_update_category(
     req: BatchCategoryRequest,
     session: AsyncSession = Depends(get_session),
-    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """批量改分级（工作台勾选批量操作）。语义与单个接口一致：manual 标记 / auto 恢复重算。"""
-    ctx.ensure_tenant(req.tenant_id)
     if req.category != "auto" and req.category not in CATEGORY_LABELS:
         raise HTTPException(400, f"分级只能是 {'/'.join(CATEGORY_LABELS)} 或 auto")
 
@@ -1424,8 +1437,6 @@ class KeywordWritebackRequest(BaseModel):
     tenant_id: int
     price: float = Field(..., gt=0, description="最终执行价（元）")
     approval_id: int | None = None
-    confirmation: str | None = None
-    idempotency_key: str | None = Field(default=None, min_length=16, max_length=128)
 
 
 class WritebackBatchItem(BaseModel):
@@ -1540,8 +1551,6 @@ async def writeback_one(
             session, req.tenant_id, keyword_id, req.price,
             operator_user_id=ctx.user_id, operator_name=ctx.username,
             approval_id=req.approval_id,
-            confirmation=req.confirmation,
-            idempotency_key=req.idempotency_key,
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))

@@ -25,7 +25,6 @@ from app.models.role import Role
 from app.models.user import User
 from app.security.api_key import resolve_api_key
 from app.security.sem_identity import ensure_sem_identity_access
-from app.permissions import OPERATOR_PERMS
 
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _bearer = HTTPBearer(auto_error=False)
@@ -167,17 +166,6 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     if p.startswith("/api/v1/assistant"):
         # 对话/记忆都算"使用助手"(读性质，非编辑配置)，view 即可，POST 也不要求 edit
         return {"assistant"}, False
-    if p.startswith("/api/v1/geo/integration/"):
-        # Keep the cockpit contract on GEO content permissions. The trailing
-        # slash is intentional: similarly named paths retain the legacy rule.
-        return {"geo.content"}, edit
-    if p == "/api/v1/seo/workbench/sites":
-        # The acquisition workbench only needs an authorized site selector.
-        # Site administration remains protected by seo.assets below.
-        return {"seo.content", "seo.site"}, edit
-    if p == "/api/v1/geo/tenants":
-        # GEO 顶部客户切换器是所有 GEO 工作台的公共只读数据源。
-        return {"geo.assets", "geo.content", "geo.diagnosis"}, False
     if p.startswith("/api/v1/geo/audits"):
         # 运行诊断、生成建议和资产都属于使用 GEO 工具，view 权限即可。
         return {"geo.diagnosis"}, False
@@ -209,26 +197,11 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
         or p.startswith("/api/v1/geo/ops-alerts")
         or p.startswith("/api/v1/geo/competitor-reports")
         or p.startswith("/api/v1/geo/onboarding")
-        or p.startswith("/api/v1/geo/weekly-insights")
-        or p.startswith("/api/v1/geo/topic-heat")
-        or p.startswith("/api/v1/geo/ai-trends")
-        or p.startswith("/api/v1/geo/ai-settings")
-        or p.startswith("/api/v1/geo/channel-polish-prompts")
-        or p.startswith("/api/v1/geo/gap-workbench")
-        or p.startswith("/api/v1/geo/optimization-periods")
-        or p.startswith("/api/v1/geo/metrics")
-        or p.startswith("/api/v1/geo/metric-dictionary")
-        or p.startswith("/api/v1/geo/competitor-aliases")
-        or p.startswith("/api/v1/geo/competitor-reports")
-        or p.startswith("/api/v1/geo/onboarding")
-        or p.startswith("/api/v1/geo/async-jobs")
-        or p.startswith("/api/v1/geo/monitoring-stance")
-        or p.startswith("/api/v1/geo/attribution")
     ):
         return {"geo.content"}, edit
     if p.startswith("/api/v1/geo"):
         return {"geo.diagnosis"}, False
-    if p.startswith("/api/v1/seo/overview") or p.startswith("/api/v1/seo/traffic"):
+    if p.startswith("/api/v1/seo/overview"):
         return {"seo.dashboard"}, edit
     if p.startswith("/api/v1/seo/alerts"):
         return {"seo.alerts"}, edit
@@ -254,9 +227,6 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     if p.startswith("/api/v1/oauth/baidu"):
         # 查看授权状态需 view；发起/更新授权需 edit。
         return {"onboarding"}, edit
-    if p == "/api/v1/writeback/mode":
-        # 关键词页和效果验证页都需要读取当前租户的门禁摘要；任一只读权限即可。
-        return {"optimize.keywords", "verify.adjustments"}, False
     if p.startswith("/api/v1/writeback"):
         # 回写台账（只读查询）归效果验证。回写动作本身走 /keywords/{id}/writeback（optimize.keywords edit）
         return {"verify.adjustments"}, edit
@@ -319,27 +289,13 @@ async def require_auth(
             raise HTTPException(401, "账号不存在或已停用")
         return await _build_context(user, session)
 
-    # 2) admin API Key 兜底（curl / 冒烟 / 调度）
+    # 2) admin API Key 兜底（curl / 冒烟 / 调度）= 超管
     settings = get_settings()
     provided = resolve_api_key(header_key, key)
     if provided and secrets.compare_digest(provided, settings.admin_api_key):
-        # 未绑租户 = 运维超管（curl / 冒烟）。绑了租户则降为该客户运营，不再绕过 RBAC。
-        bound = getattr(settings, "admin_api_key_tenant_id", None)
-        if bound is not None:
-            return AuthContext(
-                user_id=None,
-                username="api-key",
-                role_name="租户运维密钥",
-                tenant_id=int(bound),
-                permissions=dict(OPERATOR_PERMS),
-                is_superadmin=False,
-            )
         return AuthContext(
-            user_id=None,
-            username="api-key",
-            role_name="超级管理员",
-            tenant_id=None,
-            is_superadmin=True,
+            user_id=None, username="api-key", role_name="超级管理员",
+            tenant_id=None, is_superadmin=True,
         )
 
     raise HTTPException(401, "未登录。请先登录，或通过 X-API-Key 提供管理密钥。")
@@ -357,40 +313,18 @@ async def require_scoped_auth(
         if not ok:
             verb = "编辑" if need_edit else "访问"
             raise HTTPException(403, f"当前角色无权{verb}此功能")
-    tenant_id_values: list[object] = []
-    query_tid = request.query_params.get("tenant_id")
-    path_tid = request.path_params.get("tenant_id")
-    if query_tid is not None:
-        tenant_id_values.append(query_tid)
-    if path_tid is not None:
-        tenant_id_values.append(path_tid)
-    if request.method not in _READ_METHODS:
+    tid = request.query_params.get("tenant_id")
+    if not tid:
+        tid = request.path_params.get("tenant_id")
+    if not tid and request.method not in _READ_METHODS:
         try:
             payload = await request.json()
         except (ValueError, RuntimeError):
             payload = None
-        if isinstance(payload, dict) and "tenant_id" in payload:
-            tenant_id_values.append(payload["tenant_id"])
-
-    parsed_tenant_ids: list[int] = []
-    for tid in tenant_id_values:
-        if isinstance(tid, bool) or tid is None:
-            raise HTTPException(422, "tenant_id 必须是整数")
-        if isinstance(tid, float):
-            if not tid.is_integer():
-                raise HTTPException(422, "tenant_id 必须是整数")
-            parsed_tenant_ids.append(int(tid))
-        elif isinstance(tid, int):
-            parsed_tenant_ids.append(tid)
-        elif isinstance(tid, str) and tid.strip().lstrip("-").isdigit():
-            parsed_tenant_ids.append(int(tid.strip()))
-        else:
-            raise HTTPException(422, "tenant_id 必须是整数")
-
-    if len(set(parsed_tenant_ids)) > 1:
-        raise HTTPException(422, "请求中的 tenant_id 不一致")
-    if parsed_tenant_ids:
-        tenant_id = parsed_tenant_ids[0]
+        if isinstance(payload, dict):
+            tid = payload.get("tenant_id")
+    tenant_id = int(tid) if str(tid or "").lstrip("-").isdigit() else None
+    if tenant_id is not None:
         ctx.ensure_tenant(tenant_id)
         if request.url.path.startswith(_SEM_IDENTITY_GUARDED_PREFIXES):
             await ensure_module_access(session, ctx, tenant_id, "sem")
@@ -399,9 +333,7 @@ async def require_scoped_auth(
 
 
 async def require_admin(ctx: AuthContext = Depends(require_auth)) -> AuthContext:
-    """全局账号/角色管理：仅未绑定客户的账号管理员可访问。"""
-    if ctx.tenant_id is not None:
-        raise HTTPException(403, "单客户账号不能管理全局账号与角色")
+    """账号/角色管理：需 settings.accounts edit。"""
     if not ctx.can_edit("settings.accounts"):
         raise HTTPException(403, "仅有账号与权限管理权的角色可执行此操作")
     return ctx

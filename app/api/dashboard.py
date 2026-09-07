@@ -55,7 +55,10 @@ async def cockpit_report(
 ) -> dict:
     """工作台关键词报告只读聚合；缺报不补零，不查询实时账户。"""
     ctx.ensure_tenant(tenant_id)
-    validate_query(request.query_params, {"tenant_id", "start_date", "end_date", "baidu_account_id"})
+    validate_query(
+        request.query_params,
+        {"tenant_id", "start_date", "end_date", "baidu_account_id"},
+    )
     return await read_report(session, tenant_id, start_date, end_date, baidu_account_id)
 
 

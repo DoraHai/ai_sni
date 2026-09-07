@@ -93,6 +93,7 @@ jobs:
           tests/test_campaign_region_management.py
           tests/test_campaign_schedule_management.py
           tests/test_keyword_refresh.py
+          tests/test_module_workspaces.py
           tests/test_prod_guard.py
           tests/test_sem_action_ledger_details.py
           tests/test_sem_identity_repair_preview.py
