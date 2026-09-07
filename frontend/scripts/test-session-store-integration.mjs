@@ -9,8 +9,8 @@ class MemoryStorage {
   removeItem(key) { this.values.delete(key) }
 }
 
-const user = (id, tenantId = null, level = 'view') => ({
-  id, tenant_id: tenantId, permissions: { 'geo.content': level },
+const user = (id, tenantId = null, level = 'view', displayName = `user-${id}`) => ({
+  id, tenant_id: tenantId, display_name: displayName, permissions: { 'geo.content': level },
 })
 const local = new MemoryStorage({ sem_token: 'persistent-a', sem_user: JSON.stringify(user(1, 10)) })
 const tab = new MemoryStorage({ sem_token: 'tab-b', sem_user: JSON.stringify(user(2, 20)), sem_tenant_id: '20' })
@@ -103,11 +103,40 @@ assert.equal(session.authRevision, revisionBeforeRefresh)
 finishRequest()
 assert.deepEqual(await sameIdentityRequest, { secret: true })
 
+// Display-only changes from another tab update the user without invalidating
+// a request issued under the same authorization context.
+session.setAuth('cross-tab-token', user(6, 60, 'view', 'Display A'), true)
+const displayOnlyRequest = request()
+await new Promise(resolve => setTimeout(resolve, 0))
+const revisionBeforeDisplayChange = session.authRevision
+local.setItem(AUTH_ENVELOPE_KEY, JSON.stringify({
+  version: 1, token: 'cross-tab-token', user: user(6, 60, 'view', 'Display B'),
+}))
+storageEvent(AUTH_ENVELOPE_KEY)
+assert.equal(session.user.display_name, 'Display B')
+assert.equal(session.authRevision, revisionBeforeDisplayChange)
+finishRequest()
+assert.deepEqual(await displayOnlyRequest, { secret: true })
+
+// Cross-tab permission changes and token rotation both invalidate responses
+// issued under the older authorization context.
 const oldRequest = request()
 await new Promise(resolve => setTimeout(resolve, 0))
-session.refreshUser(user(6, 60, 'edit'))
+local.setItem(AUTH_ENVELOPE_KEY, JSON.stringify({
+  version: 1, token: 'cross-tab-token', user: user(6, 60, 'edit', 'Display B'),
+}))
+storageEvent(AUTH_ENVELOPE_KEY)
 finishRequest()
 await assert.rejects(oldRequest, error => error.code === 'AUTH_CONTEXT_CHANGED')
+
+const rotatedTokenRequest = request()
+await new Promise(resolve => setTimeout(resolve, 0))
+local.setItem(AUTH_ENVELOPE_KEY, JSON.stringify({
+  version: 1, token: 'rotated-token', user: user(6, 60, 'edit', 'Display B'),
+}))
+storageEvent(AUTH_ENVELOPE_KEY)
+finishRequest()
+await assert.rejects(rotatedTokenRequest, error => error.code === 'AUTH_CONTEXT_CHANGED')
 
 let unauthorizedDestination = null
 assert.equal(leaveUnauthorizedWorkspace({
