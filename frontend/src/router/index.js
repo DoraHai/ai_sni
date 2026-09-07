@@ -4,6 +4,7 @@ import { clearChunkRecoveryMarker, isChunkLoadError, recoverFromChunkLoadError }
 import { session } from '../store/session'
 import { loginUrl } from '../auth/loginRedirect'
 import { SEM_PLANNED_CHANNELS, semChannelPath } from '../constants/semChannels'
+import { COCKPIT_PERMISSION_KEYS } from '../views/workspace/cockpit/scope.mjs'
 
 // 路由按原型 v3.0 的 6 个工作流划分，未实现的页面挂占位组件。
 // meta.perm = 该页所需菜单权限 key（自定义角色 RBAC）；可为数组=任一可见即可（下钻页）。
@@ -299,7 +300,7 @@ const routes = [
       title: 'G-Snipers 获客工作台',
       documentTitle: 'G-Snipers 获客工作台 · 获客推广AI智能体',
       bare: true,
-      perm: ['monitor.dashboard', 'optimize.keywords', 'optimize.searchterms', 'seo.site', 'seo.content', 'geo.content'],
+      perm: COCKPIT_PERMISSION_KEYS,
     },
   },
   {

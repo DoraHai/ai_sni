@@ -16,7 +16,7 @@ import {
 } from './constants/semCapabilities'
 import { parseUtcTimestamp } from './utils/dateTime'
 import { SEM_PLANNED_CHANNELS, semChannelPath } from './constants/semChannels'
-import { isSecureCockpitRuntime } from './views/workspace/cockpit/scope.mjs'
+import { canViewCockpit, isSecureCockpitRuntime } from './views/workspace/cockpit/scope.mjs'
 
 const route = useRoute()
 const router = useRouter()
@@ -90,10 +90,12 @@ const consoleClasses = computed(() => [
   currentTheme.value === 'dark' ? 'sem-theme-dark' : 'sem-theme-light',
 ])
 
-const platformShortcuts = [
-  { label: 'G-Snipers 获客工作台', path: '/workspace/cockpit', icon: '⌂' },
+const platformShortcuts = computed(() => [
+  ...(canViewCockpit(key => session.canView(key))
+    ? [{ label: 'G-Snipers 获客工作台', path: '/workspace/cockpit', icon: '⌂' }]
+    : []),
   { label: '平台门户', path: '/deal-sniper/portal', icon: '←' },
-]
+])
 
 // 侧边导航徽章（真数据）：异常提醒 open 数、拓词待处理数
 const badges = reactive({ alerts: 0, alertsToday: 0, expand: 0 })
