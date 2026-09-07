@@ -26,7 +26,7 @@ test('ordinary SEO identity composes through transport and verifies an empty sit
     '/api/v1/seo/content-assets?tenant_id=16&site_id=3&page=1&page_size=1'])
 })
 
-test('six SEO resources compose through the real readonly boundary', async () => {
+test('seven SEO resources compose through the real readonly boundary', async () => {
   const content = { id: 1, tenant_id: 16, site_id: 3, title: 'Synthetic', status: 'ready',
     page_url: null, reviewed_at: null, updated_at: null, published_at: null, review_submitted_by: null, reviewed_by: null }
   const publication = { id: 2, tenant_id: 16, content_id: 1, status: 'published', page_url: null,
@@ -39,6 +39,8 @@ test('six SEO resources compose through the real readonly boundary', async () =>
     { items: [publication], total: 1, status_counts: {} },
     { items: [] },
     { items: [page], total: 1, page: 1, page_size: 50, stats: {} },
+    { page, issue_details: [], internal_links: { incoming: 0, outgoing: 0, incoming_sources: [] },
+      latest_snapshot: null, previous_snapshot: null, comparison: null },
     { page_id: 3, url: page.url, snapshot_id: null, fetched_at: null, fetch_error: null, evidence: null },
   ]
   const calls = []
@@ -49,18 +51,19 @@ test('six SEO resources compose through the real readonly boundary', async () =>
     } })
   const client = createSeoReadonlyClient({ transport: boundary.transport, onClear() {} })
   client.setContext({ tenantId: 16, siteId: 3, userId: 5, authorizationRevision: 'test',
-    allowedReads: ['contents', 'reviewHistory', 'publications', 'attempts', 'pages', 'imageEvidence'] })
+    allowedReads: ['contents', 'reviewHistory', 'publications', 'attempts', 'pages', 'pageDetail', 'imageEvidence'] })
   await client.read('contents')
   await client.read('reviewHistory', { contentId: 1 })
   await client.read('publications', { contentId: 1 })
   await client.read('attempts', { publicationId: 2 })
   await client.read('pages')
+  await client.read('pageDetail', { pageId: 3 })
   await client.read('imageEvidence', { pageId: 3 })
-  assert.equal(calls.length, 6)
+  assert.equal(calls.length, 7)
   calls.forEach(({ url, options }, index) => {
     assert.equal(url.origin, 'https://example.invalid')
     assert.equal(url.searchParams.get('tenant_id'), '16')
-    assert.equal(url.searchParams.get('site_id'), index === 1 ? null : '3')
+    assert.equal(url.searchParams.get('site_id'), [1, 5].includes(index) ? null : '3')
     assert.equal(options.method, 'GET')
     assert.equal(options.headers.Authorization, 'Bearer synthetic')
   })
@@ -75,6 +78,7 @@ test('SEO rejects unscoped, unknown and misleading filtered requests before fetc
     '/api/v1/seo/content-assets/1/review-history?tenant_id=16&site_id=3',
     '/api/v1/seo/content-distribution/publications?tenant_id=16&site_id=3&content_id=1&status=failed',
     '/api/v1/seo/site-pages/image-evidence?tenant_id=16&site_id=3',
+    '/api/v1/seo/site-pages/1/detail?tenant_id=16&site_id=3',
     '/api/v1/seo/site-pages/1/audit?tenant_id=16&site_id=3',
   ]) await assert.rejects(transport(path, { method: 'GET' }))
 })

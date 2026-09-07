@@ -12,6 +12,7 @@ const resources = Object.freeze({
   publications: '/api/v1/seo/content-distribution/publications',
   attempts: '/api/v1/seo/content-distribution/publications/',
   pages: '/api/v1/seo/site-pages',
+  pageDetail: '/api/v1/seo/site-pages/',
   imageEvidence: '/api/v1/seo/site-pages/image-evidence',
 })
 
@@ -23,6 +24,7 @@ const allowedParams = Object.freeze({
   publications: new Set(['contentId']),
   attempts: new Set(['publicationId']),
   pages: new Set(['pageId', 'q', 'status', 'issueCode', 'page', 'pageSize']),
+  pageDetail: new Set(['pageId']),
   imageEvidence: new Set(['pageId', 'snapshotId']),
 })
 
@@ -77,7 +79,9 @@ function validatePagination(data, params) {
 
 function queryFor(resource, context, params) {
   const query = new URLSearchParams({ tenant_id: String(context.tenantId) })
-  if (resource !== 'reviewHistory') query.set('site_id', String(context.siteId))
+  // These detail routes accept tenant scope only. Their parent page was first
+  // verified in the selected site, and the echoed page scope is checked below.
+  if (resource !== 'reviewHistory' && resource !== 'pageDetail') query.set('site_id', String(context.siteId))
   const names = {
     contentId: 'content_id', sourcePageId: 'source_page_id', contentType: 'content_type',
     contentTypes: 'content_types', pageId: 'page_id', snapshotId: 'snapshot_id',
@@ -86,7 +90,8 @@ function queryFor(resource, context, params) {
   }
   for (const [key, value] of Object.entries(params)) {
     const pathParameter = (resource === 'reviewHistory' && key === 'contentId') ||
-      (resource === 'attempts' && key === 'publicationId')
+      (resource === 'attempts' && key === 'publicationId') ||
+      (resource === 'pageDetail' && key === 'pageId')
     if (value !== undefined && !pathParameter) query.set(names[key], String(value))
   }
   return query
@@ -95,6 +100,7 @@ function queryFor(resource, context, params) {
 function routeFor(resource, params) {
   if (resource === 'reviewHistory') return `${resources.reviewHistory}${params.contentId}/review-history`
   if (resource === 'attempts') return `${resources.attempts}${params.publicationId}/attempts`
+  if (resource === 'pageDetail') return `${resources.pageDetail}${params.pageId}/detail`
   return resources[resource]
 }
 
@@ -143,11 +149,12 @@ export function createSeoReadonlyClient({ transport, onClear }) {
   const publicationsByContent = new Map()
   const attempts = new Map()
   const pages = new Map()
+  const pageDetails = new Map()
   const imageEvidence = new Map()
 
   function clearData() {
     contents.clear(); publications.clear(); publicationsByContent.clear()
-    attempts.clear(); pages.clear(); imageEvidence.clear()
+    attempts.clear(); pages.clear(); pageDetails.clear(); imageEvidence.clear()
   }
 
   function abortPending(prefixes) {
@@ -182,8 +189,9 @@ export function createSeoReadonlyClient({ transport, onClear }) {
   }
 
   function beginPageRefresh() {
-    abortPending(['imageEvidence:'])
+    abortPending(['pageDetail:', 'imageEvidence:'])
     pages.clear()
+    pageDetails.clear()
     imageEvidence.clear()
   }
 
@@ -216,7 +224,7 @@ export function createSeoReadonlyClient({ transport, onClear }) {
       if (!positive(params.publicationId)) fail('INVALID_FILTER', 'publicationId 必须是正整数')
       if (!publications.has(params.publicationId)) fail('UNVERIFIED_REFERENCE', '须先核验当前内容的 publicationId')
     }
-    if (resource === 'imageEvidence') {
+    if (resource === 'pageDetail' || resource === 'imageEvidence') {
       if (!positive(params.pageId)) fail('INVALID_FILTER', 'pageId 必须是正整数')
       if (!pages.has(params.pageId)) fail('UNVERIFIED_REFERENCE', '须先从当前站点页面列表核验 pageId')
     }
@@ -284,6 +292,25 @@ export function createSeoReadonlyClient({ transport, onClear }) {
         if (params.status !== undefined) contract(item.status === params.status)
         pages.set(item.id, item)
       }
+    } else if (resource === 'pageDetail') {
+      const parent = pages.get(params.pageId)
+      contract(parent && object(data) && object(data.page) && data.page.id === params.pageId)
+      validatePage(data.page, active)
+      contract(data.page.url === parent.url)
+      contract(object(data.internal_links) && nonnegative(data.internal_links.incoming) &&
+        nonnegative(data.internal_links.outgoing) && Array.isArray(data.internal_links.incoming_sources))
+      for (const source of data.internal_links.incoming_sources) {
+        contract(object(source) && positive(source.source_page_id) && typeof source.source_url === 'string' &&
+          nullableString(source.source_title) && nullableString(source.anchor_text) && timestamp(source.discovered_at))
+      }
+      contract(data.latest_snapshot === null || object(data.latest_snapshot))
+      contract(data.previous_snapshot === null || object(data.previous_snapshot))
+      for (const snapshot of [data.latest_snapshot, data.previous_snapshot].filter(Boolean)) {
+        contract(positive(snapshot.id) && snapshot.site_id === active.siteId)
+        contract([snapshot.url, snapshot.final_url].includes(parent.url))
+        contract(timestamp(snapshot.fetched_at) && nullableString(snapshot.fetch_error))
+      }
+      pageDetails.set(params.pageId, structuredClone(data))
     } else if (resource === 'imageEvidence') {
       const page = pages.get(params.pageId)
       contract(page && object(data) && data.page_id === params.pageId && data.url === page.url)
@@ -308,7 +335,7 @@ export function createSeoReadonlyClient({ transport, onClear }) {
     const atRevision = revision
     const key = resource === 'reviewHistory' || resource === 'publications' ? `${resource}:${params.contentId}` :
       resource === 'attempts' ? `${resource}:${params.publicationId}` :
-      resource === 'imageEvidence' ? `${resource}:${params.pageId}` : resource
+      resource === 'pageDetail' || resource === 'imageEvidence' ? `${resource}:${params.pageId}` : resource
     pending.get(key)?.abort()
     const controller = new AbortController()
     pending.set(key, controller)
@@ -355,12 +382,15 @@ export function createSeoReadonlyClient({ transport, onClear }) {
       failed_count: publicationRows.filter(row => row.state === 'failed').length,
     }
     let page = null
+    let detail = null
     let evidence = null
     let mappingState = 'not_linked'
     if (pageBinding !== null) {
       contract(object(pageBinding) && positive(pageBinding.pageId) && typeof pageBinding.pageUrl === 'string')
       page = pages.get(pageBinding.pageId)
       if (!page) fail('DATA_NOT_LOADED', '须先读取明确关联的页面')
+      detail = pageDetails.get(pageBinding.pageId)
+      if (!detail) fail('DATA_NOT_LOADED', '须先读取明确关联页面的抓取与链接详情')
       contract(page.url === pageBinding.pageUrl)
       if (pageBinding.targetKind === 'content_page_url') contract(content.page_url === pageBinding.pageUrl)
       else if (pageBinding.targetKind === 'publication_page_url') {
@@ -369,6 +399,9 @@ export function createSeoReadonlyClient({ transport, onClear }) {
         contract(Boolean(publication) && publication.page_url === pageBinding.pageUrl)
       } else contract(false)
       evidence = imageEvidence.get(page.id) ?? null
+      if (evidence?.snapshot_id != null) {
+        contract(detail.latest_snapshot !== null && evidence.snapshot_id === detail.latest_snapshot.id)
+      }
       mappingState = 'matched'
     } else {
       const published = publicationRows.filter(row => row.state === 'published')
@@ -389,10 +422,12 @@ export function createSeoReadonlyClient({ transport, onClear }) {
         mapping_state: mappingState, page_id: page?.id ?? null, candidate_count: page ? 1 : 0,
         check_state: page?.diagnostic?.assessment_state ?? 'not_checked',
         checked_at: page?.diagnostic?.checked_at ?? null,
-        latest_snapshot_id: evidence?.snapshot_id ?? null,
+        latest_snapshot_id: detail?.latest_snapshot?.id ?? null,
         http_status: page?.diagnostic?.http_status ?? null,
-        failure: page?.last_error ?? evidence?.fetch_error ?? null,
+        failure: page?.last_error ?? detail?.latest_snapshot?.fetch_error ?? evidence?.fetch_error ?? null,
         passed: null,
+        internal_links: detail ? structuredClone(detail.internal_links) : null,
+        image_evidence: evidence ? structuredClone(evidence) : null,
       },
       search_performance: { article_clicks: null, state: 'unavailable',
         reason: 'SEO 当前没有可靠的单篇文章点击数据，不能从业务总点击或关键词推断。' },

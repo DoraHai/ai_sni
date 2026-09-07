@@ -32,7 +32,7 @@ test('derives exact SEO reads and accepts an empty scoped content probe', async 
   assert.equal(context.userId, 5)
   assert.equal(context.tenantId, 16)
   assert.equal(context.siteId, 3)
-  assert.deepEqual(context.allowedReads, ['contents', 'reviewHistory', 'publications', 'attempts', 'pages', 'imageEvidence'])
+  assert.deepEqual(context.allowedReads, ['contents', 'reviewHistory', 'publications', 'attempts', 'pages', 'pageDetail', 'imageEvidence'])
   assert.deepEqual(context.identity.siteVerification, { resource: 'contents', empty: true })
   assert.match(context.authorizationRevision, /"site_id":3/)
 })
@@ -41,7 +41,7 @@ test('uses the page probe when the role has no content permission', async () => 
   const context = await resolveSeoReadonlyContext({ transport: preflightTransport({
     me: { user: { id: 5, tenant_id: null, permissions: { 'seo.site': 'view' } } },
   }), tenantId: 16, siteId: 3 })
-  assert.deepEqual(context.allowedReads, ['pages', 'imageEvidence'])
+  assert.deepEqual(context.allowedReads, ['pages', 'pageDetail', 'imageEvidence'])
   assert.equal(context.identity.siteVerification.resource, 'pages')
 })
 

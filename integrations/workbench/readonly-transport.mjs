@@ -16,6 +16,7 @@ const seoRoutes = [
   [/^\/api\/v1\/seo\/content-distribution\/publications$/, ['tenant_id', 'site_id', 'content_id']],
   [/^\/api\/v1\/seo\/content-distribution\/publications\/[1-9]\d*\/attempts$/, ['tenant_id', 'site_id']],
   [/^\/api\/v1\/seo\/site-pages$/, ['tenant_id', 'site_id', 'page_id', 'q', 'status', 'issue_code', 'page', 'page_size']],
+  [/^\/api\/v1\/seo\/site-pages\/[1-9]\d*\/detail$/, ['tenant_id']],
   [/^\/api\/v1\/seo\/site-pages\/image-evidence$/, ['tenant_id', 'site_id', 'page_id', 'snapshot_id']],
 ]
 

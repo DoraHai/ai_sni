@@ -1,8 +1,10 @@
 # SEO workbench readonly consumer
 
-This browser-side consumer composes only the six reviewed SEO GET resources:
+This browser-side consumer composes only the seven reviewed SEO GET resources:
 content assets, review history, per-content publications, publication attempts,
-site pages, and latest image evidence. The host must provide an authenticated
+site pages, one verified page's detail, and latest image evidence. Page detail
+supplies the latest crawl snapshot and counted incoming/outgoing internal-link
+evidence; reading it does not start a crawl. The host must provide an authenticated
 GET-only transport and a context already verified as `{tenantId, siteId,
 userId, authorizationRevision, allowedReads}`.
 
@@ -36,13 +38,15 @@ Parent references are deliberately sequential:
 
 1. Read `contents` before review history or publications.
 2. Read a content's `publications` before any publication attempts.
-3. Read `pages` before image evidence.
-4. Supply `pageBinding` to `snapshot()` only when the workbench already has an
+3. Read `pages` before that page's detail or image evidence.
+4. Read `pageDetail` before presenting crawl or internal-link evidence.
+5. Supply `pageBinding` to `snapshot()` only when the workbench already has an
    explicit, reviewed content/publication URL-to-page mapping.
 
-Review history has no `site_id` request parameter. The client therefore allows
+Review history and page detail have no `site_id` request parameter. The client therefore allows
 it only for a content ID already observed in the current tenant/site content
-response. Attempts and image evidence use the same verified-parent rule because
+response, or a page ID already observed in the current tenant/site page response.
+The echoed page and snapshot site IDs and URLs must match that parent. Attempts and image evidence use the same verified-parent rule because
 their response envelopes do not echo the complete scope.
 
 An empty HTTP 200 response remains an empty list. A 401/403 clears the current
@@ -65,7 +69,8 @@ the DOM or another UI store.
 
 `snapshot()` keeps review, publication, page checking and search performance
 separate. Page `assessment_state=assessed` does not become a whole-page pass;
-`passed` remains `null`. Article clicks also remain `null`. Latest image evidence
+`passed` remains `null`. Internal links remain counted crawl evidence rather than
+a pass/fail conclusion. Article clicks also remain `null`. Latest image evidence
 does not prove that the whole page passed, and this client does not use the
 site-wide internal-link inventory as article-level acceptance evidence.
 
