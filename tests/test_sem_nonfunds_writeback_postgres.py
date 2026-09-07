@@ -234,6 +234,7 @@ def test_account_disable_after_manual_reconciliation_preserves_decision():
                 account = await executor.get(BaiduAccount, 17)
                 record = action_row("campaign_pause")
                 await _persist_funds_intent(executor, record, dry_run=False)
+                record_id = record.id
 
                 async with AsyncSession(engine, expire_on_commit=False) as reconciler:
                     decided = await reconciler.get(WritebackAction, record.id)
@@ -251,7 +252,7 @@ def test_account_disable_after_manual_reconciliation_preserves_decision():
                 await executor.rollback()
 
             async with AsyncSession(engine) as check:
-                preserved = await check.get(WritebackAction, record.id)
+                preserved = await check.get(WritebackAction, record_id)
                 assert preserved.status == "success"
                 assert preserved.reconciliation_result == "confirmed_executed"
                 assert preserved.error_msg == "manual reconciliation preserved"
