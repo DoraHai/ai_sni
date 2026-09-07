@@ -9,6 +9,9 @@ import { createReadonlyTransport } from '../../../../integrations/workbench/read
 import { createWorkbenchViewState } from '../../../../integrations/workbench/view-state.mjs'
 import { createSemAuthorizedClient } from '../../../../integrations/sem-cockpit/authorization-context.mjs'
 import { semMetric } from '../../../../integrations/sem-cockpit/display.mjs'
+import { createSeoAuthorizedClient } from '../../../../integrations/seo-workbench/authorization-context.mjs'
+import { seoSummaryCards } from '../../../../integrations/seo-workbench/summary.mjs'
+import { currentSeoSiteId } from '../seo/seoSiteContext'
 import { isSecureCockpitRuntime, resolveTenantModuleCodes } from './cockpit/scope.mjs'
 
 const router = useRouter()
@@ -30,6 +33,7 @@ const viewState = createWorkbenchViewState()
 let workbenchSession
 let boundary
 let semClient
+let seoClient
 let loadGeneration = 0
 let prepareGeneration = 0
 
@@ -42,12 +46,16 @@ const availableModules = computed(() => session.modules.filter(item => tenantMod
   && moduleMeta[item.module_code].permission.some(key => session.canView(key))))
 const customerName = computed(() => session.tenants.find(item => item.id === session.tenantId)?.name
   || session.user?.display_name || '当前客户')
-const urgentItems = computed(() => availableModules.value.filter(item => moduleState.value[item.module_code] !== 'ready').length)
+const unresolvedModules = computed(() => availableModules.value.filter(item => moduleState.value[item.module_code] !== 'ready').length)
+const urgentItems = computed(() => unresolvedModules.value + cards.value.reduce((sum, item) => sum + (Number.isSafeInteger(item.urgentCount) ? item.urgentCount : 0), 0))
 const readyModules = computed(() => availableModules.value.filter(item => moduleState.value[item.module_code] === 'ready').length)
 const statusLabel = status => ({ ready: '数据已读取', loading: '读取中', needs_scope: '需要选择业务对象', denied: '无查看权限', error: '读取失败', waiting: '等待读取' }[status] || '待确认')
+const moduleUrgent = code => cards.value.filter(item => item.moduleCode === code).reduce((sum, item) => sum + (Number.isSafeInteger(item.urgentCount) ? item.urgentCount : 0), 0)
+const moduleStatusLabel = code => moduleState.value[code] === 'ready' && moduleUrgent(code) > 0 ? `${moduleUrgent(code)} 项待处理` : statusLabel(moduleState.value[code])
 const guideQuestions = computed(() => [
   '今天最需要我关注什么？',
   availableModules.value.some(item => item.module_code === 'sem') ? 'SEM 花费和点击有什么变化？' : null,
+  availableModules.value.some(item => item.module_code === 'seo') ? 'SEO 有多少内容和页面需要处理？' : null,
   '哪些事情需要我现在处理？',
 ].filter(Boolean))
 
@@ -63,11 +71,16 @@ function displayTime(value) {
   return value ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' }).format(value) : '尚未读取'
 }
 function clearCards() { cards.value = [] }
+function clearModuleCards(module) {
+  viewState.invalidateModule(module)
+  cards.value = viewState.snapshot().map(item => item.metric)
+}
 function resetDerivedConversation() { conversation.value = initialConversation() }
 function invalidateEvidence({ clearConversation = false } = {}) {
   ++loadGeneration
   boundary?.invalidate()
   semClient?.invalidate()
+  seoClient?.invalidate()
   viewState.invalidate()
   clearCards()
   moduleState.value = { sem: 'waiting', seo: 'waiting', geo: 'waiting' }
@@ -78,7 +91,7 @@ function metricCard(report, key, label, unit) {
   const shown = semMetric(report.metrics[key], unit, report.coverage)
   const point = row => semMetric(row[key], unit, { status: row.status, missing_dates: [] }).text
   return {
-    id: `sem-${key}`, moduleLabel: 'SEM', label, display: shown.text, unit: '', state: shown.state === 'coverage_unknown' ? 'partial' : shown.state,
+    id: `sem-${key}`, moduleCode: 'sem', moduleLabel: 'SEM', label, display: shown.text, unit: '', state: shown.state === 'coverage_unknown' ? 'partial' : shown.state,
     reason: shown.note, contextRevision: viewState.revision,
     periodLabel: `${report.window.start} 至 ${report.window.end}`,
     sourceLabel: '百度推广已有关键词报告', updatedLabel: report.coverage.updated_at || '未知',
@@ -89,14 +102,14 @@ function metricCard(report, key, label, unit) {
 }
 function phoneCard(report) {
   return {
-    id: 'sem-phone', moduleLabel: 'SEM', label: '电话按钮点击', display: '未接入', state: 'unavailable',
+    id: 'sem-phone', moduleCode: 'sem', moduleLabel: 'SEM', label: '电话按钮点击', display: '未接入', state: 'unavailable',
     reason: report.unavailable?.phone_button_clicks || '当前汇总接口没有可靠的电话按钮点击依据。电话按钮点击也不等于有效咨询。',
     contextRevision: viewState.revision, periodLabel: `${report.window.start} 至 ${report.window.end}`,
     sourceLabel: '百度推广报告原始字段', updatedLabel: report.coverage.updated_at || '未知', series: [], columns: [], rows: [],
   }
 }
 function publishCard(card) {
-  const ticket = viewState.begin('sem', card.id)
+  const ticket = viewState.begin(card.moduleCode || 'sem', card.id)
   if (ticket.publish(card)) cards.value = viewState.snapshot().map(item => item.metric)
 }
 async function loadSem(generation) {
@@ -127,12 +140,45 @@ async function loadSem(generation) {
     conversation.value.push({ role: 'assistant', text: `SEM 数据暂未读取：${error?.message || '请稍后重试'}。我没有用零值或演示数据替代。` })
   }
 }
+async function loadSeo(generation) {
+  if (!session.tenantId || !availableModules.value.some(item => item.module_code === 'seo')) return
+  const tenantId = session.tenantId
+  const siteId = currentSeoSiteId.value
+  const authRevision = session.authRevision
+  const isCurrent = () => generation === loadGeneration && tenantId === session.tenantId
+    && siteId === currentSeoSiteId.value && authRevision === session.authRevision
+  if (!siteId) {
+    moduleState.value.seo = 'needs_scope'
+    return
+  }
+  if (!seoClient) {
+    moduleState.value.seo = 'error'
+    return
+  }
+  moduleState.value.seo = 'loading'
+  try {
+    const context = await seoClient.connect({ tenantId, siteId })
+    if (!isCurrent()) return
+    const [contents, pages] = await Promise.all([
+      context.allowedReads.includes('contents') ? seoClient.read('contents', { page: 1, pageSize: 50 }) : Promise.resolve(null),
+      context.allowedReads.includes('pages') ? seoClient.read('pages', { page: 1, pageSize: 50 }) : Promise.resolve(null),
+    ])
+    if (!isCurrent()) return
+    for (const card of seoSummaryCards({ contents, pages, contextRevision: viewState.revision })) publishCard(card)
+    moduleState.value.seo = 'ready'
+    lastReadAt.value = new Date()
+  } catch (error) {
+    if (!isCurrent() || ['STALE_SESSION', 'STALE_AUTHORIZATION', 'STALE_RESPONSE'].includes(error?.code)) return
+    moduleState.value.seo = ['NOT_AUTHORIZED', 'ACCESS_REVOKED', 'SITE_SCOPE_NOT_ALLOWED'].includes(error?.code) ? 'denied' : 'error'
+    conversation.value.push({ role: 'assistant', text: `SEO 数据暂未读取：${error?.message || '请稍后重试'}。我没有改用演示数据或推算文章点击。` })
+  }
+}
 async function loadAll() {
   invalidateEvidence({ clearConversation: true })
   const generation = loadGeneration
   loading.value = true
-  for (const item of availableModules.value) moduleState.value[item.module_code] = item.module_code === 'sem' ? 'loading' : 'needs_scope'
-  await loadSem(generation)
+  for (const item of availableModules.value) moduleState.value[item.module_code] = ['sem', 'seo'].includes(item.module_code) ? 'loading' : 'needs_scope'
+  await Promise.allSettled([loadSem(generation), loadSeo(generation)])
   if (generation === loadGeneration) loading.value = false
 }
 async function prepare() {
@@ -178,6 +224,7 @@ async function prepare() {
 function answerFor(text) {
   if (!availableModules.value.length) return '当前账号没有可查看的获客模块，请联系管理员确认模块和查看权限。'
   if (text.includes('SEM') && moduleState.value.sem === 'ready') return `已按 ${dateStart.value} 至 ${dateEnd.value} 读取 SEM 数据。点击任意数字可以看每日明细和数据依据。`
+  if (text.includes('SEO') && moduleState.value.seo === 'ready') return '已读取当前 SEO 网站的内容和页面检查数字。审核、发布、页面检查分别判断，单篇搜索点击仍明确标为未接入。'
   if (urgentItems.value) return `现在有 ${urgentItems.value} 个模块还需要补齐读取范围或处理读取异常。先看右侧“紧迫事项”，我不会把缺失数据当成零。`
   return '当前已开通模块的数据状态正常。你可以点击具体指标，再选择“带着这项数据继续提问”。'
 }
@@ -192,7 +239,7 @@ async function send(text = question.value) {
 function discuss({ metricId, contextRevision }) {
   const card = cards.value.find(item => item.id === metricId)
   if (!card) return
-  const ref = viewState.reference('sem', metricId, contextRevision)
+  const ref = viewState.reference(card.moduleCode || 'sem', metricId, contextRevision)
   if (!ref || !viewState.resolve(ref)) return
   conversation.value.push({ role: 'assistant', text: `已带入“${card.label}”（${card.display}）及其统计范围和来源。你想判断原因、风险，还是下一步动作？`, ref })
 }
@@ -205,14 +252,15 @@ function openModule(code) {
 try {
   if (secureRuntime) {
     boundary = createReadonlyTransport({ origin: window.location.origin, fetchImpl: window.fetch.bind(window), getSession: () => workbenchSession?.getTransportSession() })
-    semClient = createSemAuthorizedClient({ transport: boundary.transport, onClear: clearCards })
-    workbenchSession = useWorkbenchSession({ session, invalidatables: [boundary, semClient, viewState] })
+    semClient = createSemAuthorizedClient({ transport: boundary.transport, onClear: () => clearModuleCards('sem') })
+    seoClient = createSeoAuthorizedClient({ transport: boundary.transport, onClear: () => clearModuleCards('seo') })
+    workbenchSession = useWorkbenchSession({ session, invalidatables: [boundary, semClient, seoClient, viewState] })
   }
 } catch {
   // Local HTTP preview deliberately cannot create the authenticated production transport.
   moduleState.value.sem = 'error'
 }
-watch(() => [session.tenantId, dateStart.value, dateEnd.value], () => { if (session.modules.length) prepare() })
+watch(() => [session.tenantId, currentSeoSiteId.value, dateStart.value, dateEnd.value], () => { if (session.modules.length) prepare() })
 watch(() => session.authRevision, prepare)
 onMounted(prepare)
 onBeforeUnmount(() => { ++loadGeneration; ++prepareGeneration; workbenchSession?.dispose(); viewState.dispose() })
@@ -242,7 +290,7 @@ onBeforeUnmount(() => { ++loadGeneration; ++prepareGeneration; workbenchSession?
         <div class="section-heading"><div><span>LIVE EVIDENCE</span><h2>获客数据全景</h2></div><small>点击数字查看明细；缺失数据不会补成 0</small></div>
         <div class="module-tabs">
           <button v-for="item in availableModules" :key="item.module_code" type="button" @click="openModule(item.module_code)">
-            <b>{{ moduleMeta[item.module_code].label }}</b><span>{{ statusLabel(moduleState[item.module_code]) }}</span>
+            <b>{{ moduleMeta[item.module_code].label }}</b><span>{{ moduleStatusLabel(item.module_code) }}</span>
           </button>
         </div>
         <div v-if="cards.length" class="metric-grid">
@@ -256,7 +304,7 @@ onBeforeUnmount(() => { ++loadGeneration; ++prepareGeneration; workbenchSession?
           <div class="section-heading"><div><span>ACTION LEDGER</span><h2>行动台账</h2></div><small>{{ urgentItems }} 项需要处理</small></div>
           <article v-for="item in availableModules" :key="`action-${item.module_code}`">
             <i :class="moduleState[item.module_code]"></i><b>{{ moduleMeta[item.module_code].label }}</b>
-            <span>{{ moduleState[item.module_code] === 'ready' ? '本周期数据已读取，可进入模块查看详细任务' : '补齐读取范围或处理数据状态' }}</span>
+            <span>{{ moduleState[item.module_code] === 'ready' ? (moduleUrgent(item.module_code) ? `${moduleUrgent(item.module_code)} 项已有数据依据，建议现在处理` : '本周期数据已读取，可进入模块查看详细任务') : '补齐读取范围或处理数据状态' }}</span>
             <button type="button" @click="openModule(item.module_code)">进入处理 ↗</button>
           </article>
         </div>
