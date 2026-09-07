@@ -30,4 +30,18 @@ def test_public_portal_drops_the_retired_platform_names():
     assert "全域驾驶舱" not in portal
     assert "进入全域层" not in portal
     assert "原型 Demo" not in portal
+    assert "静态原型" not in portal
     assert 'href="hub/dashboard.html' not in portal
+
+
+def test_public_portal_keeps_all_four_module_entries():
+    portal = _read("frontend/public/deal-sniper-prototype/index.html")
+
+    assert '<a class="module sem"' in portal
+    assert '<a class="module seo"' in portal
+    assert '<a class="module geo"' in portal
+    assert 'class="module content-c"' in portal
+    assert "SEM 模块" in portal
+    assert "SEO 模块" in portal
+    assert "GEO 模块" in portal
+    assert "诊断中心" in portal
