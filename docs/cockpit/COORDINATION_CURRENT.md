@@ -1,4 +1,4 @@
-# Current coordination — 2026-09-07 13:43 Asia/Shanghai
+# Current coordination — 2026-09-07 14:13 Asia/Shanghai
 
 User resumed development. Historical pause documents do not represent current instructions.
 
@@ -8,7 +8,7 @@ User resumed development. Historical pause documents do not represent current in
 - Preserve context in this file with exact commits, test evidence, production evidence, scope boundaries and the next owner/action. Do not infer completion from an idle task.
 - Ask the user with a concrete checklist before a database change or required human test. Work that does not depend on either continues.
 - Check every five minutes and report routine progress every fifteen minutes; report material failures/completions immediately.
-- Usage stop line: Codex primary remaining usage below 20%. At 13:33 the account tool reported used 57%, remaining 43%. Automation-2 now checks usage first; below the line it must pause new development/tests/merge/deploy, pause the three module tasks, update this document and notify the user. It must not consume the available reset credit automatically.
+- Usage stop line: Codex primary remaining usage below 20%. At 14:02 the account tool reported used 59%, remaining 41%. Automation-2 checks usage first; below the line it must pause new development/tests/merge/deploy, pause the three module tasks, update this document and notify the user. It must not consume a reset credit automatically.
 
 ## Completed releases
 
@@ -21,18 +21,19 @@ No migration, task14 generation, publication, or new real writeback test was per
 
 ## Active work
 
-- SEM PR420: three P1 groups remain blocked: account-change stale data/actions, confirmation-dialog context races, implicit first-account selection. SEM active on fixes; do not mix with already released nonfund intents.
+- SEM PR420 draft exact `67800555808f3dca333b8cf7713f80af2594a298`: account selection and confirmation/late-response guards are substantially repaired; all current CI is green. Coordinator review remains BLOCKED on one P1: `authRevision` is only part of request guards, while SearchTerms, AccountBudget, CampaignManage, KeywordWorkbench and KeywordDetail do not listen for permission revision changes and therefore can leave already-rendered data visible after access is revoked. SEM is fixing this and adding mounted tests across the affected views. Do not merge/deploy the current SHA.
 - SEO PR419 exact `a083b1687612883a5e488d4e8b0660ba84898149`: ready locally, awaiting GEO independent review. Production remains separate from the candidate. SEO also owns selecting one high-priority offline gap from its 34-item mapping; no customer publishing or image feedback wait is required for that selection.
-- GEO follow-up PR425: draft from exact `47cbcc0862552c162263f53f009516667a55d9f2` onto production GEO `8af28f3`. It allows only `rules_after_claim_guard` evidence-only drafts to persist with explicit failed brand validation when the configured category/brand has no support in eligible facts. Ordinary AI draft brand enforcement must stay hard. SEO cross-review and exact-head CI are pending. No task14 action.
-- Workbench view-state PR424 merged to main as `b99479efab18bb9a4146fb03b46510ddd86bdb94` after independent PASS and all CI. Formal page development moved to `codex/workbench-cockpit-shell` from that main. Current uncommitted slice adds protected `/workspace/cockpit`, a discoverable entry, central guided conversation, action ledger, responsive module layout and real HTTPS SEM report reading through the reviewed ordinary-session/preflight/transport clients. SEO/GEO show scope-required state until their business-object selection is safely mounted. No fake metrics; unavailable phone data is labelled unavailable. Production build, SEM build contract, session/evidence tests and 25 underlying client/lifecycle tests pass. It is not committed, reviewed, merged or deployed yet.
+- GEO follow-up PR425: draft exact `bb5868f78e2f685bd8b88ab1767880d8e74fb8c7` onto production GEO `8af28f3`; current CI is green. It now recomputes brand validation from the current Markdown, adds an independent readiness/publishing block even when score gating is disabled, returns brand issues to the editor and shows an explicit warning. GEO is independently re-reviewing this exact SHA. No merge/deploy/task14 action until PASS.
+- Workbench view-state PR424 merged to main as `b99479efab18bb9a4146fb03b46510ddd86bdb94` after independent PASS and all CI. Formal page PR426 is draft at exact `e0c282b72b37e7decf4adc647f9aa10b73008785`. The first independent review blocked three P1s; all three were repaired: derived conversation clears on customer/date/auth changes, platform-level module availability is narrowed with module-specific tenant lists before saying a selected customer is open, and local HTTP cockpit preview blocks App and page identity/business reads. Generation/context guards reject late scope results; new offline/scope tests were added. Local production build, SEM build contract, 43 related tests and SEM UI contracts pass. The first post-fix CI failed only because an existing VM test harness lacked the new preview dependency; `e0c282b` repairs that harness and adds zero-call checks. New CI and SEO re-review are pending. It is not merged or deployed.
 - Workbench GEO transport `2b31ba0` remains pushed and unmerged; its independent review is still pending. Do not treat transport libraries as the completed page.
+- SEO page-detail slice `e61f1a86690ae3df41303908e82a8c4f7ef48e9c` is pushed from main. It adds only a strict existing-production GET consumer for a page detail after parent tenant/site/page proof; 43 offline tests pass. It is queued for GEO review after PR419/PR425 work and is not mixed into PR419.
 
 ## Current ownership and next action
 
-- Coordinator: finish the formal page slice, add reviewable interaction coverage, commit and request independent review. Keep the conversation visually primary and data cards expandable; preserve the discovery/explanation boundary.
-- SEM task: repair PR420's three P1 groups with mounted/deferred component tests. Its latest turn hit a task usage limit after starting; it has been requeued once and must not repeat already completed releases.
-- SEO task: cross-review GEO PR425, then resume its chosen offline SEO gap and later consume the GEO review of PR419.
-- GEO task: finish independent review of SEO PR419 and provide PR425 exact CI evidence. It must not operate task14 while code review is in progress.
+- Coordinator: finish PR426 re-review/CI, repair any new finding, then mount explicit SEO site and GEO project scope in separate slices. Keep conversation visually primary and cards expandable; preserve the discovery/explanation boundary.
+- SEM task: repair PR420 permission-revocation stale-display P1 with mounted/deferred tests across affected views; return a new exact SHA, no merge/deploy.
+- SEO task: re-review workbench PR426 exact `e0c282b`; its page-detail slice waits for GEO cross-review.
+- GEO task: re-review PR425 exact `bb5868f`, then finish independent review of SEO PR419, then review SEO page-detail. It must not operate task14 while code review is in progress.
 
 ## Human and database queue
 
@@ -41,4 +42,4 @@ No migration, task14 generation, publication, or new real writeback test was per
 
 ## Monitoring
 
-Automation-2 remains active every five minutes; prompt updated to these release facts. Routine user report every fifteen minutes; material changes immediately. This check saw SEM active and SEO/GEO idle; assigned bounded pending reviews to the idle owners, without restarting SEM. No new human or administrator action requested this check.
+Automation-2 remains active every five minutes. Routine user report every fifteen minutes; material changes immediately. At this checkpoint all three module owners have bounded work: SEM fixes PR420, SEO re-reviews PR426, GEO re-reviews PR425 and then continues the SEO review queue. No human, database or administrator action is currently required.
