@@ -9,6 +9,7 @@ import { createReadonlyTransport } from '../../../../integrations/workbench/read
 import { createWorkbenchViewState } from '../../../../integrations/workbench/view-state.mjs'
 import { createSemAuthorizedClient } from '../../../../integrations/sem-cockpit/authorization-context.mjs'
 import { semMetric } from '../../../../integrations/sem-cockpit/display.mjs'
+import { isSecureCockpitRuntime, resolveTenantModuleCodes } from './cockpit/scope.mjs'
 
 const router = useRouter()
 const messagesEl = ref(null)
@@ -18,22 +19,26 @@ const lastReadAt = ref(null)
 const dateEnd = ref(shanghaiDate())
 const dateStart = ref(shiftDate(dateEnd.value, -6))
 const cards = ref([])
-const conversation = ref([
+const initialConversation = () => [
   { role: 'assistant', text: '我会先说明数据是否完整，再帮你判断现在最该处理什么。你可以直接问，也可以从下面的问题开始。' },
-])
+]
+const conversation = ref(initialConversation())
 const moduleState = ref({ sem: 'waiting', seo: 'waiting', geo: 'waiting' })
+const tenantModuleCodes = ref(new Set())
+const secureRuntime = isSecureCockpitRuntime(window.location)
 const viewState = createWorkbenchViewState()
 let workbenchSession
 let boundary
 let semClient
 let loadGeneration = 0
+let prepareGeneration = 0
 
 const moduleMeta = {
   sem: { label: 'SEM', permission: ['monitor.dashboard', 'optimize.keywords', 'optimize.searchterms'] },
   seo: { label: 'SEO', permission: ['seo.site', 'seo.content'] },
   geo: { label: 'GEO', permission: ['geo.content'] },
 }
-const availableModules = computed(() => session.modules.filter(item => item.available && moduleMeta[item.module_code]
+const availableModules = computed(() => session.modules.filter(item => tenantModuleCodes.value.has(item.module_code) && moduleMeta[item.module_code]
   && moduleMeta[item.module_code].permission.some(key => session.canView(key))))
 const customerName = computed(() => session.tenants.find(item => item.id === session.tenantId)?.name
   || session.user?.display_name || '当前客户')
@@ -58,6 +63,7 @@ function displayTime(value) {
   return value ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' }).format(value) : '尚未读取'
 }
 function clearCards() { cards.value = [] }
+function resetDerivedConversation() { conversation.value = initialConversation() }
 function metricCard(report, key, label, unit) {
   const shown = semMetric(report.metrics[key], unit, report.coverage)
   const point = row => semMetric(row[key], unit, { status: row.status, missing_dates: [] }).text
@@ -121,10 +127,35 @@ async function loadAll() {
   if (generation === loadGeneration) loading.value = false
 }
 async function prepare() {
+  const generation = ++prepareGeneration
+  const requestedTenantId = session.tenantId
+  const requestedAuthRevision = session.authRevision
+  if (!secureRuntime) {
+    loading.value = false
+    tenantModuleCodes.value = new Set()
+    resetDerivedConversation()
+    conversation.value.push({ role: 'assistant', text: '本地预览不会读取登录身份或真实业务数据。请在正式 HTTPS 环境查看当前客户数据。' })
+    return
+  }
   try {
     const [modules, tenants] = await Promise.all([fetchModules(), fetchTenants()])
+    if (generation !== prepareGeneration || requestedTenantId !== session.tenantId || requestedAuthRevision !== session.authRevision) return
     session.setModules(modules.modules)
     session.setTenants(tenants.tenants)
+    const eligible = modules.modules.filter(item => item.available && moduleMeta[item.module_code]
+      && moduleMeta[item.module_code].permission.some(key => session.canView(key)))
+    const scoped = await Promise.all(eligible.map(async item => ({
+      code: item.module_code,
+      tenants: (await fetchTenants(item.module_code)).tenants,
+    })))
+    if (generation !== prepareGeneration || requestedTenantId !== session.tenantId || requestedAuthRevision !== session.authRevision) return
+    tenantModuleCodes.value = resolveTenantModuleCodes({
+      modules: modules.modules,
+      tenantsByModule: Object.fromEntries(scoped.map(item => [item.code, item.tenants])),
+      tenantId: session.tenantId,
+      moduleMeta,
+      canView: key => session.canView(key),
+    })
     await loadAll()
   } catch (error) {
     loading.value = false
@@ -159,17 +190,22 @@ function openModule(code) {
 }
 
 try {
-  boundary = createReadonlyTransport({ origin: window.location.origin, fetchImpl: window.fetch.bind(window), getSession: () => workbenchSession?.getTransportSession() })
-  semClient = createSemAuthorizedClient({ transport: boundary.transport, onClear: clearCards })
-  workbenchSession = useWorkbenchSession({ session, invalidatables: [boundary, semClient, viewState] })
+  if (secureRuntime) {
+    boundary = createReadonlyTransport({ origin: window.location.origin, fetchImpl: window.fetch.bind(window), getSession: () => workbenchSession?.getTransportSession() })
+    semClient = createSemAuthorizedClient({ transport: boundary.transport, onClear: clearCards })
+    workbenchSession = useWorkbenchSession({ session, invalidatables: [boundary, semClient, viewState] })
+  }
 } catch {
   // Local HTTP preview deliberately cannot create the authenticated production transport.
   moduleState.value.sem = 'error'
 }
-watch(() => [session.tenantId, dateStart.value, dateEnd.value], () => { if (session.modules.length) loadAll() })
-watch(() => session.authRevision, () => { prepare() })
+watch(() => [session.tenantId, dateStart.value, dateEnd.value], () => {
+  resetDerivedConversation()
+  if (session.modules.length) prepare()
+})
+watch(() => session.authRevision, () => { resetDerivedConversation(); prepare() })
 onMounted(prepare)
-onBeforeUnmount(() => { ++loadGeneration; workbenchSession?.dispose(); viewState.dispose() })
+onBeforeUnmount(() => { ++loadGeneration; ++prepareGeneration; workbenchSession?.dispose(); viewState.dispose() })
 </script>
 
 <template>
@@ -185,7 +221,7 @@ onBeforeUnmount(() => { ++loadGeneration; workbenchSession?.dispose(); viewState
 
     <section class="pulse-strip" aria-label="工作台实时状态">
       <div><span>当前客户</span><strong>{{ customerName }}</strong></div>
-      <div><span>已开通模块</span><strong>{{ availableModules.length }}</strong></div>
+      <div><span>当前客户已开通</span><strong>{{ availableModules.length }}</strong></div>
       <div><span>数据已就绪</span><strong>{{ readyModules }}</strong></div>
       <div :class="{ urgent: urgentItems }"><span>需要处理</span><strong>{{ urgentItems }}</strong></div>
       <div><span>最近读取</span><strong>{{ displayTime(lastReadAt) }}</strong></div>
