@@ -22,6 +22,7 @@ import { useKeywordWriteback } from '../../composables/useKeywordWriteback'
 import { session } from '../../store/session'
 import MetricLabel from '../../components/MetricLabel.vue'
 import { formatLocalDate, formatUtcTimestamp } from '../../utils/dateTime'
+import { createLatestRequestGuard } from '../../utils/latestRequest'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
 
@@ -126,6 +127,14 @@ const activeView = ref('keywords')
 const campaignData = ref(null)
 const adgroupData = ref(null)
 const adgroupCampaignFilter = ref(null)
+const listLoadGuard = createLatestRequestGuard(() => ({ tenantId: TENANT_ID.value }))
+const viewLoadGuard = createLatestRequestGuard(() => ({
+  tenantId: TENANT_ID.value,
+  view: activeView.value,
+  campaignId: adgroupCampaignFilter.value,
+}))
+const assigneeLoadGuard = createLatestRequestGuard(() => ({ tenantId: TENANT_ID.value }))
+const refreshGuard = createLatestRequestGuard(() => ({ tenantId: TENANT_ID.value }))
 
 const {
   applyWriteback: submitKeywordWriteback,
@@ -135,23 +144,28 @@ const {
 
 async function switchView(view) {
   activeView.value = view
+  const attempt = viewLoadGuard.begin()
+  const { tenantId, campaignId } = attempt.context
   error.value = ''
   try {
     if (view === 'campaigns' && !campaignData.value) {
       loading.value = true
-      campaignData.value = await fetchCampaignList({ tenantId: TENANT_ID.value })
+      const result = await fetchCampaignList({ tenantId })
+      if (!attempt.isCurrent()) return
+      campaignData.value = result
     } else if (view === 'adgroups') {
       loading.value = true
-      adgroupData.value = await fetchAdgroupList({
-        tenantId: TENANT_ID.value,
-        campaignId: adgroupCampaignFilter.value,
-      })
+      const result = await fetchAdgroupList({ tenantId, campaignId })
+      if (!attempt.isCurrent()) return
+      adgroupData.value = result
     }
   } catch (e) {
-    error.value = e.message
+    if (attempt.isCurrent()) error.value = e.message
   } finally {
-    loading.value = false
-    scheduleStickyScrollSync()
+    if (attempt.isCurrent()) {
+      loading.value = false
+      scheduleStickyScrollSync()
+    }
   }
 }
 
@@ -423,14 +437,23 @@ const filters = reactive({
 })
 
 async function load() {
+  const attempt = listLoadGuard.begin()
+  const tenantId = attempt.context.tenantId
+  if (!tenantId) {
+    data.value = null
+    error.value = ''
+    loading.value = false
+    return
+  }
   loading.value = true
   error.value = ''
   try {
     // 列表与 AI 建议并行拉；建议拉取失败不影响工作台
     const [list, sug] = await Promise.all([
-      fetchKeywordList({ tenantId: TENANT_ID.value, ...filters }),
-      fetchSuggestions({ tenantId: TENANT_ID.value }).catch(() => null),
+      fetchKeywordList({ tenantId, ...filters }),
+      fetchSuggestions({ tenantId }).catch(() => null),
     ])
+    if (!attempt.isCurrent()) return
     data.value = list
     if (sug) {
       const m = {}
@@ -447,19 +470,22 @@ async function load() {
     }
     initFinalPrices(list.keywords)
   } catch (e) {
-    error.value = e.message
+    if (attempt.isCurrent()) error.value = e.message
   } finally {
-    loading.value = false
+    if (attempt.isCurrent()) loading.value = false
   }
 }
 
 async function loadSuggestionAssignees() {
-  if (!TENANT_ID.value) return
+  const attempt = assigneeLoadGuard.begin()
+  const tenantId = attempt.context.tenantId
+  if (!tenantId) return
   try {
-    const result = await fetchSuggestionAssignees(TENANT_ID.value)
+    const result = await fetchSuggestionAssignees(tenantId)
+    if (!attempt.isCurrent()) return
     suggestionAssignees.value = result.assignees || []
   } catch {
-    suggestionAssignees.value = []
+    if (attempt.isCurrent()) suggestionAssignees.value = []
   }
 }
 
@@ -496,12 +522,16 @@ async function saveSuggestionWorkflow(suggestion, field, value) {
 
 async function refreshData() {
   if (refreshing.value) return
+  const attempt = refreshGuard.begin()
+  const tenantId = attempt.context.tenantId
+  if (!tenantId) return
   refreshing.value = true
   error.value = ''
   let syncStatus = 'local'
   try {
     if (session.canEdit('optimize.keywords')) {
-      const result = await refreshKeywordWorkbench({ tenantId: TENANT_ID.value })
+      const result = await refreshKeywordWorkbench({ tenantId })
+      if (!attempt.isCurrent()) return
       syncStatus = result.status
       if (result.status === 'error') {
         throw new Error(result.message || '百度数据同步失败')
@@ -514,18 +544,22 @@ async function refreshData() {
     campaignData.value = null
     adgroupData.value = null
     await load()
+    if (!attempt.isCurrent()) return
     if (activeView.value === 'campaigns') {
       await switchView('campaigns')
     } else if (activeView.value === 'adgroups') {
       await switchView('adgroups')
     }
+    if (!attempt.isCurrent()) return
     if (syncStatus === 'ok') ElMessage.success('百度数据同步完成')
     else if (syncStatus !== 'busy') ElMessage.success('已加载最新同步数据')
   } catch (e) {
-    error.value = e.message
-    ElMessage.error(e.message)
+    if (attempt.isCurrent()) {
+      error.value = e.message
+      ElMessage.error(e.message)
+    }
   } finally {
-    refreshing.value = false
+    if (attempt.isCurrent()) refreshing.value = false
   }
 }
 
@@ -781,8 +815,18 @@ const headerStats = computed(() => {
 
 // 顶栏切换客户后重新拉数
 watch(TENANT_ID, () => {
+  listLoadGuard.invalidate()
+  viewLoadGuard.invalidate()
+  assigneeLoadGuard.invalidate()
+  refreshGuard.invalidate()
   tableRef.value?.clearSelection()
   selection.value = []
+  data.value = null
+  suggestionMap.value = {}
+  suggestionList.value = []
+  suggestionAssignees.value = []
+  landingDialog.visible = false
+  refreshing.value = false
   filters.page = 1
   campaignData.value = null
   adgroupData.value = null

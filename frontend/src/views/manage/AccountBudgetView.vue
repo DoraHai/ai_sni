@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAccountBudget, setAccountBudget } from '../../api/manage'
 import { WRITEBACK_CONFIRMATION } from '../../api/writeback'
 import { session } from '../../store/session'
+import { createLatestRequestGuard } from '../../utils/latestRequest'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
 const currentTenant = computed(() => session.tenants.find((row) => row.id === TENANT_ID.value))
@@ -17,26 +18,44 @@ const error = ref('')
 const data = ref(null)
 const saving = ref(false)
 const input = ref(null) // 待写回的预算输入
+const loadGuard = createLatestRequestGuard(() => ({
+  tenantId: TENANT_ID.value,
+  accountId: selectedAccountId.value,
+}))
+const saveGuard = createLatestRequestGuard(() => ({
+  tenantId: TENANT_ID.value,
+  accountId: selectedAccountId.value,
+}))
 
 async function load() {
-  if (!TENANT_ID.value) return
-  if (activeAccounts.value.length > 1 && !selectedAccountId.value) return
+  const attempt = loadGuard.begin()
+  const { tenantId, accountId } = attempt.context
+  if (!tenantId || (activeAccounts.value.length > 1 && !accountId)) {
+    data.value = null
+    error.value = ''
+    loading.value = false
+    return
+  }
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchAccountBudget({
-      tenantId: TENANT_ID.value,
-      baiduAccountId: selectedAccountId.value,
-    })
+    const result = await fetchAccountBudget({ tenantId, baiduAccountId: accountId })
+    if (!attempt.isCurrent()) return
+    data.value = result
     if (data.value?.status === 'ok') input.value = data.value.budget
   } catch (e) {
-    error.value = e.message
+    if (attempt.isCurrent()) error.value = e.message
   } finally {
-    loading.value = false
+    if (attempt.isCurrent()) loading.value = false
   }
 }
 
 watch([TENANT_ID, activeAccounts], ([, accounts]) => {
+  loadGuard.invalidate()
+  saveGuard.invalidate()
+  data.value = null
+  error.value = ''
+  saving.value = false
   const currentExists = accounts.some((row) => row.id === selectedAccountId.value)
   selectedAccountId.value = currentExists ? selectedAccountId.value : (accounts[0]?.id ?? null)
 }, { immediate: true })
@@ -56,6 +75,9 @@ const changeHint = computed(() => {
 })
 
 async function save() {
+  const attempt = saveGuard.begin()
+  const { tenantId, accountId } = attempt.context
+  if (!tenantId || !accountId || !data.value) return
   const v = Number(input.value)
   if (!Number.isFinite(v) || v < min.value || v > max.value) {
     ElMessage.warning(`日预算需在 ¥${min.value} ~ ¥${max.value} 之间`)
@@ -71,14 +93,16 @@ async function save() {
   } catch {
     return // 用户取消
   }
+  if (!attempt.isCurrent()) return
   saving.value = true
   try {
     const res = await setAccountBudget({
-      tenantId: TENANT_ID.value,
-      baiduAccountId: selectedAccountId.value,
+      tenantId,
+      baiduAccountId: accountId,
       budget: v,
       confirmation: WRITEBACK_CONFIRMATION,
     })
+    if (!attempt.isCurrent()) return
     if (res.status === 'dry_run') {
       ElMessage.success(`已加入待回写：日预算 ${fmtMoney(res.old_budget)} → ${fmtMoney(res.new_budget)}（百度账户未修改）`)
     } else if (res.status === 'success') {
@@ -90,9 +114,9 @@ async function save() {
     }
     await load()
   } catch (e) {
-    ElMessage.error(e.message)
+    if (attempt.isCurrent()) ElMessage.error(e.message)
   } finally {
-    saving.value = false
+    if (attempt.isCurrent()) saving.value = false
   }
 }
 </script>

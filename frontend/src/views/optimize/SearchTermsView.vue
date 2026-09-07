@@ -4,12 +4,19 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { addNegative, expandKeyword, fetchSearchTerms, syncSearchTerms } from '../../api/searchTerms'
 import { session } from '../../store/session'
 import { formatUtcTimestamp } from '../../utils/dateTime'
+import { createLatestRequestGuard } from '../../utils/latestRequest'
 
 const TENANT_ID = computed(() => session.tenantId)
+const currentTenant = computed(() => session.tenants.find((row) => row.id === TENANT_ID.value))
+const activeAccounts = computed(() => (currentTenant.value?.sem_accounts || []).filter((row) => row.status === 'active'))
+const selectedAccountId = ref(null)
 const loading = ref(false)
 const syncing = ref(false)
 const error = ref('')
 const data = ref(null)
+const negDialogVisible = ref(false)
+const loadGuard = createLatestRequestGuard(() => ({ tenantId: TENANT_ID.value, accountId: selectedAccountId.value }))
+const syncGuard = createLatestRequestGuard(() => ({ tenantId: TENANT_ID.value, accountId: selectedAccountId.value }))
 const emptyDiagnosis = computed(() => {
   if (!data.value || data.value.total) return null
   if (!data.value.window?.synced_at) return '搜索词尚未同步。该数据来自百度读取，与回写开关无关；请执行近 30 天同步。'
@@ -31,28 +38,45 @@ const filters = reactive({
 })
 
 async function load() {
+  const attempt = loadGuard.begin()
+  const { tenantId, accountId } = attempt.context
+  if (!tenantId) {
+    data.value = null
+    error.value = ''
+    loading.value = false
+    return
+  }
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchSearchTerms({ tenantId: TENANT_ID.value, ...filters })
+    const result = await fetchSearchTerms({ tenantId, baiduAccountId: accountId, ...filters })
+    if (!attempt.isCurrent()) return
+    data.value = result
   } catch (e) {
-    error.value = e.response?.data?.detail || e.message
+    if (attempt.isCurrent()) error.value = e.response?.data?.detail || e.message
   } finally {
-    loading.value = false
+    if (attempt.isCurrent()) loading.value = false
   }
 }
 
 async function runSync() {
+  const attempt = syncGuard.begin()
+  const { tenantId, accountId } = attempt.context
+  if (!tenantId || (activeAccounts.value.length > 1 && !accountId)) {
+    ElMessage.warning('请先选择要同步的推广账户')
+    return
+  }
   syncing.value = true
   try {
-    const res = await syncSearchTerms({ tenantId: TENANT_ID.value, days: 30 })
+    const res = await syncSearchTerms({ tenantId, baiduAccountId: accountId, days: 30 })
+    if (!attempt.isCurrent()) return
     ElMessage.success(`已同步 ${res.synced} 条搜索词（${res.window.start} ~ ${res.window.end}）`)
     filters.page = 1
     await load()
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
+    if (attempt.isCurrent()) ElMessage.error(e.response?.data?.detail || e.message)
   } finally {
-    syncing.value = false
+    if (attempt.isCurrent()) syncing.value = false
   }
 }
 
@@ -60,14 +84,24 @@ watch(() => [filters.status, filters.hasClick], () => { filters.page = 1; load()
 let qTimer = null
 watch(() => filters.q, () => { clearTimeout(qTimer); qTimer = setTimeout(() => { filters.page = 1; load() }, 400) })
 watch(() => [filters.page, filters.pageSize], load)
-watch(TENANT_ID, () => { filters.page = 1; load() })
+watch([TENANT_ID, activeAccounts], ([, accounts]) => {
+  loadGuard.invalidate()
+  syncGuard.invalidate()
+  data.value = null
+  error.value = ''
+  syncing.value = false
+  negDialogVisible.value = false
+  const currentExists = accounts.some((row) => row.id === selectedAccountId.value)
+  selectedAccountId.value = currentExists ? selectedAccountId.value : (accounts[0]?.id ?? null)
+  filters.page = 1
+}, { immediate: true })
+watch([TENANT_ID, selectedAccountId], load, { immediate: true })
 onMounted(load)
 
 const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
 const fmtMoney = (v) => (v == null ? '—' : '¥' + Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 }))
 const fmtPct = (v) => (v == null ? '—' : Number(v).toFixed(2) + '%')
 const fmtTime = (v) => formatUtcTimestamp(v)
-const negDialogVisible = ref(false)
 const negForm = ref({
   word: '',
   scope: 'adgroup',
@@ -184,6 +218,9 @@ const statCards = computed(() => {
     </div>
 
     <div class="filter-row">
+      <el-select v-if="activeAccounts.length > 1" v-model="selectedAccountId" placeholder="选择推广账户" style="width: 240px">
+        <el-option v-for="account in activeAccounts" :key="account.id" :label="`${account.username} · ${account.ucid}`" :value="account.id" />
+      </el-select>
       <div class="view-tabs">
         <div
           v-for="t in STATUS_TABS"
@@ -199,6 +236,14 @@ const statCards = computed(() => {
       </el-select>
       <el-input v-model="filters.q" placeholder="搜索词" clearable style="width: 220px" prefix-icon="Search" />
     </div>
+
+    <el-alert
+      v-if="data?.mixed_windows"
+      type="warning"
+      :closable="false"
+      title="当前结果包含不同统计窗口，仅展示各账户已有快照的已知合计；请选择单个推广账户后再比较指标。"
+      style="margin-bottom: 12px"
+    />
 
     <div class="table-panel">
       <el-table :data="data?.search_terms || []" class="kw-table" row-key="id" :fit="true">
