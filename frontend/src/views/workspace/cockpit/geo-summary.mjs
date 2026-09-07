@@ -11,14 +11,18 @@ export function completedWeekEnd(value) {
   return date.toISOString().slice(0, 10)
 }
 
+export function completedWeekInclusiveEnd(value) {
+  const date = new Date(`${value}T00:00:00Z`)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '') || !Number.isFinite(date.valueOf())
+    || date.toISOString().slice(0, 10) !== value) return null
+  date.setUTCDate(date.getUTCDate() - 1)
+  return date.toISOString().slice(0, 10)
+}
+
 export function completedWeekPeriodLabel(week = {}) {
   const start = week.start?.slice(0, 10) || '未知'
   const exclusiveEnd = week.end?.slice(0, 10) || week.weekEnd
-  if (!exclusiveEnd) return `${start} 至 未知（完整周）`
-  const date = new Date(`${exclusiveEnd}T00:00:00Z`)
-  if (!Number.isFinite(date.valueOf())) return `${start} 至 未知（完整周）`
-  date.setUTCDate(date.getUTCDate() - 1)
-  return `${start} 至 ${date.toISOString().slice(0, 10)}（完整周）`
+  return `${start} 至 ${completedWeekInclusiveEnd(exclusiveEnd) || '未知'}（完整周）`
 }
 
 export function geoSummaryCards({ snapshot, contextRevision }) {

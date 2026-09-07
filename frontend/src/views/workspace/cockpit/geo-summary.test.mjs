@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { completedWeekEnd, completedWeekPeriodLabel, geoSummaryCards } from './geo-summary.mjs'
+import { completedWeekEnd, completedWeekInclusiveEnd, completedWeekPeriodLabel, geoSummaryCards } from './geo-summary.mjs'
 
 test('uses the latest completed Monday boundary without browser timezone inference', () => {
   assert.equal(completedWeekEnd('2026-09-07'), '2026-09-07')
@@ -10,6 +10,8 @@ test('uses the latest completed Monday boundary without browser timezone inferen
 
 test('renders the inclusive dates of an exclusive complete-week boundary', () => {
   const week = { start: '2026-08-31T00:00:00+08:00', end: '2026-09-07T00:00:00+08:00', weekEnd: '2026-09-07' }
+  assert.equal(completedWeekInclusiveEnd('2026-09-07'), '2026-09-06')
+  assert.equal(completedWeekInclusiveEnd('invalid'), null)
   assert.equal(completedWeekPeriodLabel(week), '2026-08-31 至 2026-09-06（完整周）')
   assert.equal(completedWeekPeriodLabel({ start: week.start, weekEnd: week.weekEnd }), '2026-08-31 至 2026-09-06（完整周）')
 })
