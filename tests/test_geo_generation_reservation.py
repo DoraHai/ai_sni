@@ -114,3 +114,27 @@ def test_failed_evidence_never_claims_generation_or_creates_a_job():
     session.refresh.assert_not_awaited()
     session.commit.assert_not_awaited()
     create.assert_not_awaited()
+
+
+def test_generate_rejects_while_channel_variants_are_running():
+    task = NS(id=12, tenant_id=7, prompt_id=3, status="adapting", brief={
+        "industry": "工业传动", "audience": "采购", "intent": "scenario",
+        "content_type": "thought_leadership", "cta": "咨询选型",
+    })
+    session = NS(refresh=AsyncMock(), commit=AsyncMock(), scalar=AsyncMock())
+    with (
+        patch("app.geo.content.routes._get_task", AsyncMock(return_value=task)),
+        patch("app.geo.content.routes._ensure_tenant_exists", AsyncMock(return_value=NS(id=7, name="示例客户"))),
+        patch("app.geo.content.routes._get_prompt", AsyncMock(return_value=NS(id=3, question="产品特点是什么？"))),
+        patch("app.geo.content.routes._task_facts", AsyncMock(return_value=[fact(1), fact(2), fact(3)])),
+        patch("app.geo.content.evidence.prepare_facts_for_generation", return_value=([], {"ok": True})),
+        patch("app.geo.content.async_jobs.create_job", AsyncMock()) as create,
+    ):
+        with pytest.raises(HTTPException) as error:
+            asyncio.run(generate_task_article(
+                12, tenant_id=7, run_async=True, background_tasks=BackgroundTasks(),
+                ctx=NS(user_id=9, ensure_tenant=lambda _: None), session=session,
+            ))
+    assert error.value.status_code == 409
+    session.scalar.assert_not_awaited()
+    create.assert_not_awaited()

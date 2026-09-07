@@ -40,7 +40,8 @@ def create_fixture_tables(connection):
         raise ValueError('CI fixture database must be empty; existing tables will not be modified')
     # Structure only. Test schemas own their data and do not reference other modules.
     names = ('tenants', 'geo_action_tickets', 'geo_content_tasks', 'geo_article_versions',
-             'geo_channel_variants', 'geo_channel_accounts', 'geo_publishing_channels', 'geo_audit_runs', 'geo_publications')
+             'geo_channel_variants', 'geo_channel_accounts', 'geo_publishing_channels', 'geo_audit_runs', 'geo_publications',
+             'geo_prompts', 'geo_facts', 'geo_task_facts', 'geo_async_jobs')
     metadata = MetaData()
     for name in names:
         source = Base.metadata.tables[name]

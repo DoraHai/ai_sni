@@ -68,3 +68,27 @@ def test_live_variant_job_blocks_a_second_async_request():
     assert session.refresh.await_count == 2
     assert session.scalar.await_count == 2
     session.commit.assert_awaited_once()
+
+
+def test_variant_generation_rejects_while_master_generation_is_running():
+    task = NS(id=12, tenant_id=7, status="generating", target_channels=["website"])
+    session = NS(refresh=AsyncMock(), commit=AsyncMock(), scalar=AsyncMock())
+    with (
+        patch("app.geo.content.routes._get_task", AsyncMock(return_value=task)),
+        patch("app.geo.content.routes._latest_article", AsyncMock(return_value=NS(id=20))),
+        patch("app.geo.content.routes._ensure_default_publishing_channels", AsyncMock()),
+        patch("app.geo.content.async_jobs.create_job", AsyncMock()) as create,
+    ):
+        with pytest.raises(HTTPException) as error:
+            asyncio.run(create_variants(
+                12,
+                VariantsCreate(channels=["website"]),
+                tenant_id=7,
+                run_async=True,
+                background_tasks=BackgroundTasks(),
+                ctx=NS(user_id=9, ensure_tenant=lambda _: None),
+                session=session,
+            ))
+    assert error.value.status_code == 409
+    session.scalar.assert_not_awaited()
+    create.assert_not_awaited()
