@@ -24,6 +24,7 @@ def fact(ident):
         observed_at=None,
         expires_at=None,
         archived_at=None,
+        meta={},
     )
 
 
