@@ -61,8 +61,11 @@ mv -Tf "$dispatcher_target.next" "$dispatcher_target"
 mv -Tf "$module_target.next" "$module_target"
 install "${install_owner_args[@]}" -m 644 /dev/null "$enabled_target"
 
-PLATFORM_DEPLOY_CONFIG_ROOT="$config_root" AUTH_DEPLOY_ROOT="$auth_root" \
-  "$dispatcher_target" status | grep -Fxq 'auth=enabled'
+status_output="$(
+  PLATFORM_DEPLOY_CONFIG_ROOT="$config_root" AUTH_DEPLOY_ROOT="$auth_root" \
+    "$dispatcher_target" status
+)"
+grep -Fxq 'auth=enabled' <<< "$status_output"
 install_succeeded=true
 echo "backup_root=$backup_root"
 echo "dispatcher_sha256=$(sha256sum "$dispatcher_target" | cut -d' ' -f1)"
