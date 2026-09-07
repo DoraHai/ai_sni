@@ -16,9 +16,17 @@ _GENERIC_HEADING = re.compile(
     re.I,
 )
 _METADATA = re.compile(
-    r"^\*(?:更新时间|发布日期)[：:]\d{4}-\d{2}-\d{2}\*$"
+    r"^(?:\*(?:更新时间|发布日期)[：:]\d{4}-\d{2}-\d{2}\*|"
+    r"\*草稿生成日期[：:]\d{4}-\d{2}-\d{2}（非来源更新日期）\*)$"
 )
 _AUTHOR_METADATA = re.compile(r"^\*作者[：:]([^*\n]+)\*$")
+_SYSTEM_PRESENTATION = re.compile(
+    r"^(?:> \*\*草案提示\*\*[：:]以下为自动生成母稿，请人工润色后再发布[；;]|"
+    r"勿直接对外使用[。.]|"
+    r"【草案】基于客户提供资料自动生成，仅供内部改稿[；;]|"
+    r"须人工润色与核验后方可发布[。.]|"
+    r"不承诺被 AI 引用或排名[。.])$"
+)
 _PURE_TRANSITION = re.compile(
     r"^(?:以下|下面|接下来)(?:将|按|从)?(?:依据|围绕|按照|基于)?(?:已核验)?(?:事实|资料|来源)?"
     r"(?:逐项|分别)?(?:说明|介绍|分析|展开|讨论)[。.!！]?$|"
@@ -112,7 +120,11 @@ def is_presentation_sentence(
     value = str(sentence or "").strip()
     if not value:
         return True
-    if _METADATA.fullmatch(value) or _is_author_metadata(value, author_name):
+    if (
+        _METADATA.fullmatch(value)
+        or _SYSTEM_PRESENTATION.fullmatch(value)
+        or _is_author_metadata(value, author_name)
+    ):
         return True
     if _PURE_TRANSITION.fullmatch(value):
         return True
@@ -131,6 +143,7 @@ def is_evidence_exempt(
     if (
         not value
         or _METADATA.fullmatch(value)
+        or _SYSTEM_PRESENTATION.fullmatch(value)
         or _is_author_metadata(value, author_name)
         or _SOURCE_METADATA_NAME.fullmatch(value)
         or _is_standalone_url_reference(value)
