@@ -652,6 +652,7 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
         generation_meta={
             "source": payload.get("_source"),
             "guard_fallback": payload.get("_guard_fallback"),
+            "brand_validation": payload.get("_brand_validation"),
             "used_fact_ids": payload.get("used_fact_ids"),
             "evidence": payload.get("_evidence") or evidence_preview,
             "brief": payload.get("_brief") or brief_norm,

@@ -455,12 +455,34 @@ async def generate_master_article(
                 )
         final_brand_issues = payload_brand_issues(payload, brand)
         if final_brand_issues:
-            raise GeoContentError("母稿改写后未满足品牌标准：" + "；".join(final_brand_issues[:4]))
+            if payload.get("_source") != "rules_after_claim_guard":
+                raise GeoContentError(
+                    "母稿改写后未满足品牌标准：" + "；".join(final_brand_issues[:4])
+                )
+            # The evidence-only fallback must remain saveable when the configured
+            # brand/product label is absent from the eligible facts. Injecting the
+            # label would turn a safe fallback into an unsupported claim, while
+            # failing here would send the customer back through the same random
+            # model retries. Persist the draft and make the unmet GEO goal explicit
+            # for scoring/review instead.
+            payload["_brand_validation"] = {
+                "passed": False,
+                "brand": brand,
+                "issues": final_brand_issues[:4],
+                "reason": "brand_standard_unmet_in_evidence_only_fallback",
+            }
+        else:
+            payload["_brand_validation"] = {
+                "passed": True,
+                "brand": brand,
+                "issues": [],
+                "reason": None,
+            }
         payload["_evidence"] = evidence_meta
         payload["_brief"] = brief_norm
         payload["_strategy_richness"] = strategy_richness(brief_norm)
         payload["_brand"] = brand
-        payload["_brand_mentioned"] = True
+        payload["_brand_mentioned"] = not final_brand_issues
         return _stamp_brief_meta(payload)
     except GeoContentError:
         raise
