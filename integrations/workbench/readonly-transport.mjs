@@ -48,7 +48,7 @@ export function createReadonlyTransport({ origin, fetchImpl, getSession }) {
     for (const key of url.searchParams.keys()) {
       if (!allowed.has(key) || url.searchParams.getAll(key).length !== 1) reject('QUERY_DENIED')
     }
-    if (authTenants && (url.searchParams.size !== 1 || url.searchParams.get('module') !== 'sem')) reject('QUERY_DENIED')
+    if (authTenants && (url.searchParams.size !== 1 || !['sem', 'seo'].includes(url.searchParams.get('module')))) reject('QUERY_DENIED')
     if (seoRoute) {
       const required = seoRoute[1].includes('site_id') ? ['tenant_id', 'site_id'] : ['tenant_id']
       if (url.pathname.endsWith('/image-evidence')) required.push('page_id')

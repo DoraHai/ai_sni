@@ -2,6 +2,29 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createReadonlyTransport } from './readonly-transport.mjs'
 import { createSeoReadonlyClient } from '../seo-workbench/readonly-client.mjs'
+import { createSeoAuthorizedClient } from '../seo-workbench/authorization-context.mjs'
+
+test('ordinary SEO identity composes through transport and verifies an empty site', async () => {
+  const paths = []
+  const payloads = [
+    { user: { id: 5, tenant_id: 16, permissions: { 'seo.content': 'view' } } },
+    { tenant_id: 16, modules: [{ module_code: 'seo', status: 'active', available: true, expires_at: null }] },
+    { module: 'seo', tenants: [{ id: 16 }] },
+    { items: [], total: 0, page: 1, page_size: 1, status_counts: {} },
+  ]
+  const boundary = createReadonlyTransport({ origin: 'https://example.invalid',
+    getSession: () => ({ token: 'synthetic', revision: 1 }), fetchImpl: async url => {
+      paths.push(new URL(url).pathname + new URL(url).search)
+      const data = payloads.shift()
+      return { ok: true, status: 200, json: async () => data }
+    } })
+  const client = createSeoAuthorizedClient({ transport: boundary.transport, onClear() {} })
+  const context = await client.connect({ tenantId: 16, siteId: 3 })
+  assert.equal(context.identity.siteVerification.empty, true)
+  assert.deepEqual(context.allowedReads, ['contents', 'reviewHistory', 'publications', 'attempts'])
+  assert.deepEqual(paths, ['/api/v1/auth/me', '/api/v1/auth/modules', '/api/v1/auth/tenants?module=seo',
+    '/api/v1/seo/content-assets?tenant_id=16&site_id=3&page=1&page_size=1'])
+})
 
 test('six SEO resources compose through the real readonly boundary', async () => {
   const content = { id: 1, tenant_id: 16, site_id: 3, title: 'Synthetic', status: 'ready',

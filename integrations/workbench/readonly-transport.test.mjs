@@ -97,7 +97,7 @@ test('allows only the three exact SEM authorization preflight requests', async (
     'https://example.invalid/api/v1/auth/tenants?module=sem',
   ])
   for (const path of ['/api/v1/auth/login', '/api/v1/auth/me?tenant_id=16', '/api/v1/auth/tenants',
-    '/api/v1/auth/tenants?module=seo', '/api/v1/auth/tenants?module=sem&module=sem']) {
+    '/api/v1/auth/tenants?module=geo', '/api/v1/auth/tenants?module=sem&module=sem']) {
     await assert.rejects(client.transport(path, { method: 'GET' }))
   }
 })
