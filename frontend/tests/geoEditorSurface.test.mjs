@@ -13,6 +13,10 @@ const editorSource = readFileSync(
   fileURLToPath(new URL('../src/views/geo/GeoTaskEditorView.vue', import.meta.url)),
   'utf8',
 )
+const workspaceShellSource = readFileSync(
+  fileURLToPath(new URL('../src/views/geo/GeoWorkspaceShell.vue', import.meta.url)),
+  'utf8',
+)
 
 test('prototype editor exposes fact binding and prototype action sequence', () => {
   const surface = getGeoPrototypeEditorSurface()
@@ -115,4 +119,11 @@ test('publishing checklist refresh is not confused with article readiness rechec
   )
   assert.ok(checklist.includes('刷新发布检查'))
   assert.ok(!checklist.includes('>刷新检查</'))
+})
+
+test('GEO workspace links to the production acquisition cockpit', () => {
+  assert.ok(workspaceShellSource.includes('href="/workspace/cockpit"'))
+  assert.ok(workspaceShellSource.includes('G‑Snipers 获客工作台'))
+  assert.ok(!workspaceShellSource.includes('href="/deal-sniper/portal"'))
+  assert.ok(!workspaceShellSource.includes('返回平台门户'))
 })

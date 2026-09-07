@@ -131,7 +131,7 @@ onUnmounted(() => {
         <a href="/monitor/dashboard" target="_top"><span>SEM</span><span class="geo-quick-label">搜索广告工作台</span></a>
         <a href="/seo/dashboard"><span>SEO</span><span class="geo-quick-label">SEO 内容工作台</span></a>
         <a href="/diagnostic-center/"><span>DX</span><span class="geo-quick-label">诊断中心</span></a>
-        <a class="portal-link" href="/deal-sniper/portal" target="_top"><span>←</span><span class="geo-quick-label">返回平台门户</span></a>
+        <a class="portal-link" href="/workspace/cockpit" target="_top"><span>←</span><span class="geo-quick-label">G‑Snipers 获客工作台</span></a>
       </div>
     </aside>
     <main class="geo-shell-main">
