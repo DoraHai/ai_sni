@@ -72,6 +72,7 @@ GEO fixed all three on exact reviewed head `4da1183dcbd5b47e0b15cd945c7e0765ffef
 
 ## Ownership and next action
 
+- Current assignments after the production releases: SEM audits only the SEM-to-workbench read path (tenant/account isolation, nullable account ownership, missing-vs-zero, CTR and phone-click coverage); SEO audits only the SEO review-to-placement-to-human-publication flow and automates everything that does not need a real platform login; GEO audits only GEO session consumption, tenant/module access, current-brand recheck presentation, publication preflight and logs without operating task #14. Cross-module findings are returned to the coordinator as evidence, not edited by the module owner.
 - Coordinator: keep exact-SHA/CI gates, independently inspect release diffs, maintain this file, and integrate the already reviewed GEO transport, authorization context and formal weekly metrics into the cockpit next. Do not turn the old prototype into production evidence.
 - GEO: hotfix the three production review findings, obtain independent re-review, then controlled deploy; afterward interpret H1 result and define any next human test.
 - SEO: finish PR419 production post-release evidence and prepare a controlled SEO backend release lane for the main-only site-scope/page-detail endpoints; do not publish customer content or wait on customer image feedback.
