@@ -245,6 +245,47 @@ def test_job_creation_failure_rolls_back_reservation_and_allows_retry():
     asyncio.run(run())
 
 
+def test_live_job_blocks_regeneration_after_legacy_status_reset():
+    async def run():
+        admin, engine, schema, tables = await _prepare_database()
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as session:
+                first = await generate_task_article(
+                    12,
+                    tenant_id=7,
+                    run_async=True,
+                    background_tasks=BackgroundTasks(),
+                    ctx=_ctx(),
+                    session=session,
+                )
+                assert first["job"]["status"] == "pending"
+
+            # Represents a legacy/manual status transition. The durable live job,
+            # rather than the mutable display state, still owns the reservation.
+            async with sessions() as session:
+                task = await session.get(GeoContentTask, 12)
+                task.status = "editing"
+                await session.commit()
+
+            async with sessions() as session:
+                with pytest.raises(HTTPException) as error:
+                    await generate_task_article(
+                        12,
+                        tenant_id=7,
+                        run_async=True,
+                        background_tasks=BackgroundTasks(),
+                        ctx=_ctx(),
+                        session=session,
+                    )
+                assert error.value.status_code == 409
+                assert await session.scalar(select(func.count(GeoAsyncJob.id))) == 1
+        finally:
+            await _cleanup(admin, engine, schema, tables)
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("recovery", ["cancel", "stale"])
 def test_generation_reservation_is_released_by_existing_recovery(recovery):
     async def run():

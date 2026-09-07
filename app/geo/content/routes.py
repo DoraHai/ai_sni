@@ -872,6 +872,24 @@ async def _latest_variant_polish(session: AsyncSession, task: GeoContentTask) ->
     return polish if isinstance(polish, dict) else None
 
 
+async def _has_live_task_job(
+    session: AsyncSession, task: GeoContentTask, *, kind: str
+) -> bool:
+    """Check the durable reservation while the caller owns the task-row lock."""
+    job_id = await session.scalar(
+        select(GeoAsyncJob.id)
+        .where(
+            GeoAsyncJob.tenant_id == task.tenant_id,
+            GeoAsyncJob.kind == kind,
+            GeoAsyncJob.ref_type == "content_task",
+            GeoAsyncJob.ref_id == task.id,
+            GeoAsyncJob.status.in_(["pending", "running"]),
+        )
+        .limit(1)
+    )
+    return job_id is not None
+
+
 async def _channel_options_payload(session: AsyncSession, tenant_id: int) -> list[dict]:
     rows = await _publishing_channel_view_rows(session, tenant_id)
     return channel_options_from_registry(registry_row_dicts(rows))
@@ -7305,7 +7323,7 @@ async def save_article(
     session.add(article)
     task.title = req.title.strip()
     invalidate_review(task)
-    if task.status in {"draft", "facts_bound", "generating", "failed"}:
+    if task.status in {"draft", "facts_bound", "failed"}:
         task.status = "editing"
     await _sync_task_pipeline(session, task)
     await session.commit()
@@ -7626,7 +7644,9 @@ async def generate_task_article(
     # job id, so without the task-row lock two clicks can enqueue two different
     # workers for the same content task and both create a new master version.
     await session.refresh(task, with_for_update=True)
-    if task.status == "generating":
+    if task.status == "generating" or await _has_live_task_job(
+        session, task, kind="generate_article"
+    ):
         raise HTTPException(409, "母稿正在生成，请等待当前任务完成")
     task.status = "generating"
 
@@ -7770,6 +7790,13 @@ async def create_variants(
             run_job_in_background,
         )
 
+        await session.refresh(task, with_for_update=True)
+        if task.status == "adapting" or await _has_live_task_job(
+            session, task, kind=KIND_VARIANTS
+        ):
+            raise HTTPException(409, "渠道稿正在生成，请等待当前任务完成")
+        task.status = "adapting"
+
         job = await create_job(
             session,
             tenant_id=tenant_id,
@@ -7782,9 +7809,6 @@ async def create_variants(
             },
             created_by=ctx.user_id,
         )
-        task = await _get_task(session, task_id, tenant_id)
-        task.status = "adapting"
-        await session.commit()
         background_tasks.add_task(run_job_in_background, job.id)
         return {
             "async": True,
