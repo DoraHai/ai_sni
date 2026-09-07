@@ -1035,7 +1035,7 @@ onMounted(async () => {
       <a class="sidebar-item module-link" href="/deal-sniper/seo/dashboard"><span>⌕</span>去 SEO 模块</a>
       <a class="sidebar-item module-link" href="/deal-sniper/geo/dashboard"><span>✦</span>去 GEO 模块</a>
       <div class="sidebar-bottom">
-        <a href="/deal-sniper/hub/dashboard">⌂ 全域驾驶舱</a>
+        <a href="/workspace/cockpit">⌂ G-Snipers 获客工作台</a>
         <a href="/deal-sniper/portal">← 平台门户</a>
       </div>
     </aside>

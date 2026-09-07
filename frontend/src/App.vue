@@ -91,7 +91,7 @@ const consoleClasses = computed(() => [
 ])
 
 const platformShortcuts = [
-  { label: '全域驾驶舱', path: '/deal-sniper/hub/dashboard', icon: '⌂' },
+  { label: 'G-Snipers 获客工作台', path: '/workspace/cockpit', icon: '⌂' },
   { label: '平台门户', path: '/deal-sniper/portal', icon: '←' },
 ]
 
