@@ -82,6 +82,5 @@ GEO fixed all three on exact reviewed head `4da1183dcbd5b47e0b15cd945c7e0765ffef
 ## Human, database and administrator queue
 
 - Human GEO H1 after PR440: authorized tester logs into production, selects tenant 诺德, opens task #14, hard-refreshes once, confirms the notice “品牌配置已更新…” and clicks “按当前品牌重新检查” exactly once. Do not edit or regenerate the draft, approve, create channel copy or publish. Return test time, displayed brand, refreshed GEO score, remaining blocking items, ready/status result, button/notice screenshot, and any console/network error. H2-H4 human flows remain untouched.
-- Human: on production `f694ddb...`, an authorized tester must open tenant 诺德 → GEO task #14 → existing V3/article #20 and click exactly once “按当前品牌重新检查”. Do not edit/regenerate the draft, approve, create channel copy or publish. Return the full brand check, opening/conclusion checks, V3 status, timestamp, screenshots and any console/network error. This is H1 acceptance only; H2-H4 remain separate.
 - Database: no action now. No schema change is active.
 - Administrator: no action now. Production workflows and health endpoints are available; request assistance only if a controlled workflow, credential retrieval or server evidence cannot be completed by the module owner.
