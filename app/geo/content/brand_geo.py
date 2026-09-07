@@ -162,3 +162,30 @@ def extract_opening_from_md(md: str) -> str:
             continue
         return s
     return ""
+
+
+def markdown_brand_validation(
+    *, brand: str | None, title: str = "", body_markdown: str = ""
+) -> dict[str, Any]:
+    """Evaluate the saved article text, independent of generation metadata.
+
+    Recomputing from the current Markdown lets a manual edit clear an earlier
+    evidence-fallback warning after the operator adds the correct brand and
+    runs the readiness check again.
+    """
+    b = normalize_brand(brand)
+    body = body_markdown or ""
+    issues = brand_presence_issues(
+        brand=b,
+        full_text="\n".join(part for part in (title, body) if part),
+        direct_answer=extract_opening_from_md(body),
+        conclusion=extract_conclusion_from_md(body),
+        require_opening=True,
+        require_conclusion=True,
+    )
+    return {
+        "passed": not issues,
+        "brand": b or None,
+        "issues": issues,
+        "reason": None if not issues else "brand_standard_unmet_in_current_article",
+    }

@@ -200,10 +200,10 @@ def test_sync_generate_uses_the_same_reserved_job_executor():
             ),
         ) as execute,
         patch("app.geo.content.routes._latest_article", AsyncMock(return_value=article)),
-        patch("app.geo.content.routes._build_rule_input", AsyncMock(return_value=NS())),
-        patch("app.geo.content.routes.run_checks", return_value=[]),
-        patch("app.geo.content.routes.is_ready", return_value=False),
-        patch("app.geo.content.routes._sync_task_pipeline", AsyncMock()),
+        patch(
+            "app.geo.content.routes._evaluate_and_store_rules",
+            AsyncMock(return_value={"ready": False}),
+        ),
         patch(
             "app.geo.content.routes._task_payload",
             AsyncMock(return_value={"id": 12, "status": "needs_fix"}),

@@ -1283,17 +1283,20 @@ async function generate() {
     if ((article.body_markdown || '').trim()) leftTab.value = 'score'
     const bodyLen = (article.body_markdown || '').length
     const st = payload?.status || task.value?.status || '—'
+    const generatedBrandWarning =
+      payload?.article?.generation_meta?.brand_validation?.passed === false
     error.value = ''
     const msg =
       bodyLen > 0
         ? `母稿已生成（${bodyLen} 字）· 状态 ${st}` +
+          (generatedBrandWarning ? ' · 证据原文稿已保存，品牌标准仍待处理' : '') +
           (st === 'needs_fix' ? ' · 请点「检查就绪」并用补丁修齐规则' : '') +
           (editorSurface.showChannelVariants ? ' · 请先完成 GEO 评分' : '')
         : `生成返回成功但正文为空 · 状态 ${st}`
     generateHint.value = msg
     if (bodyLen > 0) {
       ElMessage({
-        type: st === 'needs_fix' ? 'warning' : 'success',
+        type: st === 'needs_fix' || generatedBrandWarning ? 'warning' : 'success',
         message: msg,
         duration: 8000,
         showClose: true,
@@ -2438,6 +2441,14 @@ const checks = computed(() => {
 })
 const failedChecks = computed(() => checks.value.filter((c) => !c.passed))
 const passedChecks = computed(() => checks.value.filter((c) => c.passed))
+const brandValidationWarning = computed(() => {
+  const checked = scoreIsCurrent.value
+    ? checkResult.value?.brand_validation || task.value?.rule_result?.brand_validation
+    : null
+  const generated = task.value?.article?.generation_meta?.brand_validation
+  const value = checked || generated
+  return value?.passed === false ? value : null
+})
 const geoActions = computed(
   () => scoreIsCurrent.value
     ? checkResult.value?.geo_actions || task.value?.rule_result?.geo_actions || []
@@ -3606,6 +3617,12 @@ onMounted(load)
             <span>{{ generationFailureNotice.articleLabel }}</span>
             <span>当前稿保存于 {{ generationFailureNotice.articleTime }}；失败任务结束于 {{ generationFailureNotice.failedAt }}（上海时间）</span>
             <small>{{ generationFailureNotice.detail }}</small>
+          </div>
+          <div v-if="brandValidationWarning" class="ed-generation-failure" role="status">
+            <b>证据原文稿已保存，品牌标准仍待处理</b>
+            <span>当前配置品牌：{{ brandValidationWarning.brand || '未配置' }}</span>
+            <small>{{ (brandValidationWarning.issues || ['开篇与结论尚未使用有证据支持的品牌名'])[0] }}</small>
+            <small>核对品牌配置或修改正文后，请点“重新检查”；未通过前不会标记就绪。</small>
           </div>
           <template v-if="docTab === 'master'">
             <details v-if="sentenceCites.some(c => c.review_reason === 'cross_language_unverified')" class="generation-evidence">

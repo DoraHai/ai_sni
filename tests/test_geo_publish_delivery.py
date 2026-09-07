@@ -23,11 +23,50 @@ def patches(args,perform):
     stack=ExitStack()
     stack.enter_context(patch('app.geo.content.routes._latest_article',AsyncMock(return_value=args['article'])))
     stack.enter_context(patch('app.geo.content.routes._build_rule_input',AsyncMock(return_value=None)))
-    stack.enter_context(patch('app.geo.content.gate.assert_can_publish',side_effect=lambda _,task:assert_review_approved(task)))
+    stack.enter_context(patch('app.geo.content.routes._ensure_tenant_exists',AsyncMock(return_value=NS(id=1,name='租户名'))))
+    stack.enter_context(patch('app.geo.content.routes._brand_context_for_task',AsyncMock(return_value=('业务品牌',['业务品牌']))))
+    stack.enter_context(patch('app.geo.content.gate.assert_can_publish',side_effect=lambda _,task,brand:assert_review_approved(task)))
     stack.enter_context(patch('app.geo.content.multi_push._perform_single_push',perform))
     stack.enter_context(patch('app.geo.content.multi_push.decrypt_credentials_json',return_value={'webhook_url':'https://example.com/publish'}))
     stack.enter_context(patch('app.geo.content.multi_push.asyncio.sleep',AsyncMock()))
     return stack
+
+
+def test_execution_gate_uses_current_business_brand_before_connector():
+    session,args=setup_case();send=AsyncMock(return_value={'ok':True})
+    gate=AsyncMock(return_value=('MAXXDRIVE',['MAXXDRIVE']))
+    checked=[]
+    def assert_gate(_,*,task,brand):
+        assert_review_approved(task)
+        checked.append(brand)
+    with patches(args,send), \
+         patch('app.geo.content.routes._brand_context_for_task',gate), \
+         patch('app.geo.content.gate.assert_can_publish',side_effect=assert_gate):
+        asyncio.run(execute_single_push(session,**args))
+    assert checked == ['MAXXDRIVE','MAXXDRIVE']
+    assert gate.await_count == 2
+    send.assert_awaited_once()
+
+
+def test_brand_change_after_reservation_blocks_before_connector():
+    session,args=setup_case();send=AsyncMock()
+    brands=iter([('旧品牌',['旧品牌']),('新品牌',['新品牌'])])
+    gate=AsyncMock(side_effect=lambda *_,**__: next(brands))
+    def assert_gate(_,*,task,brand):
+        assert_review_approved(task)
+        if brand == '新品牌':
+            raise ValueError('品牌标准未通过')
+    with patches(args,send), \
+         patch('app.geo.content.routes._brand_context_for_task',gate), \
+         patch('app.geo.content.gate.assert_can_publish',side_effect=assert_gate), \
+         pytest.raises(ValueError,match='品牌标准未通过'):
+        asyncio.run(execute_single_push(session,**args))
+    assert gate.await_count == 2
+    send.assert_not_awaited()
+    delivery=next(iter(args['variant'].adapt_meta['push_deliveries'].values()))
+    assert delivery['state'] == 'failed'
+    assert delivery['reason'] == 'publish_gate_changed_before_send'
+    assert gate.await_args_list[1].kwargs['fresh'] is True
 
 
 def test_success_is_reserved_before_send_and_reused_on_repeat():

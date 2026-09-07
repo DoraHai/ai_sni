@@ -118,3 +118,41 @@ def test_regeneration_invalidates_review_only_when_draft_is_saved(published):
             assert task.review_status == 'none' and task.reviewed_by is None
             assert variant.body_markdown == 'new body'
             session.commit.assert_awaited_once()
+
+
+def test_variant_generation_recomputes_brand_when_rule_result_is_missing():
+    task, variant = task_fixture(), variant_fixture()
+    task.rule_result = {}
+    article = NS(id=15, title='title', body_markdown='正文没有配置品牌。', outline={}, author_name=None)
+    session = NS(
+        get=AsyncMock(side_effect=[task, NS(name='工业齿轮箱')]),
+        refresh=AsyncMock(), scalars=AsyncMock(return_value=[]),
+        execute=AsyncMock(return_value=NS(scalars=lambda: [])),
+        flush=AsyncMock(), commit=AsyncMock(),
+    )
+
+    with ExitStack() as stack:
+        for name, replacement in {
+            '_latest_article': AsyncMock(return_value=article),
+            '_list_variants': AsyncMock(return_value=[variant]),
+            'enabled_types_from_rows': Mock(return_value=['website']),
+            'resolve_for_channel': AsyncMock(return_value={}),
+            'adapt_or_polish_for_channel': AsyncMock(return_value=(
+                'new title', 'new body',
+                {'quality': 'adapted_draft_not_publishable', 'fallback': True},
+            )),
+        }.items():
+            stack.enter_context(patch.object(variant_execute, name, replacement))
+        stack.enter_context(patch('app.geo.content.rules.run_checks', return_value=[]))
+        stack.enter_context(patch('app.geo.content.rules.is_ready', return_value=True))
+        asyncio.run(variant_execute.execute_variants_for_task(
+            session, task_id=12, tenant_id=1, channels=['website'], use_llm=False,
+        ))
+
+    assert task.status == 'needs_fix'
+    assert task.rule_result['ready'] is False
+    assert task.rule_result['brand_validation']['passed'] is False
+    assert any(
+        row['code'] == 'geo_brand_standard' and row['passed'] is False
+        for row in task.rule_result['checks']
+    )

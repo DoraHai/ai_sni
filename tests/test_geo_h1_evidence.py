@@ -162,6 +162,49 @@ def test_cross_language_fallback_keeps_untranslated_source_visible_as_source_lan
     assert not any(row['needs_fact'] for row in build_sentence_citations(rendered, facts))
 
 
+def test_evidence_fallback_is_saved_when_configured_brand_is_not_in_facts():
+    """A product/category configured as brand must not defeat the safe fallback."""
+    facts = [
+        {
+            'id': 1, 'title': '扭矩范围',
+            'statement': 'MAXXDRIVE XT covers a torque range from 15,000 to 282,000 Nm.',
+            'source_name': 'NORD official', 'trust_level': 'verified', 'status': 'active',
+        },
+        {
+            'id': 2, 'title': '散热结构',
+            'statement': 'The MAXXDRIVE XT has a heavily ribbed housing, axial fan and air guide cover.',
+            'source_name': 'NORD official', 'trust_level': 'verified', 'status': 'active',
+        },
+        {
+            'id': 3, 'title': '产品资料',
+            'statement': 'MAXXDRIVE XT is an industrial gear unit.',
+            'source_name': 'NORD official', 'trust_level': 'verified', 'status': 'active',
+        },
+    ]
+    bad = payload('本产品适用于所有重载设备。')
+    bad['direct_answer'] = '工业齿轮箱适用于所有重载设备。'
+    bad['sections'][-1]['body'] = '工业齿轮箱适用于所有重载设备。'
+    with patch('app.geo.content.generate_article.chat_json', new=AsyncMock(return_value=bad)):
+        result = asyncio.run(generate_master_article(
+            tenant_name='工业齿轮箱', question='MAXXDRIVE XT 有哪些已核验资料？', facts=facts,
+            brief={'industry':'工业传动','audience':'采购','intent':'scenario','content_type':'thought_leadership','cta':'咨询选型'},
+            llm={'api_key': 'dummy', 'base_url': 'http://invalid', 'model': 'test'}))
+
+    rendered = __import__('app.geo.content.generate_article', fromlist=['to_markdown']).to_markdown(result)
+    assert result['_source'] == 'rules_after_claim_guard'
+    assert result['_brand_mentioned'] is False
+    assert result['_brand_validation'] == {
+        'passed': False,
+        'brand': '工业齿轮箱',
+        'issues': [
+            '全文未出现品牌「工业齿轮箱」：无品牌提及无法实现 GEO 被推荐/引用，请在直接答案与结论中自然点名'
+        ],
+        'reason': 'brand_standard_unmet_in_evidence_only_fallback',
+    }
+    assert '适用于所有' not in rendered
+    assert not ungrounded_claims(rendered, facts)
+
+
 def test_generation_accepts_grounded_rewrite():
     with patch('app.geo.content.generate_article.chat_json', new=AsyncMock(side_effect=[
         payload('产品适用于矿业和港口。'), payload('示例品牌产品采用散热壳体。')])):

@@ -90,3 +90,15 @@ test('task editor keeps the complete editor-first interaction surface', () => {
     assert.ok(editorSource.includes(marker), `missing editor interaction marker: ${marker}`)
   }
 })
+
+test('evidence fallback exposes an unresolved brand warning and recheck path', () => {
+  for (const marker of [
+    'const brandValidationWarning = computed',
+    'generation_meta?.brand_validation',
+    '证据原文稿已保存，品牌标准仍待处理',
+    '未通过前不会标记就绪',
+    '@click="runCheck"',
+  ]) {
+    assert.ok(editorSource.includes(marker), `missing brand warning marker: ${marker}`)
+  }
+})

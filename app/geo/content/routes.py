@@ -353,8 +353,10 @@ def _untrusted_fact_meta(value: Any) -> dict[str, Any]:
     return {key: item for key, item in raw.items() if key not in _PROTECTED_FACT_META_KEYS}
 
 
-async def _ensure_tenant_exists(session: AsyncSession, tenant_id: int) -> Tenant:
-    tenant = await session.get(Tenant, tenant_id)
+async def _ensure_tenant_exists(
+    session: AsyncSession, tenant_id: int, *, fresh: bool = False
+) -> Tenant:
+    tenant = await session.get(Tenant, tenant_id, populate_existing=fresh)
     if tenant is None:
         raise HTTPException(404, "客户不存在")
     return tenant
@@ -364,6 +366,8 @@ async def _brand_context_for_prompt(
     session: AsyncSession,
     prompt: GeoPrompt,
     tenant: Tenant,
+    *,
+    fresh: bool = False,
 ) -> tuple[str, list[str]]:
     """Business profile product name wins; do not mix another business brand."""
     from app.geo.content.business_profile import brand_names_for_profile, display_brand
@@ -372,11 +376,15 @@ async def _brand_context_for_prompt(
     biz = None
     unit_id = getattr(prompt, "unit_id", None)
     if unit_id:
-        unit = await session.get(GeoOptimizationUnit, unit_id)
+        unit = await session.get(GeoOptimizationUnit, unit_id, populate_existing=fresh)
         if unit and unit.business_id:
-            biz = await session.get(GeoOptimizationBusiness, unit.business_id)
+            biz = await session.get(
+                GeoOptimizationBusiness, unit.business_id, populate_existing=fresh
+            )
     if biz is None and getattr(prompt, "business_id", None):
-        biz = await session.get(GeoOptimizationBusiness, prompt.business_id)
+        biz = await session.get(
+            GeoOptimizationBusiness, prompt.business_id, populate_existing=fresh
+        )
     profile = getattr(biz, "profile", None) if biz else None
     brand = display_brand(profile, fallback=fallback)
     names = brand_names_for_profile(profile, fallback=brand)
@@ -392,17 +400,23 @@ async def _brand_context_for_task(
     session: AsyncSession,
     task: GeoContentTask,
     tenant: Tenant,
+    *,
+    fresh: bool = False,
 ) -> tuple[str, list[str]]:
     from app.geo.content.business_profile import brand_names_for_profile, display_brand
 
     fallback = getattr(tenant, "name", None) or f"租户{task.tenant_id}"
     biz = None
     if getattr(task, "business_id", None):
-        biz = await session.get(GeoOptimizationBusiness, task.business_id)
+        biz = await session.get(
+            GeoOptimizationBusiness, task.business_id, populate_existing=fresh
+        )
     if biz is None:
-        prompt = await session.get(GeoPrompt, task.prompt_id)
+        prompt = await session.get(GeoPrompt, task.prompt_id, populate_existing=fresh)
         if prompt:
-            return await _brand_context_for_prompt(session, prompt, tenant)
+            return await _brand_context_for_prompt(
+                session, prompt, tenant, fresh=fresh
+            )
     profile = getattr(biz, "profile", None) if biz else None
     brand = display_brand(profile, fallback=fallback)
     return brand, brand_names_for_profile(profile, fallback=brand) or [brand]
@@ -701,17 +715,41 @@ async def _evaluate_and_store_rules(
     blocks = blocks_payload(rule_input.body_markdown or "")
     lint_ok = bool(lint.get("blocks_ready")) if isinstance(lint, dict) else None
     tenant_for_score = await _ensure_tenant_exists(session, task.tenant_id)
+    brand = (
+        (await _brand_context_for_task(session, task, tenant_for_score))[0]
+        if tenant_for_score
+        else None
+    )
     score_payload = compute_geo_score(
         rule_input,
         brief=task.brief if isinstance(task.brief, dict) else {},
         lint_ok=lint_ok,
         rule_checks=checks,
-        brand=(
-            (await _brand_context_for_task(session, task, tenant_for_score))[0]
-            if tenant_for_score
-            else None
-        ),
+        brand=brand,
     )
+    from app.geo.content.brand_geo import markdown_brand_validation
+
+    brand_validation = markdown_brand_validation(
+        brand=brand,
+        title=rule_input.title,
+        body_markdown=rule_input.body_markdown,
+    )
+    brand_message = (
+        f"开篇与结论已点名品牌「{brand_validation.get('brand') or '当前品牌'}」"
+        if brand_validation["passed"]
+        else str((brand_validation.get("issues") or ["品牌标准未满足"])[0])
+    )
+    check_dicts.append(
+        {
+            "code": "geo_brand_standard",
+            "passed": bool(brand_validation["passed"]),
+            "message": brand_message,
+            "action": "核对品牌配置，并在开篇与结论中使用有证据支持的品牌名",
+            "details": list(brand_validation.get("issues") or []),
+        }
+    )
+    if not brand_validation["passed"]:
+        ready = False
     settings = get_settings()
     score_ok, score_msg = score_blocks_ready(
         score_payload,
@@ -735,6 +773,7 @@ async def _evaluate_and_store_rules(
         "geo_score_gate": bool(getattr(settings, "geo_score_gate", False)),
         "geo_score_threshold": int(getattr(settings, "geo_score_threshold", 60) or 60),
         "geo_score_gate_message": score_msg or None,
+        "brand_validation": brand_validation,
         "ai_review": ai_review,
         "checked_at": datetime.utcnow().isoformat(),
         "variant_channels": list(rule_input.variants or []),
@@ -760,6 +799,7 @@ async def _evaluate_and_store_rules(
         "geo_actions": score_payload["geo_actions"],
         "geo_score_gate": bool(getattr(settings, "geo_score_gate", False)),
         "geo_score_threshold": int(getattr(settings, "geo_score_threshold", 60) or 60),
+        "brand_validation": brand_validation,
         "variant_channels": list(rule_input.variants or []),
         "target_channels": list(rule_input.target_channels or []),
     }
@@ -7402,6 +7442,15 @@ async def save_article(
     session.add(article)
     task.title = req.title.strip()
     invalidate_review(task)
+    previous_rules_raw = getattr(task, "rule_result", None)
+    previous_rules = previous_rules_raw if isinstance(previous_rules_raw, dict) else {}
+    task.rule_result = {
+        **previous_rules,
+        "ready": False,
+        "checks": [],
+        "brand_validation": None,
+        "article_changed_since_check": True,
+    }
     if task.status in {"draft", "facts_bound", "failed"}:
         task.status = "editing"
     await _sync_task_pipeline(session, task)
@@ -7609,17 +7658,40 @@ async def apply_patch(
     blocks = blocks_payload(rule_input.body_markdown or "")
     lint_ok = bool(lint.get("blocks_ready")) if isinstance(lint, dict) else None
     tenant_for_score = await _ensure_tenant_exists(session, task.tenant_id)
+    brand = (
+        (await _brand_context_for_task(session, task, tenant_for_score))[0]
+        if tenant_for_score
+        else None
+    )
     score_payload = compute_geo_score(
         rule_input,
         brief=task.brief if isinstance(task.brief, dict) else {},
         lint_ok=lint_ok,
         rule_checks=checks,
-        brand=(
-            (await _brand_context_for_task(session, task, tenant_for_score))[0]
-            if tenant_for_score
-            else None
-        ),
+        brand=brand,
     )
+    from app.geo.content.brand_geo import markdown_brand_validation
+
+    brand_validation = markdown_brand_validation(
+        brand=brand,
+        title=rule_input.title,
+        body_markdown=rule_input.body_markdown,
+    )
+    check_dicts.append(
+        {
+            "code": "geo_brand_standard",
+            "passed": bool(brand_validation["passed"]),
+            "message": (
+                f"开篇与结论已点名品牌「{brand_validation.get('brand') or '当前品牌'}」"
+                if brand_validation["passed"]
+                else str((brand_validation.get("issues") or ["品牌标准未满足"])[0])
+            ),
+            "action": "核对品牌配置，并在开篇与结论中使用有证据支持的品牌名",
+            "details": list(brand_validation.get("issues") or []),
+        }
+    )
+    if not brand_validation["passed"]:
+        ready = False
     settings = get_settings()
     score_ok, score_msg = score_blocks_ready(
         score_payload,
@@ -7646,6 +7718,7 @@ async def apply_patch(
         "geo_score_gate": bool(getattr(settings, "geo_score_gate", False)),
         "geo_score_threshold": int(getattr(settings, "geo_score_threshold", 60) or 60),
         "geo_score_gate_message": score_msg or None,
+        "brand_validation": brand_validation,
         "ai_review": ai_review,
         "last_patch": {
             "code": req.code,
@@ -7674,6 +7747,7 @@ async def apply_patch(
         "geo_score": score_payload["geo_score"],
         "geo_subscores": score_payload["geo_subscores"],
         "geo_actions": score_payload["geo_actions"],
+        "brand_validation": brand_validation,
         "task": task_payload,
         "article": (task_payload or {}).get("article"),
     }
@@ -7773,19 +7847,9 @@ async def generate_task_article(
     session.expire_all()
     await session.refresh(task)
     article = await _latest_article(session, task.id)
-    rule_input = await _build_rule_input(session, task, article)
-    checks = run_checks(rule_input)
-    ready = is_ready(checks, require_channels=False)
-    task.rule_result = {
-        "ready": ready,
-        "require_channels": False,
-        "checks": [c.to_dict() for c in checks],
-        "checked_at": datetime.utcnow().isoformat(),
-    }
-    task.status = "ready" if ready else "needs_fix"
-    if ready:
-        task.ready_at = task.ready_at or datetime.utcnow()
-    await _sync_task_pipeline(session, task, checks=[c.to_dict() for c in checks])
+    await _evaluate_and_store_rules(
+        session, task, article, require_channels=False
+    )
     await session.commit()
     await session.refresh(task)
     return await _task_payload(session, task, detail=True)
@@ -8159,8 +8223,10 @@ async def record_publication(
         raise HTTPException(400, "请先生成该渠道版本")
     article = await _latest_article(session, task.id)
     rule_input = await _build_rule_input(session, task, article)
+    tenant = await _ensure_tenant_exists(session, task.tenant_id)
+    brand, _ = await _brand_context_for_task(session, task, tenant)
     try:
-        assert_can_publish(rule_input, task=task)
+        assert_can_publish(rule_input, task=task, brand=brand)
     except PublishGateError as exc:
         raise HTTPException(400, str(exc)) from exc
     registry_rows = registry_row_dicts(
@@ -8279,8 +8345,10 @@ async def push_variant_webhook(
 
     article = await _latest_article(session, task.id)
     rule_input = await _build_rule_input(session, task, article)
+    tenant = await _ensure_tenant_exists(session, task.tenant_id)
+    brand, _ = await _brand_context_for_task(session, task, tenant)
     try:
-        assert_can_publish(rule_input, task=task)
+        assert_can_publish(rule_input, task=task, brand=brand)
     except PublishGateError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -8375,8 +8443,10 @@ async def push_variant_batch(
 
     article = await _latest_article(session, task.id)
     rule_input = await _build_rule_input(session, task, article)
+    tenant = await _ensure_tenant_exists(session, task.tenant_id)
+    brand, _ = await _brand_context_for_task(session, task, tenant)
     try:
-        assert_can_publish(rule_input, task=task)
+        assert_can_publish(rule_input, task=task, brand=brand)
     except PublishGateError as exc:
         raise HTTPException(400, str(exc)) from exc
 
