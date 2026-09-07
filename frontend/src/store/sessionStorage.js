@@ -1,5 +1,7 @@
-const TOKEN_KEY = 'sem_token'
-const USER_KEY = 'sem_user'
+export const TOKEN_KEY = 'sem_token'
+export const USER_KEY = 'sem_user'
+export const AUTH_ENVELOPE_KEY = 'sem_auth_v1'
+export const AUTH_CONTEXT_EVENT = 'sem:auth-context-changed'
 
 function validUser(value) {
   return value !== null
@@ -14,10 +16,27 @@ function validUser(value) {
     && Object.values(value.permissions).every((level) => level === 'view' || level === 'edit')
 }
 
-export function readAuthPair(storage) {
+function validToken(token) {
+  return typeof token === 'string' && !!token && !/\s/.test(token)
+}
+
+export function readAuthEnvelope(storage) {
+  const raw = storage?.getItem?.(AUTH_ENVELOPE_KEY)
+  if (!raw) return null
+  try {
+    const value = JSON.parse(raw)
+    return value?.version === 1 && validToken(value.token) && validUser(value.user)
+      ? { token: value.token, user: value.user }
+      : null
+  } catch {
+    return null
+  }
+}
+
+export function readLegacyAuthPair(storage) {
   const token = storage?.getItem?.(TOKEN_KEY)
   const rawUser = storage?.getItem?.(USER_KEY)
-  if (typeof token !== 'string' || !token || /\s/.test(token) || !rawUser) return null
+  if (!validToken(token) || !rawUser) return null
   try {
     const user = JSON.parse(rawUser)
     return validUser(user) ? { token, user } : null
@@ -26,9 +45,25 @@ export function readAuthPair(storage) {
   }
 }
 
+export function readAuthPair(storage) {
+  if (storage?.getItem?.(AUTH_ENVELOPE_KEY) !== null) return readAuthEnvelope(storage)
+  return readLegacyAuthPair(storage)
+}
+
+export function writeAuthEnvelope(storage, token, user) {
+  if (!validToken(token) || !validUser(user)) throw new TypeError('INVALID_AUTH_ENVELOPE')
+  storage.setItem(USER_KEY, JSON.stringify(user))
+  storage.setItem(TOKEN_KEY, token)
+  storage.setItem(AUTH_ENVELOPE_KEY, JSON.stringify({ version: 1, token, user }))
+}
+
+export function clearStoredAuth(storage) {
+  storage.removeItem(AUTH_ENVELOPE_KEY)
+  storage.removeItem(TOKEN_KEY)
+  storage.removeItem(USER_KEY)
+}
+
 export function selectStoredAuth(localStore, sessionStore) {
-  // A tab-local login is an explicit identity choice and must not be replaced
-  // when another tab creates or refreshes a persistent login.
   const transient = readAuthPair(sessionStore)
   if (transient) return { ...transient, storage: 'session' }
   const persistent = readAuthPair(localStore)
@@ -36,10 +71,14 @@ export function selectStoredAuth(localStore, sessionStore) {
 }
 
 export function persistentAuthForEvent({ event, localStore, sessionStore, currentStorage }) {
-  if (event?.storageArea !== localStore || (event.key !== TOKEN_KEY && event.key !== USER_KEY && event.key !== null)) {
+  if (event?.storageArea !== localStore) {
     return undefined
   }
   if (currentStorage === 'session' && readAuthPair(sessionStore)) return undefined
-  const persistent = readAuthPair(localStore)
+  if ((event.key === TOKEN_KEY || event.key === USER_KEY)
+      && event.newValue === null
+      && localStore.getItem(AUTH_ENVELOPE_KEY) === null) return null
+  if (event.key !== AUTH_ENVELOPE_KEY && event.key !== null) return undefined
+  const persistent = readAuthEnvelope(localStore)
   return persistent ? { ...persistent, storage: 'local' } : null
 }

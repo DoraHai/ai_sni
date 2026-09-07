@@ -135,7 +135,7 @@ function firstAllowedSeoPath() {
   return SEO_MENU_ORDER.find(([permission]) => session.canView(permission))?.[1] || null
 }
 
-router.beforeEach((to) => {
+function sessionRouteDecision(to) {
   const devBypass = !session.isLoggedIn && import.meta.env.VITE_API_KEY && import.meta.env.DEV
   if (!session.isLoggedIn && !devBypass) {
     window.location.assign(loginUrl(to.fullPath))
@@ -145,7 +145,14 @@ router.beforeEach((to) => {
   const destination = firstAllowedSeoPath()
   if (destination && destination !== to.path) return { path: destination }
   return false
-})
+}
+router.beforeEach((to) => sessionRouteDecision(to))
+
+export function revalidateSessionRoute() {
+  const decision = sessionRouteDecision(router.currentRoute.value)
+  if (decision && decision !== true) return router.replace(decision)
+  return Promise.resolve(decision)
+}
 
 router.afterEach((to) => {
   const productName = 'SEO 工作台'
