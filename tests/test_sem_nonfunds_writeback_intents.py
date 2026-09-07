@@ -15,7 +15,11 @@ os.environ.setdefault("BAIDU_SELF_TOKEN_EXPIRES_AT", "2099-01-01T00:00:00")
 os.environ.setdefault("CRYPTO_MASTER_KEY_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
-from app.baidu.writeback import apply_campaign_pause_writeback
+from app.baidu.writeback import (
+    apply_adgroup_landing_url_writeback,
+    apply_adgroup_pause_writeback,
+    apply_campaign_pause_writeback,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -228,3 +232,106 @@ def test_intent_reconciled_during_commit_gap_never_calls_remote() -> None:
     remote.assert_not_awaited()
     assert captured[0].status == "failed"
     assert captured[0].reconciliation_result == "confirmed_not_executed"
+
+
+def _adgroup() -> SimpleNamespace:
+    return SimpleNamespace(
+        baidu_account_id=88,
+        campaign_id=12,
+        adgroup_id=44,
+        adgroup_name="测试单元",
+        pause=False,
+        pc_final_url="https://old.example/pc",
+        mobile_final_url="https://old.example/mobile",
+        pc_track_param=None,
+        mobile_track_param=None,
+        pc_track_template=None,
+        mobile_track_template=None,
+    )
+
+
+def _live_settings() -> SimpleNamespace:
+    return SimpleNamespace(
+        baidu_write_dry_run=False,
+        baidu_write_is_dry_run=lambda tenant_id, account_id, scope: False,
+    )
+
+
+def test_live_adgroup_pause_reaches_remote_and_finishes_successfully() -> None:
+    adgroup = _adgroup()
+    account = SimpleNamespace(id=88, status="active")
+    session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[adgroup, None]),
+        add=Mock(),
+        flush=AsyncMock(),
+        refresh=AsyncMock(),
+        commit=AsyncMock(),
+    )
+    remote = AsyncMock(return_value={"data": []})
+
+    async def run():
+        with (
+            patch("app.baidu.writeback._active_account", new=AsyncMock(return_value=account)),
+            patch("app.baidu.writeback._account_client", return_value=object()),
+            patch("app.baidu.writeback.AdgroupService.update_adgroup_fields", remote),
+            patch("app.baidu.writeback.get_settings", return_value=_live_settings()),
+        ):
+            return await apply_adgroup_pause_writeback(
+                session, 7, 44, True, operator_user_id=3, operator_name="tester"
+            )
+
+    record = asyncio.run(run())
+    remote.assert_awaited_once_with(44, pause=True)
+    assert record.status == "success"
+    assert adgroup.pause is True
+    assert session.commit.await_count == 2
+
+
+def test_landing_url_snapshot_change_after_intent_commit_blocks_remote() -> None:
+    adgroup = _adgroup()
+    account = SimpleNamespace(id=88, status="active")
+    captured = []
+
+    async def refresh(row, **_kwargs):
+        if row is adgroup:
+            adgroup.pc_final_url = "https://synced.example/pc"
+
+    session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[adgroup, None]),
+        add=lambda record: captured.append(record),
+        flush=AsyncMock(),
+        refresh=AsyncMock(side_effect=refresh),
+        commit=AsyncMock(),
+    )
+    remote = AsyncMock()
+
+    async def run():
+        with (
+            patch("app.baidu.writeback._active_account", new=AsyncMock(return_value=account)),
+            patch("app.baidu.writeback.AdgroupService.update_adgroup_fields", remote),
+            patch("app.baidu.writeback.get_settings", return_value=_live_settings()),
+        ):
+            return await apply_adgroup_landing_url_writeback(
+                session,
+                7,
+                44,
+                pc_final_url="https://new.example/pc",
+                mobile_final_url="https://new.example/mobile",
+                pc_track_param=None,
+                mobile_track_param=None,
+                pc_track_template=None,
+                mobile_track_template=None,
+                operator_user_id=3,
+                operator_name="tester",
+            )
+
+    try:
+        asyncio.run(run())
+    except Exception as exc:
+        assert "落地页设置已变化" in str(exc)
+    else:
+        raise AssertionError("a changed landing snapshot must block the remote write")
+
+    remote.assert_not_awaited()
+    assert captured[0].status == "failed"
+    assert session.commit.await_count == 2

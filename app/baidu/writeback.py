@@ -1629,17 +1629,6 @@ async def apply_adgroup_pause_writeback(
     await _persist_action_intent(
         session, rec, dry_run=dry_run, asset=adg, account=acc
     )
-    if not dry_run:
-        latest_snapshot = {
-            "pcFinalUrl": adg.pc_final_url,
-            "mobileFinalUrl": adg.mobile_final_url,
-            "pcTrackParam": adg.pc_track_param,
-            "mobileTrackParam": adg.mobile_track_param,
-            "pcTrackTemplate": adg.pc_track_template,
-            "mobileTrackTemplate": adg.mobile_track_template,
-        }
-        if latest_snapshot != old_snapshot:
-            await _fail_action_preflight(session, rec, "单元落地页设置已变化，请核对后重试")
     try:
         resp = await AdgroupService(_account_client(acc)).update_adgroup_fields(
             adgroup_id, pause=pause
@@ -1861,6 +1850,17 @@ async def apply_adgroup_landing_url_writeback(
     await _persist_action_intent(
         session, rec, dry_run=dry_run, asset=adg, account=acc
     )
+    if not dry_run:
+        latest_snapshot = {
+            "pcFinalUrl": adg.pc_final_url,
+            "mobileFinalUrl": adg.mobile_final_url,
+            "pcTrackParam": adg.pc_track_param,
+            "mobileTrackParam": adg.mobile_track_param,
+            "pcTrackTemplate": adg.pc_track_template,
+            "mobileTrackTemplate": adg.mobile_track_template,
+        }
+        if latest_snapshot != old_snapshot:
+            await _fail_action_preflight(session, rec, "单元落地页设置已变化，请核对后重试")
     try:
         resp = await AdgroupService(_account_client(acc)).update_adgroup_fields(
             adgroup_id,
