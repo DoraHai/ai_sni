@@ -69,7 +69,7 @@ jobs:
 
       - name: Test SEM date and UI contracts
         working-directory: frontend
-        run: npm run test:sem-date-time && npm run test:sem-ui-contracts && npm run test:sem-action-ledger && npm run test:sem-latest-request
+        run: npm run test:sem-date-time && npm run test:sem-ui-contracts && npm run test:sem-action-ledger && npm run test:sem-latest-request && npm run test:sem-classic-components
 
       - name: Verify build contract
         working-directory: frontend

@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, computed, nextTick } from 'vue'
+import { onBeforeUnmount, onMounted, ref, computed, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { init, use } from 'echarts/core'
 import { BarChart, HeatmapChart, LineChart } from 'echarts/charts'
@@ -155,7 +155,16 @@ const {
   applyWriteback,
   changeMatchType,
   togglePause,
-} = useKeywordWriteback({ tenantId: TENANT_ID, onSuccess: load })
+  invalidate: invalidateKeywordWriteback,
+} = useKeywordWriteback({
+  tenantId: TENANT_ID,
+  onSuccess: load,
+  readContext: () => ({
+    tenantId: TENANT_ID.value,
+    authRevision: session.authRevision,
+    keywordId: route.params.keywordId,
+  }),
+})
 
 // 倍数阈值：> 3 橙色提示，> 4 红色预警（业务规则）
 const multiplierClass = computed(() => {
@@ -493,15 +502,22 @@ async function handleTogglePause() {
   await togglePause(data.value.keyword.keyword_id, data.value.keyword.keyword, data.value.keyword.pause)
 }
 
+function resizeCharts() {
+  rankChart?.resize()
+  trendChart?.resize()
+  bidChart?.resize()
+  scheduleChart?.resize()
+  scheduleHourChart?.resize()
+}
+
 onMounted(() => {
   load()
-  window.addEventListener('resize', () => {
-    rankChart?.resize()
-    trendChart?.resize()
-    bidChart?.resize()
-    scheduleChart?.resize()
-    scheduleHourChart?.resize()
-  })
+  window.addEventListener('resize', resizeCharts)
+})
+
+onBeforeUnmount(() => {
+  invalidateKeywordWriteback()
+  window.removeEventListener('resize', resizeCharts)
 })
 </script>
 

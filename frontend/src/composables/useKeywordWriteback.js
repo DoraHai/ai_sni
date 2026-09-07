@@ -3,6 +3,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { matchTypeWriteback, pauseKeywordBatch, writebackKeyword } from '../api/keywords'
 import { createWritebackIdempotencyKey } from '../api/idempotency'
 import { WRITEBACK_CONFIRMATION } from '../api/writeback'
+import { createLatestRequestGuard } from '../utils/latestRequest'
 
 export const MATCH_TYPE_OPTIONS = {
   exact: { matchType: 1, phraseType: 1, label: '精确匹配' },
@@ -11,21 +12,26 @@ export const MATCH_TYPE_OPTIONS = {
 }
 
 /** Reusable keyword writeback controls for the workbench and detail view. */
-export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
+export function useKeywordWriteback({ tenantId, onSuccess, readContext } = {}) {
   const pendingBidWrites = new Set()
+  const actionGuard = createLatestRequestGuard(() => (
+    readContext?.() || { tenantId: tenantId.value }
+  ))
 
-  async function notifySuccess(result) {
-    if (result?.success) await onSuccess?.(result.response)
+  async function notifySuccess(result, attempt) {
+    if (result?.success && attempt.isCurrent()) await onSuccess?.(result.response)
     return result
   }
 
-  async function applyWriteback(keywordId, price, keywordText, currentPrice) {
+  async function applyWriteback(keywordId, price, keywordText, currentPrice, accountId = null) {
     if (price == null || !(Number(price) > 0)) {
       ElMessage.warning('请先填写有效的最终执行价')
       return null
     }
 
-    const writeKey = `${tenantId.value}:${keywordId}`
+    const attempt = actionGuard.begin()
+    const scopedTenantId = attempt.context.tenantId
+    const writeKey = `${scopedTenantId}:${accountId ?? ''}:${keywordId}`
     if (pendingBidWrites.has(writeKey)) return null
     pendingBidWrites.add(writeKey)
     const idempotencyKey = createWritebackIdempotencyKey()
@@ -40,15 +46,20 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
       pendingBidWrites.delete(writeKey)
       return null
     }
+    if (!attempt.isCurrent()) {
+      pendingBidWrites.delete(writeKey)
+      return null
+    }
 
     try {
       const response = await writebackKeyword({
         keywordId,
-        tenantId: tenantId.value,
+        tenantId: scopedTenantId,
         price: Number(price),
         confirmation: WRITEBACK_CONFIRMATION,
         idempotencyKey,
       })
+      if (!attempt.isCurrent()) return null
       if (response.dry_run) {
         ElMessage.success('已加入待回写台账，百度账户未修改')
         return { response, success: false, dryRun: true }
@@ -62,18 +73,20 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
         return { response, success: false }
       }
       ElMessage.success(`已回写百度：¥${Number(price).toFixed(2)}`)
-      return await notifySuccess({ response, success: true })
+      return await notifySuccess({ response, success: true }, attempt)
     } catch (error) {
-      ElMessage.error(error.response?.data?.detail || error.message)
+      if (attempt.isCurrent()) ElMessage.error(error.response?.data?.detail || error.message)
       return null
     } finally {
       pendingBidWrites.delete(writeKey)
     }
   }
 
-  async function changeMatchType(keywordId, keywordText, currentMatchLabel, command) {
+  async function changeMatchType(keywordId, keywordText, currentMatchLabel, command, accountId = null) {
     const target = MATCH_TYPE_OPTIONS[command]
     if (!target) return null
+    const attempt = actionGuard.begin()
+    const scopedTenantId = attempt.context.tenantId
 
     try {
       await ElMessageBox.confirm(
@@ -84,14 +97,16 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
     } catch {
       return null
     }
+    if (!attempt.isCurrent()) return null
 
     try {
       const response = await matchTypeWriteback({
         keywordId,
-        tenantId: tenantId.value,
+        tenantId: scopedTenantId,
         matchType: target.matchType,
         phraseType: target.phraseType,
       })
+      if (!attempt.isCurrent()) return null
       if (response.dry_run) {
         ElMessage.warning('演练模式：已记入台账，未真改线上匹配模式')
         return { response, success: false, dryRun: true }
@@ -101,14 +116,16 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
         return { response, success: false }
       }
       ElMessage.success(`已回写百度：${target.label}`)
-      return await notifySuccess({ response, success: true })
+      return await notifySuccess({ response, success: true }, attempt)
     } catch (error) {
-      ElMessage.error(error.response?.data?.detail || error.message)
+      if (attempt.isCurrent()) ElMessage.error(error.response?.data?.detail || error.message)
       return null
     }
   }
 
-  async function togglePause(keywordId, keywordText, currentPause) {
+  async function togglePause(keywordId, keywordText, currentPause, accountId = null) {
+    const attempt = actionGuard.begin()
+    const scopedTenantId = attempt.context.tenantId
     const pause = !currentPause
     const action = pause ? '暂停' : '启用'
 
@@ -121,13 +138,15 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
     } catch {
       return null
     }
+    if (!attempt.isCurrent()) return null
 
     try {
       const response = await pauseKeywordBatch({
-        tenantId: tenantId.value,
+        tenantId: scopedTenantId,
         keywordIds: [keywordId],
         pause,
       })
+      if (!attempt.isCurrent()) return null
       if (response.simulated?.includes(keywordId)) {
         ElMessage.warning(`演练 ${action} 1（未真改线上）`)
         return { response, success: false, dryRun: true }
@@ -138,15 +157,15 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
       }
       if (response.applied?.includes(keywordId)) {
         ElMessage.success(`已${action}`)
-        return await notifySuccess({ response, success: true })
+        return await notifySuccess({ response, success: true }, attempt)
       }
       ElMessage.error(`${action}未执行`)
       return { response, success: false }
     } catch (error) {
-      ElMessage.error(error.response?.data?.detail || error.message)
+      if (attempt.isCurrent()) ElMessage.error(error.response?.data?.detail || error.message)
       return null
     }
   }
 
-  return { applyWriteback, changeMatchType, togglePause }
+  return { applyWriteback, changeMatchType, togglePause, invalidate: actionGuard.invalidate }
 }
