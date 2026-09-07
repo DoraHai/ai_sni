@@ -38,6 +38,8 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("tests/test_seo_scheduler.py")
     assert source_path_allowed("tests/test_seo_snapshot_retention.py")
     assert source_path_allowed("tests/test_seo_rank_limits.py")
+    assert source_path_allowed("tests/test_seo_site_page_detail.py")
+    assert source_path_allowed("tests/test_seo_workbench_site_scope.py")
     assert source_path_allowed("deploy/seo-frontend.nginx.conf")
     assert source_path_allowed(".github/workflows/production-seo-frontend-deploy.yml")
     assert source_path_allowed("ops/platform-deploy/install-seo-frontend.sh")
@@ -69,6 +71,8 @@ def test_seo_workflows_run_site_association_and_traffic_regressions() -> None:
     ):
         workflow = (root / relative).read_text(encoding="utf-8")
         assert "tests/test_seo_site_association.py" in workflow
+        assert "tests/test_seo_site_page_detail.py" in workflow
+        assert "tests/test_seo_workbench_site_scope.py" in workflow
         assert "tests/test_seo_traffic.py" in workflow
 
 

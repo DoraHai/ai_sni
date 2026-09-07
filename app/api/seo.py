@@ -3568,15 +3568,21 @@ async def get_site_page_detail(
     tenant_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    """Return current evidence, internal-link counts and two-scan comparison."""
+    """Return stored crawl and internal-link evidence without starting collection."""
     row = await _site_page(session, page_id, tenant_id)
+    if row.site_id is None:
+        raise HTTPException(422, "请先将页面关联到 SEO 网站")
+    await _seo_site(session, tenant_id, row.site_id)
     snapshots = list(
         await session.scalars(
             select(SeoPageSnapshot)
             .where(
                 SeoPageSnapshot.tenant_id == tenant_id,
                 SeoPageSnapshot.site_id == row.site_id,
-                or_(SeoPageSnapshot.url == row.url, SeoPageSnapshot.final_url == row.url),
+                or_(
+                    SeoPageSnapshot.url == row.url,
+                    SeoPageSnapshot.final_url == row.url,
+                ),
             )
             .order_by(SeoPageSnapshot.fetched_at.desc(), SeoPageSnapshot.id.desc())
             .limit(2)
@@ -3610,7 +3616,7 @@ async def get_site_page_detail(
             tenant_id=tenant_id,
             site_id=row.site_id,
             target_page_ids=[int(row.id)],
-            limit=100,
+            limit=200,
         )
     ).get(int(row.id), [])
     issue_details = []
@@ -3634,10 +3640,12 @@ async def get_site_page_detail(
             "incoming": incoming,
             "outgoing": outgoing,
             "incoming_sources": incoming_sources,
+            "incoming_sources_truncated": incoming > len(incoming_sources),
         },
         "latest_snapshot": _page_snapshot_payload(latest) if latest else None,
         "previous_snapshot": _page_snapshot_payload(previous) if previous else None,
         "comparison": _page_snapshot_comparison(latest, previous),
+        "read_only": True,
     }
 
 

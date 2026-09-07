@@ -25,7 +25,7 @@ from app.api.customer_modules import (
 from app.models import GeoProject, SeoSite, TenantModule
 from app.module_scope import normalize_module_code
 from app.permissions import CLIENT_PERMS, OPERATOR_PERMS
-from app.security.auth import AuthContext, require_auth, require_scoped_auth
+from app.security.auth import AuthContext, _required, require_auth, require_scoped_auth
 
 
 class ModuleWorkspaceTests(unittest.TestCase):
@@ -40,6 +40,12 @@ class ModuleWorkspaceTests(unittest.TestCase):
         self.assertEqual(CLIENT_PERMS["geo.assets"], "edit")
         self.assertNotIn("settings.customers", CLIENT_PERMS)
         self.assertNotIn("settings.customers", OPERATOR_PERMS)
+
+    def test_workbench_site_route_uses_content_or_site_permission(self):
+        self.assertEqual(
+            _required("/api/v1/seo/workbench/sites", "GET"),
+            ({"seo.content", "seo.site"}, False),
+        )
 
     def test_seo_site_routes_enforce_permission_without_global_auth_changes(self):
         viewer = AuthContext(1, "viewer", "viewer", 7, {"seo.assets": "view"})
@@ -59,7 +65,11 @@ class ModuleWorkspaceTests(unittest.TestCase):
 
         self.assertEqual(
             seo_paths,
-            {"/api/v1/seo/sites", "/api/v1/seo/sites/{site_id}"},
+            {
+                "/api/v1/seo/sites",
+                "/api/v1/seo/sites/{site_id}",
+                "/api/v1/seo/workbench/sites",
+            },
         )
         delete_routes = [
             route for route in seo_sites_router.routes
@@ -70,11 +80,23 @@ class ModuleWorkspaceTests(unittest.TestCase):
         self.assertNotIn("/api/v1/sem/assets/accounts", seo_paths)
         self.assertNotIn("/api/v1/admin/customers", seo_paths)
 
-    def test_seo_site_routes_use_local_asset_permission_instead_of_site_permission(self):
+    def test_seo_site_admin_routes_use_local_asset_permission(self):
         for route in seo_sites_router.routes:
+            if route.path == "/api/v1/seo/workbench/sites":
+                continue
             dependencies = [dependency.dependency for dependency in route.dependencies]
             self.assertIn(require_auth, dependencies)
             self.assertNotIn(require_scoped_auth, dependencies)
+
+    def test_workbench_site_route_uses_scoped_auth(self):
+        route = next(
+            route
+            for route in seo_sites_router.routes
+            if route.path == "/api/v1/seo/workbench/sites"
+        )
+        dependencies = [dependency.dependency for dependency in route.dependencies]
+        self.assertIn(require_scoped_auth, dependencies)
+        self.assertNotIn(require_auth, dependencies)
 
     def test_bound_customer_cannot_switch_tenant(self):
         ctx = AuthContext(1, "client", "client", 7, {"seo.assets": "edit"})
