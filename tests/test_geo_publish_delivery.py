@@ -51,7 +51,7 @@ def test_execution_gate_uses_current_business_brand_before_connector():
 def test_brand_change_after_reservation_blocks_before_connector():
     session,args=setup_case();send=AsyncMock()
     brands=iter([('旧品牌',['旧品牌']),('新品牌',['新品牌'])])
-    gate=AsyncMock(side_effect=lambda *_: next(brands))
+    gate=AsyncMock(side_effect=lambda *_,**__: next(brands))
     def assert_gate(_,*,task,brand):
         assert_review_approved(task)
         if brand == '新品牌':
@@ -66,6 +66,7 @@ def test_brand_change_after_reservation_blocks_before_connector():
     delivery=next(iter(args['variant'].adapt_meta['push_deliveries'].values()))
     assert delivery['state'] == 'failed'
     assert delivery['reason'] == 'publish_gate_changed_before_send'
+    assert gate.await_args_list[1].kwargs['fresh'] is True
 
 
 def test_success_is_reserved_before_send_and_reused_on_repeat():

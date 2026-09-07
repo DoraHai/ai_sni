@@ -353,8 +353,10 @@ def _untrusted_fact_meta(value: Any) -> dict[str, Any]:
     return {key: item for key, item in raw.items() if key not in _PROTECTED_FACT_META_KEYS}
 
 
-async def _ensure_tenant_exists(session: AsyncSession, tenant_id: int) -> Tenant:
-    tenant = await session.get(Tenant, tenant_id)
+async def _ensure_tenant_exists(
+    session: AsyncSession, tenant_id: int, *, fresh: bool = False
+) -> Tenant:
+    tenant = await session.get(Tenant, tenant_id, populate_existing=fresh)
     if tenant is None:
         raise HTTPException(404, "客户不存在")
     return tenant
@@ -364,6 +366,8 @@ async def _brand_context_for_prompt(
     session: AsyncSession,
     prompt: GeoPrompt,
     tenant: Tenant,
+    *,
+    fresh: bool = False,
 ) -> tuple[str, list[str]]:
     """Business profile product name wins; do not mix another business brand."""
     from app.geo.content.business_profile import brand_names_for_profile, display_brand
@@ -372,11 +376,15 @@ async def _brand_context_for_prompt(
     biz = None
     unit_id = getattr(prompt, "unit_id", None)
     if unit_id:
-        unit = await session.get(GeoOptimizationUnit, unit_id)
+        unit = await session.get(GeoOptimizationUnit, unit_id, populate_existing=fresh)
         if unit and unit.business_id:
-            biz = await session.get(GeoOptimizationBusiness, unit.business_id)
+            biz = await session.get(
+                GeoOptimizationBusiness, unit.business_id, populate_existing=fresh
+            )
     if biz is None and getattr(prompt, "business_id", None):
-        biz = await session.get(GeoOptimizationBusiness, prompt.business_id)
+        biz = await session.get(
+            GeoOptimizationBusiness, prompt.business_id, populate_existing=fresh
+        )
     profile = getattr(biz, "profile", None) if biz else None
     brand = display_brand(profile, fallback=fallback)
     names = brand_names_for_profile(profile, fallback=brand)
@@ -392,17 +400,23 @@ async def _brand_context_for_task(
     session: AsyncSession,
     task: GeoContentTask,
     tenant: Tenant,
+    *,
+    fresh: bool = False,
 ) -> tuple[str, list[str]]:
     from app.geo.content.business_profile import brand_names_for_profile, display_brand
 
     fallback = getattr(tenant, "name", None) or f"租户{task.tenant_id}"
     biz = None
     if getattr(task, "business_id", None):
-        biz = await session.get(GeoOptimizationBusiness, task.business_id)
+        biz = await session.get(
+            GeoOptimizationBusiness, task.business_id, populate_existing=fresh
+        )
     if biz is None:
-        prompt = await session.get(GeoPrompt, task.prompt_id)
+        prompt = await session.get(GeoPrompt, task.prompt_id, populate_existing=fresh)
         if prompt:
-            return await _brand_context_for_prompt(session, prompt, tenant)
+            return await _brand_context_for_prompt(
+                session, prompt, tenant, fresh=fresh
+            )
     profile = getattr(biz, "profile", None) if biz else None
     brand = display_brand(profile, fallback=fallback)
     return brand, brand_names_for_profile(profile, fallback=brand) or [brand]

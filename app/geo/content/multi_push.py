@@ -314,11 +314,13 @@ async def execute_single_push(session, *, task, variant, channel_row, account, m
     )
     from app.geo.content.gate import assert_can_publish
 
-    async def assert_current_publish_gate(current_article):
+    async def assert_current_publish_gate(current_article, *, fresh: bool = False):
         # Resolve the business-profile brand at execution time. Callers (including
         # async workers) may have queued the push before the profile changed.
-        tenant = await _ensure_tenant_exists(session, task.tenant_id)
-        brand, _ = await _brand_context_for_task(session, task, tenant)
+        tenant = await _ensure_tenant_exists(session, task.tenant_id, fresh=fresh)
+        brand, _ = await _brand_context_for_task(
+            session, task, tenant, fresh=fresh
+        )
         assert_can_publish(
             await _build_rule_input(session, task, current_article),
             task=task,
@@ -387,7 +389,7 @@ async def execute_single_push(session, *, task, variant, channel_row, account, m
     # The reservation commit released the transaction lock. Re-read both the
     # article and business brand before the first external connector call.
     try:
-        await assert_current_publish_gate(current_article)
+        await assert_current_publish_gate(current_article, fresh=True)
     except ValueError:
         record("failed", reason="publish_gate_changed_before_send")
         await session.commit()
