@@ -31,8 +31,9 @@ function nullableNumber(value) { return value === null || (typeof value === 'num
 function nullableCount(value) { return value === null || nonnegativeInteger(value) }
 function allNull(metrics) { return ['cost', 'click', 'impression', 'ctr', 'cpc'].every(key => metrics[key] === null) }
 function matchesRounded(value, raw, decimals) {
-  const tolerance = (0.5 / (10 ** decimals)) + Number.EPSILON
-  return typeof value === 'number' && Math.abs(value - raw) <= tolerance
+  const expected = Number(raw.toFixed(decimals))
+  const tolerance = Number.EPSILON * Math.max(1, Math.abs(value), Math.abs(expected))
+  return typeof value === 'number' && Number.isFinite(value) && Math.abs(value - expected) <= tolerance
 }
 function validateMetrics(metrics) {
   contract(object(metrics) && ['cost', 'click', 'impression', 'ctr', 'cpc'].every(key => Object.hasOwn(metrics, key)))
