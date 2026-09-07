@@ -33,6 +33,21 @@ function notifyAuthContext(kind) {
   window.dispatchEvent(event)
 }
 
+function permissionsEqual(left = {}, right = {}) {
+  const leftKeys = Object.keys(left).sort()
+  const rightKeys = Object.keys(right).sort()
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key])
+}
+
+function authContextChangeKind(previousToken, previousUser, nextToken, nextUser) {
+  if (previousToken !== nextToken
+      || previousUser?.id !== nextUser?.id
+      || previousUser?.tenant_id !== nextUser?.tenant_id) return 'identity'
+  if (!permissionsEqual(previousUser?.permissions, nextUser?.permissions)) return 'permissions'
+  return null
+}
+
 export const session = {
   get token() { return state.token },
   get user() { return state.user },
@@ -72,14 +87,11 @@ export const session = {
   // 登录态校验后用最新 user 刷新（角色权限可能被管理员改过，即时生效）
   refreshUser(user) {
     const previous = state.user
-    const identityChanged = previous?.id !== user?.id || previous?.tenant_id !== user?.tenant_id
-    const permissionsChanged = JSON.stringify(previous?.permissions || {}) !== JSON.stringify(user?.permissions || {})
+    const changeKind = authContextChangeKind(state.token, previous, state.token, user)
     state.user = user
     writeAuthEnvelope(_activeStore(), state.token, user)
     if (user?.tenant_id) this.setTenant(user.tenant_id)
-    if (identityChanged || permissionsChanged) {
-      notifyAuthContext(identityChanged ? 'identity' : 'permissions')
-    }
+    if (changeKind) notifyAuthContext(changeKind)
   },
 
   setTenants(list) {
@@ -137,11 +149,15 @@ if (typeof window !== 'undefined') {
       notifyAuthContext('logout')
       return
     }
-    const previousUserId = state.user?.id
+    const previousToken = state.token
+    const previousUser = state.user
+    const previousUserId = previousUser?.id
     const previousTenantId = state.tenantId
+    const changeKind = authContextChangeKind(previousToken, previousUser, next.token, next.user)
     authStorage = 'local'
     state.token = next.token
     state.user = next.user
+    if (!changeKind) return
     state.tenants = []
     state.modules = []
     state.tenantId = next.user.tenant_id
@@ -149,7 +165,7 @@ if (typeof window !== 'undefined') {
     if (state.tenantId) sessionStorage.setItem('sem_tenant_id', String(state.tenantId))
     else sessionStorage.removeItem('sem_tenant_id')
     state.tenantListRevision += 1
-    notifyAuthContext(previousUserId === next.user.id ? 'permissions' : 'identity')
+    notifyAuthContext(changeKind)
   })
 }
 
