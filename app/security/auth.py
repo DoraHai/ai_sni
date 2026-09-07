@@ -171,6 +171,10 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
         # Keep the cockpit contract on GEO content permissions. The trailing
         # slash is intentional: similarly named paths retain the legacy rule.
         return {"geo.content"}, edit
+    if p == "/api/v1/seo/workbench/sites":
+        # The acquisition workbench only needs an authorized site selector.
+        # Site administration remains protected by seo.assets below.
+        return {"seo.content", "seo.site"}, edit
     if p == "/api/v1/geo/tenants":
         # GEO 顶部客户切换器是所有 GEO 工作台的公共只读数据源。
         return {"geo.assets", "geo.content", "geo.diagnosis"}, False

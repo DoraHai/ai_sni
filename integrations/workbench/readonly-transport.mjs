@@ -11,6 +11,7 @@ const paths = [
 ]
 
 const seoRoutes = [
+  [/^\/api\/v1\/seo\/workbench\/sites$/, ['tenant_id']],
   [/^\/api\/v1\/seo\/content-assets$/, ['tenant_id', 'site_id', 'content_id', 'source_page_id', 'status', 'content_type', 'content_types', 'q', 'page', 'page_size']],
   [/^\/api\/v1\/seo\/content-assets\/[1-9]\d*\/review-history$/, ['tenant_id']],
   [/^\/api\/v1\/seo\/content-distribution\/publications$/, ['tenant_id', 'site_id', 'content_id']],
