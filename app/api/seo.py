@@ -10,7 +10,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from time import monotonic
 from typing import Any, Literal
-from urllib.parse import quote, urljoin, urlparse
+from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlparse, urlsplit, urlunsplit
 from uuid import uuid4
 
 from app.seo_backlinks import apply_backlink_evidence, discover_backlinks, fetch_backlink_page
@@ -5400,6 +5400,326 @@ def _publication_payload(
     }
 
 
+WORKBENCH_PAGE_INVENTORY_SCAN_LIMIT = 5000
+WORKBENCH_ASSOCIATION_CANDIDATE_LIMIT = 5
+_INVALID_URL_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+
+
+def _normalize_workbench_publication_url(value: str | None) -> str | None:
+    """Return the documented conservative URL identity used by the workbench.
+
+    Scheme and host are lower-cased, default ports and fragments are removed,
+    a non-root trailing slash is ignored, and query pairs are sorted while
+    preserving duplicate keys and blank values.  Path case, path escapes,
+    non-default ports, and query parameters are never discarded.
+    """
+    raw = str(value or "")
+    if not raw or raw != raw.strip() or _INVALID_URL_ESCAPE.search(raw):
+        return None
+    try:
+        parsed = urlsplit(raw)
+        scheme = parsed.scheme.lower()
+        if (
+            scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+        ):
+            return None
+        port = parsed.port
+        hostname = parsed.hostname.encode("idna").decode("ascii").lower()
+        display_host = f"[{hostname}]" if ":" in hostname else hostname
+        netloc = display_host
+        if port is not None and not (
+            (scheme == "http" and port == 80)
+            or (scheme == "https" and port == 443)
+        ):
+            netloc = f"{display_host}:{port}"
+        path = parsed.path or "/"
+        if path != "/":
+            path = path.rstrip("/") or "/"
+        query_pairs = parse_qsl(
+            parsed.query,
+            keep_blank_values=True,
+            strict_parsing=False,
+            max_num_fields=200,
+        )
+        query = urlencode(sorted(query_pairs, key=lambda pair: pair[0]), doseq=True)
+    except (UnicodeError, ValueError):
+        return None
+    return urlunsplit((scheme, netloc, path, query, ""))
+
+
+def _workbench_page_candidate(row: SeoSitePage) -> dict[str, Any]:
+    return {
+        "page_id": row.id,
+        "url": row.url,
+        "status": row.status,
+        "http_status": row.http_status,
+        "last_checked_at": _iso(row.last_checked_at),
+    }
+
+
+def _associate_workbench_publication_page(
+    publication_url: str | None,
+    pages: list[SeoSitePage],
+    *,
+    inventory_complete: bool,
+) -> tuple[dict[str, Any], SeoSitePage | None]:
+    if not str(publication_url or "").strip():
+        return (
+            {
+                "association_status": "publication_url_missing",
+                "normalized_publication_url": None,
+                "candidate_count": 0,
+                "candidates": [],
+                "reason": "publication_record_has_no_public_url",
+            },
+            None,
+        )
+    normalized = _normalize_workbench_publication_url(publication_url)
+    if normalized is None:
+        return (
+            {
+                "association_status": "no_match",
+                "normalized_publication_url": None,
+                "candidate_count": 0,
+                "candidates": [],
+                "reason": "publication_url_is_not_a_supported_absolute_http_url",
+            },
+            None,
+        )
+    matches = [
+        page
+        for page in pages
+        if _normalize_workbench_publication_url(page.url) == normalized
+    ]
+    candidates = [
+        _workbench_page_candidate(page)
+        for page in matches[:WORKBENCH_ASSOCIATION_CANDIDATE_LIMIT]
+    ]
+    if not inventory_complete:
+        return (
+            {
+                "association_status": "page_inventory_incomplete",
+                "normalized_publication_url": normalized,
+                "candidate_count": None,
+                "candidates": candidates,
+                "reason": "site_page_inventory_exceeds_scan_limit",
+            },
+            None,
+        )
+    if not matches:
+        return (
+            {
+                "association_status": "no_match",
+                "normalized_publication_url": normalized,
+                "candidate_count": 0,
+                "candidates": [],
+                "reason": "no_same_site_page_has_the_normalized_url",
+            },
+            None,
+        )
+    if len(matches) > 1:
+        return (
+            {
+                "association_status": "multiple_matches",
+                "normalized_publication_url": normalized,
+                "candidate_count": len(matches),
+                "candidates": candidates,
+                "reason": "multiple_same_site_pages_share_the_normalized_url",
+            },
+            None,
+        )
+    return (
+        {
+            "association_status": "exact_unique",
+            "normalized_publication_url": normalized,
+            "candidate_count": 1,
+            "candidates": candidates,
+            "reason": None,
+        },
+        matches[0],
+    )
+
+
+def _workbench_issue_codes(snapshot: SeoPageSnapshot, *groups: str) -> list[str]:
+    wanted = set(groups)
+    return [
+        str(code)
+        for code in snapshot.issue_codes or []
+        if _page_issue_group(str(code)) in wanted
+    ]
+
+
+def _workbench_page_check_payload(
+    page: SeoSitePage | None,
+    snapshot: SeoPageSnapshot | None,
+    *,
+    unavailable_reason: str | None = None,
+) -> dict[str, Any]:
+    if page is None:
+        return {
+            "source": "seo_page_snapshots",
+            "coverage": "not_applicable",
+            "fetched_at": None,
+            "reason": unavailable_reason or "publication_page_is_not_uniquely_associated",
+            "page": None,
+            "crawl": None,
+            "http": None,
+            "body": None,
+            "links": None,
+            "images": None,
+        }
+    page_summary = {
+        **_workbench_page_candidate(page),
+        "last_error": page.last_error,
+    }
+    if snapshot is None:
+        return {
+            "source": "seo_page_snapshots",
+            "coverage": "no_data",
+            "fetched_at": None,
+            "reason": "no_stored_snapshot_for_the_associated_page",
+            "page": page_summary,
+            "crawl": None,
+            "http": None,
+            "body": None,
+            "links": None,
+            "images": None,
+        }
+    failed = bool(snapshot.fetch_error or snapshot.error_type)
+    image_evidence = (
+        snapshot.image_alt_evidence
+        if isinstance(getattr(snapshot, "image_alt_evidence", None), dict)
+        else {}
+    )
+    return {
+        "source": "seo_page_snapshots",
+        "coverage": "failed" if failed else "available",
+        "fetched_at": _database_iso(snapshot.fetched_at),
+        "reason": "stored_crawl_failed" if failed else None,
+        "page": page_summary,
+        "crawl": {
+            "snapshot_id": snapshot.id,
+            "crawl_run_id": snapshot.crawl_run_id,
+            "requested_url": snapshot.url,
+            "final_url": snapshot.final_url,
+            "fetch_error": snapshot.fetch_error,
+            "error_type": snapshot.error_type,
+            "issue_codes": _workbench_issue_codes(snapshot, "crawl"),
+        },
+        "http": {
+            "status_code": snapshot.status_code,
+            "content_type": snapshot.content_type,
+            "content_length": snapshot.content_length,
+            "response_time_ms": snapshot.response_time_ms,
+        },
+        "body": {
+            "main_content_extractable": snapshot.main_content_extractable,
+            "word_count": snapshot.word_count,
+            "title": snapshot.title,
+            "h1_count": snapshot.h1_count,
+            "robots_allowed": snapshot.robots_allowed,
+            "indexable": snapshot.indexable,
+            "issue_codes": _workbench_issue_codes(
+                snapshot,
+                "indexable",
+                "canonical",
+                "title",
+                "description",
+                "h1",
+                "schema",
+                "content",
+                "language",
+            ),
+        },
+        "links": {
+            "coverage": "counts_only",
+            "reason": "snapshot_stores_link_counts;_edge_details_are_not_embedded",
+            "internal_count": snapshot.internal_links_count,
+            "external_count": snapshot.external_links_count,
+        },
+        "images": {
+            "coverage": "summary",
+            "count": snapshot.images_count,
+            "missing_alt_count": snapshot.images_missing_alt_count,
+            "candidate_count": image_evidence.get("candidate_count"),
+            "state_counts": image_evidence.get("counts"),
+            "details_truncated": image_evidence.get("truncated"),
+            "issue_codes": _workbench_issue_codes(snapshot, "image"),
+        },
+    }
+
+
+async def _latest_workbench_page_snapshot(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    site_id: int,
+    page_url: str,
+) -> SeoPageSnapshot | None:
+    return await session.scalar(
+        select(SeoPageSnapshot)
+        .where(
+            SeoPageSnapshot.tenant_id == tenant_id,
+            SeoPageSnapshot.site_id == site_id,
+            or_(
+                SeoPageSnapshot.url == page_url,
+                SeoPageSnapshot.final_url == page_url,
+            ),
+        )
+        .order_by(SeoPageSnapshot.fetched_at.desc(), SeoPageSnapshot.id.desc())
+        .limit(1)
+    )
+
+
+def _workbench_content_identity(row: SeoContentAsset) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "site_id": row.site_id,
+        "content_type": row.content_type,
+        "title": row.title,
+        "status": row.status,
+        "review_submitted_at": _iso(row.review_submitted_at),
+        "reviewed_at": _iso(row.reviewed_at),
+        "published_at": _iso(row.published_at),
+        "created_at": _database_iso(row.created_at),
+        "updated_at": _database_iso(row.updated_at),
+    }
+
+
+def _workbench_publication_identity(row: SeoContentPublication) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "platform_code": row.platform_code,
+        "platform_name": row.platform_name,
+        "publish_mode": row.publish_mode,
+        "status": row.status,
+        "public_url": row.page_url,
+        "external_id": row.external_id,
+        "published_at": _iso(row.published_at),
+        "last_synced_at": _iso(row.last_synced_at),
+        "last_error": row.last_error,
+        "created_at": _database_iso(row.created_at),
+        "updated_at": _database_iso(row.updated_at),
+    }
+
+
+def _workbench_attempt_identity(row: SeoPublishAttempt | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {
+        "id": row.id,
+        "action": row.action,
+        "status": row.status,
+        "error": row.error,
+        "started_at": _database_iso(row.started_at),
+        "completed_at": _iso(row.completed_at),
+    }
+
+
 async def _distribution_connection(
     session: AsyncSession, tenant_id: int, connection_id: int
 ) -> SeoDistributionConnection:
@@ -6240,6 +6560,181 @@ async def test_distribution_connection(
     row.last_tested_at = datetime.utcnow()
     await session.commit()
     return {**_connection_payload(row), "message": result["message"]}
+
+
+@router.get("/workbench/publication-page-evidence")
+async def list_workbench_publication_page_evidence(
+    tenant_id: PositiveInt,
+    site_id: PositiveInt,
+    content_id: PositiveInt | None = None,
+    publication_id: PositiveInt | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    """Join stored publication and page-check evidence without starting work."""
+    ctx.ensure_tenant(tenant_id)
+    if not ctx.can_view("seo.content", "seo.site"):
+        raise HTTPException(403, "当前账号没有 SEO 内容或页面查看权限")
+    await ensure_module_access(session, ctx, tenant_id, "seo")
+    await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
+
+    conditions = [
+        SeoContentPublication.tenant_id == tenant_id,
+        SeoContentAsset.tenant_id == tenant_id,
+        SeoContentAsset.site_id == site_id,
+    ]
+    if content_id is not None:
+        conditions.append(SeoContentPublication.content_asset_id == content_id)
+    if publication_id is not None:
+        conditions.append(SeoContentPublication.id == publication_id)
+    join_condition = and_(
+        SeoContentAsset.id == SeoContentPublication.content_asset_id,
+        SeoContentAsset.tenant_id == SeoContentPublication.tenant_id,
+    )
+    total = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(SeoContentPublication)
+            .join(SeoContentAsset, join_condition)
+            .where(*conditions)
+        )
+        or 0
+    )
+    rows = list(
+        (
+            await session.execute(
+                select(SeoContentPublication, SeoContentAsset)
+                .join(SeoContentAsset, join_condition)
+                .where(*conditions)
+                .order_by(
+                    SeoContentPublication.updated_at.desc(),
+                    SeoContentPublication.id.desc(),
+                )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        ).all()
+    )
+    publications = [row[0] for row in rows]
+    publication_ids = [row.id for row in publications]
+    attempts = (
+        list(
+            (
+                await session.scalars(
+                    select(SeoPublishAttempt)
+                    .where(
+                        SeoPublishAttempt.tenant_id == tenant_id,
+                        SeoPublishAttempt.publication_id.in_(publication_ids),
+                    )
+                    .order_by(
+                        SeoPublishAttempt.publication_id,
+                        SeoPublishAttempt.started_at.desc(),
+                        SeoPublishAttempt.id.desc(),
+                    )
+                )
+            ).all()
+        )
+        if publication_ids
+        else []
+    )
+    latest_attempts: dict[int, SeoPublishAttempt] = {}
+    for attempt in attempts:
+        latest_attempts.setdefault(int(attempt.publication_id), attempt)
+
+    needs_page_inventory = any(
+        _normalize_workbench_publication_url(row.page_url) is not None
+        for row in publications
+    )
+    page_rows = (
+        list(
+            (
+                await session.scalars(
+                    select(SeoSitePage)
+                    .where(
+                        SeoSitePage.tenant_id == tenant_id,
+                        SeoSitePage.site_id == site_id,
+                    )
+                    .order_by(SeoSitePage.id)
+                    .limit(WORKBENCH_PAGE_INVENTORY_SCAN_LIMIT + 1)
+                )
+            ).all()
+        )
+        if needs_page_inventory
+        else []
+    )
+    inventory_complete = len(page_rows) <= WORKBENCH_PAGE_INVENTORY_SCAN_LIMIT
+    pages = page_rows[:WORKBENCH_PAGE_INVENTORY_SCAN_LIMIT]
+    snapshot_cache: dict[int, SeoPageSnapshot | None] = {}
+    items: list[dict[str, Any]] = []
+    association_counts: dict[str, int] = defaultdict(int)
+    for publication, content in rows:
+        association, matched_page = _associate_workbench_publication_page(
+            publication.page_url,
+            pages,
+            inventory_complete=inventory_complete,
+        )
+        association_counts[association["association_status"]] += 1
+        snapshot = None
+        if matched_page is not None:
+            page_key = int(matched_page.id)
+            if page_key not in snapshot_cache:
+                snapshot_cache[page_key] = await _latest_workbench_page_snapshot(
+                    session,
+                    tenant_id=tenant_id,
+                    site_id=site_id,
+                    page_url=matched_page.url,
+                )
+            snapshot = snapshot_cache[page_key]
+        items.append(
+            {
+                "content": _workbench_content_identity(content),
+                "publication": _workbench_publication_identity(publication),
+                "latest_attempt": _workbench_attempt_identity(
+                    latest_attempts.get(int(publication.id))
+                ),
+                "page_association": association,
+                "page_check": _workbench_page_check_payload(
+                    matched_page,
+                    snapshot,
+                    unavailable_reason=association["reason"],
+                ),
+            }
+        )
+    read_at = _iso(datetime.now(timezone.utc))
+    return {
+        "tenant_id": tenant_id,
+        "site_id": site_id,
+        "filters": {
+            "content_id": content_id,
+            "publication_id": publication_id,
+        },
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": (total + page_size - 1) // page_size,
+        "read_at": read_at,
+        "source": {
+            "content": "seo_content_assets",
+            "publication": "seo_content_publications",
+            "attempt": "seo_publish_attempts",
+            "page_inventory": "seo_site_pages",
+            "page_check": "seo_page_snapshots",
+        },
+        "coverage": {
+            "state": "complete" if inventory_complete else "partial",
+            "reason": None if inventory_complete else "site_page_inventory_exceeds_scan_limit",
+            "returned_publications": len(items),
+            "page_inventory_scanned": len(pages),
+            "page_inventory_scan_limit": WORKBENCH_PAGE_INVENTORY_SCAN_LIMIT,
+            "candidate_summary_limit": WORKBENCH_ASSOCIATION_CANDIDATE_LIMIT,
+            "association_counts": dict(association_counts),
+        },
+        "items": items,
+        "read_only": True,
+    }
 
 
 @router.get("/content-distribution/publications")
