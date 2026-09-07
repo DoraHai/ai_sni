@@ -66,3 +66,20 @@ The candidate also clears reactive auth on a cross-tab logout without navigating
 The focused backend suite completed with `153 passed, 4 skipped`; the four skips are opt-in PostgreSQL cases. The shared-session candidate's own session tests and auth build passed, but the additional event-by-event reproduction exposed the mixed token/user race described above.
 
 These results do not constitute real-account acceptance. Real platform effects, late responses from Baidu, and production browser behavior remain intentionally untested.
+
+## Re-review of non-funds intent candidate
+
+Candidate: `codex/sem-nonfunds-writeback-intents-20260907` at `37e49181d3ee4055ad8a145e53317355c30b0b6c`.
+
+Verdict: **blocked; do not merge or release**.
+
+The candidate correctly commits a live `pending` intent before the remote call and routes unknown exceptions to `reconcile`, but the following execution gaps remain:
+
+1. **A pre-call intent can be reconciled while the executor is reacquiring locks.** The reconciliation API accepts both `pending` and `reconcile`. After the initial intent commit, `_persist_action_intent` reacquires the asset, account, and record locks, but does not verify that the refreshed record is still `pending`. An offline reproduction changed the record to `failed` with `reconciliation_result="confirmed_not_executed"` during that interval. The executor still made one remote call and finished with `status="success"` while retaining `confirmed_not_executed`. The executor must check the refreshed state before sending; the UI/API should also distinguish an actively sending intent from an unknown result.
+2. **`addWord` has no unresolved-action gate or request idempotency.** `apply_add_word_writeback` only checks the synchronized keyword dimension. A retry after remote success but before candidate adoption or keyword synchronization can issue another create, as can a concurrent request after the first intent commit. The guard must key at least tenant, account, adgroup, and normalized word, and cover unresolved and recently successful equivalent creates or use a durable request idempotency key.
+3. **Conflicting actions use separate gates.** A campaign schedule update with `pause=true` and campaign pause/enable can both pass because one gate only selects `campaign_schedule` and the other only pause/enable action types. Both can call the remote campaign API after their separate intent commits and race on the campaign pause state. Conflict domains must reflect the fields actually mutated.
+4. **Post-commit revalidation is incomplete.** Refreshing the asset does not verify that it still belongs to the original account. The add-word duplicate check is not repeated after the commit. Negative-word full-list payloads are calculated before the commit and are not rebuilt from the refreshed snapshot, so a synchronization update in the release/relock interval can be overwritten.
+
+The candidate's focused tests passed (`88 passed`). A full run excluding `tests/test_geo_brand_profile.py` passed with `2091 passed, 47 skipped`. The isolated GEO brand-profile test failed identically on both this candidate and baseline `9fc891e4c596e92e2af0ab5c567fc3f505c21d62`, so it was not introduced by the candidate. The 47 skipped tests do not include a PostgreSQL concurrency test for this change.
+
+The next review requires a disposable PostgreSQL test with two independent sessions. It must prove same-action and cross-action serialization, no-row guard behavior, add-word retry behavior, a reconciliation attempt during the post-commit/relock interval, and correct payload reconstruction after a concurrent snapshot refresh.
