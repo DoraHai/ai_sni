@@ -35,7 +35,7 @@ import './style.css'
 import SeoApp from './SeoApp.vue'
 import router, { revalidateSessionRoute } from './seo-router'
 import { AUTH_CONTEXT_EVENT } from './store/sessionStorage'
-import { installAuthContextRouting } from './router/authContextRouting'
+import { installAuthContextRouting } from './authContextRouting'
 
 installAuthContextRouting(window, AUTH_CONTEXT_EVENT, revalidateSessionRoute)
 

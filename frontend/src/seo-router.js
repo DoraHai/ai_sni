@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { loginUrl } from './auth/loginRedirect'
 import { session } from './store/session'
-import { leaveUnauthorizedWorkspace } from './router/authContextRouting'
+import { leaveUnauthorizedWorkspace } from './authContextRouting'
 
 const seoChildren = [
   { path: '', redirect: '/seo/dashboard' },
