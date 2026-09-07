@@ -41,6 +41,10 @@ class ModuleWorkspaceTests(unittest.TestCase):
     def test_asset_routes_require_their_own_module_permission(self):
         self.assertEqual(_required("/api/v1/sem/assets/accounts", "GET"), ({"sem.assets"}, False))
         self.assertEqual(_required("/api/v1/seo/sites", "POST"), ({"seo.assets"}, True))
+        self.assertEqual(
+            _required("/api/v1/seo/workbench/sites", "GET"),
+            ({"seo.content", "seo.site"}, False),
+        )
         self.assertEqual(_required("/api/v1/geo/projects", "PATCH"), ({"geo.assets"}, True))
 
     def test_sem_manage_routes_have_explicit_rbac(self):
@@ -70,7 +74,11 @@ class ModuleWorkspaceTests(unittest.TestCase):
 
         self.assertEqual(
             seo_paths,
-            {"/api/v1/seo/sites", "/api/v1/seo/sites/{site_id}"},
+            {
+                "/api/v1/seo/sites",
+                "/api/v1/seo/sites/{site_id}",
+                "/api/v1/seo/workbench/sites",
+            },
         )
         delete_routes = [
             route for route in seo_sites_router.routes
