@@ -5340,6 +5340,7 @@ class DistributionRetryRequest(BaseModel):
 
 def _connection_payload(row: SeoDistributionConnection) -> dict[str, Any]:
     definition = platform_definition(row.platform_code)
+    browser_assisted = row.mode == "assisted"
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
@@ -5350,6 +5351,13 @@ def _connection_payload(row: SeoDistributionConnection) -> dict[str, Any]:
         "base_url": row.base_url,
         "capabilities": row.capabilities or definition.get("capabilities", []),
         "has_credentials": bool(row.has_credentials),
+        # Assisted channels deliberately keep login state outside G-Snipers.
+        # Expose that distinction so consumers never present a channel note as
+        # a stored or verified platform account.
+        "account_binding": "browser_session_required" if browser_assisted else (
+            "stored_credentials" if row.has_credentials else "none"
+        ),
+        "account_verified": False if browser_assisted else bool(row.has_credentials) and row.status == "connected",
         "enabled": row.enabled,
         "status": row.status,
         "last_error": row.last_error,

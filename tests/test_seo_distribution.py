@@ -18,6 +18,7 @@ from app.api.seo import (
     DistributionVariantSaveRequest,
     _create_distribution_variant_revision,
     _distribution_content,
+    _connection_payload,
     _distribution_variant_payload,
     _require_content_ready,
     _sanitize_content_html,
@@ -93,6 +94,29 @@ def test_platform_catalog_distinguishes_api_assisted_and_planned_channels() -> N
     assert "async_status" in catalog["wechat_official"]["capabilities"]
     assert catalog["wechat_official"]["content_rules"]["title_max"] == 32
     assert catalog["zhihu"]["content_rules"]["style"]
+
+
+def test_connection_payload_never_presents_assisted_channel_as_platform_account() -> None:
+    assisted = SeoDistributionConnection(
+        id=1, tenant_id=1, platform_code="csdn", name="CSDN 发布渠道",
+        mode="assisted", status="ready", has_credentials=False, enabled=True,
+    )
+    payload = _connection_payload(assisted)
+    assert payload["account_binding"] == "browser_session_required"
+    assert payload["account_verified"] is False
+    assert payload["has_credentials"] is False
+
+    api = SeoDistributionConnection(
+        id=2, tenant_id=1, platform_code="wechat_official", name="公众号",
+        mode="api", status="connected", has_credentials=True, enabled=True,
+    )
+    payload = _connection_payload(api)
+    assert payload["account_binding"] == "stored_credentials"
+    assert payload["account_verified"] is True
+
+    view = (Path(__file__).parents[1] / "frontend/src/views/seo/SeoDistributionView.vue").read_text(encoding="utf-8")
+    assert "无系统账号 · 发布时浏览器登录" in view
+    assert "辅助渠道已配置 · 登录未核验" not in view
 
 
 @pytest.mark.parametrize(
