@@ -306,8 +306,25 @@ def safe_connection_failure(exc):
 
 
 async def execute_single_push(session, *, task, variant, channel_row, account, mode, article):
-    from app.geo.content.routes import _latest_article, _build_rule_input
+    from app.geo.content.routes import (
+        _brand_context_for_task,
+        _build_rule_input,
+        _ensure_tenant_exists,
+        _latest_article,
+    )
     from app.geo.content.gate import assert_can_publish
+
+    async def assert_current_publish_gate(current_article):
+        # Resolve the business-profile brand at execution time. Callers (including
+        # async workers) may have queued the push before the profile changed.
+        tenant = await _ensure_tenant_exists(session, task.tenant_id)
+        brand, _ = await _brand_context_for_task(session, task, tenant)
+        assert_can_publish(
+            await _build_rule_input(session, task, current_article),
+            task=task,
+            brand=brand,
+        )
+
     if mode not in {"draft", "publish"}:
         raise ValueError("不支持的发布操作")
     await session.refresh(task, with_for_update=True)
@@ -322,7 +339,7 @@ async def execute_single_push(session, *, task, variant, channel_row, account, m
     article = await _latest_article(session, task.id)
     if article is None or variant.article_version_id != article.id:
         raise ValueError("渠道稿不是最新母稿版本，请重新生成并审校")
-    assert_can_publish(await _build_rule_input(session, task, article), task=task)
+    await assert_current_publish_gate(article)
     key = delivery_key(task, variant, account, mode)
     journal = dict((variant.adapt_meta or {}).get("push_deliveries") or {})
     previous = journal.get(key) or {}
@@ -367,6 +384,14 @@ async def execute_single_push(session, *, task, variant, channel_row, account, m
         record("failed", reason="content_changed_before_send")
         await session.commit()
         raise ValueError("稿件或审批已变化，本次未发送，请重新审校")
+    # The reservation commit released the transaction lock. Re-read both the
+    # article and business brand before the first external connector call.
+    try:
+        await assert_current_publish_gate(current_article)
+    except ValueError:
+        record("failed", reason="publish_gate_changed_before_send")
+        await session.commit()
+        raise
     for attempt in range(1, 4):
         try:
             result = await _perform_single_push(session, task=task, variant=variant,
