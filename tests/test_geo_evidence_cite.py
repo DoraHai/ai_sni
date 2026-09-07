@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from app.geo.content.evidence_cite import attach_sentence_citations, split_sentences
+from app.geo.content.generate_article import to_markdown
 
 
 class EvidenceCiteTests(unittest.TestCase):
@@ -53,6 +54,31 @@ class EvidenceCiteTests(unittest.TestCase):
 
         _, untrusted = attach_sentence_citations(author, [])
         self.assertTrue(untrusted[0]["needs_fact"])
+
+    def test_fixed_generation_chrome_does_not_block_grounded_content(self):
+        statement = "MAXXDRIVE XT features a ribbed housing."
+        payload = {
+            "title": statement,
+            "direct_answer": statement,
+            "sections": [{"type": "conclusion", "body": statement}],
+            "updated_at": "2026-09-07",
+            "disclaimer": (
+                "【草案】基于客户提供资料自动生成，仅供内部改稿；"
+                "须人工润色与核验后方可发布。不承诺被 AI 引用或排名。"
+            ),
+        }
+        _, rows = attach_sentence_citations(
+            to_markdown(payload),
+            [{"id": 1, "statement": statement, "source_name": "Manual"}],
+        )
+        self.assertTrue(rows)
+        self.assertTrue(all(not row["needs_fact"] for row in rows), rows)
+
+    def test_model_written_disclaimer_claim_still_requires_evidence(self):
+        _, rows = attach_sentence_citations(
+            "【草案】本产品终身保修，须人工核验后发布。", []
+        )
+        self.assertTrue(any(row["needs_fact"] for row in rows))
 
     def test_cites_overlapping_fact(self):
         md = "Udesk 支持全渠道客服接入。这句话完全无关的内容随便写写。"
