@@ -64,6 +64,16 @@ function displayTime(value) {
 }
 function clearCards() { cards.value = [] }
 function resetDerivedConversation() { conversation.value = initialConversation() }
+function invalidateEvidence({ clearConversation = false } = {}) {
+  ++loadGeneration
+  boundary?.invalidate()
+  semClient?.invalidate()
+  viewState.invalidate()
+  clearCards()
+  moduleState.value = { sem: 'waiting', seo: 'waiting', geo: 'waiting' }
+  lastReadAt.value = null
+  if (clearConversation) resetDerivedConversation()
+}
 function metricCard(report, key, label, unit) {
   const shown = semMetric(report.metrics[key], unit, report.coverage)
   const point = row => semMetric(row[key], unit, { status: row.status, missing_dates: [] }).text
@@ -118,10 +128,9 @@ async function loadSem(generation) {
   }
 }
 async function loadAll() {
-  const generation = ++loadGeneration
+  invalidateEvidence({ clearConversation: true })
+  const generation = loadGeneration
   loading.value = true
-  viewState.invalidate()
-  clearCards()
   for (const item of availableModules.value) moduleState.value[item.module_code] = item.module_code === 'sem' ? 'loading' : 'needs_scope'
   await loadSem(generation)
   if (generation === loadGeneration) loading.value = false
@@ -130,6 +139,9 @@ async function prepare() {
   const generation = ++prepareGeneration
   const requestedTenantId = session.tenantId
   const requestedAuthRevision = session.authRevision
+  invalidateEvidence({ clearConversation: true })
+  tenantModuleCodes.value = new Set()
+  loading.value = secureRuntime
   if (!secureRuntime) {
     loading.value = false
     tenantModuleCodes.value = new Set()
@@ -158,6 +170,7 @@ async function prepare() {
     })
     await loadAll()
   } catch (error) {
+    if (generation !== prepareGeneration || requestedTenantId !== session.tenantId || requestedAuthRevision !== session.authRevision) return
     loading.value = false
     conversation.value.push({ role: 'assistant', text: `工作台身份信息读取失败：${error.message}` })
   }
@@ -199,11 +212,8 @@ try {
   // Local HTTP preview deliberately cannot create the authenticated production transport.
   moduleState.value.sem = 'error'
 }
-watch(() => [session.tenantId, dateStart.value, dateEnd.value], () => {
-  resetDerivedConversation()
-  if (session.modules.length) prepare()
-})
-watch(() => session.authRevision, () => { resetDerivedConversation(); prepare() })
+watch(() => [session.tenantId, dateStart.value, dateEnd.value], () => { if (session.modules.length) prepare() })
+watch(() => session.authRevision, prepare)
 onMounted(prepare)
 onBeforeUnmount(() => { ++loadGeneration; ++prepareGeneration; workbenchSession?.dispose(); viewState.dispose() })
 </script>
