@@ -355,7 +355,7 @@ function permOk(perm) {
   const keys = Array.isArray(perm) ? perm : [perm]
   return keys.some((k) => session.canView(k))
 }
-router.beforeEach((to) => {
+function sessionRouteDecision(to, warn = true) {
   const devBypass = !session.isLoggedIn && import.meta.env.VITE_API_KEY && import.meta.env.DEV
   if (!to.meta.public && !session.isLoggedIn && !devBypass) {
     window.location.assign(loginUrl(to.fullPath))
@@ -365,11 +365,19 @@ router.beforeEach((to) => {
   if (!to.meta.public && !permOk(to.meta.perm)) {
     const dest = firstAllowedPath()
     const permission = Array.isArray(to.meta.perm) ? to.meta.perm.join(' / ') : to.meta.perm
-    ElMessage.warning(`当前账号没有“${to.meta.title || '该页面'}”权限（需要 ${permission}）。请让管理员在「账号与权限」中为你的角色开通。`)
+    if (warn) ElMessage.warning(`当前账号没有“${to.meta.title || '该页面'}”权限（需要 ${permission}）。请让管理员在「账号与权限」中为你的角色开通。`)
     if (dest && dest !== to.path) return { path: dest }
     return { path: '/workspace' }
   }
-})
+  return true
+}
+router.beforeEach((to) => sessionRouteDecision(to))
+
+export function revalidateSessionRoute() {
+  const decision = sessionRouteDecision(router.currentRoute.value, false)
+  if (decision && decision !== true) return router.replace(decision)
+  return Promise.resolve(decision)
+}
 router.afterEach((to) => {
   clearChunkRecoveryMarker()
   const productName = to.path.startsWith('/seo') ? 'SEO 工作台' : 'SEM 智投平台'

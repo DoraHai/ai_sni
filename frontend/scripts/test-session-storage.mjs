@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { persistentAuthForEvent, readAuthPair, selectStoredAuth } from '../src/store/sessionStorage.js'
+import {
+  AUTH_ENVELOPE_KEY,
+  persistentAuthForEvent,
+  readAuthPair,
+  selectStoredAuth,
+  writeAuthEnvelope,
+} from '../src/store/sessionStorage.js'
 
 function memory(initial = {}) {
   const values = new Map(Object.entries(initial))
@@ -12,56 +18,82 @@ function memory(initial = {}) {
   }
 }
 
-const user = (id, tenantId = null) => JSON.stringify({ id, tenant_id: tenantId, permissions: { 'geo.content': 'view' } })
+const user = (id, tenantId = null) => ({ id, tenant_id: tenantId, permissions: { 'geo.content': 'view' } })
 
-test('token and user are accepted only as a valid pair from one storage', () => {
+test('legacy token and user are accepted only as a valid pair from one storage', () => {
   const local = memory({ sem_token: 'local-token' })
-  const session = memory({ sem_user: user(2) })
+  const session = memory({ sem_user: JSON.stringify(user(2)) })
   assert.equal(readAuthPair(local), null)
   assert.equal(readAuthPair(session), null)
   assert.equal(selectStoredAuth(local, session), null)
 
   local.setItem('sem_user', '{bad json')
   assert.equal(selectStoredAuth(local, session), null)
+
+  local.setItem('sem_user', JSON.stringify(user(1)))
+  local.setItem('sem_auth_v1', '{bad envelope')
+  assert.equal(selectStoredAuth(local, session), null)
 })
 
 test('an explicit tab session wins over a persistent login from another tab', () => {
-  const local = memory({ sem_token: 'local-token', sem_user: user(1, 10) })
-  const session = memory({ sem_token: 'tab-token', sem_user: user(2, 20) })
+  const local = memory()
+  const session = memory()
+  writeAuthEnvelope(local, 'local-token', user(1, 10))
+  writeAuthEnvelope(session, 'tab-token', user(2, 20))
   assert.deepEqual(selectStoredAuth(local, session), {
-    token: 'tab-token', user: JSON.parse(user(2, 20)), storage: 'session',
+    token: 'tab-token', user: user(2, 20), storage: 'session',
   })
   assert.equal(persistentAuthForEvent({
-    event: { key: 'sem_token', storageArea: local }, localStore: local,
+    event: { key: AUTH_ENVELOPE_KEY, storageArea: local }, localStore: local,
     sessionStore: session, currentStorage: 'session',
   }), undefined)
 })
 
-test('persistent login refresh and logout are synchronized without carrying tenant state', () => {
-  const local = memory({ sem_token: 'new-token', sem_user: user(3, null) })
-  const session = memory({ sem_tenant_id: '99' })
-  assert.deepEqual(persistentAuthForEvent({
-    event: { key: 'sem_token', storageArea: local }, localStore: local,
-    sessionStore: session, currentStorage: 'local',
-  }), { token: 'new-token', user: JSON.parse(user(3, null)), storage: 'local' })
+test('legacy key events never publish a mixed persistent identity', () => {
+  const local = memory()
+  const session = memory()
+  writeAuthEnvelope(local, 'old-token', user(1, 10))
 
-  local.removeItem('sem_token')
+  local.setItem('sem_user', JSON.stringify(user(2, 20)))
+  assert.equal(persistentAuthForEvent({
+    event: { key: 'sem_user', storageArea: local }, localStore: local,
+    sessionStore: session, currentStorage: 'local',
+  }), undefined)
+  local.setItem('sem_token', 'new-token')
   assert.equal(persistentAuthForEvent({
     event: { key: 'sem_token', storageArea: local }, localStore: local,
+    sessionStore: session, currentStorage: 'local',
+  }), undefined)
+
+  assert.deepEqual(persistentAuthForEvent({
+    event: { key: AUTH_ENVELOPE_KEY, storageArea: local }, localStore: local,
+    sessionStore: session, currentStorage: 'local',
+  }), { token: 'old-token', user: user(1, 10), storage: 'local' })
+
+  writeAuthEnvelope(local, 'new-token', user(2, 20))
+  assert.deepEqual(persistentAuthForEvent({
+    event: { key: AUTH_ENVELOPE_KEY, storageArea: local }, localStore: local,
+    sessionStore: session, currentStorage: 'local',
+  }), { token: 'new-token', user: user(2, 20), storage: 'local' })
+})
+
+test('persistent envelope removal synchronizes logout', () => {
+  const local = memory()
+  const session = memory()
+  writeAuthEnvelope(local, 'token', user(1))
+  local.removeItem(AUTH_ENVELOPE_KEY)
+  assert.equal(persistentAuthForEvent({
+    event: { key: AUTH_ENVELOPE_KEY, storageArea: local }, localStore: local,
     sessionStore: session, currentStorage: 'local',
   }), null)
 })
 
-test('unrelated and sessionStorage events do not mutate persistent identity', () => {
-  const local = memory({ sem_token: 'token', sem_user: user(1) })
+test('a legacy client logout remains fail closed during migration', () => {
+  const local = memory({ sem_token: 'legacy-token', sem_user: JSON.stringify(user(1)) })
   const session = memory()
+  local.removeItem('sem_token')
   assert.equal(persistentAuthForEvent({
-    event: { key: 'theme', storageArea: local }, localStore: local,
+    event: { key: 'sem_token', newValue: null, storageArea: local }, localStore: local,
     sessionStore: session, currentStorage: 'local',
-  }), undefined)
-  assert.equal(persistentAuthForEvent({
-    event: { key: 'sem_token', storageArea: session }, localStore: local,
-    sessionStore: session, currentStorage: 'local',
-  }), undefined)
+  }), null)
 })
-
