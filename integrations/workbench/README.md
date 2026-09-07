@@ -7,7 +7,12 @@ Six SEO GET resources are enabled with route-specific query keys and required
 tenant/site scope. Review history uses tenant scope plus a verified content reference;
 it must not pretend an ignored site_id parameter provides server-side site isolation.
 Publication reads require a content ID and cannot use filtered subsets as totals.
-GEO routes remain pending integration. This does not activate any UI or grant access.
+GEO customer lookup and six reviewed resources are enabled with exact paths and
+per-route query keys. Each data request requires tenant scope; weekly resources
+also require an explicit valid Monday week end. Questions retain their own filters
+without pretending to follow the weekly metric window. Legacy configuration and
+job routes are excluded. This does not activate any UI or grant access; GEO identity
+preflight and full host wiring still require integration review.
 
 The browser host must supply its **own HTTPS origin**, `fetch`, and a synchronous
 `getSession()` returning `{ token, revision }` from the ordinary authenticated session.
