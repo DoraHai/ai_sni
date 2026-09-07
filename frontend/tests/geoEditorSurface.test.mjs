@@ -94,8 +94,11 @@ test('task editor keeps the complete editor-first interaction surface', () => {
 test('evidence fallback exposes an unresolved brand warning and recheck path', () => {
   for (const marker of [
     'const brandValidationWarning = computed',
+    'const brandValidationRecheckPending = computed',
     'current_brand_validation',
     'generation_meta?.brand_validation',
+    '品牌配置已更新，当前文章检查结果需要刷新',
+    '现有检查仍使用品牌',
     '证据原文稿已保存，品牌标准仍待处理',
     '未通过前不会标记就绪',
     '按当前品牌重新检查',

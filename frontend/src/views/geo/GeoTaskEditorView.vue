@@ -2458,6 +2458,18 @@ const brandValidationWarning = computed(() => {
   const value = checked || current || generated
   return value?.passed === false ? value : null
 })
+const brandValidationRecheckPending = computed(() => {
+  const stored = task.value?.rule_result?.brand_validation
+  const current = task.value?.current_brand_validation
+  if (!stored || !current) return null
+  const storedBrand = String(stored.brand || '').trim()
+  const currentBrand = String(current.brand || '').trim()
+  if (!storedBrand || !currentBrand || storedBrand === currentBrand) return null
+  return {
+    previous_brand: storedBrand,
+    current_brand: currentBrand,
+  }
+})
 const geoActions = computed(
   () => scoreIsCurrent.value
     ? checkResult.value?.geo_actions || task.value?.rule_result?.geo_actions || []
@@ -3627,7 +3639,13 @@ onMounted(load)
             <span>当前稿保存于 {{ generationFailureNotice.articleTime }}；失败任务结束于 {{ generationFailureNotice.failedAt }}（上海时间）</span>
             <small>{{ generationFailureNotice.detail }}</small>
           </div>
-          <div v-if="brandValidationWarning" class="ed-generation-failure" role="status">
+          <div v-if="brandValidationRecheckPending" class="ed-generation-failure" role="status">
+            <b>品牌配置已更新，当前文章检查结果需要刷新</b>
+            <span>当前配置品牌：{{ brandValidationRecheckPending.current_brand }}</span>
+            <small>现有检查仍使用品牌“{{ brandValidationRecheckPending.previous_brand }}”，请按当前品牌重新检查。</small>
+            <el-button size="small" :loading="busy === 'check'" @click="runCheck">按当前品牌重新检查</el-button>
+          </div>
+          <div v-else-if="brandValidationWarning" class="ed-generation-failure" role="status">
             <b>证据原文稿已保存，品牌标准仍待处理</b>
             <span>当前配置品牌：{{ brandValidationWarning.brand || '未配置' }}</span>
             <small>{{ (brandValidationWarning.issues || ['开篇与结论尚未使用有证据支持的品牌名'])[0] }}</small>
