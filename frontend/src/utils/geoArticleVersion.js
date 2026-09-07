@@ -2,7 +2,8 @@ export function articleVersionLabel(article) {
   if (!article?.id) return '尚无保存版本'
   const meta = article.generation_meta || {}
   const source = {
-    ai: 'AI 生成', rules: '规则草稿', manual_edit: '手动保存',
+    ai: 'AI 生成', rules: '规则草稿',
+    rules_after_claim_guard: '证据原文稿（模型越界后）', manual_edit: '手动保存',
     article_import: '导入', ai_optimize: 'AI 优化',
   }[meta.source] || '来源未记录'
   const version = article.version_no == null ? '版本未知' : `V${article.version_no}`

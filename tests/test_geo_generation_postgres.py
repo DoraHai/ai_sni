@@ -20,9 +20,9 @@ from app.geo.content.async_jobs import (
     request_cancel,
     run_job_in_background,
 )
-from app.geo.content.routes import create_variants, generate_task_article
-from app.geo.content.schemas import VariantsCreate
-from app.models import GeoAsyncJob, GeoContentTask
+from app.geo.content.routes import create_variants, generate_task_article, verify_fact
+from app.geo.content.schemas import FactVerifyRequest, VariantsCreate
+from app.models import GeoAsyncJob, GeoContentTask, GeoFact
 
 
 pytestmark = pytest.mark.skipif(
@@ -594,6 +594,53 @@ def test_failed_sync_variant_job_releases_task_and_allows_retry():
                     assert retry["job"]["status"] == "pending"
             async with sessions() as session:
                 assert await session.scalar(select(func.count(GeoAsyncJob.id))) == 2
+        finally:
+            await _cleanup(admin, engine, schema, tables)
+
+    asyncio.run(run())
+
+
+def test_translation_verification_rejects_source_changed_while_waiting_for_row_lock():
+    old_source = "The MAXXDRIVE XT industrial gear unit has an axial fan."
+    new_source = "The MAXXDRIVE XT industrial gear unit does not have an axial fan."
+
+    async def run():
+        admin, engine, schema, tables = await _prepare_database()
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as setup:
+                fact = await setup.get(GeoFact, 1)
+                fact.statement = old_source
+                fact.meta = {}
+                await setup.commit()
+
+            async with sessions() as editor, sessions() as verifier:
+                fact = await editor.get(GeoFact, 1)
+                await editor.refresh(fact, with_for_update=True)
+                request = FactVerifyRequest(
+                    excerpt="The MAXXDRIVE XT industrial gear unit",
+                    excerpt_locator="product page specification",
+                    verified_translation="MAXXDRIVE XT 工业齿轮箱配有轴向风扇。",
+                    expected_source_statement=old_source,
+                    expected_source_name="已核验资料",
+                    expected_source_url="https://example.invalid/source/1",
+                )
+                verification = asyncio.create_task(
+                    verify_fact(1, request, 7, _ctx(), verifier)
+                )
+                await asyncio.sleep(0.1)
+                assert not verification.done()
+                fact.statement = new_source
+                await editor.commit()
+                with pytest.raises(HTTPException) as error:
+                    await asyncio.wait_for(verification, 10)
+                assert error.value.status_code == 409
+
+            async with sessions() as check:
+                fact = await check.get(GeoFact, 1)
+                assert fact.statement == new_source
+                assert not (fact.meta or {}).get("verified_translations")
+                assert not (fact.meta or {}).get("verification")
         finally:
             await _cleanup(admin, engine, schema, tables)
 

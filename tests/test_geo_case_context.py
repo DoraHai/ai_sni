@@ -75,9 +75,10 @@ def test_generation_pipeline_with_mock_model_preserves_gate_and_full_error(sente
             llm={'api_key': 'dummy', 'base_url': 'http://invalid', 'model': 'test'})
     with patch('app.geo.content.generate_article.chat_json', new=AsyncMock(return_value=payload(sentence))) as model:
         if blocked:
-            with pytest.raises(GeoContentError) as error:
-                asyncio.run(generate())
-            assert sentence in str(error.value)
+            result = asyncio.run(generate())
+            from app.geo.content.generate_article import to_markdown
+            assert sentence not in to_markdown(result)
+            assert result['_source'] == 'rules_after_claim_guard'
             assert model.await_count == 2
         else:
             assert asyncio.run(generate())

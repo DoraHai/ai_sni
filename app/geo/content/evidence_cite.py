@@ -11,7 +11,7 @@ from app.geo.content.fact_retrieve import tokenize
 _SENT_SPLIT = re.compile(r"(?<=[。！？!?；;\n])")
 _APPENDIX = re.compile(r"\n+## 逐句证据\s*\n[\s\S]*\Z")
 _GENERIC_HEADING = re.compile(
-    r"^(?:定义(?:与背景)?|背景|概述|简介|对比(?:选型|与考量)?|操作步骤|"
+    r"^(?:定义(?:与背景)?|背景|概述|简介|关键对比与考量|对比(?:选型|与考量)?|操作步骤|"
     r"常见问题|FAQ|结论(?:与建议)?|来源|参考资料)$",
     re.I,
 )
@@ -179,6 +179,7 @@ def _support_basis(sentence: str, fact: dict[str, Any]) -> str | None:
     def canonical(value: str) -> str:
         text = re.sub(r"[（(]来源[：:][^）)\n]*[）)]\s*$", "", value or "")
         text = re.sub(r"^\s*(?:#{1,6}|[-*+])\s*", "", text)
+        text = re.sub(r"^\*{0,2}(?:直接回答|答|A)[：:]\*{0,2}\s*", "", text, flags=re.I)
         return re.sub(r"[\s*#`]+", "", text).strip("。.!！?？；;").casefold()
 
     source_values = [str(fact.get("statement") or ""), *verified_translation_texts(fact)]

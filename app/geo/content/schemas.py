@@ -155,6 +155,10 @@ class FactVerifyRequest(BaseModel):
     excerpt_locator: str = Field(..., min_length=2, max_length=200)
     source_url: str | None = Field(None, max_length=800)
     note: str | None = Field(None, max_length=500)
+    verified_translation: str | None = Field(None, min_length=4, max_length=500)
+    expected_source_statement: str | None = Field(None, min_length=8, max_length=220)
+    expected_source_name: str | None = Field(None, min_length=1, max_length=200)
+    expected_source_url: str | None = Field(None, min_length=1, max_length=800)
 
 
 class SourceOpportunityTaskCreate(BaseModel):
