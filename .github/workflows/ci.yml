@@ -194,6 +194,7 @@ jobs:
               "test_match_combo_sync_in_commit_relock_gap_blocks_remote_overwrite",
               "test_dry_run_add_word_does_not_block_later_live_request",
               "test_batch_negative_recomputes_from_latest_list_after_intent_commit",
+              "test_pause_final_commit_failure_keeps_durable_pre_send_audit",
           }
           names = {case.attrib["name"] for case in root.iter("testcase")}
           tests = int(root.attrib["tests"])

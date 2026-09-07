@@ -24,6 +24,7 @@ from app.baidu.writeback import (
     apply_adgroup_pause_writeback,
     apply_campaign_pause_writeback,
     apply_match_type_writeback,
+    apply_pause_writeback,
 )
 
 
@@ -394,8 +395,125 @@ def test_match_combo_change_after_intent_commit_blocks_remote() -> None:
     assert captured[0].status == "failed"
     assert captured[0].old_value == 1
     assert json.loads(captured[0].baidu_response) == {
+        "schema": "sem.match_change",
+        "version": 1,
         "old": {"matchType": 1, "phraseType": 1},
         "new": {"matchType": 2, "phraseType": 3},
     }
     assert keyword.match_type == 2
     assert keyword.phrase_type == 1
+
+
+def test_large_non_json_match_response_keeps_valid_audit_json() -> None:
+    keyword = SimpleNamespace(
+        baidu_account_id=88,
+        keyword_id=55,
+        keyword="工业泵",
+        campaign_id=12,
+        adgroup_id=44,
+        match_type=2,
+        phrase_type=1,
+    )
+    account = SimpleNamespace(id=88, status="active")
+    session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[keyword, None]),
+        add=Mock(),
+        flush=AsyncMock(),
+        refresh=AsyncMock(),
+        commit=AsyncMock(),
+    )
+
+    class LargeResponse:
+        def __str__(self):
+            return "百度响应内容" * 800
+
+    remote = AsyncMock(return_value=LargeResponse())
+
+    async def run():
+        with (
+            patch("app.baidu.writeback._active_account", new=AsyncMock(return_value=account)),
+            patch("app.baidu.writeback._account_client", return_value=object()),
+            patch("app.baidu.writeback.KeywordService.update_word_match_type", remote),
+            patch("app.baidu.writeback.get_settings", return_value=_live_settings()),
+        ):
+            return await apply_match_type_writeback(
+                session, 7, 55, 2, 3, operator_user_id=3, operator_name="tester"
+            )
+
+    record = asyncio.run(run())
+    payload = json.loads(record.baidu_response)
+    assert payload["schema"] == "sem.match_change"
+    assert payload["version"] == 1
+    assert payload["old"] == {"matchType": 2, "phraseType": 1}
+    assert payload["new"] == {"matchType": 2, "phraseType": 3}
+    assert payload["baidu"]["truncated"] is True
+    assert "百度响应内容" in payload["baidu"]["preview"]
+    assert len(record.baidu_response) < 2000
+
+
+@pytest.mark.parametrize(
+    ("apply", "asset", "remote_path", "args", "message"),
+    [
+        (
+            apply_pause_writeback,
+            SimpleNamespace(
+                baidu_account_id=88, keyword_id=55, keyword="工业泵",
+                campaign_id=12, adgroup_id=44, pause=False,
+            ),
+            "app.baidu.writeback.KeywordService.update_word_pause",
+            (7, 55, True),
+            "关键词启停状态已变化",
+        ),
+        (
+            apply_campaign_pause_writeback,
+            SimpleNamespace(
+                baidu_account_id=88, campaign_id=12, campaign_name="品牌计划", pause=False,
+            ),
+            "app.baidu.writeback.CampaignService.update_campaign_pause",
+            (7, 12, True),
+            "计划启停状态已变化",
+        ),
+        (
+            apply_adgroup_pause_writeback,
+            _adgroup(),
+            "app.baidu.writeback.AdgroupService.update_adgroup_fields",
+            (7, 44, True),
+            "单元启停状态已变化",
+        ),
+    ],
+)
+def test_pause_snapshot_change_after_intent_commit_blocks_remote(
+    apply, asset, remote_path, args, message
+) -> None:
+    account = SimpleNamespace(id=88, status="active")
+    captured = []
+
+    async def refresh(row, **_kwargs):
+        if row is asset:
+            asset.pause = True
+
+    session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[asset, None]),
+        add=lambda record: captured.append(record),
+        flush=AsyncMock(),
+        refresh=AsyncMock(side_effect=refresh),
+        commit=AsyncMock(),
+    )
+    remote = AsyncMock()
+
+    async def run():
+        with (
+            patch("app.baidu.writeback._active_account", new=AsyncMock(return_value=account)),
+            patch(remote_path, remote),
+            patch("app.baidu.writeback.get_settings", return_value=_live_settings()),
+        ):
+            return await apply(
+                session, *args, operator_user_id=3, operator_name="tester"
+            )
+
+    with pytest.raises(WritebackError, match=message):
+        asyncio.run(run())
+
+    remote.assert_not_awaited()
+    assert captured[0].status == "failed"
+    assert (captured[0].old_value, captured[0].new_value) == (0, 1)

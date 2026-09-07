@@ -17,7 +17,7 @@ os.environ.setdefault(
 )
 os.environ.setdefault("ADMIN_API_KEY", "ci-admin-key")
 
-from app.api.search_terms import _action_dict  # noqa: E402
+from app.api.search_terms import _action_dict, _match_change  # noqa: E402
 from app.models import WRITEBACK_ACTION_LABELS  # noqa: E402
 
 
@@ -94,7 +94,8 @@ def test_action_api_exposes_complete_match_combo_without_raw_response():
         old_value=2,
         new_value=2,
         baidu_response=(
-            '{"old":{"matchType":2,"phraseType":1},'
+            '{"schema":"sem.match_change","version":1,'
+            '"old":{"matchType":2,"phraseType":1},'
             '"new":{"matchType":2,"phraseType":3},"baidu":{"ok":true}}'
         ),
         campaign_name="测试计划",
@@ -114,6 +115,20 @@ def test_action_api_exposes_complete_match_combo_without_raw_response():
         "new": {"matchType": 2, "phraseType": 3},
     }
     assert "baidu_response" not in result
+
+
+def test_action_api_ignores_unmarked_or_invalid_match_metadata():
+    base = SimpleNamespace(
+        action_type="set_match_type",
+        baidu_response='{"old":{"matchType":2,"phraseType":1},"new":{"matchType":2,"phraseType":3}}',
+    )
+    assert _match_change(base) is None
+    base.baidu_response = (
+        '{"schema":"sem.match_change","version":1,'
+        '"old":{"matchType":2,"phraseType":1},'
+        '"new":{"matchType":9,"phraseType":9}}'
+    )
+    assert _match_change(base) is None
 
 
 def test_frontend_action_filters_cover_every_backend_action_type():

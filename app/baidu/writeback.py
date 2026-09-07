@@ -62,6 +62,25 @@ class WritebackError(Exception):
     """回写前校验失败（业务拒绝，不调百度）。"""
 
 
+def _boolean_audit_value(value: bool | None) -> int | None:
+    return None if value is None else int(bool(value))
+
+
+def _bounded_response_summary(value: Any, limit: int = 800) -> Any:
+    """Return JSON-safe response evidence without ever truncating its container."""
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        encoded = json.dumps(str(value), ensure_ascii=False)
+    if len(encoded) <= limit:
+        return json.loads(encoded)
+    return {
+        "truncated": True,
+        "originalChars": len(encoded),
+        "preview": encoded[:limit],
+    }
+
+
 def _normalized_keyword_text(value: str | None) -> str:
     """Normalize surrounding whitespace and case for add-word duplicate checks."""
     return (value or "").strip().casefold()
@@ -967,6 +986,7 @@ async def apply_pause_writeback(
     if kw is None:
         raise WritebackError("关键词不在维度表中，请先执行关键词维度同步")
     acc = await _active_account(session, tenant_id, _asset_account_id(kw, "关键词"))
+    old_pause = kw.pause
     dry_run = _effective_dry_run(tenant_id, acc.id, "keyword_pause")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
@@ -982,15 +1002,15 @@ async def apply_pause_writeback(
         tenant_id=tenant_id, baidu_account_id=acc.id,
         action_type="pause" if pause else "enable",
         word=kw.keyword, campaign_id=kw.campaign_id, adgroup_id=kw.adgroup_id,
-        old_value=1 if kw.pause else 0, new_value=1 if pause else 0,
+        old_value=_boolean_audit_value(old_pause), new_value=int(pause),
         dry_run=dry_run, status="pending",
         operator_user_id=operator_user_id, operator_name=operator_name,
     )
     await _persist_action_intent(
         session, rec, dry_run=dry_run, asset=kw, account=acc
     )
-    if not dry_run:
-        rec.old_value = 1 if kw.pause else 0
+    if not dry_run and kw.pause != old_pause:
+        await _fail_action_preflight(session, rec, "关键词启停状态已变化，请核对后重试")
     try:
         svc = KeywordService(_account_client(acc))
         resp = await svc.update_word_pause(keyword_id, pause)
@@ -1052,6 +1072,8 @@ async def apply_match_type_writeback(
             WritebackAction.action_type == "set_match_type",
         )
     match_audit = {
+        "schema": "sem.match_change",
+        "version": 1,
         "old": {"matchType": old_match_combo[0], "phraseType": old_match_combo[1]},
         "new": {"matchType": match_type, "phraseType": phrase_type},
     }
@@ -1081,8 +1103,10 @@ async def apply_match_type_writeback(
         resp = await svc.update_word_match_type(keyword_id, match_type, phrase_type)
         rec.status = "dry_run" if dry_run else "success"
         rec.baidu_response = json.dumps(
-            {**match_audit, "baidu": resp}, ensure_ascii=False, default=str
-        )[:2000]
+            {**match_audit, "baidu": _bounded_response_summary(resp)},
+            ensure_ascii=False,
+            default=str,
+        )
         rec.executed_at = datetime.utcnow()
         if not dry_run:
             kw.match_type = match_type
@@ -1318,6 +1342,7 @@ async def apply_campaign_pause_writeback(
     if camp is None:
         raise WritebackError("计划不在维度表中，请先执行计划维度同步")
     acc = await _active_account(session, tenant_id, _asset_account_id(camp, "计划"))
+    old_pause = camp.pause
 
     dry_run = _effective_dry_run(tenant_id, acc.id, "campaign_pause")
     if not dry_run:
@@ -1333,15 +1358,15 @@ async def apply_campaign_pause_writeback(
         action_type="campaign_pause" if pause else "campaign_enable",
         word=camp.campaign_name or f"计划#{campaign_id}",
         campaign_id=campaign_id, campaign_name=camp.campaign_name,
-        old_value=1 if camp.pause else 0, new_value=1 if pause else 0,
+        old_value=_boolean_audit_value(old_pause), new_value=int(pause),
         dry_run=dry_run, status="pending",
         operator_user_id=operator_user_id, operator_name=operator_name,
     )
     await _persist_action_intent(
         session, rec, dry_run=dry_run, asset=camp, account=acc
     )
-    if not dry_run:
-        rec.old_value = 1 if camp.pause else 0
+    if not dry_run and camp.pause != old_pause:
+        await _fail_action_preflight(session, rec, "计划启停状态已变化，请核对后重试")
     try:
         resp = await CampaignService(_account_client(acc)).update_campaign_pause(
             campaign_id, pause
@@ -1627,6 +1652,7 @@ async def apply_adgroup_pause_writeback(
     if adg is None:
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
     acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
+    old_pause = adg.pause
 
     dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_pause")
     if not dry_run:
@@ -1642,15 +1668,15 @@ async def apply_adgroup_pause_writeback(
         action_type="adgroup_pause" if pause else "adgroup_enable",
         word=adg.adgroup_name or f"单元#{adgroup_id}",
         campaign_id=adg.campaign_id, adgroup_id=adgroup_id, adgroup_name=adg.adgroup_name,
-        old_value=1 if adg.pause else 0, new_value=1 if pause else 0,
+        old_value=_boolean_audit_value(old_pause), new_value=int(pause),
         dry_run=dry_run, status="pending",
         operator_user_id=operator_user_id, operator_name=operator_name,
     )
     await _persist_action_intent(
         session, rec, dry_run=dry_run, asset=adg, account=acc
     )
-    if not dry_run:
-        rec.old_value = 1 if adg.pause else 0
+    if not dry_run and adg.pause != old_pause:
+        await _fail_action_preflight(session, rec, "单元启停状态已变化，请核对后重试")
     try:
         resp = await AdgroupService(_account_client(acc)).update_adgroup_fields(
             adgroup_id, pause=pause

@@ -191,9 +191,22 @@ def _match_change(r: WritebackAction) -> dict | None:
         payload = json.loads(r.baidu_response)
     except (TypeError, ValueError):
         return None
-    old = payload.get("old") if isinstance(payload, dict) else None
+    if not isinstance(payload, dict) or payload.get("schema") != "sem.match_change":
+        return None
+    if payload.get("version") != 1:
+        return None
+    old = payload.get("old")
     new = payload.get("new") if isinstance(payload, dict) else None
     if not isinstance(old, dict) or not isinstance(new, dict):
+        return None
+    allowed = {(1, 1), (2, 1), (2, 3)}
+    values = (
+        old.get("matchType"), old.get("phraseType"),
+        new.get("matchType"), new.get("phraseType"),
+    )
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+        return None
+    if (values[0], values[1]) not in allowed or (values[2], values[3]) not in allowed:
         return None
     return {"old": old, "new": new}
 

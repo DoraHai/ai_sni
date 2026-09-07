@@ -21,6 +21,7 @@ from app.baidu.writeback import (
     _persist_funds_intent,
     _relock_action_intent,
     apply_add_word_writeback,
+    apply_campaign_pause_writeback,
     apply_match_type_writeback,
     apply_negative_batch_writeback,
     apply_negative_writeback,
@@ -660,5 +661,59 @@ def test_batch_negative_recomputes_from_latest_list_after_intent_commit():
                 assert adgroup.negative_words == ["已同步词", "工业泵", "阀门"]
                 statuses = (await check.scalars(select(WritebackAction.status))).all()
                 assert statuses == ["success", "success"]
+
+    asyncio.run(exercise())
+
+
+def test_pause_final_commit_failure_keeps_durable_pre_send_audit():
+    async def exercise():
+        async with database() as engine:
+            async with AsyncSession(engine, expire_on_commit=False) as setup:
+                setup.add_all([account_row(), campaign_row()])
+                await setup.commit()
+
+            remote = AsyncMock(return_value={"header": {"status": 0}})
+            async with AsyncSession(engine, expire_on_commit=False) as executor:
+                real_commit = executor.commit
+                commit_count = 0
+
+                async def fail_final_commit():
+                    nonlocal commit_count
+                    commit_count += 1
+                    if commit_count == 1:
+                        await real_commit()
+                        return
+                    raise RuntimeError("simulated process interruption before final commit")
+
+                with (
+                    patch.object(executor, "commit", new=fail_final_commit),
+                    patch("app.baidu.writeback._account_client", return_value=object()),
+                    patch("app.baidu.writeback.CampaignService.update_campaign_pause", remote),
+                    patch(
+                        "app.baidu.writeback.get_settings",
+                        return_value=SimpleNamespace(
+                            baidu_write_dry_run=False,
+                            baidu_write_is_dry_run=lambda tenant_id, account_id, scope: False,
+                        ),
+                    ),
+                ):
+                    with pytest.raises(RuntimeError, match="process interruption"):
+                        await apply_campaign_pause_writeback(
+                            executor,
+                            3,
+                            202,
+                            True,
+                            operator_user_id=9,
+                            operator_name="tester",
+                        )
+                await executor.rollback()
+
+            remote.assert_awaited_once_with(202, True)
+            async with AsyncSession(engine) as check:
+                record = await check.scalar(select(WritebackAction))
+                campaign = await check.get(Campaign, 101)
+                assert record.status == "pending"
+                assert (record.old_value, record.new_value) == (0, 1)
+                assert campaign.pause is False
 
     asyncio.run(exercise())
