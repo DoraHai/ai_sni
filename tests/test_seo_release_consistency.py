@@ -43,6 +43,12 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("ops/platform-deploy/install-seo-frontend.sh")
     assert source_path_allowed("ops/platform-deploy/modules/seo-frontend")
     assert source_path_allowed("frontend/src/views/seo/SeoDashboardView.vue")
+    assert source_path_allowed("frontend/src/api/client.js")
+    assert source_path_allowed("frontend/src/authContextRouting.js")
+    assert source_path_allowed("frontend/src/store/session.js")
+    assert source_path_allowed("frontend/src/store/sessionStorage.js")
+    assert source_path_allowed("frontend/scripts/test-session-storage.mjs")
+    assert source_path_allowed("frontend/scripts/test-session-store-integration.mjs")
     assert source_path_allowed("frontend/tests/seoBatchOperations.test.mjs")
     assert source_path_allowed("frontend/package-lock.json")
     assert source_path_allowed("app/api/customer_modules.py")
@@ -52,6 +58,7 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert not source_path_allowed("app/api/auth.py")
     assert not source_path_allowed("frontend/src/views/monitor/DashboardView.vue")
     assert not source_path_allowed("frontend/src/views/LoginView.vue")
+    assert not source_path_allowed("frontend/src/main.js")
 
 
 def test_seo_workflows_run_site_association_and_traffic_regressions() -> None:
@@ -63,6 +70,16 @@ def test_seo_workflows_run_site_association_and_traffic_regressions() -> None:
         workflow = (root / relative).read_text(encoding="utf-8")
         assert "tests/test_seo_site_association.py" in workflow
         assert "tests/test_seo_traffic.py" in workflow
+
+
+def test_seo_frontend_workflows_gate_shared_session_regressions() -> None:
+    root = Path(__file__).parents[1]
+    for relative in (
+        ".github/workflows/seo-baseline-check.yml",
+        ".github/workflows/production-seo-frontend-deploy.yml",
+    ):
+        workflow = (root / relative).read_text(encoding="utf-8")
+        assert "npm run test:session-storage" in workflow
 
 
 def test_seo_baseline_uses_authoritative_production_history_not_main() -> None:
