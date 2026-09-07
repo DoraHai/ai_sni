@@ -176,15 +176,17 @@ export function createGeoReadonlyClient({ transport, onClear }) {
   let dictionary = null
   const answers = new Map()
   const answerCursors = new Map()
+  const answerPages = new Map()
   let answerFingerprint = null
   const questions = new Map()
   const questionCursors = new Map()
+  const questionPages = new Map()
   let questionFingerprint = null
 
   function clearData() {
     period = null; metrics = null; dictionary = null
-    answers.clear(); answerCursors.clear(); answerFingerprint = null
-    questions.clear(); questionCursors.clear(); questionFingerprint = null
+    answers.clear(); answerCursors.clear(); answerPages.clear(); answerFingerprint = null
+    questions.clear(); questionCursors.clear(); questionPages.clear(); questionFingerprint = null
   }
   function abort(prefix) {
     for (const [key, controller] of pending) if (key.startsWith(prefix)) { controller.abort(); pending.delete(key) }
@@ -212,12 +214,12 @@ export function createGeoReadonlyClient({ transport, onClear }) {
       if (params.cursor !== undefined) {
         if (answerFingerprint !== mark || answerCursors.get(params.cursor) !== mark) fail('CURSOR_CONTEXT_CHANGED', '游标与当前租户、周或筛选条件不匹配')
       } else {
-        abort('answerDetail:'); answers.clear(); answerCursors.clear(); answerFingerprint = mark
+        abort('answerDetail:'); answers.clear(); answerCursors.clear(); answerPages.clear(); answerFingerprint = mark
       }
     }
     if (resource === 'questions') {
       const mark = fingerprint({ ...params, beforeId: undefined })
-      if (params.beforeId === undefined) { questions.clear(); questionCursors.clear(); questionFingerprint = mark }
+      if (params.beforeId === undefined) { questions.clear(); questionCursors.clear(); questionPages.clear(); questionFingerprint = mark }
       else if (questionFingerprint !== mark || questionCursors.get(params.beforeId) !== mark) fail('CURSOR_CONTEXT_CHANGED', '问题分页与当前筛选条件不匹配')
     }
   }
@@ -243,10 +245,29 @@ export function createGeoReadonlyClient({ transport, onClear }) {
       contract(object(data.pagination) && positive(data.pagination.limit) && typeof data.pagination.has_more === 'boolean' && Array.isArray(data.items))
       contract(data.pagination.limit === (params.limit ?? 50) && data.items.length <= data.pagination.limit)
       knownUrl(data.period_context_url, routes.periodContext, { tenant_id: active.tenantId, week_end: active.weekEnd })
-      for (const item of data.items) { validateAnswer(item, active); answerMatches(item, params); answers.set(item.ref.id, item) }
       const next = data.pagination.next_cursor
       contract(next === null || (typeof next === 'string' && next.length > 0 && next.length <= 4096))
       contract(data.pagination.has_more === (next !== null))
+      const pageKey = params.cursor ?? null
+      const ids = data.items.map(item => item?.ref?.id)
+      const priorPage = answerPages.get(pageKey)
+      if (priorPage) contract(JSON.stringify(priorPage.ids) === JSON.stringify(ids) && priorPage.next === next)
+      else {
+        contract(params.cursor === undefined || ids.every(id => !answers.has(id)))
+        if (next !== null) {
+          contract(next !== params.cursor)
+          let probe = next
+          const visited = new Set()
+          while (probe !== null && !visited.has(probe)) {
+            contract(probe !== params.cursor)
+            visited.add(probe)
+            probe = answerPages.get(probe)?.next ?? null
+          }
+          contract(probe === null)
+        }
+      }
+      for (const item of data.items) { validateAnswer(item, active); answerMatches(item, params); answers.set(item.ref.id, item) }
+      answerPages.set(pageKey, { ids, next })
       if (next !== null) answerCursors.set(next, answerFingerprint)
     } else if (resource === 'answerDetail') {
       contract(object(data) && data.tenant_id === active.tenantId && data.official_week_end === active.weekEnd)
@@ -257,10 +278,20 @@ export function createGeoReadonlyClient({ transport, onClear }) {
       contract(object(data) && data.tenant_id === active.tenantId && object(data.pagination) && Array.isArray(data.items))
       contract(data.pagination.limit === (params.limit ?? 50) && typeof data.pagination.has_more === 'boolean')
       contract(data.items.length <= data.pagination.limit)
-      for (const item of data.items) { validateQuestion(item, active); questionMatches(item, params); questions.set(item.ref.id, item) }
       if (params.beforeId !== undefined) contract(data.items.every(item => item.ref.id < params.beforeId))
       const next = data.pagination.next_before_id
       contract(next === null || positive(next)); contract(data.pagination.has_more === (next !== null))
+      if (next !== null) {
+        contract(data.items.length > 0 && next === data.items.at(-1).ref.id)
+        if (params.beforeId !== undefined) contract(next < params.beforeId)
+      }
+      const pageKey = params.beforeId ?? null
+      const ids = data.items.map(item => item?.ref?.id)
+      const priorPage = questionPages.get(pageKey)
+      if (priorPage) contract(JSON.stringify(priorPage.ids) === JSON.stringify(ids) && priorPage.next === next)
+      else contract(params.beforeId === undefined || ids.every(id => !questions.has(id)))
+      for (const item of data.items) { validateQuestion(item, active); questionMatches(item, params); questions.set(item.ref.id, item) }
+      questionPages.set(pageKey, { ids, next })
       if (next !== null) questionCursors.set(next, questionFingerprint)
     }
     return data

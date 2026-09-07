@@ -46,6 +46,7 @@ const answerPage = (overrides = {}) => ({
   period_context_url: '/api/v1/geo/integration/read/period-context?tenant_id=16&week_end=2026-08-31',
   pagination: { limit: 2, has_more: true, next_cursor: 'signed.opaque', watermark_max_id: 9010 }, items: [answer], ...overrides,
 })
+const answerWithId = id => ({ ...answer, ref: { ...answer.ref, id }, detail_url: `/api/v1/geo/integration/read/answers/${id}?tenant_id=16&week_end=2026-08-31` })
 
 function fixture(handler) {
   const calls = []
@@ -126,13 +127,61 @@ test('refuses to present an official metric without its required dictionary defi
 })
 
 test('answer cursor stays opaque and is bound to the original filter set', async () => {
-  const { client, calls } = fixture(() => response(answerPage()))
+  let reads = 0
+  const { client, calls } = fixture(() => {
+    reads++
+    return reads === 1 ? response(answerPage()) : response(answerPage({
+      pagination: { limit: 2, has_more: false, next_cursor: null, watermark_max_id: 9010 }, items: [answerWithId(9009)],
+    }))
+  })
   client.setContext(context)
   await client.read('answers', { sourceKind: 'real', limit: 2 })
   await client.read('answers', { sourceKind: 'real', limit: 2, cursor: 'signed.opaque' })
   assert.match(calls[1][0], /cursor=signed\.opaque/)
   await assert.rejects(client.read('answers', { sourceKind: 'manual', limit: 2, cursor: 'signed.opaque' }), { code: 'CURSOR_CONTEXT_CHANGED' })
   assert.equal(calls.length, 2)
+})
+
+test('answer pagination rejects self-loops and two-cursor cycles', async () => {
+  {
+    let reads = 0
+    const { client } = fixture(() => {
+      reads++
+      return response(answerPage({ pagination: { limit: 1, has_more: true, next_cursor: 'cursor-a', watermark_max_id: 9010 }, items: [answer] }))
+    })
+    client.setContext(context)
+    await client.read('answers', { limit: 1 })
+    await assert.rejects(client.read('answers', { limit: 1, cursor: 'cursor-a' }), { code: 'CONTRACT_MISMATCH' })
+    assert.equal(reads, 2)
+  }
+  {
+    let reads = 0
+    const pages = [
+      answerPage({ pagination: { limit: 1, has_more: true, next_cursor: 'cursor-a', watermark_max_id: 9012 }, items: [answerWithId(9012)] }),
+      answerPage({ pagination: { limit: 1, has_more: true, next_cursor: 'cursor-b', watermark_max_id: 9012 }, items: [answerWithId(9011)] }),
+      answerPage({ pagination: { limit: 1, has_more: true, next_cursor: 'cursor-a', watermark_max_id: 9012 }, items: [answerWithId(9010)] }),
+    ]
+    const { client } = fixture(() => response(pages[reads++]))
+    client.setContext(context)
+    await client.read('answers', { limit: 1 })
+    await client.read('answers', { limit: 1, cursor: 'cursor-a' })
+    await assert.rejects(client.read('answers', { limit: 1, cursor: 'cursor-b' }), { code: 'CONTRACT_MISMATCH' })
+  }
+})
+
+test('retrying the same answer page is allowed only with the same rows and next cursor', async () => {
+  let reads = 0
+  const pages = [
+    answerPage({ pagination: { limit: 1, has_more: true, next_cursor: 'cursor-a', watermark_max_id: 9011 }, items: [answerWithId(9011)] }),
+    answerPage({ pagination: { limit: 1, has_more: false, next_cursor: null, watermark_max_id: 9011 }, items: [answer] }),
+    answerPage({ pagination: { limit: 1, has_more: false, next_cursor: null, watermark_max_id: 9011 }, items: [answer] }),
+  ]
+  const { client } = fixture(() => response(pages[reads++]))
+  client.setContext(context)
+  await client.read('answers', { limit: 1 })
+  await client.read('answers', { limit: 1, cursor: 'cursor-a' })
+  await client.read('answers', { limit: 1, cursor: 'cursor-a' })
+  assert.equal(reads, 3)
 })
 
 test('new answer query revokes old references and cancels an in-flight detail', async () => {
@@ -231,6 +280,23 @@ test('questions preserve unknown source timezone and paginate only within the sa
   await assert.rejects(client.read('questions', { status: 'inactive', limit: 1, beforeId: 41 }), { code: 'CURSOR_CONTEXT_CHANGED' })
   await assert.rejects(client.read('questions', { status: 'active', limit: 1, beforeId: 39 }), { code: 'CURSOR_CONTEXT_CHANGED' })
   assert.equal(calls.length, 2)
+})
+
+test('question pagination rejects non-decreasing cursors and cursors unrelated to the last row', async () => {
+  const item = id => ({ ref: { module: 'geo', type: 'question', id }, current_text: '问题', language: 'zh-CN', status: 'active',
+    timestamp_source_timezone: 'unknown', created_at: '2026-09-06T23:14:00', updated_at: '2026-09-06T23:37:00' })
+  for (const invalidNext of [41, 39]) {
+    let reads = 0
+    const { client } = fixture(() => {
+      reads++
+      return reads === 1
+        ? response({ tenant_id: 16, pagination: { limit: 1, has_more: true, next_before_id: 41 }, items: [item(41)] })
+        : response({ tenant_id: 16, pagination: { limit: 1, has_more: true, next_before_id: invalidNext }, items: [item(40)] })
+    })
+    client.setContext(context)
+    await client.read('questions', { limit: 1 })
+    await assert.rejects(client.read('questions', { limit: 1, beforeId: 41 }), { code: 'CONTRACT_MISMATCH' })
+  }
 })
 
 test('metric arrays without tenant echo rely on the exact request context rather than invented fields', async () => {
