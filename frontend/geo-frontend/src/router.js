@@ -1,6 +1,8 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { session } from '../../src/store/session'
 import { GEO_WORKBENCH_START } from '../../src/utils/geoPrototypeNavigation'
+import { loginUrl } from '../../src/auth/loginRedirect'
+import { geoLoginRedirectPath } from './authRedirect'
 
 const geoMeta = (title, extra = {}) => ({
   title,
@@ -90,8 +92,7 @@ const router = createRouter({
 router.beforeEach((to) => {
   const devBypass = !session.isLoggedIn && import.meta.env.VITE_API_KEY && import.meta.env.DEV
   if (!to.meta.public && !session.isLoggedIn && !devBypass) {
-    const redirect = encodeURIComponent(window.location.href)
-    window.location.assign(`/login?redirect=${redirect}`)
+    window.location.assign(loginUrl(geoLoginRedirectPath()))
     return false
   }
 })
