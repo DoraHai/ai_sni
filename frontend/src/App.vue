@@ -96,6 +96,12 @@ const platformShortcuts = computed(() => [
     : []),
   { label: '平台门户', path: '/deal-sniper/portal', icon: '←' },
 ])
+const platformAdminPath = computed(() => {
+  if (!session.isLoggedIn || session.user?.tenant_id) return null
+  if (session.canEdit('settings.customers')) return '/platform/customers'
+  if (session.canEdit('settings.accounts')) return '/platform/accounts'
+  return null
+})
 
 // 侧边导航徽章（真数据）：异常提醒 open 数、拓词待处理数
 const badges = reactive({ alerts: 0, alertsToday: 0, expand: 0 })
@@ -176,10 +182,6 @@ const ALL_GROUPS = computed(() => [
   ] },
   { label: '客户交付', icon: '📨', children: [
     { label: '分析报告', path: '/delivery/report', key: 'delivery.report' },
-  ] },
-  { label: '系统设置', icon: '⚙', children: [
-    { label: '账号与权限', path: '/settings/accounts', key: 'settings.accounts' },
-    { label: '客户与模块', path: '/settings/customers', key: 'settings.customers' },
   ] },
 ])
 
@@ -445,6 +447,13 @@ onBeforeUnmount(() => {
           <el-breadcrumb-item>{{ currentTitle }}</el-breadcrumb-item>
         </el-breadcrumb>
         <div class="topbar-right">
+          <button
+            v-if="platformAdminPath"
+            class="platform-admin-entry"
+            type="button"
+            aria-label="打开平台管理"
+            @click="router.push(platformAdminPath)"
+          >⚙ 平台管理</button>
           <button class="theme-toggle" type="button" @click="toggleTheme">
             <span class="theme-dot" aria-hidden="true"></span>
             {{ themeLabel }} · 切换{{ nextThemeLabel }}
@@ -547,7 +556,7 @@ onBeforeUnmount(() => {
         <el-alert
           v-if="showSemIdentityBlock"
           title="推广账户归属冲突，已暂停展示该客户的 SEM 数据"
-          :description="currentSemIdentity.message || '请联系超级管理员在“客户与模块”中处理账户归属后重试。'"
+          :description="currentSemIdentity.message || '请联系平台管理员在“平台管理 → 客户与业务”中处理账户归属后重试。'"
           type="error"
           :closable="false"
           show-icon
@@ -574,7 +583,7 @@ onBeforeUnmount(() => {
           <router-view v-if="!showSemIdentityBlock" />
           <div v-else class="identity-block-panel">
             <strong>为了避免跨客户数据泄露，本页已安全锁定。</strong>
-            <span>超级管理员可前往“系统设置 → 客户与模块”查看冲突 UCID；处理前不要执行授权、同步或回写。</span>
+            <span>平台管理员可前往“平台管理 → 客户与业务”查看冲突 UCID；处理前不要执行授权、同步或回写。</span>
           </div>
         </div>
       </el-main>
@@ -656,6 +665,17 @@ onBeforeUnmount(() => {
 
 .topbar { background: #fff; border-bottom: 1px solid var(--sem-border); display: flex; align-items: center; justify-content: space-between; }
 .topbar-right { display: flex; align-items: center; gap: 12px; }
+.platform-admin-entry {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--sem-primary);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--sem-primary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
 .theme-toggle {
   height: 30px;
   padding: 0 11px;

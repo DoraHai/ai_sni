@@ -25,6 +25,7 @@ from app.models.role import Role
 from app.models.user import User
 from app.security.api_key import resolve_api_key
 from app.security.sem_identity import ensure_sem_identity_access
+from app.permissions import effective_role_permissions
 
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _bearer = HTTPBearer(auto_error=False)
@@ -260,7 +261,11 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
 
 async def _build_context(user: User, session: AsyncSession) -> AuthContext:
     role = await session.get(Role, user.role_id)
-    perms = dict(role.permissions or {}) if role else {}
+    perms = (
+        effective_role_permissions(role.name, role.is_system, role.permissions)
+        if role
+        else {}
+    )
     return AuthContext(
         user_id=user.id,
         username=user.username,
@@ -333,7 +338,9 @@ async def require_scoped_auth(
 
 
 async def require_admin(ctx: AuthContext = Depends(require_auth)) -> AuthContext:
-    """账号/角色管理：需 settings.accounts edit。"""
+    """全局账号/角色管理：仅未绑定客户的账号管理员可访问。"""
+    if ctx.tenant_id is not None:
+        raise HTTPException(403, "单客户账号不能管理全局账号与角色")
     if not ctx.can_edit("settings.accounts"):
         raise HTTPException(403, "仅有账号与权限管理权的角色可执行此操作")
     return ctx

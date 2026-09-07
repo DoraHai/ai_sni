@@ -11,7 +11,7 @@ class Role(Base):
     """自定义角色（RBAC）。permissions = {菜单key: 'view'|'edit'}，见 app/permissions.py。
 
     is_system=True 的内置角色（管理员/运营/品牌方客户）不可删除；其中「管理员」额外不可
-    移除 settings.accounts edit（防锁死管理入口）。其余角色可自由增删改。
+    移除两项平台管理 edit 权限（防锁死管理入口）。其余角色可自由增删改。
     """
 
     __tablename__ = "roles"

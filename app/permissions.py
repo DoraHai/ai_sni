@@ -6,7 +6,7 @@
 后端鉴权（app/security/auth.py）按请求路径反查菜单键 + HTTP 方法定 view/edit。
 """
 
-# 菜单注册表：key 唯一，group 用于侧边栏分组，path 是前端路由（settings.accounts 仅 edit 有意义）
+# 菜单注册表：key 唯一，group 用于权限矩阵分组，path 是前端路由。
 MENUS: list[dict] = [
     {"key": "sem.assets", "label": "推广账号", "group": "SEM 资产", "path": "/sem/accounts"},
     {"key": "seo.assets", "label": "网站管理", "group": "SEO 增长", "path": "/seo/sites"},
@@ -37,12 +37,14 @@ MENUS: list[dict] = [
     {"key": "manage.adgroups", "label": "单元管理", "group": "投放管理", "path": "/manage/adgroups"},
     {"key": "manage.ocpc", "label": "oCPC 投放", "group": "投放管理", "path": "/manage/ocpc"},
     {"key": "delivery.report", "label": "分析报告", "group": "客户交付", "path": "/delivery/report"},
-    {"key": "settings.accounts", "label": "账号与权限", "group": "系统设置", "path": "/settings/accounts"},
-    {"key": "settings.customers", "label": "客户与模块", "group": "系统设置", "path": "/settings/customers"},
+    {"key": "settings.accounts", "label": "账号与角色", "group": "平台管理", "path": "/platform/accounts"},
+    {"key": "settings.customers", "label": "客户与业务", "group": "平台管理", "path": "/platform/customers"},
 ]
 
 MENU_KEYS: set[str] = {m["key"] for m in MENUS}
 LEVELS = ("view", "edit")
+ADMIN_ROLE_NAME = "管理员"
+PLATFORM_ADMIN_KEYS = frozenset({"settings.accounts", "settings.customers"})
 
 # 内置系统角色的种子权限（迁移 0016 seed + 冒烟复用）。is_system=True 不可删。
 ALL_EDIT = {m["key"]: "edit" for m in MENUS}
@@ -85,3 +87,21 @@ def normalize_permissions(perms: dict) -> dict[str, str]:
         if k in MENU_KEYS and v in LEVELS:
             out[k] = v
     return out
+
+
+def effective_role_permissions(
+    role_name: str,
+    is_system: bool,
+    permissions: dict | None,
+) -> dict[str, str]:
+    """Apply non-persistent invariants only to the trusted built-in administrator."""
+    out = normalize_permissions(permissions or {})
+    if is_system and role_name == ADMIN_ROLE_NAME:
+        for key in PLATFORM_ADMIN_KEYS:
+            out[key] = "edit"
+    return out
+
+
+def has_full_platform_admin(permissions: dict | None) -> bool:
+    values = permissions or {}
+    return all(values.get(key) == "edit" for key in PLATFORM_ADMIN_KEYS)
