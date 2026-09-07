@@ -65,6 +65,7 @@ const guideQuestions = computed(() => [
   '今天最需要我关注什么？',
   availableModules.value.some(item => item.module_code === 'sem') ? 'SEM 花费和点击有什么变化？' : null,
   availableModules.value.some(item => item.module_code === 'seo') ? 'SEO 有多少内容和页面需要处理？' : null,
+  availableModules.value.some(item => item.module_code === 'geo') ? 'GEO 本周被 AI 提及了多少次？' : null,
   '哪些事情需要我现在处理？',
 ].filter(Boolean))
 

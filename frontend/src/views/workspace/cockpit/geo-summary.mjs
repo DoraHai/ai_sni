@@ -13,7 +13,7 @@ export function completedWeekEnd(value) {
 
 export function geoSummaryCards({ snapshot, contextRevision }) {
   const week = snapshot?.week || {}
-  return (snapshot?.metrics || []).filter(metric => Object.hasOwn(METRIC_LABELS, metric.metricKey)).map(metric => {
+  const metrics = (snapshot?.metrics || []).filter(metric => Object.hasOwn(METRIC_LABELS, metric.metricKey)).map(metric => {
     const reasons = metric.reasons?.map(item => item.message).filter(Boolean) || []
     const trendReasons = metric.trend?.reasons?.map(item => item.message).filter(Boolean) || []
     return {
@@ -30,4 +30,22 @@ export function geoSummaryCards({ snapshot, contextRevision }) {
       }],
     }
   })
+  const qualifications = [
+    ['samples', '本周合格回答', '条', '进入正式指标口径的回答数量'],
+    ['questions', '本周有效问题', '个', '进入正式指标口径的问题数量'],
+    ['engines', '本周覆盖引擎', '个', '进入正式指标口径的 AI 引擎数量'],
+  ].map(([key, label, unit, definition]) => {
+    const value = week.qualifiedCounts?.[key]
+    const available = Number.isSafeInteger(value) && value >= 0
+    const reason = week.reasons?.[0]?.message || definition
+    return {
+      id: `geo-qualified-${key}`, moduleCode: 'geo', moduleLabel: 'GEO', label,
+      display: available ? new Intl.NumberFormat('zh-CN').format(value) : '—', unit, state: available ? 'available' : 'unavailable',
+      reason, contextRevision, periodLabel: `${week.start?.slice(0, 10) || '未知'} 至 ${week.end?.slice(0, 10) || week.weekEnd || '未知'}（完整周）`,
+      sourceLabel: 'GEO 正式周准入统计', updatedLabel: week.weekEnd || '未知', series: [],
+      columns: [{ key: 'value', label: '本周' }, { key: 'basis', label: '说明' }],
+      rows: [{ value: available ? `${value}${unit}` : '暂无可靠数字', basis: reason }],
+    }
+  })
+  return [...metrics, ...qualifications]
 }
