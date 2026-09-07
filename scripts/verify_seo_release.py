@@ -193,6 +193,8 @@ SOURCE_ALLOWED_EXACT = {
     "tests/test_seo_site_association.py",
     "tests/test_seo_site_page_detail.py",
     "tests/test_seo_workbench_site_scope.py",
+    "tests/test_seo_site_onboarding_contract.py",
+    "docs/SEO_TIGER_SITE_ONBOARDING_HANDOFF.md",
     "tests/test_seo_workbench_publication_page_evidence.py",
     "docs/SEO_WORKBENCH_PUBLICATION_PAGE_EVIDENCE.md",
     "tests/test_seo_deploy_isolation.py",
