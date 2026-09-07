@@ -129,10 +129,75 @@ async function rejectsContract(resource, mutate, params = examples[resource].con
   await assert.rejects(client.read(resource, params), { code: 'NOT_AUTHORIZED' })
 }
 
+async function acceptsContract(resource, mutate, params = examples[resource].consumer_params) {
+  const data = structuredClone(examples[resource].response)
+  mutate(data)
+  const client = createSemReadonlyClient({ onClear() {}, transport: async () => response(data) })
+  client.setContext(context)
+  return client.read(resource, params)
+}
+
 test('CTR remains a ratio and missing dates cannot be fabricated as zero', async () => {
   await rejectsContract('report', data => { data.metrics.ctr = 2 })
+  await rejectsContract('report', data => { data.metrics.ctr = 0.5 })
+  await rejectsContract('report', data => { data.metrics.ctr = null })
+  await rejectsContract('report', data => { data.metrics.cpc = 99 })
+  await rejectsContract('report', data => { data.metrics.cpc = null })
   await rejectsContract('report', data => { data.trend[1].cost = 0 })
   await rejectsContract('report', data => { data.coverage.missing_dates = [] })
+})
+
+test('derived metrics require the exact contracted rounding precision', async () => {
+  await rejectsContract('keywords', data => {
+    data.items[0].metrics = { cost: 10, click: 3, impression: 9, ctr: 0.333333, cpc: 3.334 }
+  })
+  await rejectsContract('keywords', data => {
+    data.items[0].metrics = { cost: 3.33, click: 1, impression: 3, ctr: 0.3333338, cpc: 3.33 }
+  })
+  const rounded = await acceptsContract('keywords', data => {
+    data.items[0].metrics = { cost: 10, click: 3, impression: 9, ctr: 0.333333, cpc: 3.33 }
+  })
+  assert.deepEqual(rounded.items[0].metrics, { cost: 10, click: 3, impression: 9, ctr: 0.333333, cpc: 3.33 })
+})
+
+test('derived metrics use the backend Python half-even rounding contract', async () => {
+  for (const [cost, click, cpc] of [[2.25, 2, 1.12], [1, 8, 0.12], [11, 8, 1.38]]) {
+    const result = await acceptsContract('keywords', data => {
+      data.items[0].metrics = { cost, click, impression: 16, ctr: click / 16, cpc }
+    })
+    assert.equal(result.items[0].metrics.cpc, cpc)
+  }
+})
+
+test('derived metrics tolerate only floating representation noise and preserve null denominators', async () => {
+  const floating = await acceptsContract('keywords', data => {
+    data.items[0].metrics = { cost: 0.3, click: 3, impression: 30,
+      ctr: 0.1 + (Number.EPSILON / 2), cpc: 0.1 + (Number.EPSILON / 2) }
+  })
+  assert.ok(floating.items[0].metrics.cpc > 0.1)
+  const zero = await acceptsContract('keywords', data => {
+    data.items[0].metrics = { cost: 0, click: 0, impression: 0, ctr: null, cpc: null }
+  })
+  assert.equal(zero.items[0].metrics.ctr, null)
+  assert.equal(zero.items[0].metrics.cpc, null)
+})
+
+test('derived metrics fail closed at numeric limits and reject unsafe counts', async () => {
+  for (const cost of [Number.MAX_VALUE / 2, Number.MAX_VALUE]) {
+    const result = await acceptsContract('keywords', data => {
+      data.items[0].metrics = { cost, click: 1, impression: 1, ctr: 1, cpc: cost }
+    })
+    assert.equal(result.items[0].metrics.cpc, cost)
+  }
+  await rejectsContract('keywords', data => {
+    data.items[0].metrics = { cost: Number.MAX_VALUE, click: 1, impression: 1, ctr: 1, cpc: 0 }
+  })
+  await rejectsContract('keywords', data => {
+    data.items[0].metrics.cost = Number.MAX_VALUE * 2
+  })
+  await rejectsContract('keywords', data => {
+    data.items[0].metrics.click = Number.MAX_SAFE_INTEGER + 1
+  })
 })
 
 test('partial phone evidence cannot be presented as a complete value', async () => {

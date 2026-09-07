@@ -30,13 +30,53 @@ function validStamp(value) {
 function nullableNumber(value) { return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0) }
 function nullableCount(value) { return value === null || nonnegativeInteger(value) }
 function allNull(metrics) { return ['cost', 'click', 'impression', 'ctr', 'cpc'].every(key => metrics[key] === null) }
+function pythonRound(value, decimals) {
+  const view = new DataView(new ArrayBuffer(8))
+  view.setFloat64(0, value, false)
+  const bits = view.getBigUint64(0, false)
+  const negative = (bits >> 63n) === 1n
+  const exponentBits = Number((bits >> 52n) & 0x7ffn)
+  let significand = bits & ((1n << 52n) - 1n)
+  let binaryExponent
+  if (exponentBits === 0) binaryExponent = -1074
+  else {
+    significand |= 1n << 52n
+    binaryExponent = exponentBits - 1075
+  }
+  let numerator = significand * (5n ** BigInt(decimals))
+  let denominator = 1n
+  const scaledExponent = binaryExponent + decimals
+  if (scaledExponent >= 0) numerator <<= BigInt(scaledExponent)
+  else denominator <<= BigInt(-scaledExponent)
+  let rounded = numerator / denominator
+  const remainder = numerator % denominator
+  const halfway = remainder * 2n
+  if (halfway > denominator || (halfway === denominator && (rounded & 1n) === 1n)) rounded++
+  const decimalScale = 10n ** BigInt(decimals)
+  const result = Number(rounded / decimalScale) + (Number(rounded % decimalScale) / (10 ** decimals))
+  if (!Number.isFinite(result)) return null
+  return negative ? -result : result
+}
+function matchesRounded(value, raw, decimals) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isFinite(raw)) return false
+  const expected = pythonRound(raw, decimals)
+  if (!Number.isFinite(expected)) return false
+  const tolerance = Number.EPSILON * Math.max(1, Math.abs(value), Math.abs(expected))
+  return Number.isFinite(tolerance) && Math.abs(value - expected) <= tolerance
+}
 function validateMetrics(metrics) {
   contract(object(metrics) && ['cost', 'click', 'impression', 'ctr', 'cpc'].every(key => Object.hasOwn(metrics, key)))
   contract(nullableNumber(metrics.cost) && nullableCount(metrics.click) && nullableCount(metrics.impression))
   contract(metrics.ctr === null || (typeof metrics.ctr === 'number' && Number.isFinite(metrics.ctr) && metrics.ctr >= 0 && metrics.ctr <= 1))
   contract(nullableNumber(metrics.cpc))
-  if (metrics.ctr !== null) contract(metrics.click !== null && metrics.impression > 0)
-  if (metrics.cpc !== null) contract(metrics.cost !== null && metrics.click > 0)
+  const hasCtrBasis = metrics.click !== null && metrics.impression > 0
+  const hasCpcBasis = metrics.cost !== null && metrics.click > 0
+  contract(hasCtrBasis
+    ? matchesRounded(metrics.ctr, metrics.click / metrics.impression, 6)
+    : metrics.ctr === null)
+  contract(hasCpcBasis
+    ? matchesRounded(metrics.cpc, metrics.cost / metrics.click, 2)
+    : metrics.cpc === null)
 }
 function validateWindow(window, start, end, mode) {
   contract(object(window) && window.timezone === 'Asia/Shanghai' && window.inclusive === true)
