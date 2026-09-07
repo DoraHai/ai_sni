@@ -32,6 +32,7 @@ const conversation = ref(initialConversation())
 const moduleState = ref({ sem: 'waiting', seo: 'waiting', geo: 'waiting' })
 const tenantModuleCodes = ref(new Set())
 const seoSites = ref([])
+const seoAutomaticSelectionBlockedForTenant = ref(null)
 const secureRuntime = isSecureCockpitRuntime(window.location)
 const viewState = createWorkbenchViewState()
 let workbenchSession
@@ -161,7 +162,13 @@ async function loadSeo(generation) {
     const scope = await readSeoSiteScope({ transport: boundary.transport, tenantId })
     if (!isCurrent()) return
     seoSites.value = [...scope.sites]
-    const selection = resolveSeoSiteSelection({ sites: scope.sites, currentSiteId: siteId })
+    const selection = resolveSeoSiteSelection({
+      sites: scope.sites,
+      currentSiteId: siteId,
+      allowAutomaticSelection: seoAutomaticSelectionBlockedForTenant.value !== tenantId,
+    })
+    if (selection.reason === 'selected') seoAutomaticSelectionBlockedForTenant.value = null
+    if (selection.reason === 'selection_unavailable') seoAutomaticSelectionBlockedForTenant.value = tenantId
     if (selection.siteId !== siteId) {
       currentSeoSiteId.value = selection.siteId
       moduleState.value.seo = 'needs_scope'
@@ -265,6 +272,7 @@ function openModule(code) {
 }
 function selectSeoSite(event) {
   const value = Number(event.target.value)
+  seoAutomaticSelectionBlockedForTenant.value = null
   currentSeoSiteId.value = Number.isSafeInteger(value) && value > 0 ? value : null
 }
 
