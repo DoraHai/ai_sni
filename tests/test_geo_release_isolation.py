@@ -218,12 +218,12 @@ def test_geo_sidebar_keeps_cross_product_shortcuts_aligned_with_seo():
         'href="/monitor/dashboard" target="_top"',
         'href="/seo/dashboard"',
         'href="/diagnostic-center/"',
-        'href="/deal-sniper/portal" target="_top"',
+        'href="/workspace/cockpit" target="_top"',
     ]
     positions = [shell.index(shortcut) for shortcut in shortcuts]
 
     assert positions == sorted(positions)
-    for label in ("搜索广告工作台", "SEO 内容工作台", "诊断中心", "返回平台门户"):
+    for label in ("搜索广告工作台", "SEO 内容工作台", "诊断中心", "G‑Snipers 获客工作台"):
         assert label in shell
     assert ".geo-shell-links .portal-link" in shell
 
