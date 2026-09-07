@@ -8,7 +8,10 @@ export const MODULE_PERMISSION_KEYS = Object.freeze({
     'manage.adgroups', 'manage.ocpc', 'delivery.report',
     'settings.customers',
   ]),
-  seo: Object.freeze(['seo.assets', 'seo.dashboard', 'seo.keywords', 'seo.content', 'seo.site']),
+  seo: Object.freeze([
+    'seo.assets', 'seo.dashboard', 'seo.alerts', 'seo.keywords',
+    'seo.content', 'seo.site', 'seo.links', 'seo.competitors',
+  ]),
   geo: Object.freeze(['geo.assets', 'geo.content', 'geo.diagnosis']),
 })
 

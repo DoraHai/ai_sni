@@ -84,12 +84,13 @@ test('cockpit route accepts every backend module view permission', () => {
   assert.equal(canViewCockpit(() => false), false)
 })
 
-test('frontend cockpit permissions stay aligned with the backend module availability map', async () => {
+test('frontend cockpit permissions cover the SEO registry and current backend module map', async () => {
   const source = await readFile(new URL('../../app/api/auth.py', import.meta.url), 'utf8')
   const block = source.match(/_MODULE_PERMISSION_KEYS = \{([\s\S]*?)\n\}/)?.[1]
   assert.ok(block, 'backend module permission map must remain discoverable')
-  for (const [moduleCode, expected] of Object.entries(MODULE_PERMISSION_KEYS)) {
-    const nextCode = moduleCode === 'sem' ? 'seo' : moduleCode === 'seo' ? 'geo' : null
+  for (const moduleCode of ['sem', 'geo']) {
+    const expected = MODULE_PERMISSION_KEYS[moduleCode]
+    const nextCode = moduleCode === 'sem' ? 'seo' : null
     const pattern = nextCode
       ? new RegExp(`"${moduleCode}":[\\s\\S]*?(?=\\n\\s*"${nextCode}")`)
       : new RegExp(`"${moduleCode}":[\\s\\S]*$`)
@@ -98,6 +99,9 @@ test('frontend cockpit permissions stay aligned with the backend module availabi
     const observed = [...moduleBlock.matchAll(/"([a-z][a-z0-9_.]+)"/g)].map(match => match[1]).slice(1)
     assert.deepEqual(observed, expected, `${moduleCode} cockpit route permissions drifted from backend availability`)
   }
+  const registry = await readFile(new URL('../../app/permissions.py', import.meta.url), 'utf8')
+  const seoKeys = [...registry.matchAll(/\{"key": "(seo\.[a-z0-9_.]+)"/g)].map(match => match[1])
+  assert.deepEqual(MODULE_PERMISSION_KEYS.seo, seoKeys, 'SEO cockpit permissions drifted from registered routes')
 })
 
 test('tenant switches and late authorization responses cannot publish stale scope', () => {
