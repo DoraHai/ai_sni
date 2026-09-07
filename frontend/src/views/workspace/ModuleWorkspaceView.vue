@@ -39,11 +39,6 @@ const modules = computed(() => session.modules
 const customerName = computed(() => session.user?.tenant_id
   ? session.tenants.find((item) => item.id === session.user.tenant_id)?.name || session.user?.display_name
   : '平台管理员')
-const canOpenCockpit = computed(() => [
-  'monitor.dashboard', 'optimize.keywords', 'optimize.searchterms',
-  'seo.site', 'seo.content', 'geo.content',
-].some(key => session.canView(key)))
-
 async function load() {
   loading.value = true
   try {
@@ -72,7 +67,7 @@ onMounted(load)
         <div class="eyebrow">MY WORKSPACE</div>
         <h1>{{ customerName }}，选择要进入的工作台</h1>
         <p>使用同一个账号进入已开通模块；进入模块后，再选择该模块下的网站、品牌项目或推广账号。</p>
-        <el-button v-if="modules.length && canOpenCockpit" class="cockpit-entry" type="primary" @click="router.push('/workspace/cockpit')">
+        <el-button v-if="modules.length" class="cockpit-entry" type="primary" @click="router.push('/workspace/cockpit')">
           打开 G-Snipers 获客工作台
         </el-button>
       </div>
