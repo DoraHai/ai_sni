@@ -202,12 +202,13 @@ def test_bulk_negative_writeback_is_idempotent_across_candidate_sources() -> Non
         negative_words=["已有词"],
         exact_negative_words=[],
     )
-    account = SimpleNamespace(id=17)
+    account = SimpleNamespace(id=17, status="active")
     session = SimpleNamespace(
-        scalar=AsyncMock(return_value=adgroup),
+        scalar=AsyncMock(side_effect=[adgroup, None]),
         add=lambda _record: None,
         flush=AsyncMock(),
         commit=AsyncMock(),
+        refresh=AsyncMock(),
     )
     update_negative_words = AsyncMock(return_value={"header": {"status": 0}})
     service = SimpleNamespace(update_negative_words=update_negative_words)
@@ -255,7 +256,7 @@ def test_bulk_negative_writeback_is_idempotent_across_candidate_sources() -> Non
     assert records[3].record is None
     assert len({id(result.record) for result in records if result.record is not None}) == 2
     assert adgroup.negative_words == ["已有词", "新词一", "新词二"]
-    session.commit.assert_not_awaited()
+    assert session.commit.await_count == 2
 
 
 def test_add_to_plan_returns_error_when_writeback_failed() -> None:

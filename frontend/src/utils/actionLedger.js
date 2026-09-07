@@ -39,6 +39,11 @@ export function actionChangeText(row) {
     return `${formatActionMoney(row.old_value)} → ${formatActionMoney(row.new_value)}`
   }
   if (row.action_type === 'set_match_type') {
+    const oldMatch = row.match_change?.old
+    const newMatch = row.match_change?.new
+    if (oldMatch && newMatch) {
+      return `匹配组合 (${oldMatch.matchType},${oldMatch.phraseType}) → (${newMatch.matchType},${newMatch.phraseType})`
+    }
     const codes = `${row.old_value ?? '—'} → ${row.new_value ?? '—'}`
     return row.match_label ? `匹配类型编码 ${codes}（目标：${row.match_label}）` : `匹配类型编码 ${codes}`
   }

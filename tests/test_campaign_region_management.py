@@ -113,8 +113,8 @@ def test_region_writeback_uses_campaign_baidu_account_and_clears_factors():
         region_price_factor=[{"regionId": 4000, "priceFactor": 0.7}],
         geo_location_status=0,
     )
-    session.scalar.return_value = campaign
-    account = SimpleNamespace(id=88)
+    session.scalar.side_effect = [campaign, None]
+    account = SimpleNamespace(id=88, status="active")
     active_account = AsyncMock(return_value=account)
     update_region = AsyncMock(return_value={"data": []})
 
