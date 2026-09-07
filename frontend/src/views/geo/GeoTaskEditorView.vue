@@ -3652,6 +3652,10 @@ onMounted(load)
             <small>核对品牌配置或修改正文后，请按当前品牌重新检查；未通过前不会标记就绪。</small>
             <el-button size="small" :loading="busy === 'check'" @click="runCheck">按当前品牌重新检查</el-button>
           </div>
+          <div v-else-if="docTab === 'master' && task?.article" class="ed-brand-recheck">
+            <span>需要核对最新业务画像时，可重新运行当前母稿的品牌检查。</span>
+            <el-button size="small" :loading="busy === 'check'" @click="runCheck">按当前品牌重新检查</el-button>
+          </div>
           <template v-if="docTab === 'master'">
             <details v-if="sentenceCites.some(c => c.review_reason === 'cross_language_unverified')" class="generation-evidence">
               <summary>跨语言证据待核实（不代表已判定编造）</summary>
@@ -4423,6 +4427,20 @@ onMounted(load)
 }
 .ed-generation-failure span { color: #5b6572; }
 .ed-generation-failure small { color: #9a4e4e; overflow-wrap: anywhere; }
+.ed-brand-recheck {
+  display: flex;
+  min-height: 38px;
+  margin: 0 16px 8px;
+  padding: 6px 10px 6px 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #dce7f5;
+  border-radius: 8px;
+  background: #f7faff;
+  color: #647287;
+  font-size: 12px;
+}
 .ed-live-dot {
   width: 7px;
   height: 7px;

@@ -122,6 +122,12 @@ test('publishing checklist refresh is not confused with article readiness rechec
   assert.ok(!checklist.includes('>刷新检查</'))
 })
 
+test('current-brand recheck remains visible for an existing master article without a warning payload', () => {
+  assert.ok(editorSource.includes(`v-else-if="docTab === 'master' && task?.article"`))
+  assert.ok(editorSource.includes('需要核对最新业务画像时，可重新运行当前母稿的品牌检查。'))
+  assert.equal((editorSource.match(/>按当前品牌重新检查<\/el-button>/g) || []).length, 3)
+})
+
 test('GEO workspace links to the production acquisition cockpit', () => {
   assert.ok(workspaceShellSource.includes('href="/workspace/cockpit"'))
   assert.ok(workspaceShellSource.includes('G‑Snipers 获客工作台'))
