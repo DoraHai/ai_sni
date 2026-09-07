@@ -124,6 +124,10 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
             assert approved['status'] == 'ready'
             assert (await api.question_detail(question_id,1,1,CTX,db))['coverage']['state']=='reviewed_current'
             assert (await api.planning(1,1,CTX,db))['valid_covered_count']==1
+            candidates = await api.placement_candidates(1, 1, CTX, db)
+            assert candidates['total'] == candidates['included'] == 1
+            assert candidates['items'][0]['answer_id'] == answer['id']
+            assert candidates['items'][0]['publishable'] is True
             checked=(await api.answers(1,1,question_id,CTX,db))[0]['quality']
             assert checked['method']=='rules' and checked['blocking_issues']==[]
             task = await db.scalar(select(SeoTask))
@@ -133,6 +137,7 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
             placement = await api.prepare_placement(req, CTX, db)
             duplicate = await api.prepare_placement(req, CTX, db)
             assert duplicate['id'] == placement['id'] and placement['status'] == 'prepared'
+            assert (await api.placement_candidates(1, 1, CTX, db))['total'] == 0
             assert (await api.publication_draft(placement['id'], 1, 1, CTX, db))['body'] == fact['statement']
             exported=await api.assistant_task(placement['id'],1,1,CTX,db)
             assert exported['body']==fact['statement'] and exported['platform']=='zhihu'

@@ -18,7 +18,7 @@ const canEdit = computed(() => session.canEdit('seo.content'))
 const scope = computed(() => ({ tenant_id: Number(currentTenantId.value), site_id: Number(siteId.value) }))
 const scopeKey = computed(() => `${scope.value.tenant_id}:${scope.value.site_id}`)
 const tab = ref('questions'), busy = ref(false), loading = ref(false), error = ref('')
-const items = ref([]), facts = ref([]), placements = ref([]), maintenance = ref([]), platforms = ref([])
+const items = ref([]), facts = ref([]), placements = ref([]), placementCandidates = ref({items:[],total:0,included:0,truncated:false}), maintenance = ref([]), platforms = ref([])
 const total = ref(0), page = ref(1), query = ref(''), status = ref('')
 const questionDetail = ref(null)
 const coverageLabels = {unanswered:'尚无回答',draft_only:'尚无有效审核回答',needs_update:'需要更新证据或正文',reviewed_current:'已有有效审核回答',observed:'当前版本已有公开正文匹配'}
@@ -154,13 +154,13 @@ async function load() {
   if (!params.tenant_id || !params.site_id) { loading.value = false; return }
   loading.value = true; error.value = ''
   try {
-    const [questions, fs, ps, ms, cs] = await Promise.all([
+    const [questions, fs, ps, pcs, ms, cs] = await Promise.all([
       seoQaGet('questions', { ...params, q: query.value, status: status.value || undefined, page: page.value }),
-      seoQaGet('facts', params), seoQaGet('placements', params), seoQaGet('maintenance', params), seoQaGet('capabilities', params),
+      seoQaGet('facts', params), seoQaGet('placements', params), seoQaGet('placement-candidates', params), seoQaGet('maintenance', params), seoQaGet('capabilities', params),
     ])
     if (seq !== loadSequence || key !== scopeKey.value) return
     items.value = questions.items; total.value = questions.total; facts.value = fs
-    placements.value = ps; maintenance.value = ms.items; platforms.value = cs.platforms; planningRevision.value++
+    placements.value = ps; placementCandidates.value = pcs; maintenance.value = ms.items; platforms.value = cs.platforms; planningRevision.value++
   } catch (e) { if (seq === loadSequence && key === scopeKey.value) error.value = messageOf(e) }
   finally { if (seq === loadSequence) loading.value = false }
 }
@@ -255,6 +255,10 @@ function openPlacement() {
   Object.assign(placementForm, { answer_id: answerForm.id, platform: 'zhihu', question_url: '', scheduled_at: null })
   dialog.value = 'placement'
 }
+function openPlacementCandidate(row) {
+  tab.value = 'questions'
+  return openQuestion({...row.question, preferred_answer_id:row.answer_id})
+}
 function prepare() {
   const payload = { ...placementForm, question_url: placementForm.question_url || null, scheduled_at: placementForm.scheduled_at ? new Date(placementForm.scheduled_at).toISOString() : null }
   return act(p => seoQaPost('placements', { ...p, ...payload }), () => { dialog.value = ''; selected.value = null; tab.value = 'placements' })
@@ -304,7 +308,7 @@ watch([dialog,scopeKey,()=>receiptForm.id],()=>{++receiptReadSequence;assistantR
 watch([importing,sourceKind,sourceName,sourceUrl,dialog,scopeKey],()=>{importPreview.value=null})
 watch(scopeKey, () => {
   batchStop.value = true; batchResults.value = []; followupOnly.value = false
-  ++answerSequence; questionDetail.value=null; selected.value = null; items.value = []; facts.value = []; placements.value = []; maintenance.value = []; platforms.value = []
+  ++answerSequence; questionDetail.value=null; selected.value = null; items.value = []; facts.value = []; placements.value = []; placementCandidates.value = {items:[],total:0,included:0,truncated:false}; maintenance.value = []; platforms.value = []
   total.value = 0; page.value = 1; dialog.value = ''; resetAnswer(); load()
 }, { immediate: true })
 </script>
@@ -337,15 +341,24 @@ watch(scopeKey, () => {
 
     <section v-if="tab==='placements'" class="qa-panel">
       <h2>分发与效果</h2><p class="qa-hint">平台回答由真人发布，计划时间用于安排工作。回填网址后抓取核验正文；正文匹配不代表账号归属或平台阅读量。最近 200 条记录。</p>
+      <section v-if="placementCandidates.items.length" class="qa-review">
+        <h3>已审核待建立分发记录（{{ placementCandidates.total }}）</h3>
+        <p class="qa-hint">这些回答已审核，但尚未选择平台和目标问题网址。建立记录后才会进入下方发布与核验流程。</p>
+        <p v-if="placementCandidates.truncated" class="qa-warning">仅展示最近 {{ placementCandidates.included }} 条。</p>
+        <div v-for="row in placementCandidates.items" :key="row.answer_id" class="qa-toolbar">
+          <span class="qa-spacer"><strong>{{ row.question.title }}</strong><small class="qa-hint">回答 #{{ row.answer_id }} · 正文 v{{ row.content_version }}</small><small v-for="problem in row.problems" :key="problem" class="qa-warning">{{ problem }}</small></span>
+          <el-button type="primary" :disabled="busy || !canEdit || !row.publishable" @click="openPlacementCandidate(row)">选择平台并准备分发</el-button>
+        </div>
+      </section>
       <div class="qa-capabilities"><div v-for="p in platforms" :key="p.key"><strong>{{ p.name }}</strong><p>{{ p.description }}</p></div></div>
       <div class="qa-toolbar"><el-button :disabled="!canEdit || busy || !batchCandidates.length" @click="verifyBatch">批量核验当前列表（最多 20 条）</el-button><el-button v-if="batchRunning" @click="batchStop=true">停止后续核验</el-button><el-button :disabled="busy || !visiblePlacements.length" @click="exportResults">导出当前筛选结果</el-button></div>
       <div v-if="batchResults.length" class="qa-hint"><p>本次已返回 {{ batchResults.length }} 条结果；失败记录可单独重试。</p><p v-for="r in batchResults" :key="r.id" :class="{'qa-warning':r.failed}">#{{ r.id }} · {{ r.message }}</p></div>
       <div class="qa-toolbar"><el-checkbox v-model="followupOnly">仅看待跟进（{{ followupCount }}）</el-checkbox><span class="qa-hint">已核验的回答满 7 天进入后台正文复查队列，每小时最多 20 条。首次核验由人工触发；外链资产由外链模块定期核验。</span></div>
       <el-empty v-if="placements.length && !visiblePlacements.length" description="当前列表范围内没有待跟进记录"/>
-      <el-empty v-if="!placements.length" description="尚未建立分发记录，审核通过不会自动创建记录。">
+      <el-empty v-if="!placements.length && !placementCandidates.items.length" description="尚未建立分发记录，审核通过不会自动创建记录。">
         <el-button type="primary" :disabled="busy" @click="tab='planning'">从站点批次选择已审核回答</el-button>
       </el-empty>
-      <p v-if="!placements.length" class="qa-hint">进入“站点批次”的已审核回答，点击“打开回答准备分发”，选择平台并填写目标问题网址。生成记录后，真人发布并回填公开网址，才可核验正文；当前没有网址，批量核验不可用。</p>
+      <p v-if="!placements.length && !placementCandidates.items.length" class="qa-hint">进入“站点批次”的已审核回答，点击“打开回答准备分发”，选择平台并填写目标问题网址。生成记录后，真人发布并回填公开网址，才可核验正文；当前没有网址，批量核验不可用。</p>
       <article class="qa-placement" v-for="row in visiblePlacements" :key="row.id">
         <div class="qa-toolbar"><strong>#{{ row.id }} · {{ platformName(row.platform) }}</strong><el-tag>{{ labels[row.status] }}</el-tag><span class="qa-hint">稿件版本 {{ row.content_version }} · 计划 {{ row.scheduled_at?date(row.scheduled_at):'未设置' }}</span></div>
         <div class="qa-toolbar"><a v-if="href(row.question_url)" :href="href(row.question_url)" target="_blank" rel="noopener noreferrer">打开指定问题 ↗</a><a v-if="href(row.answer_url)" :href="href(row.answer_url)" target="_blank" rel="noopener noreferrer">查看回答 ↗</a><el-button :disabled="!row.publishable" @click="copy(row)">复制审核稿</el-button><el-button :disabled="!row.publishable" @click="download(row)">下载文本</el-button><el-button v-if="['zhihu','csdn_qa'].includes(row.platform)" :disabled="!canEdit || busy || !row.publishable" @click="downloadQaAssistant(row)">本地填稿包（试用）</el-button><el-button :disabled="!canEdit || busy" @click="Object.assign(receiptForm,{id:row.id,answer_url:row.answer_url||'',version:row.version});dialog='receipt'">回填网址</el-button><el-button :disabled="!canEdit || busy || !row.answer_url" @click="verify(row)">核验正文与外链</el-button><el-button :disabled="!canEdit || busy" @click="Object.assign(metricsForm,{id:row.id,version:row.version,views:null,likes:null,comments:null,source_url:row.answer_url||'',as_of:null});dialog='metrics'">录入平台数据</el-button></div>
