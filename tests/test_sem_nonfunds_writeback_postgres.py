@@ -22,6 +22,7 @@ from app.baidu.writeback import (
     _relock_action_intent,
     apply_add_word_writeback,
     apply_match_type_writeback,
+    apply_negative_batch_writeback,
     apply_negative_writeback,
 )
 from app.models import Adgroup, BaiduAccount, Campaign, Keyword, WritebackAction
@@ -410,6 +411,7 @@ def test_add_word_recheck_sees_other_session_success_before_remote_call():
                         tenant_id=3,
                         adgroup_id=303,
                         word="工业泵",
+                        dry_run=False,
                         exclude_record_id=own.id,
                     )
 
@@ -542,5 +544,121 @@ def test_match_combo_sync_in_commit_relock_gap_blocks_remote_overwrite():
                 assert record.status == "failed"
                 assert record.old_value == 1
                 assert (keyword.match_type, keyword.phrase_type) == (2, 1)
+
+    asyncio.run(exercise())
+
+
+def test_dry_run_add_word_does_not_block_later_live_request():
+    async def exercise():
+        async with database() as engine:
+            async with AsyncSession(engine, expire_on_commit=False) as setup:
+                setup.add_all([account_row(), campaign_row(), adgroup_row()])
+                rehearsal = action_row("add_word")
+                rehearsal.adgroup_id = 303
+                rehearsal.word = "工业泵"
+                rehearsal.dry_run = True
+                rehearsal.status = "dry_run"
+                setup.add(rehearsal)
+                await setup.commit()
+
+            remote = AsyncMock(return_value={"header": {"status": 0}})
+            async with AsyncSession(engine, expire_on_commit=False) as executor:
+                with (
+                    patch("app.baidu.writeback._account_client", return_value=object()),
+                    patch("app.baidu.writeback.KeywordService.add_word", remote),
+                    patch(
+                        "app.baidu.writeback.get_settings",
+                        return_value=SimpleNamespace(
+                            baidu_write_dry_run=False,
+                            baidu_write_is_dry_run=lambda tenant_id, account_id, scope: False,
+                        ),
+                    ),
+                ):
+                    result = await apply_add_word_writeback(
+                        executor,
+                        3,
+                        "工业泵",
+                        303,
+                        price=3.6,
+                        match_mode="exact",
+                        operator_user_id=9,
+                        operator_name="tester",
+                    )
+                    assert result.status == "success"
+
+            remote.assert_awaited_once()
+            async with AsyncSession(engine) as check:
+                rows = (await check.scalars(
+                    select(WritebackAction).order_by(WritebackAction.id)
+                )).all()
+                assert [(row.dry_run, row.status) for row in rows] == [
+                    (True, "dry_run"),
+                    (False, "success"),
+                ]
+
+    asyncio.run(exercise())
+
+
+def test_batch_negative_recomputes_from_latest_list_after_intent_commit():
+    async def exercise():
+        async with database() as engine:
+            async with AsyncSession(engine, expire_on_commit=False) as setup:
+                setup.add_all([account_row(), campaign_row(), adgroup_row()])
+                await setup.commit()
+
+            relock_entered = asyncio.Event()
+            sync_finished = asyncio.Event()
+            original_relock = _relock_action_intent
+            remote = AsyncMock(return_value={"header": {"status": 0}})
+
+            async def relock_after_sync(session, record, **kwargs):
+                relock_entered.set()
+                await asyncio.wait_for(sync_finished.wait(), 5)
+                await original_relock(session, record, **kwargs)
+
+            async def sync_latest_list():
+                await asyncio.wait_for(relock_entered.wait(), 5)
+                async with AsyncSession(engine, expire_on_commit=False) as sync_session:
+                    row = await sync_session.scalar(
+                        select(Adgroup).where(Adgroup.id == 301).with_for_update()
+                    )
+                    row.negative_words = ["已同步词"]
+                    await sync_session.commit()
+                sync_finished.set()
+
+            async with AsyncSession(engine, expire_on_commit=False) as executor:
+                sync_task = asyncio.create_task(sync_latest_list())
+                with (
+                    patch("app.baidu.writeback._relock_action_intent", new=relock_after_sync),
+                    patch("app.baidu.writeback._account_client", return_value=object()),
+                    patch("app.baidu.writeback.AdgroupService.update_negative_words", remote),
+                    patch(
+                        "app.baidu.writeback.get_settings",
+                        return_value=SimpleNamespace(
+                            baidu_write_dry_run=False,
+                            baidu_write_is_dry_run=lambda tenant_id, account_id, scope: False,
+                        ),
+                    ),
+                ):
+                    results = await apply_negative_batch_writeback(
+                        executor,
+                        3,
+                        ["工业泵", "阀门"],
+                        303,
+                        match_mode="phrase",
+                        operator_user_id=9,
+                        operator_name="tester",
+                    )
+                await asyncio.wait_for(sync_task, 5)
+                assert [result.status for result in results] == ["success", "success"]
+
+            remote.assert_awaited_once_with(
+                303, negative_words=["已同步词", "工业泵", "阀门"]
+            )
+            async with AsyncSession(engine) as check:
+                adgroup = await check.get(Adgroup, 301)
+                assert adgroup.negative_words == ["已同步词", "工业泵", "阀门"]
+                statuses = (await check.scalars(select(WritebackAction.status))).all()
+                assert statuses == ["success", "success"]
 
     asyncio.run(exercise())

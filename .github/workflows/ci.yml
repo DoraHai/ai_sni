@@ -192,6 +192,8 @@ jobs:
               "test_add_word_recheck_sees_other_session_success_before_remote_call",
               "test_two_live_add_word_attempts_from_empty_state_call_remote_once",
               "test_match_combo_sync_in_commit_relock_gap_blocks_remote_overwrite",
+              "test_dry_run_add_word_does_not_block_later_live_request",
+              "test_batch_negative_recomputes_from_latest_list_after_intent_commit",
           }
           names = {case.attrib["name"] for case in root.iter("testcase")}
           tests = int(root.attrib["tests"])

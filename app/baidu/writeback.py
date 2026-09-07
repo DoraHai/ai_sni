@@ -6,6 +6,7 @@
   3. bid_writebacks 台账——旧价快照 + 目标价 + 是否演练 + 百度返回 + 操作人，全程留痕。
 红线见 memory feedback-no-baidu-writeback：功能要做，但验证阶段绝不改乱线上真实出价。
 """
+import json
 import logging
 import math
 from dataclasses import dataclass
@@ -54,7 +55,6 @@ MIN_ACCOUNT_BUDGET = 50.0
 MAX_ACCOUNT_BUDGET = 10000000.0
 UNRESOLVED_REAL_STATUSES = {"pending", "reconcile"}
 ADD_WORD_DEDUP_WINDOW = timedelta(hours=24)
-ADD_WORD_RECENT_DEDUP_STATUSES = ("success", "dry_run")
 CAMPAIGN_PAUSE_CONFLICT_ACTIONS = ("campaign_pause", "campaign_enable", "campaign_schedule")
 
 
@@ -73,6 +73,7 @@ async def _ensure_add_word_not_duplicate(
     tenant_id: int,
     adgroup_id: int,
     word: str,
+    dry_run: bool,
     exclude_record_id: int | None = None,
 ) -> None:
     """Reject existing or just-written keywords before invoking Baidu addWord.
@@ -80,8 +81,8 @@ async def _ensure_add_word_not_duplicate(
     The caller already holds the target adgroup row lock, so concurrent requests
     for the same unit are serialized. The recent successful ledger check covers
     the interval before the next keyword dimension sync sees a newly added word.
-    Recent dry-run rows are also blocked so an unchanged pending candidate cannot
-    create duplicate rehearsal ledger entries through repeated submissions.
+    Recent dry-run rows block repeated rehearsals but never block a later live
+    request. A recent live success blocks both modes until dimension sync catches up.
     """
     normalized = _normalized_keyword_text(word)
     existing_words = (
@@ -96,6 +97,7 @@ async def _ensure_add_word_not_duplicate(
     if any(_normalized_keyword_text(existing) == normalized for existing in existing_words):
         raise WritebackError("目标单元已存在同名关键词，请勿重复加入")
 
+    recent_statuses = ["success", *(["dry_run"] if dry_run else [])]
     write_conditions = [
         WritebackAction.tenant_id == tenant_id,
         WritebackAction.adgroup_id == adgroup_id,
@@ -103,7 +105,7 @@ async def _ensure_add_word_not_duplicate(
         or_(
             WritebackAction.status.in_(["pending", "reconcile"]),
             and_(
-                WritebackAction.status.in_(ADD_WORD_RECENT_DEDUP_STATUSES),
+                WritebackAction.status.in_(recent_statuses),
                 WritebackAction.created_at >= func.now() - ADD_WORD_DEDUP_WINDOW,
             ),
         ),
@@ -898,14 +900,15 @@ async def apply_add_word_writeback(
     if adg is None:
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
     acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
+    dry_run = _effective_dry_run(tenant_id, acc.id, "keyword_create")
     await _ensure_add_word_not_duplicate(
         session,
         tenant_id=tenant_id,
         adgroup_id=adgroup_id,
         word=word,
+        dry_run=dry_run,
     )
 
-    dry_run = _effective_dry_run(tenant_id, acc.id, "keyword_create")
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="add_word",
         word=word, match_mode=match_mode, price=price,
@@ -923,6 +926,7 @@ async def apply_add_word_writeback(
                 tenant_id=tenant_id,
                 adgroup_id=adgroup_id,
                 word=word,
+                dry_run=dry_run,
                 exclude_record_id=rec.id,
             )
         except WritebackError as exc:
@@ -978,12 +982,15 @@ async def apply_pause_writeback(
         tenant_id=tenant_id, baidu_account_id=acc.id,
         action_type="pause" if pause else "enable",
         word=kw.keyword, campaign_id=kw.campaign_id, adgroup_id=kw.adgroup_id,
+        old_value=1 if kw.pause else 0, new_value=1 if pause else 0,
         dry_run=dry_run, status="pending",
         operator_user_id=operator_user_id, operator_name=operator_name,
     )
     await _persist_action_intent(
         session, rec, dry_run=dry_run, asset=kw, account=acc
     )
+    if not dry_run:
+        rec.old_value = 1 if kw.pause else 0
     try:
         svc = KeywordService(_account_client(acc))
         resp = await svc.update_word_pause(keyword_id, pause)
@@ -1044,6 +1051,10 @@ async def apply_match_type_writeback(
             WritebackAction.adgroup_id == kw.adgroup_id,
             WritebackAction.action_type == "set_match_type",
         )
+    match_audit = {
+        "old": {"matchType": old_match_combo[0], "phraseType": old_match_combo[1]},
+        "new": {"matchType": match_type, "phraseType": phrase_type},
+    }
     rec = WritebackAction(
         tenant_id=tenant_id,
         baidu_account_id=acc.id,
@@ -1054,6 +1065,7 @@ async def apply_match_type_writeback(
         adgroup_id=kw.adgroup_id,
         old_value=kw.match_type,
         new_value=match_type,
+        baidu_response=json.dumps(match_audit, ensure_ascii=False, default=str),
         dry_run=dry_run,
         status="pending",
         operator_user_id=operator_user_id,
@@ -1068,7 +1080,9 @@ async def apply_match_type_writeback(
         svc = KeywordService(_account_client(acc))
         resp = await svc.update_word_match_type(keyword_id, match_type, phrase_type)
         rec.status = "dry_run" if dry_run else "success"
-        rec.baidu_response = str(resp)[:2000]
+        rec.baidu_response = json.dumps(
+            {**match_audit, "baidu": resp}, ensure_ascii=False, default=str
+        )[:2000]
         rec.executed_at = datetime.utcnow()
         if not dry_run:
             kw.match_type = match_type
@@ -1319,12 +1333,15 @@ async def apply_campaign_pause_writeback(
         action_type="campaign_pause" if pause else "campaign_enable",
         word=camp.campaign_name or f"计划#{campaign_id}",
         campaign_id=campaign_id, campaign_name=camp.campaign_name,
+        old_value=1 if camp.pause else 0, new_value=1 if pause else 0,
         dry_run=dry_run, status="pending",
         operator_user_id=operator_user_id, operator_name=operator_name,
     )
     await _persist_action_intent(
         session, rec, dry_run=dry_run, asset=camp, account=acc
     )
+    if not dry_run:
+        rec.old_value = 1 if camp.pause else 0
     try:
         resp = await CampaignService(_account_client(acc)).update_campaign_pause(
             campaign_id, pause
@@ -1625,12 +1642,15 @@ async def apply_adgroup_pause_writeback(
         action_type="adgroup_pause" if pause else "adgroup_enable",
         word=adg.adgroup_name or f"单元#{adgroup_id}",
         campaign_id=adg.campaign_id, adgroup_id=adgroup_id, adgroup_name=adg.adgroup_name,
+        old_value=1 if adg.pause else 0, new_value=1 if pause else 0,
         dry_run=dry_run, status="pending",
         operator_user_id=operator_user_id, operator_name=operator_name,
     )
     await _persist_action_intent(
         session, rec, dry_run=dry_run, asset=adg, account=acc
     )
+    if not dry_run:
+        rec.old_value = 1 if adg.pause else 0
     try:
         resp = await AdgroupService(_account_client(acc)).update_adgroup_fields(
             adgroup_id, pause=pause

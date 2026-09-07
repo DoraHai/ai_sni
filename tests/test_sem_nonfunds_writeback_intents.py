@@ -1,5 +1,6 @@
 import ast
 import asyncio
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -128,6 +129,7 @@ def test_live_nonfunds_timeout_keeps_durable_reconciliation_record() -> None:
     assert record.status == "reconcile"
     assert record.error_msg.startswith("执行结果未知，需人工对账：")
     assert campaign.pause is False
+    assert (record.old_value, record.new_value) == (0, 1)
 
 
 def test_unresolved_live_nonfunds_action_blocks_remote_call() -> None:
@@ -288,6 +290,7 @@ def test_live_adgroup_pause_reaches_remote_and_finishes_successfully() -> None:
     remote.assert_awaited_once_with(44, pause=True)
     assert record.status == "success"
     assert adgroup.pause is True
+    assert (record.old_value, record.new_value) == (0, 1)
     assert session.commit.await_count == 2
 
 
@@ -390,5 +393,9 @@ def test_match_combo_change_after_intent_commit_blocks_remote() -> None:
     remote.assert_not_awaited()
     assert captured[0].status == "failed"
     assert captured[0].old_value == 1
+    assert json.loads(captured[0].baidu_response) == {
+        "old": {"matchType": 1, "phraseType": 1},
+        "new": {"matchType": 2, "phraseType": 3},
+    }
     assert keyword.match_type == 2
     assert keyword.phrase_type == 1

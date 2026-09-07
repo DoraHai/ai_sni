@@ -3,6 +3,7 @@
 数据源 = search_term_reports（百度搜索词报告 reportType 2307838 全量快照，app/baidu/sync.py）。
 归 optimize.searchterms 菜单。加否词/转拓词写回为阶段二（复用 dry-run 框架）。
 """
+import json
 import logging
 from datetime import date, timedelta
 from typing import Literal
@@ -183,6 +184,20 @@ async def sync_search_terms(
 # ===== 加否词 / 转拓词（写回百度，dry-run 保护，记 writeback_actions） =====
 
 
+def _match_change(r: WritebackAction) -> dict | None:
+    if r.action_type != "set_match_type" or not r.baidu_response:
+        return None
+    try:
+        payload = json.loads(r.baidu_response)
+    except (TypeError, ValueError):
+        return None
+    old = payload.get("old") if isinstance(payload, dict) else None
+    new = payload.get("new") if isinstance(payload, dict) else None
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return None
+    return {"old": old, "new": new}
+
+
 def _action_dict(r: WritebackAction) -> dict:
     return {
         "id": r.id,
@@ -195,6 +210,7 @@ def _action_dict(r: WritebackAction) -> dict:
         "price": float(r.price) if r.price is not None else None,
         "old_value": float(r.old_value) if r.old_value is not None else None,
         "new_value": float(r.new_value) if r.new_value is not None else None,
+        "match_change": _match_change(r),
         "execution_mode": "dry_run" if r.dry_run else "live",
         "execution_mode_label": "演练（未修改百度）" if r.dry_run else "真实执行",
         "campaign_name": r.campaign_name,
