@@ -3,10 +3,12 @@
 数据源 = search_term_reports（百度搜索词报告 reportType 2307838 全量快照，app/baidu/sync.py）。
 归 optimize.searchterms 菜单。加否词/转拓词写回为阶段二（复用 dry-run 框架）。
 """
+import json
 import logging
 from datetime import date, timedelta
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +30,8 @@ from app.models import (
     WritebackAction,
 )
 from app.security.auth import AuthContext, require_scoped_auth
+from app.sem_cockpit_details import read_search_terms
+from app.sem_cockpit_readonly import validate_query
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +45,7 @@ router = APIRouter(
 def _to_dict(r: SearchTermReport) -> dict:
     return {
         "id": r.id,
+        "baidu_account_id": r.baidu_account_id,
         "query_word": r.query_word,
         "trigger_keyword": r.trigger_keyword,
         "query_status": r.query_status,
@@ -58,9 +63,28 @@ def _to_dict(r: SearchTermReport) -> dict:
     }
 
 
+@router.get("/cockpit")
+async def cockpit_search_terms(
+    request: Request,
+    tenant_id: int = Query(..., gt=0),
+    baidu_account_id: int | None = Query(None, gt=0),
+    q: str | None = Query(None, max_length=200),
+    campaign_id: int | None = Query(None, gt=0),
+    adgroup_id: int | None = Query(None, gt=0),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    validate_query(request.query_params, {"tenant_id", "baidu_account_id", "q", "campaign_id", "adgroup_id", "page", "page_size"})
+    return await read_search_terms(session, tenant_id, baidu_account_id, q, campaign_id, adgroup_id, page, page_size)
+
+
 @router.get("")
 async def list_search_terms(
     tenant_id: int = Query(..., description="本地租户 ID"),
+    baidu_account_id: int | None = Query(None, gt=0, description="百度账户 ID；多账户时用于隔离窗口"),
     campaign_id: int | None = Query(None),
     adgroup_id: int | None = Query(None),
     status: str | None = Query(None, description="added / not_added，留空看全部"),
@@ -72,6 +96,8 @@ async def list_search_terms(
 ) -> dict:
     """搜索词列表（分页 + 筛选）+ 汇总（总数/有点击数/展现·点击·消费合计 + 窗口）。"""
     cond = [SearchTermReport.tenant_id == tenant_id]
+    if baidu_account_id is not None:
+        cond.append(SearchTermReport.baidu_account_id == baidu_account_id)
     if campaign_id is not None:
         cond.append(SearchTermReport.campaign_id == campaign_id)
     if adgroup_id is not None:
@@ -111,13 +137,37 @@ async def list_search_terms(
             ).where(*cond)
         )
     ).one()
-    win = (
+    window_rows = (
         await session.execute(
-            select(SearchTermReport.window_start, SearchTermReport.window_end, SearchTermReport.synced_at)
-            .where(SearchTermReport.tenant_id == tenant_id)
-            .limit(1)
+            select(
+                SearchTermReport.baidu_account_id,
+                SearchTermReport.window_start,
+                SearchTermReport.window_end,
+                func.min(SearchTermReport.synced_at),
+                func.max(SearchTermReport.synced_at),
+                func.count(),
+            )
+            .where(*cond)
+            .group_by(
+                SearchTermReport.baidu_account_id,
+                SearchTermReport.window_start,
+                SearchTermReport.window_end,
+            )
+            .order_by(SearchTermReport.baidu_account_id, SearchTermReport.window_start, SearchTermReport.window_end)
         )
-    ).first()
+    ).all()
+    windows = [
+        {
+            "baidu_account_id": row[0],
+            "start": row[1].isoformat() if row[1] else None,
+            "end": row[2].isoformat() if row[2] else None,
+            "oldest_synced_at": row[3].isoformat() if row[3] else None,
+            "synced_at": row[4].isoformat() if row[4] else None,
+            "stored_rows": int(row[5]),
+        }
+        for row in window_rows
+    ]
+    mixed_windows = len({(row[1], row[2]) for row in window_rows}) > 1
 
     return {
         "total": int(total or 0),
@@ -128,38 +178,72 @@ async def list_search_terms(
             "click": int(agg[3]),
             "cost": float(agg[4]),
         },
-        "window": {
-            "start": win[0].isoformat() if win and win[0] else None,
-            "end": win[1].isoformat() if win and win[1] else None,
-            "synced_at": win[2].isoformat() if win and win[2] else None,
-        } if win else None,
+        "account_scope": {"mode": "single" if baidu_account_id is not None else "all", "baidu_account_id": baidu_account_id},
+        "windows": windows,
+        "mixed_windows": mixed_windows,
+        "summary_comparable": not mixed_windows,
+        "window": windows[0] if len(windows) == 1 else None,
         "search_terms": [_to_dict(r) for r in rows],
+        "scope_note": "多窗口数据仅展示已存快照合计，不代表同一统计期" if mixed_windows else None,
     }
 
 
 @router.post("/sync")
 async def sync_search_terms(
     tenant_id: int = Query(..., description="本地租户 ID"),
+    baidu_account_id: int | None = Query(None, gt=0, description="百度账户 ID；多账户租户必须显式选择"),
     days: int = Query(30, ge=1, le=91, description="回溯天数（搜索词报告最大 91 天）"),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """手动从百度拉取搜索词报告并全量落库（窗口快照覆盖）。"""
     ctx.ensure_tenant(tenant_id)
-    acc = await session.scalar(
-        select(BaiduAccount).where(
-            BaiduAccount.tenant_id == tenant_id, BaiduAccount.status == "active"
-        )
+    account_query = select(BaiduAccount).where(
+        BaiduAccount.tenant_id == tenant_id, BaiduAccount.status == "active"
     )
-    if acc is None:
+    if baidu_account_id is not None:
+        account_query = account_query.where(BaiduAccount.id == baidu_account_id)
+    accounts = (await session.scalars(account_query.order_by(BaiduAccount.id).limit(2))).all()
+    if not accounts:
         raise HTTPException(404, "该租户没有生效的百度账户授权")
+    if baidu_account_id is None and len(accounts) > 1:
+        raise HTTPException(409, "该租户有多个生效百度账户，请先选择要同步的账户")
+    acc = accounts[0]
     end = date.today()
     start = end - timedelta(days=days - 1)
     n = await sync_search_terms_for_account(session, acc, start, end)
-    return {"status": "ok", "synced": n, "window": {"start": start.isoformat(), "end": end.isoformat()}}
+    return {"status": "ok", "synced": n, "baidu_account_id": acc.id,
+            "window": {"start": start.isoformat(), "end": end.isoformat()}}
 
 
 # ===== 加否词 / 转拓词（写回百度，dry-run 保护，记 writeback_actions） =====
+
+
+def _match_change(r: WritebackAction) -> dict | None:
+    if r.action_type != "set_match_type" or not r.baidu_response:
+        return None
+    try:
+        payload = json.loads(r.baidu_response)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("schema") != "sem.match_change":
+        return None
+    if payload.get("version") != 1:
+        return None
+    old = payload.get("old")
+    new = payload.get("new") if isinstance(payload, dict) else None
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return None
+    allowed = {(1, 1), (2, 1), (2, 3)}
+    values = (
+        old.get("matchType"), old.get("phraseType"),
+        new.get("matchType"), new.get("phraseType"),
+    )
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+        return None
+    if (values[0], values[1]) not in allowed or (values[2], values[3]) not in allowed:
+        return None
+    return {"old": old, "new": new}
 
 
 def _action_dict(r: WritebackAction) -> dict:
@@ -174,6 +258,7 @@ def _action_dict(r: WritebackAction) -> dict:
         "price": float(r.price) if r.price is not None else None,
         "old_value": float(r.old_value) if r.old_value is not None else None,
         "new_value": float(r.new_value) if r.new_value is not None else None,
+        "match_change": _match_change(r),
         "execution_mode": "dry_run" if r.dry_run else "live",
         "execution_mode_label": "演练（未修改百度）" if r.dry_run else "真实执行",
         "campaign_name": r.campaign_name,
@@ -200,7 +285,7 @@ class ExpandRequest(BaseModel):
     word: str
     adgroup_id: int
     price: float
-    match_mode: str = "phrase"
+    match_mode: Literal["exact", "phrase", "smart"] = "phrase"
 
 
 @router.post("/negative")
@@ -218,6 +303,8 @@ async def add_negative(
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
+    if rec.status == "failed":
+        raise HTTPException(502, "百度否词写回失败，已记录失败台账，请稍后重试")
     return {"status": "ok", "dry_run": rec.dry_run, "action": _action_dict(rec)}
 
 
@@ -237,6 +324,8 @@ async def expand_to_keyword(
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
+    if rec.status == "failed":
+        raise HTTPException(502, "百度关键词写回失败，已记录失败台账，请稍后重试")
     return {"status": "ok", "dry_run": rec.dry_run, "action": _action_dict(rec)}
 
 
