@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - codex/production-geo
+      - codex/geo-generation-sync-pg-verify-20260907
   pull_request:
     paths:
       - "app/geo/**"
@@ -57,7 +58,28 @@ jobs:
       - name: Run all GEO regressions including PostgreSQL concurrency
         env:
           GEO_TEST_POSTGRES_URL: postgresql+asyncpg://geo_ci:geo_ci_test@127.0.0.1:5432/geo_ci
-        run: python ops/run_geo_checks.py --postgres
+        run: |
+          status=0
+          python ops/run_geo_checks.py --postgres --junitxml="$RUNNER_TEMP/geo-junit.xml" || status=$?
+          if [ -f "$RUNNER_TEMP/geo-junit.xml" ]; then
+            python - "$RUNNER_TEMP/geo-junit.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          for case in root.iter("testcase"):
+              failure = case.find("failure")
+              if failure is None:
+                  failure = case.find("error")
+              if failure is None:
+                  continue
+              name = f"{case.get('classname', '')}.{case.get('name', '')}".strip(".")
+              message = (failure.get("message") or failure.text or "pytest failure").strip()
+              message = message[:1500].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error title={name}::{message}")
+          PY
+          fi
+          exit "$status"
 
 
   frontend-build:
