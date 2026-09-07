@@ -52,13 +52,17 @@ function pythonRound(value, decimals) {
   const remainder = numerator % denominator
   const halfway = remainder * 2n
   if (halfway > denominator || (halfway === denominator && (rounded & 1n) === 1n)) rounded++
-  const result = Number(rounded) / (10 ** decimals)
+  const decimalScale = 10n ** BigInt(decimals)
+  const result = Number(rounded / decimalScale) + (Number(rounded % decimalScale) / (10 ** decimals))
+  if (!Number.isFinite(result)) return null
   return negative ? -result : result
 }
 function matchesRounded(value, raw, decimals) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isFinite(raw)) return false
   const expected = pythonRound(raw, decimals)
+  if (!Number.isFinite(expected)) return false
   const tolerance = Number.EPSILON * Math.max(1, Math.abs(value), Math.abs(expected))
-  return typeof value === 'number' && Number.isFinite(value) && Math.abs(value - expected) <= tolerance
+  return Number.isFinite(tolerance) && Math.abs(value - expected) <= tolerance
 }
 function validateMetrics(metrics) {
   contract(object(metrics) && ['cost', 'click', 'impression', 'ctr', 'cpc'].every(key => Object.hasOwn(metrics, key)))

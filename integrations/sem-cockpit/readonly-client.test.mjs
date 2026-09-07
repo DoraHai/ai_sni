@@ -182,6 +182,24 @@ test('derived metrics tolerate only floating representation noise and preserve n
   assert.equal(zero.items[0].metrics.cpc, null)
 })
 
+test('derived metrics fail closed at numeric limits and reject unsafe counts', async () => {
+  for (const cost of [Number.MAX_VALUE / 2, Number.MAX_VALUE]) {
+    const result = await acceptsContract('keywords', data => {
+      data.items[0].metrics = { cost, click: 1, impression: 1, ctr: 1, cpc: cost }
+    })
+    assert.equal(result.items[0].metrics.cpc, cost)
+  }
+  await rejectsContract('keywords', data => {
+    data.items[0].metrics = { cost: Number.MAX_VALUE, click: 1, impression: 1, ctr: 1, cpc: 0 }
+  })
+  await rejectsContract('keywords', data => {
+    data.items[0].metrics.cost = Number.MAX_VALUE * 2
+  })
+  await rejectsContract('keywords', data => {
+    data.items[0].metrics.click = Number.MAX_SAFE_INTEGER + 1
+  })
+})
+
 test('partial phone evidence cannot be presented as a complete value', async () => {
   await rejectsContract('keywords', data => { data.items[0].phone_button_clicks.value = 2 })
   await rejectsContract('keywordDetail', data => { data.phone_button_clicks.unknown_rows = 0 })
