@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from fastapi import HTTPException
-from sqlalchemy import String, func, literal, select
+from sqlalchemy import String, func, literal, or_, select
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.functions import FunctionElement
 
@@ -45,6 +45,52 @@ def utc_stamp(value):
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat()
+
+
+async def resolve_account_scope(session, tenant_id, account_id):
+    """Resolve the read scope without treating archived accounts as current.
+
+    An explicit archived account remains readable for historical inspection, but
+    the default tenant scope contains only accounts that are not archived.
+    """
+    accounts = (await session.execute(
+        select(BaiduAccount.id, BaiduAccount.status)
+        .where(BaiduAccount.tenant_id == tenant_id).order_by(BaiduAccount.id)
+    )).all()
+    by_id = {row.id: row.status for row in accounts}
+    if account_id is not None:
+        if account_id not in by_id:
+            raise HTTPException(404, "该客户下不存在此账户")
+        selected_ids = [account_id]
+        payload = {
+            "mode": "single", "baidu_account_id": account_id,
+            "configured_account_ids": selected_ids,
+            "excluded_archived_account_ids": [],
+            "selected_account_status": by_id[account_id],
+        }
+    else:
+        selected_ids = [row.id for row in accounts if row.status != "archived"]
+        payload = {
+            "mode": "all", "baidu_account_id": None,
+            "configured_account_ids": selected_ids,
+            "excluded_archived_account_ids": [row.id for row in accounts if row.status == "archived"],
+        }
+    return payload, selected_ids, by_id
+
+
+def account_data_scope(model, tenant_id, account_scope):
+    """Filter stored evidence to the resolved accounts, preserving unassigned rows."""
+    filters = [model.tenant_id == tenant_id]
+    account_id = account_scope["baidu_account_id"]
+    if account_id is not None:
+        filters.append(model.baidu_account_id == account_id)
+        return filters
+    selected_ids = account_scope["configured_account_ids"]
+    ownership = model.baidu_account_id.is_(None)
+    if selected_ids:
+        ownership = or_(model.baidu_account_id.in_(selected_ids), ownership)
+    filters.append(ownership)
+    return filters
 
 
 def report_metrics(rows):
@@ -97,16 +143,11 @@ async def read_phone_rows(session, cond, group_columns=()):
 
 async def read_report(session, tenant_id, start, end, account_id, keyword_id=None):
     validate_window(start, end)
-    accounts = (await session.execute(
-        select(BaiduAccount.id, BaiduAccount.status)
-        .where(BaiduAccount.tenant_id == tenant_id).order_by(BaiduAccount.id)
-    )).all()
-    if account_id is not None and account_id not in {a.id for a in accounts}:
-        raise HTTPException(404, "该客户下不存在此账户")
-    cond = [KwReportSnapshot.tenant_id == tenant_id,
+    account_scope, selected_ids, account_statuses = await resolve_account_scope(
+        session, tenant_id, account_id
+    )
+    cond = [*account_data_scope(KwReportSnapshot, tenant_id, account_scope),
             KwReportSnapshot.report_date >= start, KwReportSnapshot.report_date <= end]
-    if account_id is not None:
-        cond.append(KwReportSnapshot.baidu_account_id == account_id)
     if keyword_id is not None:
         cond.append(KwReportSnapshot.keyword_id == keyword_id)
     rows = (await session.execute(select(
@@ -128,23 +169,22 @@ async def read_report(session, tenant_id, start, end, account_id, keyword_id=Non
                 "missing_dates": [d.isoformat() for d in days if d not in seen],
                 "latest_report_date": max(seen).isoformat() if seen else None,
                 "updated_at": utc_stamp(max((r.fetched_at for r in items), default=None))}
-    ids = {account_id} if account_id is not None else {a.id for a in accounts}
+    ids = set(selected_ids)
     ids |= {r.baidu_account_id for r in rows}
+    account_scope["includes_unassigned"] = any(r.baidu_account_id is None for r in rows)
     return {
         "contract_version": "sem-cockpit-v1", "module": "sem", "is_demo": False,
         "read_only": True, "tenant_id": tenant_id,
         "window": {"start": start.isoformat(), "end": end.isoformat(),
                    "timezone": "Asia/Shanghai", "inclusive": True},
-        "account_scope": {"mode": "all" if account_id is None else "single",
-                          "baidu_account_id": account_id,
-                          "includes_unassigned": any(r.baidu_account_id is None for r in rows)},
+        "account_scope": account_scope,
         "source": "kw_report_snapshots", "source_scope": "keyword_report_only",
         "units": {"cost": "CNY", "click": "count", "impression": "count",
                   "ctr": "ratio", "cpc": "CNY/click"},
         "retrieved_at": datetime.now(timezone.utc).isoformat(),
         "coverage": coverage(rows), "metrics": report_metrics(rows),
         "accounts": [{"baidu_account_id": aid,
-                      "status": next((a.status for a in accounts if a.id == aid), "unassigned"),
+                      "status": account_statuses.get(aid, "unassigned"),
                       "metrics": report_metrics([r for r in rows if r.baidu_account_id == aid]),
                       "coverage": coverage([r for r in rows if r.baidu_account_id == aid])}
                      for aid in sorted(ids, key=lambda x: (x is None, x or 0))],

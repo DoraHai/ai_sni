@@ -100,12 +100,40 @@ def test_phone_sql_compiles_to_postgres_field_extraction():
 def test_keywords_exact_account_join_and_asset_without_report(client):
     data=get(client,"keywords/cockpit",**PARAMS)
     assert data["total"]==4
+    assert data["account_scope"]["configured_account_ids"]==[11,12]
+    assert data["account_scope"]["excluded_archived_account_ids"]==[13]
     assert [r["metrics"]["cost"] for r in data["items"]]==[10,50,7,None]
     assert data["items"][0]["metrics"]["ctr"]==.02
     assert data["items"][0]["coverage"]["missing_dates"]==["2026-09-02"]
     assert data["items"][3]["coverage"]["status"]=="no_data"
     single=get(client,"keywords/cockpit",**PARAMS,baidu_account_id=12)
     assert single["total"]==1 and single["items"][0]["metrics"]["cost"]==50
+
+
+def test_explicit_archived_account_is_historical_only(client):
+    assert client[0].get("/api/v1/keywords/cockpit/102",params=PARAMS).status_code==404
+    listing=get(client,"keywords/cockpit",**PARAMS,baidu_account_id=13)
+    assert listing["total"]==1
+    assert listing["items"][0]["keyword"]=="archived history"
+    assert listing["account_scope"]["selected_account_status"]=="archived"
+    detail=get(client,"keywords/cockpit/102",**PARAMS,baidu_account_id=13)
+    assert detail["metrics"]["cost"]==500
+    assert detail["dimensions"]["region"]["rows"][0]["region_name"]=="归档省"
+    terms=get(client,"search-terms/cockpit",tenant_id=1,baidu_account_id=13)
+    assert terms["total"]==1 and terms["items"][0]["baidu_account_id"]==13
+
+
+def test_all_archived_tenant_returns_truthful_empty_default_scope(client):
+    client[1].tenant_id=None
+    report=get(client,"dashboard/cockpit",tenant_id=3,start_date="2026-09-01",end_date="2026-09-03")
+    keywords_data=get(client,"keywords/cockpit",tenant_id=3)
+    terms=get(client,"search-terms/cockpit",tenant_id=3)
+    for payload in (report, keywords_data, terms):
+        assert payload["account_scope"]["configured_account_ids"]==[]
+        assert payload["account_scope"]["excluded_archived_account_ids"]==[31]
+    assert report["accounts"]==[] and report["metrics"]["cost"] is None
+    assert keywords_data["total"]==0 and keywords_data["window"]["start"] is None
+    assert terms["total"]==0 and terms["status"]=="no_data"
 
 
 def test_keywords_default_window_selected_scope_and_literal_filter(client):
@@ -155,12 +183,12 @@ def test_search_windows_cover_all_filtered_pages_without_summing(client):
 
 def test_classic_search_terms_exposes_filtered_account_windows(client):
     data = get(client, "search-terms", tenant_id=1, page_size=1)
-    assert data["total"] == 3 and len(data["search_terms"]) == 1
+    assert data["total"] == 4 and len(data["search_terms"]) == 1
     assert data["mixed_windows"] is True and data["summary_comparable"] is False
     assert data["window"] is None
     assert sum(row["stored_rows"] for row in data["windows"]) == data["total"]
-    assert {row["baidu_account_id"] for row in data["windows"]} == {11, 12}
-    assert data["search_terms"][0]["baidu_account_id"] in {11, 12}
+    assert {row["baidu_account_id"] for row in data["windows"]} == {11, 12, 13}
+    assert data["search_terms"][0]["baidu_account_id"] in {11, 12, 13}
 
     filtered = get(client, "search-terms", tenant_id=1, baidu_account_id=12)
     assert filtered["account_scope"] == {"mode": "single", "baidu_account_id": 12}

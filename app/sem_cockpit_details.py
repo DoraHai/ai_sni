@@ -5,23 +5,22 @@ from datetime import timedelta
 from fastapi import HTTPException
 from sqlalchemy import func, select
 
-from app.models import BaiduAccount, Keyword, KeywordHourlyReport, KeywordRegionReport, KwReportSnapshot, SearchTermReport
-from app.sem_cockpit_readonly import phone_summary, read_phone_rows, read_report, report_metrics, utc_stamp, validate_window
-
-
-def scope(model, tenant_id, account_id):
-    filters = [model.tenant_id == tenant_id]
-    if account_id is not None:
-        filters.append(model.baidu_account_id == account_id)
-    return filters
+from app.models import Keyword, KeywordHourlyReport, KeywordRegionReport, KwReportSnapshot, SearchTermReport
+from app.sem_cockpit_readonly import (
+    account_data_scope,
+    phone_summary,
+    read_phone_rows,
+    read_report,
+    report_metrics,
+    resolve_account_scope,
+    utc_stamp,
+    validate_window,
+)
 
 
 async def accounts_for(session, tenant_id, account_id):
-    ids = list((await session.scalars(select(BaiduAccount.id).where(BaiduAccount.tenant_id == tenant_id).order_by(BaiduAccount.id))).all())
-    if account_id is not None and account_id not in ids:
-        raise HTTPException(404, "该客户下不存在此账户")
-    return {"mode": "all" if account_id is None else "single",
-            "baidu_account_id": account_id, "configured_account_ids": ids if account_id is None else [account_id]}
+    account_scope, selected_ids, _ = await resolve_account_scope(session, tenant_id, account_id)
+    return account_scope, selected_ids
 
 
 def window(start, end, mode="explicit"):
@@ -49,16 +48,16 @@ def envelope(tenant_id, account_scope, source):
 
 
 async def read_keywords(session, tenant_id, account_id, start, end, q, campaign_id, page, page_size):
-    account_scope = await accounts_for(session, tenant_id, account_id)
+    account_scope, _ = await accounts_for(session, tenant_id, account_id)
     if (start is None) != (end is None):
         raise HTTPException(422, "起止日期须同时提供或同时省略")
     mode = "explicit" if start else "latest_report_7d"
     if start:
         validate_window(start, end)
     else:
-        end = await session.scalar(select(func.max(KwReportSnapshot.report_date)).where(*scope(KwReportSnapshot, tenant_id, account_id)))
+        end = await session.scalar(select(func.max(KwReportSnapshot.report_date)).where(*account_data_scope(KwReportSnapshot, tenant_id, account_scope)))
         start = end - timedelta(days=6) if end else None
-    cond = scope(Keyword, tenant_id, account_id)
+    cond = account_data_scope(Keyword, tenant_id, account_scope)
     if q:
         cond.append(Keyword.keyword.contains(q, autoescape=True))
     if campaign_id is not None:
@@ -70,7 +69,7 @@ async def read_keywords(session, tenant_id, account_id, start, end, q, campaign_
         .where(*cond).order_by(Keyword.keyword_id, Keyword.id).offset((page-1)*page_size).limit(page_size))).all()
     reports, phones = [], []
     if start and assets:
-        report_cond = [*scope(KwReportSnapshot, tenant_id, account_id), KwReportSnapshot.report_date >= start,
+        report_cond = [*account_data_scope(KwReportSnapshot, tenant_id, account_scope), KwReportSnapshot.report_date >= start,
                        KwReportSnapshot.report_date <= end, KwReportSnapshot.keyword_id.in_([r.keyword_id for r in assets])]
         reports = (await session.execute(select(KwReportSnapshot.keyword_id, KwReportSnapshot.baidu_account_id,
             KwReportSnapshot.report_date, func.sum(KwReportSnapshot.cost).label("cost"),
@@ -98,7 +97,7 @@ async def read_keywords(session, tenant_id, account_id, start, end, q, campaign_
             "scope_note": "关键词资产列表；只关联相同账户与关键词ID的报告，未归属记录不推断到其他账户"}
 
 
-async def read_dimensions(session, tenant_id, account_id, keyword_id, start, end, expected):
+async def read_dimensions(session, tenant_id, account_scope, keyword_id, start, end, expected):
     result = {}
     for model, name, cols in (
         (KeywordRegionReport, "region", (KeywordRegionReport.region_name, KeywordRegionReport.region_level)),
@@ -107,7 +106,7 @@ async def read_dimensions(session, tenant_id, account_id, keyword_id, start, end
         rows = (await session.execute(select(model.baidu_account_id, model.report_date, *cols,
             func.sum(model.cost).label("cost"), func.sum(model.click).label("click"),
             func.sum(model.impression).label("impression"), func.max(model.fetched_at).label("fetched_at"))
-            .where(*scope(model, tenant_id, account_id), model.keyword_id == keyword_id,
+            .where(*account_data_scope(model, tenant_id, account_scope), model.keyword_id == keyword_id,
                    model.report_date >= start, model.report_date <= end)
             .group_by(model.baidu_account_id, model.report_date, *cols))).all()
         groups = defaultdict(list)
@@ -135,16 +134,16 @@ async def read_dimensions(session, tenant_id, account_id, keyword_id, start, end
 
 async def read_keyword_detail(session, tenant_id, account_id, keyword_id, start, end):
     validate_window(start, end)
-    await accounts_for(session, tenant_id, account_id)
+    account_scope, _ = await accounts_for(session, tenant_id, account_id)
     assets = (await session.execute(select(Keyword.baidu_account_id, Keyword.keyword, Keyword.synced_at)
-              .where(*scope(Keyword, tenant_id, account_id), Keyword.keyword_id == keyword_id)
+              .where(*account_data_scope(Keyword, tenant_id, account_scope), Keyword.keyword_id == keyword_id)
               .order_by(Keyword.baidu_account_id))).all()
     if not assets:
-        exists = await session.scalar(select(KwReportSnapshot.keyword_id).where(*scope(KwReportSnapshot, tenant_id, account_id), KwReportSnapshot.keyword_id == keyword_id).limit(1))
+        exists = await session.scalar(select(KwReportSnapshot.keyword_id).where(*account_data_scope(KwReportSnapshot, tenant_id, account_scope), KwReportSnapshot.keyword_id == keyword_id).limit(1))
         if exists is None:
             raise HTTPException(404, "该范围不存在此关键词")
     result = await read_report(session, tenant_id, start, end, account_id, keyword_id)
-    phone_rows = await read_phone_rows(session, [*scope(KwReportSnapshot, tenant_id, account_id),
+    phone_rows = await read_phone_rows(session, [*account_data_scope(KwReportSnapshot, tenant_id, account_scope),
         KwReportSnapshot.keyword_id == keyword_id, KwReportSnapshot.report_date >= start,
         KwReportSnapshot.report_date <= end], (KwReportSnapshot.baidu_account_id,))
     result["phone_button_clicks"] = phone_summary(phone_rows)
@@ -154,7 +153,7 @@ async def read_keyword_detail(session, tenant_id, account_id, keyword_id, start,
     result["keyword_id"] = keyword_id
     result["keyword_assets"] = [{"baidu_account_id": a.baidu_account_id, "keyword": a.keyword,
                                   "asset_updated_at": utc_stamp(a.synced_at)} for a in assets]
-    result["dimensions"] = await read_dimensions(session, tenant_id, account_id, keyword_id, start, end,
+    result["dimensions"] = await read_dimensions(session, tenant_id, account_scope, keyword_id, start, end,
                                                  [a["baidu_account_id"] for a in result["accounts"]])
     return result
 
@@ -172,8 +171,8 @@ def nullable_metrics(rows):
 
 
 async def read_search_terms(session, tenant_id, account_id, q, campaign_id, adgroup_id, page, page_size):
-    account_scope = await accounts_for(session, tenant_id, account_id)
-    cond = scope(SearchTermReport, tenant_id, account_id)
+    account_scope, _ = await accounts_for(session, tenant_id, account_id)
+    cond = account_data_scope(SearchTermReport, tenant_id, account_scope)
     if q:
         cond.append(SearchTermReport.query_word.contains(q, autoescape=True))
     for field, value in ((SearchTermReport.campaign_id,campaign_id),(SearchTermReport.adgroup_id,adgroup_id)):
