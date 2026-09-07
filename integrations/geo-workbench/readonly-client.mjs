@@ -250,6 +250,7 @@ export function createGeoReadonlyClient({ transport, onClear }) {
       contract(data.pagination.has_more === (next !== null))
       const pageKey = params.cursor ?? null
       const ids = data.items.map(item => item?.ref?.id)
+      contract(new Set(ids).size === ids.length)
       const priorPage = answerPages.get(pageKey)
       if (priorPage) contract(JSON.stringify(priorPage.ids) === JSON.stringify(ids) && priorPage.next === next)
       else {
@@ -287,6 +288,7 @@ export function createGeoReadonlyClient({ transport, onClear }) {
       }
       const pageKey = params.beforeId ?? null
       const ids = data.items.map(item => item?.ref?.id)
+      contract(new Set(ids).size === ids.length)
       const priorPage = questionPages.get(pageKey)
       if (priorPage) contract(JSON.stringify(priorPage.ids) === JSON.stringify(ids) && priorPage.next === next)
       else contract(params.beforeId === undefined || ids.every(id => !questions.has(id)))

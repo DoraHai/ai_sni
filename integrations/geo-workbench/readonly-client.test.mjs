@@ -184,6 +184,15 @@ test('retrying the same answer page is allowed only with the same rows and next 
   assert.equal(reads, 3)
 })
 
+test('answer pages reject duplicate ids before populating verified references', async () => {
+  const { client } = fixture(() => response(answerPage({
+    pagination: { limit: 2, has_more: false, next_cursor: null, watermark_max_id: 9010 }, items: [answer, answer],
+  })))
+  client.setContext(context)
+  await assert.rejects(client.read('answers', { limit: 2 }), { code: 'CONTRACT_MISMATCH' })
+  assert.throws(() => client.answerView(9010, metric.metric_key), { code: 'UNVERIFIED_REFERENCE' })
+})
+
 test('new answer query revokes old references and cancels an in-flight detail', async () => {
   let finishDetail
   const { client } = fixture(path => {
@@ -297,6 +306,16 @@ test('question pagination rejects non-decreasing cursors and cursors unrelated t
     await client.read('questions', { limit: 1 })
     await assert.rejects(client.read('questions', { limit: 1, beforeId: 41 }), { code: 'CONTRACT_MISMATCH' })
   }
+})
+
+test('question pages reject duplicate ids before recording pagination progress', async () => {
+  const item = { ref: { module: 'geo', type: 'question', id: 41 }, current_text: '问题', language: 'zh-CN', status: 'active',
+    timestamp_source_timezone: 'unknown', created_at: '2026-09-06T23:14:00', updated_at: '2026-09-06T23:37:00' }
+  const { client } = fixture(() => response({
+    tenant_id: 16, pagination: { limit: 2, has_more: false, next_before_id: null }, items: [item, item],
+  }))
+  client.setContext(context)
+  await assert.rejects(client.read('questions', { limit: 2 }), { code: 'CONTRACT_MISMATCH' })
 })
 
 test('metric arrays without tenant echo rely on the exact request context rather than invented fields', async () => {
