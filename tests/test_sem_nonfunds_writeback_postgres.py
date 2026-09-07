@@ -111,37 +111,76 @@ def adgroup_row() -> Adgroup:
     )
 
 
-def test_reconciled_intent_cannot_resume_after_commit_gap():
+def test_reconciler_wins_during_commit_relock_gap_and_executor_stays_stopped():
     async def exercise():
         async with database() as engine:
             async with AsyncSession(engine, expire_on_commit=False) as setup:
-                account = account_row()
-                campaign = campaign_row()
-                record = action_row("campaign_pause")
-                setup.add_all([account, campaign, record])
+                setup.add_all([account_row(), campaign_row(), adgroup_row()])
                 await setup.commit()
-                record_id = record.id
 
-            async with AsyncSession(engine, expire_on_commit=False) as reconciler:
-                record = await reconciler.get(WritebackAction, record_id, with_for_update=True)
-                record.status = "failed"
-                record.reconciliation_result = "confirmed_not_executed"
-                await reconciler.commit()
+            intent_committed = asyncio.Event()
+            reconciliation_finished = asyncio.Event()
+            remote = AsyncMock()
+
+            async def persist_with_reconciliation_gap(
+                session, record, *, dry_run, asset, account
+            ):
+                await _persist_funds_intent(session, record, dry_run=dry_run)
+                intent_committed.set()
+                await asyncio.wait_for(reconciliation_finished.wait(), 5)
+                await _relock_action_intent(
+                    session, record, asset=asset, account=account
+                )
+
+            async def reconcile_pending_intent():
+                await asyncio.wait_for(intent_committed.wait(), 5)
+                async with AsyncSession(engine, expire_on_commit=False) as reconciler:
+                    record = await reconciler.scalar(
+                        select(WritebackAction).with_for_update()
+                    )
+                    assert record is not None
+                    assert record.status == "pending"
+                    record.status = "failed"
+                    record.reconciliation_result = "confirmed_not_executed"
+                    record.error_msg = "manual reconciliation preserved"
+                    await reconciler.commit()
+                reconciliation_finished.set()
 
             async with AsyncSession(engine, expire_on_commit=False) as executor:
-                account = await executor.get(BaiduAccount, 17)
-                campaign = await executor.get(Campaign, 101)
-                record = await executor.get(WritebackAction, record_id)
-                with pytest.raises(WritebackError, match="已被处理"):
-                    await _relock_action_intent(
-                        executor, record, asset=campaign, account=account
-                    )
-                await executor.rollback()
+                reconcile_task = asyncio.create_task(reconcile_pending_intent())
+                with (
+                    patch(
+                        "app.baidu.writeback._persist_action_intent",
+                        new=persist_with_reconciliation_gap,
+                    ),
+                    patch("app.baidu.writeback._account_client", return_value=object()),
+                    patch("app.baidu.writeback.AdgroupService.update_negative_words", remote),
+                    patch(
+                        "app.baidu.writeback.get_settings",
+                        return_value=SimpleNamespace(
+                            baidu_write_dry_run=False,
+                            baidu_write_is_dry_run=lambda tenant_id, account_id, scope: False,
+                        ),
+                    ),
+                ):
+                    with pytest.raises(WritebackError, match="已被处理"):
+                        await apply_negative_writeback(
+                            executor,
+                            3,
+                            "工业泵",
+                            303,
+                            match_mode="phrase",
+                            operator_user_id=9,
+                            operator_name="tester",
+                        )
+                await asyncio.wait_for(reconcile_task, 5)
 
+            remote.assert_not_awaited()
             async with AsyncSession(engine) as check:
-                record = await check.get(WritebackAction, record_id)
+                record = await check.scalar(select(WritebackAction))
                 assert record.status == "failed"
                 assert record.reconciliation_result == "confirmed_not_executed"
+                assert record.error_msg == "manual reconciliation preserved"
 
     asyncio.run(exercise())
 
@@ -355,5 +394,70 @@ def test_add_word_recheck_sees_other_session_success_before_remote_call():
                         word="工业泵",
                         exclude_record_id=own.id,
                     )
+
+    asyncio.run(exercise())
+
+
+def test_two_live_add_word_attempts_from_empty_state_call_remote_once():
+    async def exercise():
+        async with database() as engine:
+            async with AsyncSession(engine, expire_on_commit=False) as setup:
+                setup.add_all([account_row(), campaign_row(), adgroup_row()])
+                await setup.commit()
+
+            first_remote_started = asyncio.Event()
+            release_first_remote = asyncio.Event()
+            second_started = asyncio.Event()
+            remote_calls = 0
+
+            async def remote(*args, **kwargs):
+                nonlocal remote_calls
+                remote_calls += 1
+                first_remote_started.set()
+                await asyncio.wait_for(release_first_remote.wait(), 5)
+                return {"header": {"status": 0}}
+
+            settings = SimpleNamespace(
+                baidu_write_dry_run=False,
+                baidu_write_is_dry_run=lambda tenant_id, account_id, scope: False,
+            )
+
+            async def run_attempt(mark_started=False):
+                async with AsyncSession(engine, expire_on_commit=False) as session:
+                    if mark_started:
+                        second_started.set()
+                    return await apply_add_word_writeback(
+                        session,
+                        3,
+                        "工业泵",
+                        303,
+                        price=3.6,
+                        match_mode="exact",
+                        operator_user_id=9,
+                        operator_name="tester",
+                    )
+
+            with (
+                patch("app.baidu.writeback._account_client", return_value=object()),
+                patch("app.baidu.writeback.KeywordService.add_word", new=remote),
+                patch("app.baidu.writeback.get_settings", return_value=settings),
+            ):
+                first = asyncio.create_task(run_attempt())
+                await asyncio.wait_for(first_remote_started.wait(), 5)
+                second = asyncio.create_task(run_attempt(mark_started=True))
+                await asyncio.wait_for(second_started.wait(), 5)
+                done, _ = await asyncio.wait({second}, timeout=0.2)
+                assert not done, "second addWord must wait for the adgroup row lock"
+                release_first_remote.set()
+                first_result = await asyncio.wait_for(first, 5)
+                assert first_result.status == "success"
+                with pytest.raises(WritebackError, match="近期成功"):
+                    await asyncio.wait_for(second, 5)
+
+            assert remote_calls == 1
+            async with AsyncSession(engine) as check:
+                records = (await check.scalars(select(WritebackAction))).all()
+                assert len(records) == 1
+                assert records[0].status == "success"
 
     asyncio.run(exercise())
