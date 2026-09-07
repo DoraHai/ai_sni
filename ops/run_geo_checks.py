@@ -33,7 +33,7 @@ def validate_ci_database(url):
 
 
 def create_fixture_tables(connection):
-    from sqlalchemy import Column, MetaData, Table, inspect
+    from sqlalchemy import BigInteger, Column, Date, MetaData, String, Table, inspect
     import app.models  # Register mapped columns; no application startup.
     from app.database import Base
     if inspect(connection).get_table_names():
@@ -47,6 +47,13 @@ def create_fixture_tables(connection):
     for name in names:
         source = Base.metadata.tables[name]
         Table(name, metadata, *(Column(c.name, c.type, nullable=c.nullable) for c in source.columns))
+    Table(
+        'tenant_modules', metadata,
+        Column('tenant_id', BigInteger),
+        Column('module_code', String),
+        Column('status', String),
+        Column('expires_at', Date),
+    )
     metadata.create_all(connection)
 
 
