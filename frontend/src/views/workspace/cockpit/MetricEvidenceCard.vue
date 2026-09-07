@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref, useId, watch } from 'vue'
 
 // Only accepts already-scoped, formatted data from a module adapter.
 // No demo defaults, network requests, HTML injection or inferred attribution.
@@ -8,11 +8,15 @@ const props = defineProps({
   contextRevision: { type: [String, Number], required: true },
 })
 const emit = defineEmits(['discuss', 'retry'])
+const titleId = `metric-evidence-${useId()}`
+const metric = computed(() => props.metric.contextRevision === props.contextRevision ? props.metric : {
+  state: 'loading', label: '正在更新数据', display: '—', reason: '正在核对当前客户的数据',
+})
 const dialog = ref(null)
 const selected = ref(null)
 const trigger = ref(null)
 const finite = value => typeof value === 'number' && Number.isFinite(value)
-const points = computed(() => Array.isArray(props.metric.series) ? props.metric.series : [])
+const points = computed(() => Array.isArray(metric.value.series) ? metric.value.series : [])
 const usable = computed(() => points.value.filter(point => finite(point.value)))
 const low = computed(() => Math.min(0, ...usable.value.map(point => point.value)))
 const high = computed(() => Math.max(1, ...usable.value.map(point => point.value)))
@@ -31,17 +35,17 @@ const segments = computed(() => {
   return result.map(segment => segment.join(' '))
 })
 const status = computed(() => ({ loading: '读取中', available: '已读取', partial: '部分数据',
-  no_data: '暂无数据', unavailable: '暂不可用', denied: '无查看权限' }[props.metric.state] ?? '待核验'))
+  no_data: '暂无数据', unavailable: '暂不可用', denied: '无查看权限' }[metric.value.state] ?? '待核验'))
 const activePoint = computed(() => points.value[selected.value] ?? null)
-const rows = computed(() => Array.isArray(props.metric.rows) ? props.metric.rows : [])
-const columns = computed(() => Array.isArray(props.metric.columns) ? props.metric.columns : [])
-const canDiscuss = computed(() => ['available', 'partial'].includes(props.metric.state))
+const rows = computed(() => Array.isArray(metric.value.rows) ? metric.value.rows : [])
+const columns = computed(() => Array.isArray(metric.value.columns) ? metric.value.columns : [])
+const canDiscuss = computed(() => ['available', 'partial'].includes(metric.value.state))
 function open() { dialog.value?.showModal() }
 function close() { dialog.value?.close() }
 function discuss() {
   if (!canDiscuss.value) return
   // Pass an object reference and revision; the parent resolves current evidence again.
-  emit('discuss', { metricId: props.metric.id, contextRevision: props.contextRevision })
+  emit('discuss', { metricId: metric.value.id, contextRevision: props.contextRevision })
   close()
 }
 watch(() => props.contextRevision, () => { selected.value = null; close() }, { flush: 'sync' })
@@ -78,8 +82,8 @@ watch(() => props.metric, () => { selected.value = null; close() }, { flush: 'sy
     <p v-else class="empty-trend">{{ metric.reason || '当前没有可展示的趋势数据' }}</p>
     <div class="card-footer"><span>{{ metric.periodLabel || '统计周期待确认' }}</span><button type="button" :disabled="!canDiscuss" @click="discuss">就这项提问 ↗</button></div>
 
-    <dialog ref="dialog" class="evidence-dialog" @click="event => { if (event.target === dialog) close() }" @close="trigger?.focus()">
-      <header><div><span class="module-name">{{ metric.moduleLabel }} · {{ status }}</span><h2>{{ metric.label }}</h2></div><button type="button" class="close-button" aria-label="关闭明细" @click="close">×</button></header>
+    <dialog ref="dialog" class="evidence-dialog" :aria-labelledby="titleId" @click="event => { if (event.target === dialog) close() }" @close="trigger?.focus()">
+      <header><div><span class="module-name">{{ metric.moduleLabel }} · {{ status }}</span><h2 :id="titleId">{{ metric.label }}</h2></div><button type="button" class="close-button" aria-label="关闭明细" @click="close">×</button></header>
       <div class="detail-value">{{ metric.display ?? '—' }}<small v-if="metric.unit">{{ metric.unit }}</small></div>
       <p v-if="metric.reason" class="detail-reason">{{ metric.reason }}</p>
       <dl class="evidence-meta"><div><dt>统计范围</dt><dd>{{ metric.periodLabel || '未提供' }}</dd></div><div><dt>数据来源</dt><dd>{{ metric.sourceLabel || '未提供' }}</dd></div><div><dt>更新时间</dt><dd>{{ metric.updatedLabel || '未知' }}</dd></div></dl>

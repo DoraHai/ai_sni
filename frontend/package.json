@@ -19,6 +19,7 @@
     "test:chunk-recovery": "node scripts/test-chunk-recovery.mjs",
     "test:sem-identity-repair-requests": "node scripts/test-sem-identity-repair-requests.mjs",
     "test:workbench-session": "node scripts/test-workbench-session.mjs",
+    "test:workbench-evidence": "node scripts/test-workbench-evidence-card.cjs",
     "deploy:sem": "bash scripts/deploy-sem.sh",
     "deploy:login": "bash scripts/deploy-auth.sh",
     "dev:diagnostic-center": "vite --config vite.diagnostic-center.config.js",
