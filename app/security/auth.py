@@ -25,6 +25,7 @@ from app.models.role import Role
 from app.models.user import User
 from app.security.api_key import resolve_api_key
 from app.security.sem_identity import ensure_sem_identity_access
+from app.permissions import effective_role_permissions
 
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _bearer = HTTPBearer(auto_error=False)
@@ -260,7 +261,11 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
 
 async def _build_context(user: User, session: AsyncSession) -> AuthContext:
     role = await session.get(Role, user.role_id)
-    perms = dict(role.permissions or {}) if role else {}
+    perms = (
+        effective_role_permissions(role.name, role.is_system, role.permissions)
+        if role
+        else {}
+    )
     return AuthContext(
         user_id=user.id,
         username=user.username,

@@ -11,6 +11,7 @@ import {
   setCustomerModule,
   updateCustomer,
 } from '../../api/moduleAssets'
+import { fetchUsers } from '../../api/auth'
 import { session } from '../../store/session'
 import { createRequestController } from './semIdentityRepairRequests'
 
@@ -18,10 +19,17 @@ const router = useRouter()
 
 const loading = ref(false)
 const customers = ref([])
+const loginUsers = ref([])
 const identitySummary = ref({ checked_customers: 0, checked_accounts: 0, errors: 0, warnings: 0, healthy: true })
 const visible = ref(false)
 const editingId = ref(null)
-const form = reactive({ name: '', industry: '', business_desc: '', modules: ['sem'] })
+const form = reactive({ name: '', industry: '', business_desc: '' })
+const moduleVisible = ref(false)
+const moduleSaving = ref(false)
+const moduleContext = reactive({ tenantId: null, customerName: '', code: '' })
+const moduleForm = reactive({ status: 'trial', expires_at: '' })
+const accountVisible = ref(false)
+const accountCustomer = ref(null)
 const repairVisible = ref(false)
 const repairLoading = ref(false)
 const repairCandidates = ref({ groups: [], summary: {} })
@@ -34,6 +42,7 @@ const repairPreviewRequestId = ref(0)
 const repairCandidateRequests = createRequestController()
 const repairPreviewRequests = createRequestController()
 const moduleLabels = { sem: 'SEM', seo: 'SEO', geo: 'GEO' }
+const moduleStatusLabels = { active: '正式', trial: '试用', suspended: '停用', closed: '关闭' }
 const editingCustomer = computed(() => customers.value.find((row) => row.id === editingId.value))
 const repairCandidateCustomers = computed(() => {
   const seen = new Set()
@@ -90,8 +99,12 @@ function moduleRow(row, code) {
 async function load() {
   loading.value = true
   try {
-    const result = await fetchCustomers()
+    const [result, users] = await Promise.all([
+      fetchCustomers(),
+      session.canEdit('settings.accounts') ? fetchUsers() : Promise.resolve(null),
+    ])
     customers.value = result.customers || []
+    loginUsers.value = users?.users || []
     identitySummary.value = result.identity_summary || { checked_customers: 0, checked_accounts: 0, errors: 0, warnings: 0, healthy: true }
   }
   catch (error) { ElMessage.error(error.message) }
@@ -100,13 +113,13 @@ async function load() {
 
 function openCreate() {
   editingId.value = null
-  Object.assign(form, { name: '', industry: '', business_desc: '', modules: ['sem'] })
+  Object.assign(form, { name: '', industry: '', business_desc: '' })
   visible.value = true
 }
 
 function openEdit(row) {
   editingId.value = row.id
-  Object.assign(form, { name: row.name, industry: row.industry || '', business_desc: row.business_desc || '', modules: row.modules.filter((m) => m.available).map((m) => m.module_code) })
+  Object.assign(form, { name: row.name, industry: row.industry || '', business_desc: row.business_desc || '' })
   visible.value = true
 }
 
@@ -148,17 +161,80 @@ async function save() {
         confirm_bound_name_change: boundNameChanged,
         name_change_reason: nameChangeReason,
       })
-      for (const code of Object.keys(moduleLabels)) {
-        await setCustomerModule(editingId.value, code, { status: form.modules.includes(code) ? 'active' : 'suspended' })
-      }
     } else {
-      await createCustomer({ name: form.name, industry: form.industry || null, business_desc: form.business_desc || null, modules: form.modules })
+      await createCustomer({ name: form.name, industry: form.industry || null, business_desc: form.business_desc || null, modules: [] })
     }
     visible.value = false
-    ElMessage.success('客户与模块配置已保存')
+    ElMessage.success('客户资料已保存')
     await load()
     session.requestTenantReload()
   } catch (error) { ElMessage.error(error.message) }
+}
+
+function effectiveModuleState(row, code) {
+  const item = moduleRow(row, code)
+  if (!item) return { label: '未开通', type: 'info' }
+  const expired = item.expires_at && item.expires_at < new Date().toISOString().slice(0, 10)
+  if (expired && ['active', 'trial'].includes(item.status)) return { label: '已过期', type: 'warning' }
+  return {
+    label: moduleStatusLabels[item.status] || '状态未知',
+    type: item.available ? 'success' : item.status === 'suspended' ? 'warning' : 'info',
+  }
+}
+
+function openModule(row, code) {
+  const item = moduleRow(row, code)
+  Object.assign(moduleContext, { tenantId: row.id, customerName: row.name, code })
+  Object.assign(moduleForm, {
+    status: item?.status || 'trial',
+    expires_at: item?.expires_at || '',
+  })
+  moduleVisible.value = true
+}
+
+async function saveModule() {
+  const label = moduleLabels[moduleContext.code]
+  const status = moduleStatusLabels[moduleForm.status]
+  const expiry = moduleForm.expires_at || '不设到期日'
+  try {
+    await ElMessageBox.confirm(
+      `确认将“${moduleContext.customerName}”的 ${label} 设置为“${status}”，${expiry}？历史数据会保留。`,
+      '确认模块变更',
+      { type: ['suspended', 'closed'].includes(moduleForm.status) ? 'warning' : 'info' },
+    )
+  } catch { return }
+  moduleSaving.value = true
+  try {
+    await setCustomerModule(moduleContext.tenantId, moduleContext.code, {
+      status: moduleForm.status,
+      expires_at: moduleForm.expires_at || null,
+    })
+    moduleVisible.value = false
+    ElMessage.success(`${label} 模块已更新`)
+    await load()
+    session.requestTenantReload()
+  } catch (error) {
+    ElMessage.error(error.message || `${label} 模块更新失败，原显示状态将重新读取`)
+    await load()
+  } finally {
+    moduleSaving.value = false
+  }
+}
+
+function showAccounts(row) {
+  accountCustomer.value = row
+  accountVisible.value = true
+}
+
+const selectedLoginUsers = computed(() => (
+  accountCustomer.value
+    ? loginUsers.value.filter((item) => item.tenant_id === accountCustomer.value.id)
+    : []
+))
+
+function connectionLabel(item) {
+  if (!item || item.state === 'no_records') return '无接入记录'
+  return `${item.record_count} 条记录 · 完整性未评估`
 }
 
 async function archiveAccount(row, account) {
@@ -282,7 +358,7 @@ onMounted(load)
 <template>
   <div class="module-page" v-loading="loading">
     <header class="page-head">
-      <div><h2>客户与模块</h2><p>平台级客户主档仅由超级管理员维护；模块内只显示已开通该模块的客户。</p></div>
+      <div><h2>客户与业务</h2><p>客户主档、模块订阅和已有接入记录；数据完整性不会由记录数量推断。</p></div>
       <div class="head-actions">
         <el-button @click="load">重新检查归属</el-button>
         <el-button type="warning" plain @click="openRepairPreview">重复客户只读预演</el-button>
@@ -299,6 +375,16 @@ onMounted(load)
     <el-table :data="customers" border>
       <el-table-column prop="name" label="客户" min-width="180" />
       <el-table-column prop="industry" label="行业" min-width="150" />
+      <el-table-column label="客户状态" width="110">
+        <template #default><el-tag type="info">未提供</el-tag></template>
+      </el-table-column>
+      <el-table-column label="登录账号" min-width="160">
+        <template #default="{ row }">
+          <div>{{ row.login_accounts?.account_count || 0 }} 个 · 启用 {{ row.login_accounts?.active_count || 0 }}</div>
+          <small>{{ row.login_accounts?.last_login_at ? `最近登录 ${row.login_accounts.last_login_at}` : '从未登录' }}</small>
+          <el-button v-if="session.canEdit('settings.accounts')" link type="primary" @click="showAccounts(row)">查看账号</el-button>
+        </template>
+      </el-table-column>
       <el-table-column label="SEM 推广账户归属" min-width="320">
         <template #default="{ row }">
           <div v-if="row.sem_accounts?.some((a) => a.status !== 'archived')" class="account-bindings">
@@ -328,8 +414,13 @@ onMounted(load)
           </div>
         </template>
       </el-table-column>
-      <el-table-column v-for="code in ['sem','seo','geo']" :key="code" :label="moduleLabels[code]" width="105" align="center">
-        <template #default="{ row }"><el-tag :type="moduleRow(row, code)?.available ? 'success' : 'info'">{{ moduleRow(row, code)?.available ? '已开通' : '未开通' }}</el-tag></template>
+      <el-table-column v-for="code in ['sem','seo','geo']" :key="code" :label="moduleLabels[code]" min-width="145" align="center">
+        <template #default="{ row }">
+          <el-tag :type="effectiveModuleState(row, code).type">{{ effectiveModuleState(row, code).label }}</el-tag>
+          <small class="module-expiry">{{ moduleRow(row, code)?.expires_at ? `至 ${moduleRow(row, code).expires_at}` : '无到期日' }}</small>
+          <small class="connection-state">{{ connectionLabel(row.data_connections?.[code]) }}</small>
+          <el-button link type="primary" @click="openModule(row, code)">配置</el-button>
+        </template>
       </el-table-column>
       <el-table-column label="操作" width="100"><template #default="{ row }"><el-button link type="primary" @click="openEdit(row)">配置</el-button></template></el-table-column>
     </el-table>
@@ -346,10 +437,37 @@ onMounted(load)
         <el-form-item label="客户名称"><el-input v-model="form.name" maxlength="100" /></el-form-item>
         <el-form-item label="所属行业"><el-input v-model="form.industry" maxlength="100" /></el-form-item>
         <el-form-item label="业务说明"><el-input v-model="form.business_desc" type="textarea" :rows="3" /></el-form-item>
-        <el-form-item label="开通模块"><el-checkbox-group v-model="form.modules"><el-checkbox v-for="(label, code) in moduleLabels" :key="code" :value="code">{{ label }}</el-checkbox></el-checkbox-group></el-form-item>
+        <el-alert title="客户保存与模块配置分开提交；创建后请逐个配置模块状态和期限。" type="info" :closable="false" />
       </el-form>
       <template #footer><el-button @click="visible=false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template>
     </el-dialog>
+    <el-dialog v-model="moduleVisible" :title="`配置 ${moduleLabels[moduleContext.code]} 模块`" width="480px">
+      <el-form label-width="96px">
+        <el-form-item label="客户"><b>{{ moduleContext.customerName }}</b></el-form-item>
+        <el-form-item label="状态" required>
+          <el-select v-model="moduleForm.status" style="width:100%">
+            <el-option label="试用" value="trial" />
+            <el-option label="正式" value="active" />
+            <el-option label="停用" value="suspended" />
+            <el-option label="关闭" value="closed" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="到期日">
+          <el-date-picker v-model="moduleForm.expires_at" type="date" value-format="YYYY-MM-DD" clearable style="width:100%" />
+        </el-form-item>
+        <el-alert title="每个模块独立确认并单独提交；失败时重新读取该模块原状态，不宣称多模块原子更新。" type="warning" :closable="false" />
+      </el-form>
+      <template #footer><el-button @click="moduleVisible=false">取消</el-button><el-button type="primary" :loading="moduleSaving" @click="saveModule">确认更新</el-button></template>
+    </el-dialog>
+    <el-drawer v-model="accountVisible" :title="`${accountCustomer?.name || ''} · 登录账号`" size="560px">
+      <el-alert v-if="!session.canEdit('settings.accounts')" title="当前权限只能查看账号汇总" type="info" :closable="false" />
+      <el-table v-else :data="selectedLoginUsers" border>
+        <el-table-column prop="username" label="用户名" />
+        <el-table-column prop="role_label" label="角色" />
+        <el-table-column label="状态"><template #default="{ row }">{{ row.is_active ? '启用' : '停用' }}</template></el-table-column>
+        <el-table-column prop="last_login_at" label="最近登录"><template #default="{ row }">{{ row.last_login_at || '从未登录' }}</template></el-table-column>
+      </el-table>
+    </el-drawer>
     <el-dialog v-model="repairVisible" title="SEM 重复客户只读检测与修复预演" width="900px" @closed="closeRepairPreview">
       <div v-loading="repairLoading" class="repair-preview">
         <el-alert

@@ -1,12 +1,18 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { createUser, fetchTenants, fetchUsers, updateUser } from '../../api/auth'
+import { useRoute, useRouter } from 'vue-router'
+import { createUser, fetchUsers, resetUserPassword, updateUser } from '../../api/auth'
 import { createRole, deleteRole, fetchRoles, updateRole } from '../../api/roles'
 import { session } from '../../store/session'
 import { formatUtcTimestamp } from '../../utils/dateTime'
 
-const tab = ref('accounts')
+const route = useRoute()
+const router = useRouter()
+const tab = computed({
+  get: () => (route.path.endsWith('/roles') ? 'roles' : 'accounts'),
+  set: (value) => router.push(`/platform/${value}`),
+})
 const loading = ref(false)
 const error = ref('')
 const usersData = ref(null)
@@ -25,14 +31,13 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [users, roles, tenants] = await Promise.all([
+    const [users, roles] = await Promise.all([
       fetchUsers(),
       fetchRoles(),
-      fetchTenants(),
     ])
     usersData.value = users
     rolesData.value = roles
-    tenantOptions.value = tenants.tenants || []
+    tenantOptions.value = users.tenant_options || []
   } catch (e) {
     error.value = e
   } finally {
@@ -80,7 +85,6 @@ async function submitUser() {
         display_name: uform.displayName || undefined,
         tenant_id: uform.tenantId ?? undefined,
         clear_tenant: uform.tenantId == null,
-        new_password: uform.password ? uform.password : undefined,
       })
       ElMessage.success('账号已更新')
     } else {
@@ -93,6 +97,34 @@ async function submitUser() {
     ElMessage.error(e.message)
   } finally {
     savingUser.value = false
+  }
+}
+
+async function resetPassword(row) {
+  let value = ''
+  try {
+    const result = await ElMessageBox.prompt(
+      `为账号“${row.username}”设置新密码。现有密码不会显示或恢复。`,
+      '重置密码',
+      {
+        inputType: 'password',
+        inputPattern: /^.{8,100}$/,
+        inputErrorMessage: '密码长度需为 8–100 位',
+        confirmButtonText: '确认重置',
+      },
+    )
+    value = result.value
+    await ElMessageBox.confirm(
+      `确认重置“${row.username}”的密码？本阶段不会自动注销该账号已有会话。`,
+      '确认重置密码',
+      { type: 'warning' },
+    )
+  } catch { return }
+  try {
+    await resetUserPassword(row.id, value)
+    ElMessage.success('密码已重置；系统不会回显新密码')
+  } catch (e) {
+    ElMessage.error(e.message)
   }
 }
 
@@ -119,8 +151,9 @@ function levelOptions(menuKey) {
   return menuKey === 'settings.accounts' ? [LEVELS[0], LEVELS[2]] : LEVELS
 }
 function cellDisabled(menuKey) {
-  // 管理员角色必须保留账号与权限编辑权
-  return rform.name === ADMIN_ROLE && menuKey === 'settings.accounts'
+  return rform.isSystem
+    && rform.name === ADMIN_ROLE
+    && ['settings.accounts', 'settings.customers'].includes(menuKey)
 }
 
 function openCreateRole() {
@@ -144,8 +177,9 @@ async function submitRole() {
   if (!rform.name.trim()) { ElMessage.warning('角色名必填'); return }
   const permissions = {}
   for (const [k, v] of Object.entries(rform.perms)) if (v) permissions[k] = v
-  if (rform.name === ADMIN_ROLE && permissions['settings.accounts'] !== 'edit') {
+  if (rform.isSystem && rform.name === ADMIN_ROLE) {
     permissions['settings.accounts'] = 'edit'
+    permissions['settings.customers'] = 'edit'
   }
   savingRole.value = true
   try {
@@ -193,8 +227,8 @@ onMounted(load)
   <div v-loading="loading">
     <div class="page-header">
       <div>
-        <div class="page-title">账号与权限</div>
-        <div class="page-desc">自定义角色 · 权限细到左侧每个菜单（可见 / 可编辑）· 每个账号归属一个角色，可选限定单客户</div>
+        <div class="page-title">{{ tab === 'accounts' ? '账号' : '角色与权限' }}</div>
+        <div class="page-desc">平台级账号和角色管理；单客户绑定用于限制业务数据范围</div>
       </div>
       <div class="page-actions">
         <el-button v-if="tab === 'accounts'" type="primary" @click="openCreateUser">新建账号</el-button>
@@ -229,9 +263,10 @@ onMounted(load)
             <el-table-column label="最近登录" width="140">
               <template #default="{ row }"><span class="sub">{{ fmtTime(row.last_login_at) }}</span></template>
             </el-table-column>
-            <el-table-column label="操作" width="230">
+            <el-table-column label="操作" width="300">
               <template #default="{ row }">
                 <el-button size="small" @click="openEditUser(row)">编辑</el-button>
+                <el-button size="small" plain @click="resetPassword(row)">重置密码</el-button>
                 <el-button
                   size="small" :type="row.is_active ? 'danger' : 'success'" plain
                   :disabled="row.id === session.user?.id"
@@ -239,7 +274,11 @@ onMounted(load)
                 >{{ row.is_active ? '停用' : '启用' }}</el-button>
               </template>
             </el-table-column>
-            <template #empty><div class="empty-line">还没有账号，点右上角「新建账号」。</div></template>
+            <template #empty>
+              <div class="empty-line">
+                当前没有登录账号记录。新建账号时可选择限定到一个客户。
+              </div>
+            </template>
           </el-table>
         </div>
       </el-tab-pane>
@@ -283,7 +322,7 @@ onMounted(load)
         <el-form-item label="显示名">
           <el-input v-model="uform.displayName" placeholder="选填" />
         </el-form-item>
-        <el-form-item :label="editingUserId ? '重置密码' : '初始密码'" :required="!editingUserId">
+        <el-form-item v-if="!editingUserId" label="初始密码" required>
           <el-input v-model="uform.password" type="password" show-password :placeholder="editingUserId ? '留空=不改' : '至少 8 位'" />
         </el-form-item>
         <el-form-item label="角色" required>

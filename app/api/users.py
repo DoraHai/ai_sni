@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.models import Role, Tenant, User
+from app.permissions import effective_role_permissions, has_full_platform_admin
 from app.security.auth import AuthContext, hash_password, require_admin
 
 router = APIRouter(
@@ -41,6 +42,10 @@ async def list_users(session: AsyncSession = Depends(get_session)) -> dict:
     return {
         "users": [_payload(u, role_names, tenant_names) for u in users],
         "role_options": [{"id": rid, "label": name} for rid, name in role_names.items()],
+        "tenant_options": [
+            {"id": tenant_id, "name": name}
+            for tenant_id, name in tenant_names.items()
+        ],
     }
 
 
@@ -89,7 +94,39 @@ class UpdateUserRequest(BaseModel):
     tenant_id: int | None = None
     clear_tenant: bool = False  # True=解除单客户绑定（改回全客户）
     display_name: str | None = Field(None, max_length=50)
-    new_password: str | None = Field(None, min_length=8, max_length=100)
+
+
+async def _role_permissions(session: AsyncSession, role_id: int) -> dict[str, str]:
+    role = await session.get(Role, role_id)
+    if role is None:
+        raise HTTPException(404, "指定的角色不存在")
+    return effective_role_permissions(role.name, role.is_system, role.permissions)
+
+
+async def _has_other_platform_admin(session: AsyncSession, user_id: int) -> bool:
+    roles = list((await session.scalars(select(Role))).all())
+    full_role_ids = {
+        role.id
+        for role in roles
+        if has_full_platform_admin(
+            effective_role_permissions(role.name, role.is_system, role.permissions)
+        )
+    }
+    if not full_role_ids:
+        return False
+    users = list(
+        (
+            await session.scalars(
+                select(User).where(
+                    User.id != user_id,
+                    User.role_id.in_(full_role_ids),
+                    User.is_active.is_(True),
+                    User.tenant_id.is_(None),
+                )
+            )
+        ).all()
+    )
+    return bool(users)
 
 
 @router.patch("/{user_id}")
@@ -104,6 +141,35 @@ async def update_user(
         raise HTTPException(404, "用户不存在")
     if req.is_active is False and user.id == ctx.user_id:
         raise HTTPException(400, "不能停用自己的账号")
+    next_role_id = req.role_id if req.role_id is not None else user.role_id
+    next_tenant_id = (
+        None
+        if req.clear_tenant
+        else req.tenant_id
+        if req.tenant_id is not None
+        else user.tenant_id
+    )
+    next_active = req.is_active if req.is_active is not None else user.is_active
+    current_permissions = await _role_permissions(session, user.role_id)
+    next_permissions = await _role_permissions(session, next_role_id)
+    currently_platform_admin = (
+        user.is_active
+        and user.tenant_id is None
+        and has_full_platform_admin(current_permissions)
+    )
+    remains_platform_admin = (
+        next_active
+        and next_tenant_id is None
+        and has_full_platform_admin(next_permissions)
+    )
+    if user.id == ctx.user_id and not remains_platform_admin:
+        raise HTTPException(400, "不能让当前账号失去平台管理能力")
+    if (
+        currently_platform_admin
+        and not remains_platform_admin
+        and not await _has_other_platform_admin(session, user.id)
+    ):
+        raise HTTPException(400, "不能停用或降权最后一个平台管理员")
     if req.role_id is not None:
         await _check_role(session, req.role_id)
         user.role_id = req.role_id
@@ -116,7 +182,23 @@ async def update_user(
         user.display_name = req.display_name
     if req.is_active is not None:
         user.is_active = req.is_active
-    if req.new_password:
-        user.password_hash = hash_password(req.new_password)
+    await session.commit()
+    return {"status": "ok"}
+
+
+class ResetPasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=8, max_length=100)
+
+
+@router.patch("/{user_id}/password")
+async def reset_user_password(
+    user_id: int,
+    req: ResetPasswordRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(404, "用户不存在")
+    user.password_hash = hash_password(req.new_password)
     await session.commit()
     return {"status": "ok"}
