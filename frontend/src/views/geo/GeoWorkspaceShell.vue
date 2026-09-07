@@ -2,6 +2,8 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GeoAccountBar from '../../components/GeoAccountBar.vue'
+import { session } from '../../store/session'
+import { canViewCockpit } from '../../utils/cockpitAccess'
 import { GEO_WORKBENCH_NAV } from '../../utils/geoPrototypeNavigation'
 
 const route = useRoute()
@@ -11,6 +13,7 @@ const geoNavCollapsed = ref(false)
 const geoNavHover = ref(false)
 const isMobile = ref(false)
 const isEditor = computed(() => /^\/geo\/tasks\/[^/]+/.test(route.path))
+const showCockpitShortcut = computed(() => canViewCockpit(session.permissions))
 const geoNavRail = computed(() => geoNavCollapsed.value && !geoNavHover.value && !isMobile.value)
 const expandedGroups = ref({
   [GEO_WORKBENCH_NAV[0]?.label]: true,
@@ -131,7 +134,7 @@ onUnmounted(() => {
         <a href="/monitor/dashboard" target="_top"><span>SEM</span><span class="geo-quick-label">搜索广告工作台</span></a>
         <a href="/seo/dashboard"><span>SEO</span><span class="geo-quick-label">SEO 内容工作台</span></a>
         <a href="/diagnostic-center/"><span>DX</span><span class="geo-quick-label">诊断中心</span></a>
-        <a class="portal-link" href="/deal-sniper/portal" target="_top"><span>←</span><span class="geo-quick-label">返回平台门户</span></a>
+        <a v-if="showCockpitShortcut" class="portal-link" href="/workspace/cockpit" target="_top"><span>←</span><span class="geo-quick-label">G‑Snipers 获客工作台</span></a>
       </div>
     </aside>
     <main class="geo-shell-main">
