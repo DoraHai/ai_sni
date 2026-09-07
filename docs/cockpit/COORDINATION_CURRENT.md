@@ -8,7 +8,7 @@ This is the authoritative continuation checkpoint. Historical pause documents ar
 - Preserve the product boundary: discovery/read evidence and explanation/action are separate. Never turn missing, stale, simulated, site-level or estimated data into customer facts.
 - Database work and human tests require a concrete request to the user first: exact object, operation, expected result, prohibited actions and evidence to return. Work that does not need either must continue.
 - Inspect the three tasks about every five minutes. Routine report about every fifteen minutes; material completion, failure or production risk is immediate.
-- Stop line: if Codex primary remaining usage is below 20%, stop new development/tests/merge/deploy, pause all three tasks, update this file and notify the user. Do not consume a reset credit automatically. At 14:42 used was 62%, remaining 38%.
+- Stop line: if Codex primary remaining usage is below 20%, stop new development/tests/merge/deploy, pause all three tasks, update this file and notify the user. Do not consume a reset credit automatically. At 15:08 used was 66%, remaining 34%.
 
 ## Production state
 
@@ -45,12 +45,11 @@ GEO fixed all three on exact reviewed head `4da1183dcbd5b47e0b15cd945c7e0765ffef
 
 ### Workbench
 
-- Draft PR429 current frozen exact `d4f0d249e633657b7f042a7e2f84d742ab6c2085`, branch `codex/workbench-seo-dashboard-20260907`, based on current main.
+- PR429 frozen exact `d4f0d249e633657b7f042a7e2f84d742ab6c2085` passed SEO and SEM independent review with P1=0/P2=0 and all CI, then merged to main as `ca3c0fa08b6cdebd5cfa4fc922aa6472c3967f97`.
 - Adds real SEO summary evidence for the explicitly selected site: content totals/statuses, review+ready counts, page totals/health/needs-fix, urgent count, and a clearly unavailable single-article-click card. It does not guess the first site, perform writes, trigger collection or infer article clicks.
 - Adds module-only view invalidation so SEO permission/site failure clears SEO cards and discussion references without erasing valid SEM evidence. Site/customer/auth revision changes reject late results.
 - Independent SEO review of the first head found one P2: business actions and unresolved modules were added together and described as modules. Exact `d4f0d24...` separates the two counts and adds four copy scenarios. Local validation now covers 50 SEO/workbench contracts plus cockpit scope, session, evidence-card and SEM UI suites; production build; `verify:sem-build` over 104 assets; diff check clean.
-- PR429 is queued for SEO data-contract review and SEM session/invalidation review. Do not merge until both exact-head reviews and CI pass.
-- PR429 GitHub checks are all green and mergeability is clean. Product gap still open: a fresh ordinary SEO read-only user cannot list/select sites because existing `/api/v1/seo/sites` requires `seo.assets`; current slice can only reuse an already selected scoped site. SEO owns a separate minimal GET-only site-scope endpoint/permission solution before this slice is considered production-complete.
+- Product gap still open: a fresh ordinary SEO read-only user cannot list/select sites because existing `/api/v1/seo/sites` requires `seo.assets`; the merged slice can only reuse an already selected scoped site. SEO owns a separate minimal GET-only site-scope endpoint/permission solution before the SEO dashboard is production-complete.
 
 ## Ownership and next action
 
@@ -61,6 +60,6 @@ GEO fixed all three on exact reviewed head `4da1183dcbd5b47e0b15cd945c7e0765ffef
 
 ## Human, database and administrator queue
 
-- Human: H1 must now be rerun once against production `882802b...`: tenant 诺德, task #14, one hard refresh and one “更新母稿”; capture job/version/type, saved result or full brand warning, score/checks, network/console error and timestamp/screenshots. Do not approve, generate channel copy or publish. Return exact result to GEO/coordinator. H2-H4 remain blocked until H1 passes.
+- Human: the production `882802b...` retest generated V3/article #20 as an evidence-only fallback and preserved V1/V2, so the code mechanism passed. H1 remains blocked only because the task business profile uses `product_name=工业齿轮箱` while its facts/body use NORD/MAXXDRIVE. An authorized business user must change the profile's outward-facing brand/product name to `MAXXDRIVE`, place `NORD` in the brand description, then click only “重新检查” on existing V3. Do not regenerate, approve, create channel copy or publish. Return the resulting brand check, opening/conclusion checks, status, timestamp and screenshots. H2-H4 remain blocked until this passes.
 - Database: no action now. No schema change is active.
 - Administrator: no action now. Production workflows and health endpoints are available; request assistance only if a controlled workflow, credential retrieval or server evidence cannot be completed by the module owner.
