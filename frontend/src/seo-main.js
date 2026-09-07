@@ -33,7 +33,11 @@ import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import 'element-plus/dist/index.css'
 import './style.css'
 import SeoApp from './SeoApp.vue'
-import router from './seo-router'
+import router, { revalidateSessionRoute } from './seo-router'
+import { AUTH_CONTEXT_EVENT } from './store/sessionStorage'
+import { installAuthContextRouting } from './authContextRouting'
+
+installAuthContextRouting(window, AUTH_CONTEXT_EVENT, revalidateSessionRoute)
 
 const elementComponents = [
   ElAlert,

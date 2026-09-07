@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { loginUrl } from './auth/loginRedirect'
 import { session } from './store/session'
+import { leaveUnauthorizedWorkspace } from './authContextRouting'
 
 const seoChildren = [
   { path: '', redirect: '/seo/dashboard' },
@@ -135,7 +136,7 @@ function firstAllowedSeoPath() {
   return SEO_MENU_ORDER.find(([permission]) => session.canView(permission))?.[1] || null
 }
 
-router.beforeEach((to) => {
+function sessionRouteDecision(to) {
   const devBypass = !session.isLoggedIn && import.meta.env.VITE_API_KEY && import.meta.env.DEV
   if (!session.isLoggedIn && !devBypass) {
     window.location.assign(loginUrl(to.fullPath))
@@ -144,8 +145,15 @@ router.beforeEach((to) => {
   if (devBypass || !to.meta.perm || session.canView(to.meta.perm)) return true
   const destination = firstAllowedSeoPath()
   if (destination && destination !== to.path) return { path: destination }
-  return false
-})
+  return leaveUnauthorizedWorkspace(window)
+}
+router.beforeEach((to) => sessionRouteDecision(to))
+
+export function revalidateSessionRoute() {
+  const decision = sessionRouteDecision(router.currentRoute.value)
+  if (decision && decision !== true) return router.replace(decision)
+  return Promise.resolve(decision)
+}
 
 router.afterEach((to) => {
   const productName = 'SEO 工作台'
