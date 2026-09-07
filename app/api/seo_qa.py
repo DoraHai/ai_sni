@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone, timedelta
 from typing import Literal, Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator, model_validator, ValidationError, StringConstraints
-from sqlalchemy import select, func
+from sqlalchemy import select, func, exists
 from sqlalchemy.dialects.postgresql import insert
 from app.database import get_session
 from app.security.auth import require_scoped_auth
@@ -620,6 +620,7 @@ async def answers(tenant_id: PositiveInt, site_id: PositiveInt, question_id: Pos
         problems = await evidence_problems(session, row, content)
         result.append({**data(row), 'body':body, 'status':content.status,
             'content_version':content.version_count, 'review_note':content.review_note,
+            'review_submitted_by':content.review_submitted_by, 'reviewed_by':content.reviewed_by,
             'problems':problems, 'quality':answer_quality(body,row.fact_snapshots,problems)})
     return result
 
@@ -735,6 +736,65 @@ async def placements(tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, ses
         result.append({**data(row), 'publishable': not problems, 'problems': problems,
                        'followup': placement_followup(row.answer_url, row.observations)})
     return result
+
+
+@router.get('/placement-candidates')
+async def placement_candidates(tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, session=Db):
+    """List reviewed answers that still need a platform-specific placement."""
+    await access(session, ctx, tenant_id, site_id)
+    has_current_placement = exists(select(SeoQaPlacement.id).where(
+        SeoQaPlacement.tenant_id == tenant_id,
+        SeoQaPlacement.site_id == site_id,
+        SeoQaPlacement.answer_id == SeoQaAnswer.id,
+        SeoQaPlacement.content_version == SeoContentAsset.version_count,
+    )).correlate(SeoQaAnswer, SeoContentAsset)
+    conditions = (
+        SeoQaAnswer.tenant_id == tenant_id,
+        SeoQaAnswer.site_id == site_id,
+        SeoContentAsset.tenant_id == tenant_id,
+        SeoContentAsset.site_id == site_id,
+        SeoContentAsset.status.in_(('ready', 'published')),
+        SeoQuestion.tenant_id == tenant_id,
+        SeoQuestion.site_id == site_id,
+        SeoQuestion.status != 'archived',
+        ~has_current_placement,
+    )
+    joined = (select(SeoQaAnswer, SeoContentAsset, SeoQuestion)
+        .join(SeoContentAsset, SeoContentAsset.id == SeoQaAnswer.content_id)
+        .join(SeoQuestion, SeoQuestion.id == SeoQaAnswer.question_id)
+        .where(*conditions))
+    rows = (await session.execute(joined.order_by(
+        SeoContentAsset.updated_at.desc(), SeoQaAnswer.id.desc()).limit(200))).all()
+    total = await session.scalar(select(func.count()).select_from(SeoQaAnswer)
+        .join(SeoContentAsset, SeoContentAsset.id == SeoQaAnswer.content_id)
+        .join(SeoQuestion, SeoQuestion.id == SeoQaAnswer.question_id)
+        .where(*conditions))
+    fact_ids = {snapshot['id'] for answer, _, _ in rows for snapshot in answer.fact_snapshots}
+    facts = list(await session.scalars(select(SeoQaFact).where(
+        SeoQaFact.id.in_(fact_ids),
+        SeoQaFact.tenant_id == tenant_id,
+        SeoQaFact.site_id == site_id,
+    ))) if fact_ids else []
+    fact_map = {fact.id: fact for fact in facts}
+    items = []
+    for answer, content, question in rows:
+        problems = await evidence_problems(session, answer, content, fact_map)
+        items.append({
+            'answer_id': answer.id,
+            'question_id': question.id,
+            'question': data(question),
+            'content_version': content.version_count,
+            'reviewed_at': content.reviewed_at.isoformat() if content.reviewed_at else None,
+            'publishable': not problems,
+            'problems': problems,
+        })
+    return {
+        'items': items,
+        'total': int(total or 0),
+        'included': len(items),
+        'truncated': int(total or 0) > len(items),
+        'meaning': '已审核回答尚未建立当前正文版本的分平台记录；审核通过不代表已发布。',
+    }
 
 
 @router.post('/placements/{placement_id}/receipt')

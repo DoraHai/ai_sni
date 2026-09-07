@@ -9,8 +9,8 @@ async function mount(api={},canEdit=true) {
   const source=await readFile(new URL('../src/views/seo/SeoQaWorkbenchView.vue',import.meta.url),'utf8')
   const compiled=compileScript(parse(source).descriptor,{id:'qa',genDefaultAs:'component'}).content
   const tenant=Vue.ref(1),site=Vue.ref(10),writes=[]
-  const bindings={...Vue,SeoQaResearch:{},SeoQaPlanning:{},publisherZip:()=>null,qaRunnerSource:'',runnerSource:'',runnerRequirements:'',currentTenantId:tenant,siteId:site,session:{canEdit:()=>canEdit},useRouter:()=>({push(){}}),ElMessage:{success(){}},
-    seoQaGet:async path=>path==='questions'?{items:[],total:0}:path==='maintenance'?{items:[]}:path==='capabilities'?{platforms:[]}:[],
+  const bindings={...Vue,SeoQaResearch:{},SeoQaPlanning:{},publisherZip:()=>null,qaRunnerSource:'',runnerSource:'',runnerRequirements:'',currentTenantId:tenant,siteId:site,session:{canEdit:()=>canEdit,user:{id:7}},useRouter:()=>({push(){}}),ElMessage:{success(){}},
+    seoQaGet:async path=>path==='questions'?{items:[],total:0}:path==='placement-candidates'?{items:[],total:0,included:0,truncated:false}:path==='maintenance'?{items:[]}:path==='capabilities'?{platforms:[]}:[],
     seoQaPost:async(...args)=>{writes.push(args);return {created:1,merged:0}},seoQaPatch:async()=>({}),assistSeoContent:async()=>({content:'草稿'}),
     submitSeoContentReview:async(...args)=>writes.push(args),decideSeoContentReview:async()=>({}),...api}
   const names=Object.keys(bindings).filter(k=>/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k))
@@ -45,6 +45,45 @@ test('unsaved answer changes cannot submit old content or prepare a placement',a
     await m.state.review('submit');m.state.openPlacement()
     assert.equal(m.writes.length,0);assert.equal(m.state.dialog,'');assert.match(m.state.error,/保存/)
   }finally{m.app.unmount()}
+})
+
+test('reviewed placement candidate opens its exact answer for distribution',async()=>{
+  const question={id:20,title:'如何选型',topic:'选型',intent:'learn',relevance:3,owner:null,status:'selected',version:1,sources:[]}
+  const answer={id:24,content_id:30,content_version:2,body:'已审核',format:'short',fact_snapshots:[],status:'ready',problems:[]}
+  const m=await mount({seoQaGet:async path=>{
+    if(path==='questions')return {items:[],total:0}
+    if(path==='placement-candidates')return {items:[{answer_id:24,question_id:20,question,content_version:2,publishable:true,problems:[]}],total:1,included:1,truncated:false}
+    if(path==='maintenance')return {items:[]}
+    if(path==='capabilities')return {platforms:[]}
+    if(path==='answers')return [answer]
+    if(path==='questions/20/detail')return {question,coverage:{state:'reviewed_current'}}
+    return []
+  }})
+  try {
+    assert.equal(m.state.placementCandidates.total,1)
+    await m.state.openPlacementCandidate(m.state.placementCandidates.items[0])
+    assert.equal(m.state.answerForm.id,24)
+    assert.equal(m.state.selected.id,20)
+    assert.equal(m.state.tab,'questions')
+    m.state.openPlacement()
+    assert.equal(m.state.dialog,'placement')
+    assert.equal(m.state.placementForm.answer_id,24)
+  } finally {m.app.unmount()}
+})
+
+test('main answer drawer blocks submitter self-approval before calling the API',async()=>{
+  let approvals=0
+  const m=await mount({decideSeoContentReview:async()=>{approvals++;return {}}})
+  try {
+    const own={id:1,content_id:3,content_version:1,body:'已保存',format:'short',fact_snapshots:[],status:'review',problems:[],review_submitted_by:7}
+    m.state.answerItems=[own];m.state.editAnswer(own)
+    await m.state.review('approve')
+    assert.equal(approvals,0);assert.match(m.state.error,/不能自审/)
+    const other={...own,review_submitted_by:8}
+    m.state.answerItems=[other];m.state.editAnswer(other);m.state.error=''
+    await m.state.review('approve')
+    assert.equal(approvals,1)
+  } finally {m.app.unmount()}
 })
 
 test('AI response cannot populate another tenant workspace',async()=>{
