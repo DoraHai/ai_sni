@@ -7622,6 +7622,14 @@ async def generate_task_article(
     if not evidence_preview["ok"]:
         raise HTTPException(400, generation_evidence_error_message(evidence_preview))
 
+    # Serialize the transition before creating a job. Job ownership is keyed by
+    # job id, so without the task-row lock two clicks can enqueue two different
+    # workers for the same content task and both create a new master version.
+    await session.refresh(task, with_for_update=True)
+    if task.status == "generating":
+        raise HTTPException(409, "母稿正在生成，请等待当前任务完成")
+    task.status = "generating"
+
     if run_async:
         from app.geo.content.async_jobs import (
             KIND_GENERATE,
@@ -7639,10 +7647,7 @@ async def generate_task_article(
             request_meta={},
             created_by=ctx.user_id,
         )
-        # create_job already committed; re-load task for status update
-        task = await _get_task(session, task_id, tenant_id)
-        task.status = "generating"
-        await session.commit()
+        # create_job commits the task transition and job reservation together.
         background_tasks.add_task(run_job_in_background, job.id)
         return {
             "async": True,
@@ -7651,7 +7656,6 @@ async def generate_task_article(
             "message": "母稿生成已排队，请轮询 /async-jobs/{id}",
         }
 
-    task.status = "generating"
     await session.commit()
     try:
         llm = await resolve_llm_credentials(session, tenant_id)
