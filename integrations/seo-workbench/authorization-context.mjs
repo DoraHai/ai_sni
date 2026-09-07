@@ -6,6 +6,7 @@ const READ_PERMISSIONS = Object.freeze({
   publications: 'seo.content',
   attempts: 'seo.content',
   pages: 'seo.site',
+  pageDetail: 'seo.site',
   imageEvidence: 'seo.site',
 })
 
