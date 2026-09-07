@@ -89,8 +89,9 @@ test('persistent envelope removal synchronizes logout', () => {
 })
 
 test('a legacy client logout remains fail closed during migration', () => {
-  const local = memory({ sem_token: 'legacy-token', sem_user: JSON.stringify(user(1)) })
+  const local = memory()
   const session = memory()
+  writeAuthEnvelope(local, 'legacy-token', user(1))
   local.removeItem('sem_token')
   assert.equal(persistentAuthForEvent({
     event: { key: 'sem_token', newValue: null, storageArea: local }, localStore: local,
