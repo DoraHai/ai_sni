@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import { createGeoReadonlyClient } from './readonly-client.mjs'
@@ -57,6 +58,30 @@ test('context requires a real Monday boundary for the formal complete week', () 
   for (const weekEnd of ['2026-02-30', '2026-08-30', '2026-8-31']) {
     assert.throws(() => client.setContext({ ...context, weekEnd }), { code: 'INVALID_CONTEXT' })
   }
+})
+
+test('all six source-derived synthetic minimum responses satisfy the actual consumer', async () => {
+  const fixtureData = JSON.parse(readFileSync(new URL('./production-minimum.synthetic.json', import.meta.url), 'utf8'))
+  assert.match(fixtureData.fixture_notice, /合成数据/)
+  assert.match(fixtureData.fixture_notice, /不是生产请求/)
+  const { client } = fixture(path => {
+    if (path.includes('/period-context?')) return response(fixtureData.responses.periodContext)
+    if (path.includes('/metrics/snapshot?')) return response(fixtureData.responses.metrics)
+    if (path.includes('/metrics/dictionary?')) return response(fixtureData.responses.dictionary)
+    if (path.includes('/answers/9010?')) return response(fixtureData.responses.answerDetail)
+    if (path.includes('/answers?')) return response(fixtureData.responses.answers)
+    if (path.includes('/questions?')) return response(fixtureData.responses.questions)
+    return response({}, 404)
+  })
+  client.setContext(fixtureData.context)
+  await client.read('periodContext')
+  await client.read('metrics')
+  await client.read('dictionary')
+  await client.read('answers', { limit: 1 })
+  await client.read('answerDetail', { snapshotId: 9010 })
+  await client.read('questions', { limit: 1 })
+  assert.equal(client.officialSnapshot().metrics.length, 3)
+  assert.match(client.answerView(9010, metric.metric_key).item.raw_text, /不是生产回答/)
 })
 
 test('reads only known GET paths from injected context and keeps metrics as the sole official source', async () => {
