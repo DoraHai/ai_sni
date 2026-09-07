@@ -38,6 +38,18 @@ assert.equal(
   '匹配类型编码 1 → 2（目标：智能匹配）',
 )
 assert.equal(
+  actionChangeText({
+    action_type: 'set_match_type',
+    old_value: 2,
+    new_value: 2,
+    match_change: {
+      old: { matchType: 2, phraseType: 1 },
+      new: { matchType: 2, phraseType: 3 },
+    },
+  }),
+  '匹配组合 (2,1) → (2,3)',
+)
+assert.equal(
   actionChangeText({ action_type: 'set_campaign_region', old_value: 2, new_value: 5 }),
   '2 个地域 → 5 个地域',
 )
