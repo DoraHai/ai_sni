@@ -280,8 +280,16 @@ const landingDialog = reactive({
   authRevision: null,
   accountId: null,
 })
+function resetLandingDialog() {
+  Object.assign(landingDialog, {
+    visible: false, submitting: false, row: null, tenantId: null, authRevision: null, accountId: null,
+    pcFinalUrl: '', mobileFinalUrl: '', pcTrackParam: '', mobileTrackParam: '',
+    pcTrackTemplate: '', mobileTrackTemplate: '',
+  })
+}
 
 function openLanding(row) {
+  if (!session.canEdit('optimize.keywords')) return
   Object.assign(landingDialog, {
     visible: true,
     submitting: false,
@@ -305,6 +313,7 @@ function copyPcToMobile() {
 }
 
 async function saveLanding() {
+  if (!session.canEdit('optimize.keywords')) return
   const attempt = actionGuard.begin()
   const row = landingDialog.row
   if (!row) return
@@ -341,6 +350,7 @@ async function saveLanding() {
 }
 
 async function editAdgroupBid(row) {
+  if (!session.canEdit('optimize.keywords')) return
   const attempt = actionGuard.begin()
   const asset = { adgroupId: row.adgroup_id, accountId: row.baidu_account_id, name: row.adgroup_name, price: row.max_price }
   const { value } = await ElMessageBox.prompt(
@@ -469,7 +479,7 @@ const filters = reactive({
 async function load() {
   const attempt = listLoadGuard.begin()
   const tenantId = attempt.context.tenantId
-  if (!tenantId) {
+  if (!session.canView('optimize.keywords') || !tenantId) {
     data.value = null
     error.value = ''
     loading.value = false
@@ -659,6 +669,7 @@ function categoryCount(code) {
 }
 
 async function onBatchCategory(code) {
+  if (!session.canEdit('optimize.keywords')) return
   const attempt = actionGuard.begin()
   const tenantId = attempt.context.tenantId
   const ids = selection.value.map((r) => r.keyword_id)
@@ -676,7 +687,7 @@ async function onBatchCategory(code) {
     const res = await batchUpdateCategory({ tenantId, keywordIds: ids, category: code })
     if (!attempt.isCurrent()) return
     ElMessage.success(`已更新 ${res.updated} 个关键词`)
-    tableRef.value?.clearSelection()
+    tableRef.value?.clearSelection?.()
     await load()
   } catch (e) {
     if (attempt.isCurrent()) ElMessage.error(e.message)
@@ -705,6 +716,7 @@ function _removeSuggestion(kwId) {
 
 // 回写的是「最终执行价」(finalPrices，可人工调整，默认=AI建议价/当前价)，不限于有 AI 建议的词
 async function applyWriteback(row) {
+  if (!session.canEdit('optimize.keywords')) return
   if (!keywordWritebackReady(row)) {
     ElMessage.error('当前关键词的回写模式尚未确认，已禁止提交，请刷新页面后重试')
     return
@@ -720,6 +732,7 @@ async function applyWriteback(row) {
 }
 
 async function openMatchTypeDialog(row, command) {
+  if (!session.canEdit('optimize.keywords')) return
   if (!keywordWritebackReady(row)) {
     ElMessage.error('当前关键词的回写模式尚未确认，已禁止修改匹配模式')
     return
@@ -728,6 +741,7 @@ async function openMatchTypeDialog(row, command) {
 }
 
 async function batchWriteback() {
+  if (!session.canEdit('optimize.keywords')) return
   if (!batchWritebackReady.value) {
     ElMessage.error('所选关键词中存在回写模式尚未确认的账户，已禁止批量提交')
     return
@@ -765,7 +779,7 @@ async function batchWriteback() {
     if (res.failed.length || res.rejected.length || res.simulated.length) ElMessage.warning(msg)
     else ElMessage.success(msg)
     res.applied.forEach((kwId) => _removeSuggestion(kwId))
-    tableRef.value?.clearSelection()
+    tableRef.value?.clearSelection?.()
     if (res.applied.length) load()
   } catch (e) {
     if (attempt.isCurrent()) ElMessage.error(e.response?.data?.detail || e.message)
@@ -773,6 +787,7 @@ async function batchWriteback() {
 }
 
 async function togglePause(row) {
+  if (!session.canEdit('optimize.keywords')) return
   if (!keywordWritebackReady(row)) {
     ElMessage.error('当前关键词的回写模式尚未确认，已禁止暂停或启用')
     return
@@ -781,6 +796,7 @@ async function togglePause(row) {
 }
 
 async function batchPause(pause) {
+  if (!session.canEdit('optimize.keywords')) return
   if (!batchWritebackReady.value) {
     ElMessage.error('所选关键词中存在回写模式尚未确认的账户，已禁止批量暂停或启用')
     return
@@ -809,7 +825,7 @@ async function batchPause(pause) {
     const msg = parts.join(' · ') || '无可操作关键词'
     if (res.failed.length || res.simulated.length) ElMessage.warning(msg)
     else ElMessage.success(msg)
-    tableRef.value?.clearSelection()
+    tableRef.value?.clearSelection?.()
     if (res.applied.length) load()
   } catch (e) {
     if (attempt.isCurrent()) ElMessage.error(e.response?.data?.detail || e.message)
@@ -817,6 +833,7 @@ async function batchPause(pause) {
 }
 
 async function ignoreSuggestion(s) {
+  if (!session.canEdit('optimize.keywords')) return
   const attempt = actionGuard.begin()
   const suggestionId = s.id
   const keywordId = s.keyword_id
@@ -867,21 +884,22 @@ const headerStats = computed(() => {
 
 // 顶栏切换客户后重新拉数
 watch(TENANT_ID, () => {
+  writebackModeGeneration += 1
   listLoadGuard.invalidate()
   viewLoadGuard.invalidate()
   assigneeLoadGuard.invalidate()
   refreshGuard.invalidate()
   actionGuard.invalidate()
   invalidateKeywordWriteback()
-  tableRef.value?.clearSelection()
+  tableRef.value?.clearSelection?.()
   selection.value = []
   data.value = null
+  error.value = ''
+  loading.value = false
   suggestionMap.value = {}
   suggestionList.value = []
   suggestionAssignees.value = []
-  landingDialog.visible = false
-  landingDialog.row = null
-  landingDialog.submitting = false
+  resetLandingDialog()
   for (const key of Object.keys(finalPrices)) delete finalPrices[key]
   workflowSavingId.value = null
   refreshing.value = false
@@ -892,6 +910,39 @@ watch(TENANT_ID, () => {
   load()
   loadKeywordWritebackMode()
   loadSuggestionAssignees()
+  scheduleStickyScrollSync()
+})
+watch(() => session.authRevision, () => {
+  writebackModeGeneration += 1
+  listLoadGuard.invalidate()
+  viewLoadGuard.invalidate()
+  assigneeLoadGuard.invalidate()
+  refreshGuard.invalidate()
+  actionGuard.invalidate()
+  invalidateKeywordWriteback()
+  tableRef.value?.clearSelection?.()
+  selection.value = []
+  data.value = null
+  error.value = ''
+  loading.value = false
+  suggestionMap.value = {}
+  suggestionList.value = []
+  suggestionAssignees.value = []
+  resetLandingDialog()
+  for (const key of Object.keys(finalPrices)) delete finalPrices[key]
+  workflowSavingId.value = null
+  refreshing.value = false
+  keywordWritebackModeState.value = 'error'
+  keywordWritebackAccountIds.value = new Set()
+  keywordBidLiveAccountIds.value = new Set()
+  campaignData.value = null
+  adgroupData.value = null
+  activeView.value = 'keywords'
+  if (session.canView('optimize.keywords')) {
+    load()
+    loadKeywordWritebackMode()
+    loadSuggestionAssignees()
+  }
   scheduleStickyScrollSync()
 })
 watch(activeView, scheduleStickyScrollSync)
@@ -907,6 +958,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  writebackModeGeneration += 1
   listLoadGuard.invalidate()
   viewLoadGuard.invalidate()
   assigneeLoadGuard.invalidate()
@@ -914,8 +966,7 @@ onBeforeUnmount(() => {
   actionGuard.invalidate()
   invalidateKeywordWriteback()
   clearTimeout(qTimer)
-  landingDialog.visible = false
-  landingDialog.row = null
+  resetLandingDialog()
   detachTableScroll()
   window.removeEventListener('resize', updateStickyScrollVisibility)
   window.removeEventListener('scroll', updateStickyScrollVisibility)

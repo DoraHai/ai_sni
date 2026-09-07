@@ -33,6 +33,16 @@ const regionForm = ref({
   campaignId: null, campaignIds: [], campaignName: '', accountId: null, accountName: '',
   regionTarget: [], factors: {}, geoLocationStatus: 0,
 })
+function resetActionForms() {
+  scheduleForm.value = {
+    campaignId: null, campaignIds: [], campaignName: '', accountId: null,
+    template: 'all', pause: false, days: [],
+  }
+  regionForm.value = {
+    campaignId: null, campaignIds: [], campaignName: '', accountId: null, accountName: '',
+    regionTarget: [], factors: {}, geoLocationStatus: 0,
+  }
+}
 const scopedContext = () => ({ tenantId: TENANT_ID.value, accountId: accountId.value, authRevision: session.authRevision })
 const loadGuard = createLatestRequestGuard(scopedContext)
 const actionGuard = createLatestRequestGuard(scopedContext)
@@ -57,7 +67,7 @@ const SCHEDULE_TEMPLATES = [
 async function load() {
   const attempt = loadGuard.begin()
   const { tenantId, accountId: selectedAccountId } = attempt.context
-  if (!tenantId) {
+  if (!session.canView('manage.campaigns') || !tenantId) {
     data.value = null
     error.value = ''
     loading.value = false
@@ -81,6 +91,7 @@ watch(TENANT_ID, () => {
   loadGuard.invalidate()
   actionGuard.invalidate()
   data.value = null
+  loading.value = false
   savingId.value = null
   const previousAccountId = accountId.value
   const activeIds = [...activeAccountIds.value]
@@ -90,33 +101,53 @@ watch(TENANT_ID, () => {
   regionVisible.value = false
   batchResult.value = null
   regionBatchResult.value = null
+  resetActionForms()
   if (accountId.value === previousAccountId) load()
 }, { immediate: true })
 watch(accountId, () => {
   loadGuard.invalidate()
   actionGuard.invalidate()
   data.value = null
+  loading.value = false
   savingId.value = null
   selectedCampaigns.value = []
   scheduleVisible.value = false
   regionVisible.value = false
   batchResult.value = null
   regionBatchResult.value = null
+  resetActionForms()
   load()
 })
 watch(() => session.tenantListRevision, () => {
   loadGuard.invalidate()
   actionGuard.invalidate()
   data.value = null
+  loading.value = false
   savingId.value = null
   selectedCampaigns.value = []
   scheduleVisible.value = false
   regionVisible.value = false
   batchResult.value = null
   regionBatchResult.value = null
+  resetActionForms()
   const previousAccountId = accountId.value
   accountId.value = chooseSemAccount(readableAccounts.value, previousAccountId)
   if (accountId.value === previousAccountId) load()
+})
+watch(() => session.authRevision, () => {
+  loadGuard.invalidate()
+  actionGuard.invalidate()
+  data.value = null
+  error.value = ''
+  loading.value = false
+  savingId.value = null
+  selectedCampaigns.value = []
+  scheduleVisible.value = false
+  regionVisible.value = false
+  batchResult.value = null
+  regionBatchResult.value = null
+  resetActionForms()
+  if (session.canView('manage.campaigns')) load()
 })
 async function loadRegions() {
   try {
@@ -175,6 +206,7 @@ function applyScheduleTemplate(templateName) {
 }
 
 function openSchedule(row) {
+  if (!session.canEdit('manage.campaigns')) return
   if (!canWriteAccount(row.baidu_account_id)) return ElMessage.warning('请先选择该计划所属的可用推广账户')
   batchResult.value = null
   scheduleForm.value = {
@@ -204,6 +236,7 @@ function openSchedule(row) {
 }
 
 function openBatchSchedule() {
+  if (!session.canEdit('manage.campaigns')) return
   if (!selectedCampaigns.value.length) {
     ElMessage.warning('请先选择需要统一设置时段的计划')
     return
@@ -246,6 +279,7 @@ function buildScheduleFactors(days = scheduleForm.value.days) {
 }
 
 async function saveSchedule() {
+  if (!session.canEdit('manage.campaigns')) return
   const attempt = actionGuard.begin()
   const form = structuredClone(scheduleForm.value)
   if (!attempt.isCurrent() || !canWriteAccount(form.accountId)) return
@@ -319,6 +353,7 @@ function regionSummary(row) {
 }
 
 function openRegion(row) {
+  if (!session.canEdit('manage.campaigns')) return
   if (!canWriteAccount(row.baidu_account_id)) return ElMessage.warning('请先选择该计划所属的可用推广账户')
   regionBatchResult.value = null
   regionForm.value = {
@@ -335,6 +370,7 @@ function openRegion(row) {
 }
 
 function openBatchRegion() {
+  if (!session.canEdit('manage.campaigns')) return
   if (!selectedCampaigns.value.length) {
     ElMessage.warning('请先选择需要统一设置地域的计划')
     return
@@ -379,6 +415,7 @@ function handleRegionChange(value) {
 }
 
 async function saveRegion() {
+  if (!session.canEdit('manage.campaigns')) return
   const attempt = actionGuard.begin()
   const form = structuredClone(regionForm.value)
   if (!attempt.isCurrent() || !canWriteAccount(form.accountId)) return
@@ -451,6 +488,7 @@ async function saveRegion() {
 }
 
 async function editBudget(row) {
+  if (!session.canEdit('manage.campaigns')) return
   if (!canWriteAccount(row.baidu_account_id)) return ElMessage.warning('请先选择该计划所属的可用推广账户')
   const attempt = actionGuard.begin()
   const asset = {
@@ -507,6 +545,7 @@ async function editBudget(row) {
 }
 
 async function togglePause(row) {
+  if (!session.canEdit('manage.campaigns')) return
   if (!canWriteAccount(row.baidu_account_id)) return ElMessage.warning('请先选择该计划所属的可用推广账户')
   const attempt = actionGuard.begin()
   const asset = { campaignId: row.campaign_id, accountId: row.baidu_account_id, name: row.campaign_name, pause: row.pause, status: row.status }

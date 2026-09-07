@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref, computed, nextTick } from 'vue'
+import { onBeforeUnmount, onMounted, ref, computed, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { init, use } from 'echarts/core'
 import { BarChart, HeatmapChart, LineChart } from 'echarts/charts'
@@ -12,6 +12,7 @@ import { fetchKeywordDetail, updateKeywordCategory } from '../../api/keywords'
 import { resolveAlert } from '../../api/alerts'
 import { useKeywordWriteback } from '../../composables/useKeywordWriteback'
 import { session } from '../../store/session'
+import { createLatestRequestGuard } from '../../utils/latestRequest'
 import MetricLabel from '../../components/MetricLabel.vue'
 
 const route = useRoute()
@@ -23,6 +24,7 @@ use([
 ])
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
+const canViewDetail = () => ['monitor.dashboard', 'monitor.alerts', 'optimize.keywords'].some((key) => session.canView(key))
 
 const loading = ref(false)
 const error = ref('')
@@ -41,6 +43,11 @@ let trendChart = null
 let bidChart = null
 let scheduleChart = null
 let scheduleHourChart = null
+const loadGuard = createLatestRequestGuard(() => ({
+  tenantId: TENANT_ID.value,
+  authRevision: session.authRevision,
+  keywordId: route.params.keywordId,
+}))
 
 const hasBidTrend = computed(() => (data.value?.bid_trend?.length || 0) > 0)
 const hasPlacementAnalysis = computed(() => !!(data.value?.region_analysis || data.value?.schedule_analysis))
@@ -176,6 +183,7 @@ const multiplierClass = computed(() => {
 })
 
 async function onChangeCategory(code) {
+  if (!session.canEdit('optimize.keywords')) return
   try {
     await updateKeywordCategory({
       keywordId: route.params.keywordId,
@@ -444,26 +452,36 @@ async function onScheduleMetricChange() {
 }
 
 async function load() {
+  const requestedDateRange = dateRange.value ? [...dateRange.value] : null
+  const attempt = loadGuard.begin()
+  if (!attempt.context.tenantId || !canViewDetail()) {
+    data.value = null
+    loading.value = false
+    return
+  }
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchKeywordDetail({
-      keywordId: route.params.keywordId,
-      tenantId: TENANT_ID.value,
-      startDate: dateRange.value?.[0],
-      endDate: dateRange.value?.[1],
+    const result = await fetchKeywordDetail({
+      keywordId: attempt.context.keywordId,
+      tenantId: attempt.context.tenantId,
+      startDate: requestedDateRange?.[0],
+      endDate: requestedDateRange?.[1],
     })
+    if (!attempt.isCurrent()) return
+    data.value = result
     dateRange.value = [data.value.period.start_date, data.value.period.end_date]
     await nextTick()
+    if (!attempt.isCurrent()) return
     renderRank()
     renderTrend()
     renderBid()
     renderSchedule()
     renderScheduleHourly()
   } catch (e) {
-    error.value = e.message
+    if (attempt.isCurrent()) error.value = e.message
   } finally {
-    loading.value = false
+    if (attempt.isCurrent()) loading.value = false
   }
 }
 
@@ -478,6 +496,7 @@ async function onResolve(row) {
 }
 
 async function handleWriteback() {
+  if (!session.canEdit('optimize.keywords')) return
   if (!data.value) return
   await applyWriteback(
     data.value.keyword.keyword_id,
@@ -488,6 +507,7 @@ async function handleWriteback() {
 }
 
 async function handleMatchChange(command) {
+  if (!session.canEdit('optimize.keywords')) return
   if (!data.value) return
   await changeMatchType(
     data.value.keyword.keyword_id,
@@ -498,6 +518,7 @@ async function handleMatchChange(command) {
 }
 
 async function handleTogglePause() {
+  if (!session.canEdit('optimize.keywords')) return
   if (!data.value) return
   await togglePause(data.value.keyword.keyword_id, data.value.keyword.keyword, data.value.keyword.pause)
 }
@@ -515,7 +536,40 @@ onMounted(() => {
   window.addEventListener('resize', resizeCharts)
 })
 
+watch(() => session.authRevision, () => {
+  loadGuard.invalidate()
+  invalidateKeywordWriteback()
+  data.value = null
+  error.value = ''
+  loading.value = false
+  editPrice.value = null
+  dateRange.value = null
+  rankChart?.clear()
+  trendChart?.clear()
+  bidChart?.clear()
+  scheduleChart?.clear()
+  scheduleHourChart?.clear()
+  if (canViewDetail()) load()
+})
+
+watch([TENANT_ID, () => route.params.keywordId], () => {
+  loadGuard.invalidate()
+  invalidateKeywordWriteback()
+  data.value = null
+  error.value = ''
+  loading.value = false
+  editPrice.value = null
+  dateRange.value = null
+  rankChart?.clear()
+  trendChart?.clear()
+  bidChart?.clear()
+  scheduleChart?.clear()
+  scheduleHourChart?.clear()
+  if (canViewDetail()) load()
+})
+
 onBeforeUnmount(() => {
+  loadGuard.invalidate()
   invalidateKeywordWriteback()
   window.removeEventListener('resize', resizeCharts)
 })
