@@ -20,11 +20,27 @@ module_target="$config_root/modules/auth"
 enabled_target="$config_root/enabled/auth"
 backup_parent="$install_root/var/backups/platform-deploy"
 auth_root="$install_root/opt/auth-frontend"
+reviewed_base_dispatcher_sha256='ed0c8ece980a0a9c5905f77a8c8cf2ba28d05bb5de45f38c992e12182dab549a'
+reviewed_candidate_dispatcher_sha256='3940c4710e6f5e77f1a0a4f9c121f4be88cb31fcc18c96c6a9f0dea27bea545d'
 
 [[ -f "$dispatcher_source" && -f "$module_source" ]] || { echo 'Reviewed Auth deploy sources are missing' >&2; exit 1; }
 [[ -x "$dispatcher_target" ]] || { echo 'Base platform-deploy helper is missing' >&2; exit 1; }
 bash -n "$dispatcher_source"
 bash -n "$module_source"
+source_dispatcher_sha256="$(sha256sum "$dispatcher_source" | cut -d' ' -f1)"
+observed_dispatcher_sha256="$(sha256sum "$dispatcher_target" | cut -d' ' -f1)"
+[[ "$source_dispatcher_sha256" == "$reviewed_candidate_dispatcher_sha256" ]] || {
+  echo "Reviewed candidate dispatcher digest mismatch: observed=$source_dispatcher_sha256" >&2
+  exit 1
+}
+case "$observed_dispatcher_sha256" in
+  "$reviewed_base_dispatcher_sha256") install_dispatcher=true ;;
+  "$reviewed_candidate_dispatcher_sha256") install_dispatcher=false ;;
+  *)
+    echo "Refusing unknown platform-deploy dispatcher: observed=$observed_dispatcher_sha256" >&2
+    exit 1
+    ;;
+esac
 install -d -m 755 "$backup_parent" "$(dirname "$dispatcher_target")" "$config_root/modules" "$config_root/enabled" "$auth_root/releases"
 backup_root="$(mktemp -d "$backup_parent/auth-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX")"
 
@@ -55,9 +71,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-install "${install_owner_args[@]}" -m 755 "$dispatcher_source" "$dispatcher_target.next"
+if [[ "$install_dispatcher" == true ]]; then
+  install "${install_owner_args[@]}" -m 755 "$dispatcher_source" "$dispatcher_target.next"
+fi
 install "${install_owner_args[@]}" -m 755 "$module_source" "$module_target.next"
-mv -Tf "$dispatcher_target.next" "$dispatcher_target"
+if [[ "$install_dispatcher" == true ]]; then mv -Tf "$dispatcher_target.next" "$dispatcher_target"; fi
 mv -Tf "$module_target.next" "$module_target"
 install "${install_owner_args[@]}" -m 644 /dev/null "$enabled_target"
 

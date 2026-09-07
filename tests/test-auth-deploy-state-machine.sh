@@ -12,7 +12,12 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 module="$repo_root/ops/platform-deploy/modules/auth"
 installer="$repo_root/ops/platform-deploy/install-auth.sh"
 sandbox="$(mktemp -d)"
-trap 'rm -rf -- "$sandbox"' EXIT
+deploy_pid=''
+cleanup_test() {
+  if [[ -n "$deploy_pid" ]]; then kill "$deploy_pid" 2>/dev/null || true; fi
+  rm -rf -- "$sandbox"
+}
+trap cleanup_test EXIT
 
 commit='1234567890abcdef1234567890abcdef12345678'
 upload_root="$sandbox/uploads"
@@ -58,11 +63,19 @@ case "$url" in
   *) exit 22 ;;
 esac
 [[ -f "$source_file" ]] || exit 22
+if [[ "$url" == */login\?* && "${AUTH_TEST_BLOCK_HEALTH:-0}" == '1' ]]; then
+  : "${AUTH_TEST_EVENT_DIR:?}"
+  : > "$AUTH_TEST_EVENT_DIR/health-entered"
+  while [[ ! -f "$AUTH_TEST_EVENT_DIR/release-health" ]]; do sleep 0.05; done
+fi
 if [[ -n "$output" ]]; then cp "$source_file" "$output"; else cat "$source_file"; fi
 EOF
 chmod +x "$stub_root/curl"
 
 run_deploy() {
+  local run_archive="${1:-$archive}"
+  local run_commit="${2:-$commit}"
+  local run_archive_sha256="${3:-$archive_sha256}"
   PATH="$stub_root:$PATH" \
   AUTH_TEST_HTTP_ROOT="$online_root" \
   AUTH_DEPLOY_TEST_MODE=1 \
@@ -72,7 +85,8 @@ run_deploy() {
   AUTH_DEPLOY_STAGE_PARENT="$sandbox" \
   AUTH_DEPLOY_TEMP_PARENT="$sandbox" \
   AUTH_DEPLOY_PUBLIC_ORIGIN='https://auth.test' \
-    "$module" "$archive" "$commit" "$archive_sha256" DEPLOY_AUTH
+  AUTH_DEPLOY_LOCK_FILE="$sandbox/locks/auth.lock" \
+    "$module" "$run_archive" "$run_commit" "$run_archive_sha256" DEPLOY_AUTH
 }
 
 prepare_online_candidate() {
@@ -149,13 +163,73 @@ fi
 [[ "$(readlink "$auth_root/current")" == "$auth_root/releases/old" ]]
 [[ ! -e "$auth_root/previous" && ! -L "$auth_root/previous" ]]
 
-# Installing the restricted dispatcher/module twice stays enabled and creates a backup each time.
+# A concurrent deployment cannot enter while the switched candidate is awaiting acceptance.
+prepare_old_release true
+prepare_online_candidate
+event_root="$sandbox/events"
+mkdir -p "$event_root"
+AUTH_TEST_BLOCK_HEALTH=1 AUTH_TEST_EVENT_DIR="$event_root" run_deploy >"$sandbox/deploy-a.out" 2>&1 &
+deploy_pid=$!
+for _ in $(seq 1 200); do
+  [[ -f "$event_root/health-entered" ]] && break
+  kill -0 "$deploy_pid" 2>/dev/null || { cat "$sandbox/deploy-a.out" >&2; exit 1; }
+  sleep 0.05
+done
+[[ -f "$event_root/health-entered" ]] || { echo 'deployment A did not reach acceptance window' >&2; exit 1; }
+commit_b='abcdefabcdefabcdefabcdefabcdefabcdefabcd'
+candidate_b="$sandbox/candidate-b/auth-release"
+mkdir -p "$candidate_b/frontend/assets"
+sed "s/commit=$commit/commit=$commit_b/" "$candidate_root/MANIFEST" > "$candidate_b/MANIFEST"
+cp "$candidate_root/frontend/index.html" "$candidate_b/frontend/index.html"
+printf '%s\n' '/api/v1/auth/login /workspace/cockpit /workspace unaccepted-candidate-b' > "$candidate_b/frontend/assets/app.js"
+cp "$candidate_root/frontend/assets/app.css" "$candidate_b/frontend/assets/app.css"
+tar -C "$sandbox/candidate-b" -czf "$upload_root/auth-${commit_b}.tgz" auth-release
+archive_b="$upload_root/auth-${commit_b}.tgz"
+archive_b_sha256="$(sha256sum "$archive_b" | cut -d' ' -f1)"
+if run_deploy "$archive_b" "$commit_b" "$archive_b_sha256" >"$sandbox/deploy-b.out" 2>&1; then
+  echo 'deployment B unexpectedly entered the locked state window' >&2
+  exit 1
+fi
+grep -Fq 'another Auth deployment is already running' "$sandbox/deploy-b.out"
+: > "$event_root/release-health"
+wait "$deploy_pid"
+deploy_pid=''
+new_release="$(readlink "$auth_root/current")"
+[[ "$new_release" == "$auth_root"/releases/*-${commit:0:12} ]]
+[[ "$(readlink "$auth_root/previous")" == "$auth_root/releases/old" ]]
+[[ "$(cat "$new_release/RELEASE_COMMIT")" == "$commit" ]]
+if find "$auth_root/releases" -mindepth 1 -maxdepth 1 -type d -name "*-${commit_b:0:12}" | grep -q .; then
+  echo 'unaccepted concurrent candidate left a release directory' >&2
+  exit 1
+fi
+
+# Unknown shared dispatchers are rejected before dispatcher, module, or enabled state changes.
 install_root="$sandbox/install-root"
 mkdir -p "$install_root/usr/local/sbin"
 cat > "$install_root/usr/local/sbin/platform-deploy" <<'EOF'
 #!/usr/bin/env bash
-echo legacy-platform-deploy
+echo unknown-platform-deploy
 EOF
+chmod +x "$install_root/usr/local/sbin/platform-deploy"
+mkdir -p "$install_root/etc/platform-deploy/modules" "$install_root/etc/platform-deploy/enabled"
+printf '%s\n' 'existing-module' > "$install_root/etc/platform-deploy/modules/auth"
+printf '%s\n' 'existing-enabled' > "$install_root/etc/platform-deploy/enabled/auth"
+cp -a "$install_root/usr/local/sbin/platform-deploy" "$sandbox/unknown-dispatcher.before"
+cp -a "$install_root/etc/platform-deploy/modules/auth" "$sandbox/unknown-module.before"
+cp -a "$install_root/etc/platform-deploy/enabled/auth" "$sandbox/unknown-enabled.before"
+if AUTH_INSTALL_TEST_ROOT="$install_root" "$installer" --enable >"$sandbox/unknown-install.out" 2>&1; then
+  echo 'unknown shared dispatcher was unexpectedly overwritten' >&2
+  exit 1
+fi
+grep -Eq 'Refusing unknown platform-deploy dispatcher: observed=[0-9a-f]{64}' "$sandbox/unknown-install.out"
+cmp -s "$sandbox/unknown-dispatcher.before" "$install_root/usr/local/sbin/platform-deploy"
+cmp -s "$sandbox/unknown-module.before" "$install_root/etc/platform-deploy/modules/auth"
+cmp -s "$sandbox/unknown-enabled.before" "$install_root/etc/platform-deploy/enabled/auth"
+[[ ! -e "$install_root/var/backups/platform-deploy" ]]
+
+# The reviewed base upgrades once; the reviewed candidate can be installed repeatedly.
+git -C "$repo_root" show eaa2c93c6ddb839e2bfdf4acabb06eb2910cd01e:ops/platform-deploy/platform-deploy \
+  > "$install_root/usr/local/sbin/platform-deploy"
 chmod +x "$install_root/usr/local/sbin/platform-deploy"
 AUTH_INSTALL_TEST_ROOT="$install_root" "$installer" --enable >/dev/null
 AUTH_INSTALL_TEST_ROOT="$install_root" "$installer" --enable >/dev/null

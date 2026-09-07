@@ -16,8 +16,12 @@ auth_root="${AUTH_DEPLOY_ROOT:-/opt/auth-frontend}"
 stage_parent="${AUTH_DEPLOY_STAGE_PARENT:-/opt}"
 temp_parent="${AUTH_DEPLOY_TEMP_PARENT:-/tmp}"
 public_origin="${AUTH_DEPLOY_PUBLIC_ORIGIN:-https://gsnipers.snipers.com.cn}"
+lock_file='/run/lock/platform-deploy-auth.lock'
 install_owner_args=(-o root -g root)
-if [[ "${AUTH_DEPLOY_TEST_MODE:-0}" == '1' ]]; then install_owner_args=(); fi
+if [[ "${AUTH_DEPLOY_TEST_MODE:-0}" == '1' ]]; then
+  install_owner_args=()
+  lock_file="${AUTH_DEPLOY_LOCK_FILE:?AUTH_DEPLOY_LOCK_FILE is required in test mode}"
+fi
 
 [[ "$confirmation" == 'DEPLOY_AUTH' ]] || fail 'confirmation must be DEPLOY_AUTH'
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail 'commit must be a full lowercase SHA'
@@ -38,6 +42,11 @@ while IFS= read -r member; do
     */../*) fail "archive contains parent traversal: $member" ;;
   esac
 done < <(tar -tzf "$archive")
+
+[[ "$lock_file" == /* ]] || fail 'lock file must be absolute'
+install -d "${install_owner_args[@]}" -m 755 "$(dirname "$lock_file")"
+exec 9>"$lock_file"
+flock -n 9 || fail 'another Auth deployment is already running'
 
 stage_root="$(mktemp -d "$stage_parent/platform-deploy-auth.XXXXXX")"
 health_index="$(mktemp "$temp_parent/auth-index.XXXXXX")"
