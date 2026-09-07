@@ -9,7 +9,12 @@ class EvidenceCiteTests(unittest.TestCase):
     def test_splits_chinese_sentences(self):
         parts = split_sentences("第一句足够长的说明。第二句也足够长的说明！短")
         self.assertGreaterEqual(len(parts), 2)
-        self.assertTrue(all(len(p) >= 8 for p in parts))
+        self.assertTrue(all(len(p) >= 4 for p in parts))
+
+    def test_short_claim_is_not_dropped(self):
+        _, rows = attach_sentence_citations("效率更高。", [])
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["needs_fact"])
 
     def test_cites_overlapping_fact(self):
         md = "Udesk 支持全渠道客服接入。这句话完全无关的内容随便写写。"
