@@ -1,0 +1,171 @@
+name: Production Auth deployment
+
+on:
+  pull_request:
+    branches:
+      - codex/production-auth
+  push:
+    branches:
+      - codex/production-auth
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-auth-deployment
+  cancel-in-progress: false
+
+env:
+  AUTH_PRODUCTION_BRANCH: codex/production-auth
+
+jobs:
+  verify:
+    name: Verify exact Auth production candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RELEASE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 0
+
+      - name: Require exact source commit
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          if [[ "$GITHUB_EVENT_NAME" == 'push' ]]; then
+            latest="$(git ls-remote origin "refs/heads/$AUTH_PRODUCTION_BRANCH" | cut -f1)"
+            test -n "$latest"
+            test "$latest" = "$RELEASE_SHA"
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - working-directory: frontend
+        run: npm ci
+
+      - name: Test redirect safety and permission defaults
+        working-directory: frontend
+        run: node --test scripts/test-auth-redirect.mjs
+
+      - name: Test Auth deployment and rollback state machine
+        run: bash tests/test-auth-deploy-state-machine.sh
+
+      - name: Build and verify isolated Auth frontend
+        working-directory: frontend
+        run: |
+          npm run build:auth
+          npm run verify:auth-build
+
+      - name: Create immutable Auth release archive
+        if: github.event_name == 'push'
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          release_root="$RUNNER_TEMP/auth-release"
+          install -d "$release_root/frontend"
+          cp -a frontend/dist-auth/. "$release_root/frontend/"
+          {
+            echo 'module=auth'
+            echo "commit=$RELEASE_SHA"
+            echo 'backend=not-included'
+            echo 'migration=not-run'
+            echo 'service_restart=not-run'
+          } > "$release_root/MANIFEST"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/auth-${RELEASE_SHA}.tgz" auth-release
+          sha256sum "$RUNNER_TEMP/auth-${RELEASE_SHA}.tgz" > "$RUNNER_TEMP/auth-${RELEASE_SHA}.tgz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          name: auth-release-${{ env.RELEASE_SHA }}
+          path: |
+            ${{ runner.temp }}/auth-${{ env.RELEASE_SHA }}.tgz
+            ${{ runner.temp }}/auth-${{ env.RELEASE_SHA }}.tgz.sha256
+          if-no-files-found: error
+          retention-days: 3
+
+  deploy:
+    name: Deploy current Auth production head
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/production-auth'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      RELEASE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Stop before server access when this workflow is stale
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          latest="$(git ls-remote origin "refs/heads/$AUTH_PRODUCTION_BRANCH" | cut -f1)"
+          test -n "$latest"
+          test "$latest" = "$RELEASE_SHA"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: auth-release-${{ env.RELEASE_SHA }}
+          path: ${{ runner.temp }}
+
+      - name: Configure restricted production identity
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/platform-deploy
+          chmod 600 ~/.ssh/platform-deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Re-check production head before upload
+        run: |
+          latest="$(git ls-remote origin "refs/heads/$AUTH_PRODUCTION_BRANCH" | cut -f1)"
+          test "$latest" = "$RELEASE_SHA"
+
+      - name: Upload immutable Auth release archive
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          archive="$RUNNER_TEMP/auth-${RELEASE_SHA}.tgz"
+          remote_path="/home/platform-deploy/uploads/auth-${RELEASE_SHA}.tgz"
+          scp -i ~/.ssh/platform-deploy -P "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$archive" "$DEPLOY_USER@$DEPLOY_HOST:${remote_path}.part"
+          ssh -i ~/.ssh/platform-deploy -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "mv '${remote_path}.part' '$remote_path'"
+
+      - name: Re-check production head before apply
+        run: |
+          latest="$(git ls-remote origin "refs/heads/$AUTH_PRODUCTION_BRANCH" | cut -f1)"
+          test "$latest" = "$RELEASE_SHA"
+
+      - name: Apply Auth frontend without backend or service restart
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          archive="$RUNNER_TEMP/auth-${RELEASE_SHA}.tgz"
+          archive_sha256="$(sha256sum "$archive" | cut -d' ' -f1)"
+          remote_path="/home/platform-deploy/uploads/auth-${RELEASE_SHA}.tgz"
+          ssh -i ~/.ssh/platform-deploy -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "sudo -n /usr/local/sbin/platform-deploy apply auth '$remote_path' '$RELEASE_SHA' '$archive_sha256' DEPLOY_AUTH"
+
+      - name: Verify login page and direct assets
+        run: |
+          index="$RUNNER_TEMP/auth-index.html"
+          curl -fsS -H 'Cache-Control: no-cache' -o "$index" "https://gsnipers.snipers.com.cn/login?release=${RELEASE_SHA}"
+          grep -Fq '/auth-assets/assets/' "$index"
+          mapfile -t assets < <(grep -Eo '/auth-assets/assets/[^"[:space:]>]+' "$index" | sort -u)
+          test "${#assets[@]}" -gt 0
+          for asset in "${assets[@]}"; do
+            curl -fsS "https://gsnipers.snipers.com.cn${asset}" >/dev/null
+          done

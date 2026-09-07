@@ -30,6 +30,8 @@ const requiredMarkers = [
   '/api/v1/auth/login',
   '图形验证码',
   'G-Snipers',
+  '/workspace/cockpit',
+  '/workspace',
 ]
 
 const found = new Set()

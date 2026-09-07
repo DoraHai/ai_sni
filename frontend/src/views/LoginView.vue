@@ -2,7 +2,8 @@
 import { reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { login, fetchTenants } from '../api/auth'
+import { login, fetchModules, fetchTenants } from '../api/auth'
+import { parseSameOriginRedirect, resolvePostLoginPath } from '../auth/postLoginRedirect.mjs'
 import { session } from '../store/session'
 import loginBackground from '../assets/login-bg.jpg'
 
@@ -36,13 +37,26 @@ async function submit() {
     session.setAuth(resp.token, resp.user, remember.value)
     const t = await fetchTenants()
     session.setTenants(t.tenants)
-    ElMessage.success(`欢迎，${resp.user.display_name}`)
-    const redirect = String(route.query.redirect || '')
-    if (redirect.startsWith('/') && !redirect.startsWith('//')) {
-      window.location.assign(redirect)
-    } else {
-      window.location.assign('/')
+    let modules = []
+    let modulesUnavailable = false
+    try {
+      const moduleResponse = await fetchModules()
+      modules = Array.isArray(moduleResponse.modules) ? moduleResponse.modules : []
+      session.setModules(modules)
+    } catch {
+      modulesUnavailable = true
+      session.setModules([])
     }
+    ElMessage.success(`欢迎，${resp.user.display_name}`)
+    const safeRedirect = parseSameOriginRedirect(route.query.redirect, window.location.origin)
+    if (modulesUnavailable && !safeRedirect) {
+      ElMessage.warning('模块开通信息读取失败，已进入模块选择页，请稍后重试')
+    }
+    window.location.assign(resolvePostLoginPath({
+      redirect: route.query.redirect,
+      currentOrigin: window.location.origin,
+      modules,
+    }))
   } catch (e) {
     ElMessage.error(e.message)
     genCaptcha()
