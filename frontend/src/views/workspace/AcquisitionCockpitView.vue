@@ -14,7 +14,7 @@ import { readSeoSiteScope } from '../../../../integrations/seo-workbench/site-sc
 import { seoSummaryCards } from '../../../../integrations/seo-workbench/summary.mjs'
 import { createGeoAuthorizedClient } from '../../../../integrations/geo-workbench/authorization-context.mjs'
 import { currentSeoSiteId } from '../seo/seoSiteContext'
-import { isSecureCockpitRuntime, resolveTenantModuleCodes } from './cockpit/scope.mjs'
+import { countUnresolvedModules, hasDataReadPermission, isCurrentCockpitScope, isSecureCockpitRuntime, resolveTenantModuleCodes, selectAvailableModules } from './cockpit/scope.mjs'
 import { completedWeekEnd, completedWeekInclusiveEnd, geoSummaryCards } from './cockpit/geo-summary.mjs'
 import { createSeoSiteSelectionGuard, resolveSeoSiteSelection } from './cockpit/site-selection.mjs'
 import { geoReadyReply, urgencyReply } from './cockpit/status-copy.mjs'
@@ -50,16 +50,15 @@ const moduleMeta = {
   seo: { label: 'SEO', permission: ['seo.site', 'seo.content'] },
   geo: { label: 'GEO', permission: ['geo.content'] },
 }
-const availableModules = computed(() => session.modules.filter(item => tenantModuleCodes.value.has(item.module_code) && moduleMeta[item.module_code]
-  && moduleMeta[item.module_code].permission.some(key => session.canView(key))))
+const availableModules = computed(() => selectAvailableModules(session.modules, tenantModuleCodes.value, moduleMeta))
 const customerName = computed(() => session.tenants.find(item => item.id === session.tenantId)?.name
   || session.user?.display_name || '当前客户')
-const unresolvedModules = computed(() => availableModules.value.filter(item => moduleState.value[item.module_code] !== 'ready').length)
+const unresolvedModules = computed(() => countUnresolvedModules(availableModules.value, moduleState.value))
 const urgentItems = computed(() => cards.value.reduce((sum, item) => sum + (Number.isSafeInteger(item.urgentCount) ? item.urgentCount : 0), 0))
 const readyModules = computed(() => availableModules.value.filter(item => moduleState.value[item.module_code] === 'ready').length)
 const geoWeekEnd = computed(() => completedWeekEnd(dateEnd.value))
 const geoWeekInclusiveEnd = computed(() => completedWeekInclusiveEnd(geoWeekEnd.value))
-const statusLabel = status => ({ ready: '数据已读取', loading: '读取中', needs_scope: '需要选择业务对象', denied: '无查看权限', error: '读取失败', waiting: '等待读取' }[status] || '待确认')
+const statusLabel = status => ({ ready: '数据已读取', loading: '读取中', needs_scope: '需要选择业务对象', denied: '当前账号缺少数据查看权限', error: '读取失败', waiting: '等待读取' }[status] || '待确认')
 const moduleUrgent = code => cards.value.filter(item => item.moduleCode === code).reduce((sum, item) => sum + (Number.isSafeInteger(item.urgentCount) ? item.urgentCount : 0), 0)
 const moduleStatusLabel = code => moduleState.value[code] === 'ready' && moduleUrgent(code) > 0 ? `${moduleUrgent(code)} 项待处理` : statusLabel(moduleState.value[code])
 const guideQuestions = computed(() => [
@@ -127,6 +126,10 @@ function publishCard(card) {
 }
 async function loadSem(generation) {
   if (!session.tenantId || !availableModules.value.some(item => item.module_code === 'sem')) return
+  if (!hasDataReadPermission('sem', key => session.canView(key), moduleMeta)) {
+    moduleState.value.sem = 'denied'
+    return
+  }
   if (!semClient) {
     moduleState.value.sem = 'error'
     return
@@ -155,6 +158,10 @@ async function loadSem(generation) {
 }
 async function loadSeo(generation) {
   if (!session.tenantId || !availableModules.value.some(item => item.module_code === 'seo')) return
+  if (!hasDataReadPermission('seo', key => session.canView(key), moduleMeta)) {
+    moduleState.value.seo = 'denied'
+    return
+  }
   const tenantId = session.tenantId
   const siteId = currentSeoSiteId.value
   const authRevision = session.authRevision
@@ -203,6 +210,10 @@ async function loadSeo(generation) {
 }
 async function loadGeo(generation) {
   if (!session.tenantId || !geoWeekEnd.value || !availableModules.value.some(item => item.module_code === 'geo')) return
+  if (!hasDataReadPermission('geo', key => session.canView(key), moduleMeta)) {
+    moduleState.value.geo = 'denied'
+    return
+  }
   if (!geoClient) { moduleState.value.geo = 'error'; return }
   const tenantId = session.tenantId
   const weekEnd = geoWeekEnd.value
@@ -239,6 +250,12 @@ async function prepare() {
   const generation = ++prepareGeneration
   const requestedTenantId = session.tenantId
   const requestedAuthRevision = session.authRevision
+  const ticket = { generation, tenantId: requestedTenantId, authRevision: requestedAuthRevision }
+  const isCurrent = () => isCurrentCockpitScope(ticket, {
+    generation: prepareGeneration,
+    tenantId: session.tenantId,
+    authRevision: session.authRevision,
+  })
   invalidateEvidence({ clearConversation: true })
   tenantModuleCodes.value = new Set()
   loading.value = secureRuntime
@@ -251,26 +268,24 @@ async function prepare() {
   }
   try {
     const [modules, tenants] = await Promise.all([fetchModules(), fetchTenants()])
-    if (generation !== prepareGeneration || requestedTenantId !== session.tenantId || requestedAuthRevision !== session.authRevision) return
+    if (!isCurrent()) return
     session.setModules(modules.modules)
     session.setTenants(tenants.tenants)
-    const eligible = modules.modules.filter(item => item.available && moduleMeta[item.module_code]
-      && moduleMeta[item.module_code].permission.some(key => session.canView(key)))
+    const eligible = modules.modules.filter(item => item.available && moduleMeta[item.module_code])
     const scoped = await Promise.all(eligible.map(async item => ({
       code: item.module_code,
       tenants: (await fetchTenants(item.module_code)).tenants,
     })))
-    if (generation !== prepareGeneration || requestedTenantId !== session.tenantId || requestedAuthRevision !== session.authRevision) return
+    if (!isCurrent()) return
     tenantModuleCodes.value = resolveTenantModuleCodes({
       modules: modules.modules,
       tenantsByModule: Object.fromEntries(scoped.map(item => [item.code, item.tenants])),
       tenantId: session.tenantId,
       moduleMeta,
-      canView: key => session.canView(key),
     })
     await loadAll()
   } catch (error) {
-    if (generation !== prepareGeneration || requestedTenantId !== session.tenantId || requestedAuthRevision !== session.authRevision) return
+    if (!isCurrent()) return
     loading.value = false
     conversation.value.push({ role: 'assistant', text: `工作台身份信息读取失败：${error.message}` })
   }
@@ -374,7 +389,7 @@ onBeforeUnmount(() => { ++loadGeneration; ++prepareGeneration; workbenchSession?
           <div class="section-heading"><div><span>ACTION LEDGER</span><h2>行动台账</h2></div><small>{{ urgentItems }} 项需要处理</small></div>
           <article v-for="item in availableModules" :key="`action-${item.module_code}`">
             <i :class="moduleState[item.module_code]"></i><b>{{ moduleMeta[item.module_code].label }}</b>
-            <span>{{ moduleState[item.module_code] === 'ready' ? (moduleUrgent(item.module_code) ? `${moduleUrgent(item.module_code)} 项已有数据依据，建议现在处理` : '本周期数据已读取，可进入模块查看详细任务') : '补齐读取范围或处理数据状态' }}</span>
+            <span>{{ moduleState[item.module_code] === 'ready' ? (moduleUrgent(item.module_code) ? `${moduleUrgent(item.module_code)} 项已有数据依据，建议现在处理` : '本周期数据已读取，可进入模块查看详细任务') : moduleState[item.module_code] === 'denied' ? '当前账号缺少数据查看权限' : '补齐读取范围或处理数据状态' }}</span>
             <button type="button" @click="openModule(item.module_code)">进入处理 ↗</button>
           </article>
         </div>
