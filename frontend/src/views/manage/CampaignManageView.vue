@@ -7,6 +7,7 @@ import {
 } from '../../api/manage'
 import { WRITEBACK_CONFIRMATION } from '../../api/writeback'
 import { session } from '../../store/session'
+import { createLatestRequestGuard } from '../../utils/latestRequest'
 
 const TENANT_ID = computed(() => session.tenantId)
 
@@ -26,6 +27,7 @@ const regionForm = ref({
   campaignId: null, campaignIds: [], campaignName: '', accountId: null, accountName: '',
   regionTarget: [], factors: {}, geoLocationStatus: 0,
 })
+const loadGuard = createLatestRequestGuard(() => ({ tenantId: TENANT_ID.value, accountId: accountId.value }))
 
 const WEEK_DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 const ALL_REGIONS_ID = 9999999
@@ -40,19 +42,37 @@ const SCHEDULE_TEMPLATES = [
 ]
 
 async function load() {
+  const attempt = loadGuard.begin()
+  const { tenantId, accountId: selectedAccountId } = attempt.context
+  if (!tenantId) {
+    data.value = null
+    error.value = ''
+    loading.value = false
+    return
+  }
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchCampaigns({ tenantId: TENANT_ID.value, baiduAccountId: accountId.value })
+    const result = await fetchCampaigns({ tenantId, baiduAccountId: selectedAccountId })
+    if (!attempt.isCurrent()) return
+    data.value = result
     selectedCampaigns.value = []
   } catch (e) {
-    error.value = e.message
+    if (attempt.isCurrent()) error.value = e.message
   } finally {
-    loading.value = false
+    if (attempt.isCurrent()) loading.value = false
   }
 }
 
-watch(TENANT_ID, load)
+watch(TENANT_ID, () => {
+  loadGuard.invalidate()
+  data.value = null
+  accountId.value = null
+  selectedCampaigns.value = []
+  scheduleVisible.value = false
+  regionVisible.value = false
+  load()
+})
 watch(accountId, load)
 async function loadRegions() {
   try {

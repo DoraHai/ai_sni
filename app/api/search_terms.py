@@ -41,6 +41,7 @@ router = APIRouter(
 def _to_dict(r: SearchTermReport) -> dict:
     return {
         "id": r.id,
+        "baidu_account_id": r.baidu_account_id,
         "query_word": r.query_word,
         "trigger_keyword": r.trigger_keyword,
         "query_status": r.query_status,
@@ -61,6 +62,7 @@ def _to_dict(r: SearchTermReport) -> dict:
 @router.get("")
 async def list_search_terms(
     tenant_id: int = Query(..., description="本地租户 ID"),
+    baidu_account_id: int | None = Query(None, gt=0, description="百度账户 ID；多账户时用于隔离窗口"),
     campaign_id: int | None = Query(None),
     adgroup_id: int | None = Query(None),
     status: str | None = Query(None, description="added / not_added，留空看全部"),
@@ -72,6 +74,8 @@ async def list_search_terms(
 ) -> dict:
     """搜索词列表（分页 + 筛选）+ 汇总（总数/有点击数/展现·点击·消费合计 + 窗口）。"""
     cond = [SearchTermReport.tenant_id == tenant_id]
+    if baidu_account_id is not None:
+        cond.append(SearchTermReport.baidu_account_id == baidu_account_id)
     if campaign_id is not None:
         cond.append(SearchTermReport.campaign_id == campaign_id)
     if adgroup_id is not None:
@@ -111,13 +115,37 @@ async def list_search_terms(
             ).where(*cond)
         )
     ).one()
-    win = (
+    window_rows = (
         await session.execute(
-            select(SearchTermReport.window_start, SearchTermReport.window_end, SearchTermReport.synced_at)
-            .where(SearchTermReport.tenant_id == tenant_id)
-            .limit(1)
+            select(
+                SearchTermReport.baidu_account_id,
+                SearchTermReport.window_start,
+                SearchTermReport.window_end,
+                func.min(SearchTermReport.synced_at),
+                func.max(SearchTermReport.synced_at),
+                func.count(),
+            )
+            .where(*cond)
+            .group_by(
+                SearchTermReport.baidu_account_id,
+                SearchTermReport.window_start,
+                SearchTermReport.window_end,
+            )
+            .order_by(SearchTermReport.baidu_account_id, SearchTermReport.window_start, SearchTermReport.window_end)
         )
-    ).first()
+    ).all()
+    windows = [
+        {
+            "baidu_account_id": row[0],
+            "start": row[1].isoformat() if row[1] else None,
+            "end": row[2].isoformat() if row[2] else None,
+            "oldest_synced_at": row[3].isoformat() if row[3] else None,
+            "synced_at": row[4].isoformat() if row[4] else None,
+            "stored_rows": int(row[5]),
+        }
+        for row in window_rows
+    ]
+    mixed_windows = len({(row[1], row[2]) for row in window_rows}) > 1
 
     return {
         "total": int(total or 0),
@@ -128,35 +156,42 @@ async def list_search_terms(
             "click": int(agg[3]),
             "cost": float(agg[4]),
         },
-        "window": {
-            "start": win[0].isoformat() if win and win[0] else None,
-            "end": win[1].isoformat() if win and win[1] else None,
-            "synced_at": win[2].isoformat() if win and win[2] else None,
-        } if win else None,
+        "account_scope": {"mode": "single" if baidu_account_id is not None else "all", "baidu_account_id": baidu_account_id},
+        "windows": windows,
+        "mixed_windows": mixed_windows,
+        "summary_comparable": not mixed_windows,
+        "window": windows[0] if len(windows) == 1 else None,
         "search_terms": [_to_dict(r) for r in rows],
+        "scope_note": "多窗口数据仅展示已存快照合计，不代表同一统计期" if mixed_windows else None,
     }
 
 
 @router.post("/sync")
 async def sync_search_terms(
     tenant_id: int = Query(..., description="本地租户 ID"),
+    baidu_account_id: int | None = Query(None, gt=0, description="百度账户 ID；多账户租户必须显式选择"),
     days: int = Query(30, ge=1, le=91, description="回溯天数（搜索词报告最大 91 天）"),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """手动从百度拉取搜索词报告并全量落库（窗口快照覆盖）。"""
     ctx.ensure_tenant(tenant_id)
-    acc = await session.scalar(
-        select(BaiduAccount).where(
-            BaiduAccount.tenant_id == tenant_id, BaiduAccount.status == "active"
-        )
+    account_query = select(BaiduAccount).where(
+        BaiduAccount.tenant_id == tenant_id, BaiduAccount.status == "active"
     )
-    if acc is None:
+    if baidu_account_id is not None:
+        account_query = account_query.where(BaiduAccount.id == baidu_account_id)
+    accounts = (await session.scalars(account_query.order_by(BaiduAccount.id).limit(2))).all()
+    if not accounts:
         raise HTTPException(404, "该租户没有生效的百度账户授权")
+    if baidu_account_id is None and len(accounts) > 1:
+        raise HTTPException(409, "该租户有多个生效百度账户，请先选择要同步的账户")
+    acc = accounts[0]
     end = date.today()
     start = end - timedelta(days=days - 1)
     n = await sync_search_terms_for_account(session, acc, start, end)
-    return {"status": "ok", "synced": n, "window": {"start": start.isoformat(), "end": end.isoformat()}}
+    return {"status": "ok", "synced": n, "baidu_account_id": acc.id,
+            "window": {"start": start.isoformat(), "end": end.isoformat()}}
 
 
 # ===== 加否词 / 转拓词（写回百度，dry-run 保护，记 writeback_actions） =====
