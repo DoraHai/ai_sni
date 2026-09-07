@@ -22,8 +22,19 @@ import { useKeywordWriteback } from '../../composables/useKeywordWriteback'
 import { session } from '../../store/session'
 import MetricLabel from '../../components/MetricLabel.vue'
 import { formatLocalDate, formatUtcTimestamp } from '../../utils/dateTime'
+import { createLatestRequestGuard } from '../../utils/latestRequest'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
+const currentTenant = computed(() => session.tenants.find((row) => row.id === TENANT_ID.value))
+const activeAccountIds = computed(() => new Set(
+  (currentTenant.value?.sem_accounts || [])
+    .filter((row) => row.status === 'active')
+    .map((row) => Number(row.id)),
+))
+const accountStateSignature = computed(() => (currentTenant.value?.sem_accounts || [])
+  .map((row) => `${Number(row.id)}:${row.status}`)
+  .sort()
+  .join('|'))
 
 const router = useRouter()
 const route = useRoute()
@@ -45,7 +56,8 @@ const keywordWritebackHint = computed(() => (
 function keywordWritebackModeFor(row) {
   if (keywordWritebackModeState.value !== 'ready') return keywordWritebackModeState.value
   const accountId = Number(row?.baidu_account_id)
-  if (!Number.isInteger(accountId) || !keywordWritebackAccountIds.value.has(accountId)) return 'unavailable'
+  if (!Number.isInteger(accountId) || !activeAccountIds.value.has(accountId)
+      || !keywordWritebackAccountIds.value.has(accountId)) return 'unavailable'
   return keywordBidLiveAccountIds.value.has(accountId) ? 'live' : 'dry_run'
 }
 function keywordWritebackButtonLabel(row) {
@@ -126,32 +138,56 @@ const activeView = ref('keywords')
 const campaignData = ref(null)
 const adgroupData = ref(null)
 const adgroupCampaignFilter = ref(null)
+const authContext = () => ({
+  tenantId: TENANT_ID.value,
+  authRevision: session.authRevision,
+  tenantListRevision: session.tenantListRevision,
+})
+const listLoadGuard = createLatestRequestGuard(authContext)
+const viewLoadGuard = createLatestRequestGuard(() => ({
+  tenantId: TENANT_ID.value,
+  authRevision: session.authRevision,
+  view: activeView.value,
+  campaignId: adgroupCampaignFilter.value,
+}))
+const assigneeLoadGuard = createLatestRequestGuard(authContext)
+const refreshGuard = createLatestRequestGuard(authContext)
+const actionGuard = createLatestRequestGuard(() => ({
+  ...authContext(),
+  selection: selection.value.map((row) => `${row.baidu_account_id}:${row.keyword_id}`).sort(),
+}))
 
 const {
   applyWriteback: submitKeywordWriteback,
   changeMatchType,
   togglePause: submitKeywordPause,
-} = useKeywordWriteback({ tenantId: TENANT_ID, onSuccess: load })
+  invalidate: invalidateKeywordWriteback,
+} = useKeywordWriteback({ tenantId: TENANT_ID, onSuccess: load, readContext: authContext })
 
 async function switchView(view) {
   activeView.value = view
+  const attempt = viewLoadGuard.begin()
+  const { tenantId, campaignId } = attempt.context
   error.value = ''
   try {
     if (view === 'campaigns' && !campaignData.value) {
       loading.value = true
-      campaignData.value = await fetchCampaignList({ tenantId: TENANT_ID.value })
+      const result = await fetchCampaignList({ tenantId })
+      if (!attempt.isCurrent()) return
+      campaignData.value = result
     } else if (view === 'adgroups') {
       loading.value = true
-      adgroupData.value = await fetchAdgroupList({
-        tenantId: TENANT_ID.value,
-        campaignId: adgroupCampaignFilter.value,
-      })
+      const result = await fetchAdgroupList({ tenantId, campaignId })
+      if (!attempt.isCurrent()) return
+      adgroupData.value = result
     }
   } catch (e) {
-    error.value = e.message
+    if (attempt.isCurrent()) error.value = e.message
   } finally {
-    loading.value = false
-    scheduleStickyScrollSync()
+    if (attempt.isCurrent()) {
+      loading.value = false
+      scheduleStickyScrollSync()
+    }
   }
 }
 
@@ -251,9 +287,20 @@ const landingDialog = reactive({
   mobileTrackParam: '',
   pcTrackTemplate: '',
   mobileTrackTemplate: '',
+  tenantId: null,
+  authRevision: null,
+  accountId: null,
 })
+function resetLandingDialog() {
+  Object.assign(landingDialog, {
+    visible: false, submitting: false, row: null, tenantId: null, authRevision: null, accountId: null,
+    pcFinalUrl: '', mobileFinalUrl: '', pcTrackParam: '', mobileTrackParam: '',
+    pcTrackTemplate: '', mobileTrackTemplate: '',
+  })
+}
 
 function openLanding(row) {
+  if (!session.canEdit('optimize.keywords')) return
   Object.assign(landingDialog, {
     visible: true,
     submitting: false,
@@ -264,6 +311,9 @@ function openLanding(row) {
     mobileTrackParam: row.mobile_track_param || '',
     pcTrackTemplate: row.pc_track_template || '',
     mobileTrackTemplate: row.mobile_track_template || '',
+    tenantId: TENANT_ID.value,
+    authRevision: session.authRevision,
+    accountId: row.baidu_account_id,
   })
 }
 
@@ -274,13 +324,22 @@ function copyPcToMobile() {
 }
 
 async function saveLanding() {
+  if (!session.canEdit('optimize.keywords')) return
+  const attempt = actionGuard.begin()
   const row = landingDialog.row
   if (!row) return
+  const asset = {
+    tenantId: landingDialog.tenantId,
+    authRevision: landingDialog.authRevision,
+    accountId: landingDialog.accountId,
+    adgroupId: row.adgroup_id,
+  }
+  if (asset.tenantId !== attempt.context.tenantId || asset.authRevision !== attempt.context.authRevision) return
   landingDialog.submitting = true
   try {
     const res = await setAdgroupLandingUrl({
-      tenantId: TENANT_ID.value,
-      adgroupId: row.adgroup_id,
+      tenantId: asset.tenantId,
+      adgroupId: asset.adgroupId,
       pcFinalUrl: blankToNull(landingDialog.pcFinalUrl),
       mobileFinalUrl: blankToNull(landingDialog.mobileFinalUrl),
       pcTrackParam: blankToNull(landingDialog.pcTrackParam),
@@ -288,31 +347,36 @@ async function saveLanding() {
       pcTrackTemplate: blankToNull(landingDialog.pcTrackTemplate),
       mobileTrackTemplate: blankToNull(landingDialog.mobileTrackTemplate),
     })
+    if (!attempt.isCurrent()) return
     const tag = res.dry_run ? '（演练：未真改）' : ''
     if (res.status === 'failed') ElMessage.error('失败：' + (res.error_msg || '未知错误'))
     else ElMessage.success(`落地页设置已提交${tag}`)
     landingDialog.visible = false
     await switchView('adgroups')
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
+    if (attempt.isCurrent()) ElMessage.error(e.response?.data?.detail || e.message)
   } finally {
-    landingDialog.submitting = false
+    if (attempt.isCurrent()) landingDialog.submitting = false
   }
 }
 
 async function editAdgroupBid(row) {
+  if (!session.canEdit('optimize.keywords')) return
+  const attempt = actionGuard.begin()
+  const asset = { adgroupId: row.adgroup_id, accountId: row.baidu_account_id, name: row.adgroup_name, price: row.max_price }
   const { value } = await ElMessageBox.prompt(
-    `单元「${row.adgroup_name}」当前出价 ${fmtMoney(row.max_price)}。\n输入新的单元出价（¥0.01 ~ 999.99，且不超过所属计划日预算）。实际执行模式由当前客户、推广账户和动作门禁决定。`,
+    `单元「${asset.name}」当前出价 ${fmtMoney(asset.price)}。\n输入新的单元出价（¥0.01 ~ 999.99，且不超过所属计划日预算）。实际执行模式由当前客户、推广账户和动作门禁决定。`,
     '修改单元出价',
     {
       confirmButtonText: '确认',
       cancelButtonText: '取消',
-      inputValue: row.max_price != null ? String(row.max_price) : '',
+      inputValue: asset.price != null ? String(asset.price) : '',
       inputPattern: /^\d+(\.\d{1,2})?$/,
       inputErrorMessage: '请输入合法金额（最多两位小数）',
     },
   ).catch(() => ({ value: null }))
   if (value == null) return
+  if (!attempt.isCurrent()) return
 
   const price = Number(value)
   if (!Number.isFinite(price) || price < 0.01 || price > 999.99) {
@@ -321,17 +385,18 @@ async function editAdgroupBid(row) {
   }
   try {
     const res = await setAdgroupBid({
-      tenantId: TENANT_ID.value,
-      adgroupId: row.adgroup_id,
+      tenantId: attempt.context.tenantId,
+      adgroupId: asset.adgroupId,
       maxPrice: price,
       confirmation: WRITEBACK_CONFIRMATION,
     })
+    if (!attempt.isCurrent()) return
     const tag = res.dry_run ? '（演练：未真改）' : ''
     if (res.status === 'failed') ElMessage.error('失败：' + (res.error_msg || '未知错误'))
     else ElMessage.success(`单元出价已提交：${fmtMoney(res.old_price)} → ${fmtMoney(res.new_price)}${tag}`)
     await switchView('adgroups')
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
+    if (attempt.isCurrent()) ElMessage.error(e.response?.data?.detail || e.message)
   }
 }
 
@@ -423,14 +488,23 @@ const filters = reactive({
 })
 
 async function load() {
+  const attempt = listLoadGuard.begin()
+  const tenantId = attempt.context.tenantId
+  if (!session.canView('optimize.keywords') || !tenantId) {
+    data.value = null
+    error.value = ''
+    loading.value = false
+    return
+  }
   loading.value = true
   error.value = ''
   try {
     // 列表与 AI 建议并行拉；建议拉取失败不影响工作台
     const [list, sug] = await Promise.all([
-      fetchKeywordList({ tenantId: TENANT_ID.value, ...filters }),
-      fetchSuggestions({ tenantId: TENANT_ID.value }).catch(() => null),
+      fetchKeywordList({ tenantId, ...filters }),
+      fetchSuggestions({ tenantId }).catch(() => null),
     ])
+    if (!attempt.isCurrent()) return
     data.value = list
     if (sug) {
       const m = {}
@@ -447,24 +521,29 @@ async function load() {
     }
     initFinalPrices(list.keywords)
   } catch (e) {
-    error.value = e.message
+    if (attempt.isCurrent()) error.value = e.message
   } finally {
-    loading.value = false
+    if (attempt.isCurrent()) loading.value = false
   }
 }
 
 async function loadSuggestionAssignees() {
-  if (!TENANT_ID.value) return
+  const attempt = assigneeLoadGuard.begin()
+  const tenantId = attempt.context.tenantId
+  if (!tenantId) return
   try {
-    const result = await fetchSuggestionAssignees(TENANT_ID.value)
+    const result = await fetchSuggestionAssignees(tenantId)
+    if (!attempt.isCurrent()) return
     suggestionAssignees.value = result.assignees || []
   } catch {
-    suggestionAssignees.value = []
+    if (attempt.isCurrent()) suggestionAssignees.value = []
   }
 }
 
 async function saveSuggestionWorkflow(suggestion, field, value) {
   if (!session.canEdit('optimize.keywords') || workflowSavingId.value) return
+  const attempt = actionGuard.begin()
+  const suggestionId = suggestion.id
   const payload = {}
   if (field === 'assignee_id') {
     if (value == null || value === '') payload.clear_assignee = true
@@ -475,9 +554,10 @@ async function saveSuggestionWorkflow(suggestion, field, value) {
   } else {
     payload.handling_status = value
   }
-  workflowSavingId.value = suggestion.id
+  workflowSavingId.value = suggestionId
   try {
-    const result = await updateSuggestionWorkflow(suggestion.id, payload)
+    const result = await updateSuggestionWorkflow(suggestionId, payload)
+    if (!attempt.isCurrent()) return
     const updated = result.suggestion
     if (updated.status === 'pending') {
       suggestionMap.value = { ...suggestionMap.value, [updated.keyword_id]: updated }
@@ -487,21 +567,27 @@ async function saveSuggestionWorkflow(suggestion, field, value) {
     }
     ElMessage.success('建议协作信息已更新')
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
-    await load()
+    if (attempt.isCurrent()) {
+      ElMessage.error(e.response?.data?.detail || e.message)
+      await load()
+    }
   } finally {
-    workflowSavingId.value = null
+    if (attempt.isCurrent()) workflowSavingId.value = null
   }
 }
 
 async function refreshData() {
   if (refreshing.value) return
+  const attempt = refreshGuard.begin()
+  const tenantId = attempt.context.tenantId
+  if (!tenantId) return
   refreshing.value = true
   error.value = ''
   let syncStatus = 'local'
   try {
     if (session.canEdit('optimize.keywords')) {
-      const result = await refreshKeywordWorkbench({ tenantId: TENANT_ID.value })
+      const result = await refreshKeywordWorkbench({ tenantId })
+      if (!attempt.isCurrent()) return
       syncStatus = result.status
       if (result.status === 'error') {
         throw new Error(result.message || '百度数据同步失败')
@@ -514,18 +600,22 @@ async function refreshData() {
     campaignData.value = null
     adgroupData.value = null
     await load()
+    if (!attempt.isCurrent()) return
     if (activeView.value === 'campaigns') {
       await switchView('campaigns')
     } else if (activeView.value === 'adgroups') {
       await switchView('adgroups')
     }
+    if (!attempt.isCurrent()) return
     if (syncStatus === 'ok') ElMessage.success('百度数据同步完成')
     else if (syncStatus !== 'busy') ElMessage.success('已加载最新同步数据')
   } catch (e) {
-    error.value = e.message
-    ElMessage.error(e.message)
+    if (attempt.isCurrent()) {
+      error.value = e.message
+      ElMessage.error(e.message)
+    }
   } finally {
-    refreshing.value = false
+    if (attempt.isCurrent()) refreshing.value = false
   }
 }
 
@@ -590,6 +680,9 @@ function categoryCount(code) {
 }
 
 async function onBatchCategory(code) {
+  if (!session.canEdit('optimize.keywords')) return
+  const attempt = actionGuard.begin()
+  const tenantId = attempt.context.tenantId
   const ids = selection.value.map((r) => r.keyword_id)
   if (!ids.length) return
   const label = BATCH_CATEGORY_OPTIONS.find((o) => o.code === code)?.label || code
@@ -600,13 +693,15 @@ async function onBatchCategory(code) {
       type: 'warning',
     })
   } catch { return }
+  if (!attempt.isCurrent()) return
   try {
-    const res = await batchUpdateCategory({ tenantId: TENANT_ID.value, keywordIds: ids, category: code })
+    const res = await batchUpdateCategory({ tenantId, keywordIds: ids, category: code })
+    if (!attempt.isCurrent()) return
     ElMessage.success(`已更新 ${res.updated} 个关键词`)
-    tableRef.value?.clearSelection()
+    tableRef.value?.clearSelection?.()
     await load()
   } catch (e) {
-    ElMessage.error(e.message)
+    if (attempt.isCurrent()) ElMessage.error(e.message)
   }
 }
 
@@ -632,6 +727,7 @@ function _removeSuggestion(kwId) {
 
 // 回写的是「最终执行价」(finalPrices，可人工调整，默认=AI建议价/当前价)，不限于有 AI 建议的词
 async function applyWriteback(row) {
+  if (!session.canEdit('optimize.keywords')) return
   if (!keywordWritebackReady(row)) {
     ElMessage.error('当前关键词的回写模式尚未确认，已禁止提交，请刷新页面后重试')
     return
@@ -641,19 +737,22 @@ async function applyWriteback(row) {
     finalPrices[row.keyword_id],
     row.keyword,
     row.price,
+    row.baidu_account_id,
   )
   if (result?.success) _removeSuggestion(row.keyword_id)
 }
 
 async function openMatchTypeDialog(row, command) {
+  if (!session.canEdit('optimize.keywords')) return
   if (!keywordWritebackReady(row)) {
     ElMessage.error('当前关键词的回写模式尚未确认，已禁止修改匹配模式')
     return
   }
-  await changeMatchType(row.keyword_id, row.keyword, row.match_type, command)
+  await changeMatchType(row.keyword_id, row.keyword, row.match_type, command, row.baidu_account_id)
 }
 
 async function batchWriteback() {
+  if (!session.canEdit('optimize.keywords')) return
   if (!batchWritebackReady.value) {
     ElMessage.error('所选关键词中存在回写模式尚未确认的账户，已禁止批量提交')
     return
@@ -666,6 +765,8 @@ async function batchWriteback() {
     ElMessage.warning('所选关键词没有有效的最终执行价')
     return
   }
+  const attempt = actionGuard.begin()
+  const tenantId = attempt.context.tenantId
   try {
     await ElMessageBox.confirm(
       `将对 ${items.length} 个关键词回写各自的最终执行价（受 ±20% 渐进调价硬上限保护并记台账）。\n` +
@@ -676,8 +777,10 @@ async function batchWriteback() {
   } catch {
     return
   }
+  if (!attempt.isCurrent()) return
   try {
-    const res = await writebackKeywordBatch({ tenantId: TENANT_ID.value, items })
+    const res = await writebackKeywordBatch({ tenantId, items })
+    if (!attempt.isCurrent()) return
     const parts = []
     if (res.applied.length) parts.push(`已写回 ${res.applied.length}`)
     if (res.simulated.length) parts.push(`演练 ${res.simulated.length}（未真改线上）`)
@@ -687,28 +790,32 @@ async function batchWriteback() {
     if (res.failed.length || res.rejected.length || res.simulated.length) ElMessage.warning(msg)
     else ElMessage.success(msg)
     res.applied.forEach((kwId) => _removeSuggestion(kwId))
-    tableRef.value?.clearSelection()
+    tableRef.value?.clearSelection?.()
     if (res.applied.length) load()
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
+    if (attempt.isCurrent()) ElMessage.error(e.response?.data?.detail || e.message)
   }
 }
 
 async function togglePause(row) {
+  if (!session.canEdit('optimize.keywords')) return
   if (!keywordWritebackReady(row)) {
     ElMessage.error('当前关键词的回写模式尚未确认，已禁止暂停或启用')
     return
   }
-  await submitKeywordPause(row.keyword_id, row.keyword, row.pause)
+  await submitKeywordPause(row.keyword_id, row.keyword, row.pause, row.baidu_account_id)
 }
 
 async function batchPause(pause) {
+  if (!session.canEdit('optimize.keywords')) return
   if (!batchWritebackReady.value) {
     ElMessage.error('所选关键词中存在回写模式尚未确认的账户，已禁止批量暂停或启用')
     return
   }
   const ids = selection.value.map((r) => r.keyword_id)
   if (!ids.length) return
+  const attempt = actionGuard.begin()
+  const tenantId = attempt.context.tenantId
   try {
     await ElMessageBox.confirm(
       `将批量${pause ? '暂停' : '启用'} ${ids.length} 个关键词。\n系统将按当前客户、推广账户和动作门禁决定演练或真实执行；真实执行会修改百度账户。`,
@@ -718,8 +825,10 @@ async function batchPause(pause) {
   } catch {
     return
   }
+  if (!attempt.isCurrent()) return
   try {
-    const res = await pauseKeywordBatch({ tenantId: TENANT_ID.value, keywordIds: ids, pause })
+    const res = await pauseKeywordBatch({ tenantId, keywordIds: ids, pause })
+    if (!attempt.isCurrent()) return
     const parts = []
     if (res.applied.length) parts.push(`已${pause ? '暂停' : '启用'} ${res.applied.length}`)
     if (res.simulated.length) parts.push(`演练 ${res.simulated.length}（未真改线上）`)
@@ -727,20 +836,25 @@ async function batchPause(pause) {
     const msg = parts.join(' · ') || '无可操作关键词'
     if (res.failed.length || res.simulated.length) ElMessage.warning(msg)
     else ElMessage.success(msg)
-    tableRef.value?.clearSelection()
+    tableRef.value?.clearSelection?.()
     if (res.applied.length) load()
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
+    if (attempt.isCurrent()) ElMessage.error(e.response?.data?.detail || e.message)
   }
 }
 
 async function ignoreSuggestion(s) {
+  if (!session.canEdit('optimize.keywords')) return
+  const attempt = actionGuard.begin()
+  const suggestionId = s.id
+  const keywordId = s.keyword_id
   try {
-    await updateSuggestionStatus(s.id, 'ignored')
-    _removeSuggestion(s.keyword_id)
+    await updateSuggestionStatus(suggestionId, 'ignored')
+    if (!attempt.isCurrent()) return
+    _removeSuggestion(keywordId)
     ElMessage.success('已忽略该建议')
   } catch (e) {
-    ElMessage.error(e.message)
+    if (attempt.isCurrent()) ElMessage.error(e.message)
   }
 }
 
@@ -781,8 +895,25 @@ const headerStats = computed(() => {
 
 // 顶栏切换客户后重新拉数
 watch(TENANT_ID, () => {
-  tableRef.value?.clearSelection()
+  writebackModeGeneration += 1
+  listLoadGuard.invalidate()
+  viewLoadGuard.invalidate()
+  assigneeLoadGuard.invalidate()
+  refreshGuard.invalidate()
+  actionGuard.invalidate()
+  invalidateKeywordWriteback()
+  tableRef.value?.clearSelection?.()
   selection.value = []
+  data.value = null
+  error.value = ''
+  loading.value = false
+  suggestionMap.value = {}
+  suggestionList.value = []
+  suggestionAssignees.value = []
+  resetLandingDialog()
+  for (const key of Object.keys(finalPrices)) delete finalPrices[key]
+  workflowSavingId.value = null
+  refreshing.value = false
   filters.page = 1
   campaignData.value = null
   adgroupData.value = null
@@ -790,6 +921,72 @@ watch(TENANT_ID, () => {
   load()
   loadKeywordWritebackMode()
   loadSuggestionAssignees()
+  scheduleStickyScrollSync()
+})
+watch(() => session.authRevision, () => {
+  writebackModeGeneration += 1
+  listLoadGuard.invalidate()
+  viewLoadGuard.invalidate()
+  assigneeLoadGuard.invalidate()
+  refreshGuard.invalidate()
+  actionGuard.invalidate()
+  invalidateKeywordWriteback()
+  tableRef.value?.clearSelection?.()
+  selection.value = []
+  data.value = null
+  error.value = ''
+  loading.value = false
+  suggestionMap.value = {}
+  suggestionList.value = []
+  suggestionAssignees.value = []
+  resetLandingDialog()
+  for (const key of Object.keys(finalPrices)) delete finalPrices[key]
+  workflowSavingId.value = null
+  refreshing.value = false
+  keywordWritebackModeState.value = 'error'
+  keywordWritebackAccountIds.value = new Set()
+  keywordBidLiveAccountIds.value = new Set()
+  campaignData.value = null
+  adgroupData.value = null
+  activeView.value = 'keywords'
+  if (session.canView('optimize.keywords')) {
+    load()
+    loadKeywordWritebackMode()
+    loadSuggestionAssignees()
+  }
+  scheduleStickyScrollSync()
+})
+watch([() => session.tenantListRevision, accountStateSignature], () => {
+  writebackModeGeneration += 1
+  listLoadGuard.invalidate()
+  viewLoadGuard.invalidate()
+  assigneeLoadGuard.invalidate()
+  refreshGuard.invalidate()
+  actionGuard.invalidate()
+  invalidateKeywordWriteback()
+  tableRef.value?.clearSelection?.()
+  selection.value = []
+  data.value = null
+  error.value = ''
+  loading.value = false
+  suggestionMap.value = {}
+  suggestionList.value = []
+  suggestionAssignees.value = []
+  resetLandingDialog()
+  for (const key of Object.keys(finalPrices)) delete finalPrices[key]
+  workflowSavingId.value = null
+  refreshing.value = false
+  keywordWritebackModeState.value = 'error'
+  keywordWritebackAccountIds.value = new Set()
+  keywordBidLiveAccountIds.value = new Set()
+  campaignData.value = null
+  adgroupData.value = null
+  activeView.value = 'keywords'
+  if (session.canView('optimize.keywords')) {
+    load()
+    loadKeywordWritebackMode()
+    loadSuggestionAssignees()
+  }
   scheduleStickyScrollSync()
 })
 watch(activeView, scheduleStickyScrollSync)
@@ -805,6 +1002,15 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  writebackModeGeneration += 1
+  listLoadGuard.invalidate()
+  viewLoadGuard.invalidate()
+  assigneeLoadGuard.invalidate()
+  refreshGuard.invalidate()
+  actionGuard.invalidate()
+  invalidateKeywordWriteback()
+  clearTimeout(qTimer)
+  resetLandingDialog()
   detachTableScroll()
   window.removeEventListener('resize', updateStickyScrollVisibility)
   window.removeEventListener('scroll', updateStickyScrollVisibility)

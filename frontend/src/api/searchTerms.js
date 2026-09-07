@@ -1,10 +1,11 @@
 import client from './client'
 
 // 搜索词报告列表（分页 + 筛选）。返回 {total, summary, window, search_terms}
-export function fetchSearchTerms({ tenantId, campaignId, adgroupId, status, hasClick, q, page, pageSize }) {
+export function fetchSearchTerms({ tenantId, baiduAccountId, campaignId, adgroupId, status, hasClick, q, page, pageSize }) {
   return client.get('/api/v1/search-terms', {
     params: {
       tenant_id: tenantId,
+      baidu_account_id: baiduAccountId ?? undefined,
       campaign_id: campaignId ?? undefined,
       adgroup_id: adgroupId ?? undefined,
       status: status || undefined,
@@ -17,9 +18,9 @@ export function fetchSearchTerms({ tenantId, campaignId, adgroupId, status, hasC
 }
 
 // 手动从百度拉搜索词报告全量落库（窗口快照覆盖）
-export function syncSearchTerms({ tenantId, days = 30 }) {
+export function syncSearchTerms({ tenantId, baiduAccountId, days = 30 }) {
   return client.post('/api/v1/search-terms/sync', null, {
-    params: { tenant_id: tenantId, days },
+    params: { tenant_id: tenantId, baidu_account_id: baiduAccountId ?? undefined, days },
   })
 }
 
