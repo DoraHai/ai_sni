@@ -231,14 +231,23 @@ function validateSearchTerms(data, params) {
   contract(['observed', 'no_data'].includes(data.status) && data.completeness === 'unknown' && Array.isArray(data.windows))
   const pairs = new Set()
   const windows = new Set()
+  const observedAccountIds = new Set()
+  let storedRows = 0
   for (const entry of data.windows) {
     contract(object(entry) && (entry.baidu_account_id === null || positive(entry.baidu_account_id)))
     if (params.baidu_account_id !== undefined) contract(entry.baidu_account_id === params.baidu_account_id)
     validateWindow(entry, undefined, undefined, 'sync_snapshot')
     contract(nonnegativeInteger(entry.stored_rows) && nonnegativeInteger(entry.unknown_timestamp_rows) && entry.unknown_timestamp_rows <= entry.stored_rows)
     contract(validStamp(entry.updated_at) && validStamp(entry.oldest_updated_at) && entry.completeness === 'unknown')
-    pairs.add(`${entry.start ?? ''}:${entry.end ?? ''}`); windows.add(`${entry.baidu_account_id ?? 'null'}:${entry.start ?? ''}:${entry.end ?? ''}`)
+    const windowKey = `${entry.baidu_account_id ?? 'null'}:${entry.start ?? ''}:${entry.end ?? ''}`
+    contract(!windows.has(windowKey))
+    pairs.add(`${entry.start ?? ''}:${entry.end ?? ''}`); windows.add(windowKey)
+    observedAccountIds.add(entry.baidu_account_id)
+    storedRows += entry.stored_rows
   }
+  contract(storedRows === data.total && Array.isArray(data.account_scope.observed_account_ids))
+  const scopedObserved = new Set(data.account_scope.observed_account_ids)
+  contract(scopedObserved.size === observedAccountIds.size && [...scopedObserved].every(id => observedAccountIds.has(id)))
   contract(data.mixed_windows === (pairs.size > 1))
   for (const item of data.items) {
     contract(object(item) && positive(item.id) && (item.baidu_account_id === null || positive(item.baidu_account_id)) && typeof item.query_word === 'string')

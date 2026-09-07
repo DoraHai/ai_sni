@@ -243,6 +243,12 @@ test('dimension and search-window shapes reject incomplete or mixed summaries', 
   await rejectsContract('searchTerms', data => { data.items[0].window.start = '2026-01-01' })
 })
 
+test('search windows exactly cover the filtered multi-account result', async () => {
+  await rejectsContract('searchTerms', data => { data.windows.push(structuredClone(data.windows[0])) })
+  await rejectsContract('searchTerms', data => { data.windows[0].stored_rows-- })
+  await rejectsContract('searchTerms', data => { data.account_scope.observed_account_ids.pop() })
+})
+
 test('echoed filters and JSON shape must match the active request', async () => {
   await rejectsContract('keywords', data => { data.filters.campaign_id = 999 })
   await rejectsContract('keywords', data => { data.items[0].baidu_account_id = 12 })
