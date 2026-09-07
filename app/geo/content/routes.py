@@ -872,15 +872,13 @@ async def _latest_variant_polish(session: AsyncSession, task: GeoContentTask) ->
     return polish if isinstance(polish, dict) else None
 
 
-async def _has_live_task_job(
-    session: AsyncSession, task: GeoContentTask, *, kind: str
-) -> bool:
+async def _has_live_content_job(session: AsyncSession, task: GeoContentTask) -> bool:
     """Check the durable reservation while the caller owns the task-row lock."""
     job_id = await session.scalar(
         select(GeoAsyncJob.id)
         .where(
             GeoAsyncJob.tenant_id == task.tenant_id,
-            GeoAsyncJob.kind == kind,
+            GeoAsyncJob.kind.in_(["generate_article", "create_variants"]),
             GeoAsyncJob.ref_type == "content_task",
             GeoAsyncJob.ref_id == task.id,
             GeoAsyncJob.status.in_(["pending", "running"]),
@@ -7644,8 +7642,8 @@ async def generate_task_article(
     # job id, so without the task-row lock two clicks can enqueue two different
     # workers for the same content task and both create a new master version.
     await session.refresh(task, with_for_update=True)
-    if task.status == "generating" or await _has_live_task_job(
-        session, task, kind="generate_article"
+    if task.status in {"generating", "adapting"} or await _has_live_content_job(
+        session, task
     ):
         raise HTTPException(409, "母稿正在生成，请等待当前任务完成")
     task.status = "generating"
@@ -7791,8 +7789,8 @@ async def create_variants(
         )
 
         await session.refresh(task, with_for_update=True)
-        if task.status == "adapting" or await _has_live_task_job(
-            session, task, kind=KIND_VARIANTS
+        if task.status in {"generating", "adapting"} or await _has_live_content_job(
+            session, task
         ):
             raise HTTPException(409, "渠道稿正在生成，请等待当前任务完成")
         task.status = "adapting"
