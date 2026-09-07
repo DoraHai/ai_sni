@@ -610,11 +610,12 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
     if getattr(task, "business_id", None):
         biz_row = await session.get(GeoOptimizationBusiness, task.business_id)
     await set_job_progress(session, job, message="正在调用模型写稿", pct=45)
+    author_name = display_brand(
+        getattr(biz_row, "profile", None) if biz_row else None,
+        fallback=tenant.name,
+    )
     payload = await generate_master_article(
-        tenant_name=display_brand(
-            getattr(biz_row, "profile", None) if biz_row else None,
-            fallback=tenant.name,
-        ),
+        tenant_name=author_name,
         question=prompt.question,
         facts=fact_dicts,
         llm=llm,
@@ -647,6 +648,7 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
         title=payload["title"],
         body_markdown=body,
         outline=outline,
+        author_name=author_name,
         generation_meta={
             "source": payload.get("_source"),
             "used_fact_ids": payload.get("used_fact_ids"),

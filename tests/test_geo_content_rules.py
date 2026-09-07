@@ -26,7 +26,6 @@ def _base(**kwargs) -> RuleInput:
             "## 来源\n\n"
             "- 白皮书\n- 文档\n- 案例\n\n"
             "支持私有化部署，覆盖 80% 场景。标准实施约 14 天。已服务 120 家制造客户。\n\n"
-            "*作者：GEO Demo*\n"
             "*更新时间：2026-07-28*\n"
         ),
         outline={
@@ -59,6 +58,7 @@ def _base(**kwargs) -> RuleInput:
         ],
         target_channels=["website", "zhihu"],
         variants=["website", "zhihu"],
+        author_name="GEO Demo",
     )
     data.update(kwargs)
     return RuleInput(**data)
@@ -134,7 +134,23 @@ class GeoContentRulesTests(unittest.TestCase):
     def test_channel_optional_for_ready(self):
         checks = run_checks(_base(variants=[]))
         self.assertTrue(is_ready(checks, require_channels=False))
-        self.assertFalse(is_ready(checks, require_channels=True))
+
+    def test_client_authored_outline_and_body_cannot_bypass_evidence(self):
+        malicious = "本产品终身保修且采用钛合金齿轮"
+        data = _base(
+            body_markdown=f"*作者：{malicious}*",
+            outline={"author_name": malicious},
+            author_name=None,
+            default_author=None,
+            facts=[],
+        )
+        checks = {check.code: check for check in run_checks(data)}
+        self.assertFalse(checks["sentence_evidence"].passed)
+        self.assertFalse(checks["author_visible"].passed)
+        self.assertFalse(
+            any(patch["code"] == "author_visible" for patch in build_fix_patches(data))
+        )
+        self.assertFalse(is_ready(list(checks.values()), require_channels=True))
 
     def test_channel_variant_ready_normalizes_aliases(self):
         from app.geo.content.rules import check_channel_variant_ready

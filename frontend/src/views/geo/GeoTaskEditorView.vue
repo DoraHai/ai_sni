@@ -2878,6 +2878,7 @@ const versionMetaLine = computed(() => {
     `${bodyWordCount.value} 字`,
     boundFacts.value.length ? `已绑 ${boundFacts.value.length} 条事实` : '',
     trustedSourceCount.value ? `可信来源 ${trustedSourceCount.value}` : '',
+    task.value?.article?.author_name ? `作者 ${task.value.article.author_name}` : '',
   ].filter(Boolean)
   return parts.join(' · ')
 })

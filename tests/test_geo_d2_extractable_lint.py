@@ -90,10 +90,9 @@ class RulesIntegrationTests(unittest.TestCase):
             title="怎么选",
             body_markdown=RICH_BODY
             + "\n## 结论\n\n优先核验。\n\n## 来源\n\n- 白皮书\n\n"
-            "*作者：Demo*\n*更新时间：2026-07-28*\n",
+            "*更新时间：2026-07-28*\n",
             outline={
                 "direct_answer": "应结合场景与可核验事实选择。",
-                "author_name": "Demo",
                 "updated_at": "2026-07-28",
                 "sections": [
                     {
@@ -143,6 +142,7 @@ class RulesIntegrationTests(unittest.TestCase):
             ],
             target_channels=["website"],
             variants=["website"],
+            author_name="Demo",
         )
         data.update(kwargs)
         return RuleInput(**data)

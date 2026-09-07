@@ -256,20 +256,13 @@ def check_channel_variant_ready(data: RuleInput) -> RuleCheck:
 
 def check_author_visible(data: RuleInput) -> RuleCheck:
     author = (data.author_name or "").strip()
-    outline = data.outline or {}
-    body = data.body_markdown or ""
     default = (data.default_author or "").strip()
-    ok = bool(
-        author
-        or default
-        or outline.get("author_name")
-        or re.search(r"(?i)(作者|署名|撰稿)[:：]", body)
-    )
+    ok = bool(author or default)
     return RuleCheck(
         code="author_visible",
         passed=ok,
-        message="文中可见作者署名" if ok else "缺少作者署名",
-        action="" if ok else "在文首或文末补充作者/署名",
+        message="结构化作者署名已设置" if ok else "缺少结构化作者署名",
+        action="" if ok else "设置文章作者字段",
     )
 
 
@@ -446,12 +439,9 @@ def check_sentence_evidence(data: RuleInput) -> RuleCheck:
     )
 
     # Saved citation metadata may predate edits or newer evidence checks.
-    outline = data.outline if isinstance(data.outline, dict) else {}
-    structured_author = data.author_name or outline.get("author_name")
     rows = build_sentence_citations(
         strip_citation_appendix(data.body_markdown or ""),
         data.facts or [],
-        author_name=structured_author,
     )
     verdict = citation_verdict(rows)
     if verdict["ok"]:
@@ -637,19 +627,6 @@ def build_fix_patches(data: RuleInput) -> list[dict[str, Any]]:
                     "步骤 3：[待填写：结果检查与下一步。]\n"
                 ),
                 "cursor_hint": "append",
-            }
-        )
-
-    if not check_author_visible(data).passed:
-        name = (
-            (data.author_name or data.default_author or "").strip() or "内容编辑"
-        )
-        patches.append(
-            {
-                "code": "author_visible",
-                "label": "插入作者",
-                "insert_markdown": f"\n*作者：{name}*\n",
-                "cursor_hint": "prepend",
             }
         )
 
