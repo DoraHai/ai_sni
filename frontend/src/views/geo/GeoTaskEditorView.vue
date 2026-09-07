@@ -1,6 +1,6 @@
 <script setup>
 import GeoGenerationEvidence from '../../components/GeoGenerationEvidence.vue'
-import { articleVersionLabel, latestGenerationFailure } from '../../utils/geoArticleVersion'
+import { articleVersionLabel, latestGenerationFailure, mergeTaskJobLists } from '../../utils/geoArticleVersion'
 import { geoSnapshotLink } from '../../utils/geoRoutes'
 /**
  * Vue 母稿编辑器
@@ -1130,12 +1130,20 @@ async function resumeActiveJob() {
   if (!tenantId.value || !taskId.value) return
   try {
     const stored = Number(sessionStorage.getItem(jobStorageKey()) || 0)
-    const listed = await editorRequest.wait(listGeoAsyncJobs(tenantId.value, {
-      ref_type: 'content_task',
-      ref_id: taskId.value,
-      limit: 20,
-    }).catch(() => ({ items: [] })))
-    recentTaskJobs.value = listed.items || []
+    const [listed, latestGeneration] = await editorRequest.wait(Promise.all([
+      listGeoAsyncJobs(tenantId.value, {
+        ref_type: 'content_task',
+        ref_id: taskId.value,
+        limit: 20,
+      }).catch(() => ({ items: [] })),
+      listGeoAsyncJobs(tenantId.value, {
+        ref_type: 'content_task',
+        ref_id: taskId.value,
+        kind: 'generate_article',
+        limit: 1,
+      }).catch(() => ({ items: [] })),
+    ]))
+    recentTaskJobs.value = mergeTaskJobLists(latestGeneration.items || [], listed.items || [])
     const open = recentTaskJobs.value.find((j) =>
       ['pending', 'running'].includes(j.status),
     )

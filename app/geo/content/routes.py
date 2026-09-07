@@ -4662,6 +4662,7 @@ async def list_async_jobs(
     limit: int = Query(20, ge=1, le=100),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(geo_read_session),
+    kind: str | None = None,
 ) -> dict:
     from app.geo.content.async_jobs import job_read_payload
 
@@ -4671,6 +4672,8 @@ async def list_async_jobs(
         stmt = stmt.where(GeoAsyncJob.ref_type == ref_type)
     if ref_id is not None:
         stmt = stmt.where(GeoAsyncJob.ref_id == ref_id)
+    if kind:
+        stmt = stmt.where(GeoAsyncJob.kind == kind)
     stmt = stmt.order_by(GeoAsyncJob.id.desc()).limit(limit)
     rows = list(await session.scalars(stmt))
     return {
