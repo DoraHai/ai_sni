@@ -10,7 +10,7 @@ This is the authoritative continuation checkpoint. Historical pause documents ar
 - SEO backend PR436 exact `22ff3f6bc67693d069e76e94dd22d0e4b7e475d3` passed independent review and all five checks, then merged into `codex/production-seo` as `e0d04cf37f6deb6241038fc0c41b579acaacd1fa`. Production deployment workflow `34100854396` and baseline `34100855025` succeeded, migration=`not-run`, public `/seo-health`=200 with `env=prod`, db/schema ok. Active backend/frontend releases are `/opt/seo-service/releases/20260907T083042Z-e0d04cf37f6d` and `/opt/seo-frontend/releases/20260907T083042Z-e0d04cf37f6d`; rollback backend is `20260906T064845Z-5ef5bab99b5c` and rollback frontend is `20260907T073656Z-e220900567fd-frontend`.
 - The production workbench now carries real read-only SEM, SEO and GEO integrations. It is no longer the fake-data prototype. Authenticated tenant/module/menu/data acceptance remains separate from the public shell smoke and must not be claimed until performed with an authorized test identity.
 - GEO H1 human retest results have been delivered to the GEO owner. GEO must interpret them and continue H2-H4 automation/static work without operating task #14 or waiting for another human action.
-- Current usage checkpoint: 72% used, 28% remaining. Stop line remains below 20% remaining; do not consume the reset credit automatically.
+- The user removed the temporary usage stop line. Continue development, review, merge and controlled deployment without pausing at 20% remaining. Database changes, real-customer writes and human-only acceptance still require a concrete request and explicit coordination.
 
 ## Operating instructions
 
@@ -18,7 +18,7 @@ This is the authoritative continuation checkpoint. Historical pause documents ar
 - Preserve the product boundary: discovery/read evidence and explanation/action are separate. Never turn missing, stale, simulated, site-level or estimated data into customer facts.
 - Database work and human tests require a concrete request to the user first: exact object, operation, expected result, prohibited actions and evidence to return. Work that does not need either must continue.
 - Inspect the three tasks about every five minutes. Routine report about every fifteen minutes; material completion, failure or production risk is immediate.
-- Stop line: if Codex primary remaining usage is below 20%, stop new development/tests/merge/deploy, pause all three tasks, update this file and notify the user. Do not consume a reset credit automatically. At 16:37 used was 72%, remaining 28%.
+- There is currently no usage-based stop line. Continue the authorized work; do not consume a reset credit unless the user explicitly asks.
 
 ## Production state
 
