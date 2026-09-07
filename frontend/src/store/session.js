@@ -71,10 +71,15 @@ export const session = {
 
   // 登录态校验后用最新 user 刷新（角色权限可能被管理员改过，即时生效）
   refreshUser(user) {
+    const previous = state.user
+    const identityChanged = previous?.id !== user?.id || previous?.tenant_id !== user?.tenant_id
+    const permissionsChanged = JSON.stringify(previous?.permissions || {}) !== JSON.stringify(user?.permissions || {})
     state.user = user
     writeAuthEnvelope(_activeStore(), state.token, user)
     if (user?.tenant_id) this.setTenant(user.tenant_id)
-    notifyAuthContext('permissions')
+    if (identityChanged || permissionsChanged) {
+      notifyAuthContext(identityChanged ? 'identity' : 'permissions')
+    }
   },
 
   setTenants(list) {
@@ -121,6 +126,7 @@ if (typeof window !== 'undefined') {
     })
     if (next === undefined) return
     if (next === null) {
+      if (!state.token && !state.user) return
       authStorage = null
       state.token = ''
       state.user = null

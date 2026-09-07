@@ -76,8 +76,7 @@ export function persistentAuthForEvent({ event, localStore, sessionStore, curren
   }
   if (currentStorage === 'session' && readAuthPair(sessionStore)) return undefined
   if ((event.key === TOKEN_KEY || event.key === USER_KEY)
-      && event.newValue === null
-      && localStore.getItem(AUTH_ENVELOPE_KEY) === null) return null
+      && event.newValue === null) return null
   if (event.key !== AUTH_ENVELOPE_KEY && event.key !== null) return undefined
   const persistent = readAuthEnvelope(localStore)
   return persistent ? { ...persistent, storage: 'local' } : null
