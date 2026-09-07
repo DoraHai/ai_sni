@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.geo.read_routes import read_session as geo_read_session
-from app.geo.tenant_scope import require_geo_read_entitlement
+from app.geo.tenant_scope import ensure_geo_entitlement, require_geo_read_entitlement
 from app.geo.content.export_view import export_revision, export_view
 from app.geo.content.schemas import VariantExportRequest
 from app.geo.content.bridge import (
@@ -5731,7 +5731,10 @@ async def publishing_auto_push_status(
     )
 
 
-@router.post("/publishing-channels/enable-multi-media-auto")
+@router.post(
+    "/publishing-channels/enable-multi-media-auto",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def enable_multi_media_auto_pack(
     tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -5778,6 +5781,7 @@ async def create_publishing_channel(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(req.tenant_id)
+    await ensure_geo_entitlement(session, req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
     row = GeoPublishingChannel(
         tenant_id=req.tenant_id,
@@ -5796,7 +5800,10 @@ async def create_publishing_channel(
     return _channel_payload(row)
 
 
-@router.delete("/publishing-channels/{channel_id}")
+@router.delete(
+    "/publishing-channels/{channel_id}",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def delete_publishing_channel(
     channel_id: int,
     tenant_id: int = Query(...),
@@ -5818,7 +5825,10 @@ async def delete_publishing_channel(
     return {"deleted": False, "disabled": True, "channel": _channel_payload(row)}
 
 
-@router.patch("/publishing-channels/{channel_id}")
+@router.patch(
+    "/publishing-channels/{channel_id}",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def update_publishing_channel(
     channel_id: int,
     req: PublishingChannelUpdate,
@@ -5839,7 +5849,10 @@ async def update_publishing_channel(
     return _channel_payload(row)
 
 
-@router.get("/channel-accounts")
+@router.get(
+    "/channel-accounts",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def list_channel_accounts(
     tenant_id: int = Query(...),
     channel_id: int | None = Query(None),
@@ -5863,6 +5876,7 @@ async def create_channel_account(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(req.tenant_id)
+    await ensure_geo_entitlement(session, req.tenant_id)
     await _get_publishing_channel(session, req.channel_id, req.tenant_id)
     credentials_encrypted = None
     if req.credentials:
@@ -5887,7 +5901,10 @@ async def create_channel_account(
     return _channel_account_payload(row)
 
 
-@router.patch("/channel-accounts/{account_id}")
+@router.patch(
+    "/channel-accounts/{account_id}",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def update_channel_account(
     account_id: int,
     req: ChannelAccountUpdate,
@@ -5919,7 +5936,10 @@ async def update_channel_account(
     return _channel_account_payload(row)
 
 
-@router.post("/oauth/social/start")
+@router.post(
+    "/oauth/social/start",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def oauth_social_start(
     tenant_id: int = Query(...),
     account_id: int = Query(...),
@@ -5959,7 +5979,10 @@ async def oauth_social_start(
     }
 
 
-@router.post("/oauth/social/refresh")
+@router.post(
+    "/oauth/social/refresh",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def oauth_social_refresh(
     tenant_id: int = Query(...),
     account_id: int = Query(...),
@@ -5989,7 +6012,10 @@ async def oauth_social_refresh(
     return {"ok": True, "account_id": account_id, "refreshed": True}
 
 
-@router.post("/channel-accounts/{account_id}/verify-social")
+@router.post(
+    "/channel-accounts/{account_id}/verify-social",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def verify_social_account(
     account_id: int,
     tenant_id: int = Query(...),
@@ -6054,7 +6080,10 @@ async def verify_social_account(
     return detail
 
 
-@router.delete("/channel-accounts/{account_id}")
+@router.delete(
+    "/channel-accounts/{account_id}",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def delete_channel_account(
     account_id: int,
     tenant_id: int = Query(...),
@@ -7430,7 +7459,10 @@ async def update_task_facts(
     return await _task_payload(session, task, detail=True)
 
 
-@router.put("/content-tasks/{task_id}/article")
+@router.put(
+    "/content-tasks/{task_id}/article",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def save_article(
     task_id: int,
     req: ArticleUpdate,
@@ -7493,7 +7525,10 @@ async def save_article(
     return await _task_payload(session, task, detail=True)
 
 
-@router.post("/content-tasks/{task_id}/check")
+@router.post(
+    "/content-tasks/{task_id}/check",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def check_task(
     task_id: int,
     tenant_id: int = Query(...),
@@ -7890,7 +7925,10 @@ async def generate_task_article(
     return await _task_payload(session, task, detail=True)
 
 
-@router.post("/content-tasks/{task_id}/variants")
+@router.post(
+    "/content-tasks/{task_id}/variants",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def create_variants(
     task_id: int,
     req: VariantsCreate,
@@ -7990,7 +8028,10 @@ async def create_variants(
     return payload
 
 
-@router.patch("/content-tasks/{task_id}/variants/{channel}")
+@router.patch(
+    "/content-tasks/{task_id}/variants/{channel}",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def update_variant(
     task_id: int,
     channel: str,
@@ -8105,7 +8146,10 @@ async def export_variant(
     return {**export_view(variant, current_article_id), "read_only": False}
 
 
-@router.post("/content-tasks/{task_id}/submit-review")
+@router.post(
+    "/content-tasks/{task_id}/submit-review",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def submit_task_review(
     task_id: int,
     req: ReviewSubmit,
@@ -8129,7 +8173,10 @@ async def submit_task_review(
     return await _task_payload(session, task, detail=True)
 
 
-@router.post("/content-tasks/{task_id}/review")
+@router.post(
+    "/content-tasks/{task_id}/review",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def decide_task_review(
     task_id: int,
     req: ReviewDecision,
@@ -8269,6 +8316,7 @@ async def record_publication(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(req.tenant_id)
+    await ensure_geo_entitlement(session, req.tenant_id)
     task = await _get_task(session, task_id, req.tenant_id)
     url = req.published_url.strip()
     if not url.startswith(("http://", "https://")):
@@ -8303,7 +8351,10 @@ async def record_publication(
     return await _task_payload(session, task, detail=True)
 
 
-@router.get("/content-tasks/{task_id}/deliveries")
+@router.get(
+    "/content-tasks/{task_id}/deliveries",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def list_task_deliveries(task_id: int, tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session)) -> dict:
     ctx.ensure_tenant(tenant_id)
@@ -8332,6 +8383,7 @@ async def list_task_deliveries(task_id: int, tenant_id: int = Query(...),
 async def resolve_task_delivery(task_id: int, variant_id: int, delivery_id: str, req: DeliveryResolution,
     ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session)) -> dict:
     ctx.ensure_tenant(req.tenant_id)
+    await ensure_geo_entitlement(session, req.tenant_id)
     task = await _get_task(session, task_id, req.tenant_id)
     await session.refresh(task, with_for_update=True)
     variant = await session.scalar(select(GeoChannelVariant).where(
@@ -8345,22 +8397,29 @@ async def resolve_task_delivery(task_id: int, variant_id: int, delivery_id: str,
                                   key=delivery_id, req=req, user_id=ctx.user_id)
 
 
-@router.get("/content-tasks/{task_id}/push-targets")
+@router.get(
+    "/content-tasks/{task_id}/push-targets",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def list_task_push_targets(
     task_id: int,
     tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(geo_read_session),
 ) -> dict:
     """List multi-media push targets for a task (ready vs missing config/export)."""
     from app.geo.content.multi_push import list_push_targets
 
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
-    await _ensure_default_publishing_channels(session, tenant_id)
+    channels = await _publishing_channel_view_rows(session, tenant_id)
     variants = await _variants(session, task.id)
     targets = await list_push_targets(
-        session, tenant_id=tenant_id, task=task, variants=variants
+        session,
+        tenant_id=tenant_id,
+        task=task,
+        variants=variants,
+        channels=channels,
     )
     ready = [t for t in targets if t.get("ready")]
     return {
@@ -8386,6 +8445,7 @@ async def push_variant_webhook(
     from app.geo.content.multi_push import execute_single_push
 
     ctx.ensure_tenant(req.tenant_id)
+    await ensure_geo_entitlement(session, req.tenant_id)
     task = await _get_task(session, task_id, req.tenant_id)
     channel = str(req.channel or "").strip().lower()
     variants = {v.channel: v for v in await _variants(session, task.id)}
@@ -8492,6 +8552,7 @@ async def push_variant_batch(
     if background_tasks is None:
         background_tasks = BackgroundTasks()
     ctx.ensure_tenant(req.tenant_id)
+    await ensure_geo_entitlement(session, req.tenant_id)
     task = await _get_task(session, task_id, req.tenant_id)
     await _ensure_default_publishing_channels(session, req.tenant_id)
     variants = await _variants(session, task.id)
@@ -10076,7 +10137,10 @@ async def get_deliverable_archive(
     }
 
 
-@router.get('/content-tasks/{task_id}/publication-monitor')
+@router.get(
+    '/content-tasks/{task_id}/publication-monitor',
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def publication_monitor_list(task_id: int, tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session)):
     from app.geo.publication_monitor import list_monitor
@@ -10084,7 +10148,10 @@ async def publication_monitor_list(task_id: int, tenant_id: int = Query(...),
     return await list_monitor(session, tenant_id, task_id)
 
 
-@router.post('/content-tasks/{task_id}/publication-monitor/{publication_id}/check')
+@router.post(
+    '/content-tasks/{task_id}/publication-monitor/{publication_id}/check',
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def publication_monitor_check(task_id: int, publication_id: int, tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session)):
     from app.geo.publication_monitor import check_publication

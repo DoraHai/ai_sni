@@ -68,6 +68,18 @@ async def list_geo_tenants_for_auth(
     return [tenant for tenant in tenants if tenant.id == bound_tenant_id]
 
 
+async def ensure_geo_entitlement(session: AsyncSession, tenant_id: int) -> None:
+    """Fail closed unless the customer currently has usable GEO access."""
+    if await session.scalar(geo_tenant_query(tenant_id=tenant_id).limit(1)) is None:
+        raise HTTPException(
+            403,
+            {
+                "code": "geo_not_available",
+                "message": "该客户未开通 GEO、已停用或已到期",
+            },
+        )
+
+
 async def require_geo_read_entitlement(tenant_id: int, ctx=Depends(require_scoped_auth),
                                        session=Depends(get_session)):
     """Check selected-customer entitlement even for a bookmarked ID or admin key.
@@ -76,6 +88,5 @@ async def require_geo_read_entitlement(tenant_id: int, ctx=Depends(require_scope
     cross-module policy. Database errors propagate (never grant on lookup failure).
     """
     ctx.ensure_tenant(tenant_id)
-    if await session.scalar(geo_tenant_query(tenant_id=tenant_id).limit(1)) is None:
-        raise HTTPException(403, {'code': 'geo_not_available', 'message': '该客户未开通 GEO、已停用或已到期'})
+    await ensure_geo_entitlement(session, tenant_id)
     return ctx

@@ -4,6 +4,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
+from fastapi import HTTPException
 from app.geo.content.multi_push import execute_single_push, delivery_key
 from app.geo.content.review import assert_review_approved, apply_decision
 
@@ -14,7 +15,7 @@ def setup_case(review='approved'):
     account=NS(id=4,channel_id=5,tenant_id=1,status='active',auth_type='webhook',credentials_encrypted='encrypted')
     channel=NS(id=5,tenant_id=1,enabled=True,publish_mode='auto_publish',channel_type='website')
     article=NS(id=16)
-    session=NS(refresh=AsyncMock(),commit=AsyncMock())
+    session=NS(refresh=AsyncMock(),commit=AsyncMock(),scalar=AsyncMock(return_value=object()))
     args=dict(task=task,variant=variant,account=account,channel_row=channel,article=article,mode='publish')
     return session,args
 
@@ -46,6 +47,16 @@ def test_execution_gate_uses_current_business_brand_before_connector():
     assert checked == ['MAXXDRIVE','MAXXDRIVE']
     assert gate.await_count == 2
     send.assert_awaited_once()
+
+
+def test_expired_geo_access_blocks_before_connector_or_reservation():
+    session,args=setup_case();send=AsyncMock()
+    session.scalar.return_value=None
+    with patches(args,send),pytest.raises(HTTPException) as error:
+        asyncio.run(execute_single_push(session,**args))
+    assert getattr(error.value, 'status_code', None) == 403
+    send.assert_not_awaited()
+    session.commit.assert_not_awaited()
 
 
 def test_brand_change_after_reservation_blocks_before_connector():

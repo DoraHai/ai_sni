@@ -74,18 +74,22 @@ async def list_push_targets(
     tenant_id: int,
     task: GeoContentTask,
     variants: list[GeoChannelVariant] | None = None,
+    channels: list[GeoPublishingChannel] | None = None,
 ) -> list[dict[str, Any]]:
     """Describe every auto-push slot for this task (ready or blocked + reason)."""
-    channels = list(
-        await session.scalars(
-            select(GeoPublishingChannel)
-            .where(
-                GeoPublishingChannel.tenant_id == tenant_id,
-                GeoPublishingChannel.enabled.is_(True),
+    if channels is None:
+        channels = list(
+            await session.scalars(
+                select(GeoPublishingChannel)
+                .where(
+                    GeoPublishingChannel.tenant_id == tenant_id,
+                    GeoPublishingChannel.enabled.is_(True),
+                )
+                .order_by(GeoPublishingChannel.sort_order, GeoPublishingChannel.id)
             )
-            .order_by(GeoPublishingChannel.sort_order, GeoPublishingChannel.id)
         )
-    )
+    else:
+        channels = [channel for channel in channels if channel.enabled]
     accounts = list(
         await session.scalars(
             select(GeoChannelAccount).where(
@@ -112,7 +116,8 @@ async def list_push_targets(
         adapt = variant_key_for_channel(ctype)
         variant = var_map.get(adapt) or var_map.get(ctype)
         mode = str(ch.publish_mode or "manual_only")
-        accs = by_channel.get(int(ch.id), [])
+        channel_id = int(ch.id) if ch.id is not None else None
+        accs = by_channel.get(channel_id, []) if channel_id is not None else []
         pushable_accs = [
             a
             for a in accs
@@ -306,6 +311,7 @@ def safe_connection_failure(exc):
 
 
 async def execute_single_push(session, *, task, variant, channel_row, account, mode, article):
+    from app.geo.tenant_scope import ensure_geo_entitlement
     from app.geo.content.routes import (
         _brand_context_for_task,
         _build_rule_input,
@@ -335,6 +341,9 @@ async def execute_single_push(session, *, task, variant, channel_row, account, m
 
     if mode not in {"draft", "publish"}:
         raise ValueError("不支持的发布操作")
+    # Recheck access in the executor as well as the HTTP route. An async push may
+    # start after the customer's GEO subscription has expired.
+    await ensure_geo_entitlement(session, task.tenant_id)
     await session.refresh(task, with_for_update=True)
     await session.refresh(variant)
     await session.refresh(account)

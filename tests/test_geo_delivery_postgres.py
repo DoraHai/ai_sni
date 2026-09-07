@@ -26,12 +26,13 @@ def test_real_delivery_serialization(scenario):
     async def run():
         url=os.environ['GEO_TEST_POSTGRES_URL']; schema='geo_delivery_test_'+uuid4().hex
         admin=create_async_engine(url); engine=None; created=False
-        tables=['geo_content_tasks','geo_channel_variants','geo_channel_accounts','geo_publishing_channels','geo_article_versions']
+        tables=['tenant_modules','geo_content_tasks','geo_channel_variants','geo_channel_accounts','geo_publishing_channels','geo_article_versions']
         try:
             async with admin.begin() as c:
                 await c.execute(text(f'CREATE SCHEMA {schema}'))
                 for table in tables:
                     await c.execute(text(f'CREATE TABLE {schema}.{table} AS SELECT * FROM public.{table} WITH NO DATA'))
+                await c.execute(text(f"INSERT INTO {schema}.tenant_modules(tenant_id,module_code,status) VALUES(7,'geo','active')"))
                 await c.execute(text(f"INSERT INTO {schema}.geo_content_tasks(id,tenant_id,review_status,title,status) VALUES(12,7,'approved','title','ready')"))
                 await c.execute(text(f"INSERT INTO {schema}.geo_article_versions(id,task_id,version_no,title,body_markdown) VALUES(16,12,1,'title','body')"))
                 await c.execute(text(f"INSERT INTO {schema}.geo_channel_variants(id,task_id,article_version_id,channel,title,body_markdown,status,adapt_meta) VALUES(3,12,16,'website','title','body','draft','{{}}')"))
@@ -117,7 +118,7 @@ def test_delivery_reloads_brand_after_reservation_commit():
 
         url=os.environ['GEO_TEST_POSTGRES_URL'];schema='geo_brand_delivery_'+uuid4().hex
         admin=create_async_engine(url);engine=None;created=False
-        tables=['tenants','geo_optimization_businesses','geo_content_tasks',
+        tables=['tenants','tenant_modules','geo_optimization_businesses','geo_content_tasks',
                 'geo_channel_variants','geo_channel_accounts',
                 'geo_publishing_channels','geo_article_versions']
         try:
@@ -126,6 +127,7 @@ def test_delivery_reloads_brand_after_reservation_commit():
                 for table in tables:
                     await c.execute(text(f'CREATE TABLE {schema}.{table} AS SELECT * FROM public.{table} WITH NO DATA'))
                 await c.execute(text(f"INSERT INTO {schema}.tenants(id,name) VALUES(7,'租户名')"))
+                await c.execute(text(f"INSERT INTO {schema}.tenant_modules(tenant_id,module_code,status) VALUES(7,'geo','active')"))
                 await c.execute(text(f'''INSERT INTO {schema}.geo_optimization_businesses(id,tenant_id,name,profile,status,sort_order)
                     VALUES(20,7,'业务','{{"product_name":"旧品牌"}}','active',0)'''))
                 await c.execute(text(f"INSERT INTO {schema}.geo_content_tasks(id,tenant_id,business_id,review_status,title,status) VALUES(12,7,20,'approved','title','ready')"))
