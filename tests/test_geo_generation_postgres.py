@@ -286,6 +286,43 @@ def test_live_job_blocks_regeneration_after_legacy_status_reset():
     asyncio.run(run())
 
 
+def test_live_variant_job_blocks_master_generation():
+    async def run():
+        admin, engine, schema, tables = await _prepare_database()
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as session:
+                session.add(
+                    GeoAsyncJob(
+                        tenant_id=7,
+                        kind="create_variants",
+                        status="pending",
+                        ref_type="content_task",
+                        ref_id=12,
+                        request_meta={"channels": ["website"]},
+                        created_by=9,
+                    )
+                )
+                await session.commit()
+
+            async with sessions() as session:
+                with pytest.raises(HTTPException) as error:
+                    await generate_task_article(
+                        12,
+                        tenant_id=7,
+                        run_async=True,
+                        background_tasks=BackgroundTasks(),
+                        ctx=_ctx(),
+                        session=session,
+                    )
+                assert error.value.status_code == 409
+                assert await session.scalar(select(func.count(GeoAsyncJob.id))) == 1
+        finally:
+            await _cleanup(admin, engine, schema, tables)
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("recovery", ["cancel", "stale"])
 def test_generation_reservation_is_released_by_existing_recovery(recovery):
     async def run():
