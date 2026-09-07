@@ -35,7 +35,7 @@ const saveGuard = createLatestRequestGuard(() => ({
 async function load() {
   const attempt = loadGuard.begin()
   const { tenantId, accountId } = attempt.context
-  if (!tenantId || !accountId) {
+  if (!session.canView('manage.account') || !tenantId || !accountId) {
     data.value = null
     error.value = ''
     loading.value = false
@@ -60,6 +60,7 @@ watch([TENANT_ID, readableAccounts, () => session.tenantListRevision], ([, accou
   saveGuard.invalidate()
   data.value = null
   error.value = ''
+  loading.value = false
   saving.value = false
   input.value = null
   const previousAccountId = selectedAccountId.value
@@ -72,9 +73,19 @@ watch(selectedAccountId, () => {
   saveGuard.invalidate()
   data.value = null
   error.value = ''
+  loading.value = false
   saving.value = false
   input.value = null
   load()
+})
+watch(() => session.authRevision, () => {
+  loadGuard.invalidate()
+  saveGuard.invalidate()
+  data.value = null
+  error.value = ''
+  saving.value = false
+  input.value = null
+  if (session.canView('manage.account')) load()
 })
 onBeforeUnmount(() => {
   loadGuard.invalidate()
@@ -95,6 +106,7 @@ const changeHint = computed(() => {
 })
 
 async function save() {
+  if (!session.canEdit('manage.account')) return
   const attempt = saveGuard.begin()
   const { tenantId, accountId } = attempt.context
   const budgetSnapshot = data.value

@@ -17,6 +17,24 @@ const syncing = ref(false)
 const error = ref('')
 const data = ref(null)
 const negDialogVisible = ref(false)
+const negForm = ref({
+  word: '',
+  scope: 'adgroup',
+  matchMode: 'exact',
+  adgroupId: null,
+  adgroupName: '',
+  campaignId: null,
+  campaignName: '',
+  baiduAccountId: null,
+  tenantId: null,
+  authRevision: null,
+})
+const resetNegativeForm = () => {
+  negForm.value = {
+    word: '', scope: 'adgroup', matchMode: 'exact', adgroupId: null, adgroupName: '',
+    campaignId: null, campaignName: '', baiduAccountId: null, tenantId: null, authRevision: null,
+  }
+}
 const scopedContext = () => ({ tenantId: TENANT_ID.value, accountId: selectedAccountId.value, authRevision: session.authRevision })
 const loadGuard = createLatestRequestGuard(scopedContext)
 const syncGuard = createLatestRequestGuard(scopedContext)
@@ -51,7 +69,7 @@ const filters = reactive({
 async function load() {
   const attempt = loadGuard.begin()
   const { tenantId, accountId } = attempt.context
-  if (!tenantId) {
+  if (!session.canView('optimize.searchterms') || !tenantId) {
     data.value = null
     error.value = ''
     loading.value = false
@@ -71,6 +89,7 @@ async function load() {
 }
 
 async function runSync() {
+  if (!session.canEdit('optimize.searchterms')) return
   const attempt = syncGuard.begin()
   const { tenantId, accountId } = attempt.context
   if (!tenantId || !accountId || !activeAccounts.value.some((row) => row.id === accountId)) {
@@ -101,8 +120,10 @@ watch([TENANT_ID, readableAccounts, () => session.tenantListRevision], ([, accou
   actionGuard.invalidate()
   data.value = null
   error.value = ''
+  loading.value = false
   syncing.value = false
   negDialogVisible.value = false
+  resetNegativeForm()
   const previousAccountId = selectedAccountId.value
   const nextAccountId = chooseSemAccount(accounts, previousAccountId)
   selectedAccountId.value = nextAccountId
@@ -115,10 +136,25 @@ watch(selectedAccountId, () => {
   actionGuard.invalidate()
   data.value = null
   error.value = ''
+  loading.value = false
   syncing.value = false
   negDialogVisible.value = false
+  resetNegativeForm()
   filters.page = 1
   load()
+})
+watch(() => session.authRevision, () => {
+  loadGuard.invalidate()
+  syncGuard.invalidate()
+  actionGuard.invalidate()
+  data.value = null
+  error.value = ''
+  loading.value = false
+  syncing.value = false
+  negDialogVisible.value = false
+  resetNegativeForm()
+  filters.page = 1
+  if (session.canView('optimize.searchterms')) load()
 })
 onBeforeUnmount(() => {
   loadGuard.invalidate()
@@ -131,19 +167,6 @@ const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
 const fmtMoney = (v) => (v == null ? '—' : '¥' + Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 }))
 const fmtPct = (v) => (v == null ? '—' : Number(v).toFixed(2) + '%')
 const fmtTime = (v) => formatUtcTimestamp(v)
-const negForm = ref({
-  word: '',
-  scope: 'adgroup',
-  matchMode: 'exact',
-  adgroupId: null,
-  adgroupName: '',
-  campaignId: null,
-  campaignName: '',
-  baiduAccountId: null,
-  tenantId: null,
-  authRevision: null,
-})
-
 // C 辅助：未加成关键词 + 有展现 + 零点击 → 疑似可否（烧展现没点击）
 function suspectNegative(row) {
   return !row.is_added && (row.impression || 0) >= 20 && (row.click || 0) === 0
@@ -155,6 +178,7 @@ function dryRunTip(res, okMsg) {
 }
 
 function addNeg(row) {
+  if (!session.canEdit('optimize.searchterms')) return
   if (!canWriteRow(row)) return ElMessage.warning('请先选择该搜索词所属的可用推广账户')
   if (!row.adgroup_id && !row.campaign_id) {
     return ElMessage.warning('该搜索词无所属计划/单元，无法加否词')
@@ -175,6 +199,7 @@ function addNeg(row) {
 }
 
 async function submitNegative() {
+  if (!session.canEdit('optimize.searchterms')) return
   const attempt = actionGuard.begin()
   const f = { ...negForm.value }
   if (!attempt.isCurrent() || f.tenantId !== attempt.context.tenantId
@@ -202,6 +227,7 @@ async function submitNegative() {
 }
 
 async function expand(row) {
+  if (!session.canEdit('optimize.searchterms')) return
   if (!row.adgroup_id) return ElMessage.warning('该搜索词无所属单元，无法转拓词')
   if (!canWriteRow(row)) return ElMessage.warning('请先选择该搜索词所属的可用推广账户')
   const attempt = actionGuard.begin()

@@ -65,7 +65,7 @@ afterEach(() => {
 })
 
 describe('SEM classic account context', () => {
-  it('rejects late account data and writes after account switch or unmount', async () => {
+  it('rejects late account data and writes after account switch or permission revocation', async () => {
     session.setAuth('component-test-token', {
       id: 7,
       tenant_id: null,
@@ -114,12 +114,25 @@ describe('SEM classic account context', () => {
     const rowA = { id: 3, baidu_account_id: 11, query_word: 'A词', adgroup_id: 101, adgroup_name: 'A单元' }
     loadA2.resolve({ total: 1, account_scope: { mode: 'single', baidu_account_id: 11 }, search_terms: [rowA] })
     await nextTick()
-    const unmounting = wrapper.vm.expand(rowA)
+    wrapper.vm.load()
     await nextTick()
-    wrapper.unmount()
+    const lateAfterRevoke = state.loads.filter((item) => item.args.baiduAccountId === 11).at(-1)
+    wrapper.vm.addNeg(rowA)
+    expect(wrapper.vm.negDialogVisible).toBe(true)
+    const revoking = wrapper.vm.expand(rowA)
+    await nextTick()
+    session.refreshUser({ id: 7, tenant_id: null, permissions: {} })
+    await nextTick()
+    expect(wrapper.vm.data).toBe(null)
+    expect(wrapper.vm.negDialogVisible).toBe(false)
+    expect(wrapper.vm.negForm.word).toBe('')
     state.prompts.at(-1).resolve({ value: '1.50' })
-    await unmounting
+    await revoking
+    lateAfterRevoke.resolve({ total: 1, account_scope: { mode: 'single', baidu_account_id: 11 }, search_terms: [{ id: 'late' }] })
+    await nextTick()
+    expect(wrapper.vm.data).toBe(null)
     expect(state.writes).toHaveLength(0)
+    wrapper.unmount()
   })
 
   it('never submits an account A budget after switching to account B', async () => {
@@ -163,11 +176,21 @@ describe('SEM classic account context', () => {
     loadB.resolve({ status: 'ok', baidu_account_id: 12, budget: 200, min_budget: 50, max_budget: 1000 })
     await nextTick()
     wrapper.vm.input = 220
-    const unmounting = wrapper.vm.save()
+    wrapper.vm.load()
     await nextTick()
-    wrapper.unmount()
+    const lateAfterRevoke = state.budgetLoads.filter((item) => item.args.baiduAccountId === 12).at(-1)
+    const revoking = wrapper.vm.save()
+    await nextTick()
+    session.refreshUser({ id: 7, tenant_id: null, permissions: {} })
+    await nextTick()
+    expect(wrapper.vm.data).toBe(null)
+    expect(wrapper.vm.input).toBe(null)
     state.confirmations.at(-1).resolve()
-    await unmounting
+    await revoking
+    lateAfterRevoke.resolve({ status: 'ok', baidu_account_id: 12, budget: 999 })
+    await nextTick()
+    expect(wrapper.vm.data).toBe(null)
     expect(state.writes).toHaveLength(0)
+    wrapper.unmount()
   })
 })
