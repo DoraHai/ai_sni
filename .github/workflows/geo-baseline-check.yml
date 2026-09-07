@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - codex/production-geo
+      - codex/geo-translation-pg-verify-20260907
   pull_request:
     paths:
       - "app/geo/**"
@@ -57,7 +58,16 @@ jobs:
       - name: Run all GEO regressions including PostgreSQL concurrency
         env:
           GEO_TEST_POSTGRES_URL: postgresql+asyncpg://geo_ci:geo_ci_test@127.0.0.1:5432/geo_ci
-        run: python ops/run_geo_checks.py --postgres
+        run: python ops/run_geo_checks.py --postgres --junitxml=geo-junit.xml
+      - name: Require every PostgreSQL concurrency case
+        run: python ops/verify_geo_pg_junit.py geo-junit.xml
+      - name: Preserve PostgreSQL verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: geo-postgres-junit-${{ github.sha }}
+          path: geo-junit.xml
+          if-no-files-found: error
 
 
   frontend-build:
