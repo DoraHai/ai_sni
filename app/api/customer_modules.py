@@ -242,6 +242,11 @@ def _require_seo_asset_permission(ctx: AuthContext, *, edit: bool = False) -> No
         raise HTTPException(403, "当前账号没有 SEO 网站管理权限")
 
 
+def _require_seo_workbench_site_permission(ctx: AuthContext) -> None:
+    if not ctx.can_view("seo.content", "seo.site"):
+        raise HTTPException(403, "当前账号没有 SEO 内容或页面查看权限")
+
+
 _SEO_SITE_DEPENDENCIES = (
     (SeoKeywordAsset, "关键词"),
     (SeoRankSnapshot, "排名快照"),
@@ -288,6 +293,45 @@ async def list_seo_sites(
     await ensure_module_access(session, ctx, tenant_id, "seo")
     rows = list((await session.scalars(select(SeoSite).where(SeoSite.tenant_id == tenant_id).order_by(SeoSite.id))).all())
     return {"sites": [_site_payload(row) for row in rows]}
+
+
+@seo_sites_router.get(
+    "/api/v1/seo/workbench/sites",
+    dependencies=[Depends(require_scoped_auth)],
+)
+async def list_seo_workbench_sites(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Return the stored SEO site scope without starting any background work."""
+    _require_seo_workbench_site_permission(ctx)
+    await ensure_module_access(session, ctx, tenant_id, "seo")
+    rows = list(
+        (
+            await session.scalars(
+                select(SeoSite)
+                .where(SeoSite.tenant_id == tenant_id)
+                .order_by(SeoSite.id)
+            )
+        ).all()
+    )
+    return {
+        "tenant_id": tenant_id,
+        "selection_policy": {
+            "selectable_statuses": ["active"],
+            "disabled_statuses": ["paused", "archived"],
+        },
+        "sites": [
+            {
+                "id": row.id,
+                "name": row.name,
+                "domain": row.domain,
+                "status": row.status,
+            }
+            for row in rows
+        ],
+    }
 
 
 @seo_sites_router.post("/api/v1/seo/sites", dependencies=[Depends(require_auth)])
