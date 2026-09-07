@@ -50,39 +50,20 @@ def _score(sentence: str, fact: dict[str, Any]) -> float:
 
 
 def _support_basis(sentence: str, fact: dict[str, Any]) -> str | None:
-    """Require evidence overlap beyond a coincidental number or brand token."""
-    from app.geo.content.cross_language import (
-        _measurements,
-        _product_phrases,
-        language,
-        verified_translation_texts,
-    )
+    """Accept only a complete source statement or explicitly verified translation."""
+    from app.geo.content.cross_language import verified_translation_texts
 
-    def compact(value: str) -> str:
-        return re.sub(r"[\s*#`]+", "", value or "").casefold()
+    def canonical(value: str) -> str:
+        text = re.sub(r"[（(]来源[：:][^）)\n]*[）)]\s*$", "", value or "")
+        text = re.sub(r"^\s*(?:#{1,6}|[-*+])\s*", "", text)
+        return re.sub(r"[\s*#`]+", "", text).strip("。.!！?？；;").casefold()
 
     source_values = [str(fact.get("statement") or ""), *verified_translation_texts(fact)]
-    sent = compact(sentence)
+    sent = canonical(sentence)
     for value in source_values:
-        statement = compact(value)
-        if len(statement) >= 8 and statement in sent:
+        statement = canonical(value)
+        if len(statement) >= 4 and statement == sent:
             return "exact_statement"
-
-    sent_tokens = {t for t in tokenize(sentence) if not t.isdigit()}
-    for value in source_values:
-        if language(sentence) != language(value) or language(value) == "unknown":
-            continue
-        fact_tokens = {t for t in tokenize(value) if not t.isdigit()}
-        shared = sent_tokens & fact_tokens
-        if len(shared) >= 2 and len(shared) / max(3, len(sent_tokens)) >= 0.3:
-            return "statement_overlap"
-
-    source = str(fact.get("statement") or "")
-    if (
-        _measurements(sentence) & _measurements(source)
-        and _product_phrases(sentence) & _product_phrases(source)
-    ):
-        return "measurement_and_entity"
     return None
 
 
@@ -121,7 +102,12 @@ def build_sentence_citations(
             )
         else:
             support_basis = None
-        is_claim = _sentence_is_claim(sent, facts)
+        is_claim = _sentence_is_claim(sent, facts) or bool(
+            not is_presentation_sentence(sent)
+            and fact is not None
+            and score >= min_score
+            and support_basis is None
+        )
         # Similarity is only a retrieval hint. It cannot override a known
         # unsupported assertion, even when the rest repeats a fact verbatim.
         if is_claim:

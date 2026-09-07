@@ -1,3 +1,5 @@
+import pytest
+
 from app.geo.content.evidence_cite import build_sentence_citations, citation_verdict
 from app.geo.content.claim_guard import ungrounded_claims, format_ungrounded
 from app.geo.content.cross_language import evidence_candidates
@@ -71,3 +73,21 @@ def test_same_number_without_same_entity_is_not_a_citation():
     rows = build_sentence_citations('MAXXDRIVE accuracy is 60%.', facts)
     assert not rows[0]['cited']
     assert rows[0]['support_basis'] is None
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "MAXXDRIVE XT ribbed housing improves efficiency.",
+        "MAXXDRIVE XT features a ribbed housing and improves efficiency.",
+        "MAXXDRIVE XT does not feature a ribbed housing.",
+        "MAXXDRIVE XT features a smooth housing.",
+        "MAXXDRIVE XT ribbed housing is not included.",
+    ],
+)
+def test_overlap_cannot_cite_added_effect_negation_or_opposite(sentence):
+    fact = {"id": 6, "statement": "MAXXDRIVE XT features a ribbed housing."}
+    row = build_sentence_citations(sentence, [fact])[0]
+    assert not row["cited"]
+    assert row["needs_fact"]
+    assert row["support_basis"] is None
