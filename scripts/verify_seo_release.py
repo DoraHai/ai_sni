@@ -116,6 +116,7 @@ SOURCE_ALLOWED_EXACT = {
     "frontend/scripts/test-seo-diagnostics.mjs",
     "frontend/scripts/test-seo-image-evidence.mjs",
     "frontend/scripts/test-seo-remediation.mjs",
+    "frontend/scripts/test-seo-workspace-access.mjs",
     "frontend/scripts/test-seo-editor.mjs",
     "frontend/scripts/test-session-storage.mjs",
     "frontend/scripts/test-session-store-integration.mjs",

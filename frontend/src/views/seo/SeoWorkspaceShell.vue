@@ -1,17 +1,21 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchMe } from '../../api/auth'
 import client from '../../api/client'
+import { fetchSeoWorkbenchSites } from '../../api/moduleAssets'
 import { session } from '../../store/session'
 import { clearSeoSiteId, currentSeoSiteId } from './seoSiteContext'
+import { createSeoWorkspaceAccess, reconcileSeoRouteSite } from './seoWorkspaceAccess'
 
 const route = useRoute()
 const router = useRouter()
 const mobileOpen = ref(false)
-if (session.tenantId && Number(route.query.site_id) > 0) {
-  currentSeoSiteId.value = Number(route.query.site_id)
-}
+const accessState = ref('checking')
+const accessError = ref('')
+const validatedSites = ref([])
+const selectableSiteStatuses = ref([])
+const seoTenants = ref([])
 
 const groups = [
   {
@@ -75,7 +79,13 @@ const title = computed(() => route.meta.title || 'SEO 工作台')
 const workflow = computed(() => route.meta.workflow || '搜索增长')
 const immersive = computed(() => Boolean(route.meta.immersive))
 const tenantName = computed(() => (
-  session.tenants.find((tenant) => tenant.id === session.tenantId)?.name || '请选择客户'
+  seoTenants.value.find((tenant) => tenant.id === session.tenantId)?.name
+    || session.tenants.find((tenant) => tenant.id === session.tenantId)?.name
+    || '请选择客户'
+))
+const showTenantSelect = computed(() => session.isLoggedIn && (
+  seoTenants.value.length > 1
+  || (session.tenantId && !seoTenants.value.some((tenant) => tenant.id === session.tenantId))
 ))
 
 function active(path) {
@@ -91,20 +101,81 @@ function navigate(path) {
   router.push({ path, query: currentSeoSiteId.value ? { site_id: currentSeoSiteId.value } : {} })
 }
 
-async function loadContext() {
-  if (!session.isLoggedIn) return
-  try {
-    const [me, tenants] = await Promise.all([
-      fetchMe(),
+function removeSiteQuery() {
+  if (!route.query.site_id) return
+  const query = { ...route.query }
+  delete query.site_id
+  void router.replace({ path: route.path, query })
+}
+
+const access = createSeoWorkspaceAccess({
+  async fetchSites(tenantId) {
+    const [siteResult, tenantResult] = await Promise.allSettled([
+      fetchSeoWorkbenchSites(tenantId),
       client.get('/api/v1/auth/tenants', { params: { module: 'seo' } }),
     ])
-    session.refreshUser(me.user)
-    session.setTenants(tenants.tenants)
+    const tenants = tenantResult.status === 'fulfilled' ? (tenantResult.value.tenants || []) : []
+    if (siteResult.status === 'rejected') {
+      const error = siteResult.reason instanceof Error ? siteResult.reason : new Error('无法核对 SEO 访问范围')
+      error.seoTenants = tenants
+      throw error
+    }
+    return { ...siteResult.value, tenants }
+  },
+  reset() {
+    accessState.value = 'checking'
+    accessError.value = ''
+    validatedSites.value = []
+    selectableSiteStatuses.value = []
+    seoTenants.value = []
+    clearSeoSiteId()
+    sessionStorage.removeItem('seo_pending_rewrite_source')
+    sessionStorage.removeItem('seo_pending_rewrite_options')
+    removeSiteQuery()
+  },
+  ready({ tenantId, sites, tenants, selectableStatuses, siteId }) {
+    if (tenantId !== session.tenantId) return
+    validatedSites.value = sites
+    selectableSiteStatuses.value = selectableStatuses
+    seoTenants.value = tenants
+    currentSeoSiteId.value = siteId
+    accessState.value = 'ready'
+  },
+  noSite({ tenantId, sites, tenants, selectableStatuses }) {
+    if (tenantId !== session.tenantId) return
+    validatedSites.value = sites
+    selectableSiteStatuses.value = selectableStatuses
+    seoTenants.value = tenants
+    clearSeoSiteId()
+    accessState.value = 'no-active-site'
+  },
+  unavailable({ tenantId, error, tenants }) {
+    if (tenantId && tenantId !== session.tenantId) return
+    validatedSites.value = []
+    selectableSiteStatuses.value = []
+    seoTenants.value = tenants
+    clearSeoSiteId()
+    accessError.value = error?.message || (tenantId ? '当前客户的 SEO 模块未启用或已过期' : '请先选择客户')
+    accessState.value = 'unavailable'
+  },
+})
+
+function validateCurrentScope() {
+  const requestedSiteId = Number(route.query.site_id) || currentSeoSiteId.value || null
+  void access.validate({ tenantId: session.tenantId, requestedSiteId })
+}
+
+async function refreshCurrentUser() {
+  if (!session.isLoggedIn) return
+  try {
+    const response = await fetchMe()
+    session.refreshUser(response.user)
   } catch { /* 登录失效由统一拦截器处理 */ }
 }
 
 async function onTenantChange(value) {
   if (!value || value === session.tenantId) return
+  access.invalidate()
   clearSeoSiteId()
   sessionStorage.removeItem('seo_pending_rewrite_source')
   sessionStorage.removeItem('seo_pending_rewrite_options')
@@ -123,26 +194,41 @@ async function onTenantChange(value) {
 }
 
 watch(() => route.path, () => { mobileOpen.value = false })
-watch(() => session.tenantId, (tenantId) => {
-  const requestedSiteId = Number(route.query.site_id) || null
-  if (tenantId && requestedSiteId) currentSeoSiteId.value = requestedSiteId
-})
-watch(() => route.query.site_id, (value) => {
+watch(() => session.tenantId, validateCurrentScope, { immediate: true })
+watch(() => session.authRevision, validateCurrentScope)
+watch(() => session.tenantListRevision, validateCurrentScope)
+watch(() => route.query.site_id, (value, previous) => {
   const requestedSiteId = Number(value) || null
-  if (session.tenantId && requestedSiteId && requestedSiteId !== currentSeoSiteId.value) {
-    currentSeoSiteId.value = requestedSiteId
+  if (requestedSiteId === (Number(previous) || null)) return
+  if (accessState.value === 'ready') {
+    reconcileSeoRouteSite({
+      sites: validatedSites.value,
+      selectableStatuses: selectableSiteStatuses.value,
+      requestedSiteId,
+      selectSite: (siteId) => { currentSeoSiteId.value = siteId },
+      replaceSiteQuery: (siteId) => {
+        void router.replace({ path: route.path, query: { ...route.query, site_id: String(siteId) } })
+      },
+      noSite: () => {
+        clearSeoSiteId()
+        accessState.value = 'no-active-site'
+      },
+    })
+    return
   }
+  validateCurrentScope()
 })
 watch(currentSeoSiteId, (siteId) => {
-  if (!session.tenantId && !siteId) return
+  if (accessState.value !== 'ready' || (!session.tenantId && !siteId)) return
   const routeSiteId = Number(route.query.site_id) || null
   if (siteId === routeSiteId) return
   const query = { ...route.query }
   if (siteId) query.site_id = String(siteId)
   else delete query.site_id
   router.replace({ query })
-}, { immediate: true })
-onMounted(loadContext)
+})
+onBeforeUnmount(access.dispose)
+onMounted(refreshCurrentUser)
 </script>
 
 <template>
@@ -192,10 +278,15 @@ onMounted(loadContext)
           <strong>{{ title }}</strong>
         </div>
         <div class="topbar-actions">
-          <label v-if="session.isLoggedIn && session.tenants.length > 1" class="tenant-select">
+          <label v-if="showTenantSelect" class="tenant-select">
             <span>客户</span>
             <select :value="session.tenantId || ''" @change="onTenantChange(Number($event.target.value))">
-              <option v-for="tenant in session.tenants" :key="tenant.id" :value="tenant.id">{{ tenant.name }}</option>
+              <option
+                v-if="session.tenantId && !seoTenants.some((tenant) => tenant.id === session.tenantId)"
+                :value="session.tenantId"
+                disabled
+              >{{ tenantName }}</option>
+              <option v-for="tenant in seoTenants" :key="tenant.id" :value="tenant.id">{{ tenant.name }}</option>
             </select>
           </label>
           <div v-else class="tenant-chip"><span>客户</span><b>{{ tenantName }}</b></div>
@@ -203,9 +294,13 @@ onMounted(loadContext)
         </div>
       </header>
       <main class="seo-content">
-        <!-- Discard customer-local view state (including late responses and open dialogs).
-             Onsite views additionally reset when switching websites or to no website. -->
-        <router-view :key="`${session.tenantId || 'none'}:${route.path === '/seo/site' ? currentSeoSiteId || 'none' : ''}`" />
+        <section v-if="accessState !== 'ready'" class="scope-gate" role="status">
+          <strong>{{ accessState === 'checking' ? '正在核对 SEO 访问范围' : accessState === 'no-active-site' ? '当前客户没有可用的 SEO 网站' : '当前客户无法显示 SEO 数据' }}</strong>
+          <p>{{ accessState === 'checking' ? '完成模块有效期和网站归属校验后再显示数据。' : accessState === 'no-active-site' ? '只有 active 网站可以进入 SEO 数据页。' : accessError }}</p>
+        </section>
+        <!-- Child views do not exist before entitlement and site ownership are validated.
+             Unmounting them also makes late responses unable to restore old customer data. -->
+        <router-view v-else :key="`${session.tenantId}:${currentSeoSiteId || 'none'}:${route.path}`" />
       </main>
     </div>
   </div>
@@ -308,6 +403,9 @@ onMounted(loadContext)
 .tenant-chip b { max-width: 190px; overflow: hidden; color: #273654; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .product-chip { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: #eaf0ff; color: #2c5bd2; font: 800 9px ui-monospace, monospace; }
 .seo-content { min-width: 0; }
+.scope-gate { margin: 28px; padding: 28px; border: 1px solid #dce3ee; border-radius: 12px; background: #fff; }
+.scope-gate strong { color: #273654; font-size: 16px; }
+.scope-gate p { margin: 10px 0 0; color: #6b7280; font-size: 13px; }
 .mobile-menu { display: none; }
 @media (max-width: 900px) {
   .seo-rail { transform: translateX(-105%); transition: transform .22s ease; }

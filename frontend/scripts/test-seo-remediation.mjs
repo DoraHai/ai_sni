@@ -92,7 +92,8 @@ rendered = rendered.replace(/import \{([\s\S]*?)\} from "vue"/, (_, names) => `c
 rendered = rendered.replace('export function render', 'function render')
 const render = new Function('Vue', `${rendered}; return render`)(Vue)
 const context = { session:{tenantId:1,tenants:[]}, route:{path:'/seo/site'}, currentSeoSiteId:1, visibleGroups:[],
-  mobileOpen:false,immersive:false,tenantName:'test',workflow:'',title:'',navigate(){},onTenantChange(){} }
+  mobileOpen:false,immersive:false,tenantName:'test',workflow:'',title:'',navigate(){},onTenantChange(){},
+  accessState:'ready',accessError:'',showTenantSelect:false,seoTenants:[] }
 const find = node => {
   if (!node || typeof node !== 'object') return null
   if (node.type === 'router-view') return node
@@ -102,10 +103,12 @@ const find = node => {
 // resolveComponent outside setup returns its string name; suppress only this expected warning.
 const warn = console.warn; console.warn = () => {}
 try {
-  assert.equal(find(render(context, [])).key, '1:1')
-  context.currentSeoSiteId = 2; assert.equal(find(render(context, [])).key, '1:2')
+  assert.equal(find(render(context, [])).key, '1:1:/seo/site')
+  context.currentSeoSiteId = 2; assert.equal(find(render(context, [])).key, '1:2:/seo/site')
   context.session.tenantId = 2; context.currentSeoSiteId = null
-  assert.equal(find(render(context, [])).key, '2:none', 'no-site customer cannot retain previous onsite view')
+  assert.equal(find(render(context, [])).key, '2:none:/seo/site', 'no-site customer cannot retain previous onsite view')
+  context.accessState = 'unavailable'
+  assert.equal(find(render(context, [])), null, 'unavailable customer must not mount any SEO child view')
 } finally { console.warn = warn }
 console.log('SEO remediation Vue tests passed: explicit AI, draft-only, Chinese text, append/version protection, stale scope, shell remount')
 

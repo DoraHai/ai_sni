@@ -2,6 +2,7 @@ import os
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("BAIDU_APP_ID", "test-app")
@@ -13,8 +14,10 @@ os.environ.setdefault("BAIDU_SELF_TOKEN_EXPIRES_AT", "2099-01-01T00:00:00")
 os.environ.setdefault("CRYPTO_MASTER_KEY_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
+from app.database import get_session
 from app.api.customer_modules import (
     _canonical_domain,
     _require_seo_asset_permission,
@@ -97,6 +100,58 @@ class ModuleWorkspaceTests(unittest.TestCase):
         dependencies = [dependency.dependency for dependency in route.dependencies]
         self.assertIn(require_scoped_auth, dependencies)
         self.assertNotIn(require_auth, dependencies)
+
+    def test_workbench_site_real_url_accepts_read_roles_without_asset_permission(self):
+        rows = [SimpleNamespace(id=31, name="Active", domain="example.com", status="active")]
+        six_permission_role = {
+            "seo.dashboard": "view",
+            "seo.alerts": "view",
+            "seo.keywords": "view",
+            "seo.content": "view",
+            "seo.site": "view",
+            "seo.links": "view",
+        }
+        cases = (
+            ({"seo.content": "view"}, 200),
+            ({"seo.site": "view"}, 200),
+            (six_permission_role, 200),
+            ({}, 403),
+            ({"seo.assets": "view"}, 403),
+        )
+
+        for permissions, expected_status in cases:
+            with self.subTest(permissions=permissions):
+                ctx = AuthContext(9, "reader", "acceptance", 7, permissions)
+                session = SimpleNamespace(
+                    scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: rows))
+                )
+                app = FastAPI()
+                app.include_router(seo_sites_router)
+
+                async def scoped_auth_override():
+                    return ctx
+
+                async def session_override():
+                    yield session
+
+                app.dependency_overrides[require_scoped_auth] = scoped_auth_override
+                app.dependency_overrides[get_session] = session_override
+                with patch(
+                    "app.api.customer_modules.ensure_module_access",
+                    new=AsyncMock(),
+                ) as ensure_access:
+                    response = TestClient(app).get(
+                        "/api/v1/seo/workbench/sites",
+                        params={"tenant_id": 7},
+                    )
+
+                self.assertEqual(response.status_code, expected_status)
+                if expected_status == 200:
+                    self.assertEqual(response.json()["selection_policy"]["selectable_statuses"], ["active"])
+                    self.assertEqual(response.json()["sites"][0]["id"], 31)
+                    ensure_access.assert_awaited_once_with(session, ctx, 7, "seo")
+                else:
+                    ensure_access.assert_not_awaited()
 
     def test_bound_customer_cannot_switch_tenant(self):
         ctx = AuthContext(1, "client", "client", 7, {"seo.assets": "edit"})
