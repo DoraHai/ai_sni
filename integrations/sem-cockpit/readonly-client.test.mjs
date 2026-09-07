@@ -131,6 +131,10 @@ async function rejectsContract(resource, mutate, params = examples[resource].con
 
 test('CTR remains a ratio and missing dates cannot be fabricated as zero', async () => {
   await rejectsContract('report', data => { data.metrics.ctr = 2 })
+  await rejectsContract('report', data => { data.metrics.ctr = 0.5 })
+  await rejectsContract('report', data => { data.metrics.ctr = null })
+  await rejectsContract('report', data => { data.metrics.cpc = 99 })
+  await rejectsContract('report', data => { data.metrics.cpc = null })
   await rejectsContract('report', data => { data.trend[1].cost = 0 })
   await rejectsContract('report', data => { data.coverage.missing_dates = [] })
 })
