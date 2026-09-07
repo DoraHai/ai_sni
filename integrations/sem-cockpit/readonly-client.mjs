@@ -30,9 +30,39 @@ function validStamp(value) {
 function nullableNumber(value) { return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0) }
 function nullableCount(value) { return value === null || nonnegativeInteger(value) }
 function allNull(metrics) { return ['cost', 'click', 'impression', 'ctr', 'cpc'].every(key => metrics[key] === null) }
+function pythonRound(value, decimals) {
+  const view = new DataView(new ArrayBuffer(8))
+  view.setFloat64(0, value, false)
+  const bits = view.getBigUint64(0, false)
+  const negative = (bits >> 63n) === 1n
+  const exponentBits = Number((bits >> 52n) & 0x7ffn)
+  let significand = bits & ((1n << 52n) - 1n)
+  let binaryExponent
+  if (exponentBits === 0) binaryExponent = -1074
+  else {
+    significand |= 1n << 52n
+    binaryExponent = exponentBits - 1075
+  }
+  let numerator = significand * (5n ** BigInt(decimals))
+  let denominator = 1n
+  const scaledExponent = binaryExponent + decimals
+  if (scaledExponent >= 0) numerator <<= BigInt(scaledExponent)
+  else denominator <<= BigInt(-scaledExponent)
+  let rounded = numerator / denominator
+  const remainder = numerator % denominator
+  const halfway = remainder * 2n
+  if (halfway > denominator || (halfway === denominator && (rounded & 1n) === 1n)) rounded++
+  const decimalScale = 10n ** BigInt(decimals)
+  const result = Number(rounded / decimalScale) + (Number(rounded % decimalScale) / (10 ** decimals))
+  if (!Number.isFinite(result)) return null
+  return negative ? -result : result
+}
 function matchesRounded(value, raw, decimals) {
-  const tolerance = (0.5 / (10 ** decimals)) + Number.EPSILON
-  return typeof value === 'number' && Math.abs(value - raw) <= tolerance
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isFinite(raw)) return false
+  const expected = pythonRound(raw, decimals)
+  if (!Number.isFinite(expected)) return false
+  const tolerance = Number.EPSILON * Math.max(1, Math.abs(value), Math.abs(expected))
+  return Number.isFinite(tolerance) && Math.abs(value - expected) <= tolerance
 }
 function validateMetrics(metrics) {
   contract(object(metrics) && ['cost', 'click', 'impression', 'ctr', 'cpc'].every(key => Object.hasOwn(metrics, key)))
