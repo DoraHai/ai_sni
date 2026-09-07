@@ -119,6 +119,18 @@ function validateAccountScope(scope, accountId) {
     if (accountId !== undefined) contract(scope[field].every(id => id === accountId))
     if (field === 'configured_account_ids' && accountId !== undefined) contract(scope[field].length === 1)
   }
+  if (Object.hasOwn(scope, 'excluded_archived_account_ids')) {
+    contract(Array.isArray(scope.excluded_archived_account_ids) &&
+      new Set(scope.excluded_archived_account_ids).size === scope.excluded_archived_account_ids.length &&
+      scope.excluded_archived_account_ids.every(positive))
+    contract(accountId === undefined || scope.excluded_archived_account_ids.length === 0)
+    if (Array.isArray(scope.configured_account_ids)) {
+      contract(scope.excluded_archived_account_ids.every(id => !scope.configured_account_ids.includes(id)))
+    }
+  }
+  if (Object.hasOwn(scope, 'selected_account_status')) {
+    contract(accountId !== undefined && typeof scope.selected_account_status === 'string' && scope.selected_account_status.length > 0)
+  }
   if (Object.hasOwn(scope, 'includes_unassigned')) contract(typeof scope.includes_unassigned === 'boolean')
 }
 function validatePhone(phone) {
