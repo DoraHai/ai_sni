@@ -12,6 +12,18 @@ export function createWorkbenchViewState() {
     for (const ticket of pending.values()) ticket.controller.abort()
     pending.clear(); cards.clear(); references.clear()
   }
+  function invalidateModule(module) {
+    if (!['sem', 'seo', 'geo'].includes(module)) throw new Error('INVALID_MODULE')
+    for (const [key, ticket] of pending) {
+      if (ticket.module === module) { ticket.controller.abort(); pending.delete(key) }
+    }
+    for (const key of [...cards.keys()]) {
+      if (JSON.parse(key)[0] === module) cards.delete(key)
+    }
+    for (const key of [...references.keys()]) {
+      if (JSON.parse(key)[0] === module) references.delete(key)
+    }
+  }
   function begin(module, id) {
     if (disposed) throw new Error('VIEW_DISPOSED')
     if (!['sem', 'seo', 'geo'].includes(module) || typeof id !== 'string' || !id) throw new Error('INVALID_CARD')
@@ -58,7 +70,7 @@ export function createWorkbenchViewState() {
     return metric ? structuredClone(metric) : null
   }
   return {
-    begin, invalidate, reference, resolve,
+    begin, invalidate, invalidateModule, reference, resolve,
     get revision() { return revision },
     snapshot() { return [...cards.entries()].map(([key, metric]) => ({ key, metric: structuredClone(metric) })) },
     dispose() { if (!disposed) { invalidate(); disposed = true } },

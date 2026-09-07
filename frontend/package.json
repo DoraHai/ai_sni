@@ -24,6 +24,8 @@
     "test:session-storage": "node --test scripts/test-session-storage.mjs && node scripts/test-session-store-integration.mjs",
     "test:workbench-evidence": "node scripts/test-workbench-evidence-card.cjs",
     "test:workbench-cockpit-scope": "node --test scripts/test-workbench-cockpit-scope.mjs",
+    "test:workbench-seo-summary": "node --test ../integrations/seo-workbench/summary.test.mjs",
+    "test:workbench-status-copy": "node --test src/views/workspace/cockpit/status-copy.test.mjs",
     "deploy:sem": "bash scripts/deploy-sem.sh",
     "deploy:login": "bash scripts/deploy-auth.sh",
     "dev:diagnostic-center": "vite --config vite.diagnostic-center.config.js",
