@@ -172,9 +172,9 @@
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=9"></script>
-<script src="assets/geo-api-v1.js?rev=16"></script>
-<script src="assets/geo-workbench-v1.js?rev=8"></script>
+<script src="assets/geo-sidebar-v1.js?rev=auth-boundary-1"></script>
+<script src="assets/geo-api-v1.js?rev=auth-boundary-1"></script>
+<script src="assets/geo-workbench-v1.js?rev=auth-boundary-1"></script>
 <script>
 (async function () {
   GeoWB.renderAuthBar(document.getElementById('authBar'));
@@ -614,8 +614,6 @@
   async function load() {
     GeoWB.clearError(err);
     try {
-      var keyFromUrl = new URLSearchParams(location.search).get('api_key');
-      if (keyFromUrl) GeoAPI.setApiKey(keyFromUrl);
       if (!taskId) {
         throw new Error('缺少 task_id。请从诊断中心「创建 GEO 优化文章」重新打开，或从 GEO 文章列表进入。');
       }

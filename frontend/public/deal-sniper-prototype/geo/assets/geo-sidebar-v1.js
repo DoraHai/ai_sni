@@ -16,9 +16,7 @@
     }
     var u = new URL(href, window.location.href);
     var tenant = qs().get('tenant_id') || localStorage.getItem('geo_tenant_id');
-    var key = qs().get('api_key') || localStorage.getItem('geo_api_key');
     if (tenant && !u.searchParams.get('tenant_id')) u.searchParams.set('tenant_id', tenant);
-    if (key && !u.searchParams.get('api_key')) u.searchParams.set('api_key', key);
     return u.pathname.split('/').pop() + u.search;
   }
 

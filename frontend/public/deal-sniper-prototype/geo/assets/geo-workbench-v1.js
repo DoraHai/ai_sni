@@ -92,11 +92,6 @@
       placeholder: 'tenant_id',
       value: GeoAPI.getTenantId() || '',
     });
-    var key = el('input', {
-      className: 'wb-input',
-      placeholder: 'API Key（无登录时）',
-      value: GeoAPI.getApiKey() || '',
-    });
     var save = el('button', {
       className: 'wb-btn primary',
       text: '保存上下文',
@@ -107,17 +102,15 @@
           u.searchParams.set('tenant_id', tenant.value);
           window.location.href = u.toString();
         }
-        if (key.value) GeoAPI.setApiKey(key.value);
       },
     });
     var tip = el('span', {
       className: 'wb-muted',
       text: GeoAPI.getToken()
-        ? '已检测到登录 token'
-        : (GeoAPI.getApiKey() ? '使用 API Key' : '请登录 SEM 或填写 API Key'),
+        ? '已登录'
+        : '请先登录',
     });
     root.appendChild(tenant);
-    root.appendChild(key);
     root.appendChild(save);
     root.appendChild(tip);
   }
@@ -205,14 +198,7 @@
     var tenant = (global.GeoAPI && GeoAPI.getTenantId && GeoAPI.getTenantId()) ||
       new URLSearchParams(window.location.search).get('tenant_id') ||
       localStorage.getItem('geo_tenant_id');
-    var key = (global.GeoAPI && GeoAPI.getApiKey && GeoAPI.getApiKey()) ||
-      new URLSearchParams(window.location.search).get('api_key') ||
-      localStorage.getItem('geo_api_key');
-    var origin = localStorage.getItem('geo_api_origin') ||
-      new URLSearchParams(window.location.search).get('api_origin');
     if (tenant && !u.searchParams.get('tenant_id')) u.searchParams.set('tenant_id', String(tenant));
-    if (key && !u.searchParams.get('api_key')) u.searchParams.set('api_key', key);
-    if (origin && !u.searchParams.get('api_origin')) u.searchParams.set('api_origin', origin);
     return u.pathname.split('/').pop() + u.search;
   }
 

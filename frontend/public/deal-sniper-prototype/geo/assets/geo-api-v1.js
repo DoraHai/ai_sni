@@ -1,6 +1,6 @@
 /**
  * GEO 内容工作台 API 客户端。
- * 鉴权：优先 sem_token（与 SEM 登录一致），其次 URL ?api_key= 或 localStorage geo_api_key。
+ * 鉴权：仅使用与主站登录一致的 sem_token，并始终请求当前站点同源 API。
  */
 (function (global) {
   var tenantResolution = null;
@@ -52,12 +52,47 @@
     );
   }
 
-  function getApiKey() {
-    return qs().get('api_key') || localStorage.getItem('geo_api_key') || '';
+  function loginRedirect() {
+    var current = new URL(window.location.href, window.location.origin);
+    current.searchParams.delete('api_key');
+    current.searchParams.delete('api_origin');
+    var target = current.pathname + current.search + current.hash;
+    window.location.href = '/login?redirect=' + encodeURIComponent(target);
   }
 
-  function setApiKey(key) {
-    if (key) localStorage.setItem('geo_api_key', key);
+  function expireCurrentToken(requestToken) {
+    if (!requestToken || getToken() !== requestToken) return false;
+    [localStorage, sessionStorage].forEach(function (store) {
+      if (store.getItem('sem_token') === requestToken) {
+        store.removeItem('sem_token');
+        store.removeItem('sem_user');
+      }
+    });
+    // A newer token in the other store wins; a late 401 must not log it out.
+    if (getToken()) return false;
+    loginRedirect();
+    return true;
+  }
+
+  async function responseData(res, requestToken) {
+    var text = await res.text();
+    var data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch (e) {
+      data = { detail: text };
+    }
+    if (res.status === 401) expireCurrentToken(requestToken);
+    if (!res.ok) {
+      var detail = data && data.detail;
+      if (Array.isArray(detail)) {
+        detail = detail.map(function (d) { return d.msg || JSON.stringify(d); }).join('; ');
+      } else if (detail && typeof detail === 'object') {
+        detail = detail.msg || JSON.stringify(detail);
+      }
+      throw new Error(detail || ('HTTP ' + res.status));
+    }
+    return data;
   }
 
   async function fetchTenants() {
@@ -67,9 +102,8 @@
     var res = await fetch(url.toString(), {
       headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
     });
-    var data = await res.json().catch(function () { return {}; });
-    if (!res.ok) throw new Error(data.detail || '无法读取当前客户');
-    return Array.isArray(data.tenants) ? data.tenants : [];
+    var data = await responseData(res, token);
+    return Array.isArray(data && data.tenants) ? data.tenants : [];
   }
 
   function resolveTenantContext() {
@@ -93,35 +127,20 @@
   }
 
   function ensureAuthOrRedirect() {
-    if (getToken() || getApiKey()) return true;
-    var redirect = encodeURIComponent(window.location.href);
-    window.location.href = '/login?redirect=' + redirect;
+    if (getToken()) return true;
+    loginRedirect();
     return false;
   }
 
   function apiOrigin() {
-    var fromQuery = qs().get('api_origin');
-    if (fromQuery) {
-      localStorage.setItem('geo_api_origin', fromQuery.replace(/\/$/, ''));
-      return fromQuery.replace(/\/$/, '');
-    }
-    var override = localStorage.getItem('geo_api_origin');
-    if (override) return override.replace(/\/$/, '');
-    // Local static/dev pages are not same-origin with geo_main (:8010)
-    if (/^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname) && window.location.port !== '8010' && window.location.port !== '8011') {
-      // Local static pages talk to geo_main; default 8011 (8010 may be an old stuck process)
-      return 'http://127.0.0.1:8011';
-    }
     return window.location.origin;
   }
 
   async function api(path, options) {
     options = options || {};
-    if (options.requireAuth !== false && !getToken() && !getApiKey()) {
-      // allow explicit local demo without redirect when tenant+key in URL
-      if (!qs().get('api_key') && !localStorage.getItem('geo_api_key')) {
-        ensureAuthOrRedirect();
-      }
+    if (options.requireAuth !== false && !getToken()) {
+      ensureAuthOrRedirect();
+      throw new Error('请先登录');
     }
     var method = options.method || 'GET';
     var body = options.body;
@@ -138,16 +157,7 @@
 
     var headers = { Accept: 'application/json' };
     var token = getToken();
-    var apiKey = getApiKey();
-    var keyFromQuery = qs().get('api_key');
-    // Deep-link demo: URL api_key must win over a stale sem_token, otherwise getTask 401s silently for the form
-    if (keyFromQuery) {
-      headers['X-API-Key'] = keyFromQuery;
-    } else if (token) {
-      headers.Authorization = 'Bearer ' + token;
-    } else if (apiKey) {
-      headers['X-API-Key'] = apiKey;
-    }
+    if (token) headers.Authorization = 'Bearer ' + token;
 
     if (body != null) {
       headers['Content-Type'] = 'application/json';
@@ -162,23 +172,26 @@
       body: body != null ? JSON.stringify(body) : undefined,
     });
 
-    var text = await res.text();
-    var data = null;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch (e) {
-      data = { detail: text };
+    return responseData(res, token);
+  }
+
+  async function upload(path, file) {
+    var token = getToken();
+    if (!token) {
+      ensureAuthOrRedirect();
+      throw new Error('请先登录');
     }
-    if (!res.ok) {
-      var detail = data && data.detail;
-      if (Array.isArray(detail)) {
-        detail = detail.map(function (d) { return d.msg || JSON.stringify(d); }).join('; ');
-      } else if (detail && typeof detail === 'object') {
-        detail = detail.msg || JSON.stringify(detail);
-      }
-      throw new Error(detail || ('HTTP ' + res.status));
-    }
-    return data;
+    var tenantId = getTenantId();
+    var url = new URL('/api/v1/geo' + path, apiOrigin());
+    if (tenantId) url.searchParams.set('tenant_id', String(tenantId));
+    var form = new FormData();
+    form.append('file', file);
+    var res = await fetch(url.toString(), {
+      method: 'POST',
+      headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
+      body: form,
+    });
+    return responseData(res, token);
   }
 
   function withTenantQuery(extra) {
@@ -193,8 +206,6 @@
     resolveTenantContext: resolveTenantContext,
     isResolvingTenant: isResolvingTenant,
     getToken: getToken,
-    getApiKey: getApiKey,
-    setApiKey: setApiKey,
     ensureAuthOrRedirect: ensureAuthOrRedirect,
     api: api,
     contentHealth: function () { return api('/content-health'); },
@@ -225,48 +236,14 @@
       return api('/prompts/import', { method: 'POST', body: { items: items } });
     },
     importPromptsCsv: function (file) {
-      var tenantId = getTenantId();
-      var fd = new FormData();
-      fd.append('file', file);
-      return fetch(apiOrigin() + '/api/v1/geo/prompts/import-csv?tenant_id=' + tenantId, {
-        method: 'POST',
-        headers: (function () {
-          var h = {};
-          var token = getToken();
-          var apiKey = getApiKey();
-          if (token) h.Authorization = 'Bearer ' + token;
-          else if (apiKey) h['X-API-Key'] = apiKey;
-          return h;
-        })(),
-        body: fd,
-      }).then(function (res) { return res.json().then(function (d) {
-        if (!res.ok) throw new Error(d.detail || ('HTTP ' + res.status));
-        return d;
-      }); });
+      return upload('/prompts/import-csv', file);
     },
     listFacts: function (trustLevel) {
       return api('/facts', { query: trustLevel ? { trust_level: trustLevel } : {} });
     },
     createFact: function (body) { return api('/facts', { method: 'POST', body: body }); },
     importFactsCsv: function (file) {
-      var tenantId = getTenantId();
-      var fd = new FormData();
-      fd.append('file', file);
-      return fetch(apiOrigin() + '/api/v1/geo/facts/import?tenant_id=' + tenantId, {
-        method: 'POST',
-        headers: (function () {
-          var h = {};
-          var token = getToken();
-          var apiKey = getApiKey();
-          if (token) h.Authorization = 'Bearer ' + token;
-          else if (apiKey) h['X-API-Key'] = apiKey;
-          return h;
-        })(),
-        body: fd,
-      }).then(function (res) { return res.json().then(function (d) {
-        if (!res.ok) throw new Error(d.detail || ('HTTP ' + res.status));
-        return d;
-      }); });
+      return upload('/facts/import', file);
     },
     verifyFact: function (id) {
       return api('/facts/' + id + '/verify', { method: 'POST', query: withTenantQuery() });
