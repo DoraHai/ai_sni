@@ -33,13 +33,14 @@ from app.models import (
 
 
 async def _latest_article(
-    session: AsyncSession, task_id: int
+    session: AsyncSession, task_id: int, *, fresh: bool = False
 ) -> GeoArticleVersion | None:
     return await session.scalar(
         select(GeoArticleVersion)
         .where(GeoArticleVersion.task_id == task_id)
         .order_by(GeoArticleVersion.version_no.desc(), GeoArticleVersion.id.desc())
         .limit(1)
+        .execution_options(populate_existing=fresh)
     )
 
 
@@ -170,6 +171,101 @@ async def execute_variants_for_task(
         return_exceptions=False,
     )
 
+    async def _fresh_brand_checks():
+        from app.geo.content.brand_geo import markdown_brand_validation
+        from app.geo.content.routes import (
+            _brand_context_for_task,
+            _ensure_tenant_exists,
+        )
+
+        current_article = await _latest_article(session, task.id, fresh=True)
+        if current_article is None or current_article.id != article.id:
+            raise ValueError("母稿已变化，请基于最新版本重新生成渠道稿")
+        current_tenant = await _ensure_tenant_exists(
+            session, tenant_id, fresh=True
+        )
+        current_brand, _ = await _brand_context_for_task(
+            session, task, current_tenant, fresh=True
+        )
+        master = markdown_brand_validation(
+            brand=current_brand,
+            title=current_article.title or task.title or "",
+            body_markdown=current_article.body_markdown or "",
+        )
+        variants = []
+        for channel, triple, exc in polished:
+            if exc is not None or triple is None:
+                continue
+            candidate_title, candidate_body, _ = triple
+            validation = markdown_brand_validation(
+                brand=current_brand,
+                title=candidate_title or "",
+                body_markdown=candidate_body or "",
+            )
+            if validation.get("passed") is False:
+                variants.append(
+                    {
+                        "channel": channel,
+                        "brand_validation": validation,
+                    }
+                )
+        return current_article, current_tenant, current_brand, master, variants
+
+    async def _stop_for_brand_change(master_validation, variant_failures):
+        from app.geo.content.review import invalidate_review
+
+        issues = list(master_validation.get("issues") or [])
+        for row in variant_failures:
+            validation = row["brand_validation"]
+            first = (validation.get("issues") or ["品牌标准未满足"])[0]
+            issues.append(f"{row['channel']}：{first}")
+        prev = task.rule_result if isinstance(task.rule_result, dict) else {}
+        old_checks = [
+            row
+            for row in (prev.get("checks") or [])
+            if row.get("code") not in {"geo_brand_standard", "geo_variant_brand_standard"}
+        ]
+        old_checks.append(
+            {
+                "code": "geo_brand_standard",
+                "passed": bool(master_validation.get("passed")),
+                "message": (
+                    "当前母稿品牌标准已通过"
+                    if master_validation.get("passed")
+                    else str((master_validation.get("issues") or ["品牌标准未满足"])[0])
+                ),
+            }
+        )
+        if variant_failures:
+            old_checks.append(
+                {
+                    "code": "geo_variant_brand_standard",
+                    "passed": False,
+                    "message": issues[-1],
+                    "details": variant_failures,
+                }
+            )
+        task.rule_result = {
+            **prev,
+            "ready": False,
+            "checks": old_checks,
+            "brand_validation": master_validation,
+            "variant_brand_validation": variant_failures,
+            "checked_at": datetime.utcnow().isoformat(),
+            "source": "variant_execute_fresh_brand_gate",
+        }
+        task.status = "needs_fix"
+        task.ready_at = None
+        invalidate_review(task)
+        await session.commit()
+        raise ValueError("当前品牌标准已变化，渠道稿未标记就绪：" + "；".join(issues[:4]))
+
+    article, tenant, brand, master_brand, variant_brand_failures = (
+        await _fresh_brand_checks()
+    )
+    if master_brand.get("passed") is False or variant_brand_failures:
+        await _stop_for_brand_change(master_brand, variant_brand_failures)
+
     for channel, triple, exc in polished:
         if exc is not None:
             polish_stats["rejected"] += 1
@@ -250,6 +346,15 @@ async def execute_variants_for_task(
             )
             session.add(variant)
         created.append(channel)
+
+    # Generation can take long enough for another transaction to change the
+    # business profile. Refresh once more immediately before persisting drafts
+    # or deriving readiness from them.
+    article, tenant, brand, master_brand, variant_brand_failures = (
+        await _fresh_brand_checks()
+    )
+    if master_brand.get("passed") is False or variant_brand_failures:
+        await _stop_for_brand_change(master_brand, variant_brand_failures)
 
     if not created and failed:
         detail_bits = []

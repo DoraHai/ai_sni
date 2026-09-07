@@ -506,9 +506,9 @@ def _business_week_actions(
 
 
 async def _get_prompt(
-    session: AsyncSession, prompt_id: int, tenant_id: int
+    session: AsyncSession, prompt_id: int, tenant_id: int, *, fresh: bool = False
 ) -> GeoPrompt:
-    row = await session.get(GeoPrompt, prompt_id)
+    row = await session.get(GeoPrompt, prompt_id, populate_existing=fresh)
     if row is None or row.tenant_id != tenant_id:
         raise HTTPException(404, "机会问题不存在")
     return row
@@ -531,7 +531,7 @@ async def _get_task(
 
 
 async def _task_facts(
-    session: AsyncSession, task_id: int
+    session: AsyncSession, task_id: int, *, fresh: bool = False
 ) -> list[GeoFact]:
     rows = (
         await session.execute(
@@ -539,27 +539,32 @@ async def _task_facts(
             .join(GeoTaskFact, GeoTaskFact.fact_id == GeoFact.id)
             .where(GeoTaskFact.task_id == task_id)
             .order_by(GeoTaskFact.sort_order.asc(), GeoFact.id.asc())
+            .execution_options(populate_existing=fresh)
         )
     ).all()
     return [r[0] for r in rows]
 
 
 async def _latest_article(
-    session: AsyncSession, task_id: int
+    session: AsyncSession, task_id: int, *, fresh: bool = False
 ) -> GeoArticleVersion | None:
     return await session.scalar(
         select(GeoArticleVersion)
         .where(GeoArticleVersion.task_id == task_id)
         .order_by(GeoArticleVersion.version_no.desc(), GeoArticleVersion.id.desc())
         .limit(1)
+        .execution_options(populate_existing=fresh)
     )
 
 
-async def _variants(session: AsyncSession, task_id: int) -> list[GeoChannelVariant]:
+async def _variants(
+    session: AsyncSession, task_id: int, *, fresh: bool = False
+) -> list[GeoChannelVariant]:
     result = await session.scalars(
         select(GeoChannelVariant)
         .where(GeoChannelVariant.task_id == task_id)
         .order_by(GeoChannelVariant.id.asc())
+        .execution_options(populate_existing=fresh)
     )
     return list(result)
 
@@ -663,14 +668,20 @@ def _refresh_article_citations(
 
 
 async def _build_rule_input(
-    session: AsyncSession, task: GeoContentTask, article: GeoArticleVersion | None
+    session: AsyncSession,
+    task: GeoContentTask,
+    article: GeoArticleVersion | None,
+    *,
+    fresh: bool = False,
+    refresh_citations: bool = True,
 ) -> RuleInput:
-    prompt = await _get_prompt(session, task.prompt_id, task.tenant_id)
-    facts = await _task_facts(session, task.id)
+    prompt = await _get_prompt(session, task.prompt_id, task.tenant_id, fresh=fresh)
+    facts = await _task_facts(session, task.id, fresh=fresh)
     fact_dicts = _fact_dicts(facts)
-    _refresh_article_citations(article, fact_dicts)
-    variants = await _variants(session, task.id)
-    tenant = await session.get(Tenant, task.tenant_id)
+    if refresh_citations:
+        _refresh_article_citations(article, fact_dicts)
+    variants = await _variants(session, task.id, fresh=fresh)
+    tenant = await session.get(Tenant, task.tenant_id, populate_existing=fresh)
     default_author = tenant.name if tenant else None
     return RuleInput(
         question=prompt.question,
@@ -8167,8 +8178,29 @@ async def _write_publication(
 ) -> None:
     from app.geo.content.attribution import normalize_url_for_match
     await session.refresh(task, with_for_update=True)
-    from app.geo.content.review import assert_review_approved
-    assert_review_approved(task)
+    await session.refresh(variant, with_for_update=True)
+    article = await _latest_article(session, task.id, fresh=True)
+    if (
+        article is None
+        or variant.task_id != task.id
+        or variant.article_version_id != article.id
+    ):
+        raise PublishGateError("渠道稿不是最新母稿版本，请重新生成并审校")
+    rule_input = await _build_rule_input(
+        session,
+        task,
+        article,
+        fresh=True,
+        refresh_citations=False,
+    )
+    tenant = await _ensure_tenant_exists(session, task.tenant_id, fresh=True)
+    brand, _ = await _brand_context_for_task(
+        session, task, tenant, fresh=True
+    )
+    # This is the final write-side gate shared by manual registration, delivery
+    # recovery, synchronous pushes and async workers. The route-level check is
+    # only an early error; this locked check is authoritative.
+    assert_can_publish(rule_input, task=task, brand=brand)
     existing = await session.scalar(select(GeoPublication).where(
         GeoPublication.variant_id == variant.id,
         GeoPublication.published_url == published_url,
