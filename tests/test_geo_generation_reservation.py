@@ -50,7 +50,7 @@ def test_second_generate_request_is_rejected_before_another_job_is_created():
         "industry": "工业传动", "audience": "采购", "intent": "scenario",
         "content_type": "thought_leadership", "cta": "咨询选型",
     })
-    session = NS(refresh=AsyncMock(), commit=AsyncMock())
+    session = NS(refresh=AsyncMock(), commit=AsyncMock(), scalar=AsyncMock(side_effect=[None, 88]))
     background = BackgroundTasks()
 
     async def create_once(*args, **kwargs):
@@ -73,6 +73,8 @@ def test_second_generate_request_is_rejected_before_another_job_is_created():
             ctx=NS(user_id=9, ensure_tenant=lambda _: None), session=session,
         ))
         assert first["job"] == {"id": 88, "status": "pending"}
+        # A legacy/manual transition must not erase the durable job reservation.
+        task.status = "editing"
         with pytest.raises(HTTPException) as error:
             asyncio.run(generate_task_article(
                 12, tenant_id=7, run_async=True, background_tasks=BackgroundTasks(),
@@ -82,6 +84,7 @@ def test_second_generate_request_is_rejected_before_another_job_is_created():
     assert error.value.status_code == 409
     assert "正在生成" in str(error.value.detail)
     assert create.await_count == 1
+    assert session.scalar.await_count == 2
     assert session.refresh.await_count == 2
     assert all(call.kwargs == {"with_for_update": True} for call in session.refresh.await_args_list)
     session.commit.assert_awaited_once()
@@ -92,7 +95,7 @@ def test_failed_evidence_never_claims_generation_or_creates_a_job():
         "industry": "工业传动", "audience": "采购", "intent": "scenario",
         "content_type": "thought_leadership", "cta": "咨询选型",
     })
-    session = NS(refresh=AsyncMock(), commit=AsyncMock())
+    session = NS(refresh=AsyncMock(), commit=AsyncMock(), scalar=AsyncMock())
     with (
         patch("app.geo.content.routes._get_task", AsyncMock(return_value=task)),
         patch("app.geo.content.routes._ensure_tenant_exists", AsyncMock(return_value=NS(id=7, name="示例客户"))),

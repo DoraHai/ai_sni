@@ -64,3 +64,23 @@ def test_first_save_accepts_explicit_empty_base_version():
     run, session = fixture(expected=None, existing=False)
     asyncio.run(run())
     assert session.add.call_args.args[0].version_no == 1
+
+
+def test_save_during_generation_does_not_release_generation_reservation():
+    task = NS(id=100, title='title', status='generating')
+    latest = NS(id=11, version_no=3, title='title', body_markdown='saved body', outline={}, author_name=None)
+    session = NS(refresh=AsyncMock(), commit=AsyncMock(), add=Mock())
+    req = ArticleUpdate(title='title', body_markdown='new body', expected_article_id=11)
+
+    async def exercise():
+        with patch('app.geo.content.routes._get_task', AsyncMock(return_value=task)), \
+             patch('app.geo.content.routes._latest_article', AsyncMock(return_value=latest)), \
+             patch('app.geo.content.routes._task_payload', AsyncMock(return_value={'id': 100})), \
+             patch('app.geo.content.routes._task_facts', AsyncMock(return_value=[])), \
+             patch('app.geo.content.routes._refresh_article_citations'), \
+             patch('app.geo.content.routes.invalidate_review'), \
+             patch('app.geo.content.routes._sync_task_pipeline', AsyncMock()):
+            await save_article(100, req, 7, NS(ensure_tenant=lambda value: None, user_id=9), session)
+
+    asyncio.run(exercise())
+    assert task.status == 'generating'
