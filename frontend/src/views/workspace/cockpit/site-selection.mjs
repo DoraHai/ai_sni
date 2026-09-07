@@ -10,3 +10,12 @@ export function resolveSeoSiteSelection({ sites = [], currentSiteId = null, allo
   if (selectable.length > 0) return { siteId: null, reason: 'selection_required' }
   return { siteId: null, reason: 'no_selectable_site' }
 }
+
+export function createSeoSiteSelectionGuard() {
+  const blockedTenants = new Set()
+  return Object.freeze({
+    allowsAutomaticSelection(tenantId) { return !blockedTenants.has(tenantId) },
+    blockAutomaticSelection(tenantId) { blockedTenants.add(tenantId) },
+    confirmExplicitSelection(tenantId) { blockedTenants.delete(tenantId) },
+  })
+}

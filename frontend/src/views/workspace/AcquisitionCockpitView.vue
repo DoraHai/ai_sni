@@ -14,7 +14,7 @@ import { readSeoSiteScope } from '../../../../integrations/seo-workbench/site-sc
 import { seoSummaryCards } from '../../../../integrations/seo-workbench/summary.mjs'
 import { currentSeoSiteId } from '../seo/seoSiteContext'
 import { isSecureCockpitRuntime, resolveTenantModuleCodes } from './cockpit/scope.mjs'
-import { resolveSeoSiteSelection } from './cockpit/site-selection.mjs'
+import { createSeoSiteSelectionGuard, resolveSeoSiteSelection } from './cockpit/site-selection.mjs'
 import { urgencyReply } from './cockpit/status-copy.mjs'
 
 const router = useRouter()
@@ -32,7 +32,7 @@ const conversation = ref(initialConversation())
 const moduleState = ref({ sem: 'waiting', seo: 'waiting', geo: 'waiting' })
 const tenantModuleCodes = ref(new Set())
 const seoSites = ref([])
-const seoAutomaticSelectionBlockedForTenant = ref(null)
+const seoSiteSelectionGuard = createSeoSiteSelectionGuard()
 const secureRuntime = isSecureCockpitRuntime(window.location)
 const viewState = createWorkbenchViewState()
 let workbenchSession
@@ -165,10 +165,10 @@ async function loadSeo(generation) {
     const selection = resolveSeoSiteSelection({
       sites: scope.sites,
       currentSiteId: siteId,
-      allowAutomaticSelection: seoAutomaticSelectionBlockedForTenant.value !== tenantId,
+      allowAutomaticSelection: seoSiteSelectionGuard.allowsAutomaticSelection(tenantId),
     })
-    if (selection.reason === 'selected') seoAutomaticSelectionBlockedForTenant.value = null
-    if (selection.reason === 'selection_unavailable') seoAutomaticSelectionBlockedForTenant.value = tenantId
+    if (selection.reason === 'selected') seoSiteSelectionGuard.confirmExplicitSelection(tenantId)
+    if (selection.reason === 'selection_unavailable') seoSiteSelectionGuard.blockAutomaticSelection(tenantId)
     if (selection.siteId !== siteId) {
       currentSeoSiteId.value = selection.siteId
       moduleState.value.seo = 'needs_scope'
@@ -272,7 +272,7 @@ function openModule(code) {
 }
 function selectSeoSite(event) {
   const value = Number(event.target.value)
-  seoAutomaticSelectionBlockedForTenant.value = null
+  seoSiteSelectionGuard.confirmExplicitSelection(session.tenantId)
   currentSeoSiteId.value = Number.isSafeInteger(value) && value > 0 ? value : null
 }
 
