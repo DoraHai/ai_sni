@@ -25,6 +25,16 @@ import { formatLocalDate, formatUtcTimestamp } from '../../utils/dateTime'
 import { createLatestRequestGuard } from '../../utils/latestRequest'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
+const currentTenant = computed(() => session.tenants.find((row) => row.id === TENANT_ID.value))
+const activeAccountIds = computed(() => new Set(
+  (currentTenant.value?.sem_accounts || [])
+    .filter((row) => row.status === 'active')
+    .map((row) => Number(row.id)),
+))
+const accountStateSignature = computed(() => (currentTenant.value?.sem_accounts || [])
+  .map((row) => `${Number(row.id)}:${row.status}`)
+  .sort()
+  .join('|'))
 
 const router = useRouter()
 const route = useRoute()
@@ -46,7 +56,8 @@ const keywordWritebackHint = computed(() => (
 function keywordWritebackModeFor(row) {
   if (keywordWritebackModeState.value !== 'ready') return keywordWritebackModeState.value
   const accountId = Number(row?.baidu_account_id)
-  if (!Number.isInteger(accountId) || !keywordWritebackAccountIds.value.has(accountId)) return 'unavailable'
+  if (!Number.isInteger(accountId) || !activeAccountIds.value.has(accountId)
+      || !keywordWritebackAccountIds.value.has(accountId)) return 'unavailable'
   return keywordBidLiveAccountIds.value.has(accountId) ? 'live' : 'dry_run'
 }
 function keywordWritebackButtonLabel(row) {
@@ -913,6 +924,39 @@ watch(TENANT_ID, () => {
   scheduleStickyScrollSync()
 })
 watch(() => session.authRevision, () => {
+  writebackModeGeneration += 1
+  listLoadGuard.invalidate()
+  viewLoadGuard.invalidate()
+  assigneeLoadGuard.invalidate()
+  refreshGuard.invalidate()
+  actionGuard.invalidate()
+  invalidateKeywordWriteback()
+  tableRef.value?.clearSelection?.()
+  selection.value = []
+  data.value = null
+  error.value = ''
+  loading.value = false
+  suggestionMap.value = {}
+  suggestionList.value = []
+  suggestionAssignees.value = []
+  resetLandingDialog()
+  for (const key of Object.keys(finalPrices)) delete finalPrices[key]
+  workflowSavingId.value = null
+  refreshing.value = false
+  keywordWritebackModeState.value = 'error'
+  keywordWritebackAccountIds.value = new Set()
+  keywordBidLiveAccountIds.value = new Set()
+  campaignData.value = null
+  adgroupData.value = null
+  activeView.value = 'keywords'
+  if (session.canView('optimize.keywords')) {
+    load()
+    loadKeywordWritebackMode()
+    loadSuggestionAssignees()
+  }
+  scheduleStickyScrollSync()
+})
+watch([() => session.tenantListRevision, accountStateSignature], () => {
   writebackModeGeneration += 1
   listLoadGuard.invalidate()
   viewLoadGuard.invalidate()

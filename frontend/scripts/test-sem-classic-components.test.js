@@ -185,6 +185,7 @@ describe('SEM classic account context', () => {
     await nextTick()
     expect(wrapper.vm.data).toBe(null)
     expect(wrapper.vm.input).toBe(null)
+    expect(wrapper.vm.loading).toBe(false)
     state.confirmations.at(-1).resolve()
     await revoking
     lateAfterRevoke.resolve({ status: 'ok', baidu_account_id: 12, budget: 999 })

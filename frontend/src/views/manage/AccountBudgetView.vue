@@ -83,6 +83,7 @@ watch(() => session.authRevision, () => {
   saveGuard.invalidate()
   data.value = null
   error.value = ''
+  loading.value = false
   saving.value = false
   input.value = null
   if (session.canView('manage.account')) load()
