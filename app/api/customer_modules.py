@@ -27,6 +27,7 @@ from app.models import (
     SeoSite,
     Tenant,
     TenantModule,
+    User,
 )
 from app.models.seo import (
     SeoBacklink,
@@ -738,6 +739,9 @@ async def list_customers(session: AsyncSession = Depends(get_session)) -> dict:
             )
         ).all()
     )
+    users = list((await session.scalars(select(User).order_by(User.id))).all())
+    seo_sites = list((await session.scalars(select(SeoSite).order_by(SeoSite.id))).all())
+    geo_projects = list((await session.scalars(select(GeoProject).order_by(GeoProject.id))).all())
     identity_check = _sem_identity_check(tenants, accounts)
     by_tenant: dict[int, list[dict]] = {}
     for row in modules:
@@ -753,6 +757,34 @@ async def list_customers(session: AsyncSession = Depends(get_session)) -> dict:
                 "status": account.status,
             }
         )
+    users_by_tenant: dict[int, list[User]] = defaultdict(list)
+    for user in users:
+        if user.tenant_id is not None:
+            users_by_tenant[user.tenant_id].append(user)
+    seo_by_tenant: dict[int, list[SeoSite]] = defaultdict(list)
+    for site in seo_sites:
+        seo_by_tenant[site.tenant_id].append(site)
+    geo_by_tenant: dict[int, list[GeoProject]] = defaultdict(list)
+    for project in geo_projects:
+        geo_by_tenant[project.tenant_id].append(project)
+
+    def record_summary(rows: list) -> dict:
+        status_counts = Counter(str(getattr(item, "status", "unknown") or "unknown") for item in rows)
+        return {
+            "state": "records_present" if rows else "no_records",
+            "record_count": len(rows),
+            "status_counts": dict(sorted(status_counts.items())),
+            "completeness": "not_evaluated",
+        }
+
+    def login_summary(tenant_id: int) -> dict:
+        rows = users_by_tenant.get(tenant_id, [])
+        logins = [item.last_login_at for item in rows if item.last_login_at is not None]
+        return {
+            "account_count": len(rows),
+            "active_count": sum(bool(item.is_active) for item in rows),
+            "last_login_at": max(logins).isoformat() if logins else None,
+        }
     return {
         "identity_summary": identity_check["summary"],
         "customers": [
@@ -777,6 +809,18 @@ async def list_customers(session: AsyncSession = Depends(get_session)) -> dict:
                 ),
                 "created_at": row.created_at.isoformat() if row.created_at else None,
                 "modules": by_tenant.get(row.id, []),
+                "customer_status": {
+                    "state": "unavailable",
+                    "reason": "not_recorded",
+                },
+                "login_accounts": login_summary(row.id),
+                "data_connections": {
+                    "sem": record_summary(
+                        [item for item in accounts if item.tenant_id == row.id]
+                    ),
+                    "seo": record_summary(seo_by_tenant.get(row.id, [])),
+                    "geo": record_summary(geo_by_tenant.get(row.id, [])),
+                },
             }
             for row in tenants
         ]

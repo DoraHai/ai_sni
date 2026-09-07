@@ -119,7 +119,7 @@ def test_p1_p2_frontend_contracts_are_present():
     assert '<div class="ac-foot">' in alerts
     assert "batch-resolve" in _read("app/api/alerts.py")
     assert "closeTenantPopoverOnEscape" in app
-    assert "path: '/settings/users', redirect: '/settings/accounts'" in router
+    assert "path: '/settings/users', redirect: '/platform/accounts'" in router
     assert "DiagnosisCenterView.vue" in router
     assert "没有链接，粘贴文字" in builder
     assert 'goal: \'获取高意向线索\'' in builder
@@ -177,7 +177,7 @@ def test_tenant_account_identity_guards_are_visible_and_race_safe():
     assert "path: '/:pathMatch(.*)*'" in router
     assert "NotFoundView.vue" in router
     assert "{ path: '/sem/plans', redirect: '/manage/campaigns' }" in router
-    assert "{ path: '/admin/internal', redirect: '/settings/accounts' }" in router
+    assert "{ path: '/admin/internal', redirect: '/platform/accounts' }" in router
 
 
 def test_negative_rows_are_deduplicated_before_display():
