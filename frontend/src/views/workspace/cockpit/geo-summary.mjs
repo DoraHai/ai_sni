@@ -11,8 +11,19 @@ export function completedWeekEnd(value) {
   return date.toISOString().slice(0, 10)
 }
 
+export function completedWeekPeriodLabel(week = {}) {
+  const start = week.start?.slice(0, 10) || '未知'
+  const exclusiveEnd = week.end?.slice(0, 10) || week.weekEnd
+  if (!exclusiveEnd) return `${start} 至 未知（完整周）`
+  const date = new Date(`${exclusiveEnd}T00:00:00Z`)
+  if (!Number.isFinite(date.valueOf())) return `${start} 至 未知（完整周）`
+  date.setUTCDate(date.getUTCDate() - 1)
+  return `${start} 至 ${date.toISOString().slice(0, 10)}（完整周）`
+}
+
 export function geoSummaryCards({ snapshot, contextRevision }) {
   const week = snapshot?.week || {}
+  const periodLabel = completedWeekPeriodLabel(week)
   const metrics = (snapshot?.metrics || []).filter(metric => Object.hasOwn(METRIC_LABELS, metric.metricKey)).map(metric => {
     const reasons = metric.reasons?.map(item => item.message).filter(Boolean) || []
     const trendReasons = metric.trend?.reasons?.map(item => item.message).filter(Boolean) || []
@@ -20,7 +31,7 @@ export function geoSummaryCards({ snapshot, contextRevision }) {
       id: `geo-${metric.metricKey}`, moduleCode: 'geo', moduleLabel: 'GEO', label: METRIC_LABELS[metric.metricKey],
       display: metric.valueText, unit: metric.unitLabel || '', state: metric.state === 'available' ? 'available' : 'unavailable',
       reason: reasons[0] || metric.definition || '正式周指标当前没有足够依据。', contextRevision,
-      periodLabel: `${week.start?.slice(0, 10) || '未知'} 至 ${week.end?.slice(0, 10) || week.weekEnd || '未知'}（完整周）`,
+      periodLabel,
       sourceLabel: 'GEO 已核验完整周指标', updatedLabel: metric.asOf || '未知', series: [],
       columns: [{ key: 'value', label: '本周' }, { key: 'trend', label: '与前一周比较' }, { key: 'basis', label: '依据' }],
       rows: [{
@@ -41,7 +52,7 @@ export function geoSummaryCards({ snapshot, contextRevision }) {
     return {
       id: `geo-qualified-${key}`, moduleCode: 'geo', moduleLabel: 'GEO', label,
       display: available ? new Intl.NumberFormat('zh-CN').format(value) : '—', unit, state: available ? 'available' : 'unavailable',
-      reason, contextRevision, periodLabel: `${week.start?.slice(0, 10) || '未知'} 至 ${week.end?.slice(0, 10) || week.weekEnd || '未知'}（完整周）`,
+      reason, contextRevision, periodLabel,
       sourceLabel: 'GEO 正式周准入统计', updatedLabel: week.weekEnd || '未知', series: [],
       columns: [{ key: 'value', label: '本周' }, { key: 'basis', label: '说明' }],
       rows: [{ value: available ? `${value}${unit}` : '暂无可靠数字', basis: reason }],

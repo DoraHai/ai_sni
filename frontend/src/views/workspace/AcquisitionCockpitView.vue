@@ -299,7 +299,7 @@ function discuss({ metricId, contextRevision }) {
   conversation.value.push({ role: 'assistant', text: `已带入“${card.label}”（${card.display}）及其统计范围和来源。你想判断原因、风险，还是下一步动作？`, ref })
 }
 function openModule(code) {
-  const path = code === 'sem' ? '/monitor/dashboard' : code === 'seo' ? '/seo/sites' : '/deal-sniper/geo/dashboard.html#/geo/projects'
+  const path = code === 'sem' ? '/monitor/dashboard' : code === 'seo' ? '/seo/site' : '/deal-sniper/geo/dashboard.html#/geo/projects'
   if (code === 'geo') window.location.assign(path)
   else router.push(path)
 }

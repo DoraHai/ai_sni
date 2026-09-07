@@ -21,7 +21,7 @@ const moduleMeta = {
     code: 'SEO',
     description: '按网站管理关键词、内容资产和自然搜索表现。',
     assetLabel: '网站',
-    entry: '/seo/sites',
+    entry: '/seo/site',
   },
   geo: {
     label: 'GEO 增长',
