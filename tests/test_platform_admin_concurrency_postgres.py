@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import ForeignKeyConstraint, MetaData, func, select
+from sqlalchemy import MetaData, func, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.schema import CreateSchema, DropSchema
@@ -18,7 +18,7 @@ from app.api import roles as roles_api
 from app.api import users as users_api
 from app.api.roles import UpdateRoleRequest
 from app.api.users import UpdateUserRequest
-from app.models import Role, User
+from app.models import Role, Tenant, User
 from app.security.auth import AuthContext
 from app.security.platform_admin import acquire_platform_admin_lock
 
@@ -46,11 +46,9 @@ async def database():
         async with engine.begin() as connection:
             await connection.execute(CreateSchema(schema))
             metadata = MetaData()
+            Tenant.__table__.to_metadata(metadata)
             Role.__table__.to_metadata(metadata)
-            user_table = User.__table__.to_metadata(metadata)
-            for constraint in list(user_table.constraints):
-                if isinstance(constraint, ForeignKeyConstraint):
-                    user_table.constraints.remove(constraint)
+            User.__table__.to_metadata(metadata)
             await connection.run_sync(metadata.create_all)
         created = True
         yield engine
