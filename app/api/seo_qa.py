@@ -620,6 +620,7 @@ async def answers(tenant_id: PositiveInt, site_id: PositiveInt, question_id: Pos
         problems = await evidence_problems(session, row, content)
         result.append({**data(row), 'body':body, 'status':content.status,
             'content_version':content.version_count, 'review_note':content.review_note,
+            'review_submitted_by':content.review_submitted_by, 'reviewed_by':content.reviewed_by,
             'problems':problems, 'quality':answer_quality(body,row.fact_snapshots,problems)})
     return result
 

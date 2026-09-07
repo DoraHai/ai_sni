@@ -9,7 +9,7 @@ async function mount(api={},canEdit=true) {
   const source=await readFile(new URL('../src/views/seo/SeoQaWorkbenchView.vue',import.meta.url),'utf8')
   const compiled=compileScript(parse(source).descriptor,{id:'qa',genDefaultAs:'component'}).content
   const tenant=Vue.ref(1),site=Vue.ref(10),writes=[]
-  const bindings={...Vue,SeoQaResearch:{},SeoQaPlanning:{},publisherZip:()=>null,qaRunnerSource:'',runnerSource:'',runnerRequirements:'',currentTenantId:tenant,siteId:site,session:{canEdit:()=>canEdit},useRouter:()=>({push(){}}),ElMessage:{success(){}},
+  const bindings={...Vue,SeoQaResearch:{},SeoQaPlanning:{},publisherZip:()=>null,qaRunnerSource:'',runnerSource:'',runnerRequirements:'',currentTenantId:tenant,siteId:site,session:{canEdit:()=>canEdit,user:{id:7}},useRouter:()=>({push(){}}),ElMessage:{success(){}},
     seoQaGet:async path=>path==='questions'?{items:[],total:0}:path==='placement-candidates'?{items:[],total:0,included:0,truncated:false}:path==='maintenance'?{items:[]}:path==='capabilities'?{platforms:[]}:[],
     seoQaPost:async(...args)=>{writes.push(args);return {created:1,merged:0}},seoQaPatch:async()=>({}),assistSeoContent:async()=>({content:'草稿'}),
     submitSeoContentReview:async(...args)=>writes.push(args),decideSeoContentReview:async()=>({}),...api}
@@ -68,6 +68,21 @@ test('reviewed placement candidate opens its exact answer for distribution',asyn
     m.state.openPlacement()
     assert.equal(m.state.dialog,'placement')
     assert.equal(m.state.placementForm.answer_id,24)
+  } finally {m.app.unmount()}
+})
+
+test('main answer drawer blocks submitter self-approval before calling the API',async()=>{
+  let approvals=0
+  const m=await mount({decideSeoContentReview:async()=>{approvals++;return {}}})
+  try {
+    const own={id:1,content_id:3,content_version:1,body:'已保存',format:'short',fact_snapshots:[],status:'review',problems:[],review_submitted_by:7}
+    m.state.answerItems=[own];m.state.editAnswer(own)
+    await m.state.review('approve')
+    assert.equal(approvals,0);assert.match(m.state.error,/不能自审/)
+    const other={...own,review_submitted_by:8}
+    m.state.answerItems=[other];m.state.editAnswer(other);m.state.error=''
+    await m.state.review('approve')
+    assert.equal(approvals,1)
   } finally {m.app.unmount()}
 })
 

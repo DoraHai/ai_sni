@@ -128,7 +128,10 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
             assert candidates['total'] == candidates['included'] == 1
             assert candidates['items'][0]['answer_id'] == answer['id']
             assert candidates['items'][0]['publishable'] is True
-            checked=(await api.answers(1,1,question_id,CTX,db))[0]['quality']
+            answer_payload=(await api.answers(1,1,question_id,CTX,db))[0]
+            assert answer_payload['review_submitted_by'] == 7
+            assert answer_payload['reviewed_by'] == 8
+            checked=answer_payload['quality']
             assert checked['method']=='rules' and checked['blocking_issues']==[]
             task = await db.scalar(select(SeoTask))
             assert task.status == 'in_progress' and task.completion_evidence is None

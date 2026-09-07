@@ -142,6 +142,9 @@ const dirtyAnswer = computed(() => {
   const saved = answerItems.value.find(a => a.id === answerForm.id)
   return !!saved && (saved.body !== answerForm.body || saved.format !== answerForm.format || JSON.stringify(saved.fact_snapshots.map(f=>f.id).sort((a,b)=>a-b)) !== JSON.stringify([...answerForm.fact_ids].sort((a,b)=>a-b)))
 })
+const currentAnswer = computed(() => answerItems.value.find(a => a.id === answerForm.id) || null)
+const canApproveCurrentAnswer = computed(() => currentAnswer.value?.review_submitted_by != null
+  && session.user?.id != null && Number(currentAnswer.value.review_submitted_by) !== Number(session.user.id))
 let loadSequence = 0, answerSequence = 0
 
 function messageOf(e) { const detail = e?.response?.data?.detail; return typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.slice(0,3).map(item=>item.msg).join('；') : detail?.message || e?.message || '操作失败，请重试' }
@@ -247,6 +250,7 @@ function generate() {
 }
 function review(decision) {
   if (dirtyAnswer.value) { error.value = '请先保存回答修改，再进入审核或分发'; return }
+  if (decision === 'approve' && !canApproveCurrentAnswer.value) { error.value = '提交人不能自审，请由另一位有内容编辑权限的实名账号审核'; return }
   const id = answerForm.id, contentId = answerForm.content_id, note = reviewNote.value || null
   return act(p => decision === 'submit' ? submitSeoContentReview({ contentId, tenantId: p.tenant_id, note }) : decideSeoContentReview({ contentId, tenantId: p.tenant_id, decision, note }), () => refreshAnswers(id))
 }
@@ -405,7 +409,7 @@ watch(scopeKey, () => {
           <details><summary>本回答保存时的引用原文</summary><p v-for="f in answerItems.find(a=>a.id===answerForm.id).fact_snapshots" :key="f.id">[F{{ f.id }}] {{ f.title }} · 版本 {{ f.version }}<br/>{{ f.statement }}<br/>来源：{{ f.source_name }} <a v-if="href(f.source_url)" :href="href(f.source_url)" target="_blank" rel="noopener noreferrer">查看出处</a></p></details>
         </section>
         <SeoQaResearch v-if="answerForm.id" :key="answerForm.id" :tenant-id="scope.tenant_id" :site-id="scope.site_id" :can-edit="canEdit" mode="quality" :answer-id="answerForm.id" :content-version="answerForm.content_version" :question-version="questionDetail?.question?.version||selected.version" :blocked="dirtyAnswer||busy||!!answerItems.find(a=>a.id===answerForm.id)?.problems?.length"/>
-        <div v-if="answerForm.id" class="qa-review"><p v-if="dirtyAnswer" class="qa-warning">有未保存的修改。请保存后再提交审核或准备分发。</p><p v-for="p in answerItems.find(a=>a.id===answerForm.id)?.problems||[]" :key="p" class="qa-warning">{{ p }}</p><el-input v-model="reviewNote" placeholder="审核意见，退回时必填" :disabled="!canEdit || busy"/><div class="qa-toolbar"><el-button v-if="['planned','drafting'].includes(answerForm.status)" :disabled="!canEdit || busy" @click="review('submit')">提交已保存版本审核</el-button><template v-if="answerForm.status==='review'"><el-button type="success" :disabled="!canEdit || busy" @click="review('approve')">审核通过</el-button><el-button :disabled="!canEdit || busy || !reviewNote.trim()" @click="review('reject')">退回修改</el-button></template><el-button v-if="['ready','published'].includes(answerForm.status)" type="primary" :disabled="!canEdit || busy" @click="openPlacement">准备分发</el-button></div></div>
+        <div v-if="answerForm.id" class="qa-review"><p v-if="dirtyAnswer" class="qa-warning">有未保存的修改。请保存后再提交审核或准备分发。</p><p v-for="p in answerItems.find(a=>a.id===answerForm.id)?.problems||[]" :key="p" class="qa-warning">{{ p }}</p><p v-if="answerForm.status==='review' && !canApproveCurrentAnswer" class="qa-warning">提交人不能自审，请由另一位有内容编辑权限的实名账号审核。</p><el-input v-model="reviewNote" placeholder="审核意见，退回时必填" :disabled="!canEdit || busy"/><div class="qa-toolbar"><el-button v-if="['planned','drafting'].includes(answerForm.status)" :disabled="!canEdit || busy" @click="review('submit')">提交已保存版本审核</el-button><template v-if="answerForm.status==='review'"><el-button type="success" :disabled="!canEdit || busy || !canApproveCurrentAnswer" @click="review('approve')">审核通过</el-button><el-button :disabled="!canEdit || busy || !reviewNote.trim()" @click="review('reject')">退回修改</el-button></template><el-button v-if="['ready','published'].includes(answerForm.status)" type="primary" :disabled="!canEdit || busy" @click="openPlacement">准备分发</el-button></div></div>
       </template>
     </el-drawer>
 
