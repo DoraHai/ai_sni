@@ -1,6 +1,5 @@
-import { canViewCockpit } from '../views/workspace/cockpit/scope.mjs'
-
 const UNSAFE_REDIRECT_CHARACTERS = /[\\\u0000-\u001f\u007f]/
+const ACQUISITION_MODULE_CODES = new Set(['sem', 'seo', 'geo'])
 
 function containsUnsafeCharacters(value) {
   let decoded = value
@@ -35,8 +34,14 @@ export function parseSameOriginRedirect(redirect, currentOrigin) {
   }
 }
 
-export function resolvePostLoginPath({ redirect, currentOrigin, canView }) {
+export function hasAvailableAcquisitionModule(modules) {
+  return Array.isArray(modules) && modules.some(module => (
+    ACQUISITION_MODULE_CODES.has(module?.module_code) && module?.available === true
+  ))
+}
+
+export function resolvePostLoginPath({ redirect, currentOrigin, modules }) {
   const safeRedirect = parseSameOriginRedirect(redirect, currentOrigin)
   if (safeRedirect) return safeRedirect
-  return canViewCockpit(canView) ? '/workspace/cockpit' : '/workspace'
+  return hasAvailableAcquisitionModule(modules) ? '/workspace/cockpit' : '/workspace'
 }

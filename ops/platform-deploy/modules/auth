@@ -10,13 +10,21 @@ archive="${1:-}"
 commit="${2:-}"
 archive_sha256="${3:-}"
 confirmation="${4:-}"
+upload_root="${AUTH_DEPLOY_UPLOAD_ROOT:-/home/platform-deploy/uploads}"
+expected_archive_owner="${AUTH_DEPLOY_ARCHIVE_OWNER:-platform-deploy}"
+auth_root="${AUTH_DEPLOY_ROOT:-/opt/auth-frontend}"
+stage_parent="${AUTH_DEPLOY_STAGE_PARENT:-/opt}"
+temp_parent="${AUTH_DEPLOY_TEMP_PARENT:-/tmp}"
+public_origin="${AUTH_DEPLOY_PUBLIC_ORIGIN:-https://gsnipers.snipers.com.cn}"
+install_owner_args=(-o root -g root)
+if [[ "${AUTH_DEPLOY_TEST_MODE:-0}" == '1' ]]; then install_owner_args=(); fi
 
 [[ "$confirmation" == 'DEPLOY_AUTH' ]] || fail 'confirmation must be DEPLOY_AUTH'
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail 'commit must be a full lowercase SHA'
 [[ "$archive_sha256" =~ ^[0-9a-f]{64}$ ]] || fail 'archive sha256 is invalid'
-[[ "$archive" == "/home/platform-deploy/uploads/auth-${commit}.tgz" ]] || fail 'unexpected archive path'
+[[ "$archive" == "$upload_root/auth-${commit}.tgz" ]] || fail 'unexpected archive path'
 [[ -f "$archive" && ! -L "$archive" ]] || fail 'archive is missing or is a symlink'
-[[ "$(stat -c '%U' "$archive")" == 'platform-deploy' ]] || fail 'archive owner must be platform-deploy'
+[[ "$(stat -c '%U' "$archive")" == "$expected_archive_owner" ]] || fail 'archive owner is invalid'
 [[ "$(stat -c '%s' "$archive")" -le 52428800 ]] || fail 'archive exceeds 50 MiB'
 printf '%s  %s\n' "$archive_sha256" "$archive" | sha256sum -c - >/dev/null
 
@@ -31,14 +39,52 @@ while IFS= read -r member; do
   esac
 done < <(tar -tzf "$archive")
 
-stage_root="$(mktemp -d /opt/platform-deploy-auth.XXXXXX)"
-health_index="$(mktemp /tmp/auth-index.XXXXXX)"
+stage_root="$(mktemp -d "$stage_parent/platform-deploy-auth.XXXXXX")"
+health_index="$(mktemp "$temp_parent/auth-index.XXXXXX")"
+candidate_assets="$(mktemp "$temp_parent/auth-candidate-assets.XXXXXX")"
+online_assets="$(mktemp "$temp_parent/auth-online-assets.XXXXXX")"
+online_asset_body="$(mktemp "$temp_parent/auth-asset.XXXXXX")"
+deployment_started=false
+deployment_committed=false
+old_current=''
+old_previous=''
+old_previous_present=false
+
+restore_link() {
+  local link="$1"
+  local present="$2"
+  local target="$3"
+  if [[ "$present" == true ]]; then
+    ln -sfn "$target" "${link}.rollback"
+    mv -Tf "${link}.rollback" "$link"
+    [[ "$(readlink "$link")" == "$target" ]]
+  else
+    rm -f -- "${link}.rollback" "$link"
+    [[ ! -e "$link" && ! -L "$link" ]]
+  fi
+}
+
+restore_deployment_state() {
+  restore_link "$auth_root/current" true "$old_current"
+  restore_link "$auth_root/previous" "$old_previous_present" "$old_previous"
+}
+
 cleanup() {
+  local status=$?
+  trap - EXIT
+  if [[ "$deployment_started" == true && "$deployment_committed" != true ]]; then
+    if ! restore_deployment_state; then
+      printf 'auth-deploy: rollback could not restore the complete prior link state\n' >&2
+      status=70
+    fi
+  fi
   case "$stage_root" in
-    /opt/platform-deploy-auth.*) rm -rf -- "$stage_root" ;;
+    "$stage_parent"/platform-deploy-auth.*) rm -rf -- "$stage_root" ;;
   esac
-  rm -f -- "$health_index"
-  rm -f -- /opt/auth-frontend/current.next /opt/auth-frontend/previous.next
+  rm -f -- "$health_index" "$candidate_assets" "$online_assets" "$online_asset_body"
+  rm -f -- "$auth_root/current.next" "$auth_root/previous.next" \
+    "$auth_root/current.rollback" "$auth_root/previous.rollback"
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -59,60 +105,60 @@ grep -RFl --include='*.js' -- '/api/v1/auth/login' "$frontend/assets" >/dev/null
 grep -RFl --include='*.js' -- '/workspace/cockpit' "$frontend/assets" >/dev/null || fail 'cockpit target is missing'
 grep -RFl --include='*.js' -- '/workspace' "$frontend/assets" >/dev/null || fail 'workspace fallback is missing'
 
-auth_root='/opt/auth-frontend'
+grep -Eo '/auth-assets/assets/[^"[:space:]>]+' "$frontend/index.html" | sort -u > "$candidate_assets"
+[[ -s "$candidate_assets" ]] || fail 'candidate Auth index has no direct assets'
+while IFS= read -r asset; do
+  candidate_file="$frontend/${asset#/auth-assets/}"
+  [[ -f "$candidate_file" && ! -L "$candidate_file" ]] || fail "candidate asset is missing: $asset"
+done < "$candidate_assets"
+
 release_id="$(date -u +%Y%m%dT%H%M%SZ)-${commit:0:12}"
 release_dir="$auth_root/releases/$release_id"
-previous_release="$(readlink "$auth_root/current" 2>/dev/null || true)"
+old_current="$(readlink "$auth_root/current" 2>/dev/null || true)"
 
-[[ "$previous_release" == "$auth_root"/releases/* ]] || fail 'current Auth release link is invalid'
-[[ -d "$previous_release" ]] || fail 'current Auth release target is missing'
+[[ "$old_current" == "$auth_root"/releases/* ]] || fail 'current Auth release link is invalid'
+[[ -d "$old_current" ]] || fail 'current Auth release target is missing'
+if [[ -e "$auth_root/previous" || -L "$auth_root/previous" ]]; then
+  [[ -L "$auth_root/previous" ]] || fail 'previous Auth release is not a symlink'
+  old_previous="$(readlink "$auth_root/previous")"
+  old_previous_present=true
+fi
 [[ ! -e "$release_dir" ]] || fail 'Auth release already exists'
 
-install -d -o root -g root -m 755 "$release_dir"
+install -d "${install_owner_args[@]}" -m 755 "$release_dir"
 cp -a "$frontend/." "$release_dir/"
 printf '%s\n' "$commit" > "$release_dir/RELEASE_COMMIT"
 chmod -R a+rX "$release_dir"
 
-rollback() {
-  ln -sfn "$previous_release" "$auth_root/current.next"
-  mv -Tf "$auth_root/current.next" "$auth_root/current"
-}
-
-ln -sfn "$previous_release" "$auth_root/previous.next"
+deployment_started=true
+ln -sfn "$old_current" "$auth_root/previous.next"
 mv -Tf "$auth_root/previous.next" "$auth_root/previous"
 
-if ! (
-  set -e
-  ln -sfn "$release_dir" "$auth_root/current.next"
-  mv -Tf "$auth_root/current.next" "$auth_root/current"
-  [[ "$(readlink "$auth_root/current")" == "$release_dir" ]]
-); then
-  rollback
-  fail 'Auth release switch failed; previous release restored'
-fi
+ln -sfn "$release_dir" "$auth_root/current.next"
+mv -Tf "$auth_root/current.next" "$auth_root/current"
+[[ "$(readlink "$auth_root/current")" == "$release_dir" ]] || fail 'Auth release switch failed'
 
-if ! curl -fsS --retry 15 --retry-delay 1 --retry-connrefused \
+curl -fsS --retry 15 --retry-delay 1 --retry-connrefused \
   -H 'Cache-Control: no-cache' \
-  "https://gsnipers.snipers.com.cn/login?release=${commit}" -o "$health_index"; then
-  rollback
-  fail 'Auth health request failed; previous release restored'
-fi
+  "$public_origin/login?release=${commit}" -o "$health_index" || fail 'Auth health request failed'
 
-mapfile -t public_assets < <(grep -Eo '/auth-assets/assets/[^"[:space:]>]+' "$health_index" | sort -u)
-if [[ "${#public_assets[@]}" -eq 0 ]]; then
-  rollback
-  fail 'Auth health response has no assets; previous release restored'
-fi
-for asset in "${public_assets[@]}"; do
-  if ! curl -fsS --retry 3 "https://gsnipers.snipers.com.cn${asset}" >/dev/null; then
-    rollback
-    fail "Auth asset check failed for $asset; previous release restored"
-  fi
-done
+cmp -s "$frontend/index.html" "$health_index" || fail 'online Auth index does not match the candidate'
+
+grep -Eo '/auth-assets/assets/[^"[:space:]>]+' "$health_index" | sort -u > "$online_assets"
+cmp -s "$candidate_assets" "$online_assets" || fail 'online Auth asset set does not match the candidate'
+while IFS= read -r asset; do
+  candidate_file="$frontend/${asset#/auth-assets/}"
+  curl -fsS --retry 3 "$public_origin${asset}" -o "$online_asset_body" \
+    || fail "Auth asset check failed for $asset"
+  cmp -s "$candidate_file" "$online_asset_body" \
+    || fail "online Auth asset content does not match the candidate: $asset"
+done < "$candidate_assets"
+
+deployment_committed=true
 
 printf 'module=auth\n'
 printf 'commit=%s\n' "$commit"
-printf 'previous_release=%s\n' "$previous_release"
+printf 'previous_release=%s\n' "$old_current"
 printf 'current_release=%s\n' "$release_dir"
 printf 'backend=not-included\n'
 printf 'migration=not-run\n'

@@ -1,6 +1,7 @@
 """Safety contracts for the isolated Auth release channel."""
 
 from pathlib import Path
+import subprocess
 
 
 ROOT = Path(__file__).parents[1]
@@ -20,6 +21,7 @@ def test_auth_workflow_requires_exact_branch_head_and_verified_build():
     assert "npm run build:auth" in workflow
     assert "npm run verify:auth-build" in workflow
     assert "environment: production" in workflow
+    assert "paths:" not in workflow
 
 
 def test_auth_workflow_uses_existing_restricted_platform_channel():
@@ -38,17 +40,19 @@ def test_auth_workflow_uses_existing_restricted_platform_channel():
     assert "DEPLOY_AUTH" in workflow
 
 
-def test_auth_module_records_current_and_previous_and_rolls_back_on_failure():
+def test_auth_module_binds_online_content_and_reports_release_links():
     module = _read("ops/platform-deploy/modules/auth")
     dispatcher = _read("ops/platform-deploy/platform-deploy")
 
     assert "RELEASE_COMMIT" in module
-    assert 'previous_release="$(readlink "$auth_root/current"' in module
+    assert 'old_current="$(readlink "$auth_root/current"' in module
     assert 'mv -Tf "$auth_root/previous.next" "$auth_root/previous"' in module
     assert 'mv -Tf "$auth_root/current.next" "$auth_root/current"' in module
-    assert "rollback()" in module
-    assert module.count("rollback") >= 4
-    assert "https://gsnipers.snipers.com.cn/login?release=${commit}" in module
+    assert "restore_deployment_state()" in module
+    assert 'cmp -s "$frontend/index.html" "$health_index"' in module
+    assert 'cmp -s "$candidate_assets" "$online_assets"' in module
+    assert 'cmp -s "$candidate_file" "$online_asset_body"' in module
+    assert '"$public_origin/login?release=${commit}"' in module
     assert "Auth asset check failed" in module
     assert "auth_current_release=" in dispatcher
     assert "auth_previous_release=" in dispatcher
@@ -68,3 +72,11 @@ def test_auth_release_cannot_include_backend_or_runtime_actions():
     assert "Direct Auth SSH deployment is disabled" in manual_script
     assert "rsync" not in manual_script
     assert "ssh " not in manual_script
+
+
+def test_auth_deploy_and_installer_state_machines_execute():
+    subprocess.run(
+        ["bash", "tests/test-auth-deploy-state-machine.sh"],
+        cwd=ROOT,
+        check=True,
+    )

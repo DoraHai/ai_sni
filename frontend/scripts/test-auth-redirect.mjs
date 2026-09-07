@@ -2,23 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  hasAvailableAcquisitionModule,
   parseSameOriginRedirect,
   resolvePostLoginPath,
 } from '../src/auth/postLoginRedirect.mjs'
-import { COCKPIT_PERMISSION_KEYS } from '../src/views/workspace/cockpit/scope.mjs'
 
 const ORIGIN = 'https://gsnipers.snipers.com.cn'
-
-test('uses the exact shared acquisition cockpit permission scope', () => {
-  assert.deepEqual(COCKPIT_PERMISSION_KEYS, [
-    'monitor.dashboard',
-    'optimize.keywords',
-    'optimize.searchterms',
-    'seo.site',
-    'seo.content',
-    'geo.content',
-  ])
-})
 
 test('preserves valid same-origin paths, queries, hashes, and absolute URLs', () => {
   assert.equal(
@@ -60,21 +49,42 @@ test('a valid redirect has priority over the permission default', () => {
   assert.equal(resolvePostLoginPath({
     redirect: '/seo/dashboard?tab=sites#summary',
     currentOrigin: ORIGIN,
-    canView: () => false,
+    modules: [],
   }), '/seo/dashboard?tab=sites#summary')
 })
 
-test('missing or rejected redirects use the shared cockpit permission scope', () => {
-  for (const permission of COCKPIT_PERMISSION_KEYS) {
+test('each purchased acquisition module defaults to the cockpit', () => {
+  for (const module_code of ['sem', 'seo', 'geo']) {
     assert.equal(resolvePostLoginPath({
       redirect: '',
       currentOrigin: ORIGIN,
-      canView: key => key === permission,
-    }), '/workspace/cockpit', permission)
+      modules: [{ module_code, available: true }],
+    }), '/workspace/cockpit', module_code)
+  }
+})
+
+test('two or three purchased acquisition modules default to the cockpit', () => {
+  for (const modules of [
+    [{ module_code: 'sem', available: true }, { module_code: 'seo', available: true }],
+    ['sem', 'seo', 'geo'].map(module_code => ({ module_code, available: true })),
+  ]) {
+    assert.equal(hasAvailableAcquisitionModule(modules), true)
+    assert.equal(resolvePostLoginPath({ redirect: '', currentOrigin: ORIGIN, modules }), '/workspace/cockpit')
+  }
+})
+
+test('no available acquisition module or a failed module lookup falls back to workspace', () => {
+  for (const modules of [
+    [],
+    undefined,
+    [{ module_code: 'sem', available: false }],
+    [{ module_code: 'diagnostic', available: true }],
+  ]) {
+    assert.equal(resolvePostLoginPath({ redirect: '', currentOrigin: ORIGIN, modules }), '/workspace')
   }
   assert.equal(resolvePostLoginPath({
     redirect: '/\\evil.example',
     currentOrigin: ORIGIN,
-    canView: key => key === 'geo.diagnosis',
+    modules: undefined,
   }), '/workspace')
 })

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-config_root="/etc/platform-deploy"
+config_root="${PLATFORM_DEPLOY_CONFIG_ROOT:-/etc/platform-deploy}"
 module_root="$config_root/modules"
 enabled_root="$config_root/enabled"
-upload_root="/home/platform-deploy/uploads"
+upload_root="${PLATFORM_DEPLOY_UPLOAD_ROOT:-/home/platform-deploy/uploads}"
+auth_root="${AUTH_DEPLOY_ROOT:-/opt/auth-frontend}"
 
 fail() {
   printf 'platform-deploy: %s\n' "$*" >&2
@@ -24,8 +25,8 @@ show_status() {
     fi
   done
   if [[ -x "$module_root/auth" && -f "$enabled_root/auth" ]]; then
-    printf 'auth_current_release=%s\n' "$(readlink /opt/auth-frontend/current 2>/dev/null || true)"
-    printf 'auth_previous_release=%s\n' "$(readlink /opt/auth-frontend/previous 2>/dev/null || true)"
+    printf 'auth_current_release=%s\n' "$(readlink "$auth_root/current" 2>/dev/null || true)"
+    printf 'auth_previous_release=%s\n' "$(readlink "$auth_root/previous" 2>/dev/null || true)"
   fi
 }
 
@@ -41,7 +42,8 @@ apply_module() {
   [[ -x "$module_root/$module" ]] || fail "$module deploy entry is not configured"
   [[ -f "$enabled_root/$module" ]] || fail "$module deploy entry is locked"
 
-  exec "$module_root/$module" "$@"
+  exec env -i PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' HOME='/root' \
+    "$module_root/$module" "$@"
 }
 
 case "${1:-}" in

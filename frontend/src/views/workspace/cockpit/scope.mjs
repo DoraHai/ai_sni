@@ -1,16 +1,3 @@
-export const COCKPIT_PERMISSION_KEYS = Object.freeze([
-  'monitor.dashboard',
-  'optimize.keywords',
-  'optimize.searchterms',
-  'seo.site',
-  'seo.content',
-  'geo.content',
-])
-
-export function canViewCockpit(canView) {
-  return typeof canView === 'function' && COCKPIT_PERMISSION_KEYS.some(key => canView(key))
-}
-
 export function isSecureCockpitRuntime(locationLike) {
   return locationLike?.protocol === 'https:'
 }
