@@ -354,7 +354,10 @@ def test_generation_reservation_is_released_by_existing_recovery(recovery):
                 if recovery == "cancel":
                     await request_cancel(session, job)
                 else:
-                    await reconcile_stale_job(session, job)
+                    # The recovery lock uses a dedicated process-level engine.
+                    # Point it at this test's isolated PostgreSQL schema too.
+                    with patch("app.database.engine", engine):
+                        await reconcile_stale_job(session, job)
 
             async with sessions() as session:
                 task = await session.get(GeoContentTask, 12)
