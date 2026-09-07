@@ -714,7 +714,7 @@ async def _evaluate_and_store_rules(
     from app.geo.content.extractable_blocks import blocks_payload
     from app.geo.content.geo_score import compute_geo_score, score_blocks_ready
 
-    rule_input = await _build_rule_input(session, task, article)
+    rule_input = await _build_rule_input(session, task, article, fresh=True)
     checks = run_checks(rule_input)
     check_dicts = [c.to_dict() for c in checks]
     ready = is_ready(checks, require_channels=require_channels)
@@ -725,9 +725,15 @@ async def _evaluate_and_store_rules(
     lint = lint_summary(lint_issues)
     blocks = blocks_payload(rule_input.body_markdown or "")
     lint_ok = bool(lint.get("blocks_ready")) if isinstance(lint, dict) else None
-    tenant_for_score = await _ensure_tenant_exists(session, task.tenant_id)
+    tenant_for_score = await _ensure_tenant_exists(
+        session, task.tenant_id, fresh=True
+    )
     brand = (
-        (await _brand_context_for_task(session, task, tenant_for_score))[0]
+        (
+            await _brand_context_for_task(
+                session, task, tenant_for_score, fresh=True
+            )
+        )[0]
         if tenant_for_score
         else None
     )
@@ -785,6 +791,7 @@ async def _evaluate_and_store_rules(
         "geo_score_threshold": int(getattr(settings, "geo_score_threshold", 60) or 60),
         "geo_score_gate_message": score_msg or None,
         "brand_validation": brand_validation,
+        "article_id": getattr(article, "id", None) if article is not None else None,
         "ai_review": ai_review,
         "checked_at": datetime.utcnow().isoformat(),
         "variant_channels": list(rule_input.variants or []),
@@ -860,6 +867,21 @@ async def _task_payload(
     payload['generation_evidence'] = generation_evidence_readiness(_fact_dicts(facts))
     article = await _latest_article(session, task.id)
     variants = await _variants(session, task.id)
+    current_brand_validation = None
+    if article is not None:
+        from app.geo.content.brand_geo import markdown_brand_validation
+
+        current_tenant = await _ensure_tenant_exists(
+            session, task.tenant_id, fresh=True
+        )
+        current_brand, _ = await _brand_context_for_task(
+            session, task, current_tenant, fresh=True
+        )
+        current_brand_validation = markdown_brand_validation(
+            brand=current_brand,
+            title=article.title or task.title or "",
+            body_markdown=article.body_markdown or "",
+        )
     pubs: list[dict[str, Any]] = []
     for variant in variants:
         pub = await session.scalar(
@@ -883,6 +905,7 @@ async def _task_payload(
     payload.update(
         {
             "facts": [_fact_payload(f) for f in facts],
+            "current_brand_validation": current_brand_validation,
             "article": None
             if article is None
             else {
@@ -7480,7 +7503,8 @@ async def check_task(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
-    article = await _latest_article(session, task.id)
+    await session.refresh(task, with_for_update=True)
+    article = await _latest_article(session, task.id, fresh=True)
     scored = await _evaluate_and_store_rules(
         session, task, article, require_channels=require_channels
     )

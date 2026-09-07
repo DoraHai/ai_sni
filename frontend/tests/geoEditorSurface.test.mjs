@@ -94,11 +94,22 @@ test('task editor keeps the complete editor-first interaction surface', () => {
 test('evidence fallback exposes an unresolved brand warning and recheck path', () => {
   for (const marker of [
     'const brandValidationWarning = computed',
+    'current_brand_validation',
     'generation_meta?.brand_validation',
     '证据原文稿已保存，品牌标准仍待处理',
     '未通过前不会标记就绪',
+    '按当前品牌重新检查',
     '@click="runCheck"',
   ]) {
     assert.ok(editorSource.includes(marker), `missing brand warning marker: ${marker}`)
   }
+})
+
+test('publishing checklist refresh is not confused with article readiness recheck', () => {
+  const checklist = readFileSync(
+    fileURLToPath(new URL('../src/components/GeoLaunchChecklist.vue', import.meta.url)),
+    'utf8',
+  )
+  assert.ok(checklist.includes('刷新发布检查'))
+  assert.ok(!checklist.includes('>刷新检查</'))
 })
