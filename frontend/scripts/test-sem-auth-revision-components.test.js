@@ -211,4 +211,35 @@ describe('SEM auth revision invalidation', () => {
     await settle()
     expect(wrapper.vm.data).toBe(null)
   })
+
+  it('clears keyword workbench mode and blocks writes when the same account becomes disabled', async () => {
+    login('optimize.keywords')
+    const wrapper = mountView(KeywordWorkbenchView)
+    await settle()
+    const row = { keyword_id: 301, baidu_account_id: 11, keyword: 'A词', price: 1.1, pause: false }
+    state.keywordLoads.at(-1).resolve({
+      total: 1, keywords: [row], totals: { keywords: 1, campaigns: 1, adgroups: 1 },
+      category_counts: {}, metrics_window: null,
+    })
+    await settle()
+    wrapper.vm.selection = [row]
+    wrapper.vm.openLanding({ ...row, adgroup_id: 401, pc_final_url: 'https://old.example/' })
+    expect(wrapper.vm.data.keywords[0].keyword_id).toBe(301)
+    expect(wrapper.vm.landingDialog.visible).toBe(true)
+
+    session.setTenants([{
+      id: 1,
+      name: '测试租户',
+      sem_accounts: [{ ...account, status: 'disabled' }],
+    }])
+    session.requestTenantReload()
+    await settle()
+    expect(wrapper.vm.data).toBe(null)
+    expect(wrapper.vm.selection).toHaveLength(0)
+    expect(wrapper.vm.landingDialog.visible).toBe(false)
+
+    await wrapper.vm.applyWriteback(row)
+    expect(state.confirmations).toHaveLength(0)
+    expect(state.writes).toHaveLength(0)
+  })
 })
