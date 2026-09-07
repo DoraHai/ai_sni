@@ -446,8 +446,12 @@ def check_sentence_evidence(data: RuleInput) -> RuleCheck:
     )
 
     # Saved citation metadata may predate edits or newer evidence checks.
+    outline = data.outline if isinstance(data.outline, dict) else {}
+    structured_author = data.author_name or outline.get("author_name")
     rows = build_sentence_citations(
-        strip_citation_appendix(data.body_markdown or ""), data.facts or []
+        strip_citation_appendix(data.body_markdown or ""),
+        data.facts or [],
+        author_name=structured_author,
     )
     verdict = citation_verdict(rows)
     if verdict["ok"]:

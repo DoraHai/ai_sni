@@ -622,7 +622,9 @@ def _refresh_article_citations(
     body = strip_citation_appendix(article.body_markdown or "")
     if article.body_markdown != body:
         article.body_markdown = body
-    cites = build_sentence_citations(body, facts)
+    outline = article.outline if isinstance(article.outline, dict) else {}
+    structured_author = article.author_name or outline.get("author_name")
+    cites = build_sentence_citations(body, facts, author_name=structured_author)
     outline = dict(article.outline or {})
     outline["sentence_citations"] = cites
     article.outline = outline
