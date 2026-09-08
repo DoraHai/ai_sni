@@ -48,10 +48,11 @@ def utc_stamp(value):
 
 
 async def resolve_account_scope(session, tenant_id, account_id):
-    """Resolve the read scope without treating archived accounts as current.
+    """Resolve the current read scope to active accounts only.
 
-    An explicit archived account remains readable for historical inspection, but
-    the default tenant scope contains only accounts that are not archived.
+    An explicit non-active account remains readable for historical inspection,
+    but the default tenant scope must not mix stopped or conflicted accounts into
+    current performance.
     """
     accounts = (await session.execute(
         select(BaiduAccount.id, BaiduAccount.status)
@@ -69,11 +70,12 @@ async def resolve_account_scope(session, tenant_id, account_id):
             "selected_account_status": by_id[account_id],
         }
     else:
-        selected_ids = [row.id for row in accounts if row.status != "archived"]
+        selected_ids = [row.id for row in accounts if row.status == "active"]
         payload = {
             "mode": "all", "baidu_account_id": None,
             "configured_account_ids": selected_ids,
             "excluded_archived_account_ids": [row.id for row in accounts if row.status == "archived"],
+            "excluded_non_active_account_ids": [row.id for row in accounts if row.status != "active"],
         }
     return payload, selected_ids, by_id
 

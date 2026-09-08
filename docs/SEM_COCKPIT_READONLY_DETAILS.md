@@ -8,7 +8,7 @@
 
 | GET 接口 | 数据、窗口 | 账户 | 权限及副作用 |
 | --- | --- | --- | --- |
-| /api/v1/dashboard/cockpit | A：保持原有报告/设备及缺报契约，不查询或返回电话按钮点击指标。必传日期，含首尾1–366天 | 默认仅非 archived 账户，未归属单列；显式指定租户内 archived 账户可读历史 | monitor.dashboard；仅 SELECT，无百度/AI/缓存写入 |
+| /api/v1/dashboard/cockpit | A：保持原有报告/设备及缺报契约，不查询或返回电话按钮点击指标。必传日期，含首尾1–366天 | 默认仅 active 账户，未归属单列；显式指定租户内非 active 账户可读历史 | monitor.dashboard；仅 SELECT，无百度/AI/缓存写入 |
 | /api/v1/keywords/cockpit | 关键词资产分页＋同账户报告；日期成对传入，否则以所选账户范围最新报告日锚定近7天 | 资产和日报按账户＋关键词ID关联，NULL不推给已知账户 | optimize.keywords；仅 SELECT 与内存计算 |
 | /api/v1/keywords/cockpit/{keyword_id} | 报告、设备、电话点击、单关键词地域及星期×小时。必传日期，1–366天 | 显式 all/single；每个维度独立列账户覆盖 | optimize.keywords；不放宽既有鉴权。新路径不继承旧详情的看板权限特例 |
 | /api/v1/search-terms/cockpit | 分页搜索词及每账户实际同步窗口；拒绝日期参数 | all/single；窗口覆盖全部筛选结果，不受当前页限制 | optimize.searchterms；只读快照，不同步/加词/否词 |

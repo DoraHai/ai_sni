@@ -60,7 +60,7 @@ def test_detail_phone_is_known_subtotal_not_fabricated_total(client):
     data=get(client,"keywords/cockpit/100",**PARAMS)
     phone=data["phone_button_clicks"]
     assert phone["value"] is None and phone["known_subtotal"]==2
-    assert (phone["stored_rows"],phone["known_rows"],phone["unknown_rows"])==(4,2,2)
+    assert (phone["stored_rows"],phone["known_rows"],phone["unknown_rows"])==(3,1,2)
     single=get(client,"keywords/cockpit/100",**PARAMS,baidu_account_id=12)
     assert single["phone_button_clicks"]["value"]==0
 
@@ -99,13 +99,14 @@ def test_phone_sql_compiles_to_postgres_field_extraction():
 
 def test_keywords_exact_account_join_and_asset_without_report(client):
     data=get(client,"keywords/cockpit",**PARAMS)
-    assert data["total"]==4
-    assert data["account_scope"]["configured_account_ids"]==[11,12]
+    assert data["total"]==3
+    assert data["account_scope"]["configured_account_ids"]==[11]
     assert data["account_scope"]["excluded_archived_account_ids"]==[13]
-    assert [r["metrics"]["cost"] for r in data["items"]]==[10,50,7,None]
+    assert data["account_scope"]["excluded_non_active_account_ids"]==[12,13]
+    assert [r["metrics"]["cost"] for r in data["items"]]==[10,7,None]
     assert data["items"][0]["metrics"]["ctr"]==.02
     assert data["items"][0]["coverage"]["missing_dates"]==["2026-09-02"]
-    assert data["items"][3]["coverage"]["status"]=="no_data"
+    assert data["items"][2]["coverage"]["status"]=="no_data"
     single=get(client,"keywords/cockpit",**PARAMS,baidu_account_id=12)
     assert single["total"]==1 and single["items"][0]["metrics"]["cost"]==50
 
@@ -131,6 +132,7 @@ def test_all_archived_tenant_returns_truthful_empty_default_scope(client):
     for payload in (report, keywords_data, terms):
         assert payload["account_scope"]["configured_account_ids"]==[]
         assert payload["account_scope"]["excluded_archived_account_ids"]==[31]
+        assert payload["account_scope"]["excluded_non_active_account_ids"]==[31]
     assert report["accounts"]==[] and report["metrics"]["cost"] is None
     assert keywords_data["total"]==0 and keywords_data["window"]["start"] is None
     assert terms["total"]==0 and terms["status"]=="no_data"
@@ -172,8 +174,8 @@ def test_detail_empty_period_does_not_call_sync(client):
 
 def test_search_windows_cover_all_filtered_pages_without_summing(client):
     data=get(client,"search-terms/cockpit",tenant_id=1,page_size=1)
-    assert data["total"]==3 and len(data["items"])==1
-    assert data["mixed_windows"] and len(data["windows"])==2
+    assert data["total"]==2 and len(data["items"])==1
+    assert not data["mixed_windows"] and len(data["windows"])==1
     assert data["items"][0]["metrics"]["ctr"]==.02  # never trust stored 999
     assert "summary" not in data
     filtered=get(client,"search-terms/cockpit",tenant_id=1,baidu_account_id=12)
