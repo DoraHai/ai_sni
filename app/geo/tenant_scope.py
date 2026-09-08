@@ -109,7 +109,10 @@ async def require_geo_request_entitlement(
     content_type = (
         request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     )
-    is_json = content_type == "application/json" or (
+    # Starlette/FastAPI also attempts JSON model parsing when Content-Type is
+    # absent.  Match that behavior so omitting the header cannot bypass the
+    # tenant carried in an otherwise valid JSON body.
+    is_json = not content_type or content_type == "application/json" or (
         content_type.startswith("application/") and content_type.endswith("+json")
     )
     if is_json:

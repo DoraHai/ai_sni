@@ -15,12 +15,12 @@ from app.security.auth import require_scoped_auth
 
 
 def request(
-    *, query: str = "", payload=None, content_type: str = "application/json"
+    *, query: str = "", payload=None, content_type: str | None = "application/json"
 ) -> Request:
     body = b"" if payload is None else json.dumps(payload).encode()
     headers = (
         []
-        if payload is None
+        if payload is None or content_type is None
         else [(b"content-type", content_type.encode("ascii"))]
     )
     sent = False
@@ -104,6 +104,19 @@ def test_application_suffix_json_body_tenant_is_checked():
     ctx.ensure_tenant.assert_called_once_with(16)
 
 
+def test_missing_content_type_json_body_tenant_is_checked():
+    ctx = Mock()
+    session = Mock(scalar=AsyncMock(return_value=object()))
+    asyncio.run(
+        require_geo_request_entitlement(
+            request=request(payload={"tenant_id": 16}, content_type=None),
+            ctx=ctx,
+            session=session,
+        )
+    )
+    ctx.ensure_tenant.assert_called_once_with(16)
+
+
 def test_non_application_json_suffix_is_not_treated_as_json():
     ctx = Mock()
     session = Mock(scalar=AsyncMock())
@@ -166,6 +179,42 @@ def test_suffix_json_expired_tenant_is_rejected_before_real_handler(monkeypatch)
     assert response.json()["detail"]["code"] == "geo_not_available"
     ctx.ensure_tenant.assert_called_once_with(16)
     handler.assert_not_awaited()
+
+
+def test_missing_content_type_expired_tenant_is_rejected_before_real_handler(
+    monkeypatch,
+):
+    app = FastAPI()
+    app.include_router(router)
+    ctx = Mock()
+    session = Mock(scalar=AsyncMock(return_value=None))
+    app.dependency_overrides[require_scoped_auth] = lambda: ctx
+    app.dependency_overrides[get_session] = lambda: session
+    handler = AsyncMock()
+    monkeypatch.setattr("app.geo.routes.audit_url", handler)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/geo/audits",
+            content=json.dumps({"tenant_id": 16, "url": "https://example.com"}),
+        )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "geo_not_available"
+    ctx.ensure_tenant.assert_called_once_with(16)
+    handler.assert_not_awaited()
+
+
+def test_empty_body_without_content_type_does_not_query_entitlement():
+    ctx = Mock()
+    session = Mock(scalar=AsyncMock())
+    asyncio.run(
+        require_geo_request_entitlement(
+            request=request(content_type=None), ctx=ctx, session=session
+        )
+    )
+    ctx.ensure_tenant.assert_not_called()
+    session.scalar.assert_not_awaited()
 
 
 def test_authenticated_static_route_needs_no_tenant_entitlement_lookup():
