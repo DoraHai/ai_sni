@@ -1,4 +1,5 @@
 import { createSeoReadonlyClient } from './readonly-client.mjs'
+import { readSeoSiteScope } from './site-scope.mjs'
 
 const READ_PERMISSIONS = Object.freeze({
   contents: 'seo.content',
@@ -25,11 +26,12 @@ function countObject(value) {
   return object(value) && Object.values(value).every(nonnegative)
 }
 
-function revisionFor(user, tenantId, siteId, module, permissions) {
+function revisionFor(user, tenantId, site, module, permissions) {
   const grants = Object.entries(permissions).filter(([key]) => key.startsWith('seo.'))
     .sort(([left], [right]) => left.localeCompare(right))
-  return JSON.stringify({ user_id: user.id, tenant_id: tenantId, site_id: siteId,
-    seo_status: module.status, seo_expires_at: module.expires_at ?? null, grants })
+  return JSON.stringify({ user_id: user.id, tenant_id: tenantId, site_id: site.id,
+    site_status: site.status, seo_status: module.status,
+    seo_expires_at: module.expires_at ?? null, grants })
 }
 
 async function readJson(transport, path, signal) {
@@ -120,14 +122,23 @@ export async function resolveSeoReadonlyContext({ transport, tenantId, siteId, s
 
   const allowedReads = Object.entries(READ_PERMISSIONS)
     .filter(([, permission]) => canView(user.permissions, permission)).map(([resource]) => resource)
+  if (allowedReads.length === 0) fail('NO_SEO_READS', '当前账号没有首期 SEO 内容或页面只读权限')
+  assertCurrent()
+  const siteScope = await readSeoSiteScope({ transport, tenantId, signal })
+  assertCurrent()
+  const site = siteScope.sites.find(item => item.id === siteId)
+  if (!site) fail('SITE_NOT_ALLOWED', '所选 SEO 站点不属于当前客户或不存在', 404)
+  if (!siteScope.selectableStatuses.includes(site.status)) {
+    fail('SITE_DISABLED', '所选 SEO 站点已暂停或归档，不能进入工作台', 409)
+  }
   assertCurrent()
   const siteVerification = await verifySiteScope({ transport, tenantId, siteId,
     permissions: user.permissions, signal, step: assertCurrent })
   assertCurrent()
   return Object.freeze({ tenantId, siteId, userId: user.id,
-    authorizationRevision: revisionFor(user, tenantId, siteId, seoModule, user.permissions),
+    authorizationRevision: revisionFor(user, tenantId, site, seoModule, user.permissions),
     allowedReads: Object.freeze(allowedReads),
-    identity: Object.freeze({ user, module: seoModule, tenant, siteVerification }) })
+    identity: Object.freeze({ user, module: seoModule, tenant, site, siteVerification }) })
 }
 
 export function createSeoAuthorizedClient({ transport, onClear }) {
