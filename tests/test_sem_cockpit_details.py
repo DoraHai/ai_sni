@@ -105,10 +105,14 @@ def test_keywords_exact_account_join_and_asset_without_report(client):
     assert data["account_scope"]["excluded_archived_account_ids"]==[13]
     assert data["account_scope"]["excluded_non_active_account_ids"]==[12,13,14]
     assert [r["metrics"]["cost"] for r in data["items"]]==[10,None,None]
-    assert [r["report_association"]["status"] for r in data["items"]]==["matched","ownership_unknown","no_report"]
+    assert [r["report_association"]["status"] for r in data["items"]]==["matched","no_report","no_report"]
+    assert [r["report_association"]["evidence_status"] for r in data["items"]]==[
+        "matched","ownership_unknown","no_report",
+    ]
     assert data["association_summary"]=={
-        "scope":"current_page", "counts":{"matched":1,"account_mismatch":0,"no_report":1,
-                                              "ownership_unknown":1,"report_ownership_unknown":0},
+        "scope":"current_page", "counts":{"matched":1,"account_mismatch":0,"no_report":2},
+        "evidence_counts":{"matched":1,"account_mismatch":0,"no_report":1,
+                           "ownership_unknown":1,"report_ownership_unknown":0},
         "completeness":"unknown",
     }
     assert data["items"][0]["metrics"]["ctr"]==.02
@@ -159,28 +163,37 @@ def test_nullable_keyword_ownership_is_never_joined_or_cross_tenant():
     assert item["coverage"]["status"] == "no_data"
     assert item["phone_button_clicks"]["status"] == "no_data"
     assert item["report_association"] == {
-        "status":"ownership_unknown",
+        "status":"no_report",
+        "evidence_status":"ownership_unknown",
         "join_keys":["baidu_account_id","keyword_id"],
         "matched_report_groups":0,
-        "other_observed_account_ids":[11],
+        "other_observed_account_ids":[],
+        "observed_known_account_ids":[11],
         "has_unassigned_reports":True,
         "completeness":"unknown",
     }
     mismatch = next(row for row in result["items"] if row["keyword_id"] == 104)
     assert mismatch["metrics"] == {"cost":None,"click":None,"impression":None,"ctr":None,"cpc":None}
     assert mismatch["report_association"]["status"] == "account_mismatch"
+    assert mismatch["report_association"]["evidence_status"] == "account_mismatch"
     assert mismatch["report_association"]["other_observed_account_ids"] == [15]
+    assert mismatch["report_association"]["observed_known_account_ids"] == [15]
     assert mismatch["report_association"]["has_unassigned_reports"] is True
     assert mismatch["phone_button_clicks"]["status"] == "no_data"
     report_unknown = next(row for row in result["items"] if row["keyword_id"] == 105)
-    assert report_unknown["report_association"]["status"] == "report_ownership_unknown"
+    assert report_unknown["report_association"]["status"] == "no_report"
+    assert report_unknown["report_association"]["evidence_status"] == "report_ownership_unknown"
     assert report_unknown["report_association"]["other_observed_account_ids"] == []
     assert report_unknown["report_association"]["has_unassigned_reports"] is True
     assert report_unknown["metrics"] == {"cost":None,"click":None,"impression":None,"ctr":None,"cpc":None}
     assert report_unknown["phone_button_clicks"]["status"] == "no_data"
     assert result["association_summary"]["counts"]["account_mismatch"] == 1
-    assert result["association_summary"]["counts"]["ownership_unknown"] == 2
-    assert result["association_summary"]["counts"]["report_ownership_unknown"] == 1
+    assert result["association_summary"]["counts"]["no_report"] == 4
+    assert set(result["association_summary"]["counts"]) == {"matched", "account_mismatch", "no_report"}
+    assert all(row["report_association"]["status"] in {"matched", "account_mismatch", "no_report"}
+               for row in result["items"])
+    assert result["association_summary"]["evidence_counts"]["ownership_unknown"] == 2
+    assert result["association_summary"]["evidence_counts"]["report_ownership_unknown"] == 1
 
 
 def test_explicit_archived_account_is_historical_only(client):

@@ -97,15 +97,20 @@ async def read_keywords(session, tenant_id, account_id, start, end, q, campaign_
         })
         has_unassigned_reports = any(r.baidu_account_id is None for r in keyword_reports)
         if ownership_unknown:
-            association_status = "ownership_unknown"
+            evidence_status = "ownership_unknown"
         elif matched_reports:
-            association_status = "matched"
+            evidence_status = "matched"
         elif other_report_accounts:
-            association_status = "account_mismatch"
+            evidence_status = "account_mismatch"
         elif has_unassigned_reports:
-            association_status = "report_ownership_unknown"
+            evidence_status = "report_ownership_unknown"
         else:
-            association_status = "no_report"
+            evidence_status = "no_report"
+        # Keep the original three-state fields valid for already-loaded clients.
+        # The additive evidence fields carry the stricter five-state meaning.
+        association_status = (
+            evidence_status if evidence_status in {"matched", "account_mismatch", "no_report"} else "no_report"
+        )
         items.append({"keyword_id": a.keyword_id, "baidu_account_id": a.baidu_account_id,
                       "keyword": a.keyword, "campaign_id": a.campaign_id, "adgroup_id": a.adgroup_id,
                       "price": float(a.price) if a.price is not None else None, "pause": a.pause,
@@ -113,22 +118,29 @@ async def read_keywords(session, tenant_id, account_id, start, end, q, campaign_
                       "metrics": report_metrics(matched_reports), "coverage": coverage(matched_reports, start, end),
                       "report_association": {
                           "status": association_status,
+                          "evidence_status": evidence_status,
                           "join_keys": ["baidu_account_id", "keyword_id"],
                           "matched_report_groups": len(matched_reports),
-                          "other_observed_account_ids": other_report_accounts,
+                          "other_observed_account_ids": (
+                              other_report_accounts if association_status == "account_mismatch" else []
+                          ),
+                          "observed_known_account_ids": other_report_accounts,
                           "has_unassigned_reports": has_unassigned_reports,
                           "completeness": "unknown",
                       },
                       "phone_button_clicks": phone_summary([] if ownership_unknown else phone_by_key[key])})
-    association_counts = {status: 0 for status in (
+    association_counts = {status: 0 for status in ("matched", "account_mismatch", "no_report")}
+    evidence_counts = {status: 0 for status in (
         "matched", "account_mismatch", "no_report", "ownership_unknown", "report_ownership_unknown"
     )}
     for item in items:
         association_counts[item["report_association"]["status"]] += 1
+        evidence_counts[item["report_association"]["evidence_status"]] += 1
     return {**envelope(tenant_id, account_scope, "keywords+kw_report_snapshots"),
             "window": window(start, end, mode), "filters": {"q": q, "campaign_id": campaign_id},
             "page": page, "page_size": page_size, "total": total, "items": items,
             "association_summary": {"scope": "current_page", "counts": association_counts,
+                                    "evidence_counts": evidence_counts,
                                     "completeness": "unknown"},
             "scope_note": "关键词资产列表；只关联相同非空账户与关键词ID的报告，未归属记录不推断到其他账户"}
 
