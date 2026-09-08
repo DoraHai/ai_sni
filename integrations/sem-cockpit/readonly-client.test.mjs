@@ -246,6 +246,7 @@ test('dimension and search-window shapes reject incomplete or mixed summaries', 
 test('search windows exactly cover the filtered multi-account result', async () => {
   await rejectsContract('searchTerms', data => { data.windows.push(structuredClone(data.windows[0])) })
   await rejectsContract('searchTerms', data => { data.windows[0].stored_rows-- })
+  await rejectsContract('searchTerms', data => { data.windows[0].stored_rows = 0 })
   await rejectsContract('searchTerms', data => { data.account_scope.observed_account_ids.pop() })
 })
 
@@ -285,6 +286,22 @@ test('complete last pages, out-of-range pages and empty totals honor pagination 
     data.items = []
   })
   assert.equal(empty.total, 0)
+
+  await rejectsContract('searchTerms', data => {
+    data.windows = []
+    data.mixed_windows = false
+    data.status = 'no_data'
+    data.total = 0
+    data.items = []
+  })
+  await rejectsContract('searchTerms', data => {
+    data.windows = [{ ...structuredClone(data.windows[0]), stored_rows: 0 }]
+    data.account_scope.observed_account_ids = [data.windows[0].baidu_account_id]
+    data.mixed_windows = false
+    data.status = 'no_data'
+    data.total = 0
+    data.items = []
+  })
 })
 
 test('echoed filters and JSON shape must match the active request', async () => {
