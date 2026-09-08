@@ -42,7 +42,7 @@
 
 - GEO Python：1078 passed，47 skipped。
 - 审核相关 Python：61 passed。
-- 前端 Node：187 passed。
+- 前端 Node：188 passed。
 - 前端生产构建：通过。
 - Windows 全仓 Python 收集被既有 Linux 专用 `fcntl` 依赖阻断；Linux CI 负责最终全仓验证。
 
