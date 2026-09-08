@@ -15,7 +15,10 @@ from app.database import get_session
 from app.geo.audit import GeoAuditError, audit_url
 from app.geo.diagnosis_merge import audit_ticket_filter
 from app.geo.generate import ai_advice, generate_json_ld, generate_llms_text
-from app.geo.tenant_scope import list_geo_tenants_for_auth
+from app.geo.tenant_scope import (
+    list_geo_tenants_for_auth,
+    require_geo_request_entitlement,
+)
 from app.geo.verify import (
     append_evidence,
     apply_verdict_to_status,
@@ -29,7 +32,10 @@ from app.security.auth import AuthContext, require_scoped_auth
 router = APIRouter(
     prefix="/api/v1/geo",
     tags=["GEO 诊断"],
-    dependencies=[Depends(require_scoped_auth)],
+    dependencies=[
+        Depends(require_scoped_auth),
+        Depends(require_geo_request_entitlement),
+    ],
 )
 
 
