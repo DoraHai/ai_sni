@@ -317,7 +317,7 @@ jobs:
 
       - name: Test SEM identity repair request cancellation
         working-directory: frontend
-        run: npm run test:sem-identity-repair-requests && npm run test:workbench-session && npm run test:workbench-evidence
+        run: npm run test:sem-identity-repair-requests && npm run test:workbench-session && npm run test:workbench-evidence && npm run test:workbench-sem-summary
 
       - name: Test SEM date and UI contracts
         working-directory: frontend
