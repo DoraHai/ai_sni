@@ -26,7 +26,25 @@ test('keyword summary keeps missing reports distinct from observed zero', () => 
   assert.equal(card.rows[0].cost, '¥0')
   assert.equal(card.rows[1].cost, '暂无数据')
   assert.equal(card.rows[0].status, '关键词未暂停')
+  assert.equal(card.rows[0].report, '同账户报告已关联')
+  assert.equal(card.rows[1].report, '窗口内无报告')
   assert.equal(card.updatedLabel, '2026-09-04T01:00:00+00:00')
+})
+
+test('keyword summary exposes account mismatch as a current-page boundary', () => {
+  const payload = example('keywords')
+  payload.page_size = 1
+  payload.items = [payload.items[1]]
+  payload.items[0].baidu_account_id = null
+  payload.items[0].report_association.status = 'account_mismatch'
+  payload.items[0].report_association.other_observed_account_ids = [11]
+  payload.association_summary.counts = { matched: 0, account_mismatch: 1, no_report: 0 }
+  const card = semKeywordCard(payload, 9)
+  assert.equal(card.state, 'partial')
+  assert.match(card.reason, /本页展示 1 个/)
+  assert.match(card.reason, /1 个仅观察到其他账户的同 ID 报告/)
+  assert.equal(card.rows[0].report, '仅其他账户有同 ID 报告')
+  assert.equal(card.rows[0].cost, '暂无数据')
 })
 
 test('old account-scope contract degrades instead of claiming active-only', () => {

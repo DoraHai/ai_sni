@@ -44,20 +44,24 @@ export function semScopeCard(report, contextRevision) {
 export function semKeywordCard(payload, contextRevision) {
   const items = Array.isArray(payload?.items) ? payload.items : []
   const observed = items.filter(item => item.coverage?.status === 'observed').length
+  const mismatched = items.filter(item => item.report_association?.status === 'account_mismatch').length
+  const pageScope = items.length < payload.total ? `本页展示 ${items.length} 个；` : ''
   return {
     id: 'sem-keywords', moduleCode: 'sem', moduleLabel: 'SEM', label: '关键词资产',
-    display: String(payload.total), unit: '个', state: payload.total ? 'available' : 'no_data',
+    display: String(payload.total), unit: '个', state: mismatched ? 'partial' : payload.total ? 'available' : 'no_data',
     reason: payload.total
-      ? `当前页 ${observed} 个关键词有报告依据；总数是资产数量，不代表全部正在投放。`
+      ? `${pageScope}当前页 ${observed} 个关键词有同账户报告依据；${mismatched ? `${mismatched} 个仅观察到其他账户的同 ID 报告，未合并其指标；` : ''}总数是资产数量，不代表全部正在投放。`
       : '当前范围没有可读取的关键词资产。',
     contextRevision, periodLabel: `${payload.window.start} 至 ${payload.window.end}`,
     sourceLabel: '关键词资产与关键词报告', updatedLabel: newestStamp(items.flatMap(item =>
       [item.coverage?.updated_at, item.asset_updated_at])) || '未知', series: [],
-    columns: [{ key: 'keyword', label: '关键词' }, { key: 'status', label: '状态' },
+    columns: [{ key: 'keyword', label: '关键词' }, { key: 'status', label: '状态' }, { key: 'report', label: '报告关联' },
       { key: 'cost', label: '花费' }, { key: 'click', label: '点击' }, { key: 'ctr', label: '点击率' }],
     rows: items.map(item => ({
       keyword: item.keyword || `关键词 ${item.keyword_id}`,
       status: item.pause === true ? '关键词已暂停' : item.pause === false ? '关键词未暂停' : '待确认',
+      report: item.report_association?.status === 'matched' ? '同账户报告已关联'
+        : item.report_association?.status === 'account_mismatch' ? '仅其他账户有同 ID 报告' : '窗口内无报告',
       cost: formatMetric(item.metrics, 'cost', 'CNY', item.coverage),
       click: formatMetric(item.metrics, 'click', 'count', item.coverage),
       ctr: formatMetric(item.metrics, 'ctr', 'ratio', item.coverage),

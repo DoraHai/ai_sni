@@ -205,6 +205,16 @@
                 "2026-09-02"
               ]
             },
+            "report_association": {
+              "status": "matched",
+              "join_keys": [
+                "baidu_account_id",
+                "keyword_id"
+              ],
+              "matched_report_groups": 2,
+              "other_observed_account_ids": [],
+              "completeness": "unknown"
+            },
             "phone_button_clicks": {
               "value": null,
               "known_subtotal": 2,
@@ -245,6 +255,16 @@
                 "2026-09-03"
               ]
             },
+            "report_association": {
+              "status": "no_report",
+              "join_keys": [
+                "baidu_account_id",
+                "keyword_id"
+              ],
+              "matched_report_groups": 0,
+              "other_observed_account_ids": [],
+              "completeness": "unknown"
+            },
             "phone_button_clicks": {
               "value": null,
               "known_subtotal": null,
@@ -258,6 +278,15 @@
             }
           }
         ],
+        "association_summary": {
+          "scope": "current_page",
+          "counts": {
+            "matched": 1,
+            "account_mismatch": 0,
+            "no_report": 1
+          },
+          "completeness": "unknown"
+        },
         "scope_note": "关键词资产列表；只关联相同账户与关键词ID的报告，未归属记录不推断到其他账户"
       }
     },
