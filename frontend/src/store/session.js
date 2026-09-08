@@ -1,5 +1,14 @@
 import { computed, reactive } from 'vue'
 
+export const AUTH_CONTEXT_EVENT = 'sem:auth-context-changed'
+
+function notifyAuthContext(kind) {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return
+  const event = new Event(AUTH_CONTEXT_EVENT)
+  Object.defineProperty(event, 'detail', { value: { kind } })
+  window.dispatchEvent(event)
+}
+
 // 轻量会话 store(规模不大,不引 pinia)。token/user 持久化 localStorage,
 // 当前客户(tenantId)持久化 sessionStorage(每个标签页可以看不同客户)。
 // 权限：user.permissions = {菜单key: 'view'|'edit'}（自定义角色 RBAC）。
@@ -39,6 +48,7 @@ export const session = {
     other.removeItem('sem_user')
     // 绑定了单客户的账号锁定该客户
     if (user?.tenant_id) this.setTenant(user.tenant_id)
+    notifyAuthContext('identity')
   },
 
   // 登录态校验后用最新 user 刷新（角色权限可能被管理员改过，即时生效）
@@ -46,6 +56,7 @@ export const session = {
     state.user = user
     _activeStore().setItem('sem_user', JSON.stringify(user))
     if (user?.tenant_id) this.setTenant(user.tenant_id)
+    notifyAuthContext('permissions')
   },
 
   setTenants(list) {
@@ -72,6 +83,7 @@ export const session = {
       s.removeItem('sem_token')
       s.removeItem('sem_user')
     }
+    notifyAuthContext('logout')
   },
 }
 

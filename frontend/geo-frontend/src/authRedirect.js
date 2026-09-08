@@ -1,6 +1,7 @@
 import { currentAppPath } from '../../src/auth/loginRedirect.js'
 
 const SENSITIVE_QUERY_KEYS = new Set([
+  'key',
   'api_key',
   'api_origin',
   'token',

@@ -13,8 +13,8 @@ test('GEO login keeps the independent app route, hash and legitimate tenant', ()
 
 test('GEO login redirect strips credentials from shell and hash queries', () => {
   const actual = geoLoginRedirectPath(
-    '/deal-sniper/geo/dashboard.html?tenant_id=16&api_origin=https://evil.example&API_KEY=x' +
-    '#/geo/tasks/14?tenant_id=16&token=secret&access_token=secret2',
+    '/deal-sniper/geo/dashboard.html?tenant_id=16&api_origin=https://evil.example&API_KEY=x&KEY=admin-secret' +
+    '#/geo/tasks/14?tenant_id=16&token=secret&access_token=secret2&key=inner-admin-secret',
   )
   assert.equal(
     actual,

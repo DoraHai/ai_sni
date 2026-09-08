@@ -3,6 +3,7 @@ import { session } from '../../src/store/session'
 import { GEO_WORKBENCH_START } from '../../src/utils/geoPrototypeNavigation'
 import { loginUrl } from '../../src/auth/loginRedirect'
 import { geoLoginRedirectPath } from './authRedirect'
+import { geoSessionRouteDecision } from './authRouteDecision'
 
 const geoMeta = (title, extra = {}) => ({
   title,
@@ -89,13 +90,25 @@ const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
 })
 
-router.beforeEach((to) => {
+function sessionRouteDecision(to) {
   const devBypass = !session.isLoggedIn && import.meta.env.VITE_API_KEY && import.meta.env.DEV
-  if (!to.meta.public && !session.isLoggedIn && !devBypass) {
-    window.location.assign(loginUrl(geoLoginRedirectPath()))
-    return false
-  }
-})
+  return geoSessionRouteDecision({
+    route: to,
+    session,
+    devBypass,
+    redirectToLogin: () => window.location.assign(loginUrl(geoLoginRedirectPath())),
+    leaveWorkspace: () => {
+      window.location.assign('/deal-sniper/portal')
+      return false
+    },
+  })
+}
+
+router.beforeEach((to) => sessionRouteDecision(to))
+
+export function revalidateSessionRoute() {
+  return sessionRouteDecision(router.currentRoute.value)
+}
 
 router.afterEach((to) => {
   document.title = `${to.meta.title || '工作台'} · GEO 增长`
