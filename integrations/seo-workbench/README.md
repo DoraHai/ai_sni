@@ -16,8 +16,12 @@ key.
 
 `authorization-context.mjs` resolves that context from the host-injected
 transport. It requires an explicit tenant and site selected by the user, then
-checks `/api/v1/auth/me`, `/api/v1/auth/modules`, and
-`/api/v1/auth/tenants?module=seo`. SEM availability never qualifies SEO access.
+checks `/api/v1/auth/me`, `/api/v1/auth/modules`,
+`/api/v1/auth/tenants?module=seo`, and the read-only
+`/api/v1/seo/workbench/sites` scope. SEM availability never qualifies SEO access.
+The selected site must still exist in that tenant and have `status=active`;
+paused and archived sites remain visible to the selector but are rejected before
+any content or page read.
 It uses a one-row content list as the site ownership probe when `seo.content` is
 readable, otherwise a one-row page list when `seo.site` is readable. Both server
 routes validate tenant, active SEO module and `site_id` before returning data,

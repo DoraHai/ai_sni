@@ -16,11 +16,12 @@ python scripts/render_seo_workbench_example.py `
 
 ## 消费顺序
 
-1. 内容列表返回一条内容及其 `tenant_id`、`site_id`、审核字段。
-2. 使用同一租户、站点和内容 ID 读取各平台发布记录。
-3. 按 publication ID 读取发布尝试；尝试失败和发布记录状态分别保留。
-4. 只有消费方已经得到明确、可核对的 URL→页面关联时，才传 `page_binding` 和对应页面详情。
-5. 每次请求保存 `tenant_id/site_id/request_id`。响应回来时三者必须仍与当前页面一致，否则丢弃迟到响应。在线调用的 `expected_context` 必须来自独立保存的请求发起上下文，不能从响应正文反推。
+1. 使用 `/api/v1/seo/workbench/sites` 重新核对显式选择的站点。只允许 `active`；空列表、站点不存在、`paused` 或 `archived` 都必须在业务数据读取前停止。
+2. 内容列表返回一条内容及其 `tenant_id`、`site_id`、审核字段。
+3. 使用同一租户、站点和内容 ID 读取各平台发布记录。
+4. 按 publication ID 读取发布尝试；尝试失败和发布记录状态分别保留。
+5. 只有消费方已经得到明确、可核对的 URL→页面关联时，才传 `page_binding` 和对应页面详情。
+6. 每次请求保存 `tenant_id/site_id/request_id`。响应回来时三者必须仍与当前页面一致，否则丢弃迟到响应。在线调用的 `expected_context` 必须来自独立保存的请求发起上下文，不能从响应正文反推。
 
 离线脚本只处理可信的合成 fixture，因此为了逐场景演示，会从 `raw.content` 构造 expected/response 两侧的同一个 context。这只是合成渲染便利写法，不能照搬成在线身份或作用域校验。
 

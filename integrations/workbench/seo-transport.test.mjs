@@ -10,6 +10,9 @@ test('ordinary SEO identity composes through transport and verifies an empty sit
     { user: { id: 5, tenant_id: 16, permissions: { 'seo.content': 'view' } } },
     { tenant_id: 16, modules: [{ module_code: 'seo', status: 'active', available: true, expires_at: null }] },
     { module: 'seo', tenants: [{ id: 16 }] },
+    { tenant_id: 16,
+      selection_policy: { selectable_statuses: ['active'], disabled_statuses: ['paused', 'archived'] },
+      sites: [{ id: 3, name: 'Site 3', domain: 'site-3.example', status: 'active' }] },
     { items: [], total: 0, page: 1, page_size: 1, status_counts: {} },
   ]
   const boundary = createReadonlyTransport({ origin: 'https://example.invalid',
@@ -23,6 +26,7 @@ test('ordinary SEO identity composes through transport and verifies an empty sit
   assert.equal(context.identity.siteVerification.empty, true)
   assert.deepEqual(context.allowedReads, ['contents', 'reviewHistory', 'publications', 'attempts'])
   assert.deepEqual(paths, ['/api/v1/auth/me', '/api/v1/auth/modules', '/api/v1/auth/tenants?module=seo',
+    '/api/v1/seo/workbench/sites?tenant_id=16',
     '/api/v1/seo/content-assets?tenant_id=16&site_id=3&page=1&page_size=1'])
 })
 
