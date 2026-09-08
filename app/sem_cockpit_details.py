@@ -86,14 +86,22 @@ async def read_keywords(session, tenant_id, account_id, start, end, q, campaign_
     items = []
     for a in assets:
         key = (a.baidu_account_id, a.keyword_id)
-        matched_reports = by_key[key]
+        # NULL ownership is not a shared account identity. Two unassigned rows
+        # may originate from different Baidu accounts, so never join them.
+        ownership_unknown = a.baidu_account_id is None
+        matched_reports = [] if ownership_unknown else by_key[key]
         other_report_accounts = sorted(
             {r.baidu_account_id for r in by_keyword[a.keyword_id] if r.baidu_account_id != a.baidu_account_id},
             key=lambda value: (value is None, value or 0),
         )
-        association_status = (
-            "matched" if matched_reports else "account_mismatch" if other_report_accounts else "no_report"
-        )
+        if ownership_unknown:
+            association_status = "ownership_unknown"
+        elif matched_reports:
+            association_status = "matched"
+        elif other_report_accounts:
+            association_status = "account_mismatch"
+        else:
+            association_status = "no_report"
         items.append({"keyword_id": a.keyword_id, "baidu_account_id": a.baidu_account_id,
                       "keyword": a.keyword, "campaign_id": a.campaign_id, "adgroup_id": a.adgroup_id,
                       "price": float(a.price) if a.price is not None else None, "pause": a.pause,
@@ -106,8 +114,8 @@ async def read_keywords(session, tenant_id, account_id, start, end, q, campaign_
                           "other_observed_account_ids": other_report_accounts if association_status == "account_mismatch" else [],
                           "completeness": "unknown",
                       },
-                      "phone_button_clicks": phone_summary(phone_by_key[key])})
-    association_counts = {status: 0 for status in ("matched", "account_mismatch", "no_report")}
+                      "phone_button_clicks": phone_summary([] if ownership_unknown else phone_by_key[key])})
+    association_counts = {status: 0 for status in ("matched", "account_mismatch", "no_report", "ownership_unknown")}
     for item in items:
         association_counts[item["report_association"]["status"]] += 1
     return {**envelope(tenant_id, account_scope, "keywords+kw_report_snapshots"),

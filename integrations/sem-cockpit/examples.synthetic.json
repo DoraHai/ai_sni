@@ -283,7 +283,8 @@
           "counts": {
             "matched": 1,
             "account_mismatch": 0,
-            "no_report": 1
+            "no_report": 1,
+            "ownership_unknown": 0
           },
           "completeness": "unknown"
         },

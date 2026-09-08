@@ -45,12 +45,13 @@ export function semKeywordCard(payload, contextRevision) {
   const items = Array.isArray(payload?.items) ? payload.items : []
   const observed = items.filter(item => item.coverage?.status === 'observed').length
   const mismatched = items.filter(item => item.report_association?.status === 'account_mismatch').length
+  const ownershipUnknown = items.filter(item => item.report_association?.status === 'ownership_unknown').length
   const pageScope = items.length < payload.total ? `本页展示 ${items.length} 个；` : ''
   return {
     id: 'sem-keywords', moduleCode: 'sem', moduleLabel: 'SEM', label: '关键词资产',
-    display: String(payload.total), unit: '个', state: mismatched ? 'partial' : payload.total ? 'available' : 'no_data',
+    display: String(payload.total), unit: '个', state: mismatched || ownershipUnknown ? 'partial' : payload.total ? 'available' : 'no_data',
     reason: payload.total
-      ? `${pageScope}当前页 ${observed} 个关键词有同账户报告依据；${mismatched ? `${mismatched} 个仅观察到其他账户的同 ID 报告，未合并其指标；` : ''}总数是资产数量，不代表全部正在投放。`
+      ? `${pageScope}当前页 ${observed} 个关键词有同账户报告依据；${mismatched ? `${mismatched} 个仅观察到其他账户的同 ID 报告，未合并其指标；` : ''}${ownershipUnknown ? `${ownershipUnknown} 个关键词缺少账户归属，未关联任何报告；` : ''}总数是资产数量，不代表全部正在投放。`
       : '当前范围没有可读取的关键词资产。',
     contextRevision, periodLabel: `${payload.window.start} 至 ${payload.window.end}`,
     sourceLabel: '关键词资产与关键词报告', updatedLabel: newestStamp(items.flatMap(item =>
@@ -61,7 +62,8 @@ export function semKeywordCard(payload, contextRevision) {
       keyword: item.keyword || `关键词 ${item.keyword_id}`,
       status: item.pause === true ? '关键词已暂停' : item.pause === false ? '关键词未暂停' : '待确认',
       report: item.report_association?.status === 'matched' ? '同账户报告已关联'
-        : item.report_association?.status === 'account_mismatch' ? '仅其他账户有同 ID 报告' : '窗口内无报告',
+        : item.report_association?.status === 'account_mismatch' ? '仅其他账户有同 ID 报告'
+          : item.report_association?.status === 'ownership_unknown' ? '账户归属未知，未关联报告' : '窗口内无报告',
       cost: formatMetric(item.metrics, 'cost', 'CNY', item.coverage),
       click: formatMetric(item.metrics, 'click', 'count', item.coverage),
       ctr: formatMetric(item.metrics, 'ctr', 'ratio', item.coverage),
