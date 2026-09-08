@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() { printf 'platform-route-deploy: %s\n' "$*" >&2; exit 64; }
+
+archive="${1:-}"
+commit="${2:-}"
+archive_sha256="${3:-}"
+confirmation="${4:-}"
+upload_root="${PLATFORM_DEPLOY_UPLOAD_ROOT:-/home/platform-deploy/uploads}"
+target="${PLATFORM_NGINX_TARGET:-/etc/nginx/conf.d/gsnipers.conf}"
+backup_parent="${PLATFORM_NGINX_BACKUP_ROOT:-/var/backups/platform-deploy}"
+public_origin="${PLATFORM_PUBLIC_ORIGIN:-https://gsnipers.snipers.com.cn}"
+lock_file="${PLATFORM_NGINX_LOCK_FILE:-/run/lock/platform-route-deploy.lock}"
+expected_owner="${PLATFORM_DEPLOY_ARCHIVE_OWNER:-platform-deploy}"
+install_owner="${PLATFORM_NGINX_OWNER:-root}"
+install_group="${PLATFORM_NGINX_GROUP:-root}"
+temporary_root="${PLATFORM_DEPLOY_TMP_ROOT:-/tmp}"
+expected_index="${PLATFORM_SEM_INDEX:-/opt/sem-frontend/current/index.html}"
+authoritative_repo='https://github.com/DoraHai/ai_sni.git'
+authoritative_ref='refs/heads/codex/production-sem'
+reviewed_base_sha256='3fd57506ca30704d5201d15ac9ab2408bda951f1b8fd0c4118c47d7023506fc1'
+reviewed_candidate_sha256='d710448c24f61e14c0e69a5c2636987781b09042a3a72cd7a11605d316ad12f3'
+
+[[ "$confirmation" == 'DEPLOY_PLATFORM_ROUTES' ]] || fail 'confirmation must be DEPLOY_PLATFORM_ROUTES'
+[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail 'commit must be a full lowercase SHA'
+[[ "$archive_sha256" =~ ^[0-9a-f]{64}$ ]] || fail 'archive sha256 is invalid'
+published_archive="$upload_root/platform-routes-${commit}.tgz"
+case "$archive" in
+  "$published_archive".part-*) ;;
+  *) fail 'unexpected inert archive path' ;;
+esac
+archive_suffix="${archive#"$published_archive.part-"}"
+[[ "$archive_suffix" =~ ^[0-9]+-[0-9]+$ ]] || fail 'invalid inert archive run identity'
+
+stage=''
+smoke_body=''
+smoke_headers=''
+backup=''
+started=false
+committed=false
+already_current=false
+published=false
+
+cleanup() {
+  status=$?
+  trap - EXIT
+  if [[ "$started" == true && "$committed" != true ]]; then
+    if ! restore; then
+      printf 'platform-route-deploy: rollback failed\n' >&2
+      status=70
+    fi
+  fi
+  [[ -z "$stage" ]] || rm -rf -- "$stage"
+  [[ -z "$smoke_body" ]] || rm -f -- "$smoke_body"
+  [[ -z "$smoke_headers" ]] || rm -f -- "$smoke_headers"
+  rm -f -- "${target}.next" "${target}.rollback"
+  if [[ "$published" != true ]]; then
+    rm -f -- "$archive"
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+
+exec 9>"$lock_file"
+flock -n 9 || fail 'another platform route deployment is active'
+[[ -f "$archive" && ! -L "$archive" ]] || fail 'inert archive is missing or is a symlink'
+[[ "$(stat -c '%F:%h' "$archive")" == 'regular file:1' ]] || fail 'inert archive is not an unlinked regular file'
+[[ "$(stat -c '%U' "$archive")" == "$expected_owner" ]] || fail 'inert archive owner is invalid'
+inert_size="$(stat -c '%s' "$archive")"
+[[ "$inert_size" -le 1048576 ]] || fail 'inert archive exceeds 1 MiB'
+printf '%s  %s\n' "$archive_sha256" "$archive" | sha256sum -c - >/dev/null
+stage="$(mktemp -d "$temporary_root/platform-routes.XXXXXX")"
+smoke_body="$(mktemp "$temporary_root/platform-routes-smoke.XXXXXX")"
+smoke_headers="$(mktemp "$temporary_root/platform-routes-headers.XXXXXX")"
+
+restore() {
+  install -o "$install_owner" -g "$install_group" -m 644 "$backup/gsnipers.conf" "${target}.rollback" || return 1
+  mv -Tf "${target}.rollback" "$target" || return 1
+  [[ "$(sha256sum "$target" | cut -d' ' -f1)" == "$reviewed_base_sha256" ]] || return 1
+  nginx -t || return 1
+  systemctl reload nginx || return 1
+}
+
+validate_release_archive() {
+  local source="$1" destination="$2" listing
+  local -a archive_entries
+  mapfile -t archive_entries < <(tar -tzf "$source")
+  [[ "${#archive_entries[@]}" -eq 3 ]] || return 1
+  printf '%s\n' "${archive_entries[@]}" | grep -Fxq 'platform-routes-release/' || return 1
+  printf '%s\n' "${archive_entries[@]}" | grep -Fxq 'platform-routes-release/gsnipers.conf' || return 1
+  printf '%s\n' "${archive_entries[@]}" | grep -Fxq 'platform-routes-release/MANIFEST' || return 1
+  if printf '%s\n' "${archive_entries[@]}" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+    return 1
+  fi
+  while IFS= read -r listing; do
+    case "${listing:0:1}" in
+      -|d) ;;
+      *) return 1 ;;
+    esac
+  done < <(tar -tvzf "$source")
+  install -d -m 700 "$destination" || return 1
+  tar -xzf "$source" -C "$destination" --no-same-owner --no-same-permissions || return 1
+  local release="$destination/platform-routes-release"
+  local release_candidate="$release/gsnipers.conf"
+  local release_manifest="$release/MANIFEST"
+  [[ -f "$release_candidate" && ! -L "$release_candidate" && -f "$release_manifest" && ! -L "$release_manifest" ]] || return 1
+  grep -Fxq 'module=platform-routes' "$release_manifest" || return 1
+  grep -Fxq "commit=$commit" "$release_manifest" || return 1
+  grep -Fxq 'migration=not-run' "$release_manifest" || return 1
+  grep -Fxq 'frontend=not-included' "$release_manifest" || return 1
+  grep -Fxq 'backend=not-included' "$release_manifest" || return 1
+  [[ "$(sha256sum "$release_candidate" | cut -d' ' -f1)" == "$reviewed_candidate_sha256" ]] || return 1
+}
+
+inert_extract="$stage/inert"
+validate_release_archive "$archive" "$inert_extract" || fail 'inert release archive is invalid'
+payload="$inert_extract/platform-routes-release"
+candidate="$payload/gsnipers.conf"
+observed="$(sha256sum "$target" | cut -d' ' -f1)"
+case "$observed" in
+  "$reviewed_base_sha256") ;;
+  "$reviewed_candidate_sha256") already_current=true ;;
+  *) fail "refusing unknown active Nginx config: observed=$observed" ;;
+esac
+
+query_authoritative_head() {
+  local output line sha ref extra
+  local -a lines
+  output="$(git ls-remote --refs "$authoritative_repo" "$authoritative_ref")" || return 1
+  mapfile -t lines < <(printf '%s\n' "$output" | sed '/^$/d')
+  [[ "${#lines[@]}" -eq 1 ]] || return 1
+  line="${lines[0]}"
+  IFS=$'\t' read -r sha ref extra <<<"$line"
+  [[ "$sha" =~ ^[0-9a-f]{40}$ && "$ref" == "$authoritative_ref" && -z "${extra:-}" ]] || return 1
+  printf '%s\n' "$sha"
+}
+
+# This is the authoritative server-side publication boundary. The lock remains
+# held through publication and every active-config operation.
+live_head="$(query_authoritative_head)" || fail 'authoritative branch query failed or returned an invalid result'
+[[ "$live_head" == "$commit" ]] || fail "stale release at server boundary: expected=$commit observed=$live_head"
+if [[ -e "$published_archive" || -L "$published_archive" ]]; then
+  [[ -f "$published_archive" && ! -L "$published_archive" ]] || fail 'existing published archive is not a regular file'
+  [[ "$(stat -c '%F:%h' "$published_archive")" == 'regular file:1' ]] || fail 'existing published archive type or link count is invalid'
+  [[ "$(stat -c '%U' "$published_archive")" == "$expected_owner" ]] || fail 'existing published archive owner is invalid'
+  [[ "$(stat -c '%s' "$published_archive")" == "$inert_size" ]] || fail 'existing published archive size mismatch'
+  printf '%s  %s\n' "$archive_sha256" "$published_archive" | sha256sum -c - >/dev/null || fail 'existing published archive digest mismatch'
+  published_extract="$stage/published"
+  validate_release_archive "$published_archive" "$published_extract" || fail 'existing published release archive is invalid'
+  cmp -s "$payload/gsnipers.conf" "$published_extract/platform-routes-release/gsnipers.conf" || fail 'published candidate differs from inert candidate'
+  cmp -s "$payload/MANIFEST" "$published_extract/platform-routes-release/MANIFEST" || fail 'published manifest differs from inert manifest'
+fi
+
+# Existing-archive validation can take time. Re-authorize at the final boundary
+# so a branch change during validation still prevents publication or mutation.
+live_head="$(query_authoritative_head)" || fail 'final authoritative branch query failed or returned an invalid result'
+[[ "$live_head" == "$commit" ]] || fail "stale release at final server boundary: expected=$commit observed=$live_head"
+if [[ -e "$published_archive" || -L "$published_archive" ]]; then
+  rm -f -- "$archive" || fail 'could not remove redundant inert archive'
+else
+  mv -Tf "$archive" "$published_archive"
+fi
+archive="$published_archive"
+published=true
+
+if [[ "$already_current" != true ]]; then
+  install -d -o "$install_owner" -g "$install_group" -m 755 "$backup_parent"
+  backup="$(mktemp -d "$backup_parent/platform-routes-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX")"
+  cp -a "$target" "$backup/gsnipers.conf"
+  started=true
+  install -o "$install_owner" -g "$install_group" -m 644 "$candidate" "${target}.next"
+  mv -Tf "${target}.next" "$target"
+  nginx -t
+  systemctl reload nginx
+fi
+
+[[ -s "$expected_index" ]] || fail 'SEM index is missing'
+smoke_sem_route() {
+  local path="$1" attempt
+  for attempt in {1..10}; do
+    if curl -fsS -H 'Cache-Control: no-cache' "$public_origin$path" -o "$smoke_body" \
+      && cmp -s "$expected_index" "$smoke_body"; then
+      return 0
+    fi
+    [[ "$attempt" -eq 10 ]] || sleep 1
+  done
+  return 1
+}
+
+for path in /platform /platform/customers /platform/accounts /platform/roles \
+  /settings/customers /settings/accounts /settings/users \
+  /workspace/cockpit /monitor/dashboard /optimize/keywords; do
+  # A successful nginx reload returns before every old worker has necessarily
+  # stopped accepting requests. Wait for both HTTP success and the exact SEM
+  # shell so an old worker cannot falsely roll back a valid route.
+  smoke_sem_route "$path" || fail "public smoke failed or returned the wrong shell: $path"
+done
+admin_status="$(curl -sS --retry 5 --retry-delay 1 -D "$smoke_headers" -o /dev/null -w '%{http_code}' \
+  "$public_origin/admin/internal")" || fail 'legacy admin redirect smoke failed'
+[[ "$admin_status" == 308 ]] || fail "legacy admin redirect returned $admin_status"
+tr -d '\r' < "$smoke_headers" | grep -Fiqx 'Location: /settings/accounts' || fail 'legacy admin redirect target changed'
+curl -fsS --retry 5 "$public_origin/health" >/dev/null || fail 'health smoke failed'
+
+committed=true
+if [[ "$already_current" == true ]]; then
+  printf 'module=platform-routes\ncommit=%s\nstatus=already-current\nactive_sha256=%s\nmigration=not-run\nfrontend=not-included\nbackend=not-included\n' \
+    "$commit" "$reviewed_candidate_sha256"
+else
+  printf 'module=platform-routes\ncommit=%s\nbackup=%s\nactive_sha256=%s\nmigration=not-run\nfrontend=not-included\nbackend=not-included\n' \
+    "$commit" "$backup" "$reviewed_candidate_sha256"
+fi

@@ -12,6 +12,14 @@ const PlaceholderView = () => import('../views/PlaceholderView.vue')
 const DealSniperShell = () => import('../views/deal/DealSniperShell.vue')
 const GrowthSniperLanding = () => import('../views/landing/GrowthSniperLanding.vue')
 const DiagnosisLanding = () => import('../views/landing/DiagnosisLanding.vue')
+const PlatformAdminShell = () => import('../views/platform/PlatformAdminShell.vue')
+
+function firstPlatformPath() {
+  if (session.user?.tenant_id) return '/workspace'
+  if (session.canEdit('settings.customers')) return '/platform/customers'
+  if (session.canEdit('settings.accounts')) return '/platform/accounts'
+  return '/workspace'
+}
 
 const routes = [
   ...SEM_PLANNED_CHANNELS.map((channel) => ({
@@ -282,17 +290,32 @@ const routes = [
     meta: { title: '分析报告', workflow: '客户交付', perm: 'delivery.report' },
   },
   {
-    path: '/settings/accounts',
-    component: () => import('../views/settings/AccountsRolesView.vue'),
-    meta: { title: '账号与权限', workflow: '系统设置', perm: 'settings.accounts' },
+    path: '/platform',
+    component: PlatformAdminShell,
+    redirect: firstPlatformPath,
+    meta: { title: '平台管理', bare: true, perm: ['settings.customers', 'settings.accounts'] },
+    children: [
+      {
+        path: 'customers',
+        component: () => import('../views/settings/CustomerModulesView.vue'),
+        meta: { title: '客户与业务', perm: 'settings.customers' },
+      },
+      {
+        path: 'accounts',
+        component: () => import('../views/settings/AccountsRolesView.vue'),
+        meta: { title: '账号', perm: 'settings.accounts' },
+      },
+      {
+        path: 'roles',
+        component: () => import('../views/settings/AccountsRolesView.vue'),
+        meta: { title: '角色与权限', perm: 'settings.accounts' },
+      },
+    ],
   },
-  { path: '/settings/users', redirect: '/settings/accounts' },
-  {
-    path: '/settings/customers',
-    component: () => import('../views/settings/CustomerModulesView.vue'),
-    meta: { title: '客户与模块', workflow: '系统设置', perm: 'settings.customers' },
-  },
-  { path: '/settings', redirect: '/settings/accounts' },
+  { path: '/settings/customers', redirect: '/platform/customers' },
+  { path: '/settings/accounts', redirect: '/platform/accounts' },
+  { path: '/settings/users', redirect: '/platform/accounts' },
+  { path: '/settings', redirect: firstPlatformPath },
   {
     path: '/workspace/cockpit',
     component: () => import('../views/workspace/AcquisitionCockpitView.vue'),
@@ -309,7 +332,7 @@ const routes = [
     meta: { title: '我的工作台' },
   },
   { path: '/sem/plans', redirect: '/manage/campaigns' },
-  { path: '/admin/internal', redirect: '/settings/accounts' },
+  { path: '/admin/internal', redirect: '/platform/accounts' },
   {
     path: '/:pathMatch(.*)*',
     component: () => import('../views/NotFoundView.vue'),
@@ -353,8 +376,8 @@ const MENU_ORDER = [
   ['manage.ocpc', '/manage/ocpc'],
   ['delivery.report', '/delivery/report'],
   ['onboarding', '/onboarding'],
-  ['settings.accounts', '/settings/accounts'],
-  ['settings.customers', '/settings/customers'],
+  ['settings.customers', '/platform/customers'],
+  ['settings.accounts', '/platform/accounts'],
 ]
 
 function firstAllowedPath() {
@@ -373,6 +396,10 @@ function sessionRouteDecision(to, warn = true) {
     return false
   }
   if (devBypass || !session.isLoggedIn) return
+  if (to.path.startsWith('/platform') && session.user?.tenant_id) {
+    if (warn) ElMessage.warning('单客户账号不能进入全局平台管理')
+    return { path: '/workspace' }
+  }
   if (!to.meta.public && !permOk(to.meta.perm)) {
     const dest = firstAllowedPath()
     const permission = Array.isArray(to.meta.perm) ? to.meta.perm.join(' / ') : to.meta.perm
