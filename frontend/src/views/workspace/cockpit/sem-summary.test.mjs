@@ -36,9 +36,10 @@ test('keyword summary exposes account mismatch as a current-page boundary', () =
   payload.page_size = 1
   payload.items = [payload.items[1]]
   payload.items[0].report_association.status = 'account_mismatch'
+  payload.items[0].report_association.evidence_status = 'account_mismatch'
   payload.items[0].report_association.other_observed_account_ids = [12]
-  payload.association_summary.counts = { matched: 0, account_mismatch: 1, no_report: 0,
-    ownership_unknown: 0, report_ownership_unknown: 0 }
+  payload.items[0].report_association.observed_known_account_ids = [12]
+  payload.association_summary.counts = { matched: 0, account_mismatch: 1, no_report: 0 }
   const card = semKeywordCard(payload, 9)
   assert.equal(card.state, 'partial')
   assert.match(card.reason, /本页展示 1 个/)
@@ -51,10 +52,8 @@ test('keyword summary keeps report-side unknown ownership distinct from mismatch
   const payload = example('keywords')
   payload.page_size = 1
   payload.items = [payload.items[1]]
-  payload.items[0].report_association.status = 'report_ownership_unknown'
+  payload.items[0].report_association.evidence_status = 'report_ownership_unknown'
   payload.items[0].report_association.has_unassigned_reports = true
-  payload.association_summary.counts = { matched: 0, account_mismatch: 0, no_report: 0,
-    ownership_unknown: 0, report_ownership_unknown: 1 }
   const card = semKeywordCard(payload, 9)
   assert.equal(card.state, 'partial')
   assert.match(card.reason, /1 个只观察到归属未知的同 ID 报告/)
@@ -67,10 +66,10 @@ test('keyword summary retains known mismatch and unknown report evidence togethe
   payload.page_size = 1
   payload.items = [payload.items[1]]
   payload.items[0].report_association.status = 'account_mismatch'
+  payload.items[0].report_association.evidence_status = 'account_mismatch'
   payload.items[0].report_association.other_observed_account_ids = [12]
+  payload.items[0].report_association.observed_known_account_ids = [12]
   payload.items[0].report_association.has_unassigned_reports = true
-  payload.association_summary.counts = { matched: 0, account_mismatch: 1, no_report: 0,
-    ownership_unknown: 0, report_ownership_unknown: 0 }
   const card = semKeywordCard(payload, 9)
   assert.match(card.reason, /1 个仅观察到已知的其他账户同 ID 报告/)
   assert.match(card.reason, /1 个还存在归属未知报告/)
@@ -82,16 +81,39 @@ test('keyword summary exposes unknown ownership without attaching report evidenc
   payload.page_size = 1
   payload.items = [payload.items[1]]
   payload.items[0].baidu_account_id = null
-  payload.items[0].report_association.status = 'ownership_unknown'
+  payload.items[0].report_association.evidence_status = 'ownership_unknown'
   payload.items[0].report_association.other_observed_account_ids = []
-  payload.association_summary.counts = { matched: 0, account_mismatch: 0, no_report: 0,
-    ownership_unknown: 1, report_ownership_unknown: 0 }
   const card = semKeywordCard(payload, 9)
   assert.equal(card.state, 'partial')
   assert.match(card.reason, /本页展示 1 个/)
   assert.match(card.reason, /1 个关键词资产缺少账户归属/)
   assert.equal(card.rows[0].report, '资产账户归属未知，未关联报告')
   assert.equal(card.rows[0].cost, '暂无数据')
+})
+
+test('current five-state and legacy three-state payloads degrade without hiding the keyword card', () => {
+  const current = example('keywords')
+  current.items = [current.items[1]]
+  current.total = 1
+  delete current.items[0].report_association.evidence_status
+  delete current.items[0].report_association.observed_known_account_ids
+  current.items[0].report_association.status = 'report_ownership_unknown'
+  current.items[0].report_association.has_unassigned_reports = true
+  assert.equal(semKeywordCard(current, 10).rows[0].report, '仅有归属未知报告，未关联')
+
+  const legacy = example('keywords')
+  legacy.items = [legacy.items[0]]
+  legacy.total = 1
+  legacy.items[0].baidu_account_id = null
+  legacy.items[0].metrics = { cost: 99, click: 9, impression: 90, ctr: 0.1, cpc: 11 }
+  legacy.items[0].coverage.status = 'observed'
+  legacy.items[0].report_association.status = 'matched'
+  delete legacy.items[0].report_association.evidence_status
+  delete legacy.items[0].report_association.observed_known_account_ids
+  delete legacy.items[0].report_association.has_unassigned_reports
+  const legacyCard = semKeywordCard(legacy, 11)
+  assert.equal(legacyCard.rows[0].report, '资产账户归属未知，未关联报告')
+  assert.equal(legacyCard.rows[0].cost, '暂无数据')
 })
 
 test('old account-scope contract degrades instead of claiming active-only', () => {
