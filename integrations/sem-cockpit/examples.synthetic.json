@@ -213,6 +213,7 @@
               ],
               "matched_report_groups": 2,
               "other_observed_account_ids": [],
+              "has_unassigned_reports": false,
               "completeness": "unknown"
             },
             "phone_button_clicks": {
@@ -263,6 +264,7 @@
               ],
               "matched_report_groups": 0,
               "other_observed_account_ids": [],
+              "has_unassigned_reports": false,
               "completeness": "unknown"
             },
             "phone_button_clicks": {
@@ -283,11 +285,13 @@
           "counts": {
             "matched": 1,
             "account_mismatch": 0,
-            "no_report": 1
+            "no_report": 1,
+            "ownership_unknown": 0,
+            "report_ownership_unknown": 0
           },
           "completeness": "unknown"
         },
-        "scope_note": "关键词资产列表；只关联相同账户与关键词ID的报告，未归属记录不推断到其他账户"
+        "scope_note": "关键词资产列表；只关联相同非空账户与关键词ID的报告，未归属记录不推断到其他账户"
       }
     },
     {
