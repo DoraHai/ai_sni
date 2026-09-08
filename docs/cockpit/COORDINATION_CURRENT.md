@@ -1,8 +1,10 @@
-# Current coordination — 2026-09-08 17:32 Asia/Shanghai
+# Current coordination — 2026-09-08 17:39 Asia/Shanghai
 
 This is the authoritative continuation checkpoint. Historical pause documents are superseded by the current user instruction to continue development and coordinate the existing SEM, SEO and GEO tasks.
 
 ## Latest production checkpoint — supersedes older state below
+
+- 2026-09-08 17:39 workbench experience release: production sync PR482 exact `d9a2bebb4aa74894829174471f579f1ca3db46c9` passed independent cross-review P1=0/P2=0, 135 cross-module auth/read-only contracts, 31 counted workbench tests plus three script contracts, production build and artifact verification. It merged to `codex/production-sem` as `2d60c674baffc505db11288724196715ea446e71`; workflow `34210651277` completed pytest, build and controlled frontend deployment successfully. Active release is `/opt/sem-frontend/releases/20260908T093447Z-2d60c674baff`, previous is `/opt/sem-frontend/releases/20260908T052646Z-dac8569b5b35`. Public `/workspace/cockpit` and the exact lazy chunk return 200 and contain the reviewed real-time status, action ledger, data-boundary, AI-agent and chat/split/data controls. No backend, migration, customer-data or business write was included.
 
 - 2026-09-08 17:32 release checkpoint: SEO PR481 merged to main as `32b3534500ab061e3ea58804ab69491feb40c4e2`; GEO PR477 then passed the refreshed-base review and merged to main as `7591f1f17db4cfb89eba5c089218bdd8c7c57868`. Neither main merge deployed its module. The workbench experience PR480 was finally rebased to that combined main, passed all focused suites/build/CI at exact `a71f957f76f8b220e3eb9d43730850d192ac7243`, and squash-merged to main as `6f5b5415b4fe8b6521594ff885822fbb11c2214a`.
 - SEM production backend PR479 merged as `5e4cb063e5d0ac9fa57a6b378a1984bb3dda6aaf` and controlled workflow `34208579015` completed successfully. Active release is `/opt/sem-backend/releases/sem-5e4cb063e5d0-20260908T091150Z`, previous is `/opt/sem-backend/releases/sem-0386b3c34adf-20260908T043732Z`; public health returns the exact active commit with `db=ok`, the four anonymous cockpit endpoints return 401, and `migration=not-run`. No sync,投放,回写, AI/cache generation or customer write ran.
