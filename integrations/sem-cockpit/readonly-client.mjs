@@ -159,6 +159,23 @@ function validatePhone(phone) {
   if (phone.status === 'partial') contract(phone.known_rows > 0 && phone.unknown_rows > 0 && phone.value === null && phone.known_subtotal !== null)
   if (phone.status === 'unavailable') contract(phone.stored_rows > 0 && phone.known_rows === 0 && phone.value === null && phone.known_subtotal === null)
 }
+function validateReportAssociation(association, item, accountId) {
+  contract(object(association) && ['matched', 'account_mismatch', 'no_report'].includes(association.status))
+  contract(Array.isArray(association.join_keys) && association.join_keys.length === 2 &&
+    association.join_keys[0] === 'baidu_account_id' && association.join_keys[1] === 'keyword_id')
+  contract(nonnegativeInteger(association.matched_report_groups) && association.completeness === 'unknown')
+  contract(Array.isArray(association.other_observed_account_ids) &&
+    new Set(association.other_observed_account_ids).size === association.other_observed_account_ids.length)
+  contract(association.other_observed_account_ids.every(id => (id === null || positive(id)) && id !== item.baidu_account_id))
+  if (association.status === 'matched') {
+    contract(association.matched_report_groups > 0 && association.matched_report_groups === item.coverage.observed_days)
+    contract(association.other_observed_account_ids.length === 0 && item.coverage.status === 'observed')
+  } else {
+    contract(association.matched_report_groups === 0 && item.coverage.status === 'no_data' && allNull(item.metrics))
+    contract((association.status === 'account_mismatch') === (association.other_observed_account_ids.length > 0))
+  }
+  if (accountId !== undefined) contract(association.status !== 'account_mismatch')
+}
 function validateReport(data, params, detail = false) {
   validateWindow(data.window, params.start_date, params.end_date)
   validateMetrics(data.metrics)
@@ -200,6 +217,7 @@ function validateKeywords(data, params) {
   contract(object(data.filters) && data.filters.q === (params.q ?? null) && data.filters.campaign_id === (params.campaign_id ?? null))
   contract(data.page === (params.page ?? 1) && data.page_size === (params.page_size ?? 20) && nonnegativeInteger(data.total) && Array.isArray(data.items))
   validatePage(data.items, data.total, data.page, data.page_size)
+  const associationCounts = { matched: 0, account_mismatch: 0, no_report: 0 }
   for (const item of data.items) {
     contract(object(item) && positive(item.keyword_id) && (item.baidu_account_id === null || positive(item.baidu_account_id)))
     if (params.baidu_account_id !== undefined) contract(item.baidu_account_id === params.baidu_account_id)
@@ -207,6 +225,14 @@ function validateKeywords(data, params) {
     contract(item.campaign_id === null || positive(item.campaign_id)); contract(item.adgroup_id === null || positive(item.adgroup_id))
     contract(nullableNumber(item.price) && (item.pause === null || typeof item.pause === 'boolean') && validStamp(item.asset_updated_at))
     validateMetrics(item.metrics); validateCoverage(item.coverage, data.window, item.metrics); validatePhone(item.phone_button_clicks)
+    validateReportAssociation(item.report_association, item, params.baidu_account_id)
+    associationCounts[item.report_association.status]++
+  }
+  contract(object(data.association_summary) && data.association_summary.scope === 'current_page' &&
+    data.association_summary.completeness === 'unknown' && object(data.association_summary.counts))
+  contract(Object.keys(data.association_summary.counts).length === 3)
+  for (const status of ['matched', 'account_mismatch', 'no_report']) {
+    contract(data.association_summary.counts[status] === associationCounts[status])
   }
 }
 function validateDimensionAccounts(payload, expectedIds, accountId) {
