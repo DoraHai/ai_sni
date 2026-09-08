@@ -68,6 +68,9 @@ async def execute_variants_for_task(
 
     Returns polish stats; raises ValueError on hard failure (no article / all rejected).
     """
+    from app.geo.tenant_scope import ensure_geo_entitlement
+
+    await ensure_geo_entitlement(session, tenant_id)
     task = await session.get(GeoContentTask, task_id)
     if task is None or task.tenant_id != tenant_id:
         raise ValueError("内容任务不存在")
@@ -149,6 +152,8 @@ async def execute_variants_for_task(
         prompts = await resolve_for_channel(session, tenant_id, channel)
         prepared.append((channel, prompts))
 
+    await ensure_geo_entitlement(session, tenant_id)
+
     async def _polish_one(channel: str, prompts: dict[str, Any] | None):
         try:
             triple = await adapt_or_polish_for_channel(
@@ -170,6 +175,8 @@ async def execute_variants_for_task(
         *[_polish_one(ch, pr) for ch, pr in prepared],
         return_exceptions=False,
     )
+    # Do not persist responses produced while the subscription was revoked.
+    await ensure_geo_entitlement(session, tenant_id)
 
     async def _fresh_brand_checks():
         from app.geo.content.brand_geo import markdown_brand_validation
@@ -450,6 +457,7 @@ async def execute_variants_for_task(
     except Exception:  # noqa: BLE001
         pass
 
+    await ensure_geo_entitlement(session, tenant_id)
     await session.commit()
     await session.refresh(task)
     return {

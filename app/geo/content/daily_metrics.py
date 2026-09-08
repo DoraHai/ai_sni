@@ -397,11 +397,17 @@ async def rebuild_day(
     day: date,
     *,
     include_empty_slices: bool = False,
+    enforce_entitlement: bool = False,
 ) -> dict[str, Any]:
     """重算单日：租户 + 有快照的业务/单元切片。
 
     include_empty_slices=True 时，还会为零快照的活跃业务/单元写入 0 行。
     """
+    if enforce_entitlement:
+        from app.geo.tenant_scope import ensure_geo_entitlement
+
+        await ensure_geo_entitlement(session, tenant_id)
+
     snaps = await load_day_snapshots(session, tenant_id, day)
     prompt_ids = {s.prompt_id for s in snaps if s.prompt_id}
     probe_map, unit_of_prompt, business_of_unit = await load_prompt_unit_maps(
@@ -446,6 +452,10 @@ async def rebuild_day(
         )
         scopes_written.append(sk)
 
+    if enforce_entitlement:
+        # Do not publish a newly calculated business metric after access was
+        # revoked while the calculation was running.
+        await ensure_geo_entitlement(session, tenant_id)
     await session.commit()
 
     by_level = defaultdict(int)
@@ -548,6 +558,7 @@ async def safe_rebuild_day(
     """独立 session 重算，失败只记日志（供巡检/落库后钩子）。"""
     from app.database import async_session_factory
     from app.geo.content.time_windows import shanghai_today
+    from app.geo.tenant_scope import GeoEntitlementUnavailable
 
     target = day or shanghai_today()
     try:
@@ -557,6 +568,7 @@ async def safe_rebuild_day(
                 tenant_id,
                 target,
                 include_empty_slices=include_empty_slices,
+                enforce_entitlement=True,
             )
             logger.info(
                 "daily metrics rebuilt tenant=%s day=%s snaps=%s scopes=%s",
@@ -566,6 +578,13 @@ async def safe_rebuild_day(
                 len(result.get("scopes_written") or []),
             )
             return result
+    except GeoEntitlementUnavailable:
+        logger.info(
+            "daily metrics rebuild skipped: GEO unavailable tenant=%s day=%s",
+            tenant_id,
+            target,
+        )
+        return {"skipped": "geo_entitlement", "metric_date": target.isoformat()}
     except Exception:  # noqa: BLE001
         logger.exception(
             "daily metrics rebuild failed tenant=%s day=%s", tenant_id, target
@@ -600,7 +619,13 @@ async def nightly_rebuild_recent_tenants(*, lookback_days: int = 2) -> dict[str,
 
     today = date.today()
     days = [today - timedelta(days=i) for i in range(lookback_days)]
-    summary: dict[str, Any] = {"tenants": 0, "rebuilt": 0, "errors": 0, "days": [d.isoformat() for d in days]}
+    summary: dict[str, Any] = {
+        "tenants": 0,
+        "rebuilt": 0,
+        "skipped_entitlement": 0,
+        "errors": 0,
+        "days": [d.isoformat() for d in days],
+    }
     async with async_session_factory() as session:
         tenant_ids = await list_tenant_ids_with_recent_snapshots(
             session, days=max(lookback_days, 2)
@@ -611,6 +636,8 @@ async def nightly_rebuild_recent_tenants(*, lookback_days: int = 2) -> dict[str,
             r = await safe_rebuild_day(tid, d)
             if r is None:
                 summary["errors"] += 1
+            elif r.get("skipped") == "geo_entitlement":
+                summary["skipped_entitlement"] += 1
             else:
                 summary["rebuilt"] += 1
     logger.info("nightly daily-metrics rebuild done %s", summary)

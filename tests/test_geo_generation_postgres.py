@@ -37,6 +37,7 @@ async def _prepare_database():
     admin = create_async_engine(url)
     tables = [
         "tenants",
+        "tenant_modules",
         "geo_prompts",
         "geo_facts",
         "geo_content_tasks",
@@ -66,6 +67,12 @@ async def _prepare_database():
         )
         await connection.execute(
             text(f'INSERT INTO "{schema}".tenants(id,name) VALUES (7,\'示例客户\')')
+        )
+        await connection.execute(
+            text(
+                f'INSERT INTO "{schema}".tenant_modules'
+                "(tenant_id,module_code,status) VALUES (7,'geo','active')"
+            )
         )
         await connection.execute(
             text(

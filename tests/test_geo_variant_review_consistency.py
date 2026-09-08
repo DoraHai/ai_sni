@@ -87,7 +87,7 @@ def test_review_uses_state_refreshed_under_task_lock():
 def test_regeneration_invalidates_review_only_when_draft_is_saved(published):
     task, variant = task_fixture(), variant_fixture('published' if published else 'draft')
     article = NS(id=15, title='title', body_markdown='brand 正文。\n\n## 结论\n选择 brand。', outline={}, author_name=None)
-    session = NS(get=AsyncMock(side_effect=[task, NS(name='brand')]), refresh=AsyncMock(),
+    session = NS(get=AsyncMock(side_effect=[task, NS(name='brand')]), scalar=AsyncMock(return_value=NS(id=1)), refresh=AsyncMock(),
                  scalars=AsyncMock(return_value=[]), execute=AsyncMock(return_value=NS(
                      scalars=lambda: [])), flush=AsyncMock(), commit=AsyncMock())
 
@@ -128,6 +128,7 @@ def test_variant_generation_recomputes_brand_when_rule_result_is_missing():
     article = NS(id=15, title='title', body_markdown='正文没有配置品牌。', outline={}, author_name=None)
     session = NS(
         get=AsyncMock(side_effect=[task, NS(name='工业齿轮箱')]),
+        scalar=AsyncMock(return_value=NS(id=1)),
         refresh=AsyncMock(), scalars=AsyncMock(return_value=[]),
         execute=AsyncMock(return_value=NS(scalars=lambda: [])),
         flush=AsyncMock(), commit=AsyncMock(),

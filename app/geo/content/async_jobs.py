@@ -464,6 +464,7 @@ async def run_job_synchronously(job_id: int) -> dict[str, Any]:
 
 async def _run_owned_job(job_id: int, *, connection=None) -> dict[str, Any]:
     from app.database import async_session_factory
+    from app.geo.tenant_scope import ensure_geo_entitlement
 
     try:
         async with async_session_factory(bind=connection) as session:
@@ -482,6 +483,9 @@ async def _run_owned_job(job_id: int, *, connection=None) -> dict[str, Any]:
                     "result_meta": {},
                 }
             row = await session.get(GeoAsyncJob, job_id)
+            tenant_id = int(row.tenant_id)
+            job_kind = row.kind
+            ref_id = row.ref_id
             meta = dict(row.request_meta or {})
             meta["execution_protocol"] = JOB_EXECUTION_PROTOCOL
             row.request_meta = meta
@@ -494,21 +498,25 @@ async def _run_owned_job(job_id: int, *, connection=None) -> dict[str, Any]:
                     "error_type": "JobCancelled",
                 }
             try:
-                if row.kind == KIND_GENERATE:
+                await ensure_geo_entitlement(session, tenant_id)
+                if job_kind == KIND_GENERATE:
                     result = await _execute_generate(session, row)
-                elif row.kind == KIND_PUSH_BATCH:
+                elif job_kind == KIND_PUSH_BATCH:
                     result = await _execute_push_batch(session, row)
-                elif row.kind == KIND_VARIANTS:
+                elif job_kind == KIND_VARIANTS:
                     result = await _execute_variants(session, row)
                 else:
-                    raise ValueError(f"未知作业类型: {row.kind}")
+                    raise ValueError(f"未知作业类型: {job_kind}")
                 await mark_job(session, job_id, status="succeeded", result_meta=result)
                 return {"status": "succeeded", "error": None, "result_meta": result}
             except Exception as exc:  # noqa: BLE001
+                rollback = getattr(session, "rollback", None)
+                if rollback is not None:
+                    await rollback()
                 live = await session.get(GeoAsyncJob, job_id) or row
                 cancelled = str(exc) == "已取消" or cancel_requested(live)
-                if row.ref_id and row.kind in {KIND_GENERATE, KIND_VARIANTS}:
-                    task = await session.get(GeoContentTask, row.ref_id)
+                if ref_id and job_kind in {KIND_GENERATE, KIND_VARIANTS}:
+                    task = await session.get(GeoContentTask, ref_id)
                     if task is not None and task.status in {
                         "generating",
                         "adapting",
@@ -551,6 +559,7 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
     from app.geo.content.generate_article import generate_master_article, outline_from_payload, to_markdown
     from app.geo.content.review import invalidate_review
     from app.models import GeoArticleVersion, GeoFact, GeoPrompt, GeoTaskFact, Tenant
+    from app.geo.tenant_scope import ensure_geo_entitlement
 
     task = await session.get(GeoContentTask, job.ref_id)
     if task is None or task.tenant_id != job.tenant_id:
@@ -559,6 +568,7 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
     prompt = await session.get(GeoPrompt, task.prompt_id)
     if tenant is None or prompt is None:
         raise ValueError("租户或意图词缺失")
+    await ensure_geo_entitlement(session, job.tenant_id)
 
     facts = list(
         (
@@ -621,6 +631,9 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
         llm=llm,
         brief=brief_norm,
     )
+    # The subscription can change while the remote model is running. Discard
+    # the response before any article write when access is no longer valid.
+    await ensure_geo_entitlement(session, job.tenant_id)
     job = await session.get(GeoAsyncJob, job.id) or job
     if cancel_requested(job):
         task.status = "editing"
@@ -696,6 +709,7 @@ async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[s
     from app.geo.content.connectors.social import SocialError
     from app.geo.content.connectors.webhook import WebhookConnectorError
     from app.geo.content.multi_push import execute_single_push, list_push_targets
+    from app.geo.tenant_scope import ensure_geo_entitlement
     from app.models import (
         GeoArticleVersion,
         GeoChannelAccount,
@@ -755,6 +769,9 @@ async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[s
     results: list[dict[str, Any]] = []
     ok_n = fail_n = 0
     for t in ready:
+        # A batch may span several remote calls. Stop before the next channel if
+        # GEO access expired while an earlier channel was being processed.
+        await ensure_geo_entitlement(session, job.tenant_id)
         channel_key = str(t.get("adapt_key") or t.get("channel_type") or "").lower()
         variant = var_map.get(channel_key)
         account = await session.get(GeoChannelAccount, int(t["account_id"]))

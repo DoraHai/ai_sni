@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 from app.geo.outcome_review import assess_outcome, update_outcome_review
 from app.geo.integration import completion_evidence
+from app.geo.tenant_scope import GeoEntitlementUnavailable
 from test_geo_integration import task, state, metric_map, MENTIONS
 
 
@@ -34,7 +35,8 @@ def test_unknown_or_incomparable_data_cannot_be_called_no_improvement(change):
 def test_missing_data_stores_waiting_and_does_not_create_work():
     row=task();row.progress_first['params']['content_task_id']=12
     s=NS(scalar=AsyncMock(side_effect=[row,None]),commit=AsyncMock(),add=lambda _:pytest.fail('must not create'))
-    with patch('app.geo.outcome_review.assess_outcome',AsyncMock(side_effect=HTTPException(409,'not enough data'))):
+    with patch('app.geo.tenant_scope.ensure_geo_entitlement',AsyncMock()), \
+         patch('app.geo.outcome_review.assess_outcome',AsyncMock(side_effect=HTTPException(409,'not enough data'))):
         asyncio.run(update_outcome_review(s,10))
     assert row.progress['outcome_review']['state']=='waiting' and row.status=='doing'
 
@@ -54,7 +56,8 @@ def test_repeated_review_reuses_ticket_and_same_week_does_not_reopen_finished_re
     assessment={'state':'needs_review','evidence':evidence}
     follow=NS(progress={'outcome_review':assessment},status='done')
     s=NS(scalar=AsyncMock(side_effect=[row,follow]),commit=AsyncMock(),add=lambda _:pytest.fail('duplicate'))
-    with patch('app.geo.outcome_review.assess_outcome',AsyncMock(return_value=assessment)):
+    with patch('app.geo.tenant_scope.ensure_geo_entitlement',AsyncMock()), \
+         patch('app.geo.outcome_review.assess_outcome',AsyncMock(return_value=assessment)):
         asyncio.run(update_outcome_review(s,10))
     assert follow.status=='done' and row.status=='doing'
 
@@ -66,9 +69,39 @@ def test_later_observation_updates_existing_review_without_erasing_history_or_au
     follow=NS(progress={'outcome_review':historical},status='doing',evidence=[{'note':'customer plan'}])
     assessment={'state':new_state,'reason':'data missing'}
     s=NS(scalar=AsyncMock(side_effect=[row,follow]),commit=AsyncMock(),add=lambda _:pytest.fail('duplicate'))
-    with patch('app.geo.outcome_review.assess_outcome',AsyncMock(return_value=assessment)):
+    with patch('app.geo.tenant_scope.ensure_geo_entitlement',AsyncMock()), \
+         patch('app.geo.outcome_review.assess_outcome',AsyncMock(return_value=assessment)):
         asyncio.run(update_outcome_review(s,10))
     assert follow.progress['current_outcome_review']==assessment
     assert follow.progress['outcome_review']==historical and follow.status=='doing'
     assert follow.evidence==[{'note':'customer plan'}] and row.status=='doing'
     assert ('待观察' if new_state=='waiting' else '已达目标') in follow.last_note
+
+
+def test_expired_outcome_review_does_not_assess_or_write():
+    row=task();row.progress_first['params']['content_task_id']=12
+    s=NS(scalar=AsyncMock(return_value=row),commit=AsyncMock(),add=lambda _:pytest.fail('must not create'))
+    assess=AsyncMock()
+    with patch('app.geo.tenant_scope.ensure_geo_entitlement',AsyncMock(side_effect=GeoEntitlementUnavailable())), \
+         patch('app.geo.outcome_review.assess_outcome',assess), \
+         pytest.raises(GeoEntitlementUnavailable):
+        asyncio.run(update_outcome_review(s,10))
+    assess.assert_not_awaited()
+    s.commit.assert_not_awaited()
+
+
+def test_outcome_review_does_not_commit_when_entitlement_changes_during_assessment():
+    row=task();row.progress_first['params']['content_task_id']=12
+    s=NS(scalar=AsyncMock(return_value=row),commit=AsyncMock(),add=lambda _:pytest.fail('must not create'))
+    checks=0
+    async def ensure(_session,_tenant_id):
+        nonlocal checks
+        checks+=1
+        if checks==2:
+            raise GeoEntitlementUnavailable()
+    assessment={'state':'waiting','reason':'data missing'}
+    with patch('app.geo.tenant_scope.ensure_geo_entitlement',side_effect=ensure), \
+         patch('app.geo.outcome_review.assess_outcome',AsyncMock(return_value=assessment)), \
+         pytest.raises(GeoEntitlementUnavailable):
+        asyncio.run(update_outcome_review(s,10))
+    s.commit.assert_not_awaited()

@@ -74,6 +74,12 @@ async def follow_up(session, content, pub, state):
 
 
 async def check_publication(session, tenant_id, task_id, publication_id, *, scheduled=False):
+    if scheduled:
+        from app.geo.tenant_scope import ensure_geo_entitlement
+
+        # Scheduled monitoring is customer business processing. Existing audit
+        # records remain stored, but an expired tenant must not start a new fetch.
+        await ensure_geo_entitlement(session, tenant_id)
     # Same lock order as publishing: content first, then variant. A transaction holds
     # ownership through the bounded fetch; a crash rolls it back without a stuck lease.
     content = await session.scalar(select(GeoContentTask).where(
@@ -110,6 +116,10 @@ async def check_publication(session, tenant_id, task_id, publication_id, *, sche
     else:
         try:
             document = await asyncio.wait_for(safe_fetch(pub.published_url), timeout=25)
+            if scheduled:
+                # Discard an in-flight observation if access expired during fetch;
+                # it must not become a verified success or open a follow-up ticket.
+                await ensure_geo_entitlement(session, tenant_id)
             proof = match_publication(variant.title, variant.body_markdown, document.html)
             proof['observed_url'] = document.final_url
             state = 'healthy'
@@ -120,6 +130,8 @@ async def check_publication(session, tenant_id, task_id, publication_id, *, sche
                 raise
             state = 'mismatch'
     fresh = outcome(old, state, now, **proof)
+    if scheduled:
+        await ensure_geo_entitlement(session, tenant_id)
     store_state(variant, pub, fresh)
     await follow_up(session, content, pub, fresh)
     await session.commit()
@@ -142,6 +154,7 @@ async def list_monitor(session, tenant_id, task_id):
 
 async def run_monitor_batch():
     from app.database import async_session_factory
+    from app.geo.tenant_scope import GeoEntitlementUnavailable
     import logging
     now = datetime.utcnow().isoformat() + 'Z'
     entry = GeoChannelVariant.adapt_meta['publication_monitor'][cast(GeoPublication.id, String)]
@@ -157,16 +170,25 @@ async def run_monitor_batch():
         try:
             async with async_session_factory() as session:
                 await check_publication(session, tenant_id, task_id, publication_id, scheduled=True)
+        except GeoEntitlementUnavailable:
+            # Expiry is an intentional stop, not a monitor failure. Do not write
+            # backoff/error state for a customer whose GEO access is unavailable.
+            continue
         except Exception:
             logging.getLogger(__name__).exception('GEO publication monitor failed for record %s', publication_id)
             try:
                 async with async_session_factory() as session:
                     await defer_monitor_failure(session, tenant_id, task_id, publication_id)
+            except GeoEntitlementUnavailable:
+                pass
             except Exception:
                 logging.getLogger(__name__).exception('Could not defer GEO publication %s', publication_id)
 
 
 async def defer_monitor_failure(session, tenant_id, task_id, publication_id):
+    from app.geo.tenant_scope import ensure_geo_entitlement
+
+    await ensure_geo_entitlement(session, tenant_id)
     content = await session.scalar(select(GeoContentTask).where(
         GeoContentTask.id == task_id, GeoContentTask.tenant_id == tenant_id,
         GeoContentTask.status.notin_(['archived', 'cancelled'])).with_for_update(skip_locked=True))
@@ -185,4 +207,5 @@ async def defer_monitor_failure(session, tenant_id, task_id, publication_id):
     # Keep the last actual observation. A failed worker is not a failed public page.
     store_state(variant, pub, {**old, 'last_error': {'at': now.isoformat() + 'Z', 'kind': 'check_incomplete'},
                               'next_check_at': (now + timedelta(hours=1)).isoformat() + 'Z'})
+    await ensure_geo_entitlement(session, tenant_id)
     await session.commit()

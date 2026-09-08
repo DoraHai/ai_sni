@@ -148,6 +148,7 @@ def test_variant_generation_fails_closed_when_brand_changes_during_generation():
     async def run():
         tables = [
             "tenants",
+            "tenant_modules",
             "geo_optimization_businesses",
             "geo_content_tasks",
             "geo_article_versions",
@@ -161,6 +162,12 @@ def test_variant_generation_fails_closed_when_brand_changes_during_generation():
         try:
             async with engine.begin() as connection:
                 await connection.execute(text("INSERT INTO tenants(id,name) VALUES(7,'租户名')"))
+                await connection.execute(
+                    text(
+                        "INSERT INTO tenant_modules(tenant_id,module_code,status) "
+                        "VALUES(7,'geo','active')"
+                    )
+                )
                 await connection.execute(
                     text(
                         "INSERT INTO geo_optimization_businesses"

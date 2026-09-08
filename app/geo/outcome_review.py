@@ -33,6 +33,9 @@ async def update_outcome_review(session, task_id):
         .with_for_update(skip_locked=True))
     if row is None or not (row.progress_first or {}).get('params', {}).get('content_task_id'):
         return
+    from app.geo.tenant_scope import ensure_geo_entitlement
+
+    await ensure_geo_entitlement(session, row.tenant_id)
     try:
         assessment = await assess_outcome(session, row)
     except HTTPException as exc:
@@ -75,11 +78,15 @@ async def update_outcome_review(session, task_id):
             follow.last_note = ('当前观察已达目标；历史复盘记录保留，原指标任务须单独验收'
                                if assessment['state'] == 'target_met'
                                else '当前待观察：' + assessment.get('reason', '缺少可比数据'))
+    # Metrics can be read over several awaits; discard the assessment if GEO
+    # access expired before its task/ticket mutations become durable.
+    await ensure_geo_entitlement(session, row.tenant_id)
     await session.commit()
 
 
 async def run_outcome_reviews():
     from app.database import async_session_factory
+    from app.geo.tenant_scope import GeoEntitlementUnavailable, ensure_geo_entitlement
     import logging
     due = func.coalesce(GeoActionTicket.progress['outcome_review_next_at'].astext, '')
     now = datetime.utcnow().isoformat() + 'Z'
@@ -92,6 +99,10 @@ async def run_outcome_reviews():
         try:
             async with async_session_factory() as session:
                 await update_outcome_review(session, task_id)
+        except GeoEntitlementUnavailable:
+            # Keep historical task evidence unchanged. Expiry is not a failed
+            # assessment and must not schedule another customer action.
+            continue
         except Exception:
             logging.getLogger(__name__).exception('GEO outcome review failed for task %s', task_id)
             try:
@@ -100,9 +111,13 @@ async def run_outcome_reviews():
                         GeoActionTicket.id == task_id, GeoActionTicket.advice_code.like('cockpit:v1:%'))
                         .with_for_update(skip_locked=True))
                     if row is not None:
+                        await ensure_geo_entitlement(session, row.tenant_id)
                         now = datetime.utcnow()
                         row.progress = {**(row.progress or {}), 'outcome_review_error': '本次评估执行失败，稍后自动重试',
                                         'outcome_review_next_at': (now + timedelta(hours=1)).isoformat() + 'Z'}
+                        await ensure_geo_entitlement(session, row.tenant_id)
                         await session.commit()
+            except GeoEntitlementUnavailable:
+                pass
             except Exception:
                 logging.getLogger(__name__).exception('Could not defer GEO outcome task %s', task_id)

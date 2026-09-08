@@ -5,8 +5,13 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 from fastapi import HTTPException
-from app.geo.content.multi_push import execute_single_push, delivery_key
+from app.geo.content.multi_push import (
+    delivery_key,
+    execute_single_push,
+    record_revoked_inflight_delivery,
+)
 from app.geo.content.review import assert_review_approved, apply_decision
+from app.geo.tenant_scope import GeoEntitlementUnavailable
 
 
 def setup_case(review='approved'):
@@ -15,7 +20,8 @@ def setup_case(review='approved'):
     account=NS(id=4,channel_id=5,tenant_id=1,status='active',auth_type='webhook',credentials_encrypted='encrypted')
     channel=NS(id=5,tenant_id=1,enabled=True,publish_mode='auto_publish',channel_type='website')
     article=NS(id=16)
-    session=NS(refresh=AsyncMock(),commit=AsyncMock(),scalar=AsyncMock(return_value=object()))
+    session=NS(refresh=AsyncMock(),commit=AsyncMock(),rollback=AsyncMock(),
+               flush=AsyncMock(),scalar=AsyncMock(return_value=object()))
     args=dict(task=task,variant=variant,account=account,channel_row=channel,article=article,mode='publish')
     return session,args
 
@@ -92,6 +98,64 @@ def test_success_is_reserved_before_send_and_reused_on_repeat():
         second=asyncio.run(execute_single_push(session,**args))
     assert second['deduplicated'] is True and send.await_count==1
     assert 'response' not in first and 'never-store' not in str(args['variant'].adapt_meta)
+
+
+def test_revoked_social_send_rolls_back_credential_patch_then_records_unknown():
+    session,args=setup_case();revoked=False
+    args['variant'].channel='wechat'
+    args['channel_row'].channel_type='wechat'
+    args['channel_row'].name='WeChat test'
+    args['account'].auth_type='oauth2'
+    args['account'].display_name='test account'
+    original_ciphertext=args['account'].credentials_encrypted
+    async def ensure(_session,_tenant_id):
+        if revoked:
+            raise GeoEntitlementUnavailable()
+    async def post_social(_credentials,_payload):
+        nonlocal revoked
+        revoked=True
+        return {'ok':True,'platform':'wechat','remote_url':'https://example.com/maybe-published',
+                'credential_patch':{'access_token':'rotated'},
+                'response':{'secret':'never-store'}}
+    async def rollback():
+        args['account'].credentials_encrypted=original_ciphertext
+    session.rollback.side_effect=rollback
+    session.scalar.side_effect=[args['task'].id,args['variant']]
+    with patch('app.geo.content.routes._latest_article',AsyncMock(return_value=args['article'])), \
+         patch('app.geo.content.routes._build_rule_input',AsyncMock(return_value=None)), \
+         patch('app.geo.content.routes._ensure_tenant_exists',AsyncMock(return_value=NS(id=1,name='租户名'))), \
+         patch('app.geo.content.routes._brand_context_for_task',AsyncMock(return_value=('业务品牌',['业务品牌']))), \
+         patch('app.geo.content.gate.assert_can_publish'), \
+         patch('app.geo.content.multi_push.decrypt_credentials_json',return_value={
+             'provider':'gateway','api_url':'https://example.com/push','access_token':'old'}), \
+         patch('app.geo.content.multi_push.post_social',side_effect=post_social), \
+         patch('app.geo.content.ai_settings.encrypt_api_key',return_value='rotated-ciphertext'), \
+         patch('app.geo.tenant_scope.ensure_geo_entitlement',side_effect=ensure), \
+         pytest.raises(GeoEntitlementUnavailable):
+        asyncio.run(execute_single_push(session,**args))
+    delivery=next(iter(args['variant'].adapt_meta['push_deliveries'].values()))
+    assert delivery['state']=='unknown'
+    assert delivery['reason']=='entitlement_revoked_after_send'
+    assert delivery['manual_verification_required'] is True
+    assert delivery['result']['remote_url']=='https://example.com/maybe-published'
+    assert 'response' not in delivery['result'] and 'never-store' not in str(delivery)
+    assert session.commit.await_count==2
+    assert session.rollback.await_count==1
+    assert args['account'].credentials_encrypted==original_ciphertext
+
+
+def test_revoked_inflight_audit_does_not_overwrite_concurrent_recovery():
+    key='delivery-key';resolved={'reservation_id':'new','state':'failed',
+        'reason':'operator_confirmed_not_published','recovery_history':[{'action':'allow_retry'}]}
+    variant=NS(id=3,task_id=12,adapt_meta={'push_deliveries':{key:resolved}})
+    session=NS(rollback=AsyncMock(),scalar=AsyncMock(side_effect=[12,variant]),commit=AsyncMock())
+    saved=asyncio.run(record_revoked_inflight_delivery(session,task_id=12,variant_id=3,
+        key=key,reservation_id='old',account_id=4,mode='publish',article_id=16,attempt=1,
+        result={'remote_url':'https://example.com/maybe'}))
+    assert saved is False
+    assert variant.adapt_meta['push_deliveries'][key]==resolved
+    assert session.rollback.await_count==2
+    session.commit.assert_not_awaited()
 
 
 @pytest.mark.parametrize('review',['none','pending','rejected'])

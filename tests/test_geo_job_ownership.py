@@ -171,6 +171,7 @@ def test_claimed_job_persists_new_execution_protocol():
     async def scenario():
         row = SimpleNamespace(
             id=42,
+            tenant_id=1,
             kind=jobs.KIND_GENERATE,
             status='running',
             request_meta={},

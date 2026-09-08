@@ -310,8 +310,100 @@ def safe_connection_failure(exc):
     )
 
 
+_DELIVERY_AUDIT_FIELDS = frozenset({
+    "ok",
+    "connector",
+    "platform",
+    "channel",
+    "channel_type",
+    "channel_id",
+    "channel_name",
+    "account_id",
+    "account_name",
+    "http_status",
+    "remote_url",
+    "host",
+    "mode",
+})
+
+
+def delivery_audit_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Keep only non-secret scalar connector metadata for durable audit."""
+    return {
+        key: value
+        for key, value in result.items()
+        if key in _DELIVERY_AUDIT_FIELDS
+        and (value is None or isinstance(value, (str, int, float, bool)))
+    }
+
+
+async def record_revoked_inflight_delivery(
+    session: AsyncSession,
+    *,
+    task_id: int,
+    variant_id: int,
+    key: str,
+    reservation_id: str,
+    account_id: int,
+    mode: str,
+    article_id: int,
+    attempt: int,
+    result: dict[str, Any],
+) -> bool:
+    """Rollback connector writes, then persist only the ambiguous-send audit."""
+    await session.rollback()
+    # Match delivery recovery's task -> variant lock order. The old ORM objects
+    # are expired by rollback and must never be read below this point.
+    locked_task_id = await session.scalar(
+        select(GeoContentTask.id)
+        .where(GeoContentTask.id == task_id)
+        .with_for_update()
+    )
+    live_variant = await session.scalar(
+        select(GeoChannelVariant)
+        .where(
+            GeoChannelVariant.id == variant_id,
+            GeoChannelVariant.task_id == task_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if locked_task_id is None or live_variant is None:
+        await session.rollback()
+        return False
+    journal = dict((live_variant.adapt_meta or {}).get("push_deliveries") or {})
+    current = journal.get(key) or {}
+    if (
+        current.get("reservation_id") != reservation_id
+        or current.get("state") != "sending"
+    ):
+        # An operator/recovery worker already resolved this reservation while
+        # the remote request was in flight. Never overwrite that newer fact.
+        await session.rollback()
+        return False
+    journal[key] = {
+        "recovery_history": list(current.get("recovery_history") or []),
+        "reservation_id": reservation_id,
+        "state": "unknown",
+        "account_id": account_id,
+        "mode": mode,
+        "article_id": article_id,
+        "updated_at": datetime.utcnow().isoformat(),
+        "attempts": attempt,
+        "reason": "entitlement_revoked_after_send",
+        "result": delivery_audit_result(result),
+        "manual_verification_required": True,
+    }
+    live_variant.adapt_meta = {
+        **(live_variant.adapt_meta or {}),
+        "push_deliveries": journal,
+    }
+    await session.commit()
+    return True
+
+
 async def execute_single_push(session, *, task, variant, channel_row, account, mode, article):
-    from app.geo.tenant_scope import ensure_geo_entitlement
+    from app.geo.tenant_scope import GeoEntitlementUnavailable, ensure_geo_entitlement
     from app.geo.content.routes import (
         _brand_context_for_task,
         _build_rule_input,
@@ -379,6 +471,11 @@ async def execute_single_push(session, *, task, variant, channel_row, account, m
 
     from uuid import uuid4
     reservation_id = uuid4().hex
+    task_id = int(task.id)
+    tenant_id = int(task.tenant_id)
+    variant_id = int(variant.id)
+    account_id = int(account.id)
+    article_id = int(article.id)
 
     def record(state, **extra):
         current_journal = dict((variant.adapt_meta or {}).get("push_deliveries") or {})
@@ -411,10 +508,41 @@ async def execute_single_push(session, *, task, variant, channel_row, account, m
         raise
     for attempt in range(1, 4):
         try:
+            # A reservation can wait while another transaction revokes access.
+            # Recheck immediately before every external attempt, including retries.
+            await ensure_geo_entitlement(session, task.tenant_id)
+        except GeoEntitlementUnavailable:
+            record(
+                "failed",
+                attempts=attempt - 1,
+                reason="entitlement_revoked_before_send",
+            )
+            await session.commit()
+            raise
+        try:
             result = await _perform_single_push(session, task=task, variant=variant,
                 channel_row=channel_row, account=account, mode=mode, article=article)
             # Store only delivery metadata, never remote response bodies or tokens.
-            result.pop("response", None)
+            result = delivery_audit_result(result)
+            try:
+                # The connector may have published while the request was in flight.
+                # If access was revoked, retain a minimal, sanitized audit trail but
+                # do not claim success or create a publication record.
+                await ensure_geo_entitlement(session, task.tenant_id)
+            except GeoEntitlementUnavailable:
+                await record_revoked_inflight_delivery(
+                    session,
+                    task_id=task_id,
+                    variant_id=variant_id,
+                    key=key,
+                    reservation_id=reservation_id,
+                    account_id=account_id,
+                    mode=mode,
+                    article_id=article_id,
+                    attempt=attempt,
+                    result=result,
+                )
+                raise
             record("succeeded", attempts=attempt, result=result)
             await session.commit()
             await session.refresh(task, with_for_update=True)

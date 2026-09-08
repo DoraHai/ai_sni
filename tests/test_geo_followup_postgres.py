@@ -18,7 +18,7 @@ def test_followup_real_concurrency(scenario):
         schema='geo_followup_test_'+uuid4().hex
         admin=create_async_engine(os.environ['GEO_TEST_POSTGRES_URL'])
         engine=None; workers=[]; release=asyncio.Event()
-        names=['tenants','geo_audit_runs','geo_action_tickets','geo_content_tasks','geo_channel_variants','geo_publications']
+        names=['tenants','tenant_modules','geo_audit_runs','geo_action_tickets','geo_content_tasks','geo_channel_variants','geo_publications']
         created=False
         try:
             async with admin.begin() as c:
@@ -28,6 +28,10 @@ def test_followup_real_concurrency(scenario):
                 await c.execute(text(f'CREATE SEQUENCE {schema}.ticket_ids START 100'))
                 await c.execute(text(f"ALTER TABLE {schema}.geo_action_tickets ALTER COLUMN id SET DEFAULT nextval('{schema}.ticket_ids')"))
                 await c.execute(text(f'INSERT INTO {schema}.tenants(id) VALUES(7)'))
+                await c.execute(text(
+                    f"INSERT INTO {schema}.tenant_modules(tenant_id,module_code,status) "
+                    "VALUES(7,'geo','active')"
+                ))
                 for aid in [1,2]:
                     await c.execute(text(f"INSERT INTO {schema}.geo_audit_runs(id,tenant_id,url,status) VALUES(:id,7,'https://example.com/a','completed')"),{'id':aid})
                 await c.execute(text(f"INSERT INTO {schema}.geo_content_tasks(id,tenant_id,title,status) VALUES(12,7,'Article','published')"))
