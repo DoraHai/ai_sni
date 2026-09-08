@@ -11,6 +11,11 @@
 
 ## 运行方式
 
+生产验收当前为 `execution_status=blocked_until_merged`。必须先合并 PR #467，再从合并
+记录取得并保存实际包含本修复的完整 main SHA，并按管理员执行单校验
+`scripts/accept_tiger_seo_readonly.py` 的固定 SHA-256。任何一步未满足时不得运行以下
+命令；PR 分支或创建 PR 时的旧 main 不能作为生产执行基线。
+
 人工先用获准账号登录，再通过受控渠道把当前 Bearer 会话放入运行进程的环境变量。不要把令牌放在命令行、脚本、输出文件或聊天里。
 
 ```bash

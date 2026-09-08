@@ -22,18 +22,40 @@
 缺少五项中的任一项时不要临时改成超管账号继续跑。由账号管理员修正普通账号权限后重新
 执行。脚本拒绝未绑定客户的会话，也不会根据角色名称猜权限。
 
-### 2. 代码与输出目录
-
-使用包含 Tiger harness 的已合并基线：
+### 2. 合并门禁、代码与输出目录
 
 ```text
-main commit: 8ba839703d91e7720bf8160b249d61ed3c704ef8
-script: scripts/accept_tiger_seo_readonly.py
+execution_status=blocked_until_merged
+required_pull_request=#467
+expected_script_sha256=2d8e5149eaa4fb53267cea48aa250e5ad179e6326eab4ebbfb2de7ec3a32c269
 ```
 
-可使用更新的 `main`，但必须先确认该脚本存在，并记录实际执行 SHA。不要在正在
-提供线上服务的 release 目录中切换分支；使用已有干净 checkout 或单独 worktree。
-输出目录权限应限制为当前执行人可读。
+当前执行状态是 `blocked_until_merged`。PR #467 尚未合并时不得运行生产验收，也不得
+使用创建 PR 时的旧 `main` 基线、PR 分支 SHA 或“更新的 main”代替合并证据。合并后，
+由统筹人从 PR #467 的已合并记录取得**实际包含本修复的完整 main SHA**，交给执行人；
+执行人必须把它写入本次受控执行记录的 `execution_main_sha`，不能手填猜测或只记短 SHA。
+
+在独立干净 checkout 中执行以下门禁；`EXECUTION_MAIN_SHA` 必须来自上述合并记录：
+
+```bash
+cd /path/to/clean/ai_sni-checkout
+git fetch origin main
+read -rp 'Merged main SHA for PR #467: ' EXECUTION_MAIN_SHA
+test "${#EXECUTION_MAIN_SHA}" -eq 40
+git checkout --detach "$EXECUTION_MAIN_SHA"
+test "$(git rev-parse HEAD)" = "$EXECUTION_MAIN_SHA"
+git merge-base --is-ancestor "$EXECUTION_MAIN_SHA" origin/main
+test -z "$(git status --short)"
+printf '%s  %s\n' \
+  '2d8e5149eaa4fb53267cea48aa250e5ad179e6326eab4ebbfb2de7ec3a32c269' \
+  'scripts/accept_tiger_seo_readonly.py' | sha256sum -c -
+```
+
+任一步失败都保持 `execution_status=blocked_until_merged` 并停止。只有 PR 已合并、完整
+`execution_main_sha` 已记录、checkout 与该 SHA 一致、该 SHA 属于当前 `origin/main`，
+且脚本固定 SHA-256 校验通过后，本次受控执行记录才能改为
+`execution_status=ready`，随后才可进入下一节。不要在正在提供线上服务的 release 目录
+中切换分支；输出目录权限应限制为当前执行人可读。
 
 ## 二、安全注入会话并执行
 
@@ -60,7 +82,8 @@ sha256sum /tmp/tiger-seo-readonly-result.json 2>/dev/null || true
 
 要求：
 
-- `git status --short` 必须为空；记录 `git rev-parse HEAD` 的完整值。
+- 必须先完成上一节的合并与固定哈希门禁；`git rev-parse HEAD` 必须等于执行记录中的
+  `execution_main_sha`，且 `git status --short` 必须为空。
 - `read -s` 期间输入不回显。运行完成后立即 `unset`，关闭承载 token 的终端会话。
 - 不要使用 `TOKEN=... python ...`、命令行 `--token`、shell 脚本常量或截图传递 token。
 - 若退出码不是 `0`，停止，不用管理员 Key 或其他客户会话绕过失败。

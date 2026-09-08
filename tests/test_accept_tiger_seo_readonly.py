@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -11,11 +12,30 @@ from urllib.parse import urlparse
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "accept_tiger_seo_readonly.py"
+RUNBOOK = Path(__file__).parents[1] / "docs" / "SEO_TIGER_ADMIN_EXECUTION_RUNBOOK.md"
 SPEC = importlib.util.spec_from_file_location("accept_tiger_seo_readonly", SCRIPT)
 assert SPEC and SPEC.loader
 acceptance = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = acceptance
 SPEC.loader.exec_module(acceptance)
+
+
+def test_admin_runbook_blocks_unmerged_or_old_main_execution():
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+    script_sha256 = hashlib.sha256(SCRIPT.read_bytes()).hexdigest()
+
+    assert "execution_status=blocked_until_merged" in runbook
+    assert "required_pull_request=#467" in runbook
+    assert "8ba839703d91e7720bf8160b249d61ed3c704ef8" not in runbook
+    assert f"expected_script_sha256={script_sha256}" in runbook
+    assert f"'{script_sha256}'" in runbook
+    assert "sha256sum -c -" in runbook
+    assert "execution_main_sha" in runbook
+    assert "git merge-base --is-ancestor \"$EXECUTION_MAIN_SHA\" origin/main" in runbook
+
+    gate_position = runbook.index("sha256sum -c -")
+    acceptance_position = runbook.index("python scripts/accept_tiger_seo_readonly.py")
+    assert gate_position < acceptance_position
 
 
 class FakeGet:
