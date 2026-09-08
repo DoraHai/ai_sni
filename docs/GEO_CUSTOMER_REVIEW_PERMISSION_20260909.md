@@ -44,17 +44,27 @@
 ## 验证
 
 - GEO Python：1080 passed，47 skipped。
-- 审核相关 Python：61 passed。
+- 审核相关 Python：63 passed。
 - 前端 Node：189 passed。
 - 前端生产构建：通过。
 - Windows 全仓 Python 收集被既有 Linux 专用 `fcntl` 依赖阻断；Linux CI 负责最终全仓验证。
 
-## 发布影响
+## 生产部署
+
+- PR：`#499`，复核 head `cf8c43391c9451af9f8c0f0091d78a32f7bc5054`。
+- `production-geo` 合并/部署 SHA：`03aed0477b21bbd7145e92b2b6797979baf6b58d`。
+- 后端 release：`/opt/geo-service/releases/20260908T163151Z-03aed0477b21`。
+- 对应前端 release 已发布；数据库迁移未运行。
+- GEO baseline 与生产部署工作流均成功。
+- 公开 `/geo-health` 返回 HTTP 200、`db=ok`；dashboard 返回 HTTP 200。
+
+## 发布影响与真人复验
 
 - 数据迁移：无。
 - 生产角色或权限数据修改：无。
 - 配置修改：无。
 - 真实采集、生成、审核和发布：无。
-- 部署后先只读确认 `/api/v1/auth/me` 返回 `user.role_label=品牌方客户`、绑定租户为诺德；
+- 真人先只读确认 `/api/v1/auth/me` 返回 `user.role_label=品牌方客户`、绑定租户为诺德；
   任一不符即停止并回传实际非敏感字段，不修改角色或数据库。确认后由真人用 `nord_geo_review`
-  对仍为 pending 的任务 `#14` 只审批一次，再继续 H2 版本失效核验。
+  对仍为 pending 的任务 `#14` 只审批一次，回传 HTTP 状态、页面状态和时间。
+- 本次客户确认结果返回前不发布、不进入 H3/H4，也不继续版本失效核验。
