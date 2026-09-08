@@ -19,6 +19,8 @@ temporary_root="${PLATFORM_DEPLOY_TMP_ROOT:-/tmp}"
 expected_index="${PLATFORM_SEM_INDEX:-/opt/sem-frontend/current/index.html}"
 authoritative_repo='https://github.com/DoraHai/ai_sni.git'
 authoritative_ref='refs/heads/codex/production-sem'
+authoritative_query_attempts=3
+authoritative_retry_delay_seconds=2
 reviewed_base_sha256='3fd57506ca30704d5201d15ac9ab2408bda951f1b8fd0c4118c47d7023506fc1'
 reviewed_candidate_sha256='d710448c24f61e14c0e69a5c2636987781b09042a3a72cd7a11605d316ad12f3'
 
@@ -125,15 +127,21 @@ case "$observed" in
 esac
 
 query_authoritative_head() {
-  local output line sha ref extra
+  local output line sha ref extra attempt
   local -a lines
-  output="$(git ls-remote --refs "$authoritative_repo" "$authoritative_ref")" || return 1
-  mapfile -t lines < <(printf '%s\n' "$output" | sed '/^$/d')
-  [[ "${#lines[@]}" -eq 1 ]] || return 1
-  line="${lines[0]}"
-  IFS=$'\t' read -r sha ref extra <<<"$line"
-  [[ "$sha" =~ ^[0-9a-f]{40}$ && "$ref" == "$authoritative_ref" && -z "${extra:-}" ]] || return 1
-  printf '%s\n' "$sha"
+  for ((attempt = 1; attempt <= authoritative_query_attempts; attempt++)); do
+    if output="$(git ls-remote --refs "$authoritative_repo" "$authoritative_ref")"; then
+      mapfile -t lines < <(printf '%s\n' "$output" | sed '/^$/d')
+      [[ "${#lines[@]}" -eq 1 ]] || return 2
+      line="${lines[0]}"
+      IFS=$'\t' read -r sha ref extra <<<"$line"
+      [[ "$sha" =~ ^[0-9a-f]{40}$ && "$ref" == "$authoritative_ref" && -z "${extra:-}" ]] || return 2
+      printf '%s\n' "$sha"
+      return 0
+    fi
+    [[ "$attempt" -eq "$authoritative_query_attempts" ]] || sleep "$authoritative_retry_delay_seconds"
+  done
+  return 1
 }
 
 # This is the authoritative server-side publication boundary. The lock remains
