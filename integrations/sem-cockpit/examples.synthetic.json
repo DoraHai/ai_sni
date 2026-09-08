@@ -207,12 +207,14 @@
             },
             "report_association": {
               "status": "matched",
+              "evidence_status": "matched",
               "join_keys": [
                 "baidu_account_id",
                 "keyword_id"
               ],
               "matched_report_groups": 2,
               "other_observed_account_ids": [],
+              "observed_known_account_ids": [],
               "has_unassigned_reports": false,
               "completeness": "unknown"
             },
@@ -258,12 +260,14 @@
             },
             "report_association": {
               "status": "no_report",
+              "evidence_status": "no_report",
               "join_keys": [
                 "baidu_account_id",
                 "keyword_id"
               ],
               "matched_report_groups": 0,
               "other_observed_account_ids": [],
+              "observed_known_account_ids": [],
               "has_unassigned_reports": false,
               "completeness": "unknown"
             },
@@ -283,6 +287,11 @@
         "association_summary": {
           "scope": "current_page",
           "counts": {
+            "matched": 1,
+            "account_mismatch": 0,
+            "no_report": 1
+          },
+          "evidence_counts": {
             "matched": 1,
             "account_mismatch": 0,
             "no_report": 1,
