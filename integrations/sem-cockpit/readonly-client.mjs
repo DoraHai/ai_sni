@@ -110,6 +110,10 @@ function validateUnits(units) {
   contract(object(units) && units.cost === 'CNY' && units.click === 'count' && units.impression === 'count' &&
     units.ctr === 'ratio' && units.cpc === 'CNY/click')
 }
+function validatePage(items, total, page, pageSize) {
+  const expected = Math.min(pageSize, Math.max(total - ((page - 1) * pageSize), 0))
+  contract(items.length === expected)
+}
 function validateAccountScope(scope, accountId) {
   contract(object(scope) && scope.mode === (accountId === undefined ? 'all' : 'single'))
   contract(scope.baidu_account_id === (accountId ?? null))
@@ -186,7 +190,7 @@ function validateKeywords(data, params) {
   }
   contract(object(data.filters) && data.filters.q === (params.q ?? null) && data.filters.campaign_id === (params.campaign_id ?? null))
   contract(data.page === (params.page ?? 1) && data.page_size === (params.page_size ?? 20) && nonnegativeInteger(data.total) && Array.isArray(data.items))
-  contract(data.items.length <= data.page_size && (data.total !== 0 || data.items.length === 0))
+  validatePage(data.items, data.total, data.page, data.page_size)
   for (const item of data.items) {
     contract(object(item) && positive(item.keyword_id) && (item.baidu_account_id === null || positive(item.baidu_account_id)))
     if (params.baidu_account_id !== undefined) contract(item.baidu_account_id === params.baidu_account_id)
@@ -228,17 +232,27 @@ function validateSearchTerms(data, params) {
   contract(object(data.filters) && data.filters.q === (params.q ?? null) && data.filters.campaign_id === (params.campaign_id ?? null) &&
     data.filters.adgroup_id === (params.adgroup_id ?? null))
   contract(data.page === (params.page ?? 1) && data.page_size === (params.page_size ?? 50) && nonnegativeInteger(data.total) && Array.isArray(data.items))
+  validatePage(data.items, data.total, data.page, data.page_size)
   contract(['observed', 'no_data'].includes(data.status) && data.completeness === 'unknown' && Array.isArray(data.windows))
   const pairs = new Set()
   const windows = new Set()
+  const observedAccountIds = new Set()
+  let storedRows = 0
   for (const entry of data.windows) {
     contract(object(entry) && (entry.baidu_account_id === null || positive(entry.baidu_account_id)))
     if (params.baidu_account_id !== undefined) contract(entry.baidu_account_id === params.baidu_account_id)
     validateWindow(entry, undefined, undefined, 'sync_snapshot')
     contract(nonnegativeInteger(entry.stored_rows) && nonnegativeInteger(entry.unknown_timestamp_rows) && entry.unknown_timestamp_rows <= entry.stored_rows)
     contract(validStamp(entry.updated_at) && validStamp(entry.oldest_updated_at) && entry.completeness === 'unknown')
-    pairs.add(`${entry.start ?? ''}:${entry.end ?? ''}`); windows.add(`${entry.baidu_account_id ?? 'null'}:${entry.start ?? ''}:${entry.end ?? ''}`)
+    const windowKey = `${entry.baidu_account_id ?? 'null'}:${entry.start ?? ''}:${entry.end ?? ''}`
+    contract(!windows.has(windowKey))
+    pairs.add(`${entry.start ?? ''}:${entry.end ?? ''}`); windows.add(windowKey)
+    observedAccountIds.add(entry.baidu_account_id)
+    storedRows += entry.stored_rows
   }
+  contract(storedRows === data.total && Array.isArray(data.account_scope.observed_account_ids))
+  const scopedObserved = new Set(data.account_scope.observed_account_ids)
+  contract(scopedObserved.size === observedAccountIds.size && [...scopedObserved].every(id => observedAccountIds.has(id)))
   contract(data.mixed_windows === (pairs.size > 1))
   for (const item of data.items) {
     contract(object(item) && positive(item.id) && (item.baidu_account_id === null || positive(item.baidu_account_id)) && typeof item.query_word === 'string')
