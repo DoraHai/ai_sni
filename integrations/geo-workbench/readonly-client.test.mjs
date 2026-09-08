@@ -85,6 +85,35 @@ test('all six source-derived synthetic minimum responses satisfy the actual cons
   assert.match(client.answerView(9010, metric.metric_key).item.raw_text, /不是生产回答/)
 })
 
+test('Tiger empty account remains authorized but insufficient without invented zeroes', async () => {
+  const fixtureData = JSON.parse(readFileSync(new URL('./tiger-empty-insufficient.synthetic.json', import.meta.url), 'utf8'))
+  assert.match(fixtureData.fixture_notice, /离线空数据契约/)
+  assert.match(fixtureData.fixture_notice, /不是生产请求/)
+  const { client, calls } = fixture(path => {
+    if (path.includes('/period-context?')) return response(fixtureData.responses.periodContext)
+    if (path.includes('/metrics/snapshot?')) return response(fixtureData.responses.metrics)
+    if (path.includes('/metrics/dictionary?')) return response(fixtureData.responses.dictionary)
+    if (path.includes('/answers?')) return response(fixtureData.responses.answers)
+    if (path.includes('/questions?')) return response(fixtureData.responses.questions)
+    return response({}, 404)
+  })
+  client.setContext(fixtureData.context)
+  await client.read('periodContext')
+  await client.read('metrics')
+  await client.read('dictionary')
+  const answers = await client.read('answers')
+  const questions = await client.read('questions')
+
+  const official = client.officialSnapshot()
+  assert.equal(official.week.status, 'insufficient')
+  assert.deepEqual(official.week.qualifiedCounts, { samples: 0, questions: 0, engines: 0 })
+  assert.ok(official.metrics.every(row => row.value === null && row.valueText === '—' && row.state === 'unavailable'))
+  assert.ok(official.metrics.every(row => row.trend.state === 'incomparable' && row.trend.direction === null))
+  assert.deepEqual(answers.items, [])
+  assert.deepEqual(questions.items, [])
+  assert.ok(calls.every(([, options]) => options.method === 'GET' && options.cache === 'no-store'))
+})
+
 test('reads only known GET paths from injected context and keeps metrics as the sole official source', async () => {
   const { client, calls } = fixture(path => {
     if (path.includes('period-context')) return response(period)

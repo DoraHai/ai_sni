@@ -1,0 +1,90 @@
+{
+  "fixture_notice": "老虎 tenant 4 的离线安全建档载荷；仅用于契约测试，禁止把本文件当成生产执行脚本。",
+  "tenant_id": 4,
+  "identity": {
+    "tenant_name": "SZ-老虎新材料",
+    "brand": "TIGER/老虎",
+    "canonical_website": "https://www.tiger-coatings.cn/"
+  },
+  "preconditions": {
+    "geo_entitlement_available": true,
+    "patrol_settings_enabled": false,
+    "persistent_tracking_engine_ids": [],
+    "persistent_channel_account_ids": [],
+    "duplicate_checks_required": true
+  },
+  "creates": {
+    "optimization_business": {
+      "tenant_id": 4,
+      "name": "粉末涂料与表面技术",
+      "description": "TIGER/老虎的粉末涂料与表面技术业务画像",
+      "sort_order": 0,
+      "profile": {
+        "product_name": "TIGER/老虎",
+        "website": "https://www.tiger-coatings.cn/",
+        "summary": "TIGER/老虎粉末涂料与表面技术",
+        "industry": "粉末涂料与表面技术"
+      }
+    },
+    "prompts": [
+      {
+        "tenant_id": 4,
+        "question": "在建筑幕墙和系统门窗中选择粉末涂料时，最关键的性能指标和验收标准有哪些？",
+        "priority": 0,
+        "tags": ["cockpit-foundation"],
+        "source": "manual",
+        "language": "zh-CN",
+        "market": "cn",
+        "is_brand_probe": false,
+        "unit_id": null
+      },
+      {
+        "tenant_id": 4,
+        "question": "粉末涂料与常见液体涂料相比，在成本、寿命、施工和环保方面有什么差异？",
+        "priority": 0,
+        "tags": ["cockpit-foundation"],
+        "source": "manual",
+        "language": "zh-CN",
+        "market": "cn",
+        "is_brand_probe": false,
+        "unit_id": null
+      },
+      {
+        "tenant_id": 4,
+        "question": "汽车轮毂、家具家电或机器设备出现涂层失效时，常见原因、排查步骤和选型建议是什么？",
+        "priority": 0,
+        "tags": ["cockpit-foundation"],
+        "source": "manual",
+        "language": "zh-CN",
+        "market": "cn",
+        "is_brand_probe": false,
+        "unit_id": null
+      }
+    ],
+    "publishing_channel": {
+      "tenant_id": 4,
+      "name": "TIGER 官方网站",
+      "channel_type": "website",
+      "publish_mode": "manual_only",
+      "base_url": "https://www.tiger-coatings.cn/",
+      "content_rules": null,
+      "enabled": false,
+      "sort_order": 0
+    }
+  },
+  "prohibited_operations": [
+    "create_optimization_unit",
+    "put_tracking_engines",
+    "enable_patrol_settings",
+    "put_visibility_patrol_settings",
+    "put_ai_settings",
+    "test_ai_settings",
+    "put_channel_polish_prompts",
+    "create_patrol_run",
+    "create_content_task",
+    "create_async_generation_job",
+    "create_channel_account",
+    "create_channel_variant",
+    "create_publication"
+  ]
+}

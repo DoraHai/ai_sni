@@ -1,0 +1,89 @@
+{
+  "fixture_notice": "老虎 tenant 4 的离线空数据契约；仅用于测试，不是生产请求、生产数据或线上验收结果。",
+  "context": {
+    "tenantId": 4,
+    "userId": 900000004,
+    "weekEnd": "2026-09-07",
+    "authorizationRevision": "synthetic-tiger-readonly",
+    "allowedReads": ["periodContext", "metrics", "dictionary", "answers", "questions"]
+  },
+  "responses": {
+    "periodContext": {
+      "tenant_id": 4,
+      "evaluated_at": "2026-09-08T00:00:00Z",
+      "timezone": "Asia/Shanghai",
+      "week_end": "2026-09-07",
+      "current": {
+        "start": "2026-08-31T00:00:00+08:00",
+        "end": "2026-09-07T00:00:00+08:00",
+        "closed": true,
+        "status": "insufficient",
+        "qualified_counts": {"samples": 0, "questions": 0, "engines": 0},
+        "reasons": [
+          {"code": "insufficient_samples", "scope": "week", "message": "完整周合格回答不足 8 条。"},
+          {"code": "insufficient_questions", "scope": "week", "message": "完整周有效问题不足 3 个。"},
+          {"code": "insufficient_engines", "scope": "week", "message": "完整周覆盖引擎不足 2 个。"}
+        ]
+      },
+      "previous": {
+        "start": "2026-08-24T00:00:00+08:00",
+        "end": "2026-08-31T00:00:00+08:00",
+        "closed": true,
+        "status": "insufficient",
+        "qualified_counts": {"samples": 0, "questions": 0, "engines": 0},
+        "reasons": [
+          {"code": "insufficient_samples", "scope": "week", "message": "前一完整周合格回答不足 8 条。"}
+        ]
+      },
+      "minimum_counts": {"samples": 8, "questions": 3, "engines": 2},
+      "own_domain_configured": false,
+      "metric_status": [
+        {"metric_key": "geo.visibility.ai_mention_count_7d", "status": "unavailable", "reason_codes": ["insufficient_samples"]},
+        {"metric_key": "geo.visibility.ai_mention_rate_7d", "status": "unavailable", "reason_codes": ["insufficient_samples"]},
+        {"metric_key": "geo.visibility.ai_visibility_score", "status": "unavailable", "reason_codes": ["insufficient_samples"]}
+      ],
+      "comparison": {
+        "comparable": false,
+        "reason_codes": ["current_week_insufficient", "previous_week_insufficient"],
+        "checks": {
+          "current_week_sufficient": false,
+          "previous_week_sufficient": false,
+          "same_cohort": false,
+          "same_historical_questions": false,
+          "complete_model_metadata": false,
+          "same_model_distribution": false,
+          "same_sample_distribution": false
+        }
+      },
+      "metrics_url": "/api/v1/geo/integration/metrics/snapshot?tenant_id=4&week_end=2026-09-07",
+      "dictionary_url": "/api/v1/geo/integration/metrics/dictionary?tenant_id=4&week_end=2026-09-07"
+    },
+    "metrics": [
+      {"metric_key": "geo.visibility.ai_mention_count_7d", "value": null, "unit": "count", "as_of": "2026-09-07T00:00:00+08:00", "trend_7d": null},
+      {"metric_key": "geo.visibility.ai_mention_rate_7d", "value": null, "unit": "percent", "as_of": "2026-09-07T00:00:00+08:00", "trend_7d": null},
+      {"metric_key": "geo.visibility.ai_visibility_score", "value": null, "unit": "score", "as_of": "2026-09-07T00:00:00+08:00", "trend_7d": null}
+    ],
+    "dictionary": {
+      "geo.visibility.ai_mention_count_7d": "上海时区完整自然周合格回答中的品牌提及条数。",
+      "geo.visibility.ai_mention_rate_7d": "上海时区完整自然周品牌提及回答数除以合格回答数。",
+      "geo.visibility.ai_visibility_score": "上海时区完整自然周的品牌提及率与自有域引用率综合分。"
+    },
+    "answers": {
+      "tenant_id": 4,
+      "evaluated_at": "2026-09-08T00:00:00Z",
+      "timezone": "Asia/Shanghai",
+      "official_week_end": "2026-09-07",
+      "observation_window": {"start": null, "end": null},
+      "unknown_time_count": 0,
+      "period_context_url": "/api/v1/geo/integration/read/period-context?tenant_id=4&week_end=2026-09-07",
+      "pagination": {"limit": 50, "has_more": false, "next_cursor": null, "watermark_max_id": 0},
+      "items": []
+    },
+    "questions": {
+      "tenant_id": 4,
+      "evaluated_at": "2026-09-08T00:00:00Z",
+      "pagination": {"limit": 50, "has_more": false, "next_before_id": null},
+      "items": []
+    }
+  }
+}
