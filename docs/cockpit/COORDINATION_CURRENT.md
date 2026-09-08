@@ -1,8 +1,10 @@
-# Current coordination — 2026-09-08 20:28 Asia/Shanghai
+# Current coordination — 2026-09-08 20:44 Asia/Shanghai
 
 This is the authoritative continuation checkpoint. Historical pause documents are superseded by the current user instruction to continue development and coordinate the existing SEM, SEO and GEO tasks.
 
 ## Latest production checkpoint — supersedes older state below
+
+- 2026-09-08 20:44 usage rule changed by the user: continue development, review, merge and controlled deployment while the Codex primary allowance has at least 30% remaining; when remaining falls below 30%, immediately stop/interupt active work, send no new assignment, preserve exact state, update this handoff and notify the user. Heartbeat `automation-2` has been updated to the same five-minute rule. Never consume a reset credit without explicit user authorization. This supersedes every older 60% or 20% threshold below.
 
 - 2026-09-08 20:28 GEO PR493 third review: exact `65572aa5868544afc705a1cf54331cb34df98772` added per-target publish rechecks, entitlement-gated nightly metrics, publication monitoring and outcome review, plus a seven-entry background execution policy and a complete H2/H3/H4 human acceptance plan. Independent `ops/run_geo_checks.py` passed 1084 tests with 46 skips. It remains blocked P1=1 and undeployed: a social connector may flush a refreshed OAuth/WeChat credential during the remote call, then the after-send revocation branch commits the intended `unknown` delivery audit and unintentionally commits that credential mutation too. The owner must rollback the business transaction, reload/lock the delivery reservation in a new transaction, and persist only sanitized unknown audit evidence without overwriting a concurrently recovered reservation; regression must prove the credential remains unchanged. H2 approval-version invalidation, H3 real-platform idempotency and H4 published-body equality still require human acceptance after a final reviewed GEO SHA is deployed; they are not cancelled. No human action is requested yet.
 
@@ -148,7 +150,7 @@ This is the authoritative continuation checkpoint. Historical pause documents ar
 - Preserve the product boundary: discovery/read evidence and explanation/action are separate. Never turn missing, stale, simulated, site-level or estimated data into customer facts.
 - Database work and human tests require a concrete request to the user first: exact object, operation, expected result, prohibited actions and evidence to return. Work that does not need either must continue.
 - Inspect the three tasks about every five minutes. Routine report about every fifteen minutes; material completion, failure or production risk is immediate.
-- Stop all development, review, merge and deployment work when the Codex primary allowance is below 60% remaining. Preserve exact task state and notify the user. Never consume a reset credit unless the user explicitly asks. At the latest check remaining was 93%, so work continues.
+- Stop all development, review, merge and deployment work when the Codex primary allowance is below 30% remaining. Preserve exact task state and notify the user. Never consume a reset credit unless the user explicitly asks. Older threshold records are historical and superseded by the 2026-09-08 20:44 instruction.
 
 ## Production state
 
