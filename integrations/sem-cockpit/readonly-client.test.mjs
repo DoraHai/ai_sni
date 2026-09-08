@@ -243,6 +243,50 @@ test('dimension and search-window shapes reject incomplete or mixed summaries', 
   await rejectsContract('searchTerms', data => { data.items[0].window.start = '2026-01-01' })
 })
 
+test('search windows exactly cover the filtered multi-account result', async () => {
+  await rejectsContract('searchTerms', data => { data.windows.push(structuredClone(data.windows[0])) })
+  await rejectsContract('searchTerms', data => { data.windows[0].stored_rows-- })
+  await rejectsContract('searchTerms', data => { data.account_scope.observed_account_ids.pop() })
+})
+
+test('paginated responses require every row that belongs on the requested page', async () => {
+  await rejectsContract('searchTerms', data => {
+    data.page_size = 2
+    data.items = data.items.slice(0, 1)
+  }, { page: 1, page_size: 2 })
+
+  await rejectsContract('keywords', data => {
+    data.page_size = 1
+    data.items = []
+  }, { ...examples.keywords.consumer_params, page: 1, page_size: 1 })
+})
+
+test('complete last pages, out-of-range pages and empty totals honor pagination boundaries', async () => {
+  const lastPage = await acceptsContract('searchTerms', data => {
+    data.page = 2
+    data.page_size = 2
+    data.items = data.items.slice(2)
+  }, { page: 2, page_size: 2 })
+  assert.equal(lastPage.items.length, 1)
+
+  const outOfRange = await acceptsContract('searchTerms', data => {
+    data.page = 3
+    data.page_size = 2
+    data.items = []
+  }, { page: 3, page_size: 2 })
+  assert.deepEqual(outOfRange.items, [])
+
+  const empty = await acceptsContract('searchTerms', data => {
+    data.account_scope.observed_account_ids = []
+    data.windows = []
+    data.mixed_windows = false
+    data.status = 'no_data'
+    data.total = 0
+    data.items = []
+  })
+  assert.equal(empty.total, 0)
+})
+
 test('echoed filters and JSON shape must match the active request', async () => {
   await rejectsContract('keywords', data => { data.filters.campaign_id = 999 })
   await rejectsContract('keywords', data => { data.items[0].baidu_account_id = 12 })
