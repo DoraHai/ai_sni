@@ -50,7 +50,9 @@ from app.geo.content.channels import default_channel_rows
 from app.geo.content.review import (
     apply_decision,
     apply_submit,
+    can_decide_customer_review,
     invalidate_review,
+    is_tenant_customer_reviewer,
     review_payload,
 )
 from app.geo.content.ai_settings import (
@@ -8378,6 +8380,12 @@ async def decide_task_review(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
+    if not can_decide_customer_review(ctx):
+        raise HTTPException(403, "当前账号没有客户审核权限")
+    if is_tenant_customer_reviewer(ctx) and (
+        req.expected_article_id is None or req.expected_updated_at is None
+    ):
+        raise HTTPException(400, "客户审核必须携带当前母稿和任务版本")
     task = await _get_task(session, task_id, tenant_id)
     await session.refresh(task, with_for_update=True)
     if req.expected_article_id is not None:

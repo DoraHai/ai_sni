@@ -87,6 +87,9 @@ class AuthContext:
 
 # ===== 请求路径 → 菜单键 + 是否写 的映射（后端真鉴权） =====
 _KW_DETAIL_RE = re.compile(r"^/api/v1/keywords/\d+(/category)?$")
+_GEO_REVIEW_DECISION_RE = re.compile(
+    r"^/api/v1/geo/content-tasks/\d+/review$"
+)
 
 
 def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
@@ -134,6 +137,10 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     if p.startswith("/api/v1/geo/audits"):
         # 运行诊断、生成建议和资产都属于使用 GEO 工具，view 权限即可。
         return {"geo.diagnosis"}, False
+    if _GEO_REVIEW_DECISION_RE.match(p) and method == "POST":
+        # 客户确认是绑定客户的只读账号唯一允许执行的 GEO 状态变更。
+        # 路由内还会校验账号已绑定租户；提交审核、编辑、生成和发布仍需 edit。
+        return {"geo.content"}, False
     if (
         p.startswith("/api/v1/geo/prompts")
         or p.startswith("/api/v1/geo/facts")

@@ -5,6 +5,8 @@ import { fetchTaskPushTargets, submitGeoTaskReview, decideGeoTaskReview } from '
 import * as evidenceApi from '../api/geoIntegration'
 import { evidenceTaskLink } from '../utils/geoEvidenceLinks'
 import { executionNext } from '../utils/geoExecutionOverview'
+import { canDecideGeoReview, canSubmitGeoReview } from '../utils/geoReviewAccess'
+import { session } from '../store/session'
 import GeoCreateEvidenceTask from './GeoCreateEvidenceTask.vue'
 const props = defineProps({ tenantId: [Number, String], task: Object, disabled: Boolean })
 const emit = defineEmits(['changed'])
@@ -18,6 +20,8 @@ const currentVariants = computed(() => (props.task?.variants || []).filter(v => 
 const configured = computed(() => targets.value.filter(t => (t.accounts || []).some(a => a.has_credentials && a.push_kind)))
 const next = computed(() => selected.value ? executionNext(selected.value, detail.value, error.value) : null)
 const currentProof = computed(() => detail.value?.publication_evidence?.article_id === props.task?.article?.id ? detail.value.publication_evidence : null)
+const canSubmit = computed(() => canSubmitGeoReview(session.user))
+const canDecide = computed(() => canDecideGeoReview(session.user))
 async function load() {
   const run = ++epoch
   targets.value = []; linked.value = []; detail.value = null; confirmed.value = false; error.value = ''; busy.value = false
@@ -38,6 +42,7 @@ async function load() {
 }
 async function review(decision) {
   if (busy.value || loading.value || props.disabled || (decision === 'approved' && !confirmed.value)) return
+  if ((decision === 'submit' && !canSubmit.value) || (decision !== 'submit' && !canDecide.value)) return
   const run = epoch, tenant = props.tenantId, id = props.task.id
   busy.value = true; error.value = ''
   try {
@@ -67,12 +72,13 @@ onBeforeUnmount(() => { epoch++ })
       <p><b>2. 渠道稿版本：</b>{{ currentVariants.length }} 个与当前母稿一致，共 {{ (task.variants || []).length }} 个。<el-button link @click="distribution">查看渠道稿与发布</el-button></p>
       <p><b>3. 客户审核：</b>{{ {none:'待提交客户审核',pending:'等待客户确认',approved:'客户已确认',rejected:'客户要求修改'}[task.review_status || 'none'] }}</p>
       <p v-if="disabled">请先保存当前修改或等待当前操作结束，再进行客户审核。</p>
-      <el-button v-if="['none','rejected'].includes(task.review_status || 'none')" :disabled="disabled || busy || !task.article" @click="review('submit')">提交客户审核</el-button>
-      <div v-if="task.review_status === 'pending'">
+      <el-button v-if="canSubmit && ['none','rejected'].includes(task.review_status || 'none')" :disabled="disabled || busy || !task.article" @click="review('submit')">提交客户审核</el-button>
+      <div v-if="task.review_status === 'pending' && canDecide">
         <el-checkbox v-model="confirmed" :disabled="disabled || busy">我已审核当前已保存的母稿及渠道稿，确认可以发布</el-checkbox>
         <el-button :disabled="disabled || busy || !confirmed" @click="review('approved')">客户确认通过</el-button>
         <el-button :disabled="disabled || busy" @click="review('rejected')">需要修改</el-button>
       </div>
+      <p v-else-if="task.review_status === 'pending'">当前账号只能查看审核状态。</p>
       <p><b>4. 指标基线：</b>{{ error ? '状态未知，请刷新' : !selected ? '尚未关联指标验收任务' : detail?.baseline_valid ? '已有有效基线' : detail?.baseline_blocker || '尚无有效基线' }}</p>
       <el-button v-if="!linked.length" :disabled="busy || disabled" @click="createOpen = true">建立指标验收任务</el-button>
       <el-select v-if="linked.length" v-model="selectedId" aria-label="关联验收任务" @change="load">

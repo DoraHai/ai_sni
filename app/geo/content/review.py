@@ -13,6 +13,25 @@ REVIEW_REJECTED = "rejected"
 REVIEW_STATUSES = (REVIEW_NONE, REVIEW_PENDING, REVIEW_APPROVED, REVIEW_REJECTED)
 
 
+def is_tenant_customer_reviewer(ctx: Any) -> bool:
+    """Return whether a signed-in, tenant-bound view account may decide reviews."""
+    return (
+        getattr(ctx, "user_id", None) is not None
+        and getattr(ctx, "tenant_id", None) is not None
+        and getattr(ctx, "permissions", {}).get("geo.content") == "view"
+    )
+
+
+def can_decide_customer_review(ctx: Any) -> bool:
+    """Keep existing editors while granting one narrow action to customer reviewers."""
+    can_edit = getattr(ctx, "can_edit", None)
+    return bool(
+        getattr(ctx, "is_superadmin", False)
+        or (callable(can_edit) and can_edit("geo.content"))
+        or is_tenant_customer_reviewer(ctx)
+    )
+
+
 def normalize_review_status(value: str | None) -> str:
     text = str(value or REVIEW_NONE).strip().lower()
     return text if text in REVIEW_STATUSES else REVIEW_NONE

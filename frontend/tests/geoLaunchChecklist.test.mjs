@@ -8,6 +8,7 @@ function fixture(){
  const events=[]
  const ctx=vm.createContext({epoch:0,props:{tenantId:7,task:{id:12,article:{id:17},updated_at:'revision'},disabled:false},
  targets:{value:[]},linked:{value:[]},selectedId:{value:null},detail:{value:null},error:{value:''},loading:{value:false},busy:{value:false},confirmed:{value:true},
+ canSubmit:{value:true},canDecide:{value:true},
  fetchTaskPushTargets:async()=>({targets:[]}),evidenceApi:{listForContent:async()=>[],readiness:async()=>({})},
  submitGeoTaskReview:async()=>{},decideGeoTaskReview:async()=>{},emit:x=>events.push(x)})
  vm.runInContext(handlers,ctx);return{ctx,events}
@@ -39,4 +40,11 @@ test('late checklist reads are discarded after customer switch',async()=>{
  const pending=ctx.load();ctx.epoch++;ctx.props.tenantId=8
  done([{id:99,status:'open'}]);await pending
  assert.equal(ctx.linked.value.length,0)
+})
+test('frontend review handler rejects actions hidden by the permission gate',async()=>{
+ const {ctx}=fixture();let submit=0,decide=0
+ ctx.submitGeoTaskReview=async()=>{submit++};ctx.decideGeoTaskReview=async()=>{decide++}
+ ctx.canSubmit.value=false;await ctx.review('submit')
+ ctx.canDecide.value=false;await ctx.review('approved')
+ assert.equal(submit,0);assert.equal(decide,0)
 })

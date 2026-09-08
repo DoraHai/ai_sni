@@ -78,7 +78,9 @@ def test_review_uses_state_refreshed_under_task_lock():
     with patch.object(routes, '_get_task', AsyncMock(return_value=task)):
         with pytest.raises(HTTPException) as exc:
             asyncio.run(routes.decide_task_review(12, ReviewDecision(decision='approved'), 1,
-                        NS(ensure_tenant=Mock(), user_id=8), session))
+                        NS(ensure_tenant=Mock(), user_id=8, tenant_id=None,
+                           permissions={'geo.content': 'edit'}, is_superadmin=False,
+                           can_edit=lambda key: key == 'geo.content'), session))
     assert exc.value.status_code == 400
     session.commit.assert_not_awaited()
 
