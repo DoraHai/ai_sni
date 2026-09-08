@@ -45,7 +45,7 @@ expected_script_sha256=996c2bf8382aca13d6161fce8dbf1f459314d4c35c5927c8d57a19643
 ```bash
 cd /path/to/clean/ai_sni-checkout
 git fetch origin main
-read -rp 'Merged main SHA for PR #467: ' EXECUTION_MAIN_SHA
+read -rp 'Merged main SHA containing PR #475: ' EXECUTION_MAIN_SHA
 test "${#EXECUTION_MAIN_SHA}" -eq 40
 git checkout --detach "$EXECUTION_MAIN_SHA"
 test "$(git rev-parse HEAD)" = "$EXECUTION_MAIN_SHA"
