@@ -105,7 +105,7 @@
 
 任一门禁不满足即停止，不能通过临时扩权、改配置或换超管绕过。
 
-1. 发布负责人回传当前 GEO 生产 SHA、发布时间与 `/geo-health` 结果。生产代码必须包含本计划引用的正式路由、`geo_read_session` 只读渠道列表以及合并契约 `main@107ea37d` 的等价内容；无法确认版本时停止。
+1. 发布负责人回传当前 GEO 生产 SHA、发布时间，并调用正式健康接口 `GET /health/geo`。必须为 HTTP 200，响应必须是 JSON 对象且同时满足 `service="geo-api"`、`db="ok"`、`geo_scheduler="running"`；字段缺失、值不符或非 200 均停止。生产代码还必须包含本计划引用的正式路由、`geo_read_session` 只读渠道列表以及合并契约 `main@107ea37d` 的等价内容；无法确认版本时停止。
 2. `GET /api/v1/auth/me`：必须返回真实 `user` envelope；`user.id` 为普通账号整数，`user.tenant_id=4`，`user.permissions["geo.content"]="edit"`。
 3. `GET /api/v1/auth/modules`：租户 4 的 GEO 必须 `available=true`，且未过期。
 4. `GET /api/v1/geo/tenants`：返回范围必须包含且只能授权执行人可访问的客户；其中必须能确认 `tenant_id=4`。若身份可查看其它租户，停止并换成最小权限账号。
@@ -154,7 +154,27 @@
 - `GET /api/v1/geo/media-placements?tenant_id=4&seed_defaults=false`；
 - `GET /api/v1/geo/content-tasks?tenant_id=4&include_archived=true&limit=200&offset=0`，保存 `total`；若 `total>200`，停止并先设计完整分页取证。
 
-不要调用 settings GET、巡检 run 详情 GET 或异步 job GET 作为基线；已有部分旧 GET 可能初始化配置或更新超时状态，不能把它们当成无副作用查询。
+另外必须使用下列 **`/integration/read` 严格只读接口**，取得巡检、回答和异步任务的完整前置水位。生产 OpenAPI 中缺少其中任何一个接口，或任何请求无法完成全量分页，均在首个 POST 前停止：
+
+- `GET /api/v1/geo/integration/read/patrol-runs?tenant_id=4&limit=50`；后续页只使用响应的 `next_before_id` 作为同一路径的 `before_id`，直到 `next_before_id=null`；
+- `GET /api/v1/geo/integration/read/answers?tenant_id=4&limit=200`；后续页原样使用响应的 opaque `pagination.next_cursor`，直到 `pagination.has_more=false` 且 `next_cursor=null`；所有页的 `pagination.watermark_max_id` 必须与首屏一致；
+- `GET /api/v1/geo/integration/read/async-jobs?tenant_id=4&limit=50`；按巡检列表相同方式使用 `next_before_id` 翻到末页。
+
+巡检和异步任务列表没有服务端 watermark 字段，客户端必须把首屏最大的 `ref.id` 固定为本次读取水位（空列表记为 0），后续页不得出现大于该水位的 ID。三个列表都要保存完整去重 ID 集合、总数、首屏水位、每页游标和响应 SHA-256；游标循环、跨页重复 ID、租户不为 4、页序异常或未到末页都属于取证失败。
+
+这里只禁止旧的、可能在查询时协调超时状态的进度接口，例如 `GET /api/v1/geo/visibility-patrol/runs`、`GET /api/v1/geo/visibility-patrol/runs/{id}`、`GET /api/v1/geo/async-jobs` 和 `GET /api/v1/geo/async-jobs/{id}`。不得把该禁令扩展到上面的严格只读 `/integration/read` 列表。settings GET 仍不得作为基线，因为部分旧实现可能初始化配置。
+
+### 4.5 固定执行时间窗与后置水位
+
+完成 4.1 至 4.4 的全部前置取证后，以服务端可审计 UTC 时间记 `T0`，随后才允许首个 POST。最后一个允许的 POST 及其目标对象 GET 复核结束后立即记 `T1`；要求 `T1-T0<=10 分钟`。不得事后按客户端估算时间补填窗口。
+
+结束复核时，对 4.4 的三个严格只读列表重新从首屏分页到底，取得后置水位和完整去重 ID 集合。比较每个列表的前后 ID 集合和数量：
+
+- 巡检和异步任务新增 ID 必须为空；任何新增项还要记录其 `created_at` 是否落在 `[T0,T1]`，但时间不在窗口内不能推翻 ID 差异；
+- 回答新增 ID 必须为空；任何新增项还要记录其 `captured_at` 是否落在 `[T0,T1]`。后置回答首屏自己的 `watermark_max_id` 固定整次后置翻页，不能复用前置 cursor；
+- 前置与后置各自必须完整翻到末页。不得只查询 `captured_from=T0&captured_to=T1` 来替代完整 ID 集合比较，因为 `captured_at` 可能为空或与写入时间不同。
+
+若任一严格只读接口非 200、返回结构不符、游标或水位不一致、分页未到底、ID 无法完整提取，执行结果必须降级为 `unverified_evidence_incomplete`。此时停止验收，不得宣称“没有新增巡检、回答或异步任务”，即使其它对象检查全部通过。
 
 ## 5. 正式执行顺序
 
@@ -165,7 +185,7 @@
 3. **问题 2**：重复同样流程。
 4. **问题 3**：重复同样流程。
 5. **官网渠道**：最后重新执行 4.3。仍为 0 条时，按 2.3 POST 一次。要求 HTTP 200、正整数 ID、`tenant_id=4`、`virtual_default=false`、`publish_mode=manual_only`、`enabled=false`。重新 GET 确认恰好一条持久化记录。
-6. **结束复核**：重复 4.1 至 4.4 的全部安全 GET。不得为了“验证配置”调用任何测试、采集、生成或发布接口。
+6. **结束复核**：固定 `T1`，重复 4.1 至 4.5 的全部安全 GET 和严格只读分页比较。不得为了“验证配置”调用任何测试、采集、生成或发布接口。
 
 若某对象已经完全一致地存在，执行记录必须写 `reused` 和原 ID；不能为了得到“本轮新建”效果再次 POST。
 
@@ -204,16 +224,16 @@
 1. 业务画像精确 1 条，固定字段正确，`status=active`、`unit_count=0`；
 2. 三个固定问句各精确 1 条，均为 manual/zh-CN/cn、非品牌点名、`unit_id=null`；
 3. `TIGER 官方网站` 持久化渠道精确 1 条，website/manual_only/disabled，官网地址正确；
-4. 禁止对象基线的总数和持久化 ID 与执行前完全一致；
+4. 禁止对象基线的总数和持久化 ID 与执行前完全一致，三个严格只读列表均分页到底且前后完整 ID 集合和数量一致；
 5. 请求账本只有允许的 GET 和最多 5 个已列明 POST，没有其它非 GET；
-6. 没有采集 run、回答、内容任务、异步 job、渠道账号、渠道稿或发布记录因本轮产生；
+6. 严格只读证据完整，并据此确认没有采集 run、回答或异步 job 因本轮产生；同时没有内容任务、渠道账号、渠道稿或发布记录因本轮产生；
 7. 所有对象均可归因到明确响应 ID；空列表或虚拟默认项不能写成“已创建”。
 
-任一条件不满足，结果只能是“停止/部分完成”，不能写“成功”。
+任一条件不满足，结果只能是“停止/部分完成”，不能写“成功”。若三个严格只读列表任一取证不完整，结果必须写 `unverified_evidence_incomplete`，且不得写“没有新增巡检、回答或异步任务”。
 
 ## 9. 停止条件与补偿回滚
 
-立即停止条件包括：身份或模块门禁失败、部署版本不明、重复记录、现存对象字段冲突、非预期对象数量变化、任何非 GET/允许 POST 请求、HTTP 401/403/409/422/5xx、响应租户不是 4、响应无正整数 ID、POST 结果不确定，以及渠道不是 manual_only+disabled。
+立即停止条件包括：身份或模块门禁失败、健康接口非 200 或关键字段不符、部署版本不明、严格只读前置取证不完整、重复记录、现存对象字段冲突、非预期对象数量变化、任何非 GET/允许 POST 请求、HTTP 401/403/409/422/5xx、响应租户不是 4、响应无正整数 ID、POST 结果不确定，以及渠道不是 manual_only+disabled。后置严格只读取证不完整时立即停止验收并标记 `unverified_evidence_incomplete`。
 
 停止后不要自动回滚。先回传完整脱敏证据，由工作台统筹和 GEO 负责人共同决定是否执行补偿。补偿只处理“本执行编号明确新建”的 ID，按逆序进行：
 
@@ -228,11 +248,12 @@
 执行人须一次性回传以下脱敏材料：
 
 - 执行编号、执行人 user ID、`tenant_id=4`、权限键、开始/结束 UTC 与 Asia/Shanghai 时间；
-- GEO 生产 SHA、发布时间和健康检查结果；
+- GEO 生产 SHA、发布时间，以及 `GET /health/geo` 的 HTTP 状态和 `service`、`db`、`geo_scheduler` 三个字段；
 - 执行前与执行后每个安全 GET 的状态码、响应摘要、对象总数、持久化 ID 列表和响应 SHA-256；
 - 每个目标对象的决策：`created`、`reused`、`created_outcome_recovered` 或 `stopped`；
 - 每个允许 POST 的方法、路径、查询参数、请求体 SHA-256、HTTP 状态、服务端 request ID 和返回对象 ID；
 - 业务画像 4 个非空字段及其余空字段摘要、三个问题的固定字段、渠道的 type/mode/enabled/base URL；
+- `T0`、`T1`，三个严格只读列表前后各自的完整分页请求序列、固定水位、完整去重 ID 集合、数量和差异；
 - 禁止对象前后差异结果，以及“其它非 GET 请求数 = 0”；
 - 所有异常原文、停止点、是否存在部分完成、是否建议补偿。
 
