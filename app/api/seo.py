@@ -5549,12 +5549,16 @@ def _workbench_page_check_payload(
     snapshot: SeoPageSnapshot | None,
     *,
     unavailable_reason: str | None = None,
+    verification_not_before: datetime | None = None,
 ) -> dict[str, Any]:
+    not_before_iso = _iso(verification_not_before)
     if page is None:
         return {
             "source": "seo_page_snapshots",
             "coverage": "not_applicable",
             "fetched_at": None,
+            "verified_after_publication": None,
+            "verification_not_before": not_before_iso,
             "reason": unavailable_reason or "publication_page_is_not_uniquely_associated",
             "page": None,
             "crawl": None,
@@ -5572,6 +5576,8 @@ def _workbench_page_check_payload(
             "source": "seo_page_snapshots",
             "coverage": "no_data",
             "fetched_at": None,
+            "verified_after_publication": None,
+            "verification_not_before": not_before_iso,
             "reason": "no_stored_snapshot_for_the_associated_page",
             "page": page_summary,
             "crawl": None,
@@ -5580,6 +5586,25 @@ def _workbench_page_check_payload(
             "links": None,
             "images": None,
         }
+    fetched_at = snapshot.fetched_at
+    fetched_utc = (
+        fetched_at.replace(tzinfo=timezone.utc)
+        if fetched_at is not None and fetched_at.tzinfo is None
+        else fetched_at.astimezone(timezone.utc) if fetched_at is not None else None
+    )
+    not_before_utc = (
+        verification_not_before.replace(tzinfo=timezone.utc)
+        if verification_not_before is not None and verification_not_before.tzinfo is None
+        else verification_not_before.astimezone(timezone.utc)
+        if verification_not_before is not None
+        else None
+    )
+    verified_after_publication = (
+        fetched_utc >= not_before_utc
+        if fetched_utc is not None and not_before_utc is not None
+        else None
+    )
+    stale = verified_after_publication is False
     failed = bool(snapshot.fetch_error or snapshot.error_type)
     image_evidence = (
         snapshot.image_alt_evidence
@@ -5588,9 +5613,15 @@ def _workbench_page_check_payload(
     )
     return {
         "source": "seo_page_snapshots",
-        "coverage": "failed" if failed else "available",
-        "fetched_at": _database_iso(snapshot.fetched_at),
-        "reason": "stored_crawl_failed" if failed else None,
+        "coverage": "stale" if stale else "failed" if failed else "available",
+        "fetched_at": _database_iso(fetched_at),
+        "verified_after_publication": verified_after_publication,
+        "verification_not_before": not_before_iso,
+        "reason": (
+            "stored_snapshot_predates_publication"
+            if stale
+            else "stored_crawl_failed" if failed else None
+        ),
         "page": page_summary,
         "crawl": {
             "snapshot_id": snapshot.id,
@@ -6694,6 +6725,11 @@ async def list_workbench_publication_page_evidence(
                     matched_page,
                     snapshot,
                     unavailable_reason=association["reason"],
+                    verification_not_before=(
+                        publication.published_at
+                        if publication.status == "published"
+                        else None
+                    ),
                 ),
             }
         )

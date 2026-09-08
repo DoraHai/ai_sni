@@ -238,8 +238,12 @@ def test_incomplete_inventory_never_claims_a_unique_match():
 
 
 def test_page_check_keeps_crawl_http_body_link_and_image_evidence_separate():
-    result = api._workbench_page_check_payload(_page(), _snapshot())
+    result = api._workbench_page_check_payload(
+        _page(), _snapshot(), verification_not_before=datetime(2026, 9, 6, 4, 0)
+    )
     assert result["coverage"] == "available"
+    assert result["verified_after_publication"] is True
+    assert result["verification_not_before"] == "2026-09-06T04:00:00Z"
     assert result["crawl"]["snapshot_id"] == 71
     assert result["http"]["status_code"] == 200
     assert result["body"]["main_content_extractable"] is True
@@ -258,6 +262,27 @@ def test_page_check_keeps_crawl_http_body_link_and_image_evidence_separate():
     assert failed["coverage"] == "failed"
     assert failed["reason"] == "stored_crawl_failed"
     assert failed["crawl"]["fetch_error"] == "timeout"
+
+
+def test_page_check_marks_a_prepublication_snapshot_as_stale_even_if_it_passed():
+    result = api._workbench_page_check_payload(
+        _page(),
+        _snapshot(fetched_at=datetime(2026, 9, 6, 3, 59), status_code=200),
+        verification_not_before=datetime(2026, 9, 6, 4, 0),
+    )
+
+    assert result["coverage"] == "stale"
+    assert result["verified_after_publication"] is False
+    assert result["reason"] == "stored_snapshot_predates_publication"
+    assert result["http"]["status_code"] == 200
+
+
+def test_page_check_without_a_publication_time_never_claims_postpublication_verification():
+    result = api._workbench_page_check_payload(_page(), _snapshot())
+
+    assert result["coverage"] == "available"
+    assert result["verified_after_publication"] is None
+    assert result["verification_not_before"] is None
 
 
 def test_endpoint_returns_scoped_stored_evidence_and_has_no_write_side_effect(monkeypatch):
@@ -303,6 +328,7 @@ def test_endpoint_returns_scoped_stored_evidence_and_has_no_write_side_effect(mo
     assert result["items"][0]["latest_attempt"]["status"] == "succeeded"
     assert result["items"][0]["page_association"]["association_status"] == "exact_unique"
     assert result["items"][0]["page_check"]["coverage"] == "available"
+    assert result["items"][0]["page_check"]["verified_after_publication"] is True
     assert "request_summary" not in result["items"][0]["latest_attempt"]
     module_guard.assert_awaited_once_with(db, ctx, 7, "seo")
     tenant_guard.assert_awaited_once_with(db, 7)
