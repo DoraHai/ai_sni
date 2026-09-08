@@ -410,7 +410,7 @@ onBeforeUnmount(() => { document.removeEventListener('fullscreenchange', syncFul
       <div class="page-tabs">
         <button :class="{ active: activeSection === 'dashboard' }" type="button" @click="activeSection = 'dashboard'">实时战况</button>
         <button :class="{ active: activeSection === 'actions' }" type="button" @click="activeSection = 'actions'">行动台账 <b v-if="urgentItems">{{ urgentItems }}</b></button>
-        <button :class="{ active: activeSection === 'quality' }" type="button" @click="activeSection = 'quality'">数据边界 <i v-if="partialEvidence"></i></button>
+        <button :class="{ active: activeSection === 'quality' }" type="button" @click="activeSection = 'quality'">数据边界 <i v-if="boundaryItems"></i></button>
       </div>
       <div class="view-tools" aria-label="布局控制">
         <span>视图</span>
