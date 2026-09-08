@@ -1,8 +1,10 @@
-# Current coordination — 2026-09-08 20:44 Asia/Shanghai
+# Current coordination — 2026-09-08 20:48 Asia/Shanghai
 
 This is the authoritative continuation checkpoint. Historical pause documents are superseded by the current user instruction to continue development and coordinate the existing SEM, SEO and GEO tasks.
 
 ## Latest production checkpoint — supersedes older state below
+
+- 2026-09-08 20:48 GEO background-entitlement PR493 final exact `f7bbfe7611c4f8cbfd3aa3b9435183cb969e243e` on production-geo `bbbb216be5c8b3823bb98c269ac1c57ea4f55dd3` passed coordinator review P1=0/P2=0. The final change rolls back connector-side credential refresh and other pending writes when entitlement expires during a remote send, then persists only a sanitized `unknown` delivery audit in a fresh task→variant locked transaction if the reservation is still owned; a concurrent human recovery is not overwritten. Independent `ops/run_geo_checks.py` passed 1085 tests with 47 skips, diff check is clean, and all exact-head PR checks are green. The GEO owner is authorized to perform an unchanged exact-head controlled production-geo merge/deploy and return release/rollback/health/scheduler/log evidence. No customer, task14, business call, migration or H2-H4 action is authorized during deployment.
 
 - 2026-09-08 20:44 usage rule changed by the user: continue development, review, merge and controlled deployment while the Codex primary allowance has at least 30% remaining; when remaining falls below 30%, immediately stop/interupt active work, send no new assignment, preserve exact state, update this handoff and notify the user. Heartbeat `automation-2` has been updated to the same five-minute rule. Never consume a reset credit without explicit user authorization. This supersedes every older 60% or 20% threshold below.
 
