@@ -12,7 +12,7 @@ from sqlalchemy import BigInteger, Date, String, and_, column, or_, select, tabl
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Tenant
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from app.database import get_session
 from app.security.auth import require_scoped_auth
 
@@ -89,4 +89,42 @@ async def require_geo_read_entitlement(tenant_id: int, ctx=Depends(require_scope
     """
     ctx.ensure_tenant(tenant_id)
     await ensure_geo_entitlement(session, tenant_id)
+    return ctx
+
+
+async def require_geo_request_entitlement(
+    request: Request,
+    ctx=Depends(require_scoped_auth),
+    session=Depends(get_session),
+):
+    """Enforce GEO entitlement whenever a GEO request names a customer.
+
+    GEO routes use both query parameters and JSON request models for
+    ``tenant_id``.  Reading JSON through Starlette's cached request body keeps
+    normal FastAPI model parsing intact.  Routes without a customer context
+    (for example the brief catalog and the already-filtered tenant switcher)
+    remain available after authentication.
+    """
+    candidates = list(request.query_params.getlist("tenant_id"))
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].lower()
+    if content_type == "application/json":
+        try:
+            payload = await request.json()
+        except (ValueError, UnicodeDecodeError):
+            payload = None
+        if isinstance(payload, dict) and payload.get("tenant_id") is not None:
+            candidates.append(payload["tenant_id"])
+
+    tenant_ids: list[int] = []
+    for value in candidates:
+        try:
+            tenant_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if tenant_id > 0 and tenant_id not in tenant_ids:
+            tenant_ids.append(tenant_id)
+
+    for tenant_id in tenant_ids:
+        ctx.ensure_tenant(tenant_id)
+        await ensure_geo_entitlement(session, tenant_id)
     return ctx
