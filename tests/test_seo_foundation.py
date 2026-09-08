@@ -531,6 +531,141 @@ def test_seo_routes_require_active_module_for_tenant(http_request: Request) -> N
     guard.assert_awaited_once_with(session, context, 12, "seo")
 
 
+def test_seo_module_gate_accepts_integer_json_numbers_without_skipping_entitlement() -> None:
+    request = _request(
+        "POST",
+        "/api/v1/seo/keywords",
+        body=b'{"tenant_id":12.0,"site_id":3.0}',
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=12,
+        permissions={"seo.keywords": "edit"},
+    )
+    with (
+        patch("app.api.seo.ensure_module_access", new=AsyncMock()) as module_guard,
+        patch(
+            "app.api.seo.seo_site_is_operational",
+            new=AsyncMock(return_value=True),
+        ) as site_guard,
+    ):
+        result = asyncio.run(require_seo_module_access(request, context, object()))
+
+    assert result is context
+    module_guard.assert_awaited_once_with(ANY, context, 12, "seo")
+    site_guard.assert_awaited_once_with(ANY, 12, 3)
+
+
+def test_seo_module_gate_rejects_inactive_site_before_new_business_write() -> None:
+    request = _request(
+        "POST",
+        "/api/v1/seo/site/crawl-runs",
+        body=b'{"tenant_id":12,"site_id":3,"max_urls":10}',
+    )
+    context = AuthContext(7, "operator", "运营", 12, {"seo.site": "edit"})
+    with (
+        patch("app.api.seo.ensure_module_access", new=AsyncMock()),
+        patch(
+            "app.api.seo.seo_site_is_operational",
+            new=AsyncMock(return_value=False),
+        ),
+    ):
+        with pytest.raises(Exception) as raised:
+            asyncio.run(require_seo_module_access(request, context, object()))
+
+    assert raised.value.status_code == 409
+
+
+def test_seo_module_gate_keeps_external_publication_receipt_writable() -> None:
+    request = _request(
+        "POST",
+        "/api/v1/seo/content-distribution/publications/9/complete",
+        body=b'{"tenant_id":12,"site_id":3,"page_url":"https://publisher.example/a"}',
+    )
+    context = AuthContext(7, "operator", "运营", 12, {"seo.content": "edit"})
+    site_guard = AsyncMock(return_value=False)
+    inactive_module = AsyncMock(return_value=SimpleNamespace(status="disabled"))
+    with (
+        patch("app.api.seo.get_tenant_module", new=inactive_module),
+        patch("app.api.seo.seo_site_is_operational", new=site_guard),
+    ):
+        result = asyncio.run(require_seo_module_access(request, context, object()))
+
+    assert result is context
+    inactive_module.assert_awaited_once_with(ANY, 12, "seo", require_active=False)
+    site_guard.assert_not_awaited()
+
+
+def test_seo_module_gate_does_not_treat_publication_retry_as_evidence() -> None:
+    request = _request(
+        "POST",
+        "/api/v1/seo/content-distribution/publications/9/retry",
+        body=b'{"tenant_id":12,"site_id":3,"confirm":true}',
+    )
+    context = AuthContext(7, "operator", "运营", 12, {"seo.content": "edit"})
+    module_guard = AsyncMock()
+    site_guard = AsyncMock(return_value=False)
+    with (
+        patch("app.api.seo.ensure_module_access", new=module_guard),
+        patch("app.api.seo.seo_site_is_operational", new=site_guard),
+    ):
+        with pytest.raises(Exception) as raised:
+            asyncio.run(require_seo_module_access(request, context, object()))
+
+    assert raised.value.status_code == 409
+    module_guard.assert_awaited_once_with(ANY, context, 12, "seo")
+    site_guard.assert_awaited_once_with(ANY, 12, 3)
+
+
+def test_queued_crawl_stops_and_refunds_when_site_was_disabled() -> None:
+    from app.api import seo
+
+    run = SimpleNamespace(
+        id=9,
+        tenant_id=12,
+        site_id=3,
+        status="queued",
+        error_summary=None,
+        completed_at=None,
+    )
+    run_session = SimpleNamespace(get=AsyncMock(return_value=run), commit=AsyncMock())
+    refund_session = SimpleNamespace()
+
+    class SessionContext:
+        def __init__(self, value):
+            self.value = value
+
+        async def __aenter__(self):
+            return self.value
+
+        async def __aexit__(self, *_args):
+            return False
+
+    factory = MagicMock(
+        side_effect=[SessionContext(run_session), SessionContext(refund_session)]
+    )
+    crawl = AsyncMock()
+    refund = AsyncMock()
+    with (
+        patch.object(seo, "async_session_factory", factory),
+        patch.object(seo, "seo_site_is_operational", new=AsyncMock(return_value=False)),
+        patch.object(seo, "crawl_site", new=crawl),
+        patch.object(seo, "refund_seo_usage", new=refund),
+    ):
+        asyncio.run(
+            seo._execute_seo_crawl_run(
+                9, 12, 3, "https://example.com", 20, 2, [], 7
+            )
+        )
+
+    crawl.assert_not_awaited()
+    assert run.status == "failed"
+    assert "未启动" in run.error_summary
+    refund.assert_awaited_once_with(refund_session, 12, "crawl_urls", 20)
+
+
 def test_keyword_and_rank_input_validation() -> None:
     keyword = KeywordCreate(
         tenant_id=1,
@@ -706,11 +841,160 @@ def test_existing_content_task_can_be_bound_to_a_source_page() -> None:
     session.get = AsyncMock(return_value=row)
     session.scalar = AsyncMock(return_value=None)
     source_page = SimpleNamespace(id=231, tenant_id=1, site_id=9)
-    with patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)):
+    with (
+        patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)),
+        patch("app.api.seo._require_resource_operational_site", new=AsyncMock()),
+    ):
         result = asyncio.run(update_content_asset(88, 1, request, session, context))
     assert row.source_page_id == 231
     assert result["source_page_id"] == 231
     session.commit.assert_awaited_once()
+
+
+def test_inactive_persisted_content_site_blocks_review_and_update_by_resource_id() -> None:
+    from fastapi import HTTPException
+
+    row = SeoContentAsset(
+        id=88,
+        tenant_id=1,
+        site_id=9,
+        title="停用站点内容",
+        content_type="article",
+        status="drafting",
+        keyword_id=6,
+        draft="<p>正文</p>",
+    )
+    context = AuthContext(7, "operator", "运营", 1, {"seo.content": "edit"})
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+    guard = AsyncMock(side_effect=HTTPException(409, "site inactive"))
+    calls = (
+        lambda: submit_content_review(88, 1, ContentReviewSubmit(), session, context),
+        lambda: decide_content_review(
+            88, 1, ContentReviewDecision(decision="approve"), session, context
+        ),
+        lambda: update_content_asset(
+            88, 1, ContentUpdate(title="不可修改"), session, context
+        ),
+    )
+
+    with patch("app.api.seo._require_resource_operational_site", new=guard):
+        for call in calls:
+            with pytest.raises(HTTPException) as raised:
+                asyncio.run(call())
+            assert raised.value.status_code == 409
+
+    assert [item.args for item in guard.await_args_list] == [(session, 1, 9)] * 3
+    session.commit.assert_not_awaited()
+
+
+def test_distribution_resource_site_is_authoritative_when_request_omits_site() -> None:
+    from fastapi import HTTPException
+    from app.api.seo import _distribution_content
+
+    row = SeoContentAsset(
+        id=88, tenant_id=1, site_id=9, title="分发稿", content_type="article"
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+    guard = AsyncMock(side_effect=HTTPException(409, "site inactive"))
+    with patch("app.api.seo.require_seo_site_operational", new=guard):
+        with pytest.raises(HTTPException) as raised:
+            asyncio.run(_distribution_content(session, 1, 88))
+
+    assert raised.value.status_code == 409
+    guard.assert_awaited_once_with(session, 1, 9)
+
+
+def test_publish_and_retry_endpoints_stop_on_inactive_persisted_content_site() -> None:
+    from fastapi import HTTPException
+    from app.api.seo import (
+        DistributionPublishRequest,
+        DistributionRetryRequest,
+        publish_content_distribution,
+        retry_content_publication,
+    )
+
+    context = AuthContext(7, "operator", "运营", 1, {"seo.content": "edit"})
+    session = AsyncMock()
+    session.scalar = AsyncMock(
+        return_value=SimpleNamespace(id=12, tenant_id=1, content_asset_id=88)
+    )
+    inactive_content = AsyncMock(side_effect=HTTPException(409, "site inactive"))
+    provider = AsyncMock()
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=inactive_content),
+        patch("app.api.seo.publish_content", new=provider),
+    ):
+        with pytest.raises(HTTPException) as publish_error:
+            asyncio.run(
+                publish_content_distribution(
+                    DistributionPublishRequest(
+                        tenant_id=1,
+                        content_id=88,
+                        connection_id=3,
+                        action="publish",
+                        confirm=True,
+                    ),
+                    session,
+                    context,
+                )
+            )
+        with pytest.raises(HTTPException) as retry_error:
+            asyncio.run(
+                retry_content_publication(
+                    12,
+                    DistributionRetryRequest(tenant_id=1, confirm=True),
+                    session,
+                    context,
+                )
+            )
+
+    assert publish_error.value.status_code == 409
+    assert retry_error.value.status_code == 409
+    assert inactive_content.await_count == 2
+    assert all(call.kwargs == {} for call in inactive_content.await_args_list)
+    provider.assert_not_awaited()
+    session.commit.assert_not_awaited()
+
+
+def test_distribution_evidence_load_can_read_inactive_resource_site() -> None:
+    from app.api.seo import _distribution_content
+
+    row = SeoContentAsset(
+        id=88, tenant_id=1, site_id=9, title="已外发稿", content_type="article"
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+    guard = AsyncMock()
+    with patch("app.api.seo.require_seo_site_operational", new=guard):
+        result = asyncio.run(
+            _distribution_content(session, 1, 88, require_operational=False)
+        )
+
+    assert result is row
+    guard.assert_not_awaited()
+
+
+def test_connection_test_requires_an_operational_tenant_site_before_provider_call() -> None:
+    from fastapi import HTTPException
+    from app.api.seo import test_distribution_connection as invoke_connection_test
+
+    context = AuthContext(7, "operator", "运营", 1, {"seo.content": "edit"})
+    session = AsyncMock()
+    guard = AsyncMock(side_effect=HTTPException(409, "no operational site"))
+    provider = AsyncMock()
+    with (
+        patch("app.api.seo.require_any_operational_seo_site", new=guard),
+        patch("app.api.seo.test_connection", new=provider),
+    ):
+        with pytest.raises(HTTPException) as raised:
+            asyncio.run(invoke_connection_test(3, 1, session, context))
+
+    assert raised.value.status_code == 409
+    guard.assert_awaited_once_with(session, 1)
+    provider.assert_not_awaited()
 
 
 def test_ready_landing_content_can_bind_a_source_page_without_reopening_text() -> None:

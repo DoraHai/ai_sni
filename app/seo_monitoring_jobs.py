@@ -14,8 +14,9 @@ from sqlalchemy import or_, select
 
 from app.config import get_settings
 from app.database import async_session_factory
-from app.module_scope import list_active_module_tenants
+from app.module_scope import list_active_module_tenants, seo_site_is_operational
 from app.models import SeoBacklink, SeoCompetitor, SeoCompetitorEvent
+from app.models.module_workspace import SeoSite
 from app.models.seo import SeoCrawlRun
 from app.seo_automation_runs import (
     active_manual_automation_site_ids,
@@ -52,10 +53,16 @@ async def collect_scheduled_competitors() -> dict[str, int]:
         rows = list(
             await session.scalars(
                 select(SeoCompetitor)
+                .join(
+                    SeoSite,
+                    (SeoSite.id == SeoCompetitor.site_id)
+                    & (SeoSite.tenant_id == SeoCompetitor.tenant_id),
+                )
                 .where(
                     SeoCompetitor.tenant_id.in_(entitled_tenant_ids),
                     SeoCompetitor.status == "active",
                     SeoCompetitor.site_id.is_not(None),
+                    SeoSite.status == "active",
                     or_(SeoCompetitor.last_checked_at.is_(None), SeoCompetitor.last_checked_at < cutoff),
                 )
                 .order_by(SeoCompetitor.last_checked_at.asc().nullsfirst(), SeoCompetitor.id)
@@ -98,12 +105,25 @@ async def collect_scheduled_competitors() -> dict[str, int]:
             if candidate.site_id in blocked_site_ids:
                 tenant_skipped += 1
                 continue
+            async with async_session_factory() as session:
+                if not await seo_site_is_operational(
+                    session, tenant_id, int(candidate.site_id)
+                ):
+                    tenant_skipped += 1
+                    continue
             checked += 1
             try:
                 collection = await collect_competitor_content(candidate.domain)
                 async with async_session_factory() as session:
                     row = await session.get(SeoCompetitor, candidate.id)
-                    if row is None or row.status != "active" or row.site_id is None:
+                    if (
+                        row is None
+                        or row.status != "active"
+                        or row.site_id is None
+                        or not await seo_site_is_operational(
+                            session, row.tenant_id, int(row.site_id)
+                        )
+                    ):
                         tenant_skipped += 1
                         continue
                     existing = list(
@@ -180,9 +200,15 @@ async def verify_scheduled_backlinks() -> dict[str, int]:
         rows = list(
             await session.scalars(
                 select(SeoBacklink)
+                .join(
+                    SeoSite,
+                    (SeoSite.id == SeoBacklink.site_id)
+                    & (SeoSite.tenant_id == SeoBacklink.tenant_id),
+                )
                 .where(
                     SeoBacklink.tenant_id.in_(entitled_tenant_ids),
                     SeoBacklink.status.in_(["active", "lost"]),
+                    SeoSite.status == "active",
                     or_(SeoBacklink.last_checked_at.is_(None), SeoBacklink.last_checked_at < cutoff),
                 )
                 .order_by(SeoBacklink.last_checked_at.asc().nullsfirst(), SeoBacklink.id)
@@ -225,11 +251,25 @@ async def verify_scheduled_backlinks() -> dict[str, int]:
             if candidate.site_id in blocked_site_ids:
                 tenant_skipped += 1
                 continue
+            async with async_session_factory() as session:
+                if not await seo_site_is_operational(
+                    session, tenant_id, int(candidate.site_id)
+                ):
+                    tenant_skipped += 1
+                    continue
             try:
                 result = await fetch_url(candidate.source_url)
                 async with async_session_factory() as session:
                     row = await session.get(SeoBacklink, candidate.id, with_for_update=True)
-                    if row is None or row.status not in {"active", "lost"} or row.source_url != candidate.source_url or row.target_url != candidate.target_url:
+                    if (
+                        row is None
+                        or row.status not in {"active", "lost"}
+                        or row.source_url != candidate.source_url
+                        or row.target_url != candidate.target_url
+                        or not await seo_site_is_operational(
+                            session, row.tenant_id, int(row.site_id)
+                        )
+                    ):
                         tenant_skipped += 1
                         continue
                     evidence = apply_backlink_evidence(row, result)
@@ -320,6 +360,11 @@ async def verify_scheduled_qa() -> dict[str, int]:
                 if row is None:
                     skipped += 1
                     continue
+                if not await seo_site_is_operational(
+                    session, row.tenant_id, row.site_id
+                ):
+                    skipped += 1
+                    continue
                 try:
                     result = await fetch_backlink_page(row.answer_url)
                 except Exception as exc:
@@ -329,6 +374,11 @@ async def verify_scheduled_qa() -> dict[str, int]:
                 observation['source'] = 'scheduled'
                 # Existing backlink assets have their own verification schedule.
                 observation['backlink_discovery'] = {'state':'not_checked', 'found':None, 'created':0}
+                if not await seo_site_is_operational(
+                    session, row.tenant_id, row.site_id
+                ):
+                    skipped += 1
+                    continue
                 row.observations = [*row.observations[-29:], observation]
                 row.status = observation['state']
                 row.version += 1

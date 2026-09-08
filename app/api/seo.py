@@ -64,7 +64,14 @@ from app.models.seo import (
     SeoDistributionVariant,
     SeoPublishAttempt,
 )
-from app.module_scope import ensure_module_access
+from app.module_scope import (
+    ensure_module_access,
+    get_tenant_module,
+    require_any_operational_seo_site,
+    require_seo_site_operational,
+    seo_publication_site_is_operational,
+    seo_site_is_operational,
+)
 from app.security.auth import AuthContext, require_scoped_auth
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_distribution import (
@@ -139,29 +146,129 @@ from app.seo_distribution_import import (
 )
 
 
+def _request_integer(value: object, field: str) -> int:
+    if isinstance(value, bool) or value is None:
+        raise HTTPException(422, f"{field} 必须是整数")
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise HTTPException(422, f"{field} 必须是整数")
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value.strip())
+    raise HTTPException(422, f"{field} 必须是整数")
+
+
+def _inactive_site_evidence_write_allowed(
+    request: Request,
+    payload: dict[str, Any] | None,
+) -> bool:
+    """Keep external facts and stop controls writable after a site is paused."""
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None)
+    raw_path = request.url.path.rstrip("/")
+
+    def matches(template: str) -> bool:
+        if route_path is not None:
+            return route_path == template
+        pattern = re.sub(r"\\\{[^{}]+\\\}", "[^/]+", re.escape(template))
+        return re.fullmatch(pattern, raw_path) is not None
+
+    if request.method == "DELETE" and matches("/api/v1/seo/tasks/{task_id}"):
+        return True
+    if matches("/api/v1/seo/content-assets/import-published-links"):
+        return True
+    if matches("/api/v1/seo/backlinks/referrals"):
+        return True
+    if matches("/api/v1/seo/content-distribution/publications/{publication_id}/materials"):
+        return True
+    if any(matches(template) for template in (
+        "/api/v1/seo/content-distribution/publications/{publication_id}/complete",
+        "/api/v1/seo/content-distribution/publications/{publication_id}/sync",
+    )):
+        return True
+    if any(matches(template) for template in (
+        "/api/v1/seo/qa/placements/{placement_id}/receipt",
+        "/api/v1/seo/qa/placements/{placement_id}/assistant-receipt",
+        "/api/v1/seo/qa/placements/{placement_id}/metrics",
+    )):
+        return True
+    if any(matches(template) for template in (
+        "/api/v1/seo/content-distribution/video/publications/{publication_id}/recover",
+        "/api/v1/seo/content-distribution/video/publications/{publication_id}/sync",
+    )):
+        return True
+    if matches("/api/v1/seo/qa/batches/{batch_id}/control") and payload:
+        return (
+            payload.get("action") in {"pause", "cancel"}
+            and payload.get("question_id") is None
+            and set(payload) <= {"tenant_id", "site_id", "action", "question_id"}
+        )
+    if matches("/api/v1/seo/tasks/{task_id}") and request.method == "PATCH" and payload:
+        return (
+            payload.get("status") == "cancelled"
+            and set(payload) <= {"tenant_id", "site_id", "status"}
+        )
+    return False
+
+
 async def require_seo_module_access(
     request: Request,
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> AuthContext:
     """Require an active, non-expired SEO entitlement for tenant-bound routes."""
-    tenant_value = request.query_params.get("tenant_id")
-    if not tenant_value:
-        tenant_value = request.path_params.get("tenant_id")
-    if not tenant_value and request.method not in {"GET", "HEAD", "OPTIONS"}:
+    payload: dict[str, Any] | None = None
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
         try:
-            payload = await request.json()
+            raw_payload = await request.json()
         except (ValueError, RuntimeError):
-            payload = None
-        if isinstance(payload, dict):
-            tenant_value = payload.get("tenant_id")
-    tenant_id = (
-        int(tenant_value)
-        if str(tenant_value or "").lstrip("-").isdigit()
-        else None
+            raw_payload = None
+        if isinstance(raw_payload, dict):
+            payload = raw_payload
+
+    tenant_values: list[object] = []
+    for value in (
+        request.query_params.get("tenant_id"),
+        request.path_params.get("tenant_id"),
+        payload.get("tenant_id") if payload else None,
+    ):
+        if value is not None:
+            tenant_values.append(value)
+    if not tenant_values:
+        return ctx
+    tenant_ids = [_request_integer(value, "tenant_id") for value in tenant_values]
+    if len(set(tenant_ids)) != 1:
+        raise HTTPException(422, "请求中的 tenant_id 不一致")
+    tenant_id = tenant_ids[0]
+    evidence_write = (
+        request.method not in {"GET", "HEAD", "OPTIONS"}
+        and _inactive_site_evidence_write_allowed(request, payload)
     )
-    if tenant_id is not None:
+    if evidence_write:
+        ctx.ensure_tenant(tenant_id)
+        await get_tenant_module(session, tenant_id, "seo", require_active=False)
+    else:
         await ensure_module_access(session, ctx, tenant_id, "seo")
+
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        site_values: list[object] = []
+        for value in (
+            request.query_params.get("site_id"),
+            request.path_params.get("site_id"),
+            payload.get("site_id") if payload else None,
+        ):
+            if value is not None:
+                site_values.append(value)
+        if site_values:
+            site_ids = [_request_integer(value, "site_id") for value in site_values]
+            if len(set(site_ids)) != 1:
+                raise HTTPException(422, "请求中的 site_id 不一致")
+            if not evidence_write and not await seo_site_is_operational(
+                session, tenant_id, site_ids[0]
+            ):
+                raise HTTPException(409, "SEO 网站已暂停或归档，不能启动新的业务动作")
     return ctx
 
 
@@ -459,13 +566,19 @@ async def _tenant(session: AsyncSession, tenant_id: int) -> Tenant:
 
 
 async def _seo_site(
-    session: AsyncSession, tenant_id: int, site_id: int | None
+    session: AsyncSession,
+    tenant_id: int,
+    site_id: int | None,
+    *,
+    require_active: bool = False,
 ) -> SeoSite | None:
     if site_id is None:
         return None
     row = await session.get(SeoSite, site_id)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO site does not exist for this tenant")
+    if require_active and row.status != "active":
+        raise HTTPException(409, "SEO 网站已暂停或归档，不能启动新的业务动作")
     return row
 
 
@@ -480,6 +593,18 @@ async def _seo_site_for_update(
     if row is None:
         raise HTTPException(404, "SEO site does not exist for this tenant")
     return row
+
+
+async def _require_resource_operational_site(
+    session: AsyncSession,
+    tenant_id: int,
+    site_id: int | None,
+) -> None:
+    """Gate a mutation by the persisted resource site, never request claims alone."""
+    if site_id is None:
+        await require_any_operational_seo_site(session, tenant_id)
+        return
+    await require_seo_site_operational(session, tenant_id, site_id)
 
 
 async def _keyword(
@@ -1457,6 +1582,7 @@ async def update_seo_keyword(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     row = await _keyword_for_update(session, keyword_id, tenant_id)
+    await _require_resource_operational_site(session, tenant_id, row.site_id)
     changes = req.model_dump(exclude_unset=True)
     if "site_id" in changes:
         target_site_id = changes["site_id"]
@@ -1521,6 +1647,7 @@ async def create_rank_snapshots_batch(
     site_ids = {item.site_id for item in req.items}
     for site_id in site_ids:
         await _seo_site(session, req.tenant_id, site_id)
+        await require_seo_site_operational(session, req.tenant_id, site_id)
     ids = {item.keyword_id for item in req.items}
     found = set(
         await session.scalars(
@@ -1676,6 +1803,7 @@ async def update_brand_profile(
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
     tenant = await _tenant(session, req.tenant_id)
+    await _require_resource_operational_site(session, req.tenant_id, req.site_id)
     brand_name = req.brand_name.strip()
     if not brand_name:
         raise HTTPException(400, "品牌名称不能为空")
@@ -1774,6 +1902,7 @@ async def create_brand_asset(
     ctx.ensure_tenant(req.tenant_id)
     await _tenant(session, req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
+    await _require_resource_operational_site(session, req.tenant_id, req.site_id)
     value = req.match_value.strip()
     if req.asset_type == "official_domain":
         value = url_domain(value)
@@ -1810,6 +1939,7 @@ async def update_brand_asset(
     row = await session.get(SeoBrandAsset, asset_id)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "品牌资产规则不存在")
+    await _require_resource_operational_site(session, tenant_id, row.site_id)
     values = req.model_dump(exclude_unset=True)
     if "match_value" in values:
         value = values["match_value"].strip()
@@ -2568,6 +2698,9 @@ async def confirm_serp_ownership(
     row = await session.get(SeoSerpResult, result_id)
     if not row or row.tenant_id != req.tenant_id:
         raise HTTPException(404, "搜索结果不存在")
+    await _require_resource_operational_site(
+        session, req.tenant_id, row.site_id or req.site_id
+    )
     await _seo_site(session, req.tenant_id, req.site_id)
     if req.site_id is not None and row.site_id not in {None, req.site_id}:
         raise HTTPException(400, "Search result site does not match the selected site")
@@ -2845,13 +2978,27 @@ async def _execute_seo_crawl_run(
     created_by: int | None,
 ) -> None:
     """Execute a persisted crawl after the initiating HTTP response has returned."""
+    inactive = False
     async with async_session_factory() as session:
         run = await session.get(SeoCrawlRun, run_id)
         if run is None or run.tenant_id != tenant_id or run.site_id != site_id:
             return
-        run.status = "running"
-        run.started_at = datetime.utcnow()
+        if not await seo_site_is_operational(session, tenant_id, site_id):
+            run.status = "failed"
+            run.error_summary = "SEO 网站已暂停、归档或模块已到期，扫描未启动"
+            run.completed_at = datetime.utcnow()
+            inactive = True
+        else:
+            run.status = "running"
+            run.started_at = datetime.utcnow()
         await session.commit()
+    if inactive:
+        try:
+            async with async_session_factory() as session:
+                await refund_seo_usage(session, tenant_id, "crawl_urls", max_urls)
+        except Exception:
+            logger.exception("[SEO][crawl] failed to refund inactive run_id=%s", run_id)
+        return
     try:
         result = await crawl_site(
             seed_url,
@@ -2863,6 +3010,21 @@ async def _execute_seo_crawl_run(
         async with async_session_factory() as session:
             run = await session.get(SeoCrawlRun, run_id)
             if run is None:
+                return
+            if not await seo_site_is_operational(session, tenant_id, site_id):
+                run.status = "failed"
+                run.error_summary = "扫描期间 SEO 网站已暂停、归档或模块已到期，结果未写入"
+                run.completed_at = datetime.utcnow()
+                await session.commit()
+                try:
+                    async with async_session_factory() as refund_session:
+                        await refund_seo_usage(
+                            refund_session, tenant_id, "crawl_urls", max_urls
+                        )
+                except Exception:
+                    logger.exception(
+                        "[SEO][crawl] failed to refund inactive run_id=%s", run_id
+                    )
                 return
             snapshot_values = result.get("snapshots") or []
             existing_pages = {
@@ -4046,16 +4208,25 @@ async def audit_pending_site_pages(
     if not ctx.can_edit("seo.site"):
         raise HTTPException(403, "无权操作站内优化")
     await _tenant(session, tenant_id)
-    await _seo_site(session, tenant_id, site_id)
+    await _seo_site(session, tenant_id, site_id, require_active=site_id is not None)
     conditions = [
         SeoSitePage.tenant_id == tenant_id,
         or_(SeoSitePage.status == "pending", SeoSitePage.title.is_(None)),
     ]
     if site_id is not None:
         conditions.append(SeoSitePage.site_id == site_id)
+    pending_query = select(SeoSitePage.id)
+    if site_id is None:
+        pending_query = pending_query.join(
+            SeoSite,
+            (SeoSite.id == SeoSitePage.site_id)
+            & (SeoSite.tenant_id == SeoSitePage.tenant_id),
+        ).where(SeoSite.status == "active")
     page_ids = list(
         await session.scalars(
-            select(SeoSitePage.id).where(*conditions).order_by(SeoSitePage.id).limit(max_pages)
+            pending_query.where(*conditions)
+            .order_by(SeoSitePage.id)
+            .limit(max_pages)
         )
     )
     completed = 0
@@ -4105,6 +4276,7 @@ async def update_site_page(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     row = await _site_page(session, page_id, tenant_id)
+    await _require_resource_operational_site(session, tenant_id, row.site_id)
     values = req.model_dump(exclude_unset=True)
     await _validate_target_keyword(
         session, tenant_id, values.get("target_keyword_id"), row.site_id
@@ -4155,7 +4327,7 @@ async def _audit_site_page_observation(
         return None
     if row.site_id is None:
         raise HTTPException(422, "请先将页面关联到 SEO 网站")
-    await _seo_site(session, tenant_id, row.site_id)
+    await _seo_site(session, tenant_id, row.site_id, require_active=True)
     started_at = datetime.utcnow()
     values = await collect_page_snapshot(row.url)
     await save_page_snapshot(session, row, values, ctx.user_id, started_at)
@@ -5757,6 +5929,8 @@ async def _distribution_content(
     tenant_id: int,
     content_id: int,
     site_id: int | None = None,
+    *,
+    require_operational: bool = True,
 ) -> SeoContentAsset:
     row = await session.get(SeoContentAsset, content_id)
     if (
@@ -5765,12 +5939,39 @@ async def _distribution_content(
         or (site_id is not None and row.site_id != site_id)
     ):
         raise HTTPException(404, "内容资产不存在")
+    if require_operational:
+        if row.site_id is None:
+            raise HTTPException(409, "内容资产尚未关联 SEO 网站")
+        await require_seo_site_operational(session, tenant_id, row.site_id)
     if row.content_type in {'qa', 'faq'}:
         from app.models.seo_qa import SeoQaAnswer
         linked = await session.scalar(select(SeoQaAnswer.id).where(SeoQaAnswer.content_id == row.id))
         if linked is not None:
             raise HTTPException(409, '问答工作台的回答请通过指定问题分发，不能使用文章发布接口')
     return row
+
+
+async def _require_publication_operational_before_provider(
+    session: AsyncSession,
+    row: SeoContentPublication,
+    attempt: SeoPublishAttempt,
+) -> None:
+    """Close a durable claim if its persisted site was disabled before publish."""
+    if await seo_publication_site_is_operational(session, row.tenant_id, row.id):
+        return
+    error = "发布前最终核验失败：SEO 网站已暂停、归档或模块已停用"
+    row.status = "failed"
+    row.last_error = error
+    attempt.status = "failed"
+    attempt.error = error
+    attempt.response_summary = {
+        "outcome": "blocked",
+        "reason": "site_inactive_before_provider",
+        "provider_called": False,
+    }
+    attempt.completed_at = datetime.utcnow()
+    await session.commit()
+    raise HTTPException(409, "SEO 网站已暂停或归档，本次未调用发布平台")
 
 
 def _require_content_ready(content: SeoContentAsset) -> None:
@@ -6481,6 +6682,7 @@ async def create_distribution_connection(
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
     await _tenant(session, req.tenant_id)
+    await require_any_operational_seo_site(session, req.tenant_id)
     try:
         platform_code = req.platform_code.strip().lower()
         definition = platform_definition(platform_code)
@@ -6524,6 +6726,7 @@ async def update_distribution_connection(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     ctx.ensure_tenant(tenant_id)
+    await require_any_operational_seo_site(session, tenant_id)
     row = await _distribution_connection(session, tenant_id, connection_id)
     try:
         definition = platform_definition(row.platform_code)
@@ -6568,9 +6771,11 @@ async def test_distribution_connection(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     ctx.ensure_tenant(tenant_id)
+    await require_any_operational_seo_site(session, tenant_id)
     row = await _distribution_connection(session, tenant_id, connection_id)
     try:
         credentials = decrypt_credentials(row.credentials_encrypted)
+        await require_any_operational_seo_site(session, tenant_id)
         result = await test_connection(row.platform_code, row.base_url, credentials)
     except SeoDistributionError as exc:
         row.status = "failed"
@@ -7252,7 +7457,8 @@ async def distribution_variant_history(
     if not current or current.tenant_id != tenant_id:
         raise HTTPException(404, "平台专属稿不存在")
     content = await _distribution_content(
-        session, tenant_id, current.content_asset_id, site_id
+        session, tenant_id, current.content_asset_id, site_id,
+        require_operational=False,
     )
     connection = await _distribution_connection(
         session, tenant_id, current.connection_id
@@ -7609,6 +7815,7 @@ async def publish_content_distribution(
     )
     session.add(attempt)
     await session.commit()
+    await _require_publication_operational_before_provider(session, row, attempt)
     try:
         remote = await publish_content(
             connection.platform_code,
@@ -7685,7 +7892,8 @@ async def complete_manual_publication(
         raise HTTPException(404, "发布任务不存在")
     content_asset_id = int(row.content_asset_id)
     content = await _distribution_content(
-        session, req.tenant_id, content_asset_id, req.site_id
+        session, req.tenant_id, content_asset_id, req.site_id,
+        require_operational=False,
     )
     if req.source_version is not None and row.source_version != req.source_version:
         raise HTTPException(409, "发布任务版本已变化，请重新导出任务并核对结果")
@@ -7761,7 +7969,8 @@ async def sync_content_publication(
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "发布任务不存在")
     content = await _distribution_content(
-        session, tenant_id, row.content_asset_id, site_id
+        session, tenant_id, row.content_asset_id, site_id,
+        require_operational=False,
     )
     if row.status != "publishing" or not row.connection_id:
         raise HTTPException(409, "当前任务不需要同步发布状态")
@@ -7896,6 +8105,7 @@ async def retry_content_publication(
     row.last_error = None
     session.add(attempt)
     await session.commit()
+    await _require_publication_operational_before_provider(session, row, attempt)
     try:
         remote = await publish_content(
             connection.platform_code,
@@ -7975,7 +8185,10 @@ async def download_publication_materials(publication_id: int, req: DistributionM
     row = await session.get(SeoContentPublication, publication_id)
     if not row or row.tenant_id != req.tenant_id:
         raise HTTPException(404, "发布任务不存在")
-    content = await _distribution_content(session, req.tenant_id, row.content_asset_id, req.site_id)
+    content = await _distribution_content(
+        session, req.tenant_id, row.content_asset_id, req.site_id,
+        require_operational=False,
+    )
     if req.source_version != row.source_version or (content.version_count or 1) != row.source_version:
         raise HTTPException(409, "稿件版本已变化，请重新生成分发任务")
     try:
@@ -7998,7 +8211,10 @@ async def list_publish_attempts(
     row = await session.get(SeoContentPublication, publication_id)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "发布任务不存在")
-    await _distribution_content(session, tenant_id, row.content_asset_id, site_id)
+    await _distribution_content(
+        session, tenant_id, row.content_asset_id, site_id,
+        require_operational=False,
+    )
     attempts = list(
         await session.scalars(
             select(SeoPublishAttempt)
@@ -8038,6 +8254,7 @@ async def submit_content_review(
     row = await session.get(SeoContentAsset, content_id, with_for_update=True)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
+    await _require_resource_operational_site(session, tenant_id, row.site_id)
     if row.status not in {"planned", "drafting"}:
         raise HTTPException(409, "只有草稿可以提交审核")
     keyword_ids = _selected_keyword_ids(row.keyword_ids, row.keyword_id)
@@ -8084,6 +8301,7 @@ async def decide_content_review(
     row = await session.get(SeoContentAsset, content_id, with_for_update=True)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
+    await _require_resource_operational_site(session, tenant_id, row.site_id)
     if row.status != "review":
         raise HTTPException(409, "只有待审核内容可以审核")
     note = (req.note or "").strip()
@@ -8133,6 +8351,7 @@ async def bind_content_source_page(
     row = await session.get(SeoContentAsset, content_id, with_for_update=True)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
+    await _require_resource_operational_site(session, tenant_id, row.site_id)
     if row.content_type != "landing":
         raise HTTPException(409, "只有落地页内容可以绑定承接页")
     if row.status not in {"planned", "drafting", "ready"}:
@@ -8179,6 +8398,7 @@ async def update_content_asset(
     row = await session.get(SeoContentAsset, content_id, with_for_update=True)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
+    await _require_resource_operational_site(session, tenant_id, row.site_id)
     row_site_id = row.site_id
     values = req.model_dump(exclude_unset=True)
     expected_version = values.pop("version_count", None)
@@ -8612,6 +8832,9 @@ async def _fetch_internal_link_document(url: str) -> PageDocument:
 @router.post("/internal-links/crawl")
 async def crawl_internal_links(tenant_id: int, page_id: int, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     page = await _site_page(session, page_id, tenant_id)
+    if page.site_id is None:
+        raise HTTPException(422, "请先将页面关联到 SEO 网站")
+    await _seo_site(session, tenant_id, page.site_id, require_active=True)
     try:
         document = await _fetch_internal_link_document(page.url)
     except GeoAuditError as exc:

@@ -7,6 +7,7 @@ from sqlalchemy import select, text
 from app.database import async_session_factory, engine
 from app.models.seo_qa import SeoQaBatch
 from app.models.user import User
+from app.module_scope import seo_site_is_operational
 from app.security.auth import AuthContext, _build_context
 
 logger = logging.getLogger(__name__)
@@ -41,12 +42,22 @@ async def checkpoint(sessions,batch_id,index,**changes):
         return row.status
 
 
+async def pause_if_inactive(session, batch) -> bool:
+    if await seo_site_is_operational(session, batch.tenant_id, batch.site_id):
+        return False
+    batch.status = 'paused'
+    batch.updated_at = datetime.now(timezone.utc)
+    await session.commit()
+    return True
+
+
 async def process_next(sessions=async_session_factory):
     from app.api.seo_qa import DraftRequest, AnswerInput, generate_question_draft, create_answer, access
     async with sessions() as session:
         batch = await session.scalar(select(SeoQaBatch).where(SeoQaBatch.status.in_(['queued','running']))
             .order_by(SeoQaBatch.updated_at,SeoQaBatch.id).limit(1))
         if batch is None: return False
+        if await pause_if_inactive(session, batch): return True
         index = next((n for n,i in enumerate(batch.items) if i['state'] in ('pending','generating','saving')),None)
         if index is None:
             batch.status='completed';await session.commit();return True
@@ -57,13 +68,18 @@ async def process_next(sessions=async_session_factory):
         if not item['draft']:
             async with sessions() as session:
                 batch=await session.get(SeoQaBatch,batch_id)
+                if await pause_if_inactive(session, batch): return True
                 ctx=await current_actor(session,batch)
                 item['draft']=await generate_question_draft(DraftRequest(**item['request']),ctx,session)
+            async with sessions() as session:
+                batch=await session.get(SeoQaBatch,batch_id)
+                if await pause_if_inactive(session, batch): return True
             state=await checkpoint(sessions,batch_id,index,draft=item['draft'],state='saving')
             if state=='cancelled': return True
         async with sessions() as session:
             batch=await session.get(SeoQaBatch,batch_id)
             if batch.status=='cancelled': return True
+            if await pause_if_inactive(session, batch): return True
             ctx=await current_actor(session,batch)
             await access(session,ctx,tenant_id,site_id,True)
             payload={k:v for k,v in item['draft'].items() if k not in ('action','operation_id')}

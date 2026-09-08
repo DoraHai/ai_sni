@@ -4,7 +4,7 @@ import io
 import logging
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs,urlparse
 from uuid import uuid4
 import pytest
@@ -13,7 +13,7 @@ from sqlalchemy import MetaData,select
 from app import seo_video_platforms as video
 from app.api import seo_video as api
 from app.models.seo import SeoDistributionConnection,SeoContentPublication,SeoPublishAttempt,SeoContentAsset
-from app.models.module_workspace import SeoSite
+from app.models.module_workspace import SeoSite, TenantModule
 from app.seo_distribution import encrypt_credentials,decrypt_credentials
 from app.security.auth import AuthContext
 from test_seo_cockpit import run_database
@@ -62,6 +62,101 @@ def test_authorization_state_binds_actor_site_expiry_and_nonce():
     assert api.valid_state(pending,req,ctx)
     for field,value in [('actor',8),('site_id',20),('expires',0),('digest','invalid')]:assert not api.valid_state({**pending,field:value},req,ctx)
 
+
+def test_video_connection_rejects_inactive_site_before_external_action():
+    req=api.Scope(tenant_id=1,site_id=9,connection_id=3)
+    ctx=AuthContext(7,'test','operator',1,{'seo.content':'edit'})
+    session=AsyncMock()
+    inactive=AsyncMock(side_effect=HTTPException(409,'site inactive'))
+    with patch.object(api,'scope',new=AsyncMock()), \
+         patch.object(api,'require_seo_site_operational',new=inactive):
+        with pytest.raises(HTTPException) as raised:
+            asyncio.run(api.connection(req,ctx,session))
+    assert raised.value.status_code==409
+    inactive.assert_awaited_once_with(session,1,9)
+    session.get.assert_not_awaited()
+
+
+def test_video_upload_final_gate_closes_claim_before_provider():
+    ctx=AuthContext(7,'test','operator',1,{'seo.content':'edit'})
+    connection=SimpleNamespace(id=1,tenant_id=1,platform_code='douyin_video',name='账号',credentials_encrypted='sealed')
+    content=SeoContentAsset(id=5,tenant_id=1,site_id=9,title='视频',status='ready',version_count=1)
+    session=AsyncMock();session.get=AsyncMock(return_value=content);session.scalar=AsyncMock(return_value=None);session.add=MagicMock()
+
+    async def assign_id():
+        session.add.call_args_list[0].args[0].id=12
+
+    session.flush=AsyncMock(side_effect=assign_id)
+    provider=AsyncMock()
+    with patch.object(api,'connection',new=AsyncMock(return_value=connection)), \
+         patch.object(api,'decrypt_credentials',return_value=credentials()), \
+         patch.object(api,'seo_publication_site_is_operational',new=AsyncMock(return_value=False)), \
+         patch.object(video,'upload',new=provider):
+        with pytest.raises(HTTPException) as raised:
+            asyncio.run(api.upload(
+                tenant_id=1,site_id=9,connection_id=1,content_id=5,source_version=1,
+                request_id=uuid4(),title='标题',
+                file=UploadFile(file=io.BytesIO(b'0000ftypmp42')),ctx=ctx,session=session,
+            ))
+
+    pub=session.add.call_args_list[0].args[0];attempt=session.add.call_args_list[1].args[0]
+    assert raised.value.status_code==409
+    assert pub.status=='failed' and attempt.status=='failed'
+    assert attempt.response_summary['provider_called'] is False
+    assert session.commit.await_count==2
+    provider.assert_not_awaited()
+
+
+def test_video_publish_final_gate_closes_claim_before_provider():
+    ctx=AuthContext(7,'test','operator',1,{'seo.content':'edit'})
+    connection=SimpleNamespace(id=1,tenant_id=1,platform_code='douyin_video',credentials_encrypted='account')
+    pub=SeoContentPublication(id=12,tenant_id=1,content_asset_id=5,connection_id=1,
+        platform_code='douyin_video',platform_name='抖音',publish_mode='official_video',status='draft',
+        source_version=1,adapted_title='标题')
+    content=SeoContentAsset(id=5,tenant_id=1,site_id=9,title='视频',status='ready',version_count=1)
+    previous=SimpleNamespace(request_summary={'account_fingerprint':hashlib.sha256(b'user').hexdigest()},response_summary={'sealed_video_media':'media'})
+    session=AsyncMock();session.scalar=AsyncMock(return_value=previous);session.add=MagicMock()
+    provider=AsyncMock()
+    with patch.object(api,'publication',new=AsyncMock(return_value=(connection,pub,content))), \
+         patch.object(api,'decrypt_credentials',side_effect=[credentials(),{'video_id':'media'}]), \
+         patch.object(api,'seo_publication_site_is_operational',new=AsyncMock(return_value=False)), \
+         patch.object(video,'publish',new=provider):
+        with pytest.raises(HTTPException) as raised:
+            asyncio.run(api.publish(12,1,9,1,True,None,ctx,session))
+
+    attempt=session.add.call_args.args[0]
+    assert raised.value.status_code==409
+    assert pub.status=='failed' and attempt.status=='failed'
+    assert attempt.response_summary['reason']=='site_inactive_before_provider'
+    assert session.commit.await_count==2
+    provider.assert_not_awaited()
+
+
+def test_video_publish_persists_external_id_after_final_gate_passes():
+    ctx=AuthContext(7,'test','operator',1,{'seo.content':'edit'})
+    connection=SimpleNamespace(id=1,tenant_id=1,platform_code='douyin_video',credentials_encrypted='account')
+    pub=SeoContentPublication(id=12,tenant_id=1,content_asset_id=5,connection_id=1,
+        platform_code='douyin_video',platform_name='抖音',publish_mode='official_video',status='draft',
+        source_version=1,adapted_title='标题')
+    content=SeoContentAsset(id=5,tenant_id=1,site_id=9,title='视频',status='ready',version_count=1)
+    previous=SimpleNamespace(request_summary={'account_fingerprint':hashlib.sha256(b'user').hexdigest()},response_summary={'sealed_video_media':'media'})
+    session=AsyncMock();session.scalar=AsyncMock(return_value=previous);session.add=MagicMock()
+    operational=AsyncMock(return_value=True)
+
+    async def publish_then_disable(*_args):
+        operational.return_value=False
+        return 'external-12'
+
+    with patch.object(api,'publication',new=AsyncMock(return_value=(connection,pub,content))), \
+         patch.object(api,'decrypt_credentials',side_effect=[credentials(),{'video_id':'media'}]), \
+         patch.object(api,'seo_publication_site_is_operational',new=operational), \
+         patch.object(video,'publish',new=AsyncMock(side_effect=publish_then_disable)):
+        result=asyncio.run(api.publish(12,1,9,1,True,None,ctx,session))
+
+    assert operational.await_count==1
+    assert result['external_id']=='external-12'
+    assert result['status']=='publishing'
+
 def test_token_query_logging_is_redacted():
     record=logging.LogRecord('httpx',20,'',0,'HTTP Request: %s %s',('GET','https://open.kuaishou.com/oauth2/access_token?app_secret=secret'),None)
     assert video.RedactVideoRequest().filter(record)
@@ -79,6 +174,7 @@ def test_video_durable_claim_idempotency_uncertainty_and_tenant_isolation():
                 table=model.__table__.to_metadata(MetaData())
                 for fk in list(table.foreign_key_constraints):table.constraints.remove(fk)
                 await db.run_sync(lambda sync:table.create(sync.connection()))
+            db.add(TenantModule(id=1,tenant_id=1,module_code='seo',status='active'))
             db.add(SeoSite(id=1,tenant_id=1,tenant_module_id=1,name='brand',domain='brand.example',canonical_domain='brand.example',status='active'))
             db.add(SeoContentAsset(id=1,tenant_id=1,site_id=1,title='video',status='ready',version_count=1))
             db.add(SeoDistributionConnection(id=1,tenant_id=1,name='video account',platform_code='douyin_video',mode='api',enabled=True,has_credentials=True,credentials_encrypted=encrypt_credentials(credentials())))

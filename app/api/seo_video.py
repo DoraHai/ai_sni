@@ -13,6 +13,10 @@ from app.database import get_session
 from app.security.auth import require_scoped_auth
 from app.models.seo import SeoDistributionConnection, SeoContentAsset, SeoContentPublication, SeoPublishAttempt
 from app.api.seo_cockpit import scope
+from app.module_scope import (
+    require_seo_site_operational,
+    seo_publication_site_is_operational,
+)
 from app.seo_distribution import encrypt_credentials, decrypt_credentials
 from app import seo_video_platforms as video
 
@@ -33,7 +37,7 @@ class Recovery(Scope):
 
 @router.post('/publications/{publication_id}/recover')
 async def recover(publication_id:int,req:Recovery,ctx=Depends(require_scoped_auth),session=Depends(get_session)):
-    row,pub,_=await publication(req,publication_id,ctx,session)
+    row,pub,_=await publication(req,publication_id,ctx,session,True)
     if pub.external_id or pub.status not in {'manual_required','publishing'}:raise HTTPException(409,'仅支持恢复作品 ID 缺失且曾提交的任务')
     attempted=await session.scalar(select(SeoPublishAttempt.id).where(SeoPublishAttempt.tenant_id==req.tenant_id,SeoPublishAttempt.publication_id==pub.id,SeoPublishAttempt.action=='video_publish').limit(1))
     if not attempted:raise HTTPException(409,'该任务尚未尝试发布')
@@ -45,8 +49,10 @@ async def recover(publication_id:int,req:Recovery,ctx=Depends(require_scoped_aut
         request_summary={'item_id':req.item_id},response_summary=result,created_by=ctx.user_id,completed_at=datetime.utcnow()))
     await session.commit();return publication_info(pub)
 
-async def connection(req,ctx,session,write=True):
+async def connection(req,ctx,session,write=True,allow_inactive=False):
     await scope(session,ctx,req.tenant_id,req.site_id,'seo.content',write)
+    if write and not allow_inactive:
+        await require_seo_site_operational(session,req.tenant_id,req.site_id)
     row=await session.get(SeoDistributionConnection,req.connection_id,with_for_update=write,populate_existing=True)
     if not row or row.tenant_id!=req.tenant_id or row.platform_code not in video.PLATFORMS:raise HTTPException(404,'视频连接不存在')
     if not row.enabled:raise HTTPException(409,'连接已停用')
@@ -133,6 +139,15 @@ async def file_bytes(file,maximum,image=False):
 def publication_info(row):
     return {key:getattr(row,key) for key in ('id','content_asset_id','connection_id','platform_code','status','adapted_title','external_id','page_url','last_error','source_version')}
 
+async def require_publication_operational_before_provider(session,pub,attempt):
+    if await seo_publication_site_is_operational(session,pub.tenant_id,pub.id):return
+    error='平台调用前最终核验失败：SEO 网站已暂停、归档或模块已停用'
+    pub.status='failed';pub.last_error=error
+    attempt.status='failed';attempt.error=error;attempt.completed_at=datetime.utcnow()
+    attempt.response_summary={'outcome':'blocked','reason':'site_inactive_before_provider','provider_called':False}
+    await session.commit()
+    raise HTTPException(409,'SEO 网站已暂停或归档，本次未调用视频平台')
+
 @router.get('/publications')
 async def publications(tenant_id:PositiveInt,site_id:PositiveInt,ctx=Depends(require_scoped_auth),session=Depends(get_session)):
     await scope(session,ctx,tenant_id,site_id,'seo.content')
@@ -163,6 +178,7 @@ async def upload(tenant_id:PositiveInt=Form(...),site_id:PositiveInt=Form(...),c
     attempt=SeoPublishAttempt(tenant_id=tenant_id,publication_id=pub.id,action='video_upload',status='running',created_by=ctx.user_id,
         request_summary={'bytes':len(data),'source_version':source_version,'account_fingerprint':hashlib.sha256(credentials['open_id'].encode()).hexdigest()})
     session.add(attempt);await session.commit()
+    await require_publication_operational_before_provider(session,pub,attempt)
     try:
         media=await video.upload(row.platform_code,credentials,data)
         # Upload handles are sensitive; encrypt at rest. API responses omit this field.
@@ -172,8 +188,8 @@ async def upload(tenant_id:PositiveInt=Form(...),site_id:PositiveInt=Form(...),c
         attempt.status='failed';pub.status='manual_required';pub.last_error='素材上传未确认完成，请先核实平台素材库；未自动重试'
     attempt.completed_at=datetime.utcnow();await session.commit();return publication_info(pub)
 
-async def publication(req,pub_id,ctx,session):
-    row=await connection(req,ctx,session)
+async def publication(req,pub_id,ctx,session,allow_inactive=False):
+    row=await connection(req,ctx,session,allow_inactive=allow_inactive)
     pub=await session.get(SeoContentPublication,pub_id,with_for_update=True,populate_existing=True)
     if not pub or pub.tenant_id!=req.tenant_id or pub.connection_id!=row.id:raise HTTPException(404,'发布任务不存在')
     content=await session.get(SeoContentAsset,pub.content_asset_id)
@@ -201,6 +217,7 @@ async def publish(publication_id:int,tenant_id:PositiveInt=Form(...),site_id:Pos
     pub.status='publishing'
     attempt=SeoPublishAttempt(tenant_id=tenant_id,publication_id=pub.id,action='video_publish',status='running',created_by=ctx.user_id,request_summary={'confirmed':True,'title':pub.adapted_title})
     session.add(attempt);await session.commit()  # Claim before network call, never blind-retry.
+    await require_publication_operational_before_provider(session,pub,attempt)
     try:
         pub.external_id=await video.publish(row.platform_code,credentials,media,pub.adapted_title,image)
         attempt.status='succeeded';attempt.response_summary={'item_id':pub.external_id,'state':'submitted'}
@@ -210,7 +227,7 @@ async def publish(publication_id:int,tenant_id:PositiveInt=Form(...),site_id:Pos
 
 @router.post('/publications/{publication_id}/sync')
 async def sync(publication_id:int,req:Scope,ctx=Depends(require_scoped_auth),session=Depends(get_session)):
-    row,pub,content=await publication(req,publication_id,ctx,session)
+    row,pub,content=await publication(req,publication_id,ctx,session,True)
     if not pub.external_id:raise HTTPException(409,'尚无作品 ID，请先到平台核实提交结果')
     try:result=await video.sync(row.platform_code,decrypt_credentials(row.credentials_encrypted),pub.external_id)
     except video.VideoError as exc:raise HTTPException(502,str(exc)) from exc

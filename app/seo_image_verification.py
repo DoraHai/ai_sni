@@ -50,7 +50,7 @@ def evaluate_image_repair(review, original, values):
         'metric_key':'seo.images.verified_repair_count','change_abs':1 if fixed else 0}
 
 async def verify_pending_images():
-    from app.module_scope import list_active_module_tenants
+    from app.module_scope import list_active_module_tenants, seo_site_is_operational
     async with async_session_factory() as session:
         tenants=[t.id for t in await list_active_module_tenants(session,'seo')]
     for _ in range(10):
@@ -71,6 +71,9 @@ async def verify_pending_images():
                     job.status='superseded';await session.commit();continue
                 url=page.url;page_id=page.id;lease=job.available_at;started=datetime.utcnow()
                 await session.commit()
+            async with async_session_factory() as session:
+                if not await seo_site_is_operational(session, job.tenant_id, job.site_id):
+                    continue
             values=await collect_page_snapshot(url)
             async with async_session_factory() as session:
                 # Same lock order as review writes: page, then verification.
@@ -78,7 +81,7 @@ async def verify_pending_images():
                 job=await session.get(SeoImageVerification,job_id,with_for_update=True)
                 if job is None:continue
                 review=await session.get(SeoImageAltReview,job.review_id)
-                if job.status!='checking' or job.available_at!=lease or not page or page.tenant_id!=job.tenant_id or page.site_id!=job.site_id or page.url!=url or not review or review.updated_at!=job.approved_at or review.review_status!='approved':
+                if job.status!='checking' or job.available_at!=lease or not page or page.tenant_id!=job.tenant_id or page.site_id!=job.site_id or page.url!=url or not review or review.updated_at!=job.approved_at or review.review_status!='approved' or not await seo_site_is_operational(session,job.tenant_id,job.site_id):
                     if job.status=='checking' and job.available_at==lease:job.status='superseded'
                     await session.commit();continue
                 original=await session.get(SeoPageSnapshot,review.snapshot_id)

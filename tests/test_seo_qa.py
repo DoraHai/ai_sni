@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from app.api import seo_qa as api
-from app.models.module_workspace import SeoSite
+from app.models.module_workspace import SeoSite, TenantModule
 from app.models.seo import SeoContentAsset, SeoSerpResult, SeoContentReviewEvent, SeoBacklink, SeoAiOperation
 from app.models.seo_cockpit import SeoTask
 from app.models.seo_qa import SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement, SeoQaBatch
@@ -151,13 +151,17 @@ def database(scenario):
         try:
             async with engine.begin() as conn:
                 await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
-                for model in [SeoAiOperation, SeoBacklink, SeoSite, SeoContentAsset, SeoContentReviewEvent, SeoTask, SeoSerpResult, SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement, SeoQaBatch]:
+                for model in [TenantModule, SeoAiOperation, SeoBacklink, SeoSite, SeoContentAsset, SeoContentReviewEvent, SeoTask, SeoSerpResult, SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement, SeoQaBatch]:
                     table = model.__table__.to_metadata(MetaData())
                     for fk in list(table.foreign_key_constraints):
                         table.constraints.remove(fk)
                     await conn.run_sync(lambda sync: table.create(sync))
             sessions = async_sessionmaker(engine, expire_on_commit=False)
             async with sessions() as db:
+                db.add_all([
+                    TenantModule(id=i, tenant_id=i, module_code='seo', status='active')
+                    for i in [1, 2]
+                ])
                 db.add_all([SeoSite(id=i, tenant_id=i, tenant_module_id=i, name='brand', domain=f'brand{i}.example',
                                    canonical_domain=f'brand{i}.example', status='active') for i in [1, 2]])
                 await db.commit()
@@ -1025,6 +1029,50 @@ def test_durable_worker_database_lock_excludes_second_worker():
             assert process.await_count==1
             release.set();await first
             await worker.run_qa_batches();assert process.await_count==2
+    database(scenario)
+
+
+def test_queued_batch_pauses_without_ai_when_site_becomes_inactive():
+    from app import seo_qa_batches as worker
+
+    async def scenario(sessions):
+        async with sessions() as db:
+            db.add(
+                SeoQaBatch(
+                    tenant_id=1,
+                    site_id=1,
+                    actor='7',
+                    request_key='inactive-site-batch',
+                    request_hash='fixture',
+                    status='queued',
+                    items=[{
+                        'question_id':1,
+                        'title':'fixture',
+                        'state':'pending',
+                        'draft':None,
+                        'answer_id':None,
+                        'error':None,
+                        'request':{},
+                    }],
+                )
+            )
+            await db.commit()
+        generate = AsyncMock()
+        with (
+            patch.object(
+                worker,
+                'seo_site_is_operational',
+                new=AsyncMock(return_value=False),
+            ),
+            patch.object(api, 'generate_question_draft', new=generate),
+        ):
+            assert await worker.process_next(sessions) is True
+        async with sessions() as db:
+            batch = await db.scalar(select(SeoQaBatch))
+            assert batch.status == 'paused'
+            assert batch.items[0]['state'] == 'pending'
+        generate.assert_not_awaited()
+
     database(scenario)
 
 @pytest.mark.parametrize('mode',['inactive','readonly','other_tenant','allowed'])

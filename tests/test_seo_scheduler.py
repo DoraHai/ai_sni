@@ -38,6 +38,14 @@ from app.seo_scheduler import shutdown_seo_scheduler, start_seo_scheduler
 
 
 class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.operational_site = patch(
+            "app.seo_ranking_jobs.seo_site_is_operational",
+            new=AsyncMock(return_value=True),
+        )
+        self.operational_site.start()
+        self.addCleanup(self.operational_site.stop)
+
     async def test_tenant_session_contains_body_and_exit_failures(self):
         session = SimpleNamespace()
 

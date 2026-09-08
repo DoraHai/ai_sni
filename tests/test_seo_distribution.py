@@ -884,6 +884,7 @@ def test_approved_persisted_variant_is_bound_to_publication() -> None:
         patch("app.api.seo._latest_distribution_variant", new=AsyncMock(return_value=variant)),
         patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])),
         patch("app.api.seo.decrypt_credentials", return_value={}),
+        patch("app.api.seo._require_publication_operational_before_provider", new=AsyncMock()),
         patch(
             "app.api.seo.publish_content",
             new=AsyncMock(
@@ -902,6 +903,112 @@ def test_approved_persisted_variant_is_bound_to_publication() -> None:
     assert "SEO 内容分发专属正文" in publication.adapted_content
     assert result["variant_id"] == 33
     assert result["status"] == "manual_required"
+
+
+def test_publish_final_gate_closes_claim_before_provider_when_site_was_disabled() -> None:
+    content = SeoContentAsset(
+        id=5, tenant_id=1, site_id=8, content_type="article",
+        title="已审核内容", draft="<p>正文</p>", status="ready", version_count=1,
+    )
+    connection = SeoDistributionConnection(
+        id=9, tenant_id=1, platform_code="wordpress", name="官网",
+        mode="api", base_url="https://example.com", enabled=True,
+        status="connected", has_credentials=True,
+    )
+    session = AsyncMock()
+    session.scalar = AsyncMock(side_effect=[None, None])
+    session.add = MagicMock()
+
+    async def assign_publication_id():
+        session.add.call_args.args[0].id = 12
+
+    session.flush = AsyncMock(side_effect=assign_publication_id)
+    context = AuthContext(7, "operator", "运营", 1, {"seo.content": "edit"})
+    provider = AsyncMock()
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
+        patch("app.api.seo.decrypt_credentials", return_value={}),
+        patch("app.api.seo.seo_publication_site_is_operational", new=AsyncMock(return_value=False)),
+        patch("app.api.seo.publish_content", new=provider),
+    ):
+        with pytest.raises(Exception) as raised:
+            asyncio.run(publish_content_distribution(
+                DistributionPublishRequest(
+                    tenant_id=1, content_id=5, connection_id=9,
+                    action="publish", confirm=True,
+                ),
+                session,
+                context,
+            ))
+
+    publication = session.add.call_args_list[0].args[0]
+    attempt = session.add.call_args_list[1].args[0]
+    assert getattr(raised.value, "status_code", None) == 409
+    assert publication.status == "failed"
+    assert publication.last_error.startswith("发布前最终核验失败")
+    assert attempt.status == "failed"
+    assert attempt.response_summary == {
+        "outcome": "blocked",
+        "reason": "site_inactive_before_provider",
+        "provider_called": False,
+    }
+    assert session.commit.await_count == 2
+    provider.assert_not_awaited()
+
+
+def test_publish_persists_external_fact_when_site_disables_after_provider_call() -> None:
+    content = SeoContentAsset(
+        id=5, tenant_id=1, site_id=8, content_type="article",
+        title="已审核内容", draft="<p>正文</p>", status="ready", version_count=1,
+    )
+    connection = SeoDistributionConnection(
+        id=9, tenant_id=1, platform_code="wordpress", name="官网",
+        mode="api", base_url="https://example.com", enabled=True,
+        status="connected", has_credentials=True,
+    )
+    session = AsyncMock()
+    session.scalar = AsyncMock(side_effect=[None, None])
+    session.add = MagicMock()
+
+    async def assign_publication_id():
+        session.add.call_args.args[0].id = 12
+
+    session.flush = AsyncMock(side_effect=assign_publication_id)
+    operational = AsyncMock(return_value=True)
+
+    async def publish_then_disable(*_args, **_kwargs):
+        operational.return_value = False
+        return distribution.RemotePublishResult(
+            status="published",
+            external_id="post-12",
+            page_url="https://example.com/post-12",
+            response_summary={"http_status": 201},
+        )
+
+    context = AuthContext(7, "operator", "运营", 1, {"seo.content": "edit"})
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
+        patch("app.api.seo.decrypt_credentials", return_value={}),
+        patch("app.api.seo.seo_publication_site_is_operational", new=operational),
+        patch("app.api.seo.publish_content", new=AsyncMock(side_effect=publish_then_disable)),
+    ):
+        result = asyncio.run(publish_content_distribution(
+            DistributionPublishRequest(
+                tenant_id=1, content_id=5, connection_id=9,
+                action="publish", confirm=True,
+            ),
+            session,
+            context,
+        ))
+
+    assert operational.await_count == 1
+    assert result["status"] == "published"
+    assert result["external_id"] == "post-12"
+    assert content.status == "published"
 
 
 def test_custom_variant_rejects_stale_source_and_missing_target_keyword() -> None:
@@ -1198,6 +1305,7 @@ def test_confirmed_failed_task_retries_same_content_version() -> None:
         patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
         patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
         patch("app.api.seo.decrypt_credentials", return_value={"username": "u", "application_password": "p"}),
+        patch("app.api.seo._require_publication_operational_before_provider", new=AsyncMock()),
         patch("app.api.seo.publish_content", new=publish_mock),
     ):
         result = asyncio.run(retry_content_publication(12, request, session, context))
@@ -1211,6 +1319,50 @@ def test_confirmed_failed_task_retries_same_content_version() -> None:
     prepared = publish_mock.await_args.args[3]
     assert prepared["title"] == "知乎专属 SEO 标题"
     assert "保留的专属正文" in prepared["content_html"]
+
+
+def test_retry_final_gate_closes_claim_before_provider_when_site_was_disabled() -> None:
+    publication = SeoContentPublication(
+        id=12, tenant_id=1, content_asset_id=5, connection_id=9,
+        platform_code="wordpress", platform_name="WordPress",
+        publish_mode="draft", status="failed", source_version=2,
+        adapted_title="专属标题", adapted_content="<div>专属正文</div>",
+    )
+    content = SeoContentAsset(
+        id=5, tenant_id=1, site_id=8, content_type="article",
+        title="原始内容", status="ready", version_count=2,
+    )
+    connection = SeoDistributionConnection(
+        id=9, tenant_id=1, platform_code="wordpress", name="官网",
+        mode="api", base_url="https://example.com", enabled=True,
+        status="connected", has_credentials=True,
+    )
+    session = AsyncMock()
+    # Publication lookup, persisted content site, then fresh operational query.
+    session.scalar = AsyncMock(side_effect=[publication, 8, None])
+    session.add = MagicMock()
+    context = AuthContext(7, "operator", "运营", 1, {"seo.content": "edit"})
+    provider = AsyncMock()
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
+        patch("app.api.seo.decrypt_credentials", return_value={}),
+        patch("app.api.seo.publish_content", new=provider),
+    ):
+        with pytest.raises(Exception) as raised:
+            asyncio.run(retry_content_publication(
+                12, DistributionRetryRequest(tenant_id=1, confirm=True),
+                session, context,
+            ))
+
+    attempt = session.add.call_args.args[0]
+    assert getattr(raised.value, "status_code", None) == 409
+    assert publication.status == "failed"
+    assert attempt.status == "failed"
+    assert attempt.response_summary["provider_called"] is False
+    assert session.commit.await_count == 2
+    provider.assert_not_awaited()
 
 
 def test_unexpected_retry_error_restores_failed_state() -> None:
@@ -1245,6 +1397,7 @@ def test_unexpected_retry_error_restores_failed_state() -> None:
         patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
         patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
         patch("app.api.seo.decrypt_credentials", return_value={"username": "u", "application_password": "p"}),
+        patch("app.api.seo._require_publication_operational_before_provider", new=AsyncMock()),
         patch("app.api.seo.publish_content", new=AsyncMock(side_effect=RuntimeError("adapter bug"))),
         pytest.raises(Exception) as exc,
     ):
@@ -1305,7 +1458,9 @@ def test_manual_handoff_completion_is_site_scoped_and_audited() -> None:
         result = asyncio.run(complete_manual_publication(12, request, session, context))
 
     attempt = session.add.call_args.args[0]
-    content_lookup.assert_awaited_once_with(session, 1, 5, 8)
+    content_lookup.assert_awaited_once_with(
+        session, 1, 5, 8, require_operational=False
+    )
     session.get.assert_awaited_once_with(
         SeoContentPublication, 12, with_for_update=True
     )

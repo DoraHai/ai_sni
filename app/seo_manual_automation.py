@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.database import async_session_factory
 from app.models.module_workspace import SeoSite
+from app.module_scope import seo_site_is_operational
 from app.models.seo import (
     SeoAutomationRun,
     SeoBacklink,
@@ -223,6 +224,8 @@ async def _run_ranking(row: SeoAutomationRun) -> tuple[int, int, int, str]:
     heartbeat: asyncio.Task | None = None
     try:
         async with async_session_factory() as session:
+            if not await seo_site_is_operational(session, row.tenant_id, int(row.site_id)):
+                raise ManualAutomationError("site_inactive", "SEO 网站已停用，不能运行采集")
             try:
                 reservation = await reserve_manual_rank_collection(
                     session,
@@ -305,6 +308,8 @@ async def _run_competitors(row: SeoAutomationRun) -> tuple[int, int, int, str]:
         try:
             checked_at = datetime.utcnow()
             async with async_session_factory() as session:
+                if not await seo_site_is_operational(session, row.tenant_id, int(row.site_id)):
+                    continue
                 current = await session.get(SeoCompetitor, candidate.id)
                 if (
                     current is None
@@ -382,6 +387,9 @@ async def _run_backlinks(row: SeoAutomationRun) -> tuple[int, int, int, str]:
     errors: list[str] = []
     for candidate in candidates:
         try:
+            async with async_session_factory() as session:
+                if not await seo_site_is_operational(session, row.tenant_id, int(row.site_id)):
+                    continue
             result = await fetch_url(candidate.source_url)
             async with async_session_factory() as session:
                 current = await session.get(SeoBacklink, candidate.id, with_for_update=True)
@@ -415,6 +423,19 @@ async def execute_manual_automation_run(run_id: int) -> None:
         row = await session.get(SeoAutomationRun, run_id)
         if row is None or row.trigger_type != "manual" or row.site_id is None:
             return
+        operational = await seo_site_is_operational(
+            session, row.tenant_id, int(row.site_id)
+        )
+    if not operational:
+        await finish_automation_run(
+            run_id,
+            planned_count=row.planned_count,
+            success_count=0,
+            failed_count=0,
+            skipped_count=row.planned_count,
+            error_summary="site_inactive",
+        )
+        return
     try:
         runner = {
             "ranking": _run_ranking,
