@@ -22,7 +22,10 @@ SPEC.loader.exec_module(acceptance)
 
 def test_admin_runbook_blocks_unmerged_or_old_main_execution():
     runbook = RUNBOOK.read_text(encoding="utf-8")
-    script_sha256 = hashlib.sha256(SCRIPT.read_bytes()).hexdigest()
+    # Git normalizes this text file to LF. Hash those repository bytes so the
+    # execution checksum is identical in Linux and Windows autocrlf checkouts.
+    script_bytes = SCRIPT.read_bytes().replace(b"\r\n", b"\n")
+    script_sha256 = hashlib.sha256(script_bytes).hexdigest()
 
     assert "execution_status=blocked_until_merged" in runbook
     assert "required_pull_request=#467" in runbook

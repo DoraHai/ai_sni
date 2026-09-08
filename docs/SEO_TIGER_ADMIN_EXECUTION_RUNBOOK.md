@@ -27,7 +27,7 @@
 ```text
 execution_status=blocked_until_merged
 required_pull_request=#467
-expected_script_sha256=2d8e5149eaa4fb53267cea48aa250e5ad179e6326eab4ebbfb2de7ec3a32c269
+expected_script_sha256=74d7672499d0d62aa97aed399dc3e25ea6d36ef9f80c4977962eeb9b2888d735
 ```
 
 当前执行状态是 `blocked_until_merged`。PR #467 尚未合并时不得运行生产验收，也不得
@@ -47,7 +47,7 @@ test "$(git rev-parse HEAD)" = "$EXECUTION_MAIN_SHA"
 git merge-base --is-ancestor "$EXECUTION_MAIN_SHA" origin/main
 test -z "$(git status --short)"
 printf '%s  %s\n' \
-  '2d8e5149eaa4fb53267cea48aa250e5ad179e6326eab4ebbfb2de7ec3a32c269' \
+  '74d7672499d0d62aa97aed399dc3e25ea6d36ef9f80c4977962eeb9b2888d735' \
   'scripts/accept_tiger_seo_readonly.py' | sha256sum -c -
 ```
 
