@@ -1,6 +1,10 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { session } from '../../src/store/session'
 import { GEO_WORKBENCH_START } from '../../src/utils/geoPrototypeNavigation'
+import { loginUrl } from '../../src/auth/loginRedirect'
+import { leaveUnauthorizedWorkspace } from '../../src/authContextRouting'
+import { geoLoginRedirectPath } from './authRedirect'
+import { geoSessionRouteDecision } from './authRouteDecision'
 
 const geoMeta = (title, extra = {}) => ({
   title,
@@ -77,14 +81,24 @@ const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
 })
 
-router.beforeEach((to) => {
+function sessionRouteDecision(to) {
   const devBypass = !session.isLoggedIn && import.meta.env.VITE_API_KEY && import.meta.env.DEV
-  if (!to.meta.public && !session.isLoggedIn && !devBypass) {
-    const redirect = encodeURIComponent(window.location.href)
-    window.location.assign(`/login?redirect=${redirect}`)
-    return false
-  }
-})
+  return geoSessionRouteDecision({
+    route: to,
+    session,
+    devBypass,
+    redirectToLogin: () => window.location.assign(loginUrl(geoLoginRedirectPath())),
+    leaveWorkspace: () => leaveUnauthorizedWorkspace(window),
+  })
+}
+
+router.beforeEach((to) => sessionRouteDecision(to))
+
+export function revalidateSessionRoute() {
+  const decision = sessionRouteDecision(router.currentRoute.value)
+  if (decision && decision !== true) return router.replace(decision)
+  return Promise.resolve(decision)
+}
 
 router.afterEach((to) => {
   document.title = `${to.meta.title || '工作台'} · GEO 增长`
