@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+
 from app.geo.content import async_jobs, geo_scheduler, patrol, variant_execute
 from app.geo import scheduler as legacy_scheduler
 from app.geo.tenant_scope import GeoEntitlementUnavailable
@@ -509,5 +511,123 @@ def test_legacy_scheduler_inactive_first_does_not_block_active_second():
         assert session.add.call_args.args[0].tenant_id == 8
         execute.assert_awaited_once_with(session, 99)
         session.rollback.assert_not_awaited()
+
+    asyncio.run(scenario())
+
+
+def test_push_batch_stops_before_next_target_after_entitlement_revocation():
+    async def scenario():
+        task = NS(id=12, tenant_id=7)
+        variant = NS(channel="website")
+        account = NS(id=4)
+        channel = NS(id=5)
+        job = NS(ref_id=12, tenant_id=7, request_meta={"mode": "draft"})
+        revoked = False
+
+        async def get(model, _ident):
+            return {
+                "GeoContentTask": task,
+                "GeoChannelAccount": account,
+                "GeoPublishingChannel": channel,
+            }.get(getattr(model, "__name__", ""))
+
+        async def ensure(_session, _tenant_id):
+            if revoked:
+                raise GeoEntitlementUnavailable()
+
+        async def push(*_args, **_kwargs):
+            nonlocal revoked
+            revoked = True
+            return {"connector": "test", "channel": "website"}
+
+        targets = [
+            {"ready": True, "adapt_key": "website", "account_id": 4, "channel_id": 5},
+            {"ready": True, "adapt_key": "website", "account_id": 4, "channel_id": 5},
+        ]
+        session = NS(
+            get=AsyncMock(side_effect=get),
+            scalars=AsyncMock(return_value=[variant]),
+            scalar=AsyncMock(return_value=None),
+            commit=AsyncMock(),
+        )
+        with (
+            patch("app.geo.tenant_scope.ensure_geo_entitlement", side_effect=ensure),
+            patch(
+                "app.geo.content.multi_push.list_push_targets",
+                AsyncMock(return_value=targets),
+            ),
+            patch(
+                "app.geo.content.multi_push.execute_single_push",
+                AsyncMock(side_effect=push),
+            ) as execute,
+        ):
+            with pytest.raises(GeoEntitlementUnavailable):
+                await async_jobs._execute_push_batch(session, job)
+
+        execute.assert_awaited_once()
+        session.commit.assert_not_awaited()
+
+    asyncio.run(scenario())
+
+
+def test_safe_daily_metrics_rebuild_skips_expired_tenant_without_write():
+    async def scenario():
+        from app.geo.content import daily_metrics
+
+        session = NS()
+
+        @asynccontextmanager
+        async def factory():
+            yield session
+
+        load = AsyncMock(side_effect=AssertionError("metric rebuild must not run"))
+        with (
+            patch("app.database.async_session_factory", factory),
+            patch(
+                "app.geo.tenant_scope.ensure_geo_entitlement",
+                AsyncMock(side_effect=GeoEntitlementUnavailable()),
+            ),
+            patch.object(daily_metrics, "load_day_snapshots", load),
+        ):
+            result = await daily_metrics.safe_rebuild_day(7)
+
+        assert result["skipped"] == "geo_entitlement"
+        load.assert_not_awaited()
+
+    asyncio.run(scenario())
+
+
+def test_daily_metrics_does_not_commit_when_entitlement_changes_during_rebuild():
+    async def scenario():
+        from datetime import date
+        from app.geo.content import daily_metrics
+
+        checks = 0
+
+        async def ensure(_session, _tenant_id):
+            nonlocal checks
+            checks += 1
+            if checks == 2:
+                raise GeoEntitlementUnavailable()
+
+        session = NS(scalars=AsyncMock(return_value=[]), commit=AsyncMock())
+        with (
+            patch("app.geo.tenant_scope.ensure_geo_entitlement", side_effect=ensure),
+            patch.object(
+                daily_metrics, "load_day_snapshots", AsyncMock(return_value=[])
+            ),
+            patch.object(
+                daily_metrics,
+                "load_prompt_unit_maps",
+                AsyncMock(return_value=({}, {}, {})),
+            ),
+            patch.object(daily_metrics, "upsert_metric_row", AsyncMock()),
+            pytest.raises(GeoEntitlementUnavailable),
+        ):
+            await daily_metrics.rebuild_day(
+                session, 7, date(2026, 9, 8), enforce_entitlement=True
+            )
+
+        session.commit.assert_not_awaited()
 
     asyncio.run(scenario())

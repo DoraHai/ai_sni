@@ -709,6 +709,7 @@ async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[s
     from app.geo.content.connectors.social import SocialError
     from app.geo.content.connectors.webhook import WebhookConnectorError
     from app.geo.content.multi_push import execute_single_push, list_push_targets
+    from app.geo.tenant_scope import ensure_geo_entitlement
     from app.models import (
         GeoArticleVersion,
         GeoChannelAccount,
@@ -768,6 +769,9 @@ async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[s
     results: list[dict[str, Any]] = []
     ok_n = fail_n = 0
     for t in ready:
+        # A batch may span several remote calls. Stop before the next channel if
+        # GEO access expired while an earlier channel was being processed.
+        await ensure_geo_entitlement(session, job.tenant_id)
         channel_key = str(t.get("adapt_key") or t.get("channel_type") or "").lower()
         variant = var_map.get(channel_key)
         account = await session.get(GeoChannelAccount, int(t["account_id"]))

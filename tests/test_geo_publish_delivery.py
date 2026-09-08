@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 from app.geo.content.multi_push import execute_single_push, delivery_key
 from app.geo.content.review import assert_review_approved, apply_decision
+from app.geo.tenant_scope import GeoEntitlementUnavailable
 
 
 def setup_case(review='approved'):
@@ -92,6 +93,29 @@ def test_success_is_reserved_before_send_and_reused_on_repeat():
         second=asyncio.run(execute_single_push(session,**args))
     assert second['deduplicated'] is True and send.await_count==1
     assert 'response' not in first and 'never-store' not in str(args['variant'].adapt_meta)
+
+
+def test_revoked_during_send_records_unknown_audit_without_claiming_success():
+    session,args=setup_case();revoked=False
+    async def ensure(_session,_tenant_id):
+        if revoked:
+            raise GeoEntitlementUnavailable()
+    async def perform(*_args,**_kwargs):
+        nonlocal revoked
+        revoked=True
+        return {'ok':True,'remote_url':'https://example.com/maybe-published',
+                'response':{'secret':'never-store'}}
+    with patches(args,AsyncMock(side_effect=perform)), \
+         patch('app.geo.tenant_scope.ensure_geo_entitlement',side_effect=ensure), \
+         pytest.raises(GeoEntitlementUnavailable):
+        asyncio.run(execute_single_push(session,**args))
+    delivery=next(iter(args['variant'].adapt_meta['push_deliveries'].values()))
+    assert delivery['state']=='unknown'
+    assert delivery['reason']=='entitlement_revoked_after_send'
+    assert delivery['manual_verification_required'] is True
+    assert delivery['result']['remote_url']=='https://example.com/maybe-published'
+    assert 'response' not in delivery['result'] and 'never-store' not in str(delivery)
+    assert session.commit.await_count==2
 
 
 @pytest.mark.parametrize('review',['none','pending','rejected'])

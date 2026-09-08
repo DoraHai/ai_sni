@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 from app.geo.audit import GeoAuditError
 from app.geo.publication_monitor import check_publication, initial_state, store_state, outcome, follow_up
+from app.geo.tenant_scope import GeoEntitlementUnavailable
 from app.models import GeoActionTicket
 
 
@@ -104,6 +105,37 @@ def test_cancelled_fetch_does_not_commit_success_or_failure():
         with pytest.raises(asyncio.CancelledError):asyncio.run(check_publication(s,7,5,4))
     s.commit.assert_not_awaited()
     assert v.adapt_meta['publication_monitor'][str(p.id)]==old
+
+
+def test_scheduled_monitor_discards_response_when_entitlement_changes_in_flight():
+    v,p,_,s=fixture();revoked=False
+    old=dict(v.adapt_meta['publication_monitor'][str(p.id)])
+    async def ensure(_session,_tenant_id):
+        if revoked:
+            raise GeoEntitlementUnavailable()
+    async def fetch(_url):
+        nonlocal revoked
+        revoked=True
+        return NS(html='matching',final_url=p.published_url)
+    with patch('app.geo.tenant_scope.ensure_geo_entitlement',side_effect=ensure), \
+         patch('app.geo.publication_monitor.safe_fetch',side_effect=fetch), \
+         patch('app.geo.publication_monitor.match_publication') as match, \
+         pytest.raises(GeoEntitlementUnavailable):
+        asyncio.run(check_publication(s,7,5,4,scheduled=True))
+    match.assert_not_called()
+    s.commit.assert_not_awaited()
+    assert v.adapt_meta['publication_monitor'][str(p.id)]==old
+
+
+def test_scheduled_monitor_does_not_fetch_for_expired_tenant():
+    _,_,_,s=fixture();fetch=AsyncMock()
+    with patch('app.geo.tenant_scope.ensure_geo_entitlement',AsyncMock(side_effect=GeoEntitlementUnavailable())), \
+         patch('app.geo.publication_monitor.safe_fetch',fetch), \
+         pytest.raises(GeoEntitlementUnavailable):
+        asyncio.run(check_publication(s,7,5,4,scheduled=True))
+    fetch.assert_not_awaited()
+    s.scalar.assert_not_awaited()
+    s.commit.assert_not_awaited()
 
 
 def test_failed_worker_defers_without_fabricating_a_page_failure():

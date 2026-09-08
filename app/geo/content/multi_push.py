@@ -311,7 +311,7 @@ def safe_connection_failure(exc):
 
 
 async def execute_single_push(session, *, task, variant, channel_row, account, mode, article):
-    from app.geo.tenant_scope import ensure_geo_entitlement
+    from app.geo.tenant_scope import GeoEntitlementUnavailable, ensure_geo_entitlement
     from app.geo.content.routes import (
         _brand_context_for_task,
         _build_rule_input,
@@ -411,10 +411,37 @@ async def execute_single_push(session, *, task, variant, channel_row, account, m
         raise
     for attempt in range(1, 4):
         try:
+            # A reservation can wait while another transaction revokes access.
+            # Recheck immediately before every external attempt, including retries.
+            await ensure_geo_entitlement(session, task.tenant_id)
+        except GeoEntitlementUnavailable:
+            record(
+                "failed",
+                attempts=attempt - 1,
+                reason="entitlement_revoked_before_send",
+            )
+            await session.commit()
+            raise
+        try:
             result = await _perform_single_push(session, task=task, variant=variant,
                 channel_row=channel_row, account=account, mode=mode, article=article)
             # Store only delivery metadata, never remote response bodies or tokens.
             result.pop("response", None)
+            try:
+                # The connector may have published while the request was in flight.
+                # If access was revoked, retain a minimal, sanitized audit trail but
+                # do not claim success or create a publication record.
+                await ensure_geo_entitlement(session, task.tenant_id)
+            except GeoEntitlementUnavailable:
+                record(
+                    "unknown",
+                    attempts=attempt,
+                    reason="entitlement_revoked_after_send",
+                    result=result,
+                    manual_verification_required=True,
+                )
+                await session.commit()
+                raise
             record("succeeded", attempts=attempt, result=result)
             await session.commit()
             await session.refresh(task, with_for_update=True)
