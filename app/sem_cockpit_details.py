@@ -77,23 +77,44 @@ async def read_keywords(session, tenant_id, account_id, start, end, q, campaign_
             func.max(KwReportSnapshot.fetched_at).label("fetched_at")).where(*report_cond)
             .group_by(KwReportSnapshot.keyword_id, KwReportSnapshot.baidu_account_id, KwReportSnapshot.report_date))).all()
         phones = await read_phone_rows(session, report_cond, (KwReportSnapshot.keyword_id, KwReportSnapshot.baidu_account_id))
-    by_key, phone_by_key = defaultdict(list), defaultdict(list)
+    by_key, by_keyword, phone_by_key = defaultdict(list), defaultdict(list), defaultdict(list)
     for r in reports:
         by_key[(r.baidu_account_id, r.keyword_id)].append(r)
+        by_keyword[r.keyword_id].append(r)
     for r in phones:
         phone_by_key[(r.baidu_account_id, r.keyword_id)].append(r)
     items = []
     for a in assets:
         key = (a.baidu_account_id, a.keyword_id)
+        matched_reports = by_key[key]
+        other_report_accounts = sorted(
+            {r.baidu_account_id for r in by_keyword[a.keyword_id] if r.baidu_account_id != a.baidu_account_id},
+            key=lambda value: (value is None, value or 0),
+        )
+        association_status = (
+            "matched" if matched_reports else "account_mismatch" if other_report_accounts else "no_report"
+        )
         items.append({"keyword_id": a.keyword_id, "baidu_account_id": a.baidu_account_id,
                       "keyword": a.keyword, "campaign_id": a.campaign_id, "adgroup_id": a.adgroup_id,
                       "price": float(a.price) if a.price is not None else None, "pause": a.pause,
                       "asset_updated_at": utc_stamp(a.synced_at),
-                      "metrics": report_metrics(by_key[key]), "coverage": coverage(by_key[key], start, end),
+                      "metrics": report_metrics(matched_reports), "coverage": coverage(matched_reports, start, end),
+                      "report_association": {
+                          "status": association_status,
+                          "join_keys": ["baidu_account_id", "keyword_id"],
+                          "matched_report_groups": len(matched_reports),
+                          "other_observed_account_ids": other_report_accounts if association_status == "account_mismatch" else [],
+                          "completeness": "unknown",
+                      },
                       "phone_button_clicks": phone_summary(phone_by_key[key])})
+    association_counts = {status: 0 for status in ("matched", "account_mismatch", "no_report")}
+    for item in items:
+        association_counts[item["report_association"]["status"]] += 1
     return {**envelope(tenant_id, account_scope, "keywords+kw_report_snapshots"),
             "window": window(start, end, mode), "filters": {"q": q, "campaign_id": campaign_id},
             "page": page, "page_size": page_size, "total": total, "items": items,
+            "association_summary": {"scope": "current_page", "counts": association_counts,
+                                    "completeness": "unknown"},
             "scope_note": "关键词资产列表；只关联相同账户与关键词ID的报告，未归属记录不推断到其他账户"}
 
 

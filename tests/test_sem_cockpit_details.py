@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from tests.sem_cockpit_fixtures import ReadSession, make_fixture_tables, seed_fixture, make_sqlite_engine, only_select
+from tests.sem_cockpit_fixtures import ReadSession, make_fixture_tables, seed_fixture, make_sqlite_engine, only_select, readonly_session
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import event
@@ -16,6 +16,7 @@ from app.database import get_session
 from app.models import BaiduAccount, Keyword, KeywordHourlyReport, KeywordRegionReport, KwReportSnapshot, SearchTermReport
 from app.security import auth
 from app.sem_cockpit_readonly import phone_summary
+from app.sem_cockpit_details import read_keywords
 
 
 @pytest.fixture
@@ -102,13 +103,52 @@ def test_keywords_exact_account_join_and_asset_without_report(client):
     assert data["total"]==3
     assert data["account_scope"]["configured_account_ids"]==[11]
     assert data["account_scope"]["excluded_archived_account_ids"]==[13]
-    assert data["account_scope"]["excluded_non_active_account_ids"]==[12,13]
+    assert data["account_scope"]["excluded_non_active_account_ids"]==[12,13,14]
     assert [r["metrics"]["cost"] for r in data["items"]]==[10,7,None]
+    assert [r["report_association"]["status"] for r in data["items"]]==["matched","matched","no_report"]
+    assert data["association_summary"]=={
+        "scope":"current_page", "counts":{"matched":2,"account_mismatch":0,"no_report":1},
+        "completeness":"unknown",
+    }
     assert data["items"][0]["metrics"]["ctr"]==.02
     assert data["items"][0]["coverage"]["missing_dates"]==["2026-09-02"]
     assert data["items"][2]["coverage"]["status"]=="no_data"
     single=get(client,"keywords/cockpit",**PARAMS,baidu_account_id=12)
     assert single["total"]==1 and single["items"][0]["metrics"]["cost"]==50
+
+
+def test_nullable_keyword_account_mismatch_is_explicit_not_silent_or_cross_tenant():
+    engine = make_sqlite_engine()
+    metadata, tables = make_fixture_tables()
+    metadata.create_all(engine)
+    with engine.begin() as conn:
+        seed_fixture(conn, tables)
+        conn.execute(tables[Keyword].insert(), dict(
+            id=7, tenant_id=1, baidu_account_id=None, keyword_id=103,
+            keyword="归属未知词", campaign_id=7, adgroup_id=8, synced_at=datetime(2026,9,4,1),
+        ))
+        conn.execute(tables[KwReportSnapshot].insert(), [
+            dict(tenant_id=1, baidu_account_id=11, keyword_id=103, report_date=date(2026,9,1),
+                 device=0, cost=9, click=1, impression=10, fetched_at=datetime(2026,9,4,1), raw_metrics={}),
+            dict(tenant_id=2, baidu_account_id=21, keyword_id=103, report_date=date(2026,9,1),
+                 device=0, cost=999, click=99, impression=999, fetched_at=datetime(2026,9,4,1), raw_metrics={}),
+        ])
+    with readonly_session(engine) as session:
+        result = asyncio.run(read_keywords(
+            session, 1, None, date(2026,9,1), date(2026,9,3), None, None, 1, 20,
+        ))
+    item = next(row for row in result["items"] if row["keyword_id"] == 103)
+    assert item["baidu_account_id"] is None
+    assert item["metrics"] == {"cost":None,"click":None,"impression":None,"ctr":None,"cpc":None}
+    assert item["coverage"]["status"] == "no_data"
+    assert item["report_association"] == {
+        "status":"account_mismatch",
+        "join_keys":["baidu_account_id","keyword_id"],
+        "matched_report_groups":0,
+        "other_observed_account_ids":[11],
+        "completeness":"unknown",
+    }
+    assert result["association_summary"]["counts"]["account_mismatch"] == 1
 
 
 def test_explicit_archived_account_is_historical_only(client):

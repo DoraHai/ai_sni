@@ -27,11 +27,14 @@ q、campaign_id、adgroup_id、page/page_size。关键词日期仅传一端返�
   A基础字段保持不变；电话点击只在B关键词列表/详情返回。is_demo=false只表示读取存储，不表示生产已上线。
 - 金额 CNY；CTR ratio=click/impression；CPC=cost/click。除零或缺分母为null；
   搜索词重新计算，避免直接使用历史存储百分数。聚合按总量重算，不平均CTR。
-- all 模式下 `account_scope.configured_account_ids` 只列非 archived 账户，
-  `excluded_archived_account_ids` 明示列出被默认排除的归档账户。显式指定租户内归档账户时仍允许只读历史，
-  `selected_account_status=archived`；外租户或未知账户仍返回404。列表的 `observed_account_ids`
+- all 模式下 `account_scope.configured_account_ids` 只列 active 账户，
+  `excluded_non_active_account_ids` 明示列出所有默认排除账户，`excluded_archived_account_ids` 保留归档子集以兼容既有消费者。
+  显式指定租户内非 active 账户时仍允许只读历史，并返回 `selected_account_status`；外租户或未知账户仍返回404。列表的 `observed_account_ids`
   是全筛选结果中的实际账户（可包含null），不是仅当前页。报告的 accounts 含当前范围账户及实际报告归属。
 - 关键词资产的 `asset_updated_at` 与日报 `coverage.updated_at` 分离。
+  列表逐项返回 `report_association`：`matched` 表示相同账户与关键词ID有报告，`no_report` 表示窗口内没有同ID报告，
+  `account_mismatch` 表示窗口内只有其他账户桶（含未归属桶）的同ID报告；此时指标仍为空，不猜测归属。
+  `association_summary` 只统计当前页三种状态，`completeness=unknown`，用于避免 `keywords.baidu_account_id` 为空或漂移时静默显示成真实零值。
   详情的keyword_assets按账户返回已存关键词名称及资产更新时间；只有历史报告而无资产时为空，不猜测当前资产状态。
   地域和小时维度分别读取自己的 fetched_at，逐账户覆盖包含无数据账户。
 - `coverage.status=observed/no_data`；missing_dates只说明无记录日，completeness持续为unknown。
