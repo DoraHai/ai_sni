@@ -14,11 +14,13 @@
 ```bash
 export GSNIPERS_BEARER_TOKEN='<existing authorized browser session token>'
 python scripts/accept_tiger_seo_readonly.py \
-  --tenant-id 4 \
-  --expected-domain tiger-coatings.cn \
   --output tiger-seo-readonly-result.json
 unset GSNIPERS_BEARER_TOKEN
 ```
+
+脚本固定访问 `https://gsnipers.snipers.com.cn`、`tenant_id=4` 和
+`tiger-coatings.cn`，不提供 CLI 覆盖。基础地址拒绝 userinfo、query、fragment 和
+非默认端口；跨域重定向在转发 Authorization 前直接失败。
 
 可选传入已有的公开网页预检文件：
 
@@ -31,17 +33,19 @@ python scripts/accept_tiger_seo_readonly.py \
 
 ## 验收顺序
 
-1. `/api/v1/auth/me`：普通账号必须绑定租户 4；超管允许 `tenant_id=null`。
-2. `/api/v1/auth/modules`：SEO 必须 `available=true`。
-3. `/api/v1/seo/sites?tenant_id=4` 与 `/api/v1/seo/workbench/sites?tenant_id=4`：按 `canonical_domain=tiger-coatings.cn` 精确匹配。
-4. 没有匹配站点时输出 `status=empty_site`，立即停止，不猜 `site_id`。
-5. 恰好一个匹配站点时，读取内容、发布、页面、GSC 配置和 cockpit 指标快照，输出 count / coverage / freshness。
+1. `/openapi.json`：实际指标 GET 必须挂载在 `/api/v1/seo/metrics/snapshot`。
+2. `/api/v1/auth/me`：普通账号必须绑定租户 4；超管允许 `tenant_id=null`。
+3. `/api/v1/auth/modules`：SEO 必须 `available=true`。
+4. `/api/v1/seo/sites?tenant_id=4` 与 `/api/v1/seo/workbench/sites?tenant_id=4`：按 `canonical_domain=tiger-coatings.cn` 精确匹配，再交叉核对 site ID、域名和状态。
+5. 没有匹配站点时输出 `status=empty_site`，立即停止，不猜 `site_id`。
+6. 站点为 paused/archived、不在服务端 selectable statuses 内，或两份列表的 ID/域名/状态不一致时，输出 `status=site_unavailable` 并停止后续探测。
+7. 恰好一个可选站点时，读取内容、发布、页面、GSC 配置和指标快照，输出 count / coverage / freshness。
 
 空列表只证明该接口可读且当前无对象；不等于所有详情接口通过。`client_non_get_requests=0` 只证明客户端本次没有发送非 GET，不能单独证明服务端的 GET 永远无内部副作用。
 
 ## 待审查项
 
-- 生产 SEO 是否仍暴露 `/api/v1/seo/cockpit/metrics/snapshot`；若发布基线改名，只更新确认过的 GET 路径。
+- 生产验收时会通过 OpenAPI 先确认 `/api/v1/seo/metrics/snapshot` GET 真实挂载；未挂载即停止。
 - `content-distribution/publications` 目前没有分页参数，验收时会读取该站点全部发布记录；数量过大时应由 SEO 接口增加分页，不应由脚本猜参数。
 - GSC 端点只证明连接配置；点击、展示、CTR 和平均排名仍应以指标快照的 source / observed_at / data_quality 为准。
 - 单篇文章搜索点击仍不可由站点级 GSC 数据推算。
