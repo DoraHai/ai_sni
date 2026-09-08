@@ -7,10 +7,12 @@ from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.api.seo import (
     DistributionAdaptRequest,
     DistributionManualComplete,
+    DistributionManualPublicationCreate,
     DistributionPreflightRequest,
     DistributionPublishRequest,
     DistributionRetryRequest,
@@ -24,6 +26,7 @@ from app.api.seo import (
     _sanitize_content_html,
     adapt_content_distribution,
     complete_manual_publication,
+    create_manual_publication,
     preflight_content_distribution,
     publish_content_distribution,
     review_distribution_variant,
@@ -1312,6 +1315,185 @@ def test_manual_handoff_completion_is_site_scoped_and_audited() -> None:
     assert result["page_url"] == "https://zhuanlan.zhihu.com/p/123"
 
 
+def test_manual_publication_duplicate_race_returns_conflict_and_rolls_back() -> None:
+    content = SeoContentAsset(
+        id=5,
+        tenant_id=1,
+        site_id=8,
+        content_type="article",
+        title="测试文章",
+        status="ready",
+        version_count=2,
+    )
+    winner = SeoContentPublication(
+        id=13,
+        tenant_id=1,
+        content_asset_id=5,
+        platform_code="manual",
+        platform_name="知乎",
+        publish_mode="manual",
+        status="published",
+        source_version=2,
+        page_url="https://zhuanlan.zhihu.com/p/123",
+    )
+    session = AsyncMock()
+    session.scalar = AsyncMock(side_effect=[None, winner])
+    session.add = MagicMock()
+    session.commit = AsyncMock(
+        side_effect=IntegrityError("insert publication", {}, Exception("duplicate"))
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    request = DistributionManualPublicationCreate(
+        tenant_id=1,
+        site_id=8,
+        content_id=5,
+        platform_name="知乎",
+        page_url="https://zhuanlan.zhihu.com/p/123",
+    )
+
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        pytest.raises(Exception) as exc,
+    ):
+        asyncio.run(create_manual_publication(request, session, context))
+
+    assert getattr(exc.value, "status_code", None) == 409
+    session.rollback.assert_awaited_once()
+    session.refresh.assert_not_awaited()
+
+
+def test_manual_publication_unrelated_integrity_error_is_not_hidden_as_duplicate() -> None:
+    content = SeoContentAsset(
+        id=5, tenant_id=1, site_id=8, content_type="article",
+        title="测试文章", status="ready", version_count=2,
+    )
+    session = AsyncMock()
+    session.scalar = AsyncMock(side_effect=[None, None])
+    session.add = MagicMock()
+    error = IntegrityError("insert publication", {}, Exception("foreign key"))
+    session.commit = AsyncMock(side_effect=error)
+    request = DistributionManualPublicationCreate(
+        tenant_id=1, site_id=8, content_id=5, platform_name="知乎",
+        page_url="https://zhuanlan.zhihu.com/p/123",
+    )
+
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        pytest.raises(IntegrityError) as exc,
+    ):
+        asyncio.run(create_manual_publication(request, session, AuthContext(
+            user_id=7, username="operator", role_name="运营", tenant_id=1,
+            permissions={"seo.content": "edit"},
+        )))
+
+    assert exc.value is error
+    session.rollback.assert_awaited_once()
+
+
+def test_manual_completion_duplicate_race_returns_conflict_and_rolls_back() -> None:
+    publication = SeoContentPublication(
+        id=12,
+        tenant_id=1,
+        content_asset_id=5,
+        platform_code="zhihu",
+        platform_name="知乎",
+        publish_mode="assisted",
+        status="manual_required",
+        source_version=2,
+    )
+    content = SeoContentAsset(
+        id=5,
+        tenant_id=1,
+        site_id=8,
+        content_type="article",
+        title="测试文章",
+        status="ready",
+        version_count=2,
+    )
+    winner = SeoContentPublication(
+        id=13,
+        tenant_id=1,
+        content_asset_id=5,
+        platform_code="manual",
+        platform_name="知乎",
+        publish_mode="manual",
+        status="published",
+        source_version=2,
+        page_url="https://zhuanlan.zhihu.com/p/123",
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=publication)
+    session.scalar = AsyncMock(side_effect=[None, winner])
+    session.add = MagicMock()
+    session.commit = AsyncMock(
+        side_effect=IntegrityError("update publication", {}, Exception("duplicate"))
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    request = DistributionManualComplete(
+        tenant_id=1,
+        site_id=8,
+        page_url="https://zhuanlan.zhihu.com/p/123",
+    )
+
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        pytest.raises(Exception) as exc,
+    ):
+        asyncio.run(complete_manual_publication(12, request, session, context))
+
+    assert getattr(exc.value, "status_code", None) == 409
+    session.rollback.assert_awaited_once()
+
+
+def test_manual_completion_unrelated_integrity_error_is_not_hidden_as_duplicate() -> None:
+    publication = SeoContentPublication(
+        id=12, tenant_id=1, content_asset_id=5, platform_code="zhihu",
+        platform_name="知乎", publish_mode="assisted", status="manual_required",
+        source_version=2,
+    )
+    content = SeoContentAsset(
+        id=5, tenant_id=1, site_id=8, content_type="article",
+        title="测试文章", status="ready", version_count=2,
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=publication)
+    session.scalar = AsyncMock(side_effect=[None, None])
+    session.add = MagicMock()
+    error = IntegrityError("update publication", {}, Exception("not null"))
+    session.commit = AsyncMock(side_effect=error)
+    request = DistributionManualComplete(
+        tenant_id=1, site_id=8, page_url="https://zhuanlan.zhihu.com/p/123",
+    )
+
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        pytest.raises(IntegrityError) as exc,
+    ):
+        asyncio.run(complete_manual_publication(12, request, session, AuthContext(
+            user_id=7, username="operator", role_name="运营", tenant_id=1,
+            permissions={"seo.content": "edit"},
+        )))
+
+    assert exc.value is error
+    session.rollback.assert_awaited_once()
+
+
 def test_publication_sync_locks_row_before_remote_status_update() -> None:
     publication = SeoContentPublication(
         id=12, tenant_id=1, content_asset_id=5, connection_id=9,
@@ -1357,6 +1539,67 @@ def test_publication_sync_locks_row_before_remote_status_update() -> None:
     assert session.commit.await_count == 1
     assert publication.status == "published"
     assert result["external_id"] == "publish-1"
+
+
+def test_publication_sync_records_an_unexpected_provider_failure() -> None:
+    publication = SeoContentPublication(
+        id=12,
+        tenant_id=1,
+        content_asset_id=5,
+        connection_id=9,
+        platform_code="wechat_official",
+        platform_name="微信公众号",
+        publish_mode="publish",
+        status="publishing",
+        source_version=2,
+        external_id="media-1",
+    )
+    content = SeoContentAsset(
+        id=5,
+        tenant_id=1,
+        site_id=8,
+        content_type="article",
+        title="测试文章",
+        status="ready",
+        version_count=2,
+    )
+    connection = SeoDistributionConnection(
+        id=9,
+        tenant_id=1,
+        platform_code="wechat_official",
+        name="公众号",
+        mode="api",
+        enabled=True,
+        status="connected",
+        has_credentials=True,
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=publication)
+    session.add = MagicMock()
+    session.flush = AsyncMock()
+    session.commit = AsyncMock()
+
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
+        patch("app.api.seo.decrypt_credentials", return_value={"app_id": "id", "app_secret": "secret"}),
+        patch("app.api.seo.sync_publish_status", new=AsyncMock(side_effect=RuntimeError("adapter bug"))),
+        pytest.raises(Exception) as exc,
+    ):
+        asyncio.run(sync_content_publication(12, 1, 8, session, AuthContext(
+            user_id=7, username="operator", role_name="运营", tenant_id=1,
+            permissions={"seo.content": "edit"},
+        )))
+
+    attempt = session.add.call_args.args[0]
+    assert getattr(exc.value, "status_code", None) == 502
+    assert publication.status == "publishing"
+    assert publication.last_error == "同步结果不确定，需要人工核对平台后台：RuntimeError"
+    assert attempt.status == "failed"
+    assert attempt.error == "同步结果不确定，需要人工核对平台后台：RuntimeError"
+    assert attempt.response_summary == {"requires_manual_review": True, "outcome": "unknown"}
+    session.commit.assert_awaited_once()
 
 
 def test_distribution_migration_backfills_legacy_links_and_is_linear() -> None:

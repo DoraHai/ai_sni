@@ -6841,7 +6841,20 @@ async def create_manual_publication(
     content.target_platforms = platforms[:20]
     content.status = "published"
     content.published_at = content.published_at or published_at
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        winner = await session.scalar(
+            select(SeoContentPublication).where(
+                SeoContentPublication.tenant_id == req.tenant_id,
+                SeoContentPublication.content_asset_id == req.content_id,
+                SeoContentPublication.page_url == page_url,
+            )
+        )
+        if winner is not None:
+            raise HTTPException(409, "该文章的发布链接已经登记，请刷新后核对") from exc
+        raise
     await session.refresh(row)
     return _publication_payload(row, content=content)
 
@@ -7634,8 +7647,9 @@ async def complete_manual_publication(
     )
     if not row or row.tenant_id != req.tenant_id:
         raise HTTPException(404, "发布任务不存在")
+    content_asset_id = int(row.content_asset_id)
     content = await _distribution_content(
-        session, req.tenant_id, row.content_asset_id, req.site_id
+        session, req.tenant_id, content_asset_id, req.site_id
     )
     if req.source_version is not None and row.source_version != req.source_version:
         raise HTTPException(409, "发布任务版本已变化，请重新导出任务并核对结果")
@@ -7677,7 +7691,21 @@ async def complete_manual_publication(
             created_by=ctx.user_id,
         )
     )
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        winner = await session.scalar(
+            select(SeoContentPublication).where(
+                SeoContentPublication.tenant_id == req.tenant_id,
+                SeoContentPublication.content_asset_id == content_asset_id,
+                SeoContentPublication.page_url == page_url,
+                SeoContentPublication.id != publication_id,
+            )
+        )
+        if winner is not None:
+            raise HTTPException(409, "该文章的发布链接已经登记，请刷新后核对") from exc
+        raise
     return _publication_payload(row, content=content)
 
 
@@ -7728,6 +7756,22 @@ async def sync_content_publication(
         attempt.completed_at = datetime.utcnow()
         await session.commit()
         raise HTTPException(502, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        error = f"同步结果不确定，需要人工核对平台后台：{type(exc).__name__}"
+        row.last_error = error
+        attempt.status = "failed"
+        attempt.error = error
+        attempt.response_summary = {"requires_manual_review": True, "outcome": "unknown"}
+        attempt.completed_at = datetime.utcnow()
+        await session.commit()
+        logger.error(
+            "SEO publication sync failed unexpectedly publication_id=%s error_type=%s",
+            row.id,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            502, "同步平台状态时出现未预期错误；请核对平台后台后再试"
+        ) from exc
     row.status = remote.status
     row.external_id = remote.external_id or row.external_id
     row.page_url = remote.page_url or row.page_url
