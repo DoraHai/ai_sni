@@ -1,14 +1,16 @@
 <script setup>
 import { onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { createSeoSite, deleteSeoSite, fetchSeoSites, updateSeoSite } from '../../api/moduleAssets'
 import { currentTenantId } from '../../store/session'
 
 const loading=ref(false),visible=ref(false),sites=ref([]),editing=ref(null)
+const router=useRouter()
 const form=reactive({name:'',domain:'',status:'active'})
 async function load(){if(!currentTenantId.value)return;loading.value=true;try{sites.value=(await fetchSeoSites(currentTenantId.value)).sites||[]}catch(e){ElMessage.error(e.message)}finally{loading.value=false}}
 function open(row=null){editing.value=row;Object.assign(form,{name:row?.name||'',domain:row?.domain||'',status:row?.status||'active'});visible.value=true}
-async function save(){if(!form.name||!form.domain)return ElMessage.warning('请填写网站名称和域名');try{if(editing.value)await updateSeoSite(editing.value.id,currentTenantId.value,form);else await createSeoSite({tenant_id:currentTenantId.value,...form});visible.value=false;ElMessage.success('SEO 网站已保存');await load()}catch(e){ElMessage.error(e.message)}}
+async function save(){if(!form.name||!form.domain)return ElMessage.warning('请填写网站名称和域名');try{let created=null;if(editing.value)await updateSeoSite(editing.value.id,currentTenantId.value,form);else created=await createSeoSite({tenant_id:currentTenantId.value,...form});visible.value=false;ElMessage.success('SEO 网站已保存');await load();if(created?.id)await router.replace({path:'/seo/sites',query:{site_id:String(created.id)}})}catch(e){ElMessage.error(e.message)}}
 async function remove(row){
   try{
     await ElMessageBox.prompt(`删除后无法恢复。请输入主域名 ${row.canonical_domain} 确认删除。如网站已有关键词、排名、页面或其他 SEO 数据，系统不会删除，请将网站状态改为“归档”。`, '删除 SEO 网站', {confirmButtonText:'删除',cancelButtonText:'取消',inputPattern:new RegExp(`^${row.canonical_domain.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}$`),inputErrorMessage:'输入的主域名不一致',type:'warning'})

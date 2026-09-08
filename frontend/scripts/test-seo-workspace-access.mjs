@@ -3,10 +3,18 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 import {
+  canRenderSeoRoute,
   createSeoWorkspaceAccess,
   reconcileSeoRouteSite,
   selectOwnedSeoSite,
 } from '../src/views/seo/seoWorkspaceAccess.js'
+
+test('site management remains available before the first active site exists', () => {
+  assert.equal(canRenderSeoRoute('no-active-site', '/seo/sites'), true)
+  assert.equal(canRenderSeoRoute('no-active-site', '/seo/dashboard'), false)
+  assert.equal(canRenderSeoRoute('unavailable', '/seo/sites'), false)
+  assert.equal(canRenderSeoRoute('ready', '/seo/dashboard'), true)
+})
 
 function deferred() {
   let resolve
@@ -175,7 +183,7 @@ test('separate tab controllers cannot commit each other scope responses', async 
 test('workspace shell gates child views and uses the workbench site selector', async () => {
   const source = await readFile(new URL('../src/views/seo/SeoWorkspaceShell.vue', import.meta.url), 'utf8')
   assert.match(source, /client\.get\('\/api\/v1\/auth\/tenants', \{ params: \{ module: 'seo' \} \}\)/)
-  assert.match(source, /<section v-if="accessState !== 'ready'"/)
+  assert.match(source, /<section v-if="!renderRoute"/)
   assert.match(source, /<router-view v-else/)
   assert.match(source, /fetchSeoWorkbenchSites\(tenantId\)/)
   assert.match(source, /reconcileSeoRouteSite\(\{[\s\S]*selectableStatuses: selectableSiteStatuses\.value/)
