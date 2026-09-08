@@ -46,7 +46,7 @@ def test_report_accounts_missing_days_units_and_privacy(db):
     assert [a["baidu_account_id"] for a in result["accounts"]] == [11,None]
     assert result["account_scope"]["configured_account_ids"] == [11]
     assert result["account_scope"]["excluded_archived_account_ids"] == [13]
-    assert result["account_scope"]["excluded_non_active_account_ids"] == [12, 13]
+    assert result["account_scope"]["excluded_non_active_account_ids"] == [12, 13, 14]
     assert result["coverage"]["missing_dates"] == ["2026-09-02"]
     assert result["coverage"]["completeness"] == "unknown"
     assert result["trend"][1]["cost"] is None
@@ -67,11 +67,12 @@ def test_single_account_and_empty_window(db):
     assert result["coverage"]["updated_at"] is None
 
 
-def test_explicit_inactive_account_remains_available_for_historical_read(db):
-    result = asyncio.run(read_report(db, 1, START, END, 12))
-    assert result["metrics"]["cost"] == 30
-    assert result["account_scope"]["selected_account_status"] == "inactive"
-    assert result["account_scope"]["configured_account_ids"] == [12]
+@pytest.mark.parametrize(("account_id", "status", "cost"), [(12, "inactive", 30), (14, "disabled", 70)])
+def test_explicit_non_active_account_remains_available_for_historical_read(db, account_id, status, cost):
+    result = asyncio.run(read_report(db, 1, START, END, account_id))
+    assert result["metrics"]["cost"] == cost
+    assert result["account_scope"]["selected_account_status"] == status
+    assert result["account_scope"]["configured_account_ids"] == [account_id]
 
 
 def test_explicit_archived_account_remains_available_for_historical_read(db):
