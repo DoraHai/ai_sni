@@ -68,6 +68,24 @@ test('late response after filter change cannot replace latest result', async () 
   await assert.rejects(first, { code: 'STALE_RESPONSE' })
 })
 
+test('late default scope cannot replace an explicit archived-account history read', async () => {
+  const finishes = []
+  const client = createSemReadonlyClient({ onClear() {}, transport: () => new Promise(resolve => finishes.push(resolve)) })
+  client.setContext(context)
+  const defaultRead = client.read('report', dates)
+  const archivedRead = client.read('report', { ...dates, baidu_account_id: 13 })
+  const archived = structuredClone(payload)
+  archived.account_scope = {
+    mode: 'single', baidu_account_id: 13, configured_account_ids: [13],
+    excluded_archived_account_ids: [], selected_account_status: 'archived', includes_unassigned: false,
+  }
+  archived.accounts = [{ ...archived.accounts[0], baidu_account_id: 13, status: 'archived' }]
+  finishes[1](response(archived))
+  assert.equal((await archivedRead).account_scope.selected_account_status, 'archived')
+  finishes[0](response(payload))
+  await assert.rejects(defaultRead, { code: 'STALE_RESPONSE' })
+})
+
 for (const status of [401, 403]) test(`permission rejection ${status} invalidates all context`, async () => {
   const client = createSemReadonlyClient({ onClear() {}, transport: async () => ({ status, ok: false }) })
   client.setContext(context)
@@ -99,6 +117,15 @@ test('incorrect account or date response cannot populate a filtered view', async
     client.setContext(context)
     await assert.rejects(client.read('report', { ...dates, baidu_account_id: 12 }), { code: 'CONTRACT_MISMATCH' })
   }
+})
+
+test('archived-account scope metadata must remain disjoint and explicit', async () => {
+  await rejectsContract('searchTerms', data => {
+    data.account_scope.excluded_archived_account_ids = [11]
+  })
+  await rejectsContract('searchTerms', data => {
+    data.account_scope.selected_account_status = 'archived'
+  })
 })
 
 test('all synthetic API responses are accepted by the actual consumer contract', async () => {

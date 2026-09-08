@@ -32,6 +32,7 @@ const report = await sem.read('report', {
   start_date: '2026-09-01', end_date: '2026-09-03', baidu_account_id: selectedAccountId,
 })
 // all模式省略baidu_account_id，不能传null或偷偷传首个账户。
+// all模式服务端只纳入非archived账户；显式指定租户内archived账户仅用于历史查询。
 // 客户切换/登出/权限刷新失败：
 sem.invalidate()
 ```

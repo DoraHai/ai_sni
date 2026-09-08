@@ -6,7 +6,7 @@
 import logging
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +28,8 @@ from app.models import (
     WritebackAction,
 )
 from app.security.auth import AuthContext, require_scoped_auth
+from app.sem_cockpit_details import read_search_terms
+from app.sem_cockpit_readonly import validate_query
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,44 @@ router = APIRouter(
     tags=["搜索词报告"],
     dependencies=[Depends(require_scoped_auth)],
 )
+
+
+@router.get("/cockpit")
+async def cockpit_search_terms(
+    request: Request,
+    tenant_id: int = Query(..., gt=0),
+    baidu_account_id: int | None = Query(None, gt=0),
+    q: str | None = Query(None, max_length=200),
+    campaign_id: int | None = Query(None, gt=0),
+    adgroup_id: int | None = Query(None, gt=0),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    validate_query(
+        request.query_params,
+        {
+            "tenant_id",
+            "baidu_account_id",
+            "q",
+            "campaign_id",
+            "adgroup_id",
+            "page",
+            "page_size",
+        },
+    )
+    return await read_search_terms(
+        session,
+        tenant_id,
+        baidu_account_id,
+        q,
+        campaign_id,
+        adgroup_id,
+        page,
+        page_size,
+    )
 
 
 def _to_dict(r: SearchTermReport) -> dict:
