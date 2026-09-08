@@ -18,7 +18,14 @@ def test_customer_review_rejects_stale_saved_version(changed):
          patch('app.geo.content.routes._latest_article',AsyncMock(return_value=NS(id=18 if changed=='article' else 17))), \
          patch('app.geo.content.routes.apply_decision') as decision:
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(decide_task_review(12,req,7,NS(user_id=9,ensure_tenant=lambda _:None),session))
+            asyncio.run(decide_task_review(12,req,7,NS(
+                user_id=9,
+                tenant_id=None,
+                permissions={"geo.content": "edit"},
+                is_superadmin=False,
+                can_edit=lambda key: key == "geo.content",
+                ensure_tenant=lambda _:None,
+            ),session))
         assert exc.value.status_code==409
         decision.assert_not_called();session.commit.assert_not_awaited()
 

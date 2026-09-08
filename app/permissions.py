@@ -39,6 +39,7 @@ MENUS: list[dict] = [
 
 MENU_KEYS: set[str] = {m["key"] for m in MENUS}
 LEVELS = ("view", "edit")
+CUSTOMER_ROLE = "品牌方客户"
 
 # 内置系统角色的种子权限（迁移 0016 seed + 冒烟复用）。is_system=True 不可删。
 ALL_EDIT = {m["key"]: "edit" for m in MENUS}
@@ -63,7 +64,7 @@ CLIENT_PERMS = {
 SYSTEM_ROLES = [
     {"name": "管理员", "description": "全部菜单可编辑，含账号与角色管理", "permissions": ALL_EDIT},
     {"name": "运营", "description": "日常优化工作流全部可编辑，不含账号管理", "permissions": OPERATOR_PERMS},
-    {"name": "品牌方客户", "description": "只读：数据看板 + 分析报告（通常绑定单客户）", "permissions": CLIENT_PERMS},
+    {"name": CUSTOMER_ROLE, "description": "只读数据并可确认本客户待审 GEO 内容", "permissions": CLIENT_PERMS},
 ]
 
 

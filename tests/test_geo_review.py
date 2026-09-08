@@ -117,6 +117,10 @@ class ReviewFsmTests(unittest.TestCase):
             _required("/api/v1/geo/content-tasks/1/submit-review", "POST"),
             ({"geo.content"}, True),
         )
+        self.assertEqual(
+            _required("/api/v1/geo/content-tasks/1/review", "POST"),
+            ({"geo.content"}, False),
+        )
 
 
 if __name__ == "__main__":
