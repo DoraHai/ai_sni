@@ -110,6 +110,10 @@ function validateUnits(units) {
   contract(object(units) && units.cost === 'CNY' && units.click === 'count' && units.impression === 'count' &&
     units.ctr === 'ratio' && units.cpc === 'CNY/click')
 }
+function validatePage(items, total, page, pageSize) {
+  const expected = Math.min(pageSize, Math.max(total - ((page - 1) * pageSize), 0))
+  contract(items.length === expected)
+}
 function validateAccountScope(scope, accountId) {
   contract(object(scope) && scope.mode === (accountId === undefined ? 'all' : 'single'))
   contract(scope.baidu_account_id === (accountId ?? null))
@@ -186,7 +190,7 @@ function validateKeywords(data, params) {
   }
   contract(object(data.filters) && data.filters.q === (params.q ?? null) && data.filters.campaign_id === (params.campaign_id ?? null))
   contract(data.page === (params.page ?? 1) && data.page_size === (params.page_size ?? 20) && nonnegativeInteger(data.total) && Array.isArray(data.items))
-  contract(data.items.length <= data.page_size && (data.total !== 0 || data.items.length === 0))
+  validatePage(data.items, data.total, data.page, data.page_size)
   for (const item of data.items) {
     contract(object(item) && positive(item.keyword_id) && (item.baidu_account_id === null || positive(item.baidu_account_id)))
     if (params.baidu_account_id !== undefined) contract(item.baidu_account_id === params.baidu_account_id)
@@ -228,6 +232,7 @@ function validateSearchTerms(data, params) {
   contract(object(data.filters) && data.filters.q === (params.q ?? null) && data.filters.campaign_id === (params.campaign_id ?? null) &&
     data.filters.adgroup_id === (params.adgroup_id ?? null))
   contract(data.page === (params.page ?? 1) && data.page_size === (params.page_size ?? 50) && nonnegativeInteger(data.total) && Array.isArray(data.items))
+  validatePage(data.items, data.total, data.page, data.page_size)
   contract(['observed', 'no_data'].includes(data.status) && data.completeness === 'unknown' && Array.isArray(data.windows))
   const pairs = new Set()
   const windows = new Set()
