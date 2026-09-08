@@ -176,12 +176,25 @@ if [[ "$already_current" != true ]]; then
 fi
 
 [[ -s "$expected_index" ]] || fail 'SEM index is missing'
+smoke_sem_route() {
+  local path="$1" attempt
+  for attempt in {1..10}; do
+    if curl -fsS -H 'Cache-Control: no-cache' "$public_origin$path" -o "$smoke_body" \
+      && cmp -s "$expected_index" "$smoke_body"; then
+      return 0
+    fi
+    [[ "$attempt" -eq 10 ]] || sleep 1
+  done
+  return 1
+}
+
 for path in /platform /platform/customers /platform/accounts /platform/roles \
   /settings/customers /settings/accounts /settings/users \
   /workspace/cockpit /monitor/dashboard /optimize/keywords; do
-  curl -fsS --retry 5 --retry-delay 1 -H 'Cache-Control: no-cache' \
-    "$public_origin$path" -o "$smoke_body" || fail "public smoke failed: $path"
-  cmp -s "$expected_index" "$smoke_body" || fail "route did not serve the SEM index: $path"
+  # A successful nginx reload returns before every old worker has necessarily
+  # stopped accepting requests. Wait for both HTTP success and the exact SEM
+  # shell so an old worker cannot falsely roll back a valid route.
+  smoke_sem_route "$path" || fail "public smoke failed or returned the wrong shell: $path"
 done
 admin_status="$(curl -sS --retry 5 --retry-delay 1 -D "$smoke_headers" -o /dev/null -w '%{http_code}' \
   "$public_origin/admin/internal")" || fail 'legacy admin redirect smoke failed'
