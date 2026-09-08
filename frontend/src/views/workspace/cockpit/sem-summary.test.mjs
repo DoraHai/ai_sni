@@ -40,8 +40,9 @@ test('old account-scope contract degrades instead of claiming active-only', () =
 
 test('an access failure invalidates a whole concurrent detail batch', () => {
   const revoked = Object.assign(new Error('revoked'), { code: 'ACCESS_REVOKED' })
+  const stale = Object.assign(new Error('stale sibling'), { code: 'STALE_RESPONSE' })
   assert.throws(() => resolveSemDetailBatch([
-    { status: 'fulfilled', value: example('keywords') },
+    { status: 'rejected', reason: stale },
     { status: 'rejected', reason: revoked },
   ]), error => error === revoked)
   const ordinary = new Error('temporary')

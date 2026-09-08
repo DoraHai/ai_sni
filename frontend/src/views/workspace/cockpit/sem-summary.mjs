@@ -93,13 +93,16 @@ function newestStamp(values) {
     .reduce((latest, value) => latest === null || Date.parse(value) > Date.parse(latest) ? value : latest, null)
 }
 
-const invalidatingCodes = new Set(['ACCESS_REVOKED', 'NOT_AUTHORIZED', 'CONTRACT_MISMATCH',
-  'STALE_SESSION', 'STALE_AUTHORIZATION', 'STALE_RESPONSE'])
+const invalidatingPriority = new Map([
+  ['ACCESS_REVOKED', 3], ['NOT_AUTHORIZED', 3], ['CONTRACT_MISMATCH', 2],
+  ['STALE_SESSION', 1], ['STALE_AUTHORIZATION', 1], ['STALE_RESPONSE', 1],
+])
 
 // A permission/identity failure invalidates the whole concurrent batch. Never republish a
 // successful sibling after the client has already cleared evidence for the revoked context.
 export function resolveSemDetailBatch(results) {
-  const invalidating = results.find(result => result.status === 'rejected' && invalidatingCodes.has(result.reason?.code))
+  const invalidating = results.filter(result => result.status === 'rejected' && invalidatingPriority.has(result.reason?.code))
+    .sort((left, right) => invalidatingPriority.get(right.reason.code) - invalidatingPriority.get(left.reason.code))[0]
   if (invalidating) throw invalidating.reason
   return results.map(result => result.status === 'fulfilled'
     ? { value: result.value, error: null }
