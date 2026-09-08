@@ -1,8 +1,10 @@
-# Current coordination — 2026-09-08 18:49 Asia/Shanghai
+# Current coordination — 2026-09-08 18:53 Asia/Shanghai
 
 This is the authoritative continuation checkpoint. Historical pause documents are superseded by the current user instruction to continue development and coordinate the existing SEM, SEO and GEO tasks.
 
 ## Latest production checkpoint — supersedes older state below
+
+- 2026-09-08 18:53 SEO publication concurrency Draft PR489 exact `33157eca78b7873c0860ad6e61f5a3d65a55d1cd` adds rollback handling for manual publication/QA placement races and records sanitized unknown provider-sync failures. Coordinator review found P1=0/P2=1: all three new handlers currently translate any `IntegrityError` into a duplicate/race response, even when no competing winner exists, which can hide unrelated constraint or database faults. It remains blocked until each path re-reads the expected winner after rollback and only returns the idempotent/409 outcome when that evidence exists; negative no-winner tests are required. No real platform login, customer data, publication, database, merge or deployment action ran.
 
 - 2026-09-08 18:49 active review gates: SEM Draft PR487 exact `decbd3dcc1196127d46902f41afbcd8ef87ac7a3` correctly stops NULL-owned keyword assets from joining NULL-owned reports, but coordinator review found P2=1 because a known asset account plus only NULL-owned same-ID reports is still labelled `account_mismatch` and rendered as “other account”; NULL does not prove another account. It remains blocked pending a truthful report-ownership-unknown state and tests. GEO Draft PR488 exact `be1877349a7f58efe06871663fa9c67e22a60dd8` adds a global entitlement gate, but coordinator review found P1=1: it inspects bodies only for exact `application/json`, while FastAPI accepts `application/*+json`; a vendor-JSON write can therefore bypass the proposed body tenant gate. It also must prove coverage for any write route whose tenant is derived only from a path object or auth context. Both owners are fixing their own Drafts; neither may merge/deploy. No customer, task14, publication, generation, database or production write ran.
 
