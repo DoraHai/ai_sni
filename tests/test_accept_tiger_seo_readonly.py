@@ -29,6 +29,8 @@ def test_admin_runbook_blocks_until_platform_route_and_harness_are_released():
 
     assert "execution_status=blocked_until_seo_openapi_route_deployed" in runbook
     assert "required_prior_pull_request=#467" in runbook
+    assert "required_platform_route_pull_request=#474" in runbook
+    assert "required_harness_pull_request=#475" in runbook
     assert "required_platform_route=GET /seo-openapi.json" in runbook
     assert "8ba839703d91e7720bf8160b249d61ed3c704ef8" not in runbook
     assert f"expected_script_sha256={script_sha256}" in runbook

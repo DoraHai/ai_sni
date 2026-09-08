@@ -27,6 +27,8 @@
 ```text
 execution_status=blocked_until_seo_openapi_route_deployed
 required_prior_pull_request=#467
+required_platform_route_pull_request=#474
+required_harness_pull_request=#475
 required_platform_route=GET /seo-openapi.json -> SEO 127.0.0.1:8020/openapi.json
 expected_script_sha256=996c2bf8382aca13d6161fce8dbf1f459314d4c35c5927c8d57a196434d20a79
 ```
