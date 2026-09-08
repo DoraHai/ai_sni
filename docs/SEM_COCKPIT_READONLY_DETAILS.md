@@ -8,7 +8,7 @@
 
 | GET 接口 | 数据、窗口 | 账户 | 权限及副作用 |
 | --- | --- | --- | --- |
-| /api/v1/dashboard/cockpit | A：保持原有报告/设备及缺报契约，不查询或返回电话按钮点击指标。必传日期，含首尾1–366天 | 默认仅非 archived 账户，未归属单列；显式指定租户内 archived 账户可读历史 | monitor.dashboard；仅 SELECT，无百度/AI/缓存写入 |
+| /api/v1/dashboard/cockpit | A：保持原有报告/设备及缺报契约，不查询或返回电话按钮点击指标。必传日期，含首尾1–366天 | 默认仅 active 账户，未归属单列；显式指定租户内非 active 账户可读历史 | monitor.dashboard；仅 SELECT，无百度/AI/缓存写入 |
 | /api/v1/keywords/cockpit | 关键词资产分页＋同账户报告；日期成对传入，否则以所选账户范围最新报告日锚定近7天 | 资产和日报按账户＋关键词ID关联，NULL不推给已知账户 | optimize.keywords；仅 SELECT 与内存计算 |
 | /api/v1/keywords/cockpit/{keyword_id} | 报告、设备、电话点击、单关键词地域及星期×小时。必传日期，1–366天 | 显式 all/single；每个维度独立列账户覆盖 | optimize.keywords；不放宽既有鉴权。新路径不继承旧详情的看板权限特例 |
 | /api/v1/search-terms/cockpit | 分页搜索词及每账户实际同步窗口；拒绝日期参数 | all/single；窗口覆盖全部筛选结果，不受当前页限制 | optimize.searchterms；只读快照，不同步/加词/否词 |
@@ -27,9 +27,9 @@ q、campaign_id、adgroup_id、page/page_size。关键词日期仅传一端返�
   A基础字段保持不变；电话点击只在B关键词列表/详情返回。is_demo=false只表示读取存储，不表示生产已上线。
 - 金额 CNY；CTR ratio=click/impression；CPC=cost/click。除零或缺分母为null；
   搜索词重新计算，避免直接使用历史存储百分数。聚合按总量重算，不平均CTR。
-- all 模式下 `account_scope.configured_account_ids` 只列非 archived 账户，
-  `excluded_archived_account_ids` 明示列出被默认排除的归档账户。显式指定租户内归档账户时仍允许只读历史，
-  `selected_account_status=archived`；外租户或未知账户仍返回404。列表的 `observed_account_ids`
+- all 模式下 `account_scope.configured_account_ids` 只列 active 账户，
+  `excluded_non_active_account_ids` 明示列出所有默认排除账户，`excluded_archived_account_ids` 保留归档子集以兼容既有消费者。
+  显式指定租户内非 active 账户时仍允许只读历史，并返回 `selected_account_status`；外租户或未知账户仍返回404。列表的 `observed_account_ids`
   是全筛选结果中的实际账户（可包含null），不是仅当前页。报告的 accounts 含当前范围账户及实际报告归属。
 - 关键词资产的 `asset_updated_at` 与日报 `coverage.updated_at` 分离。
   详情的keyword_assets按账户返回已存关键词名称及资产更新时间；只有历史报告而无资产时为空，不猜测当前资产状态。
@@ -89,8 +89,8 @@ reports/analysis、monthly及export不在白名单，不通过force=false假装�
 3. `/api/v1/keywords/cockpit/{keyword_id}`
 4. `/api/v1/search-terms/cockpit`
 
-本次更新 `app/sem_cockpit_readonly.py` 与 `app/sem_cockpit_details.py`，让默认范围排除 archived 账户，
-同时允许显式选择租户内 archived 账户查看历史。测试夹具和两组只读测试覆盖 active、inactive、archived、
+本次更新 `app/sem_cockpit_readonly.py` 与 `app/sem_cockpit_details.py`，让默认范围只包含 active 账户，
+同时允许显式选择租户内非 active 账户查看历史。测试夹具和两组只读测试覆盖 active、inactive、archived、
 仅 archived、未归属、跨租户、缺报、零值、电话字段、地域、星期×小时及搜索词窗口。
 
 发布工作流保留生产后端已有的全部安全测试，只追加两个 cockpit 测试文件。它仍只允许手动输入当前
