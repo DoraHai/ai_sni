@@ -20,15 +20,16 @@ sys.modules[SPEC.name] = acceptance
 SPEC.loader.exec_module(acceptance)
 
 
-def test_admin_runbook_blocks_unmerged_or_old_main_execution():
+def test_admin_runbook_blocks_until_platform_route_and_harness_are_released():
     runbook = RUNBOOK.read_text(encoding="utf-8")
     # Git normalizes this text file to LF. Hash those repository bytes so the
     # execution checksum is identical in Linux and Windows autocrlf checkouts.
     script_bytes = SCRIPT.read_bytes().replace(b"\r\n", b"\n")
     script_sha256 = hashlib.sha256(script_bytes).hexdigest()
 
-    assert "execution_status=blocked_until_merged" in runbook
-    assert "required_pull_request=#467" in runbook
+    assert "execution_status=blocked_until_seo_openapi_route_deployed" in runbook
+    assert "required_prior_pull_request=#467" in runbook
+    assert "required_platform_route=GET /seo-openapi.json" in runbook
     assert "8ba839703d91e7720bf8160b249d61ed3c704ef8" not in runbook
     assert f"expected_script_sha256={script_sha256}" in runbook
     assert f"'{script_sha256}'" in runbook
@@ -53,7 +54,8 @@ class FakeGet:
 
 def base_responses(sites):
     return {
-        "/openapi.json": {
+        acceptance.SEO_OPENAPI_PATH: {
+            "info": {"title": acceptance.EXPECTED_OPENAPI_TITLE},
             "paths": {
                 "/api/v1/seo/metrics/snapshot": {"get": {"responses": {"200": {}}}}
             }
@@ -119,6 +121,12 @@ def test_no_gsc_content_or_publications_are_explicit_states():
     result = acceptance.run_acceptance(fake)
 
     assert result["status"] == "readable"
+    assert result["route_contract"] == {
+        "schema_path": "/seo-openapi.json",
+        "service_title": "Growth Sniper SEO API",
+        "path": "/api/v1/seo/metrics/snapshot",
+        "get_mounted": True,
+    }
     assert result["site_id"] == 44
     assert result["states"] == {
         "no_content": True,
@@ -167,7 +175,8 @@ def test_public_crawl_is_labelled_preflight_not_production(tmp_path):
 def test_unscoped_or_cross_tenant_identity_fails_before_module_probe(identity_tenant):
     fake = FakeGet(
         {
-            "/openapi.json": {
+            acceptance.SEO_OPENAPI_PATH: {
+                "info": {"title": acceptance.EXPECTED_OPENAPI_TITLE},
                 "paths": {"/api/v1/seo/metrics/snapshot": {"get": {}}}
             },
             "/api/v1/auth/me": {"user": {
@@ -187,7 +196,10 @@ def test_unscoped_or_cross_tenant_identity_fails_before_module_probe(identity_te
     with pytest.raises(acceptance.AcceptanceError, match="expected 4"):
         acceptance.run_acceptance(fake)
 
-    assert fake.calls == [("/openapi.json", None), ("/api/v1/auth/me", None)]
+    assert fake.calls == [
+        (acceptance.SEO_OPENAPI_PATH, None),
+        ("/api/v1/auth/me", None),
+    ]
 
 
 @pytest.mark.parametrize("missing", acceptance.REQUIRED_SEO_PERMISSIONS)
@@ -199,7 +211,10 @@ def test_missing_required_permission_stops_before_module_site_and_data_probes(mi
     with pytest.raises(acceptance.AcceptanceError, match=missing):
         acceptance.run_acceptance(fake)
 
-    assert fake.calls == [("/openapi.json", None), ("/api/v1/auth/me", None)]
+    assert fake.calls == [
+        (acceptance.SEO_OPENAPI_PATH, None),
+        ("/api/v1/auth/me", None),
+    ]
 
 
 class StubHttpResponse:
@@ -236,7 +251,7 @@ def test_real_get_client_enforces_auth_me_envelope_and_permissions_before_probes
         acceptance.run_acceptance(client.get_json)
 
     assert [request.full_url for request, _ in opener.requests] == [
-        "https://gsnipers.snipers.com.cn/openapi.json",
+        "https://gsnipers.snipers.com.cn/seo-openapi.json",
         "https://gsnipers.snipers.com.cn/api/v1/auth/me",
     ]
     assert all(request.get_method() == "GET" for request, _ in opener.requests)
@@ -297,12 +312,45 @@ def test_redirect_handler_never_forwards_authorization_off_origin():
 
 
 def test_required_metrics_route_must_be_mounted_before_identity_read():
-    fake = FakeGet({"/openapi.json": {"paths": {}}})
+    fake = FakeGet(
+        {
+            acceptance.SEO_OPENAPI_PATH: {
+                "info": {"title": acceptance.EXPECTED_OPENAPI_TITLE},
+                "paths": {},
+            }
+        }
+    )
 
     with pytest.raises(acceptance.AcceptanceError, match="not mounted"):
         acceptance.run_acceptance(fake)
 
-    assert fake.calls == [("/openapi.json", None)]
+    assert fake.calls == [(acceptance.SEO_OPENAPI_PATH, None)]
+
+
+def test_wrong_openapi_service_fails_before_identity_read():
+    fake = FakeGet(
+        {
+            acceptance.SEO_OPENAPI_PATH: {
+                "info": {"title": "SEM platform API"},
+                "paths": {
+                    "/api/v1/seo/metrics/snapshot": {"get": {}}
+                },
+            }
+        }
+    )
+
+    with pytest.raises(acceptance.AcceptanceError, match="wrong service"):
+        acceptance.run_acceptance(fake)
+
+    assert fake.calls == [(acceptance.SEO_OPENAPI_PATH, None)]
+
+
+def test_openapi_probe_is_unique_to_seo_and_cannot_fall_back_to_root_schema():
+    source = SCRIPT.read_text(encoding="utf-8")
+
+    assert acceptance.SEO_OPENAPI_PATH == "/seo-openapi.json"
+    assert 'get_json(SEO_OPENAPI_PATH, None)' in source
+    assert 'get_json("/openapi.json", None)' not in source
 
 
 @pytest.mark.parametrize("status", ["paused", "archived"])

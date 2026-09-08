@@ -25,14 +25,17 @@
 ### 2. 合并门禁、代码与输出目录
 
 ```text
-execution_status=blocked_until_merged
-required_pull_request=#467
-expected_script_sha256=74d7672499d0d62aa97aed399dc3e25ea6d36ef9f80c4977962eeb9b2888d735
+execution_status=blocked_until_seo_openapi_route_deployed
+required_prior_pull_request=#467
+required_platform_route=GET /seo-openapi.json -> SEO 127.0.0.1:8020/openapi.json
+expected_script_sha256=996c2bf8382aca13d6161fce8dbf1f459314d4c35c5927c8d57a196434d20a79
 ```
 
-当前执行状态是 `blocked_until_merged`。PR #467 尚未合并时不得运行生产验收，也不得
-使用创建 PR 时的旧 `main` 基线、PR 分支 SHA 或“更新的 main”代替合并证据。合并后，
-由统筹人从 PR #467 的已合并记录取得**实际包含本修复的完整 main SHA**，交给执行人；
+当前执行状态是 `blocked_until_seo_openapi_route_deployed`。PR #467 已合并，但现网根路径
+`/openapi.json` 不属于 SEO 服务。必须先由独立 platform-routes 发布单元上线精确
+`/seo-openapi.json`，确认它只转发到 SEO 8020 的 `/openapi.json`，且没有改写根路径
+`/openapi.json`。随后必须合并本次 harness 修复。由统筹人从本次合并记录取得
+**实际包含本修复的完整 main SHA**，交给执行人；
 执行人必须把它写入本次受控执行记录的 `execution_main_sha`，不能手填猜测或只记短 SHA。
 
 在独立干净 checkout 中执行以下门禁；`EXECUTION_MAIN_SHA` 必须来自上述合并记录：
@@ -47,15 +50,29 @@ test "$(git rev-parse HEAD)" = "$EXECUTION_MAIN_SHA"
 git merge-base --is-ancestor "$EXECUTION_MAIN_SHA" origin/main
 test -z "$(git status --short)"
 printf '%s  %s\n' \
-  '74d7672499d0d62aa97aed399dc3e25ea6d36ef9f80c4977962eeb9b2888d735' \
+  '996c2bf8382aca13d6161fce8dbf1f459314d4c35c5927c8d57a196434d20a79' \
   'scripts/accept_tiger_seo_readonly.py' | sha256sum -c -
 ```
 
-任一步失败都保持 `execution_status=blocked_until_merged` 并停止。只有 PR 已合并、完整
-`execution_main_sha` 已记录、checkout 与该 SHA 一致、该 SHA 属于当前 `origin/main`，
+任一步失败都保持 `execution_status=blocked_until_seo_openapi_route_deployed` 并停止。只有
+平台路由已发布、harness 修复已合并、完整 `execution_main_sha` 已记录、checkout 与该 SHA一致、该 SHA 属于当前 `origin/main`，
 且脚本固定 SHA-256 校验通过后，本次受控执行记录才能改为
 `execution_status=ready`，随后才可进入下一节。不要在正在提供线上服务的 release 目录
 中切换分支；输出目录权限应限制为当前执行人可读。
+
+在注入客户会话前执行公开、只读的路由门禁：
+
+```bash
+umask 077
+curl -fsS --proto '=https' --tlsv1.2 \
+  https://gsnipers.snipers.com.cn/seo-openapi.json \
+  -o /tmp/tiger-seo-openapi.json
+python -c 'import json; p=json.load(open("/tmp/tiger-seo-openapi.json", encoding="utf-8")); assert p["info"]["title"] == "Growth Sniper SEO API"; assert "get" in p["paths"]["/api/v1/seo/metrics/snapshot"]'
+rm -f /tmp/tiger-seo-openapi.json
+```
+
+任一命令失败都停止。不得把工具改回根路径 `/openapi.json`，也不得把该根路径重新代理
+到 SEO；平台、SEM 或官网可能拥有该路径。
 
 ## 二、安全注入会话并执行
 
