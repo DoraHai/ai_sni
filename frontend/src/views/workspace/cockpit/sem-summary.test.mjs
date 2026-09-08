@@ -68,9 +68,12 @@ test('an access failure invalidates a whole concurrent detail batch', () => {
 })
 
 test('search term summary warns when account windows differ', () => {
-  const card = semSearchTermCard(example('searchTerms'), 9)
+  const payload = example('searchTerms')
+  payload.total = 51
+  const card = semSearchTermCard(payload, 9)
   assert.equal(card.state, 'partial')
-  assert.equal(card.display, '3')
+  assert.equal(card.display, '51')
+  assert.match(card.reason, /本页展示 3 条，共 51 条/)
   assert.match(card.reason, /同步窗口不一致/)
   assert.equal(card.rows[0].query, '搜索%词')
 })

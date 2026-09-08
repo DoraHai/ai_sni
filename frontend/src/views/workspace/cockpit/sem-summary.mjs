@@ -71,11 +71,12 @@ export function semKeywordCard(payload, contextRevision) {
 
 export function semSearchTermCard(payload, contextRevision) {
   const items = Array.isArray(payload?.items) ? payload.items : []
+  const pageScope = items.length < payload.total ? `本页展示 ${items.length} 条，共 ${payload.total} 条；` : ''
   const reason = payload.total === 0
     ? '当前同步窗口没有搜索词记录。'
     : payload.mixed_windows
-      ? '不同账户的同步窗口不一致，明细按各自窗口展示，不能直接视为同一日期范围的总量。'
-      : '展示已保存的搜索词同步快照；触发词不是咨询归因证据。'
+      ? `${pageScope}不同账户的同步窗口不一致，明细按各自窗口展示，不能直接视为同一日期范围的总量。`
+      : `${pageScope}展示已保存的搜索词同步快照；触发词不是咨询归因证据。`
   return {
     id: 'sem-search-terms', moduleCode: 'sem', moduleLabel: 'SEM', label: '实际搜索词',
     display: String(payload.total), unit: '条', state: payload.mixed_windows ? 'partial' : payload.total ? 'available' : 'no_data',
