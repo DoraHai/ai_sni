@@ -32,9 +32,11 @@ q、campaign_id、adgroup_id、page/page_size。关键词日期仅传一端返�
   显式指定租户内非 active 账户时仍允许只读历史，并返回 `selected_account_status`；外租户或未知账户仍返回404。列表的 `observed_account_ids`
   是全筛选结果中的实际账户（可包含null），不是仅当前页。报告的 accounts 含当前范围账户及实际报告归属。
 - 关键词资产的 `asset_updated_at` 与日报 `coverage.updated_at` 分离。
-  列表逐项返回 `report_association`：`matched` 表示相同账户与关键词ID有报告，`no_report` 表示窗口内没有同ID报告，
-  `account_mismatch` 表示窗口内只有其他账户桶（含未归属桶）的同ID报告；此时指标仍为空，不猜测归属。
-  `association_summary` 只统计当前页三种状态，`completeness=unknown`，用于避免 `keywords.baidu_account_id` 为空或漂移时静默显示成真实零值。
+  列表逐项返回 `report_association`：`matched` 表示相同非空账户与关键词ID有报告，`no_report` 表示窗口内没有同ID报告，
+  `account_mismatch` 表示窗口内存在已知且不同账户的同ID报告，`report_ownership_unknown` 表示只有归属未知的同ID报告，
+  `ownership_unknown` 表示关键词资产本身没有账户归属。`has_unassigned_reports` 独立保留报告侧未知归属证据，因此已知异账户和未知报告同时存在时不会丢失后者。
+  未归属报告不参与指标或电话点击聚合，不把两个 `baidu_account_id=null` 当作同一账户。
+  `association_summary` 只统计当前页五种状态，`completeness=unknown`，用于避免账户归属为空或漂移时静默显示成真实零值。
   详情的keyword_assets按账户返回已存关键词名称及资产更新时间；只有历史报告而无资产时为空，不猜测当前资产状态。
   地域和小时维度分别读取自己的 fetched_at，逐账户覆盖包含无数据账户。
 - `coverage.status=observed/no_data`；missing_dates只说明无记录日，completeness持续为unknown。
