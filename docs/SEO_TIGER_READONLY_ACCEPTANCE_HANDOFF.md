@@ -6,6 +6,8 @@
 
 - `scripts/accept_tiger_seo_readonly.py`：生产 GET-only 验收脚本。
 - `tests/test_accept_tiger_seo_readonly.py`：空站点、未配 GSC、无内容、无发布、跨租户拒绝和公开抓取来源标签的离线契约。
+- `docs/SEO_TIGER_ADMIN_EXECUTION_RUNBOOK.md`：可直接交给管理员/真人的执行单、
+  回传字段，以及 `empty_site` 后的查重和建站申请规范。
 
 ## 运行方式
 
