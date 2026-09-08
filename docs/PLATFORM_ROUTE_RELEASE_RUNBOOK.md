@@ -21,7 +21,7 @@ Nginx 配置变更的最终边界前。网络重试耗尽仍以状态 64 退出�
 head 检出并安装下面的受限模块；此步骤只更新受限部署入口，不修改 Nginx 活动配置。
 安装证据回传并复核后，才可把 PR #474 转为 ready 并合入生产路由分支。
 
-合并后先从 `codex/production-sem` 的干净、精确提交检出以下文件，并核对工作区无改动：
+在合并前，从 PR #474 当前已审查的完整 head SHA 建立干净 detached checkout，检出以下文件并核对工作区无改动。不得改用当时的 `codex/production-sem` 分支头，也不得使用短 SHA；安装证据中的 Git SHA 必须与 GitHub 上 PR #474 的 head 完全一致：
 
 - `ops/platform-deploy/install-platform-routes.sh`
 - `ops/platform-deploy/modules/platform`
