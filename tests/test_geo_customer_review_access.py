@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, patch
 
@@ -12,12 +13,12 @@ from app.geo.content.schemas import ReviewDecision
 from app.security.auth import AuthContext, _required, require_scoped_auth
 
 
-def _ctx(*, tenant_id=7, level="view", user_id=9):
+def _ctx(*, tenant_id=7, level="view", user_id=9, role_name="品牌方客户"):
     permissions = {"geo.content": level} if level else {}
     return AuthContext(
         user_id=user_id,
         username="reviewer",
-        role_name="customer-reviewer",
+        role_name=role_name,
         tenant_id=tenant_id,
         permissions=permissions,
     )
@@ -73,6 +74,12 @@ def test_scoped_auth_rejects_account_without_geo_content_access():
     assert error.value.status_code == 403
 
 
+def test_auth_payload_exposes_database_role_name_as_frontend_role_label():
+    source = Path("app/api/auth.py").read_text(encoding="utf-8")
+    assert '"role_label": role.name if role else "?"' in source
+    assert '"permissions": (role.permissions or {}) if role else {}' in source
+
+
 @pytest.mark.parametrize("decision", ["approved", "rejected"])
 def test_bound_customer_reviewer_can_decide_current_pending_version(decision):
     updated = datetime(2026, 9, 8, 15, 45, 58)
@@ -126,6 +133,24 @@ def test_unbound_viewer_cannot_decide_customer_review():
             ),
             7,
             _ctx(tenant_id=None),
+            NS(),
+        ))
+    assert error.value.status_code == 403
+    lookup.assert_not_awaited()
+
+
+def test_custom_tenant_readonly_role_cannot_decide_customer_review():
+    lookup = AsyncMock()
+    with patch.object(routes, "_get_task", lookup), pytest.raises(HTTPException) as error:
+        asyncio.run(routes.decide_task_review(
+            14,
+            ReviewDecision(
+                decision="approved",
+                expected_article_id=22,
+                expected_updated_at="revision",
+            ),
+            7,
+            _ctx(role_name="__workbench_test_readonly__"),
             NS(),
         ))
     assert error.value.status_code == 403

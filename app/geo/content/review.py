@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from app.permissions import CUSTOMER_ROLE
+
 REVIEW_NONE = "none"
 REVIEW_PENDING = "pending"
 REVIEW_APPROVED = "approved"
@@ -18,6 +20,7 @@ def is_tenant_customer_reviewer(ctx: Any) -> bool:
     return (
         getattr(ctx, "user_id", None) is not None
         and getattr(ctx, "tenant_id", None) is not None
+        and getattr(ctx, "role_name", None) == CUSTOMER_ROLE
         and getattr(ctx, "permissions", {}).get("geo.content") == "view"
     )
 
