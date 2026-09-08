@@ -64,13 +64,14 @@ def readonly_session(engine):
 def seed_report_fixture(conn):
     conn.execute(text("CREATE TABLE baidu_accounts (id INTEGER, tenant_id INTEGER, status TEXT)"))
     conn.execute(text("""INSERT INTO baidu_accounts VALUES
-      (11,1,'active'),(12,1,'inactive'),(13,1,'archived'),
+      (11,1,'active'),(12,1,'inactive'),(13,1,'archived'),(14,1,'disabled'),
       (21,2,'active'),(31,3,'archived')"""))
     conn.execute(text("CREATE TABLE kw_report_snapshots (tenant_id INTEGER, baidu_account_id INTEGER, report_date DATE, device INTEGER, cost NUMERIC, click INTEGER, impression INTEGER, fetched_at DATETIME)"))
     conn.execute(text("""INSERT INTO kw_report_snapshots VALUES
       (1,11,'2026-09-01',0,10,2,100,'2026-09-02 01:00:00'),
       (1,12,'2026-09-01',1,30,3,100,'2026-09-02 02:00:00'),
       (1,13,'2026-09-01',1,500,50,1000,'2026-09-02 02:30:00'),
+      (1,14,'2026-09-01',1,70,7,140,'2026-09-02 02:45:00'),
       (1,NULL,'2026-09-01',9,5,1,0,'2026-09-02 03:00:00'),
       (1,11,'2026-09-03',0,0,0,0,'2026-09-04 01:00:00'),
       (2,21,'2026-09-01',0,999,99,999,'2026-09-02 01:00:00')"""))
@@ -93,6 +94,7 @@ def seed_fixture(conn, tables):
         dict(id=11,tenant_id=1,status="active"),
         dict(id=12,tenant_id=1,status="inactive"),
         dict(id=13,tenant_id=1,status="archived"),
+        dict(id=14,tenant_id=1,status="disabled"),
         dict(id=21,tenant_id=2,status="active"),
         dict(id=31,tenant_id=3,status="archived"),
     ])

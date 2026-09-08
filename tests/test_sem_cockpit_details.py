@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from tests.sem_cockpit_fixtures import ReadSession, make_fixture_tables, seed_fixture, make_sqlite_engine, only_select
+from tests.sem_cockpit_fixtures import ReadSession, make_fixture_tables, seed_fixture, make_sqlite_engine, only_select, readonly_session
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import event
@@ -16,6 +16,7 @@ from app.database import get_session
 from app.models import BaiduAccount, Keyword, KeywordHourlyReport, KeywordRegionReport, KwReportSnapshot, SearchTermReport
 from app.security import auth
 from app.sem_cockpit_readonly import phone_summary
+from app.sem_cockpit_details import read_keywords
 
 
 @pytest.fixture
@@ -60,7 +61,7 @@ def test_detail_phone_is_known_subtotal_not_fabricated_total(client):
     data=get(client,"keywords/cockpit/100",**PARAMS)
     phone=data["phone_button_clicks"]
     assert phone["value"] is None and phone["known_subtotal"]==2
-    assert (phone["stored_rows"],phone["known_rows"],phone["unknown_rows"])==(4,2,2)
+    assert (phone["stored_rows"],phone["known_rows"],phone["unknown_rows"])==(3,1,2)
     single=get(client,"keywords/cockpit/100",**PARAMS,baidu_account_id=12)
     assert single["phone_button_clicks"]["value"]==0
 
@@ -99,15 +100,55 @@ def test_phone_sql_compiles_to_postgres_field_extraction():
 
 def test_keywords_exact_account_join_and_asset_without_report(client):
     data=get(client,"keywords/cockpit",**PARAMS)
-    assert data["total"]==4
-    assert data["account_scope"]["configured_account_ids"]==[11,12]
+    assert data["total"]==3
+    assert data["account_scope"]["configured_account_ids"]==[11]
     assert data["account_scope"]["excluded_archived_account_ids"]==[13]
-    assert [r["metrics"]["cost"] for r in data["items"]]==[10,50,7,None]
+    assert data["account_scope"]["excluded_non_active_account_ids"]==[12,13,14]
+    assert [r["metrics"]["cost"] for r in data["items"]]==[10,7,None]
+    assert [r["report_association"]["status"] for r in data["items"]]==["matched","matched","no_report"]
+    assert data["association_summary"]=={
+        "scope":"current_page", "counts":{"matched":2,"account_mismatch":0,"no_report":1},
+        "completeness":"unknown",
+    }
     assert data["items"][0]["metrics"]["ctr"]==.02
     assert data["items"][0]["coverage"]["missing_dates"]==["2026-09-02"]
-    assert data["items"][3]["coverage"]["status"]=="no_data"
+    assert data["items"][2]["coverage"]["status"]=="no_data"
     single=get(client,"keywords/cockpit",**PARAMS,baidu_account_id=12)
     assert single["total"]==1 and single["items"][0]["metrics"]["cost"]==50
+
+
+def test_nullable_keyword_account_mismatch_is_explicit_not_silent_or_cross_tenant():
+    engine = make_sqlite_engine()
+    metadata, tables = make_fixture_tables()
+    metadata.create_all(engine)
+    with engine.begin() as conn:
+        seed_fixture(conn, tables)
+        conn.execute(tables[Keyword].insert(), dict(
+            id=7, tenant_id=1, baidu_account_id=None, keyword_id=103,
+            keyword="归属未知词", campaign_id=7, adgroup_id=8, synced_at=datetime(2026,9,4,1),
+        ))
+        conn.execute(tables[KwReportSnapshot].insert(), [
+            dict(tenant_id=1, baidu_account_id=11, keyword_id=103, report_date=date(2026,9,1),
+                 device=0, cost=9, click=1, impression=10, fetched_at=datetime(2026,9,4,1), raw_metrics={}),
+            dict(tenant_id=2, baidu_account_id=21, keyword_id=103, report_date=date(2026,9,1),
+                 device=0, cost=999, click=99, impression=999, fetched_at=datetime(2026,9,4,1), raw_metrics={}),
+        ])
+    with readonly_session(engine) as session:
+        result = asyncio.run(read_keywords(
+            session, 1, None, date(2026,9,1), date(2026,9,3), None, None, 1, 20,
+        ))
+    item = next(row for row in result["items"] if row["keyword_id"] == 103)
+    assert item["baidu_account_id"] is None
+    assert item["metrics"] == {"cost":None,"click":None,"impression":None,"ctr":None,"cpc":None}
+    assert item["coverage"]["status"] == "no_data"
+    assert item["report_association"] == {
+        "status":"account_mismatch",
+        "join_keys":["baidu_account_id","keyword_id"],
+        "matched_report_groups":0,
+        "other_observed_account_ids":[11],
+        "completeness":"unknown",
+    }
+    assert result["association_summary"]["counts"]["account_mismatch"] == 1
 
 
 def test_explicit_archived_account_is_historical_only(client):
@@ -131,6 +172,7 @@ def test_all_archived_tenant_returns_truthful_empty_default_scope(client):
     for payload in (report, keywords_data, terms):
         assert payload["account_scope"]["configured_account_ids"]==[]
         assert payload["account_scope"]["excluded_archived_account_ids"]==[31]
+        assert payload["account_scope"]["excluded_non_active_account_ids"]==[31]
     assert report["accounts"]==[] and report["metrics"]["cost"] is None
     assert keywords_data["total"]==0 and keywords_data["window"]["start"] is None
     assert terms["total"]==0 and terms["status"]=="no_data"
@@ -172,8 +214,8 @@ def test_detail_empty_period_does_not_call_sync(client):
 
 def test_search_windows_cover_all_filtered_pages_without_summing(client):
     data=get(client,"search-terms/cockpit",tenant_id=1,page_size=1)
-    assert data["total"]==3 and len(data["items"])==1
-    assert data["mixed_windows"] and len(data["windows"])==2
+    assert data["total"]==2 and len(data["items"])==1
+    assert not data["mixed_windows"] and len(data["windows"])==1
     assert data["items"][0]["metrics"]["ctr"]==.02  # never trust stored 999
     assert "summary" not in data
     filtered=get(client,"search-terms/cockpit",tenant_id=1,baidu_account_id=12)
