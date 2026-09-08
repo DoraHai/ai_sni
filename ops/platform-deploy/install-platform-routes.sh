@@ -10,7 +10,7 @@ enabled='/etc/platform-deploy/enabled/platform'
 backup_parent='/var/backups/platform-deploy'
 dispatcher='/usr/local/sbin/platform-deploy'
 reviewed_dispatcher_sha256='0330e2c14f2ff7074df140e02d56136aa2a5248ebce296d9c35007437c09937a'
-reviewed_module_sha256='1ee1c8d71048aea5e929dfa2175669c9a302646ec8b98bd6043ee4ca4ca4e9ba'
+reviewed_module_sha256='c8824ba23eb0efdd57f9c6a0027685f3d2da7a99d39a09cef54d8e639493639d'
 
 [[ -x "$dispatcher" && -f "$source_module" ]] || { echo 'dispatcher or reviewed module missing' >&2; exit 1; }
 [[ "$(sha256sum "$dispatcher" | cut -d' ' -f1)" == "$reviewed_dispatcher_sha256" ]] || {

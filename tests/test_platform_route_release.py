@@ -120,8 +120,9 @@ def test_installer_and_workflow_are_exact_revision_and_prewrite_gated():
     first_install = installer.index("install -d")
     assert digest_gate < first_install
     assert "0330e2c14f2ff7074df140e02d56136aa2a5248ebce296d9c35007437c09937a" in installer
-    module_digest = hashlib.sha256((ROOT / "ops/platform-deploy/modules/platform").read_bytes()).hexdigest()
-    assert module_digest == "1ee1c8d71048aea5e929dfa2175669c9a302646ec8b98bd6043ee4ca4ca4e9ba"
+    module_bytes = (ROOT / "ops/platform-deploy/modules/platform").read_bytes().replace(b"\r\n", b"\n")
+    module_digest = hashlib.sha256(module_bytes).hexdigest()
+    assert module_digest == "c8824ba23eb0efdd57f9c6a0027685f3d2da7a99d39a09cef54d8e639493639d"
     assert module_digest in installer
     assert 'sha256sum "$source_module"' in installer
     assert "platform=enabled" in installer

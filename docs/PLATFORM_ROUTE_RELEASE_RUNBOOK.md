@@ -25,7 +25,7 @@ Nginx 配置变更的最终边界前。网络重试耗尽仍以状态 64 退出�
 当前受审模块 SHA-256：
 
 ```text
-1ee1c8d71048aea5e929dfa2175669c9a302646ec8b98bd6043ee4ca4ca4e9ba
+c8824ba23eb0efdd57f9c6a0027685f3d2da7a99d39a09cef54d8e639493639d
 ```
 
 安装器会在写入 `/etc/platform-deploy/modules/platform` 前同时校验 dispatcher 和上述模块
