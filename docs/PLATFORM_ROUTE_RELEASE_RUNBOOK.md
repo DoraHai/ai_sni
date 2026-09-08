@@ -17,6 +17,10 @@ Nginx 配置变更的最终边界前。网络重试耗尽仍以状态 64 退出�
 
 ## 安装受审模块
 
+本轮 SEO OpenAPI 路由对应 Draft PR #474。该 PR 审查通过后，管理员必须先从其精确
+head 检出并安装下面的受限模块；此步骤只更新受限部署入口，不修改 Nginx 活动配置。
+安装证据回传并复核后，才可把 PR #474 转为 ready 并合入生产路由分支。
+
 合并后先从 `codex/production-sem` 的干净、精确提交检出以下文件，并核对工作区无改动：
 
 - `ops/platform-deploy/install-platform-routes.sh`
