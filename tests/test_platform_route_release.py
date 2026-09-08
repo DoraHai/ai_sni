@@ -36,17 +36,20 @@ def block(config: str, declaration: str) -> str:
     raise AssertionError(f"unterminated Nginx block: {declaration}")
 
 
-def test_candidate_is_exact_reviewed_base_plus_one_narrow_spa_location():
+def test_candidate_is_exact_reviewed_base_plus_one_narrow_seo_schema_location():
     base = read("tests/fixtures/gsnipers-platform-routes-reviewed-base.conf")
     candidate = read("deploy/gsnipers-platform-routes.conf")
-    marker = "    # Only declared business routes enter the SEM SPA."
+    marker = "    # GEO and SEO use independent processes and release directories."
     added = candidate[len(base[: base.index(marker)]) : candidate.index(marker)]
     assert candidate == base.replace(marker, added + marker, 1)
-    assert "location ~ ^/platform(/|$)" in added
-    assert "location = /admin/internal" not in added
+    assert "location = /seo-openapi.json" in added
+    assert "proxy_pass http://127.0.0.1:8020/openapi.json;" in added
+    assert "if ($request_method != GET)" in added
+    assert "return 405;" in added
+    assert "location = /openapi.json" not in added
     assert added.count("location ") == 1
-    assert hashlib.sha256(base.encode()).hexdigest() == "3fd57506ca30704d5201d15ac9ab2408bda951f1b8fd0c4118c47d7023506fc1"
-    assert hashlib.sha256(candidate.encode()).hexdigest() == "d710448c24f61e14c0e69a5c2636987781b09042a3a72cd7a11605d316ad12f3"
+    assert hashlib.sha256(base.encode()).hexdigest() == "d710448c24f61e14c0e69a5c2636987781b09042a3a72cd7a11605d316ad12f3"
+    assert hashlib.sha256(candidate.encode()).hexdigest() == "d52f853cd154709faebca4c10067d3243a80418a3e41cf420b13a8e871c65047"
 
 
 def test_platform_serves_sem_index_and_preserves_legacy_admin_redirect():
@@ -107,6 +110,7 @@ def test_release_module_validates_before_reload_and_has_complete_rollback():
         "/workspace/cockpit",
         "/monitor/dashboard",
         "/optimize/keywords",
+        "/seo-openapi.json",
     ):
         assert route in script
     assert "migration=not-run" in script
@@ -122,7 +126,7 @@ def test_installer_and_workflow_are_exact_revision_and_prewrite_gated():
     assert "0330e2c14f2ff7074df140e02d56136aa2a5248ebce296d9c35007437c09937a" in installer
     module_bytes = (ROOT / "ops/platform-deploy/modules/platform").read_bytes().replace(b"\r\n", b"\n")
     module_digest = hashlib.sha256(module_bytes).hexdigest()
-    assert module_digest == "c8824ba23eb0efdd57f9c6a0027685f3d2da7a99d39a09cef54d8e639493639d"
+    assert module_digest == "d1522668411f34c7329e3777aea2bbf138fc99820baef1c1dc295a22f6ad9a2d"
     assert module_digest in installer
     assert 'sha256sum "$source_module"' in installer
     assert "platform=enabled" in installer
@@ -230,6 +234,8 @@ done
 if [[ "$url" == */admin/internal ]]; then
   printf 'HTTP/2 308\\r\\nLocation: /settings/accounts\\r\\n\\r\\n' > "$headers"
   printf '308'
+elif [[ "$url" == */seo-openapi.json ]]; then
+  printf '%s' '{"info":{"title":"Growth Sniper SEO API"},"paths":{"/api/v1/seo/metrics/snapshot":{"get":{}}}}' > "$output"
 elif [[ -n "$output" ]]; then
   cp "$PLATFORM_SEM_INDEX" "$output"
 fi

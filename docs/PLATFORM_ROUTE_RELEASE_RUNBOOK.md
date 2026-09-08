@@ -25,7 +25,7 @@ Nginx 配置变更的最终边界前。网络重试耗尽仍以状态 64 退出�
 当前受审模块 SHA-256：
 
 ```text
-c8824ba23eb0efdd57f9c6a0027685f3d2da7a99d39a09cef54d8e639493639d
+d1522668411f34c7329e3777aea2bbf138fc99820baef1c1dc295a22f6ad9a2d
 ```
 
 安装器会在写入 `/etc/platform-deploy/modules/platform` 前同时校验 dispatcher 和上述模块
@@ -47,5 +47,8 @@ module 文件。
 
 成功记录应包含服务器输出的 commit、active SHA-256、备份目录，以及 `/platform`、
 `/platform/customers`、`/platform/accounts`、`/platform/roles`、旧设置入口、获客工作台、
-SEM 看板与关键词页的 smoke 结果。若权威查询最终失败，应确认没有发布归档、Nginx 配置、
+SEM 看板与关键词页的 smoke 结果。若本次发布包含 SEO OpenAPI 精确路由，还必须记录
+`GET /seo-openapi.json` 返回 `Growth Sniper SEO API` 且挂载
+`GET /api/v1/seo/metrics/snapshot`；任何其它方法必须由 Nginx 拒绝，根路径
+`/openapi.json` 的所有权保持不变。若权威查询最终失败，应确认没有发布归档、Nginx 配置、
 reload 或公网 smoke 操作，然后另起 workflow attempt；不能跳过服务器权威校验。

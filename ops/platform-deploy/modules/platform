@@ -21,8 +21,8 @@ authoritative_repo='https://github.com/DoraHai/ai_sni.git'
 authoritative_ref='refs/heads/codex/production-sem'
 authoritative_query_attempts=3
 authoritative_retry_delay_seconds=2
-reviewed_base_sha256='3fd57506ca30704d5201d15ac9ab2408bda951f1b8fd0c4118c47d7023506fc1'
-reviewed_candidate_sha256='d710448c24f61e14c0e69a5c2636987781b09042a3a72cd7a11605d316ad12f3'
+reviewed_base_sha256='d710448c24f61e14c0e69a5c2636987781b09042a3a72cd7a11605d316ad12f3'
+reviewed_candidate_sha256='d52f853cd154709faebca4c10067d3243a80418a3e41cf420b13a8e871c65047'
 
 [[ "$confirmation" == 'DEPLOY_PLATFORM_ROUTES' ]] || fail 'confirmation must be DEPLOY_PLATFORM_ROUTES'
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail 'commit must be a full lowercase SHA'
@@ -204,6 +204,12 @@ for path in /platform /platform/customers /platform/accounts /platform/roles \
   # shell so an old worker cannot falsely roll back a valid route.
   smoke_sem_route "$path" || fail "public smoke failed or returned the wrong shell: $path"
 done
+curl -fsS --retry 5 "$public_origin/seo-openapi.json" -o "$smoke_body" \
+  || fail 'SEO OpenAPI smoke failed'
+grep -Fq '"title":"Growth Sniper SEO API"' "$smoke_body" \
+  || fail 'SEO OpenAPI smoke returned the wrong service schema'
+grep -Fq '"/api/v1/seo/metrics/snapshot"' "$smoke_body" \
+  || fail 'SEO OpenAPI smoke is missing the workbench metrics route'
 admin_status="$(curl -sS --retry 5 --retry-delay 1 -D "$smoke_headers" -o /dev/null -w '%{http_code}' \
   "$public_origin/admin/internal")" || fail 'legacy admin redirect smoke failed'
 [[ "$admin_status" == 308 ]] || fail "legacy admin redirect returned $admin_status"
