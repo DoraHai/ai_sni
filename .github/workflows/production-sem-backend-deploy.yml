@@ -100,6 +100,8 @@ jobs:
           tests/test_sem_identity_repair_preview.py
           tests/test_sem_p0_data_trust.py
           tests/test_sem_public_http_security.py
+          tests/test_sem_cockpit_details.py
+          tests/test_sem_cockpit_readonly.py
           tests/test_sem_readonly_consistency.py
           tests/test_sem_release_isolation.py
           tests/test_sem_strict_audit_fixes.py
