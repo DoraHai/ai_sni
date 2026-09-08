@@ -28,6 +28,20 @@ def scheduler_status() -> str:
     return _status
 
 
+def scheduled_patrol_settings_query(*, tenant_id: int | None = None):
+    """Return the exact settings scan used to select scheduled patrol tenants."""
+    from sqlalchemy import select
+
+    from app.models import GeoVisibilityPatrolSettings
+
+    query = select(GeoVisibilityPatrolSettings).where(
+        GeoVisibilityPatrolSettings.enabled.is_(True),
+    )
+    if tenant_id is not None:
+        query = query.where(GeoVisibilityPatrolSettings.tenant_id == tenant_id)
+    return query
+
+
 async def run_geo_daily_metrics_nightly() -> None:
     from app.geo.content.daily_metrics import nightly_rebuild_recent_tenants
 
@@ -51,19 +65,13 @@ async def run_geo_visibility_patrols() -> None:
         execute_patrol_run_owned,
         should_run_scheduled_patrol,
     )
-    from app.models import GeoVisibilityPatrolRun, GeoVisibilityPatrolSettings, Tenant
+    from app.models import GeoVisibilityPatrolRun, Tenant
 
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
     day_limit = int(getattr(get_settings(), "geo_patrol_max_runs_per_day", 24) or 24)
     day_limit = max(1, min(day_limit, 500))
     async with async_session_factory() as session:
-        rows = list(
-            await session.scalars(
-                select(GeoVisibilityPatrolSettings).where(
-                    GeoVisibilityPatrolSettings.enabled.is_(True),
-                )
-            )
-        )
+        rows = list(await session.scalars(scheduled_patrol_settings_query()))
         for st in rows:
             start_h = int(st.window_start_hour if st.window_start_hour is not None else st.daily_hour if st.daily_hour is not None else 6)
             end_h = int(st.window_end_hour if st.window_end_hour is not None else st.daily_hour if st.daily_hour is not None else 22)
