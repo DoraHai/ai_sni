@@ -8,20 +8,19 @@
 
 - 客户：`tenant_id=4`，`SZ-老虎新材料`；
 - 官网：`https://www.tiger-coatings.cn/`；
-- 允许新建：1 个业务画像、3 个手工问题、1 个禁用的官网人工渠道；
+- 允许通过一次服务端原子建档请求新建：1 个业务画像、3 个手工问题、1 个禁用的官网人工渠道；
 - 不建优化单元，不启动采集、生成或发布。
 
 执行人只能使用绑定 `tenant_id=4` 且拥有 `geo.content=edit` 的普通账号。不得使用未绑定租户的超级管理员或管理员 API Key代替客户范围校验。所有请求固定发往生产 GEO API 的 `/api/v1/geo` 前缀。
 
 ## 2. 固定载荷
 
-### 2.1 业务画像
+### 2.1 业务画像子对象
 
-`POST /api/v1/geo/optimization-businesses`
+以下对象只能作为第 5 节原子请求的 `business` 字段，不再单独调用业务创建接口。
 
 ```json
 {
-  "tenant_id": 4,
   "name": "粉末涂料与表面技术",
   "description": "TIGER/老虎的粉末涂料与表面技术业务画像",
   "sort_order": 0,
@@ -36,13 +35,12 @@
 
 接口会规范化画像。验收时上述 4 个字段必须保持一致；`honors`、`qualifications`、`capabilities`、`scenarios`、`competitors`、`recommend_reasons`、`banned_claims` 应为空数组，`audience`、`geo_scope`、`cta` 应为空字符串。不得在本轮补写未经客户确认的能力、资质、案例、竞品或承诺。
 
-### 2.2 三个手工问题
+### 2.2 三个手工问题子对象
 
-每个问题分别调用一次 `POST /api/v1/geo/prompts`，不得使用导入、扩展或批量提升接口。
+三个对象只能作为第 5 节原子请求的 `prompts` 数组，不再逐条调用问题创建接口。
 
 ```json
 {
-  "tenant_id": 4,
   "question": "在建筑幕墙和系统门窗中选择粉末涂料时，最关键的性能指标和验收标准有哪些？",
   "priority": 0,
   "tags": ["cockpit-foundation"],
@@ -50,13 +48,12 @@
   "language": "zh-CN",
   "market": "cn",
   "is_brand_probe": false,
-  "unit_id": null
+  "is_brand_probe": false
 }
 ```
 
 ```json
 {
-  "tenant_id": 4,
   "question": "粉末涂料与常见液体涂料相比，在成本、寿命、施工和环保方面有什么差异？",
   "priority": 0,
   "tags": ["cockpit-foundation"],
@@ -64,13 +61,12 @@
   "language": "zh-CN",
   "market": "cn",
   "is_brand_probe": false,
-  "unit_id": null
+  "is_brand_probe": false
 }
 ```
 
 ```json
 {
-  "tenant_id": 4,
   "question": "汽车轮毂、家具家电或机器设备出现涂层失效时，常见原因、排查步骤和选型建议是什么？",
   "priority": 0,
   "tags": ["cockpit-foundation"],
@@ -78,17 +74,16 @@
   "language": "zh-CN",
   "market": "cn",
   "is_brand_probe": false,
-  "unit_id": null
+  "is_brand_probe": false
 }
 ```
 
-### 2.3 官网人工渠道
+### 2.3 官网人工渠道子对象
 
-`POST /api/v1/geo/publishing-channels`
+以下对象只能作为第 5 节原子请求的 `channel` 字段，不再单独调用渠道创建接口。
 
 ```json
 {
-  "tenant_id": 4,
   "name": "TIGER 官方网站",
   "channel_type": "website",
   "publish_mode": "manual_only",
@@ -111,7 +106,8 @@
 4. `GET /api/v1/geo/tenants`：返回范围必须包含且只能授权执行人可访问的客户；其中必须能确认 `tenant_id=4`。若身份可查看其它租户，停止并换成最小权限账号。
 5. 建立唯一执行编号和 10 分钟独占变更窗口。窗口内只有一名执行人可以为租户 4 新建 GEO 基础对象。无法保证单执行人时停止，因为问题表没有数据库唯一约束。
 6. 保存执行前脱敏证据。请求和响应记录不得包含 `Authorization`、Cookie、密码、API Key 或整份服务器环境。
-7. 生产 OpenAPI 必须挂载 `GET /api/v1/geo/integration/read/scheduler-eligibility`。使用同一个 tenant 4 普通账号调用后，必须返回 HTTP 200、`tenant_id=4`、`read_only=true`、`scheduler_eligible=false`、`selection_stage="enabled_settings_scan"` 和带 `Z` 后缀的 `observed_at`。该 eligibility 精确表示是否会进入 scheduler 的 enabled-settings 初筛，不承诺一定创建 run。同时记录 `patrol_settings.exists`、`patrol_settings.enabled` 与 `active_prompt_count`；不得读取或回传引擎、供应商凭证或 settings 原文。接口缺失、非 200、字段缺失，或 eligibility 为 true 时停止。
+7. 生产 OpenAPI 必须同时挂载 `GET /api/v1/geo/integration/read/scheduler-eligibility` 与 `POST /api/v1/geo/integration/scheduler-safe-foundation`。GET 必须返回 HTTP 200、`tenant_id=4`、`read_only=true`、`scheduler_eligible=false`、`selection_stage="enabled_settings_scan"` 和带 `Z` 后缀的 `observed_at`。接口缺失、非 200、字段缺失或 eligibility 为 true 时停止。
+8. 必须核验当前部署实现了三方共享的租户行锁：scheduler 创建 run 的决策、patrol settings 更新、原子建档都先锁定同一 `tenants.id=4`。scheduler 取得锁后必须重读 settings；不存在或 `enabled=false` 必须直接跳过且不创建 run。无法核对 exact SHA 和相关并发测试时停止。
 
 ## 4. 执行前重复检查和基线
 
@@ -167,9 +163,11 @@
 
 ### 4.5 固定执行时间窗与后置水位
 
-完成 4.1 至 4.4 的全部前置取证后，再调用一次 `GET /api/v1/geo/integration/read/scheduler-eligibility?tenant_id=4`。响应仍为 `scheduler_eligible=false` 时，把该响应的服务端 UTC `observed_at` 原样记为 `T0`，随后才允许首个 POST。不得用客户端时间或其它接口时间代替 `T0`。
+完成 4.1 至 4.4 的全部前置取证后，调用 eligibility GET。把返回 false 的服务端 UTC `observed_at` 记为审计时间 `T0`。这个瞬时读取不是互斥锁，不单独作为“不会采集”的证明。
 
-每个允许的 POST 及其目标对象 GET 复核后，都再次读取 eligibility；任一次不是 false 都立即停止后续 POST。最后一个目标对象复核后再次调用 eligibility，把该响应的 `observed_at` 原样记为 `T1`，并要求仍为 false 且 `T1-T0<=10 分钟`。完成建档后，在未取得独立的巡检启用审批前，eligibility 必须继续保持 false；本执行单不授权创建或启用 patrol settings。
+真正的保护窗口是原子建档响应中的 `protected_window.started_at/finished_at`：服务端在同一事务中取得 tenant 4 行锁，锁后重读 settings 并检查无 pending/running patrol，再一次性建立全部对象。settings 更新、手工巡检与 scheduler 决策都与该事务争用同一行锁，scheduler 得锁后还会重读 enabled，所以不能使用得锁前的旧值创建 run。
+
+原子请求返回后立即再调用 eligibility，将 `observed_at` 记为 `T1`。必须仍为 false。`T0/T1` 只是审计边界；并发安全证据是服务端原子事务和共享行锁。原子事务结束后，系统无法阻止另一个已授权管理员日后单独启用 settings；因此未经独立审批不得执行 settings PUT，也不得宣称 eligibility 会永久保持 false。
 
 结束复核时，对 4.4 的三个严格只读列表重新从首屏分页到底，取得后置水位和完整去重 ID 集合。比较每个列表的前后 ID 集合和数量：
 
@@ -181,30 +179,27 @@
 
 ## 5. 正式执行顺序
 
-每一步都采用“即时重复检查 → 最多一次 POST → 立即 GET 复核”。只有上一步完成或确认可复用，才能进入下一步。
+前置 GET 和重复检查完成后，本执行单只允许一次非 GET 请求：
 
-1. **业务画像**：重新执行 4.1。仍为 0 条时，按 2.1 POST 一次。要求 HTTP 200、响应 `id` 为正整数、`tenant_id=4`、`status=active`、`unit_count=0`。随后用 4.1 的 GET 精确确认并记录 ID。
-2. **问题 1**：重新拉取完整问题列表。仍为 0 条时，按 2.2 第一个载荷 POST 一次。要求 HTTP 200、正整数 ID、`tenant_id=4`、`status=active` 和固定字段一致。重新 GET 确认恰好一条。
-3. **问题 2**：重复同样流程。
-4. **问题 3**：重复同样流程。
-5. **官网渠道**：最后重新执行 4.3。仍为 0 条时，按 2.3 POST 一次。要求 HTTP 200、正整数 ID、`tenant_id=4`、`virtual_default=false`、`publish_mode=manual_only`、`enabled=false`。重新 GET 确认恰好一条持久化记录。
-6. **结束复核**：用 eligibility 响应固定 `T1`，重复 4.1 至 4.5 的全部安全 GET 和严格只读分页比较。不得为了“验证配置”调用任何测试、采集、生成或发布接口。
+`POST /api/v1/geo/integration/scheduler-safe-foundation`
 
-若某对象已经完全一致地存在，执行记录必须写 `reused` 和原 ID；不能为了得到“本轮新建”效果再次 POST。
+请求体顶层固定为 `tenant_id=4`，`business` 使用 2.1 对象，`prompts` 使用 2.2 的三个对象数组，`channel` 使用 2.3 对象。不得追加单独的业务、问题或渠道 POST。
+
+1. 请求前最后一次执行 4.1–4.4 和 eligibility GET，记录 `T0`。
+2. 原子 POST 不得自动重试。要求 HTTP 200、`tenant_id=4`、`atomic=true`、`scheduler_eligible=false`，并返回有效 `protected_window`。
+3. `decisions.business`、三个 `decisions.prompts` 和 `decisions.channel` 必须都是 `created` 或 `reused`，且每个 ID 为正整数。任何 409/422/5xx 都停止，不改用旧的分步 POST。
+4. 响应后立即调用 eligibility GET 记录 `T1`，要求仍为 false；再重复 4.1–4.4 的安全 GET 和严格只读分页比较。
+5. 不得为了“验证配置”调用任何测试、采集、生成或发布接口。
 
 ## 6. 幂等与不确定响应
 
-这三个正式创建接口都没有请求级 idempotency key。执行端不得伪造“接口幂等”。本计划只采用以下受控策略：
+原子接口在同一租户行锁内按固定字段查重：完全一致的对象返回 `reused`，冲突、重复或 settings 启用均返回 409 并使整个事务回滚。它没有客户端 idempotency key，因此不得自动重试。
 
-- 业务画像与渠道由数据库唯一约束提供最终并发保护；收到 409 时停止并重新 GET，不把 409 当成成功；
-- 问题没有唯一约束，依赖单执行人窗口、逐条即时查重和一次 POST；
-- POST 收到超时、502、连接断开或未知状态时，立即冻结后续 POST，用 GET 查找固定对象；
-- 查到恰好 1 条完全一致记录，标为 `created_outcome_recovered`；查到 0 条或多条都停止，未经代码审查和服务器日志确认不得重试；
-- 任何自动重试中间件必须在执行前关闭。每个创建请求的客户端重试次数必须为 0。
+POST 超时、502 或连接断开时，先执行 4.1–4.3 GET 确认五个对象是否全部存在且字段一致，并核对服务器 request ID/事务日志。只有独立确认原事务整体回滚后才能人工重新提交；不得用旧分步接口补齐。
 
 ## 7. 明确禁止的请求
 
-执行记录中除第 5 节允许的 5 个 POST 外，不能出现其它非 GET 请求。特别禁止：
+执行记录中除第 5 节允许的唯一原子 POST 外，不能出现其它非 GET 请求。特别禁止单独调用 `POST /optimization-businesses`、`POST /prompts` 或 `POST /publishing-channels`，并禁止：
 
 - `POST/PATCH /api/v1/geo/optimization-units...`；
 - `PUT /api/v1/geo/tracking-engines`；
@@ -228,10 +223,10 @@
 2. 三个固定问句各精确 1 条，均为 manual/zh-CN/cn、非品牌点名、`unit_id=null`；
 3. `TIGER 官方网站` 持久化渠道精确 1 条，website/manual_only/disabled，官网地址正确；
 4. 禁止对象基线的总数和持久化 ID 与执行前完全一致，三个严格只读列表均分页到底且前后完整 ID 集合和数量一致；
-5. 请求账本只有允许的 GET 和最多 5 个已列明 POST，没有其它非 GET；
+5. 请求账本只有允许的 GET 和最多 1 个已列明的原子 POST，没有其它非 GET；
 6. 严格只读证据完整，并据此确认没有采集 run、回答或异步 job 因本轮产生；同时没有内容任务、渠道账号、渠道稿或发布记录因本轮产生；
 7. 所有对象均可归因到明确响应 ID；空列表或虚拟默认项不能写成“已创建”。
-8. `scheduler_eligible` 在 `T0`、每个创建步骤后和 `T1` 均为 false；时间窗完全取自该端点的服务端 UTC `observed_at`。
+8. `scheduler_eligible` 在 `T0`和 `T1` 均为 false；原子响应返回 `atomic=true`、两个服务端 UTC 保护时间和五个对象的 created/reused ID。
 
 任一条件不满足，结果只能是“停止/部分完成”，不能写“成功”。若三个严格只读列表任一取证不完整，结果必须写 `unverified_evidence_incomplete`，且不得写“没有新增巡检、回答或异步任务”。
 
@@ -255,10 +250,10 @@
 - GEO 生产 SHA、发布时间，以及 `GET /health/geo` 的 HTTP 状态和 `service`、`db`、`geo_scheduler` 三个字段；
 - 执行前与执行后每个安全 GET 的状态码、响应摘要、对象总数、持久化 ID 列表和响应 SHA-256；
 - 每个目标对象的决策：`created`、`reused`、`created_outcome_recovered` 或 `stopped`；
-- 每个允许 POST 的方法、路径、查询参数、请求体 SHA-256、HTTP 状态、服务端 request ID 和返回对象 ID；
+- 唯一原子 POST 的方法、路径、请求体 SHA-256、HTTP 状态、服务端 request ID、`protected_window` 和全部返回对象 ID；
 - 业务画像 4 个非空字段及其余空字段摘要、三个问题的固定字段、渠道的 type/mode/enabled/base URL；
 - `T0`、`T1`，三个严格只读列表前后各自的完整分页请求序列、固定水位、完整去重 ID 集合、数量和差异；
-- eligibility 在 `T0`、每个允许创建步骤后及 `T1` 的 `observed_at`、`patrol_settings.exists/enabled`、`active_prompt_count` 与 `scheduler_eligible`；
+- eligibility 在 `T0` 及 `T1` 的 `observed_at`、`patrol_settings.exists/enabled`、`active_prompt_count` 与 `scheduler_eligible`；
 - 禁止对象前后差异结果，以及“其它非 GET 请求数 = 0”；
 - 所有异常原文、停止点、是否存在部分完成、是否建议补偿。
 

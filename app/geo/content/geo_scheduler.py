@@ -42,6 +42,31 @@ def scheduled_patrol_settings_query(*, tenant_id: int | None = None):
     return query
 
 
+async def lock_scheduler_tenant(session, tenant_id: int) -> bool:
+    """Serialize scheduler decisions, settings writes and safe foundation setup."""
+    from sqlalchemy import select
+
+    from app.models import Tenant
+
+    locked_id = await session.scalar(
+        select(Tenant.id).where(Tenant.id == tenant_id).with_for_update()
+    )
+    return locked_id is not None
+
+
+async def current_patrol_settings(session, tenant_id: int):
+    """Reload settings after the tenant lock; never trust the initial scan object."""
+    from sqlalchemy import select
+
+    from app.models import GeoVisibilityPatrolSettings
+
+    return await session.scalar(
+        select(GeoVisibilityPatrolSettings)
+        .where(GeoVisibilityPatrolSettings.tenant_id == tenant_id)
+        .execution_options(populate_existing=True)
+    )
+
+
 async def run_geo_daily_metrics_nightly() -> None:
     from app.geo.content.daily_metrics import nightly_rebuild_recent_tenants
 
@@ -65,14 +90,22 @@ async def run_geo_visibility_patrols() -> None:
         execute_patrol_run_owned,
         should_run_scheduled_patrol,
     )
-    from app.models import GeoVisibilityPatrolRun, Tenant
+    from app.models import GeoVisibilityPatrolRun
 
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
     day_limit = int(getattr(get_settings(), "geo_patrol_max_runs_per_day", 24) or 24)
     day_limit = max(1, min(day_limit, 500))
     async with async_session_factory() as session:
         rows = list(await session.scalars(scheduled_patrol_settings_query()))
-        for st in rows:
+        for scanned in rows:
+            tenant_id = scanned.tenant_id
+            if not await lock_scheduler_tenant(session, tenant_id):
+                await session.commit()
+                continue
+            st = await current_patrol_settings(session, tenant_id)
+            if st is None or not bool(st.enabled):
+                await session.commit()
+                continue
             start_h = int(st.window_start_hour if st.window_start_hour is not None else st.daily_hour if st.daily_hour is not None else 6)
             end_h = int(st.window_end_hour if st.window_end_hour is not None else st.daily_hour if st.daily_hour is not None else 22)
             interval = int(getattr(st, "interval_hours", None) or 24)
@@ -84,8 +117,8 @@ async def run_geo_visibility_patrols() -> None:
                 interval_hours=interval,
                 last_scheduled_at=last_at,
             ):
+                await session.commit()
                 continue
-            await session.execute(select(Tenant.id).where(Tenant.id == st.tenant_id).with_for_update())
             from app.geo.retest import reserved_week
             if await reserved_week(session, st.tenant_id):
                 await session.commit()

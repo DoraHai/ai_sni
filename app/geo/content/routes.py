@@ -114,6 +114,7 @@ from app.geo.content.schemas import (
     RetrieveFactsRequest,
     ReviewDecision,
     ReviewSubmit,
+    SchedulerSafeFoundationRequest,
     SuggestBriefRequest,
     WebhookPushRequest,
     PushBatchRequest,
@@ -4900,6 +4901,184 @@ async def get_visibility_patrol_settings(
     return patrol_settings_payload(row, tenant_id)
 
 
+@router.post(
+    "/integration/scheduler-safe-foundation",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
+async def create_scheduler_safe_foundation(
+    req: SchedulerSafeFoundationRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Create the reviewed foundation atomically while patrol scheduling is locked."""
+    from datetime import timezone
+
+    from app.geo.content.business_profile import normalize_profile
+    from app.geo.content.geo_scheduler import (
+        current_patrol_settings,
+        lock_scheduler_tenant,
+    )
+
+    ctx.ensure_tenant(req.tenant_id)
+    await ensure_geo_entitlement(session, req.tenant_id)
+    tenant = await _ensure_tenant_exists(session, req.tenant_id, fresh=True)
+    if not await lock_scheduler_tenant(session, req.tenant_id):
+        raise HTTPException(404, "客户不存在")
+    settings = await current_patrol_settings(session, req.tenant_id)
+    if settings is not None and bool(settings.enabled):
+        raise HTTPException(409, "定时巡检已启用，不能执行安全基础建档")
+    inflight = await session.scalar(
+        select(GeoVisibilityPatrolRun.id)
+        .where(
+            GeoVisibilityPatrolRun.tenant_id == req.tenant_id,
+            GeoVisibilityPatrolRun.status.in_(("pending", "running")),
+        )
+        .limit(1)
+    )
+    if inflight is not None:
+        raise HTTPException(409, "当前存在进行中的巡检，不能执行安全基础建档")
+
+    protected_started_at = datetime.now(timezone.utc)
+    decisions: dict[str, Any] = {"prompts": []}
+
+    business_name = req.business.name.strip()
+    expected_profile = normalize_profile(req.business.profile)
+    businesses = list(
+        await session.scalars(
+            select(GeoOptimizationBusiness).where(
+                GeoOptimizationBusiness.tenant_id == req.tenant_id,
+                GeoOptimizationBusiness.name == business_name,
+            )
+        )
+    )
+    if len(businesses) > 1:
+        raise HTTPException(409, "同名业务存在重复记录")
+    business = businesses[0] if businesses else None
+    if business is not None:
+        if (
+            business.description != req.business.description
+            or normalize_profile(business.profile) != expected_profile
+            or business.sort_order != req.business.sort_order
+            or business.status != "active"
+        ):
+            raise HTTPException(409, "同名业务与请求契约不一致")
+        decisions["business"] = {"decision": "reused", "id": business.id}
+    else:
+        business = GeoOptimizationBusiness(
+            tenant_id=req.tenant_id,
+            name=business_name,
+            description=req.business.description,
+            profile=expected_profile,
+            sort_order=req.business.sort_order,
+        )
+        session.add(business)
+        await session.flush()
+        decisions["business"] = {"decision": "created", "id": business.id}
+
+    seen_questions: set[str] = set()
+    for prompt_req in req.prompts:
+        question = prompt_req.question.strip()
+        if question in seen_questions:
+            raise HTTPException(409, "基础建档请求中存在重复问题")
+        seen_questions.add(question)
+        prompts = list(
+            await session.scalars(
+                select(GeoPrompt).where(
+                    GeoPrompt.tenant_id == req.tenant_id,
+                    func.trim(GeoPrompt.question) == question,
+                )
+            )
+        )
+        if len(prompts) > 1:
+            raise HTTPException(409, "同文问题存在重复记录")
+        prompt = prompts[0] if prompts else None
+        if prompt is not None:
+            if (
+                prompt.priority != prompt_req.priority
+                or (prompt.tags or []) != prompt_req.tags
+                or prompt.language != prompt_req.language
+                or prompt.market != prompt_req.market
+                or prompt.source != "manual"
+                or bool(prompt.is_brand_probe)
+                or prompt.unit_id is not None
+                or prompt.status != "active"
+            ):
+                raise HTTPException(409, "同文问题与请求契约不一致")
+            decision = "reused"
+        else:
+            prompt = GeoPrompt(
+                tenant_id=req.tenant_id,
+                unit_id=None,
+                question=question,
+                language=prompt_req.language,
+                priority=prompt_req.priority,
+                tags=prompt_req.tags,
+                source="manual",
+                market=normalize_market(prompt_req.market),
+                is_brand_probe=False,
+                created_by=ctx.user_id,
+            )
+            session.add(prompt)
+            await session.flush()
+            decision = "created"
+        decisions["prompts"].append(
+            {"decision": decision, "id": prompt.id, "question": question}
+        )
+
+    channel_name = req.channel.name.strip()
+    channels = list(
+        await session.scalars(
+            select(GeoPublishingChannel).where(
+                GeoPublishingChannel.tenant_id == req.tenant_id,
+                GeoPublishingChannel.name == channel_name,
+            )
+        )
+    )
+    if len(channels) > 1:
+        raise HTTPException(409, "同名渠道存在重复记录")
+    channel = channels[0] if channels else None
+    if channel is not None:
+        if (
+            channel.channel_type != req.channel.channel_type
+            or channel.publish_mode != "manual_only"
+            or channel.base_url != req.channel.base_url
+            or channel.content_rules != req.channel.content_rules
+            or bool(channel.enabled)
+            or channel.sort_order != req.channel.sort_order
+        ):
+            raise HTTPException(409, "同名渠道与请求契约不一致")
+        decisions["channel"] = {"decision": "reused", "id": channel.id}
+    else:
+        channel = GeoPublishingChannel(
+            tenant_id=req.tenant_id,
+            name=channel_name,
+            channel_type=req.channel.channel_type,
+            publish_mode="manual_only",
+            base_url=req.channel.base_url,
+            content_rules=req.channel.content_rules,
+            enabled=False,
+            sort_order=req.channel.sort_order,
+            created_by=ctx.user_id,
+        )
+        session.add(channel)
+        await session.flush()
+        decisions["channel"] = {"decision": "created", "id": channel.id}
+
+    protected_finished_at = datetime.now(timezone.utc)
+    await session.commit()
+    return {
+        "tenant_id": req.tenant_id,
+        "atomic": True,
+        "scheduler_eligible": False,
+        "selection_basis": "tenant_row_lock_and_post_lock_enabled_settings_read",
+        "protected_window": {
+            "started_at": protected_started_at.isoformat().replace("+00:00", "Z"),
+            "finished_at": protected_finished_at.isoformat().replace("+00:00", "Z"),
+        },
+        "decisions": decisions,
+    }
+
+
 @router.put("/visibility-patrol/settings")
 async def put_visibility_patrol_settings(
     req: VisibilityPatrolSettingsUpdate,
@@ -4911,10 +5090,16 @@ async def put_visibility_patrol_settings(
         clamp_interval_hours,
         patrol_settings_payload,
     )
+    from app.geo.content.geo_scheduler import (
+        current_patrol_settings,
+        lock_scheduler_tenant,
+    )
 
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
-    row = await session.get(GeoVisibilityPatrolSettings, req.tenant_id)
+    if not await lock_scheduler_tenant(session, req.tenant_id):
+        raise HTTPException(404, "客户不存在")
+    row = await current_patrol_settings(session, req.tenant_id)
     if row is None:
         row = GeoVisibilityPatrolSettings(tenant_id=req.tenant_id)
         session.add(row)
