@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { semKeywordCard, semScopeCard, semSearchTermCard } from './sem-summary.mjs'
+import { resolveSemDetailBatch, semKeywordCard, semScopeCard, semSearchTermCard } from './sem-summary.mjs'
 
 const fixtures = JSON.parse(readFileSync(new URL('../../../../../integrations/sem-cockpit/examples.synthetic.json', import.meta.url), 'utf8'))
 const example = name => structuredClone(fixtures.examples.find(item => item.resource === name).response)
@@ -18,10 +18,34 @@ test('account scope exposes exclusions and unassigned evidence instead of hiding
 })
 
 test('keyword summary keeps missing reports distinct from observed zero', () => {
-  const card = semKeywordCard(example('keywords'), 8)
+  const payload = example('keywords')
+  payload.items[0].metrics.cost = 0
+  payload.items[0].coverage.missing_dates = []
+  const card = semKeywordCard(payload, 8)
   assert.equal(card.display, '2')
-  assert.equal(card.rows[0].cost, '已观测小计 ¥10')
+  assert.equal(card.rows[0].cost, '¥0')
   assert.equal(card.rows[1].cost, '暂无数据')
+  assert.equal(card.rows[0].status, '关键词未暂停')
+  assert.equal(card.updatedLabel, '2026-09-04T01:00:00+00:00')
+})
+
+test('old account-scope contract degrades instead of claiming active-only', () => {
+  const report = example('report')
+  report.accounts[0].status = 'disabled'
+  const card = semScopeCard(report, 10)
+  assert.equal(card.label, '账户范围')
+  assert.equal(card.state, 'partial')
+  assert.match(card.reason, /非在投账户/)
+})
+
+test('an access failure invalidates a whole concurrent detail batch', () => {
+  const revoked = Object.assign(new Error('revoked'), { code: 'ACCESS_REVOKED' })
+  assert.throws(() => resolveSemDetailBatch([
+    { status: 'fulfilled', value: example('keywords') },
+    { status: 'rejected', reason: revoked },
+  ]), error => error === revoked)
+  const ordinary = new Error('temporary')
+  assert.deepEqual(resolveSemDetailBatch([{ status: 'rejected', reason: ordinary }]), [{ value: null, error: ordinary }])
 })
 
 test('search term summary warns when account windows differ', () => {

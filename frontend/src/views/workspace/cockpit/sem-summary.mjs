@@ -3,9 +3,13 @@ import { semMetric } from '../../../../../integrations/sem-cockpit/display.mjs'
 const formatMetric = (metrics, key, unit, coverage = { status: 'observed', missing_dates: [] }) =>
   semMetric(metrics?.[key], unit, coverage).text
 
-function scopeReason(scope = {}) {
+function scopeReason(scope = {}, accounts = []) {
   const excluded = Array.isArray(scope.excluded_non_active_account_ids) ? scope.excluded_non_active_account_ids : []
-  const notes = ['默认只汇总当前在投的百度推广账户。']
+  const nonActive = accounts.filter(item => item.baidu_account_id !== null && item.status !== 'active')
+  const notes = []
+  if (nonActive.length) notes.push(`本次返回包含 ${nonActive.length} 个非在投账户，汇总数字不能视为当前在投口径。`)
+  else if (Array.isArray(scope.excluded_non_active_account_ids)) notes.push('本次默认范围仅纳入接口标记为在投的百度推广账户。')
+  else notes.push('接口未提供非在投账户排除清单，账户范围仍需核对。')
   if (excluded.length) notes.push(`已排除 ${excluded.length} 个非在投账户。`)
   if (scope.includes_unassigned) notes.push('另含未归属到账户的报告，查看明细时需单独核对。')
   return notes.join('')
@@ -15,11 +19,12 @@ export function semScopeCard(report, contextRevision) {
   const accounts = Array.isArray(report?.accounts) ? report.accounts : []
   const scope = report?.account_scope || {}
   const excluded = Array.isArray(scope.excluded_non_active_account_ids) ? scope.excluded_non_active_account_ids : []
-  const partial = scope.includes_unassigned === true
+  const partial = scope.includes_unassigned === true || !Array.isArray(scope.excluded_non_active_account_ids)
+    || accounts.some(item => item.baidu_account_id !== null && item.status !== 'active')
   return {
-    id: 'sem-account-scope', moduleCode: 'sem', moduleLabel: 'SEM', label: '当前在投账户',
+    id: 'sem-account-scope', moduleCode: 'sem', moduleLabel: 'SEM', label: '账户范围',
     display: String(accounts.filter(item => item.baidu_account_id !== null).length), unit: '个',
-    state: partial ? 'partial' : 'available', reason: scopeReason(scope), contextRevision,
+    state: partial ? 'partial' : 'available', reason: scopeReason(scope, accounts), contextRevision,
     periodLabel: `${report.window.start} 至 ${report.window.end}`,
     sourceLabel: '百度推广账户与关键词报告', updatedLabel: report.coverage?.updated_at || '未知',
     series: [],
@@ -46,12 +51,13 @@ export function semKeywordCard(payload, contextRevision) {
       ? `当前页 ${observed} 个关键词有报告依据；总数是资产数量，不代表全部正在投放。`
       : '当前范围没有可读取的关键词资产。',
     contextRevision, periodLabel: `${payload.window.start} 至 ${payload.window.end}`,
-    sourceLabel: '关键词资产与关键词报告', updatedLabel: payload.retrieved_at || '未知', series: [],
+    sourceLabel: '关键词资产与关键词报告', updatedLabel: newestStamp(items.flatMap(item =>
+      [item.coverage?.updated_at, item.asset_updated_at])) || '未知', series: [],
     columns: [{ key: 'keyword', label: '关键词' }, { key: 'status', label: '状态' },
       { key: 'cost', label: '花费' }, { key: 'click', label: '点击' }, { key: 'ctr', label: '点击率' }],
     rows: items.map(item => ({
       keyword: item.keyword || `关键词 ${item.keyword_id}`,
-      status: item.pause === true ? '已暂停' : item.pause === false ? '在投' : '待确认',
+      status: item.pause === true ? '关键词已暂停' : item.pause === false ? '关键词未暂停' : '待确认',
       cost: formatMetric(item.metrics, 'cost', 'CNY', item.coverage),
       click: formatMetric(item.metrics, 'click', 'count', item.coverage),
       ctr: formatMetric(item.metrics, 'ctr', 'ratio', item.coverage),
@@ -71,7 +77,8 @@ export function semSearchTermCard(payload, contextRevision) {
     display: String(payload.total), unit: '条', state: payload.mixed_windows ? 'partial' : payload.total ? 'available' : 'no_data',
     reason, contextRevision, periodLabel: payload.mixed_windows ? '多个账户同步窗口' : (payload.windows?.[0]
       ? `${payload.windows[0].start || '未知'} 至 ${payload.windows[0].end || '未知'}` : '暂无同步窗口'),
-    sourceLabel: '搜索词同步快照', updatedLabel: payload.retrieved_at || '未知', series: [],
+    sourceLabel: '搜索词同步快照', updatedLabel: newestStamp((payload.windows || []).flatMap(item =>
+      [item.updated_at, item.oldest_updated_at])) || '未知', series: [],
     columns: [{ key: 'query', label: '客户实际搜索' }, { key: 'keyword', label: '触发关键词' },
       { key: 'account', label: '账户 ID' }, { key: 'cost', label: '花费' }, { key: 'click', label: '点击' }],
     rows: items.map(item => ({
@@ -79,4 +86,22 @@ export function semSearchTermCard(payload, contextRevision) {
       cost: formatMetric(item.metrics, 'cost', 'CNY'), click: formatMetric(item.metrics, 'click', 'count'),
     })),
   }
+}
+
+function newestStamp(values) {
+  return values.filter(value => typeof value === 'string' && Number.isFinite(Date.parse(value)))
+    .reduce((latest, value) => latest === null || Date.parse(value) > Date.parse(latest) ? value : latest, null)
+}
+
+const invalidatingCodes = new Set(['ACCESS_REVOKED', 'NOT_AUTHORIZED', 'CONTRACT_MISMATCH',
+  'STALE_SESSION', 'STALE_AUTHORIZATION', 'STALE_RESPONSE'])
+
+// A permission/identity failure invalidates the whole concurrent batch. Never republish a
+// successful sibling after the client has already cleared evidence for the revoked context.
+export function resolveSemDetailBatch(results) {
+  const invalidating = results.find(result => result.status === 'rejected' && invalidatingCodes.has(result.reason?.code))
+  if (invalidating) throw invalidating.reason
+  return results.map(result => result.status === 'fulfilled'
+    ? { value: result.value, error: null }
+    : { value: null, error: result.reason })
 }

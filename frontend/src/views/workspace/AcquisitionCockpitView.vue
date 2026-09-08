@@ -9,7 +9,7 @@ import { createReadonlyTransport } from '../../../../integrations/workbench/read
 import { createWorkbenchViewState } from '../../../../integrations/workbench/view-state.mjs'
 import { createSemAuthorizedClient } from '../../../../integrations/sem-cockpit/authorization-context.mjs'
 import { semMetric } from '../../../../integrations/sem-cockpit/display.mjs'
-import { semKeywordCard, semScopeCard, semSearchTermCard } from './cockpit/sem-summary.mjs'
+import { resolveSemDetailBatch, semKeywordCard, semScopeCard, semSearchTermCard } from './cockpit/sem-summary.mjs'
 import { createSeoAuthorizedClient } from '../../../../integrations/seo-workbench/authorization-context.mjs'
 import { readSeoSiteScope } from '../../../../integrations/seo-workbench/site-scope.mjs'
 import { seoSummaryCards } from '../../../../integrations/seo-workbench/summary.mjs'
@@ -154,7 +154,7 @@ async function loadSem(generation) {
       metricCard(report, 'cost', '推广花费', 'CNY'), metricCard(report, 'impression', '广告展现', 'count'),
       metricCard(report, 'click', '广告点击', 'count'), metricCard(report, 'ctr', '点击率', 'ratio'), phoneCard(report),
     ]) publishCard(card)
-    const details = await Promise.allSettled([
+    const settledDetails = await Promise.allSettled([
       context.allowedReads.includes('keywords')
         ? semClient.read('keywords', { start_date: dateStart.value, end_date: dateEnd.value, page: 1, page_size: 20 })
         : Promise.resolve(null),
@@ -163,10 +163,11 @@ async function loadSem(generation) {
         : Promise.resolve(null),
     ])
     if (generation !== loadGeneration) return
-    if (details[0].status === 'fulfilled' && details[0].value) publishCard(semKeywordCard(details[0].value, viewState.revision))
-    else if (context.allowedReads.includes('keywords')) publishCard(unavailableSemDetailCard('sem-keywords', '关键词资产', details[0].reason))
-    if (details[1].status === 'fulfilled' && details[1].value) publishCard(semSearchTermCard(details[1].value, viewState.revision))
-    else if (context.allowedReads.includes('searchTerms')) publishCard(unavailableSemDetailCard('sem-search-terms', '实际搜索词', details[1].reason))
+    const details = resolveSemDetailBatch(settledDetails)
+    if (details[0].value) publishCard(semKeywordCard(details[0].value, viewState.revision))
+    else if (context.allowedReads.includes('keywords')) publishCard(unavailableSemDetailCard('sem-keywords', '关键词资产', details[0].error))
+    if (details[1].value) publishCard(semSearchTermCard(details[1].value, viewState.revision))
+    else if (context.allowedReads.includes('searchTerms')) publishCard(unavailableSemDetailCard('sem-search-terms', '实际搜索词', details[1].error))
     moduleState.value.sem = 'ready'
     lastReadAt.value = new Date()
   } catch (error) {
