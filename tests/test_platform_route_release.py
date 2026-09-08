@@ -89,7 +89,11 @@ def test_release_module_validates_before_reload_and_has_complete_rollback():
     assert "*) return 1" in script
     assert "already_current=true" in script
     assert 'git ls-remote --refs "$authoritative_repo" "$authoritative_ref"' in script
+    assert "authoritative_query_attempts=3" in script
+    assert "authoritative_retry_delay_seconds=2" in script
+    assert '[[ "$attempt" -eq "$authoritative_query_attempts" ]] || sleep "$authoritative_retry_delay_seconds"' in script
     assert script.count('live_head="$(query_authoritative_head)"') == 2
+    assert script.index("flock -n 9") < script.index('live_head="$(query_authoritative_head)"')
     assert script.rindex('live_head="$(query_authoritative_head)"') < script.index('mv -Tf "$archive" "$published_archive"')
     assert script.index('expected_index="${PLATFORM_SEM_INDEX:-/opt/sem-frontend/current/index.html}"') < script.index("status=already-current")
     for route in (
@@ -116,6 +120,10 @@ def test_installer_and_workflow_are_exact_revision_and_prewrite_gated():
     first_install = installer.index("install -d")
     assert digest_gate < first_install
     assert "0330e2c14f2ff7074df140e02d56136aa2a5248ebce296d9c35007437c09937a" in installer
+    module_digest = hashlib.sha256((ROOT / "ops/platform-deploy/modules/platform").read_bytes()).hexdigest()
+    assert module_digest == "1ee1c8d71048aea5e929dfa2175669c9a302646ec8b98bd6043ee4ca4ca4e9ba"
+    assert module_digest in installer
+    assert 'sha256sum "$source_module"' in installer
     assert "platform=enabled" in installer
     assert "platform route installer rollback failed" in installer
     assert 'if [[ "$committed" != true ]]' in installer
@@ -254,6 +262,32 @@ fi
     return base, target, calls, archive, commit, digest, env
 
 
+def _set_git_response_sequence(env: dict[str, str], responses: list[str], commit: str) -> None:
+    fake_bin = Path(env["PATH"].split(":", 1)[0])
+    response_file = Path(env["PLATFORM_TEST_STATE"]) / "git-responses"
+    response_file.write_text("\n".join(responses) + "\n", encoding="utf-8")
+    env["PLATFORM_TEST_GIT_RESPONSES"] = str(response_file)
+    env["PLATFORM_TEST_COMMIT"] = commit
+    _write_command(
+        fake_bin / "git",
+        '''response="$(head -n 1 "$PLATFORM_TEST_GIT_RESPONSES")"
+tail -n +2 "$PLATFORM_TEST_GIT_RESPONSES" > "$PLATFORM_TEST_GIT_RESPONSES.next"
+mv "$PLATFORM_TEST_GIT_RESPONSES.next" "$PLATFORM_TEST_GIT_RESPONSES"
+printf 'git %s -> %s\n' "$*" "$response" >> "$PLATFORM_TEST_CALLS"
+case "$response" in
+  network) exit 128 ;;
+  current) printf '%s\trefs/heads/codex/production-sem\n' "$PLATFORM_TEST_COMMIT" ;;
+  newer) printf '%040d\trefs/heads/codex/production-sem\n' 0 ;;
+  malformed) printf 'not-a-sha\trefs/heads/codex/production-sem\n' ;;
+  multiple) printf '%s\trefs/heads/codex/production-sem\n%s\trefs/heads/codex/production-sem\n' "$PLATFORM_TEST_COMMIT" "$PLATFORM_TEST_COMMIT" ;;
+  wrong_ref) printf '%s\trefs/heads/main\n' "$PLATFORM_TEST_COMMIT" ;;
+  missing|'') exit 0 ;;
+  *) exit 98 ;;
+esac
+''',
+    )
+
+
 @pytest.mark.skipif(os.name == "nt", reason="deployment state machine executes on Linux")
 def test_release_module_executes_ordered_apply_and_complete_rollback(tmp_path: Path):
     base, target, calls, archive, commit, digest, env = _release_fixture(tmp_path)
@@ -319,6 +353,7 @@ def test_release_module_reports_70_and_never_masks_rollback_stage_failure(tmp_pa
         "network_failure",
         "malformed",
         "multiple_refs",
+        "ref_mismatch",
         "missing_ref",
         "boundary_drift",
     ),
@@ -331,6 +366,7 @@ def test_server_boundary_fails_closed_before_publish_or_active_mutation(tmp_path
         "network_failure": "printf 'git %s\\n' \"$*\" >> \"$PLATFORM_TEST_CALLS\"\nexit 128\n",
         "malformed": "printf 'git %s\\n' \"$*\" >> \"$PLATFORM_TEST_CALLS\"\nprintf 'not-a-sha\\trefs/heads/codex/production-sem\\n'\n",
         "multiple_refs": f"printf 'git %s\\n' \"$*\" >> \"$PLATFORM_TEST_CALLS\"\nprintf '{commit}\\trefs/heads/codex/production-sem\\n{commit}\\trefs/heads/codex/production-sem\\n'\n",
+        "ref_mismatch": f"printf 'git %s\\n' \"$*\" >> \"$PLATFORM_TEST_CALLS\"\nprintf '{commit}\\trefs/heads/main\\n'\n",
         "missing_ref": "printf 'git %s\\n' \"$*\" >> \"$PLATFORM_TEST_CALLS\"\n",
         "boundary_drift": f'''count_file="$PLATFORM_TEST_STATE/git-boundary"
 count=0
@@ -362,6 +398,29 @@ fi
     assert "systemctl " not in recorded
     assert "curl " not in recorded
     assert "active_sha256=" not in result.stdout
+    assert not any(line.startswith(f"mv -Tf {archive} ") for line in recorded.splitlines())
+    expected_queries = 3 if server_result == "network_failure" else 2 if server_result == "boundary_drift" else 1
+    assert recorded.count("git ls-remote --refs ") == expected_queries
+    assert recorded.count("sleep 2") == (2 if server_result == "network_failure" else 0)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="server publication retry executes on Linux")
+def test_server_boundary_retries_network_failures_then_uses_fresh_live_head(tmp_path: Path):
+    _, target, calls, archive, commit, digest, env = _release_fixture(tmp_path, curl_mode="success")
+    _set_git_response_sequence(env, ["network", "network", "current", "current"], commit)
+    result = subprocess.run(
+        ["bash", str(ROOT / "ops/platform-deploy/modules/platform"), str(archive), commit, digest, "DEPLOY_PLATFORM_ROUTES"],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert target.read_bytes() == (ROOT / "deploy/gsnipers-platform-routes.conf").read_bytes()
+    recorded = calls.read_text(encoding="utf-8")
+    assert recorded.count("git ls-remote --refs ") == 4
+    assert recorded.count("sleep 2") == 2
+    assert recorded.index("git ls-remote --refs ") < recorded.index("mv -Tf ")
+    assert "active_sha256=" in result.stdout
 
 
 @pytest.mark.skipif(os.name == "nt", reason="idempotent archive state machine executes on Linux")
