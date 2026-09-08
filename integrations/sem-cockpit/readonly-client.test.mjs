@@ -253,6 +253,26 @@ test('partial phone evidence cannot be presented as a complete value', async () 
   })
 })
 
+test('keyword report association gaps must be explicit and page-scoped', async () => {
+  await rejectsContract('keywords', data => { delete data.items[0].report_association })
+  await rejectsContract('keywords', data => { data.items[0].report_association.matched_report_groups = 1 })
+  await rejectsContract('keywords', data => {
+    data.items[1].report_association.status = 'account_mismatch'
+    data.items[1].report_association.other_observed_account_ids = []
+  })
+  await rejectsContract('keywords', data => { data.association_summary.scope = 'all_pages' })
+  await rejectsContract('keywords', data => { data.association_summary.counts.matched = 0 })
+  const mismatch = await acceptsContract('keywords', data => {
+    data.account_scope = { mode: 'all', baidu_account_id: null, configured_account_ids: [11], observed_account_ids: [11, null] }
+    data.items[1].baidu_account_id = null
+    data.items[1].report_association.status = 'account_mismatch'
+    data.items[1].report_association.other_observed_account_ids = [11]
+    data.association_summary.counts.account_mismatch = 1
+    data.association_summary.counts.no_report = 0
+  }, { start_date: dates.start_date, end_date: dates.end_date })
+  assert.equal(mismatch.items[1].report_association.status, 'account_mismatch')
+})
+
 test('dimension and search-window shapes reject incomplete or mixed summaries', async () => {
   await rejectsContract('keywordDetail', data => { data.dimensions.schedule.cells.pop() })
   await rejectsContract('keywordDetail', data => { data.dimensions.region.accounts[0].baidu_account_id = 12 })
@@ -363,6 +383,7 @@ test('keyword default window can truthfully return no report anchor', async () =
   data.window = { start: null, end: null, timezone: 'Asia/Shanghai', inclusive: true, mode: 'latest_report_7d' }
   data.total = 0
   data.items = []
+  data.association_summary.counts = { matched: 0, account_mismatch: 0, no_report: 0 }
   const client = createSemReadonlyClient({ onClear() {}, transport: async () => response(data) })
   client.setContext(context)
   assert.equal((await client.read('keywords')).window.start, null)
