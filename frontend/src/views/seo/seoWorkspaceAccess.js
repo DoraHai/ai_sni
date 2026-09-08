@@ -3,6 +3,11 @@ function positiveId(value) {
   return Number.isInteger(id) && id > 0 ? id : null
 }
 
+export function canRenderSeoRoute(accessState, routePath) {
+  return accessState === 'ready'
+    || (accessState === 'no-active-site' && routePath === '/seo/sites')
+}
+
 export function selectOwnedSeoSite(sites, requestedSiteId, selectableStatuses = ['active']) {
   const rows = Array.isArray(sites) ? sites : []
   const allowed = new Set(Array.isArray(selectableStatuses) ? selectableStatuses : [])

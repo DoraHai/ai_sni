@@ -6,7 +6,7 @@ import client from '../../api/client'
 import { fetchSeoWorkbenchSites } from '../../api/moduleAssets'
 import { session } from '../../store/session'
 import { clearSeoSiteId, currentSeoSiteId } from './seoSiteContext'
-import { createSeoWorkspaceAccess, reconcileSeoRouteSite } from './seoWorkspaceAccess'
+import { canRenderSeoRoute, createSeoWorkspaceAccess, reconcileSeoRouteSite } from './seoWorkspaceAccess'
 
 const route = useRoute()
 const router = useRouter()
@@ -78,6 +78,7 @@ const visibleGroups = computed(() => {
 const title = computed(() => route.meta.title || 'SEO 工作台')
 const workflow = computed(() => route.meta.workflow || '搜索增长')
 const immersive = computed(() => Boolean(route.meta.immersive))
+const renderRoute = computed(() => canRenderSeoRoute(accessState.value, route.path))
 const tenantName = computed(() => (
   seoTenants.value.find((tenant) => tenant.id === session.tenantId)?.name
     || session.tenants.find((tenant) => tenant.id === session.tenantId)?.name
@@ -294,7 +295,7 @@ onMounted(refreshCurrentUser)
         </div>
       </header>
       <main class="seo-content">
-        <section v-if="accessState !== 'ready'" class="scope-gate" role="status">
+        <section v-if="!renderRoute" class="scope-gate" role="status">
           <strong>{{ accessState === 'checking' ? '正在核对 SEO 访问范围' : accessState === 'no-active-site' ? '当前客户没有可用的 SEO 网站' : '当前客户无法显示 SEO 数据' }}</strong>
           <p>{{ accessState === 'checking' ? '完成模块有效期和网站归属校验后再显示数据。' : accessState === 'no-active-site' ? '只有 active 网站可以进入 SEO 数据页。' : accessError }}</p>
         </section>
