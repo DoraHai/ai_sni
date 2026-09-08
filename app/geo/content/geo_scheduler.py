@@ -32,10 +32,14 @@ def scheduled_patrol_settings_query(*, tenant_id: int | None = None):
     """Return the exact settings scan used to select scheduled patrol tenants."""
     from sqlalchemy import select
 
-    from app.models import GeoVisibilityPatrolSettings
+    from app.models import GeoVisibilityPatrolSettings, Tenant
+    from app.geo.tenant_scope import geo_tenant_query
 
     query = select(GeoVisibilityPatrolSettings).where(
         GeoVisibilityPatrolSettings.enabled.is_(True),
+        GeoVisibilityPatrolSettings.tenant_id.in_(
+            geo_tenant_query().with_only_columns(Tenant.id)
+        ),
     )
     if tenant_id is not None:
         query = query.where(GeoVisibilityPatrolSettings.tenant_id == tenant_id)
@@ -91,6 +95,7 @@ async def run_geo_visibility_patrols() -> None:
         should_run_scheduled_patrol,
     )
     from app.models import GeoVisibilityPatrolRun
+    from app.geo.tenant_scope import GeoEntitlementUnavailable, ensure_geo_entitlement
 
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
     day_limit = int(getattr(get_settings(), "geo_patrol_max_runs_per_day", 24) or 24)
@@ -104,6 +109,11 @@ async def run_geo_visibility_patrols() -> None:
                 continue
             st = await current_patrol_settings(session, tenant_id)
             if st is None or not bool(st.enabled):
+                await session.commit()
+                continue
+            try:
+                await ensure_geo_entitlement(session, tenant_id)
+            except GeoEntitlementUnavailable:
                 await session.commit()
                 continue
             start_h = int(st.window_start_hour if st.window_start_hour is not None else st.daily_hour if st.daily_hour is not None else 6)

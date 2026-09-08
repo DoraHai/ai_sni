@@ -81,14 +81,16 @@ async def run_geo_visibility_patrols() -> None:
     day_limit = max(1, min(day_limit, 500))
 
     async with async_session_factory() as session:
-        settings_rows = list(
-            await session.scalars(
-                select(GeoVisibilityPatrolSettings).where(
-                    GeoVisibilityPatrolSettings.enabled.is_(True)
-                )
-            )
-        )
+        from app.geo.content.geo_scheduler import scheduled_patrol_settings_query
+        from app.geo.tenant_scope import GeoEntitlementUnavailable, ensure_geo_entitlement
+
+        settings_rows = list(await session.scalars(scheduled_patrol_settings_query()))
         for patrol_settings in settings_rows:
+            try:
+                await ensure_geo_entitlement(session, patrol_settings.tenant_id)
+            except GeoEntitlementUnavailable:
+                await session.rollback()
+                continue
             start_hour = int(
                 getattr(patrol_settings, "window_start_hour", None)
                 or patrol_settings.daily_hour

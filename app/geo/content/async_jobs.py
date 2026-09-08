@@ -464,6 +464,7 @@ async def run_job_synchronously(job_id: int) -> dict[str, Any]:
 
 async def _run_owned_job(job_id: int, *, connection=None) -> dict[str, Any]:
     from app.database import async_session_factory
+    from app.geo.tenant_scope import ensure_geo_entitlement
 
     try:
         async with async_session_factory(bind=connection) as session:
@@ -494,6 +495,7 @@ async def _run_owned_job(job_id: int, *, connection=None) -> dict[str, Any]:
                     "error_type": "JobCancelled",
                 }
             try:
+                await ensure_geo_entitlement(session, row.tenant_id)
                 if row.kind == KIND_GENERATE:
                     result = await _execute_generate(session, row)
                 elif row.kind == KIND_PUSH_BATCH:
@@ -505,6 +507,9 @@ async def _run_owned_job(job_id: int, *, connection=None) -> dict[str, Any]:
                 await mark_job(session, job_id, status="succeeded", result_meta=result)
                 return {"status": "succeeded", "error": None, "result_meta": result}
             except Exception as exc:  # noqa: BLE001
+                rollback = getattr(session, "rollback", None)
+                if rollback is not None:
+                    await rollback()
                 live = await session.get(GeoAsyncJob, job_id) or row
                 cancelled = str(exc) == "已取消" or cancel_requested(live)
                 if row.ref_id and row.kind in {KIND_GENERATE, KIND_VARIANTS}:
@@ -551,6 +556,7 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
     from app.geo.content.generate_article import generate_master_article, outline_from_payload, to_markdown
     from app.geo.content.review import invalidate_review
     from app.models import GeoArticleVersion, GeoFact, GeoPrompt, GeoTaskFact, Tenant
+    from app.geo.tenant_scope import ensure_geo_entitlement
 
     task = await session.get(GeoContentTask, job.ref_id)
     if task is None or task.tenant_id != job.tenant_id:
@@ -559,6 +565,7 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
     prompt = await session.get(GeoPrompt, task.prompt_id)
     if tenant is None or prompt is None:
         raise ValueError("租户或意图词缺失")
+    await ensure_geo_entitlement(session, job.tenant_id)
 
     facts = list(
         (
@@ -621,6 +628,9 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
         llm=llm,
         brief=brief_norm,
     )
+    # The subscription can change while the remote model is running. Discard
+    # the response before any article write when access is no longer valid.
+    await ensure_geo_entitlement(session, job.tenant_id)
     job = await session.get(GeoAsyncJob, job.id) or job
     if cancel_requested(job):
         task.status = "editing"

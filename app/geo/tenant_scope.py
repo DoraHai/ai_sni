@@ -26,6 +26,19 @@ _TENANT_MODULES = table(
 )
 
 
+class GeoEntitlementUnavailable(HTTPException):
+    """Stable signal for workers that must stop after GEO access is revoked."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            403,
+            {
+                "code": "geo_not_available",
+                "message": "该客户未开通 GEO、已停用或已到期",
+            },
+        )
+
+
 def geo_tenant_query(*, tenant_id: int | None = None, today: date | None = None):
     """Build the read-only query for customers with an active GEO entitlement."""
     current_date = today or date.today()
@@ -71,13 +84,7 @@ async def list_geo_tenants_for_auth(
 async def ensure_geo_entitlement(session: AsyncSession, tenant_id: int) -> None:
     """Fail closed unless the customer currently has usable GEO access."""
     if await session.scalar(geo_tenant_query(tenant_id=tenant_id).limit(1)) is None:
-        raise HTTPException(
-            403,
-            {
-                "code": "geo_not_available",
-                "message": "该客户未开通 GEO、已停用或已到期",
-            },
-        )
+        raise GeoEntitlementUnavailable()
 
 
 async def require_geo_read_entitlement(tenant_id: int, ctx=Depends(require_scoped_auth),

@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.geo.tenant_scope import GeoEntitlementUnavailable, ensure_geo_entitlement
 from app.geo.content.probe import (
     SAMPLE_MODE_REAL,
     dashscope_usable_for_engine,
@@ -466,6 +467,15 @@ async def execute_patrol_run(
     if row.status != "pending":
         await session.commit()
         return row
+    try:
+        await ensure_geo_entitlement(session, row.tenant_id)
+    except GeoEntitlementUnavailable as exc:
+        row.status = "failed"
+        row.error = str(exc)
+        row.finished_at = datetime.utcnow()
+        await session.commit()
+        await session.refresh(row)
+        return row
     contract_plan = (row.summary or {}).get("contract_plan")
     row.status = "running"
     row.started_at = datetime.utcnow()
@@ -613,6 +623,9 @@ async def execute_patrol_run(
                 from app.geo.retest import engines_for_prompt
                 selected_engines = engines_for_prompt(contract_plan, prompt.id)
             for engine in selected_engines:
+                # Recheck for every cell because a long patrol/retest can span a
+                # subscription change between provider calls.
+                await ensure_geo_entitlement(session, row.tenant_id)
                 if contract_plan and datetime.utcnow() >= datetime.fromisoformat(contract_plan['window_end']):
                     raise ValueError('复测已跨出约定自然周，停止采样')
                 if cells_planned >= max_cells:
@@ -697,6 +710,9 @@ async def execute_patrol_run(
                         sample_mode=sample_mode,
                         fallback_reason=fallback_reason,
                     )
+                    # A provider response arriving after revocation is not a
+                    # valid customer sample and must never be persisted.
+                    await ensure_geo_entitlement(session, row.tenant_id)
                     cell.update(
                         {
                             "ok": True,
@@ -794,6 +810,8 @@ async def execute_patrol_run(
                         await session.flush()
                         cell["snapshot_id"] = snap.id
                         summary["snapshots_created"] += 1
+                except GeoEntitlementUnavailable:
+                    raise
                 except (DeepSeekError, ValueError) as exc:
                     cell["ok"] = False
                     cell["error"] = str(exc)
@@ -813,6 +831,7 @@ async def execute_patrol_run(
                 items.append(cell)
                 # periodic commit so long runs don't hold huge txn
                 if len(items) % 5 == 0:
+                    await ensure_geo_entitlement(session, row.tenant_id)
                     row.items = list(items)
                     row.summary = dict(summary)
                     await session.commit()
@@ -822,6 +841,7 @@ async def execute_patrol_run(
         if contract_plan:
             from app.geo.retest import validate_run_result
             summary["retest_result"] = validate_run_result(contract_plan, items)
+        await ensure_geo_entitlement(session, row.tenant_id)
         row.items = items
         row.summary = summary
         row.status = "completed"
@@ -843,6 +863,9 @@ async def execute_patrol_run(
         return row
     except Exception as exc:  # noqa: BLE001
         logger.exception("patrol run %s failed", run_id)
+        rollback = getattr(session, "rollback", None)
+        if rollback is not None:
+            await rollback()
         row = await session.get(GeoVisibilityPatrolRun, run_id)
         if row:
             row.status = "failed"
