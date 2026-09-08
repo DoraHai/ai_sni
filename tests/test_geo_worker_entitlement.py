@@ -4,6 +4,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, Mock, patch
 
 from app.geo.content import async_jobs, geo_scheduler, patrol, variant_execute
+from app.geo import scheduler as legacy_scheduler
 from app.geo.tenant_scope import GeoEntitlementUnavailable
 
 
@@ -43,6 +44,86 @@ def test_claimed_worker_rechecks_entitlement_before_business_executor():
         assert result["error_type"] == "GeoEntitlementUnavailable"
         assert row.status == "failed"
         executor.assert_not_awaited()
+        session.rollback.assert_awaited_once()
+
+    asyncio.run(scenario())
+
+
+def test_worker_failure_never_reads_rolled_back_job_and_restores_task():
+    async def scenario():
+        class ExpiringJob:
+            expired = False
+
+            def __init__(self):
+                self.id = 42
+                self.tenant_id = 7
+                self.kind = async_jobs.KIND_GENERATE
+                self.ref_id = 12
+                self.status = "running"
+                self.request_meta = {}
+                self.started_at = None
+                self.finished_at = None
+                self.error = None
+                self.result_meta = None
+
+            def __getattribute__(self, name):
+                if name in {"kind", "ref_id", "tenant_id"} and object.__getattribute__(
+                    self, "expired"
+                ):
+                    raise RuntimeError(f"expired ORM attribute read: {name}")
+                return object.__getattribute__(self, name)
+
+        old = ExpiringJob()
+        live = NS(
+            id=42,
+            tenant_id=7,
+            kind=async_jobs.KIND_GENERATE,
+            ref_id=12,
+            status="running",
+            request_meta={"execution_protocol": async_jobs.JOB_EXECUTION_PROTOCOL},
+            started_at=None,
+            finished_at=None,
+            error=None,
+            result_meta=None,
+        )
+        task = NS(id=12, status="generating")
+        job_reads = 0
+
+        async def get(model, _ident):
+            nonlocal job_reads
+            if getattr(model, "__name__", "") == "GeoContentTask":
+                return task
+            job_reads += 1
+            return old if job_reads == 1 else live
+
+        async def rollback():
+            old.expired = True
+
+        session = NS(
+            scalar=AsyncMock(side_effect=[42, object()]),
+            get=AsyncMock(side_effect=get),
+            commit=AsyncMock(),
+            rollback=AsyncMock(side_effect=rollback),
+        )
+
+        @asynccontextmanager
+        async def factory(**_kwargs):
+            yield session
+
+        with (
+            patch("app.database.async_session_factory", factory),
+            patch.object(
+                async_jobs,
+                "_execute_generate",
+                AsyncMock(side_effect=ValueError("synthetic failure")),
+            ),
+        ):
+            result = await async_jobs._run_owned_job(42)
+
+        assert result["status"] == "failed"
+        assert result["error_type"] == "ValueError"
+        assert task.status == "editing"
+        assert live.status == "failed"
         session.rollback.assert_awaited_once()
 
     asyncio.run(scenario())
@@ -371,5 +452,62 @@ def test_scheduler_rechecks_entitlement_under_tenant_lock_before_creating_run():
         session.add.assert_not_called()
         execute.assert_not_awaited()
         session.commit.assert_awaited_once()
+
+    asyncio.run(scenario())
+
+
+def test_legacy_scheduler_inactive_first_does_not_block_active_second():
+    async def scenario():
+        scanned = [NS(tenant_id=7), NS(tenant_id=8)]
+        active = NS(
+            tenant_id=8,
+            enabled=True,
+            daily_hour=6,
+            window_start_hour=0,
+            window_end_hour=23,
+            interval_hours=1,
+            last_scheduled_at=None,
+            auto_persist=True,
+            prefer_real=True,
+            prompt_limit=1,
+            engine_keys=["chatgpt"],
+        )
+        session = NS(
+            scalars=AsyncMock(return_value=scanned),
+            scalar=AsyncMock(return_value=None),
+            add=Mock(side_effect=lambda row: setattr(row, "id", 99)),
+            commit=AsyncMock(),
+            rollback=AsyncMock(),
+            refresh=AsyncMock(),
+        )
+
+        @asynccontextmanager
+        async def factory():
+            yield session
+
+        async def ensure(_session, tenant_id):
+            if tenant_id == 7:
+                raise GeoEntitlementUnavailable()
+
+        execute = AsyncMock()
+        with (
+            patch.object(legacy_scheduler, "async_session_factory", factory),
+            patch("app.geo.tenant_scope.ensure_geo_entitlement", side_effect=ensure),
+            patch(
+                "app.geo.content.geo_scheduler.current_patrol_settings",
+                AsyncMock(return_value=active),
+            ) as current,
+            patch.object(legacy_scheduler, "should_run_scheduled_patrol", return_value=True),
+            patch.object(
+                legacy_scheduler, "count_patrol_runs_today", AsyncMock(return_value=0)
+            ),
+            patch.object(legacy_scheduler, "execute_patrol_run_owned", execute),
+        ):
+            await legacy_scheduler.run_geo_visibility_patrols()
+
+        current.assert_awaited_once_with(session, 8)
+        assert session.add.call_args.args[0].tenant_id == 8
+        execute.assert_awaited_once_with(session, 99)
+        session.rollback.assert_not_awaited()
 
     asyncio.run(scenario())

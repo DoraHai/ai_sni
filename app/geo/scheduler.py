@@ -81,15 +81,21 @@ async def run_geo_visibility_patrols() -> None:
     day_limit = max(1, min(day_limit, 500))
 
     async with async_session_factory() as session:
-        from app.geo.content.geo_scheduler import scheduled_patrol_settings_query
+        from app.geo.content.geo_scheduler import (
+            current_patrol_settings,
+            scheduled_patrol_settings_query,
+        )
         from app.geo.tenant_scope import GeoEntitlementUnavailable, ensure_geo_entitlement
 
         settings_rows = list(await session.scalars(scheduled_patrol_settings_query()))
-        for patrol_settings in settings_rows:
+        tenant_ids = [int(row.tenant_id) for row in settings_rows]
+        for tenant_id in tenant_ids:
             try:
-                await ensure_geo_entitlement(session, patrol_settings.tenant_id)
+                await ensure_geo_entitlement(session, tenant_id)
             except GeoEntitlementUnavailable:
-                await session.rollback()
+                continue
+            patrol_settings = await current_patrol_settings(session, tenant_id)
+            if patrol_settings is None or not bool(patrol_settings.enabled):
                 continue
             start_hour = int(
                 getattr(patrol_settings, "window_start_hour", None)
@@ -113,11 +119,11 @@ async def run_geo_visibility_patrols() -> None:
             ):
                 continue
 
-            used = await count_patrol_runs_today(session, patrol_settings.tenant_id)
+            used = await count_patrol_runs_today(session, tenant_id)
             if used >= day_limit:
                 logger.warning(
                     "[geo-scheduler] tenant=%s reached daily quota %s/%s",
-                    patrol_settings.tenant_id,
+                    tenant_id,
                     used,
                     day_limit,
                 )
@@ -126,7 +132,7 @@ async def run_geo_visibility_patrols() -> None:
             inflight = await session.scalar(
                 select(GeoVisibilityPatrolRun.id)
                 .where(
-                    GeoVisibilityPatrolRun.tenant_id == patrol_settings.tenant_id,
+                    GeoVisibilityPatrolRun.tenant_id == tenant_id,
                     GeoVisibilityPatrolRun.trigger == "schedule",
                     GeoVisibilityPatrolRun.status.in_(("pending", "running")),
                 )
@@ -136,7 +142,7 @@ async def run_geo_visibility_patrols() -> None:
                 continue
 
             run = GeoVisibilityPatrolRun(
-                tenant_id=patrol_settings.tenant_id,
+                tenant_id=tenant_id,
                 status="pending",
                 trigger="schedule",
                 auto_persist=bool(patrol_settings.auto_persist),
@@ -153,13 +159,13 @@ async def run_geo_visibility_patrols() -> None:
                 await execute_patrol_run_owned(session, run.id)
                 logger.info(
                     "[geo-scheduler] patrol completed tenant=%s run=%s",
-                    patrol_settings.tenant_id,
+                    tenant_id,
                     run.id,
                 )
             except Exception:  # noqa: BLE001
                 logger.exception(
                     "[geo-scheduler] patrol failed tenant=%s run=%s",
-                    patrol_settings.tenant_id,
+                    tenant_id,
                     run.id,
                 )
 

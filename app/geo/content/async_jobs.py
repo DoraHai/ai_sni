@@ -483,6 +483,9 @@ async def _run_owned_job(job_id: int, *, connection=None) -> dict[str, Any]:
                     "result_meta": {},
                 }
             row = await session.get(GeoAsyncJob, job_id)
+            tenant_id = int(row.tenant_id)
+            job_kind = row.kind
+            ref_id = row.ref_id
             meta = dict(row.request_meta or {})
             meta["execution_protocol"] = JOB_EXECUTION_PROTOCOL
             row.request_meta = meta
@@ -495,15 +498,15 @@ async def _run_owned_job(job_id: int, *, connection=None) -> dict[str, Any]:
                     "error_type": "JobCancelled",
                 }
             try:
-                await ensure_geo_entitlement(session, row.tenant_id)
-                if row.kind == KIND_GENERATE:
+                await ensure_geo_entitlement(session, tenant_id)
+                if job_kind == KIND_GENERATE:
                     result = await _execute_generate(session, row)
-                elif row.kind == KIND_PUSH_BATCH:
+                elif job_kind == KIND_PUSH_BATCH:
                     result = await _execute_push_batch(session, row)
-                elif row.kind == KIND_VARIANTS:
+                elif job_kind == KIND_VARIANTS:
                     result = await _execute_variants(session, row)
                 else:
-                    raise ValueError(f"未知作业类型: {row.kind}")
+                    raise ValueError(f"未知作业类型: {job_kind}")
                 await mark_job(session, job_id, status="succeeded", result_meta=result)
                 return {"status": "succeeded", "error": None, "result_meta": result}
             except Exception as exc:  # noqa: BLE001
@@ -512,8 +515,8 @@ async def _run_owned_job(job_id: int, *, connection=None) -> dict[str, Any]:
                     await rollback()
                 live = await session.get(GeoAsyncJob, job_id) or row
                 cancelled = str(exc) == "已取消" or cancel_requested(live)
-                if row.ref_id and row.kind in {KIND_GENERATE, KIND_VARIANTS}:
-                    task = await session.get(GeoContentTask, row.ref_id)
+                if ref_id and job_kind in {KIND_GENERATE, KIND_VARIANTS}:
+                    task = await session.get(GeoContentTask, ref_id)
                     if task is not None and task.status in {
                         "generating",
                         "adapting",
