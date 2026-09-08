@@ -137,12 +137,18 @@ def test_tenant_lock_serializes_settings_enable_with_scheduler_decision():
                 created = True
                 await connection.run_sync(metadata.create_all)
                 await connection.execute(
-                    text(f'INSERT INTO "{schema}".tenants (id, name) VALUES (4, \'Tiger\')')
+                    text(
+                        f'INSERT INTO "{schema}".tenants '
+                        "(id, name, created_at) VALUES (4, 'Tiger', NOW())"
+                    )
                 )
                 await connection.execute(
                     text(
                         f'INSERT INTO "{schema}".geo_visibility_patrol_settings '
-                        "(tenant_id, enabled) VALUES (4, true)"
+                        "(tenant_id, enabled, daily_hour, window_start_hour, "
+                        "window_end_hour, interval_hours, auto_persist, prefer_real, "
+                        "prompt_limit, updated_at) VALUES "
+                        "(4, true, 6, 6, 22, 24, true, true, 20, NOW())"
                     )
                 )
 
