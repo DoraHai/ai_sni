@@ -104,7 +104,7 @@ def test_database_discovery_inserts_once_and_keeps_evidence():
     from sqlalchemy import text, select, MetaData
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
     from app.models.seo import SeoBacklink, SeoContentPublication, SeoContentAsset
-    from app.models.module_workspace import SeoSite
+    from app.models.module_workspace import SeoSite, TenantModule
     from app.seo_backlinks import discover_published_backlinks
     url = os.environ.get('SEO_USAGE_TEST_DATABASE_URL')
     if not url:
@@ -115,7 +115,7 @@ def test_database_discovery_inserts_once_and_keeps_evidence():
         try:
             async with engine.begin() as connection:
                 await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
-                for model in [SeoBacklink, SeoContentPublication, SeoContentAsset, SeoSite]:
+                for model in [SeoBacklink, SeoContentPublication, SeoContentAsset, SeoSite, TenantModule]:
                     table = model.__table__.to_metadata(MetaData())
                     for foreign_key in list(table.foreign_key_constraints):
                         table.constraints.remove(foreign_key)
@@ -134,6 +134,7 @@ def test_database_discovery_inserts_once_and_keeps_evidence():
                     assert row.tenant_id == 7 and row.site_id == 9
             assert first['created'] == 1 and second['created'] == 0
             async with sessions() as session:
+                session.add(TenantModule(id=1,tenant_id=7,module_code='seo',status='active'))
                 session.add(SeoSite(id=9, tenant_id=7,tenant_module_id=1,name='Site',domain='brand.example',canonical_domain='brand.example',status='active'))
                 session.add(SeoContentAsset(id=11,tenant_id=7,site_id=9,title='Article',status='published'))
                 session.add(SeoContentPublication(id=21,tenant_id=7,content_asset_id=11,platform_code='manual',platform_name='Media',status='published',page_url='https://media.example/article'))

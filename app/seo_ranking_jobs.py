@@ -11,7 +11,8 @@ from sqlalchemy import and_, func, select
 from app.config import get_settings, parse_seo_rank_engine_intervals
 from app.database import async_session_factory
 from app.models.seo import SeoKeywordAsset, SeoMetricSnapshot, SeoRankSnapshot
-from app.module_scope import list_active_module_tenants
+from app.module_scope import list_active_module_tenants, seo_site_is_operational
+from app.models.module_workspace import SeoSite
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_automation_runs import finish_automation_run, start_automation_run
 from app.seo_rank_limits import SEO_RANK_COLLECTION_LOCK_PATH
@@ -409,10 +410,16 @@ async def collect_daily_seo_rankings() -> None:
             tenant_ids = list(
                 await discovery_session.scalars(
                     select(SeoKeywordAsset.tenant_id)
+                    .join(
+                        SeoSite,
+                        (SeoSite.id == SeoKeywordAsset.site_id)
+                        & (SeoSite.tenant_id == SeoKeywordAsset.tenant_id),
+                    )
                     .where(
                         SeoKeywordAsset.tenant_id.in_(entitled_tenant_ids),
                         SeoKeywordAsset.status == "active",
                         SeoKeywordAsset.site_id.is_not(None),
+                        SeoSite.status == "active",
                     )
                     .distinct()
                     .order_by(SeoKeywordAsset.tenant_id)
@@ -430,10 +437,16 @@ async def collect_daily_seo_rankings() -> None:
                 selected_rows = (
                     await session.execute(
                         select(SeoKeywordAsset.id, SeoKeywordAsset.site_id)
+                        .join(
+                            SeoSite,
+                            (SeoSite.id == SeoKeywordAsset.site_id)
+                            & (SeoSite.tenant_id == SeoKeywordAsset.tenant_id),
+                        )
                         .where(
                             SeoKeywordAsset.tenant_id == tenant_id,
                             SeoKeywordAsset.status == "active",
                             SeoKeywordAsset.site_id.is_not(None),
+                            SeoSite.status == "active",
                         )
                         .order_by(SeoKeywordAsset.priority, SeoKeywordAsset.id)
                         .limit(max_keywords + 1)
@@ -556,6 +569,12 @@ async def collect_daily_seo_rankings() -> None:
                             for keyword_id, keyword_site_id in keyword_sites
                             if keyword_site_id == site_id
                         ]
+                        if not await seo_site_is_operational(
+                            session, int(tenant_id), site_id
+                        ):
+                            totals["skipped_pairs"] += len(eligible_ids)
+                            tenant_skipped += len(eligible_ids)
+                            continue
                         pending_ids = [
                             keyword_id
                             for keyword_id in eligible_ids

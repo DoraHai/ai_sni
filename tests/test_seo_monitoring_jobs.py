@@ -22,6 +22,15 @@ class _SessionContext:
         return False
 
 
+@pytest.fixture(autouse=True)
+def _operational_site_gate():
+    with patch(
+        "app.seo_monitoring_jobs.seo_site_is_operational",
+        new=AsyncMock(return_value=True),
+    ):
+        yield
+
+
 def test_backlink_verification_normalizes_relative_and_tracking_urls() -> None:
     body = '<html><a href="/target/?utm_source=partner#section">Brand</a></html>'
 
@@ -336,6 +345,56 @@ def test_scheduled_backlinks_skip_sites_with_active_manual_runs() -> None:
     fetch.assert_not_awaited()
     finish_run.assert_awaited_once_with(
         91,
+        planned_count=1,
+        success_count=0,
+        failed_count=0,
+        skipped_count=1,
+        error_summary="",
+    )
+
+
+@pytest.mark.parametrize(
+    ("runner", "job_type", "setting_name", "candidate", "external_name", "expected"),
+    [
+        (
+            collect_scheduled_competitors,
+            "competitor",
+            "seo_competitor_scheduler_max_per_run",
+            SimpleNamespace(id=51, tenant_id=7, site_id=3, domain="competitor.example", status="active", last_checked_at=None),
+            "collect_competitor_content",
+            {"checked": 0, "created": 0, "failed": 0},
+        ),
+        (
+            verify_scheduled_backlinks,
+            "backlink",
+            "seo_backlink_scheduler_max_per_run",
+            SimpleNamespace(id=52, tenant_id=7, site_id=3, source_url="https://publisher.example/a", target_url="https://brand.example/", status="active", last_checked_at=None),
+            "fetch_url",
+            {"checked": 0, "found": 0, "lost": 0, "failed": 0},
+        ),
+    ],
+)
+def test_scheduled_monitoring_skips_site_disabled_after_candidate_selection(
+    runner, job_type, setting_name, candidate, external_name, expected
+) -> None:
+    session = SimpleNamespace(scalars=AsyncMock(return_value=[candidate]))
+    external = AsyncMock()
+    finish = AsyncMock()
+    with (
+        patch("app.seo_monitoring_jobs.get_settings", return_value=SimpleNamespace(**{setting_name: 50})),
+        patch("app.seo_monitoring_jobs.list_active_module_tenants", new=AsyncMock(return_value=[SimpleNamespace(id=7)])),
+        patch("app.seo_monitoring_jobs.async_session_factory", return_value=_SessionContext(session)),
+        patch("app.seo_monitoring_jobs.active_manual_automation_site_ids", new=AsyncMock(return_value=set())),
+        patch("app.seo_monitoring_jobs.start_automation_run", new=AsyncMock(return_value=111)),
+        patch("app.seo_monitoring_jobs.finish_automation_run", new=finish),
+        patch("app.seo_monitoring_jobs.seo_site_is_operational", new=AsyncMock(return_value=False)),
+        patch(f"app.seo_monitoring_jobs.{external_name}", new=external),
+    ):
+        assert asyncio.run(runner()) == expected
+
+    external.assert_not_awaited()
+    finish.assert_awaited_once_with(
+        111,
         planned_count=1,
         success_count=0,
         failed_count=0,

@@ -13,7 +13,7 @@ from app.seo_image_evidence import image_alt_evidence
 from app.seo_image_verification import evaluate_image_repair,enqueue_image_verification,verify_pending_images
 from app.models.seo_cockpit import SeoTask,SeoImageVerification
 from app.models.seo import SeoSitePage,SeoImageAltReview,SeoPageSnapshot,SeoCrawlRun,SeoKeywordAsset,SeoRankSnapshot,SeoContentAsset,SeoMetricSnapshot
-from app.models.module_workspace import SeoSite
+from app.models.module_workspace import SeoSite,TenantModule
 from app.models.seo import SeoBacklink
 from app.security.auth import AuthContext
 from app.api.seo_cockpit import TaskCreate,TaskUpdate,create_task,update_task,get_task,cancel_task
@@ -51,7 +51,7 @@ def run_database(scenario):
         try:
             async with engine.begin() as connection:
                 await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
-                for model in [SeoSite,SeoSitePage,SeoImageAltReview,SeoPageSnapshot,SeoCrawlRun,SeoTask,SeoImageVerification,SeoKeywordAsset,SeoRankSnapshot,SeoContentAsset,SeoMetricSnapshot,SeoBacklink]:
+                for model in [TenantModule,SeoSite,SeoSitePage,SeoImageAltReview,SeoPageSnapshot,SeoCrawlRun,SeoTask,SeoImageVerification,SeoKeywordAsset,SeoRankSnapshot,SeoContentAsset,SeoMetricSnapshot,SeoBacklink]:
                     table=model.__table__.to_metadata(MetaData())
                     for fk in list(table.foreign_key_constraints):table.constraints.remove(fk)
                     await connection.run_sync(lambda sync:table.create(sync))
@@ -98,6 +98,7 @@ def test_database_approval_queue_reuses_page_snapshot_and_preserves_proof():
     async def scenario(sessions):
         now=datetime.now(timezone.utc)
         async with sessions() as db:
+            db.add(TenantModule(id=1,tenant_id=1,module_code='seo',status='active'))
             db.add(SeoSite(id=1,tenant_id=1,tenant_module_id=1,name='brand',domain='brand.example',canonical_domain='brand.example',status='active'))
             db.add(SeoSitePage(id=1,tenant_id=1,site_id=1,url='https://brand.example/article',status='needs_fix'))
             db.add(SeoPageSnapshot(id=1,tenant_id=1,site_id=1,crawl_run_id=1,url='https://brand.example/article',image_alt_evidence=image_alt_evidence(BeautifulSoup('<img src="/a.png">','html.parser'),'https://brand.example/article')))
@@ -120,4 +121,22 @@ def test_database_approval_queue_reuses_page_snapshot_and_preserves_proof():
             assert job.status=='verified' and job.result_snapshot_id is not None
             assert job.evidence['before_snapshot_id']==1 and job.evidence['change_abs']==1
             assert (await db.get(SeoPageSnapshot,job.result_snapshot_id)).image_alt_evidence['observations'][0]['alt']=='品牌产品'
+    run_database(scenario)
+
+
+def test_image_worker_does_not_fetch_after_site_becomes_inactive():
+    async def scenario(sessions):
+        now=datetime.now(timezone.utc)
+        async with sessions() as db:
+            db.add(TenantModule(id=1,tenant_id=1,module_code='seo',status='active'))
+            db.add(SeoSite(id=1,tenant_id=1,tenant_module_id=1,name='brand',domain='brand.example',canonical_domain='brand.example',status='active'))
+            db.add(SeoSitePage(id=1,tenant_id=1,site_id=1,url='https://brand.example/article',status='needs_fix'))
+            db.add(SeoImageAltReview(id=1,tenant_id=1,site_id=1,page_id=1,snapshot_id=1,position=1,source_url='https://brand.example/a.png',observed_alt_state='missing',decision='informative',alt_suggestion='品牌产品',review_status='approved',actor_id=7,actor_name='test',reviewed_at=now,updated_at=now))
+            db.add(SeoImageVerification(id=1,tenant_id=1,site_id=1,page_id=1,review_id=1,status='pending',approved_at=now,available_at=now))
+            await db.commit()
+        fetch=AsyncMock()
+        with patch('app.seo_image_verification.async_session_factory',sessions),patch('app.module_scope.list_active_module_tenants',new=AsyncMock(return_value=[SimpleNamespace(id=1)])),patch('app.module_scope.seo_site_is_operational',new=AsyncMock(return_value=False)),patch('app.seo_image_verification.collect_page_snapshot',new=fetch):
+            await verify_pending_images()
+        fetch.assert_not_awaited()
+
     run_database(scenario)

@@ -26,7 +26,7 @@ from app.api.customer_modules import (
     seo_sites_router,
 )
 from app.models import GeoProject, SeoSite, TenantModule
-from app.module_scope import normalize_module_code
+from app.module_scope import normalize_module_code, seo_site_is_operational
 from app.permissions import CLIENT_PERMS, OPERATOR_PERMS
 from app.security.auth import AuthContext, _required, require_auth, require_scoped_auth
 
@@ -164,6 +164,18 @@ class ModuleWorkspaceTests(unittest.TestCase):
         self.assertEqual(normalize_module_code("SEO"), "seo")
         with self.assertRaises(HTTPException):
             normalize_module_code("diagnosis")
+
+    def test_operational_seo_site_requires_active_entitlement_and_site(self):
+        session = SimpleNamespace(scalar=AsyncMock(return_value=31))
+        self.assertTrue(
+            __import__("asyncio").run(seo_site_is_operational(session, 7, 31))
+        )
+        statement = session.scalar.await_args.args[0]
+        sql = str(statement)
+        self.assertIn("tenant_modules", sql)
+        self.assertIn("seo_sites.status", sql)
+        self.assertIn("tenant_modules.status", sql)
+        self.assertIn("tenant_modules.expires_at", sql)
 
     def test_seo_site_created_at_has_an_explicit_database_timezone(self):
         payload = _site_payload(

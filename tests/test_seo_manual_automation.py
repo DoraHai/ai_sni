@@ -40,6 +40,15 @@ class _SessionContext:
         return False
 
 
+@pytest.fixture(autouse=True)
+def _operational_site_gate():
+    with patch(
+        "app.seo_manual_automation.seo_site_is_operational",
+        new=AsyncMock(return_value=True),
+    ):
+        yield
+
+
 def _site(**overrides: object) -> SimpleNamespace:
     values = {"id": 3, "tenant_id": 7, "status": "active"}
     values.update(overrides)
@@ -236,6 +245,34 @@ def test_executor_stops_when_another_worker_already_claimed_the_run() -> None:
     factory.assert_not_called()
 
 
+def test_executor_skips_claimed_run_when_site_was_disabled_in_queue() -> None:
+    row = _run(status="running")
+    session = SimpleNamespace(get=AsyncMock(return_value=row))
+    finish = AsyncMock()
+    runner = AsyncMock()
+    with (
+        patch("app.seo_manual_automation.mark_automation_run_running", AsyncMock(return_value=True)),
+        patch("app.seo_manual_automation.async_session_factory", return_value=_SessionContext(session)),
+        patch(
+            "app.seo_manual_automation.seo_site_is_operational",
+            new=AsyncMock(return_value=False),
+        ),
+        patch("app.seo_manual_automation._run_backlinks", runner),
+        patch("app.seo_manual_automation.finish_automation_run", finish),
+    ):
+        asyncio.run(execute_manual_automation_run(19))
+
+    runner.assert_not_awaited()
+    finish.assert_awaited_once_with(
+        19,
+        planned_count=2,
+        success_count=0,
+        failed_count=0,
+        skipped_count=2,
+        error_summary="site_inactive",
+    )
+
+
 def test_backlink_result_is_not_written_after_asset_url_changes() -> None:
     candidate = SimpleNamespace(
         id=5,
@@ -253,9 +290,14 @@ def test_backlink_result_is_not_written_after_asset_url_changes() -> None:
         }
     )
     list_session = SimpleNamespace(scalars=AsyncMock(return_value=[candidate]))
+    gate_session = SimpleNamespace()
     update_session = SimpleNamespace(get=AsyncMock(return_value=changed), commit=AsyncMock())
     factory = MagicMock(
-        side_effect=[_SessionContext(list_session), _SessionContext(update_session)]
+        side_effect=[
+            _SessionContext(list_session),
+            _SessionContext(gate_session),
+            _SessionContext(update_session),
+        ]
     )
     fetch = AsyncMock(
         return_value=SimpleNamespace(

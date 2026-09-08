@@ -50,7 +50,7 @@ async def discover_published_backlinks():
     from app.database import async_session_factory
     from app.models.seo import SeoContentPublication, SeoContentAsset
     from app.models.module_workspace import SeoSite
-    from app.module_scope import list_active_module_tenants
+    from app.module_scope import list_active_module_tenants, seo_site_is_operational
     cutoff = (datetime.utcnow() - timedelta(days=7)).isoformat()
     retry_cutoff = (datetime.utcnow() - timedelta(hours=1)).isoformat()
     async with async_session_factory() as session:
@@ -73,9 +73,20 @@ async def discover_published_backlinks():
     for candidate in candidates:
         try:
             async with async_session_factory() as session:
+                if not await seo_site_is_operational(
+                    session, candidate.tenant_id, candidate.site_id
+                ):
+                    continue
                 evidence = await discover_backlinks(session, candidate.tenant_id, candidate.site_id, candidate.page_url, candidate.canonical_domain)
                 row = await session.get(SeoContentPublication, candidate.id, with_for_update=True)
-                if row is None or row.page_url != candidate.page_url or row.status != "published":
+                if (
+                    row is None
+                    or row.page_url != candidate.page_url
+                    or row.status != "published"
+                    or not await seo_site_is_operational(
+                        session, candidate.tenant_id, candidate.site_id
+                    )
+                ):
                     await session.rollback()
                     continue
                 row.link_discovery = evidence
