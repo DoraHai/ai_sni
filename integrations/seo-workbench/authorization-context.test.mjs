@@ -11,6 +11,11 @@ const identity = {
     { module_code: 'seo', status: 'active', available: true, expires_at: null },
   ] },
   tenants: { module: 'seo', tenants: [{ id: 16, name: '只读客户' }] },
+  sites: {
+    tenant_id: 16,
+    selection_policy: { selectable_statuses: ['active'], disabled_statuses: ['paused', 'archived'] },
+    sites: [{ id: 3, name: '站点 3', domain: 'site-3.example', status: 'active' }],
+  },
 }
 const emptyContent = { items: [], total: 0, page: 1, page_size: 1, status_counts: {} }
 const emptyPages = { items: [], total: 0, page: 1, page_size: 1, stats: { total: 0 } }
@@ -21,6 +26,7 @@ function preflightTransport(overrides = {}) {
     if (path === '/api/v1/auth/me') return json(data.me)
     if (path === '/api/v1/auth/modules') return json(data.modules)
     if (path === '/api/v1/auth/tenants?module=seo') return json(data.tenants)
+    if (path === '/api/v1/seo/workbench/sites?tenant_id=16') return json(data.sites)
     if (path === '/api/v1/seo/content-assets?tenant_id=16&site_id=3&page=1&page_size=1') return json(data.site ?? emptyContent)
     if (path === '/api/v1/seo/site-pages?tenant_id=16&site_id=3&page=1&page_size=1') return json(data.site ?? emptyPages)
     throw new Error(`unexpected ${path}`)
@@ -34,7 +40,9 @@ test('derives exact SEO reads and accepts an empty scoped content probe', async 
   assert.equal(context.siteId, 3)
   assert.deepEqual(context.allowedReads, ['contents', 'reviewHistory', 'publications', 'attempts', 'pages', 'pageDetail', 'imageEvidence'])
   assert.deepEqual(context.identity.siteVerification, { resource: 'contents', empty: true })
+  assert.equal(context.identity.site.status, 'active')
   assert.match(context.authorizationRevision, /"site_id":3/)
+  assert.match(context.authorizationRevision, /"site_status":"active"/)
 })
 
 test('uses the page probe when the role has no content permission', async () => {
@@ -89,6 +97,31 @@ test('does not probe a business route without a usable SEO read permission', asy
   assert.deepEqual(calls, ['/api/v1/auth/me', '/api/v1/auth/modules', '/api/v1/auth/tenants?module=seo'])
 })
 
+test('rejects missing, paused and archived sites before any business data read', async () => {
+  for (const [sites, code] of [
+    [[], 'SITE_NOT_ALLOWED'],
+    [[{ id: 3, name: 'Paused', domain: 'paused.example', status: 'paused' }], 'SITE_DISABLED'],
+    [[{ id: 3, name: 'Archived', domain: 'archived.example', status: 'archived' }], 'SITE_DISABLED'],
+  ]) {
+    const calls = []
+    const transport = preflightTransport({
+      sites: {
+        tenant_id: 16,
+        selection_policy: { selectable_statuses: ['active'], disabled_statuses: ['paused', 'archived'] },
+        sites,
+      },
+    })
+    await assert.rejects(resolveSeoReadonlyContext({
+      transport: async (...args) => { calls.push(args[0]); return transport(...args) },
+      tenantId: 16,
+      siteId: 3,
+    }), { code })
+    assert.ok(calls.includes('/api/v1/seo/workbench/sites?tenant_id=16'))
+    assert.ok(!calls.some(path => path.includes('/seo/content-assets?')))
+    assert.ok(!calls.some(path => path.includes('/seo/site-pages?')))
+  }
+})
+
 test('site probe distinguishes permission, ownership and server failures', async () => {
   for (const [status, code] of [[403, 'SITE_SCOPE_NOT_ALLOWED'], [404, 'SITE_NOT_ALLOWED'], [500, 'SITE_PREFLIGHT_FAILED']]) {
     const transport = preflightTransport({ site: {} })
@@ -122,6 +155,11 @@ test('an empty probe is bound to the explicitly selected site request', async ()
   const base = preflightTransport()
   const context = await resolveSeoReadonlyContext({ transport: async path => {
     calls.push(path)
+    if (path === '/api/v1/seo/workbench/sites?tenant_id=16') return json({
+      tenant_id: 16,
+      selection_policy: { selectable_statuses: ['active'], disabled_statuses: ['paused', 'archived'] },
+      sites: [{ id: 4, name: '站点 4', domain: 'site-4.example', status: 'active' }],
+    })
     if (path === '/api/v1/seo/content-assets?tenant_id=16&site_id=4&page=1&page_size=1') return json(emptyContent)
     return base(path)
   }, tenantId: 16, siteId: 4 })
@@ -171,6 +209,12 @@ test('a late 401 from an old site connect cannot clear the newer authorization',
       return new Promise(resolve => { finishOld = resolve })
     }
     if (path === '/api/v1/seo/content-assets?tenant_id=16&site_id=4&page=1&page_size=1') return json(emptyContent)
+    if (path === '/api/v1/seo/workbench/sites?tenant_id=16') return json({
+      tenant_id: 16,
+      selection_policy: { selectable_statuses: ['active'], disabled_statuses: ['paused', 'archived'] },
+      sites: [{ id: 3, name: '站点 3', domain: 'site-3.example', status: 'active' },
+        { id: 4, name: '站点 4', domain: 'site-4.example', status: 'active' }],
+    })
     if (path === '/api/v1/seo/content-assets?tenant_id=16&site_id=4') {
       return json({ items: [], total: 0, page: 1, page_size: 50, status_counts: {} })
     }
