@@ -107,7 +107,8 @@ def test_keywords_exact_account_join_and_asset_without_report(client):
     assert [r["metrics"]["cost"] for r in data["items"]]==[10,None,None]
     assert [r["report_association"]["status"] for r in data["items"]]==["matched","ownership_unknown","no_report"]
     assert data["association_summary"]=={
-        "scope":"current_page", "counts":{"matched":1,"account_mismatch":0,"no_report":1,"ownership_unknown":1},
+        "scope":"current_page", "counts":{"matched":1,"account_mismatch":0,"no_report":1,
+                                              "ownership_unknown":1,"report_ownership_unknown":0},
         "completeness":"unknown",
     }
     assert data["items"][0]["metrics"]["ctr"]==.02
@@ -123,11 +124,14 @@ def test_nullable_keyword_ownership_is_never_joined_or_cross_tenant():
     metadata.create_all(engine)
     with engine.begin() as conn:
         seed_fixture(conn, tables)
+        conn.execute(tables[BaiduAccount].insert(), dict(id=15, tenant_id=1, status="active"))
         conn.execute(tables[Keyword].insert(), [
             dict(id=7, tenant_id=1, baidu_account_id=None, keyword_id=103,
                  keyword="归属未知词", campaign_id=7, adgroup_id=8, synced_at=datetime(2026,9,4,1)),
             dict(id=8, tenant_id=1, baidu_account_id=11, keyword_id=104,
                  keyword="报告归属未知词", campaign_id=7, adgroup_id=8, synced_at=datetime(2026,9,4,1)),
+            dict(id=9, tenant_id=1, baidu_account_id=11, keyword_id=105,
+                 keyword="仅未知报告词", campaign_id=7, adgroup_id=8, synced_at=datetime(2026,9,4,1)),
         ])
         conn.execute(tables[KwReportSnapshot].insert(), [
             dict(tenant_id=1, baidu_account_id=11, keyword_id=103, report_date=date(2026,9,1),
@@ -137,6 +141,11 @@ def test_nullable_keyword_ownership_is_never_joined_or_cross_tenant():
                  raw_metrics={"ocpcConversionsDetail2": 4}),
             dict(tenant_id=1, baidu_account_id=None, keyword_id=104, report_date=date(2026,9,1),
                  device=0, cost=7, click=1, impression=7, fetched_at=datetime(2026,9,4,1), raw_metrics={}),
+            dict(tenant_id=1, baidu_account_id=15, keyword_id=104, report_date=date(2026,9,1),
+                 device=0, cost=6, click=1, impression=6, fetched_at=datetime(2026,9,4,1), raw_metrics={}),
+            dict(tenant_id=1, baidu_account_id=None, keyword_id=105, report_date=date(2026,9,1),
+                 device=0, cost=5, click=1, impression=5, fetched_at=datetime(2026,9,4,1),
+                 raw_metrics={"ocpcConversionsDetail2": 3}),
             dict(tenant_id=2, baidu_account_id=21, keyword_id=103, report_date=date(2026,9,1),
                  device=0, cost=999, click=99, impression=999, fetched_at=datetime(2026,9,4,1), raw_metrics={}),
         ])
@@ -153,15 +162,25 @@ def test_nullable_keyword_ownership_is_never_joined_or_cross_tenant():
         "status":"ownership_unknown",
         "join_keys":["baidu_account_id","keyword_id"],
         "matched_report_groups":0,
-        "other_observed_account_ids":[],
+        "other_observed_account_ids":[11],
+        "has_unassigned_reports":True,
         "completeness":"unknown",
     }
     mismatch = next(row for row in result["items"] if row["keyword_id"] == 104)
     assert mismatch["metrics"] == {"cost":None,"click":None,"impression":None,"ctr":None,"cpc":None}
     assert mismatch["report_association"]["status"] == "account_mismatch"
-    assert mismatch["report_association"]["other_observed_account_ids"] == [None]
+    assert mismatch["report_association"]["other_observed_account_ids"] == [15]
+    assert mismatch["report_association"]["has_unassigned_reports"] is True
+    assert mismatch["phone_button_clicks"]["status"] == "no_data"
+    report_unknown = next(row for row in result["items"] if row["keyword_id"] == 105)
+    assert report_unknown["report_association"]["status"] == "report_ownership_unknown"
+    assert report_unknown["report_association"]["other_observed_account_ids"] == []
+    assert report_unknown["report_association"]["has_unassigned_reports"] is True
+    assert report_unknown["metrics"] == {"cost":None,"click":None,"impression":None,"ctr":None,"cpc":None}
+    assert report_unknown["phone_button_clicks"]["status"] == "no_data"
     assert result["association_summary"]["counts"]["account_mismatch"] == 1
     assert result["association_summary"]["counts"]["ownership_unknown"] == 2
+    assert result["association_summary"]["counts"]["report_ownership_unknown"] == 1
 
 
 def test_explicit_archived_account_is_historical_only(client):
