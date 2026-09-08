@@ -32,14 +32,10 @@ def scheduled_patrol_settings_query(*, tenant_id: int | None = None):
     """Return the exact settings scan used to select scheduled patrol tenants."""
     from sqlalchemy import select
 
-    from app.models import GeoVisibilityPatrolSettings, Tenant
-    from app.geo.tenant_scope import geo_tenant_query
+    from app.models import GeoVisibilityPatrolSettings
 
     query = select(GeoVisibilityPatrolSettings).where(
         GeoVisibilityPatrolSettings.enabled.is_(True),
-        GeoVisibilityPatrolSettings.tenant_id.in_(
-            geo_tenant_query().with_only_columns(Tenant.id)
-        ),
     )
     if tenant_id is not None:
         query = query.where(GeoVisibilityPatrolSettings.tenant_id == tenant_id)
