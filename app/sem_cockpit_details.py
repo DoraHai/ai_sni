@@ -86,14 +86,26 @@ async def read_keywords(session, tenant_id, account_id, start, end, q, campaign_
     items = []
     for a in assets:
         key = (a.baidu_account_id, a.keyword_id)
-        matched_reports = by_key[key]
-        other_report_accounts = sorted(
-            {r.baidu_account_id for r in by_keyword[a.keyword_id] if r.baidu_account_id != a.baidu_account_id},
-            key=lambda value: (value is None, value or 0),
-        )
-        association_status = (
-            "matched" if matched_reports else "account_mismatch" if other_report_accounts else "no_report"
-        )
+        # NULL ownership is not a shared account identity. Two unassigned rows
+        # may originate from different Baidu accounts, so never join them.
+        ownership_unknown = a.baidu_account_id is None
+        matched_reports = [] if ownership_unknown else by_key[key]
+        keyword_reports = by_keyword[a.keyword_id]
+        other_report_accounts = sorted({
+            r.baidu_account_id for r in keyword_reports
+            if r.baidu_account_id is not None and r.baidu_account_id != a.baidu_account_id
+        })
+        has_unassigned_reports = any(r.baidu_account_id is None for r in keyword_reports)
+        if ownership_unknown:
+            association_status = "ownership_unknown"
+        elif matched_reports:
+            association_status = "matched"
+        elif other_report_accounts:
+            association_status = "account_mismatch"
+        elif has_unassigned_reports:
+            association_status = "report_ownership_unknown"
+        else:
+            association_status = "no_report"
         items.append({"keyword_id": a.keyword_id, "baidu_account_id": a.baidu_account_id,
                       "keyword": a.keyword, "campaign_id": a.campaign_id, "adgroup_id": a.adgroup_id,
                       "price": float(a.price) if a.price is not None else None, "pause": a.pause,
@@ -103,11 +115,14 @@ async def read_keywords(session, tenant_id, account_id, start, end, q, campaign_
                           "status": association_status,
                           "join_keys": ["baidu_account_id", "keyword_id"],
                           "matched_report_groups": len(matched_reports),
-                          "other_observed_account_ids": other_report_accounts if association_status == "account_mismatch" else [],
+                          "other_observed_account_ids": other_report_accounts,
+                          "has_unassigned_reports": has_unassigned_reports,
                           "completeness": "unknown",
                       },
-                      "phone_button_clicks": phone_summary(phone_by_key[key])})
-    association_counts = {status: 0 for status in ("matched", "account_mismatch", "no_report")}
+                      "phone_button_clicks": phone_summary([] if ownership_unknown else phone_by_key[key])})
+    association_counts = {status: 0 for status in (
+        "matched", "account_mismatch", "no_report", "ownership_unknown", "report_ownership_unknown"
+    )}
     for item in items:
         association_counts[item["report_association"]["status"]] += 1
     return {**envelope(tenant_id, account_scope, "keywords+kw_report_snapshots"),
@@ -115,7 +130,7 @@ async def read_keywords(session, tenant_id, account_id, start, end, q, campaign_
             "page": page, "page_size": page_size, "total": total, "items": items,
             "association_summary": {"scope": "current_page", "counts": association_counts,
                                     "completeness": "unknown"},
-            "scope_note": "关键词资产列表；只关联相同账户与关键词ID的报告，未归属记录不推断到其他账户"}
+            "scope_note": "关键词资产列表；只关联相同非空账户与关键词ID的报告，未归属记录不推断到其他账户"}
 
 
 async def read_dimensions(session, tenant_id, account_scope, keyword_id, start, end, expected):

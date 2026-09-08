@@ -35,15 +35,62 @@ test('keyword summary exposes account mismatch as a current-page boundary', () =
   const payload = example('keywords')
   payload.page_size = 1
   payload.items = [payload.items[1]]
-  payload.items[0].baidu_account_id = null
   payload.items[0].report_association.status = 'account_mismatch'
-  payload.items[0].report_association.other_observed_account_ids = [11]
-  payload.association_summary.counts = { matched: 0, account_mismatch: 1, no_report: 0 }
+  payload.items[0].report_association.other_observed_account_ids = [12]
+  payload.association_summary.counts = { matched: 0, account_mismatch: 1, no_report: 0,
+    ownership_unknown: 0, report_ownership_unknown: 0 }
   const card = semKeywordCard(payload, 9)
   assert.equal(card.state, 'partial')
   assert.match(card.reason, /本页展示 1 个/)
-  assert.match(card.reason, /1 个仅观察到其他账户的同 ID 报告/)
-  assert.equal(card.rows[0].report, '仅其他账户有同 ID 报告')
+  assert.match(card.reason, /1 个仅观察到已知的其他账户同 ID 报告/)
+  assert.equal(card.rows[0].report, '仅其他已知账户有同 ID 报告')
+  assert.equal(card.rows[0].cost, '暂无数据')
+})
+
+test('keyword summary keeps report-side unknown ownership distinct from mismatch', () => {
+  const payload = example('keywords')
+  payload.page_size = 1
+  payload.items = [payload.items[1]]
+  payload.items[0].report_association.status = 'report_ownership_unknown'
+  payload.items[0].report_association.has_unassigned_reports = true
+  payload.association_summary.counts = { matched: 0, account_mismatch: 0, no_report: 0,
+    ownership_unknown: 0, report_ownership_unknown: 1 }
+  const card = semKeywordCard(payload, 9)
+  assert.equal(card.state, 'partial')
+  assert.match(card.reason, /1 个只观察到归属未知的同 ID 报告/)
+  assert.equal(card.rows[0].report, '仅有归属未知报告，未关联')
+  assert.equal(card.rows[0].cost, '暂无数据')
+})
+
+test('keyword summary retains known mismatch and unknown report evidence together', () => {
+  const payload = example('keywords')
+  payload.page_size = 1
+  payload.items = [payload.items[1]]
+  payload.items[0].report_association.status = 'account_mismatch'
+  payload.items[0].report_association.other_observed_account_ids = [12]
+  payload.items[0].report_association.has_unassigned_reports = true
+  payload.association_summary.counts = { matched: 0, account_mismatch: 1, no_report: 0,
+    ownership_unknown: 0, report_ownership_unknown: 0 }
+  const card = semKeywordCard(payload, 9)
+  assert.match(card.reason, /1 个仅观察到已知的其他账户同 ID 报告/)
+  assert.match(card.reason, /1 个还存在归属未知报告/)
+  assert.equal(card.rows[0].report, '仅其他已知账户有同 ID 报告；另有归属未知报告')
+})
+
+test('keyword summary exposes unknown ownership without attaching report evidence', () => {
+  const payload = example('keywords')
+  payload.page_size = 1
+  payload.items = [payload.items[1]]
+  payload.items[0].baidu_account_id = null
+  payload.items[0].report_association.status = 'ownership_unknown'
+  payload.items[0].report_association.other_observed_account_ids = []
+  payload.association_summary.counts = { matched: 0, account_mismatch: 0, no_report: 0,
+    ownership_unknown: 1, report_ownership_unknown: 0 }
+  const card = semKeywordCard(payload, 9)
+  assert.equal(card.state, 'partial')
+  assert.match(card.reason, /本页展示 1 个/)
+  assert.match(card.reason, /1 个关键词资产缺少账户归属/)
+  assert.equal(card.rows[0].report, '资产账户归属未知，未关联报告')
   assert.equal(card.rows[0].cost, '暂无数据')
 })
 

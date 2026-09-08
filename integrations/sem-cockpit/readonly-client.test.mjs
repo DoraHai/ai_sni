@@ -260,17 +260,68 @@ test('keyword report association gaps must be explicit and page-scoped', async (
     data.items[1].report_association.status = 'account_mismatch'
     data.items[1].report_association.other_observed_account_ids = []
   })
+  await rejectsContract('keywords', data => {
+    data.items[1].report_association.status = 'account_mismatch'
+    data.items[1].report_association.other_observed_account_ids = [null]
+    data.association_summary.counts.account_mismatch = 1
+    data.association_summary.counts.no_report = 0
+  })
+  await rejectsContract('keywords', data => {
+    data.items[1].report_association.status = 'report_ownership_unknown'
+    data.association_summary.counts.report_ownership_unknown = 1
+    data.association_summary.counts.no_report = 0
+  })
   await rejectsContract('keywords', data => { data.association_summary.scope = 'all_pages' })
   await rejectsContract('keywords', data => { data.association_summary.counts.matched = 0 })
   const mismatch = await acceptsContract('keywords', data => {
-    data.account_scope = { mode: 'all', baidu_account_id: null, configured_account_ids: [11], observed_account_ids: [11, null] }
-    data.items[1].baidu_account_id = null
+    data.account_scope = { mode: 'all', baidu_account_id: null, configured_account_ids: [11, 12], observed_account_ids: [11] }
     data.items[1].report_association.status = 'account_mismatch'
-    data.items[1].report_association.other_observed_account_ids = [11]
+    data.items[1].report_association.other_observed_account_ids = [12]
     data.association_summary.counts.account_mismatch = 1
     data.association_summary.counts.no_report = 0
   }, { start_date: dates.start_date, end_date: dates.end_date })
   assert.equal(mismatch.items[1].report_association.status, 'account_mismatch')
+
+  const reportUnknown = await acceptsContract('keywords', data => {
+    data.account_scope = { mode: 'all', baidu_account_id: null, configured_account_ids: [11], observed_account_ids: [11] }
+    data.items[1].report_association.status = 'report_ownership_unknown'
+    data.items[1].report_association.has_unassigned_reports = true
+    data.association_summary.counts.report_ownership_unknown = 1
+    data.association_summary.counts.no_report = 0
+  }, { start_date: dates.start_date, end_date: dates.end_date })
+  assert.equal(reportUnknown.items[1].report_association.status, 'report_ownership_unknown')
+  assert.equal(reportUnknown.items[1].phone_button_clicks.status, 'no_data')
+
+  const mixed = await acceptsContract('keywords', data => {
+    data.account_scope = { mode: 'all', baidu_account_id: null, configured_account_ids: [11, 12], observed_account_ids: [11] }
+    data.items[1].report_association.status = 'account_mismatch'
+    data.items[1].report_association.other_observed_account_ids = [12]
+    data.items[1].report_association.has_unassigned_reports = true
+    data.association_summary.counts.account_mismatch = 1
+    data.association_summary.counts.no_report = 0
+  }, { start_date: dates.start_date, end_date: dates.end_date })
+  assert.deepEqual(mixed.items[1].report_association.other_observed_account_ids, [12])
+  assert.equal(mixed.items[1].report_association.has_unassigned_reports, true)
+
+  const assetUnknown = await acceptsContract('keywords', data => {
+    data.account_scope = { mode: 'all', baidu_account_id: null, configured_account_ids: [11], observed_account_ids: [11, null] }
+    data.items[1].baidu_account_id = null
+    data.items[1].report_association.status = 'ownership_unknown'
+    data.items[1].report_association.other_observed_account_ids = [11]
+    data.items[1].report_association.has_unassigned_reports = true
+    data.association_summary.counts.ownership_unknown = 1
+    data.association_summary.counts.no_report = 0
+  }, { start_date: dates.start_date, end_date: dates.end_date })
+  assert.equal(assetUnknown.items[1].report_association.status, 'ownership_unknown')
+
+  await rejectsContract('keywords', data => {
+    data.items[1].baidu_account_id = null
+  })
+  await rejectsContract('keywords', data => {
+    data.items[1].report_association.status = 'ownership_unknown'
+    data.association_summary.counts.ownership_unknown = 1
+    data.association_summary.counts.no_report = 0
+  })
 })
 
 test('dimension and search-window shapes reject incomplete or mixed summaries', async () => {
@@ -366,7 +417,8 @@ test('keyword default window can truthfully return no report anchor', async () =
   data.window = { start: null, end: null, timezone: 'Asia/Shanghai', inclusive: true, mode: 'latest_report_7d' }
   data.total = 0
   data.items = []
-  data.association_summary.counts = { matched: 0, account_mismatch: 0, no_report: 0 }
+  data.association_summary.counts = { matched: 0, account_mismatch: 0, no_report: 0,
+    ownership_unknown: 0, report_ownership_unknown: 0 }
   const client = createSemReadonlyClient({ onClear() {}, transport: async () => response(data) })
   client.setContext(context)
   assert.equal((await client.read('keywords')).window.start, null)
