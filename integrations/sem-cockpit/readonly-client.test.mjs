@@ -128,6 +128,23 @@ test('archived-account scope metadata must remain disjoint and explicit', async 
   })
 })
 
+test('non-active account exclusions must be unique, positive and outside configured scope', async () => {
+  for (const excluded of [[11], [12, 12], [0]]) {
+    const data = structuredClone(payload)
+    data.account_scope = { mode: 'all', baidu_account_id: null, configured_account_ids: [11], includes_unassigned: false }
+    data.account_scope.excluded_non_active_account_ids = excluded
+    const client = createSemReadonlyClient({ onClear() {}, transport: async () => response(data) })
+    client.setContext(context)
+    await assert.rejects(client.read('report', { start_date: dates.start_date, end_date: dates.end_date }), { code: 'CONTRACT_MISMATCH' })
+  }
+  const data = structuredClone(payload)
+  data.account_scope = { mode: 'all', baidu_account_id: null, configured_account_ids: [11], includes_unassigned: false }
+  data.account_scope.excluded_non_active_account_ids = [12]
+  const client = createSemReadonlyClient({ onClear() {}, transport: async () => response(data) })
+  client.setContext(context)
+  assert.deepEqual((await client.read('report', { start_date: dates.start_date, end_date: dates.end_date })).account_scope.excluded_non_active_account_ids, [12])
+})
+
 test('all synthetic API responses are accepted by the actual consumer contract', async () => {
   assert.equal(fixtures.synthetic, true)
   for (const example of fixtures.examples) {

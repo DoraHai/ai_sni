@@ -28,6 +28,7 @@
     "test:workbench-site-selection": "node --test src/views/workspace/cockpit/site-selection.test.mjs",
     "test:workbench-geo-summary": "node --test src/views/workspace/cockpit/geo-summary.test.mjs",
     "test:workbench-status-copy": "node --test src/views/workspace/cockpit/status-copy.test.mjs",
+    "test:workbench-sem-summary": "node --test src/views/workspace/cockpit/sem-summary.test.mjs",
     "deploy:sem": "bash scripts/deploy-sem.sh",
     "deploy:login": "bash scripts/deploy-auth.sh",
     "dev:diagnostic-center": "vite --config vite.diagnostic-center.config.js",

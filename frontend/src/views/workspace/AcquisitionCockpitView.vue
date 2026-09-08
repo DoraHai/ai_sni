@@ -9,6 +9,7 @@ import { createReadonlyTransport } from '../../../../integrations/workbench/read
 import { createWorkbenchViewState } from '../../../../integrations/workbench/view-state.mjs'
 import { createSemAuthorizedClient } from '../../../../integrations/sem-cockpit/authorization-context.mjs'
 import { semMetric } from '../../../../integrations/sem-cockpit/display.mjs'
+import { resolveSemDetailBatch, semKeywordCard, semScopeCard, semSearchTermCard } from './cockpit/sem-summary.mjs'
 import { createSeoAuthorizedClient } from '../../../../integrations/seo-workbench/authorization-context.mjs'
 import { readSeoSiteScope } from '../../../../integrations/seo-workbench/site-scope.mjs'
 import { seoSummaryCards } from '../../../../integrations/seo-workbench/summary.mjs'
@@ -120,6 +121,14 @@ function phoneCard(report) {
     sourceLabel: '百度推广报告原始字段', updatedLabel: report.coverage.updated_at || '未知', series: [], columns: [], rows: [],
   }
 }
+function unavailableSemDetailCard(id, label, error) {
+  return {
+    id, moduleCode: 'sem', moduleLabel: 'SEM', label, display: '读取失败', state: 'unavailable',
+    reason: `${error?.message || '明细接口暂时不可用'}。汇总卡仍保留，明细没有用演示值或零值替代。`,
+    contextRevision: viewState.revision, periodLabel: `${dateStart.value} 至 ${dateEnd.value}`,
+    sourceLabel: 'SEM 只读明细接口', updatedLabel: '本次读取未完成', series: [], columns: [], rows: [],
+  }
+}
 function publishCard(card) {
   const ticket = viewState.begin(card.moduleCode || 'sem', card.id)
   if (ticket.publish(card)) cards.value = viewState.snapshot().map(item => item.metric)
@@ -141,9 +150,24 @@ async function loadSem(generation) {
     const report = await semClient.read('report', { start_date: dateStart.value, end_date: dateEnd.value })
     if (generation !== loadGeneration) return
     for (const card of [
+      semScopeCard(report, viewState.revision),
       metricCard(report, 'cost', '推广花费', 'CNY'), metricCard(report, 'impression', '广告展现', 'count'),
       metricCard(report, 'click', '广告点击', 'count'), metricCard(report, 'ctr', '点击率', 'ratio'), phoneCard(report),
     ]) publishCard(card)
+    const settledDetails = await Promise.allSettled([
+      context.allowedReads.includes('keywords')
+        ? semClient.read('keywords', { start_date: dateStart.value, end_date: dateEnd.value, page: 1, page_size: 20 })
+        : Promise.resolve(null),
+      context.allowedReads.includes('searchTerms')
+        ? semClient.read('searchTerms', { page: 1, page_size: 50 })
+        : Promise.resolve(null),
+    ])
+    if (generation !== loadGeneration) return
+    const details = resolveSemDetailBatch(settledDetails)
+    if (details[0].value) publishCard(semKeywordCard(details[0].value, viewState.revision))
+    else if (context.allowedReads.includes('keywords')) publishCard(unavailableSemDetailCard('sem-keywords', '关键词资产', details[0].error))
+    if (details[1].value) publishCard(semSearchTermCard(details[1].value, viewState.revision))
+    else if (context.allowedReads.includes('searchTerms')) publishCard(unavailableSemDetailCard('sem-search-terms', '实际搜索词', details[1].error))
     moduleState.value.sem = 'ready'
     lastReadAt.value = new Date()
   } catch (error) {
