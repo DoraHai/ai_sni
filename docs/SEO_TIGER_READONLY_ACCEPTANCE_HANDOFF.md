@@ -34,11 +34,18 @@ python scripts/accept_tiger_seo_readonly.py \
 ## 验收顺序
 
 1. `/openapi.json`：实际指标 GET 必须挂载在 `/api/v1/seo/metrics/snapshot`。
-2. `/api/v1/auth/me`：普通账号必须绑定租户 4；超管允许 `tenant_id=null`。
+2. `/api/v1/auth/me`：必须返回真实 `user` envelope；本脚本只接受绑定租户 4 的
+   普通账号，且
+   `seo.assets`、`seo.content`、`seo.site`、`seo.keywords` 四项权限均为
+   `view` 或 `edit`；缺少任一项时在模块、站点和数据探测前停止。脚本不会根据角色
+   名称猜测授权，也不接受未绑定租户的超管会话代替普通账号验收。
 3. `/api/v1/auth/modules`：SEO 必须 `available=true`。
 4. `/api/v1/seo/sites?tenant_id=4` 与 `/api/v1/seo/workbench/sites?tenant_id=4`：按 `canonical_domain=tiger-coatings.cn` 精确匹配，再交叉核对 site ID、域名和状态。
 5. 没有匹配站点时输出 `status=empty_site`，立即停止，不猜 `site_id`。
-6. 站点为 paused/archived、不在服务端 selectable statuses 内，或两份列表的 ID/域名/状态不一致时，输出 `status=site_unavailable` 并停止后续探测。
+6. `selection_policy` 必须精确为 `selectable_statuses=[active]`、
+   `disabled_statuses=[paused, archived]`；顺序、缺项或额外状态发生漂移时，输出
+   `status=site_unavailable` 并停止。站点为 paused/archived，或两份列表的
+   ID/域名/状态不一致时，同样停止后续探测。
 7. 恰好一个可选站点时，读取内容、发布、页面、GSC 配置和指标快照，输出 count / coverage / freshness。
 
 空列表只证明该接口可读且当前无对象；不等于所有详情接口通过。`client_non_get_requests=0` 只证明客户端本次没有发送非 GET，不能单独证明服务端的 GET 永远无内部副作用。

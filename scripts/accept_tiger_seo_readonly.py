@@ -26,6 +26,14 @@ DEFAULT_TENANT_ID = 4
 EXPECTED_DOMAIN = "tiger-coatings.cn"
 TOKEN_ENV = "GSNIPERS_BEARER_TOKEN"
 METRICS_PATH = "/api/v1/seo/metrics/snapshot"
+REQUIRED_SEO_PERMISSIONS = (
+    "seo.assets",
+    "seo.content",
+    "seo.site",
+    "seo.keywords",
+)
+SELECTABLE_SITE_STATUSES = ["active"]
+DISABLED_SITE_STATUSES = ["paused", "archived"]
 
 
 class AcceptanceError(RuntimeError):
@@ -253,6 +261,38 @@ def _route_is_mounted(openapi: Any, path: str) -> bool:
     return isinstance(operations, dict) and isinstance(operations.get("get"), dict)
 
 
+def _identity_user(payload: Any) -> dict[str, Any]:
+    user = payload.get("user") if isinstance(payload, dict) else None
+    if not isinstance(user, dict):
+        raise AcceptanceError("GET /api/v1/auth/me did not return the user envelope")
+    if not isinstance(user.get("id"), int) or isinstance(user.get("id"), bool):
+        raise AcceptanceError("GET /api/v1/auth/me returned an invalid user id")
+    permissions = user.get("permissions")
+    if not isinstance(permissions, dict):
+        raise AcceptanceError("GET /api/v1/auth/me returned invalid permissions")
+    missing = [
+        key
+        for key in REQUIRED_SEO_PERMISSIONS
+        if permissions.get(key) not in {"view", "edit"}
+    ]
+    if missing:
+        raise AcceptanceError(
+            "ordinary SEO acceptance identity lacks required view permission: "
+            + ", ".join(missing)
+        )
+    return user
+
+
+def _selection_policy_matches(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    policy = payload.get("selection_policy")
+    return isinstance(policy, dict) and (
+        policy.get("selectable_statuses") == SELECTABLE_SITE_STATUSES
+        and policy.get("disabled_statuses") == DISABLED_SITE_STATUSES
+    )
+
+
 def run_acceptance(
     get_json: Callable[[str, dict[str, Any] | None], Any],
     *,
@@ -275,20 +315,19 @@ def run_acceptance(
         raise AcceptanceError(f"required GET route is not mounted: {METRICS_PATH}")
     report["route_contract"] = {"path": METRICS_PATH, "get_mounted": True}
 
-    identity = get_json("/api/v1/auth/me", None)
-    identity_tenant = identity.get("tenant_id") if isinstance(identity, dict) else None
-    # Superadmins can be unbound; ordinary users must be bound to Tiger.
-    if identity_tenant not in (None, tenant_id):
+    identity_payload = get_json("/api/v1/auth/me", None)
+    identity = _identity_user(identity_payload)
+    identity_tenant = identity.get("tenant_id")
+    # This acceptance is intentionally scoped to an ordinary Tiger account.
+    if identity_tenant != tenant_id:
         raise AcceptanceError(
             f"identity is bound to tenant {identity_tenant}, expected {tenant_id}"
         )
     report["identity"] = {
-        "id": identity.get("id") if isinstance(identity, dict) else None,
+        "id": identity.get("id"),
         "tenant_id": identity_tenant,
-        "is_superadmin": bool(identity.get("is_superadmin")) if isinstance(identity, dict) else False,
-        "permission_keys": sorted((identity.get("permissions") or {}).keys())
-        if isinstance(identity, dict) and isinstance(identity.get("permissions"), dict)
-        else [],
+        "permission_keys": sorted(identity["permissions"].keys()),
+        "required_permission_keys": list(REQUIRED_SEO_PERMISSIONS),
     }
 
     modules = get_json("/api/v1/auth/modules", None)
@@ -328,6 +367,10 @@ def run_acceptance(
         "expected_domain_matches": len(matches),
         "items": workbench_items,
     }
+    if not _selection_policy_matches(sites_workbench):
+        report["status"] = "site_unavailable"
+        report["site_unavailable_reasons"] = ["selection_policy_mismatch"]
+        return report
     if not matches:
         if admin_domain_candidates:
             report["status"] = "site_unavailable"
@@ -367,12 +410,7 @@ def run_acceptance(
         drift_reasons.append("expected_domain_missing_or_duplicate_in_workbench_list")
     elif workbench_domain_matches[0].get("id") != site_id:
         drift_reasons.append("site_id_mismatch_for_expected_domain")
-    selectable = (
-        sites_workbench.get("selection_policy", {}).get("selectable_statuses", [])
-        if isinstance(sites_workbench, dict)
-        else []
-    )
-    if admin_site.get("status") not in selectable:
+    if admin_site.get("status") not in SELECTABLE_SITE_STATUSES:
         drift_reasons.append("site_status_not_selectable")
     if drift_reasons:
         report["status"] = "site_unavailable"

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from urllib.request import Request
+from urllib.parse import urlparse
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "accept_tiger_seo_readonly.py"
@@ -34,17 +35,25 @@ def base_responses(sites):
                 "/api/v1/seo/metrics/snapshot": {"get": {"responses": {"200": {}}}}
             }
         },
-        "/api/v1/auth/me": {
+        "/api/v1/auth/me": {"user": {
             "id": 5,
             "tenant_id": 4,
-            "permissions": {"seo.content": "view", "seo.site": "view"},
-        },
+            "permissions": {
+                "seo.assets": "view",
+                "seo.content": "view",
+                "seo.site": "view",
+                "seo.keywords": "view",
+            },
+        }},
         "/api/v1/auth/modules": {
             "modules": [{"module_code": "seo", "available": True}]
         },
         "/api/v1/seo/sites": {"sites": sites},
         "/api/v1/seo/workbench/sites": {
-            "selection_policy": {"selectable_statuses": ["active"]},
+            "selection_policy": {
+                "selectable_statuses": ["active"],
+                "disabled_statuses": ["paused", "archived"],
+            },
             "sites": sites,
         },
     }
@@ -130,13 +139,23 @@ def test_public_crawl_is_labelled_preflight_not_production(tmp_path):
     assert summary["fetch_errors"] == 1
 
 
-def test_cross_tenant_identity_fails_before_module_probe():
+@pytest.mark.parametrize("identity_tenant", [16, None])
+def test_unscoped_or_cross_tenant_identity_fails_before_module_probe(identity_tenant):
     fake = FakeGet(
         {
             "/openapi.json": {
                 "paths": {"/api/v1/seo/metrics/snapshot": {"get": {}}}
             },
-            "/api/v1/auth/me": {"id": 9, "tenant_id": 16},
+            "/api/v1/auth/me": {"user": {
+                "id": 9,
+                "tenant_id": identity_tenant,
+                "permissions": {
+                    "seo.assets": "view",
+                    "seo.content": "view",
+                    "seo.site": "view",
+                    "seo.keywords": "view",
+                },
+            }},
         }
     )
 
@@ -144,6 +163,58 @@ def test_cross_tenant_identity_fails_before_module_probe():
         acceptance.run_acceptance(fake)
 
     assert fake.calls == [("/openapi.json", None), ("/api/v1/auth/me", None)]
+
+
+@pytest.mark.parametrize("missing", acceptance.REQUIRED_SEO_PERMISSIONS)
+def test_missing_required_permission_stops_before_module_site_and_data_probes(missing):
+    responses = base_responses([tiger_site()])
+    del responses["/api/v1/auth/me"]["user"]["permissions"][missing]
+    fake = FakeGet(responses)
+
+    with pytest.raises(acceptance.AcceptanceError, match=missing):
+        acceptance.run_acceptance(fake)
+
+    assert fake.calls == [("/openapi.json", None), ("/api/v1/auth/me", None)]
+
+
+class StubHttpResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return json.dumps(self.payload).encode("utf-8")
+
+
+class RecordingOpener:
+    def __init__(self, payloads):
+        self.payloads = payloads
+        self.requests = []
+
+    def open(self, request, timeout):
+        self.requests.append((request, timeout))
+        return StubHttpResponse(self.payloads[urlparse(request.full_url).path])
+
+
+def test_real_get_client_enforces_auth_me_envelope_and_permissions_before_probes():
+    responses = base_responses([tiger_site()])
+    responses["/api/v1/auth/me"]["user"]["permissions"]["seo.keywords"] = "none"
+    opener = RecordingOpener(responses)
+    client = acceptance.GetOnlyClient("synthetic-token", opener=opener)
+
+    with pytest.raises(acceptance.AcceptanceError, match="seo.keywords"):
+        acceptance.run_acceptance(client.get_json)
+
+    assert [request.full_url for request, _ in opener.requests] == [
+        "https://gsnipers.snipers.com.cn/openapi.json",
+        "https://gsnipers.snipers.com.cn/api/v1/auth/me",
+    ]
+    assert all(request.get_method() == "GET" for request, _ in opener.requests)
 
 
 def test_script_has_no_write_http_methods():
@@ -223,6 +294,22 @@ def test_non_selectable_site_stops_before_data_probes(status):
 
     assert result["status"] == "site_unavailable"
     assert result["site_unavailable_reasons"] == ["site_status_not_selectable"]
+    assert len(fake.calls) == 5
+
+
+def test_paused_selectable_policy_drift_fails_closed_before_data_probes():
+    site = {**tiger_site(), "status": "paused"}
+    responses = base_responses([site])
+    responses["/api/v1/seo/workbench/sites"]["selection_policy"] = {
+        "selectable_statuses": ["active", "paused"],
+        "disabled_statuses": ["archived"],
+    }
+    fake = FakeGet(responses)
+
+    result = acceptance.run_acceptance(fake)
+
+    assert result["status"] == "site_unavailable"
+    assert result["site_unavailable_reasons"] == ["selection_policy_mismatch"]
     assert len(fake.calls) == 5
 
 
