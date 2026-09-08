@@ -689,6 +689,42 @@ class PublishingChannelUpdate(BaseModel):
     sort_order: int | None = None
 
 
+class SchedulerSafeFoundationBusiness(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    description: str | None = None
+    sort_order: int = 0
+    profile: dict[str, Any] | None = None
+
+
+class SchedulerSafeFoundationPrompt(BaseModel):
+    question: str = Field(..., min_length=4, max_length=500)
+    priority: int = 0
+    tags: list[str] = Field(default_factory=list)
+    language: str = "zh-CN"
+    market: Literal["cn", "global", "both"] = "cn"
+    source: Literal["manual"] = "manual"
+    is_brand_probe: Literal[False] = False
+
+
+class SchedulerSafeFoundationChannel(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    channel_type: PublishingChannelType
+    publish_mode: Literal["manual_only"] = "manual_only"
+    base_url: str | None = Field(None, max_length=2000)
+    content_rules: dict[str, Any] | None = None
+    enabled: Literal[False] = False
+    sort_order: int = 0
+
+
+class SchedulerSafeFoundationRequest(BaseModel):
+    tenant_id: int
+    business: SchedulerSafeFoundationBusiness
+    prompts: list[SchedulerSafeFoundationPrompt] = Field(
+        ..., min_length=1, max_length=20
+    )
+    channel: SchedulerSafeFoundationChannel
+
+
 class ChannelAccountCreate(BaseModel):
     tenant_id: int
     channel_id: int

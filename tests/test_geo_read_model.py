@@ -111,7 +111,8 @@ def test_capabilities_do_not_claim_live_mode_from_a_key(stance, configured, mode
 
 def test_routes_only_allow_get_and_use_read_session():
     assert {route.path.removeprefix('/integration/read') for route in router.routes} == {
-        '/answers', '/answers/{snapshot_id}', '/period-context', '/capabilities', '/content-tasks/{content_task_id}',
+        '/answers', '/answers/{snapshot_id}', '/period-context', '/capabilities',
+        '/scheduler-eligibility', '/content-tasks/{content_task_id}',
         '/async-jobs', '/async-jobs/{async_job_id}', '/patrol-runs', '/patrol-runs/{patrol_run_id}'}
     for route in router.routes:
         assert route.methods == {'GET'}

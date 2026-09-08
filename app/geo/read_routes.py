@@ -12,7 +12,8 @@ from sqlalchemy import case, func, or_, and_, select, text
 from app.config import get_settings
 from app.database import async_session_factory
 from app.security.auth import require_scoped_auth
-from app.models import (GeoAnswerSnapshot, GeoPrompt, GeoVisibilityPatrolRun, GeoTrackingEngine,
+from app.models import (GeoAnswerSnapshot, GeoPrompt, GeoVisibilityPatrolRun,
+                        GeoVisibilityPatrolSettings, GeoTrackingEngine,
                         GeoPublishingChannel, GeoContentTask, GeoArticleVersion, GeoChannelVariant,
                         GeoPublication, GeoAsyncJob, GeoActionTicket, GeoAiSetting)
 from app.geo.integration_metrics import load_weekly_snapshot, _load_snapshot_window, closed_week_end
@@ -40,6 +41,47 @@ async def context_for(session, tenant_id, week_end):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return period_context(tenant_id, end, current, previous)
+
+
+@router.get('/scheduler-eligibility')
+async def get_scheduler_eligibility(
+    tenant_id: int,
+    ctx=Depends(require_scoped_auth),
+    session=Depends(read_session),
+):
+    """Report scheduler scan eligibility without initializing or mutating settings."""
+    from app.geo.content.geo_scheduler import scheduled_patrol_settings_query
+
+    ctx.ensure_tenant(tenant_id)
+    settings = await session.scalar(
+        select(GeoVisibilityPatrolSettings).where(
+            GeoVisibilityPatrolSettings.tenant_id == tenant_id,
+        )
+    )
+    selected = await session.scalar(
+        scheduled_patrol_settings_query(tenant_id=tenant_id)
+    )
+    active_prompt_count = await session.scalar(
+        select(func.count(GeoPrompt.id)).where(
+            GeoPrompt.tenant_id == tenant_id,
+            GeoPrompt.status == 'active',
+        )
+    )
+    return {
+        'tenant_id': tenant_id,
+        'observed_at': iso(datetime.now(timezone.utc)),
+        'read_only': True,
+        'patrol_settings': {
+            'exists': settings is not None,
+            'enabled': bool(settings.enabled) if settings is not None else False,
+        },
+        'active_prompt_count': int(active_prompt_count or 0),
+        'scheduler_eligible': selected is not None,
+        'selection_basis': 'geo_visibility_patrol_settings.enabled=true',
+        'selection_stage': 'enabled_settings_scan',
+        'active_prompts_affect_selection': False,
+        'run_creation_guaranteed': False,
+    }
 
 
 @router.get('/period-context')
