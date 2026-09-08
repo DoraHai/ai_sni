@@ -6,8 +6,15 @@
 
 - `scripts/accept_tiger_seo_readonly.py`：生产 GET-only 验收脚本。
 - `tests/test_accept_tiger_seo_readonly.py`：空站点、未配 GSC、无内容、无发布、跨租户拒绝和公开抓取来源标签的离线契约。
+- `docs/SEO_TIGER_ADMIN_EXECUTION_RUNBOOK.md`：可直接交给管理员/真人的执行单、
+  回传字段，以及 `empty_site` 后的查重和建站申请规范。
 
 ## 运行方式
+
+生产验收当前为 `execution_status=blocked_until_merged`。必须先合并 PR #467，再从合并
+记录取得并保存实际包含本修复的完整 main SHA，并按管理员执行单校验
+`scripts/accept_tiger_seo_readonly.py` 的固定 SHA-256。任何一步未满足时不得运行以下
+命令；PR 分支或创建 PR 时的旧 main 不能作为生产执行基线。
 
 人工先用获准账号登录，再通过受控渠道把当前 Bearer 会话放入运行进程的环境变量。不要把令牌放在命令行、脚本、输出文件或聊天里。
 
@@ -36,12 +43,16 @@ python scripts/accept_tiger_seo_readonly.py \
 1. `/openapi.json`：实际指标 GET 必须挂载在 `/api/v1/seo/metrics/snapshot`。
 2. `/api/v1/auth/me`：必须返回真实 `user` envelope；本脚本只接受绑定租户 4 的
    普通账号，且
-   `seo.assets`、`seo.content`、`seo.site`、`seo.keywords` 四项权限均为
+   `seo.assets`、`seo.content`、`seo.site`、`seo.keywords`、`seo.dashboard`
+   五项权限均为
    `view` 或 `edit`；缺少任一项时在模块、站点和数据探测前停止。脚本不会根据角色
    名称猜测授权，也不接受未绑定租户的超管会话代替普通账号验收。
 3. `/api/v1/auth/modules`：SEO 必须 `available=true`。
-4. `/api/v1/seo/sites?tenant_id=4` 与 `/api/v1/seo/workbench/sites?tenant_id=4`：按 `canonical_domain=tiger-coatings.cn` 精确匹配，再交叉核对 site ID、域名和状态。
-5. 没有匹配站点时输出 `status=empty_site`，立即停止，不猜 `site_id`。
+4. `/api/v1/seo/sites?tenant_id=4` 与 `/api/v1/seo/workbench/sites?tenant_id=4`：
+   先分别按目标域规范化匹配，再比较两表目标域是否同时存在及 site ID 集合；任一单向
+   存在或 ID 集合漂移均输出 `status=site_unavailable`，之后才核对域名和状态。
+5. 只有两表目标域匹配数均为 0 时才输出 `status=empty_site`，立即停止，不猜
+   `site_id`。
 6. `selection_policy` 必须精确为 `selectable_statuses=[active]`、
    `disabled_statuses=[paused, archived]`；顺序、缺项或额外状态发生漂移时，输出
    `status=site_unavailable` 并停止。站点为 paused/archived，或两份列表的

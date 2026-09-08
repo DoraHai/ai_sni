@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -11,11 +12,33 @@ from urllib.parse import urlparse
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "accept_tiger_seo_readonly.py"
+RUNBOOK = Path(__file__).parents[1] / "docs" / "SEO_TIGER_ADMIN_EXECUTION_RUNBOOK.md"
 SPEC = importlib.util.spec_from_file_location("accept_tiger_seo_readonly", SCRIPT)
 assert SPEC and SPEC.loader
 acceptance = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = acceptance
 SPEC.loader.exec_module(acceptance)
+
+
+def test_admin_runbook_blocks_unmerged_or_old_main_execution():
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+    # Git normalizes this text file to LF. Hash those repository bytes so the
+    # execution checksum is identical in Linux and Windows autocrlf checkouts.
+    script_bytes = SCRIPT.read_bytes().replace(b"\r\n", b"\n")
+    script_sha256 = hashlib.sha256(script_bytes).hexdigest()
+
+    assert "execution_status=blocked_until_merged" in runbook
+    assert "required_pull_request=#467" in runbook
+    assert "8ba839703d91e7720bf8160b249d61ed3c704ef8" not in runbook
+    assert f"expected_script_sha256={script_sha256}" in runbook
+    assert f"'{script_sha256}'" in runbook
+    assert "sha256sum -c -" in runbook
+    assert "execution_main_sha" in runbook
+    assert "git merge-base --is-ancestor \"$EXECUTION_MAIN_SHA\" origin/main" in runbook
+
+    gate_position = runbook.index("sha256sum -c -")
+    acceptance_position = runbook.index("python scripts/accept_tiger_seo_readonly.py")
+    assert gate_position < acceptance_position
 
 
 class FakeGet:
@@ -43,6 +66,7 @@ def base_responses(sites):
                 "seo.content": "view",
                 "seo.site": "view",
                 "seo.keywords": "view",
+                "seo.dashboard": "view",
             },
         }},
         "/api/v1/auth/modules": {
@@ -154,6 +178,7 @@ def test_unscoped_or_cross_tenant_identity_fails_before_module_probe(identity_te
                     "seo.content": "view",
                     "seo.site": "view",
                     "seo.keywords": "view",
+                    "seo.dashboard": "view",
                 },
             }},
         }
@@ -203,11 +228,11 @@ class RecordingOpener:
 
 def test_real_get_client_enforces_auth_me_envelope_and_permissions_before_probes():
     responses = base_responses([tiger_site()])
-    responses["/api/v1/auth/me"]["user"]["permissions"]["seo.keywords"] = "none"
+    responses["/api/v1/auth/me"]["user"]["permissions"]["seo.dashboard"] = "none"
     opener = RecordingOpener(responses)
     client = acceptance.GetOnlyClient("synthetic-token", opener=opener)
 
-    with pytest.raises(acceptance.AcceptanceError, match="seo.keywords"):
+    with pytest.raises(acceptance.AcceptanceError, match="seo.dashboard"):
         acceptance.run_acceptance(client.get_json)
 
     assert [request.full_url for request, _ in opener.requests] == [
@@ -316,8 +341,8 @@ def test_paused_selectable_policy_drift_fails_closed_before_data_probes():
 @pytest.mark.parametrize(
     "workbench_site,reason",
     [
-        (None, "site_id_missing_or_duplicate_in_workbench_list"),
-        ({**tiger_site(), "domain": "https://wrong.example/"}, "domain_mismatch_between_site_lists"),
+        (None, "expected_domain_presence_mismatch_between_site_lists"),
+        ({**tiger_site(), "domain": "https://wrong.example/"}, "expected_domain_presence_mismatch_between_site_lists"),
         ({**tiger_site(), "domain": "http://www.tiger-coatings.cn/"}, "domain_mismatch_between_site_lists"),
         ({**tiger_site(), "status": "paused"}, "status_mismatch_between_site_lists"),
     ],
@@ -333,6 +358,36 @@ def test_site_list_drift_is_unavailable_and_stops(workbench_site, reason):
 
     assert result["status"] == "site_unavailable"
     assert reason in result["site_unavailable_reasons"]
+    assert len(fake.calls) == 5
+
+
+def test_workbench_only_expected_domain_is_unavailable_not_empty():
+    responses = base_responses([])
+    responses["/api/v1/seo/workbench/sites"]["sites"] = [tiger_site()]
+    fake = FakeGet(responses)
+
+    result = acceptance.run_acceptance(fake)
+
+    assert result["status"] == "site_unavailable"
+    assert result["site_unavailable_reasons"] == [
+        "expected_domain_presence_mismatch_between_site_lists"
+    ]
+    assert len(fake.calls) == 5
+
+
+def test_expected_domain_id_set_drift_is_unavailable_before_empty_decision():
+    responses = base_responses([tiger_site()])
+    responses["/api/v1/seo/workbench/sites"]["sites"] = [
+        {**tiger_site(), "id": 45}
+    ]
+    fake = FakeGet(responses)
+
+    result = acceptance.run_acceptance(fake)
+
+    assert result["status"] == "site_unavailable"
+    assert result["site_unavailable_reasons"] == [
+        "expected_domain_id_set_mismatch_between_site_lists"
+    ]
     assert len(fake.calls) == 5
 
 
