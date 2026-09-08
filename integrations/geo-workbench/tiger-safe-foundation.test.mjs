@@ -48,6 +48,10 @@ test('Tiger foundation forbids every operation that could collect, generate or p
     'create_optimization_unit',
     'put_tracking_engines',
     'enable_patrol_settings',
+    'put_visibility_patrol_settings',
+    'put_ai_settings',
+    'test_ai_settings',
+    'put_channel_polish_prompts',
     'create_patrol_run',
     'create_content_task',
     'create_async_generation_job',
@@ -57,4 +61,17 @@ test('Tiger foundation forbids every operation that could collect, generate or p
   ]
   assert.deepEqual(fixture.prohibited_operations, required)
   assert.deepEqual(Object.keys(fixture.creates).sort(), ['optimization_business', 'prompts', 'publishing_channel'])
+})
+
+test('Tiger foundation prohibits every route-level settings mutation and settings test', () => {
+  const prohibited = new Set(fixture.prohibited_operations)
+  for (const operation of [
+    'put_tracking_engines',
+    'put_visibility_patrol_settings',
+    'put_ai_settings',
+    'test_ai_settings',
+    'put_channel_polish_prompts',
+  ]) {
+    assert.equal(prohibited.has(operation), true, `${operation} must stay prohibited`)
+  }
 })

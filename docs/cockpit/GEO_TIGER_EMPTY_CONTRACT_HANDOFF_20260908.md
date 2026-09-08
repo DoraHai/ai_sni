@@ -53,8 +53,12 @@ Python tests prove that:
 - there are exactly three unique manual questions and no optimization unit;
 - the website candidate is `manual_only` and disabled;
 - no credential or token material is present;
-- the fixture explicitly prohibits engine writes, patrol enablement/runs, content
-  tasks, generation, channel accounts/variants and publication.
+- the fixture explicitly prohibits every route-level settings mutation or test:
+  `put_tracking_engines`, `put_visibility_patrol_settings`, `put_ai_settings`,
+  `test_ai_settings` and `put_channel_polish_prompts`;
+- it also prohibits patrol enablement/runs, content tasks, generation, channel
+  accounts/variants and publication. A settings test is treated as an operation, not
+  as a harmless read.
 
 The fixture does not prove that production remains empty. That requires a separate,
 authorized, authenticated GET-only acceptance run. It must not be inferred from this
