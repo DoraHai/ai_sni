@@ -1,5 +1,8 @@
 name: Production SEM platform routes
 
+# Retrigger the exact reviewed route package after the restricted server module
+# was upgraded; the previous run correctly stopped on a stale branch head.
+
 on:
   pull_request:
     branches: [codex/production-sem]
