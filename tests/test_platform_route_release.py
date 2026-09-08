@@ -489,7 +489,8 @@ def test_release_waits_for_new_nginx_worker_after_transient_404(tmp_path: Path):
     assert result.returncode == 0, result.stderr
     assert target.read_bytes() == (ROOT / "deploy/gsnipers-platform-routes.conf").read_bytes()
     recorded = calls.read_text(encoding="utf-8")
-    assert recorded.count("curl ") == 13
+    assert recorded.count("curl ") == 14
+    assert recorded.count("https://gsnipers.snipers.com.cn/seo-openapi.json") == 1
     assert recorded.count("sleep 1") == 1
 
 
