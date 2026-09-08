@@ -4,9 +4,11 @@ from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from app.database import get_session
 from app.geo.content.geo_scheduler import (
     current_patrol_settings,
     lock_scheduler_tenant,
@@ -20,7 +22,7 @@ from app.geo.content.routes import (
 )
 from app.geo.content.schemas import SchedulerSafeFoundationRequest
 from app.geo.tenant_scope import require_geo_read_entitlement
-from app.security.auth import _required
+from app.security.auth import AuthContext, _required, require_scoped_auth
 
 
 def _route():
@@ -185,13 +187,145 @@ def test_settings_write_and_atomic_foundation_share_scheduler_tenant_lock():
     assert "lock_scheduler_tenant" in scheduler_source
     assert "current_patrol_settings" in scheduler_source
     assert foundation_route.methods == {"POST"}
-    assert any(
+    assert not any(
         dep.call is require_geo_read_entitlement
         for dep in foundation_route.dependant.dependencies
     )
     assert _required(
         "/api/v1/geo/integration/scheduler-safe-foundation", "POST"
     ) == ({"geo.content"}, True)
+
+
+def _runbook_foundation_payload():
+    return {
+        "tenant_id": 4,
+        "business": {
+            "name": "粉末涂料与表面技术",
+            "description": "TIGER/老虎的粉末涂料与表面技术业务画像",
+            "sort_order": 0,
+            "profile": {
+                "product_name": "TIGER/老虎",
+                "website": "https://www.tiger-coatings.cn/",
+                "summary": "TIGER/老虎粉末涂料与表面技术",
+                "industry": "粉末涂料与表面技术",
+            },
+        },
+        "prompts": [
+            {
+                "question": "在建筑幕墙和系统门窗中选择粉末涂料时，最关键的性能指标和验收标准有哪些？",
+                "priority": 0,
+                "tags": ["cockpit-foundation"],
+                "source": "manual",
+                "language": "zh-CN",
+                "market": "cn",
+                "is_brand_probe": False,
+            },
+            {
+                "question": "粉末涂料与常见液体涂料相比，在成本、寿命、施工和环保方面有什么差异？",
+                "priority": 0,
+                "tags": ["cockpit-foundation"],
+                "source": "manual",
+                "language": "zh-CN",
+                "market": "cn",
+                "is_brand_probe": False,
+            },
+            {
+                "question": "汽车轮毂、家具家电或机器设备出现涂层失效时，常见原因、排查步骤和选型建议是什么？",
+                "priority": 0,
+                "tags": ["cockpit-foundation"],
+                "source": "manual",
+                "language": "zh-CN",
+                "market": "cn",
+                "is_brand_probe": False,
+            },
+        ],
+        "channel": {
+            "name": "TIGER 官方网站",
+            "channel_type": "website",
+            "publish_mode": "manual_only",
+            "base_url": "https://www.tiger-coatings.cn/",
+            "content_rules": None,
+            "enabled": False,
+            "sort_order": 0,
+        },
+    }
+
+
+def _foundation_http(ctx):
+    app = FastAPI()
+    app.include_router(content_router, prefix="/api/v1/geo")
+    next_id = iter(range(101, 110))
+    session = Mock(
+        scalar=AsyncMock(side_effect=[NS(id=4), None]),
+        scalars=AsyncMock(return_value=[]),
+        get=AsyncMock(return_value=NS(id=4, name="Tiger")),
+        flush=AsyncMock(),
+        commit=AsyncMock(),
+    )
+
+    def add(row):
+        if getattr(row, "id", None) is None:
+            row.id = next(next_id)
+
+    session.add = Mock(side_effect=add)
+    app.dependency_overrides[require_scoped_auth] = lambda: ctx
+    app.dependency_overrides[get_session] = lambda: session
+    return TestClient(app), session
+
+
+def test_runbook_body_only_http_request_reaches_atomic_handler_without_query_tenant():
+    ctx = AuthContext(
+        user_id=9,
+        username="tiger_operator",
+        role_name="tenant-editor",
+        tenant_id=4,
+        permissions={"geo.content": "edit"},
+    )
+    http, session = _foundation_http(ctx)
+
+    with (
+        patch(
+            "app.geo.content.geo_scheduler.lock_scheduler_tenant",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.geo.content.geo_scheduler.current_patrol_settings",
+            AsyncMock(return_value=NS(enabled=False)),
+        ),
+    ):
+        response = http.post(
+            "/api/v1/geo/integration/scheduler-safe-foundation",
+            json=_runbook_foundation_payload(),
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["tenant_id"] == 4
+    assert response.json()["atomic"] is True
+    assert len(response.json()["decisions"]["prompts"]) == 3
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "ctx",
+    [
+        AuthContext(None, "api-key", "superadmin", None, is_superadmin=True),
+        AuthContext(None, "api-key", "tenant-key", 4, is_superadmin=False),
+        AuthContext(9, "other-user", "tenant-editor", 16, {"geo.content": "edit"}),
+        AuthContext(9, "unbound-user", "superadmin", None, {"geo.content": "edit"}),
+    ],
+)
+def test_atomic_foundation_rejects_superadmin_api_key_cross_tenant_and_unbound_user(ctx):
+    http, session = _foundation_http(ctx)
+
+    response = http.post(
+        "/api/v1/geo/integration/scheduler-safe-foundation",
+        json=_runbook_foundation_payload(),
+    )
+
+    assert response.status_code == 403
+    session.scalar.assert_not_awaited()
+    session.get.assert_not_awaited()
+    session.commit.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

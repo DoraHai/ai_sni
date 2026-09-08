@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import BackgroundTasks
 from sqlalchemy import Column, MetaData, Table, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -199,8 +200,17 @@ def test_tenant_lock_serializes_settings_enable_with_scheduler_decision():
     reason="requires explicitly configured PostgreSQL",
 )
 def test_scheduler_safe_foundation_is_atomic_idempotent_and_keeps_patrol_disabled():
-    from app.geo.content.routes import create_scheduler_safe_foundation
-    from app.geo.content.schemas import SchedulerSafeFoundationRequest
+    from app.geo.content.geo_scheduler import current_patrol_settings
+    from app.geo.content.routes import (
+        create_scheduler_safe_foundation,
+        create_visibility_patrol_run,
+        put_visibility_patrol_settings,
+    )
+    from app.geo.content.schemas import (
+        SchedulerSafeFoundationRequest,
+        VisibilityPatrolCreate,
+        VisibilityPatrolSettingsUpdate,
+    )
     from app.models import (
         GeoOptimizationBusiness,
         GeoPrompt,
@@ -209,6 +219,7 @@ def test_scheduler_safe_foundation_is_atomic_idempotent_and_keeps_patrol_disable
         GeoVisibilityPatrolSettings,
         Tenant,
     )
+    from app.security.auth import AuthContext
 
     async def run():
         schema = "geo_safe_foundation_" + uuid4().hex
@@ -293,8 +304,13 @@ def test_scheduler_safe_foundation_is_atomic_idempotent_and_keeps_patrol_disable
                 connect_args={"server_settings": {"search_path": schema}},
             )
             sessions = async_sessionmaker(engine, expire_on_commit=False)
-            ctx = Mock(user_id=9)
-            ctx.ensure_tenant = Mock()
+            ctx = AuthContext(
+                user_id=9,
+                username="tiger_operator",
+                role_name="tenant-editor",
+                tenant_id=4,
+                permissions={"geo.content": "edit"},
+            )
             async with sessions() as session:
                 first = await create_scheduler_safe_foundation(request, ctx, session)
             async with sessions() as session:
@@ -309,6 +325,97 @@ def test_scheduler_safe_foundation_is_atomic_idempotent_and_keeps_patrol_disable
             assert all(item["decision"] == "reused" for item in second["decisions"]["prompts"])
             assert second["decisions"]["channel"]["decision"] == "reused"
 
+            # A real settings mutation cannot pass the shared tenant row lock
+            # until the atomic foundation transaction commits. It may enable
+            # scheduling afterwards; the endpoint deliberately promises only
+            # transaction-window exclusion.
+            foundation_locked = asyncio.Event()
+            release_foundation = asyncio.Event()
+
+            async def pause_after_foundation_lock(session, tenant_id):
+                row = await current_patrol_settings(session, tenant_id)
+                if asyncio.current_task().get_name() == "safe-foundation-settings":
+                    foundation_locked.set()
+                    await release_foundation.wait()
+                return row
+
+            async with sessions() as foundation_session, sessions() as settings_session:
+                with patch(
+                    "app.geo.content.geo_scheduler.current_patrol_settings",
+                    side_effect=pause_after_foundation_lock,
+                ):
+                    foundation_task = asyncio.create_task(
+                        create_scheduler_safe_foundation(request, ctx, foundation_session),
+                        name="safe-foundation-settings",
+                    )
+                    await asyncio.wait_for(foundation_locked.wait(), timeout=2)
+                    settings_task = asyncio.create_task(
+                        put_visibility_patrol_settings(
+                            VisibilityPatrolSettingsUpdate(tenant_id=4, enabled=True),
+                            ctx,
+                            settings_session,
+                        )
+                    )
+                    await asyncio.sleep(0.1)
+                    assert not settings_task.done(), "settings PUT must wait for foundation"
+                    release_foundation.set()
+                    await asyncio.wait_for(foundation_task, timeout=2)
+                    await asyncio.wait_for(settings_task, timeout=2)
+
+            async with sessions() as session:
+                await session.execute(
+                    text(
+                        "UPDATE geo_visibility_patrol_settings "
+                        "SET enabled=false WHERE tenant_id=4"
+                    )
+                )
+                await session.commit()
+
+            # The real manual patrol handler is serialized by the same lock.
+            # Once foundation commits, a separately authorized manual request
+            # may create its run; it cannot overlap the protected transaction.
+            foundation_locked = asyncio.Event()
+            release_foundation = asyncio.Event()
+
+            async def pause_before_manual_patrol(session, tenant_id):
+                row = await current_patrol_settings(session, tenant_id)
+                if asyncio.current_task().get_name() == "safe-foundation-patrol":
+                    foundation_locked.set()
+                    await release_foundation.wait()
+                return row
+
+            async with sessions() as foundation_session, sessions() as patrol_session:
+                with (
+                    patch(
+                        "app.geo.content.geo_scheduler.current_patrol_settings",
+                        side_effect=pause_before_manual_patrol,
+                    ),
+                    patch("app.geo.retest.reserved_week", AsyncMock(return_value=None)),
+                    patch(
+                        "app.geo.content.patrol.count_patrol_runs_today",
+                        AsyncMock(return_value=0),
+                    ),
+                ):
+                    foundation_task = asyncio.create_task(
+                        create_scheduler_safe_foundation(request, ctx, foundation_session),
+                        name="safe-foundation-patrol",
+                    )
+                    await asyncio.wait_for(foundation_locked.wait(), timeout=2)
+                    patrol_task = asyncio.create_task(
+                        create_visibility_patrol_run(
+                            VisibilityPatrolCreate(tenant_id=4, run_async=True),
+                            BackgroundTasks(),
+                            ctx,
+                            patrol_session,
+                        )
+                    )
+                    await asyncio.sleep(0.1)
+                    assert not patrol_task.done(), "manual patrol must wait for foundation"
+                    release_foundation.set()
+                    await asyncio.wait_for(foundation_task, timeout=2)
+                    patrol_result = await asyncio.wait_for(patrol_task, timeout=2)
+                    assert patrol_result["started"] is True
+
             async with sessions() as session:
                 counts = {
                     "business": await session.scalar(text("SELECT count(*) FROM geo_optimization_businesses")),
@@ -319,7 +426,7 @@ def test_scheduler_safe_foundation_is_atomic_idempotent_and_keeps_patrol_disable
                 enabled = await session.scalar(
                     text("SELECT enabled FROM geo_visibility_patrol_settings WHERE tenant_id=4")
                 )
-            assert counts == {"business": 1, "prompts": 2, "channels": 1, "runs": 0}
+            assert counts == {"business": 1, "prompts": 2, "channels": 1, "runs": 1}
             assert enabled is False
         finally:
             if engine is not None:

@@ -4901,10 +4901,7 @@ async def get_visibility_patrol_settings(
     return patrol_settings_payload(row, tenant_id)
 
 
-@router.post(
-    "/integration/scheduler-safe-foundation",
-    dependencies=[Depends(require_geo_read_entitlement)],
-)
+@router.post("/integration/scheduler-safe-foundation")
 async def create_scheduler_safe_foundation(
     req: SchedulerSafeFoundationRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -4919,6 +4916,17 @@ async def create_scheduler_safe_foundation(
         lock_scheduler_tenant,
     )
 
+    # This production-only operation must be attributable to an ordinary user
+    # bound to exactly the tenant carried in the reviewed request body.  An
+    # unbound superadmin or API key must not be able to turn this body-only
+    # endpoint into an arbitrary-tenant write primitive.
+    if (
+        ctx.is_superadmin
+        or ctx.user_id is None
+        or ctx.tenant_id is None
+        or ctx.tenant_id != req.tenant_id
+    ):
+        raise HTTPException(403, "安全基础建档仅允许绑定当前客户的普通账号执行")
     ctx.ensure_tenant(req.tenant_id)
     await ensure_geo_entitlement(session, req.tenant_id)
     tenant = await _ensure_tenant_exists(session, req.tenant_id, fresh=True)

@@ -47,7 +47,6 @@
   "source": "manual",
   "language": "zh-CN",
   "market": "cn",
-  "is_brand_probe": false,
   "is_brand_probe": false
 }
 ```
@@ -60,7 +59,6 @@
   "source": "manual",
   "language": "zh-CN",
   "market": "cn",
-  "is_brand_probe": false,
   "is_brand_probe": false
 }
 ```
@@ -73,7 +71,6 @@
   "source": "manual",
   "language": "zh-CN",
   "market": "cn",
-  "is_brand_probe": false,
   "is_brand_probe": false
 }
 ```
@@ -125,11 +122,11 @@
 
 对每个问句分别判断：
 
-- 0 条：允许后续单独创建；
-- 恰好 1 条且 `source=manual`、`language=zh-CN`、`market=cn`、`is_brand_probe=false`、`unit_id=null`、标签包含 `cockpit-foundation`：复用；
+- 0 条：允许进入第 5 节的唯一原子 POST，由原子请求创建；
+- 恰好 1 条且 `source=manual`、`language=zh-CN`、`market=cn`、`is_brand_probe=false`、`unit_id=null`、标签包含 `cockpit-foundation`：允许进入同一原子 POST，由服务端复用；
 - 字段不一致或同一问句多于 1 条：停止，不能再创建或自动合并。
 
-问题接口没有唯一约束，所以“先查再建”不是并发数据库锁。执行期间必须保持单执行人；POST 超时或连接中断时严禁直接重试，先重新 GET 并按精确问句确认结果。
+问题接口没有唯一约束，所以“先查再建”不是并发数据库锁。重复检查只是执行前证据，不允许单独创建问题；三个问题只能由第 5 节的唯一原子 POST 创建或复用。执行期间必须保持单执行人；POST 超时或连接中断时严禁直接重试，先重新 GET 并按精确问句确认结果。
 
 ### 4.3 渠道重复检查
 
