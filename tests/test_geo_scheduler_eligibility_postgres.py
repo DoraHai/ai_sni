@@ -98,4 +98,3 @@ def test_scheduler_eligibility_uses_read_only_transaction_without_initialization
             await admin.dispose()
 
     asyncio.run(run())
-
