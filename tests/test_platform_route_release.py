@@ -78,6 +78,8 @@ def test_release_module_validates_before_reload_and_has_complete_rollback():
     activation = script.index("systemctl reload nginx", validation)
     smoke = script.index("/platform/customers", activation)
     assert mutation < validation < activation < smoke
+    assert "for attempt in {1..10}" in script
+    assert '[[ "$attempt" -eq 10 ]] || sleep 1' in script
     restore = script[script.index("restore() {") : script.index("mapfile -t archive_entries")]
     assert 'mv -Tf "${target}.rollback" "$target"' in restore
     assert "nginx -t" in restore and "systemctl reload nginx" in restore
@@ -182,7 +184,7 @@ printf '%s %s\\n' "$name" "$*" >> "$PLATFORM_TEST_CALLS"
 exec {real!r} "$@"
 ''',
         )
-    for name in ("nginx", "systemctl"):
+    for name in ("nginx", "systemctl", "sleep"):
         _write_command(
             fake_bin / name,
             f'''name={name!r}
@@ -197,8 +199,14 @@ printf '%s %s\\n' "$name" "$*" >> "$PLATFORM_TEST_CALLS"
         )
     _write_command(
         fake_bin / "curl",
-        '''printf 'curl %s\\n' "$*" >> "$PLATFORM_TEST_CALLS"
+        '''count_file="$PLATFORM_TEST_STATE/curl"
+count=0
+[[ ! -f "$count_file" ]] || count="$(cat "$count_file")"
+count=$((count + 1))
+printf '%s' "$count" > "$count_file"
+printf 'curl %s\\n' "$*" >> "$PLATFORM_TEST_CALLS"
 [[ "$PLATFORM_TEST_CURL_MODE" != fail ]] || exit 22
+[[ "$PLATFORM_TEST_CURL_MODE" != transient || "$count" -ne 1 ]] || exit 22
 output=''
 headers=''
 url=''
@@ -401,6 +409,22 @@ def test_post_publish_failure_archive_is_reused_by_successful_same_commit_retry(
     second_calls = calls.read_text(encoding="utf-8")
     assert second_calls.count("nginx -t") == 1
     assert second_calls.count("systemctl reload nginx") == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="nginx worker readiness executes on Linux")
+def test_release_waits_for_new_nginx_worker_after_transient_404(tmp_path: Path):
+    _, target, calls, inert, commit, digest, env = _release_fixture(tmp_path, curl_mode="transient")
+    result = subprocess.run(
+        ["bash", str(ROOT / "ops/platform-deploy/modules/platform"), str(inert), commit, digest, "DEPLOY_PLATFORM_ROUTES"],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert target.read_bytes() == (ROOT / "deploy/gsnipers-platform-routes.conf").read_bytes()
+    recorded = calls.read_text(encoding="utf-8")
+    assert recorded.count("curl ") == 13
+    assert recorded.count("sleep 1") == 1
 
 
 @pytest.mark.skipif(os.name == "nt", reason="published archive anomaly checks execute on Linux")
