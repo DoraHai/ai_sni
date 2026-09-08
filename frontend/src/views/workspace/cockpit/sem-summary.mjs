@@ -41,14 +41,36 @@ export function semScopeCard(report, contextRevision) {
   }
 }
 
+function keywordEvidence(item) {
+  const association = item?.report_association || {}
+  if (item?.baidu_account_id === null) return 'ownership_unknown'
+  if (['ownership_unknown', 'report_ownership_unknown'].includes(association.evidence_status)) {
+    return association.evidence_status
+  }
+  if (['ownership_unknown', 'report_ownership_unknown'].includes(association.status)) return association.status
+  if (association.evidence_status === 'matched' || association.status === 'matched') return 'matched'
+  const rawIds = Array.isArray(association.other_observed_account_ids) ? association.other_observed_account_ids : []
+  const knownIds = Array.isArray(association.observed_known_account_ids)
+    ? association.observed_known_account_ids : rawIds.filter(id => id !== null)
+  if (knownIds.length) return 'account_mismatch'
+  if (association.has_unassigned_reports === true || rawIds.includes(null)) return 'report_ownership_unknown'
+  return 'no_report'
+}
+
+const hasUnassignedReports = item => item?.report_association?.has_unassigned_reports === true ||
+  item?.report_association?.other_observed_account_ids?.includes(null)
+
+const keywordMetric = (item, key, unit) => keywordEvidence(item) === 'matched'
+  ? formatMetric(item.metrics, key, unit, item.coverage) : '暂无数据'
+
 export function semKeywordCard(payload, contextRevision) {
   const items = Array.isArray(payload?.items) ? payload.items : []
-  const observed = items.filter(item => item.coverage?.status === 'observed').length
-  const mismatched = items.filter(item => item.report_association?.status === 'account_mismatch').length
-  const ownershipUnknown = items.filter(item => item.report_association?.status === 'ownership_unknown').length
-  const reportOwnershipUnknown = items.filter(item => item.report_association?.status === 'report_ownership_unknown').length
-  const additionalUnassignedReports = items.filter(item => item.report_association?.has_unassigned_reports &&
-    item.report_association?.status !== 'report_ownership_unknown').length
+  const observed = items.filter(item => keywordEvidence(item) === 'matched' && item.coverage?.status === 'observed').length
+  const mismatched = items.filter(item => keywordEvidence(item) === 'account_mismatch').length
+  const ownershipUnknown = items.filter(item => keywordEvidence(item) === 'ownership_unknown').length
+  const reportOwnershipUnknown = items.filter(item => keywordEvidence(item) === 'report_ownership_unknown').length
+  const additionalUnassignedReports = items.filter(item => hasUnassignedReports(item) &&
+    keywordEvidence(item) !== 'report_ownership_unknown').length
   const pageScope = items.length < payload.total ? `本页展示 ${items.length} 个；` : ''
   return {
     id: 'sem-keywords', moduleCode: 'sem', moduleLabel: 'SEM', label: '关键词资产',
@@ -61,19 +83,23 @@ export function semKeywordCard(payload, contextRevision) {
       [item.coverage?.updated_at, item.asset_updated_at])) || '未知', series: [],
     columns: [{ key: 'keyword', label: '关键词' }, { key: 'status', label: '状态' }, { key: 'report', label: '报告关联' },
       { key: 'cost', label: '花费' }, { key: 'click', label: '点击' }, { key: 'ctr', label: '点击率' }],
-    rows: items.map(item => ({
-      keyword: item.keyword || `关键词 ${item.keyword_id}`,
-      status: item.pause === true ? '关键词已暂停' : item.pause === false ? '关键词未暂停' : '待确认',
-      report: item.report_association?.status === 'matched'
-        ? item.report_association?.has_unassigned_reports ? '同账户报告已关联；归属未知报告未合并' : '同账户报告已关联'
-        : item.report_association?.status === 'account_mismatch'
-          ? item.report_association?.has_unassigned_reports ? '仅其他已知账户有同 ID 报告；另有归属未知报告' : '仅其他已知账户有同 ID 报告'
-          : item.report_association?.status === 'report_ownership_unknown' ? '仅有归属未知报告，未关联'
-            : item.report_association?.status === 'ownership_unknown' ? '资产账户归属未知，未关联报告' : '窗口内无报告',
-      cost: formatMetric(item.metrics, 'cost', 'CNY', item.coverage),
-      click: formatMetric(item.metrics, 'click', 'count', item.coverage),
-      ctr: formatMetric(item.metrics, 'ctr', 'ratio', item.coverage),
-    })),
+    rows: items.map(item => {
+      const evidence = keywordEvidence(item)
+      const hasUnassigned = hasUnassignedReports(item)
+      return {
+        keyword: item.keyword || `关键词 ${item.keyword_id}`,
+        status: item.pause === true ? '关键词已暂停' : item.pause === false ? '关键词未暂停' : '待确认',
+        report: evidence === 'matched'
+          ? hasUnassigned ? '同账户报告已关联；归属未知报告未合并' : '同账户报告已关联'
+          : evidence === 'account_mismatch'
+            ? hasUnassigned ? '仅其他已知账户有同 ID 报告；另有归属未知报告' : '仅其他已知账户有同 ID 报告'
+            : evidence === 'report_ownership_unknown' ? '仅有归属未知报告，未关联'
+              : evidence === 'ownership_unknown' ? '资产账户归属未知，未关联报告' : '窗口内无报告',
+        cost: keywordMetric(item, 'cost', 'CNY'),
+        click: keywordMetric(item, 'click', 'count'),
+        ctr: keywordMetric(item, 'ctr', 'ratio'),
+      }
+    }),
   }
 }
 
