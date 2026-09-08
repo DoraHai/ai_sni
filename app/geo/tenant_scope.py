@@ -106,8 +106,13 @@ async def require_geo_request_entitlement(
     remain available after authentication.
     """
     candidates = list(request.query_params.getlist("tenant_id"))
-    content_type = request.headers.get("content-type", "").split(";", 1)[0].lower()
-    if content_type == "application/json":
+    content_type = (
+        request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    )
+    is_json = content_type == "application/json" or (
+        content_type.startswith("application/") and content_type.endswith("+json")
+    )
+    if is_json:
         try:
             payload = await request.json()
         except (ValueError, UnicodeDecodeError):
