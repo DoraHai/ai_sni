@@ -31,6 +31,7 @@ REQUIRED_SEO_PERMISSIONS = (
     "seo.content",
     "seo.site",
     "seo.keywords",
+    "seo.dashboard",
 )
 SELECTABLE_SITE_STATUSES = ["active"]
 DISABLED_SITE_STATUSES = ["paused", "archived"]
@@ -353,6 +354,11 @@ def run_acceptance(
         for item in admin_items
         if _canonical_domain(item.get("domain")) == expected_domain
     ]
+    workbench_domain_candidates = [
+        item
+        for item in workbench_items
+        if _canonical_domain(item.get("domain")) == expected_domain
+    ]
     matches = [
         item
         for item in admin_domain_candidates
@@ -370,6 +376,20 @@ def run_acceptance(
     if not _selection_policy_matches(sites_workbench):
         report["status"] = "site_unavailable"
         report["site_unavailable_reasons"] = ["selection_policy_mismatch"]
+        return report
+    admin_target_ids = {item.get("id") for item in admin_domain_candidates}
+    workbench_target_ids = {item.get("id") for item in workbench_domain_candidates}
+    if bool(admin_domain_candidates) != bool(workbench_domain_candidates):
+        report["status"] = "site_unavailable"
+        report["site_unavailable_reasons"] = [
+            "expected_domain_presence_mismatch_between_site_lists"
+        ]
+        return report
+    if admin_target_ids != workbench_target_ids:
+        report["status"] = "site_unavailable"
+        report["site_unavailable_reasons"] = [
+            "expected_domain_id_set_mismatch_between_site_lists"
+        ]
         return report
     if not matches:
         if admin_domain_candidates:
@@ -392,11 +412,7 @@ def run_acceptance(
     if not isinstance(site_id, int) or isinstance(site_id, bool):
         raise AcceptanceError("matched site has no integer id")
     workbench_matches = [item for item in workbench_items if item.get("id") == site_id]
-    workbench_domain_matches = [
-        item
-        for item in workbench_items
-        if item.get("domain") == admin_site.get("domain")
-    ]
+    workbench_domain_matches = workbench_domain_candidates
     drift_reasons: list[str] = []
     if len(workbench_matches) != 1:
         drift_reasons.append("site_id_missing_or_duplicate_in_workbench_list")

@@ -8,7 +8,7 @@
 
 ### 1. 普通账号
 
-使用绑定 `tenant_id=4` 的普通账号。`GET /api/v1/auth/me` 返回的四项权限必须
+使用绑定 `tenant_id=4` 的普通账号。`GET /api/v1/auth/me` 返回的五项权限必须
 分别为 `view` 或 `edit`：
 
 | 权限 | 本次用途 |
@@ -17,8 +17,9 @@
 | `seo.content` | 读取内容与发布记录 |
 | `seo.site` | 读取页面检查数据 |
 | `seo.keywords` | 读取 SEO 指标相关数据 |
+| `seo.dashboard` | 读取 GSC 连接状态与搜索表现 |
 
-缺少任一项时不要临时改成超管账号继续跑。由账号管理员修正普通账号权限后重新
+缺少五项中的任一项时不要临时改成超管账号继续跑。由账号管理员修正普通账号权限后重新
 执行。脚本拒绝未绑定客户的会话，也不会根据角色名称猜权限。
 
 ### 2. 代码与输出目录
@@ -103,7 +104,7 @@ Authorization、token、密码或完整请求头。
 2. 退出码、输出文件 SHA-256、顶层 `status`。
 3. `route_contract`。
 4. `identity.id`、`identity.tenant_id`、`identity.required_permission_keys`；只需确认
-   四项权限通过，不贴 token 或请求头。
+   五项权限通过，不贴 token 或请求头。
 5. `module.available`。
 6. `sites.stored_count`、`sites.workbench_count`、`sites.selection_policy`、
    `sites.expected_domain_matches`；若存在则回传 `site_id`。
@@ -128,11 +129,13 @@ GET /api/v1/seo/workbench/sites?tenant_id=4
 
 1. 对每个 `domain` 和 `canonical_domain` 做相同规范化：域名转小写、去末尾点、去
    最前面的 `www.`，目标值为 `tiger-coatings.cn`。
-2. 两个列表按 `site_id/domain/status` 交叉核对；选择策略必须精确为
+2. 两个列表先各自按规范化目标域筛选，并比较“是否存在”和 site ID 集合；任一
+   单向存在或 ID 集合漂移都按 `site_unavailable` 停止。随后再按
+   `site_id/domain/status` 交叉核对；选择策略必须精确为
    `selectable_statuses=[active]`、`disabled_statuses=[paused, archived]`。
 3. 匹配数为 `1`：禁止创建，使用现有站点；若两表不一致则先修复列表契约。
 4. 匹配数大于 `1`：禁止创建和删除，提交重复数据核查单。
-5. 匹配数为 `0`：记录查重时间和脱敏结果，才可提出创建申请。实际 POST 前由执行人
+5. 两个列表的匹配数均为 `0`：记录查重时间和脱敏结果，才可提出创建申请。实际 POST 前由执行人
    再做一次相同 GET，避免并发重复创建。
 
 ## 六、站点创建请求规范（待单独审批）

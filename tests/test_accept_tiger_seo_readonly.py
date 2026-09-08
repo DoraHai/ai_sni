@@ -43,6 +43,7 @@ def base_responses(sites):
                 "seo.content": "view",
                 "seo.site": "view",
                 "seo.keywords": "view",
+                "seo.dashboard": "view",
             },
         }},
         "/api/v1/auth/modules": {
@@ -154,6 +155,7 @@ def test_unscoped_or_cross_tenant_identity_fails_before_module_probe(identity_te
                     "seo.content": "view",
                     "seo.site": "view",
                     "seo.keywords": "view",
+                    "seo.dashboard": "view",
                 },
             }},
         }
@@ -203,11 +205,11 @@ class RecordingOpener:
 
 def test_real_get_client_enforces_auth_me_envelope_and_permissions_before_probes():
     responses = base_responses([tiger_site()])
-    responses["/api/v1/auth/me"]["user"]["permissions"]["seo.keywords"] = "none"
+    responses["/api/v1/auth/me"]["user"]["permissions"]["seo.dashboard"] = "none"
     opener = RecordingOpener(responses)
     client = acceptance.GetOnlyClient("synthetic-token", opener=opener)
 
-    with pytest.raises(acceptance.AcceptanceError, match="seo.keywords"):
+    with pytest.raises(acceptance.AcceptanceError, match="seo.dashboard"):
         acceptance.run_acceptance(client.get_json)
 
     assert [request.full_url for request, _ in opener.requests] == [
@@ -316,8 +318,8 @@ def test_paused_selectable_policy_drift_fails_closed_before_data_probes():
 @pytest.mark.parametrize(
     "workbench_site,reason",
     [
-        (None, "site_id_missing_or_duplicate_in_workbench_list"),
-        ({**tiger_site(), "domain": "https://wrong.example/"}, "domain_mismatch_between_site_lists"),
+        (None, "expected_domain_presence_mismatch_between_site_lists"),
+        ({**tiger_site(), "domain": "https://wrong.example/"}, "expected_domain_presence_mismatch_between_site_lists"),
         ({**tiger_site(), "domain": "http://www.tiger-coatings.cn/"}, "domain_mismatch_between_site_lists"),
         ({**tiger_site(), "status": "paused"}, "status_mismatch_between_site_lists"),
     ],
@@ -333,6 +335,36 @@ def test_site_list_drift_is_unavailable_and_stops(workbench_site, reason):
 
     assert result["status"] == "site_unavailable"
     assert reason in result["site_unavailable_reasons"]
+    assert len(fake.calls) == 5
+
+
+def test_workbench_only_expected_domain_is_unavailable_not_empty():
+    responses = base_responses([])
+    responses["/api/v1/seo/workbench/sites"]["sites"] = [tiger_site()]
+    fake = FakeGet(responses)
+
+    result = acceptance.run_acceptance(fake)
+
+    assert result["status"] == "site_unavailable"
+    assert result["site_unavailable_reasons"] == [
+        "expected_domain_presence_mismatch_between_site_lists"
+    ]
+    assert len(fake.calls) == 5
+
+
+def test_expected_domain_id_set_drift_is_unavailable_before_empty_decision():
+    responses = base_responses([tiger_site()])
+    responses["/api/v1/seo/workbench/sites"]["sites"] = [
+        {**tiger_site(), "id": 45}
+    ]
+    fake = FakeGet(responses)
+
+    result = acceptance.run_acceptance(fake)
+
+    assert result["status"] == "site_unavailable"
+    assert result["site_unavailable_reasons"] == [
+        "expected_domain_id_set_mismatch_between_site_lists"
+    ]
     assert len(fake.calls) == 5
 
 
