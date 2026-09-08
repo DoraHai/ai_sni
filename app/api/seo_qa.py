@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator, model_validator, ValidationError, StringConstraints
 from sqlalchemy import select, func, exists
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from app.database import get_session
 from app.security.auth import require_scoped_auth
 from app.api.seo_cockpit import scope
@@ -713,8 +714,12 @@ async def prepare_placement(req: PlacementInput, ctx=Auth, session=Db):
             raise ValueError('必须填写指定问题的网址')
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    row = await session.scalar(select(SeoQaPlacement).where(SeoQaPlacement.answer_id == answer.id,
-        SeoQaPlacement.platform == req.platform, SeoQaPlacement.content_version == content.version_count))
+    placement_query = select(SeoQaPlacement).where(
+        SeoQaPlacement.answer_id == answer.id,
+        SeoQaPlacement.platform == req.platform,
+        SeoQaPlacement.content_version == content.version_count,
+    )
+    row = await session.scalar(placement_query)
     if row is not None:
         if row.question_url != question_url:
             raise HTTPException(409, '本版回答已有不同问题的发布记录，请核对原记录')
@@ -724,7 +729,16 @@ async def prepare_placement(req: PlacementInput, ctx=Auth, session=Db):
     row = SeoQaPlacement(tenant_id=req.tenant_id, site_id=req.site_id, answer_id=answer.id, platform=req.platform,
         question_url=question_url, scheduled_at=req.scheduled_at, content_version=content.version_count, body=body)
     session.add(row)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        winner = await session.scalar(placement_query)
+        if winner is not None and winner.question_url == question_url:
+            return data(winner)
+        if winner is not None:
+            raise HTTPException(409, '本版回答的发布任务已被其他操作创建，请刷新后核对') from exc
+        raise
     await session.refresh(row)
     return data(row)
 

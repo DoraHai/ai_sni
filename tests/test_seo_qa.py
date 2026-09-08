@@ -2,13 +2,14 @@ import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import MetaData, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from app.api import seo_qa as api
@@ -74,6 +75,70 @@ def test_observation_never_turns_blocked_or_redirected_pages_into_success():
     assert answer_checks('错误引用[F2]', [{'id': 1}])
     assert answer_checks('待补充[F1]', [{'id': 1}])
     assert not answer_checks('先确认型号[F1]', [{'id': 1}])
+
+
+def test_prepare_placement_duplicate_race_returns_the_committed_winner():
+    answer = SeoQaAnswer(id=11, tenant_id=1, site_id=1, question_id=3, content_id=5)
+    content = SeoContentAsset(
+        id=5, tenant_id=1, site_id=1, content_type='qa', title='测试回答',
+        draft='已审核正文[F1]', status='ready', version_count=2,
+    )
+    winner = SeoQaPlacement(
+        id=17, tenant_id=1, site_id=1, answer_id=11, platform='zhihu',
+        question_url='https://www.zhihu.com/question/12', content_version=2,
+        body='已审核正文', status='prepared', version=1,
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=content)
+    session.scalar = AsyncMock(side_effect=[None, winner])
+    session.add = MagicMock()
+    session.commit = AsyncMock(
+        side_effect=IntegrityError('insert placement', {}, Exception('duplicate'))
+    )
+    request = api.PlacementInput(
+        tenant_id=1, site_id=1, answer_id=11, platform='zhihu',
+        question_url='https://www.zhihu.com/question/12',
+    )
+
+    with (
+        patch.object(api, 'access', new=AsyncMock()),
+        patch.object(api, 'record', new=AsyncMock(return_value=answer)),
+        patch.object(api, 'require_answer_evidence', new=AsyncMock()),
+    ):
+        result = asyncio.run(api.prepare_placement(request, CTX, session))
+
+    assert result['id'] == 17
+    session.rollback.assert_awaited_once()
+    session.refresh.assert_not_awaited()
+
+
+def test_prepare_placement_unrelated_integrity_error_is_not_hidden_as_duplicate():
+    answer = SeoQaAnswer(id=11, tenant_id=1, site_id=1, question_id=3, content_id=5)
+    content = SeoContentAsset(
+        id=5, tenant_id=1, site_id=1, content_type='qa', title='测试回答',
+        draft='已审核正文[F1]', status='ready', version_count=2,
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=content)
+    session.scalar = AsyncMock(side_effect=[None, None])
+    session.add = MagicMock()
+    error = IntegrityError('insert placement', {}, Exception('foreign key'))
+    session.commit = AsyncMock(side_effect=error)
+    request = api.PlacementInput(
+        tenant_id=1, site_id=1, answer_id=11, platform='zhihu',
+        question_url='https://www.zhihu.com/question/12',
+    )
+
+    with (
+        patch.object(api, 'access', new=AsyncMock()),
+        patch.object(api, 'record', new=AsyncMock(return_value=answer)),
+        patch.object(api, 'require_answer_evidence', new=AsyncMock()),
+        pytest.raises(IntegrityError) as exc,
+    ):
+        asyncio.run(api.prepare_placement(request, CTX, session))
+
+    assert exc.value is error
+    session.rollback.assert_awaited_once()
 
 
 def database(scenario):
