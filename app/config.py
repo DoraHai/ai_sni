@@ -124,6 +124,12 @@ class Settings(BaseSettings):
     chinaz_domain_keyword_max_pages: int = 10
     # 每天按上海时间检查一次，引擎可配置独立的间隔天数。
     seo_rank_scheduler_enabled: bool = True
+    # Isolated demonstration runtime. APP_ENV=demo requires the explicit safe
+    # combination validated by app.seo_demo_runtime; production defaults remain
+    # unchanged until a dedicated demo service is configured.
+    seo_demo_mode: bool = False
+    seo_scheduler_enabled: bool = True
+    seo_external_actions_enabled: bool = True
     seo_rank_scheduler_engines: str = "baidu,sogou,360,google,bing"
     seo_rank_scheduler_engine_interval_days: str = "baidu:1,sogou:2,360:2"
     seo_rank_scheduler_hour: int = Field(2, ge=0, le=23)

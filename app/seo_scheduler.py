@@ -23,6 +23,7 @@ from app.seo_monitoring_jobs import (
     verify_scheduled_backlinks,
     verify_scheduled_qa,
 )
+from app.seo_demo_runtime import seo_scheduler_may_start
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +45,13 @@ def _release_scheduler_lock() -> None:
 
 
 def _start_seo_scheduler() -> None:
+    settings = get_settings()
+    if not seo_scheduler_may_start(settings):
+        logger.info("[scheduler][SEO] runtime policy disabled all SEO scheduled workers")
+        return
     if not _acquire_scheduler_lock():
         logger.info("[scheduler][SEO] 未抢到调度锁，本 worker 不启动 SEO 调度")
         return
-    settings = get_settings()
     rank_hour = int(settings.seo_rank_scheduler_hour)
     rank_minute = int(settings.seo_rank_scheduler_minute)
     seo_scheduler.add_job(
