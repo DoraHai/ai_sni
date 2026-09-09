@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import BigInteger, Date, String, and_, cast, column, func, literal, or_, select, table
+from sqlalchemy import BigInteger, Date, String, and_, case, cast, column, func, literal, or_, select, table
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +16,7 @@ from app.geo.demo_tenant import (
     GeoDemoBindingUnavailable,
     GeoTenantPolicy,
     enforce_demo_request,
-    policy_from_module_settings,
+    policy_from_binding,
 )
 from app.models import Tenant
 from fastapi import Depends, HTTPException, Request
@@ -30,7 +30,17 @@ _TENANT_MODULES = table(
     column("module_code", String),
     column("status", String),
     column("expires_at", Date),
-    column("module_settings", JSONB),
+)
+
+_DEMO_BINDINGS = table(
+    "demo_tenant_bindings",
+    column("tenant_id", BigInteger),
+    column("demo_tenant_id", BigInteger),
+    column("dataset_key", String),
+    column("dataset_version", String),
+    column("status", String),
+    column("version", BigInteger),
+    schema="public",
 )
 
 
@@ -97,28 +107,28 @@ async def ensure_geo_entitlement(
     lock_binding: bool = True,
 ) -> GeoTenantPolicy:
     """Fail closed unless the customer currently has usable GEO access."""
-    settings_query = (
-        select(func.coalesce(_TENANT_MODULES.c.module_settings, cast(literal("{}"), JSONB)))
-        .select_from(Tenant)
-        .join(_TENANT_MODULES, _TENANT_MODULES.c.tenant_id == Tenant.id)
-        .where(
-            Tenant.id == tenant_id,
-            _TENANT_MODULES.c.module_code == "geo",
-            _TENANT_MODULES.c.status.in_(("active", "trial")),
-            or_(
-                _TENANT_MODULES.c.expires_at.is_(None),
-                _TENANT_MODULES.c.expires_at >= date.today(),
-            ),
-        )
-        .limit(1)
-    )
     if lock_binding:
-        settings_query = settings_query.with_for_update()
-    module_settings = await session.scalar(settings_query)
-    if module_settings is None:
-        raise GeoEntitlementUnavailable()
+        # Lock the parent tenant first.  The binding FK prevents a concurrent
+        # insert while this transaction is deciding which data source to use.
+        # Then lock the current binding row so replace/disable cannot race the
+        # selected read or execution path.
+        entitled = await session.scalar(
+            geo_tenant_entitlement_query(tenant_id).with_for_update()
+        )
+        if entitled is None:
+            raise GeoEntitlementUnavailable()
+        binding = await session.scalar(
+            demo_tenant_binding_query(tenant_id).with_for_update()
+        )
+        binding = binding or {}
+    else:
+        binding = await session.scalar(
+            geo_tenant_policy_query(tenant_id)
+        )
+        if binding is None:
+            raise GeoEntitlementUnavailable()
     try:
-        policy = policy_from_module_settings(tenant_id, module_settings)
+        policy = policy_from_binding(tenant_id, binding)
     except GeoDemoBindingUnavailable:
         if allow_demo_read:
             raise
@@ -126,6 +136,81 @@ async def ensure_geo_entitlement(
     if policy.is_demo and not allow_demo_read:
         raise GeoEntitlementUnavailable()
     return policy
+
+
+def geo_tenant_entitlement_query(tenant_id: int, *, today: date | None = None):
+    """Select one entitled parent tenant; callers may lock it before routing."""
+    today = today or date.today()
+    return (
+        select(Tenant.id)
+        .join(_TENANT_MODULES, _TENANT_MODULES.c.tenant_id == Tenant.id)
+        .where(
+            Tenant.id == tenant_id,
+            _TENANT_MODULES.c.module_code == "geo",
+            _TENANT_MODULES.c.status.in_(("active", "trial")),
+            or_(
+                _TENANT_MODULES.c.expires_at.is_(None),
+                _TENANT_MODULES.c.expires_at >= today,
+            ),
+        )
+        .limit(1)
+    )
+
+
+def demo_tenant_binding_query(tenant_id: int):
+    """Return any 0098 binding so disabled rows cannot fall back to production."""
+    return select(
+        func.jsonb_build_object(
+            "tenant_id", _DEMO_BINDINGS.c.tenant_id,
+            "demo_tenant_id", _DEMO_BINDINGS.c.demo_tenant_id,
+            "dataset_key", _DEMO_BINDINGS.c.dataset_key,
+            "dataset_version", _DEMO_BINDINGS.c.dataset_version,
+            "status", _DEMO_BINDINGS.c.status,
+            "version", _DEMO_BINDINGS.c.version,
+        )
+    ).where(_DEMO_BINDINGS.c.tenant_id == tenant_id)
+
+
+def geo_tenant_policy_query(
+    tenant_id: int,
+    *,
+    today: date | None = None,
+):
+    """Build a non-locking entitlement plus 0098 binding lookup."""
+    today = today or date.today()
+    binding_payload = func.jsonb_build_object(
+        "tenant_id", _DEMO_BINDINGS.c.tenant_id,
+        "demo_tenant_id", _DEMO_BINDINGS.c.demo_tenant_id,
+        "dataset_key", _DEMO_BINDINGS.c.dataset_key,
+        "dataset_version", _DEMO_BINDINGS.c.dataset_version,
+        "status", _DEMO_BINDINGS.c.status,
+        "version", _DEMO_BINDINGS.c.version,
+    )
+    settings_query = (
+        select(
+            case(
+                (_DEMO_BINDINGS.c.tenant_id.is_not(None), binding_payload),
+                else_=cast(literal("{}"), JSONB),
+            )
+        )
+        .select_from(Tenant)
+        .join(_TENANT_MODULES, _TENANT_MODULES.c.tenant_id == Tenant.id)
+        .outerjoin(
+            _DEMO_BINDINGS,
+            _DEMO_BINDINGS.c.tenant_id == Tenant.id,
+        )
+        .where(
+            Tenant.id == tenant_id,
+            _TENANT_MODULES.c.module_code == "geo",
+            _TENANT_MODULES.c.status.in_(("active", "trial")),
+            or_(
+                _TENANT_MODULES.c.expires_at.is_(None),
+                _TENANT_MODULES.c.expires_at >= today,
+            ),
+        )
+        .limit(1)
+    )
+    return settings_query
 
 
 async def require_geo_read_entitlement(tenant_id: int, ctx=Depends(require_scoped_auth),

@@ -61,6 +61,7 @@ async def get_geo_tenants(
             "workspace_mode": "demo" if policy.is_demo else "production",
             "read_only": policy.read_only,
             "fixture_namespace": policy.fixture_namespace,
+            "dataset_version": policy.dataset_version,
         })
     return {"tenants": payload}
 

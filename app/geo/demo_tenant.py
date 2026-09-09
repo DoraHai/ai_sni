@@ -12,7 +12,7 @@ from typing import Any, Mapping
 from fastapi import HTTPException, Request
 
 
-DEMO_DATABASE_KEY = "gsnipers_demo"
+DEMO_DATASET_KEY = "gsnipers_demo"
 DEMO_FIXTURE_NAMESPACE = "g-snipers-geo-demo-v1"
 DEMO_READ_PATHS = {
     "/api/v1/geo/integration/metrics/snapshot",
@@ -25,7 +25,10 @@ class GeoTenantPolicy:
     tenant_id: int
     source_kind: str = "production"
     read_only: bool = False
-    database_key: str | None = None
+    demo_tenant_id: int | None = None
+    dataset_key: str | None = None
+    dataset_version: str | None = None
+    binding_version: int | None = None
     fixture_namespace: str | None = None
 
     @property
@@ -49,30 +52,44 @@ class GeoDemoExecutionBlocked(HTTPException):
         )
 
 
-def policy_from_module_settings(tenant_id: int, module_settings: Any) -> GeoTenantPolicy:
-    """Parse only the server-owned module_settings value and fail closed on drift."""
-    if not isinstance(module_settings, Mapping):
+def _positive_int(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise GeoDemoBindingUnavailable(f"演示绑定字段 {field} 无效")
+    return value
+
+
+def policy_from_binding(tenant_id: int, binding: Any) -> GeoTenantPolicy:
+    """Parse the 0098-protected server binding and fail closed on drift."""
+    if not isinstance(binding, Mapping):
         raise GeoDemoBindingUnavailable()
-    raw = module_settings.get("geo_data_source")
-    if raw is None:
+    if not binding:
         return GeoTenantPolicy(tenant_id=tenant_id)
-    if not isinstance(raw, Mapping):
-        raise GeoDemoBindingUnavailable()
-    allowed = {"kind", "database_key", "fixture_namespace", "read_only"}
-    if set(raw) != allowed:
+    allowed = {
+        "tenant_id",
+        "demo_tenant_id",
+        "dataset_key",
+        "dataset_version",
+        "status",
+        "version",
+    }
+    if set(binding) != allowed:
         raise GeoDemoBindingUnavailable()
     if (
-        raw.get("kind") != "isolated_demo"
-        or raw.get("database_key") != DEMO_DATABASE_KEY
-        or raw.get("fixture_namespace") != DEMO_FIXTURE_NAMESPACE
-        or raw.get("read_only") is not True
+        _positive_int(binding.get("tenant_id"), "tenant_id") != tenant_id
+        or binding.get("dataset_key") != DEMO_DATASET_KEY
+        or not isinstance(binding.get("dataset_version"), str)
+        or not binding["dataset_version"].strip()
+        or binding.get("status") != "active"
     ):
         raise GeoDemoBindingUnavailable()
     return GeoTenantPolicy(
         tenant_id=tenant_id,
         source_kind="isolated_demo",
         read_only=True,
-        database_key=DEMO_DATABASE_KEY,
+        demo_tenant_id=_positive_int(binding.get("demo_tenant_id"), "demo_tenant_id"),
+        dataset_key=DEMO_DATASET_KEY,
+        dataset_version=binding["dataset_version"],
+        binding_version=_positive_int(binding.get("version"), "version"),
         fixture_namespace=DEMO_FIXTURE_NAMESPACE,
     )
 
@@ -81,14 +98,11 @@ def enforce_demo_request(policy: GeoTenantPolicy, request: Request) -> None:
     if not policy.is_demo:
         return
     path = request.url.path.rstrip("/") or "/"
-    if request.method.upper() in {"GET", "HEAD", "OPTIONS"} and path in DEMO_READ_PATHS:
-        return
-    if request.method.upper() in {"GET", "HEAD", "OPTIONS"} and path.startswith(
-        "/api/v1/geo/integration/"
+    if request.method.upper() in {"GET", "HEAD", "OPTIONS"} and (
+        path in DEMO_READ_PATHS
+        or path.startswith("/api/v1/geo/integration/read/")
     ):
-        # No fixed database_key -> DSN resolver has been approved yet.  Refuse
-        # the request instead of accidentally reading the production session.
-        raise GeoDemoBindingUnavailable("演示只读数据源尚未配置")
+        return
     raise GeoDemoExecutionBlocked()
 
 

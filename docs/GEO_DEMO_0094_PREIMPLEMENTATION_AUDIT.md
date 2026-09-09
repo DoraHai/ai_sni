@@ -126,36 +126,37 @@ geo_visibility_patrol_runs         geo_visibility_patrol_settings
 控制库完成登录、租户绑定、GEO 开通与到期校验。数据源选择必须发生在这些校验之后，并且只读取服务端
 保存的演示绑定，不接受客户端传入 `is_demo`、数据库名、连接串或路由提示。
 
-建议将 GEO 绑定放在现有 `tenant_modules.module_settings` 的 `module_code='geo'` 行，例如：
+正式共享契约已经由 `0097_demo_tenant_bindings` 建立，并由
+`0098_demo_binding_no_truncate` 增加当前绑定表的防清空保护。GEO 只读取生产控制库中的
+`public.demo_tenant_bindings`，不自行创建、修改或迁移该表。运行时只采纳以下字段：
 
 ```json
 {
-  "geo_data_source": {
-    "kind": "isolated_demo",
-    "database_key": "gsnipers_demo",
-    "fixture_namespace": "g-snipers-geo-demo-v1",
-    "read_only": true
-  }
+  "tenant_id": 8,
+  "demo_tenant_id": 108,
+  "dataset_key": "gsnipers_demo",
+  "dataset_version": "demo-20260909-v1",
+  "status": "active",
+  "version": 1
 }
 ```
 
-`database_key` 只能映射到服务器环境中的固定连接配置，不能成为连接串。生产 control tenant 与 demo
-数据库 tenant 建议使用相同数值 ID，避免所有现有 tenant-scoped 查询和响应做双向 ID 翻译；loader
-必须显式验证两边 ID、名称、namespace 和 entitlement。若不能保证同 ID，则需正式映射字段和全接口
-翻译，已经超出“最小适配”。
+`dataset_key` 和 `dataset_version` 只匹配服务器环境中的固定配置，不能成为连接串。生产 control tenant
+与 demo 数据库 tenant 通过 `demo_tenant_id` 明确映射。全部查询使用映射后的数据租户，响应和链接仍使用
+已鉴权的 control tenant，不能泄露或接受客户端指定的数据租户。
 
 最小代码结构建议：
 
-1. 新增 GEO 自有 `data_source` resolver：先用生产 session 校验 auth、entitlement 和绑定，再返回
-   `production` 或固定的 `gsnipers_demo` session factory；绑定缺失、未知、冲突或 demo DB 不可达时
-   fail closed，禁止回退生产库；
+1. GEO 自有 resolver 先用生产 session 校验 auth、entitlement，再锁定 control tenant 与当前 active
+   binding；只有 dataset key/version 与服务器固定配置完全一致时才返回独立 demo session。绑定损坏、
+   目标错误或 demo DB 不可达时 fail closed，禁止回退生产库；
 2. 仅 `GET/HEAD/OPTIONS /api/v1/geo/integration/**` 可取得 demo session；生产租户仍取原 session；
 3. `/api/v1/geo/tenants` 仍从生产控制库读取，可增加 `workspace_mode`、`read_only` 和
    `fixture_namespace`，不返回数据库信息；
 4. demo session 的数据库账号只授予所需共享租户行和 GEO 表 `SELECT`。fixture loader 使用独立短期写
    账号，运行时绝不持有；
-5. 现有 `read_routes.read_session` 改为 resolver 选择的 `REPEATABLE READ, READ ONLY` session；metrics
-   snapshot/dictionary 也必须复用该只读 dependency，不能继续直接使用全局 `get_session`；
+5. `integration/read` 使用 resolver 选择的 `REPEATABLE READ, READ ONLY` session；正式 metrics
+   snapshot/dictionary 只查生产控制面绑定，演示绑定直接返回 null，绝不读取演示原始值充当正式指标；
 6. 所有 demo mutation 在取得业务 session 前拒绝。旧版 GET 可能初始化配置或更新超时状态，不得对
    demo 放行；模块详情通过现有站内 URL 消费 integration/read 接口；
 7. scheduler、recovery、stale reconciliation 和 worker 继续只持生产数据 session，且其 tenant selector
@@ -184,7 +185,7 @@ geo_visibility_patrol_runs         geo_visibility_patrol_settings
 
 - 绑定 demo 的普通账号只能访问自己的 control tenant，不能通过替换 `tenant_id` 访问其他客户；
 - 未绑定超管选择 demo tenant 后同样进入只读数据源和门禁；
-- query/header/body 伪造 `is_demo`、`database_key` 或 namespace 无效；
+- query/header/body 伪造 `is_demo`、`dataset_key`、`dataset_version`、`demo_tenant_id` 或 namespace 无效；
 - production tenant 始终命中生产数据源，demo tenant 始终命中 `gsnipers_demo`；
 - demo 绑定缺失、格式错误、数据库不可达、tenant ID/namespace 不符时 503/403 fail closed，绝不回退
   `sem_prod`；错误和日志不泄露 DSN/凭据；
@@ -223,30 +224,32 @@ geo_visibility_patrol_runs         geo_visibility_patrol_settings
 
 1. 迁移协调方需发布包含 0094、0074 及所有新增 live heads 的最终单 head；
 2. 数据库负责人需批准 `gsnipers_demo` hostname/database/runtime role/loader role，并完成上述空库验证；
-3. 共享身份负责人需批准 `tenant_modules.module_settings.geo_data_source` 的键、写权限和 demo control
-   tenant；
-4. 必须确定 control tenant ID 与 demo DB tenant ID 是否相同；不同则重新评估全部 ID 翻译边界；
-5. 服务器负责人需提供固定 `database_key -> DSN` 映射、连接池、健康检查和无生产回退规则；
+3. 迁移/身份负责人需确认 `0098_demo_binding_no_truncate` 已获批并在目标环境执行，且应用角色仅有读取
+   `public.demo_tenant_bindings` 的权限；
+4. 绑定负责人需提供唯一的 control tenant、`demo_tenant_id`、dataset key/version，并保留 0097 的审计历史；
+5. 服务器负责人需提供固定 dataset key/version 对应的 DSN、数据库名、只读用户、主机与服务端地址
+   白名单、精确 schema revision；
 6. 工作台负责人需确认现有站内 GEO 页面在 demo 模式只调用 integration/read 及可选 demo summary。
 
 这些条件满足前，PR #504 保持 Draft；不得合并、部署、连接生产库、迁移或装载 fixture。
 
 ## 租户级 fail-closed 适配状态
 
-本 Draft 已实现不依赖数据库迁移的控制面门禁，绑定仍只来自服务端
-`tenant_modules.module_settings.geo_data_source`。只有上述四字段和值完全匹配时才识别为演示租户；未知
-字段、错误类型、错误 database key、错误 namespace 或非只读绑定全部 fail closed。客户端参数不能选择
-数据源。
+本 Draft 已按 0097/0098 共享表契约实现控制面门禁，但没有携带或执行迁移。绑定只来自服务端
+`public.demo_tenant_bindings` 的现存行，且只有 `status=active` 才可使用。六个运行时字段必须精确匹配；
+`disabled`、未知字段、错误类型、错误 dataset key/version 或无效租户映射全部 fail closed，不会转读生产
+数据。客户端参数不能选择数据源。
 
-当前阶段没有获批的 `database_key -> DSN` 固定映射，因此行为刻意收窄为：
+当前实现要求服务器提供完整固定映射；缺少任一配置即 503，且绝不尝试生产数据回退：
 
 - 已认证的正式指标 snapshot/dictionary 可读；三个正式指标的 `value` 和 `trend_7d` 强制为 `null`；
-- 其他 `integration/read` 返回 `geo_demo_binding_unavailable`，不会使用生产 session 兜底；
+- `integration/read` 只有在数据库名、只读用户、主机、服务端地址、schema revision、演示租户与夹具标记、
+  全量回答的模拟属性全部核验通过后才读取演示库；
 - legacy GET、所有写方法、生成、模型、巡检、scheduler、worker、恢复、发布、OAuth 和历史公开分享均阻断；
-- `/geo/tenants` 只从控制库返回 `workspace_mode`、`read_only`、`fixture_namespace`，不返回数据库信息；
+- `/geo/tenants` 只从控制库返回 `workspace_mode`、`read_only`、`fixture_namespace`、`dataset_version`，
+  不返回数据库信息或 `demo_tenant_id`；
 - 执行路径在首次状态写入前复核绑定，并锁定控制面的 entitlement/binding 行到事务结束；绑定漂移、过期或
   格式损坏都不能继续执行。
 
-这不是可展示完整 fixture 的最终数据源接入。后续只有在固定 resolver、独立只读数据库角色、空库迁移
-验收和租户 ID/namespace 校验全部获批后，才可把 `integration/read` 接到 `gsnipers_demo`。在此之前
-保持 Draft，且不连接数据库、不安装夹具、不合并、不部署。
+代码侧闭环已经可供审查；环境侧仍需完成 0098 到位证明、独立只读数据库角色、空库迁移验收、固定
+目标配置和夹具安装。完成前保持 Draft，且本次不连接数据库、不执行迁移、不安装夹具、不合并、不部署。

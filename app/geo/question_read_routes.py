@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import Select, and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.geo.read_routes import read_session as geo_read_session
+from app.geo.demo_read_session import data_tenant_id, tenant_read_session
 from app.geo.tenant_scope import require_geo_read_entitlement
 from app.models import GeoOptimizationBusiness, GeoOptimizationUnit, GeoPrompt
 from app.security.auth import AuthContext, require_scoped_auth
@@ -163,13 +163,14 @@ async def list_questions(
     limit: int = Query(50, ge=1, le=200),
     before_id: int | None = Query(None, ge=1),
     ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(geo_read_session),
+    session: AsyncSession = Depends(tenant_read_session),
 ) -> QuestionReadPage:
     """Return the question catalog without initializing configuration or executing work."""
     ctx.ensure_tenant(tenant_id)
+    data_id = data_tenant_id(session, tenant_id)
     result = await session.execute(
         build_question_query(
-            tenant_id=tenant_id,
+            tenant_id=data_id,
             limit=limit,
             before_id=before_id,
             status=status,

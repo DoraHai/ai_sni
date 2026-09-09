@@ -9,13 +9,20 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.geo.demo_tenant import (
+    DEMO_DATASET_KEY,
     DEMO_FIXTURE_NAMESPACE,
     GeoDemoBindingUnavailable,
     demo_metric_rows,
     enforce_demo_request,
-    policy_from_module_settings,
+    policy_from_binding,
 )
-from app.geo.tenant_scope import GeoEntitlementUnavailable, ensure_geo_entitlement
+from app.geo.tenant_scope import (
+    demo_tenant_binding_query,
+    GeoEntitlementUnavailable,
+    ensure_geo_entitlement,
+    geo_tenant_entitlement_query,
+    geo_tenant_policy_query,
+)
 
 
 def _request(method: str, path: str) -> Request:
@@ -31,43 +38,73 @@ def _request(method: str, path: str) -> Request:
     })
 
 
-def _demo_settings():
+def _demo_binding():
     return {
-        "geo_data_source": {
-            "kind": "isolated_demo",
-            "database_key": "gsnipers_demo",
-            "fixture_namespace": DEMO_FIXTURE_NAMESPACE,
-            "read_only": True,
-        }
+        "tenant_id": 8,
+        "demo_tenant_id": 108,
+        "dataset_key": DEMO_DATASET_KEY,
+        "dataset_version": "demo-20260909-v1",
+        "status": "active",
+        "version": 1,
     }
 
 
 def test_policy_uses_only_exact_server_binding_and_never_client_hints():
-    production = policy_from_module_settings(7, {})
+    production = policy_from_binding(7, {})
     assert not production.is_demo and not production.read_only
 
-    demo = policy_from_module_settings(8, _demo_settings())
+    demo = policy_from_binding(8, _demo_binding())
     assert demo.is_demo and demo.read_only
-    assert demo.database_key == "gsnipers_demo"
+    assert demo.dataset_key == "gsnipers_demo"
+    assert demo.demo_tenant_id == 108
 
     for invalid in (
         None,
-        {"geo_data_source": "isolated_demo"},
-        {"geo_data_source": {**_demo_settings()["geo_data_source"], "read_only": False}},
-        {"geo_data_source": {**_demo_settings()["geo_data_source"], "database_key": "sem_prod"}},
-        {"geo_data_source": {**_demo_settings()["geo_data_source"], "extra": True}},
+        {**_demo_binding(), "tenant_id": 9},
+        {**_demo_binding(), "demo_tenant_id": 0},
+        {**_demo_binding(), "dataset_key": "sem_prod"},
+        {**_demo_binding(), "status": "disabled"},
+        {**_demo_binding(), "extra": True},
     ):
         with pytest.raises(GeoDemoBindingUnavailable):
-            policy_from_module_settings(8, invalid)
+            policy_from_binding(8, invalid)
+
+
+def test_entitlement_lookup_uses_0098_binding_without_hiding_disabled_rows():
+    sql = str(
+        geo_tenant_policy_query(8, today=date(2026, 9, 9)).compile(
+            compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "public.demo_tenant_bindings" in sql
+    assert "demo_tenant_bindings.status = 'active'" not in sql
+    assert "tenant_modules.module_code = 'geo'" in sql
+    assert "tenant_modules.expires_at >= '2026-09-09'" in sql
+    assert "FOR UPDATE" not in sql
+
+    entitlement_sql = str(
+        geo_tenant_entitlement_query(8, today=date(2026, 9, 9))
+        .with_for_update()
+        .compile(compile_kwargs={"literal_binds": True})
+    )
+    binding_sql = str(
+        demo_tenant_binding_query(8)
+        .with_for_update()
+        .compile(compile_kwargs={"literal_binds": True})
+    )
+    assert "FROM tenants JOIN tenant_modules" in entitlement_sql
+    assert "FOR UPDATE" in entitlement_sql
+    assert "FROM public.demo_tenant_bindings" in binding_sql
+    assert "demo_tenant_bindings.status = 'active'" not in binding_sql
+    assert "FOR UPDATE" in binding_sql
 
 
 def test_demo_policy_allows_only_null_metric_contract_without_data_source_fallback():
-    policy = policy_from_module_settings(8, _demo_settings())
+    policy = policy_from_binding(8, _demo_binding())
     enforce_demo_request(policy, _request("GET", "/api/v1/geo/integration/metrics/snapshot"))
     enforce_demo_request(policy, _request("GET", "/api/v1/geo/integration/metrics/dictionary"))
 
-    with pytest.raises(GeoDemoBindingUnavailable):
-        enforce_demo_request(policy, _request("GET", "/api/v1/geo/integration/read/answers"))
+    enforce_demo_request(policy, _request("GET", "/api/v1/geo/integration/read/answers"))
     with pytest.raises(HTTPException) as exc:
         enforce_demo_request(policy, _request("POST", "/api/v1/geo/integration/tasks"))
     assert exc.value.status_code == 403
@@ -84,13 +121,56 @@ def test_demo_formal_metrics_are_always_null():
     }
 
 
+def test_demo_database_target_is_fixed_and_cannot_equal_primary():
+    from app.geo.demo_read_session import resolve_demo_database_target
+
+    policy = policy_from_binding(8, _demo_binding())
+    env = {
+        "GEO_DEMO_DATASET_KEY": "gsnipers_demo",
+        "GEO_DEMO_DATASET_VERSION": "demo-20260909-v1",
+        "GEO_DEMO_DATABASE_URL": "postgresql+asyncpg://geo_demo_read:secret@db-demo.internal/gsnipers_demo",
+        "GEO_DEMO_DATABASE_NAME": "gsnipers_demo",
+        "GEO_DEMO_DATABASE_USER": "geo_demo_read",
+        "GEO_DEMO_DATABASE_HOST_ALLOWLIST": "db-demo.internal",
+        "GEO_DEMO_DATABASE_SERVER_ADDR_ALLOWLIST": "10.0.0.8",
+        "GEO_DEMO_SCHEMA_REVISION": "0098_demo_binding_no_truncate",
+    }
+    with patch(
+        "app.geo.demo_read_session.get_settings",
+        return_value=SimpleNamespace(
+            database_url="postgresql+asyncpg://prod:secret@db.internal/sem_prod"
+        ),
+    ):
+        target = resolve_demo_database_target(policy, env)
+    assert target.database == "gsnipers_demo"
+    assert target.username == "geo_demo_read"
+    assert target.server_addresses == frozenset({"10.0.0.8"})
+
+    bad = {**env, "GEO_DEMO_DATABASE_URL": env["GEO_DEMO_DATABASE_URL"].replace(
+        "db-demo.internal/gsnipers_demo", "db.internal/sem_prod"
+    ), "GEO_DEMO_DATABASE_NAME": "sem_prod", "GEO_DEMO_DATABASE_HOST_ALLOWLIST": "db.internal"}
+    with patch(
+        "app.geo.demo_read_session.get_settings",
+        return_value=SimpleNamespace(
+            database_url="postgresql+asyncpg://prod:secret@db.internal/sem_prod"
+        ),
+    ), pytest.raises(GeoDemoBindingUnavailable):
+        resolve_demo_database_target(policy, bad)
+
+
 def test_internal_execution_guard_rechecks_trusted_binding():
-    session = Mock(scalar=AsyncMock(return_value=_demo_settings()))
+    session = Mock(scalar=AsyncMock(return_value=_demo_binding()))
     with pytest.raises(GeoEntitlementUnavailable):
         asyncio.run(ensure_geo_entitlement(session, 8))
 
     policy = asyncio.run(ensure_geo_entitlement(session, 8, allow_demo_read=True))
     assert policy.is_demo
+
+    disabled = Mock(
+        scalar=AsyncMock(return_value={**_demo_binding(), "status": "disabled"})
+    )
+    with pytest.raises(GeoDemoBindingUnavailable):
+        asyncio.run(ensure_geo_entitlement(disabled, 8, allow_demo_read=True))
 
 
 def test_missing_entitlement_and_malformed_binding_fail_closed():
@@ -98,7 +178,7 @@ def test_missing_entitlement_and_malformed_binding_fail_closed():
     with pytest.raises(GeoEntitlementUnavailable):
         asyncio.run(ensure_geo_entitlement(missing, 8))
 
-    malformed = Mock(scalar=AsyncMock(return_value={"geo_data_source": {"kind": "production"}}))
+    malformed = Mock(scalar=AsyncMock(return_value={"tenant_id": 8, "status": "active"}))
     with pytest.raises(GeoDemoBindingUnavailable):
         asyncio.run(ensure_geo_entitlement(malformed, 8, allow_demo_read=True))
 
@@ -109,7 +189,7 @@ def test_missing_entitlement_and_malformed_binding_fail_closed():
 def test_demo_snapshot_returns_null_without_querying_production_metrics():
     from app.geo.integration import metrics_snapshot
 
-    session = Mock(scalar=AsyncMock(return_value=_demo_settings()), commit=AsyncMock())
+    session = Mock(scalar=AsyncMock(return_value=_demo_binding()), commit=AsyncMock())
     ctx = Mock()
     with patch("app.geo.integration.snapshot", AsyncMock()) as load:
         result = asyncio.run(metrics_snapshot(8, None, ctx, session))
@@ -126,7 +206,7 @@ def test_demo_oauth_callback_stops_before_account_or_network_access():
     from app.geo.content.oauth_public import oauth_social_callback
 
     session = Mock(
-        scalar=AsyncMock(return_value=_demo_settings()),
+        scalar=AsyncMock(return_value=_demo_binding()),
         get=AsyncMock(),
         commit=AsyncMock(),
     )
@@ -148,7 +228,7 @@ def test_existing_public_share_stops_after_tenant_is_rebound_to_demo():
 
     archive = SimpleNamespace(tenant_id=8)
     session = Mock(
-        scalar=AsyncMock(side_effect=[archive, _demo_settings()]),
+        scalar=AsyncMock(side_effect=[archive, _demo_binding(), _demo_binding()]),
         commit=AsyncMock(),
     )
     with pytest.raises(GeoEntitlementUnavailable):
@@ -162,7 +242,7 @@ def test_demo_worker_stops_before_claim_write_or_model_execution():
     row = SimpleNamespace(id=42, tenant_id=8, status="pending")
     session = SimpleNamespace(
         get=AsyncMock(return_value=row),
-        scalar=AsyncMock(return_value=_demo_settings()),
+        scalar=AsyncMock(return_value=_demo_binding()),
         rollback=AsyncMock(),
         commit=AsyncMock(),
     )
@@ -176,6 +256,6 @@ def test_demo_worker_stops_before_claim_write_or_model_execution():
     ) as execute:
         result = asyncio.run(async_jobs._run_owned_job(42))
     assert result["status"] == "blocked"
-    assert session.scalar.await_count == 1
+    assert session.scalar.await_count == 2
     session.commit.assert_not_awaited()
     execute.assert_not_awaited()

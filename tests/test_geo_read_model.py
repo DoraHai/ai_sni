@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from app.geo.integration_metrics import build_weekly_snapshot, verified_patrol_rows, MENTIONS
 from app.geo.read_model import answer_payload, period_context
 from app.geo.read_routes import decode_cursor, encode_cursor, progress_payload, get_capabilities, router, read_session, get_answer, get_answers
+from app.geo.demo_read_session import tenant_read_session
 
 
 def fixture(count=7):
@@ -113,10 +114,11 @@ def test_routes_only_allow_get_and_use_read_session():
     assert {route.path.removeprefix('/integration/read') for route in router.routes} == {
         '/answers', '/answers/{snapshot_id}', '/period-context', '/capabilities',
         '/scheduler-eligibility', '/content-tasks/{content_task_id}',
-        '/async-jobs', '/async-jobs/{async_job_id}', '/patrol-runs', '/patrol-runs/{patrol_run_id}'}
+        '/async-jobs', '/async-jobs/{async_job_id}', '/patrol-runs', '/patrol-runs/{patrol_run_id}',
+        '/demo-summary'}
     for route in router.routes:
         assert route.methods == {'GET'}
-        assert any(d.call == read_session for d in route.dependant.dependencies)
+        assert any(d.call == tenant_read_session for d in route.dependant.dependencies)
 
 
 def test_missing_or_other_tenant_object_returns_404_without_context_loading():
@@ -154,15 +156,16 @@ def test_read_session_sets_database_read_only_before_any_query():
         def __init__(self, value): self.value = value
         async def __aenter__(self): return self.value
         async def __aexit__(self, *args): pass
-    session = Mock(execute=AsyncMock(), begin=Mock(return_value=Context(None)))
+    session = Mock(execute=AsyncMock(), rollback=AsyncMock())
     async def consume():
         async for value in read_session():
             assert value is session
             assert session.execute.await_count == 1
-    with patch('app.geo.read_routes.async_session_factory', return_value=Context(session)) as factory:
+    with patch('app.geo.demo_read_session.async_session_factory', return_value=Context(session)) as factory:
         asyncio.run(consume())
     factory.assert_called_once_with(autoflush=False)
     assert str(session.execute.call_args.args[0]) == 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY'
+    session.rollback.assert_awaited_once()
     session.add.assert_not_called()
     session.flush.assert_not_called()
 

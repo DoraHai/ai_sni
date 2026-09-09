@@ -76,7 +76,9 @@ def period_context(tenant_id, end, current, previous):
             'dictionary_url': f'/api/v1/geo/integration/metrics/dictionary?tenant_id={tenant_id}&week_end={end}'}
 
 
-def answer_payload(row, prompt, run, context, *, detail=False):
+def answer_payload(
+    row, prompt, run, context, *, detail=False, response_tenant_id=None
+):
     if run and run.tenant_id != row.tenant_id:
         run = None
     cell = {c.get('snapshot_id'): c for c in (run.items or []) if isinstance(c, dict)}.get(row.id) if run else None
@@ -118,7 +120,7 @@ def answer_payload(row, prompt, run, context, *, detail=False):
                                 'model_identity_basis': 'recorded_request_model_alias' if historical.get('model') else None,
                                 'exact_model_revision_known': False},
         'relations': [{'relation': 'captured_by', 'target': ref('patrol_run', run.id)}] if run else [],
-        'detail_url': f'/api/v1/geo/integration/read/answers/{row.id}?tenant_id={row.tenant_id}&week_end={context["week_end"]}',
+        'detail_url': f'/api/v1/geo/integration/read/answers/{row.id}?tenant_id={response_tenant_id or row.tenant_id}&week_end={context["week_end"]}',
     }
     if detail:
         result['raw_text'] = row.raw_text or ''

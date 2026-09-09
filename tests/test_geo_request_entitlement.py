@@ -76,7 +76,7 @@ def test_query_tenant_is_checked_before_the_route_runs():
     )
     assert result is ctx
     ctx.ensure_tenant.assert_called_once_with(15)
-    session.scalar.assert_awaited_once()
+    assert session.scalar.await_count == 2
 
 
 def test_json_body_tenant_is_checked_without_consuming_route_semantics():
@@ -135,7 +135,7 @@ def test_non_application_json_suffix_is_not_treated_as_json():
 
 def test_conflicting_query_and_body_tenants_cannot_bypass_either_check():
     ctx = Mock()
-    session = Mock(scalar=AsyncMock(side_effect=[{}, None]))
+    session = Mock(scalar=AsyncMock(side_effect=[{}, {}, None]))
     with pytest.raises(HTTPException) as error:
         asyncio.run(
             require_geo_request_entitlement(
