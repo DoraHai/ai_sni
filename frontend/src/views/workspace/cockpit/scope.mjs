@@ -40,6 +40,13 @@ export function resolveTenantModuleCodes({ modules, tenantsByModule, tenantId, m
     .map(item => item.module_code))
 }
 
+export function selectCockpitTenants({ tenants, tenantsByModule, moduleCodes }) {
+  const allowedIds = new Set((moduleCodes || []).flatMap(code => (
+    tenantsByModule?.[code] || []
+  )).map(tenant => Number(tenant.id)).filter(Number.isSafeInteger))
+  return (tenants || []).filter(tenant => allowedIds.has(Number(tenant.id)))
+}
+
 export function selectAvailableModules(modules, tenantModuleCodes, moduleMeta) {
   return (modules || []).filter(item => item.available
     && tenantModuleCodes.has(item.module_code) && moduleMeta[item.module_code])

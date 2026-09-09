@@ -12,6 +12,7 @@ import {
   isSecureCockpitRuntime,
   resolveTenantModuleCodes,
   selectAvailableModules,
+  selectCockpitTenants,
 } from '../src/views/workspace/cockpit/scope.mjs'
 
 const moduleMeta = {
@@ -39,6 +40,24 @@ test('single, dual and triple purchases expose exactly their customer-scoped mod
   assert.deepEqual([...scoped(['sem'])], ['sem'])
   assert.deepEqual([...scoped(['sem', 'seo'])], ['sem', 'seo'])
   assert.deepEqual([...scoped(['sem', 'seo', 'geo'])], ['sem', 'seo', 'geo'])
+})
+
+test('customer switcher includes every authorized tenant with at least one purchased module', () => {
+  const tenants = [
+    { id: 1, name: '诺德' },
+    { id: 4, name: '老虎' },
+    { id: 9, name: '未开通客户' },
+  ]
+  const selected = selectCockpitTenants({
+    tenants,
+    moduleCodes: ['sem', 'seo', 'geo'],
+    tenantsByModule: {
+      sem: [{ id: 4 }],
+      seo: [{ id: 1 }, { id: 4 }],
+      geo: [{ id: 1 }],
+    },
+  })
+  assert.deepEqual(selected, tenants.slice(0, 2))
 })
 
 test('questions, data area, urgent state and ledger receive purchased modules only', () => {
