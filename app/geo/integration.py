@@ -14,9 +14,9 @@ from app.geo.integration_metrics import (
     MENTIONS,
     RATE,
     SCORE,
-    closed_week_end,
     load_weekly_snapshot,
     metric_dictionary,
+    validated_week_end,
 )
 from app.geo.tenant_scope import require_geo_read_entitlement
 
@@ -140,7 +140,10 @@ async def metrics_snapshot(tenant_id: int = Query(...), week_end: date | None = 
         session, tenant_id, allow_demo_read=True, lock_binding=True
     )
     if policy.is_demo:
-        end = week_end or closed_week_end()
+        try:
+            end = validated_week_end(week_end)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         as_of = datetime.combine(end, datetime.min.time(), tzinfo=TENANT_TZ).isoformat()
         return demo_metric_rows(as_of=as_of)
     return (await snapshot(session, tenant_id, week_end))['metrics']

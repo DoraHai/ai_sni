@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -115,6 +116,10 @@ def test_demo_snapshot_returns_null_without_querying_production_metrics():
     assert all(row["value"] is None and row["trend_7d"] is None for row in result)
     load.assert_not_awaited()
     session.commit.assert_not_awaited()
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(metrics_snapshot(8, date(2026, 9, 8), ctx, session))
+    assert exc.value.status_code == 400
 
 
 def test_demo_oauth_callback_stops_before_account_or_network_access():
