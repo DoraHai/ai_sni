@@ -48,6 +48,7 @@ def test_adoption_contract_is_fixed_schema_online_only_and_irreversible() -> Non
 
     assert "LOCK TABLE public.geo_action_tickets IN ACCESS EXCLUSIVE MODE" in source
     assert "SET LOCAL lock_timeout = '5s'" in source
+    assert "SELECT c.relkind::text" in source
     assert "context.as_sql" in source
     assert 'bind.dialect.name != "postgresql"' in source
     assert 'schema=_SCHEMA' in source

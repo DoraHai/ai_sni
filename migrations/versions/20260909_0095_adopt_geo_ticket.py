@@ -45,7 +45,7 @@ _EXPECTED_COLUMNS = {
 
 
 _TABLE_SQL = sa.text("""
-SELECT c.relkind
+SELECT c.relkind::text
 FROM pg_catalog.pg_class AS c
 JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public' AND c.relname = 'geo_action_tickets'

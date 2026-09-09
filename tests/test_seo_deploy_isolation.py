@@ -308,6 +308,10 @@ def test_schema_catalog_check_is_read_only_and_search_path_aware():
     assert not any(word in sql.upper().split() for word in ('INSERT','UPDATE','DELETE','CREATE','ALTER','DROP'))
 
 
+def test_geo_ticket_catalog_normalizes_postgres_internal_char_type():
+    assert 'c.relkind::text' in str(seo_main.SEO_GEO_TICKET_SHAPE_SQL)
+
+
 def test_structure_contract_preserves_smallint_fields():
     assert seo_main.SEO_REQUIRED_COLUMNS[('seo_content_assets', 'rewrite_progress')] == 'int2'
     assert seo_main.SEO_REQUIRED_COLUMNS[('seo_content_assets', 'originality_score')] == 'int2'

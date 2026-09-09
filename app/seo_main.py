@@ -62,7 +62,7 @@ SEO_SCHEMA_COLUMNS_SQL = text("""
 SEO_GEO_TICKET_SHAPE_SQL = text("""
     SELECT
         a.attname,
-        c.relkind,
+        c.relkind::text,
         pg_catalog.format_type(a.atttypid, a.atttypmod),
         a.attnotnull,
         pg_catalog.pg_get_expr(ad.adbin, ad.adrelid),
