@@ -113,7 +113,10 @@ async def ensure_geo_entitlement(
         # Then lock the current binding row so replace/disable cannot race the
         # selected read or execution path.
         entitled = await session.scalar(
-            geo_tenant_entitlement_query(tenant_id).with_for_update()
+            # Lock only the parent tenant.  Locking every joined row would hold
+            # tenant_modules across external work and prevent revocation from
+            # committing before the executor's required post-send recheck.
+            geo_tenant_entitlement_query(tenant_id).with_for_update(of=Tenant)
         )
         if entitled is None:
             raise GeoEntitlementUnavailable()

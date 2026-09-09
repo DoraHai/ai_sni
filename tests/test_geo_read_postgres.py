@@ -16,6 +16,7 @@ def test_workbench_reads_use_real_sql_and_cannot_write_or_reconcile():
                             GeoPublishingChannel, GeoContentTask, GeoArticleVersion, GeoChannelVariant,
                             GeoPublication, GeoAsyncJob, GeoActionTicket, GeoAiSetting)
     from app.geo import read_routes as api
+    from app.geo import demo_read_session as read_db
 
     async def run():
         schema = 'geo_read_test_' + uuid4().hex
@@ -37,7 +38,7 @@ def test_workbench_reads_use_real_sql_and_cannot_write_or_reconcile():
                 await conn.execute(text(f"INSERT INTO {schema}.geo_visibility_patrol_runs (id, tenant_id, status, created_at, started_at) VALUES (1,1,'running','2020-01-01','2020-01-01')"))
             engine = create_async_engine(os.environ['GEO_TEST_POSTGRES_URL'], connect_args={'server_settings': {'search_path': schema, 'statement_timeout': '10000'}})
             sessions = async_sessionmaker(engine, expire_on_commit=False)
-            with patch.object(api, 'async_session_factory', sessions):
+            with patch.object(read_db, 'async_session_factory', sessions):
                 async for session in api.read_session():
                     assert await session.scalar(text('SHOW transaction_read_only')) == 'on'
                     assert await session.scalar(text('SHOW transaction_isolation')) == 'repeatable read'

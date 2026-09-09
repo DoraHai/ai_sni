@@ -32,6 +32,7 @@ async def environment(*, extra_models=(), legacy_routes=False):
     from ops.run_geo_checks import validate_ci_database
     from app.database import get_session
     from app.geo import read_routes as api
+    from app.geo import demo_read_session as read_db
     from app.geo.question_read_routes import router as question_read_router
     from app.geo.integration import router as metrics
     from app.models import (Tenant, GeoAnswerSnapshot, GeoPrompt, GeoVisibilityPatrolRun,
@@ -88,7 +89,7 @@ async def environment(*, extra_models=(), legacy_routes=False):
         identity['sessions'] = sessions
         app.dependency_overrides[get_session] = query_session
         app.dependency_overrides[require_auth] = lambda: identity['ctx']
-        with patch.object(api, 'async_session_factory', sessions), patch('app.geo.tenant_scope.date', FrozenDate):
+        with patch.object(read_db, 'async_session_factory', sessions), patch('app.geo.tenant_scope.date', FrozenDate):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
                                         base_url='http://fixture') as client:
                 yield client, engine, tables, identity

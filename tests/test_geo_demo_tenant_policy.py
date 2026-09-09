@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.dialects import postgresql
 from starlette.requests import Request
 
 from app.geo.demo_tenant import (
@@ -23,6 +24,7 @@ from app.geo.tenant_scope import (
     geo_tenant_entitlement_query,
     geo_tenant_policy_query,
 )
+from app.models import Tenant
 
 
 def _request(method: str, path: str) -> Request:
@@ -84,8 +86,11 @@ def test_entitlement_lookup_uses_0098_binding_without_hiding_disabled_rows():
 
     entitlement_sql = str(
         geo_tenant_entitlement_query(8, today=date(2026, 9, 9))
-        .with_for_update()
-        .compile(compile_kwargs={"literal_binds": True})
+        .with_for_update(of=Tenant)
+        .compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
     )
     binding_sql = str(
         demo_tenant_binding_query(8)
@@ -93,7 +98,7 @@ def test_entitlement_lookup_uses_0098_binding_without_hiding_disabled_rows():
         .compile(compile_kwargs={"literal_binds": True})
     )
     assert "FROM tenants JOIN tenant_modules" in entitlement_sql
-    assert "FOR UPDATE" in entitlement_sql
+    assert "FOR UPDATE OF tenants" in entitlement_sql
     assert "FROM public.demo_tenant_bindings" in binding_sql
     assert "demo_tenant_bindings.status = 'active'" not in binding_sql
     assert "FOR UPDATE" in binding_sql
