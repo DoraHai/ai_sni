@@ -5,6 +5,7 @@ from scripts.verify_seo_release import (
     build_manifest,
     check_release_diff,
     source_path_allowed,
+    source_change_allowed,
 )
 
 
@@ -61,6 +62,15 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert not source_path_allowed("frontend/src/views/monitor/DashboardView.vue")
     assert not source_path_allowed("frontend/src/views/LoginView.vue")
     assert not source_path_allowed("frontend/src/main.js")
+
+
+def test_canonical_migrations_are_add_once_then_immutable() -> None:
+    migration = "migrations/versions/20260909_0095_adopt_geo_ticket.py"
+    assert source_change_allowed("A", migration)
+    assert not source_change_allowed("M", migration)
+    assert not source_change_allowed("D", migration)
+    assert not source_change_allowed("R", migration)
+    assert source_change_allowed("M", "app/seo_main.py")
 
 
 def test_seo_workflows_run_site_association_and_traffic_regressions() -> None:
@@ -342,7 +352,7 @@ def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
 
 def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     root = Path(__file__).parents[1]
-    expected = "0094_seo_qa_batches (head)"
+    expected = "0095_adopt_geo_ticket (head)"
     baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
     production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
     assert expected in baseline

@@ -28,6 +28,11 @@ class _HealthConnection:
         self.revisions = revisions
 
     async def execute(self, statement, parameters=None):
+        if "geo_action_tickets" in str(statement):
+            return [
+                (name, *shape, False, False)
+                for name, shape in sorted(seo_main.SEO_GEO_TICKET_SHAPE.items())
+            ]
         if "pg_attribute" in str(statement):
             return [(table, column, kind or "text") for (table, column), kind in seo_main.SEO_REQUIRED_COLUMNS.items()]
         return _HealthResult(self.revisions if "alembic_version" in str(statement) else [])
@@ -65,7 +70,7 @@ def test_seo_service_mounts_only_seo_routes() -> None:
     assert "from app.scheduler" not in source
     assert "start_seo_scheduler" in source
     assert "shutdown_seo_scheduler" in source
-    assert 'SEO_REQUIRED_SCHEMA_REVISION = "0094_seo_qa_batches"' in source
+    assert 'SEO_REQUIRED_SCHEMA_REVISION = "0095_adopt_geo_ticket"' in source
     assert "SELECT version_num FROM alembic_version ORDER BY version_num" in source
     assert 'schema_status = "error"' in source
     assert "response.status_code = 503" in source
@@ -94,7 +99,7 @@ def test_seo_health_fails_closed_when_database_revision_is_stale() -> None:
     assert response.status_code == 503
     assert result["db"] == "error"
     assert result["schema"] == "error"
-    assert "expected 0094_seo_qa_batches" in result["db_error"]
+    assert "expected 0095_adopt_geo_ticket" in result["db_error"]
 
 
 def test_seo_scheduler_registers_only_rank_collection() -> None:
@@ -196,6 +201,8 @@ def test_production_workflow_auto_deploys_only_the_exact_production_head() -> No
     assert "DEPLOY_SEO" in workflow
     assert "platform-deploy apply seo" in workflow
     assert "migration=not-run" in workflow
+    assert "verify_seo_release.py source-diff" in workflow
+    assert "PUSH_BEFORE_SHA" in workflow
     assert "alembic upgrade" not in workflow
     assert "Apply schema-compatible SEO release without running database migration" in workflow
     assert "tests/test_seo_scheduler.py" in workflow
@@ -216,8 +223,8 @@ def test_frontend_exposes_explicit_seo_build_contract() -> None:
 
 
 @pytest.mark.parametrize('revisions', [[], ['0093_seo_qa'], ['9999_unknown'],
-    ['0094_seo_qa_batches', '0095_sem_tasks'], ['0095_sem_tasks', '9999_unknown'],
-    ['0095_sem_tasks', '0095_sem_tasks'],
+    ['0094_seo_qa_batches', '0095_adopt_geo_ticket'], ['0095_adopt_geo_ticket', '9999_unknown'],
+    ['0095_adopt_geo_ticket', '0095_adopt_geo_ticket'],
     ['0094_seo_qa_batches', '9999_unknown'], ['0094_seo_qa_batches', '0094_seo_qa_batches']])
 def test_health_rejects_unknown_empty_or_multiple_revisions(revisions):
     response = Response()
@@ -227,7 +234,7 @@ def test_health_rejects_unknown_empty_or_multiple_revisions(revisions):
     structure.assert_not_called()
 
 
-@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_sem_tasks'])
+@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket'])
 def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
     response = Response()
     with patch.object(seo_main, 'engine', _HealthEngine([revision])):
@@ -235,14 +242,51 @@ def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
     assert response.status_code == 200 and result['schema'] == 'ok'
     assert result['db'] == 'ok' and result['db_error'] is None
     assert result['schema_revision'] == revision
-    assert result['required_schema_revision'] == '0094_seo_qa_batches'
-    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_sem_tasks']
+    assert result['required_schema_revision'] == '0095_adopt_geo_ticket'
+    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket']
+
+
+@pytest.mark.parametrize('failure', ['missing_column', 'wrong_type', 'has_index', 'has_constraint'])
+def test_health_rejects_0095_when_geo_ticket_adoption_shape_is_incomplete(failure):
+    async def execute(self, statement, parameters=None):
+        sql = str(statement)
+        if 'geo_action_tickets' in sql:
+            rows = [
+                [name, *shape, False, False]
+                for name, shape in sorted(seo_main.SEO_GEO_TICKET_SHAPE.items())
+            ]
+            if failure == 'missing_column':
+                rows.pop()
+            elif failure == 'wrong_type':
+                rows[0][1] = 'character varying(200)'
+            elif failure == 'has_index':
+                rows[0][-2] = True
+            elif failure == 'has_constraint':
+                rows[0][-1] = True
+            return [tuple(row) for row in rows]
+        if 'pg_attribute' in sql:
+            return [(table, column, kind or 'text') for (table, column), kind in seo_main.SEO_REQUIRED_COLUMNS.items()]
+        return _HealthResult(self.revisions if 'alembic_version' in sql else [])
+
+    response = Response()
+    with patch.object(_HealthConnection, 'execute', execute), patch.object(
+        seo_main, 'engine', _HealthEngine(['0095_adopt_geo_ticket'])
+    ):
+        result = asyncio.run(seo_main.seo_health(response))
+    assert response.status_code == 503
+    assert result['schema'] == 'error'
+    assert 'GEO ticket assignment columns' in result['db_error']
 
 
 @pytest.mark.parametrize('failure', ['missing_table','missing_column','wrong_bigint','wrong_jsonb','catalog_denied'])
-@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_sem_tasks'])
+@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket'])
 def test_health_rejects_incomplete_schema_even_at_allowed_revision(failure, revision):
     async def execute(self, statement, parameters=None):
+        if 'geo_action_tickets' in str(statement):
+            return [
+                (name, *shape, False, False)
+                for name, shape in sorted(seo_main.SEO_GEO_TICKET_SHAPE.items())
+            ]
         if 'pg_attribute' not in str(statement):
             return _HealthResult(self.revisions if 'alembic_version' in str(statement) else [])
         if failure == 'catalog_denied': raise PermissionError('catalog access denied')
@@ -264,6 +308,17 @@ def test_schema_catalog_check_is_read_only_and_search_path_aware():
     assert not any(word in sql.upper().split() for word in ('INSERT','UPDATE','DELETE','CREATE','ALTER','DROP'))
 
 
+def test_geo_ticket_catalog_normalizes_postgres_internal_char_type():
+    sql = str(seo_main.SEO_GEO_TICKET_SHAPE_SQL)
+    for expression in (
+        'a.attidentity::text',
+        'a.attgenerated::text',
+        't.typtype::text',
+    ):
+        assert expression in sql
+    assert "c.relkind = 'r'" in sql
+
+
 def test_structure_contract_preserves_smallint_fields():
     assert seo_main.SEO_REQUIRED_COLUMNS[('seo_content_assets', 'rewrite_progress')] == 'int2'
     assert seo_main.SEO_REQUIRED_COLUMNS[('seo_content_assets', 'originality_score')] == 'int2'
@@ -271,4 +326,8 @@ def test_structure_contract_preserves_smallint_fields():
 
 
 def test_runtime_allowlist_contains_only_exact_reviewed_versions():
-    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_sem_tasks'})
+    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_adopt_geo_ticket'})
+    assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket'})
+    assert (
+        seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS - {'0094_seo_qa_batches'}
+    ) <= seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS

@@ -21,10 +21,15 @@ from app.seo_scheduler import shutdown_seo_scheduler, start_seo_scheduler
 
 settings = get_settings()
 enforce_production_secrets(settings, hard_fail=True)
-SEO_REQUIRED_SCHEMA_REVISION = "0094_seo_qa_batches"
-# Add a shared migration revision only after its ID, parent and DDL are reviewed.
-# Reviewed #370 source package; enabling compatibility does not authorize migration.
-SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset({SEO_REQUIRED_SCHEMA_REVISION, "0095_sem_tasks"})
+SEO_REQUIRED_SCHEMA_REVISION = "0095_adopt_geo_ticket"
+# Runtime compatibility supports code-first rollout; it never authorizes the
+# separately reviewed migration operation.
+SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset({"0094_seo_qa_batches", SEO_REQUIRED_SCHEMA_REVISION})
+SEO_GEO_TICKET_REQUIRED_REVISIONS = frozenset({"0095_adopt_geo_ticket"})
+SEO_GEO_TICKET_SHAPE = {
+    "owner_name": ("character varying(100)", False, None, "", "", "b", None, True),
+    "due_date": ("date", False, None, "", "", "b", None, True),
+}
 
 
 def _required_schema_columns():
@@ -54,6 +59,51 @@ SEO_SCHEMA_COLUMNS_SQL = text("""
     WHERE c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped
 """)
 
+SEO_GEO_TICKET_SHAPE_SQL = text("""
+    SELECT
+        a.attname,
+        pg_catalog.format_type(a.atttypid, a.atttypmod),
+        a.attnotnull,
+        pg_catalog.pg_get_expr(ad.adbin, ad.adrelid),
+        a.attidentity::text,
+        a.attgenerated::text,
+        t.typtype::text,
+        CASE WHEN t.typbasetype = 0 THEN NULL ELSE bt.typname END,
+        a.attcollation = t.typcollation,
+        EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_depend dep
+            JOIN pg_catalog.pg_class index_class
+              ON dep.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+             AND index_class.oid = dep.objid
+            JOIN pg_catalog.pg_index i
+              ON i.indexrelid = index_class.oid AND i.indrelid = c.oid
+            WHERE dep.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass
+              AND dep.refobjid = c.oid AND dep.refobjsubid = a.attnum
+        ),
+        EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_depend dep
+            JOIN pg_catalog.pg_constraint con
+              ON dep.classid = 'pg_catalog.pg_constraint'::pg_catalog.regclass
+             AND con.oid = dep.objid
+            WHERE dep.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass
+              AND dep.refobjid = c.oid AND dep.refobjsubid = a.attnum
+        )
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+    JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
+    LEFT JOIN pg_catalog.pg_type bt ON bt.oid = t.typbasetype
+    LEFT JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+    WHERE n.nspname = 'public'
+      AND c.relname = 'geo_action_tickets'
+      AND c.relkind = 'r'
+      AND a.attname IN ('owner_name', 'due_date')
+      AND a.attnum > 0 AND NOT a.attisdropped
+    ORDER BY a.attname
+""")
+
 
 async def _check_seo_structure(conn):
     rows = await conn.execute(SEO_SCHEMA_COLUMNS_SQL,
@@ -63,6 +113,20 @@ async def _check_seo_structure(conn):
                     if (table, column) not in actual or (kind and actual[(table, column)] != kind)]
     if incompatible:
         raise RuntimeError('SEO required columns missing or incompatible: ' + ', '.join(sorted(incompatible)))
+
+
+async def _check_geo_ticket_adoption(conn):
+    rows = await conn.execute(SEO_GEO_TICKET_SHAPE_SQL)
+    actual = {}
+    for row in rows:
+        name, *shape = row
+        actual[name] = tuple(shape)
+    expected = {name: shape + (False, False) for name, shape in SEO_GEO_TICKET_SHAPE.items()}
+    if actual != expected:
+        raise RuntimeError(
+            "0095 GEO ticket assignment columns missing or incompatible: "
+            f"found {sorted(actual)}"
+        )
 
 
 
@@ -114,6 +178,8 @@ async def seo_health(response: Response) -> dict:
                 )
             schema_status = "error"
             await _check_seo_structure(conn)
+            if revisions[0] in SEO_GEO_TICKET_REQUIRED_REVISIONS:
+                await _check_geo_ticket_adoption(conn)
             schema_status = "ok"
     except Exception as exc:  # noqa: BLE001 - health must report infra failure
         db_status = "error"
