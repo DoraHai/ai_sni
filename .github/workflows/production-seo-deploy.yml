@@ -102,6 +102,7 @@ jobs:
           tests/test_seo_competitors.py
           tests/test_seo_deploy_isolation.py
           tests/test_geo_ticket_adoption_migration.py
+          tests/test_sem_task_migration.py
           tests/test_seo_distribution.py
           tests/test_seo_domestic_distribution.py
           tests/test_seo_distribution_import.py
@@ -141,7 +142,7 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0095_adopt_geo_ticket (head)'
+          printf '%s\n' "$heads" | grep -F '0096_sem_tasks (head)'
 
       - working-directory: frontend
         run: npm ci --no-audit
