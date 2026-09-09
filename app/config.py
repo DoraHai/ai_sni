@@ -152,6 +152,17 @@ class Settings(BaseSettings):
     app_port: int = 8000
     app_base_url: str = "https://gsnipers.snipers.com.cn"
 
+    # Same-site SEM demo routing. Production identity remains in DATABASE_URL;
+    # only protected server-side tenant identities may use the isolated reader.
+    sem_demo_data_source_enabled: bool = False
+    sem_demo_principal_tenant_ids: str = ""
+    sem_demo_binding_schema_revision: str = "0098_demo_binding_no_truncate"
+    sem_demo_database_url: str = ""
+    sem_demo_database_name: str = ""
+    sem_demo_database_host_allowlist: str = ""
+    sem_demo_database_server_addr_allowlist: str = ""
+    sem_demo_database_schema_revision: str = ""
+
     database_url: str = Field(..., description="SQLAlchemy async URL，需用 postgresql+asyncpg 方言")
 
     baidu_api_base_url: str = "https://api.baidu.com"

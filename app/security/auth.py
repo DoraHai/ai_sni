@@ -293,6 +293,7 @@ async def _build_context(user: User, session: AsyncSession) -> AuthContext:
 
 
 async def require_auth(
+    request: Request,
     bearer: HTTPAuthorizationCredentials | None = Security(_bearer),
     header_key: str | None = Security(_api_key_header),
     key: str | None = Query(None, description="旧版 API Key 查询参数；需服务端显式开启"),
@@ -309,7 +310,10 @@ async def require_auth(
         user = await session.get(User, int(payload["sub"]))
         if user is None or not user.is_active:
             raise HTTPException(401, "账号不存在或已停用")
-        return await _build_context(user, session)
+        ctx = await _build_context(user, session)
+        from app.sem_demo_source import enforce_sem_demo_access
+
+        return await enforce_sem_demo_access(get_settings(), request, ctx, session)
 
     # 2) admin API Key 兜底（curl / 冒烟 / 调度）
     settings = get_settings()
@@ -318,7 +322,7 @@ async def require_auth(
         # 未绑租户 = 运维超管（curl / 冒烟）。绑了租户则降为该客户运营，不再绕过 RBAC。
         bound = getattr(settings, "admin_api_key_tenant_id", None)
         if bound is not None:
-            return AuthContext(
+            ctx = AuthContext(
                 user_id=None,
                 username="api-key",
                 role_name="租户运维密钥",
@@ -326,13 +330,19 @@ async def require_auth(
                 permissions=dict(OPERATOR_PERMS),
                 is_superadmin=False,
             )
-        return AuthContext(
+            from app.sem_demo_source import enforce_sem_demo_access
+
+            return await enforce_sem_demo_access(get_settings(), request, ctx, session)
+        ctx = AuthContext(
             user_id=None,
             username="api-key",
             role_name="超级管理员",
             tenant_id=None,
             is_superadmin=True,
         )
+        from app.sem_demo_source import enforce_sem_demo_access
+
+        return await enforce_sem_demo_access(get_settings(), request, ctx, session)
 
     raise HTTPException(401, "未登录。请先登录，或通过 X-API-Key 提供管理密钥。")
 

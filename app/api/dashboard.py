@@ -28,6 +28,11 @@ from app.models import (
 from app.security.auth import AuthContext, require_scoped_auth
 from app.security.crypto import decrypt
 from app.sem_cockpit_readonly import read_report, validate_query
+from app.sem_demo_source import (
+    get_sem_read_session,
+    present_sem_read_result,
+    resolve_sem_data_tenant_id,
+)
 
 logger = logging.getLogger(__name__)
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
@@ -50,13 +55,17 @@ async def cockpit_report(
     start_date: date = Query(...),
     end_date: date = Query(...),
     baidu_account_id: int | None = Query(None, gt=0),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(get_sem_read_session),
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """工作台关键词报告只读聚合；缺报不补零，不查询实时账户。"""
     ctx.ensure_tenant(tenant_id)
     validate_query(request.query_params, {"tenant_id", "start_date", "end_date", "baidu_account_id"})
-    return await read_report(session, tenant_id, start_date, end_date, baidu_account_id)
+    data_tenant_id = resolve_sem_data_tenant_id(request, tenant_id)
+    result = await read_report(
+        session, data_tenant_id, start_date, end_date, baidu_account_id
+    )
+    return present_sem_read_result(request, tenant_id, result)
 
 
 def _f(v: Any) -> float:

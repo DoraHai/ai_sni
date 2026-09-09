@@ -45,6 +45,11 @@ from app.baidu.writeback import WritebackError, apply_keyword_writeback, apply_p
 from app.security.auth import AuthContext, require_scoped_auth
 from app.sem_cockpit_details import read_keyword_detail, read_keywords
 from app.sem_cockpit_readonly import validate_query
+from app.sem_demo_source import (
+    get_sem_read_session,
+    present_sem_read_result,
+    resolve_sem_data_tenant_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -584,12 +589,24 @@ async def cockpit_keywords(
     campaign_id: int | None = Query(None, gt=0),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(get_sem_read_session),
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     validate_query(request.query_params, {"tenant_id", "baidu_account_id", "start_date", "end_date", "q", "campaign_id", "page", "page_size"})
-    return await read_keywords(session, tenant_id, baidu_account_id, start_date, end_date, q, campaign_id, page, page_size)
+    data_tenant_id = resolve_sem_data_tenant_id(request, tenant_id)
+    result = await read_keywords(
+        session,
+        data_tenant_id,
+        baidu_account_id,
+        start_date,
+        end_date,
+        q,
+        campaign_id,
+        page,
+        page_size,
+    )
+    return present_sem_read_result(request, tenant_id, result)
 
 
 @router.get("/cockpit/{keyword_id}")
@@ -600,12 +617,21 @@ async def cockpit_keyword_detail(
     start_date: date = Query(...),
     end_date: date = Query(...),
     baidu_account_id: int | None = Query(None, gt=0),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(get_sem_read_session),
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     validate_query(request.query_params, {"tenant_id", "baidu_account_id", "start_date", "end_date"})
-    return await read_keyword_detail(session, tenant_id, baidu_account_id, keyword_id, start_date, end_date)
+    data_tenant_id = resolve_sem_data_tenant_id(request, tenant_id)
+    result = await read_keyword_detail(
+        session,
+        data_tenant_id,
+        baidu_account_id,
+        keyword_id,
+        start_date,
+        end_date,
+    )
+    return present_sem_read_result(request, tenant_id, result)
 
 
 @router.get("")

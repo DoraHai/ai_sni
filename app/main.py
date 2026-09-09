@@ -68,6 +68,7 @@ from app.scheduler import (
 from app.security.auth import require_scoped_auth
 from app.security.crypto import encrypt
 from app.security.prod_guard import enforce_production_secrets
+from app.sem_demo_source import validate_sem_demo_source_settings
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level)
@@ -77,6 +78,7 @@ logger = logging.getLogger("sem-backend")
 async def lifespan(_app: FastAPI):
     """生产配置先自检，再启动调度器；退出时保证释放调度资源。"""
     enforce_production_secrets(settings, hard_fail=True)
+    validate_sem_demo_source_settings(settings)
     logger.info(
         "SEM 后端启动：env=%s base_url=%s default_user=%s",
         settings.app_env,
