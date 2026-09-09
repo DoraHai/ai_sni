@@ -20,7 +20,6 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("scripts/load_seo_demo_fixture.py")
     assert source_path_allowed("tests/test_seo_demo_fixture_loader.py")
     assert source_path_allowed("docs/SEO_DEMO_FIXTURE_LOADER.md")
-    assert source_path_allowed("docs/SEO_DEMO_FIXTURE_RECEIPT_MIGRATION_PROPOSAL.md")
     assert source_path_allowed("app/models/sem_task.py")
     assert source_path_allowed("migrations/versions/20260909_0096_sem_tasks.py")
     assert source_path_allowed("migrations/versions/20260909_0097_demo_tenant_bindings.py")

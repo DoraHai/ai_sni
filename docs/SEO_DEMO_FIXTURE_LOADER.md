@@ -40,55 +40,23 @@ version as `fixture_marker` and `dataset_version`, plus JSON booleans
 `external_actions_disabled=true`. Distribution connection examples must have no
 encrypted credentials, `has_credentials=false`, and `enabled=false`.
 
-## Database transaction
+## Revision 0098 execution gate
 
-Execution requires explicit allowlists for both the URL hostname and the server
-address returned by PostgreSQL. The URL, connected database and manifest must
-all name `gsnipers_demo`; `sem_prod` is rejected. The loader requires one exact
-Alembic revision, `0098_demo_binding_no_truncate`, a non-superuser,
-non-replication loader role, and SERIALIZABLE isolation.
-Both the loader and application roles must prove they have no `CONNECT` on
-`sem_prod` using the PostgreSQL catalog from the demo connection. Missing or
-failed catalog evidence is a hard failure; the loader never connects to the
-production database to perform this check.
+Revision `0098_demo_binding_no_truncate` has no approved fixture registry.
+Therefore the transaction, command, and receipt-recovery entry points all raise
+an error before opening a connection, issuing a catalog query, or writing data.
+Adding an ad hoc table or function cannot enable them. This module contains no
+alternate/private execution path.
 
-A fixed, database-wide SEO fixture advisory lock serializes every dataset. All
-allowed data tables, users, roles and both demo-binding tables must be empty. The latter are control-plane
-objects and are never written by this loader. Inserts use SQLAlchemy metadata,
-the fixed table order and explicit manifest rows; no update, upsert, delete,
-truncate, DDL or sequence adjustment is performed. Any validation or insert
-failure rolls back the whole transaction.
+The only future integration marker is the inert `REGISTRY_CONTRACT` value. It
+names the shared `demo_control.fixture_registry` object and records that its
+`0099` contract is still pending. After the shared migration is merged, this
+branch must rebase and consume the reviewed health and registry API. SEO will
+not define its own registry table, trigger, refusal function, permission model,
+or migration.
 
-Before and after insertion, the declared application role must have SELECT and
-no INSERT, UPDATE, DELETE or TRUNCATE privilege on every allowed table. It must
-have public schema USAGE but no schema CREATE, database CREATE/TEMP, superuser,
-replication, or writable sequence privilege. Row counts are compared with the
-bundle before commit.
-
-The loader also requires the immutable database receipt registry described in
-`docs/SEO_DEMO_FIXTURE_RECEIPT_MIGRATION_PROPOSAL.md`. That registry is not part
-of revision `0098`, so both load and receipt-recovery entry points
-unconditionally reject before issuing a database query. Manually adding a
-lookalike table to an `0098` database cannot enable loading. This keeps the Draft review executable only at
-the offline-validation layer until a separate shared migration is approved.
-
-Once that migration is approved and the required revision is updated, the
-database receipt is inserted as the final statement in the same transaction.
-The command then writes a new receipt file atomically after the transaction commits.
-It refuses to overwrite or follow an existing receipt path. The receipt binds
-the database/server identity, dataset, tenant, revision, manifest hash, loader
-role and actual nonzero row counts. Store it for an independent review before a
-binding is created in the primary database.
-
-Example shape (do not run without the separate database approval):
-
-```powershell
-python scripts/load_seo_demo_fixture.py D:\approved\seo-tiger-v1 `
-  --database-url-env SEO_FIXTURE_DATABASE_URL `
-  --allow-host demo-db.internal `
-  --allow-server-address 192.0.2.10 `
-  --receipt D:\approved\receipts\seo-tiger-v1.json
-```
+Until that rebase, the supported operation is offline bundle validation only.
+No database, fixture load, binding, merge, or deployment is authorized.
 
 Credentials belong only in the process environment. They must not appear in a
 bundle, receipt, command transcript, repository file, or client request.

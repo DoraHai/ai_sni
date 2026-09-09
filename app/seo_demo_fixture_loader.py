@@ -6,15 +6,12 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
-from decimal import Decimal
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
 
-from sqlalchemy import Date, DateTime, Numeric, insert, text
 from sqlalchemy.engine import make_url
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncConnection, create_async_engine
 
 
 REQUIRED_REVISION = "0098_demo_binding_no_truncate"
@@ -80,8 +77,6 @@ FIXED_LOCK_KEY = int.from_bytes(
     "big",
     signed=True,
 )
-RECEIPT_REGISTRY_TABLE = "seo_fixture_load_receipts"
-RECEIPT_REJECT_FUNCTION = "public.reject_seo_fixture_receipt_mutation()"
 SYNTHETIC_ACTOR_TEXT = "fixture:synthetic"
 SYNTHETIC_ACTOR_ID = 0
 SYNTHETIC_ACTOR_NAME = "Synthetic Fixture"
@@ -108,6 +103,9 @@ SENSITIVE_TEXT = re.compile(
     r"(?:\bBearer\s+[A-Za-z0-9._~+/=-]+|-----BEGIN [A-Z ]*PRIVATE KEY-----|"
     r"\bAKIA[0-9A-Z]{16}\b|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b|"
     r"\b(?:sk-|ya29\.)[A-Za-z0-9._-]{8,}|"
+    r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|"
+    r"xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{20,}|"
+    r"glpat-[A-Za-z0-9_-]{10,}|npm_[A-Za-z0-9]{20,}|pypi-[A-Za-z0-9_-]{20,})\b|"
     r"\b(?:authorization|private[_-]?key|access[_-]?key|api[_-]?key|oauth|client[_-]?secret|session)\s*[:=])",
     re.I,
 )
@@ -513,361 +511,29 @@ def validate_target_url(database_url: str, bundle: SeoFixtureBundle, allowed_hos
         raise SeoFixtureError("database URL does not target the reviewed demo database")
 
 
-async def _scalar_rows(connection: AsyncConnection, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
-    return list((await connection.execute(text(sql), params or {})).scalars())
+REGISTRY_CONTRACT = {
+    "schema": "demo_control",
+    "table": "fixture_registry",
+    "revision": "0099-pending-shared-contract",
+    "enabled": False,
+}
 
 
-async def _verify_no_production_connect(connection: AsyncConnection, role: str) -> None:
-    privilege = (await connection.execute(text(
-        "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_database WHERE datname='sem_prod') "
-        "THEN has_database_privilege(:role, 'sem_prod', 'CONNECT') ELSE NULL END"
-    ), {"role": role})).scalar_one()
-    if privilege is not False:
-        raise SeoFixtureError("demo role production database CONNECT privilege is unsafe or unverifiable")
-
-
-async def _verify_app_readonly(connection: AsyncConnection, role: str) -> None:
-    identity = (await connection.execute(text(
-        "SELECT count(*)=1, coalesce(bool_or(rolsuper),false), "
-        "coalesce(bool_or(rolreplication),false), coalesce(bool_or(rolbypassrls),false), "
-        "coalesce(bool_or(rolcreatedb),false), coalesce(bool_or(rolcreaterole),false), "
-        "(SELECT count(*) FROM pg_auth_members m JOIN pg_roles child ON child.oid=m.member WHERE child.rolname=:role)=0, "
-        "(SELECT count(*) FROM pg_auth_members m JOIN pg_roles parent ON parent.oid=m.roleid WHERE parent.rolname=:role)=0 "
-        "FROM pg_roles WHERE rolname=:role"
-    ), {"role": role})).one()
-    if identity != (True, False, False, False, False, False, True, True):
-        raise SeoFixtureError("application read-only role identity is unsafe")
-    await _verify_no_production_connect(connection, role)
-    readable_tables = (*TABLE_ORDER, "roles", "users", "demo_tenant_bindings", "demo_tenant_binding_history")
-    for table in readable_tables:
-        privileges = (await connection.execute(text(
-            f"SELECT has_table_privilege(:role, 'public.{table}', 'SELECT'), "
-            f"has_table_privilege(:role, 'public.{table}', 'INSERT'), "
-            f"has_table_privilege(:role, 'public.{table}', 'UPDATE'), "
-            f"has_table_privilege(:role, 'public.{table}', 'DELETE'), "
-            f"has_table_privilege(:role, 'public.{table}', 'TRUNCATE')"
-        ), {"role": role})).one()
-        if privileges != (True, False, False, False, False):
-            raise SeoFixtureError(f"application role privileges are unsafe for {table}")
-    registry_privileges = (await connection.execute(text(
-        f"SELECT has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'SELECT'), "
-        f"has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'INSERT'), "
-        f"has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'UPDATE'), "
-        f"has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'DELETE'), "
-        f"has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'TRUNCATE')"
-    ), {"role": role})).one()
-    if registry_privileges != (False, False, False, False, False):
-        raise SeoFixtureError("application role must not access the fixture receipt registry")
-    schema_privileges = (await connection.execute(text(
-        "SELECT has_schema_privilege(:role, 'public', 'USAGE'), has_schema_privilege(:role, 'public', 'CREATE'), "
-        "has_database_privilege(:role, current_database(), 'CONNECT'), "
-        "has_database_privilege(:role, current_database(), 'CREATE'), has_database_privilege(:role, current_database(), 'TEMP')"
-    ), {"role": role})).one()
-    if schema_privileges != (True, False, True, False, False):
-        raise SeoFixtureError("application role schema or database privileges are unsafe")
-    writable_sequences = (await connection.execute(text(
-        "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-        "WHERE n.nspname='public' AND c.relkind='S' AND "
-        "(has_sequence_privilege(:role, c.oid, 'SELECT') OR has_sequence_privilege(:role, c.oid, 'USAGE') OR has_sequence_privilege(:role, c.oid, 'UPDATE'))"
-    ), {"role": role})).scalar_one()
-    if int(writable_sequences) != 0:
-        raise SeoFixtureError("application role has writable sequence privileges")
-
-
-async def _verify_loader_role(connection: AsyncConnection, role: str) -> None:
-    memberships = (await connection.execute(text(
-        "SELECT "
-        "(SELECT count(*) FROM pg_auth_members m JOIN pg_roles child ON child.oid=m.member WHERE child.rolname=:role), "
-        "(SELECT count(*) FROM pg_auth_members m JOIN pg_roles parent ON parent.oid=m.roleid WHERE parent.rolname=:role)"
-    ), {"role": role})).one()
-    if memberships != (0, 0):
-        raise SeoFixtureError("loader role must not inherit or grant role memberships")
-    await _verify_no_production_connect(connection, role)
-    readonly_tables = {"roles", "users", "demo_tenant_bindings", "demo_tenant_binding_history"}
-    for table in (*TABLE_ORDER, *sorted(readonly_tables)):
-        privileges = (await connection.execute(text(
-            f"SELECT has_table_privilege(:role, 'public.{table}', 'SELECT'), "
-            f"has_table_privilege(:role, 'public.{table}', 'INSERT'), "
-            f"has_table_privilege(:role, 'public.{table}', 'UPDATE'), "
-            f"has_table_privilege(:role, 'public.{table}', 'DELETE'), "
-            f"has_table_privilege(:role, 'public.{table}', 'TRUNCATE')"
-        ), {"role": role})).one()
-        expected = (True, table in TABLE_ORDER, False, False, False)
-        if privileges != expected:
-            raise SeoFixtureError(f"loader role privileges are unsafe for {table}")
-    registry_privileges = (await connection.execute(text(
-        f"SELECT has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'SELECT'), "
-        f"has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'INSERT'), "
-        f"has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'UPDATE'), "
-        f"has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'DELETE'), "
-        f"has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'TRUNCATE')"
-    ), {"role": role})).one()
-    if registry_privileges != (True, True, False, False, False):
-        raise SeoFixtureError("loader role receipt registry privileges are unsafe")
-    environment = (await connection.execute(text(
-        "SELECT has_schema_privilege(:role, 'public', 'USAGE'), has_schema_privilege(:role, 'public', 'CREATE'), "
-        "has_database_privilege(:role, current_database(), 'CONNECT'), "
-        "has_database_privilege(:role, current_database(), 'CREATE'), has_database_privilege(:role, current_database(), 'TEMP')"
-    ), {"role": role})).one()
-    if environment != (True, False, True, False, False):
-        raise SeoFixtureError("loader role schema or database privileges are unsafe")
-    sequence_privileges = (await connection.execute(text(
-        "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-        "WHERE n.nspname='public' AND c.relkind='S' AND "
-        "(has_sequence_privilege(:role, c.oid, 'SELECT') OR has_sequence_privilege(:role, c.oid, 'USAGE') OR has_sequence_privilege(:role, c.oid, 'UPDATE'))"
-    ), {"role": role})).scalar_one()
-    if int(sequence_privileges) != 0:
-        raise SeoFixtureError("loader role has sequence privileges")
-
-
-async def _verify_receipt_registry(connection: AsyncConnection) -> None:
-    relation = (await connection.execute(text(
-        f"SELECT to_regclass('public.{RECEIPT_REGISTRY_TABLE}')::text"
-    ))).scalar_one()
-    if relation != RECEIPT_REGISTRY_TABLE:
-        raise SeoFixtureError(
-            "immutable fixture receipt registry is absent; revision 0098 is intentionally fail-closed"
-        )
-    columns = await _scalar_rows(connection,
-        "SELECT column_name FROM information_schema.columns "
-        f"WHERE table_schema='public' AND table_name='{RECEIPT_REGISTRY_TABLE}' ORDER BY ordinal_position"
+def _blocked_0098() -> None:
+    raise SeoFixtureError(
+        "revision 0098 cannot access a fixture registry or load data; "
+        "the approved shared 0099 demo_control.fixture_registry contract is required"
     )
-    expected = [
-        "manifest_sha256", "dataset_key", "dataset_version", "demo_tenant_id",
-        "target_revision", "target_database", "server_address", "loader_role",
-        "loader_version", "row_counts", "committed_at",
-    ]
-    if columns != expected:
-        raise SeoFixtureError("fixture receipt registry columns do not match the reviewed design")
-    trigger_rows = (await connection.execute(text(
-        "SELECT event_manipulation, action_timing, action_statement "
-        "FROM information_schema.triggers "
-        f"WHERE event_object_schema='public' AND event_object_table='{RECEIPT_REGISTRY_TABLE}'"
-    ))).all()
-    expected_triggers = {
-        (event, "BEFORE", f"EXECUTE FUNCTION {RECEIPT_REJECT_FUNCTION}")
-        for event in ("UPDATE", "DELETE", "TRUNCATE")
-    }
-    if set(trigger_rows) != expected_triggers:
-        raise SeoFixtureError("fixture receipt registry is not protected by immutable triggers")
-
-
-async def _table_count(connection: AsyncConnection, table: str) -> int:
-    return int((await connection.execute(text(f"SELECT count(*) FROM public.{table}"))).scalar_one())
-
-
-def _metadata_tables() -> dict[str, Any]:
-    from app.database import Base
-    import app.models  # noqa: F401
-    return {name: Base.metadata.tables[name] for name in TABLE_ORDER}
-
-
-def _coerce_rows(table: Any, rows: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
-    columns = {column.name: column for column in table.columns}
-    converted: list[dict[str, Any]] = []
-    for row in rows:
-        unknown = set(row) - TABLE_COLUMN_ALLOWLISTS[table.name]
-        if unknown:
-            raise SeoFixtureError(f"table {table.name} contains unknown columns")
-        item = dict(row)
-        for name, value in tuple(item.items()):
-            if value is None:
-                continue
-            kind = columns[name].type
-            try:
-                if isinstance(kind, DateTime) and isinstance(value, str):
-                    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                    if not kind.timezone and parsed.tzinfo is not None:
-                        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-                    item[name] = parsed
-                elif isinstance(kind, Date) and isinstance(value, str):
-                    item[name] = date.fromisoformat(value)
-                elif isinstance(kind, Numeric) and not isinstance(value, Decimal):
-                    item[name] = Decimal(str(value))
-            except (ValueError, ArithmeticError) as exc:
-                raise SeoFixtureError(f"table {table.name} column {name} has an invalid value") from exc
-        converted.append(item)
-    return converted
-
-
-async def _load_fixture_transaction_after_approved_registry(
-    connection: AsyncConnection,
-    bundle: SeoFixtureBundle,
-    *,
-    expected_server_addresses: set[str],
-) -> dict[str, Any]:
-    identity = (await connection.execute(text(
-        "SELECT current_database(), inet_server_addr()::text, current_user, session_user, "
-        "current_setting('transaction_isolation'), r.rolsuper, r.rolreplication, "
-        "r.rolbypassrls, r.rolcreatedb, r.rolcreaterole "
-        "FROM pg_roles r WHERE r.rolname=current_user"
-    ))).one()
-    database, server_address, loader_role, session_role, isolation, superuser, replication, bypass_rls, create_db, create_role = identity
-    if database != bundle.manifest["target_database"] or database == "sem_prod":
-        raise SeoFixtureError("connected database identity is not the reviewed demo target")
-    if server_address not in expected_server_addresses or isolation.lower() != "serializable":
-        raise SeoFixtureError("server address or transaction isolation is unsafe")
-    if (
-        session_role != loader_role or superuser or replication or bypass_rls
-        or create_db or create_role or loader_role == bundle.manifest["app_readonly_role"]
-    ):
-        raise SeoFixtureError("loader role identity is unsafe")
-    revisions = await _scalar_rows(connection, "SELECT version_num FROM alembic_version ORDER BY version_num")
-    if revisions != [REQUIRED_REVISION]:
-        raise SeoFixtureError(f"target must have exactly revision {REQUIRED_REVISION}")
-    locked = (await connection.execute(
-        text("SELECT pg_try_advisory_xact_lock(:lock_key)"), {"lock_key": FIXED_LOCK_KEY}
-    )).scalar_one()
-    if locked is not True:
-        raise SeoFixtureError("another SEO fixture loader holds the database advisory lock")
-    await _verify_receipt_registry(connection)
-    for table in EMPTY_GUARD_TABLES:
-        if await _table_count(connection, table) != 0:
-            raise SeoFixtureError(f"target is not empty: {table}")
-    if await _table_count(connection, RECEIPT_REGISTRY_TABLE) != 0:
-        raise SeoFixtureError("target already has a fixture load receipt")
-    await _verify_loader_role(connection, loader_role)
-    await _verify_app_readonly(connection, bundle.manifest["app_readonly_role"])
-    metadata = _metadata_tables()
-    for table_name in TABLE_ORDER:
-        rows = bundle.rows.get(table_name, ())
-        if rows:
-            await connection.execute(insert(metadata[table_name]), _coerce_rows(metadata[table_name], rows))
-    actual_counts = {table: await _table_count(connection, table) for table in TABLE_ORDER}
-    expected_counts = {table: len(bundle.rows.get(table, ())) for table in TABLE_ORDER}
-    if actual_counts != expected_counts:
-        raise SeoFixtureError("post-load row counts do not match the manifest")
-    if await _table_count(connection, "demo_tenant_bindings") or await _table_count(connection, "demo_tenant_binding_history"):
-        raise SeoFixtureError("loader must not create demo tenant bindings")
-    await _verify_app_readonly(connection, bundle.manifest["app_readonly_role"])
-    receipt = {
-        "schema_version": 1,
-        "module": "seo",
-        "target_revision": REQUIRED_REVISION,
-        "target_database": database,
-        "server_address": server_address,
-        "loader_role": loader_role,
-        "loader_version": bundle.manifest["loader_version"],
-        "dataset_key": bundle.dataset_key,
-        "dataset_version": bundle.dataset_version,
-        "demo_tenant_id": bundle.demo_tenant_id,
-        "manifest_sha256": bundle.digest,
-        "row_counts": {name: count for name, count in actual_counts.items() if count},
-        "validated_at": datetime.now().astimezone().isoformat(),
-        "result": "committed",
-    }
-    await connection.execute(text(
-        f"INSERT INTO public.{RECEIPT_REGISTRY_TABLE} "
-        "(manifest_sha256, dataset_key, dataset_version, demo_tenant_id, target_revision, "
-        "target_database, server_address, loader_role, loader_version, row_counts) "
-        "VALUES (:manifest_sha256, :dataset_key, :dataset_version, :demo_tenant_id, :target_revision, "
-        ":target_database, :server_address, :loader_role, :loader_version, CAST(:row_counts AS jsonb))"
-    ), {**receipt, "row_counts": json.dumps(receipt["row_counts"], sort_keys=True)})
-    return receipt
 
 
 async def load_fixture_transaction(
-    connection: AsyncConnection,
+    connection: object,
     bundle: SeoFixtureBundle,
     *,
     expected_server_addresses: set[str],
 ) -> dict[str, Any]:
     del connection, bundle, expected_server_addresses
-    raise SeoFixtureError(
-        "revision 0098 cannot load fixtures; an approved 0099 receipt migration is required"
-    )
-
-
-async def _run_fixture_load_after_approved_registry(
-    database_url: str,
-    bundle: SeoFixtureBundle,
-    *,
-    allowed_hosts: set[str],
-    expected_server_addresses: set[str],
-    engine: AsyncEngine | None = None,
-) -> dict[str, Any]:
-    validate_target_url(database_url, bundle, allowed_hosts)
-    owned = engine is None
-    target = engine or create_async_engine(database_url, isolation_level="SERIALIZABLE", pool_pre_ping=True)
-    try:
-        async with target.begin() as connection:
-            receipt = await _load_fixture_transaction_after_approved_registry(
-                connection, bundle, expected_server_addresses=expected_server_addresses
-            )
-        return receipt
-    finally:
-        if owned:
-            await target.dispose()
-
-
-async def _recover_committed_receipt_after_approved_registry(
-    database_url: str,
-    bundle: SeoFixtureBundle,
-    *,
-    allowed_hosts: set[str],
-    expected_server_addresses: set[str],
-    engine: AsyncEngine | None = None,
-) -> dict[str, Any]:
-    """Recreate a lost local receipt from the immutable in-database record."""
-    validate_target_url(database_url, bundle, allowed_hosts)
-    owned = engine is None
-    target = engine or create_async_engine(database_url, isolation_level="SERIALIZABLE", pool_pre_ping=True)
-    try:
-        async with target.begin() as connection:
-            identity = (await connection.execute(text(
-                "SELECT current_database(), inet_server_addr()::text, current_user, session_user, "
-                "current_setting('transaction_isolation'), r.rolsuper, r.rolreplication, "
-                "r.rolbypassrls, r.rolcreatedb, r.rolcreaterole "
-                "FROM pg_roles r WHERE r.rolname=current_user"
-            ))).one()
-            (
-                database, server_address, loader_role, session_role, isolation,
-                superuser, replication, bypass_rls, create_db, create_role,
-            ) = identity
-            if (
-                database != bundle.manifest["target_database"] or database == "sem_prod"
-                or server_address not in expected_server_addresses
-                or loader_role != session_role or isolation.lower() != "serializable"
-                or superuser or replication or bypass_rls or create_db or create_role
-            ):
-                raise SeoFixtureError("receipt recovery target identity is unsafe")
-            revisions = await _scalar_rows(connection, "SELECT version_num FROM alembic_version ORDER BY version_num")
-            if revisions != [REQUIRED_REVISION]:
-                raise SeoFixtureError(f"target must have exactly revision {REQUIRED_REVISION}")
-            await _verify_receipt_registry(connection)
-            await _verify_loader_role(connection, loader_role)
-            result = (await connection.execute(text(
-                f"SELECT dataset_key, dataset_version, demo_tenant_id, target_revision, target_database, "
-                f"server_address::text, loader_role::text, loader_version, row_counts, committed_at "
-                f"FROM public.{RECEIPT_REGISTRY_TABLE} WHERE manifest_sha256=:digest"
-            ), {"digest": bundle.digest})).one_or_none()
-            if result is None:
-                raise SeoFixtureError("no committed receipt matches the reviewed bundle")
-            (
-                dataset_key, dataset_version, demo_tenant_id, target_revision,
-                target_database, recorded_address, recorded_role, loader_version,
-                row_counts, committed_at,
-            ) = result
-            if (
-                dataset_key != bundle.dataset_key or dataset_version != bundle.dataset_version
-                or demo_tenant_id != bundle.demo_tenant_id or target_revision != REQUIRED_REVISION
-                or target_database != database or recorded_address != server_address
-                or recorded_role != loader_role or loader_version != bundle.manifest["loader_version"]
-            ):
-                raise SeoFixtureError("stored receipt does not match the reviewed bundle or target")
-            return {
-                "schema_version": 1, "module": "seo", "target_revision": target_revision,
-                "target_database": target_database, "server_address": recorded_address,
-                "loader_role": recorded_role, "loader_version": loader_version,
-                "dataset_key": dataset_key, "dataset_version": dataset_version,
-                "demo_tenant_id": demo_tenant_id, "manifest_sha256": bundle.digest,
-                "row_counts": row_counts,
-                "validated_at": committed_at.isoformat() if hasattr(committed_at, "isoformat") else str(committed_at),
-                "result": "committed",
-            }
-    finally:
-        if owned:
-            await target.dispose()
+    _blocked_0098()
 
 
 async def run_fixture_load(
@@ -876,12 +542,10 @@ async def run_fixture_load(
     *,
     allowed_hosts: set[str],
     expected_server_addresses: set[str],
-    engine: AsyncEngine | None = None,
+    engine: object | None = None,
 ) -> dict[str, Any]:
     del database_url, bundle, allowed_hosts, expected_server_addresses, engine
-    raise SeoFixtureError(
-        "revision 0098 cannot load fixtures; an approved 0099 receipt migration is required"
-    )
+    _blocked_0098()
 
 
 async def recover_committed_receipt(
@@ -890,9 +554,7 @@ async def recover_committed_receipt(
     *,
     allowed_hosts: set[str],
     expected_server_addresses: set[str],
-    engine: AsyncEngine | None = None,
+    engine: object | None = None,
 ) -> dict[str, Any]:
     del database_url, bundle, allowed_hosts, expected_server_addresses, engine
-    raise SeoFixtureError(
-        "revision 0098 cannot recover fixture receipts; an approved 0099 receipt migration is required"
-    )
+    _blocked_0098()
