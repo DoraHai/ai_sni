@@ -1,5 +1,6 @@
 from app.models.tenant import Tenant
 from app.models.sem_task import SemTask
+from app.models.demo_tenant_binding import DemoTenantBinding, DemoTenantBindingHistory
 from app.models.seo_cockpit import SeoTask, SeoImageVerification
 from app.models.seo_qa import SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement
 from app.models.baidu_account import BaiduAccount
@@ -137,6 +138,8 @@ __all__ = [
     "TRANS_TYPE_LABELS",
     "Tenant",
     "SemTask",
+    "DemoTenantBinding",
+    "DemoTenantBindingHistory",
     "BaiduAccount",
     "BaiduOAuthGrant",
     "BaiduOAuthState",
