@@ -70,9 +70,12 @@ async def environment(*, extra_models=(), legacy_routes=False):
         async def query_session(request: Request):
             async with sessions(autoflush=False) as session:
                 async with session.begin():
-                    if request.method in {'GET', 'HEAD'}:
+                    control_metrics = request.url.path.startswith(
+                        '/api/v1/geo/integration/metrics/'
+                    )
+                    if request.method in {'GET', 'HEAD'} and not control_metrics:
                         await session.execute(text('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY'))
-                    else:
+                    elif request.method not in {'GET', 'HEAD'}:
                         await session.execute(text("SET LOCAL application_name='geo_fixture_post'"))
                     yield session
 
