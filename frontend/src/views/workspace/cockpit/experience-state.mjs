@@ -18,3 +18,9 @@ export function normalizeModuleSelection(activeModule, availableCodes) {
   if (activeModule === 'all') return 'all'
   return Array.isArray(availableCodes) && availableCodes.includes(activeModule) ? activeModule : 'all'
 }
+
+export function isCurrentCommandContext(request, current) {
+  return Number(request?.tenantId) === Number(current?.tenantId)
+    && request?.loadGeneration === current?.loadGeneration
+    && request?.contextRevision === current?.contextRevision
+}
