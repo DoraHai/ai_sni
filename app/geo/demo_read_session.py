@@ -19,6 +19,10 @@ from app.geo.tenant_scope import ensure_geo_entitlement
 from app.security.auth import AuthContext, require_scoped_auth
 
 
+REQUIRED_SCHEMA_REVISION = "0098_demo_binding_no_truncate"
+FIXTURE_REGISTRY_TABLE = "public.geo_demo_fixture_registry"
+
+
 @dataclass(frozen=True)
 class GeoDemoDatabaseTarget:
     database_url: str
@@ -26,6 +30,7 @@ class GeoDemoDatabaseTarget:
     username: str
     server_addresses: frozenset[str]
     schema_revision: str
+    manifest_sha256: str
 
 
 def _required(env: Mapping[str, str], key: str) -> str:
@@ -48,7 +53,13 @@ def resolve_demo_database_target(policy, env: Mapping[str, str] | None = None):
     raw_url = _required(env, "GEO_DEMO_DATABASE_URL")
     database = _required(env, "GEO_DEMO_DATABASE_NAME")
     username = _required(env, "GEO_DEMO_DATABASE_USER")
-    schema_revision = _required(env, "GEO_DEMO_SCHEMA_REVISION")
+    if _required(env, "GEO_DEMO_SCHEMA_REVISION") != REQUIRED_SCHEMA_REVISION:
+        raise GeoDemoBindingUnavailable("演示数据库结构版本配置不匹配")
+    manifest_sha256 = _required(env, "GEO_DEMO_MANIFEST_SHA256").lower()
+    if len(manifest_sha256) != 64 or any(
+        value not in "0123456789abcdef" for value in manifest_sha256
+    ):
+        raise GeoDemoBindingUnavailable("演示夹具清单摘要无效")
     hosts = frozenset(
         value.strip().lower()
         for value in _required(env, "GEO_DEMO_DATABASE_HOST_ALLOWLIST").split(",")
@@ -86,7 +97,8 @@ def resolve_demo_database_target(policy, env: Mapping[str, str] | None = None):
         database=database,
         username=username,
         server_addresses=server_addresses,
-        schema_revision=schema_revision,
+        schema_revision=REQUIRED_SCHEMA_REVISION,
+        manifest_sha256=manifest_sha256,
     )
 
 
@@ -127,6 +139,25 @@ async def validate_demo_session(session, policy, target: GeoDemoDatabaseTarget) 
     )
     if revisions != [target.schema_revision]:
         raise GeoDemoBindingUnavailable("演示数据库结构版本不匹配")
+    receipt = (
+        await session.execute(
+            text(
+                f"SELECT dataset_key, dataset_version, fixture_namespace, "
+                f"manifest_sha256, status FROM {FIXTURE_REGISTRY_TABLE} "
+                "WHERE tenant_id=:tenant_id"
+            ),
+            {"tenant_id": policy.demo_tenant_id},
+        )
+    ).one_or_none()
+    if (
+        receipt is None
+        or receipt[0] != policy.dataset_key
+        or receipt[1] != policy.dataset_version
+        or receipt[2] != policy.fixture_namespace
+        or str(receipt[3] or "").lower() != target.manifest_sha256
+        or receipt[4] != "sealed"
+    ):
+        raise GeoDemoBindingUnavailable("演示夹具装载回执不匹配")
     tenant = (
         await session.execute(
             text(
@@ -143,17 +174,23 @@ async def validate_demo_session(session, policy, target: GeoDemoDatabaseTarget) 
         or marker not in str(tenant[2] or "")
     ):
         raise GeoDemoBindingUnavailable("演示租户或夹具标记不匹配")
-    total, synthetic = (
+    total, compliant = (
         await session.execute(
             text(
                 "SELECT count(*), count(*) FILTER (WHERE simulated IS TRUE "
-                "OR sample_mode='mock_persona') FROM geo_answer_snapshots "
+                "AND sample_mode='mock_persona' "
+                "AND position(:visible_marker in coalesce(raw_text, '')) > 0 "
+                "AND position(:visible_marker in coalesce(note, '')) > 0) "
+                "FROM geo_answer_snapshots "
                 "WHERE tenant_id=:tenant_id"
             ),
-            {"tenant_id": policy.demo_tenant_id},
+            {
+                "tenant_id": policy.demo_tenant_id,
+                "visible_marker": f"[全虚拟演示][{marker}]",
+            },
         )
     ).one()
-    if int(total or 0) <= 0 or int(total) != int(synthetic or 0):
+    if int(total or 0) <= 0 or int(total) != int(compliant or 0):
         raise GeoDemoBindingUnavailable("演示回答不是完整的全虚拟数据集")
 
 

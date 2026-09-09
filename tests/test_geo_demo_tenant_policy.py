@@ -134,6 +134,7 @@ def test_demo_database_target_is_fixed_and_cannot_equal_primary():
         "GEO_DEMO_DATABASE_HOST_ALLOWLIST": "db-demo.internal",
         "GEO_DEMO_DATABASE_SERVER_ADDR_ALLOWLIST": "10.0.0.8",
         "GEO_DEMO_SCHEMA_REVISION": "0098_demo_binding_no_truncate",
+        "GEO_DEMO_MANIFEST_SHA256": "a" * 64,
     }
     with patch(
         "app.geo.demo_read_session.get_settings",
@@ -145,6 +146,16 @@ def test_demo_database_target_is_fixed_and_cannot_equal_primary():
     assert target.database == "gsnipers_demo"
     assert target.username == "geo_demo_read"
     assert target.server_addresses == frozenset({"10.0.0.8"})
+    assert target.schema_revision == "0098_demo_binding_no_truncate"
+
+    old_revision = {**env, "GEO_DEMO_SCHEMA_REVISION": "0060_geo_competitors"}
+    with patch(
+        "app.geo.demo_read_session.get_settings",
+        return_value=SimpleNamespace(
+            database_url="postgresql+asyncpg://prod:secret@db.internal/sem_prod"
+        ),
+    ), pytest.raises(GeoDemoBindingUnavailable):
+        resolve_demo_database_target(policy, old_revision)
 
     bad = {**env, "GEO_DEMO_DATABASE_URL": env["GEO_DEMO_DATABASE_URL"].replace(
         "db-demo.internal/gsnipers_demo", "db.internal/sem_prod"

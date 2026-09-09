@@ -228,7 +228,8 @@ geo_visibility_patrol_runs         geo_visibility_patrol_settings
    `public.demo_tenant_bindings` 的权限；
 4. 绑定负责人需提供唯一的 control tenant、`demo_tenant_id`、dataset key/version，并保留 0097 的审计历史；
 5. 服务器负责人需提供固定 dataset key/version 对应的 DSN、数据库名、只读用户、主机与服务端地址
-   白名单、精确 schema revision；
+   白名单和清单 SHA-256；schema revision 由代码硬编码为 `0098_demo_binding_no_truncate`，运维配置只能
+   重复声明该值，不能选择其他 revision；
 6. 工作台负责人需确认现有站内 GEO 页面在 demo 模式只调用 integration/read 及可选 demo summary。
 
 这些条件满足前，PR #504 保持 Draft；不得合并、部署、连接生产库、迁移或装载 fixture。
@@ -245,6 +246,11 @@ geo_visibility_patrol_runs         geo_visibility_patrol_settings
 - 已认证的正式指标 snapshot/dictionary 可读；三个正式指标的 `value` 和 `trend_7d` 强制为 `null`；
 - `integration/read` 只有在数据库名、只读用户、主机、服务端地址、schema revision、演示租户与夹具标记、
   全量回答的模拟属性全部核验通过后才读取演示库；
+- 演示库必须提供只读、唯一且不可变的 `public.geo_demo_fixture_registry` 回执，至少包含 `tenant_id`、
+  `dataset_key`、`dataset_version`、`fixture_namespace`、`manifest_sha256`、`status`；运行时要求 key/version
+  与生产绑定精确一致、摘要与服务器固定值一致且 `status=sealed`。统一 registry 落库前查询会失败关闭；
+- 每条回答必须同时满足 `simulated IS TRUE`、`sample_mode='mock_persona'`，并在 `raw_text` 与 `note`
+  保留完整可见夹具标记；任一条件不满足即拒绝整个演示数据源；
 - legacy GET、所有写方法、生成、模型、巡检、scheduler、worker、恢复、发布、OAuth 和历史公开分享均阻断；
 - `/geo/tenants` 只从控制库返回 `workspace_mode`、`read_only`、`fixture_namespace`、`dataset_version`，
   不返回数据库信息或 `demo_tenant_id`；

@@ -131,8 +131,10 @@ g-snipers-geo-demo-v1:<object_type>:<name>
 正式实现加载器前，需要数据库和共享身份负责人明确以下事项：
 
 1. 为独立租户分配物理 ID和 GEO module entitlement；确认不复用 tenant 1、tenant 4 或已有测试租户。
-2. 选择持久演示标识和幂等登记结构。推荐两张 GEO 自有表：
-   `geo_demo_fixture_tenants(tenant_id PK/FK, fixture_namespace UNIQUE, fixture_version, status, created_at)`；
+2. 选择持久演示标识和幂等登记结构。运行时只读契约要求一张不可变回执表：
+   `public.geo_demo_fixture_registry(tenant_id PK/FK, dataset_key UNIQUE, dataset_version,
+   fixture_namespace UNIQUE, manifest_sha256, status, loaded_at)`，其中完成装载的状态只能是 `sealed`；另推荐
+   一张 GEO 自有对象登记表：
    `geo_demo_fixture_objects(fixture_namespace, logical_key, table_name, object_id, payload_hash, created_at,
    PRIMARY KEY(fixture_namespace, logical_key), UNIQUE(table_name, object_id))`。若采用共享
    `tenants.is_demo`，需由跨模块负责人统一迁移，GEO 不自行修改共享表；对象登记仍需保留。
