@@ -48,6 +48,9 @@ class GeoDemoExecutionBlocked(HTTPException):
             {
                 "code": "geo_demo_tenant_read_only",
                 "message": "全虚拟演示客户仅允许认证后的只读展示",
+                "simulated": True,
+                "would_execute": False,
+                "result": "演示操作已模拟拦截，未产生采集、生成、发布、OAuth、调度或数据库写入",
             },
         )
 

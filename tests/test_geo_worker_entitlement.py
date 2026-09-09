@@ -40,7 +40,7 @@ def test_claimed_worker_rechecks_entitlement_before_business_executor():
             patch("app.database.async_session_factory", factory),
             patch.object(async_jobs, "_execute_generate", executor),
         ):
-            result = await async_jobs._run_owned_job(42)
+            result = await async_jobs._run_owned_job(42, tenant_id=7)
 
         assert result["status"] == "blocked"
         assert result["error_type"] == "GeoEntitlementUnavailable"
@@ -122,7 +122,7 @@ def test_worker_failure_never_reads_rolled_back_job_and_restores_task():
                 AsyncMock(side_effect=ValueError("synthetic failure")),
             ),
         ):
-            result = await async_jobs._run_owned_job(42)
+            result = await async_jobs._run_owned_job(42, tenant_id=7)
 
         assert result["status"] == "failed"
         assert result["error_type"] == "ValueError"
@@ -372,7 +372,7 @@ def test_patrol_discards_probe_response_when_entitlement_changes_in_flight():
             patch("app.geo.content.patrol.run_probe_draft", side_effect=probe),
             patch("app.geo.content.patrol.GeoAnswerSnapshot", snapshot),
         ):
-            running = asyncio.create_task(patrol.execute_patrol_run(session, 9))
+            running = asyncio.create_task(patrol.execute_patrol_run(session, 9, tenant_id=7))
             await asyncio.wait_for(entered.wait(), 3)
             revoked = True
             release.set()
@@ -409,7 +409,7 @@ def test_queued_patrol_expired_before_claim_is_closed_without_probe():
             ),
             patch("app.geo.content.patrol.run_probe_draft", probe),
         ):
-            result = await patrol.execute_patrol_run(session, 10)
+            result = await patrol.execute_patrol_run(session, 10, tenant_id=7)
 
         assert result.status == "failed"
         assert "geo_not_available" in result.error
@@ -511,7 +511,7 @@ def test_legacy_scheduler_inactive_first_does_not_block_active_second():
 
         current.assert_awaited_once_with(session, 8)
         assert session.add.call_args.args[0].tenant_id == 8
-        execute.assert_awaited_once_with(session, 99)
+        execute.assert_awaited_once_with(session, 99, 8)
         session.rollback.assert_not_awaited()
 
     asyncio.run(scenario())

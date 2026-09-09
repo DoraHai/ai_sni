@@ -59,6 +59,9 @@ async def get_scheduler_eligibility(
     from app.geo.content.geo_scheduler import scheduled_patrol_settings_query
 
     ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import is_tenant16_demo, scheduler_eligibility
+    if is_tenant16_demo(ctx, tenant_id):
+        return scheduler_eligibility()
     data_id = data_tenant_id(session, tenant_id)
     settings = await session.scalar(
         select(GeoVisibilityPatrolSettings).where(
@@ -94,10 +97,41 @@ async def get_scheduler_eligibility(
     }
 
 
+@router.get('/simulate-action')
+async def simulate_action(
+    tenant_id: int,
+    action: Literal['collect', 'recheck', 'generate', 'publish', 'oauth', 'schedule'],
+    target_ref: str | None = Query(None, max_length=160),
+    ctx=Depends(require_scoped_auth),
+    session=Depends(tenant_read_session),
+):
+    """Describe a demo action outcome without executing or persisting anything."""
+    ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import is_tenant16_demo, metadata
+    if not is_tenant16_demo(ctx, tenant_id):
+        raise HTTPException(404, '当前客户没有只读演示动作')
+    return {
+        'tenant_id': tenant_id,
+        'evaluated_at': iso(datetime.now(timezone.utc)),
+        'action': action,
+        'target_ref': target_ref,
+        'status': 'simulated',
+        'simulated': True,
+        'would_execute': False,
+        'result': '演示操作已完成模拟；未产生外部调用、任务或数据写入',
+        'demo': metadata(),
+    }
+
+
 @router.get('/period-context')
 async def get_period_context(tenant_id: int, week_end: date | None = None,
                              ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import is_tenant16_demo, period_context
+    if is_tenant16_demo(ctx, tenant_id):
+        if week_end is not None and week_end != date(2026, 9, 7):
+            raise HTTPException(400, '演示数据集仅提供版本化完整周 2026-09-07')
+        return period_context()
     return await context_for(
         session,
         data_tenant_id(session, tenant_id),
@@ -150,6 +184,29 @@ async def get_answers(tenant_id: int, week_end: date | None = None, prompt_id: i
         raise HTTPException(400, '观察时间必须包含明确时区')
     if captured_from and captured_to and captured_from >= captured_to:
         raise HTTPException(400, '观察区间必须起点早于终点，右端不包含')
+    from app.geo.tenant16_demo import answer_page, is_tenant16_demo
+    if is_tenant16_demo(ctx, tenant_id):
+        if week_end is not None and week_end != date(2026, 9, 7):
+            raise HTTPException(400, '演示数据集仅提供版本化完整周 2026-09-07')
+        filters = {'tenant_id': tenant_id, 'week_end': '2026-09-07', 'prompt_id': prompt_id,
+                   'engine_key': engine_key, 'patrol_run_id': patrol_run_id,
+                   'source_kind': source_kind, 'captured_from': iso(captured_from),
+                   'captured_to': iso(captured_to), 'limit': limit}
+        fingerprint = hashlib.sha256(json.dumps(filters, sort_keys=True).encode()).hexdigest()
+        decoded = decode_cursor(cursor) if cursor else None
+        if decoded and (not decoded.get('demo') or decoded.get('filters') != fingerprint):
+            raise HTTPException(400, {'code': 'invalid_cursor', 'message': '租户或筛选条件已改变，请重新查询'})
+        result = answer_page(limit=limit, prompt_id=prompt_id, engine_key=engine_key,
+                             patrol_run_id=patrol_run_id, source_kind=source_kind,
+                             captured_from=captured_from, captured_to=captured_to,
+                             before_id=decoded['last_id'] if decoded else None)
+        if result['pagination']['has_more'] and result['items']:
+            result['pagination']['next_cursor'] = encode_cursor({
+                'v': 1, 'demo': True, 'week_end': '2026-09-07', 'filters': fingerprint,
+                'max_id': result['pagination']['watermark_max_id'],
+                'last_id': result['items'][-1]['ref']['id'],
+            })
+        return result
     decoded = decode_cursor(cursor) if cursor else None
     # Keep the first page's canonical week even when the calendar rolls over.
     end = week_end or (date.fromisoformat(decoded['week_end']) if decoded else closed_week_end())
@@ -211,6 +268,9 @@ async def tenant_object(session, model, tenant_id, ident):
 async def get_answer(snapshot_id: int, tenant_id: int, week_end: date | None = None,
                      ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import answer_detail, is_tenant16_demo
+    if is_tenant16_demo(ctx, tenant_id):
+        return answer_detail(snapshot_id)
     data_id = data_tenant_id(session, tenant_id)
     row = await tenant_object(session, GeoAnswerSnapshot, data_id, snapshot_id)
     prompt = await tenant_object(session, GeoPrompt, data_id, row.prompt_id)
@@ -227,6 +287,9 @@ async def get_answer(snapshot_id: int, tenant_id: int, week_end: date | None = N
 async def get_capabilities(tenant_id: int, ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     from app.geo.content.engine_providers import platform_engine_public_status
     ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import capabilities, is_tenant16_demo
+    if is_tenant16_demo(ctx, tenant_id):
+        return capabilities()
     data_id = data_tenant_id(session, tenant_id)
     ai_setting = await session.scalar(select(GeoAiSetting).where(GeoAiSetting.tenant_id == data_id))
     stance = (ai_setting.monitoring_stance if ai_setting else None) or 'hybrid'
@@ -262,6 +325,11 @@ async def get_demo_summary(
 ):
     """Return illustrative raw demo counts, never an official metric snapshot."""
     ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import demo_summary as embedded_demo_summary, is_tenant16_demo
+    if is_tenant16_demo(ctx, tenant_id):
+        if week_end is not None and week_end != date(2026, 9, 7):
+            raise HTTPException(400, '演示数据集仅提供版本化完整周 2026-09-07')
+        return embedded_demo_summary()
     policy = demo_policy(session)
     if policy is None:
         raise HTTPException(404, '当前客户不是 GEO 演示数据集')
@@ -404,6 +472,9 @@ async def progress_payload(
 @router.get('/async-jobs/{async_job_id}')
 async def get_async_job(async_job_id: int, tenant_id: int, ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import is_tenant16_demo
+    if is_tenant16_demo(ctx, tenant_id):
+        raise HTTPException(404, '演示账号不创建异步任务')
     data_id = data_tenant_id(session, tenant_id)
     return await progress_payload(session, await tenant_object(session, GeoAsyncJob, data_id, async_job_id), data_id, 'async_job', response_tenant_id=tenant_id)
 
@@ -411,6 +482,9 @@ async def get_async_job(async_job_id: int, tenant_id: int, ctx=Depends(require_s
 @router.get('/patrol-runs/{patrol_run_id}')
 async def get_patrol_run(patrol_run_id: int, tenant_id: int, ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import is_tenant16_demo, patrol_detail
+    if is_tenant16_demo(ctx, tenant_id):
+        return patrol_detail(patrol_run_id)
     data_id = data_tenant_id(session, tenant_id)
     return await progress_payload(session, await tenant_object(session, GeoVisibilityPatrolRun, data_id, patrol_run_id), data_id, 'patrol_run', response_tenant_id=tenant_id)
 
@@ -432,6 +506,9 @@ async def progress_list(
 async def get_async_jobs(tenant_id: int, limit: int = Query(20, ge=1, le=50), before_id: int | None = None,
                          ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import async_job_list, is_tenant16_demo
+    if is_tenant16_demo(ctx, tenant_id):
+        return async_job_list()
     return await progress_list(session, data_tenant_id(session, tenant_id), GeoAsyncJob,
                                'async_job', limit, before_id, response_tenant_id=tenant_id)
 
@@ -440,14 +517,40 @@ async def get_async_jobs(tenant_id: int, limit: int = Query(20, ge=1, le=50), be
 async def get_patrol_runs(tenant_id: int, limit: int = Query(20, ge=1, le=50), before_id: int | None = None,
                           ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import is_tenant16_demo, patrol_list
+    if is_tenant16_demo(ctx, tenant_id):
+        return patrol_list(limit=limit, before_id=before_id)
     return await progress_list(session, data_tenant_id(session, tenant_id),
                                GeoVisibilityPatrolRun, 'patrol_run', limit, before_id,
                                response_tenant_id=tenant_id)
 
 
+@router.get('/content-tasks')
+async def get_content_tasks(tenant_id: int, limit: int = Query(20, ge=1, le=50), before_id: int | None = None,
+                            ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
+    ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import content_task_list, is_tenant16_demo
+    if is_tenant16_demo(ctx, tenant_id):
+        return content_task_list(limit=limit, before_id=before_id)
+    data_id = data_tenant_id(session, tenant_id)
+    query = select(GeoContentTask).where(GeoContentTask.tenant_id == data_id)
+    if before_id is not None:
+        query = query.where(GeoContentTask.id < before_id)
+    rows = list(await session.scalars(query.order_by(GeoContentTask.id.desc()).limit(limit + 1)))
+    return {'tenant_id': tenant_id, 'evaluated_at': iso(datetime.now(timezone.utc)),
+            'items': [{'ref': ref('content_task', row.id), 'title': row.title,
+                       'stored_status': row.status, 'review_status': row.review_status,
+                       'pipeline_step': row.pipeline_step} for row in rows[:limit]],
+            'pagination': {'limit': limit, 'has_more': len(rows) > limit,
+                           'next_before_id': rows[limit-1].id if len(rows) > limit else None}}
+
+
 @router.get('/content-tasks/{content_task_id}')
 async def get_content_task(content_task_id: int, tenant_id: int, ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import content_task_detail, is_tenant16_demo
+    if is_tenant16_demo(ctx, tenant_id):
+        return content_task_detail(content_task_id)
     data_id = data_tenant_id(session, tenant_id)
     task = await tenant_object(session, GeoContentTask, data_id, content_task_id)
     articles = list(await session.scalars(select(GeoArticleVersion).where(GeoArticleVersion.task_id == task.id).order_by(GeoArticleVersion.version_no.desc())))

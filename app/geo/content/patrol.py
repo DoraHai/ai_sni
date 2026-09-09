@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.geo.tenant16_demo import DEMO_TENANT_ID
 from app.geo.tenant_scope import GeoEntitlementUnavailable, ensure_geo_entitlement
 from app.geo.content.probe import (
     SAMPLE_MODE_REAL,
@@ -118,6 +119,8 @@ async def reconcile_stale_patrol_run(
     row: GeoVisibilityPatrolRun,
 ) -> GeoVisibilityPatrolRun:
     """Close out zombie pending/running rows so history does not hang forever."""
+    from app.geo.tenant_scope import ensure_geo_background_execution_allowed
+    ensure_geo_background_execution_allowed(row.tenant_id)
     if row.status not in ("pending", "running"):
         return row
     stale, _reason = patrol_stale_view(row)
@@ -177,9 +180,12 @@ def patrol_read_payload(row: GeoVisibilityPatrolRun) -> dict[str, Any]:
     return payload
 
 
-async def run_patrol_in_background(run_id: int) -> None:
+async def run_patrol_in_background(run_id: int, tenant_id: int) -> None:
     """Entry for FastAPI BackgroundTasks / scheduler: never leave runs hanging."""
     from app.database import async_session_factory
+    from app.geo.tenant_scope import ensure_geo_background_execution_allowed
+
+    ensure_geo_background_execution_allowed(tenant_id)
 
     try:
         async with patrol_execution_lock(run_id) as acquired:
@@ -190,6 +196,7 @@ async def run_patrol_in_background(run_id: int) -> None:
                     await execute_patrol_run(
                         session,
                         run_id,
+                        tenant_id=tenant_id,
                         execution_protocol=PATROL_EXECUTION_PROTOCOL,
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -207,8 +214,15 @@ async def run_patrol_in_background(run_id: int) -> None:
 
 
 async def execute_patrol_run_owned(
-    session: AsyncSession, run_id: int
+    session: AsyncSession, run_id: int, tenant_id: int
 ) -> GeoVisibilityPatrolRun:
+    from app.geo.tenant_scope import ensure_geo_background_execution_allowed
+    ensure_geo_background_execution_allowed(tenant_id)
+    row = await session.get(GeoVisibilityPatrolRun, run_id)
+    if row is None:
+        raise ValueError(f"patrol run {run_id} not found")
+    if int(row.tenant_id) != int(tenant_id):
+        raise ValueError("patrol run tenant mismatch")
     async with patrol_execution_lock(run_id) as acquired:
         if not acquired:
             row = await session.get(GeoVisibilityPatrolRun, run_id)
@@ -218,6 +232,7 @@ async def execute_patrol_run_owned(
         return await execute_patrol_run(
             session,
             run_id,
+            tenant_id=tenant_id,
             execution_protocol=PATROL_EXECUTION_PROTOCOL,
         )
 
@@ -231,6 +246,7 @@ async def reconcile_stale_patrol_runs_background() -> dict[str, int]:
         rows = list(
             await session.scalars(
                 select(GeoVisibilityPatrolRun).where(
+                    GeoVisibilityPatrolRun.tenant_id != DEMO_TENANT_ID,
                     GeoVisibilityPatrolRun.status.in_(("pending", "running"))
                 )
             )
@@ -257,6 +273,7 @@ async def recover_patrol_runs_on_startup() -> dict[str, int]:
         rows = list(
             await session.scalars(
                 select(GeoVisibilityPatrolRun).where(
+                    GeoVisibilityPatrolRun.tenant_id != DEMO_TENANT_ID,
                     GeoVisibilityPatrolRun.status.in_(("pending", "running"))
                 )
             )
@@ -451,6 +468,7 @@ async def execute_patrol_run(
     session: AsyncSession,
     run_id: int,
     *,
+    tenant_id: int,
     execution_protocol: str | None = None,
 ) -> GeoVisibilityPatrolRun:
     """Run patrol to completion inside one session (commit at end of phases)."""
@@ -459,9 +477,14 @@ async def execute_patrol_run(
     from app.geo.content.engines import default_engine_rows
     from app.models import GeoTrackingEngine
 
+    from app.geo.tenant_scope import ensure_geo_background_execution_allowed
+    ensure_geo_background_execution_allowed(tenant_id)
     row = await session.get(GeoVisibilityPatrolRun, run_id)
     if row is None:
         raise ValueError(f"patrol run {run_id} not found")
+
+    if int(row.tenant_id) != int(tenant_id):
+        raise ValueError("patrol run tenant mismatch")
 
     await session.refresh(row, with_for_update=True)
     if row.status != "pending":

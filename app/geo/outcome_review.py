@@ -8,6 +8,7 @@ from app.geo.integration import completion_evidence, metric, snapshot
 from app.geo.verify import append_evidence
 from app.models import GeoActionTicket
 from app.geo.followup_lifecycle import active_review_source
+from app.geo.tenant16_demo import DEMO_TENANT_ID
 
 
 async def assess_outcome(session, row):
@@ -27,8 +28,11 @@ async def assess_outcome(session, row):
             'checked_at': datetime.utcnow().isoformat() + 'Z'}
 
 
-async def update_outcome_review(session, task_id):
+async def update_outcome_review(session, task_id, *, tenant_id: int):
+    from app.geo.tenant_scope import ensure_geo_background_execution_allowed
+    ensure_geo_background_execution_allowed(tenant_id)
     row = await session.scalar(select(GeoActionTicket).where(GeoActionTicket.id == task_id,
+        GeoActionTicket.tenant_id == tenant_id,
         GeoActionTicket.advice_code.like('cockpit:v1:%'), GeoActionTicket.status.in_(['todo', 'doing']), active_review_source())
         .with_for_update(skip_locked=True))
     if row is None or not (row.progress_first or {}).get('params', {}).get('content_task_id'):
@@ -91,14 +95,15 @@ async def run_outcome_reviews():
     due = func.coalesce(GeoActionTicket.progress['outcome_review_next_at'].astext, '')
     now = datetime.utcnow().isoformat() + 'Z'
     async with async_session_factory() as session:
-        ids = list(await session.scalars(select(GeoActionTicket.id).where(
+        tasks = (await session.execute(select(GeoActionTicket.id, GeoActionTicket.tenant_id).where(
+            GeoActionTicket.tenant_id != DEMO_TENANT_ID,
             GeoActionTicket.advice_code.like('cockpit:v1:%'), GeoActionTicket.status.in_(['todo', 'doing']),
             active_review_source(), due <= now)
-            .order_by(due, GeoActionTicket.id).limit(100)))
-    for task_id in ids:
+            .order_by(due, GeoActionTicket.id).limit(100))).all()
+    for task_id, tenant_id in tasks:
         try:
             async with async_session_factory() as session:
-                await update_outcome_review(session, task_id)
+                await update_outcome_review(session, task_id, tenant_id=int(tenant_id))
         except GeoEntitlementUnavailable:
             # Keep historical task evidence unchanged. Expiry is not a failed
             # assessment and must not schedule another customer action.

@@ -317,7 +317,7 @@ def test_legacy_running_patrol_is_reported_stale_but_never_auto_failed():
 def test_owned_patrol_wrapper_is_the_only_marker_entry_point():
     async def scenario():
         row = _patrol("pending")
-        session = Mock()
+        session = Mock(get=AsyncMock(return_value=row))
 
         @asynccontextmanager
         async def available(_run_id):
@@ -328,11 +328,12 @@ def test_owned_patrol_wrapper_is_the_only_marker_entry_point():
             patch.object(patrol, "patrol_execution_lock", available),
             patch.object(patrol, "execute_patrol_run", execute),
         ):
-            assert await patrol.execute_patrol_run_owned(session, row.id) is row
-        execute.assert_awaited_once_with(
-            session,
-            row.id,
-            execution_protocol=patrol.PATROL_EXECUTION_PROTOCOL,
-        )
+            assert await patrol.execute_patrol_run_owned(session, row.id, row.tenant_id) is row
+            execute.assert_awaited_once_with(
+                session,
+                row.id,
+                tenant_id=row.tenant_id,
+                execution_protocol=patrol.PATROL_EXECUTION_PROTOCOL,
+            )
 
     asyncio.run(scenario())

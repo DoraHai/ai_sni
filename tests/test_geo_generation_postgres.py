@@ -510,7 +510,7 @@ def test_sync_variant_generation_is_blocked_by_live_master_job():
                 route_patches[2],
                 route_patches[3],
             ):
-                worker = asyncio.create_task(run_job_in_background(job.id))
+                worker = asyncio.create_task(run_job_in_background(job.id, job.tenant_id))
                 await asyncio.wait_for(master_entered.wait(), 10)
                 # A mutable display status must not bypass the durable live job.
                 async with sessions() as session:
