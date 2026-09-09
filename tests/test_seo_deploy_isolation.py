@@ -234,7 +234,7 @@ def test_health_rejects_unknown_empty_or_multiple_revisions(revisions):
     structure.assert_not_called()
 
 
-@pytest.mark.parametrize('revision', ['0095_adopt_geo_ticket', '0096_sem_tasks'])
+@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks'])
 def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
     response = Response()
     with patch.object(seo_main, 'engine', _HealthEngine([revision])):
@@ -243,7 +243,7 @@ def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
     assert result['db'] == 'ok' and result['db_error'] is None
     assert result['schema_revision'] == revision
     assert result['required_schema_revision'] == '0096_sem_tasks'
-    assert result['compatible_schema_revisions'] == ['0095_adopt_geo_ticket', '0096_sem_tasks']
+    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks']
 
 
 @pytest.mark.parametrize('failure', ['missing_column', 'wrong_type', 'has_index', 'has_constraint'])
@@ -279,7 +279,7 @@ def test_health_rejects_0095_when_geo_ticket_adoption_shape_is_incomplete(failur
 
 
 @pytest.mark.parametrize('failure', ['missing_table','missing_column','wrong_bigint','wrong_jsonb','catalog_denied'])
-@pytest.mark.parametrize('revision', ['0095_adopt_geo_ticket', '0096_sem_tasks'])
+@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks'])
 def test_health_rejects_incomplete_schema_even_at_allowed_revision(failure, revision):
     async def execute(self, statement, parameters=None):
         if 'geo_action_tickets' in str(statement):
@@ -326,8 +326,10 @@ def test_structure_contract_preserves_smallint_fields():
 
 
 def test_runtime_allowlist_contains_only_exact_reviewed_versions():
-    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0095_adopt_geo_ticket', '0096_sem_tasks'})
+    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset(
+        {'0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks'}
+    )
     assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket', '0096_sem_tasks'})
     assert (
-        seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS
+        seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS - {'0094_seo_qa_batches'}
     ) <= seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS
