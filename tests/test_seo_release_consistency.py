@@ -16,6 +16,9 @@ def _write(root: Path, relative: str, content: str) -> None:
 
 
 def test_source_allowlist_rejects_auth_and_other_modules() -> None:
+    assert source_path_allowed("app/models/sem_task.py")
+    assert source_path_allowed("migrations/versions/20260909_0096_sem_tasks.py")
+    assert source_path_allowed("tests/test_sem_task_migration.py")
     assert source_path_allowed("frontend/package-lock.json")
     assert source_path_allowed("frontend/scripts/test-seo-editor.mjs")
     assert source_path_allowed("tests/fixtures/seo_editor_html_roundtrip.json")
@@ -65,11 +68,14 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
 
 
 def test_canonical_migrations_are_add_once_then_immutable() -> None:
-    migration = "migrations/versions/20260909_0095_adopt_geo_ticket.py"
-    assert source_change_allowed("A", migration)
-    assert not source_change_allowed("M", migration)
-    assert not source_change_allowed("D", migration)
-    assert not source_change_allowed("R", migration)
+    for migration in (
+        "migrations/versions/20260909_0095_adopt_geo_ticket.py",
+        "migrations/versions/20260909_0096_sem_tasks.py",
+    ):
+        assert source_change_allowed("A", migration)
+        assert not source_change_allowed("M", migration)
+        assert not source_change_allowed("D", migration)
+        assert not source_change_allowed("R", migration)
     assert source_change_allowed("M", "app/seo_main.py")
 
 
@@ -84,6 +90,17 @@ def test_seo_workflows_run_site_association_and_traffic_regressions() -> None:
         assert "tests/test_seo_site_page_detail.py" in workflow
         assert "tests/test_seo_workbench_site_scope.py" in workflow
         assert "tests/test_seo_traffic.py" in workflow
+
+
+def test_seo_workflows_gate_the_sem_task_migration_contract() -> None:
+    root = Path(__file__).parents[1]
+    for relative in (
+        ".github/workflows/seo-baseline-check.yml",
+        ".github/workflows/production-seo-deploy.yml",
+    ):
+        workflow = (root / relative).read_text(encoding="utf-8")
+        assert "tests/test_sem_task_migration.py" in workflow
+        assert "0096_sem_tasks (head)" in workflow
 
 
 def test_seo_frontend_workflows_gate_shared_session_regressions() -> None:
@@ -352,7 +369,7 @@ def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
 
 def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     root = Path(__file__).parents[1]
-    expected = "0095_adopt_geo_ticket (head)"
+    expected = "0096_sem_tasks (head)"
     baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
     production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
     assert expected in baseline

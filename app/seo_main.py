@@ -21,11 +21,15 @@ from app.seo_scheduler import shutdown_seo_scheduler, start_seo_scheduler
 
 settings = get_settings()
 enforce_production_secrets(settings, hard_fail=True)
-SEO_REQUIRED_SCHEMA_REVISION = "0095_adopt_geo_ticket"
+SEO_REQUIRED_SCHEMA_REVISION = "0096_sem_tasks"
 # Runtime compatibility supports code-first rollout; it never authorizes the
 # separately reviewed migration operation.
-SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset({"0094_seo_qa_batches", SEO_REQUIRED_SCHEMA_REVISION})
-SEO_GEO_TICKET_REQUIRED_REVISIONS = frozenset({"0095_adopt_geo_ticket"})
+SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset(
+    {"0095_adopt_geo_ticket", SEO_REQUIRED_SCHEMA_REVISION}
+)
+SEO_GEO_TICKET_REQUIRED_REVISIONS = frozenset(
+    {"0095_adopt_geo_ticket", "0096_sem_tasks"}
+)
 SEO_GEO_TICKET_SHAPE = {
     "owner_name": ("character varying(100)", False, None, "", "", "b", None, True),
     "due_date": ("date", False, None, "", "", "b", None, True),
