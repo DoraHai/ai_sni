@@ -1,10 +1,13 @@
 import asyncio
+import json
 import os
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
 from starlette.requests import Request
+from starlette.responses import StreamingResponse
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@primary-db/test")
 os.environ.setdefault("BAIDU_APP_ID", "test-app")
@@ -17,13 +20,17 @@ os.environ.setdefault("CRYPTO_MASTER_KEY_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.security.auth import AuthContext
+from app.models.module_workspace import SeoSite
+from app.models.tenant import Tenant
 from app.seo_demo_source import (
     DemoDataSourceError,
     SeoDataSourceDecision,
     SeoDemoBinding,
+    SeoDemoSession,
     _demo_database_target,
     _validate_demo_session,
     get_seo_session,
+    hide_demo_tenant_ids,
     require_seo_auth,
     resolve_seo_data_source,
 )
@@ -134,13 +141,27 @@ def test_non_user_disabled_feature_and_unbound_tenant_stay_primary():
     [
         ([binding_row(), binding_row()], "ambiguous"),
         ([binding_row(status="disabled", disabled_at=object())], "disabled"),
-        ([binding_row(dataset_version="")], "incomplete"),
+        ([binding_row(dataset_version="")], "version"),
         ([binding_row(version=1.0)], "positive integer"),
     ],
 )
 def test_invalid_trusted_binding_fails_closed(rows, message):
     with pytest.raises(DemoDataSourceError, match=message):
         resolve(rows=rows)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("dataset_key", "Tiger"), ("dataset_key", "bad.key"),
+        ("dataset_key", "a" * 65), ("dataset_key", " tiger"),
+        ("dataset_version", "V1"), ("dataset_version", "bad/version"),
+        ("dataset_version", "a" * 41), ("dataset_version", "v1 "),
+    ],
+)
+def test_binding_dataset_identity_matches_0098_constraints(field, value):
+    with pytest.raises(DemoDataSourceError, match="dataset"):
+        resolve(rows=[binding_row(**{field: value})])
 
 
 def test_binding_lookup_failure_fails_closed():
@@ -156,7 +177,7 @@ def test_demo_auth_rejects_client_routing_write_oauth_and_wrong_tenant(monkeypat
         request(headers=((b"x-seo-database", b"prod"),)),
         request(method="POST"),
         request(path="/api/v1/seo/oauth/status"),
-        request(query="tenant_id=7"),
+        request(query="tenant_id=901"),
     )
     for candidate, status in zip(cases, (400, 400, 403, 403, 403), strict=True):
         with pytest.raises(HTTPException) as caught:
@@ -166,9 +187,9 @@ def test_demo_auth_rejects_client_routing_write_oauth_and_wrong_tenant(monkeypat
 
 def test_demo_auth_maps_only_the_trusted_tenant(monkeypatch):
     monkeypatch.setattr("app.seo_demo_source.get_settings", settings)
-    req = request(query="tenant_id=901&site_id=902")
+    req = request(query="tenant_id=7&site_id=902")
     mapped = asyncio.run(require_seo_auth(req, context(), PrimarySession([binding_row()])))
-    assert mapped.tenant_id == 901
+    assert mapped.tenant_id == 7
     assert mapped.user_id == 41
     assert mapped.is_superadmin is False
     assert req.state.seo_data_source_decision.source == "demo"
@@ -225,7 +246,7 @@ def test_demo_session_requires_exact_revision_dataset_and_safety_flags():
 
 def test_demo_session_is_read_only_and_always_rolled_back(monkeypatch):
     reviewed = reviewed_binding()
-    req = request(query="tenant_id=901&site_id=902")
+    req = request(query="tenant_id=7&site_id=902")
     req.state.seo_data_source_decision = SeoDataSourceDecision("demo", reviewed)
 
     class SessionContext:
@@ -258,13 +279,81 @@ def test_demo_session_is_read_only_and_always_rolled_back(monkeypatch):
     async def run():
         stream = get_seo_session(req, context())
         yielded = await anext(stream)
-        assert yielded is session
+        assert isinstance(yielded, SeoDemoSession)
+        assert yielded._session is session
         await stream.aclose()
 
     asyncio.run(run())
     assert session.executed == ["SET TRANSACTION READ ONLY"]
     assert validated == [(session, reviewed, "gsnipers_demo", frozenset({"192.0.2.10"}))]
     assert session.rolled_back is True
+
+
+def test_demo_session_maps_tenant_predicates_but_not_site_ids():
+    class CapturingSession:
+        def __init__(self):
+            self.calls = []
+
+        async def execute(self, statement, params=None, **kwargs):
+            self.calls.append((statement, params, kwargs))
+            return Result()
+
+        async def get(self, entity, ident, **kwargs):
+            self.calls.append((entity, ident, kwargs))
+            return None
+
+    raw = CapturingSession()
+    session = SeoDemoSession(raw, reviewed_binding())
+    statement = select(SeoSite).where(SeoSite.tenant_id == 7, SeoSite.id == 7)
+    asyncio.run(session.execute(statement, {"tenant_id": 7, "site_id": 7}))
+    assert raw.calls[0][0].compile().params == {"tenant_id_1": 901, "id_1": 7}
+    assert raw.calls[0][1] == {"tenant_id": 901, "site_id": 7}
+    asyncio.run(session.get(Tenant, 7))
+    asyncio.run(session.get(SeoSite, 7))
+    assert raw.calls[1][1] == 901
+    assert raw.calls[2][1] == 7
+
+
+def test_site_list_and_detail_payloads_keep_demo_tenant_private():
+    binding = reviewed_binding()
+    payload = {
+        "tenant_id": 7,
+        "sites": [{"id": 902, "tenant_id": 901, "name": "Tiger"}],
+        "detail": {"site_id": 902, "tenant_id": 901},
+    }
+    assert hide_demo_tenant_ids(payload, binding) == {
+        "tenant_id": 7,
+        "sites": [{"id": 902, "tenant_id": 7, "name": "Tiger"}],
+        "detail": {"site_id": 902, "tenant_id": 7},
+    }
+
+
+def test_http_json_response_never_exposes_demo_tenant():
+    from app.seo_main import keep_demo_tenant_mapping_private
+
+    req = request(query="tenant_id=7")
+    req.state.seo_data_source_decision = SeoDataSourceDecision(
+        "demo", reviewed_binding()
+    )
+
+    async def call_next(_request):
+        payload = json.dumps(
+            {"tenant_id": 7, "sites": [{"id": 902, "tenant_id": 901}]}
+        ).encode()
+
+        async def chunks():
+            yield payload
+
+        return StreamingResponse(chunks(), media_type="application/json")
+
+    async def run():
+        response = await keep_demo_tenant_mapping_private(req, call_next)
+        return json.loads(response.body)
+
+    assert asyncio.run(run()) == {
+        "tenant_id": 7,
+        "sites": [{"id": 902, "tenant_id": 7}],
+    }
 
 
 def test_primary_decision_reuses_authenticated_primary_session():
@@ -294,3 +383,6 @@ def test_every_router_mounted_by_seo_service_uses_the_resolved_session():
     assert customer_source.count("Depends(get_seo_session)") == 5
     scheduler_source = open(os.path.join(root, "app/seo_scheduler.py"), encoding="utf-8").read()
     assert "seo_demo_database" not in scheduler_source
+    main_source = open(os.path.join(root, "app/seo_main.py"), encoding="utf-8").read()
+    assert "keep_demo_tenant_mapping_private" in main_source
+    assert "hide_demo_tenant_ids" in main_source

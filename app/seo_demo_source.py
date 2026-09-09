@@ -9,14 +9,17 @@ dataset key selects a data source.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import lru_cache
+import re
 from typing import Any
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.sql import visitors
+from sqlalchemy.sql.elements import BindParameter
 
 from app.config import get_settings
 from app.database import get_session as get_primary_session
@@ -26,6 +29,8 @@ from app.security.auth import AuthContext, enforce_scoped_request, require_auth
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 DEMO_SCHEMA_REVISION = "0098_demo_binding_no_truncate"
+DATASET_KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+DATASET_VERSION_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,39}$")
 CLIENT_DATA_SOURCE_QUERY_KEYS = frozenset({"dataset", "data_source", "database"})
 CLIENT_DATA_SOURCE_HEADER_KEYS = frozenset(
     {"x-seo-dataset", "x-seo-data-source", "x-seo-database"}
@@ -67,10 +72,12 @@ def _positive_int(value: object, field: str) -> int:
 def _binding(row: DemoTenantBinding) -> SeoDemoBinding:
     if row.status != "active" or row.disabled_at is not None:
         raise DemoDataSourceError("SEO demo binding is disabled")
-    dataset_key = str(row.dataset_key or "").strip()
-    dataset_version = str(row.dataset_version or "").strip()
-    if not dataset_key or not dataset_version:
-        raise DemoDataSourceError("SEO demo binding dataset identity is incomplete")
+    dataset_key = str(row.dataset_key or "")
+    dataset_version = str(row.dataset_version or "")
+    if not DATASET_KEY_PATTERN.fullmatch(dataset_key):
+        raise DemoDataSourceError("SEO demo binding dataset key is invalid")
+    if not DATASET_VERSION_PATTERN.fullmatch(dataset_version):
+        raise DemoDataSourceError("SEO demo binding dataset version is invalid")
     return SeoDemoBinding(
         principal_tenant_id=_positive_int(row.tenant_id, "tenant_id"),
         tenant_id=_positive_int(row.demo_tenant_id, "demo_tenant_id"),
@@ -147,11 +154,123 @@ def _enforce_demo_request(request: Request, binding: SeoDemoBinding) -> None:
     ]
     if tenant_values:
         tenant_ids = {_request_int(value, "tenant_id") for value in tenant_values}
-        if tenant_ids != {binding.tenant_id}:
+        if tenant_ids != {binding.principal_tenant_id}:
             raise HTTPException(403, "请求客户不属于服务端演示绑定")
     for value in (request.query_params.get("site_id"), request.path_params.get("site_id")):
         if value is not None:
             _request_int(value, "site_id")
+
+
+def _mapped_value(value: Any, source_tenant_id: int, target_tenant_id: int) -> Any:
+    if value == source_tenant_id:
+        return target_tenant_id
+    if isinstance(value, tuple):
+        return tuple(_mapped_value(item, source_tenant_id, target_tenant_id) for item in value)
+    if isinstance(value, list):
+        return [_mapped_value(item, source_tenant_id, target_tenant_id) for item in value]
+    if isinstance(value, set):
+        return {_mapped_value(item, source_tenant_id, target_tenant_id) for item in value}
+    return value
+
+
+def _map_tenant_statement(statement: Any, binding: SeoDemoBinding) -> Any:
+    def replace_bind(element: Any) -> Any:
+        if isinstance(element, BindParameter) and getattr(element, "_orig_key", None) == "tenant_id":
+            mapped = _mapped_value(
+                element.value, binding.principal_tenant_id, binding.tenant_id
+            )
+            if mapped != element.value:
+                return element._with_value(mapped, maintain_key=True)
+        return None
+
+    try:
+        return visitors.replacement_traverse(statement, {}, replace_bind)
+    except TypeError:
+        return statement
+
+
+def _map_tenant_parameters(parameters: Any, binding: SeoDemoBinding) -> Any:
+    if isinstance(parameters, dict):
+        return {
+            key: (
+                _mapped_value(value, binding.principal_tenant_id, binding.tenant_id)
+                if key == "tenant_id" or key.endswith("_tenant_id")
+                else value
+            )
+            for key, value in parameters.items()
+        }
+    if isinstance(parameters, list):
+        return [_map_tenant_parameters(item, binding) for item in parameters]
+    return parameters
+
+
+class SeoDemoSession:
+    """Read-only facade that maps only server-trusted tenant predicates."""
+
+    def __init__(self, session: AsyncSession, binding: SeoDemoBinding):
+        self._session = session
+        self._binding = binding
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._session, name)
+
+    async def execute(self, statement: Any, params: Any = None, **kwargs: Any) -> Any:
+        return await self._session.execute(
+            _map_tenant_statement(statement, self._binding),
+            _map_tenant_parameters(params, self._binding),
+            **kwargs,
+        )
+
+    async def scalar(self, statement: Any, params: Any = None, **kwargs: Any) -> Any:
+        return await self._session.scalar(
+            _map_tenant_statement(statement, self._binding),
+            _map_tenant_parameters(params, self._binding),
+            **kwargs,
+        )
+
+    async def scalars(self, statement: Any, params: Any = None, **kwargs: Any) -> Any:
+        return await self._session.scalars(
+            _map_tenant_statement(statement, self._binding),
+            _map_tenant_parameters(params, self._binding),
+            **kwargs,
+        )
+
+    async def stream(self, statement: Any, params: Any = None, **kwargs: Any) -> Any:
+        return await self._session.stream(
+            _map_tenant_statement(statement, self._binding),
+            _map_tenant_parameters(params, self._binding),
+            **kwargs,
+        )
+
+    async def stream_scalars(self, statement: Any, params: Any = None, **kwargs: Any) -> Any:
+        return await self._session.stream_scalars(
+            _map_tenant_statement(statement, self._binding),
+            _map_tenant_parameters(params, self._binding),
+            **kwargs,
+        )
+
+    async def get(self, entity: Any, ident: Any, **kwargs: Any) -> Any:
+        if getattr(getattr(entity, "__table__", None), "name", None) == "tenants":
+            ident = _mapped_value(
+                ident, self._binding.principal_tenant_id, self._binding.tenant_id
+            )
+        return await self._session.get(entity, ident, **kwargs)
+
+
+def hide_demo_tenant_ids(value: Any, binding: SeoDemoBinding) -> Any:
+    """Map demo tenant ids in JSON payloads back to the public tenant."""
+    if isinstance(value, dict):
+        return {
+            key: (
+                binding.principal_tenant_id
+                if key == "tenant_id" and item == binding.tenant_id
+                else hide_demo_tenant_ids(item, binding)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [hide_demo_tenant_ids(item, binding) for item in value]
+    return value
 
 
 def _demo_database_target(settings: object) -> tuple[str, str, frozenset[str]]:
@@ -286,7 +405,7 @@ async def require_seo_auth(
         return ctx
     assert decision.binding is not None
     _enforce_demo_request(request, decision.binding)
-    return replace(ctx, tenant_id=decision.binding.tenant_id, is_superadmin=False)
+    return ctx
 
 
 async def require_seo_scoped_auth(
@@ -323,7 +442,7 @@ async def get_seo_session(
                 expected_server_addresses,
             )
             try:
-                yield session
+                yield SeoDemoSession(session, decision.binding)
             finally:
                 await session.rollback()
     except DemoDataSourceError as exc:

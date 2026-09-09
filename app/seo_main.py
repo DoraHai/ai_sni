@@ -5,6 +5,7 @@ Deploying or restarting it does not restart the shared SEM backend or GEO.
 """
 
 from contextlib import asynccontextmanager
+import json
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
@@ -24,6 +25,7 @@ from app.seo_demo_runtime import (
     seo_scheduler_may_start,
     validate_seo_demo_runtime_settings,
 )
+from app.seo_demo_source import SeoDataSourceDecision, hide_demo_tenant_ids
 
 settings = get_settings()
 enforce_production_secrets(settings, hard_fail=True)
@@ -320,6 +322,46 @@ async def enforce_demo_runtime_read_only(request: Request, call_next):
             },
         )
     return await call_next(request)
+
+
+@app.middleware("http")
+async def keep_demo_tenant_mapping_private(request: Request, call_next):
+    """Keep isolated tenant ids out of otherwise transparent JSON responses."""
+    response = await call_next(request)
+    decision = getattr(request.state, "seo_data_source_decision", None)
+    if (
+        not isinstance(decision, SeoDataSourceDecision)
+        or decision.source != "demo"
+        or decision.binding is None
+        or "application/json" not in response.headers.get("content-type", "")
+    ):
+        return response
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    if not body:
+        return response
+    try:
+        payload = json.loads(body)
+    except (UnicodeError, json.JSONDecodeError):
+        return Response(
+            body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            background=response.background,
+        )
+    rewritten = json.dumps(
+        hide_demo_tenant_ids(payload, decision.binding),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode()
+    headers = dict(response.headers)
+    headers.pop("content-length", None)
+    return Response(
+        rewritten,
+        status_code=response.status_code,
+        headers=headers,
+        media_type="application/json",
+        background=response.background,
+    )
 
 
 register_infra_handlers(app)

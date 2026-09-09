@@ -13,8 +13,10 @@ API-key superadmins cannot select the demo source.
 
 The binding fixes the production tenant, demo tenant, dataset key, dataset
 version and binding version. Query parameters and headers named `dataset`,
-`data_source` or `database` are rejected; a tenant parameter can only match the
-bound demo tenant. Ordinary SEO tenant scoping verifies any requested site. The
+`data_source` or `database` are rejected. Clients continue to send and receive
+the authenticated production tenant id; the isolated demo tenant id remains a
+server-only mapping and is never required or exposed. Ordinary SEO tenant
+scoping verifies any requested site. The
 application checks `current_database()`, `inet_server_addr()`, exactly one
 Alembic revision (`0098_demo_binding_no_truncate`), and every bound tenant site's
 dataset key, dataset version and three stored safety flags before yielding a demo
