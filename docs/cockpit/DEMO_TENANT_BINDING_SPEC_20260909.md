@@ -58,6 +58,14 @@ Binding resolution precedes every data or response cache lookup. Cache keys and 
 
 The fixture loader must assert that every module row belongs to the bound `demo_tenant_id`, and that no additional active tenant exists in the demo dataset unless explicitly approved for another binding.
 
+## Demo fixture registry
+
+The demo database has a separately reviewed `demo_control` schema owned by the fixture loader, not by production Alembic migrations. Its registry records `dataset_key`, stable `dataset_version`, manifest SHA-256, unified business-schema revision, positive demo tenant ID, load status and load/verification timestamps. A ready dataset has exactly one matching registry row. The demo application role receives SELECT only; the loader may replace registry and fixture contents atomically.
+
+An optional append-only object registry records module, object type, stable fixture object key and database object ID under the same dataset and demo tenant. This supports stable links and evidence without treating equal numeric IDs across databases as the same object.
+
+The dedicated presentation tenant has no synthetic production business site. For SEO, after the production binding selects the demo data session, the service enumerates sites from that session under `demo_tenant_id`. A client `site_id` is only a candidate and must resolve with `WHERE tenant_id=:demo_tenant_id AND id=:site_id`; it cannot select a database. The resolved demo site identity or stable registry key is included in cache keys. A production-site-to-demo-site mapping is neither required nor allowed for this dedicated tenant.
+
 ## Mutation and administration
 
 The first release has no customer-facing mutation endpoint. Application runtime roles receive `SELECT` only on the current and history tables. Binding create, disable and replacement require a controlled database package executed by a separately authorized role. Delete is prohibited. A replacement first loads and verifies the new registry, then uses `WHERE tenant_id=:tenant_id AND version=:old_version`, appends the complete before/after history, updates the current mapping/status/audit fields and increments `version` atomically. Every change sets `updated_by_user_id` and `updated_at`; initial creation sets the updater equal to the binder. Ordinary reactivation without a reviewed replacement is prohibited.
@@ -88,4 +96,4 @@ GEO formal metrics and completion evidence must accept the immutable access cont
 - Confirm that all three fixture manifests and the demo registry use the same stable release token format and value.
 - Confirm whether super-admins may enter every active demo binding or require an additional permission.
 - Decide the controlled API and audit-history design for future binding changes; it is outside the initial migration.
-- Confirm the exact structural shadow rows required by all three module fixture loaders after the unified empty-database migration rehearsal.
+- Confirm the exact structural shadow rows and `demo_control` registry DDL required by all three module fixture loaders after the unified empty-database migration rehearsal.
