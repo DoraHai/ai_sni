@@ -23,7 +23,7 @@ MANIFEST_FIELDS = frozenset(
         "schema_version", "module", "target_revision", "target_database",
         "dataset_key", "dataset_version", "demo_tenant_id", "generated_at",
         "loader_version", "app_readonly_role", "sites", "sources", "tables",
-        "bundle_sha256",
+        "bundle_sha256", "text_policy",
     }
 )
 TABLE_ENTRY_FIELDS = frozenset({"path", "size", "sha256", "row_count"})
@@ -44,7 +44,7 @@ TABLE_COLUMN_ALLOWLISTS = {
     'tenants': frozenset('id name strategy monthly_budget contract_start contract_end brand_terms industry business_desc profile_summary profile_generated_at created_at'.split()),
     'tenant_modules': frozenset('id tenant_id module_code status opened_at expires_at module_settings created_at updated_at'.split()),
     'seo_sites': frozenset('id tenant_id tenant_module_id name domain canonical_domain default_url status site_settings created_at updated_at'.split()),
-    'seo_ai_operations': frozenset('id tenant_id site_id request_key request_hash kind charged_on status result expires_at completed_at created_at'.split()),
+    'seo_ai_operations': frozenset('id tenant_id site_id request_key request_hash kind charged_on status result expires_at completed_at created_at actor'.split()),
     'seo_distribution_connections': frozenset('id tenant_id platform_code name mode base_url config capabilities has_credentials enabled status last_error last_tested_at created_at updated_at'.split()),
     'seo_automation_runs': frozenset('id tenant_id site_id job_type trigger_type status planned_count success_count failed_count skipped_count error_summary started_at completed_at created_at'.split()),
     'seo_backlinks': frozenset('id tenant_id site_id source_url target_url source_domain anchor_text authority_score toxic_score status first_seen_at last_seen_at last_checked_at verification missing_checks created_at updated_at'.split()),
@@ -53,19 +53,19 @@ TABLE_COLUMN_ALLOWLISTS = {
     'seo_crawl_runs': frozenset('id tenant_id site_id status seed_url max_urls discovered_count fetched_count failed_count blocked_count issue_count error_summary started_at completed_at created_at'.split()),
     'seo_keyword_assets': frozenset('id tenant_id site_id keyword cluster intent monthly_volume difficulty priority landing_page status source notes created_at updated_at'.split()),
     'seo_metric_snapshots': frozenset('id tenant_id site_id metric_type dimension numeric_value text_value unit source data_quality status error_message raw_payload observed_at collected_at created_at'.split()),
-    'seo_qa_batches': frozenset('request_key request_hash status items id tenant_id site_id created_at updated_at'.split()),
+    'seo_qa_batches': frozenset('request_key request_hash status items id tenant_id site_id created_at updated_at actor'.split()),
     'seo_qa_facts': frozenset('title statement source_name source_url expires_at status version id tenant_id site_id created_at updated_at'.split()),
     'seo_questions': frozenset('title fingerprint topic intent status relevance sources version id tenant_id site_id created_at updated_at'.split()),
-    'seo_tasks': frozenset('id tenant_id site_id module action_type title params status assignee_role completion_evidence baseline created_at updated_at'.split()),
+    'seo_tasks': frozenset('id tenant_id site_id module action_type title params status assignee_role completion_evidence baseline created_at updated_at created_by'.split()),
     'seo_competitor_events': frozenset('id tenant_id site_id competitor_id event_type title url source_url summary event_at detected_at'.split()),
     'seo_page_snapshots': frozenset('id tenant_id site_id crawl_run_id url final_url discovery_source click_depth status_code redirect_chain fetch_error error_type content_type content_length response_time_ms raw_html_hash robots_allowed meta_robots x_robots_tag canonical_url indexable title title_length meta_description description_length h1_texts h1_count html_lang main_content_extractable main_content_hash word_count schema_types schema_jsonld_count schema_parse_error internal_links_count external_links_count images_count images_missing_alt_count image_alt_evidence hreflang_tags issue_codes fetched_at created_at'.split()),
     'seo_rank_snapshots': frozenset('id tenant_id site_id keyword_id engine device region domain subject_type rank result_url source checked_at created_at'.split()),
     'seo_serp_results': frozenset('id tenant_id site_id keyword_id engine device region rank rank_label title description result_url domain ownership_type match_method confidence matched_asset_id is_confirmed provider captured_at created_at'.split()),
     'seo_site_pages': frozenset('id tenant_id site_id url page_type target_keyword_id title meta_description meta_keywords h1 canonical indexable http_status content_units audit_score issue_codes title_suggestion description_suggestion status last_error last_checked_at created_at updated_at'.split()),
     'seo_content_assets': frozenset('id tenant_id site_id source_page_id keyword_id keyword_ids content_type title outline draft humanized_content source_text rewrite_progress originality_score target_platforms version_count status page_url published_at review_submitted_at review_note reviewed_at created_at updated_at'.split()),
-    'seo_image_alt_reviews': frozenset('id tenant_id site_id page_id snapshot_id position source_url observed_alt_state decision alt_suggestion note review_status reviewed_at updated_at'.split()),
+    'seo_image_alt_reviews': frozenset('id tenant_id site_id page_id snapshot_id position source_url observed_alt_state decision alt_suggestion note review_status reviewed_at updated_at actor_id actor_name'.split()),
     'seo_internal_links': frozenset('id tenant_id site_id source_page_id target_page_id anchor_text discovered_at'.split()),
-    'seo_page_index_reviews': frozenset('id tenant_id site_id page_id intent reason evidence created_at'.split()),
+    'seo_page_index_reviews': frozenset('id tenant_id site_id page_id intent reason evidence created_at actor_id actor_name'.split()),
     'seo_content_review_events': frozenset('id tenant_id site_id content_asset_id action from_status to_status note created_at'.split()),
     'seo_distribution_variants': frozenset('id tenant_id content_asset_id connection_id platform_code source_version revision_number status title excerpt content content_chars keyword_checks warnings ai_generated generation_instruction feedback review_note reviewed_at created_at updated_at'.split()),
     'seo_image_verifications': frozenset('id tenant_id site_id page_id review_id status approved_at checked_at available_at evidence result_snapshot_id created_at'.split()),
@@ -81,6 +81,10 @@ FIXED_LOCK_KEY = int.from_bytes(
     signed=True,
 )
 RECEIPT_REGISTRY_TABLE = "seo_fixture_load_receipts"
+RECEIPT_REJECT_FUNCTION = "public.reject_seo_fixture_receipt_mutation()"
+SYNTHETIC_ACTOR_TEXT = "fixture:synthetic"
+SYNTHETIC_ACTOR_ID = 0
+SYNTHETIC_ACTOR_NAME = "Synthetic Fixture"
 EMPTY_GUARD_TABLES = (
     "roles", "users", *TABLE_ORDER,
     "demo_tenant_bindings", "demo_tenant_binding_history",
@@ -97,13 +101,14 @@ RUNNABLE_STATES = {
 }
 SENSITIVE_KEYS = re.compile(
     r"(?:authorization|password|secret|token|cookie|credential|private[_-]?key|"
-    r"access[_-]?key|session)",
+    r"access[_-]?key|api[_-]?key|oauth|client[_-]?secret|session)",
     re.I,
 )
 SENSITIVE_TEXT = re.compile(
     r"(?:\bBearer\s+[A-Za-z0-9._~+/=-]+|-----BEGIN [A-Z ]*PRIVATE KEY-----|"
     r"\bAKIA[0-9A-Z]{16}\b|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b|"
-    r"\b(?:authorization|private[_-]?key|access[_-]?key|session)\s*[:=])",
+    r"\b(?:sk-|ya29\.)[A-Za-z0-9._-]{8,}|"
+    r"\b(?:authorization|private[_-]?key|access[_-]?key|api[_-]?key|oauth|client[_-]?secret|session)\s*[:=])",
     re.I,
 )
 PII_TEXT = re.compile(
@@ -111,6 +116,11 @@ PII_TEXT = re.compile(
     r"(?<!\d)1[3-9]\d{9}(?!\d)|"
     r"(?<!\d)\d{17}[\dXx](?!\d))",
     re.I,
+)
+LABELED_PII_TEXT = re.compile(
+    r"(?:联系人|姓名|收件人)\s*[:：]\s*[\u4e00-\u9fff]{2,6}|"
+    r"(?:地址|住址|联系地址)\s*[:：]\s*[^\s,，;；]{4,}|"
+    r"(?:座机|电话|联系电话)\s*[:：]\s*(?:0\d{2,3}[- ]?)?\d{7,8}",
 )
 IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 VERSION = re.compile(r"^[a-z0-9][a-z0-9._-]{0,39}$")
@@ -200,7 +210,7 @@ def _contains_sensitive_value(value: object, path: str = "") -> bool:
     elif isinstance(value, list):
         return any(_contains_sensitive_value(item, path) for item in value)
     elif isinstance(value, str):
-        return bool(SENSITIVE_TEXT.search(value) or PII_TEXT.search(value))
+        return bool(SENSITIVE_TEXT.search(value) or PII_TEXT.search(value) or LABELED_PII_TEXT.search(value))
     return False
 
 
@@ -238,6 +248,8 @@ class SeoFixtureBundle:
         if not isinstance(manifest, dict) or set(manifest) != MANIFEST_FIELDS:
             raise SeoFixtureError("manifest fields do not match the reviewed contract")
         cls._validate_manifest(manifest)
+        if _contains_sensitive_value(manifest):
+            raise SeoFixtureError("manifest contains credential or personal data")
         tables = manifest["tables"]
         declared_paths: set[str] = set()
         rows: dict[str, tuple[dict[str, Any], ...]] = {}
@@ -338,6 +350,12 @@ class SeoFixtureBundle:
                 raise SeoFixtureError(f"{field} must include a timezone")
         if not isinstance(manifest["loader_version"], str) or not manifest["loader_version"].strip():
             raise SeoFixtureError("loader_version is invalid")
+        if manifest["text_policy"] != {
+            "synthetic": True,
+            "redacted": True,
+            "policy_version": "seo-fixture-text-v1",
+        }:
+            raise SeoFixtureError("manifest text_policy must declare synthetic, redacted fixture text")
         tables = manifest["tables"]
         if not isinstance(tables, dict) or not REQUIRED_TABLES.issubset(tables):
             raise SeoFixtureError("manifest is missing required fixture tables")
@@ -360,6 +378,7 @@ class SeoFixtureBundle:
                 raise SeoFixtureError("site manifest entry is duplicate or invalid")
             expected_sites[site_id] = domain.strip().lower()
         loaded_sites: dict[int, str] = {}
+        tenant_module_ids = {row.get("id") for row in self.rows.get("tenant_modules", ())}
         seen_primary_keys: dict[str, set[object]] = {}
         for table, records in self.rows.items():
             for row in records:
@@ -377,7 +396,20 @@ class SeoFixtureBundle:
                     raise SeoFixtureError("tenant_modules may contain SEO only")
                 if table == "seo_tasks" and row.get("module") != "seo":
                     raise SeoFixtureError("seo_tasks must use module=seo")
+                if table in {"seo_ai_operations", "seo_qa_batches"} and row.get("actor") != SYNTHETIC_ACTOR_TEXT:
+                    raise SeoFixtureError(f"table {table} must use the synthetic actor contract")
+                if table == "seo_tasks" and row.get("created_by") != SYNTHETIC_ACTOR_TEXT:
+                    raise SeoFixtureError("seo_tasks must use the synthetic actor contract")
+                if table in {"seo_image_alt_reviews", "seo_page_index_reviews"} and (
+                    row.get("actor_id") != SYNTHETIC_ACTOR_ID
+                    or row.get("actor_name") != SYNTHETIC_ACTOR_NAME
+                ):
+                    raise SeoFixtureError(f"table {table} must use the synthetic actor contract")
                 if table == "seo_sites":
+                    if row.get("tenant_module_id") not in tenant_module_ids:
+                        raise SeoFixtureError(
+                            "table seo_sites tenant_module_id does not reference a bundled parent"
+                        )
                     settings = row.get("site_settings")
                     marker = {
                         "fixture_marker": self.dataset_key,
@@ -485,6 +517,15 @@ async def _scalar_rows(connection: AsyncConnection, sql: str, params: dict[str, 
     return list((await connection.execute(text(sql), params or {})).scalars())
 
 
+async def _verify_no_production_connect(connection: AsyncConnection, role: str) -> None:
+    privilege = (await connection.execute(text(
+        "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_database WHERE datname='sem_prod') "
+        "THEN has_database_privilege(:role, 'sem_prod', 'CONNECT') ELSE NULL END"
+    ), {"role": role})).scalar_one()
+    if privilege is not False:
+        raise SeoFixtureError("demo role production database CONNECT privilege is unsafe or unverifiable")
+
+
 async def _verify_app_readonly(connection: AsyncConnection, role: str) -> None:
     identity = (await connection.execute(text(
         "SELECT count(*)=1, coalesce(bool_or(rolsuper),false), "
@@ -496,6 +537,7 @@ async def _verify_app_readonly(connection: AsyncConnection, role: str) -> None:
     ), {"role": role})).one()
     if identity != (True, False, False, False, False, False, True, True):
         raise SeoFixtureError("application read-only role identity is unsafe")
+    await _verify_no_production_connect(connection, role)
     readable_tables = (*TABLE_ORDER, "roles", "users", "demo_tenant_bindings", "demo_tenant_binding_history")
     for table in readable_tables:
         privileges = (await connection.execute(text(
@@ -540,6 +582,7 @@ async def _verify_loader_role(connection: AsyncConnection, role: str) -> None:
     ), {"role": role})).one()
     if memberships != (0, 0):
         raise SeoFixtureError("loader role must not inherit or grant role memberships")
+    await _verify_no_production_connect(connection, role)
     readonly_tables = {"roles", "users", "demo_tenant_bindings", "demo_tenant_binding_history"}
     for table in (*TABLE_ORDER, *sorted(readonly_tables)):
         privileges = (await connection.execute(text(
@@ -596,13 +639,16 @@ async def _verify_receipt_registry(connection: AsyncConnection) -> None:
     ]
     if columns != expected:
         raise SeoFixtureError("fixture receipt registry columns do not match the reviewed design")
-    immutable_triggers = (await connection.execute(text(
-        "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid "
-        f"WHERE c.relname='{RECEIPT_REGISTRY_TABLE}' AND NOT t.tgisinternal "
-        "AND (pg_get_triggerdef(t.oid) ILIKE '%BEFORE UPDATE%' OR "
-        "pg_get_triggerdef(t.oid) ILIKE '%BEFORE DELETE%' OR pg_get_triggerdef(t.oid) ILIKE '%BEFORE TRUNCATE%')"
-    ))).scalar_one()
-    if int(immutable_triggers) < 3:
+    trigger_rows = (await connection.execute(text(
+        "SELECT event_manipulation, action_timing, action_statement "
+        "FROM information_schema.triggers "
+        f"WHERE event_object_schema='public' AND event_object_table='{RECEIPT_REGISTRY_TABLE}'"
+    ))).all()
+    expected_triggers = {
+        (event, "BEFORE", f"EXECUTE FUNCTION {RECEIPT_REJECT_FUNCTION}")
+        for event in ("UPDATE", "DELETE", "TRUNCATE")
+    }
+    if set(trigger_rows) != expected_triggers:
         raise SeoFixtureError("fixture receipt registry is not protected by immutable triggers")
 
 
@@ -644,7 +690,7 @@ def _coerce_rows(table: Any, rows: tuple[dict[str, Any], ...]) -> list[dict[str,
     return converted
 
 
-async def load_fixture_transaction(
+async def _load_fixture_transaction_after_approved_registry(
     connection: AsyncConnection,
     bundle: SeoFixtureBundle,
     *,
@@ -720,7 +766,19 @@ async def load_fixture_transaction(
     return receipt
 
 
-async def run_fixture_load(
+async def load_fixture_transaction(
+    connection: AsyncConnection,
+    bundle: SeoFixtureBundle,
+    *,
+    expected_server_addresses: set[str],
+) -> dict[str, Any]:
+    del connection, bundle, expected_server_addresses
+    raise SeoFixtureError(
+        "revision 0098 cannot load fixtures; an approved 0099 receipt migration is required"
+    )
+
+
+async def _run_fixture_load_after_approved_registry(
     database_url: str,
     bundle: SeoFixtureBundle,
     *,
@@ -733,14 +791,16 @@ async def run_fixture_load(
     target = engine or create_async_engine(database_url, isolation_level="SERIALIZABLE", pool_pre_ping=True)
     try:
         async with target.begin() as connection:
-            receipt = await load_fixture_transaction(connection, bundle, expected_server_addresses=expected_server_addresses)
+            receipt = await _load_fixture_transaction_after_approved_registry(
+                connection, bundle, expected_server_addresses=expected_server_addresses
+            )
         return receipt
     finally:
         if owned:
             await target.dispose()
 
 
-async def recover_committed_receipt(
+async def _recover_committed_receipt_after_approved_registry(
     database_url: str,
     bundle: SeoFixtureBundle,
     *,
@@ -808,3 +868,31 @@ async def recover_committed_receipt(
     finally:
         if owned:
             await target.dispose()
+
+
+async def run_fixture_load(
+    database_url: str,
+    bundle: SeoFixtureBundle,
+    *,
+    allowed_hosts: set[str],
+    expected_server_addresses: set[str],
+    engine: AsyncEngine | None = None,
+) -> dict[str, Any]:
+    del database_url, bundle, allowed_hosts, expected_server_addresses, engine
+    raise SeoFixtureError(
+        "revision 0098 cannot load fixtures; an approved 0099 receipt migration is required"
+    )
+
+
+async def recover_committed_receipt(
+    database_url: str,
+    bundle: SeoFixtureBundle,
+    *,
+    allowed_hosts: set[str],
+    expected_server_addresses: set[str],
+    engine: AsyncEngine | None = None,
+) -> dict[str, Any]:
+    del database_url, bundle, allowed_hosts, expected_server_addresses, engine
+    raise SeoFixtureError(
+        "revision 0098 cannot recover fixture receipts; an approved 0099 receipt migration is required"
+    )

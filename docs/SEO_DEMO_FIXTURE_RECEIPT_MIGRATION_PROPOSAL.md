@@ -25,8 +25,11 @@ CREATE TABLE seo_fixture_load_receipts (
 );
 ```
 
-The reviewed migration must add separate `BEFORE UPDATE`, `BEFORE DELETE`, and
-`BEFORE TRUNCATE` triggers that always raise an exception. The loader role gets
+The reviewed migration must create
+`public.reject_seo_fixture_receipt_mutation()` and add separate `BEFORE UPDATE`,
+`BEFORE DELETE`, and `BEFORE TRUNCATE` triggers on exactly
+`public.seo_fixture_load_receipts`; every trigger must call that function and it
+must always raise an exception. The loader role gets
 only `SELECT, INSERT`; the application read role gets no access. No sequence is
 used. The loader inserts the receipt as the final statement of the same
 SERIALIZABLE transaction as the fixture rows, so a committed registry row is

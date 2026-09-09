@@ -15,6 +15,7 @@ declared table. The manifest is exact-schema JSON and records:
   generation time and the already-created application read-only role;
 - site ids and canonical domains;
 - source URLs, collection timestamps and source-content SHA-256 values;
+- exact `text_policy={synthetic:true,redacted:true,policy_version:seo-fixture-text-v1}`;
 - each table file's normalized relative path, byte size, SHA-256 and row count;
 - a `bundle_sha256` over the canonical manifest excluding that field itself.
 
@@ -24,6 +25,14 @@ in `app.seo_demo_fixture_loader.TABLE_ORDER` are accepted. `tenants`,
 absolute or parent paths, symlinks, unknown columns, credentials, cross-tenant
 rows, undeclared site ids, and runnable job states are rejected before a
 database connection is needed.
+
+Columns are allowed per table rather than inferred from the ORM. Credential
+keys and scalar values include authorization, API/OAuth/client secrets, private
+and access keys, sessions, Bearer/JWT/common provider tokens. Direct contact
+data and labelled person/address/telephone text are rejected. The five supported
+tables whose schema requires an actor use only the fixed synthetic identities
+documented in the loader; ordinary business names and public webpage copy remain
+valid under the declared synthetic/redacted policy.
 
 Every `seo_sites.site_settings` object must contain the manifest dataset key and
 version as `fixture_marker` and `dataset_version`, plus JSON booleans
@@ -38,6 +47,10 @@ address returned by PostgreSQL. The URL, connected database and manifest must
 all name `gsnipers_demo`; `sem_prod` is rejected. The loader requires one exact
 Alembic revision, `0098_demo_binding_no_truncate`, a non-superuser,
 non-replication loader role, and SERIALIZABLE isolation.
+Both the loader and application roles must prove they have no `CONNECT` on
+`sem_prod` using the PostgreSQL catalog from the demo connection. Missing or
+failed catalog evidence is a hard failure; the loader never connects to the
+production database to perform this check.
 
 A fixed, database-wide SEO fixture advisory lock serializes every dataset. All
 allowed data tables, users, roles and both demo-binding tables must be empty. The latter are control-plane
@@ -54,8 +67,9 @@ bundle before commit.
 
 The loader also requires the immutable database receipt registry described in
 `docs/SEO_DEMO_FIXTURE_RECEIPT_MIGRATION_PROPOSAL.md`. That registry is not part
-of revision `0098`, so the current loader intentionally rejects every database
-before inserting fixture data. This keeps the Draft review executable only at
+of revision `0098`, so both load and receipt-recovery entry points
+unconditionally reject before issuing a database query. Manually adding a
+lookalike table to an `0098` database cannot enable loading. This keeps the Draft review executable only at
 the offline-validation layer until a separate shared migration is approved.
 
 Once that migration is approved and the required revision is updated, the

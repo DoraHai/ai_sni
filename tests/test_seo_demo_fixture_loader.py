@@ -26,6 +26,8 @@ from app.seo_demo_fixture_loader import (
     SeoFixtureBundle,
     SeoFixtureError,
     _verify_app_readonly,
+    _verify_loader_role,
+    _verify_receipt_registry,
     load_fixture_transaction,
     manifest_digest,
     recover_committed_receipt,
@@ -86,6 +88,7 @@ def write_bundle(root: Path, *, rows=None, mutate_manifest=None):
         "app_readonly_role": "seo_demo_reader",
         "sites": [{"site_id": 903, "canonical_domain": "tiger.example"}],
         "sources": [{"url": "https://tiger.example/", "collected_at": "2026-09-09T00:00:00+00:00", "content_sha256": "0" * 64}],
+        "text_policy": {"synthetic": True, "redacted": True, "policy_version": "seo-fixture-text-v1"},
         "tables": tables,
         "bundle_sha256": "0" * 64,
     }
@@ -171,7 +174,7 @@ def test_non_seo_table_cross_tenant_runnable_state_and_credentials_are_rejected(
     cases.append((rows, "tenant boundary"))
     rows = minimum_rows(); rows["seo_sites"][0]["id"] = 904
     cases.append((rows, "sites do not match"))
-    rows = minimum_rows(); rows["seo_tasks"] = [{"id": 1, "tenant_id": 901, "site_id": 903, "module": "seo", "status": "in_progress"}]
+    rows = minimum_rows(); rows["seo_tasks"] = [{"id": 1, "tenant_id": 901, "site_id": 903, "module": "seo", "status": "in_progress", "created_by": "fixture:synthetic"}]
     cases.append((rows, "runnable"))
     rows = minimum_rows(); rows["seo_distribution_connections"] = [{"id": 1, "tenant_id": 901, "credentials_encrypted": "cipher", "has_credentials": True, "enabled": True, "status": "active"}]
     cases.append((rows, "allowlist|credential"))
@@ -213,7 +216,7 @@ def test_cross_site_parent_reference_is_rejected(tmp_path):
         {"id": 905, "tenant_id": 901, "site_id": 904, "url": "https://second.example/a", "status": "healthy", "created_at": timestamp, "updated_at": timestamp}
     ]
     rows["seo_image_alt_reviews"] = [
-        {"id": 906, "tenant_id": 901, "site_id": 903, "page_id": 905, "position": 1, "source_url": "https://second.example/a.png", "review_status": "pending"}
+        {"id": 906, "tenant_id": 901, "site_id": 903, "page_id": 905, "position": 1, "source_url": "https://second.example/a.png", "review_status": "pending", "actor_id": 0, "actor_name": "Synthetic Fixture"}
     ]
     write_bundle(tmp_path, rows=rows, mutate_manifest=lambda value: value["sites"].append(
         {"site_id": 904, "canonical_domain": "second.example"}
@@ -222,7 +225,11 @@ def test_cross_site_parent_reference_is_rejected(tmp_path):
         SeoFixtureBundle.open(tmp_path)
 
 
-@pytest.mark.parametrize("unsafe", ["person@example.com", "13800138000", "11010519491231002X"])
+@pytest.mark.parametrize("unsafe", [
+    "person@example.com", "13800138000", "11010519491231002X",
+    "姓名：张三", "联系地址：上海市静安区测试路1号", "座机：021-12345678",
+    "apiKey: abcdefghijklmnop", "client_secret=abcdefghijklmnop", "oauth: ya29.abcdefghijk",
+])
 def test_scalar_pii_is_rejected_anywhere_in_bundle_rows(tmp_path, unsafe):
     rows = minimum_rows()
     rows["seo_sites"][0]["site_settings"]["note"] = unsafe
@@ -243,6 +250,54 @@ def test_distribution_connection_config_has_exact_inert_schema(tmp_path):
         SeoFixtureBundle.open(tmp_path)
 
 
+def test_supported_not_null_actor_rows_use_auditable_synthetic_contract(tmp_path):
+    rows = minimum_rows()
+    timestamp = "2026-09-09T00:00:00+00:00"
+    rows.update({
+        "seo_ai_operations": [{
+            "id": "op-1", "tenant_id": 901, "site_id": 903, "request_key": "r1",
+            "request_hash": "0" * 64, "actor": "fixture:synthetic", "kind": "draft",
+            "charged_on": "2026-09-09", "status": "succeeded", "expires_at": timestamp,
+        }],
+        "seo_qa_batches": [{
+            "id": 910, "tenant_id": 901, "site_id": 903, "actor": "fixture:synthetic",
+            "request_key": "q1", "request_hash": "1" * 64, "status": "done", "items": [],
+        }],
+        "seo_tasks": [{
+            "id": 911, "tenant_id": 901, "site_id": 903, "module": "seo",
+            "action_type": "review", "title": "Synthetic review", "status": "done",
+            "created_by": "fixture:synthetic", "assignee_role": "reviewer",
+        }],
+        "seo_crawl_runs": [{"id": 912, "tenant_id": 901, "site_id": 903, "status": "completed"}],
+        "seo_site_pages": [{"id": 913, "tenant_id": 901, "site_id": 903, "url": "https://tiger.example/a"}],
+        "seo_page_snapshots": [{
+            "id": 914, "tenant_id": 901, "site_id": 903, "crawl_run_id": 912,
+            "url": "https://tiger.example/a", "fetched_at": timestamp,
+        }],
+        "seo_image_alt_reviews": [{
+            "id": 915, "tenant_id": 901, "site_id": 903, "page_id": 913,
+            "snapshot_id": 914, "position": 1, "observed_alt_state": "missing",
+            "decision": "approved", "actor_id": 0, "actor_name": "Synthetic Fixture",
+        }],
+        "seo_page_index_reviews": [{
+            "id": 916, "tenant_id": 901, "site_id": 903, "page_id": 913,
+            "intent": "allow", "reason": "Synthetic fixture evidence", "evidence": {},
+            "actor_id": 0, "actor_name": "Synthetic Fixture",
+        }],
+    })
+    write_bundle(tmp_path, rows=rows)
+    bundle = SeoFixtureBundle.open(tmp_path)
+    assert len(bundle.rows["seo_tasks"]) == 1
+
+
+def test_site_tenant_module_parent_must_be_in_bundle(tmp_path):
+    rows = minimum_rows()
+    rows["seo_sites"][0]["tenant_module_id"] = 999999
+    write_bundle(tmp_path, rows=rows)
+    with pytest.raises(SeoFixtureError, match="tenant_module_id does not reference a bundled parent"):
+        SeoFixtureBundle.open(tmp_path)
+
+
 class Result:
     def __init__(self, value):
         self.value = value
@@ -259,9 +314,12 @@ class Result:
     def scalars(self):
         return iter(self.value)
 
+    def all(self):
+        return self.value
+
 
 class FakeConnection:
-    def __init__(self, *, revisions=None, initial=None, unsafe_table=None, unsafe_schema=False, writable_sequences=0, fail_insert=None, lock=True, registry=True, session_role="seo_fixture_loader", loader_memberships=(0, 0)):
+    def __init__(self, *, revisions=None, initial=None, unsafe_table=None, unsafe_schema=False, writable_sequences=0, fail_insert=None, lock=True, registry=True, session_role="seo_fixture_loader", loader_memberships=(0, 0), production_connect=False, trigger_rows=None):
         self.revisions = revisions or [REQUIRED_REVISION]
         self.counts = {table: 0 for table in (*EMPTY_GUARD_TABLES, RECEIPT_REGISTRY_TABLE)}
         self.counts.update(initial or {})
@@ -273,6 +331,8 @@ class FakeConnection:
         self.registry = registry
         self.session_role = session_role
         self.loader_memberships = loader_memberships
+        self.production_connect = production_connect
+        self.trigger_rows = trigger_rows
         self.inserted = []
 
     async def execute(self, statement, parameters=None):
@@ -304,8 +364,11 @@ class FakeConnection:
                 "target_revision", "target_database", "server_address", "loader_role",
                 "loader_version", "row_counts", "committed_at",
             ])
-        if "FROM pg_trigger" in sql:
-            return Result(3)
+        if "FROM information_schema.triggers" in sql:
+            return Result(self.trigger_rows if self.trigger_rows is not None else [
+                (event, "BEFORE", "EXECUTE FUNCTION public.reject_seo_fixture_receipt_mutation()")
+                for event in ("UPDATE", "DELETE", "TRUNCATE")
+            ])
         if f"FROM public.{RECEIPT_REGISTRY_TABLE} WHERE manifest_sha256" in sql:
             return Result((
                 "seo-tiger-demo", "tiger-20260909-v1", 901, REQUIRED_REVISION,
@@ -320,6 +383,10 @@ class FakeConnection:
             return Result((True, False, False, False, False, False, True, True))
         if "SELECT (SELECT count(*) FROM pg_auth_members" in sql:
             return Result(self.loader_memberships)
+        if "pg_database WHERE datname='sem_prod'" in sql:
+            if self.production_connect == "error":
+                raise RuntimeError("catalog lookup failed")
+            return Result(self.production_connect)
         if "has_table_privilege" in sql:
             if self.unsafe_table and f"public.{self.unsafe_table}" in sql:
                 return Result((True, True, False, False, False))
@@ -337,51 +404,40 @@ class FakeConnection:
         raise AssertionError(sql)
 
 
-def test_nonempty_target_and_repeat_load_are_rejected(tmp_path):
+def test_revision_0098_unconditionally_rejects_before_database_access(tmp_path):
     write_bundle(tmp_path)
     bundle = SeoFixtureBundle.open(tmp_path)
-    connection = FakeConnection(initial={"seo_sites": 1})
-    with pytest.raises(SeoFixtureError, match="not empty"):
-        asyncio.run(load_fixture_transaction(connection, bundle, expected_server_addresses={"192.0.2.10"}))
+
+    class MustNotExecute:
+        async def execute(self, *_args, **_kwargs):
+            raise AssertionError("0098 guard queried the database")
+
+    with pytest.raises(SeoFixtureError, match="0098 cannot load"):
+        asyncio.run(load_fixture_transaction(
+            MustNotExecute(), bundle, expected_server_addresses={"192.0.2.10"}
+        ))
 
 
-def test_second_load_is_rejected_after_one_success(tmp_path):
-    write_bundle(tmp_path)
-    bundle = SeoFixtureBundle.open(tmp_path)
-    connection = FakeConnection()
-    asyncio.run(load_fixture_transaction(connection, bundle, expected_server_addresses={"192.0.2.10"}))
-    with pytest.raises(SeoFixtureError, match="not empty"):
-        asyncio.run(load_fixture_transaction(connection, bundle, expected_server_addresses={"192.0.2.10"}))
-
-
-def test_database_revision_must_be_exact_0098(tmp_path):
-    write_bundle(tmp_path)
-    bundle = SeoFixtureBundle.open(tmp_path)
-    with pytest.raises(SeoFixtureError, match="0098"):
-        asyncio.run(load_fixture_transaction(FakeConnection(revisions=["0097_demo_tenant_bindings"]), bundle, expected_server_addresses={"192.0.2.10"}))
-
-
-def test_revision_0098_without_receipt_registry_is_fail_closed(tmp_path):
-    write_bundle(tmp_path)
-    bundle = SeoFixtureBundle.open(tmp_path)
-    with pytest.raises(SeoFixtureError, match="registry is absent"):
-        asyncio.run(load_fixture_transaction(FakeConnection(registry=False), bundle, expected_server_addresses={"192.0.2.10"}))
-
-
-def test_concurrent_dataset_loader_is_rejected(tmp_path):
-    write_bundle(tmp_path)
-    bundle = SeoFixtureBundle.open(tmp_path)
-    with pytest.raises(SeoFixtureError, match="advisory lock"):
-        asyncio.run(load_fixture_transaction(FakeConnection(lock=False), bundle, expected_server_addresses={"192.0.2.10"}))
-
-
-def test_set_role_and_loader_membership_are_rejected(tmp_path):
-    write_bundle(tmp_path)
-    bundle = SeoFixtureBundle.open(tmp_path)
-    with pytest.raises(SeoFixtureError, match="identity"):
-        asyncio.run(load_fixture_transaction(FakeConnection(session_role="login_parent"), bundle, expected_server_addresses={"192.0.2.10"}))
+def test_loader_role_membership_is_rejected_directly():
     with pytest.raises(SeoFixtureError, match="memberships"):
-        asyncio.run(load_fixture_transaction(FakeConnection(loader_memberships=(1, 0)), bundle, expected_server_addresses={"192.0.2.10"}))
+        asyncio.run(_verify_loader_role(
+            FakeConnection(loader_memberships=(1, 0)), "seo_fixture_loader"
+        ))
+
+
+@pytest.mark.parametrize("unsafe", [True, None, "error"])
+def test_demo_roles_must_prove_no_sem_prod_connect(unsafe):
+    with pytest.raises((SeoFixtureError, RuntimeError), match="CONNECT|catalog"):
+        asyncio.run(_verify_loader_role(
+            FakeConnection(production_connect=unsafe), "seo_fixture_loader"
+        ))
+
+
+def test_receipt_registry_requires_exact_event_function_contract():
+    asyncio.run(_verify_receipt_registry(FakeConnection()))
+    wrong = [("UPDATE", "BEFORE", "EXECUTE FUNCTION public.other_function()")]
+    with pytest.raises(SeoFixtureError, match="immutable triggers"):
+        asyncio.run(_verify_receipt_registry(FakeConnection(trigger_rows=wrong)))
 
 
 def test_app_role_contract_rejects_write_privilege():
@@ -393,27 +449,15 @@ def test_app_role_contract_rejects_write_privilege():
         asyncio.run(_verify_app_readonly(FakeConnection(writable_sequences=1), "seo_demo_reader"))
 
 
-def test_successful_single_load_returns_manifest_bound_receipt(tmp_path):
+def test_revision_0098_unconditionally_rejects_receipt_recovery(tmp_path):
     write_bundle(tmp_path)
     bundle = SeoFixtureBundle.open(tmp_path)
-    connection = FakeConnection()
-    receipt = asyncio.run(load_fixture_transaction(connection, bundle, expected_server_addresses={"192.0.2.10"}))
-    assert receipt["manifest_sha256"] == bundle.digest
-    assert receipt["row_counts"] == {"tenants": 1, "tenant_modules": 1, "seo_sites": 1}
-    assert receipt["loader_version"] == "test-v1"
-    assert connection.inserted == ["tenants", "tenant_modules", "seo_sites", RECEIPT_REGISTRY_TABLE]
-
-
-def test_committed_receipt_can_be_recovered_from_registry(tmp_path):
-    write_bundle(tmp_path)
-    bundle = SeoFixtureBundle.open(tmp_path)
-    receipt = asyncio.run(recover_committed_receipt(
-        "postgresql+asyncpg://u:p@demo-db/gsnipers_demo", bundle,
-        allowed_hosts={"demo-db"}, expected_server_addresses={"192.0.2.10"},
-        engine=FakeEngine(FakeConnection()),
-    ))
-    assert receipt["manifest_sha256"] == bundle.digest
-    assert receipt["result"] == "committed"
+    with pytest.raises(SeoFixtureError, match="0098 cannot recover"):
+        asyncio.run(recover_committed_receipt(
+            "postgresql+asyncpg://u:p@demo-db/gsnipers_demo", bundle,
+            allowed_hosts={"demo-db"}, expected_server_addresses={"192.0.2.10"},
+            engine=FakeEngine(FakeConnection()),
+        ))
 
 
 class BeginContext:
@@ -438,55 +482,32 @@ class FakeEngine:
         return self.context
 
 
-def test_any_failure_rolls_back_and_emits_no_receipt(tmp_path, monkeypatch):
+def test_run_fixture_load_0098_refuses_before_transaction_or_inserts(tmp_path):
     write_bundle(tmp_path)
     bundle = SeoFixtureBundle.open(tmp_path)
-    engine = FakeEngine(SimpleNamespace())
-
-    async def fail(*_args, **_kwargs):
-        raise SeoFixtureError("injected failure")
-
-    monkeypatch.setattr("app.seo_demo_fixture_loader.load_fixture_transaction", fail)
-    with pytest.raises(SeoFixtureError, match="injected"):
+    connection = FakeConnection()
+    engine = FakeEngine(connection)
+    with pytest.raises(SeoFixtureError, match="0098 cannot load"):
         asyncio.run(run_fixture_load(
             "postgresql+asyncpg://u:p@demo-db/gsnipers_demo", bundle,
             allowed_hosts={"demo-db"}, expected_server_addresses={"192.0.2.10"}, engine=engine,
         ))
-    assert engine.context.rolled_back is True
+    assert engine.context.rolled_back is False
     assert engine.context.committed is False
+    assert connection.inserted == []
 
 
-def test_insert_failure_rolls_back_the_actual_transaction(tmp_path):
-    write_bundle(tmp_path)
-    bundle = SeoFixtureBundle.open(tmp_path)
-    engine = FakeEngine(FakeConnection(fail_insert="tenant_modules"))
-    with pytest.raises(RuntimeError, match="insert failure"):
-        asyncio.run(run_fixture_load(
-            "postgresql+asyncpg://u:p@demo-db/gsnipers_demo", bundle,
-            allowed_hosts={"demo-db"}, expected_server_addresses={"192.0.2.10"}, engine=engine,
-        ))
-    assert engine.context.rolled_back is True
-    assert engine.context.committed is False
-
-
-def test_cli_writes_new_receipt_atomically_and_refuses_overwrite(tmp_path, monkeypatch):
+def test_cli_0098_refuses_without_writing_receipt(tmp_path, monkeypatch):
     import scripts.load_seo_demo_fixture as command
 
     bundle_root = tmp_path / "bundle"; bundle_root.mkdir()
     write_bundle(bundle_root)
     receipt = tmp_path / "receipt.json"
-    expected = {"result": "committed", "manifest_sha256": "a" * 64}
-
-    async def succeed(*_args, **_kwargs):
-        return expected
-
-    monkeypatch.setattr(command, "run_fixture_load", succeed)
     monkeypatch.setenv("SEO_FIXTURE_DATABASE_URL", "postgresql+asyncpg://u:p@demo-db/gsnipers_demo")
     monkeypatch.setattr("sys.argv", [
         "load_seo_demo_fixture.py", str(bundle_root), "--allow-host", "demo-db",
         "--allow-server-address", "192.0.2.10", "--receipt", str(receipt),
     ])
-    assert command.main() == 0
-    assert json.loads(receipt.read_text(encoding="utf-8")) == expected
-    with pytest.raises(SystemExit):
+    with pytest.raises(SeoFixtureError, match="0098 cannot load"):
         command.main()
+    assert not receipt.exists()
