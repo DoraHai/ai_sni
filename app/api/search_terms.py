@@ -32,6 +32,7 @@ from app.models import (
 from app.security.auth import AuthContext, require_scoped_auth
 from app.sem_cockpit_details import read_search_terms
 from app.sem_cockpit_readonly import validate_query
+from app.sem_demo_adapter import is_demo_read, read_demo_search_terms
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,10 @@ async def cockpit_search_terms(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     validate_query(request.query_params, {"tenant_id", "baidu_account_id", "q", "campaign_id", "adgroup_id", "page", "page_size"})
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_search_terms(
+            baidu_account_id, q, campaign_id, adgroup_id, page, page_size
+        )
     return await read_search_terms(session, tenant_id, baidu_account_id, q, campaign_id, adgroup_id, page, page_size)
 
 

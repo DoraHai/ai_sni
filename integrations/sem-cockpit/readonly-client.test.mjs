@@ -101,6 +101,22 @@ test('foreign or simulated result is rejected', async () => {
   }
 })
 
+test('the exact tenant-bound demo context accepts only its versioned demo payload', async () => {
+  const demo = structuredClone(payload)
+  demo.tenant_id = 16
+  demo.is_demo = true
+  demo.demo_revision = 'sem-demo-tenant16-v1'
+  const client = createSemReadonlyClient({ onClear() {}, transport: async () => response(demo) })
+  client.setContext({ ...context, tenantId: 16, demoRevision: 'sem-demo-tenant16-v1' })
+  assert.equal((await client.read('report', examples.report.consumer_params)).demo_revision, 'sem-demo-tenant16-v1')
+
+  const staleClient = createSemReadonlyClient({ onClear() {}, transport: async () => response({
+    ...demo, demo_revision: 'sem-demo-tenant16-old',
+  }) })
+  staleClient.setContext({ ...context, tenantId: 16, demoRevision: 'sem-demo-tenant16-v1' })
+  await assert.rejects(staleClient.read('report', examples.report.consumer_params), { code: 'CONTRACT_MISMATCH' })
+})
+
 test('zero allowed reads and server failure do not fall back to demo', async () => {
   let calls = 0
   const client = createSemReadonlyClient({ onClear() {}, transport: async () => { calls++; return { status: 500, ok: false } } })
