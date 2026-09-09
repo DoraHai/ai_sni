@@ -131,11 +131,9 @@ class Settings(BaseSettings):
     seo_scheduler_enabled: bool = True
     seo_external_actions_enabled: bool = True
     # Same-site demo access authenticates against the production identity
-    # store, then routes only explicitly listed principals to an isolated,
-    # transaction-read-only SEO data source.  The browser cannot select it.
+    # store, then resolves the authenticated tenant through the trusted
+    # demo_tenant_bindings control table. The browser cannot select it.
     seo_demo_data_source_enabled: bool = False
-    seo_demo_principal_user_ids: str = ""
-    seo_demo_bindings_json: str = "[]"
     seo_demo_database_url: str = ""
     seo_demo_database_host_allowlist: str = ""
     seo_demo_database_server_addr_allowlist: str = ""

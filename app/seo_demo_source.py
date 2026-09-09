@@ -1,30 +1,31 @@
 """Trusted dual-data-source routing for same-site SEO demonstrations.
 
-Authentication always uses the primary database.  Only a production identity
-listed by server configuration can be mapped to the isolated demo database;
-no request parameter, header, tenant id, site id or dataset key selects a data
-source.
+Authentication and the trusted tenant binding always use the primary database.
+An active production control record can map that authenticated tenant to the
+isolated demo database; no request parameter, header, tenant id, site id or
+dataset key selects a data source.
 """
 
 from __future__ import annotations
 
-import json
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Any
 
 from fastapi import Depends, HTTPException, Request
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import get_settings
 from app.database import get_session as get_primary_session
+from app.models.demo_tenant_binding import DemoTenantBinding
 from app.security.auth import AuthContext, enforce_scoped_request, require_auth
 
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+DEMO_SCHEMA_REVISION = "0098_demo_binding_no_truncate"
 CLIENT_DATA_SOURCE_QUERY_KEYS = frozenset({"dataset", "data_source", "database"})
 CLIENT_DATA_SOURCE_HEADER_KEYS = frozenset(
     {"x-seo-dataset", "x-seo-data-source", "x-seo-database"}
@@ -37,13 +38,12 @@ class DemoDataSourceError(RuntimeError):
 
 @dataclass(frozen=True)
 class SeoDemoBinding:
-    principal_user_id: int
     principal_tenant_id: int
     tenant_id: int
-    site_ids: tuple[int, ...]
     dataset_key: str
-    schema_revision: str
-    enabled: bool
+    dataset_version: str
+    binding_version: int
+    schema_revision: str = DEMO_SCHEMA_REVISION
 
 
 @dataclass(frozen=True)
@@ -64,86 +64,51 @@ def _positive_int(value: object, field: str) -> int:
     return parsed
 
 
-def _principal_ids(raw: object) -> frozenset[int]:
-    values: set[int] = set()
-    for entry in str(raw or "").split(","):
-        if not entry.strip():
-            continue
-        value = _positive_int(entry.strip(), "SEO demo principal user id")
-        if value in values:
-            raise DemoDataSourceError("duplicate SEO demo principal user id")
-        values.add(value)
-    return frozenset(values)
-
-
-def _binding(row: object) -> SeoDemoBinding:
-    if not isinstance(row, Mapping):
-        raise DemoDataSourceError("SEO demo binding must be an object")
-    allowed = {
-        "principal_user_id",
-        "principal_tenant_id",
-        "tenant_id",
-        "site_ids",
-        "dataset_key",
-        "schema_revision",
-        "enabled",
-    }
-    if set(row) != allowed:
-        raise DemoDataSourceError("SEO demo binding fields do not match the reviewed contract")
-    raw_sites = row.get("site_ids")
-    if not isinstance(raw_sites, list) or not raw_sites:
-        raise DemoDataSourceError("SEO demo binding requires at least one site id")
-    site_ids = tuple(_positive_int(value, "SEO demo site id") for value in raw_sites)
-    if len(set(site_ids)) != len(site_ids):
-        raise DemoDataSourceError("SEO demo binding contains duplicate site ids")
-    dataset_key = str(row.get("dataset_key") or "").strip()
-    revision = str(row.get("schema_revision") or "").strip()
-    if not dataset_key or not revision:
-        raise DemoDataSourceError("SEO demo binding requires dataset key and schema revision")
-    if not isinstance(row.get("enabled"), bool):
-        raise DemoDataSourceError("SEO demo binding enabled must be boolean")
+def _binding(row: DemoTenantBinding) -> SeoDemoBinding:
+    if row.status != "active" or row.disabled_at is not None:
+        raise DemoDataSourceError("SEO demo binding is disabled")
+    dataset_key = str(row.dataset_key or "").strip()
+    dataset_version = str(row.dataset_version or "").strip()
+    if not dataset_key or not dataset_version:
+        raise DemoDataSourceError("SEO demo binding dataset identity is incomplete")
     return SeoDemoBinding(
-        principal_user_id=_positive_int(row.get("principal_user_id"), "principal_user_id"),
-        principal_tenant_id=_positive_int(row.get("principal_tenant_id"), "principal_tenant_id"),
-        tenant_id=_positive_int(row.get("tenant_id"), "tenant_id"),
-        site_ids=site_ids,
+        principal_tenant_id=_positive_int(row.tenant_id, "tenant_id"),
+        tenant_id=_positive_int(row.demo_tenant_id, "demo_tenant_id"),
         dataset_key=dataset_key,
-        schema_revision=revision,
-        enabled=bool(row["enabled"]),
+        dataset_version=dataset_version,
+        binding_version=_positive_int(row.version, "version"),
     )
 
 
-def _bindings(raw: object) -> tuple[SeoDemoBinding, ...]:
-    try:
-        value = json.loads(str(raw or "[]"))
-    except json.JSONDecodeError as exc:
-        raise DemoDataSourceError("SEO demo bindings are not valid JSON") from exc
-    if not isinstance(value, list):
-        raise DemoDataSourceError("SEO demo bindings must be a JSON list")
-    return tuple(_binding(row) for row in value)
-
-
-def resolve_seo_data_source(settings: object, ctx: AuthContext) -> SeoDataSourceDecision:
-    """Resolve from authenticated identity and server configuration only."""
-    protected = _principal_ids(getattr(settings, "seo_demo_principal_user_ids", ""))
-    if ctx.user_id is None or ctx.user_id not in protected:
+async def resolve_seo_data_source(
+    settings: object,
+    ctx: AuthContext,
+    primary_session: AsyncSession,
+) -> SeoDataSourceDecision:
+    """Resolve from primary authentication and the reviewed control table only."""
+    if ctx.user_id is None or ctx.tenant_id is None:
         return SeoDataSourceDecision(source="primary")
     if not bool(getattr(settings, "seo_demo_data_source_enabled", False)):
-        raise DemoDataSourceError("SEO demo data source is disabled")
-    matches = [
-        item
-        for item in _bindings(getattr(settings, "seo_demo_bindings_json", "[]"))
-        if item.principal_user_id == ctx.user_id
-    ]
+        return SeoDataSourceDecision(source="primary")
+    try:
+        matches = list(
+            (
+                await primary_session.execute(
+                    select(DemoTenantBinding).where(
+                        DemoTenantBinding.tenant_id == ctx.tenant_id
+                    )
+                )
+            ).scalars()
+        )
+    except Exception as exc:
+        raise DemoDataSourceError("SEO demo binding lookup failed") from exc
     if not matches:
-        raise DemoDataSourceError("SEO demo binding is missing")
+        return SeoDataSourceDecision(source="primary")
     if len(matches) != 1:
         raise DemoDataSourceError("SEO demo binding is ambiguous")
-    binding = matches[0]
-    if not binding.enabled:
-        raise DemoDataSourceError("SEO demo binding is disabled")
+    binding = _binding(matches[0])
     if ctx.tenant_id != binding.principal_tenant_id:
-        raise DemoDataSourceError("SEO demo identity tenant does not match its binding")
+        raise DemoDataSourceError("SEO demo authenticated tenant does not match its binding")
     return SeoDataSourceDecision(source="demo", binding=binding)
 
 
@@ -184,18 +149,9 @@ def _enforce_demo_request(request: Request, binding: SeoDemoBinding) -> None:
         tenant_ids = {_request_int(value, "tenant_id") for value in tenant_values}
         if tenant_ids != {binding.tenant_id}:
             raise HTTPException(403, "请求客户不属于服务端演示绑定")
-    site_values = [
-        value
-        for value in (
-            request.query_params.get("site_id"),
-            request.path_params.get("site_id"),
-        )
-        if value is not None
-    ]
-    if site_values:
-        site_ids = {_request_int(value, "site_id") for value in site_values}
-        if len(site_ids) != 1 or not site_ids.issubset(binding.site_ids):
-            raise HTTPException(403, "请求网站不属于服务端演示绑定")
+    for value in (request.query_params.get("site_id"), request.path_params.get("site_id")):
+        if value is not None:
+            _request_int(value, "site_id")
 
 
 def _demo_database_target(settings: object) -> tuple[str, str, frozenset[str]]:
@@ -279,43 +235,50 @@ async def _validate_demo_session(
                 """
                 SELECT id, tenant_id,
                        site_settings ->> 'fixture_marker' AS fixture_marker,
+                       site_settings ->> 'dataset_version' AS dataset_version,
                        site_settings ->> 'synthetic' AS synthetic,
                        site_settings ->> 'scheduler_excluded' AS scheduler_excluded,
                        site_settings ->> 'external_actions_disabled' AS external_actions_disabled
                 FROM seo_sites
-                WHERE tenant_id = :tenant_id AND id = ANY(CAST(:site_ids AS bigint[]))
+                WHERE tenant_id = :tenant_id
                 ORDER BY id
                 """
             ),
-            {"tenant_id": binding.tenant_id, "site_ids": list(binding.site_ids)},
+            {"tenant_id": binding.tenant_id},
         )
     ).all()
-    expected_rows = {
-        site_id: (binding.tenant_id, binding.dataset_key, "true", "true", "true")
-        for site_id in binding.site_ids
-    }
     actual_rows = {
         int(site_id): (
             int(tenant_id),
             fixture_marker,
+            dataset_version,
             synthetic,
             scheduler_excluded,
             external_actions_disabled,
         )
-        for site_id, tenant_id, fixture_marker, synthetic, scheduler_excluded, external_actions_disabled in rows
+        for site_id, tenant_id, fixture_marker, dataset_version, synthetic, scheduler_excluded, external_actions_disabled in rows
     }
-    if actual_rows != expected_rows:
+    expected_marker = (
+        binding.tenant_id,
+        binding.dataset_key,
+        binding.dataset_version,
+        "true",
+        "true",
+        "true",
+    )
+    if not actual_rows or any(row != expected_marker for row in actual_rows.values()):
         raise DemoDataSourceError("SEO demo dataset marker or safety flags do not match")
 
 
 async def require_seo_auth(
     request: Request,
     ctx: AuthContext = Depends(require_auth),
+    primary_session: AsyncSession = Depends(get_primary_session),
 ) -> AuthContext:
     """Authenticate in primary DB, then apply a trusted SEO-only binding."""
     _reject_client_data_source_selector(request)
     try:
-        decision = resolve_seo_data_source(get_settings(), ctx)
+        decision = await resolve_seo_data_source(get_settings(), ctx, primary_session)
     except DemoDataSourceError as exc:
         raise HTTPException(503, "SEO 演示数据源暂不可用") from exc
     request.state.seo_data_source_decision = decision
