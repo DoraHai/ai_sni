@@ -233,3 +233,10 @@ GEO fixed all three on exact reviewed head `4da1183dcbd5b47e0b15cd945c7e0765ffef
 - Human GEO H1 after PR440: authorized tester logs into production, selects tenant 诺德, opens task #14, hard-refreshes once, confirms the notice “品牌配置已更新…” and clicks “按当前品牌重新检查” exactly once. Do not edit or regenerate the draft, approve, create channel copy or publish. Return test time, displayed brand, refreshed GEO score, remaining blocking items, ready/status result, button/notice screenshot, and any console/network error. H2-H4 human flows remain untouched.
 - Database: no action now. No schema change is active.
 - Administrator: no action now. Production workflows and health endpoints are available; request assistance only if a controlled workflow, credential retrieval or server evidence cannot be completed by the module owner.
+
+## 2026-09-09 full-demo customer decision
+
+- The user requires a presentation-ready customer with rich SEM, SEO and GEO data. Do not mix synthetic SEO/GEO records into Tiger tenant 4 because its SEM history is real.
+- Prepare a separate long-lived `G-Snipers 全域演示` tenant and ordinary demo account. Every screen must identify demo data, and every external collection, model run, writeback and publication path must be server-side disabled.
+- The coordinator owns the cross-module experience and the execution gate. SEM, SEO and GEO owners may only prepare their own idempotent fixture package, scheduler exclusions and tests; they must not write production data or deploy this scope yet.
+- The reviewable design and proposed object volumes are in `docs/cockpit/FULL_DEMO_TENANT_PLAN_20260909.md`. Database execution remains blocked until module audits prove isolation and the user approves the exact transaction/rollback package.
