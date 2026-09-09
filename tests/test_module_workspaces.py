@@ -17,7 +17,6 @@ os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from app.database import get_session
 from app.api.customer_modules import (
     _canonical_domain,
     _require_seo_asset_permission,
@@ -28,7 +27,12 @@ from app.api.customer_modules import (
 from app.models import GeoProject, SeoSite, TenantModule
 from app.module_scope import normalize_module_code, seo_site_is_operational
 from app.permissions import CLIENT_PERMS, OPERATOR_PERMS
-from app.security.auth import AuthContext, _required, require_auth, require_scoped_auth
+from app.security.auth import AuthContext, _required
+from app.seo_demo_source import (
+    get_seo_session,
+    require_seo_auth,
+    require_seo_scoped_auth,
+)
 
 
 class ModuleWorkspaceTests(unittest.TestCase):
@@ -88,8 +92,8 @@ class ModuleWorkspaceTests(unittest.TestCase):
             if route.path == "/api/v1/seo/workbench/sites":
                 continue
             dependencies = [dependency.dependency for dependency in route.dependencies]
-            self.assertIn(require_auth, dependencies)
-            self.assertNotIn(require_scoped_auth, dependencies)
+            self.assertIn(require_seo_auth, dependencies)
+            self.assertNotIn(require_seo_scoped_auth, dependencies)
 
     def test_workbench_site_route_uses_scoped_auth(self):
         route = next(
@@ -98,8 +102,8 @@ class ModuleWorkspaceTests(unittest.TestCase):
             if route.path == "/api/v1/seo/workbench/sites"
         )
         dependencies = [dependency.dependency for dependency in route.dependencies]
-        self.assertIn(require_scoped_auth, dependencies)
-        self.assertNotIn(require_auth, dependencies)
+        self.assertIn(require_seo_scoped_auth, dependencies)
+        self.assertNotIn(require_seo_auth, dependencies)
 
     def test_workbench_site_real_url_accepts_read_roles_without_asset_permission(self):
         rows = [SimpleNamespace(id=31, name="Active", domain="example.com", status="active")]
@@ -134,8 +138,8 @@ class ModuleWorkspaceTests(unittest.TestCase):
                 async def session_override():
                     yield session
 
-                app.dependency_overrides[require_scoped_auth] = scoped_auth_override
-                app.dependency_overrides[get_session] = session_override
+                app.dependency_overrides[require_seo_scoped_auth] = scoped_auth_override
+                app.dependency_overrides[get_seo_session] = session_override
                 with patch(
                     "app.api.customer_modules.ensure_module_access",
                     new=AsyncMock(),

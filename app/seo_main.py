@@ -5,8 +5,10 @@ Deploying or restarting it does not restart the shared SEM backend or GEO.
 """
 
 from contextlib import asynccontextmanager
+import json
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text, BigInteger, Integer, SmallInteger
 from sqlalchemy.dialects.postgresql import JSONB
@@ -18,9 +20,16 @@ from app.database import engine
 from app.http_errors import register_infra_handlers
 from app.security.prod_guard import enforce_production_secrets
 from app.seo_scheduler import shutdown_seo_scheduler, start_seo_scheduler
+from app.seo_demo_runtime import (
+    demo_request_is_allowed,
+    seo_scheduler_may_start,
+    validate_seo_demo_runtime_settings,
+)
+from app.seo_demo_source import SeoDataSourceDecision, hide_demo_tenant_ids
 
 settings = get_settings()
 enforce_production_secrets(settings, hard_fail=True)
+validate_seo_demo_runtime_settings(settings)
 SEO_REQUIRED_SCHEMA_REVISION = "0098_demo_binding_no_truncate"
 # Runtime compatibility supports code-first rollout; it never authorizes the
 # separately reviewed migration operation.
@@ -288,14 +297,73 @@ async def _check_demo_binding_structure(conn, *, require_current_truncate: bool 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    start_seo_scheduler()
+    scheduler_started = seo_scheduler_may_start(settings)
+    if scheduler_started:
+        start_seo_scheduler()
     try:
         yield
     finally:
-        shutdown_seo_scheduler()
+        if scheduler_started:
+            shutdown_seo_scheduler()
 
 
 app = FastAPI(title="Growth Sniper SEO API", version="0.1.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def enforce_demo_runtime_read_only(request: Request, call_next):
+    """Block mutations and every outbound-capable action before route dispatch."""
+    if not demo_request_is_allowed(settings, request.method, request.url.path):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "演示环境仅允许只读查询；抓取、生成、连接测试、发布和数据修改均已禁用",
+                "code": "seo_demo_runtime_read_only",
+            },
+        )
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def keep_demo_tenant_mapping_private(request: Request, call_next):
+    """Keep isolated tenant ids out of otherwise transparent JSON responses."""
+    response = await call_next(request)
+    decision = getattr(request.state, "seo_data_source_decision", None)
+    if (
+        not isinstance(decision, SeoDataSourceDecision)
+        or decision.source != "demo"
+        or decision.binding is None
+        or "application/json" not in response.headers.get("content-type", "")
+    ):
+        return response
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    if not body:
+        return response
+    try:
+        payload = json.loads(body)
+    except (UnicodeError, json.JSONDecodeError):
+        return Response(
+            body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            background=response.background,
+        )
+    rewritten = json.dumps(
+        hide_demo_tenant_ids(payload, decision.binding),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode()
+    headers = dict(response.headers)
+    headers.pop("content-length", None)
+    return Response(
+        rewritten,
+        status_code=response.status_code,
+        headers=headers,
+        media_type="application/json",
+        background=response.background,
+    )
+
+
 register_infra_handlers(app)
 app.add_middleware(
     CORSMiddleware,

@@ -34,6 +34,11 @@ from app.module_scope import (
     normalize_module_code,
 )
 from app.security.auth import AuthContext, require_auth, require_scoped_auth
+from app.seo_demo_source import (
+    get_seo_session,
+    require_seo_auth,
+    require_seo_scoped_auth,
+)
 
 
 router = APIRouter(tags=["客户与模块"])
@@ -283,11 +288,11 @@ async def _seo_site_delete_blockers(
     return blockers
 
 
-@seo_sites_router.get("/api/v1/seo/sites", dependencies=[Depends(require_auth)])
+@seo_sites_router.get("/api/v1/seo/sites", dependencies=[Depends(require_seo_auth)])
 async def list_seo_sites(
     tenant_id: int = Query(...),
-    ctx: AuthContext = Depends(require_auth),
-    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_seo_auth),
+    session: AsyncSession = Depends(get_seo_session),
 ) -> dict:
     _require_seo_asset_permission(ctx)
     await ensure_module_access(session, ctx, tenant_id, "seo")
@@ -297,12 +302,12 @@ async def list_seo_sites(
 
 @seo_sites_router.get(
     "/api/v1/seo/workbench/sites",
-    dependencies=[Depends(require_scoped_auth)],
+    dependencies=[Depends(require_seo_scoped_auth)],
 )
 async def list_seo_workbench_sites(
     tenant_id: int = Query(...),
-    ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_seo_scoped_auth),
+    session: AsyncSession = Depends(get_seo_session),
 ) -> dict:
     """Return the stored SEO site scope without starting any background work."""
     _require_seo_workbench_site_permission(ctx)
@@ -334,11 +339,11 @@ async def list_seo_workbench_sites(
     }
 
 
-@seo_sites_router.post("/api/v1/seo/sites", dependencies=[Depends(require_auth)])
+@seo_sites_router.post("/api/v1/seo/sites", dependencies=[Depends(require_seo_auth)])
 async def create_seo_site(
     req: SeoSiteCreate,
-    ctx: AuthContext = Depends(require_auth),
-    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_seo_auth),
+    session: AsyncSession = Depends(get_seo_session),
 ) -> dict:
     _require_seo_asset_permission(ctx, edit=True)
     module = await ensure_module_access(session, ctx, req.tenant_id, "seo")
@@ -361,13 +366,13 @@ async def create_seo_site(
     return _site_payload(row)
 
 
-@seo_sites_router.patch("/api/v1/seo/sites/{site_id}", dependencies=[Depends(require_auth)])
+@seo_sites_router.patch("/api/v1/seo/sites/{site_id}", dependencies=[Depends(require_seo_auth)])
 async def update_seo_site(
     site_id: int,
     tenant_id: int,
     req: SeoSiteUpdate,
-    ctx: AuthContext = Depends(require_auth),
-    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_seo_auth),
+    session: AsyncSession = Depends(get_seo_session),
 ) -> dict:
     _require_seo_asset_permission(ctx, edit=True)
     await ensure_module_access(session, ctx, tenant_id, "seo")
@@ -392,12 +397,12 @@ async def update_seo_site(
     return _site_payload(row)
 
 
-@seo_sites_router.delete("/api/v1/seo/sites/{site_id}", dependencies=[Depends(require_auth)])
+@seo_sites_router.delete("/api/v1/seo/sites/{site_id}", dependencies=[Depends(require_seo_auth)])
 async def delete_seo_site(
     site_id: int,
     tenant_id: int,
-    ctx: AuthContext = Depends(require_auth),
-    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_seo_auth),
+    session: AsyncSession = Depends(get_seo_session),
 ) -> dict:
     """Delete only an empty SEO site; populated sites must be archived instead."""
     _require_seo_asset_permission(ctx, edit=True)

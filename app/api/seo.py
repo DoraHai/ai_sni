@@ -31,7 +31,11 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
-from app.database import async_session_factory, get_session
+from app.database import async_session_factory
+from app.seo_demo_source import (
+    get_seo_session as get_session,
+    require_seo_scoped_auth as require_scoped_auth,
+)
 from app.config import get_settings, seo_rank_freshness_hours
 from app.geo.audit import GeoAuditError, PageDocument, audit_url, normalize_url, safe_fetch
 from app.geo.chinaz import fetch_chinaz_seo_metrics
@@ -72,7 +76,7 @@ from app.module_scope import (
     seo_publication_site_is_operational,
     seo_site_is_operational,
 )
-from app.security.auth import AuthContext, require_scoped_auth
+from app.security.auth import AuthContext
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_distribution import (
     domestic_content_warnings,

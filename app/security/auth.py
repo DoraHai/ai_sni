@@ -290,11 +290,13 @@ async def require_auth(
     raise HTTPException(401, "未登录。请先登录，或通过 X-API-Key 提供管理密钥。")
 
 
-async def require_scoped_auth(
-    request: Request,
-    ctx: AuthContext = Depends(require_auth),
-) -> AuthContext:
-    """业务路由统一鉴权：菜单权限（view/edit）+ 单客户隔离。"""
+async def enforce_scoped_request(request: Request, ctx: AuthContext) -> AuthContext:
+    """Apply route permissions and tenant isolation to an authenticated context.
+
+    Keeping this enforcement separate from credential verification lets a
+    module apply an independently reviewed, server-side tenant binding without
+    trusting a tenant supplied by the client.
+    """
     keys, need_edit = _required(request.url.path, request.method)
     if keys is not None:
         ok = ctx.can_edit(*keys) if need_edit else ctx.can_view(*keys)
@@ -337,6 +339,14 @@ async def require_scoped_auth(
         tenant_id = parsed_tenant_ids[0]
         ctx.ensure_tenant(tenant_id)
     return ctx
+
+
+async def require_scoped_auth(
+    request: Request,
+    ctx: AuthContext = Depends(require_auth),
+) -> AuthContext:
+    """业务路由统一鉴权：菜单权限（view/edit）+ 单客户隔离。"""
+    return await enforce_scoped_request(request, ctx)
 
 
 async def require_admin(ctx: AuthContext = Depends(require_auth)) -> AuthContext:
