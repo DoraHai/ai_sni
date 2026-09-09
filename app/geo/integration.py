@@ -134,7 +134,13 @@ def metric(state, key):
 async def metrics_snapshot(tenant_id: int = Query(...), week_end: date | None = None,
                            ctx=Depends(require_scoped_auth), session=Depends(get_session)):
     ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import DEMO_WEEK_END, is_tenant16_demo
     from app.geo.demo_tenant import demo_metric_rows
+    if is_tenant16_demo(ctx, tenant_id):
+        if week_end is not None and week_end != DEMO_WEEK_END:
+            raise HTTPException(400, '演示数据集仅提供版本化完整周 2026-09-07')
+        as_of = datetime.combine(DEMO_WEEK_END, datetime.min.time(), tzinfo=TENANT_TZ).isoformat()
+        return demo_metric_rows(as_of=as_of)
     from app.geo.tenant_scope import ensure_geo_entitlement
     policy = await ensure_geo_entitlement(
         session, tenant_id, allow_demo_read=True, lock_binding=True
@@ -153,6 +159,9 @@ async def metrics_snapshot(tenant_id: int = Query(...), week_end: date | None = 
 async def metrics_dictionary(tenant_id: int = Query(...), week_end: date | None = None,
                              ctx=Depends(require_scoped_auth), session=Depends(get_session)):
     ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import is_tenant16_demo
+    if is_tenant16_demo(ctx, tenant_id):
+        return metric_dictionary({})
     from app.geo.tenant_scope import ensure_geo_entitlement
     policy = await ensure_geo_entitlement(
         session, tenant_id, allow_demo_read=True, lock_binding=True
@@ -369,7 +378,7 @@ async def start_retest(task_id: int, background_tasks: BackgroundTasks, tenant_i
     progress['retest_runs'] = {**progress.get('retest_runs', {}), plan['window_start']: run.id}
     row.progress = progress
     await session.commit()
-    background_tasks.add_task(run_patrol_in_background, run.id)
+    background_tasks.add_task(run_patrol_in_background, run.id, tenant_id)
     return {'run_id': run.id, 'already_started': False, 'plan': plan}
 
 

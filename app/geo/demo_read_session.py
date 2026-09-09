@@ -213,6 +213,12 @@ async def tenant_read_session(
 ) -> AsyncIterator[AsyncSession]:
     """Authenticate/entitle in production, then open exactly one verified source."""
     ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import Tenant16DemoSession, is_tenant16_demo
+    if is_tenant16_demo(ctx, tenant_id):
+        # This account is backed by an embedded immutable fixture.  Yield a
+        # sentinel so an omitted route interception fails instead of touching DB.
+        yield Tenant16DemoSession()
+        return
     policy = await ensure_geo_entitlement(
         control_session,
         tenant_id,

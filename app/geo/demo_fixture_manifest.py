@@ -548,8 +548,10 @@ def build_manifest(week_end: date = date(2026, 9, 7)) -> dict[str, Any]:
         "read_interfaces": [
             "/api/v1/geo/integration/read/questions",
             "/api/v1/geo/integration/read/answers",
+            "/api/v1/geo/integration/read/simulate-action",
             "/api/v1/geo/integration/read/period-context",
             "/api/v1/geo/integration/read/capabilities",
+            "/api/v1/geo/integration/read/content-tasks",
             "/api/v1/geo/integration/read/content-tasks/{id}",
             "/api/v1/geo/integration/read/patrol-runs/{id}",
             "/api/v1/geo/integration/metrics/snapshot",

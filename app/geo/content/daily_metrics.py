@@ -26,6 +26,7 @@ from typing import Any, Iterable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.geo.tenant16_demo import DEMO_TENANT_ID
 from app.geo.content.snapshots import (
     extract_cited_domain,
     normalize_cited_urls,
@@ -558,8 +559,9 @@ async def safe_rebuild_day(
     """独立 session 重算，失败只记日志（供巡检/落库后钩子）。"""
     from app.database import async_session_factory
     from app.geo.content.time_windows import shanghai_today
-    from app.geo.tenant_scope import GeoEntitlementUnavailable
+    from app.geo.tenant_scope import GeoEntitlementUnavailable, ensure_geo_background_execution_allowed
 
+    ensure_geo_background_execution_allowed(tenant_id)
     target = day or shanghai_today()
     try:
         async with async_session_factory() as session:
@@ -607,6 +609,7 @@ async def list_tenant_ids_with_recent_snapshots(
     start = datetime.combine(date.today() - timedelta(days=max(0, days - 1)), time.min)
     rows = await session.scalars(
         select(distinct(GeoAnswerSnapshot.tenant_id)).where(
+            GeoAnswerSnapshot.tenant_id != DEMO_TENANT_ID,
             GeoAnswerSnapshot.captured_at >= start
         )
     )

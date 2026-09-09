@@ -46,6 +46,7 @@ class StalePatrolReconcileTests(unittest.IsolatedAsyncioTestCase):
         old = datetime.utcnow() - timedelta(seconds=STALE_PENDING_SECONDS + 10)
         row = SimpleNamespace(
             id=3,
+            tenant_id=1,
             status="pending",
             started_at=None,
             created_at=old,
@@ -281,7 +282,7 @@ class ExecutePatrolRunTests(unittest.IsolatedAsyncioTestCase):
 
             session.get = AsyncMock(side_effect=get_row)
 
-            result = await execute_patrol_run(session, 99)
+            result = await execute_patrol_run(session, 99, tenant_id=run.tenant_id)
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.summary["cells_ok"], 1)
@@ -350,7 +351,7 @@ class ExecutePatrolRunTests(unittest.IsolatedAsyncioTestCase):
                 return_value={"api_key": "k", "base_url": "u", "model": "m", "provider": "p"},
             ),
         ):
-            result = await execute_patrol_run(session, 7)
+            result = await execute_patrol_run(session, 7, tenant_id=run.tenant_id)
 
         self.assertEqual(result.status, "failed")
         self.assertIn("机会词", result.error or "")
@@ -435,7 +436,7 @@ class ExecutePatrolRunTests(unittest.IsolatedAsyncioTestCase):
                 return_value=draft,
             ),
         ):
-            result = await execute_patrol_run(session, 2)
+            result = await execute_patrol_run(session, 2, tenant_id=run.tenant_id)
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.summary["real_samples"], 1)

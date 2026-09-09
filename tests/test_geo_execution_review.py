@@ -193,10 +193,10 @@ def test_weekly_trend_rejects_different_sampling_weights_and_question_text():
 def test_duplicate_worker_cannot_repeat_ai_calls():
     from app.geo.content.patrol import execute_patrol_run
     async def run():
-        row=NS(status='running')
+        row=NS(status='running', tenant_id=1)
         session=NS(get=AsyncMock(return_value=row),refresh=AsyncMock(),commit=AsyncMock())
         with patch('app.geo.content.patrol.run_probe_draft',AsyncMock()) as probe:
-            assert await execute_patrol_run(session,42) is row
+            assert await execute_patrol_run(session,42,tenant_id=row.tenant_id) is row
             probe.assert_not_awaited()
         session.refresh.assert_awaited_once_with(row,with_for_update=True)
     asyncio.run(run())
@@ -213,7 +213,7 @@ def test_executor_calls_only_exact_sparse_matrix():
         session=NS(get=AsyncMock(side_effect=[row,tenant]),refresh=AsyncMock(),commit=AsyncMock(),scalars=AsyncMock(side_effect=[engines,prompts]),scalar=AsyncMock(return_value=tenant))
         draft=dict(raw_text='real answer',sample_mode='openai_compat',simulated=False,suggested_mentions_brand=False,analysis_status='completed')
         with patch('app.geo.content.ai_settings.resolve_llm_credentials',AsyncMock(return_value={'api_key':'test'})),patch('app.geo.content.patrol.resolve_engine_llm',return_value=({'api_key':'test','model':'test-model','provider':'test-provider'},'openai_compat',None)),patch('app.geo.content.patrol.run_probe_draft',AsyncMock(return_value=draft)) as probe, patch('app.geo.content.patrol.ensure_geo_entitlement', AsyncMock()):
-            result=await execute_patrol_run(session,42)
+            result=await execute_patrol_run(session,42,tenant_id=row.tenant_id)
         assert result.status=='completed', result.error
         assert [(c.kwargs['question'],c.kwargs['engine']) for c in probe.await_args_list]==[('question one','deepseek'),('question one','deepseek'),('question one','kimi')]+[('question two','deepseek')]*3
         assert not result.summary['retest_result']['comparable']  # No persisted snapshot IDs means no evidence.
