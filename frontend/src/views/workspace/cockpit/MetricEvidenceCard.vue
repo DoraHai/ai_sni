@@ -6,8 +6,9 @@ import { computed, ref, useId, watch } from 'vue'
 const props = defineProps({
   metric: { type: Object, required: true },
   contextRevision: { type: [String, Number], required: true },
+  highlighted: { type: Boolean, default: false },
 })
-const emit = defineEmits(['discuss', 'retry'])
+const emit = defineEmits(['discuss', 'retry', 'focus'])
 const titleId = `metric-evidence-${useId()}`
 const metric = computed(() => props.metric.contextRevision === props.contextRevision ? props.metric : {
   state: 'loading', label: '正在更新数据', display: '—', reason: '正在核对当前客户的数据',
@@ -40,7 +41,10 @@ const activePoint = computed(() => points.value[selected.value] ?? null)
 const rows = computed(() => Array.isArray(metric.value.rows) ? metric.value.rows : [])
 const columns = computed(() => Array.isArray(metric.value.columns) ? metric.value.columns : [])
 const canDiscuss = computed(() => ['available', 'partial'].includes(metric.value.state))
-function open() { dialog.value?.showModal() }
+function open() {
+  emit('focus', metric.value.id)
+  dialog.value?.showModal()
+}
 function close() { dialog.value?.close() }
 function discuss() {
   if (!canDiscuss.value) return
@@ -53,7 +57,7 @@ watch(() => props.metric, () => { selected.value = null; close() }, { flush: 'sy
 </script>
 
 <template>
-  <article class="evidence-card" :class="`is-${metric.state}`" :aria-busy="metric.state === 'loading'">
+  <article class="evidence-card" :class="[`is-${metric.state}`, { 'is-highlighted': highlighted }]" :aria-busy="metric.state === 'loading'">
     <div class="card-heading"><span class="module-name">{{ metric.moduleLabel }}</span><span class="read-status">{{ status }}</span></div>
     <button ref="trigger" class="metric-trigger" type="button" aria-haspopup="dialog" @click="open">
       <span class="metric-title">{{ metric.label }}</span>
@@ -97,4 +101,5 @@ watch(() => props.metric, () => { selected.value = null; close() }, { flush: 'sy
 <style scoped>
 .evidence-card{--signal:#67ddca;position:relative;min-width:0;padding:22px;border:1px solid #27374c;border-radius:22px;background:linear-gradient(150deg,#142335,#0d1725);color:#e9f2fa;transition:transform .22s,border-color .22s,box-shadow .22s;font-variant-numeric:tabular-nums}
 .evidence-card:hover{transform:translateY(-3px);border-color:#47647d;box-shadow:0 16px 42px #040a1240}.card-heading,.card-footer{display:flex;align-items:center;justify-content:space-between;gap:12px}.module-name{font-size:11px;letter-spacing:.08em;color:#9baec0}.read-status{font-size:11px;color:var(--signal);display:flex;align-items:center;gap:6px}.read-status:before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor}.is-partial{--signal:#e5ba70}.is-denied,.is-no_data,.is-unavailable{--signal:#a5b3c3}.metric-trigger{width:100%;position:relative;text-align:left;border:0;background:none;color:inherit;padding:22px 0 8px;cursor:pointer}.metric-title{display:block;font-size:14px;color:#b2c2d2}.metric-number{display:block;font-size:clamp(30px,3.2vw,46px);font-weight:650;letter-spacing:-.04em;line-height:1.4}.metric-number small,.detail-value small{font-size:14px;font-weight:400;margin-left:7px;color:#adbed0;letter-spacing:0}.metric-change{font-size:12px;color:#c0cfdc}.expand-hint{position:absolute;right:0;bottom:12px;color:#9baec0;font-size:11px}.trend-wrap{position:relative;margin-top:10px}.trend{display:block;width:100%;height:90px;overflow:visible}.baseline{stroke:#29384b;fill:none}.trend-line{stroke:var(--signal);stroke-width:2.3;fill:none;stroke-linecap:round;stroke-linejoin:round}.trend-point{fill:var(--signal);transition:r .16s}.point-controls{position:absolute;inset:0 0 24px;display:flex}.point-controls button{flex:1;min-width:0;border:0;background:transparent;cursor:crosshair;color:transparent}.point-controls span{position:absolute;width:1px;height:1px;overflow:hidden}.point-readout{font-size:11px;min-height:16px;color:#9daec0;margin:5px 0 0}.empty-trend{min-height:70px;display:flex;align-items:center;font-size:12px;color:#98aabc}.card-footer{margin-top:16px;padding-top:14px;border-top:1px solid #253447;font-size:11px;color:#a1b4c6}.card-footer button{border:0;background:none;color:#9de5db;cursor:pointer;font-size:12px;padding:5px 0}button:disabled{opacity:.45;cursor:not-allowed}button:focus-visible{outline:2px solid #8ce2f1;outline-offset:4px;border-radius:5px}.evidence-dialog{box-sizing:border-box;width:min(850px,94vw);max-height:86vh;padding:28px;border:1px solid #3d526a;border-radius:24px;background:#101c2b;color:#e9f2fa;box-shadow:0 30px 100px #0009}.evidence-dialog::backdrop{background:#020813aa;backdrop-filter:blur(8px)}.evidence-dialog header{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}.evidence-dialog h2{font-size:22px;margin:10px 0}.close-button{border:1px solid #3a4d64;background:#1a293b;color:inherit;border-radius:50%;width:34px;height:34px;font-size:22px;cursor:pointer}.detail-value{font-size:48px;letter-spacing:-.03em;margin:20px 0}.detail-reason{color:#e6c489;font-size:13px;line-height:1.7}.evidence-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;padding:18px 0;border-top:1px solid #2c3c50;border-bottom:1px solid #2c3c50}.evidence-meta dt{font-size:11px;color:#97aabf}.evidence-meta dd{margin:8px 0 0;font-size:13px;overflow-wrap:anywhere}.detail-table{overflow:auto;margin:20px 0}table{border-collapse:collapse;width:100%;font-size:13px;text-align:left}th,td{padding:13px 14px;border-bottom:1px solid #2a394c;white-space:nowrap}th{color:#a8bbce;font-weight:500}.detail-empty{color:#a8bbce;padding:30px 0;font-size:13px}.evidence-dialog footer{display:flex;justify-content:flex-end;gap:12px}.evidence-dialog footer button{padding:12px 18px;border:1px solid #436474;border-radius:12px;background:#1e4149;color:#d7fffa;cursor:pointer}.is-loading .metric-number{opacity:.4;animation:breathe 1.6s ease-in-out infinite}@keyframes breathe{50%{opacity:.8}}@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.evidence-card:hover{transform:none}}@media(max-width:600px){.evidence-meta{grid-template-columns:1fr}.evidence-dialog{padding:20px}.metric-number{font-size:34px}}
+.evidence-card.is-highlighted{border-color:#67ddca;box-shadow:0 0 0 1px #67ddca44,0 0 30px #3fd8c329,0 18px 52px #02071199}.evidence-card.is-highlighted:before{content:'TARGET LOCK';position:absolute;right:14px;top:-8px;padding:3px 7px;border:1px solid #67ddca88;border-radius:999px;background:#0a1c28;color:#9efff1;font-size:8px;font-weight:800;letter-spacing:.12em}
 </style>

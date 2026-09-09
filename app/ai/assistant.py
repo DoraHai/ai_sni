@@ -7,6 +7,7 @@
 - 对话历史：滑动窗口（只带最近 N 轮）。普通闲聊滑走无所谓。
 直接复用 app/ai/deepseek（不引 LangChain，第一版单次调用够用）。
 """
+import json
 import logging
 import re
 from calendar import monthrange
@@ -190,6 +191,114 @@ def _sanitize_assistant_output(out: dict[str, Any]) -> tuple[list[dict[str, Any]
         })
 
     return actions, suggestions
+
+
+COCKPIT_MODULES = {"sem", "seo", "geo"}
+COCKPIT_ACTIONS = {"focus-module", "open-metric", "open-module", "reset-view"}
+
+
+def _cockpit_text(value: Any, limit: int = 240) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
+
+
+def sanitize_cockpit_command(
+    raw: Any,
+    *,
+    allowed_metric_ids: set[str],
+    allowed_modules: set[str],
+) -> dict[str, Any]:
+    """Turn model JSON into a display-only command over the current screen.
+
+    The command cannot name data or modules that were not already visible to the
+    authenticated browser. It contains no business mutation operation.
+    """
+    out = raw if isinstance(raw, dict) else {}
+    requested_modules = out.get("filters", {}).get("modules", []) if isinstance(out.get("filters"), dict) else []
+    modules = [
+        value for value in (_cockpit_text(item, 8).lower() for item in requested_modules)
+        if value in allowed_modules and value in COCKPIT_MODULES
+    ]
+    requested_ids = out.get("highlight", {}).get("ids", []) if isinstance(out.get("highlight"), dict) else []
+    highlight_ids = [
+        value for value in (_cockpit_text(item, 100) for item in requested_ids)
+        if value in allowed_metric_ids
+    ][:12]
+    focus = _cockpit_text(out.get("focus_module"), 8).lower()
+    if focus != "all" and focus not in allowed_modules:
+        focus = modules[0] if len(modules) == 1 else "all"
+    drawer = _cockpit_text(out.get("drawer_metric_id"), 100)
+    if drawer not in allowed_metric_ids:
+        drawer = highlight_ids[0] if highlight_ids else None
+    actions = []
+    for item in out.get("actions") or []:
+        if not isinstance(item, dict):
+            continue
+        action_type = _cockpit_text(item.get("type"), 30)
+        target = _cockpit_text(item.get("target"), 100)
+        if action_type not in COCKPIT_ACTIONS:
+            continue
+        if action_type == "focus-module" and target not in allowed_modules:
+            continue
+        if action_type == "open-metric" and target not in allowed_metric_ids:
+            continue
+        if action_type == "open-module" and target not in allowed_modules:
+            continue
+        actions.append({
+            "label": _cockpit_text(item.get("label"), 60) or "查看",
+            "type": action_type,
+            "target": target,
+        })
+        if len(actions) == 4:
+            break
+    return {
+        "answer": _cockpit_text(out.get("answer") or out.get("reply") or "已按当前数据调整画面。", 1200),
+        "filters": {"modules": modules},
+        "highlight": {"type": "metric-cards", "ids": highlight_ids},
+        "focus_module": focus,
+        "drawer_metric_id": drawer,
+        "actions": actions,
+    }
+
+
+async def run_cockpit_command(
+    message: str,
+    visible_cards: list[dict[str, Any]],
+    available_modules: list[str],
+) -> dict[str, Any]:
+    """Ask DeepSeek for an explanation plus a safe, display-only screen command."""
+    modules = {str(item).lower() for item in available_modules if str(item).lower() in COCKPIT_MODULES}
+    cards = []
+    metric_ids: set[str] = set()
+    for item in visible_cards[:40]:
+        if not isinstance(item, dict):
+            continue
+        metric_id = _cockpit_text(item.get("id"), 100)
+        module = _cockpit_text(item.get("module"), 8).lower()
+        if not metric_id or module not in modules:
+            continue
+        metric_ids.add(metric_id)
+        cards.append({
+            "id": metric_id,
+            "module": module,
+            "label": _cockpit_text(item.get("label"), 80),
+            "value": _cockpit_text(item.get("value"), 80),
+            "state": _cockpit_text(item.get("state"), 30),
+            "period": _cockpit_text(item.get("period"), 80),
+            "source": _cockpit_text(item.get("source"), 120),
+        })
+    if not is_enabled():
+        raise DeepSeekError("未配置 DEEPSEEK_API_KEY")
+    system = """你是 G-Snipers 获客工作台的指挥助手。只依据当前画面证据回答，不编造数字。
+你只能改变画面焦点，不能执行投放、调价、发布、生成、采集或写入。
+输出严格 JSON：
+{"answer":"简明回答","filters":{"modules":["sem|seo|geo"]},"highlight":{"ids":["当前卡片id"]},"focus_module":"all|sem|seo|geo","drawer_metric_id":"当前卡片id或null","actions":[{"label":"按钮文案","type":"focus-module|open-metric|open-module|reset-view","target":"模块或卡片id"}]}
+所有模块和卡片 id 必须来自输入；证据不足时明确说暂无数据，并返回空高亮。"""
+    payload = {"question": _cockpit_text(message, 1000), "modules": sorted(modules), "visible_cards": cards}
+    raw = await chat_messages([
+        {"role": "system", "content": system},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ], json_mode=True, temperature=0.2)
+    return sanitize_cockpit_command(raw, allowed_metric_ids=metric_ids, allowed_modules=modules)
 
 
 def _f(v) -> float:
