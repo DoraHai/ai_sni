@@ -27,7 +27,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
+from app.config import get_settings, reject_sem_demo_async_action
 from app.database import async_session_factory
 from app.models import BaiduAccount, BaiduOAuthGrant, BaiduOAuthState, Tenant, TenantModule
 from app.security.crypto import decrypt, encrypt
@@ -82,6 +82,7 @@ def _safe_return_path(path: str | None) -> str:
     return value[:300]
 
 
+@reject_sem_demo_async_action("Baidu OAuth")
 async def create_authorization_url(
     session: AsyncSession,
     *,
@@ -154,6 +155,7 @@ def verify_callback_signature(params: dict[str, str], signature: str) -> bool:
     return secrets.compare_digest(expected.lower(), signature.strip().lower())
 
 
+@reject_sem_demo_async_action("Baidu OAuth")
 async def consume_oauth_state(
     session: AsyncSession, raw_state: str
 ) -> BaiduOAuthState:
@@ -172,6 +174,7 @@ async def consume_oauth_state(
     return row
 
 
+@reject_sem_demo_async_action("Baidu OAuth")
 async def _post_oauth(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     settings = get_settings()
     url = f"{settings.baidu_oauth_base_url.rstrip('/')}{path}"
@@ -200,6 +203,7 @@ async def _post_oauth(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     return body["data"]
 
 
+@reject_sem_demo_async_action("Baidu OAuth")
 async def exchange_auth_code(*, auth_code: str, user_id: int) -> dict[str, Any]:
     settings = get_settings()
     return await _post_oauth(
@@ -214,6 +218,7 @@ async def exchange_auth_code(*, auth_code: str, user_id: int) -> dict[str, Any]:
     )
 
 
+@reject_sem_demo_async_action("Baidu OAuth")
 async def fetch_authorized_accounts(
     *, open_id: str, access_token: str, user_id: int
 ) -> tuple[dict[str, Any], list[OAuthAccount]]:
@@ -294,6 +299,7 @@ def _expiry_from_token_data(
     )
 
 
+@reject_sem_demo_async_action("Baidu OAuth")
 async def persist_authorization(
     session: AsyncSession,
     *,
@@ -522,6 +528,7 @@ async def persist_authorization(
     return grant, linked, linked_tenants
 
 
+@reject_sem_demo_async_action("Baidu OAuth")
 async def refresh_grant(
     session: AsyncSession, grant: BaiduOAuthGrant
 ) -> bool:
@@ -574,6 +581,7 @@ async def refresh_grant(
     return True
 
 
+@reject_sem_demo_async_action("Baidu OAuth")
 async def refresh_expiring_oauth_grants(session: AsyncSession) -> dict[str, int]:
     now = datetime.utcnow()
     grants = (

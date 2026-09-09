@@ -59,14 +59,25 @@ GEO 共享表；它不是只建 SEM 表的迁移子集。
 | `BAIDU_LIVE_WRITE_SCOPES` | 空 | 旧版真实写动作白名单为空 | 是，兼容保护 |
 | `BAIDU_LEGACY_SPLIT_CONFIRMATION_ENABLED` | `true` | 强制旧兼容路径保持 dry-run | 是，作为第二道保护 |
 
-当前缺少以下总开关，因此现有 SEM 服务入口不能作为合格的 demo runtime 启动：
+PR 505 已补以下最小总开关。非 demo 环境默认均为 `true`，保持现有生产/开发行为；
+`APP_ENV=demo` 时四项必须显式为 `false`，缺失或任一为 `true` 都在启动时失败：
 
-| 建议新增配置 | 演示值 | 必须控制的代码位置 |
+| 配置 | 演示值 | 控制位置 |
 | --- | --- | --- |
 | `SEM_SCHEDULER_ENABLED` | `false` | `app.main.lifespan` 不得调用 `start_scheduler()`；关闭全部六个 SEM APScheduler job |
 | `SEM_BAIDU_CLIENT_ENABLED` | `false` | `app.baidu.client` 及 OAuth/刷新/同步入口在构造客户端前返回稳定的 403/503 |
 | `SEM_EXTERNAL_ACTIONS_ENABLED` | `false` | 所有手动同步、OAuth、规划器和外部探测入口统一失败关闭 |
 | `SEM_WRITE_ENDPOINTS_ENABLED` | `false` | 百度 dry-run、本地台账、审批消费、业务状态变更接口均在业务处理前拒绝 |
+
+HTTP 中央门禁允许 `POST /api/v1/auth/login` 和 GET/HEAD/OPTIONS，只读接口仍可使用；
+其余修改方法在鉴权依赖和业务处理前返回 `403 sem_demo_read_only`。OAuth callback 虽为
+GET，也由外部动作门禁单独拒绝。内部调用不依赖 HTTP：所有 `app.baidu.sync` 的
+`sync_*`、OAuth 状态消费/换 token/账户持久化/刷新、`refresh_keyword_workbench_snapshot`
+和全部 `apply_*_writeback` 都有 demo 装饰器；`BaiduAPIClient` 构造也直接拒绝 demo。
+共享 DeepSeek/DashScope 客户端在 demo 中报告 disabled，底层调用也直接拒绝，因此
+已有只读结果不会触发新的模型生成。
+两个历史 GET 副作用也已单独处理：客户画像只返回 `tenants.profile_summary`，每日洞察
+只查询已有 `daily_insights`；即使传入 `force=true` 也不调用百度、模型或更新缓存。
 
 必须同时满足以下部署约束：
 
@@ -125,7 +136,8 @@ loader 在创建数据库 engine 之前必须全部满足：
    账号、TLS 和网络隔离。
 2. 选择 `sem_tasks`：正式纳入演示迁移链，或首版明确排除任务数据和任务接口。
 3. 为无凭据 demo 账户确定独立表/只读适配，不放宽生产 `baidu_accounts` 的凭据约束。
-4. 实现并测试四个 runtime 总开关，覆盖启动、所有手动入口和迟到后台任务。
+4. 复核四个 runtime 总开关覆盖的完整入口清单；当前已覆盖 SEM 主 scheduler、HTTP
+   修改方法、OAuth callback、百度客户端、同步、OAuth 状态/刷新和真实/dry-run 写回。
 5. 在全新、一次性 PostgreSQL 16 演示库运行迁移与只读 schema 快照核对；不得连接
    生产地址。
 6. 单独评审 loader 的预检、事务、幂等、失败回滚和快照恢复后，才允许增加 apply。

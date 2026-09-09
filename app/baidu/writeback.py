@@ -32,7 +32,11 @@ from app.baidu.writeback_approval import (
     claim_approval,
     create_self_approved_approval,
 )
-from app.config import get_settings, resolve_baidu_write_dry_run
+from app.config import (
+    get_settings,
+    reject_sem_demo_async_action,
+    resolve_baidu_write_dry_run,
+)
 from app.models import (
     Adgroup,
     BaiduAccount,
@@ -344,6 +348,7 @@ def _validate(old_bid: float | None, new_bid: float) -> float | None:
     return round(signed_change_pct, 2)
 
 
+@reject_sem_demo_async_action("SEM writeback", "sem_write_endpoints_enabled")
 async def apply_keyword_writeback(
     session: AsyncSession,
     tenant_id: int,
@@ -543,6 +548,7 @@ def _effective_dry_run(
     )
 
 
+@reject_sem_demo_async_action("SEM writeback", "sem_write_endpoints_enabled")
 async def apply_negative_writeback(
     session: AsyncSession,
     tenant_id: int,
@@ -629,6 +635,7 @@ async def apply_negative_writeback(
     return rec
 
 
+@reject_sem_demo_async_action("SEM writeback", "sem_write_endpoints_enabled")
 async def apply_negative_batch_writeback(
     session: AsyncSession,
     tenant_id: int,
@@ -795,6 +802,7 @@ async def apply_negative_batch_writeback(
     return results
 
 
+@reject_sem_demo_async_action("SEM writeback", "sem_write_endpoints_enabled")
 async def apply_negative_writeback_campaign(
     session: AsyncSession,
     tenant_id: int,
@@ -890,6 +898,7 @@ async def apply_negative_writeback_campaign(
     return rec
 
 
+@reject_sem_demo_async_action("SEM writeback", "sem_write_endpoints_enabled")
 async def apply_add_word_writeback(
     session: AsyncSession,
     tenant_id: int,
@@ -973,6 +982,7 @@ async def apply_add_word_writeback(
     return rec
 
 
+@reject_sem_demo_async_action("SEM writeback", "sem_write_endpoints_enabled")
 async def apply_pause_writeback(
     session: AsyncSession,
     tenant_id: int,
@@ -1034,6 +1044,7 @@ async def apply_pause_writeback(
     return rec
 
 
+@reject_sem_demo_async_action("SEM writeback", "sem_write_endpoints_enabled")
 async def apply_match_type_writeback(
     session: AsyncSession,
     tenant_id: int,
@@ -1126,6 +1137,7 @@ async def apply_match_type_writeback(
     return rec
 
 
+@reject_sem_demo_async_action("SEM writeback", "sem_write_endpoints_enabled")
 async def apply_remove_negative_writeback(
     session: AsyncSession,
     tenant_id: int,
@@ -1203,6 +1215,7 @@ async def apply_remove_negative_writeback(
     return rec
 
 
+@reject_sem_demo_async_action("SEM writeback", "sem_write_endpoints_enabled")
 async def apply_campaign_budget_writeback(
     session: AsyncSession,
     tenant_id: int,
@@ -1327,6 +1340,7 @@ async def apply_campaign_budget_writeback(
 # ===== 计划 / 单元启停 + 单元出价（投放管理） =====
 
 
+@reject_sem_demo_async_action("SEM writeback", "sem_write_endpoints_enabled")
 async def apply_campaign_pause_writeback(
     session: AsyncSession,
     tenant_id: int,
@@ -1420,6 +1434,7 @@ def _normalize_schedule_price_factors(items: list[dict]) -> list[dict[str, float
     return sorted(normalized, key=lambda row: int(row["timeId"]))
 
 
+@reject_sem_demo_async_action("SEM writeback", "sem_write_endpoints_enabled")
 async def apply_campaign_schedule_writeback(
     session: AsyncSession,
     tenant_id: int,
@@ -1547,6 +1562,7 @@ def _normalize_region_price_factor(
     return normalized
 
 
+@reject_sem_demo_async_action("SEM writeback", "sem_write_endpoints_enabled")
 async def apply_campaign_region_writeback(
     session: AsyncSession,
     tenant_id: int,
@@ -1637,6 +1653,7 @@ async def apply_campaign_region_writeback(
     return rec
 
 
+@reject_sem_demo_async_action("SEM writeback", "sem_write_endpoints_enabled")
 async def apply_adgroup_pause_writeback(
     session: AsyncSession,
     tenant_id: int,
@@ -1701,6 +1718,7 @@ async def apply_adgroup_pause_writeback(
     return rec
 
 
+@reject_sem_demo_async_action("SEM writeback", "sem_write_endpoints_enabled")
 async def apply_adgroup_bid_writeback(
     session: AsyncSession,
     tenant_id: int,
@@ -1825,6 +1843,7 @@ def _validate_landing_url(value: str | None, label: str) -> str | None:
     return value
 
 
+@reject_sem_demo_async_action("SEM writeback", "sem_write_endpoints_enabled")
 async def apply_adgroup_landing_url_writeback(
     session: AsyncSession,
     tenant_id: int,
@@ -1947,6 +1966,7 @@ async def apply_adgroup_landing_url_writeback(
 # ===== 账户日预算写回（投放管理：安全总闸，L1 引导第一步） =====
 
 
+@reject_sem_demo_async_action("SEM writeback", "sem_write_endpoints_enabled")
 async def apply_account_budget_writeback(
     session: AsyncSession,
     tenant_id: int,
