@@ -172,7 +172,9 @@ def test_background_reconciliation_defers_legacy_running_job():
         async def factory():
             yield session
 
-        with patch("app.database.async_session_factory", factory):
+        with patch("app.database.async_session_factory", factory), patch(
+            "app.geo.tenant_scope.ensure_geo_entitlement", AsyncMock()
+        ):
             stats = await async_jobs.reconcile_stale_jobs_background()
         assert row.status == "running"
         assert stats == {"failed_jobs": 0, "released_tasks": 0}
@@ -239,9 +241,10 @@ def test_orphan_task_recovery_only_accepts_content_generation_jobs_as_live():
             scalar=AsyncMock(return_value=None),
             commit=AsyncMock(),
         )
-        released = await async_jobs.reconcile_stale_content_tasks(
-            session, tenant_id=1, max_age_seconds=60
-        )
+        with patch("app.geo.tenant_scope.ensure_geo_entitlement", AsyncMock()):
+            released = await async_jobs.reconcile_stale_content_tasks(
+                session, tenant_id=1, max_age_seconds=60
+            )
         assert released == 1 and task.status == "editing"
         statement = session.scalar.await_args.args[0]
         sql = str(statement.compile(compile_kwargs={"literal_binds": True}))

@@ -14,6 +14,7 @@ from app.ai.deepseek import is_enabled as ai_enabled
 from app.database import get_session
 from app.geo.audit import GeoAuditError, audit_url
 from app.geo.diagnosis_merge import audit_ticket_filter
+from app.geo.demo_runtime import require_geo_demo_safe_request
 from app.geo.generate import ai_advice, generate_json_ld, generate_llms_text
 from app.geo.tenant_scope import (
     list_geo_tenants_for_auth,
@@ -34,6 +35,7 @@ router = APIRouter(
     tags=["GEO 诊断"],
     dependencies=[
         Depends(require_scoped_auth),
+        Depends(require_geo_demo_safe_request),
         Depends(require_geo_request_entitlement),
     ],
 )
@@ -46,7 +48,22 @@ async def get_geo_tenants(
 ) -> dict:
     """Customer switcher data, limited to currently enabled GEO tenants."""
     tenants = await list_geo_tenants_for_auth(session, bound_tenant_id=ctx.tenant_id)
-    return {"tenants": [{"id": tenant.id, "name": tenant.name} for tenant in tenants]}
+    from app.geo.tenant_scope import ensure_geo_entitlement
+
+    payload = []
+    for tenant in tenants:
+        policy = await ensure_geo_entitlement(
+            session, tenant.id, allow_demo_read=True, lock_binding=False
+        )
+        payload.append({
+            "id": tenant.id,
+            "name": tenant.name,
+            "workspace_mode": "demo" if policy.is_demo else "production",
+            "read_only": policy.read_only,
+            "fixture_namespace": policy.fixture_namespace,
+            "dataset_version": policy.dataset_version,
+        })
+    return {"tenants": payload}
 
 
 class AuditCreate(BaseModel):

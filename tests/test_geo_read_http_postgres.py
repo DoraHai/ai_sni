@@ -32,6 +32,7 @@ async def environment(*, extra_models=(), legacy_routes=False):
     from ops.run_geo_checks import validate_ci_database
     from app.database import get_session
     from app.geo import read_routes as api
+    from app.geo import demo_read_session as read_db
     from app.geo.question_read_routes import router as question_read_router
     from app.geo.integration import router as metrics
     from app.models import (Tenant, GeoAnswerSnapshot, GeoPrompt, GeoVisibilityPatrolRun,
@@ -69,9 +70,12 @@ async def environment(*, extra_models=(), legacy_routes=False):
         async def query_session(request: Request):
             async with sessions(autoflush=False) as session:
                 async with session.begin():
-                    if request.method in {'GET', 'HEAD'}:
+                    control_metrics = request.url.path.startswith(
+                        '/api/v1/geo/integration/metrics/'
+                    )
+                    if request.method in {'GET', 'HEAD'} and not control_metrics:
                         await session.execute(text('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY'))
-                    else:
+                    elif request.method not in {'GET', 'HEAD'}:
                         await session.execute(text("SET LOCAL application_name='geo_fixture_post'"))
                     yield session
 
@@ -88,7 +92,17 @@ async def environment(*, extra_models=(), legacy_routes=False):
         identity['sessions'] = sessions
         app.dependency_overrides[get_session] = query_session
         app.dependency_overrides[require_auth] = lambda: identity['ctx']
-        with patch.object(api, 'async_session_factory', sessions), patch('app.geo.tenant_scope.date', FrozenDate):
+
+        async def routed_read_session():
+            async for session in read_db.production_read_session():
+                yield session
+
+        # The production dependency uses a writable control session for the
+        # binding lock, then opens a separate read-only data session.  Keep the
+        # fixture's get_session read-only proof for router entitlement and
+        # legacy GETs, while mirroring that split for integration/read.
+        app.dependency_overrides[read_db.tenant_read_session] = routed_read_session
+        with patch.object(read_db, 'async_session_factory', sessions), patch('app.geo.tenant_scope.date', FrozenDate):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
                                         base_url='http://fixture') as client:
                 yield client, engine, tables, identity

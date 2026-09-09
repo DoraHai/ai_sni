@@ -11,7 +11,7 @@ from app.geo.question_read_routes import (
     question_page,
     router,
 )
-from app.geo.read_routes import read_session as geo_read_session
+from app.geo.demo_read_session import tenant_read_session as geo_read_session
 from app.geo.tenant_scope import require_geo_read_entitlement
 from app.models import GeoOptimizationBusiness, GeoOptimizationUnit, GeoPrompt
 from app.security.auth import AuthContext, require_scoped_auth

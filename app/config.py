@@ -52,6 +52,21 @@ class Settings(BaseSettings):
     # GEO：是否允许同一人提交审校又审批通过（默认禁止）
     geo_allow_self_review: bool = False
 
+    # GEO isolated demo runtime. Normal environments keep existing behavior.
+    # APP_ENV=demo additionally requires every switch to be explicitly present
+    # and disabled; see app.geo.demo_runtime.
+    geo_demo_runtime: bool = False
+    geo_scheduler_enabled: bool = True
+    geo_followup_scheduler_enabled: bool = True
+    geo_stale_reconciliation_enabled: bool = True
+    geo_startup_recovery_enabled: bool = True
+    geo_async_worker_enabled: bool = True
+    geo_patrol_execution_enabled: bool = True
+    geo_model_execution_enabled: bool = True
+    geo_content_generation_enabled: bool = True
+    geo_publishing_enabled: bool = True
+    geo_oauth_enabled: bool = True
+
     # DeepSeek 官方（SEM 建议引擎等）。不配 key 则建议引擎只产规则版。
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"

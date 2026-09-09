@@ -15,7 +15,8 @@ from app.geo.content.geo_scheduler import (
     run_geo_visibility_patrols,
     scheduled_patrol_settings_query,
 )
-from app.geo.read_routes import get_scheduler_eligibility, read_session, router
+from app.geo.demo_read_session import tenant_read_session
+from app.geo.read_routes import get_scheduler_eligibility, router
 from app.geo.content.routes import (
     put_visibility_patrol_settings,
     router as content_router,
@@ -37,7 +38,7 @@ def test_route_is_get_only_tenant_scoped_and_requires_geo_content():
     route = _route()
 
     assert route.methods == {"GET"}
-    assert any(dep.call is read_session for dep in route.dependant.dependencies)
+    assert any(dep.call is tenant_read_session for dep in route.dependant.dependencies)
     assert any(
         dep.call is require_geo_read_entitlement for dep in route.dependant.dependencies
     )
@@ -256,7 +257,7 @@ def _foundation_http(ctx):
     app.include_router(content_router, prefix="/api/v1/geo")
     next_id = iter(range(101, 110))
     session = Mock(
-        scalar=AsyncMock(side_effect=[NS(id=4), None]),
+        scalar=AsyncMock(side_effect=[{}, None, None]),
         scalars=AsyncMock(return_value=[]),
         get=AsyncMock(return_value=NS(id=4, name="Tiger")),
         flush=AsyncMock(),

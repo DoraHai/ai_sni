@@ -16,6 +16,7 @@ from app.database import engine
 from app.http_errors import register_infra_handlers
 from app.geo.content.oauth_public import router as geo_oauth_public_router
 from app.geo.routes import router as geo_router
+from app.geo.demo_runtime import validate_geo_demo_runtime
 from app.geo.content.geo_scheduler import (
     scheduler_status,
     shutdown_geo_scheduler,
@@ -49,6 +50,11 @@ async def _supervise_stale_reconciliation() -> None:
 async def _lifespan(_app: FastAPI):
     # Productization must-do: refuse demo keys when APP_ENV=prod|production
     enforce_production_secrets(settings, hard_fail=True)
+    if validate_geo_demo_runtime(settings):
+        # The demo process serves only the whitelisted read APIs.  It must not
+        # recover or start any job, patrol, scheduler, or follow-up worker.
+        yield
+        return
     try:
         from app.geo.content.async_jobs import recover_jobs_on_startup
 
@@ -120,4 +126,6 @@ async def geo_health(response: Response) -> dict:
         "db_error": db_error,
         "geo_scheduler": scheduler_status(),
         "geo_followup_scheduler": "running" if followup_scheduler.running else "standby",
+        "demo_runtime": settings.app_env == "demo",
+        "execution_enabled": settings.app_env != "demo",
     }

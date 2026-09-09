@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     reason="requires explicitly configured PostgreSQL",
 )
 def test_scheduler_eligibility_uses_read_only_transaction_without_initialization():
+    from app.geo import demo_read_session as read_db
     from app.geo import read_routes as api
     from app.models import GeoPrompt, GeoVisibilityPatrolSettings
 
@@ -62,7 +63,7 @@ def test_scheduler_eligibility_uses_read_only_transaction_without_initialization
                 },
             )
             sessions = async_sessionmaker(engine, expire_on_commit=False)
-            with patch.object(api, "async_session_factory", sessions):
+            with patch.object(read_db, "async_session_factory", sessions):
                 async for session in api.read_session():
                     assert await session.scalar(text("SHOW transaction_read_only")) == "on"
                     result = await api.get_scheduler_eligibility(4, Mock(), session)

@@ -131,7 +131,7 @@ def test_failed_completion_never_commits_or_changes_status():
 
 
 def test_metric_read_does_not_commit_and_checks_tenant_first():
-    session=NS(commit=AsyncMock())
+    session=NS(commit=AsyncMock(), scalar=AsyncMock(return_value={}))
     async def run():
         with patch('app.geo.integration.snapshot',AsyncMock(return_value=state())) as load:
             result=await metrics_snapshot(7,None,NS(ensure_tenant=lambda t:None),session)
@@ -188,7 +188,7 @@ def test_http_task_and_snapshot_contract_and_permissions():
     async def scalar(query):
         params=query.compile().params
         if 'tenant_modules' in str(query):
-            return NS(id=7) if entitlement_active[0] and params.get('id_1') == 7 else None
+            return {} if entitlement_active[0] and params.get('id_1') == 7 else None
         return rows[0] if rows and params.get('id_1')==10 and params.get('tenant_id_1')==7 else None
     session.add=add;session.scalar=scalar;session.get=AsyncMock(return_value=NS(id=7))
     app.dependency_overrides[require_scoped_auth]=lambda:ctx

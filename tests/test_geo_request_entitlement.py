@@ -68,7 +68,7 @@ def test_every_authenticated_geo_write_route_exposes_its_tenant_to_the_gate():
 
 def test_query_tenant_is_checked_before_the_route_runs():
     ctx = Mock()
-    session = Mock(scalar=AsyncMock(return_value=object()))
+    session = Mock(scalar=AsyncMock(return_value={}))
     result = asyncio.run(
         require_geo_request_entitlement(
             request=request(query="tenant_id=15"), ctx=ctx, session=session
@@ -76,12 +76,12 @@ def test_query_tenant_is_checked_before_the_route_runs():
     )
     assert result is ctx
     ctx.ensure_tenant.assert_called_once_with(15)
-    session.scalar.assert_awaited_once()
+    assert session.scalar.await_count == 2
 
 
 def test_json_body_tenant_is_checked_without_consuming_route_semantics():
     ctx = Mock()
-    session = Mock(scalar=AsyncMock(return_value=object()))
+    session = Mock(scalar=AsyncMock(return_value={}))
     req = request(payload={"tenant_id": 16, "title": "draft"})
     asyncio.run(require_geo_request_entitlement(request=req, ctx=ctx, session=session))
     assert asyncio.run(req.json()) == {"tenant_id": 16, "title": "draft"}
@@ -90,7 +90,7 @@ def test_json_body_tenant_is_checked_without_consuming_route_semantics():
 
 def test_application_suffix_json_body_tenant_is_checked():
     ctx = Mock()
-    session = Mock(scalar=AsyncMock(return_value=object()))
+    session = Mock(scalar=AsyncMock(return_value={}))
     asyncio.run(
         require_geo_request_entitlement(
             request=request(
@@ -106,7 +106,7 @@ def test_application_suffix_json_body_tenant_is_checked():
 
 def test_missing_content_type_json_body_tenant_is_checked():
     ctx = Mock()
-    session = Mock(scalar=AsyncMock(return_value=object()))
+    session = Mock(scalar=AsyncMock(return_value={}))
     asyncio.run(
         require_geo_request_entitlement(
             request=request(payload={"tenant_id": 16}, content_type=None),
@@ -135,7 +135,7 @@ def test_non_application_json_suffix_is_not_treated_as_json():
 
 def test_conflicting_query_and_body_tenants_cannot_bypass_either_check():
     ctx = Mock()
-    session = Mock(scalar=AsyncMock(side_effect=[object(), None]))
+    session = Mock(scalar=AsyncMock(side_effect=[{}, {}, None]))
     with pytest.raises(HTTPException) as error:
         asyncio.run(
             require_geo_request_entitlement(

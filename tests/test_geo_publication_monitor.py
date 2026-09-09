@@ -143,7 +143,8 @@ def test_failed_worker_defers_without_fabricating_a_page_failure():
     v,p,_,s=fixture()
     old={**initial_state(v),'state':'healthy','checked_at':'2026-09-01T00:00:00Z','observed_sha256':'real-proof','failures':0}
     store_state(v,p,old)
-    asyncio.run(defer_monitor_failure(s,7,5,4))
+    with patch('app.geo.tenant_scope.ensure_geo_entitlement', AsyncMock()):
+        asyncio.run(defer_monitor_failure(s,7,5,4))
     result=v.adapt_meta['publication_monitor']['4']
     assert result['state']=='healthy' and result['failures']==0
     assert result['checked_at']==old['checked_at'] and result['observed_sha256']=='real-proof'

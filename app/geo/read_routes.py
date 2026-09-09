@@ -7,66 +7,74 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import case, func, or_, and_, select, text
+from sqlalchemy import case, func, or_, and_, select
 
 from app.config import get_settings
-from app.database import async_session_factory
 from app.security.auth import require_scoped_auth
 from app.models import (GeoAnswerSnapshot, GeoPrompt, GeoVisibilityPatrolRun,
                         GeoVisibilityPatrolSettings, GeoTrackingEngine,
                         GeoPublishingChannel, GeoContentTask, GeoArticleVersion, GeoChannelVariant,
                         GeoPublication, GeoAsyncJob, GeoActionTicket, GeoAiSetting)
-from app.geo.integration_metrics import load_weekly_snapshot, _load_snapshot_window, closed_week_end
-from app.geo.content.time_windows import to_utc_naive
+from app.geo.integration_metrics import (
+    _load_snapshot_window,
+    closed_week_end,
+    load_weekly_snapshot,
+    metric_trend,
+    validated_week_end,
+)
+from app.geo.content.time_windows import shanghai_day_bounds_utc_naive, to_utc_naive
 from app.geo.read_model import answer_payload, period_context, iso, ref
 from app.geo.tenant_scope import require_geo_read_entitlement
+from app.geo.demo_read_session import (
+    data_tenant_id,
+    demo_policy,
+    production_read_session,
+    tenant_read_session,
+)
 
 router = APIRouter(prefix='/integration/read', tags=['GEO read-only workbench'],
                    dependencies=[Depends(require_geo_read_entitlement)])
 
 
-async def read_session():
-    async with async_session_factory(autoflush=False) as session:
-        async with session.begin():
-            # Set before the first data query. No persistent DB configuration change.
-            await session.execute(text('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY'))
-            yield session
+read_session = production_read_session
 
 
-async def context_for(session, tenant_id, week_end):
+async def context_for(session, tenant_id, week_end, *, response_tenant_id=None):
     end = week_end or closed_week_end()
     try:
         current = await load_weekly_snapshot(session, tenant_id, end)
         previous = await _load_snapshot_window(session, tenant_id, end-timedelta(days=7))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    return period_context(tenant_id, end, current, previous)
+    return period_context(response_tenant_id or tenant_id, end, current, previous)
 
 
 @router.get('/scheduler-eligibility')
 async def get_scheduler_eligibility(
     tenant_id: int,
     ctx=Depends(require_scoped_auth),
-    session=Depends(read_session),
+    session=Depends(tenant_read_session),
 ):
     """Report scheduler scan eligibility without initializing or mutating settings."""
     from app.geo.content.geo_scheduler import scheduled_patrol_settings_query
 
     ctx.ensure_tenant(tenant_id)
+    data_id = data_tenant_id(session, tenant_id)
     settings = await session.scalar(
         select(GeoVisibilityPatrolSettings).where(
-            GeoVisibilityPatrolSettings.tenant_id == tenant_id,
+            GeoVisibilityPatrolSettings.tenant_id == data_id,
         )
     )
     selected = await session.scalar(
-        scheduled_patrol_settings_query(tenant_id=tenant_id)
+        scheduled_patrol_settings_query(tenant_id=data_id)
     )
     active_prompt_count = await session.scalar(
         select(func.count(GeoPrompt.id)).where(
-            GeoPrompt.tenant_id == tenant_id,
+            GeoPrompt.tenant_id == data_id,
             GeoPrompt.status == 'active',
         )
     )
+    policy = demo_policy(session)
     return {
         'tenant_id': tenant_id,
         'observed_at': iso(datetime.now(timezone.utc)),
@@ -76,7 +84,9 @@ async def get_scheduler_eligibility(
             'enabled': bool(settings.enabled) if settings is not None else False,
         },
         'active_prompt_count': int(active_prompt_count or 0),
-        'scheduler_eligible': selected is not None,
+        'scheduler_eligible': selected is not None and policy is None,
+        'execution_blocked': policy is not None,
+        'execution_block_reason': 'demo_tenant_read_only' if policy is not None else None,
         'selection_basis': 'geo_visibility_patrol_settings.enabled=true',
         'selection_stage': 'enabled_settings_scan',
         'active_prompts_affect_selection': False,
@@ -86,9 +96,14 @@ async def get_scheduler_eligibility(
 
 @router.get('/period-context')
 async def get_period_context(tenant_id: int, week_end: date | None = None,
-                             ctx=Depends(require_scoped_auth), session=Depends(read_session)):
+                             ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     ctx.ensure_tenant(tenant_id)
-    return await context_for(session, tenant_id, week_end)
+    return await context_for(
+        session,
+        data_tenant_id(session, tenant_id),
+        week_end,
+        response_tenant_id=tenant_id,
+    )
 
 
 def encode_cursor(payload):
@@ -128,8 +143,9 @@ async def get_answers(tenant_id: int, week_end: date | None = None, prompt_id: i
                       source_kind: Literal['real', 'manual', 'simulated', 'unknown'] | None = None,
                       captured_from: datetime | None = None, captured_to: datetime | None = None,
                       limit: int = Query(50, ge=1, le=200), cursor: str | None = None,
-                      ctx=Depends(require_scoped_auth), session=Depends(read_session)):
+                      ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     ctx.ensure_tenant(tenant_id)
+    data_id = data_tenant_id(session, tenant_id)
     if any(value is not None and value.utcoffset() is None for value in (captured_from, captured_to)):
         raise HTTPException(400, '观察时间必须包含明确时区')
     if captured_from and captured_to and captured_from >= captured_to:
@@ -143,8 +159,10 @@ async def get_answers(tenant_id: int, week_end: date | None = None, prompt_id: i
     fingerprint = hashlib.sha256(json.dumps(filters, sort_keys=True).encode()).hexdigest()
     if decoded and decoded.get('filters') != fingerprint:
         raise HTTPException(400, {'code': 'invalid_cursor', 'message': '租户或筛选条件已改变，请重新查询'})
-    context = await context_for(session, tenant_id, end)
-    conditions = [GeoAnswerSnapshot.tenant_id == tenant_id, GeoPrompt.tenant_id == tenant_id]
+    context = await context_for(
+        session, data_id, end, response_tenant_id=tenant_id
+    )
+    conditions = [GeoAnswerSnapshot.tenant_id == data_id, GeoPrompt.tenant_id == data_id]
     for column, value in ((GeoAnswerSnapshot.prompt_id, prompt_id), (GeoAnswerSnapshot.engine, engine_key),
                           (GeoAnswerSnapshot.patrol_run_id, patrol_run_id), (source_expression(), source_kind)):
         if value is not None:
@@ -155,7 +173,7 @@ async def get_answers(tenant_id: int, week_end: date | None = None, prompt_id: i
         base = base.where(GeoAnswerSnapshot.captured_at >= to_utc_naive(captured_from))
     if captured_to:
         base = base.where(GeoAnswerSnapshot.captured_at < to_utc_naive(captured_to))
-    max_id = decoded['max_id'] if decoded else (await session.scalar(select(func.max(GeoAnswerSnapshot.id)).where(GeoAnswerSnapshot.tenant_id == tenant_id)) or 0)
+    max_id = decoded['max_id'] if decoded else (await session.scalar(select(func.max(GeoAnswerSnapshot.id)).where(GeoAnswerSnapshot.tenant_id == data_id)) or 0)
     base = base.where(GeoAnswerSnapshot.id <= max_id)
     if decoded:
         last = datetime.fromisoformat(decoded['last_at']) if decoded['last_at'] else None
@@ -166,7 +184,7 @@ async def get_answers(tenant_id: int, week_end: date | None = None, prompt_id: i
                                  and_(GeoAnswerSnapshot.captured_at == last, GeoAnswerSnapshot.id < decoded['last_id'])))
     pairs = (await session.execute(base.order_by(GeoAnswerSnapshot.captured_at.desc().nullslast(), GeoAnswerSnapshot.id.desc()).limit(limit+1))).all()
     page = pairs[:limit]
-    runs = list(await session.scalars(select(GeoVisibilityPatrolRun).where(GeoVisibilityPatrolRun.tenant_id == tenant_id,
+    runs = list(await session.scalars(select(GeoVisibilityPatrolRun).where(GeoVisibilityPatrolRun.tenant_id == data_id,
                        GeoVisibilityPatrolRun.id.in_({row.patrol_run_id for row, _ in page if row.patrol_run_id})))) if page else []
     by_id = {run.id: run for run in runs}
     next_cursor = None
@@ -178,7 +196,8 @@ async def get_answers(tenant_id: int, week_end: date | None = None, prompt_id: i
             'official_week_end': str(end), 'observation_window': {'start': iso(captured_from, True), 'end': iso(captured_to, True)},
             'unknown_time_count': unknown, 'period_context_url': f'/api/v1/geo/integration/read/period-context?tenant_id={tenant_id}&week_end={end}',
             'pagination': {'limit': limit, 'has_more': bool(next_cursor), 'next_cursor': next_cursor, 'watermark_max_id': max_id},
-            'items': [answer_payload(row, prompt, by_id.get(row.patrol_run_id), context) for row, prompt in page]}
+            'items': [answer_payload(row, prompt, by_id.get(row.patrol_run_id), context,
+                                     response_tenant_id=tenant_id) for row, prompt in page]}
 
 
 async def tenant_object(session, model, tenant_id, ident):
@@ -190,27 +209,30 @@ async def tenant_object(session, model, tenant_id, ident):
 
 @router.get('/answers/{snapshot_id}')
 async def get_answer(snapshot_id: int, tenant_id: int, week_end: date | None = None,
-                     ctx=Depends(require_scoped_auth), session=Depends(read_session)):
+                     ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     ctx.ensure_tenant(tenant_id)
-    row = await tenant_object(session, GeoAnswerSnapshot, tenant_id, snapshot_id)
-    prompt = await tenant_object(session, GeoPrompt, tenant_id, row.prompt_id)
+    data_id = data_tenant_id(session, tenant_id)
+    row = await tenant_object(session, GeoAnswerSnapshot, data_id, snapshot_id)
+    prompt = await tenant_object(session, GeoPrompt, data_id, row.prompt_id)
     run = await session.scalar(select(GeoVisibilityPatrolRun).where(GeoVisibilityPatrolRun.id == row.patrol_run_id,
-                                                                  GeoVisibilityPatrolRun.tenant_id == tenant_id)) if row.patrol_run_id else None
-    context = await context_for(session, tenant_id, week_end)
+                                                                  GeoVisibilityPatrolRun.tenant_id == data_id)) if row.patrol_run_id else None
+    context = await context_for(session, data_id, week_end, response_tenant_id=tenant_id)
     return {'tenant_id': tenant_id, 'evaluated_at': context['evaluated_at'], 'official_week_end': context['week_end'],
             'period_context_url': f'/api/v1/geo/integration/read/period-context?tenant_id={tenant_id}&week_end={context["week_end"]}',
-            'item': answer_payload(row, prompt, run, context, detail=True)}
+            'item': answer_payload(row, prompt, run, context, detail=True,
+                                   response_tenant_id=tenant_id)}
 
 
 @router.get('/capabilities')
-async def get_capabilities(tenant_id: int, ctx=Depends(require_scoped_auth), session=Depends(read_session)):
+async def get_capabilities(tenant_id: int, ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     from app.geo.content.engine_providers import platform_engine_public_status
     ctx.ensure_tenant(tenant_id)
-    ai_setting = await session.scalar(select(GeoAiSetting).where(GeoAiSetting.tenant_id == tenant_id))
+    data_id = data_tenant_id(session, tenant_id)
+    ai_setting = await session.scalar(select(GeoAiSetting).where(GeoAiSetting.tenant_id == data_id))
     stance = (ai_setting.monitoring_stance if ai_setting else None) or 'hybrid'
-    engines = list(await session.scalars(select(GeoTrackingEngine).where(GeoTrackingEngine.tenant_id == tenant_id)))
-    channels = list(await session.scalars(select(GeoPublishingChannel).where(GeoPublishingChannel.tenant_id == tenant_id)))
-    history = list(await session.scalars(select(GeoAnswerSnapshot.engine).where(GeoAnswerSnapshot.tenant_id == tenant_id).distinct()))
+    engines = list(await session.scalars(select(GeoTrackingEngine).where(GeoTrackingEngine.tenant_id == data_id)))
+    channels = list(await session.scalars(select(GeoPublishingChannel).where(GeoPublishingChannel.tenant_id == data_id)))
+    history = list(await session.scalars(select(GeoAnswerSnapshot.engine).where(GeoAnswerSnapshot.tenant_id == data_id).distinct()))
     engine_items = []
     for row in engines:
         platform = platform_engine_public_status(row.engine_key)
@@ -229,6 +251,83 @@ async def get_capabilities(tenant_id: int, ctx=Depends(require_scoped_auth), ses
             'channels': [{'id': r.id, 'name': r.name, 'channel_type': r.channel_type, 'enabled': r.enabled} for r in channels],
             'configuration_status': 'configured' if engines else 'unconfigured',
             'actions_enabled': False, 'note': '仅按已有配置推断，未试连；不保证真实采集，不初始化配置。'}
+
+
+@router.get('/demo-summary')
+async def get_demo_summary(
+    tenant_id: int,
+    week_end: date | None = None,
+    ctx=Depends(require_scoped_auth),
+    session=Depends(tenant_read_session),
+):
+    """Return illustrative raw demo counts, never an official metric snapshot."""
+    ctx.ensure_tenant(tenant_id)
+    policy = demo_policy(session)
+    if policy is None:
+        raise HTTPException(404, '当前客户不是 GEO 演示数据集')
+    try:
+        end = validated_week_end(week_end)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    start = end - timedelta(days=14)
+    start_utc = shanghai_day_bounds_utc_naive(start)[0]
+    end_utc = shanghai_day_bounds_utc_naive(end)[0]
+    rows = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot).where(
+                GeoAnswerSnapshot.tenant_id == policy.demo_tenant_id,
+                GeoAnswerSnapshot.captured_at >= start_utc,
+                GeoAnswerSnapshot.captured_at < end_utc,
+            )
+        )
+    )
+
+    def raw_window(window_start, window_end):
+        included = [
+            row
+            for row in rows
+            if row.captured_at is not None
+            and window_start <= to_utc_naive(row.captured_at) < window_end
+        ]
+        mentions = sum(bool(row.mentions_brand) for row in included)
+        return {
+            'sample_count': len(included),
+            'mention_count': mentions,
+            'mention_rate': round(100 * mentions / len(included), 2) if included else None,
+        }
+
+    middle_utc = shanghai_day_bounds_utc_naive(end - timedelta(days=7))[0]
+    previous = raw_window(start_utc, middle_utc)
+    current = raw_window(middle_utc, end_utc)
+    return {
+        'tenant_id': tenant_id,
+        'evaluated_at': iso(datetime.now(timezone.utc)),
+        'timezone': 'Asia/Shanghai',
+        'official': False,
+        'source_kind': 'synthetic',
+        'excluded_from_official_metrics': True,
+        'exclusion_reason': {
+            'code': 'demo_tenant',
+            'message': '全虚拟演示数据不进入正式指标或完成证据',
+        },
+        'dataset': {
+            'key': policy.dataset_key,
+            'version': policy.dataset_version,
+            'fixture_namespace': policy.fixture_namespace,
+        },
+        'window': {
+            'previous': {'start': str(start), 'end': str(end - timedelta(days=7)), **previous},
+            'current': {'start': str(end - timedelta(days=7)), 'end': str(end), **current},
+        },
+        'trend_7d': {
+            key: metric_trend(current[key], previous[key])
+            for key in ('mention_count', 'mention_rate')
+        },
+        'official_metrics_url': (
+            f'/api/v1/geo/integration/metrics/snapshot?tenant_id={tenant_id}'
+            f'&week_end={end}'
+        ),
+    }
 
 
 def safe_error(value):
@@ -250,7 +349,9 @@ def safe_error(value):
     return {'code': 'execution_failed', 'message': '执行失败，请在 GEO 任务中查看并处理'}
 
 
-async def progress_payload(session, row, tenant_id, kind):
+async def progress_payload(
+    session, row, tenant_id, kind, *, response_tenant_id=None
+):
     is_job = kind == 'async_job'
     if is_job:
         from app.geo.content.async_jobs import _stale_limits
@@ -262,7 +363,7 @@ async def progress_payload(session, row, tenant_id, kind):
     stale = bool(row.status in {'pending', 'running'} and anchor and
                  (datetime.now(timezone.utc).replace(tzinfo=None) - to_utc_naive(anchor)).total_seconds() >=
                  (pending_limit if row.status == 'pending' else running_limit))
-    payload = {'tenant_id': tenant_id, 'evaluated_at': iso(datetime.now(timezone.utc)), 'ref': ref(kind, row.id), 'stored_status': row.status, 'stale': stale,
+    payload = {'tenant_id': response_tenant_id or tenant_id, 'evaluated_at': iso(datetime.now(timezone.utc)), 'ref': ref(kind, row.id), 'stored_status': row.status, 'stale': stale,
                'stale_reason': 'elapsed_threshold_exceeded' if stale else None,
                'created_at': iso(row.created_at), 'started_at': iso(row.started_at), 'finished_at': iso(row.finished_at),
                'error': safe_error(row.error), 'relations': [], 'result_refs': []}
@@ -301,49 +402,58 @@ async def progress_payload(session, row, tenant_id, kind):
 
 
 @router.get('/async-jobs/{async_job_id}')
-async def get_async_job(async_job_id: int, tenant_id: int, ctx=Depends(require_scoped_auth), session=Depends(read_session)):
+async def get_async_job(async_job_id: int, tenant_id: int, ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     ctx.ensure_tenant(tenant_id)
-    return await progress_payload(session, await tenant_object(session, GeoAsyncJob, tenant_id, async_job_id), tenant_id, 'async_job')
+    data_id = data_tenant_id(session, tenant_id)
+    return await progress_payload(session, await tenant_object(session, GeoAsyncJob, data_id, async_job_id), data_id, 'async_job', response_tenant_id=tenant_id)
 
 
 @router.get('/patrol-runs/{patrol_run_id}')
-async def get_patrol_run(patrol_run_id: int, tenant_id: int, ctx=Depends(require_scoped_auth), session=Depends(read_session)):
+async def get_patrol_run(patrol_run_id: int, tenant_id: int, ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     ctx.ensure_tenant(tenant_id)
-    return await progress_payload(session, await tenant_object(session, GeoVisibilityPatrolRun, tenant_id, patrol_run_id), tenant_id, 'patrol_run')
+    data_id = data_tenant_id(session, tenant_id)
+    return await progress_payload(session, await tenant_object(session, GeoVisibilityPatrolRun, data_id, patrol_run_id), data_id, 'patrol_run', response_tenant_id=tenant_id)
 
 
-async def progress_list(session, tenant_id, model, kind, limit, before_id):
+async def progress_list(
+    session, tenant_id, model, kind, limit, before_id, *, response_tenant_id=None
+):
     query = select(model).where(model.tenant_id == tenant_id)
     if before_id is not None:
         query = query.where(model.id < before_id)
     rows = list(await session.scalars(query.order_by(model.id.desc()).limit(limit+1)))
-    return {'tenant_id': tenant_id, 'evaluated_at': iso(datetime.now(timezone.utc)),
-            'items': [await progress_payload(session, row, tenant_id, kind) for row in rows[:limit]],
+    return {'tenant_id': response_tenant_id or tenant_id, 'evaluated_at': iso(datetime.now(timezone.utc)),
+            'items': [await progress_payload(session, row, tenant_id, kind,
+                                             response_tenant_id=response_tenant_id) for row in rows[:limit]],
             'next_before_id': rows[limit-1].id if len(rows) > limit else None}
 
 
 @router.get('/async-jobs')
 async def get_async_jobs(tenant_id: int, limit: int = Query(20, ge=1, le=50), before_id: int | None = None,
-                         ctx=Depends(require_scoped_auth), session=Depends(read_session)):
+                         ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     ctx.ensure_tenant(tenant_id)
-    return await progress_list(session, tenant_id, GeoAsyncJob, 'async_job', limit, before_id)
+    return await progress_list(session, data_tenant_id(session, tenant_id), GeoAsyncJob,
+                               'async_job', limit, before_id, response_tenant_id=tenant_id)
 
 
 @router.get('/patrol-runs')
 async def get_patrol_runs(tenant_id: int, limit: int = Query(20, ge=1, le=50), before_id: int | None = None,
-                          ctx=Depends(require_scoped_auth), session=Depends(read_session)):
+                          ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     ctx.ensure_tenant(tenant_id)
-    return await progress_list(session, tenant_id, GeoVisibilityPatrolRun, 'patrol_run', limit, before_id)
+    return await progress_list(session, data_tenant_id(session, tenant_id),
+                               GeoVisibilityPatrolRun, 'patrol_run', limit, before_id,
+                               response_tenant_id=tenant_id)
 
 
 @router.get('/content-tasks/{content_task_id}')
-async def get_content_task(content_task_id: int, tenant_id: int, ctx=Depends(require_scoped_auth), session=Depends(read_session)):
+async def get_content_task(content_task_id: int, tenant_id: int, ctx=Depends(require_scoped_auth), session=Depends(tenant_read_session)):
     ctx.ensure_tenant(tenant_id)
-    task = await tenant_object(session, GeoContentTask, tenant_id, content_task_id)
+    data_id = data_tenant_id(session, tenant_id)
+    task = await tenant_object(session, GeoContentTask, data_id, content_task_id)
     articles = list(await session.scalars(select(GeoArticleVersion).where(GeoArticleVersion.task_id == task.id).order_by(GeoArticleVersion.version_no.desc())))
     variants = list(await session.scalars(select(GeoChannelVariant).where(GeoChannelVariant.task_id == task.id)))
     publications = list(await session.scalars(select(GeoPublication).join(GeoChannelVariant, GeoChannelVariant.id == GeoPublication.variant_id).where(GeoChannelVariant.task_id == task.id)))
-    metric_tasks = list(await session.scalars(select(GeoActionTicket).where(GeoActionTicket.tenant_id == tenant_id, GeoActionTicket.advice_code == 'cockpit:v1:task')))
+    metric_tasks = list(await session.scalars(select(GeoActionTicket).where(GeoActionTicket.tenant_id == data_id, GeoActionTicket.advice_code == 'cockpit:v1:task')))
     versions = []
     for article in articles:
         meta = article.generation_meta or {}
@@ -352,7 +462,7 @@ async def get_content_task(content_task_id: int, tenant_id: int, ctx=Depends(req
                 'created_at': iso(article.created_at), 'relations': []}
         job_id = meta.get('async_job_id')
         if isinstance(job_id, int):
-            job = await session.scalar(select(GeoAsyncJob).where(GeoAsyncJob.id == job_id, GeoAsyncJob.tenant_id == tenant_id,
+            job = await session.scalar(select(GeoAsyncJob).where(GeoAsyncJob.id == job_id, GeoAsyncJob.tenant_id == data_id,
                                        GeoAsyncJob.ref_type == 'content_task', GeoAsyncJob.ref_id == task.id))
             if job:
                 item['relations'].append({'relation': 'generated_by', 'target': ref('async_job', job.id)})

@@ -14,9 +14,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
+from app.geo.demo_runtime import require_geo_demo_safe_request
 from app.models import GeoChannelAccount
 
-router = APIRouter(tags=["GEO public"])
+router = APIRouter(
+    tags=["GEO public"], dependencies=[Depends(require_geo_demo_safe_request)]
+)
 
 
 @router.get("/api/v1/geo/oauth/social/callback")
@@ -40,6 +43,11 @@ async def oauth_social_callback(
         raise HTTPException(400, str(exc)) from exc
     tenant_id = parsed["tenant_id"]
     account_id = parsed["account_id"]
+    from app.geo.tenant_scope import ensure_geo_entitlement
+
+    # The signed state identifies the tenant, but does not authorize a demo
+    # tenant to exchange credentials or persist OAuth tokens.
+    await ensure_geo_entitlement(session, int(tenant_id))
     row = await session.get(GeoChannelAccount, account_id)
     if row is None or int(row.tenant_id) != int(tenant_id):
         raise HTTPException(404, "账号不存在")
@@ -87,6 +95,11 @@ async def get_deliverable_by_share_token(
     )
     if row is None:
         raise HTTPException(404, "分享链接无效或已失效")
+    from app.geo.tenant_scope import ensure_geo_entitlement
+
+    # A previously created production share must stop working if its tenant is
+    # later rebound to an isolated demo workspace.
+    await ensure_geo_entitlement(session, int(row.tenant_id))
     pack = row.pack_json or {}
     return {
         "id": row.id,

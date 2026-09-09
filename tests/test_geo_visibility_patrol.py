@@ -236,6 +236,7 @@ class ExecutePatrolRunTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("app.ai.deepseek.chat_json", new_callable=AsyncMock),
+            patch("app.geo.content.patrol.ensure_geo_entitlement", new_callable=AsyncMock),
             patch(
                 "app.geo.content.ai_settings.resolve_llm_credentials",
                 new_callable=AsyncMock,
@@ -342,6 +343,7 @@ class ExecutePatrolRunTests(unittest.IsolatedAsyncioTestCase):
         session.get = AsyncMock(side_effect=get_row)
 
         with (
+            patch("app.geo.content.patrol.ensure_geo_entitlement", new_callable=AsyncMock),
             patch(
                 "app.geo.content.ai_settings.resolve_llm_credentials",
                 new_callable=AsyncMock,
@@ -413,6 +415,7 @@ class ExecutePatrolRunTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with (
+            patch("app.geo.content.patrol.ensure_geo_entitlement", new_callable=AsyncMock),
             patch(
                 "app.geo.content.ai_settings.resolve_llm_credentials",
                 new_callable=AsyncMock,

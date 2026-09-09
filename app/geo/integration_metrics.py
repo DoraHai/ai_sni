@@ -142,12 +142,17 @@ def verified_patrol_rows(rows, runs):
     return result
 
 
-async def load_weekly_snapshot(session, tenant_id, week_end=None):
+def validated_week_end(week_end=None):
     week_end = week_end or closed_week_end()
     if week_end < date(1, 1, 22):
         raise ValueError('week_end 必须留足两个完整周的统计窗口')
     if week_end.weekday() != 0 or week_end > closed_week_end():
         raise ValueError('week_end 必须为不晚于本周周一的上海日期')
+    return week_end
+
+
+async def load_weekly_snapshot(session, tenant_id, week_end=None):
+    week_end = validated_week_end(week_end)
     return await _load_snapshot_window(session, tenant_id, week_end)
 
 
