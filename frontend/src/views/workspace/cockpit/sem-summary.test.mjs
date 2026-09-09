@@ -17,6 +17,17 @@ test('account scope exposes exclusions and unassigned evidence instead of hiding
   assert.deepEqual(card.rows.map(row => row.account), [11, '未归属', 12])
 })
 
+test('versioned demo scope is labelled as simulation instead of a live account warning', () => {
+  const report = example('report')
+  report.is_demo = true
+  report.accounts[0].status = 'demo'
+  const card = semScopeCard(report, 7)
+  assert.equal(card.state, 'available')
+  assert.equal(card.sourceLabel, '版本化 SEM 内置演示数据')
+  assert.match(card.reason, /只读演示数据/)
+  assert.match(card.reason, /不触发同步、投放或外部调用/)
+})
+
 test('keyword summary keeps missing reports distinct from observed zero', () => {
   const payload = example('keywords')
   payload.items[0].metrics.cost = 0

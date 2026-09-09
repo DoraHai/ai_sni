@@ -30,6 +30,28 @@ test('preflight derives exact SEM reads from current role permissions', async ()
   assert.match(context.authorizationRevision, /monitor\.dashboard/)
 })
 
+test('only the exact tenant-bound demo identity selects the demo revision', async () => {
+  const demoIdentity = {
+    ...identity.me,
+    user: { ...identity.me.user, username: 'workbench_test_readonly', tenant_id: 16 },
+  }
+  const context = await resolveSemReadonlyContext({
+    transport: preflightTransport({
+      me: demoIdentity,
+      modules: { ...identity.modules, tenant_id: 16 },
+    }),
+    tenantId: 16,
+  })
+  assert.equal(context.demoRevision, 'sem-demo-tenant16-v1')
+  const unbound = await resolveSemReadonlyContext({
+    transport: preflightTransport({
+      me: { ...demoIdentity, user: { ...demoIdentity.user, tenant_id: null } },
+    }),
+    tenantId: 16,
+  })
+  assert.equal(unbound.demoRevision, null)
+})
+
 test('preflight rejects unavailable module, foreign tenant, and blocked identity', async () => {
   await assert.rejects(resolveSemReadonlyContext({ transport: preflightTransport({
     modules: { tenant_id: null, modules: [{ module_code: 'sem', status: 'disabled', available: false }] },

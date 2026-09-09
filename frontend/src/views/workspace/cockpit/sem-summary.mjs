@@ -3,7 +3,8 @@ import { semMetric } from '../../../../../integrations/sem-cockpit/display.mjs'
 const formatMetric = (metrics, key, unit, coverage = { status: 'observed', missing_dates: [] }) =>
   semMetric(metrics?.[key], unit, coverage).text
 
-function scopeReason(scope = {}, accounts = []) {
+function scopeReason(scope = {}, accounts = [], isDemo = false) {
+  if (isDemo) return '当前为 tenant 16 的版本化只读演示数据；交互只展示模拟结果，不触发同步、投放或外部调用。'
   const excluded = Array.isArray(scope.excluded_non_active_account_ids) ? scope.excluded_non_active_account_ids : []
   const nonActive = accounts.filter(item => item.baidu_account_id !== null && item.status !== 'active')
   const notes = []
@@ -19,14 +20,15 @@ export function semScopeCard(report, contextRevision) {
   const accounts = Array.isArray(report?.accounts) ? report.accounts : []
   const scope = report?.account_scope || {}
   const excluded = Array.isArray(scope.excluded_non_active_account_ids) ? scope.excluded_non_active_account_ids : []
-  const partial = scope.includes_unassigned === true || !Array.isArray(scope.excluded_non_active_account_ids)
+  const partial = !report?.is_demo && (scope.includes_unassigned === true || !Array.isArray(scope.excluded_non_active_account_ids)
     || accounts.some(item => item.baidu_account_id !== null && item.status !== 'active')
+  )
   return {
     id: 'sem-account-scope', moduleCode: 'sem', moduleLabel: 'SEM', label: '账户范围',
     display: String(accounts.filter(item => item.baidu_account_id !== null).length), unit: '个',
-    state: partial ? 'partial' : 'available', reason: scopeReason(scope, accounts), contextRevision,
+    state: partial ? 'partial' : 'available', reason: scopeReason(scope, accounts, report?.is_demo), contextRevision,
     periodLabel: `${report.window.start} 至 ${report.window.end}`,
-    sourceLabel: '百度推广账户与关键词报告', updatedLabel: report.coverage?.updated_at || '未知',
+    sourceLabel: report?.is_demo ? '版本化 SEM 内置演示数据' : '百度推广账户与关键词报告', updatedLabel: report.coverage?.updated_at || '未知',
     series: [],
     columns: [{ key: 'account', label: '账户 ID' }, { key: 'status', label: '状态' },
       { key: 'cost', label: '花费' }, { key: 'click', label: '点击' }],
@@ -79,7 +81,7 @@ export function semKeywordCard(payload, contextRevision) {
       ? `${pageScope}当前页 ${observed} 个关键词有同账户报告依据；${mismatched ? `${mismatched} 个仅观察到已知的其他账户同 ID 报告，未合并其指标；` : ''}${reportOwnershipUnknown ? `${reportOwnershipUnknown} 个只观察到归属未知的同 ID 报告，未关联其指标；` : ''}${additionalUnassignedReports ? `${additionalUnassignedReports} 个还存在归属未知报告，均未合并；` : ''}${ownershipUnknown ? `${ownershipUnknown} 个关键词资产缺少账户归属，未关联任何报告；` : ''}总数是资产数量，不代表全部正在投放。`
       : '当前范围没有可读取的关键词资产。',
     contextRevision, periodLabel: `${payload.window.start} 至 ${payload.window.end}`,
-    sourceLabel: '关键词资产与关键词报告', updatedLabel: newestStamp(items.flatMap(item =>
+    sourceLabel: payload?.is_demo ? '版本化 SEM 内置演示数据' : '关键词资产与关键词报告', updatedLabel: newestStamp(items.flatMap(item =>
       [item.coverage?.updated_at, item.asset_updated_at])) || '未知', series: [],
     columns: [{ key: 'keyword', label: '关键词' }, { key: 'status', label: '状态' }, { key: 'report', label: '报告关联' },
       { key: 'cost', label: '花费' }, { key: 'click', label: '点击' }, { key: 'ctr', label: '点击率' }],
@@ -116,7 +118,7 @@ export function semSearchTermCard(payload, contextRevision) {
     display: String(payload.total), unit: '条', state: payload.mixed_windows ? 'partial' : payload.total ? 'available' : 'no_data',
     reason, contextRevision, periodLabel: payload.mixed_windows ? '多个账户同步窗口' : (payload.windows?.[0]
       ? `${payload.windows[0].start || '未知'} 至 ${payload.windows[0].end || '未知'}` : '暂无同步窗口'),
-    sourceLabel: '搜索词同步快照', updatedLabel: newestStamp((payload.windows || []).flatMap(item =>
+    sourceLabel: payload?.is_demo ? '版本化 SEM 内置演示数据' : '搜索词同步快照', updatedLabel: newestStamp((payload.windows || []).flatMap(item =>
       [item.updated_at, item.oldest_updated_at])) || '未知', series: [],
     columns: [{ key: 'query', label: '客户实际搜索' }, { key: 'keyword', label: '触发关键词' },
       { key: 'account', label: '账户 ID' }, { key: 'cost', label: '花费' }, { key: 'click', label: '点击' }],
