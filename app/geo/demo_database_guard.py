@@ -12,8 +12,8 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 DEMO_CONFIRMATION = "LOAD_GEO_DEMO_ONLY"
 
-# Proposed runtime contract.  app.geo_main does not consume these switches yet;
-# a demo service must not start until that wiring or a scheduler-free entrypoint exists.
+# Shared loader/runtime contract. app.geo_main validates these switches before
+# starting the isolated demo service; a future loader must validate the same set.
 REQUIRED_RUNTIME_FLAGS = {
     "GEO_DEMO_RUNTIME": "true",
     "GEO_SCHEDULER_ENABLED": "false",

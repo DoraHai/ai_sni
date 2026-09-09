@@ -14,6 +14,7 @@ from app.ai.deepseek import is_enabled as ai_enabled
 from app.database import get_session
 from app.geo.audit import GeoAuditError, audit_url
 from app.geo.diagnosis_merge import audit_ticket_filter
+from app.geo.demo_runtime import require_geo_demo_safe_request
 from app.geo.generate import ai_advice, generate_json_ld, generate_llms_text
 from app.geo.tenant_scope import (
     list_geo_tenants_for_auth,
@@ -34,6 +35,7 @@ router = APIRouter(
     tags=["GEO 诊断"],
     dependencies=[
         Depends(require_scoped_auth),
+        Depends(require_geo_demo_safe_request),
         Depends(require_geo_request_entitlement),
     ],
 )

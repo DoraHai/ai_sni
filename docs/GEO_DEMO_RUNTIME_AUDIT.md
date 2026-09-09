@@ -51,12 +51,12 @@ extension。迁移进程仍会加载共享 `Settings`，所以除 `DATABASE_URL`
 
 ## Demo runtime 必须关闭的进程和动作
 
-当前 `app.geo_main` 启动时会无条件：恢复异步内容任务、恢复巡检、启动 GEO scheduler、启动 followup
-supervisor，并每 60 秒运行 stale reconciliation。现有配置没有关闭这些行为的总开关。因此仅在环境
-文件里写 `false` 尚不会生效，不能直接把 `app.geo_main:app` 当作安全 demo runtime 启动。
+原 `app.geo_main` 启动时会无条件：恢复异步内容任务、恢复巡检、启动 GEO scheduler、启动 followup
+supervisor，并每 60 秒运行 stale reconciliation。本 Draft 已增加 demo runtime 总开关和逐项关闭开关：
+`APP_ENV=demo` 时每个变量都必须由进程环境显式提供并符合下列值，缺失或为真都会在 lifespan 启动前
+失败。校验通过后，lifespan 直接进入只读服务，不运行任何恢复、scheduler 或 supervisor。
 
-建议 demo 环境契约如下；在 `geo_main` 接入这些开关或增加 scheduler-free demo entrypoint 之前，
-服务保持不启动：
+demo 环境契约如下：
 
 ```dotenv
 APP_ENV=demo
@@ -84,6 +84,17 @@ SEO_RANK_SCHEDULER_ENABLED=false
 demo 加密/JWT/admin secret，不能读取生产 EnvironmentFile，也不能复用 `/opt/sem-backend/.env`。
 systemd 服务必须使用独立工作目录、独立 env 文件、独立用户和独立端口。
 
+GEO 主路由同时增加请求级门禁，因此即使管理员修改数据库中的引擎、巡检或渠道配置，也不能绕过：
+
+- 允许 `GET/HEAD/OPTIONS /api/v1/geo/tenants`；
+- 允许 `GET/HEAD/OPTIONS /api/v1/geo/integration/**`，包括严格只读详情、任务查询、正式指标及排除原因；
+- 拒绝其他 GEO 路由，包括全部 POST/PUT/PATCH/DELETE、旧版可能有副作用的 GET、OAuth callback 和
+  公开分享入口，统一返回 `geo_demo_runtime_read_only`；
+- auth login 与 `/auth/me` 不属于 GEO 路由，由独立 demo auth runtime 提供，本门禁不拦截。
+
+请求门禁每次请求都会重新执行 demo 配置校验，避免绕过 standalone lifespan。正常 dev/test/production
+环境不启用该分支，原行为保持不变。
+
 ## Loader fail-closed 草案
 
 `app/geo/demo_database_guard.py` 只解析并校验配置，不连接数据库。未来 loader 在建立连接前必须全部
@@ -104,8 +115,8 @@ cleanup 或网络调用。
 
 - 数据库负责人：独立数据库/实例的最终 hostname、database name、loader/migrator/runtime 三类账号及
   权限；完整协调分支的最终 Alembic head；空库两次迁移和整库重建结果。
-- 服务器负责人：scheduler-free 入口还是在 `geo_main` 接入开关；独立 systemd/container、端口、
-  EnvironmentFile、健康检查、日志和回滚目录；demo 服务不得读取生产 secrets。
+- 服务器负责人：独立 systemd/container、端口、EnvironmentFile、健康检查、日志和回滚目录；确认
+  使用本 Draft 已接入开关的 `app.geo_main:app`，demo 服务不得读取生产 secrets。
 - 跨模块负责人：认证服务是否同库部署、演示普通用户和角色如何 seed、前端如何固定显示全虚拟标识。
 
 上述信息确认前，PR `#504` 保持 Draft，不实现或执行 loader apply。

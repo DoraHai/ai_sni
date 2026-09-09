@@ -14,9 +14,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
+from app.geo.demo_runtime import require_geo_demo_safe_request
 from app.models import GeoChannelAccount
 
-router = APIRouter(tags=["GEO public"])
+router = APIRouter(
+    tags=["GEO public"], dependencies=[Depends(require_geo_demo_safe_request)]
+)
 
 
 @router.get("/api/v1/geo/oauth/social/callback")
