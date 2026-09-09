@@ -105,6 +105,8 @@ jobs:
           tests/test_sem_task_migration.py
           tests/test_demo_tenant_binding_migration.py
           tests/test_demo_binding_no_truncate_migration.py
+          tests/test_seo_demo_runtime.py
+          tests/test_seo_demo_source.py
           tests/test_seo_distribution.py
           tests/test_seo_domestic_distribution.py
           tests/test_seo_distribution_import.py

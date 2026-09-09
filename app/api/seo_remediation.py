@@ -8,10 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.deepseek import is_enabled
 from app.api.seo_site_diagnostics import _scope
-from app.database import get_session
+from app.seo_demo_source import (
+    get_seo_session as get_session,
+    require_seo_scoped_auth as require_scoped_auth,
+)
 from app.models.module_workspace import SeoSite
 from app.models.seo import SeoSitePage
-from app.security.auth import AuthContext, require_scoped_auth
+from app.security.auth import AuthContext
 from app.seo_site_diagnostics import diagnostic_payload
 from app import seo_remediation as service
 

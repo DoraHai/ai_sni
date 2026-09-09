@@ -9,10 +9,13 @@ from pydantic import BaseModel, Field, PositiveInt, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_session
+from app.seo_demo_source import (
+    get_seo_session as get_session,
+    require_seo_scoped_auth as require_scoped_auth,
+)
 from app.models.module_workspace import SeoSite
 from app.models.seo import SeoImageAltReview, SeoPageIndexReview, SeoSitePage, SeoPageSnapshot
-from app.security.auth import AuthContext, require_scoped_auth
+from app.security.auth import AuthContext
 from app.seo_image_alt_ai import candidate_prompt_item, generate_alt_drafts
 from app.seo_remediation import reserve as reserve_ai_usage, settle as settle_ai_usage
 from app.seo_site_diagnostics import assessed_condition, checked_iso, diagnostic_payload

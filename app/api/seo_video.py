@@ -9,8 +9,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 from sqlalchemy import select
-from app.database import get_session
-from app.security.auth import require_scoped_auth
+from app.seo_demo_source import (
+    get_seo_session as get_session,
+    require_seo_scoped_auth as require_scoped_auth,
+)
 from app.models.seo import SeoDistributionConnection, SeoContentAsset, SeoContentPublication, SeoPublishAttempt
 from app.api.seo_cockpit import scope
 from app.module_scope import (

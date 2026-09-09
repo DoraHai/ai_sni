@@ -11,8 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator,
 from sqlalchemy import select, func, exists
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
-from app.database import get_session
-from app.security.auth import require_scoped_auth
+from app.seo_demo_source import (
+    get_seo_session as get_session,
+    require_seo_scoped_auth as require_scoped_auth,
+)
 from app.api.seo_cockpit import scope
 from app.models.seo import SeoContentAsset, SeoSerpResult
 from app.models.seo_qa import SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement

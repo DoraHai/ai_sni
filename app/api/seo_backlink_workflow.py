@@ -3,8 +3,10 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 from sqlalchemy import select
-from app.database import get_session
-from app.security.auth import require_scoped_auth
+from app.seo_demo_source import (
+    get_seo_session as get_session,
+    require_seo_scoped_auth as require_scoped_auth,
+)
 from app.models.seo import SeoBacklink, SeoContentAsset, SeoContentPublication
 from app.api.seo_cockpit import scope
 from app.seo_backlink_sources import candidate_url, index_status

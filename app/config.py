@@ -130,6 +130,16 @@ class Settings(BaseSettings):
     seo_demo_mode: bool = False
     seo_scheduler_enabled: bool = True
     seo_external_actions_enabled: bool = True
+    # Same-site demo access authenticates against the production identity
+    # store, then routes only explicitly listed principals to an isolated,
+    # transaction-read-only SEO data source.  The browser cannot select it.
+    seo_demo_data_source_enabled: bool = False
+    seo_demo_principal_user_ids: str = ""
+    seo_demo_bindings_json: str = "[]"
+    seo_demo_database_url: str = ""
+    seo_demo_database_host_allowlist: str = ""
+    seo_demo_database_server_addr_allowlist: str = ""
+    seo_demo_database_name: str = "gsnipers_demo"
     seo_rank_scheduler_engines: str = "baidu,sogou,360,google,bing"
     seo_rank_scheduler_engine_interval_days: str = "baidu:1,sogou:2,360:2"
     seo_rank_scheduler_hour: int = Field(2, ge=0, le=23)

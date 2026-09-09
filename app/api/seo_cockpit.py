@@ -4,8 +4,10 @@ from typing import Literal
 from fastapi import APIRouter,Depends,HTTPException,Query
 from pydantic import BaseModel,Field,PositiveInt,ConfigDict
 from sqlalchemy import select
-from app.database import get_session
-from app.security.auth import require_scoped_auth
+from app.seo_demo_source import (
+    get_seo_session as get_session,
+    require_seo_scoped_auth as require_scoped_auth,
+)
 from app.models.module_workspace import SeoSite
 from app.models.seo import SeoContentAsset,SeoImageAltReview
 from app.models.seo_cockpit import SeoTask,SeoImageVerification
