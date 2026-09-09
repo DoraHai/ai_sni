@@ -62,15 +62,25 @@
 测试前没有记录三个旧渠道稿 ID；重生成实现会原位更新未发布渠道稿，当前 ID 不能作为改前独立证据，
 该项记为证据缺失，不要求通过再次修改母稿补录。
 
-页面没有提供 V1–V6 的完整列表，只显示 V6 基于 V5。历史版本保留仅需补一次严格只读查询：
+页面没有提供 V1–V6 的完整列表，只显示 V6 基于 V5，因此使用严格只读接口补充历史证据：
 
 ```http
 GET /api/v1/geo/integration/read/content-tasks/14?tenant_id=<诺德租户ID>
 ```
 
-该接口使用只读事务，返回 `versions` 数组。确认其中包含版本号 1–6，并记录每项 `ref`、
-`version_no`、`source`、`from_version`、`created_at`。只读结果齐全后，H2 可正式记为通过；若缺少
-任一版本，记失败并停止。不再编辑、生成、审核或发布。
+该接口使用只读事务。2026-09-09 09:03（Asia/Shanghai）使用浏览器已登录会话查询，HTTP 200；
+没有编辑、生成、审核或发布。
+
+| ref | version_no | source | from_version | created_at |
+| --- | ---: | --- | ---: | --- |
+| `geo/article_version/18` | 1 | `ai` | null | `2026-09-06T14:12:19.493961Z` |
+| `geo/article_version/19` | 2 | `manual_edit` | 1 | `2026-09-06T14:12:47.137228Z` |
+| `geo/article_version/20` | 3 | `rules_after_claim_guard` | null | `2026-09-07T14:41:48.741782Z` |
+| `geo/article_version/21` | 4 | `manual_edit` | 3 | `2026-09-08T21:26:35.586422Z` |
+| `geo/article_version/22` | 5 | `manual_edit` | 4 | `2026-09-08T21:27:35.026097Z` |
+| `geo/article_version/23` | 6 | `manual_edit` | 5 | `2026-09-09T01:35:22.053956Z` |
+
+V1–V6 全部存在，无缺失。结合版本失效主链路结果，H2 正式通过。
 
 ## H2 版本失效操作脚本（已执行，留档）
 
@@ -116,8 +126,8 @@ GET /api/v1/geo/integration/read/content-tasks/14?tenant_id=<诺德租户ID>
 - 重新生成的三个渠道稿都关联最新母稿。
 - V1 至 V5 及本次新版本、历史审核信息均保留。
 
-当前前四项已有现场证据；最后一项等待上述一次只读查询确认。当前验收状态为“主链路通过，历史版本
-只读证据待补”，不需要重新执行写操作。
+五项均已有现场证据，H2 正式通过。改前三渠道稿 ID 未记录，作为证据缺失留档；现有证据已经覆盖
+旧稿失效和新稿改绑，不要求再次修改母稿补测。
 
 ## 禁止动作
 
