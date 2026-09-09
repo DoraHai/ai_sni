@@ -230,3 +230,23 @@ geo_visibility_patrol_runs         geo_visibility_patrol_settings
 6. 工作台负责人需确认现有站内 GEO 页面在 demo 模式只调用 integration/read 及可选 demo summary。
 
 这些条件满足前，PR #504 保持 Draft；不得合并、部署、连接生产库、迁移或装载 fixture。
+
+## 租户级 fail-closed 适配状态
+
+本 Draft 已实现不依赖数据库迁移的控制面门禁，绑定仍只来自服务端
+`tenant_modules.module_settings.geo_data_source`。只有上述四字段和值完全匹配时才识别为演示租户；未知
+字段、错误类型、错误 database key、错误 namespace 或非只读绑定全部 fail closed。客户端参数不能选择
+数据源。
+
+当前阶段没有获批的 `database_key -> DSN` 固定映射，因此行为刻意收窄为：
+
+- 已认证的正式指标 snapshot/dictionary 可读；三个正式指标的 `value` 和 `trend_7d` 强制为 `null`；
+- 其他 `integration/read` 返回 `geo_demo_binding_unavailable`，不会使用生产 session 兜底；
+- legacy GET、所有写方法、生成、模型、巡检、scheduler、worker、恢复、发布、OAuth 和历史公开分享均阻断；
+- `/geo/tenants` 只从控制库返回 `workspace_mode`、`read_only`、`fixture_namespace`，不返回数据库信息；
+- 执行路径在首次状态写入前复核绑定，并锁定控制面的 entitlement/binding 行到事务结束；绑定漂移、过期或
+  格式损坏都不能继续执行。
+
+这不是可展示完整 fixture 的最终数据源接入。后续只有在固定 resolver、独立只读数据库角色、空库迁移
+验收和租户 ID/namespace 校验全部获批后，才可把 `integration/read` 接到 `gsnipers_demo`。在此之前
+保持 Draft，且不连接数据库、不安装夹具、不合并、不部署。

@@ -8,9 +8,16 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import BigInteger, Date, String, and_, column, or_, select, table
+from sqlalchemy import BigInteger, Date, String, and_, cast, column, func, literal, or_, select, table
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.geo.demo_tenant import (
+    GeoDemoBindingUnavailable,
+    GeoTenantPolicy,
+    enforce_demo_request,
+    policy_from_module_settings,
+)
 from app.models import Tenant
 from fastapi import Depends, HTTPException, Request
 from app.database import get_session
@@ -23,6 +30,7 @@ _TENANT_MODULES = table(
     column("module_code", String),
     column("status", String),
     column("expires_at", Date),
+    column("module_settings", JSONB),
 )
 
 
@@ -81,10 +89,43 @@ async def list_geo_tenants_for_auth(
     return [tenant for tenant in tenants if tenant.id == bound_tenant_id]
 
 
-async def ensure_geo_entitlement(session: AsyncSession, tenant_id: int) -> None:
+async def ensure_geo_entitlement(
+    session: AsyncSession,
+    tenant_id: int,
+    *,
+    allow_demo_read: bool = False,
+    lock_binding: bool = True,
+) -> GeoTenantPolicy:
     """Fail closed unless the customer currently has usable GEO access."""
-    if await session.scalar(geo_tenant_query(tenant_id=tenant_id).limit(1)) is None:
+    settings_query = (
+        select(func.coalesce(_TENANT_MODULES.c.module_settings, cast(literal("{}"), JSONB)))
+        .select_from(Tenant)
+        .join(_TENANT_MODULES, _TENANT_MODULES.c.tenant_id == Tenant.id)
+        .where(
+            Tenant.id == tenant_id,
+            _TENANT_MODULES.c.module_code == "geo",
+            _TENANT_MODULES.c.status.in_(("active", "trial")),
+            or_(
+                _TENANT_MODULES.c.expires_at.is_(None),
+                _TENANT_MODULES.c.expires_at >= date.today(),
+            ),
+        )
+        .limit(1)
+    )
+    if lock_binding:
+        settings_query = settings_query.with_for_update()
+    module_settings = await session.scalar(settings_query)
+    if module_settings is None:
         raise GeoEntitlementUnavailable()
+    try:
+        policy = policy_from_module_settings(tenant_id, module_settings)
+    except GeoDemoBindingUnavailable:
+        if allow_demo_read:
+            raise
+        raise GeoEntitlementUnavailable() from None
+    if policy.is_demo and not allow_demo_read:
+        raise GeoEntitlementUnavailable()
+    return policy
 
 
 async def require_geo_read_entitlement(tenant_id: int, ctx=Depends(require_scoped_auth),
@@ -95,7 +136,9 @@ async def require_geo_read_entitlement(tenant_id: int, ctx=Depends(require_scope
     cross-module policy. Database errors propagate (never grant on lookup failure).
     """
     ctx.ensure_tenant(tenant_id)
-    await ensure_geo_entitlement(session, tenant_id)
+    await ensure_geo_entitlement(
+        session, tenant_id, allow_demo_read=True, lock_binding=False
+    )
     return ctx
 
 
@@ -141,5 +184,8 @@ async def require_geo_request_entitlement(
 
     for tenant_id in tenant_ids:
         ctx.ensure_tenant(tenant_id)
-        await ensure_geo_entitlement(session, tenant_id)
+        policy = await ensure_geo_entitlement(
+            session, tenant_id, allow_demo_read=True, lock_binding=True
+        )
+        enforce_demo_request(policy, request)
     return ctx

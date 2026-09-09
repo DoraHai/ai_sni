@@ -35,4 +35,4 @@ def test_query_reuses_existing_module_status_and_inclusive_expiry():
     for fragment in ["module_code = 'geo'", "'active', 'trial'", "expires_at IS NULL", "expires_at >= '2026-09-06'", 'tenants.id = 15']:
         assert fragment in sql
     ctx = Mock()
-    assert asyncio.run(require_geo_read_entitlement(15, ctx, Mock(scalar=AsyncMock(return_value=object())))) is ctx
+    assert asyncio.run(require_geo_read_entitlement(15, ctx, Mock(scalar=AsyncMock(return_value={})))) is ctx

@@ -256,7 +256,7 @@ def _foundation_http(ctx):
     app.include_router(content_router, prefix="/api/v1/geo")
     next_id = iter(range(101, 110))
     session = Mock(
-        scalar=AsyncMock(side_effect=[NS(id=4), None]),
+        scalar=AsyncMock(side_effect=[{}, None]),
         scalars=AsyncMock(return_value=[]),
         get=AsyncMock(return_value=NS(id=4, name="Tiger")),
         flush=AsyncMock(),

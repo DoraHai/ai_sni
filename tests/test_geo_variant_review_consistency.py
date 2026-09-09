@@ -110,6 +110,7 @@ def test_regeneration_invalidates_review_only_when_draft_is_saved(published):
         stack.enter_context(patch('app.geo.content.rules.is_ready', return_value=False))
         stack.enter_context(patch('app.geo.content.routes._ensure_tenant_exists', AsyncMock(return_value=NS(name='brand'))))
         stack.enter_context(patch('app.geo.content.routes._brand_context_for_task', AsyncMock(return_value=('brand',['brand']))))
+        stack.enter_context(patch('app.geo.tenant_scope.ensure_geo_entitlement', AsyncMock()))
         run = variant_execute.execute_variants_for_task(session, task_id=12, tenant_id=1,
                                                        channels=['website'], use_llm=False)
         if published:
@@ -153,6 +154,7 @@ def test_variant_generation_recomputes_brand_when_rule_result_is_missing():
         stack.enter_context(patch('app.geo.content.routes._ensure_tenant_exists', AsyncMock(return_value=NS(name='工业齿轮箱'))))
         brand_context = AsyncMock(return_value=('工业齿轮箱',['工业齿轮箱']))
         stack.enter_context(patch('app.geo.content.routes._brand_context_for_task', brand_context))
+        stack.enter_context(patch('app.geo.tenant_scope.ensure_geo_entitlement', AsyncMock()))
         with pytest.raises(ValueError, match='品牌标准'):
             asyncio.run(variant_execute.execute_variants_for_task(
                 session, task_id=12, tenant_id=1, channels=['website'], use_llm=False,

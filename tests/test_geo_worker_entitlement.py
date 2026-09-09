@@ -16,7 +16,7 @@ def test_claimed_worker_rechecks_entitlement_before_business_executor():
             id=42,
             tenant_id=7,
             kind=async_jobs.KIND_GENERATE,
-            status="running",
+            status="pending",
             request_meta={},
             ref_id=None,
             started_at=None,
@@ -25,7 +25,7 @@ def test_claimed_worker_rechecks_entitlement_before_business_executor():
             result_meta=None,
         )
         session = NS(
-            scalar=AsyncMock(side_effect=[42, None]),
+            scalar=AsyncMock(return_value=None),
             commit=AsyncMock(),
             rollback=AsyncMock(),
             get=AsyncMock(return_value=row),
@@ -42,11 +42,12 @@ def test_claimed_worker_rechecks_entitlement_before_business_executor():
         ):
             result = await async_jobs._run_owned_job(42)
 
-        assert result["status"] == "failed"
+        assert result["status"] == "blocked"
         assert result["error_type"] == "GeoEntitlementUnavailable"
-        assert row.status == "failed"
+        assert row.status == "pending"
         executor.assert_not_awaited()
         session.rollback.assert_awaited_once()
+        session.commit.assert_not_awaited()
 
     asyncio.run(scenario())
 
@@ -61,7 +62,7 @@ def test_worker_failure_never_reads_rolled_back_job_and_restores_task():
                 self.tenant_id = 7
                 self.kind = async_jobs.KIND_GENERATE
                 self.ref_id = 12
-                self.status = "running"
+                self.status = "pending"
                 self.request_meta = {}
                 self.started_at = None
                 self.finished_at = None
@@ -114,6 +115,7 @@ def test_worker_failure_never_reads_rolled_back_job_and_restores_task():
 
         with (
             patch("app.database.async_session_factory", factory),
+            patch("app.geo.tenant_scope.ensure_geo_entitlement", AsyncMock()),
             patch.object(
                 async_jobs,
                 "_execute_generate",

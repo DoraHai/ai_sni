@@ -48,7 +48,21 @@ async def get_geo_tenants(
 ) -> dict:
     """Customer switcher data, limited to currently enabled GEO tenants."""
     tenants = await list_geo_tenants_for_auth(session, bound_tenant_id=ctx.tenant_id)
-    return {"tenants": [{"id": tenant.id, "name": tenant.name} for tenant in tenants]}
+    from app.geo.tenant_scope import ensure_geo_entitlement
+
+    payload = []
+    for tenant in tenants:
+        policy = await ensure_geo_entitlement(
+            session, tenant.id, allow_demo_read=True, lock_binding=False
+        )
+        payload.append({
+            "id": tenant.id,
+            "name": tenant.name,
+            "workspace_mode": "demo" if policy.is_demo else "production",
+            "read_only": policy.read_only,
+            "fixture_namespace": policy.fixture_namespace,
+        })
+    return {"tenants": payload}
 
 
 class AuditCreate(BaseModel):

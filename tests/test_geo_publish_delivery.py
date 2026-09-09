@@ -26,7 +26,7 @@ def setup_case(review='approved'):
     return session,args
 
 
-def patches(args,perform):
+def patches(args,perform, *, entitlement=True):
     stack=ExitStack()
     stack.enter_context(patch('app.geo.content.routes._latest_article',AsyncMock(return_value=args['article'])))
     stack.enter_context(patch('app.geo.content.routes._build_rule_input',AsyncMock(return_value=None)))
@@ -36,6 +36,8 @@ def patches(args,perform):
     stack.enter_context(patch('app.geo.content.multi_push._perform_single_push',perform))
     stack.enter_context(patch('app.geo.content.multi_push.decrypt_credentials_json',return_value={'webhook_url':'https://example.com/publish'}))
     stack.enter_context(patch('app.geo.content.multi_push.asyncio.sleep',AsyncMock()))
+    if entitlement:
+        stack.enter_context(patch('app.geo.tenant_scope.ensure_geo_entitlement', AsyncMock()))
     return stack
 
 
@@ -58,7 +60,7 @@ def test_execution_gate_uses_current_business_brand_before_connector():
 def test_expired_geo_access_blocks_before_connector_or_reservation():
     session,args=setup_case();send=AsyncMock()
     session.scalar.return_value=None
-    with patches(args,send),pytest.raises(HTTPException) as error:
+    with patches(args,send,entitlement=False),pytest.raises(HTTPException) as error:
         asyncio.run(execute_single_push(session,**args))
     assert getattr(error.value, 'status_code', None) == 403
     send.assert_not_awaited()

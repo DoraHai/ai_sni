@@ -9,7 +9,15 @@ from sqlalchemy import select
 from app.database import get_session
 from app.models import GeoActionTicket, Tenant
 from app.security.auth import require_scoped_auth
-from app.geo.integration_metrics import load_weekly_snapshot, metric_dictionary, MENTIONS, RATE, SCORE
+from app.geo.content.time_windows import TENANT_TZ
+from app.geo.integration_metrics import (
+    MENTIONS,
+    RATE,
+    SCORE,
+    closed_week_end,
+    load_weekly_snapshot,
+    metric_dictionary,
+)
 from app.geo.tenant_scope import require_geo_read_entitlement
 
 router = APIRouter(prefix='/integration', tags=['GEO shared contract'])
@@ -126,6 +134,15 @@ def metric(state, key):
 async def metrics_snapshot(tenant_id: int = Query(...), week_end: date | None = None,
                            ctx=Depends(require_scoped_auth), session=Depends(get_session)):
     ctx.ensure_tenant(tenant_id)
+    from app.geo.demo_tenant import demo_metric_rows
+    from app.geo.tenant_scope import ensure_geo_entitlement
+    policy = await ensure_geo_entitlement(
+        session, tenant_id, allow_demo_read=True, lock_binding=True
+    )
+    if policy.is_demo:
+        end = week_end or closed_week_end()
+        as_of = datetime.combine(end, datetime.min.time(), tzinfo=TENANT_TZ).isoformat()
+        return demo_metric_rows(as_of=as_of)
     return (await snapshot(session, tenant_id, week_end))['metrics']
 
 
@@ -133,6 +150,12 @@ async def metrics_snapshot(tenant_id: int = Query(...), week_end: date | None = 
 async def metrics_dictionary(tenant_id: int = Query(...), week_end: date | None = None,
                              ctx=Depends(require_scoped_auth), session=Depends(get_session)):
     ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant_scope import ensure_geo_entitlement
+    policy = await ensure_geo_entitlement(
+        session, tenant_id, allow_demo_read=True, lock_binding=True
+    )
+    if policy.is_demo:
+        return metric_dictionary({})
     state = await snapshot(session, tenant_id, week_end)
     return metric_dictionary(state['competitor_names'])
 

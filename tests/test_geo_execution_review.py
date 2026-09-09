@@ -212,7 +212,7 @@ def test_executor_calls_only_exact_sparse_matrix():
         engines=[NS(engine_key=e,enabled=True) for e in ['deepseek','kimi']]
         session=NS(get=AsyncMock(side_effect=[row,tenant]),refresh=AsyncMock(),commit=AsyncMock(),scalars=AsyncMock(side_effect=[engines,prompts]),scalar=AsyncMock(return_value=tenant))
         draft=dict(raw_text='real answer',sample_mode='openai_compat',simulated=False,suggested_mentions_brand=False,analysis_status='completed')
-        with patch('app.geo.content.ai_settings.resolve_llm_credentials',AsyncMock(return_value={'api_key':'test'})),patch('app.geo.content.patrol.resolve_engine_llm',return_value=({'api_key':'test','model':'test-model','provider':'test-provider'},'openai_compat',None)),patch('app.geo.content.patrol.run_probe_draft',AsyncMock(return_value=draft)) as probe:
+        with patch('app.geo.content.ai_settings.resolve_llm_credentials',AsyncMock(return_value={'api_key':'test'})),patch('app.geo.content.patrol.resolve_engine_llm',return_value=({'api_key':'test','model':'test-model','provider':'test-provider'},'openai_compat',None)),patch('app.geo.content.patrol.run_probe_draft',AsyncMock(return_value=draft)) as probe, patch('app.geo.content.patrol.ensure_geo_entitlement', AsyncMock()):
             result=await execute_patrol_run(session,42)
         assert result.status=='completed', result.error
         assert [(c.kwargs['question'],c.kwargs['engine']) for c in probe.await_args_list]==[('question one','deepseek'),('question one','deepseek'),('question one','kimi')]+[('question two','deepseek')]*3

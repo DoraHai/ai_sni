@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy import or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -181,6 +182,9 @@ async def _release_task_lock(
 async def reconcile_stale_job(
     session: AsyncSession, row: GeoAsyncJob
 ) -> GeoAsyncJob:
+    from app.geo.tenant_scope import ensure_geo_entitlement
+
+    await ensure_geo_entitlement(session, int(row.tenant_id))
     if row.status == "running" and not job_has_advisory_owner(row):
         return row
     async with job_execution_lock(row.id) as acquired:
@@ -232,6 +236,9 @@ async def reconcile_stale_content_tasks(
     max_age_seconds: int | None = None,
 ) -> int:
     """Orphan generating/adapting tasks with no live job → editing."""
+    from app.geo.tenant_scope import ensure_geo_entitlement
+
+    await ensure_geo_entitlement(session, tenant_id)
     _, running_lim = _stale_limits()
     max_age = max_age_seconds or running_lim
     cutoff = datetime.utcnow() - timedelta(seconds=max_age)
@@ -279,6 +286,9 @@ async def create_job(
     request_meta: dict | None,
     created_by: int | None,
 ) -> GeoAsyncJob:
+    from app.geo.tenant_scope import ensure_geo_entitlement
+
+    await ensure_geo_entitlement(session, tenant_id)
     row = GeoAsyncJob(
         tenant_id=tenant_id,
         kind=kind,
@@ -302,6 +312,7 @@ async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, 
     import asyncio
 
     from app.database import async_session_factory
+    from app.geo.tenant_scope import GeoEntitlementUnavailable
 
     pending_lim, _running_lim = _stale_limits()
     stats = {
@@ -326,7 +337,17 @@ async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, 
                 if not acquired:
                     continue
                 await session.refresh(candidate)
-                await _recover_unowned_job(session, candidate, pending_lim, requeue_pending, stats, requeue_ids)
+                try:
+                    await _recover_unowned_job(
+                        session,
+                        candidate,
+                        pending_lim,
+                        requeue_pending,
+                        stats,
+                        requeue_ids,
+                    )
+                except GeoEntitlementUnavailable:
+                    continue
         tenant_ids = list(
             await session.scalars(
                 select(GeoContentTask.tenant_id)
@@ -335,9 +356,12 @@ async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, 
             )
         )
         for tenant_id in tenant_ids:
-            stats["released_tasks"] += await reconcile_stale_content_tasks(
-                session, tenant_id=int(tenant_id)
-            )
+            try:
+                stats["released_tasks"] += await reconcile_stale_content_tasks(
+                    session, tenant_id=int(tenant_id)
+                )
+            except GeoEntitlementUnavailable:
+                continue
         await session.commit()
 
     for jid in requeue_ids:
@@ -348,6 +372,7 @@ async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, 
 async def reconcile_stale_jobs_background() -> dict[str, int]:
     """Persist stale-job and orphan-task recovery outside request handlers."""
     from app.database import async_session_factory
+    from app.geo.tenant_scope import GeoEntitlementUnavailable
 
     stats = {"failed_jobs": 0, "released_tasks": 0}
     async with async_session_factory() as session:
@@ -360,7 +385,10 @@ async def reconcile_stale_jobs_background() -> dict[str, int]:
         )
         for row in rows:
             before = row.status
-            await reconcile_stale_job(session, row)
+            try:
+                await reconcile_stale_job(session, row)
+            except GeoEntitlementUnavailable:
+                continue
             if before in {"pending", "running"} and row.status == "failed":
                 stats["failed_jobs"] += 1
         tenant_ids = list(
@@ -371,13 +399,19 @@ async def reconcile_stale_jobs_background() -> dict[str, int]:
             )
         )
         for tenant_id in tenant_ids:
-            stats["released_tasks"] += await reconcile_stale_content_tasks(
-                session, tenant_id=int(tenant_id)
-            )
+            try:
+                stats["released_tasks"] += await reconcile_stale_content_tasks(
+                    session, tenant_id=int(tenant_id)
+                )
+            except GeoEntitlementUnavailable:
+                continue
     return stats
 
 
 async def _recover_unowned_job(session, row, pending_lim, requeue_pending, stats, requeue_ids):
+    from app.geo.tenant_scope import ensure_geo_entitlement
+
+    await ensure_geo_entitlement(session, int(row.tenant_id))
     if row.status not in {"pending", "running"}:
         return
     # Only a job without a live execution lock can be considered interrupted.
@@ -468,22 +502,41 @@ async def _run_owned_job(job_id: int, *, connection=None) -> dict[str, Any]:
 
     try:
         async with async_session_factory(bind=connection) as session:
-            claimed = await session.scalar(
-                update(GeoAsyncJob)
-                .where(GeoAsyncJob.id == job_id, GeoAsyncJob.status == "pending")
-                .values(status="running", started_at=datetime.utcnow())
-                .returning(GeoAsyncJob.id)
-            )
-            await session.commit()
-            if claimed is None:
+            row = await session.get(GeoAsyncJob, job_id)
+            if row is None or row.status != "pending":
                 return {
                     "status": "conflict",
                     "error": "作业不是待执行状态",
                     "error_type": "JobNotPending",
                     "result_meta": {},
                 }
-            row = await session.get(GeoAsyncJob, job_id)
             tenant_id = int(row.tenant_id)
+            try:
+                await ensure_geo_entitlement(session, tenant_id)
+            except HTTPException as exc:
+                await session.rollback()
+                return {
+                    "status": "blocked",
+                    "error": str(exc.detail),
+                    "error_type": type(exc).__name__,
+                    "result_meta": {},
+                }
+            claimed = await session.scalar(
+                update(GeoAsyncJob)
+                .where(GeoAsyncJob.id == job_id, GeoAsyncJob.status == "pending")
+                .values(status="running", started_at=datetime.utcnow())
+                .returning(GeoAsyncJob.id)
+            )
+            if claimed is None:
+                await session.rollback()
+                return {
+                    "status": "conflict",
+                    "error": "作业不是待执行状态",
+                    "error_type": "JobNotPending",
+                    "result_meta": {},
+                }
+            row.status = "running"
+            row.started_at = row.started_at or datetime.utcnow()
             job_kind = row.kind
             ref_id = row.ref_id
             meta = dict(row.request_meta or {})
