@@ -25,6 +25,7 @@ SEO_REQUIRED_SCHEMA_REVISION = "0095_adopt_geo_ticket"
 # Runtime compatibility supports code-first rollout; it never authorizes the
 # separately reviewed migration operation.
 SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset({"0094_seo_qa_batches", SEO_REQUIRED_SCHEMA_REVISION})
+SEO_GEO_TICKET_REQUIRED_REVISIONS = frozenset({"0095_adopt_geo_ticket"})
 SEO_GEO_TICKET_SHAPE = {
     "owner_name": ("character varying(100)", False, None, "", "", "b", None, True),
     "due_date": ("date", False, None, "", "", "b", None, True),
@@ -177,7 +178,7 @@ async def seo_health(response: Response) -> dict:
                 )
             schema_status = "error"
             await _check_seo_structure(conn)
-            if revisions[0] == "0095_adopt_geo_ticket":
+            if revisions[0] in SEO_GEO_TICKET_REQUIRED_REVISIONS:
                 await _check_geo_ticket_adoption(conn)
             schema_status = "ok"
     except Exception as exc:  # noqa: BLE001 - health must report infra failure

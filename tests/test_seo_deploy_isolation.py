@@ -201,6 +201,8 @@ def test_production_workflow_auto_deploys_only_the_exact_production_head() -> No
     assert "DEPLOY_SEO" in workflow
     assert "platform-deploy apply seo" in workflow
     assert "migration=not-run" in workflow
+    assert "verify_seo_release.py source-diff" in workflow
+    assert "PUSH_BEFORE_SHA" in workflow
     assert "alembic upgrade" not in workflow
     assert "Apply schema-compatible SEO release without running database migration" in workflow
     assert "tests/test_seo_scheduler.py" in workflow
@@ -314,3 +316,4 @@ def test_structure_contract_preserves_smallint_fields():
 
 def test_runtime_allowlist_contains_only_exact_reviewed_versions():
     assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_adopt_geo_ticket'})
+    assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket'})

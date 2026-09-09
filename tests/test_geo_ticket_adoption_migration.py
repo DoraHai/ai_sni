@@ -27,13 +27,20 @@ def _load_migration():
     return module
 
 
-def test_adoption_is_the_only_head_and_follows_production_0094() -> None:
+def test_adoption_follows_production_0094_without_assuming_it_is_forever_head() -> None:
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "migrations"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["0095_adopt_geo_ticket"]
     assert script.get_revision("0095_adopt_geo_ticket").down_revision == "0094_seo_qa_batches"
+    assert script.get_base() == "0001_initial"
+    assert "0074_geo_ticket_assignment" not in {
+        revision.revision for revision in script.walk_revisions()
+    }
+    assert [
+        step.revision.revision
+        for step in script._upgrade_revs("0095_adopt_geo_ticket", "0094_seo_qa_batches")
+    ] == ["0095_adopt_geo_ticket"]
 
 
 def test_adoption_contract_is_fixed_schema_online_only_and_irreversible() -> None:
@@ -227,6 +234,20 @@ async def _create_or_drop_database(source_url: str, database: str, *, create: bo
         await engine.dispose()
 
 
+async def _require_local_postgres_16(source_url: str) -> None:
+    parsed = make_url(source_url)
+    if parsed.host not in {"localhost", "127.0.0.1", "::1"}:
+        raise RuntimeError("migration rehearsal requires a loopback PostgreSQL URL")
+    engine = create_async_engine(source_url)
+    try:
+        async with engine.connect() as connection:
+            version = int((await connection.execute(text("SHOW server_version_num"))).scalar_one())
+        if not 160000 <= version < 170000:
+            raise RuntimeError(f"migration rehearsal requires PostgreSQL 16, found {version}")
+    finally:
+        await engine.dispose()
+
+
 def _isolated_database_url(source_url: str, database: str) -> str:
     return make_url(source_url).set(database=database).render_as_string(hide_password=False)
 
@@ -237,20 +258,24 @@ def _isolated_database_url(source_url: str, database: str) -> str:
 )
 def test_postgres_fresh_chain_creates_reviewed_columns(monkeypatch) -> None:
     source_url = os.environ["SEO_MIGRATION_TEST_DATABASE_URL"]
+    from app.config import get_settings
+
+    asyncio.run(_require_local_postgres_16(source_url))
     database = "geo_adopt_fresh_" + uuid4().hex
     asyncio.run(_create_or_drop_database(source_url, database, create=True))
     target_url = _isolated_database_url(source_url, database)
     try:
         monkeypatch.setenv("DATABASE_URL", target_url)
-        from app.config import get_settings
-
         get_settings.cache_clear()
-        command.upgrade(_config(), "head")
+        command.upgrade(_config(), "0095_adopt_geo_ticket")
 
         async def inspect_shape():
             engine = create_async_engine(target_url)
             try:
                 async with engine.connect() as connection:
+                    from app import seo_main
+
+                    await seo_main._check_geo_ticket_adoption(connection)
                     version = (await connection.execute(text(
                         "SELECT version_num FROM alembic_version"
                     ))).scalar_one()
@@ -279,13 +304,14 @@ def test_postgres_fresh_chain_creates_reviewed_columns(monkeypatch) -> None:
 )
 def test_postgres_reviewed_0094_shape_is_adopted_without_rewrite(monkeypatch) -> None:
     source_url = os.environ["SEO_MIGRATION_TEST_DATABASE_URL"]
+    from app.config import get_settings
+
+    asyncio.run(_require_local_postgres_16(source_url))
     database = "geo_adopt_existing_" + uuid4().hex
     asyncio.run(_create_or_drop_database(source_url, database, create=True))
     target_url = _isolated_database_url(source_url, database)
     try:
         monkeypatch.setenv("DATABASE_URL", target_url)
-        from app.config import get_settings
-
         get_settings.cache_clear()
         command.upgrade(_config(), "0094_seo_qa_batches")
 
@@ -317,12 +343,15 @@ def test_postgres_reviewed_0094_shape_is_adopted_without_rewrite(monkeypatch) ->
                 await engine.dispose()
 
         before = asyncio.run(prepare_and_snapshot())
-        command.upgrade(_config(), "head")
+        command.upgrade(_config(), "0095_adopt_geo_ticket")
 
         async def inspect_after():
             engine = create_async_engine(target_url)
             try:
                 async with engine.connect() as connection:
+                    from app import seo_main
+
+                    await seo_main._check_geo_ticket_adoption(connection)
                     catalog = (await connection.execute(text("""
                         SELECT c.relfilenode, a.attname, a.attnum
                         FROM pg_catalog.pg_class c
@@ -356,15 +385,16 @@ def test_postgres_reviewed_0094_shape_is_adopted_without_rewrite(monkeypatch) ->
     not os.getenv("SEO_MIGRATION_TEST_DATABASE_URL"),
     reason="requires isolated PostgreSQL 16 with CREATE DATABASE",
 )
-def test_postgres_expression_and_predicate_indexes_fail_closed(monkeypatch) -> None:
+def test_postgres_index_constraint_drift_and_partial_states_fail_closed(monkeypatch) -> None:
     source_url = os.environ["SEO_MIGRATION_TEST_DATABASE_URL"]
+    from app.config import get_settings
+
+    asyncio.run(_require_local_postgres_16(source_url))
     database = "geo_adopt_index_" + uuid4().hex
     asyncio.run(_create_or_drop_database(source_url, database, create=True))
     target_url = _isolated_database_url(source_url, database)
     try:
         monkeypatch.setenv("DATABASE_URL", target_url)
-        from app.config import get_settings
-
         get_settings.cache_clear()
         command.upgrade(_config(), "0094_seo_qa_batches")
 
@@ -378,10 +408,6 @@ def test_postgres_expression_and_predicate_indexes_fail_closed(monkeypatch) -> N
                         ADD COLUMN due_date date NULL
                     """))
                     await connection.execute(text("""
-                        CREATE INDEX ix_geo_ticket_owner_expression
-                        ON public.geo_action_tickets (lower(owner_name))
-                    """))
-                    await connection.execute(text("""
                         CREATE INDEX ix_geo_ticket_due_predicate
                         ON public.geo_action_tickets (id) WHERE due_date IS NOT NULL
                     """))
@@ -389,8 +415,81 @@ def test_postgres_expression_and_predicate_indexes_fail_closed(monkeypatch) -> N
                 await engine.dispose()
 
         asyncio.run(prepare())
+
+        async def assert_health_shape_rejected():
+            from app import seo_main
+
+            engine = create_async_engine(target_url)
+            try:
+                async with engine.connect() as connection:
+                    with pytest.raises(RuntimeError, match="GEO ticket assignment columns"):
+                        await seo_main._check_geo_ticket_adoption(connection)
+            finally:
+                await engine.dispose()
+
+        asyncio.run(assert_health_shape_rejected())
         with pytest.raises(Exception, match="must not have indexes or constraints"):
-            command.upgrade(_config(), "head")
+            command.upgrade(_config(), "0095_adopt_geo_ticket")
+
+        async def execute_ddl(sql):
+            engine = create_async_engine(target_url)
+            try:
+                async with engine.begin() as connection:
+                    await connection.execute(text(sql))
+            finally:
+                await engine.dispose()
+
+        asyncio.run(execute_ddl("""
+            DROP INDEX public.ix_geo_ticket_due_predicate;
+            CREATE INDEX ix_geo_ticket_owner_expression
+            ON public.geo_action_tickets (lower(owner_name))
+        """))
+        asyncio.run(assert_health_shape_rejected())
+        with pytest.raises(Exception, match="must not have indexes or constraints"):
+            command.upgrade(_config(), "0095_adopt_geo_ticket")
+
+        asyncio.run(execute_ddl("""
+            DROP INDEX public.ix_geo_ticket_owner_expression;
+            CREATE INDEX ix_geo_ticket_due_key
+            ON public.geo_action_tickets (due_date)
+        """))
+        asyncio.run(assert_health_shape_rejected())
+        with pytest.raises(Exception, match="must not have indexes or constraints"):
+            command.upgrade(_config(), "0095_adopt_geo_ticket")
+
+        asyncio.run(execute_ddl("""
+            DROP INDEX public.ix_geo_ticket_due_key;
+            CREATE INDEX ix_geo_ticket_owner_include
+            ON public.geo_action_tickets (id) INCLUDE (owner_name)
+        """))
+        asyncio.run(assert_health_shape_rejected())
+        with pytest.raises(Exception, match="must not have indexes or constraints"):
+            command.upgrade(_config(), "0095_adopt_geo_ticket")
+
+        asyncio.run(execute_ddl("""
+            DROP INDEX public.ix_geo_ticket_owner_include;
+            ALTER TABLE public.geo_action_tickets
+            ADD CONSTRAINT ck_geo_ticket_due_review CHECK (due_date IS NULL OR due_date >= DATE '2000-01-01')
+        """))
+        asyncio.run(assert_health_shape_rejected())
+        with pytest.raises(Exception, match="must not have indexes or constraints"):
+            command.upgrade(_config(), "0095_adopt_geo_ticket")
+
+        asyncio.run(execute_ddl("""
+            ALTER TABLE public.geo_action_tickets DROP CONSTRAINT ck_geo_ticket_due_review;
+            ALTER TABLE public.geo_action_tickets ALTER COLUMN owner_name TYPE character varying(200)
+        """))
+        asyncio.run(assert_health_shape_rejected())
+        with pytest.raises(Exception, match="does not match"):
+            command.upgrade(_config(), "0095_adopt_geo_ticket")
+
+        asyncio.run(execute_ddl("""
+            ALTER TABLE public.geo_action_tickets ALTER COLUMN owner_name TYPE character varying(100);
+            ALTER TABLE public.geo_action_tickets DROP COLUMN due_date
+        """))
+        asyncio.run(assert_health_shape_rejected())
+        with pytest.raises(Exception, match="refusing partial"):
+            command.upgrade(_config(), "0095_adopt_geo_ticket")
 
         async def current_version():
             engine = create_async_engine(target_url)
