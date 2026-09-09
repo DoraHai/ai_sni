@@ -45,6 +45,11 @@ from app.baidu.writeback import WritebackError, apply_keyword_writeback, apply_p
 from app.security.auth import AuthContext, require_scoped_auth
 from app.sem_cockpit_details import read_keyword_detail, read_keywords
 from app.sem_cockpit_readonly import validate_query
+from app.sem_demo_adapter import (
+    is_demo_read,
+    read_demo_keyword_detail,
+    read_demo_keywords,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -589,6 +594,10 @@ async def cockpit_keywords(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     validate_query(request.query_params, {"tenant_id", "baidu_account_id", "start_date", "end_date", "q", "campaign_id", "page", "page_size"})
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_keywords(
+            baidu_account_id, start_date, end_date, q, campaign_id, page, page_size
+        )
     return await read_keywords(session, tenant_id, baidu_account_id, start_date, end_date, q, campaign_id, page, page_size)
 
 
@@ -605,6 +614,10 @@ async def cockpit_keyword_detail(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     validate_query(request.query_params, {"tenant_id", "baidu_account_id", "start_date", "end_date"})
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_keyword_detail(
+            keyword_id, baidu_account_id, start_date, end_date
+        )
     return await read_keyword_detail(session, tenant_id, baidu_account_id, keyword_id, start_date, end_date)
 
 
