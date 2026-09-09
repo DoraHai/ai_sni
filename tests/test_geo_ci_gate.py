@@ -30,3 +30,30 @@ def test_ci_never_overwrites_existing_tables():
         with pytest.raises(ValueError, match='must be empty'):
             create_fixture_tables(object())
         create.assert_not_called()
+
+
+def test_ci_fixture_mirrors_0098_binding_read_contract_without_rows():
+    captured = {}
+
+    def capture(metadata, connection):
+        captured["connection"] = connection
+        captured["table"] = metadata.tables["public.demo_tenant_bindings"]
+
+    connection = object()
+    with patch(
+        'sqlalchemy.inspect',
+        return_value=SimpleNamespace(get_table_names=lambda: []),
+    ), patch('sqlalchemy.MetaData.create_all', autospec=True, side_effect=capture):
+        create_fixture_tables(connection)
+
+    table = captured["table"]
+    assert captured["connection"] is connection
+    assert list(table.columns) == [
+        table.c.tenant_id,
+        table.c.demo_tenant_id,
+        table.c.dataset_key,
+        table.c.dataset_version,
+        table.c.status,
+        table.c.version,
+    ]
+    assert table.c.tenant_id.primary_key

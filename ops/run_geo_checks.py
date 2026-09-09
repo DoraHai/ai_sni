@@ -33,7 +33,7 @@ def validate_ci_database(url):
 
 
 def create_fixture_tables(connection):
-    from sqlalchemy import BigInteger, Column, Date, MetaData, String, Table, inspect
+    from sqlalchemy import BigInteger, Column, Date, Integer, MetaData, String, Table, inspect
     import app.models  # Register mapped columns; no application startup.
     from app.database import Base
     if inspect(connection).get_table_names():
@@ -53,6 +53,18 @@ def create_fixture_tables(connection):
         Column('module_code', String),
         Column('status', String),
         Column('expires_at', Date),
+    )
+    # CI mirrors only the read contract owned by shared migrations 0097/0098.
+    # It deliberately creates no binding rows, history, loader, or runtime data.
+    Table(
+        'demo_tenant_bindings', metadata,
+        Column('tenant_id', BigInteger, primary_key=True),
+        Column('demo_tenant_id', BigInteger, nullable=False, unique=True),
+        Column('dataset_key', String(64), nullable=False, unique=True),
+        Column('dataset_version', String(40), nullable=False),
+        Column('status', String(16), nullable=False),
+        Column('version', Integer, nullable=False),
+        schema='public',
     )
     metadata.create_all(connection)
 
