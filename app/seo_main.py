@@ -21,19 +21,121 @@ from app.seo_scheduler import shutdown_seo_scheduler, start_seo_scheduler
 
 settings = get_settings()
 enforce_production_secrets(settings, hard_fail=True)
-SEO_REQUIRED_SCHEMA_REVISION = "0096_sem_tasks"
+SEO_REQUIRED_SCHEMA_REVISION = "0097_demo_tenant_bindings"
 # Runtime compatibility supports code-first rollout; it never authorizes the
 # separately reviewed migration operation.
 SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset(
-    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", SEO_REQUIRED_SCHEMA_REVISION}
+    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", "0096_sem_tasks", SEO_REQUIRED_SCHEMA_REVISION}
 )
 SEO_GEO_TICKET_REQUIRED_REVISIONS = frozenset(
-    {"0095_adopt_geo_ticket", "0096_sem_tasks"}
+    {"0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings"}
 )
 SEO_GEO_TICKET_SHAPE = {
     "owner_name": ("character varying(100)", False, None, "", "", "b", None, True),
     "due_date": ("date", False, None, "", "", "b", None, True),
 }
+SEO_DEMO_BINDING_COLUMNS = {
+    "demo_tenant_bindings": {
+        "tenant_id": ("bigint", True), "demo_tenant_id": ("bigint", True),
+        "dataset_key": ("character varying(64)", True), "dataset_version": ("character varying(40)", True),
+        "status": ("character varying(16)", True), "bound_by_user_id": ("bigint", True),
+        "bound_at": ("timestamp with time zone", True), "updated_by_user_id": ("bigint", True),
+        "updated_at": ("timestamp with time zone", True), "disabled_at": ("timestamp with time zone", False),
+        "version": ("integer", True), "notes": ("character varying(500)", False),
+    },
+    "demo_tenant_binding_history": {
+        "id": ("bigint", True), "tenant_id": ("bigint", True), "binding_version": ("integer", True),
+        "operation": ("character varying(16)", True), "before_snapshot": ("jsonb", False),
+        "after_snapshot": ("jsonb", True), "actor_user_id": ("bigint", True),
+        "reason": ("character varying(500)", True), "created_at": ("timestamp with time zone", True),
+    },
+}
+SEO_DEMO_BINDING_CONSTRAINTS = {
+    "demo_tenant_bindings": {
+        "pk_demo_tenant_bindings", "fk_demo_tenant_bindings_tenant", "fk_demo_tenant_bindings_bound_by",
+        "fk_demo_tenant_bindings_updated_by", "uq_demo_tenant_bindings_demo_tenant",
+        "uq_demo_tenant_bindings_dataset_key", "ck_demo_tenant_bindings_demo_tenant_positive",
+        "ck_demo_tenant_bindings_version_positive", "ck_demo_tenant_bindings_dataset_key_format",
+        "ck_demo_tenant_bindings_dataset_version_format", "ck_demo_tenant_bindings_status",
+        "ck_demo_tenant_bindings_disabled_state", "ck_demo_tenant_bindings_updated_time",
+        "ck_demo_tenant_bindings_disabled_time", "ck_demo_tenant_bindings_disabled_updater",
+    },
+    "demo_tenant_binding_history": {
+        "pk_demo_tenant_binding_history", "fk_demo_tenant_binding_history_tenant",
+        "fk_demo_tenant_binding_history_actor", "uq_demo_tenant_binding_history_tenant_version",
+        "ck_demo_tenant_binding_history_version_positive", "ck_demo_tenant_binding_history_operation",
+        "ck_demo_tenant_binding_history_before", "ck_demo_tenant_binding_history_after",
+        "ck_demo_tenant_binding_history_reason", "ck_demo_tenant_binding_history_links",
+        "ck_demo_tenant_binding_history_transition",
+    },
+}
+SEO_DEMO_BINDING_DEFAULTS = {
+    ("demo_tenant_bindings", "bound_at"): "now()",
+    ("demo_tenant_bindings", "updated_at"): "now()",
+    ("demo_tenant_bindings", "version"): "1",
+    ("demo_tenant_binding_history", "id"): "nextval('demo_tenant_binding_history_id_seq'::regclass)",
+    ("demo_tenant_binding_history", "created_at"): "now()",
+}
+SEO_DEMO_BINDING_CONSTRAINT_RULES = {
+    "pk_demo_tenant_bindings": ("primary key", "tenant_id"),
+    "fk_demo_tenant_bindings_tenant": ("foreign key", "tenant_id", "references tenants", "on delete restrict"),
+    "fk_demo_tenant_bindings_bound_by": ("foreign key", "bound_by_user_id", "references users", "on delete restrict"),
+    "fk_demo_tenant_bindings_updated_by": ("foreign key", "updated_by_user_id", "references users", "on delete restrict"),
+    "uq_demo_tenant_bindings_demo_tenant": ("unique", "demo_tenant_id"),
+    "uq_demo_tenant_bindings_dataset_key": ("unique", "dataset_key"),
+    "ck_demo_tenant_bindings_demo_tenant_positive": ("check", "demo_tenant_id", "> 0"),
+    "ck_demo_tenant_bindings_version_positive": ("check", "version", "> 0"),
+    "ck_demo_tenant_bindings_dataset_key_format": ("check", "dataset_key", "a-z0-9"),
+    "ck_demo_tenant_bindings_dataset_version_format": ("check", "dataset_version", "a-z0-9"),
+    "ck_demo_tenant_bindings_status": ("check", "status", "active", "disabled"),
+    "ck_demo_tenant_bindings_disabled_state": ("check", "status", "disabled_at", "is null", "is not null"),
+    "ck_demo_tenant_bindings_updated_time": ("check", "updated_at", "bound_at"),
+    "ck_demo_tenant_bindings_disabled_time": ("check", "disabled_at", "bound_at"),
+    "ck_demo_tenant_bindings_disabled_updater": ("check", "disabled", "updated_by_user_id"),
+    "pk_demo_tenant_binding_history": ("primary key", "id"),
+    "fk_demo_tenant_binding_history_tenant": ("foreign key", "tenant_id", "references tenants", "on delete restrict"),
+    "fk_demo_tenant_binding_history_actor": ("foreign key", "actor_user_id", "references users", "on delete restrict"),
+    "uq_demo_tenant_binding_history_tenant_version": ("unique", "tenant_id", "binding_version"),
+    "ck_demo_tenant_binding_history_version_positive": ("check", "binding_version", "> 0"),
+    "ck_demo_tenant_binding_history_operation": ("check", "operation", "create", "disable", "replace"),
+    "ck_demo_tenant_binding_history_before": ("check", "before_snapshot", "binding_version", "jsonb_typeof", "dataset_key", "updated_by_user_id"),
+    "ck_demo_tenant_binding_history_after": ("check", "after_snapshot", "binding_version", "jsonb_typeof", "dataset_key", "updated_by_user_id"),
+    "ck_demo_tenant_binding_history_reason": ("check", "btrim", "reason"),
+    "ck_demo_tenant_binding_history_links": ("check", "tenant_id", "actor_user_id", "updated_by_user_id"),
+    "ck_demo_tenant_binding_history_transition": ("check", "operation", "create", "replace", "disable", "active", "disabled"),
+}
+
+SEO_DEMO_BINDING_COLUMNS_SQL = text("""
+    SELECT c.relname, a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod), a.attnotnull,
+           pg_catalog.pg_get_expr(d.adbin, d.adrelid)
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+    JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid
+    LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+    WHERE n.nspname='public' AND c.relkind='r'
+      AND c.relname IN ('demo_tenant_bindings','demo_tenant_binding_history')
+      AND a.attnum > 0 AND NOT a.attisdropped
+    ORDER BY c.relname, a.attnum
+""")
+SEO_DEMO_BINDING_CONSTRAINTS_SQL = text("""
+    SELECT c.relname, con.conname, pg_catalog.pg_get_constraintdef(con.oid, true)
+    FROM pg_catalog.pg_constraint con
+    JOIN pg_catalog.pg_class c ON c.oid=con.conrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='public' AND c.relname IN ('demo_tenant_bindings','demo_tenant_binding_history')
+    ORDER BY c.relname, con.conname
+""")
+SEO_DEMO_BINDING_TRIGGER_SQL = text("""
+    SELECT c.relname, t.tgname, pg_catalog.pg_get_triggerdef(t.oid, true)
+    FROM pg_catalog.pg_trigger t
+    JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='public' AND c.relname IN ('demo_tenant_bindings','demo_tenant_binding_history')
+      AND NOT t.tgisinternal AND t.tgenabled <> 'D'
+""")
+SEO_DEMO_BINDING_SEQUENCE_SQL = text("""
+    SELECT pg_catalog.pg_get_serial_sequence('public.demo_tenant_binding_history', 'id')
+""")
 
 
 def _required_schema_columns():
@@ -133,6 +235,52 @@ async def _check_geo_ticket_adoption(conn):
         )
 
 
+async def _check_demo_binding_structure(conn):
+    column_rows = await conn.execute(SEO_DEMO_BINDING_COLUMNS_SQL)
+    columns = {table: {} for table in SEO_DEMO_BINDING_COLUMNS}
+    defaults = {}
+    for table, name, kind, not_null, default in column_rows:
+        if table in columns:
+            columns[table][name] = (kind, not_null)
+            if default is not None:
+                defaults[(table, name)] = " ".join(default.lower().split())
+    constraint_rows = await conn.execute(SEO_DEMO_BINDING_CONSTRAINTS_SQL)
+    constraints = {table: set() for table in SEO_DEMO_BINDING_CONSTRAINTS}
+    definitions = {}
+    for table, name, definition in constraint_rows:
+        if table in constraints:
+            constraints[table].add(name)
+            definitions[name] = " ".join(definition.lower().replace("public.", "").split())
+    trigger_rows = await conn.execute(SEO_DEMO_BINDING_TRIGGER_SQL)
+    triggers = {(table, name): " ".join(definition.lower().replace("public.", "").split()) for table, name, definition in trigger_rows}
+    definition_ok = all(
+        name in definitions and all(fragment in definitions[name] for fragment in fragments)
+        for name, fragments in SEO_DEMO_BINDING_CONSTRAINT_RULES.items()
+    )
+    expected_triggers = {
+        ("demo_tenant_binding_history", "trg_demo_tenant_binding_history_append_only"): ("before", "update", "delete", "for each row", "reject_demo_tenant_binding_history_mutation"),
+        ("demo_tenant_binding_history", "trg_demo_tenant_binding_history_no_truncate"): ("before", "truncate", "for each statement", "reject_demo_tenant_binding_history_mutation"),
+        ("demo_tenant_bindings", "trg_demo_tenant_bindings_no_delete"): ("before", "delete", "for each row", "reject_demo_tenant_binding_delete"),
+    }
+    trigger_ok = set(triggers) == set(expected_triggers) and all(
+        all(fragment in triggers[key] for fragment in fragments) for key, fragments in expected_triggers.items()
+    )
+    sequence_rows = await conn.execute(SEO_DEMO_BINDING_SEQUENCE_SQL)
+    sequence = next(iter(sequence_rows.scalars()), None)
+    sequence_ok = sequence is not None and sequence.removeprefix("public.") == "demo_tenant_binding_history_id_seq"
+    if (columns != SEO_DEMO_BINDING_COLUMNS
+            or constraints != SEO_DEMO_BINDING_CONSTRAINTS
+            or defaults != SEO_DEMO_BINDING_DEFAULTS
+            or not definition_ok or not trigger_ok or not sequence_ok):
+        raise RuntimeError(
+            "0097 demo binding control-plane objects missing or incompatible: "
+            f"column_keys={{{', '.join(f'{table}:{sorted(values)}' for table, values in columns.items())}}}; "
+            f"constraint_names={{{', '.join(f'{table}:{sorted(values)}' for table, values in constraints.items())}}}; "
+            f"default_keys={sorted(defaults)}; definition_ok={definition_ok}; "
+            f"trigger_names={sorted(triggers)}; trigger_ok={trigger_ok}; sequence_ok={sequence_ok}"
+        )
+
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -184,6 +332,8 @@ async def seo_health(response: Response) -> dict:
             await _check_seo_structure(conn)
             if revisions[0] in SEO_GEO_TICKET_REQUIRED_REVISIONS:
                 await _check_geo_ticket_adoption(conn)
+            if revisions[0] == "0097_demo_tenant_bindings":
+                await _check_demo_binding_structure(conn)
             schema_status = "ok"
     except Exception as exc:  # noqa: BLE001 - health must report infra failure
         db_status = "error"
