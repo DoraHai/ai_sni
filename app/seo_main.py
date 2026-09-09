@@ -21,10 +21,10 @@ from app.seo_scheduler import shutdown_seo_scheduler, start_seo_scheduler
 
 settings = get_settings()
 enforce_production_secrets(settings, hard_fail=True)
-SEO_REQUIRED_SCHEMA_REVISION = "0094_seo_qa_batches"
+SEO_REQUIRED_SCHEMA_REVISION = "0095_adopt_geo_ticket"
 # Add a shared migration revision only after its ID, parent and DDL are reviewed.
 # Reviewed #370 source package; enabling compatibility does not authorize migration.
-SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset({SEO_REQUIRED_SCHEMA_REVISION, "0095_sem_tasks"})
+SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset({"0094_seo_qa_batches", SEO_REQUIRED_SCHEMA_REVISION})
 
 
 def _required_schema_columns():
