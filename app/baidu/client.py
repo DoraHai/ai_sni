@@ -22,7 +22,11 @@ from typing import Any
 
 import httpx
 
-from app.config import get_settings, resolve_baidu_write_dry_run
+from app.config import (
+    get_settings,
+    reject_sem_demo_action,
+    resolve_baidu_write_dry_run,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +110,10 @@ class BaiduAPIClient:
         tenant_id: int | None = None,
         baidu_account_id: int | None = None,
     ):
+        settings = get_settings()
+        reject_sem_demo_action(
+            settings, "Baidu client access", "sem_baidu_client_enabled"
+        )
         if not username or not access_token:
             raise ValueError("BaiduAPIClient 必须提供 username 和 access_token")
         self._username = username
@@ -113,7 +121,7 @@ class BaiduAPIClient:
         self._timeout = timeout
         self._tenant_id = tenant_id
         self._baidu_account_id = baidu_account_id
-        self._base_url = get_settings().baidu_api_base_url.rstrip("/")
+        self._base_url = settings.baidu_api_base_url.rstrip("/")
 
     async def call(
         self,

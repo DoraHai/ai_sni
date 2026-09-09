@@ -9,7 +9,11 @@ import re
 
 import httpx
 
-from app.config import get_settings
+from app.config import (
+    get_settings,
+    is_sem_demo_runtime,
+    reject_sem_demo_async_action,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,12 +93,15 @@ def _resolve_creds(
 def is_enabled() -> bool:
     """是否配置了可用 AI Key（优先百炼 env，其次 DeepSeek）。"""
     s = get_settings()
+    if is_sem_demo_runtime(s):
+        return False
     return bool(
         (getattr(s, "dashscope_api_key", None) or "").strip()
         or (s.deepseek_api_key or "").strip()
     )
 
 
+@reject_sem_demo_async_action("external model access")
 async def chat_json(
     system: str,
     user: str,
@@ -145,6 +152,7 @@ async def chat_json(
         raise DeepSeekError(f"AI 调用/解析失败: {e}") from e
 
 
+@reject_sem_demo_async_action("external model access")
 async def chat_messages(
     messages: list[dict],
     json_mode: bool = False,

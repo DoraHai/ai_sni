@@ -146,9 +146,11 @@ def test_sem_lifespan_only_starts_sem_scheduler():
     node = next(n for n in ast.parse(source).body if isinstance(n, ast.AsyncFunctionDef) and n.name == "lifespan")
     start, stop, guard = Mock(), Mock(), Mock()
     namespace = dict(asynccontextmanager=asynccontextmanager, FastAPI=object,
-                     enforce_production_secrets=guard, start_scheduler=start, shutdown_scheduler=stop,
-                     settings=SimpleNamespace(app_env="test", app_base_url="https://example.invalid", baidu_default_username="dummy"),
-                     logger=Mock())
+                         enforce_production_secrets=guard, start_scheduler=start, shutdown_scheduler=stop,
+                         enforce_sem_demo_runtime_config=Mock(),
+                         is_sem_demo_runtime=lambda _settings: False,
+                         settings=SimpleNamespace(app_env="test", app_base_url="https://example.invalid", baidu_default_username="dummy"),
+                         logger=Mock())
     # Execute the actual lifecycle function, not a copied implementation.
     assert "app.geo" not in ast.unparse(node)
     exec(compile(ast.Module(body=[node], type_ignores=[]), "lifespan", "exec"), namespace)

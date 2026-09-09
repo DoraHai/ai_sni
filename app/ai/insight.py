@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
 from app.api.dashboard import DEVICE_LABELS, _period_kpi
 from app.baidu.services.diagnosis import DIMENSION_LABELS, FluctuationService
+from app.config import get_settings, is_sem_demo_runtime
 from app.models import Alert, BaiduAccount, Campaign, DailyInsight, KwReportSnapshot, Tenant
 
 logger = logging.getLogger(__name__)
@@ -159,6 +160,21 @@ async def generate_insight(
     force: bool = False,
 ) -> DailyInsight | None:
     """生成或取缓存某租户某天的洞察。未配 key 返回 None；AI 失败返回旧缓存（若有）。"""
+    if is_sem_demo_runtime(get_settings()):
+        if target_date is None:
+            target_date = await session.scalar(
+                select(func.max(DailyInsight.insight_date)).where(
+                    DailyInsight.tenant_id == tenant.id
+                )
+            )
+        if target_date is None:
+            return None
+        return await session.scalar(
+            select(DailyInsight).where(
+                DailyInsight.tenant_id == tenant.id,
+                DailyInsight.insight_date == target_date,
+            )
+        )
     if not is_enabled():
         return None
     if target_date is None:

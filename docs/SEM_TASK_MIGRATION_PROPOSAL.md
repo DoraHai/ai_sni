@@ -1,5 +1,14 @@
 # SemTask 迁移提案——仅开发审核，不合并或执行
 
+> **候选已暂停编号。** 跨模块审计发现 `0074_geo_ticket_assignment` 是生产 `0094`
+> 未包含的另一分支。`0095_sem_tasks -> 0094_seo_qa_batches` 只保留为历史 DDL 候选，
+> 不得注册、复制或执行；等待生产 catalog 只读结果及统筹确定 merge、SemTask 和 demo binding
+> 的最终顺序与编号。实施前审计见 `SEM_TASK_PREIMPLEMENTATION_AUDIT.md`。
+>
+> 数据库/服务器侧
+> 已回传生产当前为单行 `0094_seo_qa_batches` 且 `sem_tasks` 不存在；本任务未连接生产库。
+> 本文后续出现的 `0093` 描述均为历史现场记录，不应替代新的执行前预检。
+
 ## 给 SEO PR #369 的候选契约
 
 - 草案 revision：`0095_sem_tasks`。

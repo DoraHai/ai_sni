@@ -3,7 +3,8 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, text
@@ -55,7 +56,13 @@ from app.baidu.sync import (
     sync_url_candidates_for_account,
 )
 from app.classification import reclassify_keywords
-from app.config import get_settings
+from app.config import (
+    SemDemoRuntimeBlockedError,
+    enforce_sem_demo_runtime_config,
+    get_settings,
+    is_sem_demo_runtime,
+    sem_demo_http_mutation_blocked,
+)
 from app.database import async_session_factory, engine, get_session
 from app.http_errors import register_infra_handlers
 from app.models import BaiduAccount, Keyword, Tenant
@@ -77,21 +84,55 @@ logger = logging.getLogger("sem-backend")
 async def lifespan(_app: FastAPI):
     """生产配置先自检，再启动调度器；退出时保证释放调度资源。"""
     enforce_production_secrets(settings, hard_fail=True)
+    enforce_sem_demo_runtime_config(settings)
     logger.info(
         "SEM 后端启动：env=%s base_url=%s default_user=%s",
         settings.app_env,
         settings.app_base_url,
         settings.baidu_default_username,
     )
-    start_scheduler()
+    scheduler_started = False
+    if (
+        getattr(settings, "sem_scheduler_enabled", True)
+        and not is_sem_demo_runtime(settings)
+    ):
+        start_scheduler()
+        scheduler_started = True
     try:
         yield
     finally:
-        shutdown_scheduler()
+        if scheduler_started:
+            shutdown_scheduler()
 
 
 app = FastAPI(title="SEM 智投平台后端", version="0.3.0", lifespan=lifespan)
 register_infra_handlers(app)
+
+
+@app.exception_handler(SemDemoRuntimeBlockedError)
+async def sem_demo_action_blocked(
+    _request: Request, exc: SemDemoRuntimeBlockedError
+):
+    return JSONResponse(
+        status_code=403,
+        content={"detail": str(exc), "code": "sem_demo_action_blocked"},
+    )
+
+
+@app.middleware("http")
+async def enforce_sem_demo_read_only(request: Request, call_next):
+    """Allow login and reads in demo; reject every other HTTP mutation centrally."""
+    if sem_demo_http_mutation_blocked(
+        settings, request.method, request.url.path
+    ):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "SEM demo runtime is read-only",
+                "code": "sem_demo_read_only",
+            },
+        )
+    return await call_next(request)
 
 # 原型页（file:// 或其他域名）直连接口需要 CORS。API Key 走自定义头/查询参数，不涉及 credentials。
 app.add_middleware(

@@ -1,5 +1,6 @@
 import re
-from functools import lru_cache
+from functools import lru_cache, wraps
+from typing import Awaitable, Callable, ParamSpec, TypeVar
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -23,6 +24,87 @@ SEM_CUSTOMER_LIVE_WRITE_SCOPES = frozenset(
         "keyword_pause",
     }
 )
+
+_DEMO_RUNTIME_FLAG_NAMES = (
+    "sem_scheduler_enabled",
+    "sem_baidu_client_enabled",
+    "sem_external_actions_enabled",
+    "sem_write_endpoints_enabled",
+)
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+class SemDemoRuntimeBlockedError(RuntimeError):
+    """A side-effecting SEM capability was invoked in the demo runtime."""
+
+
+def is_sem_demo_runtime(settings: object) -> bool:
+    return str(getattr(settings, "app_env", "") or "").strip().casefold() == "demo"
+
+
+def enforce_sem_demo_runtime_config(settings: object) -> None:
+    """Require every execution capability to be explicitly disabled in demo."""
+    if not is_sem_demo_runtime(settings):
+        return
+    unsafe = [
+        name for name in _DEMO_RUNTIME_FLAG_NAMES
+        if getattr(settings, name, True) is not False
+    ]
+    if unsafe:
+        raise RuntimeError(
+            "SEM demo runtime requires explicit false flags: " + ", ".join(unsafe)
+        )
+
+
+def reject_sem_demo_action(
+    settings: object,
+    capability: str,
+    flag_name: str = "sem_external_actions_enabled",
+) -> None:
+    """Block demo actions and honor an explicitly disabled runtime capability."""
+    if (
+        is_sem_demo_runtime(settings)
+        or getattr(settings, flag_name, True) is False
+    ):
+        raise SemDemoRuntimeBlockedError(
+            f"SEM runtime blocks {capability}"
+        )
+
+
+def sem_demo_http_mutation_blocked(
+    settings: object,
+    method: str,
+    path: str,
+) -> bool:
+    """Keep login available while the demo HTTP surface remains read-only."""
+    return (
+        (
+            getattr(settings, "sem_write_endpoints_enabled", True) is False
+            and method.upper() not in {"GET", "HEAD", "OPTIONS"}
+            and path != "/api/v1/auth/login"
+        )
+        or (
+            getattr(settings, "sem_external_actions_enabled", True) is False
+            and path == "/api/oauth/baidu/callback"
+        )
+    )
+
+
+def reject_sem_demo_async_action(
+    capability: str,
+    flag_name: str = "sem_external_actions_enabled",
+) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
+    """Guard internal async entry points that can run outside HTTP routing."""
+    def decorate(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
+        @wraps(func)
+        async def guarded(*args: P.args, **kwargs: P.kwargs) -> R:
+            reject_sem_demo_action(get_settings(), capability, flag_name)
+            return await func(*args, **kwargs)
+
+        return guarded
+
+    return decorate
 
 
 def parse_positive_id_csv(value: str, *, label: str) -> frozenset[int]:
@@ -151,6 +233,13 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     app_base_url: str = "https://gsnipers.snipers.com.cn"
+
+    # Production/dev compatibility defaults to enabled. APP_ENV=demo must set all
+    # four flags explicitly false or startup fails before any scheduler is started.
+    sem_scheduler_enabled: bool = True
+    sem_baidu_client_enabled: bool = True
+    sem_external_actions_enabled: bool = True
+    sem_write_endpoints_enabled: bool = True
 
     database_url: str = Field(..., description="SQLAlchemy async URL，需用 postgresql+asyncpg 方言")
 

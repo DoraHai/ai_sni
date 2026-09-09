@@ -59,6 +59,7 @@ from app.security.sem_identity import (
     ensure_sem_identity_access,
     filter_identity_safe_active_accounts,
 )
+from app.config import reject_sem_demo_async_action
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ def _release_tenant_sync_lock(fh) -> None:
     release_file_lock(fh)
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def refresh_keyword_workbench_snapshot(
     session,
     tenant: Tenant,

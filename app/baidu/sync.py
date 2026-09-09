@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.baidu.client import BaiduAPIClient, BaiduAPIError
+from app.config import reject_sem_demo_async_action
 from app.baidu.services.account import AccountService
 from app.baidu.services.adgroup import AdgroupService
 from app.baidu.services.campaign import CampaignService
@@ -217,6 +218,7 @@ def _province_name(row: dict[str, Any]) -> str:
     return str(province).strip()
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_keyword_report_for_account(
     session: AsyncSession,
     baidu_account: BaiduAccount,
@@ -228,6 +230,7 @@ async def sync_keyword_report_for_account(
     )
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_keyword_report_range_for_account(
     session: AsyncSession,
     baidu_account: BaiduAccount,
@@ -345,6 +348,7 @@ async def sync_keyword_report_range_for_account(
     return len(records)
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_keyword_dimension_reports_for_account(
     session: AsyncSession,
     baidu_account: BaiduAccount,
@@ -403,6 +407,7 @@ async def sync_keyword_dimension_reports_for_account(
     return {"region": len(region_records), "hourly": len(hourly_records)}
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_region_snapshot(
     session: AsyncSession,
     tenant: Tenant | None,
@@ -468,6 +473,7 @@ async def sync_region_snapshot(
     return len(records)
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_keyword_region_snapshots_for_account(
     session: AsyncSession,
     baidu_account: BaiduAccount,
@@ -553,6 +559,7 @@ async def _chunked_upsert(
     await session.commit()
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_campaigns_for_account(
     session: AsyncSession, baidu_account: BaiduAccount
 ) -> int:
@@ -599,6 +606,7 @@ async def sync_campaigns_for_account(
     return len(records)
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_adgroups_for_account(
     session: AsyncSession, baidu_account: BaiduAccount
 ) -> int:
@@ -658,6 +666,7 @@ async def sync_adgroups_for_account(
     return len(records)
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_price_strategies_for_account(
     session: AsyncSession, baidu_account: BaiduAccount
 ) -> int:
@@ -704,6 +713,7 @@ async def sync_price_strategies_for_account(
     return len(records)
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_ocpc_packages_for_account(
     session: AsyncSession, baidu_account: BaiduAccount
 ) -> int:
@@ -761,6 +771,7 @@ async def sync_ocpc_packages_for_account(
     return len(records)
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_keywords_for_account(
     session: AsyncSession, baidu_account: BaiduAccount
 ) -> int:
@@ -874,6 +885,7 @@ def _legacy_operation_record_dedup_key(fields: tuple[str, ...]) -> str:
     return hashlib.md5("|".join(fields).encode("utf-8")).hexdigest()
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_operation_records_for_account(
     session: AsyncSession,
     baidu_account: BaiduAccount,
@@ -1061,6 +1073,7 @@ def _planner_row_to_record(
     }
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_planner_candidates_for_account(
     session: AsyncSession,
     baidu_account: BaiduAccount,
@@ -1104,6 +1117,7 @@ async def sync_planner_candidates_for_account(
     return len(records)
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_query_candidates_for_account(
     session: AsyncSession,
     baidu_account: BaiduAccount,
@@ -1257,6 +1271,7 @@ def _merge_search_term_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(merged.values())
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_search_terms_for_account(
     session: AsyncSession,
     baidu_account: BaiduAccount,
@@ -1359,6 +1374,7 @@ async def sync_search_terms_for_account(
     return len(records)
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_url_candidates_for_account(
     session: AsyncSession,
     baidu_account: BaiduAccount,
@@ -1436,6 +1452,7 @@ async def sync_url_candidates_for_account(
     return len(records), details
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_keyword_report_for_all_active_accounts(
     session: AsyncSession, target_date: date
 ) -> dict[str, int]:
@@ -1462,6 +1479,7 @@ async def sync_keyword_report_for_all_active_accounts(
 LEAD_SOLUTION_TYPES = ["phone", "consult", "form", "wechat", "callback", "follow"]
 
 
+@reject_sem_demo_async_action("SEM external sync")
 async def sync_leads_for_account(
     session: AsyncSession,
     baidu_account: BaiduAccount,
