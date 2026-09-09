@@ -123,7 +123,7 @@ function metricCard(report, key, label, unit) {
     id: `sem-${key}`, moduleCode: 'sem', moduleLabel: 'SEM', label, display: shown.text, unit: '', state: shown.state === 'coverage_unknown' ? 'partial' : shown.state,
     reason: shown.note, contextRevision: viewState.revision,
     periodLabel: `${report.window.start} 至 ${report.window.end}`,
-    sourceLabel: '百度推广已有关键词报告', updatedLabel: report.coverage.updated_at || '未知',
+    sourceLabel: report.is_demo ? '版本化 SEM 内置演示数据' : '百度推广已有关键词报告', updatedLabel: report.coverage.updated_at || '未知',
     series: report.trend.map(row => ({ label: row.date.slice(5), value: row[key], display: point(row) })),
     columns: [{ key: 'date', label: '日期' }, { key: 'value', label }],
     rows: report.trend.map(row => ({ date: row.date, value: point(row) })),
