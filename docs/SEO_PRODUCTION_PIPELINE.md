@@ -133,39 +133,42 @@ not a database rollback.
 
 ## Shared SemTask compatibility: current Draft implementation
 
-Development of the actual two-version allowlist is now authorized. PR #369
-remains Draft: do not merge, deploy or execute a migration. This supersedes the
-current-only/test-patched allowlist described in the historical review notes below.
+PR #369 remains Draft: do not merge, deploy or execute a migration. Its two-version
+allowlist (`0094_seo_qa_batches`, `0095_sem_tasks`) was built against an incomplete
+shared-history inventory and is no longer a valid deployment candidate. The
+separate GEO revision `0074_geo_ticket_assignment` is not an ancestor of 0094.
+The runtime allowlist must remain unchanged until the shared owner approves a
+merge revision and its exact identifier; the stale direct-0095 target must then
+be replaced and the full rejection/structure test matrix rerun.
 
-The runtime allowlist contains exactly `0094_seo_qa_batches` and `0095_sem_tasks`.
-The required SEO baseline stays `0094_seo_qa_batches`. A healthy result requires
-exactly one allowed revision row AND the existing necessary SEO structure checks.
-Unknown, empty, duplicate or multiple rows fail, including a row for each of the
-two individually allowed versions. Tests use the actual allowlist without patching.
-Missing tables/columns, integer/JSONB mismatches and catalog errors still fail.
+The health-check behavior remains required: exactly one reviewed revision row
+and all necessary SEO structures must be present. Unknown, empty, duplicate or
+multiple rows fail. Missing tables/columns, integer/JSONB mismatches and catalog
+errors also fail. The presence of both individually allowed rows must never be
+treated as healthy.
 
-Source contract: #370 at `a62a003262f53fab1d1e8ec69175e747266b9469`, direct
-parent `0094_seo_qa_batches` to target `0095_sem_tasks`. Relative to reviewed
-`66455f1`, only execution-design documentation, a read-only preflight script and
-its offline tests were added; candidate migration, source lock, builder and env
-are unchanged. The preflight script has not been executed by this SEO task.
-This is compatibility implementation, not approval of the production executor.
+PR #370 at `a62a003262f53fab1d1e8ec69175e747266b9469` still provides useful
+SemTask DDL and execution-design evidence, but its direct
+`0094_seo_qa_batches -> 0095_sem_tasks` lineage is superseded by the newly found
+GEO branch. This is a compatibility review, not approval of a production runner.
 
 ### Separate approval and rollback requirements
 
-1. Independently approve and deploy the SEO compatibility release first. Record
-   its exact commit, artifact checksum and successful health result against the
-   current 0094 database. Development approval is not deployment approval.
+1. After the shared merge identifier is approved, update, independently approve
+   and deploy the SEO compatibility release first. Record its exact commit,
+   artifact checksum and successful health result against the current 0094
+   database. Development approval is not deployment approval.
 2. Before separately approving the database migration, retain an independently
-   reviewed, tested and deployable rollback artifact that also accepts BOTH 0094
-   and 0095 and preserves the required structure checks. Record its exact commit
-   and checksum in the release record. No rollback artifact is designated by
-   this Draft, and a generic previous-release symlink is insufficient evidence.
-3. Only after separate migration approval may the database advance to 0095.
-   After that, never roll SEO back to an older 0094-only health checker (including
-   backend baseline `4e83611`). Application rollback must use the recorded
-   compatible artifact; do not stamp/downgrade the version table or drop SemTask
-   audit data to make an older application appear healthy.
+   reviewed, tested and deployable rollback artifact that accepts BOTH 0094 and
+   the approved merge head and preserves the required structure checks. Record
+   its exact commit and checksum in the release record. No rollback artifact is
+   designated by this Draft, and a generic previous-release symlink is
+   insufficient evidence.
+3. Only after separate migration approval may the database advance to the merge
+   head. After that, never roll SEO back to an older 0094-only health checker
+   (including backend baseline `4e83611`). Application rollback must use the
+   recorded compatible artifact; do not stamp/downgrade the version table or
+   drop SemTask audit data to make an older application appear healthy.
 4. If no eligible rollback artifact is available, the migration is not ready
    for execution approval. Shared schema reconciliation, production execution
    review and SemTask enablement remain separate gates.
@@ -338,6 +341,11 @@ SEM revision `0076_oauth_rebind_intent` is therefore an ancestor of 0094 via
 `0074_suggestion_workflow` is a distinct SEM revision and is also included.
 Do not identify a revision by its numeric prefix alone.
 
+The separate GEO revision `0074_geo_ticket_assignment`, whose parent is
+`0073_geo_schema_repair`, is **not** an ancestor of 0094. Its upgrade adds nullable
+`owner_name VARCHAR(100)` and `due_date DATE` columns to `geo_action_tickets`.
+It must not be confused with `0074_merge_geo_seo_heads`.
+
 ### Empty database executability and known blockers
 
 The source graph is structurally complete for an online `base -> 0094`
@@ -376,19 +384,35 @@ migration is BIGINT, matching the SemTask proposal. A future binding table must
 reference that same type and must not introduce a second Alembic version table
 or a module-local migration root.
 
-### Reserved single linear sequence
+### Provisional shared sequence (not yet reserved)
 
-The only acceptable next sequence is:
+The source-complete candidate order is:
 
-1. `0095_sem_tasks`, `down_revision = "0094_seo_qa_batches"`.
-2. `0096_demo_tenant_bindings`, `down_revision = "0095_sem_tasks"`.
+1. `0095_merge_0094_geo_ticket` (provisional name), with
+   `down_revision = ("0094_seo_qa_batches", "0074_geo_ticket_assignment")` and
+   no DDL.
+2. `0096_sem_tasks`, parented to the approved merge revision.
+3. `0097_demo_tenant_bindings`, parented to the approved SemTask revision.
 
-Do not allocate both migrations as children of 0094, reuse module-local 0076 or
-0074 identifiers, or add a merge revision after creating parallel heads. The
-0096 identifier is a reservation, not approval of its unreviewed DDL. Before
-0096 can run, every service health allowlist that may serve that database must
-be reviewed to accept the exact new head while retaining required-structure
-checks. Deploying 0095-compatible code does not imply 0096 compatibility.
+No identifier above is locked until the shared migration owner reviews the live
+production version rows and confirms whether `geo_action_tickets.owner_name` and
+`geo_action_tickets.due_date` exist. Do not allocate SemTask or binding revisions
+as children of 0094, reuse module-local identifiers, or copy the provisional files
+into the formal directory before that decision.
+
+If production is at 0094 and both GEO columns are absent, the normal merge path
+executes `0074_geo_ticket_assignment` before recording the no-DDL merge. If either
+column already exists while the version row is absent, that path can fail on a
+duplicate column. Do not stamp around this state. The shared owner must choose and
+review an explicit reconciliation strategy from the catalog evidence.
+
+A temporary source-only Alembic graph (no migration file retained) proved one
+head and no duplicate/missing revisions for this candidate. `base -> merge`
+contains 113 revisions: the 111 revisions reachable from 0094, the GEO ticket
+revision, and the merge. `0094 -> merge` plans exactly
+`0074_geo_ticket_assignment`, then `0095_merge_0094_geo_ticket`; 0094 ancestors
+are not rerun. Adding the two later placeholders produces 115 revisions and one
+head, `0097_demo_tenant_bindings`. This is graph proof only, not online execution.
 
 ### Required database rehearsals
 
@@ -397,11 +421,14 @@ step may target `sem_prod` or a production hostname.
 
 **Fresh empty database:** create a PostgreSQL 16 database with an empty public
 schema; record server/search path/role; run the exact shared source online from
-base to 0094; assert one `alembic_version` row at 0094, all 111 revisions
-reachable, required SEO/SEM/GEO structures present, FKs/indexes/checks valid,
-and no unexpected schema. Then install the reviewed 0095 and 0096 files in
-order and execute each exact target separately, catalog-diffing only its
-approved objects.
+base to the approved merge; assert one `alembic_version` row at that merge, all
+113 revisions reachable, both GEO ticket columns present, required SEO/SEM/GEO
+structures present, FKs/indexes/checks valid, and no unexpected schema. The
+common ancestors must execute once, both branches must execute, and the no-DDL
+merge must consolidate the version table. Then install and execute the reviewed
+SemTask and binding files one target at a time, catalog-diffing only their
+approved objects. This online PostgreSQL 16 proof remains required because the
+0048/0049 offline-mode blocker prevents valid full SQL generation.
 
 **Second no-op:** at each target, capture schema and row-count fingerprints,
 run `alembic upgrade <same-target>` again, and require identical revision,
@@ -410,12 +437,17 @@ may execute twice and no additional head may appear.
 
 **Existing sem_prod-shaped upgrade:** restore a verified sanitized schema-only
 snapshot whose recorded revision and required structures both match 0094;
-verify one version row and absence of every target object; capture owners,
-grants, constraints, indexes and sentinel row counts; execute only 0095, then
-only 0096 after its separate approval; verify existing objects/data are
-unchanged and only the approved objects were added. The real `sem_prod` remains
-read-only until this rehearsal, backup/PITR evidence and an execution window
-are separately approved.
+verify one version row and the catalog state of both GEO ticket columns; capture
+owners, grants, constraints, indexes and sentinel row counts. When both columns
+are absent, execute only the approved merge target and verify that Alembic runs
+the missing GEO revision followed by the merge, without rerunning 0094 ancestors.
+Under the PostgreSQL transaction used by `migrations/env.py`, successful commit
+should leave one merge version row; any failure must roll the transaction back.
+Verify this behavior in the disposable PostgreSQL 16 rehearsal. Execute SemTask
+and binding only after their separate approvals and confirm that existing
+objects/data remain unchanged except for the approved additions. The real
+`sem_prod` remains read-only until this rehearsal, backup/PITR evidence and an
+execution window are separately approved.
 
 **Drop/rebuild determinism:** drop only the disposable database, recreate it,
 repeat the full online sequence with the same source and role, and compare the
@@ -424,7 +456,12 @@ for an empty demo database. Do not use `alembic downgrade` as the rebuild path:
 the reviewed SemTask proposal intentionally refuses destructive downgrade and
 task audit data must not be dropped after use.
 
-Blocking inputs before implementation are the final source-locked 0095 file,
-reviewed 0096 DDL/object inventory, service-role ownership and grants, and the
-disposable PostgreSQL online rehearsal. The dual-data-source runtime and demo
+Blocking inputs before implementation are the read-only production catalog and
+complete live-head inventory, the shared owner's exact merge identifier, a
+source-locked SemTask file rebased onto that merge, reviewed binding DDL/object
+inventory, service-role ownership and grants, and the disposable PostgreSQL 16
+online rehearsal. Before any database merge is deployed, a separately reviewed
+health-check release must accept 0094 and the approved merge head while rejecting
+unknown/multiple rows and missing required structures; the stale direct
+`0095_sem_tasks` allowlist is insufficient. The dual-data-source runtime and demo
 tenant authorization remain separate application reviews.
