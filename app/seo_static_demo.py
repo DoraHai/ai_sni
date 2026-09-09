@@ -362,10 +362,12 @@ def _required_demo_permission(path: str) -> str:
     return "seo.dashboard"
 
 
-async def _authenticate_demo_request(request: Request) -> AuthContext:
+async def _authenticate_demo_request(request: Request) -> AuthContext | None:
     authorization = request.headers.get("authorization", "")
     scheme, _, token = authorization.partition(" ")
-    bearer = HTTPAuthorizationCredentials(scheme=scheme, credentials=token) if scheme.lower() == "bearer" and token else None
+    if scheme.lower() != "bearer" or not token:
+        return None
+    bearer = HTTPAuthorizationCredentials(scheme=scheme, credentials=token)
     async with async_session_factory() as session:
         return await require_auth(bearer=bearer, header_key=None, key=None, session=session)
 
@@ -382,21 +384,27 @@ async def serve_static_demo(request: Request) -> JSONResponse | None:
         except (ValueError, RuntimeError):
             body = None
     try:
-        tenant_id = _tenant_from_request(request.query_params, body)
-    except HTTPException as exc:
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-    if tenant_id != DEMO_TENANT_ID:
+        ctx = await _authenticate_demo_request(request)
+    except HTTPException:
+        # Preserve the existing route's authentication response and behavior.
+        return None
+    if (
+        ctx is None
+        or ctx.is_superadmin
+        or ctx.username != DEMO_USERNAME
+        or ctx.tenant_id != DEMO_TENANT_ID
+    ):
         return None
     try:
+        tenant_id = _tenant_from_request(request.query_params, body)
+        if tenant_id is not None:
+            ctx.ensure_tenant(tenant_id)
         _validate_demo_site(request.query_params, body)
     except HTTPException as exc:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-    try:
-        ctx = await _authenticate_demo_request(request)
-    except HTTPException as exc:
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-    if ctx.username != DEMO_USERNAME or ctx.tenant_id != DEMO_TENANT_ID:
-        return JSONResponse(status_code=403, content={"detail": "tenant 16 演示数据仅向批准的只读身份开放", "code": "seo_static_demo_identity_mismatch"})
+    if request.url.path.rstrip("/") == "/api/v1/seo/content-distribution/catalog":
+        # This global catalog is already a pure static response with no tenant data.
+        return None
     if not ctx.can_view(_required_demo_permission(request.url.path)):
         return JSONResponse(status_code=403, content={"detail": "当前演示身份没有 SEO 只读权限", "code": "seo_static_demo_permission_denied"})
     resolved = resolve_demo_response(request.method, request.url.path, request.query_params, body)

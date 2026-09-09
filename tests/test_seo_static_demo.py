@@ -231,19 +231,20 @@ def test_middleware_intercepts_only_exact_demo_identity(monkeypatch):
     assert payload["site"]["id"] == 1601
     assert payload["demo_meta"]["persisted"] is False
 
-    assert asyncio.run(serve_static_demo(
-        request("/api/v1/seo/overview?tenant_id=15&site_id=1601")
-    )) is None
+    omitted = asyncio.run(serve_static_demo(request("/api/v1/seo/overview?site_id=1601")))
+    assert omitted is not None and omitted.status_code == 200
 
 
-def test_middleware_rejects_wrong_identity_and_missing_permissions(monkeypatch):
+def test_other_identity_uses_original_production_route(monkeypatch):
     async def wrong_identity(_request):
         return demo_context(username="another_user")
 
     monkeypatch.setattr("app.seo_static_demo._authenticate_demo_request", wrong_identity)
     response = asyncio.run(serve_static_demo(request("/api/v1/seo/overview?tenant_id=16")))
-    assert response.status_code == 403
-    assert json.loads(response.body)["code"] == "seo_static_demo_identity_mismatch"
+    assert response is None
+
+
+def test_demo_identity_still_requires_endpoint_permission(monkeypatch):
 
     async def no_permission(_request):
         return demo_context(permissions={})
@@ -270,11 +271,11 @@ def test_middleware_enforces_exact_site_and_endpoint_permission(monkeypatch):
     assert content.status_code == 403
 
 
-def test_middleware_rejects_malformed_or_conflicting_scope_before_auth(monkeypatch):
-    async def should_not_run(_request):
-        raise AssertionError("authentication must not run for malformed scope")
+def test_demo_identity_cannot_bypass_scope_with_malformed_or_conflicting_tenant(monkeypatch):
+    async def approved(_request):
+        return demo_context()
 
-    monkeypatch.setattr("app.seo_static_demo._authenticate_demo_request", should_not_run)
+    monkeypatch.setattr("app.seo_static_demo._authenticate_demo_request", approved)
     malformed = asyncio.run(
         serve_static_demo(request("/api/v1/seo/overview?tenant_id=16.0"))
     )
@@ -289,6 +290,21 @@ def test_middleware_rejects_malformed_or_conflicting_scope_before_auth(monkeypat
         )
     )
     assert conflict.status_code == 422
+
+    tampered = asyncio.run(
+        serve_static_demo(request("/api/v1/seo/overview?tenant_id=15&site_id=1601"))
+    )
+    assert tampered.status_code == 403
+
+
+def test_superadmin_never_enters_static_demo(monkeypatch):
+    async def superadmin(_request):
+        return demo_context(is_superadmin=True)
+
+    monkeypatch.setattr("app.seo_static_demo._authenticate_demo_request", superadmin)
+    assert asyncio.run(
+        serve_static_demo(request("/api/v1/seo/overview?tenant_id=16&site_id=1601"))
+    ) is None
 
 
 def test_unknown_tenant16_endpoint_fails_closed():
