@@ -89,6 +89,16 @@ async def environment(*, extra_models=(), legacy_routes=False):
         identity['sessions'] = sessions
         app.dependency_overrides[get_session] = query_session
         app.dependency_overrides[require_auth] = lambda: identity['ctx']
+
+        async def routed_read_session():
+            async for session in read_db.production_read_session():
+                yield session
+
+        # The production dependency uses a writable control session for the
+        # binding lock, then opens a separate read-only data session.  Keep the
+        # fixture's get_session read-only proof for router entitlement and
+        # legacy GETs, while mirroring that split for integration/read.
+        app.dependency_overrides[read_db.tenant_read_session] = routed_read_session
         with patch.object(read_db, 'async_session_factory', sessions), patch('app.geo.tenant_scope.date', FrozenDate):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
                                         base_url='http://fixture') as client:
