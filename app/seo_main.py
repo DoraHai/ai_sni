@@ -30,14 +30,14 @@ from app.seo_demo_source import SeoDataSourceDecision, hide_demo_tenant_ids
 settings = get_settings()
 enforce_production_secrets(settings, hard_fail=True)
 validate_seo_demo_runtime_settings(settings)
-SEO_REQUIRED_SCHEMA_REVISION = "0098_demo_binding_no_truncate"
+SEO_REQUIRED_SCHEMA_REVISION = "0099_demo_fixture_registry"
 # Runtime compatibility supports code-first rollout; it never authorizes the
 # separately reviewed migration operation.
 SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset(
-    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", SEO_REQUIRED_SCHEMA_REVISION}
+    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION}
 )
 SEO_GEO_TICKET_REQUIRED_REVISIONS = frozenset(
-    {"0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate"}
+    {"0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION}
 )
 SEO_GEO_TICKET_SHAPE = {
     "owner_name": ("character varying(100)", False, None, "", "", "b", None, True),
@@ -144,6 +144,91 @@ SEO_DEMO_BINDING_TRIGGER_SQL = text("""
 """)
 SEO_DEMO_BINDING_SEQUENCE_SQL = text("""
     SELECT pg_catalog.pg_get_serial_sequence('public.demo_tenant_binding_history', 'id')
+""")
+
+SEO_FIXTURE_REGISTRY_COLUMNS = {
+    "module_code": ("character varying(3)", True, None),
+    "demo_tenant_id": ("bigint", True, None),
+    "dataset_key": ("character varying(64)", True, None),
+    "dataset_version": ("character varying(40)", True, None),
+    "fixture_namespace": ("character varying(128)", True, None),
+    "manifest_sha256": ("character(64)", True, None),
+    "schema_revision": ("character varying(64)", True, None),
+    "loader_name": ("character varying(80)", True, None),
+    "loader_version": ("character varying(80)", True, None),
+    "row_counts": ("jsonb", True, None),
+    "source_summary": ("jsonb", True, None),
+    "sealed_at": ("timestamp with time zone", True, None),
+    "status": ("character varying(16)", True, None),
+}
+SEO_FIXTURE_REGISTRY_CONSTRAINTS = {
+    "pk_demo_fixture_registry",
+    "uq_demo_fixture_registry_manifest",
+    "ck_demo_fixture_registry_module",
+    "ck_demo_fixture_registry_tenant_positive",
+    "ck_demo_fixture_registry_dataset_key_format",
+    "ck_demo_fixture_registry_dataset_version_format",
+    "ck_demo_fixture_registry_namespace_nonempty",
+    "ck_demo_fixture_registry_manifest_sha256",
+    "ck_demo_fixture_registry_schema_revision",
+    "ck_demo_fixture_registry_loader_name_nonempty",
+    "ck_demo_fixture_registry_loader_version_nonempty",
+    "ck_demo_fixture_registry_row_counts",
+    "ck_demo_fixture_registry_source_summary",
+    "ck_demo_fixture_registry_status",
+}
+SEO_FIXTURE_REGISTRY_CONSTRAINT_RULES = {
+    "pk_demo_fixture_registry": ("primary key", "module_code", "demo_tenant_id", "dataset_key", "dataset_version"),
+    "uq_demo_fixture_registry_manifest": ("unique", "manifest_sha256"),
+    "ck_demo_fixture_registry_module": ("check", "module_code", "sem", "seo", "geo"),
+    "ck_demo_fixture_registry_tenant_positive": ("check", "demo_tenant_id", "> 0"),
+    "ck_demo_fixture_registry_dataset_key_format": ("check", "dataset_key", "a-z0-9"),
+    "ck_demo_fixture_registry_dataset_version_format": ("check", "dataset_version", "a-z0-9"),
+    "ck_demo_fixture_registry_namespace_nonempty": ("check", "btrim", "fixture_namespace"),
+    "ck_demo_fixture_registry_manifest_sha256": ("check", "manifest_sha256", "0-9a-f", "64"),
+    "ck_demo_fixture_registry_schema_revision": ("check", "schema_revision", "0099_demo_fixture_registry"),
+    "ck_demo_fixture_registry_loader_name_nonempty": ("check", "btrim", "loader_name"),
+    "ck_demo_fixture_registry_loader_version_nonempty": ("check", "btrim", "loader_version"),
+    "ck_demo_fixture_registry_row_counts": ("check", "is_nonnegative_integer_object", "row_counts"),
+    "ck_demo_fixture_registry_source_summary": ("check", "jsonb_typeof", "source_summary", "object"),
+    "ck_demo_fixture_registry_status": ("check", "status", "sealed"),
+}
+SEO_FIXTURE_REGISTRY_COLUMNS_SQL = text("""
+    SELECT a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod), a.attnotnull,
+           pg_catalog.pg_get_expr(d.adbin, d.adrelid)
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+    JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid
+    LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+    WHERE n.nspname='demo_control' AND c.relname='fixture_registry' AND c.relkind='r'
+      AND a.attnum > 0 AND NOT a.attisdropped
+    ORDER BY a.attnum
+""")
+SEO_FIXTURE_REGISTRY_CONSTRAINTS_SQL = text("""
+    SELECT con.conname, pg_catalog.pg_get_constraintdef(con.oid, true)
+    FROM pg_catalog.pg_constraint con
+    JOIN pg_catalog.pg_class c ON c.oid=con.conrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='demo_control' AND c.relname='fixture_registry' AND c.relkind='r'
+    ORDER BY con.conname
+""")
+SEO_FIXTURE_REGISTRY_TRIGGER_SQL = text("""
+    SELECT t.tgname, pg_catalog.pg_get_triggerdef(t.oid, true)
+    FROM pg_catalog.pg_trigger t
+    JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='demo_control' AND c.relname='fixture_registry' AND c.relkind='r'
+      AND NOT t.tgisinternal AND t.tgenabled <> 'D'
+    ORDER BY t.tgname
+""")
+SEO_FIXTURE_REGISTRY_FUNCTION_SQL = text("""
+    SELECT p.proname, pg_catalog.pg_get_functiondef(p.oid), p.provolatile::text,
+           p.proisstrict, p.proparallel::text
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+    WHERE n.nspname='demo_control'
+      AND p.proname IN ('is_nonnegative_integer_object','reject_fixture_registry_mutation')
+    ORDER BY p.proname, p.oid
 """)
 
 
@@ -294,6 +379,72 @@ async def _check_demo_binding_structure(conn, *, require_current_truncate: bool 
         )
 
 
+async def _check_fixture_registry_structure(conn):
+    column_rows = list(await conn.execute(SEO_FIXTURE_REGISTRY_COLUMNS_SQL))
+    columns = {
+        name: (kind, not_null, None if default is None else " ".join(default.lower().split()))
+        for name, kind, not_null, default in column_rows
+    }
+    constraint_rows = list(await conn.execute(SEO_FIXTURE_REGISTRY_CONSTRAINTS_SQL))
+    constraints = {name for name, _definition in constraint_rows}
+    definitions = {
+        name: " ".join(definition.lower().replace("demo_control.", "").split())
+        for name, definition in constraint_rows
+    }
+    constraint_ok = all(
+        name in definitions and all(fragment in definitions[name] for fragment in fragments)
+        for name, fragments in SEO_FIXTURE_REGISTRY_CONSTRAINT_RULES.items()
+    )
+
+    trigger_rows = list(await conn.execute(SEO_FIXTURE_REGISTRY_TRIGGER_SQL))
+    triggers = {
+        name: " ".join(definition.lower().replace("demo_control.", "").split())
+        for name, definition in trigger_rows
+    }
+    expected_triggers = {
+        "trg_fixture_registry_no_update": ("before update", "for each row", "reject_fixture_registry_mutation"),
+        "trg_fixture_registry_no_delete": ("before delete", "for each row", "reject_fixture_registry_mutation"),
+        "trg_fixture_registry_no_truncate": ("before truncate", "for each statement", "reject_fixture_registry_mutation"),
+    }
+    trigger_ok = len(trigger_rows) == len(expected_triggers) and set(triggers) == set(expected_triggers) and all(
+        all(fragment in triggers[name] for fragment in fragments)
+        for name, fragments in expected_triggers.items()
+    )
+
+    function_rows = list(await conn.execute(SEO_FIXTURE_REGISTRY_FUNCTION_SQL))
+    functions = {
+        name: (" ".join(definition.lower().split()), volatility, strict, parallel)
+        for name, definition, volatility, strict, parallel in function_rows
+    }
+    validator = functions.get("is_nonnegative_integer_object")
+    rejector = functions.get("reject_fixture_registry_mutation")
+    function_ok = (
+        len(function_rows) == 2
+        and validator is not None
+        and validator[1:] == ("i", True, "s")
+        and all(fragment in validator[0] for fragment in (
+            "returns boolean", "language sql", "jsonb_typeof", "jsonb_each",
+            "not exists", "0-9", "value <> '{}'::jsonb",
+        ))
+        and rejector is not None
+        and rejector[1] == "v"
+        and all(fragment in rejector[0] for fragment in (
+            "returns trigger", "language plpgsql", "raise exception",
+            "demo_control.fixture_registry is immutable",
+        ))
+    )
+
+    if (columns != SEO_FIXTURE_REGISTRY_COLUMNS
+            or constraints != SEO_FIXTURE_REGISTRY_CONSTRAINTS
+            or not constraint_ok or not trigger_ok or not function_ok):
+        raise RuntimeError(
+            "0099 demo fixture registry objects missing or incompatible: "
+            f"column_keys={sorted(columns)}; constraint_names={sorted(constraints)}; "
+            f"constraint_ok={constraint_ok}; trigger_names={sorted(triggers)}; "
+            f"trigger_ok={trigger_ok}; function_names={sorted(functions)}; function_ok={function_ok}"
+        )
+
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -404,10 +555,12 @@ async def seo_health(response: Response) -> dict:
             await _check_seo_structure(conn)
             if revisions[0] in SEO_GEO_TICKET_REQUIRED_REVISIONS:
                 await _check_geo_ticket_adoption(conn)
-            if revisions[0] in {"0097_demo_tenant_bindings", "0098_demo_binding_no_truncate"}:
+            if revisions[0] in {"0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", "0099_demo_fixture_registry"}:
                 await _check_demo_binding_structure(
-                    conn, require_current_truncate=revisions[0] == "0098_demo_binding_no_truncate"
+                    conn, require_current_truncate=revisions[0] in {"0098_demo_binding_no_truncate", "0099_demo_fixture_registry"}
                 )
+            if revisions[0] == "0099_demo_fixture_registry":
+                await _check_fixture_registry_structure(conn)
             schema_status = "ok"
     except Exception as exc:  # noqa: BLE001 - health must report infra failure
         db_status = "error"
