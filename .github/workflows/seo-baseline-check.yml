@@ -105,6 +105,7 @@ jobs:
           tests/test_demo_binding_no_truncate_migration.py
           tests/test_seo_demo_runtime.py
           tests/test_seo_demo_source.py
+          tests/test_seo_static_demo.py
           tests/test_seo_distribution.py
           tests/test_seo_domestic_distribution.py
           tests/test_seo_backlink_sources.py

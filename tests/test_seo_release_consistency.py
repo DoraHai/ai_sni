@@ -105,6 +105,7 @@ def test_seo_workflows_run_site_association_and_traffic_regressions() -> None:
         assert "tests/test_seo_site_page_detail.py" in workflow
         assert "tests/test_seo_workbench_site_scope.py" in workflow
         assert "tests/test_seo_traffic.py" in workflow
+        assert "tests/test_seo_static_demo.py" in workflow
 
 
 def test_seo_workflows_gate_the_sem_task_migration_contract() -> None:
