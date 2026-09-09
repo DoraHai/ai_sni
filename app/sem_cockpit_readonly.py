@@ -59,6 +59,8 @@ async def resolve_account_scope(session, tenant_id, account_id):
         .where(BaiduAccount.tenant_id == tenant_id).order_by(BaiduAccount.id)
     )).all()
     by_id = {row.id: row.status for row in accounts}
+    demo_read = bool(getattr(session, "info", {}).get("sem_demo_read"))
+    readable_status = "disabled" if demo_read else "active"
     if account_id is not None:
         if account_id not in by_id:
             raise HTTPException(404, "该客户下不存在此账户")
@@ -70,12 +72,14 @@ async def resolve_account_scope(session, tenant_id, account_id):
             "selected_account_status": by_id[account_id],
         }
     else:
-        selected_ids = [row.id for row in accounts if row.status == "active"]
+        selected_ids = [row.id for row in accounts if row.status == readable_status]
         payload = {
             "mode": "all", "baidu_account_id": None,
             "configured_account_ids": selected_ids,
             "excluded_archived_account_ids": [row.id for row in accounts if row.status == "archived"],
-            "excluded_non_active_account_ids": [row.id for row in accounts if row.status != "active"],
+            "excluded_non_active_account_ids": [
+                row.id for row in accounts if row.status != readable_status
+            ],
         }
     return payload, selected_ids, by_id
 

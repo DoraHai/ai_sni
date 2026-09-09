@@ -45,6 +45,10 @@ def alert_record(tenant_id, kind, row, age_seconds):
 
 async def refresh_writeback_alerts(session, tenant_id):
     """Caller owns the per-tenant transaction; never calls the advertising API."""
+    from app.config import get_settings
+    from app.sem_demo_source import ensure_sem_production_action_allowed
+
+    await ensure_sem_production_action_allowed(get_settings(), session, tenant_id)
     count = 0
     for kind, model in SOURCES:
         # created_at uses database now() into a naive timestamp column. Compare

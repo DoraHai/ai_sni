@@ -17,6 +17,7 @@ from app.baidu.oauth import (
     create_authorization_url,
     exchange_auth_code,
     fetch_authorized_accounts,
+    inspect_oauth_state,
     oauth_callback_url,
     oauth_is_configured,
     persist_authorization,
@@ -28,7 +29,12 @@ from app.models import BaiduAccount, BaiduOAuthGrant, Tenant
 from app.module_scope import get_tenant_module
 from app.scheduler import INITIAL_KEYWORD_HISTORY_DAYS, refresh_keyword_workbench_snapshot
 from app.security.auth import AuthContext, require_scoped_auth
+from app.security.sem_identity import ensure_sem_identity_access
 from app.sem_asset_sync import public_sync_error
+from app.sem_demo_source import (
+    SemDemoActionBlockedError,
+    ensure_sem_production_action_allowed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -228,23 +234,43 @@ async def callback(
             logger.warning("百度 OAuth 回调验签失败")
             return _result_redirect(status="error", code="invalid_signature")
 
-        # 验签通过后再消费一次性 state，防止伪造请求耗掉合法 state。
-        from app.baidu.oauth import consume_oauth_state
-
-        state_row = await consume_oauth_state(session, state)
+        # 验签通过后先只读校验租户绑定；演示租户不能消耗一次性 state。
+        state_row = await inspect_oauth_state(session, state)
         try:
             await get_tenant_module(session, state_row.tenant_id, "sem")
+            await ensure_sem_identity_access(session, state_row.tenant_id)
         except HTTPException as exc:
             raise BaiduOAuthError(
                 "sem_module_unavailable",
-                "授权期间目标客户的 SEM 模块已停用，本次绑定已安全终止。",
+                "授权期间目标客户的 SEM 模块或身份不可用，本次绑定已安全终止。",
             ) from exc
+        try:
+            await ensure_sem_production_action_allowed(
+                settings, session, state_row.tenant_id
+            )
+        except SemDemoActionBlockedError as exc:
+            raise BaiduOAuthError(
+                "demo_read_only", "演示客户禁止 OAuth 授权。"
+            ) from exc
+        from app.baidu.oauth import consume_oauth_state
+
+        state_row = await consume_oauth_state(
+            session, state, validated_row=state_row
+        )
         token_data = await exchange_auth_code(auth_code=authCode, user_id=userId)
         master, oauth_accounts = await fetch_authorized_accounts(
             open_id=str(token_data.get("openId") or ""),
             access_token=str(token_data.get("accessToken") or ""),
             user_id=userId,
         )
+        try:
+            await ensure_sem_production_action_allowed(
+                settings, session, state_row.tenant_id
+            )
+        except SemDemoActionBlockedError as exc:
+            raise BaiduOAuthError(
+                "demo_read_only", "演示客户禁止 OAuth 授权。"
+            ) from exc
         _, accounts, account_tenants = await persist_authorization(
             session,
             oauth_user_id=userId,

@@ -33,6 +33,7 @@ from app.baidu.writeback_approval import (
     create_self_approved_approval,
 )
 from app.config import get_settings, resolve_baidu_write_dry_run
+from app.sem_demo_source import ensure_sem_production_action_allowed
 from app.models import (
     Adgroup,
     BaiduAccount,
@@ -60,6 +61,14 @@ CAMPAIGN_PAUSE_CONFLICT_ACTIONS = ("campaign_pause", "campaign_enable", "campaig
 
 class WritebackError(Exception):
     """回写前校验失败（业务拒绝，不调百度）。"""
+
+
+async def _writeback_account_client(
+    session: AsyncSession, tenant_id: int, account: BaiduAccount
+):
+    """Recheck the binding immediately before constructing an external client."""
+    await ensure_sem_production_action_allowed(get_settings(), session, tenant_id)
+    return _account_client(account)
 
 
 def _boolean_audit_value(value: bool | None) -> int | None:
@@ -203,6 +212,9 @@ async def _persist_funds_intent(
     这样即使外部调用后进程退出或最终状态提交失败，审批也不会回到可重复消费状态，
     pending 台账会明确要求人工对账。演练模式不需要拆分事务。
     """
+    await ensure_sem_production_action_allowed(
+        get_settings(), session, record.tenant_id
+    )
     session.add(record)
     await session.flush()
     if not dry_run:
@@ -441,7 +453,7 @@ async def apply_keyword_writeback(
             raise
 
     try:
-        svc = KeywordService(_account_client(acc))
+        svc = KeywordService(await _writeback_account_client(session, tenant_id, acc))
         resp = await svc.update_word_bid(keyword_id, new_bid)
         rec.status = "dry_run" if dry_run else "success"
         rec.baidu_response = str(resp)[:2000]
@@ -605,7 +617,7 @@ async def apply_negative_writeback(
         new_list = current + [word]
 
     try:
-        svc = AdgroupService(_account_client(acc))
+        svc = AdgroupService(await _writeback_account_client(session, tenant_id, acc))
         kwargs = (
             {"exact_negative_words": new_list}
             if match_mode == "exact"
@@ -749,7 +761,7 @@ async def apply_negative_batch_writeback(
                 if match_mode == "exact"
                 else {"negative_words": current + new_words}
             )
-            resp = await AdgroupService(_account_client(acc)).update_negative_words(
+            resp = await AdgroupService(await _writeback_account_client(session, tenant_id, acc)).update_negative_words(
                 adgroup_id, **kwargs
             )
             status = "dry_run" if dry_run else "success"
@@ -869,7 +881,7 @@ async def apply_negative_writeback_campaign(
             if match_mode == "exact"
             else {"negative_words": new_list}
         )
-        resp = await CampaignService(_account_client(acc)).update_campaign_negative_words(
+        resp = await CampaignService(await _writeback_account_client(session, tenant_id, acc)).update_campaign_negative_words(
             campaign_id,
             **kwargs,
         )
@@ -955,7 +967,7 @@ async def apply_add_word_writeback(
             await _fail_action_preflight(session, rec, str(exc))
 
     try:
-        svc = KeywordService(_account_client(acc))
+        svc = KeywordService(await _writeback_account_client(session, tenant_id, acc))
         match_type, phrase_type = _MATCH_BY_MODE[match_mode]
         resp = await svc.add_word(adgroup_id, word, match_type, phrase_type, price)
         rec.status = "dry_run" if dry_run else "success"
@@ -1015,7 +1027,7 @@ async def apply_pause_writeback(
     if not dry_run and kw.pause != old_pause:
         await _fail_action_preflight(session, rec, "关键词启停状态已变化，请核对后重试")
     try:
-        svc = KeywordService(_account_client(acc))
+        svc = KeywordService(await _writeback_account_client(session, tenant_id, acc))
         resp = await svc.update_word_pause(keyword_id, pause)
         rec.status = "dry_run" if dry_run else "success"
         rec.baidu_response = str(resp)[:2000]
@@ -1102,7 +1114,7 @@ async def apply_match_type_writeback(
     if not dry_run and (kw.match_type, kw.phrase_type) != old_match_combo:
         await _fail_action_preflight(session, rec, "关键词匹配模式已变化，请核对后重试")
     try:
-        svc = KeywordService(_account_client(acc))
+        svc = KeywordService(await _writeback_account_client(session, tenant_id, acc))
         resp = await svc.update_word_match_type(keyword_id, match_type, phrase_type)
         rec.status = "dry_run" if dry_run else "success"
         rec.baidu_response = json.dumps(
@@ -1179,7 +1191,7 @@ async def apply_remove_negative_writeback(
             await _fail_action_preflight(session, rec, "否词列表已变化，请核对后重试")
         new_list = [item for item in current if item != word]
     try:
-        svc = AdgroupService(_account_client(acc))
+        svc = AdgroupService(await _writeback_account_client(session, tenant_id, acc))
         kwargs = (
             {"exact_negative_words": new_list}
             if match_mode == "exact"
@@ -1241,7 +1253,7 @@ async def apply_campaign_budget_writeback(
 
     # 计划预算不能超账户日预算：实时查账户预算做上限校验（失败不阻断，交百度兜底）
     try:
-        info = (await AccountService(_account_client(acc)).get_account_info(
+        info = (await AccountService(await _writeback_account_client(session, tenant_id, acc)).get_account_info(
             ["budget", "budgetType"]
         )).get("data") or {}
         if isinstance(info, list):
@@ -1304,7 +1316,7 @@ async def apply_campaign_budget_writeback(
         await session.refresh(rec, with_for_update=True)
         rec.old_value = float(camp.budget) if camp.budget is not None else None
     try:
-        resp = await CampaignService(_account_client(acc)).update_campaign_budget(
+        resp = await CampaignService(await _writeback_account_client(session, tenant_id, acc)).update_campaign_budget(
             campaign_id, new_budget
         )
         rec.status = "dry_run" if dry_run else "success"
@@ -1371,7 +1383,7 @@ async def apply_campaign_pause_writeback(
     if not dry_run and camp.pause != old_pause:
         await _fail_action_preflight(session, rec, "计划启停状态已变化，请核对后重试")
     try:
-        resp = await CampaignService(_account_client(acc)).update_campaign_pause(
+        resp = await CampaignService(await _writeback_account_client(session, tenant_id, acc)).update_campaign_pause(
             campaign_id, pause
         )
         rec.status = "dry_run" if dry_run else "success"
@@ -1478,7 +1490,7 @@ async def apply_campaign_schedule_writeback(
     ):
         await _fail_action_preflight(session, rec, "计划时段或启停状态已变化，请核对后重试")
     try:
-        resp = await CampaignService(_account_client(acc)).update_campaign_schedule(
+        resp = await CampaignService(await _writeback_account_client(session, tenant_id, acc)).update_campaign_schedule(
             campaign_id, normalized, pause=pause
         )
         rec.status = "dry_run" if dry_run else "success"
@@ -1611,7 +1623,7 @@ async def apply_campaign_region_writeback(
         await _fail_action_preflight(session, rec, "计划地域设置已变化，请核对后重试")
 
     try:
-        resp = await CampaignService(_account_client(acc)).update_campaign_region(
+        resp = await CampaignService(await _writeback_account_client(session, tenant_id, acc)).update_campaign_region(
             campaign_id,
             normalized_regions,
             region_price_factor=normalized_factors,
@@ -1681,7 +1693,7 @@ async def apply_adgroup_pause_writeback(
     if not dry_run and adg.pause != old_pause:
         await _fail_action_preflight(session, rec, "单元启停状态已变化，请核对后重试")
     try:
-        resp = await AdgroupService(_account_client(acc)).update_adgroup_fields(
+        resp = await AdgroupService(await _writeback_account_client(session, tenant_id, acc)).update_adgroup_fields(
             adgroup_id, pause=pause
         )
         rec.status = "dry_run" if dry_run else "success"
@@ -1788,7 +1800,7 @@ async def apply_adgroup_bid_writeback(
         await session.refresh(rec, with_for_update=True)
         rec.old_value = float(adg.max_price) if adg.max_price is not None else None
     try:
-        resp = await AdgroupService(_account_client(acc)).update_adgroup_fields(
+        resp = await AdgroupService(await _writeback_account_client(session, tenant_id, acc)).update_adgroup_fields(
             adgroup_id, max_price=new_price
         )
         rec.status = "dry_run" if dry_run else "success"
@@ -1913,7 +1925,7 @@ async def apply_adgroup_landing_url_writeback(
         if latest_snapshot != old_snapshot:
             await _fail_action_preflight(session, rec, "单元落地页设置已变化，请核对后重试")
     try:
-        resp = await AdgroupService(_account_client(acc)).update_adgroup_fields(
+        resp = await AdgroupService(await _writeback_account_client(session, tenant_id, acc)).update_adgroup_fields(
             adgroup_id,
             pc_final_url=pc_final_url,
             mobile_final_url=mobile_final_url,
@@ -1976,7 +1988,7 @@ async def apply_account_budget_writeback(
     # 实时查当前账户预算作旧值快照（失败不阻断写回，old_value 留空）
     old_budget: float | None = None
     try:
-        info = (await AccountService(_account_client(acc)).get_account_info(
+        info = (await AccountService(await _writeback_account_client(session, tenant_id, acc)).get_account_info(
             ["budget", "budgetType"]
         )).get("data") or {}
         if isinstance(info, list):
@@ -2024,7 +2036,7 @@ async def apply_account_budget_writeback(
         await _relock_funds_account(session, acc, rec)
         await session.refresh(rec, with_for_update=True)
     try:
-        resp = await AccountService(_account_client(acc)).update_account_budget(
+        resp = await AccountService(await _writeback_account_client(session, tenant_id, acc)).update_account_budget(
             new_budget, budget_type=1
         )
         rec.status = "dry_run" if dry_run else "success"

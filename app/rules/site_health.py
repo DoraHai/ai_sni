@@ -142,6 +142,10 @@ class SiteHealthRule:
 async def run_site_health_for_tenant(
     session: AsyncSession, tenant: Tenant, target_date: date
 ) -> int:
+    from app.config import get_settings
+    from app.sem_demo_source import ensure_sem_production_action_allowed
+
+    await ensure_sem_production_action_allowed(get_settings(), session, tenant.id)
     drafts = await SiteHealthRule().evaluate(session, tenant, target_date)
     records = [
         {

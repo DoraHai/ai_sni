@@ -59,6 +59,11 @@ from app.security.sem_identity import (
     ensure_sem_identity_access,
     filter_identity_safe_active_accounts,
 )
+from app.config import get_settings
+from app.sem_demo_source import (
+    blocked_sem_demo_tenant_ids,
+    ensure_sem_production_action_allowed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +99,7 @@ async def refresh_keyword_workbench_snapshot(
 ) -> dict:
     """同步 SEM 只读资产；单维度失败不会阻断其他维度。"""
     tenant_id = tenant.id
+    await ensure_sem_production_action_allowed(get_settings(), session, tenant_id)
     account_id = getattr(acc, "id", None)
     selected = normalize_dimensions(dimensions)
     lock_fh = _acquire_tenant_sync_lock(tenant_id)
@@ -244,11 +250,15 @@ def _account_refs(accounts: list[BaiduAccount]) -> list[tuple[int, int, str]]:
 
 
 async def _scheduled_account_refs(session) -> list[tuple[int, int, str]]:
-    return _account_refs(
+    refs = _account_refs(
         filter_identity_safe_active_accounts(
             await list_active_sem_accounts(session)
         )
     )
+    blocked = await blocked_sem_demo_tenant_ids(
+        get_settings(), session, {tenant_id for _, tenant_id, _ in refs}
+    )
+    return [ref for ref in refs if ref[1] not in blocked]
 
 
 async def _reload_scheduled_account(
@@ -262,6 +272,9 @@ async def _reload_scheduled_account(
         return None, None, "missing_account"
     if account.status != "active" or account.tenant_id != expected_tenant_id:
         return None, None, "account_changed"
+    await ensure_sem_production_action_allowed(
+        get_settings(), session, expected_tenant_id
+    )
     await get_tenant_module(session, expected_tenant_id, "sem")
     await ensure_sem_identity_access(session, expected_tenant_id)
     tenant = await session.get(Tenant, expected_tenant_id)

@@ -205,12 +205,19 @@ class BaiduOAuthTests(unittest.IsolatedAsyncioTestCase):
         source = (
             Path(__file__).resolve().parents[1] / "app/api/oauth_baidu.py"
         ).read_text(encoding="utf-8")
-        consume_at = source.index("state_row = await consume_oauth_state")
+        inspect_at = source.index("state_row = await inspect_oauth_state")
         entitlement_at = source.index(
             'await get_tenant_module(session, state_row.tenant_id, "sem")'
         )
+        binding_at = source.index(
+            "await ensure_sem_production_action_allowed",
+            entitlement_at,
+        )
+        consume_at = source.index("state_row = await consume_oauth_state")
         exchange_at = source.index("token_data = await exchange_auth_code")
-        self.assertLess(consume_at, entitlement_at)
+        self.assertLess(inspect_at, entitlement_at)
+        self.assertLess(entitlement_at, binding_at)
+        self.assertLess(binding_at, consume_at)
         self.assertLess(entitlement_at, exchange_at)
 
     async def test_initial_sync_backfills_thirty_days_of_keyword_history(self):

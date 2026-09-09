@@ -34,8 +34,8 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 JWT_ALG = "HS256"
 _READ_METHODS = ("GET", "HEAD", "OPTIONS")
 
-# 这些路径会读取或操作 SEM 客户数据。客户与模块管理、授权入口和 SEO/GEO 路径故意不在
-# 列表中，确保管理员仍能查看冲突并完成修复，同时不跨模块扩大影响。
+# 这些路径会读取或操作 SEM 客户数据。客户与模块管理和 SEO/GEO 路径不在列表中，
+# 避免跨模块扩大影响；百度授权入口也必须先完成 SEM 模块和身份检查。
 _SEM_IDENTITY_GUARDED_PREFIXES = (
     "/api/v1/dashboard",
     "/api/v1/alerts",
@@ -55,6 +55,7 @@ _SEM_IDENTITY_GUARDED_PREFIXES = (
     "/api/v1/manage",
     "/api/v1/ocpc",
     "/api/v1/onboarding-builder",
+    "/api/v1/oauth/baidu",
     "/api/v1/sem/assets/accounts",
     "/api/v1/admin/fetch-keyword-report",
     "/api/v1/admin/sync-keywords",
@@ -310,10 +311,7 @@ async def require_auth(
         user = await session.get(User, int(payload["sub"]))
         if user is None or not user.is_active:
             raise HTTPException(401, "账号不存在或已停用")
-        ctx = await _build_context(user, session)
-        from app.sem_demo_source import enforce_sem_demo_access
-
-        return await enforce_sem_demo_access(get_settings(), request, ctx, session)
+        return await _build_context(user, session)
 
     # 2) admin API Key 兜底（curl / 冒烟 / 调度）
     settings = get_settings()
@@ -322,7 +320,7 @@ async def require_auth(
         # 未绑租户 = 运维超管（curl / 冒烟）。绑了租户则降为该客户运营，不再绕过 RBAC。
         bound = getattr(settings, "admin_api_key_tenant_id", None)
         if bound is not None:
-            ctx = AuthContext(
+            return AuthContext(
                 user_id=None,
                 username="api-key",
                 role_name="租户运维密钥",
@@ -330,19 +328,13 @@ async def require_auth(
                 permissions=dict(OPERATOR_PERMS),
                 is_superadmin=False,
             )
-            from app.sem_demo_source import enforce_sem_demo_access
-
-            return await enforce_sem_demo_access(get_settings(), request, ctx, session)
-        ctx = AuthContext(
+        return AuthContext(
             user_id=None,
             username="api-key",
             role_name="超级管理员",
             tenant_id=None,
             is_superadmin=True,
         )
-        from app.sem_demo_source import enforce_sem_demo_access
-
-        return await enforce_sem_demo_access(get_settings(), request, ctx, session)
 
     raise HTTPException(401, "未登录。请先登录，或通过 X-API-Key 提供管理密钥。")
 
@@ -391,12 +383,18 @@ async def require_scoped_auth(
 
     if len(set(parsed_tenant_ids)) > 1:
         raise HTTPException(422, "请求中的 tenant_id 不一致")
-    if parsed_tenant_ids:
-        tenant_id = parsed_tenant_ids[0]
-        ctx.ensure_tenant(tenant_id)
+    effective_tenant_id = parsed_tenant_ids[0] if parsed_tenant_ids else ctx.tenant_id
+    if effective_tenant_id is not None:
+        tenant_id = effective_tenant_id
+        if parsed_tenant_ids:
+            ctx.ensure_tenant(tenant_id)
         if request.url.path.startswith(_SEM_IDENTITY_GUARDED_PREFIXES):
             await ensure_module_access(session, ctx, tenant_id, "sem")
             await ensure_sem_identity_access(session, tenant_id)
+        request.state.sem_effective_tenant_id = tenant_id
+    from app.sem_demo_source import enforce_sem_demo_access
+
+    await enforce_sem_demo_access(get_settings(), request, ctx, session)
     return ctx
 
 

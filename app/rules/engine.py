@@ -170,6 +170,10 @@ async def run_rules_for_tenant(
     session: AsyncSession, tenant: Tenant, target_date: date
 ) -> int:
     """Evaluate all daily rules for one tenant and return written/refreshed alert count."""
+    from app.config import get_settings
+    from app.sem_demo_source import ensure_sem_production_action_allowed
+
+    await ensure_sem_production_action_allowed(get_settings(), session, tenant.id)
     drafts = []
     tenant_id = tenant.id
     for rule in ALL_RULES:

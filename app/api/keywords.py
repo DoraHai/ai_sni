@@ -48,6 +48,7 @@ from app.sem_cockpit_readonly import validate_query
 from app.sem_demo_source import (
     get_sem_read_session,
     present_sem_read_result,
+    resolve_sem_data_account_id,
     resolve_sem_data_tenant_id,
 )
 
@@ -595,10 +596,11 @@ async def cockpit_keywords(
     ctx.ensure_tenant(tenant_id)
     validate_query(request.query_params, {"tenant_id", "baidu_account_id", "start_date", "end_date", "q", "campaign_id", "page", "page_size"})
     data_tenant_id = resolve_sem_data_tenant_id(request, tenant_id)
+    data_account_id = resolve_sem_data_account_id(request, baidu_account_id)
     result = await read_keywords(
         session,
         data_tenant_id,
-        baidu_account_id,
+        data_account_id,
         start_date,
         end_date,
         q,
@@ -623,10 +625,11 @@ async def cockpit_keyword_detail(
     ctx.ensure_tenant(tenant_id)
     validate_query(request.query_params, {"tenant_id", "baidu_account_id", "start_date", "end_date"})
     data_tenant_id = resolve_sem_data_tenant_id(request, tenant_id)
+    data_account_id = resolve_sem_data_account_id(request, baidu_account_id)
     result = await read_keyword_detail(
         session,
         data_tenant_id,
-        baidu_account_id,
+        data_account_id,
         keyword_id,
         start_date,
         end_date,

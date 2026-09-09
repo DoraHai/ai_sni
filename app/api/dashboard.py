@@ -31,6 +31,7 @@ from app.sem_cockpit_readonly import read_report, validate_query
 from app.sem_demo_source import (
     get_sem_read_session,
     present_sem_read_result,
+    resolve_sem_data_account_id,
     resolve_sem_data_tenant_id,
 )
 
@@ -62,8 +63,9 @@ async def cockpit_report(
     ctx.ensure_tenant(tenant_id)
     validate_query(request.query_params, {"tenant_id", "start_date", "end_date", "baidu_account_id"})
     data_tenant_id = resolve_sem_data_tenant_id(request, tenant_id)
+    data_account_id = resolve_sem_data_account_id(request, baidu_account_id)
     result = await read_report(
-        session, data_tenant_id, start_date, end_date, baidu_account_id
+        session, data_tenant_id, start_date, end_date, data_account_id
     )
     return present_sem_read_result(request, tenant_id, result)
 

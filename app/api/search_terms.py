@@ -35,6 +35,7 @@ from app.sem_cockpit_readonly import validate_query
 from app.sem_demo_source import (
     get_sem_read_session,
     present_sem_read_result,
+    resolve_sem_data_account_id,
     resolve_sem_data_tenant_id,
 )
 
@@ -84,10 +85,11 @@ async def cockpit_search_terms(
     ctx.ensure_tenant(tenant_id)
     validate_query(request.query_params, {"tenant_id", "baidu_account_id", "q", "campaign_id", "adgroup_id", "page", "page_size"})
     data_tenant_id = resolve_sem_data_tenant_id(request, tenant_id)
+    data_account_id = resolve_sem_data_account_id(request, baidu_account_id)
     result = await read_search_terms(
         session,
         data_tenant_id,
-        baidu_account_id,
+        data_account_id,
         q,
         campaign_id,
         adgroup_id,

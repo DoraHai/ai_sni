@@ -102,6 +102,10 @@ async def run_suggestions_for_tenant(
     session: AsyncSession, tenant: Tenant, window_days: int = WINDOW_DAYS
 ) -> int:
     """对单租户跑建议引擎，返回写入/刷新的建议条数。"""
+    from app.config import get_settings
+    from app.sem_demo_source import ensure_sem_production_action_allowed
+
+    await ensure_sem_production_action_allowed(get_settings(), session, tenant.id)
     # 窗口锚定：最近有数据日往前 window_days 天
     latest = await session.scalar(
         select(func.max(KwReportSnapshot.report_date)).where(

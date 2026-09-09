@@ -159,9 +159,13 @@ class Settings(BaseSettings):
     sem_demo_binding_schema_revision: str = "0098_demo_binding_no_truncate"
     sem_demo_database_url: str = ""
     sem_demo_database_name: str = ""
+    sem_demo_database_user: str = ""
     sem_demo_database_host_allowlist: str = ""
     sem_demo_database_server_addr_allowlist: str = ""
-    sem_demo_database_schema_revision: str = ""
+    sem_demo_database_schema_revision: str = "0098_demo_binding_no_truncate"
+    sem_demo_dataset_key: str = ""
+    sem_demo_dataset_version: str = ""
+    sem_demo_manifest_sha256: str = ""
 
     database_url: str = Field(..., description="SQLAlchemy async URL，需用 postgresql+asyncpg 方言")
 

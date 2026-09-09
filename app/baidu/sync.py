@@ -51,6 +51,8 @@ from app.models import (
 from app.security.crypto import decrypt
 from app.security.sem_identity import filter_identity_safe_active_accounts
 from app.module_scope import list_active_sem_accounts
+from app.config import get_settings
+from app.sem_demo_source import ensure_sem_production_action_allowed
 
 logger = logging.getLogger(__name__)
 _KEYWORD_REPORT_MAX_WINDOW_DAYS = 7
@@ -238,10 +240,7 @@ async def sync_keyword_report_range_for_account(
     if start_date > end_date:
         raise ValueError("关键词报告开始日期不能晚于结束日期")
 
-    client = BaiduAPIClient(
-        username=baidu_account.baidu_username,
-        access_token=decrypt(baidu_account.access_token_encrypted),
-    )
+    client = await _guarded_account_client(session, baidu_account)
     svc = ReportService(client)
 
     start_iso = start_date.isoformat()
@@ -351,10 +350,7 @@ async def sync_keyword_dimension_reports_for_account(
     target_date: date,
 ) -> dict[str, int]:
     """拉某账户某天关键词地域/小时效果报告。"""
-    client = BaiduAPIClient(
-        username=baidu_account.baidu_username,
-        access_token=decrypt(baidu_account.access_token_encrypted),
-    )
+    client = await _guarded_account_client(session, baidu_account)
     svc = ReportService(client)
     iso_date = target_date.isoformat()
 
@@ -411,10 +407,7 @@ async def sync_region_snapshot(
     end_date: date,
 ) -> int:
     """按省汇总关键词报表地域数据，upsert 进 kw_region_snapshots。"""
-    client = BaiduAPIClient(
-        username=baidu_account.baidu_username,
-        access_token=decrypt(baidu_account.access_token_encrypted),
-    )
+    client = await _guarded_account_client(session, baidu_account)
     svc = ReportService(client)
     rows = await svc.get_keyword_province_report(
         start_date=start_date.isoformat(),
@@ -497,6 +490,15 @@ def _account_client(baidu_account: BaiduAccount) -> BaiduAPIClient:
     )
 
 
+async def _guarded_account_client(
+    session: AsyncSession, baidu_account: BaiduAccount
+) -> BaiduAPIClient:
+    await ensure_sem_production_action_allowed(
+        get_settings(), session, baidu_account.tenant_id
+    )
+    return _account_client(baidu_account)
+
+
 # asyncpg 单条语句绑定参数上限 32767；按"行数 × 列数"留余量分批。
 # 30000 为宽表、驱动和后续字段扩展预留余量，不能只按固定行数判断。
 UPSERT_CHUNK = 1000
@@ -557,7 +559,7 @@ async def sync_campaigns_for_account(
     session: AsyncSession, baidu_account: BaiduAccount
 ) -> int:
     """同步推广计划维度（getCampaign，全账户）。返回写入条数。"""
-    campaigns = await CampaignService(_account_client(baidu_account)).get_all_campaigns()
+    campaigns = await CampaignService(await _guarded_account_client(session, baidu_account)).get_all_campaigns()
     if not campaigns:
         return 0
 
@@ -614,7 +616,7 @@ async def sync_adgroups_for_account(
     if not campaign_ids:
         return 0
 
-    adgroups = await AdgroupService(_account_client(baidu_account)).get_adgroups_by_campaign_ids(
+    adgroups = await AdgroupService(await _guarded_account_client(session, baidu_account)).get_adgroups_by_campaign_ids(
         list(campaign_ids)
     )
     if not adgroups:
@@ -663,7 +665,7 @@ async def sync_price_strategies_for_account(
 ) -> int:
     """同步优化排名出价策略（getPriceStrategy，全账户）。返回写入条数。"""
     strategies = await PriceStrategyService(
-        _account_client(baidu_account)
+        await _guarded_account_client(session, baidu_account)
     ).get_ranking_strategies()
     if not strategies:
         return 0
@@ -712,7 +714,7 @@ async def sync_ocpc_packages_for_account(
     level=1 需传 userId（推广账户 ID，与 ucid 不一定相同），先 getAccountInfo 取。
     🚫 只读同步，不写回。账户没开 OCPC 时返回空，本地存量不动（不清表）。
     """
-    client = _account_client(baidu_account)
+    client = await _guarded_account_client(session, baidu_account)
     resp = await AccountService(client).get_account_info(["userId"])
     info = resp.get("data") or {}
     if isinstance(info, list):  # getAccountInfo 的 data 可能是 list（见 dashboard 实测）
@@ -785,7 +787,7 @@ async def sync_keywords_for_account(
     ).all()
     first_seen = {kw_id: d for kw_id, d in span_rows}
 
-    svc = KeywordService(_account_client(baidu_account))
+    svc = KeywordService(await _guarded_account_client(session, baidu_account))
     adgroup_ids = (
         await session.scalars(
             select(Adgroup.adgroup_id).where(
@@ -885,7 +887,7 @@ async def sync_operation_records_for_account(
     百度不给记录 ID，幂等靠 dedup_key（全字段 md5）+ on_conflict_do_nothing，
     重叠窗口重复拉取不会产生重复行。
     """
-    svc = ToolkitService(_account_client(baidu_account))
+    svc = ToolkitService(await _guarded_account_client(session, baidu_account))
     raw = await svc.get_operation_records(start_date.isoformat(), end_date.isoformat())
     if not raw:
         logger.info(
@@ -1072,7 +1074,7 @@ async def sync_planner_candidates_for_account(
     removeDuplicate 已让百度剔除账户内已购词，本地再按 keywords 表字面兜底去重。
     返回写入候选条数。
     """
-    svc = KeywordPlannerService(_account_client(baidu_account))
+    svc = KeywordPlannerService(await _guarded_account_client(session, baidu_account))
     brand_terms = await _tenant_brand_terms(session, baidu_account.tenant_id)
     existing = await _existing_keyword_texts(session, baidu_account.tenant_id)
 
@@ -1115,7 +1117,7 @@ async def sync_query_candidates_for_account(
     SUMMARY 汇总后同一搜索词仍可能多行（不同触发词），按词聚合，
     触发词取展现最高的一条。返回写入候选条数。
     """
-    svc = ReportService(_account_client(baidu_account))
+    svc = ReportService(await _guarded_account_client(session, baidu_account))
     rows = await svc.get_search_term_report(
         start_date.isoformat(), end_date.isoformat()
     )
@@ -1204,7 +1206,7 @@ async def _fetch_search_term_rows(
     end_date: date,
 ) -> list[dict[str, Any]]:
     """拉取一个百度允许的搜索词报告窗口，不写本地库。"""
-    svc = ReportService(_account_client(baidu_account))
+    svc = ReportService(await _guarded_account_client(session, baidu_account))
     return await svc.get_search_term_report(start_date.isoformat(), end_date.isoformat())
 
 
@@ -1393,7 +1395,7 @@ async def sync_url_candidates_for_account(
         return 0, details
 
     # 流量回查：黄反/超限的词百度不返回，pv_map 里查不到的按无数据入库
-    svc = KeywordPlannerService(_account_client(baidu_account))
+    svc = KeywordPlannerService(await _guarded_account_client(session, baidu_account))
     pv_rows = await svc.get_pv_search(list(word_to_url))
     pv_map = {r.get("keywordName"): r for r in pv_rows if r.get("keywordName")}
 
@@ -1473,7 +1475,7 @@ async def sync_leads_for_account(
     幂等：按 clueId（external_id）去重，已存在的跳过——保住人工改过的状态/备注，只增不覆盖。
     词级归因（keyword/campaign）、接通状态（connect）一并落库。窗口 ≤30 天。返回新增条数。
     """
-    client = _account_client(baidu_account)
+    client = await _guarded_account_client(session, baidu_account)
     tenant_id = baidu_account.tenant_id
 
     # 已落库的 clueId，用于跨类型/跨次同步去重
