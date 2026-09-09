@@ -104,6 +104,7 @@ jobs:
           tests/test_geo_ticket_adoption_migration.py
           tests/test_sem_task_migration.py
           tests/test_demo_tenant_binding_migration.py
+          tests/test_demo_binding_no_truncate_migration.py
           tests/test_seo_distribution.py
           tests/test_seo_domestic_distribution.py
           tests/test_seo_distribution_import.py
@@ -143,7 +144,7 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0097_demo_tenant_bindings (head)'
+          printf '%s\n' "$heads" | grep -F '0098_demo_binding_no_truncate (head)'
 
       - working-directory: frontend
         run: npm ci --no-audit

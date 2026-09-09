@@ -21,14 +21,14 @@ from app.seo_scheduler import shutdown_seo_scheduler, start_seo_scheduler
 
 settings = get_settings()
 enforce_production_secrets(settings, hard_fail=True)
-SEO_REQUIRED_SCHEMA_REVISION = "0097_demo_tenant_bindings"
+SEO_REQUIRED_SCHEMA_REVISION = "0098_demo_binding_no_truncate"
 # Runtime compatibility supports code-first rollout; it never authorizes the
 # separately reviewed migration operation.
 SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset(
-    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", "0096_sem_tasks", SEO_REQUIRED_SCHEMA_REVISION}
+    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", SEO_REQUIRED_SCHEMA_REVISION}
 )
 SEO_GEO_TICKET_REQUIRED_REVISIONS = frozenset(
-    {"0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings"}
+    {"0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate"}
 )
 SEO_GEO_TICKET_SHAPE = {
     "owner_name": ("character varying(100)", False, None, "", "", "b", None, True),
@@ -235,7 +235,7 @@ async def _check_geo_ticket_adoption(conn):
         )
 
 
-async def _check_demo_binding_structure(conn):
+async def _check_demo_binding_structure(conn, *, require_current_truncate: bool = False):
     column_rows = await conn.execute(SEO_DEMO_BINDING_COLUMNS_SQL)
     columns = {table: {} for table in SEO_DEMO_BINDING_COLUMNS}
     defaults = {}
@@ -262,6 +262,10 @@ async def _check_demo_binding_structure(conn):
         ("demo_tenant_binding_history", "trg_demo_tenant_binding_history_no_truncate"): ("before", "truncate", "for each statement", "reject_demo_tenant_binding_history_mutation"),
         ("demo_tenant_bindings", "trg_demo_tenant_bindings_no_delete"): ("before", "delete", "for each row", "reject_demo_tenant_binding_delete"),
     }
+    if require_current_truncate:
+        expected_triggers[("demo_tenant_bindings", "trg_demo_tenant_bindings_no_truncate")] = (
+            "before", "truncate", "for each statement", "reject_demo_tenant_binding_delete"
+        )
     trigger_ok = set(triggers) == set(expected_triggers) and all(
         all(fragment in triggers[key] for fragment in fragments) for key, fragments in expected_triggers.items()
     )
@@ -332,8 +336,10 @@ async def seo_health(response: Response) -> dict:
             await _check_seo_structure(conn)
             if revisions[0] in SEO_GEO_TICKET_REQUIRED_REVISIONS:
                 await _check_geo_ticket_adoption(conn)
-            if revisions[0] == "0097_demo_tenant_bindings":
-                await _check_demo_binding_structure(conn)
+            if revisions[0] in {"0097_demo_tenant_bindings", "0098_demo_binding_no_truncate"}:
+                await _check_demo_binding_structure(
+                    conn, require_current_truncate=revisions[0] == "0098_demo_binding_no_truncate"
+                )
             schema_status = "ok"
     except Exception as exc:  # noqa: BLE001 - health must report infra failure
         db_status = "error"
