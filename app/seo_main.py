@@ -6,7 +6,8 @@ Deploying or restarting it does not restart the shared SEM backend or GEO.
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text, BigInteger, Integer, SmallInteger
 from sqlalchemy.dialects.postgresql import JSONB
@@ -18,9 +19,15 @@ from app.database import engine
 from app.http_errors import register_infra_handlers
 from app.security.prod_guard import enforce_production_secrets
 from app.seo_scheduler import shutdown_seo_scheduler, start_seo_scheduler
+from app.seo_demo_runtime import (
+    demo_request_is_allowed,
+    seo_scheduler_may_start,
+    validate_seo_demo_runtime_settings,
+)
 
 settings = get_settings()
 enforce_production_secrets(settings, hard_fail=True)
+validate_seo_demo_runtime_settings(settings)
 SEO_REQUIRED_SCHEMA_REVISION = "0094_seo_qa_batches"
 # Add a shared migration revision only after its ID, parent and DDL are reviewed.
 # Reviewed #370 source package; enabling compatibility does not authorize migration.
@@ -68,14 +75,33 @@ async def _check_seo_structure(conn):
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    start_seo_scheduler()
+    scheduler_started = seo_scheduler_may_start(settings)
+    if scheduler_started:
+        start_seo_scheduler()
     try:
         yield
     finally:
-        shutdown_seo_scheduler()
+        if scheduler_started:
+            shutdown_seo_scheduler()
 
 
 app = FastAPI(title="Growth Sniper SEO API", version="0.1.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def enforce_demo_runtime_read_only(request: Request, call_next):
+    """Block mutations and every outbound-capable action before route dispatch."""
+    if not demo_request_is_allowed(settings, request.method, request.url.path):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "演示环境仅允许只读查询；抓取、生成、连接测试、发布和数据修改均已禁用",
+                "code": "seo_demo_runtime_read_only",
+            },
+        )
+    return await call_next(request)
+
+
 register_infra_handlers(app)
 app.add_middleware(
     CORSMiddleware,

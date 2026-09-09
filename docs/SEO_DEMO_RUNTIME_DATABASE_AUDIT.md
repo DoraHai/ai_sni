@@ -68,7 +68,7 @@ DASHSCOPE_API_KEY=
 
 因此 demo runtime 在新增并测试统一门禁之前只能以只读方式暴露：进程不调用 `start_seo_scheduler`，不启动任何额外 worker，网关仅允许经过白名单审核的 GET/HEAD/OPTIONS，且应用层后续还需 `SEO_DEMO_MODE=true` 对所有业务写动作返回 403/409。网关只读限制不能作为最终唯一保护。
 
-建议后续新增但本轮不实现的配置契约：
+本分支随后实现的配置契约：
 
 ```dotenv
 SEO_DEMO_MODE=true
@@ -78,7 +78,7 @@ SEO_DEMO_DB_ALLOWED_HOSTNAMES=demo-db.internal
 SEO_DEMO_DB_REQUIRED_NAME=gsnipers_demo
 ```
 
-启动时应 fail closed：demo mode 下任一 scheduler/external-actions 开关为 true、任一外部凭据非空、数据库目标校验不通过，都拒绝启动。`APP_ENV=demo` 不会触发现有 production secret guard，演示环境仍需独立的强随机 JWT、API key 和加密主密钥，且不得复用生产值。
+启动时会 fail closed：`APP_ENV=demo` 要求 demo mode=true、scheduler=false、external-actions=false；配置不完整直接拒绝启动。调度器入口和 lifespan 均再次检查策略，demo 下不获取调度锁、不注册或启动任何 scheduler/worker/startup recovery。HTTP 层允许 GET/HEAD/OPTIONS，以及精确白名单中的认证登录、分发预检、问题导入预览和资料文件预览；其他 POST/PUT/PATCH/DELETE 在路由分发前统一返回 `seo_demo_runtime_read_only`。白名单路径分别为 `/api/v1/auth/login`、`/api/v1/seo/content-distribution/preflight`、`/api/v1/seo/qa/questions/import/preview`、`/api/v1/seo/qa/research/file-preview`。当前 GET 路由静态审计未发现直接调用抓取、搜索平台查询、发布、账号测试或 AI 生成入口。`APP_ENV=demo` 不会触发现有 production secret guard，演示环境仍需独立的强随机 JWT、API key 和加密主密钥，且不得复用生产值。
 
 ## Loader 数据库目标门禁草案
 
@@ -96,4 +96,4 @@ SEO_DEMO_DB_REQUIRED_NAME=gsnipers_demo
 
 ## 本轮结论
 
-迁移图从空 PostgreSQL 建到 `0094` 在结构上可行，但仍缺一次真实空库 online 演练。offline 全量 SQL 被 0048/0049 的数据读取迁移阻断。更关键的是当前 SEO 服务没有总 scheduler 开关或 demo 写动作硬门禁，仅靠清空凭据和 `SEO_RANK_SCHEDULER_ENABLED=false` 不足以安全启动演示环境。数据库回复可以继续并行等待，下一开发门槛应先实现并审核 demo runtime 的统一启动/写动作门禁，再实现仅能连接独立 demo DB 的 loader。
+迁移图从空 PostgreSQL 建到 `0094` 在结构上可行，但仍缺一次真实空库 online 演练。offline 全量 SQL被 0048/0049 的数据读取迁移阻断。本分支已补统一 scheduler 启动门禁与 HTTP 写动作硬拒绝；尚未实现 loader，也没有启动 demo runtime。数据库回复可以继续并行等待，下一开发门槛是独立审查这组门禁，确认部署拓扑中的 auth 路由和网关只读规则，再进行空库演练。
