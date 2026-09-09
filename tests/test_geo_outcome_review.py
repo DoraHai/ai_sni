@@ -37,7 +37,7 @@ def test_missing_data_stores_waiting_and_does_not_create_work():
     s=NS(scalar=AsyncMock(side_effect=[row,None]),commit=AsyncMock(),add=lambda _:pytest.fail('must not create'))
     with patch('app.geo.tenant_scope.ensure_geo_entitlement',AsyncMock()), \
          patch('app.geo.outcome_review.assess_outcome',AsyncMock(side_effect=HTTPException(409,'not enough data'))):
-        asyncio.run(update_outcome_review(s,10))
+        asyncio.run(update_outcome_review(s,10,tenant_id=1))
     assert row.progress['outcome_review']['state']=='waiting' and row.status=='doing'
 
 
@@ -58,7 +58,7 @@ def test_repeated_review_reuses_ticket_and_same_week_does_not_reopen_finished_re
     s=NS(scalar=AsyncMock(side_effect=[row,follow]),commit=AsyncMock(),add=lambda _:pytest.fail('duplicate'))
     with patch('app.geo.tenant_scope.ensure_geo_entitlement',AsyncMock()), \
          patch('app.geo.outcome_review.assess_outcome',AsyncMock(return_value=assessment)):
-        asyncio.run(update_outcome_review(s,10))
+        asyncio.run(update_outcome_review(s,10,tenant_id=1))
     assert follow.status=='done' and row.status=='doing'
 
 
@@ -71,7 +71,7 @@ def test_later_observation_updates_existing_review_without_erasing_history_or_au
     s=NS(scalar=AsyncMock(side_effect=[row,follow]),commit=AsyncMock(),add=lambda _:pytest.fail('duplicate'))
     with patch('app.geo.tenant_scope.ensure_geo_entitlement',AsyncMock()), \
          patch('app.geo.outcome_review.assess_outcome',AsyncMock(return_value=assessment)):
-        asyncio.run(update_outcome_review(s,10))
+        asyncio.run(update_outcome_review(s,10,tenant_id=1))
     assert follow.progress['current_outcome_review']==assessment
     assert follow.progress['outcome_review']==historical and follow.status=='doing'
     assert follow.evidence==[{'note':'customer plan'}] and row.status=='doing'
@@ -85,10 +85,9 @@ def test_expired_outcome_review_does_not_assess_or_write():
     with patch('app.geo.tenant_scope.ensure_geo_entitlement',AsyncMock(side_effect=GeoEntitlementUnavailable())), \
          patch('app.geo.outcome_review.assess_outcome',assess), \
          pytest.raises(GeoEntitlementUnavailable):
-        asyncio.run(update_outcome_review(s,10))
+        asyncio.run(update_outcome_review(s,10,tenant_id=1))
     assess.assert_not_awaited()
     s.commit.assert_not_awaited()
-
 
 def test_outcome_review_does_not_commit_when_entitlement_changes_during_assessment():
     row=task();row.progress_first['params']['content_task_id']=12
@@ -103,5 +102,5 @@ def test_outcome_review_does_not_commit_when_entitlement_changes_during_assessme
     with patch('app.geo.tenant_scope.ensure_geo_entitlement',side_effect=ensure), \
          patch('app.geo.outcome_review.assess_outcome',AsyncMock(return_value=assessment)), \
          pytest.raises(GeoEntitlementUnavailable):
-        asyncio.run(update_outcome_review(s,10))
+        asyncio.run(update_outcome_review(s,10,tenant_id=1))
     s.commit.assert_not_awaited()

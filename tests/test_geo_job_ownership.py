@@ -34,9 +34,9 @@ def test_two_dispatches_execute_once():
         with patch.object(jobs, 'job_execution_lock', lock), patch.object(
             jobs, '_run_owned_job', new=AsyncMock(side_effect=execute)
         ) as run:
-            first = asyncio.create_task(jobs.run_job_in_background(1))
+            first = asyncio.create_task(jobs.run_job_in_background(1, 1))
             await entered.wait()
-            await jobs.run_job_in_background(1)
+            await jobs.run_job_in_background(1, 1)
             finish.set()
             await first
             assert run.await_count == 1
@@ -170,7 +170,7 @@ def test_unclaimed_job_never_executes_and_claim_is_conditional():
         with patch('app.database.async_session_factory', factory), patch(
             'app.geo.tenant_scope.ensure_geo_entitlement', AsyncMock()
         ):
-            await jobs._run_owned_job(42)
+            await jobs._run_owned_job(42, tenant_id=1)
         session.get.assert_awaited_once_with(jobs.GeoAsyncJob, 42)
         statement = session.scalar.await_args.args[0]
         compiled = statement.compile(dialect=postgresql.dialect())
@@ -211,7 +211,7 @@ def test_claimed_job_persists_new_execution_protocol():
             patch.object(jobs, '_execute_generate', AsyncMock(return_value={'ok': True})),
             patch('app.geo.tenant_scope.ensure_geo_entitlement', AsyncMock()),
         ):
-            await jobs._run_owned_job(42)
+            await jobs._run_owned_job(42, tenant_id=1)
         assert row.request_meta['execution_protocol'] == jobs.JOB_EXECUTION_PROTOCOL
         assert row.status == 'succeeded'
 

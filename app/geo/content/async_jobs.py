@@ -12,6 +12,7 @@ from sqlalchemy import or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import GeoAsyncJob, GeoContentTask
+from app.geo.tenant16_demo import DEMO_TENANT_ID
 
 logger = logging.getLogger(__name__)
 
@@ -182,8 +183,9 @@ async def _release_task_lock(
 async def reconcile_stale_job(
     session: AsyncSession, row: GeoAsyncJob
 ) -> GeoAsyncJob:
-    from app.geo.tenant_scope import ensure_geo_entitlement
+    from app.geo.tenant_scope import ensure_geo_background_execution_allowed, ensure_geo_entitlement
 
+    ensure_geo_background_execution_allowed(int(row.tenant_id))
     await ensure_geo_entitlement(session, int(row.tenant_id))
     if row.status == "running" and not job_has_advisory_owner(row):
         return row
@@ -236,8 +238,9 @@ async def reconcile_stale_content_tasks(
     max_age_seconds: int | None = None,
 ) -> int:
     """Orphan generating/adapting tasks with no live job → editing."""
-    from app.geo.tenant_scope import ensure_geo_entitlement
+    from app.geo.tenant_scope import ensure_geo_background_execution_allowed, ensure_geo_entitlement
 
+    ensure_geo_background_execution_allowed(tenant_id)
     await ensure_geo_entitlement(session, tenant_id)
     _, running_lim = _stale_limits()
     max_age = max_age_seconds or running_lim
@@ -322,12 +325,13 @@ async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, 
         "released_tasks": 0,
         "legacy_running_deferred": 0,
     }
-    requeue_ids: list[int] = []
+    requeue_ids: list[tuple[int, int]] = []
 
     async with async_session_factory() as session:
         rows = list(
             await session.scalars(
                 select(GeoAsyncJob).where(
+                    GeoAsyncJob.tenant_id != DEMO_TENANT_ID,
                     GeoAsyncJob.status.in_(["pending", "running"])
                 )
             )
@@ -351,7 +355,8 @@ async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, 
         tenant_ids = list(
             await session.scalars(
                 select(GeoContentTask.tenant_id)
-                .where(GeoContentTask.status.in_(["generating", "adapting"]))
+                .where(GeoContentTask.tenant_id != DEMO_TENANT_ID,
+                       GeoContentTask.status.in_(["generating", "adapting"]))
                 .distinct()
             )
         )
@@ -364,8 +369,8 @@ async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, 
                 continue
         await session.commit()
 
-    for jid in requeue_ids:
-        asyncio.create_task(run_job_in_background(jid))
+    for jid, tenant_id in requeue_ids:
+        asyncio.create_task(run_job_in_background(jid, tenant_id))
     return stats
 
 
@@ -379,6 +384,7 @@ async def reconcile_stale_jobs_background() -> dict[str, int]:
         rows = list(
             await session.scalars(
                 select(GeoAsyncJob).where(
+                    GeoAsyncJob.tenant_id != DEMO_TENANT_ID,
                     GeoAsyncJob.status.in_(["pending", "running"])
                 )
             )
@@ -394,7 +400,8 @@ async def reconcile_stale_jobs_background() -> dict[str, int]:
         tenant_ids = list(
             await session.scalars(
                 select(GeoContentTask.tenant_id)
-                .where(GeoContentTask.status.in_(["generating", "adapting"]))
+                .where(GeoContentTask.tenant_id != DEMO_TENANT_ID,
+                       GeoContentTask.status.in_(["generating", "adapting"]))
                 .distinct()
             )
         )
@@ -409,8 +416,9 @@ async def reconcile_stale_jobs_background() -> dict[str, int]:
 
 
 async def _recover_unowned_job(session, row, pending_lim, requeue_pending, stats, requeue_ids):
-    from app.geo.tenant_scope import ensure_geo_entitlement
+    from app.geo.tenant_scope import ensure_geo_background_execution_allowed, ensure_geo_entitlement
 
+    ensure_geo_background_execution_allowed(int(row.tenant_id))
     await ensure_geo_entitlement(session, int(row.tenant_id))
     if row.status not in {"pending", "running"}:
         return
@@ -437,7 +445,7 @@ async def _recover_unowned_job(session, row, pending_lim, requeue_pending, stats
         await _release_task_lock(session, row, reason=reason)
         stats["failed_stale_pending"] += 1
     elif requeue_pending:
-        requeue_ids.append(int(row.id))
+        requeue_ids.append((int(row.id), int(row.tenant_id)))
         stats["requeued"] += 1
     else:
         reason = "进程重启：pending 作业未自动续跑（requeue 关闭）"
@@ -472,13 +480,15 @@ async def mark_job(
     await session.commit()
 
 
-async def run_job_in_background(job_id: int) -> None:
+async def run_job_in_background(job_id: int, tenant_id: int) -> None:
+    from app.geo.tenant_scope import ensure_geo_background_execution_allowed
+    ensure_geo_background_execution_allowed(tenant_id)
     async with job_execution_lock(job_id) as acquired:
         if acquired:
-            await _run_owned_job(job_id, connection=acquired)
+            await _run_owned_job(job_id, tenant_id=tenant_id, connection=acquired)
 
 
-async def run_job_synchronously(job_id: int) -> dict[str, Any]:
+async def run_job_synchronously(job_id: int, tenant_id: int) -> dict[str, Any]:
     """Execute a reserved job now while using the same durable ownership protocol.
 
     Synchronous HTTP compatibility endpoints must not call the business executor
@@ -486,6 +496,8 @@ async def run_job_synchronously(job_id: int) -> dict[str, Any]:
     workers.  The advisory lock remains held across all business-session commits
     and the remote model call.
     """
+    from app.geo.tenant_scope import ensure_geo_background_execution_allowed
+    ensure_geo_background_execution_allowed(tenant_id)
     async with job_execution_lock(job_id) as acquired:
         if not acquired:
             return {
@@ -493,12 +505,14 @@ async def run_job_synchronously(job_id: int) -> dict[str, Any]:
                 "error": "作业已由其他执行器接管",
                 "error_type": "JobOwnershipConflict",
             }
-        return await _run_owned_job(job_id, connection=acquired)
+        return await _run_owned_job(job_id, tenant_id=tenant_id, connection=acquired)
 
 
-async def _run_owned_job(job_id: int, *, connection=None) -> dict[str, Any]:
+async def _run_owned_job(job_id: int, *, tenant_id: int, connection=None) -> dict[str, Any]:
     from app.database import async_session_factory
-    from app.geo.tenant_scope import ensure_geo_entitlement
+    from app.geo.tenant_scope import ensure_geo_background_execution_allowed, ensure_geo_entitlement
+
+    ensure_geo_background_execution_allowed(tenant_id)
 
     try:
         async with async_session_factory(bind=connection) as session:
@@ -510,7 +524,13 @@ async def _run_owned_job(job_id: int, *, connection=None) -> dict[str, Any]:
                     "error_type": "JobNotPending",
                     "result_meta": {},
                 }
-            tenant_id = int(row.tenant_id)
+            if int(row.tenant_id) != int(tenant_id):
+                return {
+                    "status": "conflict",
+                    "error": "作业租户不匹配",
+                    "error_type": "JobTenantMismatch",
+                    "result_meta": {},
+                }
             try:
                 await ensure_geo_entitlement(session, tenant_id)
             except HTTPException as exc:
@@ -612,7 +632,9 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
     from app.geo.content.generate_article import generate_master_article, outline_from_payload, to_markdown
     from app.geo.content.review import invalidate_review
     from app.models import GeoArticleVersion, GeoFact, GeoPrompt, GeoTaskFact, Tenant
-    from app.geo.tenant_scope import ensure_geo_entitlement
+    from app.geo.tenant_scope import ensure_geo_background_execution_allowed, ensure_geo_entitlement
+
+    ensure_geo_background_execution_allowed(job.tenant_id)
 
     task = await session.get(GeoContentTask, job.ref_id)
     if task is None or task.tenant_id != job.tenant_id:
@@ -741,6 +763,8 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
 
 
 async def _execute_variants(session: AsyncSession, job: GeoAsyncJob) -> dict[str, Any]:
+    from app.geo.tenant_scope import ensure_geo_background_execution_allowed
+    ensure_geo_background_execution_allowed(job.tenant_id)
     from app.geo.content.variant_execute import execute_variants_for_task
 
     meta = job.request_meta or {}
@@ -762,7 +786,7 @@ async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[s
     from app.geo.content.connectors.social import SocialError
     from app.geo.content.connectors.webhook import WebhookConnectorError
     from app.geo.content.multi_push import execute_single_push, list_push_targets
-    from app.geo.tenant_scope import ensure_geo_entitlement
+    from app.geo.tenant_scope import ensure_geo_background_execution_allowed, ensure_geo_entitlement
     from app.models import (
         GeoArticleVersion,
         GeoChannelAccount,
@@ -771,6 +795,7 @@ async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[s
         GeoPublishingChannel,
     )
 
+    ensure_geo_background_execution_allowed(job.tenant_id)
     meta = job.request_meta or {}
     task = await session.get(GeoContentTask, job.ref_id)
     if task is None or task.tenant_id != job.tenant_id:

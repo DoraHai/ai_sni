@@ -222,5 +222,5 @@ def test_sync_generate_uses_the_same_reserved_job_executor():
 
     assert result == {"id": 12, "status": "needs_fix"}
     create.assert_awaited_once()
-    execute.assert_awaited_once_with(88)
+    execute.assert_awaited_once_with(88, 7)
     session.expire_all.assert_called_once_with()

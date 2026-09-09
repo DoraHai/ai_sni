@@ -16,6 +16,7 @@ except ModuleNotFoundError:
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from app.geo.tenant16_demo import DEMO_TENANT_ID
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ def scheduled_patrol_settings_query(*, tenant_id: int | None = None):
 
     query = select(GeoVisibilityPatrolSettings).where(
         GeoVisibilityPatrolSettings.enabled.is_(True),
+        GeoVisibilityPatrolSettings.tenant_id != DEMO_TENANT_ID,
     )
     if tenant_id is not None:
         query = query.where(GeoVisibilityPatrolSettings.tenant_id == tenant_id)
@@ -171,7 +173,7 @@ async def run_geo_visibility_patrols() -> None:
             await session.refresh(run)
             rid = run.id
             try:
-                await execute_patrol_run_owned(session, rid)
+                await execute_patrol_run_owned(session, rid, tenant_id)
                 logger.info(
                     "[geo-scheduler] patrol done tenant=%s run=%s window=%s-%s interval=%sh",
                     st.tenant_id,

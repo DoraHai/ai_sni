@@ -50,6 +50,8 @@ class QuestionReadItem(BaseModel):
     created_at: datetime
     updated_at: datetime
     timestamp_source_timezone: Literal["unknown"] = "unknown"
+    source_classification: str | None = None
+    formal_metric_eligible: bool | None = None
 
 
 class QuestionPagination(BaseModel):
@@ -63,6 +65,8 @@ class QuestionReadPage(BaseModel):
     evaluated_at: datetime
     pagination: QuestionPagination
     items: list[QuestionReadItem]
+    timezone: str | None = None
+    demo: dict | None = None
 
 
 def build_question_query(
@@ -167,6 +171,12 @@ async def list_questions(
 ) -> QuestionReadPage:
     """Return the question catalog without initializing configuration or executing work."""
     ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import is_tenant16_demo, question_page as demo_question_page
+    if is_tenant16_demo(ctx, tenant_id):
+        return QuestionReadPage.model_validate(demo_question_page(
+            limit=limit, before_id=before_id, status=status,
+            is_brand_probe=is_brand_probe,
+        ))
     data_id = data_tenant_id(session, tenant_id)
     result = await session.execute(
         build_question_query(

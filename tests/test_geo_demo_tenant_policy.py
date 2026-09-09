@@ -270,7 +270,7 @@ def test_demo_worker_stops_before_claim_write_or_model_execution():
     with patch("app.database.async_session_factory", factory), patch.object(
         async_jobs, "_execute_generate", AsyncMock()
     ) as execute:
-        result = asyncio.run(async_jobs._run_owned_job(42))
+        result = asyncio.run(async_jobs._run_owned_job(42, tenant_id=8))
     assert result["status"] == "blocked"
     assert session.scalar.await_count == 2
     session.commit.assert_not_awaited()

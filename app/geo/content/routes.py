@@ -5302,12 +5302,12 @@ async def create_visibility_patrol_run(
     if req.run_async:
         # Mark queued→running intent so UI leaves pure "pending" immediately after worker picks up;
         # execute_patrol_run also sets running on start.
-        background_tasks.add_task(run_patrol_in_background, run_id)
+        background_tasks.add_task(run_patrol_in_background, run_id, req.tenant_id)
         return {"run": patrol_run_payload(run), "started": True, "async": True}
 
     from app.geo.content.patrol import execute_patrol_run_owned
 
-    done = await execute_patrol_run_owned(session, run_id)
+    done = await execute_patrol_run_owned(session, run_id, req.tenant_id)
     return {"run": patrol_run_payload(done), "started": True, "async": False}
 
 
@@ -8086,7 +8086,7 @@ async def generate_task_article(
     )
     if run_async:
         # create_job commits the task transition and job reservation together.
-        background_tasks.add_task(run_job_in_background, job.id)
+        background_tasks.add_task(run_job_in_background, job.id, tenant_id)
         return {
             "async": True,
             "job": job_payload(job),
@@ -8094,7 +8094,7 @@ async def generate_task_article(
             "message": "母稿生成已排队，请轮询 /async-jobs/{id}",
         }
 
-    outcome = await run_job_synchronously(job.id)
+    outcome = await run_job_synchronously(job.id, tenant_id)
     if outcome.get("status") != "succeeded":
         message = str(outcome.get("error") or "生成失败")
         error_type = str(outcome.get("error_type") or "")
@@ -8175,7 +8175,7 @@ async def create_variants(
         created_by=ctx.user_id,
     )
     if run_async:
-        background_tasks.add_task(run_job_in_background, job.id)
+        background_tasks.add_task(run_job_in_background, job.id, tenant_id)
         return {
             "async": True,
             "job": job_payload(job),
@@ -8183,7 +8183,7 @@ async def create_variants(
             "message": "渠道稿生成已排队，请轮询 /async-jobs/{id}",
         }
 
-    outcome = await run_job_synchronously(job.id)
+    outcome = await run_job_synchronously(job.id, tenant_id)
     if outcome.get("status") != "succeeded":
         message = str(outcome.get("error") or "渠道稿生成失败")
         error_type = str(outcome.get("error_type") or "")
@@ -8824,7 +8824,7 @@ async def push_variant_batch(
             },
             created_by=ctx.user_id,
         )
-        background_tasks.add_task(run_job_in_background, job.id)
+        background_tasks.add_task(run_job_in_background, job.id, tenant_id)
         return {
             "async": True,
             "job": job_payload(job),

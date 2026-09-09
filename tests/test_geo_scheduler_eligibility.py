@@ -113,6 +113,7 @@ def test_runtime_and_endpoint_share_the_exact_enabled_settings_selector():
     )
 
     assert "geo_visibility_patrol_settings.enabled IS true" in sql
+    assert "geo_visibility_patrol_settings.tenant_id != 16" in sql
     assert "geo_visibility_patrol_settings.tenant_id = 4" in sql
     assert "scheduled_patrol_settings_query()" in inspect.getsource(
         run_geo_visibility_patrols

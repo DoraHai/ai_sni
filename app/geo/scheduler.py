@@ -156,7 +156,7 @@ async def run_geo_visibility_patrols() -> None:
             await session.commit()
             await session.refresh(run)
             try:
-                await execute_patrol_run_owned(session, run.id)
+                await execute_patrol_run_owned(session, run.id, tenant_id)
                 logger.info(
                     "[geo-scheduler] patrol completed tenant=%s run=%s",
                     tenant_id,

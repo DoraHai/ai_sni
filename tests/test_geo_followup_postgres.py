@@ -93,7 +93,7 @@ def test_followup_real_concurrency(scenario):
                         assert (await list_monitor(s,7,12))['monitoring_active'] is False
                         with patch('app.geo.publication_monitor.safe_fetch',AsyncMock()) as fetch, patch('app.geo.outcome_review.assess_outcome',AsyncMock()) as assess:
                             assert await check_publication(s,7,12,4,scheduled=True) is None
-                            await update_outcome_review(s,50)
+                            await update_outcome_review(s,50,tenant_id=7)
                             fetch.assert_not_awaited();assess.assert_not_awaited()
                         await s.execute(text('DELETE FROM geo_content_tasks WHERE id=12'))
                         await s.commit();assert await active()==set()
@@ -133,7 +133,7 @@ def test_followup_real_concurrency(scenario):
                 async def assess(*args):
                     entered.set();await release.wait();return assessment
                 async def review():
-                    async with sessions() as s:await update_outcome_review(s,50)
+                    async with sessions() as s:await update_outcome_review(s,50,tenant_id=7)
                 with patch('app.geo.outcome_review.assess_outcome',side_effect=assess):
                     workers=[asyncio.create_task(review())]
                     await asyncio.wait_for(entered.wait(),5)

@@ -10,6 +10,7 @@ from app.geo.audit import GeoAuditError, safe_fetch
 from app.geo.publication_evidence import match_publication
 from app.geo.verify import append_evidence
 from app.models import GeoActionTicket, GeoChannelVariant, GeoContentTask, GeoPublication
+from app.geo.tenant16_demo import DEMO_TENANT_ID
 
 PREFIX = 'monitor:v1:'
 
@@ -75,10 +76,11 @@ async def follow_up(session, content, pub, state):
 
 async def check_publication(session, tenant_id, task_id, publication_id, *, scheduled=False):
     if scheduled:
-        from app.geo.tenant_scope import ensure_geo_entitlement
+        from app.geo.tenant_scope import ensure_geo_background_execution_allowed, ensure_geo_entitlement
 
         # Scheduled monitoring is customer business processing. Existing audit
         # records remain stored, but an expired tenant must not start a new fetch.
+        ensure_geo_background_execution_allowed(tenant_id)
         await ensure_geo_entitlement(session, tenant_id)
     # Same lock order as publishing: content first, then variant. A transaction holds
     # ownership through the bounded fetch; a crash rolls it back without a stuck lease.
@@ -163,7 +165,8 @@ async def run_monitor_batch():
         rows = (await session.execute(select(GeoContentTask.tenant_id, GeoContentTask.id, GeoPublication.id)
             .join(GeoChannelVariant, GeoChannelVariant.task_id == GeoContentTask.id)
             .join(GeoPublication, GeoPublication.variant_id == GeoChannelVariant.id)
-            .where(GeoContentTask.status.notin_(['archived', 'cancelled']), GeoPublication.status == 'published',
+            .where(GeoContentTask.tenant_id != DEMO_TENANT_ID,
+                   GeoContentTask.status.notin_(['archived', 'cancelled']), GeoPublication.status == 'published',
                    GeoPublication.published_url.is_not(None), due <= now)
             .order_by(due, GeoPublication.id).limit(25))).all()
     for tenant_id, task_id, publication_id in rows:

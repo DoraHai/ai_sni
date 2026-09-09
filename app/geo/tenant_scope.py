@@ -57,6 +57,13 @@ class GeoEntitlementUnavailable(HTTPException):
         )
 
 
+def ensure_geo_background_execution_allowed(tenant_id: int) -> None:
+    """Reject the embedded demo tenant before worker locks, writes or calls."""
+    from app.geo.tenant16_demo import is_demo_tenant
+    if is_demo_tenant(int(tenant_id)):
+        raise GeoEntitlementUnavailable()
+
+
 def geo_tenant_query(*, tenant_id: int | None = None, today: date | None = None):
     """Build the read-only query for customers with an active GEO entitlement."""
     current_date = today or date.today()
@@ -224,6 +231,9 @@ async def require_geo_read_entitlement(tenant_id: int, ctx=Depends(require_scope
     cross-module policy. Database errors propagate (never grant on lookup failure).
     """
     ctx.ensure_tenant(tenant_id)
+    from app.geo.tenant16_demo import is_tenant16_demo
+    if is_tenant16_demo(ctx, tenant_id):
+        return ctx
     await ensure_geo_entitlement(
         session, tenant_id, allow_demo_read=True, lock_binding=False
     )
@@ -272,6 +282,19 @@ async def require_geo_request_entitlement(
 
     for tenant_id in tenant_ids:
         ctx.ensure_tenant(tenant_id)
+        from app.geo.tenant16_demo import is_tenant16_demo
+        if is_tenant16_demo(ctx, tenant_id):
+            from app.geo.demo_tenant import GeoDemoExecutionBlocked
+            path = request.url.path.rstrip("/") or "/"
+            if request.method.upper() in {"GET", "HEAD", "OPTIONS"} and (
+                path.startswith("/api/v1/geo/integration/read/")
+                or path in {
+                    "/api/v1/geo/integration/metrics/snapshot",
+                    "/api/v1/geo/integration/metrics/dictionary",
+                }
+            ):
+                continue
+            raise GeoDemoExecutionBlocked()
         policy = await ensure_geo_entitlement(
             session, tenant_id, allow_demo_read=True, lock_binding=True
         )
