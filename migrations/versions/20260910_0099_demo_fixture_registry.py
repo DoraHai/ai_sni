@@ -79,7 +79,6 @@ def upgrade() -> None:
             "module_code", "demo_tenant_id", "dataset_key", "dataset_version",
             name="pk_demo_fixture_registry",
         ),
-        sa.UniqueConstraint("manifest_sha256", name="uq_demo_fixture_registry_manifest"),
         sa.CheckConstraint(
             "module_code IN ('sem','seo','geo')",
             name="ck_demo_fixture_registry_module",

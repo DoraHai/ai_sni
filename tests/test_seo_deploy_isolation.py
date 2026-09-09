@@ -44,9 +44,9 @@ class _HealthConnection:
             ]
         if "demo_control" in sql and "pg_trigger" in sql:
             return [
-                ("trg_fixture_registry_no_update", "before update for each row reject_fixture_registry_mutation"),
-                ("trg_fixture_registry_no_delete", "before delete for each row reject_fixture_registry_mutation"),
-                ("trg_fixture_registry_no_truncate", "before truncate for each statement reject_fixture_registry_mutation"),
+                ("trg_fixture_registry_no_update", "before update for each row execute function reject_fixture_registry_mutation()", "O"),
+                ("trg_fixture_registry_no_delete", "before delete for each row execute function reject_fixture_registry_mutation()", "O"),
+                ("trg_fixture_registry_no_truncate", "before truncate for each statement execute function reject_fixture_registry_mutation()", "O"),
             ]
         if "demo_control" in sql and "pg_get_functiondef" in sql:
             return [
@@ -445,7 +445,7 @@ def test_0099_health_requires_strict_fixture_registry() -> None:
     assert "registry drift" in result["db_error"]
 
 
-@pytest.mark.parametrize("failure", ["extra_trigger", "wrong_function", "nullable", "missing_constraint"])
+@pytest.mark.parametrize("failure", ["extra_trigger", "disabled_trigger", "wrong_function", "nullable", "missing_constraint"])
 def test_0099_health_rejects_fixture_registry_drift(failure) -> None:
     original = _HealthConnection.execute
 
@@ -453,7 +453,10 @@ def test_0099_health_rejects_fixture_registry_drift(failure) -> None:
         sql = str(statement)
         rows = await original(self, statement, parameters)
         if failure == "extra_trigger" and "demo_control" in sql and "pg_trigger" in sql:
-            return [*rows, ("trg_fixture_registry_duplicate", "before update for each row reject_fixture_registry_mutation")]
+            return [*rows, ("trg_fixture_registry_duplicate", "before update for each row execute function reject_fixture_registry_mutation()", "O")]
+        if failure == "disabled_trigger" and "demo_control" in sql and "pg_trigger" in sql:
+            return [(name, definition, "D" if name == "trg_fixture_registry_no_update" else enabled)
+                    for name, definition, enabled in rows]
         if failure == "wrong_function" and "demo_control" in sql and "pg_get_functiondef" in sql:
             return [
                 (name, "returns trigger language plpgsql return new" if name == "reject_fixture_registry_mutation" else definition,

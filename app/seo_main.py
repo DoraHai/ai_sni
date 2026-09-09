@@ -163,7 +163,6 @@ SEO_FIXTURE_REGISTRY_COLUMNS = {
 }
 SEO_FIXTURE_REGISTRY_CONSTRAINTS = {
     "pk_demo_fixture_registry",
-    "uq_demo_fixture_registry_manifest",
     "ck_demo_fixture_registry_module",
     "ck_demo_fixture_registry_tenant_positive",
     "ck_demo_fixture_registry_dataset_key_format",
@@ -179,7 +178,6 @@ SEO_FIXTURE_REGISTRY_CONSTRAINTS = {
 }
 SEO_FIXTURE_REGISTRY_CONSTRAINT_RULES = {
     "pk_demo_fixture_registry": ("primary key", "module_code", "demo_tenant_id", "dataset_key", "dataset_version"),
-    "uq_demo_fixture_registry_manifest": ("unique", "manifest_sha256"),
     "ck_demo_fixture_registry_module": ("check", "module_code", "sem", "seo", "geo"),
     "ck_demo_fixture_registry_tenant_positive": ("check", "demo_tenant_id", "> 0"),
     "ck_demo_fixture_registry_dataset_key_format": ("check", "dataset_key", "a-z0-9"),
@@ -213,12 +211,12 @@ SEO_FIXTURE_REGISTRY_CONSTRAINTS_SQL = text("""
     ORDER BY con.conname
 """)
 SEO_FIXTURE_REGISTRY_TRIGGER_SQL = text("""
-    SELECT t.tgname, pg_catalog.pg_get_triggerdef(t.oid, true)
+    SELECT t.tgname, pg_catalog.pg_get_triggerdef(t.oid, true), t.tgenabled::text
     FROM pg_catalog.pg_trigger t
     JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid
     JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='demo_control' AND c.relname='fixture_registry' AND c.relkind='r'
-      AND NOT t.tgisinternal AND t.tgenabled <> 'D'
+      AND NOT t.tgisinternal
     ORDER BY t.tgname
 """)
 SEO_FIXTURE_REGISTRY_FUNCTION_SQL = text("""
@@ -398,16 +396,16 @@ async def _check_fixture_registry_structure(conn):
 
     trigger_rows = list(await conn.execute(SEO_FIXTURE_REGISTRY_TRIGGER_SQL))
     triggers = {
-        name: " ".join(definition.lower().replace("demo_control.", "").split())
-        for name, definition in trigger_rows
+        name: (" ".join(definition.lower().replace("demo_control.", "").split()), enabled)
+        for name, definition, enabled in trigger_rows
     }
     expected_triggers = {
-        "trg_fixture_registry_no_update": ("before update", "for each row", "reject_fixture_registry_mutation"),
-        "trg_fixture_registry_no_delete": ("before delete", "for each row", "reject_fixture_registry_mutation"),
-        "trg_fixture_registry_no_truncate": ("before truncate", "for each statement", "reject_fixture_registry_mutation"),
+        "trg_fixture_registry_no_update": ("before update", "for each row", "execute function reject_fixture_registry_mutation()"),
+        "trg_fixture_registry_no_delete": ("before delete", "for each row", "execute function reject_fixture_registry_mutation()"),
+        "trg_fixture_registry_no_truncate": ("before truncate", "for each statement", "execute function reject_fixture_registry_mutation()"),
     }
     trigger_ok = len(trigger_rows) == len(expected_triggers) and set(triggers) == set(expected_triggers) and all(
-        all(fragment in triggers[name] for fragment in fragments)
+        triggers[name][1] == "O" and all(fragment in triggers[name][0] for fragment in fragments)
         for name, fragments in expected_triggers.items()
     )
 
