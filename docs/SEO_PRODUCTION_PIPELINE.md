@@ -131,44 +131,45 @@ downgrade or a pre-migration database snapshot; changing code symlinks alone is
 not a database rollback.
 
 
-## Shared SemTask compatibility: current Draft implementation
+## Shared migration compatibility: current adoption candidate
 
-Development of the actual two-version allowlist is now authorized. PR #369
-remains Draft: do not merge, deploy or execute a migration. This supersedes the
-current-only/test-patched allowlist described in the historical review notes below.
+The previous `0095_sem_tasks` proposal is superseded and remains historical
+evidence only. The canonical sequence is now reserved as:
 
-The runtime allowlist contains exactly `0094_seo_qa_batches` and `0095_sem_tasks`.
-The required SEO baseline stays `0094_seo_qa_batches`. A healthy result requires
-exactly one allowed revision row AND the existing necessary SEO structure checks.
-Unknown, empty, duplicate or multiple rows fail, including a row for each of the
-two individually allowed versions. Tests use the actual allowlist without patching.
-Missing tables/columns, integer/JSONB mismatches and catalog errors still fail.
+1. `0095_adopt_geo_ticket`, parent `0094_seo_qa_batches`;
+2. `0096_sem_tasks`, parent `0095_adopt_geo_ticket`;
+3. `0097_demo_tenant_bindings`, parent `0096_sem_tasks`.
 
-Source contract: #370 at `a62a003262f53fab1d1e8ec69175e747266b9469`, direct
-parent `0094_seo_qa_batches` to target `0095_sem_tasks`. Relative to reviewed
-`66455f1`, only execution-design documentation, a read-only preflight script and
-its offline tests were added; candidate migration, source lock, builder and env
-are unchanged. The preflight script has not been executed by this SEO task.
-This is compatibility implementation, not approval of the production executor.
+The current candidate runtime accepts exactly `0094_seo_qa_batches` and
+`0095_adopt_geo_ticket`; the latter is the required source head. A healthy 0095
+response also verifies the exact reviewed `public.geo_action_tickets.owner_name`
+and `due_date` catalog shape. Unknown, empty, duplicate or multiple version rows
+fail closed. The ordinary deploy workflow never runs Alembic.
+
+`0095_adopt_geo_ticket` accepts only the exact reviewed production shape with no
+DDL, or a fresh canonical shape where both columns are absent and are created in
+one transaction. It rejects partial/drifted states, offline execution and
+downgrade. Canonical migrations may be added once through the source boundary;
+subsequent modification, rename or deletion is rejected.
 
 ### Separate approval and rollback requirements
 
-1. Independently approve and deploy the SEO compatibility release first. Record
+1. Independently approve and deploy the 0094/0095-compatible SEO release first. Record
    its exact commit, artifact checksum and successful health result against the
    current 0094 database. Development approval is not deployment approval.
 2. Before separately approving the database migration, retain an independently
    reviewed, tested and deployable rollback artifact that also accepts BOTH 0094
-   and 0095 and preserves the required structure checks. Record its exact commit
+   and 0095 and preserves the revision-specific structure checks. Record its exact commit
    and checksum in the release record. No rollback artifact is designated by
    this Draft, and a generic previous-release symlink is insufficient evidence.
-3. Only after separate migration approval may the database advance to 0095.
+3. Only after PostgreSQL 16 rehearsals and separate migration approval may the database advance to 0095.
    After that, never roll SEO back to an older 0094-only health checker (including
-   backend baseline `4e83611`). Application rollback must use the recorded
-   compatible artifact; do not stamp/downgrade the version table or drop SemTask
-   audit data to make an older application appear healthy.
+   the current pre-adoption SEO release). Application rollback must use the recorded
+   compatible artifact; do not stamp/downgrade the version table or remove adopted
+   GEO ticket columns to make an older application appear healthy.
 4. If no eligible rollback artifact is available, the migration is not ready
-   for execution approval. Shared schema reconciliation, production execution
-   review and SemTask enablement remain separate gates.
+   for execution approval. The 0096 SemTask package and 0097 demo binding package
+   each require their own later compatibility window and review.
 
 ## Historical review log (superseded where noted above)
 

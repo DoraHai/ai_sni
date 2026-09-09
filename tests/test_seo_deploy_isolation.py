@@ -28,6 +28,11 @@ class _HealthConnection:
         self.revisions = revisions
 
     async def execute(self, statement, parameters=None):
+        if "geo_action_tickets" in str(statement):
+            return [
+                (name, "r", *shape, False, False)
+                for name, shape in sorted(seo_main.SEO_GEO_TICKET_SHAPE.items())
+            ]
         if "pg_attribute" in str(statement):
             return [(table, column, kind or "text") for (table, column), kind in seo_main.SEO_REQUIRED_COLUMNS.items()]
         return _HealthResult(self.revisions if "alembic_version" in str(statement) else [])
@@ -239,10 +244,47 @@ def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
     assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket']
 
 
+@pytest.mark.parametrize('failure', ['missing_column', 'wrong_type', 'has_index', 'has_constraint'])
+def test_health_rejects_0095_when_geo_ticket_adoption_shape_is_incomplete(failure):
+    async def execute(self, statement, parameters=None):
+        sql = str(statement)
+        if 'geo_action_tickets' in sql:
+            rows = [
+                [name, 'r', *shape, False, False]
+                for name, shape in sorted(seo_main.SEO_GEO_TICKET_SHAPE.items())
+            ]
+            if failure == 'missing_column':
+                rows.pop()
+            elif failure == 'wrong_type':
+                rows[0][2] = 'character varying(200)'
+            elif failure == 'has_index':
+                rows[0][-2] = True
+            elif failure == 'has_constraint':
+                rows[0][-1] = True
+            return [tuple(row) for row in rows]
+        if 'pg_attribute' in sql:
+            return [(table, column, kind or 'text') for (table, column), kind in seo_main.SEO_REQUIRED_COLUMNS.items()]
+        return _HealthResult(self.revisions if 'alembic_version' in sql else [])
+
+    response = Response()
+    with patch.object(_HealthConnection, 'execute', execute), patch.object(
+        seo_main, 'engine', _HealthEngine(['0095_adopt_geo_ticket'])
+    ):
+        result = asyncio.run(seo_main.seo_health(response))
+    assert response.status_code == 503
+    assert result['schema'] == 'error'
+    assert 'GEO ticket assignment columns' in result['db_error']
+
+
 @pytest.mark.parametrize('failure', ['missing_table','missing_column','wrong_bigint','wrong_jsonb','catalog_denied'])
 @pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket'])
 def test_health_rejects_incomplete_schema_even_at_allowed_revision(failure, revision):
     async def execute(self, statement, parameters=None):
+        if 'geo_action_tickets' in str(statement):
+            return [
+                (name, 'r', *shape, False, False)
+                for name, shape in sorted(seo_main.SEO_GEO_TICKET_SHAPE.items())
+            ]
         if 'pg_attribute' not in str(statement):
             return _HealthResult(self.revisions if 'alembic_version' in str(statement) else [])
         if failure == 'catalog_denied': raise PermissionError('catalog access denied')

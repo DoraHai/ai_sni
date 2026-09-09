@@ -90,6 +90,7 @@ jobs:
           tests/test_seo_manual_automation.py
           tests/test_seo_competitors.py
           tests/test_seo_deploy_isolation.py
+          tests/test_geo_ticket_adoption_migration.py
           tests/test_seo_distribution.py
           tests/test_seo_domestic_distribution.py
           tests/test_seo_distribution_import.py

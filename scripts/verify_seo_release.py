@@ -217,6 +217,17 @@ def source_path_allowed(path: str) -> bool:
     return normalized in SOURCE_ALLOWED_EXACT or normalized.startswith(SOURCE_ALLOWED_PREFIXES)
 
 
+def source_change_allowed(status: str, path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    if not source_path_allowed(normalized):
+        return False
+    if normalized.startswith("migrations/versions/"):
+        # A migration may enter the canonical history once. Once present in the
+        # compared base, modifying, renaming or deleting it is always rejected.
+        return status == "A"
+    return True
+
+
 def _files(root: Path) -> dict[str, Path]:
     return {
         path.relative_to(root).as_posix(): path
@@ -261,15 +272,26 @@ def check_release_diff(base: Path, candidate: Path, entry_asset: str) -> list[st
     return problems
 
 
-def changed_source_paths(repo: Path, base_ref: str, head_ref: str) -> list[str]:
+def changed_source_entries(repo: Path, base_ref: str, head_ref: str) -> list[tuple[str, str]]:
     result = subprocess.run(
-        ["git", "diff", "--name-only", f"{base_ref}..{head_ref}"],
+        ["git", "diff", "--name-status", "--find-renames=100%", f"{base_ref}..{head_ref}"],
         cwd=repo,
         check=True,
         capture_output=True,
         text=True,
     )
-    return [line.strip().replace("\\", "/") for line in result.stdout.splitlines() if line.strip()]
+    entries = []
+    for line in result.stdout.splitlines():
+        parts = line.strip().split("\t")
+        if len(parts) < 2:
+            continue
+        status = parts[0][0]
+        entries.extend((status, path.replace("\\", "/")) for path in parts[1:])
+    return entries
+
+
+def changed_source_paths(repo: Path, base_ref: str, head_ref: str) -> list[str]:
+    return [path for _, path in changed_source_entries(repo, base_ref, head_ref)]
 
 
 def build_manifest(root: Path, paths: list[str]) -> dict[str, object]:
@@ -299,8 +321,9 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "source-diff":
-        changed = changed_source_paths(args.repo, args.base, args.head)
-        problems = [path for path in changed if not source_path_allowed(path)]
+        entries = changed_source_entries(args.repo, args.base, args.head)
+        changed = [path for _, path in entries]
+        problems = [path for status, path in entries if not source_change_allowed(status, path)]
         print(json.dumps({"changed": changed, "rejected": problems}, ensure_ascii=False, indent=2))
         return 1 if problems else 0
     if args.command == "release-diff":

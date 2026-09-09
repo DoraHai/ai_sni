@@ -79,12 +79,19 @@ ORDER BY a.attname
 
 _INDEX_SQL = sa.text("""
 SELECT DISTINCT index_class.relname AS object_name
-FROM pg_catalog.pg_index AS i
-JOIN pg_catalog.pg_class AS table_class ON table_class.oid = i.indrelid
+FROM pg_catalog.pg_class AS table_class
 JOIN pg_catalog.pg_namespace AS n ON n.oid = table_class.relnamespace
-JOIN pg_catalog.pg_class AS index_class ON index_class.oid = i.indexrelid
 JOIN pg_catalog.pg_attribute AS a
-  ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+  ON a.attrelid = table_class.oid
+JOIN pg_catalog.pg_depend AS dep
+  ON dep.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass
+ AND dep.refobjid = table_class.oid
+ AND dep.refobjsubid = a.attnum
+JOIN pg_catalog.pg_class AS index_class
+  ON dep.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+ AND index_class.oid = dep.objid
+JOIN pg_catalog.pg_index AS i
+  ON i.indexrelid = index_class.oid AND i.indrelid = table_class.oid
 WHERE n.nspname = 'public'
   AND table_class.relname = 'geo_action_tickets'
   AND a.attname IN ('owner_name', 'due_date')
@@ -93,11 +100,17 @@ ORDER BY index_class.relname
 
 _CONSTRAINT_SQL = sa.text("""
 SELECT DISTINCT con.conname AS object_name
-FROM pg_catalog.pg_constraint AS con
-JOIN pg_catalog.pg_class AS table_class ON table_class.oid = con.conrelid
+FROM pg_catalog.pg_class AS table_class
 JOIN pg_catalog.pg_namespace AS n ON n.oid = table_class.relnamespace
 JOIN pg_catalog.pg_attribute AS a
-  ON a.attrelid = con.conrelid AND a.attnum = ANY(con.conkey)
+  ON a.attrelid = table_class.oid
+JOIN pg_catalog.pg_depend AS dep
+  ON dep.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass
+ AND dep.refobjid = table_class.oid
+ AND dep.refobjsubid = a.attnum
+JOIN pg_catalog.pg_constraint AS con
+  ON dep.classid = 'pg_catalog.pg_constraint'::pg_catalog.regclass
+ AND con.oid = dep.objid
 WHERE n.nspname = 'public'
   AND table_class.relname = 'geo_action_tickets'
   AND a.attname IN ('owner_name', 'due_date')
