@@ -15,7 +15,7 @@ import { readSeoSiteScope } from '../../../../integrations/seo-workbench/site-sc
 import { seoSummaryCards } from '../../../../integrations/seo-workbench/summary.mjs'
 import { createGeoAuthorizedClient } from '../../../../integrations/geo-workbench/authorization-context.mjs'
 import { currentSeoSiteId } from '../seo/seoSiteContext'
-import { countUnresolvedModules, hasDataReadPermission, isCurrentCockpitScope, isSecureCockpitRuntime, resolveTenantModuleCodes, selectAvailableModules } from './cockpit/scope.mjs'
+import { countUnresolvedModules, hasDataReadPermission, isCurrentCockpitScope, isSecureCockpitRuntime, resolveTenantModuleCodes, selectAvailableModules, selectCockpitTenants } from './cockpit/scope.mjs'
 import { completedWeekEnd, completedWeekInclusiveEnd, geoSummaryCards } from './cockpit/geo-summary.mjs'
 import { createSeoSiteSelectionGuard, resolveSeoSiteSelection } from './cockpit/site-selection.mjs'
 import { geoReadyReply, urgencyReply } from './cockpit/status-copy.mjs'
@@ -41,6 +41,7 @@ const initialConversation = () => [
 const conversation = ref(initialConversation())
 const moduleState = ref({ sem: 'waiting', seo: 'waiting', geo: 'waiting' })
 const tenantModuleCodes = ref(new Set())
+const selectableTenants = ref([])
 const seoSites = ref([])
 const seoSiteSelectionGuard = createSeoSiteSelectionGuard()
 const secureRuntime = isSecureCockpitRuntime(window.location)
@@ -316,9 +317,19 @@ async function prepare() {
       tenants: (await fetchTenants(item.module_code)).tenants,
     })))
     if (!isCurrent()) return
+    const tenantsByModule = Object.fromEntries(scoped.map(item => [item.code, item.tenants]))
+    selectableTenants.value = selectCockpitTenants({
+      tenants: tenants.tenants,
+      tenantsByModule,
+      moduleCodes: eligible.map(item => item.module_code),
+    })
+    if (!selectableTenants.value.some(item => Number(item.id) === Number(session.tenantId))) {
+      session.setTenant(selectableTenants.value[0]?.id ?? null)
+      return
+    }
     tenantModuleCodes.value = resolveTenantModuleCodes({
       modules: modules.modules,
-      tenantsByModule: Object.fromEntries(scoped.map(item => [item.code, item.tenants])),
+      tenantsByModule,
       tenantId: session.tenantId,
       moduleMeta,
     })
@@ -362,6 +373,13 @@ function selectSeoSite(event) {
   const value = Number(event.target.value)
   seoSiteSelectionGuard.confirmExplicitSelection(session.tenantId)
   currentSeoSiteId.value = Number.isSafeInteger(value) && value > 0 ? value : null
+}
+function selectTenant(event) {
+  const value = Number(event.target.value)
+  if (!Number.isSafeInteger(value) || value <= 0 || value === Number(session.tenantId)) return
+  currentSeoSiteId.value = null
+  invalidateEvidence({ clearConversation: true })
+  session.setTenant(value)
 }
 function setViewMode(mode) {
   viewMode.value = mode
@@ -411,6 +429,11 @@ onBeforeUnmount(() => { document.removeEventListener('fullscreenchange', syncFul
       </div>
       <div class="live-badge"><i></i><span>工作台在线</span><b>{{ displayTime(lastReadAt) }}</b></div>
       <div class="command-controls">
+        <label v-if="selectableTenants.length > 1">客户
+          <select :value="session.tenantId || ''" aria-label="选择客户" @change="selectTenant">
+            <option v-for="tenant in selectableTenants" :key="tenant.id" :value="tenant.id">{{ tenant.name }}</option>
+          </select>
+        </label>
         <label v-if="availableModules.some(item => item.module_code === 'seo')">SEO 网站
           <select :value="currentSeoSiteId || ''" aria-label="选择 SEO 网站" @change="selectSeoSite">
             <option value="">{{ seoSites.some(site => site.status === 'active') ? '请选择网站' : '暂无可用网站' }}</option>
