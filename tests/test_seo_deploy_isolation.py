@@ -30,7 +30,7 @@ class _HealthConnection:
     async def execute(self, statement, parameters=None):
         if "geo_action_tickets" in str(statement):
             return [
-                (name, "r", *shape, False, False)
+                (name, *shape, False, False)
                 for name, shape in sorted(seo_main.SEO_GEO_TICKET_SHAPE.items())
             ]
         if "pg_attribute" in str(statement):
@@ -252,13 +252,13 @@ def test_health_rejects_0095_when_geo_ticket_adoption_shape_is_incomplete(failur
         sql = str(statement)
         if 'geo_action_tickets' in sql:
             rows = [
-                [name, 'r', *shape, False, False]
+                [name, *shape, False, False]
                 for name, shape in sorted(seo_main.SEO_GEO_TICKET_SHAPE.items())
             ]
             if failure == 'missing_column':
                 rows.pop()
             elif failure == 'wrong_type':
-                rows[0][2] = 'character varying(200)'
+                rows[0][1] = 'character varying(200)'
             elif failure == 'has_index':
                 rows[0][-2] = True
             elif failure == 'has_constraint':
@@ -284,7 +284,7 @@ def test_health_rejects_incomplete_schema_even_at_allowed_revision(failure, revi
     async def execute(self, statement, parameters=None):
         if 'geo_action_tickets' in str(statement):
             return [
-                (name, 'r', *shape, False, False)
+                (name, *shape, False, False)
                 for name, shape in sorted(seo_main.SEO_GEO_TICKET_SHAPE.items())
             ]
         if 'pg_attribute' not in str(statement):
@@ -309,7 +309,14 @@ def test_schema_catalog_check_is_read_only_and_search_path_aware():
 
 
 def test_geo_ticket_catalog_normalizes_postgres_internal_char_type():
-    assert 'c.relkind::text' in str(seo_main.SEO_GEO_TICKET_SHAPE_SQL)
+    sql = str(seo_main.SEO_GEO_TICKET_SHAPE_SQL)
+    for expression in (
+        'a.attidentity::text',
+        'a.attgenerated::text',
+        't.typtype::text',
+    ):
+        assert expression in sql
+    assert "c.relkind = 'r'" in sql
 
 
 def test_structure_contract_preserves_smallint_fields():

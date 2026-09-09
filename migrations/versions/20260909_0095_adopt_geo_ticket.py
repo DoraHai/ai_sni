@@ -45,10 +45,12 @@ _EXPECTED_COLUMNS = {
 
 
 _TABLE_SQL = sa.text("""
-SELECT c.relkind::text
+SELECT c.oid
 FROM pg_catalog.pg_class AS c
 JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
-WHERE n.nspname = 'public' AND c.relname = 'geo_action_tickets'
+WHERE n.nspname = 'public'
+  AND c.relname = 'geo_action_tickets'
+  AND c.relkind = 'r'
 """)
 
 _COLUMN_SQL = sa.text("""
@@ -57,9 +59,9 @@ SELECT
     pg_catalog.format_type(a.atttypid, a.atttypmod) AS formatted_type,
     a.attnotnull,
     pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) AS default_expression,
-    a.attidentity,
-    a.attgenerated,
-    t.typtype,
+    a.attidentity::text,
+    a.attgenerated::text,
+    t.typtype::text,
     CASE WHEN t.typbasetype = 0 THEN NULL ELSE bt.typname END AS domain_base_type,
     a.attcollation = t.typcollation AS collation_is_type_default
 FROM pg_catalog.pg_attribute AS a
@@ -120,7 +122,7 @@ ORDER BY con.conname
 
 def _catalog_state(bind) -> dict[str, dict[str, object]]:
     table_rows = bind.execute(_TABLE_SQL).all()
-    if len(table_rows) != 1 or table_rows[0][0] != "r":
+    if len(table_rows) != 1:
         raise RuntimeError("public.geo_action_tickets must exist as one ordinary table")
 
     rows = bind.execute(_COLUMN_SQL).mappings().all()

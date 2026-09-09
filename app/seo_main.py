@@ -62,13 +62,12 @@ SEO_SCHEMA_COLUMNS_SQL = text("""
 SEO_GEO_TICKET_SHAPE_SQL = text("""
     SELECT
         a.attname,
-        c.relkind::text,
         pg_catalog.format_type(a.atttypid, a.atttypmod),
         a.attnotnull,
         pg_catalog.pg_get_expr(ad.adbin, ad.adrelid),
-        a.attidentity,
-        a.attgenerated,
-        t.typtype,
+        a.attidentity::text,
+        a.attgenerated::text,
+        t.typtype::text,
         CASE WHEN t.typbasetype = 0 THEN NULL ELSE bt.typname END,
         a.attcollation = t.typcollation,
         EXISTS (
@@ -99,6 +98,7 @@ SEO_GEO_TICKET_SHAPE_SQL = text("""
     LEFT JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
     WHERE n.nspname = 'public'
       AND c.relname = 'geo_action_tickets'
+      AND c.relkind = 'r'
       AND a.attname IN ('owner_name', 'due_date')
       AND a.attnum > 0 AND NOT a.attisdropped
     ORDER BY a.attname
@@ -119,9 +119,9 @@ async def _check_geo_ticket_adoption(conn):
     rows = await conn.execute(SEO_GEO_TICKET_SHAPE_SQL)
     actual = {}
     for row in rows:
-        name, relkind, *shape = row
-        actual[name] = (relkind, tuple(shape))
-    expected = {name: ("r", shape + (False, False)) for name, shape in SEO_GEO_TICKET_SHAPE.items()}
+        name, *shape = row
+        actual[name] = tuple(shape)
+    expected = {name: shape + (False, False) for name, shape in SEO_GEO_TICKET_SHAPE.items()}
     if actual != expected:
         raise RuntimeError(
             "0095 GEO ticket assignment columns missing or incompatible: "

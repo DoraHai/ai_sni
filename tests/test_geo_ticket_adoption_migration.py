@@ -48,7 +48,11 @@ def test_adoption_contract_is_fixed_schema_online_only_and_irreversible() -> Non
 
     assert "LOCK TABLE public.geo_action_tickets IN ACCESS EXCLUSIVE MODE" in source
     assert "SET LOCAL lock_timeout = '5s'" in source
-    assert "SELECT c.relkind::text" in source
+    assert "SELECT c.oid" in source
+    assert "c.relkind = 'r'" in source
+    assert "a.attidentity::text" in source
+    assert "a.attgenerated::text" in source
+    assert "t.typtype::text" in source
     assert "context.as_sql" in source
     assert 'bind.dialect.name != "postgresql"' in source
     assert 'schema=_SCHEMA' in source
@@ -119,8 +123,8 @@ class _Bind:
         if sql.startswith("LOCK TABLE"):
             self.locked = True
             return _Result([])
-        if "SELECT c.relkind" in sql:
-            return _Result([("r",)])
+        if "SELECT c.oid" in sql:
+            return _Result([(12345,)])
         if "pg_catalog.pg_attribute AS a" in sql and "pg_attrdef" in sql:
             return _Result([
                 {"attname": name, **values}
