@@ -298,3 +298,133 @@ Next gates remain current-schema reconciliation, review of a production entry
 and operational prerequisites, and explicit release/execution authorization.
 #369 remains Draft with its 0094-only runtime allowlist; candidate compatibility
 is still simulated only in tests. No merge, deployment or migration occurred.
+
+## Shared migration preflight — 2026-09-09
+
+This section is a source-only implementation preflight for the confirmed
+production starting point `0094_seo_qa_batches`. It did not connect to
+`sem_prod`, create a database, run DDL, stamp a revision, or change any SEM/GEO
+business model.
+
+### Authoritative 0094 ancestry
+
+At production SEO baseline `0867004478504ce6d5b848338af4b4dc420556f9`,
+`ScriptDirectory.get_heads()` returns the single head
+`0094_seo_qa_batches`, `get_base()` returns `0001_initial`, and walking from
+0094 to base visits 111 unique revisions. Alembic loads the graph without a
+duplicate revision or missing-parent error. The six merge points that close
+every historical branch are:
+
+| merge revision | parents |
+| --- | --- |
+| `0055_merge_geo_platform` | `0038_oauth_account_tenants`, `0054_geo_opt_hierarchy` |
+| `0064_merge_geo_sem_heads` | `0064_fact_business`, `0063_seo_serp_brand_assets` |
+| `0072_merge_login_seo` | `0071_login_lockout`, `0071_seo_distribution` |
+| `0074_merge_geo_seo_heads` | `0073_geo_schema_repair`, `0073_seo_distribution_variants` |
+| `0077_merge_sem_seo_heads` | `0076_oauth_rebind_intent`, `0075_seo_content_source_page` |
+| `0086_seo_index_review_merge` | `0084_seo_crawl_queued_status`, `0085_seo_page_index_reviews` |
+
+The final linear tail is
+`0086 -> 0087 -> 0088 -> 0089 -> 0090 -> 0091 -> 0092 -> 0093 -> 0094`.
+The existing `test_seo_migration_merge.py` also fixes the exact upgrade plan
+from SEM revision `0076_oauth_rebind_intent` to 0094 and verifies the merge
+parents above.
+
+SEM revision `0076_oauth_rebind_intent` is therefore an ancestor of 0094 via
+`0077_merge_sem_seo_heads`. Its parents `0075_sem_asset_sync_state` and
+`0074_suggestion_workflow` are also present. GEO merge revision
+`0074_merge_geo_seo_heads` is an ancestor of both sides joined at 0077, and its
+`0073_geo_schema_repair` parent is present. The similarly numbered
+`0074_suggestion_workflow` is a distinct SEM revision and is also included.
+Do not identify a revision by its numeric prefix alone.
+
+### Empty database executability and known blockers
+
+The source graph is structurally complete for an online `base -> 0094`
+upgrade. The repair migrations that use pre-existing tables are ordered after
+their table-creating ancestors: `0065_seo_rewrite_schema_repair` follows the
+SEO foundation, `0073_geo_schema_repair` follows the GEO hierarchy, and
+`0078_seo_site_data_repairs` follows the site-scoped SEO tables. Their data
+updates, along with the backfills in 0038/0066/0070/0071/0078/0084, are
+expected to be no-ops on an empty database.
+
+This is not yet proof of online execution. No isolated PostgreSQL upgrade from
+an empty database was run in this review. In addition, offline SQL generation
+is not a substitute: `alembic upgrade 0094_seo_qa_batches --sql` exits at
+`0048_clean_legacy_geo_demo_text` because its `op.get_bind().execute(...)`
+returns no result in offline mode and `.mappings()` raises `AttributeError`.
+0049 uses the same result-reading pattern. The generated SQL stream is partial
+and must never be executed. The required proof is a disposable PostgreSQL 16
+online rehearsal using the exact migration source.
+
+### Existing and proposed objects
+
+The formal 0094 directory contains neither `sem_tasks` nor
+`demo_tenant_bindings`. The reviewed 0095 proposal adds only `sem_tasks`, its
+implicit `sem_tasks_id_seq` and `sem_tasks_pkey`, indexes
+`ix_sem_tasks_action`/`ix_sem_tasks_queue`, eight `ck_sem_tasks_*` checks, and
+the tenant foreign key with `ON DELETE RESTRICT`. None of those identifiers is
+created by the 111-revision 0094 ancestry. The confirmed production read-only
+preflight likewise reports these SemTask objects absent, so there is no known
+object-name conflict at the recorded starting point.
+
+There is no reviewed `demo_tenant_bindings` DDL, model, constraint inventory,
+or source lock yet. Its exact conflict set cannot be claimed clean until those
+names and column/FK types are fixed and compared with `pg_class`,
+`pg_constraint`, and `pg_indexes`. The existing `tenants.id` type in the base
+migration is BIGINT, matching the SemTask proposal. A future binding table must
+reference that same type and must not introduce a second Alembic version table
+or a module-local migration root.
+
+### Reserved single linear sequence
+
+The only acceptable next sequence is:
+
+1. `0095_sem_tasks`, `down_revision = "0094_seo_qa_batches"`.
+2. `0096_demo_tenant_bindings`, `down_revision = "0095_sem_tasks"`.
+
+Do not allocate both migrations as children of 0094, reuse module-local 0076 or
+0074 identifiers, or add a merge revision after creating parallel heads. The
+0096 identifier is a reservation, not approval of its unreviewed DDL. Before
+0096 can run, every service health allowlist that may serve that database must
+be reviewed to accept the exact new head while retaining required-structure
+checks. Deploying 0095-compatible code does not imply 0096 compatibility.
+
+### Required database rehearsals
+
+All destructive work below is restricted to a disposable local database. No
+step may target `sem_prod` or a production hostname.
+
+**Fresh empty database:** create a PostgreSQL 16 database with an empty public
+schema; record server/search path/role; run the exact shared source online from
+base to 0094; assert one `alembic_version` row at 0094, all 111 revisions
+reachable, required SEO/SEM/GEO structures present, FKs/indexes/checks valid,
+and no unexpected schema. Then install the reviewed 0095 and 0096 files in
+order and execute each exact target separately, catalog-diffing only its
+approved objects.
+
+**Second no-op:** at each target, capture schema and row-count fingerprints,
+run `alembic upgrade <same-target>` again, and require identical revision,
+catalog, ownership, grants, sequence state and row counts. No migration body
+may execute twice and no additional head may appear.
+
+**Existing sem_prod-shaped upgrade:** restore a verified sanitized schema-only
+snapshot whose recorded revision and required structures both match 0094;
+verify one version row and absence of every target object; capture owners,
+grants, constraints, indexes and sentinel row counts; execute only 0095, then
+only 0096 after its separate approval; verify existing objects/data are
+unchanged and only the approved objects were added. The real `sem_prod` remains
+read-only until this rehearsal, backup/PITR evidence and an execution window
+are separately approved.
+
+**Drop/rebuild determinism:** drop only the disposable database, recreate it,
+repeat the full online sequence with the same source and role, and compare the
+normalized catalog fingerprint with the first run. This is the rollback test
+for an empty demo database. Do not use `alembic downgrade` as the rebuild path:
+the reviewed SemTask proposal intentionally refuses destructive downgrade and
+task audit data must not be dropped after use.
+
+Blocking inputs before implementation are the final source-locked 0095 file,
+reviewed 0096 DDL/object inventory, service-role ownership and grants, and the
+disposable PostgreSQL online rehearsal. The dual-data-source runtime and demo
+tenant authorization remain separate application reviews.
