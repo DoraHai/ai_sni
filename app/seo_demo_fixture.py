@@ -8,10 +8,11 @@ no database, crawler, scheduler, AI, or publisher side effects.
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 
 FIXTURE_VERSION = "seo-demo-v1"
@@ -19,6 +20,67 @@ DEMO_TENANT_KEY = "g-snipers-global-demo"
 DEMO_SITE_KEY = "g-snipers-demo-site"
 DEMO_DOMAIN = "g-snipers-seo-demo.example"
 FORBIDDEN_TENANT_IDS = {4}
+
+
+@dataclass(frozen=True)
+class DemoDatabaseTarget:
+    """Credential-free description of an approved isolated demo database."""
+
+    driver: str
+    hostname: str
+    port: int | None
+    database: str
+
+
+def validate_demo_database_target(
+    database_url: str,
+    *,
+    allowed_hostnames: set[str] | frozenset[str],
+    required_database_name: str,
+    runtime_mode: str,
+) -> DemoDatabaseTarget:
+    """Validate the target for a future loader without opening a connection.
+
+    The caller must supply an exact, non-wildcard hostname allowlist and exact
+    database name from deployment configuration.  This is only a reusable
+    fail-closed guard; the repository intentionally has no database apply path.
+    """
+    if runtime_mode.strip().lower() != "demo":
+        raise ValueError("SEO demo loader requires runtime_mode=demo")
+    hosts = {str(value).strip().lower().rstrip(".") for value in allowed_hostnames}
+    if not hosts or any(not value or "*" in value for value in hosts):
+        raise ValueError("an exact non-wildcard demo database hostname allowlist is required")
+    required_name = required_database_name.strip()
+    if not required_name or "/" in required_name or required_name.lower() in {
+        "postgres",
+        "template0",
+        "template1",
+    }:
+        raise ValueError("an exact dedicated demo database name is required")
+    try:
+        parsed = urlsplit(database_url.strip())
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("invalid demo database URL") from exc
+    if parsed.scheme not in {
+        "postgresql",
+        "postgresql+asyncpg",
+        "postgresql+psycopg",
+        "postgresql+psycopg2",
+    }:
+        raise ValueError("demo loader only supports PostgreSQL")
+    if not hostname or hostname not in hosts:
+        raise ValueError("database hostname is not in the exact demo allowlist")
+    database = unquote(parsed.path.lstrip("/"))
+    if not database or "/" in database or database != required_name:
+        raise ValueError("database name does not match the dedicated demo database")
+    return DemoDatabaseTarget(
+        driver=parsed.scheme,
+        hostname=hostname,
+        port=port,
+        database=database,
+    )
 
 
 def _iso(value: datetime) -> str:

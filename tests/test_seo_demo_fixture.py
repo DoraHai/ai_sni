@@ -8,6 +8,7 @@ from app.seo_demo_fixture import (
     FIXTURE_VERSION,
     build_seo_demo_fixture,
     validate_seo_demo_fixture,
+    validate_demo_database_target,
 )
 
 
@@ -80,3 +81,42 @@ def test_validator_rejects_runnable_or_real_network_data():
     }
     with pytest.raises(ValueError, match="unresolved"):
         validate_seo_demo_fixture(package)
+
+
+def test_demo_database_target_is_exact_and_credential_free():
+    result = validate_demo_database_target(
+        "postgresql+asyncpg://demo_user:secret@demo-db.internal:5432/gsnipers_demo?ssl=require",
+        allowed_hostnames={"demo-db.internal"},
+        required_database_name="gsnipers_demo",
+        runtime_mode="demo",
+    )
+    assert result.hostname == "demo-db.internal"
+    assert result.database == "gsnipers_demo"
+    assert "secret" not in repr(result)
+    rejected = (
+        ("postgresql+asyncpg://u:p@prod-db.internal/gsnipers_demo", "database hostname"),
+        ("postgresql+asyncpg://u:p@demo-db.internal/sem_prod", "database name"),
+        ("sqlite:///gsnipers_demo", "PostgreSQL"),
+    )
+    for url, message in rejected:
+        with pytest.raises(ValueError, match=message):
+            validate_demo_database_target(
+                url,
+                allowed_hostnames={"demo-db.internal"},
+                required_database_name="gsnipers_demo",
+                runtime_mode="demo",
+            )
+    with pytest.raises(ValueError, match="runtime_mode"):
+        validate_demo_database_target(
+            "postgresql+asyncpg://u:p@demo-db.internal/gsnipers_demo",
+            allowed_hostnames={"demo-db.internal"},
+            required_database_name="gsnipers_demo",
+            runtime_mode="prod",
+        )
+    with pytest.raises(ValueError, match="non-wildcard"):
+        validate_demo_database_target(
+            "postgresql+asyncpg://u:p@demo-db.internal/gsnipers_demo",
+            allowed_hostnames={"*"},
+            required_database_name="gsnipers_demo",
+            runtime_mode="demo",
+        )
