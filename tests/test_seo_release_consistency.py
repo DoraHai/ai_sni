@@ -38,6 +38,8 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("app/seo_scheduler.py")
     assert source_path_allowed("app/seo_demo_runtime.py")
     assert source_path_allowed("app/seo_demo_source.py")
+    assert source_path_allowed("app/seo_static_demo.py")
+    assert source_path_allowed("app/fixtures/seo_demo_tenant16_v1.json")
     assert source_path_allowed("app/seo_snapshot_retention.py")
     assert source_path_allowed("app/seo_automation_runs.py")
     assert source_path_allowed("app/seo_manual_automation.py")
@@ -49,6 +51,7 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("tests/test_seo_scheduler.py")
     assert source_path_allowed("tests/test_seo_demo_runtime.py")
     assert source_path_allowed("tests/test_seo_demo_source.py")
+    assert source_path_allowed("tests/test_seo_static_demo.py")
     assert source_path_allowed("docs/SEO_DEMO_DUAL_SOURCE_HANDOFF.md")
     assert source_path_allowed("tests/test_seo_snapshot_retention.py")
     assert source_path_allowed("tests/test_seo_rank_limits.py")
@@ -102,6 +105,7 @@ def test_seo_workflows_run_site_association_and_traffic_regressions() -> None:
         assert "tests/test_seo_site_page_detail.py" in workflow
         assert "tests/test_seo_workbench_site_scope.py" in workflow
         assert "tests/test_seo_traffic.py" in workflow
+        assert "tests/test_seo_static_demo.py" in workflow
 
 
 def test_seo_workflows_gate_the_sem_task_migration_contract() -> None:

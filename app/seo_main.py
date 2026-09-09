@@ -26,6 +26,7 @@ from app.seo_demo_runtime import (
     validate_seo_demo_runtime_settings,
 )
 from app.seo_demo_source import SeoDataSourceDecision, hide_demo_tenant_ids
+from app.seo_static_demo import serve_static_demo
 
 settings = get_settings()
 enforce_production_secrets(settings, hard_fail=True)
@@ -308,6 +309,13 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Growth Sniper SEO API", version="0.1.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def serve_tenant16_static_demo(request: Request, call_next):
+    """Short-circuit approved tenant-16 demo calls before business handlers."""
+    response = await serve_static_demo(request)
+    return response if response is not None else await call_next(request)
 
 
 @app.middleware("http")
