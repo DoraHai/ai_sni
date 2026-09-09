@@ -15,6 +15,7 @@ SOURCE_ALLOWED_EXACT = {
     "scripts/load_seo_demo_fixture.py",
     "tests/test_seo_demo_fixture_loader.py",
     "docs/SEO_DEMO_FIXTURE_LOADER.md",
+    "docs/SEO_DEMO_FIXTURE_RECEIPT_MIGRATION_PROPOSAL.md",
     "app/seo_qa_batches.py",
     "migrations/versions/20260906_0094_seo_qa_batches.py",
     "migrations/versions/20260909_0095_adopt_geo_ticket.py",

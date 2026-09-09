@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -40,7 +40,51 @@ TABLE_ORDER = (
     "seo_content_publications", "seo_qa_placements", "seo_publish_attempts",
 )
 ALLOWED_TABLES = frozenset(TABLE_ORDER)
+TABLE_COLUMN_ALLOWLISTS = {
+    'tenants': frozenset('id name strategy monthly_budget contract_start contract_end brand_terms industry business_desc profile_summary profile_generated_at created_at'.split()),
+    'tenant_modules': frozenset('id tenant_id module_code status opened_at expires_at module_settings created_at updated_at'.split()),
+    'seo_sites': frozenset('id tenant_id tenant_module_id name domain canonical_domain default_url status site_settings created_at updated_at'.split()),
+    'seo_ai_operations': frozenset('id tenant_id site_id request_key request_hash kind charged_on status result expires_at completed_at created_at'.split()),
+    'seo_distribution_connections': frozenset('id tenant_id platform_code name mode base_url config capabilities has_credentials enabled status last_error last_tested_at created_at updated_at'.split()),
+    'seo_automation_runs': frozenset('id tenant_id site_id job_type trigger_type status planned_count success_count failed_count skipped_count error_summary started_at completed_at created_at'.split()),
+    'seo_backlinks': frozenset('id tenant_id site_id source_url target_url source_domain anchor_text authority_score toxic_score status first_seen_at last_seen_at last_checked_at verification missing_checks created_at updated_at'.split()),
+    'seo_brand_assets': frozenset('id tenant_id site_id asset_type name match_value platform status created_at updated_at'.split()),
+    'seo_competitors': frozenset('id tenant_id site_id name domain notes status last_checked_at created_at updated_at'.split()),
+    'seo_crawl_runs': frozenset('id tenant_id site_id status seed_url max_urls discovered_count fetched_count failed_count blocked_count issue_count error_summary started_at completed_at created_at'.split()),
+    'seo_keyword_assets': frozenset('id tenant_id site_id keyword cluster intent monthly_volume difficulty priority landing_page status source notes created_at updated_at'.split()),
+    'seo_metric_snapshots': frozenset('id tenant_id site_id metric_type dimension numeric_value text_value unit source data_quality status error_message raw_payload observed_at collected_at created_at'.split()),
+    'seo_qa_batches': frozenset('request_key request_hash status items id tenant_id site_id created_at updated_at'.split()),
+    'seo_qa_facts': frozenset('title statement source_name source_url expires_at status version id tenant_id site_id created_at updated_at'.split()),
+    'seo_questions': frozenset('title fingerprint topic intent status relevance sources version id tenant_id site_id created_at updated_at'.split()),
+    'seo_tasks': frozenset('id tenant_id site_id module action_type title params status assignee_role completion_evidence baseline created_at updated_at'.split()),
+    'seo_competitor_events': frozenset('id tenant_id site_id competitor_id event_type title url source_url summary event_at detected_at'.split()),
+    'seo_page_snapshots': frozenset('id tenant_id site_id crawl_run_id url final_url discovery_source click_depth status_code redirect_chain fetch_error error_type content_type content_length response_time_ms raw_html_hash robots_allowed meta_robots x_robots_tag canonical_url indexable title title_length meta_description description_length h1_texts h1_count html_lang main_content_extractable main_content_hash word_count schema_types schema_jsonld_count schema_parse_error internal_links_count external_links_count images_count images_missing_alt_count image_alt_evidence hreflang_tags issue_codes fetched_at created_at'.split()),
+    'seo_rank_snapshots': frozenset('id tenant_id site_id keyword_id engine device region domain subject_type rank result_url source checked_at created_at'.split()),
+    'seo_serp_results': frozenset('id tenant_id site_id keyword_id engine device region rank rank_label title description result_url domain ownership_type match_method confidence matched_asset_id is_confirmed provider captured_at created_at'.split()),
+    'seo_site_pages': frozenset('id tenant_id site_id url page_type target_keyword_id title meta_description meta_keywords h1 canonical indexable http_status content_units audit_score issue_codes title_suggestion description_suggestion status last_error last_checked_at created_at updated_at'.split()),
+    'seo_content_assets': frozenset('id tenant_id site_id source_page_id keyword_id keyword_ids content_type title outline draft humanized_content source_text rewrite_progress originality_score target_platforms version_count status page_url published_at review_submitted_at review_note reviewed_at created_at updated_at'.split()),
+    'seo_image_alt_reviews': frozenset('id tenant_id site_id page_id snapshot_id position source_url observed_alt_state decision alt_suggestion note review_status reviewed_at updated_at'.split()),
+    'seo_internal_links': frozenset('id tenant_id site_id source_page_id target_page_id anchor_text discovered_at'.split()),
+    'seo_page_index_reviews': frozenset('id tenant_id site_id page_id intent reason evidence created_at'.split()),
+    'seo_content_review_events': frozenset('id tenant_id site_id content_asset_id action from_status to_status note created_at'.split()),
+    'seo_distribution_variants': frozenset('id tenant_id content_asset_id connection_id platform_code source_version revision_number status title excerpt content content_chars keyword_checks warnings ai_generated generation_instruction feedback review_note reviewed_at created_at updated_at'.split()),
+    'seo_image_verifications': frozenset('id tenant_id site_id page_id review_id status approved_at checked_at available_at evidence result_snapshot_id created_at'.split()),
+    'seo_qa_answers': frozenset('question_id content_id format fact_snapshots evidence_hash id tenant_id site_id created_at updated_at'.split()),
+    'seo_content_publications': frozenset('id tenant_id content_asset_id connection_id variant_id platform_code platform_name publish_mode status source_version adapted_title adapted_excerpt adapted_content external_id page_url handoff_url idempotency_key last_error published_at link_discovery last_synced_at created_at updated_at'.split()),
+    'seo_qa_placements': frozenset('answer_id platform question_url answer_url status scheduled_at content_version body observations reported_metrics version id tenant_id site_id created_at updated_at'.split()),
+    'seo_publish_attempts': frozenset('id tenant_id publication_id action status request_summary response_summary error started_at completed_at'.split()),
+}
 REQUIRED_TABLES = frozenset({"tenants", "tenant_modules", "seo_sites"})
+FIXED_LOCK_KEY = int.from_bytes(
+    hashlib.sha256(b"gsnipers:seo:demo-fixture-loader:v1").digest()[:8],
+    "big",
+    signed=True,
+)
+RECEIPT_REGISTRY_TABLE = "seo_fixture_load_receipts"
+EMPTY_GUARD_TABLES = (
+    "roles", "users", *TABLE_ORDER,
+    "demo_tenant_bindings", "demo_tenant_binding_history",
+)
 RUNNABLE_STATES = {
     "seo_ai_operations": frozenset({"pending", "queued", "running", "processing"}),
     "seo_automation_runs": frozenset({"pending", "queued", "running", "processing"}),
@@ -49,11 +93,53 @@ RUNNABLE_STATES = {
     "seo_tasks": frozenset({"in_progress"}),
     "seo_content_publications": frozenset({"preparing", "publishing", "retrying"}),
     "seo_publish_attempts": frozenset({"pending", "queued", "running", "processing", "retrying"}),
+    "seo_image_verifications": frozenset({"pending", "checking"}),
 }
-SENSITIVE_KEYS = re.compile(r"(?:password|secret|token|cookie|credential)", re.I)
+SENSITIVE_KEYS = re.compile(
+    r"(?:authorization|password|secret|token|cookie|credential|private[_-]?key|"
+    r"access[_-]?key|session)",
+    re.I,
+)
+SENSITIVE_TEXT = re.compile(
+    r"(?:\bBearer\s+[A-Za-z0-9._~+/=-]+|-----BEGIN [A-Z ]*PRIVATE KEY-----|"
+    r"\bAKIA[0-9A-Z]{16}\b|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b|"
+    r"\b(?:authorization|private[_-]?key|access[_-]?key|session)\s*[:=])",
+    re.I,
+)
+PII_TEXT = re.compile(
+    r"(?:\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|"
+    r"(?<!\d)1[3-9]\d{9}(?!\d)|"
+    r"(?<!\d)\d{17}[\dXx](?!\d))",
+    re.I,
+)
 IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 VERSION = re.compile(r"^[a-z0-9][a-z0-9._-]{0,39}$")
 ROLE = re.compile(r"^[a-z_][a-z0-9_-]{0,62}$")
+
+# Every relation that can carry site-scoped data.  The validation below follows
+# these edges and requires all resolved parents to belong to one manifest site.
+SITE_RELATIONS = {
+    "tenant_module_id": "tenant_modules",
+    "site_id": "seo_sites",
+    "crawl_run_id": "seo_crawl_runs",
+    "keyword_id": "seo_keyword_assets",
+    "target_keyword_id": "seo_keyword_assets",
+    "competitor_id": "seo_competitors",
+    "matched_asset_id": "seo_brand_assets",
+    "source_page_id": "seo_site_pages",
+    "target_page_id": "seo_site_pages",
+    "page_id": "seo_site_pages",
+    "snapshot_id": "seo_page_snapshots",
+    "result_snapshot_id": "seo_page_snapshots",
+    "content_asset_id": "seo_content_assets",
+    "content_id": "seo_content_assets",
+    "review_id": "seo_image_alt_reviews",
+    "question_id": "seo_questions",
+    "answer_id": "seo_qa_answers",
+    "variant_id": "seo_distribution_variants",
+    "publication_id": "seo_content_publications",
+    "connection_id": "seo_distribution_connections",
+}
 
 
 class SeoFixtureError(RuntimeError):
@@ -113,6 +199,8 @@ def _contains_sensitive_value(value: object, path: str = "") -> bool:
                 return True
     elif isinstance(value, list):
         return any(_contains_sensitive_value(item, path) for item in value)
+    elif isinstance(value, str):
+        return bool(SENSITIVE_TEXT.search(value) or PII_TEXT.search(value))
     return False
 
 
@@ -236,14 +324,18 @@ class SeoFixtureBundle:
             if not isinstance(source["content_sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", source["content_sha256"]):
                 raise SeoFixtureError("source provenance hash is invalid")
             try:
-                datetime.fromisoformat(str(source["collected_at"]).replace("Z", "+00:00"))
+                collected_at = datetime.fromisoformat(str(source["collected_at"]).replace("Z", "+00:00"))
             except ValueError as exc:
                 raise SeoFixtureError("source provenance timestamp is invalid") from exc
+            if collected_at.tzinfo is None:
+                raise SeoFixtureError("source provenance timestamp must include a timezone")
         for field in ("generated_at",):
             try:
-                datetime.fromisoformat(str(manifest[field]).replace("Z", "+00:00"))
+                parsed_time = datetime.fromisoformat(str(manifest[field]).replace("Z", "+00:00"))
             except ValueError as exc:
                 raise SeoFixtureError(f"{field} is invalid") from exc
+            if parsed_time.tzinfo is None:
+                raise SeoFixtureError(f"{field} must include a timezone")
         if not isinstance(manifest["loader_version"], str) or not manifest["loader_version"].strip():
             raise SeoFixtureError("loader_version is invalid")
         tables = manifest["tables"]
@@ -271,6 +363,8 @@ class SeoFixtureBundle:
         seen_primary_keys: dict[str, set[object]] = {}
         for table, records in self.rows.items():
             for row in records:
+                if set(row) - TABLE_COLUMN_ALLOWLISTS[table]:
+                    raise SeoFixtureError(f"table {table} contains columns outside its explicit allowlist")
                 if _contains_sensitive_value(row):
                     raise SeoFixtureError(f"table {table} contains credential material")
                 if "tenant_id" in row and row["tenant_id"] != tenant_id:
@@ -296,7 +390,12 @@ class SeoFixtureBundle:
                         raise SeoFixtureError("SEO site safety markers do not match the manifest")
                     loaded_sites[row.get("id")] = str(row.get("canonical_domain") or "").lower()
                 if table == "seo_distribution_connections":
-                    if row.get("credentials_encrypted") not in (None, "") or row.get("has_credentials") is not False or row.get("enabled") is not False:
+                    if (
+                        row.get("has_credentials") is not False
+                        or row.get("enabled") is not False
+                        or row.get("config") not in (None, {})
+                        or row.get("capabilities") not in (None, [])
+                    ):
                         raise SeoFixtureError("demo distribution connections must be inert and credential-free")
                 if str(row.get("status") or "").strip().lower() in RUNNABLE_STATES.get(table, ()):
                     raise SeoFixtureError(f"table {table} contains a runnable state")
@@ -307,6 +406,65 @@ class SeoFixtureBundle:
                     values.add(row["id"])
         if loaded_sites != expected_sites:
             raise SeoFixtureError("loaded SEO sites do not match the manifest")
+        self._validate_relations(expected_sites)
+
+    def _validate_relations(self, expected_sites: dict[int, str]) -> None:
+        by_table = {
+            table: {row["id"]: row for row in rows if row.get("id") is not None}
+            for table, rows in self.rows.items()
+        }
+        resolved: dict[tuple[str, object], int | None] = {
+            ("seo_sites", site_id): site_id for site_id in expected_sites
+        }
+        pending = [
+            (table, row) for table, rows in self.rows.items() for row in rows
+            if row.get("id") is not None and table != "seo_sites"
+        ]
+        for _ in range(len(pending) + 1):
+            changed = False
+            for table, row in pending:
+                key = (table, row["id"])
+                candidates: set[int] = set()
+                if isinstance(row.get("site_id"), int):
+                    candidates.add(row["site_id"])
+                unresolved = False
+                for field, parent_table in SITE_RELATIONS.items():
+                    parent_id = row.get(field)
+                    if parent_id is None or field == "site_id":
+                        continue
+                    parent = by_table.get(parent_table, {}).get(parent_id)
+                    if parent is None:
+                        raise SeoFixtureError(
+                            f"table {table} {field} does not reference a bundled parent"
+                        )
+                    parent_site = resolved.get((parent_table, parent_id))
+                    if parent_site is None and parent_table != "tenant_modules" and parent_table != "seo_distribution_connections":
+                        unresolved = True
+                    elif parent_site is not None:
+                        candidates.add(parent_site)
+                keyword_ids = row.get("keyword_ids")
+                if keyword_ids is not None:
+                    if not isinstance(keyword_ids, list) or any(
+                        isinstance(value, bool) or not isinstance(value, int) for value in keyword_ids
+                    ):
+                        raise SeoFixtureError(f"table {table} keyword_ids must be an integer list")
+                    for parent_id in keyword_ids:
+                        if parent_id not in by_table.get("seo_keyword_assets", {}):
+                            raise SeoFixtureError(
+                                f"table {table} keyword_ids does not reference a bundled parent"
+                            )
+                        parent_site = resolved.get(("seo_keyword_assets", parent_id))
+                        if parent_site is None:
+                            unresolved = True
+                        else:
+                            candidates.add(parent_site)
+                if len(candidates) > 1:
+                    raise SeoFixtureError(f"table {table} crosses site boundaries through its parent references")
+                if not unresolved and key not in resolved:
+                    resolved[key] = next(iter(candidates), None)
+                    changed = True
+            if not changed:
+                break
 
 
 def validate_target_url(database_url: str, bundle: SeoFixtureBundle, allowed_hosts: set[str]) -> None:
@@ -332,12 +490,14 @@ async def _verify_app_readonly(connection: AsyncConnection, role: str) -> None:
         "SELECT count(*)=1, coalesce(bool_or(rolsuper),false), "
         "coalesce(bool_or(rolreplication),false), coalesce(bool_or(rolbypassrls),false), "
         "coalesce(bool_or(rolcreatedb),false), coalesce(bool_or(rolcreaterole),false), "
-        "(SELECT count(*) FROM pg_auth_members m JOIN pg_roles child ON child.oid=m.member WHERE child.rolname=:role)=0 "
+        "(SELECT count(*) FROM pg_auth_members m JOIN pg_roles child ON child.oid=m.member WHERE child.rolname=:role)=0, "
+        "(SELECT count(*) FROM pg_auth_members m JOIN pg_roles parent ON parent.oid=m.roleid WHERE parent.rolname=:role)=0 "
         "FROM pg_roles WHERE rolname=:role"
     ), {"role": role})).one()
-    if identity != (True, False, False, False, False, False, True):
+    if identity != (True, False, False, False, False, False, True, True):
         raise SeoFixtureError("application read-only role identity is unsafe")
-    for table in TABLE_ORDER:
+    readable_tables = (*TABLE_ORDER, "roles", "users", "demo_tenant_bindings", "demo_tenant_binding_history")
+    for table in readable_tables:
         privileges = (await connection.execute(text(
             f"SELECT has_table_privilege(:role, 'public.{table}', 'SELECT'), "
             f"has_table_privilege(:role, 'public.{table}', 'INSERT'), "
@@ -347,18 +507,103 @@ async def _verify_app_readonly(connection: AsyncConnection, role: str) -> None:
         ), {"role": role})).one()
         if privileges != (True, False, False, False, False):
             raise SeoFixtureError(f"application role privileges are unsafe for {table}")
-    schema_privileges = (await connection.execute(text(
-        "SELECT has_schema_privilege(:role, 'public', 'USAGE'), has_schema_privilege(:role, 'public', 'CREATE'), has_database_privilege(:role, current_database(), 'CREATE'), has_database_privilege(:role, current_database(), 'TEMP')"
+    registry_privileges = (await connection.execute(text(
+        f"SELECT has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'SELECT'), "
+        f"has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'INSERT'), "
+        f"has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'UPDATE'), "
+        f"has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'DELETE'), "
+        f"has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'TRUNCATE')"
     ), {"role": role})).one()
-    if schema_privileges != (True, False, False, False):
+    if registry_privileges != (False, False, False, False, False):
+        raise SeoFixtureError("application role must not access the fixture receipt registry")
+    schema_privileges = (await connection.execute(text(
+        "SELECT has_schema_privilege(:role, 'public', 'USAGE'), has_schema_privilege(:role, 'public', 'CREATE'), "
+        "has_database_privilege(:role, current_database(), 'CONNECT'), "
+        "has_database_privilege(:role, current_database(), 'CREATE'), has_database_privilege(:role, current_database(), 'TEMP')"
+    ), {"role": role})).one()
+    if schema_privileges != (True, False, True, False, False):
         raise SeoFixtureError("application role schema or database privileges are unsafe")
     writable_sequences = (await connection.execute(text(
         "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
         "WHERE n.nspname='public' AND c.relkind='S' AND "
-        "(has_sequence_privilege(:role, c.oid, 'USAGE') OR has_sequence_privilege(:role, c.oid, 'UPDATE'))"
+        "(has_sequence_privilege(:role, c.oid, 'SELECT') OR has_sequence_privilege(:role, c.oid, 'USAGE') OR has_sequence_privilege(:role, c.oid, 'UPDATE'))"
     ), {"role": role})).scalar_one()
     if int(writable_sequences) != 0:
         raise SeoFixtureError("application role has writable sequence privileges")
+
+
+async def _verify_loader_role(connection: AsyncConnection, role: str) -> None:
+    memberships = (await connection.execute(text(
+        "SELECT "
+        "(SELECT count(*) FROM pg_auth_members m JOIN pg_roles child ON child.oid=m.member WHERE child.rolname=:role), "
+        "(SELECT count(*) FROM pg_auth_members m JOIN pg_roles parent ON parent.oid=m.roleid WHERE parent.rolname=:role)"
+    ), {"role": role})).one()
+    if memberships != (0, 0):
+        raise SeoFixtureError("loader role must not inherit or grant role memberships")
+    readonly_tables = {"roles", "users", "demo_tenant_bindings", "demo_tenant_binding_history"}
+    for table in (*TABLE_ORDER, *sorted(readonly_tables)):
+        privileges = (await connection.execute(text(
+            f"SELECT has_table_privilege(:role, 'public.{table}', 'SELECT'), "
+            f"has_table_privilege(:role, 'public.{table}', 'INSERT'), "
+            f"has_table_privilege(:role, 'public.{table}', 'UPDATE'), "
+            f"has_table_privilege(:role, 'public.{table}', 'DELETE'), "
+            f"has_table_privilege(:role, 'public.{table}', 'TRUNCATE')"
+        ), {"role": role})).one()
+        expected = (True, table in TABLE_ORDER, False, False, False)
+        if privileges != expected:
+            raise SeoFixtureError(f"loader role privileges are unsafe for {table}")
+    registry_privileges = (await connection.execute(text(
+        f"SELECT has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'SELECT'), "
+        f"has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'INSERT'), "
+        f"has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'UPDATE'), "
+        f"has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'DELETE'), "
+        f"has_table_privilege(:role, 'public.{RECEIPT_REGISTRY_TABLE}', 'TRUNCATE')"
+    ), {"role": role})).one()
+    if registry_privileges != (True, True, False, False, False):
+        raise SeoFixtureError("loader role receipt registry privileges are unsafe")
+    environment = (await connection.execute(text(
+        "SELECT has_schema_privilege(:role, 'public', 'USAGE'), has_schema_privilege(:role, 'public', 'CREATE'), "
+        "has_database_privilege(:role, current_database(), 'CONNECT'), "
+        "has_database_privilege(:role, current_database(), 'CREATE'), has_database_privilege(:role, current_database(), 'TEMP')"
+    ), {"role": role})).one()
+    if environment != (True, False, True, False, False):
+        raise SeoFixtureError("loader role schema or database privileges are unsafe")
+    sequence_privileges = (await connection.execute(text(
+        "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+        "WHERE n.nspname='public' AND c.relkind='S' AND "
+        "(has_sequence_privilege(:role, c.oid, 'SELECT') OR has_sequence_privilege(:role, c.oid, 'USAGE') OR has_sequence_privilege(:role, c.oid, 'UPDATE'))"
+    ), {"role": role})).scalar_one()
+    if int(sequence_privileges) != 0:
+        raise SeoFixtureError("loader role has sequence privileges")
+
+
+async def _verify_receipt_registry(connection: AsyncConnection) -> None:
+    relation = (await connection.execute(text(
+        f"SELECT to_regclass('public.{RECEIPT_REGISTRY_TABLE}')::text"
+    ))).scalar_one()
+    if relation != RECEIPT_REGISTRY_TABLE:
+        raise SeoFixtureError(
+            "immutable fixture receipt registry is absent; revision 0098 is intentionally fail-closed"
+        )
+    columns = await _scalar_rows(connection,
+        "SELECT column_name FROM information_schema.columns "
+        f"WHERE table_schema='public' AND table_name='{RECEIPT_REGISTRY_TABLE}' ORDER BY ordinal_position"
+    )
+    expected = [
+        "manifest_sha256", "dataset_key", "dataset_version", "demo_tenant_id",
+        "target_revision", "target_database", "server_address", "loader_role",
+        "loader_version", "row_counts", "committed_at",
+    ]
+    if columns != expected:
+        raise SeoFixtureError("fixture receipt registry columns do not match the reviewed design")
+    immutable_triggers = (await connection.execute(text(
+        "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid "
+        f"WHERE c.relname='{RECEIPT_REGISTRY_TABLE}' AND NOT t.tgisinternal "
+        "AND (pg_get_triggerdef(t.oid) ILIKE '%BEFORE UPDATE%' OR "
+        "pg_get_triggerdef(t.oid) ILIKE '%BEFORE DELETE%' OR pg_get_triggerdef(t.oid) ILIKE '%BEFORE TRUNCATE%')"
+    ))).scalar_one()
+    if int(immutable_triggers) < 3:
+        raise SeoFixtureError("fixture receipt registry is not protected by immutable triggers")
 
 
 async def _table_count(connection: AsyncConnection, table: str) -> int:
@@ -375,7 +620,7 @@ def _coerce_rows(table: Any, rows: tuple[dict[str, Any], ...]) -> list[dict[str,
     columns = {column.name: column for column in table.columns}
     converted: list[dict[str, Any]] = []
     for row in rows:
-        unknown = set(row) - set(columns)
+        unknown = set(row) - TABLE_COLUMN_ALLOWLISTS[table.name]
         if unknown:
             raise SeoFixtureError(f"table {table.name} contains unknown columns")
         item = dict(row)
@@ -385,7 +630,10 @@ def _coerce_rows(table: Any, rows: tuple[dict[str, Any], ...]) -> list[dict[str,
             kind = columns[name].type
             try:
                 if isinstance(kind, DateTime) and isinstance(value, str):
-                    item[name] = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                    if not kind.timezone and parsed.tzinfo is not None:
+                        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+                    item[name] = parsed
                 elif isinstance(kind, Date) and isinstance(value, str):
                     item[name] = date.fromisoformat(value)
                 elif isinstance(kind, Numeric) and not isinstance(value, Decimal):
@@ -403,30 +651,36 @@ async def load_fixture_transaction(
     expected_server_addresses: set[str],
 ) -> dict[str, Any]:
     identity = (await connection.execute(text(
-        "SELECT current_database(), inet_server_addr()::text, current_user, "
+        "SELECT current_database(), inet_server_addr()::text, current_user, session_user, "
         "current_setting('transaction_isolation'), r.rolsuper, r.rolreplication, "
         "r.rolbypassrls, r.rolcreatedb, r.rolcreaterole "
         "FROM pg_roles r WHERE r.rolname=current_user"
     ))).one()
-    database, server_address, loader_role, isolation, superuser, replication, bypass_rls, create_db, create_role = identity
+    database, server_address, loader_role, session_role, isolation, superuser, replication, bypass_rls, create_db, create_role = identity
     if database != bundle.manifest["target_database"] or database == "sem_prod":
         raise SeoFixtureError("connected database identity is not the reviewed demo target")
     if server_address not in expected_server_addresses or isolation.lower() != "serializable":
         raise SeoFixtureError("server address or transaction isolation is unsafe")
-    if superuser or replication or bypass_rls or create_db or create_role or loader_role == bundle.manifest["app_readonly_role"]:
+    if (
+        session_role != loader_role or superuser or replication or bypass_rls
+        or create_db or create_role or loader_role == bundle.manifest["app_readonly_role"]
+    ):
         raise SeoFixtureError("loader role identity is unsafe")
     revisions = await _scalar_rows(connection, "SELECT version_num FROM alembic_version ORDER BY version_num")
     if revisions != [REQUIRED_REVISION]:
         raise SeoFixtureError(f"target must have exactly revision {REQUIRED_REVISION}")
-    lock_key = int.from_bytes(hashlib.sha256(f"seo-fixture:{bundle.dataset_key}".encode()).digest()[:8], "big", signed=True)
     locked = (await connection.execute(
-        text("SELECT pg_try_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key}
+        text("SELECT pg_try_advisory_xact_lock(:lock_key)"), {"lock_key": FIXED_LOCK_KEY}
     )).scalar_one()
     if locked is not True:
-        raise SeoFixtureError("another loader holds the dataset advisory lock")
-    for table in (*TABLE_ORDER, "demo_tenant_bindings", "demo_tenant_binding_history"):
+        raise SeoFixtureError("another SEO fixture loader holds the database advisory lock")
+    await _verify_receipt_registry(connection)
+    for table in EMPTY_GUARD_TABLES:
         if await _table_count(connection, table) != 0:
             raise SeoFixtureError(f"target is not empty: {table}")
+    if await _table_count(connection, RECEIPT_REGISTRY_TABLE) != 0:
+        raise SeoFixtureError("target already has a fixture load receipt")
+    await _verify_loader_role(connection, loader_role)
     await _verify_app_readonly(connection, bundle.manifest["app_readonly_role"])
     metadata = _metadata_tables()
     for table_name in TABLE_ORDER:
@@ -440,13 +694,14 @@ async def load_fixture_transaction(
     if await _table_count(connection, "demo_tenant_bindings") or await _table_count(connection, "demo_tenant_binding_history"):
         raise SeoFixtureError("loader must not create demo tenant bindings")
     await _verify_app_readonly(connection, bundle.manifest["app_readonly_role"])
-    return {
+    receipt = {
         "schema_version": 1,
         "module": "seo",
         "target_revision": REQUIRED_REVISION,
         "target_database": database,
         "server_address": server_address,
         "loader_role": loader_role,
+        "loader_version": bundle.manifest["loader_version"],
         "dataset_key": bundle.dataset_key,
         "dataset_version": bundle.dataset_version,
         "demo_tenant_id": bundle.demo_tenant_id,
@@ -455,6 +710,14 @@ async def load_fixture_transaction(
         "validated_at": datetime.now().astimezone().isoformat(),
         "result": "committed",
     }
+    await connection.execute(text(
+        f"INSERT INTO public.{RECEIPT_REGISTRY_TABLE} "
+        "(manifest_sha256, dataset_key, dataset_version, demo_tenant_id, target_revision, "
+        "target_database, server_address, loader_role, loader_version, row_counts) "
+        "VALUES (:manifest_sha256, :dataset_key, :dataset_version, :demo_tenant_id, :target_revision, "
+        ":target_database, :server_address, :loader_role, :loader_version, CAST(:row_counts AS jsonb))"
+    ), {**receipt, "row_counts": json.dumps(receipt["row_counts"], sort_keys=True)})
+    return receipt
 
 
 async def run_fixture_load(
@@ -472,6 +735,76 @@ async def run_fixture_load(
         async with target.begin() as connection:
             receipt = await load_fixture_transaction(connection, bundle, expected_server_addresses=expected_server_addresses)
         return receipt
+    finally:
+        if owned:
+            await target.dispose()
+
+
+async def recover_committed_receipt(
+    database_url: str,
+    bundle: SeoFixtureBundle,
+    *,
+    allowed_hosts: set[str],
+    expected_server_addresses: set[str],
+    engine: AsyncEngine | None = None,
+) -> dict[str, Any]:
+    """Recreate a lost local receipt from the immutable in-database record."""
+    validate_target_url(database_url, bundle, allowed_hosts)
+    owned = engine is None
+    target = engine or create_async_engine(database_url, isolation_level="SERIALIZABLE", pool_pre_ping=True)
+    try:
+        async with target.begin() as connection:
+            identity = (await connection.execute(text(
+                "SELECT current_database(), inet_server_addr()::text, current_user, session_user, "
+                "current_setting('transaction_isolation'), r.rolsuper, r.rolreplication, "
+                "r.rolbypassrls, r.rolcreatedb, r.rolcreaterole "
+                "FROM pg_roles r WHERE r.rolname=current_user"
+            ))).one()
+            (
+                database, server_address, loader_role, session_role, isolation,
+                superuser, replication, bypass_rls, create_db, create_role,
+            ) = identity
+            if (
+                database != bundle.manifest["target_database"] or database == "sem_prod"
+                or server_address not in expected_server_addresses
+                or loader_role != session_role or isolation.lower() != "serializable"
+                or superuser or replication or bypass_rls or create_db or create_role
+            ):
+                raise SeoFixtureError("receipt recovery target identity is unsafe")
+            revisions = await _scalar_rows(connection, "SELECT version_num FROM alembic_version ORDER BY version_num")
+            if revisions != [REQUIRED_REVISION]:
+                raise SeoFixtureError(f"target must have exactly revision {REQUIRED_REVISION}")
+            await _verify_receipt_registry(connection)
+            await _verify_loader_role(connection, loader_role)
+            result = (await connection.execute(text(
+                f"SELECT dataset_key, dataset_version, demo_tenant_id, target_revision, target_database, "
+                f"server_address::text, loader_role::text, loader_version, row_counts, committed_at "
+                f"FROM public.{RECEIPT_REGISTRY_TABLE} WHERE manifest_sha256=:digest"
+            ), {"digest": bundle.digest})).one_or_none()
+            if result is None:
+                raise SeoFixtureError("no committed receipt matches the reviewed bundle")
+            (
+                dataset_key, dataset_version, demo_tenant_id, target_revision,
+                target_database, recorded_address, recorded_role, loader_version,
+                row_counts, committed_at,
+            ) = result
+            if (
+                dataset_key != bundle.dataset_key or dataset_version != bundle.dataset_version
+                or demo_tenant_id != bundle.demo_tenant_id or target_revision != REQUIRED_REVISION
+                or target_database != database or recorded_address != server_address
+                or recorded_role != loader_role or loader_version != bundle.manifest["loader_version"]
+            ):
+                raise SeoFixtureError("stored receipt does not match the reviewed bundle or target")
+            return {
+                "schema_version": 1, "module": "seo", "target_revision": target_revision,
+                "target_database": target_database, "server_address": recorded_address,
+                "loader_role": recorded_role, "loader_version": loader_version,
+                "dataset_key": dataset_key, "dataset_version": dataset_version,
+                "demo_tenant_id": demo_tenant_id, "manifest_sha256": bundle.digest,
+                "row_counts": row_counts,
+                "validated_at": committed_at.isoformat() if hasattr(committed_at, "isoformat") else str(committed_at),
+                "result": "committed",
+            }
     finally:
         if owned:
             await target.dispose()

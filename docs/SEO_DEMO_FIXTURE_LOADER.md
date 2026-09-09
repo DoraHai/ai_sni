@@ -39,8 +39,8 @@ all name `gsnipers_demo`; `sem_prod` is rejected. The loader requires one exact
 Alembic revision, `0098_demo_binding_no_truncate`, a non-superuser,
 non-replication loader role, and SERIALIZABLE isolation.
 
-A transaction-scoped advisory lock is keyed by `dataset_key`. All allowed data
-tables and both demo-binding tables must be empty. The latter are control-plane
+A fixed, database-wide SEO fixture advisory lock serializes every dataset. All
+allowed data tables, users, roles and both demo-binding tables must be empty. The latter are control-plane
 objects and are never written by this loader. Inserts use SQLAlchemy metadata,
 the fixed table order and explicit manifest rows; no update, upsert, delete,
 truncate, DDL or sequence adjustment is performed. Any validation or insert
@@ -52,7 +52,15 @@ have public schema USAGE but no schema CREATE, database CREATE/TEMP, superuser,
 replication, or writable sequence privilege. Row counts are compared with the
 bundle before commit.
 
-The command writes a new receipt file atomically after the transaction commits.
+The loader also requires the immutable database receipt registry described in
+`docs/SEO_DEMO_FIXTURE_RECEIPT_MIGRATION_PROPOSAL.md`. That registry is not part
+of revision `0098`, so the current loader intentionally rejects every database
+before inserting fixture data. This keeps the Draft review executable only at
+the offline-validation layer until a separate shared migration is approved.
+
+Once that migration is approved and the required revision is updated, the
+database receipt is inserted as the final statement in the same transaction.
+The command then writes a new receipt file atomically after the transaction commits.
 It refuses to overwrite or follow an existing receipt path. The receipt binds
 the database/server identity, dataset, tenant, revision, manifest hash, loader
 role and actual nonzero row counts. Store it for an independent review before a

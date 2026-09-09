@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.seo_demo_fixture_loader import SeoFixtureBundle, run_fixture_load
+from app.seo_demo_fixture_loader import SeoFixtureBundle, recover_committed_receipt, run_fixture_load
 
 
 def main() -> int:
@@ -23,6 +23,10 @@ def main() -> int:
     parser.add_argument("--allow-host", action="append", required=True)
     parser.add_argument("--allow-server-address", action="append", required=True)
     parser.add_argument("--receipt", type=Path, required=True)
+    parser.add_argument(
+        "--recover-committed", action="store_true",
+        help="recreate a lost local receipt from the immutable database registry; never inserts fixture rows",
+    )
     args = parser.parse_args()
     database_url = os.environ.get(args.database_url_env, "")
     if not database_url:
@@ -31,8 +35,9 @@ def main() -> int:
     if receipt.exists() or receipt.is_symlink() or not receipt.parent.is_dir():
         parser.error("--receipt must be a new file in an existing directory")
     bundle = SeoFixtureBundle.open(args.bundle)
+    operation = recover_committed_receipt if args.recover_committed else run_fixture_load
     result = asyncio.run(
-        run_fixture_load(
+        operation(
             database_url,
             bundle,
             allowed_hosts=set(args.allow_host),
