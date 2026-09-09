@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import secrets
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -37,6 +38,10 @@ logger = logging.getLogger(__name__)
 _DEFAULT_ACCESS_SECONDS = 24 * 60 * 60
 _DEFAULT_REFRESH_SECONDS = 30 * 24 * 60 * 60
 _REFRESH_AHEAD = timedelta(hours=2)
+
+
+def _no_autoflush(session):
+    return getattr(session, "no_autoflush", nullcontext())
 _MAX_SUB_ACCOUNT_PAGES = 100
 
 
@@ -154,9 +159,10 @@ def verify_callback_signature(params: dict[str, str], signature: str) -> bool:
     return secrets.compare_digest(expected.lower(), signature.strip().lower())
 
 
-async def consume_oauth_state(
+async def inspect_oauth_state(
     session: AsyncSession, raw_state: str
 ) -> BaiduOAuthState:
+    """Lock and validate an OAuth state without consuming it."""
     row = await session.scalar(
         select(BaiduOAuthState)
         .where(BaiduOAuthState.state_hash == _state_hash(raw_state))
@@ -167,6 +173,21 @@ async def consume_oauth_state(
         raise BaiduOAuthError(
             "invalid_state", "授权请求已失效，请返回 SEM 平台重新发起授权。"
         )
+    return row
+
+
+async def consume_oauth_state(
+    session: AsyncSession,
+    raw_state: str,
+    *,
+    validated_row: BaiduOAuthState | None = None,
+) -> BaiduOAuthState:
+    row = validated_row or await inspect_oauth_state(session, raw_state)
+    if row.state_hash != _state_hash(raw_state) or row.consumed_at is not None:
+        raise BaiduOAuthError(
+            "invalid_state", "授权请求已失效，请返回 SEM 平台重新发起授权。"
+        )
+    now = datetime.utcnow()
     row.consumed_at = now
     await session.commit()
     return row
@@ -308,7 +329,13 @@ async def persist_authorization(
     普通首次接入按百度 UCID 创建/复用独立客户；管理员显式发起重新绑定时，
     只允许单账户授权并绑定到 OAuth state 中锁定的目标客户。
     """
+    from app.sem_demo_source import ensure_sem_production_action_allowed
+
     settings = get_settings()
+    if target_tenant_id is not None:
+        await ensure_sem_production_action_allowed(
+            settings, session, target_tenant_id
+        )
     access_token = str(token_data.get("accessToken") or "")
     refresh_token = str(token_data.get("refreshToken") or "")
     open_id = str(token_data.get("openId") or "")
@@ -376,6 +403,10 @@ async def persist_authorization(
                 )
                 session.add(tenant)
                 await session.flush()
+            else:
+                await ensure_sem_production_action_allowed(
+                    settings, session, tenant.id
+                )
             linked_tenants.append(tenant)
 
     if not linked_tenants:
@@ -386,6 +417,11 @@ async def persist_authorization(
     # 开通对应的 SEM 工作区，否则模块客户选择器会把已授权账户隐藏起来。
     # 使用唯一约束 + ON CONFLICT 保证重复授权和并发回调不会产生重复记录；
     # 已存在但被业务侧停用的模块不会被 OAuth 擅自重新启用。
+    with _no_autoflush(session):
+        for linked_tenant in linked_tenants:
+            await ensure_sem_production_action_allowed(
+                settings, session, linked_tenant.id
+            )
     await session.execute(
         insert(TenantModule)
         .values(
@@ -518,6 +554,11 @@ async def persist_authorization(
         )
         .values(status="inactive")
     )
+    with _no_autoflush(session):
+        for linked_tenant in linked_tenants:
+            await ensure_sem_production_action_allowed(
+                settings, session, linked_tenant.id
+            )
     await session.commit()
     return grant, linked, linked_tenants
 
@@ -525,14 +566,27 @@ async def persist_authorization(
 async def refresh_grant(
     session: AsyncSession, grant: BaiduOAuthGrant
 ) -> bool:
+    from app.sem_demo_source import ensure_sem_production_action_allowed
+
+    await ensure_sem_production_action_allowed(
+        get_settings(), session, grant.tenant_id
+    )
     now = datetime.utcnow()
     if grant.refresh_expires_at <= now:
         grant.status = "reauthorization_required"
+        with _no_autoflush(session):
+            await ensure_sem_production_action_allowed(
+                get_settings(), session, grant.tenant_id
+            )
         await session.execute(
             update(BaiduAccount)
             .where(BaiduAccount.oauth_grant_id == grant.id)
             .values(status="reauthorization_required")
         )
+        with _no_autoflush(session):
+            await ensure_sem_production_action_allowed(
+                get_settings(), session, grant.tenant_id
+            )
         await session.commit()
         return False
 
@@ -544,6 +598,9 @@ async def refresh_grant(
             "secretKey": get_settings().baidu_secret_key,
             "userId": grant.oauth_user_id,
         },
+    )
+    await ensure_sem_production_action_allowed(
+        get_settings(), session, grant.tenant_id
     )
     access_token = str(data.get("accessToken") or "")
     refresh_token = str(data.get("refreshToken") or "")
@@ -559,6 +616,10 @@ async def refresh_grant(
     grant.expires_at = expires_at
     grant.refresh_expires_at = refresh_expires_at
     grant.status = "active"
+    with _no_autoflush(session):
+        await ensure_sem_production_action_allowed(
+            get_settings(), session, grant.tenant_id
+        )
     await session.execute(
         update(BaiduAccount)
         .where(BaiduAccount.oauth_grant_id == grant.id)
@@ -570,6 +631,10 @@ async def refresh_grant(
             status="active",
         )
     )
+    with _no_autoflush(session):
+        await ensure_sem_production_action_allowed(
+            get_settings(), session, grant.tenant_id
+        )
     await session.commit()
     return True
 

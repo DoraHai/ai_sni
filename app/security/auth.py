@@ -34,8 +34,8 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 JWT_ALG = "HS256"
 _READ_METHODS = ("GET", "HEAD", "OPTIONS")
 
-# 这些路径会读取或操作 SEM 客户数据。客户与模块管理、授权入口和 SEO/GEO 路径故意不在
-# 列表中，确保管理员仍能查看冲突并完成修复，同时不跨模块扩大影响。
+# 这些路径会读取或操作 SEM 客户数据。客户与模块管理和 SEO/GEO 路径不在列表中，
+# 避免跨模块扩大影响；百度授权入口也必须先完成 SEM 模块和身份检查。
 _SEM_IDENTITY_GUARDED_PREFIXES = (
     "/api/v1/dashboard",
     "/api/v1/alerts",
@@ -55,6 +55,7 @@ _SEM_IDENTITY_GUARDED_PREFIXES = (
     "/api/v1/manage",
     "/api/v1/ocpc",
     "/api/v1/onboarding-builder",
+    "/api/v1/oauth/baidu",
     "/api/v1/sem/assets/accounts",
     "/api/v1/admin/fetch-keyword-report",
     "/api/v1/admin/sync-keywords",
@@ -293,6 +294,7 @@ async def _build_context(user: User, session: AsyncSession) -> AuthContext:
 
 
 async def require_auth(
+    request: Request,
     bearer: HTTPAuthorizationCredentials | None = Security(_bearer),
     header_key: str | None = Security(_api_key_header),
     key: str | None = Query(None, description="旧版 API Key 查询参数；需服务端显式开启"),
@@ -343,12 +345,6 @@ async def require_scoped_auth(
     session: AsyncSession = Depends(get_session),
 ) -> AuthContext:
     """业务路由统一鉴权：菜单权限（view/edit）+ 单客户隔离。"""
-    keys, need_edit = _required(request.url.path, request.method)
-    if keys is not None:
-        ok = ctx.can_edit(*keys) if need_edit else ctx.can_view(*keys)
-        if not ok:
-            verb = "编辑" if need_edit else "访问"
-            raise HTTPException(403, f"当前角色无权{verb}此功能")
     tenant_id_values: list[object] = []
     query_tid = request.query_params.get("tenant_id")
     path_tid = request.path_params.get("tenant_id")
@@ -381,12 +377,28 @@ async def require_scoped_auth(
 
     if len(set(parsed_tenant_ids)) > 1:
         raise HTTPException(422, "请求中的 tenant_id 不一致")
-    if parsed_tenant_ids:
-        tenant_id = parsed_tenant_ids[0]
-        ctx.ensure_tenant(tenant_id)
+    effective_tenant_id = parsed_tenant_ids[0] if parsed_tenant_ids else ctx.tenant_id
+    if effective_tenant_id is not None:
+        tenant_id = effective_tenant_id
+        if parsed_tenant_ids:
+            ctx.ensure_tenant(tenant_id)
+
+    keys, need_edit = _required(request.url.path, request.method)
+    if keys is not None:
+        ok = ctx.can_edit(*keys) if need_edit else ctx.can_view(*keys)
+        if not ok:
+            verb = "编辑" if need_edit else "访问"
+            raise HTTPException(403, f"当前角色无权{verb}此功能")
+
+    if effective_tenant_id is not None:
+        tenant_id = effective_tenant_id
         if request.url.path.startswith(_SEM_IDENTITY_GUARDED_PREFIXES):
             await ensure_module_access(session, ctx, tenant_id, "sem")
             await ensure_sem_identity_access(session, tenant_id)
+        request.state.sem_effective_tenant_id = tenant_id
+    from app.sem_demo_source import enforce_sem_demo_access
+
+    await enforce_sem_demo_access(get_settings(), request, ctx, session)
     return ctx
 
 

@@ -149,8 +149,17 @@ class AIAnomalyRule:
         cands = cands[:MAX_CANDIDATES]
 
         camp_names = await _campaign_names(session, tenant.id)
+        from app.config import get_settings
+        from app.sem_demo_source import ensure_sem_production_action_allowed
+
         try:
+            await ensure_sem_production_action_allowed(
+                get_settings(), session, tenant.id
+            )
             verdicts = await self._judge(cands)
+            await ensure_sem_production_action_allowed(
+                get_settings(), session, tenant.id
+            )
         except DeepSeekError as e:
             logger.warning("AI 异常扫描调用失败（降级跳过）tenant=%s：%s", tenant.id, e)
             return []

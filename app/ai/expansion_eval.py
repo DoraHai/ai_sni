@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import math
+from contextlib import nullcontext
 from datetime import datetime
 
 from sqlalchemy import Text, case, cast, func, select
@@ -24,11 +25,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
+from app.config import get_settings
 from app.models import (
     CANDIDATE_AI_RECOMMEND_LABELS,
     CANDIDATE_AI_RELEVANCE_LABELS,
     KeywordCandidate,
     Tenant,
+)
+from app.sem_demo_source import (
+    SemDemoActionBlockedError,
+    ensure_sem_production_action_allowed,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,6 +42,14 @@ logger = logging.getLogger(__name__)
 BATCH_SIZE = 25  # 每次 API 评估的词数（控制单次 token 量 + 调用次数）
 INTERACTIVE_WORD_LIMIT = 5  # 拓词页一次点击只发一个小请求，不自动拆成多次模型调用
 MODEL_TIMEOUT_SECONDS = 30.0  # SEM-only wall-clock budget, not just HTTP inactivity
+
+
+async def _guard_evaluation_action(session: AsyncSession, tenant_id: int) -> None:
+    try:
+        await ensure_sem_production_action_allowed(get_settings(), session, tenant_id)
+    except SemDemoActionBlockedError:
+        await session.rollback()
+        raise
 
 SYSTEM_PROMPT = """你是资深国内百度 SEM 优化师，为当前客户筛选拓词候选。
 只依据本次提供的客户行业、业务描述和品牌资料判断，不套用其他客户或固定行业背景。
@@ -419,6 +433,7 @@ async def evaluate_candidates_for_tenant(
     只评 status='pending' 的候选；force=False 时跳过已评估过的（ai_evaluated_at 非空）。
     limit = 本次最多评估的去重词数（控制单次请求时长，存量回填可分多次调用清空）。
     """
+    await _guard_evaluation_action(session, tenant.id)
     if not is_enabled():
         return {"enabled": False, "evaluated": 0}
 
@@ -481,7 +496,9 @@ async def evaluate_candidates_for_tenant(
         chunk = distinct_words[i : i + batch_size]
         batches += 1
         try:
+            await _guard_evaluation_action(session, tenant.id)
             verdicts = await _evaluate_batch(tenant, chunk)
+            await _guard_evaluation_action(session, tenant.id)
         except DeepSeekError as e:
             failed += 1
             logger.warning(
@@ -516,6 +533,9 @@ async def evaluate_candidates_for_tenant(
                     flag_modified(c, field)
                 c.raw = evaluation_stamp_expression(fingerprint)
                 evaluated += 1
+        no_autoflush = getattr(session, "no_autoflush", nullcontext())
+        with no_autoflush:
+            await _guard_evaluation_action(session, tenant.id)
         await session.commit()  # 逐批提交，部分进度可留存
 
     deferred = remaining

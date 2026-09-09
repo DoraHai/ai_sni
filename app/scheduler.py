@@ -12,6 +12,7 @@
 """
 import logging
 import tempfile
+from contextlib import nullcontext
 from asyncio import Lock, sleep
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -59,6 +60,12 @@ from app.security.sem_identity import (
     ensure_sem_identity_access,
     filter_identity_safe_active_accounts,
 )
+from app.config import get_settings
+from app.sem_demo_source import (
+    SemDemoActionBlockedError,
+    blocked_sem_demo_tenant_ids,
+    ensure_sem_production_action_allowed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +73,13 @@ scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 _report_sync_lock = Lock()
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 INITIAL_KEYWORD_HISTORY_DAYS = 30
+
+
+async def _commit_sync_state(session, tenant_id: int) -> None:
+    no_autoflush = getattr(session, "no_autoflush", nullcontext())
+    with no_autoflush:
+        await ensure_sem_production_action_allowed(get_settings(), session, tenant_id)
+    await session.commit()
 
 # 多 worker 防双跑：uvicorn --workers 2 时每个 worker 都会执行 startup → 各起一个
 # APScheduler，导致每日任务跑两次（重复调百度 + 重复写）。用文件排他锁，只让抢到锁的
@@ -94,6 +108,7 @@ async def refresh_keyword_workbench_snapshot(
 ) -> dict:
     """同步 SEM 只读资产；单维度失败不会阻断其他维度。"""
     tenant_id = tenant.id
+    await ensure_sem_production_action_allowed(get_settings(), session, tenant_id)
     account_id = getattr(acc, "id", None)
     selected = normalize_dimensions(dimensions)
     lock_fh = _acquire_tenant_sync_lock(tenant_id)
@@ -108,14 +123,14 @@ async def refresh_keyword_workbench_snapshot(
         acc.last_sync_error = None
         acc.asset_sync_state = state
         if hasattr(session, "commit"):
-            await session.commit()
+            await _commit_sync_state(session, tenant_id)
 
         async def run_dimension(name: str):
             nonlocal acc, state, tenant
             state = update_dimension(state, run_id, name, "syncing")
             acc.asset_sync_state = state
             if hasattr(session, "commit"):
-                await session.commit()
+                await _commit_sync_state(session, tenant_id)
             try:
                 if name == "reports":
                     report_start = report_start_date or target_date
@@ -151,6 +166,10 @@ async def refresh_keyword_workbench_snapshot(
                     else "empty" if value == 0 else "success"
                 )
                 state = update_dimension(state, run_id, name, status, rows=value)
+            except SemDemoActionBlockedError:
+                if hasattr(session, "rollback"):
+                    await session.rollback()
+                raise
             except Exception as exc:  # noqa: BLE001
                 if hasattr(session, "rollback"):
                     await session.rollback()
@@ -170,14 +189,24 @@ async def refresh_keyword_workbench_snapshot(
                 )
             acc.asset_sync_state = state
             if hasattr(session, "commit"):
-                await session.commit()
+                await _commit_sync_state(session, tenant_id)
 
         for dimension in selected:
             await run_dimension(dimension)
 
         if "keywords" in selected and "keywords" not in failures:
             try:
+                await ensure_sem_production_action_allowed(
+                    get_settings(), session, tenant_id
+                )
                 category_counts = await reclassify_keywords(session, tenant)
+                await ensure_sem_production_action_allowed(
+                    get_settings(), session, tenant_id
+                )
+            except SemDemoActionBlockedError:
+                if hasattr(session, "rollback"):
+                    await session.rollback()
+                raise
             except Exception:  # noqa: BLE001
                 logger.exception("租户 %s 关键词分级重算失败（不影响资产同步状态）", tenant_id)
 
@@ -190,7 +219,7 @@ async def refresh_keyword_workbench_snapshot(
         if acc.sync_status == "synced":
             acc.last_synced_at = datetime.utcnow()
         if hasattr(session, "commit"):
-            await session.commit()
+            await _commit_sync_state(session, tenant_id)
         return {
             "status": "ok" if not failures else "partial",
             "tenant_id": tenant_id,
@@ -207,6 +236,10 @@ async def refresh_keyword_workbench_snapshot(
             "price_strategies_synced": results.get("price_strategies", 0),
             "category_counts": category_counts,
         }
+    except SemDemoActionBlockedError:
+        if hasattr(session, "rollback"):
+            await session.rollback()
+        raise
     except Exception as exc:
         if hasattr(session, "rollback"):
             await session.rollback()
@@ -217,7 +250,7 @@ async def refresh_keyword_workbench_snapshot(
         failed_acc.last_sync_error = safe_sync_error(exc)
         failed_acc.asset_sync_state = finish_sync_run(state, run_id)
         if hasattr(session, "commit"):
-            await session.commit()
+            await _commit_sync_state(session, tenant_id)
         raise
     finally:
         _release_tenant_sync_lock(lock_fh)
@@ -244,11 +277,15 @@ def _account_refs(accounts: list[BaiduAccount]) -> list[tuple[int, int, str]]:
 
 
 async def _scheduled_account_refs(session) -> list[tuple[int, int, str]]:
-    return _account_refs(
+    refs = _account_refs(
         filter_identity_safe_active_accounts(
             await list_active_sem_accounts(session)
         )
     )
+    blocked = await blocked_sem_demo_tenant_ids(
+        get_settings(), session, {tenant_id for _, tenant_id, _ in refs}
+    )
+    return [ref for ref in refs if ref[1] not in blocked]
 
 
 async def _reload_scheduled_account(
@@ -262,6 +299,9 @@ async def _reload_scheduled_account(
         return None, None, "missing_account"
     if account.status != "active" or account.tenant_id != expected_tenant_id:
         return None, None, "account_changed"
+    await ensure_sem_production_action_allowed(
+        get_settings(), session, expected_tenant_id
+    )
     await get_tenant_module(session, expected_tenant_id, "sem")
     await ensure_sem_identity_access(session, expected_tenant_id)
     tenant = await session.get(Tenant, expected_tenant_id)
@@ -495,11 +535,15 @@ async def check_writeback_health() -> None:
 
     async with async_session_factory() as session:
         tenant_ids = [t.id for t in await list_active_module_tenants(session, "sem")]
+        blocked = await blocked_sem_demo_tenant_ids(
+            get_settings(), session, set(tenant_ids)
+        )
+        tenant_ids = [tenant_id for tenant_id in tenant_ids if tenant_id not in blocked]
     for tenant_id in tenant_ids:
         try:
             async with async_session_factory() as session:
                 await refresh_writeback_alerts(session, tenant_id)
-                await session.commit()
+                await _commit_sync_state(session, tenant_id)
         except Exception:  # noqa: BLE001
             logger.exception("[scheduler] 回写告警检查失败 tenant=%s", tenant_id)
 
