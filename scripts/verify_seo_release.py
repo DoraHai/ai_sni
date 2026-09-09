@@ -21,6 +21,8 @@ SOURCE_ALLOWED_EXACT = {
     "migrations/versions/20260909_0097_demo_tenant_bindings.py",
     "app/models/demo_tenant_binding.py",
     "tests/test_demo_tenant_binding_migration.py",
+    "migrations/versions/20260909_0098_demo_binding_no_truncate.py",
+    "tests/test_demo_binding_no_truncate_migration.py",
     "docs/DEMO_DATABASE_MIGRATION_0095.md",
     "app/seo_qa_documents.py",
     "tests/test_seo_qa_documents.py",

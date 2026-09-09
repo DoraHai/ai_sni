@@ -63,7 +63,7 @@ def _load_migration():
 
 def test_demo_binding_revision_is_the_single_linear_head() -> None:
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == ["0097_demo_tenant_bindings"]
+    assert script.get_heads() == ["0098_demo_binding_no_truncate"]
     assert script.get_revision("0097_demo_tenant_bindings").down_revision == "0096_sem_tasks"
     assert [step.revision.revision for step in script._upgrade_revs("0097_demo_tenant_bindings", "0096_sem_tasks")] == ["0097_demo_tenant_bindings"]
 

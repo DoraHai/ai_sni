@@ -45,11 +45,14 @@ class _HealthConnection:
                 for name in expected
             ]
         if "demo_tenant_binding_history" in sql and "pg_trigger" in sql:
-            return [
+            rows = [
                 ("demo_tenant_binding_history", "trg_demo_tenant_binding_history_append_only", "before update or delete for each row reject_demo_tenant_binding_history_mutation"),
                 ("demo_tenant_binding_history", "trg_demo_tenant_binding_history_no_truncate", "before truncate for each statement reject_demo_tenant_binding_history_mutation"),
                 ("demo_tenant_bindings", "trg_demo_tenant_bindings_no_delete", "before delete for each row reject_demo_tenant_binding_delete"),
             ]
+            if self.revisions == ["0098_demo_binding_no_truncate"]:
+                rows.append(("demo_tenant_bindings", "trg_demo_tenant_bindings_no_truncate", "before truncate for each statement reject_demo_tenant_binding_delete"))
+            return rows
         if "pg_get_serial_sequence" in sql:
             return _HealthResult(["public.demo_tenant_binding_history_id_seq"])
         if "geo_action_tickets" in sql:
@@ -94,7 +97,7 @@ def test_seo_service_mounts_only_seo_routes() -> None:
     assert "from app.scheduler" not in source
     assert "start_seo_scheduler" in source
     assert "shutdown_seo_scheduler" in source
-    assert 'SEO_REQUIRED_SCHEMA_REVISION = "0097_demo_tenant_bindings"' in source
+    assert 'SEO_REQUIRED_SCHEMA_REVISION = "0098_demo_binding_no_truncate"' in source
     assert "SELECT version_num FROM alembic_version ORDER BY version_num" in source
     assert 'schema_status = "error"' in source
     assert "response.status_code = 503" in source
@@ -123,7 +126,7 @@ def test_seo_health_fails_closed_when_database_revision_is_stale() -> None:
     assert response.status_code == 503
     assert result["db"] == "error"
     assert result["schema"] == "error"
-    assert "expected 0097_demo_tenant_bindings" in result["db_error"]
+    assert "expected 0098_demo_binding_no_truncate" in result["db_error"]
 
 
 def test_seo_scheduler_registers_only_rank_collection() -> None:
@@ -258,7 +261,7 @@ def test_health_rejects_unknown_empty_or_multiple_revisions(revisions):
     structure.assert_not_called()
 
 
-@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings'])
+@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate'])
 def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
     response = Response()
     with patch.object(seo_main, 'engine', _HealthEngine([revision])):
@@ -266,8 +269,8 @@ def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
     assert response.status_code == 200 and result['schema'] == 'ok'
     assert result['db'] == 'ok' and result['db_error'] is None
     assert result['schema_revision'] == revision
-    assert result['required_schema_revision'] == '0097_demo_tenant_bindings'
-    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings']
+    assert result['required_schema_revision'] == '0098_demo_binding_no_truncate'
+    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate']
 
 
 @pytest.mark.parametrize('failure', ['missing_column', 'wrong_type', 'has_index', 'has_constraint'])
@@ -294,7 +297,7 @@ def test_health_rejects_0095_when_geo_ticket_adoption_shape_is_incomplete(failur
 
     response = Response()
     with patch.object(_HealthConnection, 'execute', execute), patch.object(
-        seo_main, 'engine', _HealthEngine(['0097_demo_tenant_bindings'])
+        seo_main, 'engine', _HealthEngine(['0098_demo_binding_no_truncate'])
     ):
         result = asyncio.run(seo_main.seo_health(response))
     assert response.status_code == 503
@@ -303,7 +306,7 @@ def test_health_rejects_0095_when_geo_ticket_adoption_shape_is_incomplete(failur
 
 
 @pytest.mark.parametrize('failure', ['missing_table','missing_column','wrong_bigint','wrong_jsonb','catalog_denied'])
-@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings'])
+@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate'])
 def test_health_rejects_incomplete_schema_even_at_allowed_revision(failure, revision):
     async def execute(self, statement, parameters=None):
         if 'geo_action_tickets' in str(statement):
@@ -350,8 +353,8 @@ def test_structure_contract_preserves_smallint_fields():
 
 
 def test_runtime_allowlist_contains_only_exact_reviewed_versions():
-    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings'})
-    assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings'})
+    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate'})
+    assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate'})
     assert (
         seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS - {'0094_seo_qa_batches'}
     ) <= seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS
@@ -377,6 +380,22 @@ def test_pre_0097_compatible_health_does_not_require_future_binding_tables(revis
     ) as binding_check:
         result = asyncio.run(seo_main.seo_health(response))
     binding_check.assert_not_called()
+    assert response.status_code == 200
+    assert result["schema"] == "ok"
+
+
+@pytest.mark.parametrize("revision,required", [
+    ("0097_demo_tenant_bindings", False),
+    ("0098_demo_binding_no_truncate", True),
+])
+def test_binding_health_requires_current_truncate_only_at_0098(revision, required) -> None:
+    response = Response()
+    with patch.object(seo_main, "engine", _HealthEngine([revision])), patch.object(
+        seo_main, "_check_demo_binding_structure", return_value=None
+    ) as binding_check:
+        result = asyncio.run(seo_main.seo_health(response))
+    binding_check.assert_awaited_once()
+    assert binding_check.await_args.kwargs == {"require_current_truncate": required}
     assert response.status_code == 200
     assert result["schema"] == "ok"
 
@@ -425,7 +444,7 @@ def test_0097_health_rejects_control_plane_definition_drift(failure) -> None:
 
     response = Response()
     with patch.object(_HealthConnection, "execute", execute), patch.object(
-        seo_main, "engine", _HealthEngine(["0097_demo_tenant_bindings"])
+        seo_main, "engine", _HealthEngine(["0098_demo_binding_no_truncate"])
     ):
         result = asyncio.run(seo_main.seo_health(response))
     assert response.status_code == 503

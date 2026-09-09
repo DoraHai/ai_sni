@@ -21,6 +21,8 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("migrations/versions/20260909_0097_demo_tenant_bindings.py")
     assert source_path_allowed("app/models/demo_tenant_binding.py")
     assert source_path_allowed("tests/test_demo_tenant_binding_migration.py")
+    assert source_path_allowed("migrations/versions/20260909_0098_demo_binding_no_truncate.py")
+    assert source_path_allowed("tests/test_demo_binding_no_truncate_migration.py")
     assert source_path_allowed("tests/test_sem_task_migration.py")
     assert source_path_allowed("frontend/package-lock.json")
     assert source_path_allowed("frontend/scripts/test-seo-editor.mjs")
@@ -75,6 +77,7 @@ def test_canonical_migrations_are_add_once_then_immutable() -> None:
         "migrations/versions/20260909_0095_adopt_geo_ticket.py",
         "migrations/versions/20260909_0096_sem_tasks.py",
         "migrations/versions/20260909_0097_demo_tenant_bindings.py",
+        "migrations/versions/20260909_0098_demo_binding_no_truncate.py",
     ):
         assert source_change_allowed("A", migration)
         assert not source_change_allowed("M", migration)
@@ -105,7 +108,8 @@ def test_seo_workflows_gate_the_sem_task_migration_contract() -> None:
         workflow = (root / relative).read_text(encoding="utf-8")
         assert "tests/test_sem_task_migration.py" in workflow
         assert "tests/test_demo_tenant_binding_migration.py" in workflow
-        assert "0097_demo_tenant_bindings (head)" in workflow
+        assert "tests/test_demo_binding_no_truncate_migration.py" in workflow
+        assert "0098_demo_binding_no_truncate (head)" in workflow
 
 
 def test_seo_frontend_workflows_gate_shared_session_regressions() -> None:
@@ -374,7 +378,7 @@ def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
 
 def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     root = Path(__file__).parents[1]
-    expected = "0097_demo_tenant_bindings (head)"
+    expected = "0098_demo_binding_no_truncate (head)"
     baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
     production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
     assert expected in baseline
