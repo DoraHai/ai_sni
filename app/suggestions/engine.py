@@ -7,6 +7,7 @@
 全维 signals，替换 reason 为判断理由并做跨规则仲裁。
 """
 import logging
+from contextlib import nullcontext
 from datetime import timedelta
 
 from sqlalchemy import BigInteger, all_, any_, bindparam, case, func, or_, select, update
@@ -14,15 +15,36 @@ from sqlalchemy.dialects.postgresql import ARRAY, insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Keyword, KwReportSnapshot, Suggestion, Tenant
+from app.config import get_settings
 from app.database import async_session_factory
 from app.module_scope import list_active_module_tenants
 from app.suggestions.base import KeywordProfile, SuggestionContext
 from app.suggestions.guardrails import apply_guardrails
 from app.suggestions.rules import ALL_RULES
+from app.sem_demo_source import (
+    SemDemoActionBlockedError,
+    blocked_sem_demo_tenant_ids,
+    ensure_sem_production_action_allowed,
+)
 
 logger = logging.getLogger(__name__)
 
 WINDOW_DAYS = 7
+
+
+async def _guard_suggestion_action(session: AsyncSession, tenant_id: int) -> None:
+    try:
+        await ensure_sem_production_action_allowed(get_settings(), session, tenant_id)
+    except SemDemoActionBlockedError:
+        await session.rollback()
+        raise
+
+
+async def _guarded_suggestion_external(session, tenant_id: int, operation):
+    await _guard_suggestion_action(session, tenant_id)
+    result = await operation()
+    await _guard_suggestion_action(session, tenant_id)
+    return result
 
 
 def _f(v) -> float | None:
@@ -46,6 +68,7 @@ async def _persist_suggestions(
     chunk_size = min(1000, 30000 // len(Suggestion.__table__.columns))
     try:
         for start in range(0, len(records), chunk_size):
+            await _guard_suggestion_action(session, tenant_id)
             stmt = pg_insert(Suggestion).values(records[start:start + chunk_size])
             stmt = stmt.on_conflict_do_update(
                 constraint="uq_suggestions_tenant_kw_date",
@@ -91,7 +114,11 @@ async def _persist_suggestions(
             cleanup = cleanup.where(Suggestion.keyword_id == any_(bindparam(
                 "evaluated_keyword_ids", value=evaluated_ids, type_=ARRAY(BigInteger)
             )))
+        await _guard_suggestion_action(session, tenant_id)
         await session.execute(cleanup)
+        no_autoflush = getattr(session, "no_autoflush", nullcontext())
+        with no_autoflush:
+            await _guard_suggestion_action(session, tenant_id)
         await session.commit()
     except Exception:
         await session.rollback()
@@ -102,10 +129,7 @@ async def run_suggestions_for_tenant(
     session: AsyncSession, tenant: Tenant, window_days: int = WINDOW_DAYS
 ) -> int:
     """对单租户跑建议引擎，返回写入/刷新的建议条数。"""
-    from app.config import get_settings
-    from app.sem_demo_source import ensure_sem_production_action_allowed
-
-    await ensure_sem_production_action_allowed(get_settings(), session, tenant.id)
+    await _guard_suggestion_action(session, tenant.id)
     # 窗口锚定：最近有数据日往前 window_days 天
     latest = await session.scalar(
         select(func.max(KwReportSnapshot.report_date)).where(
@@ -251,11 +275,17 @@ async def run_suggestions_for_tenant(
     from app.ai.judge import enhance_draft
 
     # 客户画像：每次跑算一次，喂给每条建议的 AI 判断（让 AI 懂这个客户）
-    customer_brief = await build_customer_brief(session, tenant)
+    customer_brief = await _guarded_suggestion_external(
+        session, tenant.id, lambda: build_customer_brief(session, tenant)
+    )
 
     final = []
     for d in drafts:
-        nd = await enhance_draft(profiles.get(d.keyword_id), d, customer_brief)
+        nd = await _guarded_suggestion_external(
+            session,
+            tenant.id,
+            lambda d=d: enhance_draft(profiles.get(d.keyword_id), d, customer_brief),
+        )
         if nd is not None:
             final.append(nd)
     drafts = final
@@ -300,7 +330,12 @@ async def run_suggestions_for_all_tenants(
 ) -> dict[str, int]:
     """对所有租户跑建议引擎（每日同步后调用）。返回 {租户名: 条数}。"""
     tenants = await list_active_module_tenants(session, "sem")
-    tenant_refs = [(tenant.id, tenant.name) for tenant in tenants]
+    blocked = await blocked_sem_demo_tenant_ids(
+        get_settings(), session, {tenant.id for tenant in tenants}
+    )
+    tenant_refs = [
+        (tenant.id, tenant.name) for tenant in tenants if tenant.id not in blocked
+    ]
     result: dict[str, int] = {}
     for tenant_id, tenant_name in tenant_refs:
         try:

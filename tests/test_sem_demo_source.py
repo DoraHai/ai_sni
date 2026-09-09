@@ -241,10 +241,16 @@ def test_startup_configuration_is_atomic_and_0098_fixed():
 
 
 class DemoSession:
-    def __init__(self, *, identity=None, role=None, grants=None, receipt=None, marker=None, accounts=None):
+    def __init__(
+        self, *, identity=None, role=None, memberships=None, grants=None,
+        receipt=None, marker=None, accounts=None,
+    ):
         now = datetime.now(timezone.utc)
-        self.identity = identity or ("gsnipers_demo", "sem_demo_app", "10.0.0.18", "on")
+        self.identity = identity or (
+            "gsnipers_demo", "sem_demo_app", "sem_demo_app", "10.0.0.18", "on"
+        )
         self.role = role or (False, False, False, False, False, True)
+        self.memberships = [] if memberships is None else memberships
         self.grants = iter((False, False, False, False) if grants is None else grants)
         self.receipt = [(
             "gsnipers-sem-demo-v1", "demo-20260909-v1", MANIFEST, REVISION,
@@ -258,9 +264,12 @@ class DemoSession:
             (990000102, "disabled", "demo", "disabled"),
         ] if accounts is None else accounts
         self.info = {}
+        self.statements = []
     async def execute(self, statement, params=None):
         sql = str(statement)
+        self.statements.append(sql)
         if "current_database" in sql: return Result(one=self.identity)
+        if "pg_auth_members" in sql: return Result(rows=self.memberships)
         if "pg_roles" in sql: return Result(one=self.role)
         if "alembic_version" in sql: return Result(scalars=[REVISION])
         if source.FIXTURE_REGISTRY_TABLE in sql: return Result(rows=self.receipt)
@@ -277,17 +286,25 @@ def validate_demo(session):
         session, binding(), source._demo_database_target(settings())
     ))
 def test_demo_session_validates_registry_role_privileges_and_disabled_accounts():
-    alias_to_id, id_to_alias = validate_demo(DemoSession())
+    valid = DemoSession()
+    alias_to_id, id_to_alias = validate_demo(valid)
     assert set(alias_to_id.values()) == {990000101, 990000102}
     assert {id_to_alias[v] for v in alias_to_id.values()} == set(alias_to_id)
+    membership_sql = next(sql for sql in valid.statements if "pg_auth_members" in sql)
+    assert "WITH RECURSIVE" in membership_sql
+    assert "pg_has_role" in membership_sql and "'MEMBER'" in membership_sql
     bad = [
-        DemoSession(identity=("gsnipers_demo", "wrong", "10.0.0.18", "on")),
+        DemoSession(identity=("gsnipers_demo", "wrong", "wrong", "10.0.0.18", "on")),
+        DemoSession(identity=("gsnipers_demo", "sem_demo_app", "other", "10.0.0.18", "on")),
         DemoSession(role=(True, False, False, False, False, True)),
         DemoSession(role=(False, True, False, False, False, True)),
         DemoSession(role=(False, False, True, False, False, True)),
         DemoSession(role=(False, False, False, True, False, True)),
         DemoSession(role=(False, False, False, False, True, True)),
         DemoSession(role=(False, False, False, False, False, False)),
+        DemoSession(memberships=[("writer", False, False, False, False, False, True)]),
+        # NOINHERIT does not make SET ROLE safe; any reachable membership is rejected.
+        DemoSession(memberships=[("noinherit_writer", False, False, False, False, False, True)]),
         DemoSession(grants=(True, False, False, False)),
         DemoSession(grants=(False, True, False, False)),
         DemoSession(grants=(False, False, True, False)),
@@ -378,6 +395,21 @@ def test_demo_reader_sets_readonly_before_validation_and_keeps_session_open(monk
 def test_scoped_auth_orders_scope_rbac_entitlement_identity_before_binding(monkeypatch):
     req = request("/api/v1/dashboard/cockpit", "tenant_id=16")
     events = []
+    original_required = auth._required
+
+    class TrackingContext(AuthContext):
+        def ensure_tenant(self, tenant_id):
+            events.append("tenant_scope")
+            return super().ensure_tenant(tenant_id)
+
+        def can_view(self, *keys):
+            events.append("can_view")
+            return super().can_view(*keys)
+
+    def required(*args):
+        events.append("required")
+        return original_required(*args)
+
     async def module(*_args): events.append("module")
     async def identity(*_args): events.append("identity")
     async def binding_gate(*_args):
@@ -385,10 +417,15 @@ def test_scoped_auth_orders_scope_rbac_entitlement_identity_before_binding(monke
         events.append("binding")
     monkeypatch.setattr(auth, "ensure_module_access", module)
     monkeypatch.setattr(auth, "ensure_sem_identity_access", identity)
+    monkeypatch.setattr(auth, "_required", required)
     monkeypatch.setattr(source, "enforce_sem_demo_access", binding_gate)
-    ctx = context(16)
+    ctx = TrackingContext(
+        5, "reader", "viewer", 16, {"monitor.dashboard": "view"}, False
+    )
     assert run(auth.require_scoped_auth(req, ctx, object())) == ctx
-    assert events == ["module", "identity", "binding"]
+    assert events == [
+        "tenant_scope", "required", "can_view", "module", "identity", "binding"
+    ]
 
 
 def test_source_gates_cover_claim_transport_oauth_scheduler_and_workers():
@@ -399,7 +436,9 @@ def test_source_gates_cover_claim_transport_oauth_scheduler_and_workers():
         "app/api/oauth_baidu.py": "ensure_sem_production_action_allowed",
         "app/scheduler.py": "blocked_sem_demo_tenant_ids",
         "app/rules/engine.py": "ensure_sem_production_action_allowed",
+        "app/rules/ai_anomaly.py": "ensure_sem_production_action_allowed",
         "app/suggestions/engine.py": "ensure_sem_production_action_allowed",
+        "app/ai/expansion_eval.py": "ensure_sem_production_action_allowed",
     }
     for relative, marker in files.items():
         assert marker in (BASE / relative).read_text(encoding="utf-8")
@@ -429,7 +468,127 @@ def test_external_client_helpers_recheck_binding_immediately(monkeypatch):
     monkeypatch.setattr(writeback, "ensure_sem_production_action_allowed", guard)
     monkeypatch.setattr(writeback, "get_settings", lambda: settings())
     monkeypatch.setattr(writeback, "_account_client", lambda _account: "write-client")
-    assert run(writeback._writeback_account_client(
+    write_client = run(writeback._writeback_account_client(
         "write-session", 16, SimpleNamespace()
-    )) == "write-client"
+    ))
+    assert write_client._client == "write-client"
     assert events == [("sync-session", 16), ("write-session", 16)]
+
+
+def test_binding_enabled_during_external_call_stops_before_any_write(monkeypatch):
+    from app.baidu import sync
+
+    state = {"active": False, "rollbacks": 0}
+
+    class Session:
+        async def rollback(self):
+            state["rollbacks"] += 1
+
+    async def guard(_settings, _session, _tenant_id):
+        if state["active"]:
+            raise source.SemDemoActionBlockedError("binding activated")
+
+    async def external():
+        state["active"] = True
+        return [{"campaignId": 1}]
+
+    monkeypatch.setattr(sync, "ensure_sem_production_action_allowed", guard)
+    with pytest.raises(source.SemDemoActionBlockedError):
+        run(sync._guarded_external_call(Session(), 16, external))
+    assert state["rollbacks"] == 1
+
+
+def test_binding_enabled_after_chunk_write_rolls_back_before_commit(monkeypatch):
+    from app.baidu import sync
+    from app.models import Campaign
+
+    state = {"active": False, "executes": 0, "commits": 0, "rollbacks": 0}
+
+    class Session:
+        async def execute(self, _statement):
+            state["executes"] += 1
+            state["active"] = True
+
+        async def commit(self):
+            state["commits"] += 1
+
+        async def rollback(self):
+            state["rollbacks"] += 1
+
+    async def guard(_settings, _session, _tenant_id):
+        if state["active"]:
+            raise source.SemDemoActionBlockedError("binding activated")
+
+    monkeypatch.setattr(sync, "ensure_sem_production_action_allowed", guard)
+    records = [{"tenant_id": 16, "campaign_id": 1, "campaign_name": "demo"}]
+    with pytest.raises(source.SemDemoActionBlockedError):
+        run(sync._chunked_upsert(
+            Session(), Campaign, records, "uq_campaigns_tenant_camp",
+            {"tenant_id", "campaign_id"},
+        ))
+    assert state == {"active": True, "executes": 1, "commits": 0, "rollbacks": 1}
+
+
+def test_binding_enabled_during_suggestion_ai_call_blocks_persistence(monkeypatch):
+    from app.suggestions import engine
+
+    state = {"active": False, "rollbacks": 0}
+
+    class Session:
+        async def rollback(self):
+            state["rollbacks"] += 1
+
+    async def guard(_settings, _session, _tenant_id):
+        if state["active"]:
+            raise source.SemDemoActionBlockedError("binding activated")
+
+    async def ai_call():
+        state["active"] = True
+        return {"decision": "accept"}
+
+    monkeypatch.setattr(engine, "ensure_sem_production_action_allowed", guard)
+    with pytest.raises(source.SemDemoActionBlockedError):
+        run(engine._guarded_suggestion_external(Session(), 16, ai_call))
+    assert state["rollbacks"] == 1
+
+
+def test_binding_enabled_during_rule_evaluation_stops_before_alert_write(monkeypatch):
+    from app.rules import engine
+
+    state = {"active": False, "rollbacks": 0, "commits": 0}
+
+    class Nested:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class Session:
+        def begin_nested(self):
+            return Nested()
+
+        async def rollback(self):
+            state["rollbacks"] += 1
+
+        async def commit(self):
+            state["commits"] += 1
+
+    class Rule:
+        code = "AI-test"
+
+        async def evaluate(self, _session, _tenant, _target_date):
+            state["active"] = True
+            return []
+
+    async def guard(_settings, _session, _tenant_id):
+        if state["active"]:
+            raise source.SemDemoActionBlockedError("binding activated")
+
+    monkeypatch.setattr(engine, "ensure_sem_production_action_allowed", guard)
+    monkeypatch.setattr(engine, "ALL_RULES", [Rule()])
+    with pytest.raises(source.SemDemoActionBlockedError):
+        run(engine.run_rules_for_tenant(
+            Session(), SimpleNamespace(id=16), datetime.now(timezone.utc).date()
+        ))
+    assert state == {"active": True, "rollbacks": 1, "commits": 0}

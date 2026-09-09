@@ -408,7 +408,8 @@ async def _validate_demo_session(
     identity = (
         await session.execute(
             text(
-                "SELECT current_database(), current_user, inet_server_addr()::text, "
+                "SELECT current_database(), current_user, session_user, "
+                "inet_server_addr()::text, "
                 "current_setting('transaction_read_only')"
             )
         )
@@ -416,8 +417,9 @@ async def _validate_demo_session(
     if (
         identity[0] != target.database
         or identity[1] != target.username
-        or identity[2] not in target.server_addresses
-        or identity[3] != "on"
+        or identity[2] != target.username
+        or identity[3] not in target.server_addresses
+        or identity[4] != "on"
     ):
         raise SemDemoSourceError("connected SEM demo database identity is not trusted")
     role = (
@@ -430,6 +432,32 @@ async def _validate_demo_session(
     ).one_or_none()
     if role != (False, False, False, False, False, True):
         raise SemDemoSourceError("SEM demo reader role attributes are unsafe")
+    reachable_roles = (
+        await session.execute(
+            text("""
+                WITH RECURSIVE reachable(roleid) AS (
+                    SELECT membership.roleid
+                    FROM pg_catalog.pg_auth_members AS membership
+                    JOIN pg_catalog.pg_roles AS member_role
+                      ON member_role.oid = membership.member
+                    WHERE member_role.rolname IN (current_user, session_user)
+                    UNION
+                    SELECT membership.roleid
+                    FROM pg_catalog.pg_auth_members AS membership
+                    JOIN reachable ON reachable.roleid = membership.member
+                )
+                SELECT role.rolname, role.rolsuper, role.rolcreatedb,
+                       role.rolcreaterole, role.rolreplication, role.rolbypassrls,
+                       pg_catalog.pg_has_role(current_user, role.oid, 'MEMBER')
+                FROM reachable
+                JOIN pg_catalog.pg_roles AS role ON role.oid = reachable.roleid
+            """)
+        )
+    ).all()
+    if reachable_roles:
+        raise SemDemoSourceError(
+            "SEM demo reader must not inherit or SET ROLE to member roles"
+        )
     revisions = list((await session.execute(_BINDING_REVISION_SQL)).scalars())
     if revisions != [REQUIRED_SCHEMA_REVISION]:
         raise SemDemoSourceError("SEM demo database schema revision does not match")

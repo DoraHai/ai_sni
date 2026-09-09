@@ -9,6 +9,7 @@ from sqlalchemy.orm import aliased
 
 from app.models import Alert, Tenant
 from app.database import async_session_factory
+from app.config import get_settings
 from app.module_scope import list_active_module_tenants
 from app.rules.ai_anomaly import AIAnomalyRule
 from app.rules.base import Rule
@@ -16,6 +17,11 @@ from app.rules.brand_rank import BrandRankRule
 from app.rules.budget_overrun import BudgetOverrunRule
 from app.rules.high_cost_low_quality import HighCostLowQualityRule
 from app.rules.keyword_shortage import KeywordShortageRule
+from app.sem_demo_source import (
+    SemDemoActionBlockedError,
+    blocked_sem_demo_tenant_ids,
+    ensure_sem_production_action_allowed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +34,17 @@ ALL_RULES: list[Rule] = [
 ]
 
 
+async def _guard_rule_action(session: AsyncSession, tenant_id: int) -> None:
+    try:
+        await ensure_sem_production_action_allowed(get_settings(), session, tenant_id)
+    except SemDemoActionBlockedError:
+        await session.rollback()
+        raise
+
+
 async def merge_duplicate_alerts(session: AsyncSession, tenant_id: int) -> int:
     """Merge older open alerts for the same keyword/entity when a newer alert exists."""
+    await _guard_rule_action(session, tenant_id)
     newer = aliased(Alert)
     result_kw = await session.execute(
         update(Alert)
@@ -46,6 +61,7 @@ async def merge_duplicate_alerts(session: AsyncSession, tenant_id: int) -> int:
         )
         .values(status="merged")
     )
+    await _guard_rule_action(session, tenant_id)
     result_entity = await session.execute(
         update(Alert)
         .where(
@@ -61,6 +77,7 @@ async def merge_duplicate_alerts(session: AsyncSession, tenant_id: int) -> int:
         )
         .values(status="merged")
     )
+    await _guard_rule_action(session, tenant_id)
     await session.commit()
     return (result_kw.rowcount or 0) + (result_entity.rowcount or 0)
 
@@ -121,6 +138,7 @@ async def _upsert_keyword_alerts(session: AsyncSession, records: list[dict]) -> 
         for start in range(0, len(records), chunk_size):
             await _upsert_keyword_alerts(session, records[start:start + chunk_size])
         return
+    await _guard_rule_action(session, int(records[0]["tenant_id"]))
     stmt = pg_insert(Alert).values(records)
     stmt = stmt.on_conflict_do_update(
         index_elements=["tenant_id", "rule_code", "keyword_id", "report_date"],
@@ -148,6 +166,7 @@ async def _upsert_entity_alerts(session: AsyncSession, records: list[dict]) -> N
         for start in range(0, len(records), chunk_size):
             await _upsert_entity_alerts(session, records[start:start + chunk_size])
         return
+    await _guard_rule_action(session, int(records[0]["tenant_id"]))
     stmt = pg_insert(Alert).values(records)
     stmt = stmt.on_conflict_do_update(
         index_elements=["tenant_id", "rule_code", "entity_ref", "report_date"],
@@ -170,18 +189,24 @@ async def run_rules_for_tenant(
     session: AsyncSession, tenant: Tenant, target_date: date
 ) -> int:
     """Evaluate all daily rules for one tenant and return written/refreshed alert count."""
-    from app.config import get_settings
-    from app.sem_demo_source import ensure_sem_production_action_allowed
-
-    await ensure_sem_production_action_allowed(get_settings(), session, tenant.id)
+    await _guard_rule_action(session, tenant.id)
     drafts = []
     tenant_id = tenant.id
     for rule in ALL_RULES:
         try:
             # A database failure must not poison subsequent rules in this tenant.
             async with session.begin_nested():
+                await ensure_sem_production_action_allowed(
+                    get_settings(), session, tenant_id
+                )
                 rule_drafts = await rule.evaluate(session, tenant, target_date)
+                await ensure_sem_production_action_allowed(
+                    get_settings(), session, tenant_id
+                )
             drafts.extend(rule_drafts)
+        except SemDemoActionBlockedError:
+            await session.rollback()
+            raise
         except Exception:  # noqa: BLE001
             logger.exception(
                 "rule %s failed for tenant %s date %s", rule.code, tenant_id, target_date
@@ -206,6 +231,7 @@ async def run_rules_for_tenant(
 
     await _upsert_keyword_alerts(session, kw_records)
     await _upsert_entity_alerts(session, entity_records)
+    await _guard_rule_action(session, tenant_id)
     await session.commit()
 
     merged = await merge_duplicate_alerts(session, tenant.id)
@@ -224,7 +250,12 @@ async def run_rules_for_all_tenants(
 ) -> dict[str, int]:
     """Evaluate daily rules for all tenants."""
     tenants = await list_active_module_tenants(session, "sem")
-    tenant_refs = [(tenant.id, tenant.name) for tenant in tenants]
+    blocked = await blocked_sem_demo_tenant_ids(
+        get_settings(), session, {tenant.id for tenant in tenants}
+    )
+    tenant_refs = [
+        (tenant.id, tenant.name) for tenant in tenants if tenant.id not in blocked
+    ]
     result: dict[str, int] = {}
     for tenant_id, tenant_name in tenant_refs:
         try:

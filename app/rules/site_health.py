@@ -142,11 +142,11 @@ class SiteHealthRule:
 async def run_site_health_for_tenant(
     session: AsyncSession, tenant: Tenant, target_date: date
 ) -> int:
-    from app.config import get_settings
-    from app.sem_demo_source import ensure_sem_production_action_allowed
+    from app.rules.engine import _guard_rule_action
 
-    await ensure_sem_production_action_allowed(get_settings(), session, tenant.id)
+    await _guard_rule_action(session, tenant.id)
     drafts = await SiteHealthRule().evaluate(session, tenant, target_date)
+    await _guard_rule_action(session, tenant.id)
     records = [
         {
             "tenant_id": tenant.id,
@@ -166,6 +166,7 @@ async def run_site_health_for_tenant(
         if d.entity_ref
     ]
     await _upsert_entity_alerts(session, records)
+    await _guard_rule_action(session, tenant.id)
     await session.commit()
     await merge_duplicate_alerts(session, tenant.id)
     return len(records)
@@ -174,9 +175,17 @@ async def run_site_health_for_tenant(
 async def run_site_health_for_all_tenants(
     session: AsyncSession, target_date: date
 ) -> dict[str, int]:
+    from app.config import get_settings
+    from app.sem_demo_source import blocked_sem_demo_tenant_ids
+
     tenants = await list_active_module_tenants(session, "sem")
+    blocked = await blocked_sem_demo_tenant_ids(
+        get_settings(), session, {tenant.id for tenant in tenants}
+    )
     result: dict[str, int] = {}
     for tenant in tenants:
+        if tenant.id in blocked:
+            continue
         try:
             result[tenant.name] = await run_site_health_for_tenant(session, tenant, target_date)
         except Exception:  # noqa: BLE001

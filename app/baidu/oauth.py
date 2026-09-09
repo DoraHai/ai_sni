@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import secrets
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -37,6 +38,10 @@ logger = logging.getLogger(__name__)
 _DEFAULT_ACCESS_SECONDS = 24 * 60 * 60
 _DEFAULT_REFRESH_SECONDS = 30 * 24 * 60 * 60
 _REFRESH_AHEAD = timedelta(hours=2)
+
+
+def _no_autoflush(session):
+    return getattr(session, "no_autoflush", nullcontext())
 _MAX_SUB_ACCOUNT_PAGES = 100
 
 
@@ -412,6 +417,11 @@ async def persist_authorization(
     # 开通对应的 SEM 工作区，否则模块客户选择器会把已授权账户隐藏起来。
     # 使用唯一约束 + ON CONFLICT 保证重复授权和并发回调不会产生重复记录；
     # 已存在但被业务侧停用的模块不会被 OAuth 擅自重新启用。
+    with _no_autoflush(session):
+        for linked_tenant in linked_tenants:
+            await ensure_sem_production_action_allowed(
+                settings, session, linked_tenant.id
+            )
     await session.execute(
         insert(TenantModule)
         .values(
@@ -544,6 +554,11 @@ async def persist_authorization(
         )
         .values(status="inactive")
     )
+    with _no_autoflush(session):
+        for linked_tenant in linked_tenants:
+            await ensure_sem_production_action_allowed(
+                settings, session, linked_tenant.id
+            )
     await session.commit()
     return grant, linked, linked_tenants
 
@@ -559,11 +574,19 @@ async def refresh_grant(
     now = datetime.utcnow()
     if grant.refresh_expires_at <= now:
         grant.status = "reauthorization_required"
+        with _no_autoflush(session):
+            await ensure_sem_production_action_allowed(
+                get_settings(), session, grant.tenant_id
+            )
         await session.execute(
             update(BaiduAccount)
             .where(BaiduAccount.oauth_grant_id == grant.id)
             .values(status="reauthorization_required")
         )
+        with _no_autoflush(session):
+            await ensure_sem_production_action_allowed(
+                get_settings(), session, grant.tenant_id
+            )
         await session.commit()
         return False
 
@@ -593,6 +616,10 @@ async def refresh_grant(
     grant.expires_at = expires_at
     grant.refresh_expires_at = refresh_expires_at
     grant.status = "active"
+    with _no_autoflush(session):
+        await ensure_sem_production_action_allowed(
+            get_settings(), session, grant.tenant_id
+        )
     await session.execute(
         update(BaiduAccount)
         .where(BaiduAccount.oauth_grant_id == grant.id)
@@ -604,6 +631,10 @@ async def refresh_grant(
             status="active",
         )
     )
+    with _no_autoflush(session):
+        await ensure_sem_production_action_allowed(
+            get_settings(), session, grant.tenant_id
+        )
     await session.commit()
     return True
 

@@ -33,7 +33,10 @@ from app.baidu.writeback_approval import (
     create_self_approved_approval,
 )
 from app.config import get_settings, resolve_baidu_write_dry_run
-from app.sem_demo_source import ensure_sem_production_action_allowed
+from app.sem_demo_source import (
+    SemDemoActionBlockedError,
+    ensure_sem_production_action_allowed,
+)
 from app.models import (
     Adgroup,
     BaiduAccount,
@@ -63,12 +66,33 @@ class WritebackError(Exception):
     """回写前校验失败（业务拒绝，不调百度）。"""
 
 
+class _BindingCheckedBaiduClient:
+    def __init__(self, client, session: AsyncSession, tenant_id: int):
+        self._client = client
+        self._session = session
+        self._tenant_id = tenant_id
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+    async def call(self, *args, **kwargs):
+        result = await self._client.call(*args, **kwargs)
+        try:
+            await ensure_sem_production_action_allowed(
+                get_settings(), self._session, self._tenant_id
+            )
+        except SemDemoActionBlockedError:
+            await self._session.rollback()
+            raise
+        return result
+
+
 async def _writeback_account_client(
     session: AsyncSession, tenant_id: int, account: BaiduAccount
 ):
     """Recheck the binding immediately before constructing an external client."""
     await ensure_sem_production_action_allowed(get_settings(), session, tenant_id)
-    return _account_client(account)
+    return _BindingCheckedBaiduClient(_account_client(account), session, tenant_id)
 
 
 def _boolean_audit_value(value: bool | None) -> int | None:

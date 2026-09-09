@@ -65,6 +65,7 @@ async def refresh_writeback_alerts(session, tenant_id):
         async for row, seconds in stream:
             record = alert_record(tenant_id, kind, row, seconds)
             insert = pg_insert(Alert).values(**record)
+            await ensure_sem_production_action_allowed(get_settings(), session, tenant_id)
             await session.execute(insert.on_conflict_do_update(
                 index_elements=["tenant_id", "rule_code", "entity_ref", "report_date"],
                 index_where=Alert.entity_ref.isnot(None),
@@ -79,6 +80,7 @@ async def refresh_writeback_alerts(session, tenant_id):
             func.concat(f"writeback:{kind}:", model.id) == Alert.entity_ref,
             *unresolved(model),
         ))
+        await ensure_sem_production_action_allowed(get_settings(), session, tenant_id)
         await session.execute(update(Alert).where(
             Alert.tenant_id == tenant_id,
             Alert.rule_code == f"WB-{kind}",

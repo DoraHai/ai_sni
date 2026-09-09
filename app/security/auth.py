@@ -345,12 +345,6 @@ async def require_scoped_auth(
     session: AsyncSession = Depends(get_session),
 ) -> AuthContext:
     """业务路由统一鉴权：菜单权限（view/edit）+ 单客户隔离。"""
-    keys, need_edit = _required(request.url.path, request.method)
-    if keys is not None:
-        ok = ctx.can_edit(*keys) if need_edit else ctx.can_view(*keys)
-        if not ok:
-            verb = "编辑" if need_edit else "访问"
-            raise HTTPException(403, f"当前角色无权{verb}此功能")
     tenant_id_values: list[object] = []
     query_tid = request.query_params.get("tenant_id")
     path_tid = request.path_params.get("tenant_id")
@@ -388,6 +382,16 @@ async def require_scoped_auth(
         tenant_id = effective_tenant_id
         if parsed_tenant_ids:
             ctx.ensure_tenant(tenant_id)
+
+    keys, need_edit = _required(request.url.path, request.method)
+    if keys is not None:
+        ok = ctx.can_edit(*keys) if need_edit else ctx.can_view(*keys)
+        if not ok:
+            verb = "编辑" if need_edit else "访问"
+            raise HTTPException(403, f"当前角色无权{verb}此功能")
+
+    if effective_tenant_id is not None:
+        tenant_id = effective_tenant_id
         if request.url.path.startswith(_SEM_IDENTITY_GUARDED_PREFIXES):
             await ensure_module_access(session, ctx, tenant_id, "sem")
             await ensure_sem_identity_access(session, tenant_id)

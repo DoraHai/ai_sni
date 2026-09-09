@@ -25,7 +25,8 @@
 
 `/dashboard/today`、分析报告、月报、导出、投放、同步、OAuth、AI、任务写入以及其他路由均被
 服务端门禁拒绝。OAuth 回调在消费 state 前、外部调用前和持久化前复核绑定；scheduler 在账户
-枚举及领取任务后复核；同步、规则、建议、健康检查和百度写回在外部调用或写入前再次复核。
+枚举及领取任务后复核；同步、规则、建议、健康检查和百度写回在每次外部调用前后、每个分块
+写入及提交前再次复核。长调用期间若绑定变为 active，当前事务回滚并立即停止。
 
 ## 启用前提
 
@@ -47,7 +48,9 @@
 演示库并设置 `REPEATABLE READ, READ ONLY` 事务。读取前会核验数据库名、`current_user`、服务器
 地址、事务只读状态及唯一 schema revision。专用角色必须可登录，且不得拥有 superuser、
 createdb、createrole、replication、bypassrls、schema CREATE、数据库 CREATE/TEMP，以及表或序列
-写权限。
+写权限。`current_user` 必须等于 `session_user`；运行时递归检查 `pg_auth_members` 并以
+`pg_has_role(..., 'MEMBER')` 交叉核验，专用角色不得继承或通过 `SET ROLE` 到任何成员角色，
+包括 `NOINHERIT` 成员关系。
 
 夹具加载器必须维护 `demo_control.fixture_registry`。运行时要求同一 SEM 演示租户恰有一条
 `load_status=ready` 的记录，并精确匹配 dataset key/version、manifest SHA-256、固定 schema

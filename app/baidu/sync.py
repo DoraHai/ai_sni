@@ -5,6 +5,7 @@ APScheduler 和手动触发接口都走这里。
 """
 import hashlib
 import logging
+from contextlib import nullcontext
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -52,7 +53,11 @@ from app.security.crypto import decrypt
 from app.security.sem_identity import filter_identity_safe_active_accounts
 from app.module_scope import list_active_sem_accounts
 from app.config import get_settings
-from app.sem_demo_source import ensure_sem_production_action_allowed
+from app.sem_demo_source import (
+    SemDemoActionBlockedError,
+    blocked_sem_demo_tenant_ids,
+    ensure_sem_production_action_allowed,
+)
 
 logger = logging.getLogger(__name__)
 _KEYWORD_REPORT_MAX_WINDOW_DAYS = 7
@@ -253,9 +258,13 @@ async def sync_keyword_report_range_for_account(
             end_date,
         )
         rows.extend(
-            await svc.get_keyword_report(
+            await _guarded_external_call(
+                session,
+                baidu_account.tenant_id,
+                lambda: svc.get_keyword_report(
                 start_date=window_start.isoformat(),
                 end_date=window_end.isoformat(),
+                ),
             )
         )
         window_start = window_end + timedelta(days=1)
@@ -354,7 +363,11 @@ async def sync_keyword_dimension_reports_for_account(
     svc = ReportService(client)
     iso_date = target_date.isoformat()
 
-    region_rows = await svc.get_keyword_region_report(start_date=iso_date, end_date=iso_date)
+    region_rows = await _guarded_external_call(
+        session,
+        baidu_account.tenant_id,
+        lambda: svc.get_keyword_region_report(start_date=iso_date, end_date=iso_date),
+    )
     region_records = [
         rec for row in region_rows
         if (rec := _row_to_region_record(row, baidu_account.tenant_id, baidu_account.id, target_date))
@@ -375,7 +388,11 @@ async def sync_keyword_dimension_reports_for_account(
             },
         )
 
-    hourly_rows = await svc.get_keyword_hourly_report(start_date=iso_date, end_date=iso_date)
+    hourly_rows = await _guarded_external_call(
+        session,
+        baidu_account.tenant_id,
+        lambda: svc.get_keyword_hourly_report(start_date=iso_date, end_date=iso_date),
+    )
     hourly_records = [
         rec for row in hourly_rows
         if (rec := _row_to_hourly_record(row, baidu_account.tenant_id, baidu_account.id))
@@ -409,9 +426,13 @@ async def sync_region_snapshot(
     """按省汇总关键词报表地域数据，upsert 进 kw_region_snapshots。"""
     client = await _guarded_account_client(session, baidu_account)
     svc = ReportService(client)
-    rows = await svc.get_keyword_province_report(
-        start_date=start_date.isoformat(),
-        end_date=end_date.isoformat(),
+    rows = await _guarded_external_call(
+        session,
+        baidu_account.tenant_id,
+        lambda: svc.get_keyword_province_report(
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat(),
+        ),
     )
 
     agg: dict[tuple[int, date, str], dict[str, Any]] = {}
@@ -499,6 +520,45 @@ async def _guarded_account_client(
     return _account_client(baidu_account)
 
 
+async def _guarded_external_call(
+    session: AsyncSession, tenant_id: int, operation
+):
+    """Recheck binding immediately before and after one external operation."""
+    try:
+        await ensure_sem_production_action_allowed(get_settings(), session, tenant_id)
+        result = await operation()
+        await ensure_sem_production_action_allowed(get_settings(), session, tenant_id)
+        return result
+    except SemDemoActionBlockedError:
+        await session.rollback()
+        raise
+
+
+async def _guard_tenant_write(session: AsyncSession, tenant_id: int) -> None:
+    try:
+        await ensure_sem_production_action_allowed(get_settings(), session, tenant_id)
+    except SemDemoActionBlockedError:
+        await session.rollback()
+        raise
+
+
+async def _guard_records_write(session: AsyncSession, records) -> None:
+    tenant_ids = {
+        int(record.get("tenant_id") if isinstance(record, dict) else record.tenant_id)
+        for record in records
+    }
+    if len(tenant_ids) != 1:
+        raise RuntimeError("SEM sync write batch must belong to exactly one tenant")
+    await _guard_tenant_write(session, next(iter(tenant_ids)))
+
+
+async def _guarded_commit(session: AsyncSession, tenant_id: int) -> None:
+    no_autoflush = getattr(session, "no_autoflush", nullcontext())
+    with no_autoflush:
+        await _guard_tenant_write(session, tenant_id)
+    await session.commit()
+
+
 # asyncpg 单条语句绑定参数上限 32767；按"行数 × 列数"留余量分批。
 # 30000 为宽表、驱动和后续字段扩展预留余量，不能只按固定行数判断。
 UPSERT_CHUNK = 1000
@@ -538,9 +598,12 @@ async def _chunked_upsert(
     update_keys: set[str] | None = None,
 ) -> None:
     """大批量 upsert 分批执行，避免超 asyncpg 32767 参数上限（生产实测 2026-06-11）。"""
+    if not records:
+        return
     chunk_size = _safe_upsert_chunk_size(model, records)
     for i in range(0, len(records), chunk_size):
         chunk = records[i : i + chunk_size]
+        await _guard_records_write(session, chunk)
         stmt = pg_insert(model).values(chunk)
         keys_to_update = update_keys if update_keys is not None else set(chunk[0])
         stmt = stmt.on_conflict_do_update(
@@ -552,14 +615,17 @@ async def _chunked_upsert(
             },
         )
         await session.execute(stmt)
-    await session.commit()
+    await _guarded_commit(session, int(records[0]["tenant_id"]))
 
 
 async def sync_campaigns_for_account(
     session: AsyncSession, baidu_account: BaiduAccount
 ) -> int:
     """同步推广计划维度（getCampaign，全账户）。返回写入条数。"""
-    campaigns = await CampaignService(await _guarded_account_client(session, baidu_account)).get_all_campaigns()
+    service = CampaignService(await _guarded_account_client(session, baidu_account))
+    campaigns = await _guarded_external_call(
+        session, baidu_account.tenant_id, service.get_all_campaigns
+    )
     if not campaigns:
         return 0
 
@@ -616,8 +682,11 @@ async def sync_adgroups_for_account(
     if not campaign_ids:
         return 0
 
-    adgroups = await AdgroupService(await _guarded_account_client(session, baidu_account)).get_adgroups_by_campaign_ids(
-        list(campaign_ids)
+    service = AdgroupService(await _guarded_account_client(session, baidu_account))
+    adgroups = await _guarded_external_call(
+        session,
+        baidu_account.tenant_id,
+        lambda: service.get_adgroups_by_campaign_ids(list(campaign_ids)),
     )
     if not adgroups:
         return 0
@@ -664,9 +733,12 @@ async def sync_price_strategies_for_account(
     session: AsyncSession, baidu_account: BaiduAccount
 ) -> int:
     """同步优化排名出价策略（getPriceStrategy，全账户）。返回写入条数。"""
-    strategies = await PriceStrategyService(
+    service = PriceStrategyService(
         await _guarded_account_client(session, baidu_account)
-    ).get_ranking_strategies()
+    )
+    strategies = await _guarded_external_call(
+        session, baidu_account.tenant_id, service.get_ranking_strategies
+    )
     if not strategies:
         return 0
 
@@ -715,7 +787,12 @@ async def sync_ocpc_packages_for_account(
     🚫 只读同步，不写回。账户没开 OCPC 时返回空，本地存量不动（不清表）。
     """
     client = await _guarded_account_client(session, baidu_account)
-    resp = await AccountService(client).get_account_info(["userId"])
+    account_service = AccountService(client)
+    resp = await _guarded_external_call(
+        session,
+        baidu_account.tenant_id,
+        lambda: account_service.get_account_info(["userId"]),
+    )
     info = resp.get("data") or {}
     if isinstance(info, list):  # getAccountInfo 的 data 可能是 list（见 dashboard 实测）
         info = info[0] if info else {}
@@ -724,7 +801,12 @@ async def sync_ocpc_packages_for_account(
         logger.warning("账户 %s getAccountInfo 未返回 userId，跳过 OCPC 同步", baidu_account.baidu_username)
         return 0
 
-    packages = await OcpcService(client).get_target_packages(user_id)
+    ocpc_service = OcpcService(client)
+    packages = await _guarded_external_call(
+        session,
+        baidu_account.tenant_id,
+        lambda: ocpc_service.get_target_packages(user_id),
+    )
     if not packages:
         logger.info("账户 %s 无 oCPC 出价策略", baidu_account.baidu_username)
         return 0
@@ -797,9 +879,17 @@ async def sync_keywords_for_account(
         )
     ).all()
     if adgroup_ids:
-        words = await svc.get_words_by_adgroup_ids(list(adgroup_ids))
+        words = await _guarded_external_call(
+            session,
+            baidu_account.tenant_id,
+            lambda: svc.get_words_by_adgroup_ids(list(adgroup_ids)),
+        )
     elif first_seen:
-        words = await svc.get_words_by_ids(list(first_seen))
+        words = await _guarded_external_call(
+            session,
+            baidu_account.tenant_id,
+            lambda: svc.get_words_by_ids(list(first_seen)),
+        )
     else:
         return 0
     if not words:
@@ -888,7 +978,11 @@ async def sync_operation_records_for_account(
     重叠窗口重复拉取不会产生重复行。
     """
     svc = ToolkitService(await _guarded_account_client(session, baidu_account))
-    raw = await svc.get_operation_records(start_date.isoformat(), end_date.isoformat())
+    raw = await _guarded_external_call(
+        session,
+        baidu_account.tenant_id,
+        lambda: svc.get_operation_records(start_date.isoformat(), end_date.isoformat()),
+    )
     if not raw:
         logger.info(
             "账户 %s %s~%s 无操作记录", baidu_account.baidu_username, start_date, end_date
@@ -971,12 +1065,13 @@ async def sync_operation_records_for_account(
 
     for i in range(0, len(records), UPSERT_CHUNK):
         chunk = records[i : i + UPSERT_CHUNK]
+        await _guard_records_write(session, chunk)
         stmt = pg_insert(OperationRecord).values(chunk)
         stmt = stmt.on_conflict_do_nothing(
             constraint="uq_operation_records_tenant_dedup"
         )
         await session.execute(stmt)
-    await session.commit()
+    await _guarded_commit(session, baidu_account.tenant_id)
 
     logger.info(
         "账户 %s 操作记录 %s~%s 拉到 %d 条（幂等去重后入库）",
@@ -1012,8 +1107,11 @@ async def _existing_keyword_texts(session: AsyncSession, tenant_id: int) -> set[
 
 async def _upsert_candidates(session: AsyncSession, records: list[dict]) -> None:
     """候选词幂等 upsert：刷新指标列，status/status_updated_at 人工字段不碰。"""
+    if not records:
+        return
     for i in range(0, len(records), UPSERT_CHUNK):
         chunk = records[i : i + UPSERT_CHUNK]
+        await _guard_records_write(session, chunk)
         stmt = pg_insert(KeywordCandidate).values(chunk)
         stmt = stmt.on_conflict_do_update(
             constraint="uq_kw_candidates_tenant_word_src",
@@ -1024,7 +1122,7 @@ async def _upsert_candidates(session: AsyncSession, records: list[dict]) -> None
             },
         )
         await session.execute(stmt)
-    await session.commit()
+    await _guarded_commit(session, int(records[0]["tenant_id"]))
 
 
 def _planner_row_to_record(
@@ -1090,11 +1188,25 @@ async def sync_planner_candidates_for_account(
 
     # 账户主动推荐失败不阻断种子词拓展（两接口权限独立演进，防御处理）
     try:
-        collect(await svc.get_account_recommend_words(max_num), None)
+        collect(
+            await _guarded_external_call(
+                session,
+                baidu_account.tenant_id,
+                lambda: svc.get_account_recommend_words(max_num),
+            ),
+            None,
+        )
     except BaiduAPIError as e:
         logger.warning("账户 %s 主动推荐词失败（跳过）: %s", baidu_account.baidu_username, e)
     for s in seeds:
-        collect(await svc.get_words_by_seed(s, max_num), s)
+        collect(
+            await _guarded_external_call(
+                session,
+                baidu_account.tenant_id,
+                lambda s=s: svc.get_words_by_seed(s, max_num),
+            ),
+            s,
+        )
 
     records = list(by_word.values())
     if records:
@@ -1118,8 +1230,10 @@ async def sync_query_candidates_for_account(
     触发词取展现最高的一条。返回写入候选条数。
     """
     svc = ReportService(await _guarded_account_client(session, baidu_account))
-    rows = await svc.get_search_term_report(
-        start_date.isoformat(), end_date.isoformat()
+    rows = await _guarded_external_call(
+        session,
+        baidu_account.tenant_id,
+        lambda: svc.get_search_term_report(start_date.isoformat(), end_date.isoformat()),
     )
     if not rows:
         logger.info("账户 %s 搜索词报告无数据", baidu_account.baidu_username)
@@ -1201,13 +1315,18 @@ def _search_term_windows(start_date: date, end_date: date) -> list[tuple[date, d
 
 
 async def _fetch_search_term_rows(
+    session: AsyncSession,
     baidu_account: BaiduAccount,
     start_date: date,
     end_date: date,
 ) -> list[dict[str, Any]]:
     """拉取一个百度允许的搜索词报告窗口，不写本地库。"""
     svc = ReportService(await _guarded_account_client(session, baidu_account))
-    return await svc.get_search_term_report(start_date.isoformat(), end_date.isoformat())
+    return await _guarded_external_call(
+        session,
+        baidu_account.tenant_id,
+        lambda: svc.get_search_term_report(start_date.isoformat(), end_date.isoformat()),
+    )
 
 
 def _merge_search_term_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1274,7 +1393,9 @@ async def sync_search_terms_for_account(
     fetched_rows: list[dict[str, Any]] = []
     windows = _search_term_windows(start_date, end_date)
     for window_start, window_end in windows:
-        rows = await _fetch_search_term_rows(baidu_account, window_start, window_end)
+        rows = await _fetch_search_term_rows(
+            session, baidu_account, window_start, window_end
+        )
         fetched_rows.extend(rows)
 
     rows = _merge_search_term_rows(fetched_rows)
@@ -1341,6 +1462,7 @@ async def sync_search_terms_for_account(
         )
 
     # 仅在全部窗口拉取、合并且通过完整性校验后，替换当前账户快照。
+    await _guard_records_write(session, records)
     await session.execute(
         delete(SearchTermReport).where(
             SearchTermReport.tenant_id == baidu_account.tenant_id,
@@ -1348,7 +1470,7 @@ async def sync_search_terms_for_account(
         )
     )
     session.add_all(records)
-    await session.commit()
+    await _guarded_commit(session, baidu_account.tenant_id)
     logger.info(
         "账户 %s 搜索词报告 %s~%s（%d 段）：原始 %d 条，合并落库 %d 条",
         baidu_account.baidu_username,
@@ -1378,7 +1500,11 @@ async def sync_url_candidates_for_account(
     details: list[dict[str, Any]] = []
     for url in urls:
         try:
-            title, text = await fetch_page_text(url)
+            title, text = await _guarded_external_call(
+                session,
+                baidu_account.tenant_id,
+                lambda url=url: fetch_page_text(url),
+            )
             words = extract_words(title, text)
         except UrlFetchError as e:
             details.append({"url": url, "extracted": 0, "error": str(e)})
@@ -1396,7 +1522,11 @@ async def sync_url_candidates_for_account(
 
     # 流量回查：黄反/超限的词百度不返回，pv_map 里查不到的按无数据入库
     svc = KeywordPlannerService(await _guarded_account_client(session, baidu_account))
-    pv_rows = await svc.get_pv_search(list(word_to_url))
+    pv_rows = await _guarded_external_call(
+        session,
+        baidu_account.tenant_id,
+        lambda: svc.get_pv_search(list(word_to_url)),
+    )
     pv_map = {r.get("keywordName"): r for r in pv_rows if r.get("keywordName")}
 
     now = datetime.utcnow()
@@ -1445,6 +1575,10 @@ async def sync_keyword_report_for_all_active_accounts(
     accounts = filter_identity_safe_active_accounts(
         await list_active_sem_accounts(session)
     )
+    blocked = await blocked_sem_demo_tenant_ids(
+        get_settings(), session, {account.tenant_id for account in accounts}
+    )
+    accounts = [account for account in accounts if account.tenant_id not in blocked]
 
     result: dict[str, int] = {}
     for acc in accounts:
@@ -1505,7 +1639,11 @@ async def sync_leads_for_account(
                 "pageSize": 5000,
             }
             try:
-                resp = await client.call("LeadsNoticeService", "getNoticeList", body)
+                resp = await _guarded_external_call(
+                    session,
+                    tenant_id,
+                    lambda: client.call("LeadsNoticeService", "getNoticeList", body),
+                )
             except BaiduAPIError as e:
                 logger.warning(
                     "账户 %s 线索拉取失败 type=%s code=%s msg=%s",
@@ -1543,8 +1681,9 @@ async def sync_leads_for_account(
             page_no += 1
 
     if new_records:
+        await _guard_records_write(session, new_records)
         session.add_all(new_records)
-        await session.commit()
+        await _guarded_commit(session, tenant_id)
     logger.info(
         "账户 %s 线索同步 %s~%s：新增 %d 条（已存在 %d 条跳过）",
         baidu_account.baidu_username, start_date, end_date, len(new_records), len(existing),
