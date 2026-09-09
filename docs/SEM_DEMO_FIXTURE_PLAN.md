@@ -1,5 +1,9 @@
 # G-Snipers 全域演示：SEM 虚拟数据包方案
 
+独立 demo runtime、空库迁移依赖、关闭所有执行路径的配置缺口和 loader
+失败关闭草案见 `docs/SEM_DEMO_RUNTIME_AUDIT.md`。该审计明确：当前迁移 head
+不包含 `sem_tasks`，且现有 SEM 主服务没有调度器总开关，因此本夹具仍只允许离线生成。
+
 ## 当前交付
 
 `scripts/build_sem_demo_fixture.py` 只在内存中生成确定性 JSON，可选原子写入本地文件。它没有数据库、HTTP、百度客户端、调度器或写回模块依赖，也没有任何“应用到环境”的参数。默认窗口固定为 2026-06-11 至 2026-09-08，共 90 天；重复运行生成完全相同的字节和 SHA-256。
