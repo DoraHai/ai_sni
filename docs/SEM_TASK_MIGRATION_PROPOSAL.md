@@ -1,5 +1,9 @@
 # SemTask 迁移提案——仅开发审核，不合并或执行
 
+> 2026-09-09 实施前审计见 `SEM_TASK_PREIMPLEMENTATION_AUDIT_0095.md`。数据库/服务器侧
+> 已回传生产当前为单行 `0094_seo_qa_batches` 且 `sem_tasks` 不存在；本任务未连接生产库。
+> 本文后续出现的 `0093` 描述均为历史现场记录，不应替代新的执行前预检。
+
 ## 给 SEO PR #369 的候选契约
 
 - 草案 revision：`0095_sem_tasks`。
