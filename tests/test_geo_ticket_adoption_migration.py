@@ -431,64 +431,97 @@ def test_postgres_index_constraint_drift_and_partial_states_fail_closed(monkeypa
         with pytest.raises(Exception, match="must not have indexes or constraints"):
             command.upgrade(_config(), "0095_adopt_geo_ticket")
 
-        async def execute_ddl(sql):
+        async def execute_ddl(*statements):
             engine = create_async_engine(target_url)
             try:
                 async with engine.begin() as connection:
-                    await connection.execute(text(sql))
+                    for statement in statements:
+                        await connection.execute(text(statement))
             finally:
                 await engine.dispose()
 
-        asyncio.run(execute_ddl("""
-            DROP INDEX public.ix_geo_ticket_due_predicate;
+        asyncio.run(execute_ddl(
+            "DROP INDEX public.ix_geo_ticket_due_predicate",
+            """
             CREATE INDEX ix_geo_ticket_owner_expression
             ON public.geo_action_tickets (lower(owner_name))
-        """))
+            """,
+        ))
         asyncio.run(assert_health_shape_rejected())
         with pytest.raises(Exception, match="must not have indexes or constraints"):
             command.upgrade(_config(), "0095_adopt_geo_ticket")
 
-        asyncio.run(execute_ddl("""
-            DROP INDEX public.ix_geo_ticket_owner_expression;
+        asyncio.run(execute_ddl(
+            "DROP INDEX public.ix_geo_ticket_owner_expression",
+            """
             CREATE INDEX ix_geo_ticket_due_key
             ON public.geo_action_tickets (due_date)
-        """))
+            """,
+        ))
         asyncio.run(assert_health_shape_rejected())
         with pytest.raises(Exception, match="must not have indexes or constraints"):
             command.upgrade(_config(), "0095_adopt_geo_ticket")
 
-        asyncio.run(execute_ddl("""
-            DROP INDEX public.ix_geo_ticket_due_key;
+        asyncio.run(execute_ddl(
+            "DROP INDEX public.ix_geo_ticket_due_key",
+            """
             CREATE INDEX ix_geo_ticket_owner_include
             ON public.geo_action_tickets (id) INCLUDE (owner_name)
-        """))
+            """,
+        ))
         asyncio.run(assert_health_shape_rejected())
         with pytest.raises(Exception, match="must not have indexes or constraints"):
             command.upgrade(_config(), "0095_adopt_geo_ticket")
 
-        asyncio.run(execute_ddl("""
-            DROP INDEX public.ix_geo_ticket_owner_include;
+        asyncio.run(execute_ddl(
+            "DROP INDEX public.ix_geo_ticket_owner_include",
+            """
             ALTER TABLE public.geo_action_tickets
             ADD CONSTRAINT ck_geo_ticket_due_review CHECK (due_date IS NULL OR due_date >= DATE '2000-01-01')
-        """))
+            """,
+        ))
         asyncio.run(assert_health_shape_rejected())
         with pytest.raises(Exception, match="must not have indexes or constraints"):
             command.upgrade(_config(), "0095_adopt_geo_ticket")
 
-        asyncio.run(execute_ddl("""
-            ALTER TABLE public.geo_action_tickets DROP CONSTRAINT ck_geo_ticket_due_review;
-            ALTER TABLE public.geo_action_tickets ALTER COLUMN owner_name TYPE character varying(200)
-        """))
+        asyncio.run(execute_ddl(
+            "ALTER TABLE public.geo_action_tickets DROP CONSTRAINT ck_geo_ticket_due_review",
+            "ALTER TABLE public.geo_action_tickets ALTER COLUMN owner_name TYPE character varying(200)",
+        ))
         asyncio.run(assert_health_shape_rejected())
         with pytest.raises(Exception, match="does not match"):
             command.upgrade(_config(), "0095_adopt_geo_ticket")
 
-        asyncio.run(execute_ddl("""
-            ALTER TABLE public.geo_action_tickets ALTER COLUMN owner_name TYPE character varying(100);
-            ALTER TABLE public.geo_action_tickets DROP COLUMN due_date
-        """))
+        asyncio.run(execute_ddl(
+            "ALTER TABLE public.geo_action_tickets ALTER COLUMN owner_name TYPE character varying(100)",
+            "ALTER TABLE public.geo_action_tickets DROP COLUMN due_date",
+        ))
         asyncio.run(assert_health_shape_rejected())
         with pytest.raises(Exception, match="refusing partial"):
+            command.upgrade(_config(), "0095_adopt_geo_ticket")
+
+        asyncio.run(execute_ddl(
+            "ALTER TABLE public.geo_action_tickets ADD COLUMN due_date date NULL",
+            "ALTER TABLE public.geo_action_tickets DROP COLUMN owner_name",
+        ))
+        asyncio.run(assert_health_shape_rejected())
+        with pytest.raises(Exception, match="refusing partial"):
+            command.upgrade(_config(), "0095_adopt_geo_ticket")
+
+        asyncio.run(execute_ddl(
+            "ALTER TABLE public.geo_action_tickets ADD COLUMN owner_name character varying(100) NULL",
+            "ALTER TABLE public.geo_action_tickets ALTER COLUMN due_date SET DEFAULT CURRENT_DATE",
+        ))
+        asyncio.run(assert_health_shape_rejected())
+        with pytest.raises(Exception, match="does not match"):
+            command.upgrade(_config(), "0095_adopt_geo_ticket")
+
+        asyncio.run(execute_ddl(
+            "ALTER TABLE public.geo_action_tickets ALTER COLUMN due_date DROP DEFAULT",
+            "ALTER TABLE public.geo_action_tickets ALTER COLUMN owner_name SET NOT NULL",
+        ))
+        asyncio.run(assert_health_shape_rejected())
+        with pytest.raises(Exception, match="does not match"):
             command.upgrade(_config(), "0095_adopt_geo_ticket")
 
         async def current_version():
