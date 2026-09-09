@@ -64,7 +64,7 @@ The demo database has a separately reviewed `demo_control` schema owned by the f
 
 An optional append-only object registry records module, object type, stable fixture object key and database object ID under the same dataset and demo tenant. This supports stable links and evidence without treating equal numeric IDs across databases as the same object.
 
-The dedicated presentation tenant has no synthetic production business site. For SEO, after the production binding selects the demo data session, the service enumerates sites from that session under `demo_tenant_id`. A client `site_id` is only a candidate and must resolve with `WHERE tenant_id=:demo_tenant_id AND id=:site_id`; it cannot select a database. The resolved demo site identity or stable registry key is included in cache keys. A production-site-to-demo-site mapping is neither required nor allowed for this dedicated tenant.
+The dedicated presentation tenant has no synthetic production business site. For SEO, after the production binding selects the demo data session, the service enumerates sites from that session under `demo_tenant_id`. A client `site_id` is only a candidate and must resolve with `WHERE tenant_id=:demo_tenant_id AND id=:site_id`; it cannot select a database. Demo object requests also carry the dataset version returned by selection; a missing or stale version fails with a reselect response before object lookup, so a numeric ID reused after fixture replacement cannot silently open another object. Stable links use the object registry key and resolve it under the exact dataset key/version. The resolved key/site ID and version are included in cache keys. A production-site-to-demo-site mapping is neither required nor allowed for this dedicated tenant.
 
 ## Mutation and administration
 
@@ -85,6 +85,7 @@ GEO formal metrics and completion evidence must accept the immutable access cont
 - missing, duplicate, disabled, unknown-version and unavailable-demo-database failures do not fall back
 - production control and selected data session types cannot be interchanged; SQL tracing proves identity/entitlement/binding use only the control engine and module repositories use only the selected data engine
 - cache isolation across production tenant, demo tenant, module, version and period
+- stale or missing demo dataset version rejects old numeric object links; stable registry keys cannot resolve across the wrong dataset version
 - shadow identity is never accepted for login or authorization
 - optimistic-lock conflict, disabled-at consistency, controlled replacement and atomic append-only before/after history
 - scheduler, worker, recovery, direct executor, OAuth callback, collection, model, writeback, public share and publication paths reject the demo tenant, including a queue-time-to-claim-time binding race
