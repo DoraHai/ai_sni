@@ -7,7 +7,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +18,9 @@ from app.ai.assistant import (
     chat_turn,
     get_active_memories,
     load_history,
+    run_cockpit_command,
 )
+from app.ai.deepseek import DeepSeekError
 from app.database import get_session
 from app.models import MEMORY_TYPE_LABELS, TenantMemory
 from app.security.auth import AuthContext, require_scoped_auth
@@ -37,6 +39,23 @@ class ChatRequest(BaseModel):
     message: str  # 新的用户提问（历史由后端从库读，前端不必回传）
 
 
+class CockpitCard(BaseModel):
+    id: str
+    module: str
+    label: str = ""
+    value: str = ""
+    state: str = ""
+    period: str = ""
+    source: str = ""
+
+
+class CockpitCommandRequest(BaseModel):
+    tenant_id: int
+    message: str
+    available_modules: list[str] = Field(default_factory=list, max_length=3)
+    visible_cards: list[CockpitCard] = Field(default_factory=list, max_length=40)
+
+
 @router.post("/chat")
 async def chat(
     req: ChatRequest,
@@ -48,6 +67,28 @@ async def chat(
     if not req.message.strip():
         raise HTTPException(400, "消息不能为空")
     return await chat_turn(session, req.tenant_id, ctx.user_id, req.message.strip())
+
+
+@router.post("/cockpit-command")
+async def cockpit_command(
+    req: CockpitCommandRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict:
+    """DeepSeek answer plus a validated, display-only command for the cockpit."""
+    ctx.ensure_tenant(req.tenant_id)
+    if not req.message.strip():
+        raise HTTPException(400, "消息不能为空")
+    try:
+        return await run_cockpit_command(
+            req.message.strip(),
+            [item.model_dump() for item in req.visible_cards],
+            req.available_modules,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except DeepSeekError as exc:
+        logger.warning("工作台 AI 指令失败 tenant=%s: %s", req.tenant_id, exc)
+        raise HTTPException(503, "DeepSeek 暂时不可用，请稍后重试") from exc
 
 
 class AdoptRequest(BaseModel):
