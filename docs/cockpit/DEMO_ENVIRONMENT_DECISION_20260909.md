@@ -39,7 +39,7 @@
 - 生产 `sem_prod.alembic_version` 当前只有 `0094_seo_qa_batches` 一行；所谓多 head 是不同部署代码树的分叉，不是生产库同时存有多个 head。
 - SEM 代码树当前到 `0076_oauth_rebind_intent`，GEO 代码树当前到 `0074_geo_ticket_assignment`，必须逐对象证明它们与 `0094` 链的包含关系。
 - `sem_tasks` 模型存在但生产表和正式迁移均不存在。历史交付包内有一份父级为 `0094` 的 `0095_sem_tasks` 草案，只能作为审计证据，不能直接执行。
-- 在创建演示库前，必须形成一条可从空 PostgreSQL 在线升级的唯一线性链，补齐 `sem_tasks`，再追加 `demo_tenant_bindings`；随后验证空库升级、二次 no-op、现有 `sem_prod` 升级预演以及 drop/rebuild。
+- 计划中的 canonical 顺序为 `0094_seo_qa_batches -> 0095_adopt_geo_ticket -> 0096_sem_tasks -> 0097_demo_tenant_bindings`。0095 必须排除旧 GEO 0074 文件，在同一事务内锁定并检查精确的 public 表；仅在两列均不存在时创建，仅在生产现有结构完全匹配时收养，任何半缺失或漂移立即失败，并在任何 DDL 前拒绝 downgrade。在第二次生产目录核验和独立代码审查完成前，这仍是设计，不得执行。
 - 演示库中的业务表普遍引用 `tenants/users`。是否装载仅作外键锚点的影子身份行，及其与正式 Auth 主数据的同步规则，必须在执行包中明确；演示库中的影子行不得成为鉴权依据。
 
 ## 已完成离线数据包
