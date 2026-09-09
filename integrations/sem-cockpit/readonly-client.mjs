@@ -451,8 +451,10 @@ export function createSemReadonlyClient({ transport, onClear }) {
         fail('CONTRACT_MISMATCH', '响应不是有效的只读JSON契约')
       }
       if (stale()) fail('STALE_RESPONSE', '已丢弃旧客户或旧筛选结果')
+      const expectsDemo = typeof active.demoRevision === 'string' && active.demoRevision.length > 0
       if (!object(data) || data.tenant_id !== active.tenantId || data.module !== 'sem' || data.read_only !== true ||
-          data.is_demo !== false || data.contract_version !== 'sem-cockpit-v1' || data.source !== route.source ||
+          data.is_demo !== expectsDemo || (expectsDemo && data.demo_revision !== active.demoRevision) ||
+          data.contract_version !== 'sem-cockpit-v1' || data.source !== route.source ||
           data.account_scope?.baidu_account_id !== (params.baidu_account_id ?? null) ||
           data.account_scope?.mode !== (params.baidu_account_id === undefined ? 'all' : 'single') ||
           (params.start_date !== undefined && (data.window?.start !== params.start_date || data.window?.end !== params.end_date)) ||

@@ -6,6 +6,7 @@ const READ_PERMISSIONS = Object.freeze({
   keywordDetail: 'optimize.keywords',
   searchTerms: 'optimize.searchterms',
 })
+const DEMO_REVISION = 'sem-demo-tenant16-v1'
 
 function fail(code, message, status) {
   const error = new Error(message)
@@ -75,7 +76,9 @@ export async function resolveSemReadonlyContext({ transport, tenantId, signal, a
 
   const allowedReads = Object.entries(READ_PERMISSIONS)
     .filter(([, permission]) => canView(user.permissions, permission)).map(([resource]) => resource)
-  return Object.freeze({ tenantId, userId: user.id,
+  const demoRevision = user.username === 'workbench_test_readonly' && user.tenant_id === 16 && tenantId === 16
+    ? DEMO_REVISION : null
+  return Object.freeze({ tenantId, userId: user.id, demoRevision,
     authorizationRevision: revisionFor(user, tenantId, semModule, user.permissions),
     allowedReads: Object.freeze(allowedReads), identity: Object.freeze({ user, module: semModule, tenant }) })
 }

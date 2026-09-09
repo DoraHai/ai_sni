@@ -28,6 +28,7 @@ from app.models import (
 from app.security.auth import AuthContext, require_scoped_auth
 from app.security.crypto import decrypt
 from app.sem_cockpit_readonly import read_report, validate_query
+from app.sem_demo_adapter import is_demo_read, read_demo_report
 
 logger = logging.getLogger(__name__)
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
@@ -56,6 +57,8 @@ async def cockpit_report(
     """工作台关键词报告只读聚合；缺报不补零，不查询实时账户。"""
     ctx.ensure_tenant(tenant_id)
     validate_query(request.query_params, {"tenant_id", "start_date", "end_date", "baidu_account_id"})
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_report(start_date, end_date, baidu_account_id)
     return await read_report(session, tenant_id, start_date, end_date, baidu_account_id)
 
 
