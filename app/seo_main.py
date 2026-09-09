@@ -25,7 +25,7 @@ SEO_REQUIRED_SCHEMA_REVISION = "0096_sem_tasks"
 # Runtime compatibility supports code-first rollout; it never authorizes the
 # separately reviewed migration operation.
 SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset(
-    {"0095_adopt_geo_ticket", SEO_REQUIRED_SCHEMA_REVISION}
+    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", SEO_REQUIRED_SCHEMA_REVISION}
 )
 SEO_GEO_TICKET_REQUIRED_REVISIONS = frozenset(
     {"0095_adopt_geo_ticket", "0096_sem_tasks"}
