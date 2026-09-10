@@ -7,7 +7,7 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import Numeric, and_, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +21,8 @@ from app.models import (
     Keyword,
     OperationRecord,
 )
-from app.security.auth import require_scoped_auth
+from app.security.auth import AuthContext, require_scoped_auth
+from app.sem_demo_adapter import is_demo_read, read_demo_operations
 
 router = APIRouter(
     prefix="/api/v1/operation-records",
@@ -87,8 +88,15 @@ async def list_operation_records(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """台账列表 + 本月统计卡。默认全期倒序。"""
+    if not isinstance(ctx, AuthContext):
+        raise HTTPException(403, "需要有效登录身份")
+    ctx.ensure_tenant(tenant_id)
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_operations(opt_level, opt_content, q, start_date, end_date,
+                                    over_limit, page, page_size)
     cond = [OperationRecord.tenant_id == tenant_id]
     if opt_level is not None:
         cond.append(OperationRecord.opt_level == opt_level)

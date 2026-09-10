@@ -346,8 +346,13 @@ async def list_actions(
     action_type: str | None = Query(None, description="negative / add_word"),
     limit: int = Query(200, le=500),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """加否词 / 转拓词台账（按时间倒序）。"""
+    ctx.ensure_tenant(tenant_id)
+    from app.sem_demo_adapter import is_demo_read, read_demo_actions
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_actions(action_type, limit)
     cond = [WritebackAction.tenant_id == tenant_id]
     if action_type:
         cond.append(WritebackAction.action_type == action_type)

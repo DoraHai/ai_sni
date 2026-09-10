@@ -32,6 +32,9 @@ from app.baidu.writeback import (
 from app.database import get_session
 from app.models import Adgroup, BaiduAccount, Campaign
 from app.security.auth import AuthContext, require_scoped_auth
+from app.sem_demo_adapter import (
+    is_demo_read, read_demo_account_budget, read_demo_adgroups, read_demo_campaigns,
+)
 from app.sem_asset_sync import public_sync_error
 
 logger = logging.getLogger(__name__)
@@ -54,8 +57,14 @@ async def get_account_budget(
     tenant_id: int = Query(..., description="本地租户 ID"),
     baidu_account_id: int | None = Query(None, description="百度账户本地 ID"),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """实时查账户日预算 + 余额/消费。百度调用失败降级返回错误说明，不抛 500。"""
+    if not isinstance(ctx, AuthContext):
+        raise HTTPException(403, "需要有效登录身份")
+    ctx.ensure_tenant(tenant_id)
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_account_budget(baidu_account_id)
     stmt = (
         select(BaiduAccount).where(
             BaiduAccount.tenant_id == tenant_id, BaiduAccount.status == "active"
@@ -137,8 +146,14 @@ async def list_campaigns_budget(
     tenant_id: int = Query(..., description="本地租户 ID"),
     baidu_account_id: int | None = Query(None, description="按百度账户筛选"),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """计划列表（计划管理：日预算/状态，行内可改预算）。数据来自本地维度表。"""
+    if not isinstance(ctx, AuthContext):
+        raise HTTPException(403, "需要有效登录身份")
+    ctx.ensure_tenant(tenant_id)
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_campaigns(baidu_account_id)
     conditions = [Campaign.tenant_id == tenant_id]
     if baidu_account_id is not None:
         conditions.append(Campaign.baidu_account_id == baidu_account_id)
@@ -263,8 +278,8 @@ class CampaignScheduleReq(BaseModel):
 @router.post("/campaign-schedule")
 async def set_campaign_schedule(
     req: CampaignScheduleReq,
-    ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """按模板写回计划投放时段；支持节假日停投模板。"""
     ctx.ensure_tenant(req.tenant_id)
@@ -310,8 +325,8 @@ class CampaignRegionReq(BaseModel):
 @router.post("/campaign-region")
 async def set_campaign_region(
     req: CampaignRegionReq,
-    ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """写回计划投放地域及分地域系数。dry-run + 台账保护。"""
     ctx.ensure_tenant(req.tenant_id)
@@ -353,9 +368,15 @@ async def set_campaign_region(
 async def list_adgroups_manage(
     tenant_id: int = Query(..., description="本地租户 ID"),
     campaign_id: int | None = Query(None, description="按计划筛选"),
+    ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """单元列表（出价/启停状态，行内可改）。数据来自本地维度表。"""
+    if not isinstance(ctx, AuthContext):
+        raise HTTPException(403, "需要有效登录身份")
+    ctx.ensure_tenant(tenant_id)
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_adgroups(campaign_id)
     cond = [Adgroup.tenant_id == tenant_id]
     if campaign_id is not None:
         cond.append(Adgroup.campaign_id == campaign_id)

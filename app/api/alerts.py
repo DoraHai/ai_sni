@@ -16,6 +16,7 @@ from app.database import get_session
 from app.models import Alert, Tenant
 from app.rules import run_rules_for_tenant
 from app.security.auth import AuthContext, require_scoped_auth
+from app.sem_demo_adapter import is_demo_read, read_demo_alerts
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,8 @@ async def list_alerts(
     open 告警附带 streak（近期累计触发天数 + 首次日期）。
     """
     ctx.ensure_tenant(tenant_id)
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_alerts(status, priority, campaign_id, alert_type, limit)
     cond = [Alert.tenant_id == tenant_id]
     if status and status != "all":
         cond.append(Alert.status == status)

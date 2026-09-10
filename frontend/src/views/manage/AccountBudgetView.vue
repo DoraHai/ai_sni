@@ -6,11 +6,13 @@ import { WRITEBACK_CONFIRMATION } from '../../api/writeback'
 import { session } from '../../store/session'
 import { createLatestRequestGuard } from '../../utils/latestRequest'
 import { chooseSemAccount } from '../../utils/accountScope'
+import { isSemDemoIdentity, SEM_DEMO_ACCOUNTS } from '../../utils/semDemo'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
+const demoMode = computed(() => isSemDemoIdentity(session.user, TENANT_ID.value))
 const currentTenant = computed(() => session.tenants.find((row) => row.id === TENANT_ID.value))
 const readableAccounts = computed(() => (
-  currentTenant.value?.sem_accounts || []
+  demoMode.value ? SEM_DEMO_ACCOUNTS : (currentTenant.value?.sem_accounts || [])
 ).filter((row) => row.status !== 'archived'))
 const activeAccounts = computed(() => readableAccounts.value.filter((row) => row.status === 'active'))
 const selectedAccountIsActive = computed(() => activeAccounts.value.some((row) => row.id === selectedAccountId.value))
@@ -172,6 +174,7 @@ async function save() {
       </div>
     </div>
 
+    <el-alert v-if="demoMode" title="演示数据，仅供体验；操作不会影响真实投放。" type="info" :closable="false" show-icon style="margin-bottom: 14px" />
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
 
     <el-alert
@@ -238,7 +241,7 @@ async function save() {
             controls-position="right"
             style="width: 200px"
           />
-          <el-button type="primary" :loading="saving" :disabled="!selectedAccountIsActive" @click="save">加入待回写</el-button>
+          <el-button v-if="!demoMode && session.canEdit('manage.account')" type="primary" :loading="saving" :disabled="!selectedAccountIsActive" @click="save">加入待回写</el-button>
           <span v-if="changeHint" class="change-hint" :class="{ big: changeHint.big }">
             {{ changeHint.pct > 0 ? '+' : '' }}{{ changeHint.pct }}%
             <template v-if="changeHint.big">⚠ 调整幅度较大，请确认</template>
