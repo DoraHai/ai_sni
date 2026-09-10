@@ -65,3 +65,17 @@ SEO实际current已为20260910T092707Z-d77143dc485f。以普通演示身份验�
 - 统筹普通账号登录，带tenant_id=16验证dashboard/today、keywords、search-terms均200，关键词6条、搜索词6条，响应含演示元数据；省略必需tenant_id会422，非登录失败。浏览器逐交互仍未验。
 - #528第二批a408d805相对main12文件已初审。要求去掉isinstance(ctx,AuthContext)导致无有效ctx仍落真实查询的兼容路径，直接单测传有效身份；准备生产推广草稿PR待最终核对，未授权第二批上线或扩权。
 - 额度剩余11%，未达到5%暂停线。无新增人工或数据库需求。
+
+## 本批收尾（用户要求暂不继续验证）
+
+- SEM第二批修正039f9ac5已通过审查及CI。开发回传#528 main=7d6ef50c；#531后端生产7fe82ebec419454b80fe22b22cf3e8c6b1d22012（run34465719699成功）；#532前端生产37cf821980282f3c9369fa6bee7b1201d0fddf46（run34465893572成功），健康及五个页面静态资源核验通过，无迁移或业务执行。
+- 统筹通过现有角色API再次确认role4仅user5/tenant16、非系统角色，新增manage.campaigns/manage.adgroups/manage.account/monitor.alerts/verify.adjustments五项view，API读取确认共17项view。无平台管理或edit权限。
+- 用户明确“不要验证，先补”，因此未继续第二批普通身份读取及全模块浏览器逐页验收，不声称全交互通过。
+- 本轮约定菜单与数据代码已部署、权限已补；SEO QA/video与模拟执行全过程属于后续独立范围，不自动扩展。结束本轮自动监测。
+
+## 20:57 演示首页数据与排列修复
+
+- 用户截图暴露三个实际问题：SEO页面响应不符工作台读取契约；GEO演示账号首页仍读取正式指标，因模拟样本被正确排除而显示不可用/0；线上指标区丢失原型分组并出现内层滚动，无数据依据的固定演示事件与真实状态冲突。
+- SEO #534已部署 dcd989c71c5bba20d38020fd410e34e2ca36f2f8（run34479343695），无迁移。普通演示身份的线上响应经现有 createSeoAuthorizedClient/read-only client 重放，contents=4、pages=26，均通过。
+- 工作台 PR #533已部署 production-sem=54dfdc542caa368541a15bfdb56a43aa2391a7d5（run34479743912）。精确演示身份先走GEO正式资格预检，再读取demo-summary/capabilities；显示50%提及率、18次提及、12次官网引用、36条回答、3个演示覆盖引擎，全部标记不进入正式指标。恢复“趋势与投入/内容与品牌”分组，去掉指标区限高内滚动和固定伪事件，无真实事件时不留空事件面板。
+- 验证：PR #533 pytest、sem-frontend-build、生产发布全部成功；线上入口引用 AcquisitionCockpitView-cxfU9G0a.js，包含新分组与GEO演示消费，不再包含“正在播放演示事件”。未代用户完成浏览器视觉验收。
