@@ -132,6 +132,32 @@ def _site_page_list(fixture: dict[str, Any], query: Mapping[str, str]) -> dict[s
         row.setdefault("description_suggestion", None)
         row.setdefault("content_task_id", None)
         row.setdefault("created_at", row.get("last_checked_at"))
+        checked_at = row.get("last_checked_at")
+        assessment_state = (
+            "unavailable"
+            if not checked_at or row.get("last_error") or row.get("http_status") is None
+            else "assessed"
+        )
+        row["diagnostic"] = {
+            "assessment_state": assessment_state,
+            "audit_score": row.get("audit_score") if assessment_state == "assessed" else None,
+            "detection_source": "program",
+            "guidance_source": "rules",
+            "index_intent_source": "human",
+            "ai_used": False,
+            "http_status": None if row.get("last_error") else row.get("http_status"),
+            "checked_at": checked_at,
+            "index_control": (
+                "no_restriction_detected" if row.get("indexable") is True else "unknown"
+            ),
+            "search_engine_indexed": None,
+            "index_intent": "undecided",
+            "review_outcome": "needs_review",
+            "guidance": "这是演示数据；请结合最近一次存档检测人工确认页面索引意图。",
+            "index_evidence_codes": [],
+            "ai_crawler_codes": [],
+            "note": "基于静态演示的最近一次存档检测，不是实时监控；允许索引不等于已收录。",
+        }
     result = _page(rows, query)
     all_rows = fixture["pages"]
     result["stats"] = {
@@ -356,7 +382,7 @@ def resolve_demo_response(
         else:
             page = _site_page_list({**fixture, "pages": [row]}, {})["items"][0]
             issue_details = [{"code": code, "group": "image" if code == "image_alt_missing" else "other", "label": code, "severity": "low", "guidance": "结合公开页面检查证据人工核对并修复。"} for code in row["issue_codes"]]
-            snapshot = {"id": row["id"] + 100000, "url": row["url"], "final_url": row["url"], "status_code": row["http_status"], "canonical_url": row["canonical_url"], "indexable": row["indexable"], "title": row["title"], "title_length": len(row["title"] or ""), "meta_description": row["meta_description"], "description_length": len(row["meta_description"] or ""), "h1_texts": [], "word_count": None, "schema_types": [], "images_missing_alt_count": row["images_missing_alt_count"], "response_time_ms": row["response_time_ms"], "redirect_chain": [], "fetched_at": row["last_checked_at"], "source": row["evidence_source"]}
+            snapshot = {"id": row["id"] + 100000, "site_id": row["site_id"], "url": row["url"], "final_url": row["url"], "status_code": row["http_status"], "canonical_url": row["canonical_url"], "indexable": row["indexable"], "title": row["title"], "title_length": len(row["title"] or ""), "meta_description": row["meta_description"], "description_length": len(row["meta_description"] or ""), "h1_texts": [], "word_count": None, "schema_types": [], "images_missing_alt_count": row["images_missing_alt_count"], "response_time_ms": row["response_time_ms"], "redirect_chain": [], "fetched_at": row["last_checked_at"], "fetch_error": row["last_error"], "source": row["evidence_source"]}
             payload = {"page": page, "issue_details": issue_details, "internal_links": {"incoming": 0, "outgoing": row["internal_links_count"], "incoming_sources": [], "incoming_sources_truncated": False}, "latest_snapshot": snapshot, "previous_snapshot": None, "comparison": {"available": False, "changed_fields": [], "resolved_issues": [], "new_issues": []}, "read_only": True, "demo_meta": _dataset_meta(fixture)}
             return DemoResponse(200, payload)
     if method == "GET" and path == "/api/v1/seo/keywords":
@@ -383,7 +409,11 @@ def resolve_demo_response(
         row = next((item for item in fixture["pages"] if item["id"] == page_id), None)
         if row is None:
             return DemoResponse(404, {"detail": "演示页面不存在", "code": "demo_not_found"})
-        return DemoResponse(200, {"page_id": page_id, "snapshot_id": None, "source": row["evidence_source"], "images_count": row["images_count"], "candidate_count": row["images_missing_alt_count"], "items": [], "truncated": True, "demo_meta": _dataset_meta(fixture)})
+        snapshot_id = row["id"] + 100000
+        requested_snapshot_id = _int(query.get("snapshot_id"))
+        if requested_snapshot_id is not None and requested_snapshot_id != snapshot_id:
+            return DemoResponse(404, {"detail": "演示页面快照不存在", "code": "demo_not_found"})
+        return DemoResponse(200, {"page_id": page_id, "url": row["url"], "snapshot_id": snapshot_id, "fetched_at": row["last_checked_at"], "fetch_error": row["last_error"], "evidence": None, "source": row["evidence_source"], "images_count": row["images_count"], "candidate_count": row["images_missing_alt_count"], "items": [], "truncated": True, "demo_meta": _dataset_meta(fixture)})
     if method == "GET" and path == "/api/v1/seo/internal-links":
         pages = {row["id"]: row for row in fixture["pages"]}
         edges = deepcopy(fixture["internal_links"])
