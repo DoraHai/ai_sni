@@ -79,3 +79,11 @@ SEO实际current已为20260910T092707Z-d77143dc485f。以普通演示身份验�
 - SEO #534已部署 dcd989c71c5bba20d38020fd410e34e2ca36f2f8（run34479343695），无迁移。普通演示身份的线上响应经现有 createSeoAuthorizedClient/read-only client 重放，contents=4、pages=26，均通过。
 - 工作台 PR #533已部署 production-sem=54dfdc542caa368541a15bfdb56a43aa2391a7d5（run34479743912）。精确演示身份先走GEO正式资格预检，再读取demo-summary/capabilities；显示50%提及率、18次提及、12次官网引用、36条回答、3个演示覆盖引擎，全部标记不进入正式指标。恢复“趋势与投入/内容与品牌”分组，去掉指标区限高内滚动和固定伪事件，无真实事件时不留空事件面板。
 - 验证：PR #533 pytest、sem-frontend-build、生产发布全部成功；线上入口引用 AcquisitionCockpitView-cxfU9G0a.js，包含新分组与GEO演示消费，不再包含“正在播放演示事件”。未代用户完成浏览器视觉验收。
+
+## 21:45 老虎演示身份与三模块内容统一
+
+- 通过现有客户管理 API 将专用租户16的显示名改为 `TIGER 老虎新材料（演示）`；账号、租户ID、权限及模块开通状态未变。
+- 工作台 PR #535 已部署 production-sem=`58b2829b7872b35b5cff7e48ddcd6512a73f4a40`（run34482310666）。演示身份下智能区明确显示“AI 演示助手 / 交互演示台 / 演示模式”，并说明回答和屏幕联动仅用于产品体验；真实客户模式仍保留 DeepSeek 指令能力文案。
+- SEM PR #536 已部署 production-sem-backend=`6674930beb1a9915de2b875a4da962d0b56ecca8`（run34482880274）。演示关键词、搜索词、账户、计划、预警与调整记录统一为 TIGER 粉末涂料及表面技术场景；演示ID、指标和只读边界未变。
+- GEO PR #537 已部署 production-geo=`2aff472b39ab02c70a903d06547d311310960fc0`（run34483721529）。12个问题、72条回答、事实卡、任务及渠道稿统一为 TIGER 粉末涂料场景；全部继续标记 synthetic/never_official，正式指标仍不采纳这些样本。
+- 普通演示身份线上核验：SEM关键词与搜索词、GEO demo-summary 均HTTP 200，均命中 TIGER/老虎内容且不再出现旧设备运维/G-Snipers Demo主题。线上驾驶舱资源包含新的演示助手文案；浏览器视觉仍需用户刷新后查看。
