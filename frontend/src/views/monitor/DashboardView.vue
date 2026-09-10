@@ -11,11 +11,13 @@ import MetricLabel from '../../components/MetricLabel.vue'
 import { ElMessage } from 'element-plus'
 import { DataAnalysis } from '@element-plus/icons-vue'
 import { formatUtcTimestamp } from '../../utils/dateTime'
+import { isSemDemoIdentity } from '../../utils/semDemo'
 
 const router = useRouter()
 use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
+const demoMode = computed(() => data.value?.is_demo === true || isSemDemoIdentity(session.user, TENANT_ID.value))
 
 const loading = ref(false)
 const error = ref('')
@@ -332,9 +334,11 @@ onBeforeUnmount(() => {
           · 每 {{ data.freshness.sync_interval_minutes }} 分钟
         </span>
         <el-button :loading="loading" aria-label="立即刷新数据看板" @click="manualRefresh">立即刷新</el-button>
-        <el-button type="primary" @click="onGenerateReport">生成完整报告</el-button>
+        <el-button v-if="!demoMode" type="primary" @click="onGenerateReport">生成完整报告</el-button>
       </div>
     </div>
+
+    <el-alert v-if="demoMode" title="演示数据，仅供体验；操作不会影响真实投放。" type="info" :closable="false" show-icon style="margin-bottom: 14px" />
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
     <el-alert
