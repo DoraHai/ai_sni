@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from fastapi import HTTPException
 
 os.environ.setdefault(
     "DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/gsniper_test"
@@ -21,6 +22,7 @@ os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.baidu.services.campaign import CampaignService
 from app.api.manage import list_campaigns_budget
+from app.security.auth import AuthContext
 from app.baidu.writeback import (
     WritebackError,
     _normalize_schedule_price_factors,
@@ -170,8 +172,17 @@ def test_campaign_list_returns_account_context():
     session = AsyncMock()
     session.scalars.side_effect = [campaign_result, account_result]
 
-    result = asyncio.run(list_campaigns_budget(7, 88, session))
+    ctx = AuthContext(1, "test-user", "test-role", 7, {})
+    result = asyncio.run(list_campaigns_budget(7, 88, session, ctx))
 
     assert result["campaigns"][0]["baidu_account_id"] == 88
     assert result["campaigns"][0]["baidu_account_name"] == "推广账户 A"
     assert result["accounts"] == [{"id": 88, "name": "推广账户 A", "status": "active"}]
+
+
+def test_campaign_list_rejects_missing_auth_context_before_query():
+    session = AsyncMock()
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(list_campaigns_budget(7, 88, session, object()))
+    assert exc.value.status_code == 403
+    session.scalars.assert_not_called()

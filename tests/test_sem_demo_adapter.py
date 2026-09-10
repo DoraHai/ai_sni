@@ -16,7 +16,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api import dashboard, insights, keywords, search_terms, structure, suggestions, writeback
+from app.api import alerts, dashboard, insights, keywords, manage, operations, search_terms, structure, suggestions, writeback
 from app.database import get_session
 from app.security import auth
 from app.security.auth import AuthContext
@@ -33,7 +33,8 @@ def demo_client(monkeypatch):
     app = FastAPI()
     for router in (
         dashboard.router, insights.router, keywords.router, search_terms.router,
-        structure.router, suggestions.router, writeback.router,
+        structure.router, suggestions.router, writeback.router, manage.router,
+        alerts.router, operations.router,
     ):
         app.include_router(router)
     ctx = AuthContext(
@@ -45,6 +46,11 @@ def demo_client(monkeypatch):
             "monitor.dashboard": "view",
             "optimize.keywords": "view",
             "optimize.searchterms": "view",
+            "manage.campaigns": "view",
+            "manage.adgroups": "view",
+            "manage.account": "view",
+            "monitor.alerts": "view",
+            "verify.adjustments": "view",
         },
     )
     session = NoDataSession()
@@ -203,3 +209,42 @@ def test_classic_search_term_page_reads_embedded_rows(demo_client):
     assert len(data["search_terms"]) == 4
     assert data["window"]["start"] == "2026-09-04"
     assert all(row["status_label"] == "未加成关键词" for row in data["search_terms"])
+
+
+def test_demo_manage_reads_never_touch_database_or_realtime_account(demo_client):
+    account = demo_client.get("/api/v1/manage/account-budget", params={
+        "tenant_id": 16, "baidu_account_id": 160001,
+    })
+    assert account.status_code == 200, account.text
+    assert account.json()["demo_policy"]["external_calls"] is False
+    assert account.json()["baidu_account_name"] == "演示账户 A"
+
+    campaigns = demo_client.get("/api/v1/manage/campaigns", params={
+        "tenant_id": 16, "baidu_account_id": 160002,
+    }).json()
+    assert campaigns["is_demo"] is True and campaigns["total"] == 2
+    assert {row["baidu_account_id"] for row in campaigns["campaigns"]} == {160002}
+
+    adgroups = demo_client.get("/api/v1/manage/adgroups", params={
+        "tenant_id": 16, "campaign_id": 160201,
+    }).json()
+    assert adgroups["is_demo"] is True and adgroups["total"] == 1
+
+
+def test_demo_alerts_and_all_adjustment_tabs_are_embedded_reads(demo_client):
+    alerts_data = demo_client.get("/api/v1/alerts", params={"tenant_id": 16, "status": "all"}).json()
+    assert alerts_data["is_demo"] is True and len(alerts_data["alerts"]) == 2
+    assert alerts_data["total_open"] == 1
+
+    operations_data = demo_client.get("/api/v1/operation-records", params={
+        "tenant_id": 16, "over_limit": True,
+    }).json()
+    assert operations_data["is_demo"] is True and operations_data["total"] == 1
+    assert operations_data["records"][0]["change"]["over_limit"] is True
+
+    writebacks = demo_client.get("/api/v1/writeback", params={"tenant_id": 16}).json()
+    approvals = demo_client.get("/api/v1/writeback/approvals", params={"tenant_id": 16}).json()
+    actions = demo_client.get("/api/v1/search-terms/actions", params={"tenant_id": 16}).json()
+    assert writebacks["is_demo"] is True and writebacks["writebacks"][0]["dry_run"] is True
+    assert approvals["is_demo"] is True and approvals["approvals"][0]["status"] == "consumed"
+    assert actions["is_demo"] is True and actions["actions"][0]["status"] == "dry_run"

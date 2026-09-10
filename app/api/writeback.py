@@ -202,6 +202,9 @@ async def list_writeback_approvals(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
+    from app.sem_demo_adapter import is_demo_read, read_demo_approvals
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_approvals(status, limit)
     cond = [WritebackApproval.tenant_id == tenant_id]
     if status and status != "all":
         cond.append(WritebackApproval.status == status)
@@ -288,8 +291,13 @@ async def list_writebacks(
     ),
     limit: int = Query(200, le=500),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """回写台账列表（按时间倒序）+ 按状态计数。"""
+    ctx.ensure_tenant(tenant_id)
+    from app.sem_demo_adapter import is_demo_read, read_demo_writebacks
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_writebacks(status, limit)
     cond = [BidWriteback.tenant_id == tenant_id]
     if status and status != "all":
         cond.append(BidWriteback.status == status)
