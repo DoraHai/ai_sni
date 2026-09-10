@@ -22,7 +22,7 @@ from app.geo.demo_fixture_manifest import build_manifest
 DEMO_TENANT_ID = 16
 DEMO_USER_ID = 5
 DEMO_USERNAME = "workbench_test_readonly"
-DEMO_DATASET_VERSION = "tenant16-geo-demo-v1"
+DEMO_DATASET_VERSION = "tenant16-geo-demo-v2"
 DEMO_WEEK_END = date(2026, 9, 7)
 DEMO_ID_BASE = 16_000_000
 SHANGHAI = ZoneInfo("Asia/Shanghai")

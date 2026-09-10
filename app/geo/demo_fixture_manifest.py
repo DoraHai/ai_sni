@@ -15,25 +15,27 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 
-FIXTURE_NAMESPACE = "g-snipers-geo-demo-v1"
-FIXTURE_MARKER = "[全虚拟演示][GEO_DEMO_FIXTURE:g-snipers-geo-demo-v1]"
-TENANT_NAME = "G-Snipers 全域演示（全虚拟）"
+FIXTURE_NAMESPACE = "tiger-geo-demo-v2"
+FIXTURE_MARKER = "[全虚拟演示][TIGER_GEO_DEMO:tiger-geo-demo-v2]"
+TENANT_NAME = "TIGER 老虎新材料（演示）"
 PROTECTED_TENANT_IDS = (1, 4)
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+TIGER_BRAND = "TIGER 老虎"
+TIGER_CHINA_HOMEPAGE = "https://www.tiger-coatings.cn/"
 
 QUESTIONS = (
-    "制造企业如何评估智能设备巡检平台？",
-    "设备运维知识库应该包含哪些内容？",
-    "如何比较不同工业数据分析平台？",
-    "工厂预测性维护项目如何开始？",
-    "工业设备故障诊断系统有哪些选型指标？",
-    "制造业如何建设可追溯的维修知识体系？",
-    "多工厂设备健康数据如何统一管理？",
-    "设备停机风险如何提前发现？",
-    "工业智能运维平台如何验证效果？",
-    "设备维保团队如何减少重复排查？",
-    "工业知识问答如何控制事实准确性？",
-    "采购工业软件时如何验证供应商能力？",
+    "工业粉末涂料选型需要重点比较哪些性能指标？",
+    "建筑幕墙和系统门窗如何选择粉末涂料体系？",
+    "汽车轮毂与零部件的粉末涂层需要关注哪些要求？",
+    "户外应用如何评估粉末涂层的耐候性？",
+    "粉末涂料的色彩与表面效果应该如何选样？",
+    "粉末涂装方案的可持续性可以从哪些维度评估？",
+    "前处理工艺与粉末涂料兼容性如何验证？",
+    "批次间色差和表面一致性应该如何控制？",
+    "低温固化粉末涂料适合哪些应用评估场景？",
+    "粉末回收利用对涂层质量有哪些验证要点？",
+    "粉末涂料供应商的技术服务能力如何比较？",
+    "新粉末涂料上线前应如何安排试喷和验收？",
 )
 
 ENGINES = (
@@ -42,7 +44,7 @@ ENGINES = (
     ("kimi", "Kimi", "Moonshot AI", "kimi-k2.6"),
 )
 
-COMPETITORS = ("北辰智造", "远海科技", "恒峰系统")
+COMPETITORS = ("竞品A", "竞品B", "竞品C")
 CHANNELS = ("website", "wechat", "zhihu")
 EXPECTED_COUNTS = {
     "tenants": 1,
@@ -91,16 +93,18 @@ def _snapshot(
         competitors.append(COMPETITORS[1])
     if current and (prompt_index + engine_index) % 6 == 0:
         competitors.append(COMPETITORS[2])
-    cited_urls = (
-        [f"https://g-snipers-demo.invalid/knowledge/{prompt_key}"] if cites_own else []
-    )
-    answer_parts = [FIXTURE_MARKER, f"虚拟回答样本 {key}。"]
+    cited_urls = [TIGER_CHINA_HOMEPAGE] if cites_own else []
+    answer_parts = [
+        FIXTURE_MARKER,
+        f"虚拟回答样本 {key}。",
+        f"本条演示围绕“{QUESTIONS[prompt_index]}”展示选型维度、应用条件与验证流程，不构成产品结论。",
+    ]
     if mentions:
-        answer_parts.append("示例品牌 G-Snipers Demo 被作为候选方案提及。")
+        answer_parts.append(f"演示品牌 {TIGER_BRAND} 被作为待核验候选方案提及。")
     if competitors:
-        answer_parts.append("虚拟竞品：" + "、".join(competitors) + "。")
+        answer_parts.append("匿名演示竞品：" + "、".join(competitors) + "，不代表真实市场结论。")
     if cited_urls:
-        answer_parts.append("虚拟引用：" + cited_urls[0])
+        answer_parts.append("演示引用（仍为 synthetic、never_official）：" + cited_urls[0])
     return {
         "logical_key": _logical("answer", key),
         "prompt_key": _logical("prompt", prompt_key),
@@ -260,11 +264,11 @@ def build_manifest(week_end: date = date(2026, 9, 7)) -> dict[str, Any]:
     facts = [
         {
             "logical_key": _logical("fact", f"f{index + 1}"),
-            "title": f"[全虚拟演示] 设备知识事实 {index + 1}",
-            "statement": f"{FIXTURE_MARKER} 虚构产品能力说明 {index + 1}，仅用于界面演示。",
+            "title": f"[全虚拟演示] TIGER 粉末涂料事实卡 {index + 1}",
+            "statement": f"{FIXTURE_MARKER} 粉末涂料与表面技术演示资料 {index + 1}，仅用于界面展示，须另行核验后方可作为产品事实。",
             "fact_type": ("product", "metric", "case")[index % 3],
-            "source_name": "G-Snipers Demo 虚拟资料库",
-            "source_url": f"https://g-snipers-demo.invalid/facts/{index + 1}",
+            "source_name": "TIGER 中国官网首页（演示引用）",
+            "source_url": TIGER_CHINA_HOMEPAGE,
             "trust_level": "needs_review",
             "status": "active",
             "meta": {"fixture_namespace": FIXTURE_NAMESPACE, "synthetic": True},
@@ -278,7 +282,7 @@ def build_manifest(week_end: date = date(2026, 9, 7)) -> dict[str, Any]:
             "prompt_key": prompts[0]["logical_key"],
             "business_key": _logical("business", "operations"),
             "period_key": _logical("period", "current"),
-            "title": "[全虚拟演示] 旧审核与渠道稿失效",
+            "title": "[全虚拟演示] 建筑粉末涂料选型稿待更新",
             "status": "editing",
             "pipeline_step": "article",
             "review_status": "none",
@@ -286,7 +290,7 @@ def build_manifest(week_end: date = date(2026, 9, 7)) -> dict[str, Any]:
             "brief": {
                 "fixture_namespace": FIXTURE_NAMESPACE,
                 "synthetic": True,
-                "scenario": "latest article invalidates prior review and variants",
+                "scenario": "TIGER 粉末涂料演示母稿更新后，旧审核与渠道稿失效",
             },
             "fact_keys": [row["logical_key"] for row in facts[:3]],
         },
@@ -295,7 +299,7 @@ def build_manifest(week_end: date = date(2026, 9, 7)) -> dict[str, Any]:
             "prompt_key": prompts[1]["logical_key"],
             "business_key": _logical("business", "operations"),
             "period_key": _logical("period", "current"),
-            "title": "[全虚拟演示] 三渠道稿已重生成",
+            "title": "[全虚拟演示] 耐候与色彩主题三渠道稿",
             "status": "editing",
             "pipeline_step": "variants",
             "review_status": "none",
@@ -303,7 +307,7 @@ def build_manifest(week_end: date = date(2026, 9, 7)) -> dict[str, Any]:
             "brief": {
                 "fixture_namespace": FIXTURE_NAMESPACE,
                 "synthetic": True,
-                "scenario": "variants regenerated against latest article",
+                "scenario": "基于最新 TIGER 表面技术演示母稿重新生成渠道稿",
             },
             "fact_keys": [row["logical_key"] for row in facts[3:]],
         },
@@ -318,10 +322,10 @@ def build_manifest(week_end: date = date(2026, 9, 7)) -> dict[str, Any]:
                     "task_key": _logical("content_task", task_name),
                     "version_no": version,
                     "kind": "master",
-                    "title": f"{FIXTURE_MARKER} {task_name} V{version}",
+                    "title": f"{FIXTURE_MARKER} TIGER 粉末涂料演示母稿 V{version}",
                     "body_markdown": (
-                        f"# {FIXTURE_MARKER}\n\n这是 {task_name} 的虚拟母稿 V{version}，"
-                        "不得用于真实发布。"
+                        f"# {FIXTURE_MARKER}\n\n这是 {TIGER_BRAND} 粉末涂料与表面技术场景的虚拟母稿 V{version}，"
+                        "仅用于演示版本失效与重生成，不得用于真实发布。"
                     ),
                     "generation_meta": {
                         "source": "demo_fixture",
@@ -339,8 +343,8 @@ def build_manifest(week_end: date = date(2026, 9, 7)) -> dict[str, Any]:
                     "task_key": _logical("content_task", task_name),
                     "article_key": _logical("article", f"{task_name}:v{bound_version}"),
                     "channel": channel,
-                    "title": f"{FIXTURE_MARKER} {channel} 渠道稿",
-                    "body_markdown": f"{FIXTURE_MARKER} 虚拟渠道稿，不得发布。",
+                    "title": f"{FIXTURE_MARKER} TIGER 粉末涂料 {channel} 渠道稿",
+                    "body_markdown": f"{FIXTURE_MARKER} {TIGER_BRAND} 粉末涂料与表面技术虚拟渠道稿，不得发布。",
                     "status": "draft",
                     "expected_stale": task_name == "invalidated",
                     "adapt_meta": {
@@ -379,9 +383,9 @@ def build_manifest(week_end: date = date(2026, 9, 7)) -> dict[str, Any]:
         }
         for index, (title, status, action) in enumerate(
             (
-                ("[全虚拟演示] 补充可信事实", "todo", "补充真实资料后方可完成"),
-                ("[全虚拟演示] 改进内容结构", "doing", "等待真实指标变化"),
-                ("[全虚拟演示] 配置发布前置条件", "todo", "保持发布禁用"),
+                ("[全虚拟演示] 补充粉末涂料可信事实", "todo", "补充真实资料后方可完成"),
+                ("[全虚拟演示] 完善耐候与色彩内容结构", "doing", "等待真实指标变化"),
+                ("[全虚拟演示] 配置表面技术内容发布前置条件", "todo", "保持发布禁用"),
                 ("[全虚拟演示] 放弃过期演示动作", "cancelled", "无需完成证据"),
             )
         )
@@ -393,9 +397,9 @@ def build_manifest(week_end: date = date(2026, 9, 7)) -> dict[str, Any]:
                 "logical_key": _logical("tenant", "root"),
                 "name": TENANT_NAME,
                 "strategy": "demo",
-                "industry": "工业智能运维（全虚拟演示）",
-                "business_desc": FIXTURE_MARKER,
-                "brand_terms": ["G-Snipers Demo"],
+                "industry": "粉末涂料与表面技术（全虚拟演示）",
+                "business_desc": f"{FIXTURE_MARKER} TIGER 老虎粉末涂料选型、应用、耐候、色彩与可持续主题演示。",
+                "brand_terms": [TIGER_BRAND, "TIGER"],
                 "physical_id": None,
             }
         ],
@@ -424,12 +428,12 @@ def build_manifest(week_end: date = date(2026, 9, 7)) -> dict[str, Any]:
         "businesses": [
             {
                 "logical_key": _logical("business", "operations"),
-                "name": "[全虚拟演示] 智能设备运维",
+                "name": "[全虚拟演示] 粉末涂料与表面技术",
                 "description": FIXTURE_MARKER,
                 "status": "active",
                 "profile": {
-                    "product_name": "G-Snipers Demo",
-                    "brand_description": "全虚拟工业智能运维演示品牌",
+                    "product_name": TIGER_BRAND,
+                    "brand_description": "TIGER 老虎粉末涂料与表面技术全虚拟演示画像",
                     "fixture_namespace": FIXTURE_NAMESPACE,
                     "synthetic": True,
                 },
@@ -440,7 +444,7 @@ def build_manifest(week_end: date = date(2026, 9, 7)) -> dict[str, Any]:
                 "logical_key": _logical("unit", f"u{index + 1}"),
                 "business_key": _logical("business", "operations"),
                 "name": f"[全虚拟演示] 主题单元 {index + 1}",
-                "keyword": ("设备巡检", "预测维护", "工业知识库")[index],
+                "keyword": ("粉末涂料选型", "耐候与应用", "色彩与可持续")[index],
                 "status": "active",
             }
             for index in range(3)
@@ -453,7 +457,7 @@ def build_manifest(week_end: date = date(2026, 9, 7)) -> dict[str, Any]:
                 "name": f"[全虚拟演示] {channel}",
                 "channel_type": channel,
                 "publish_mode": "manual_only",
-                "base_url": "https://g-snipers-demo.invalid" if channel == "website" else None,
+                "base_url": TIGER_CHINA_HOMEPAGE if channel == "website" else None,
                 "enabled": False,
                 "content_rules": {
                     "fixture_namespace": FIXTURE_NAMESPACE,

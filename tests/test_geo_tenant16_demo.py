@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from app.geo.demo_read_session import tenant_read_session
+from app.geo.demo_fixture_manifest import COMPETITORS, TIGER_BRAND, TIGER_CHINA_HOMEPAGE
 from app.geo.integration import metrics_snapshot
 from app.geo.integration import router as integration_router
 from app.geo.question_read_routes import list_questions
@@ -93,15 +94,29 @@ def test_questions_answers_and_detail_are_versioned_and_visibly_synthetic():
         business_id=None, limit=50, before_id=None, ctx=context(), session=sentinel,
     ))
     assert len(questions.items) == 12
-    assert questions.demo["dataset_version"] == "tenant16-geo-demo-v1"
+    assert questions.demo["dataset_version"] == "tenant16-geo-demo-v2"
     assert all(item.source_classification == "simulated" and item.formal_metric_eligible is False
                for item in questions.items)
+    question_texts = {item.current_text for item in questions.items}
+    assert any("粉末涂料选型" in text for text in question_texts)
+    assert any("建筑" in text for text in question_texts)
+    assert any("汽车" in text for text in question_texts)
+    assert any("耐候" in text for text in question_texts)
+    assert any("色彩" in text for text in question_texts)
+    assert any("可持续" in text for text in question_texts)
 
     answers = asyncio.run(get_answers(tenant_id=16, limit=200, ctx=context(), session=sentinel))
     assert len(answers["items"]) == 72
     assert answers["demo"]["official"] is False
     assert all(item["source_kind"] == "simulated" and item["formal_metric_eligible"] is False
                for item in answers["items"])
+    mentioned = [item for item in answers["items"] if item["mentions_brand"]]
+    assert mentioned and all(TIGER_BRAND in item["raw_text"] for item in mentioned)
+    assert set(name for item in answers["items"] for name in item["competitors"]) == set(COMPETITORS)
+    assert all(
+        item["cited_urls"] == [TIGER_CHINA_HOMEPAGE]
+        for item in answers["items"] if item["cited_urls"]
+    )
     answer_id = answers["items"][0]["ref"]["id"]
     detail = asyncio.run(get_answer(answer_id, 16, None, context(), sentinel))
     assert "全虚拟演示" in detail["item"]["raw_text"]
@@ -111,12 +126,15 @@ def test_questions_answers_and_detail_are_versioned_and_visibly_synthetic():
 
 def test_demo_filters_and_ids_never_alias_real_task_14():
     all_answers = answer_page(limit=200)
+    answer_ids = {row["ref"]["id"] for row in all_answers["items"]}
+    assert answer_ids == set(range(16_010_001, 16_010_073))
     engine = all_answers["items"][0]["engine"]["key"]
     filtered = answer_page(limit=200, engine_key=engine)
     assert filtered["items"]
     assert {row["engine"]["key"] for row in filtered["items"]} == {engine}
     tasks = content_task_list(limit=20)
     assert len(tasks["items"]) == 2
+    assert {row["ref"]["id"] for row in tasks["items"]} == {16_030_001, 16_030_002}
     assert 14 not in {row["ref"]["id"] for row in tasks["items"]}
 
 
