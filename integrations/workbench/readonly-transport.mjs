@@ -22,6 +22,7 @@ const seoRoutes = [
 ]
 
 const geoRoutes = [
+  [/^\/api\/v1\/geo\/integration\/read\/(demo-summary|capabilities)$/, ['tenant_id']],
   [/^\/api\/v1\/geo\/tenants$/, []],
   [/^\/api\/v1\/geo\/integration\/read\/period-context$/, ['tenant_id', 'week_end']],
   [/^\/api\/v1\/geo\/integration\/metrics\/(snapshot|dictionary)$/, ['tenant_id', 'week_end']],
