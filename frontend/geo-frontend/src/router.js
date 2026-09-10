@@ -4,6 +4,7 @@ import { GEO_WORKBENCH_START } from '../../src/utils/geoPrototypeNavigation'
 import { loginUrl } from '../../src/auth/loginRedirect'
 import { geoLoginRedirectPath } from './authRedirect'
 import { geoSessionRouteDecision } from './authRouteDecision'
+import { GEO_DEMO_HOME, isGeoDemoIdentity } from '../../src/utils/geoDemoIdentity'
 
 const geoMeta = (title, extra = {}) => ({
   title,
@@ -20,6 +21,13 @@ const routes = [
     redirect: GEO_WORKBENCH_START,
     meta: geoMeta('GEO 工作台', { bare: true }),
     children: [
+      { path: 'demo', redirect: GEO_DEMO_HOME },
+      { path: 'demo/overview', component: () => import('../../src/views/geo/GeoDemoView.vue'), meta: geoMeta('GEO 演示总览') },
+      { path: 'demo/questions', component: () => import('../../src/views/geo/GeoDemoView.vue'), meta: geoMeta('演示问题监测') },
+      { path: 'demo/answers', component: () => import('../../src/views/geo/GeoDemoView.vue'), meta: geoMeta('演示回答与引用') },
+      { path: 'demo/answers/:answerId', component: () => import('../../src/views/geo/GeoDemoView.vue'), meta: geoMeta('演示回答详情') },
+      { path: 'demo/tasks', component: () => import('../../src/views/geo/GeoDemoView.vue'), meta: geoMeta('演示内容任务') },
+      { path: 'demo/tasks/:taskId', component: () => import('../../src/views/geo/GeoDemoView.vue'), meta: geoMeta('演示任务详情') },
       { path: 'overview', component: () => import('../../src/views/geo/GeoOverviewView.vue'), meta: geoMeta('GEO 概览') },
       { path: 'visibility', component: () => import('../../src/views/geo/GeoVisibilityDashView.vue'), meta: geoMeta('AI 可见度') },
       { path: 'visibility/snapshots', component: () => import('../../src/views/geo/GeoVisibilityView.vue'), meta: geoMeta('采集与判断') },
@@ -104,7 +112,17 @@ function sessionRouteDecision(to) {
   })
 }
 
-router.beforeEach((to) => sessionRouteDecision(to))
+router.beforeEach((to) => {
+  const decision = sessionRouteDecision(to)
+  if (decision !== true) return decision
+  if (
+    isGeoDemoIdentity(session.user, session.tenantId)
+    && to.path.startsWith('/geo')
+    && !to.meta.public
+    && !to.path.startsWith('/geo/demo')
+  ) return GEO_DEMO_HOME
+  return true
+})
 
 export function revalidateSessionRoute() {
   return sessionRouteDecision(router.currentRoute.value)

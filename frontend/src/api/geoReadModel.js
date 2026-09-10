@@ -7,8 +7,11 @@ function query(path, tenantId, params = {}, signal) {
 }
 export const getGeoReadAnswers = (tenant, params, signal) => query('/read/answers', tenant, params, signal)
 export const getGeoReadAnswer = (tenant, id, params, signal) => query(`/read/answers/${id}`, tenant, params, signal)
+export const getGeoReadQuestions = (tenant, params, signal) => query('/read/questions', tenant, params, signal)
 export const getGeoReadPeriod = (tenant, params, signal) => query('/read/period-context', tenant, params, signal)
 export const getGeoReadCapabilities = (tenant, signal) => query('/read/capabilities', tenant, {}, signal)
+export const getGeoReadDemoSummary = (tenant, signal) => query('/read/demo-summary', tenant, {}, signal)
+export const getGeoReadContentTasks = (tenant, params, signal) => query('/read/content-tasks', tenant, params, signal)
 export const getGeoReadContentTask = (tenant, id, signal) => query(`/read/content-tasks/${id}`, tenant, {}, signal)
 export const getGeoReadPatrol = (tenant, id, signal) => query(`/read/patrol-runs/${id}`, tenant, {}, signal)
 export const getGeoReadJob = (tenant, id, signal) => query(`/read/async-jobs/${id}`, tenant, {}, signal)

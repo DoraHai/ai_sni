@@ -5,6 +5,7 @@ import GeoAccountBar from '../../components/GeoAccountBar.vue'
 import { session } from '../../store/session'
 import { canViewCockpit } from '../../utils/cockpitAccess'
 import { GEO_WORKBENCH_NAV } from '../../utils/geoPrototypeNavigation'
+import { GEO_DEMO_HOME, isGeoDemoIdentity } from '../../utils/geoDemoIdentity'
 
 const route = useRoute()
 const router = useRouter()
@@ -14,6 +15,21 @@ const geoNavHover = ref(false)
 const isMobile = ref(false)
 const isEditor = computed(() => /^\/geo\/tasks\/[^/]+/.test(route.path))
 const showCockpitShortcut = computed(() => canViewCockpit(session.permissions))
+const isDemoIdentity = computed(() => isGeoDemoIdentity(session.user, session.tenantId))
+const visibleNavigation = computed(() => (
+  isDemoIdentity.value
+    ? [
+        { label: '数据看板', children: [{ label: 'GEO 演示总览', path: GEO_DEMO_HOME, key: 'geo.content', icon: '▦' }] },
+        { label: '智能监测', children: [
+          { label: '问题监测', path: '/geo/demo/questions', key: 'geo.content', icon: '◌' },
+          { label: '回答与引用', path: '/geo/demo/answers', key: 'geo.content', icon: '✦' },
+        ] },
+        { label: '内容与信源', children: [
+          { label: '内容任务', path: '/geo/demo/tasks', key: 'geo.content', icon: 'Aa' },
+        ] },
+      ]
+    : GEO_WORKBENCH_NAV
+))
 const geoNavRail = computed(() => geoNavCollapsed.value && !geoNavHover.value && !isMobile.value)
 const expandedGroups = ref({
   [GEO_WORKBENCH_NAV[0]?.label]: true,
@@ -94,7 +110,7 @@ onUnmounted(() => {
       </div>
       <nav class="geo-shell-nav">
         <div class="geo-nav-section-title">GEO 增长工作流</div>
-        <section v-for="(group, groupIndex) in GEO_WORKBENCH_NAV" :key="group.label" class="geo-nav-group">
+        <section v-for="(group, groupIndex) in visibleNavigation" :key="group.label" class="geo-nav-group">
           <button
             type="button"
             class="geo-nav-group-toggle"
