@@ -66,10 +66,14 @@ def demo_context(**changes):
         "role_name": "只读演示",
         "tenant_id": DEMO_TENANT_ID,
         "permissions": {
+            "seo.assets": "view",
             "seo.dashboard": "view",
+            "seo.alerts": "view",
             "seo.content": "view",
             "seo.site": "view",
             "seo.keywords": "view",
+            "seo.links": "view",
+            "seo.competitors": "view",
         },
     }
     values.update(changes)
@@ -200,6 +204,45 @@ def test_search_clicks_are_explicitly_unavailable_not_fabricated():
 
 
 @pytest.mark.parametrize(
+    ("path", "assertion"),
+    [
+        ("/api/v1/seo/overview/task-center", lambda payload: payload["total"] == 2),
+        ("/api/v1/seo/alerts", lambda payload: payload["total"] == 4 and payload["high"] == 2),
+        ("/api/v1/seo/rank-serp/brand-profile", lambda payload: payload["ranking_ready"] is True),
+        ("/api/v1/seo/rank-serp/brand-assets", lambda payload: payload["total"] == 1),
+        ("/api/v1/seo/internal-links", lambda payload: payload["stats"]["links"] == 5),
+        ("/api/v1/seo/backlinks", lambda payload: payload["total"] == 3),
+        ("/api/v1/seo/backlinks/discovery-sources", lambda payload: payload["total"] == 2),
+        ("/api/v1/seo/backlinks/analysis", lambda payload: payload["referring_domains"] == 1),
+        ("/api/v1/seo/backlinks/index-status", lambda payload: payload["configured"] is False),
+        ("/api/v1/seo/backlinks/opportunities", lambda payload: payload["result"]["state"] == "completed"),
+        ("/api/v1/seo/tasks", lambda payload: len(payload) == 1),
+        ("/api/v1/seo/backlinks/outcomes", lambda payload: len(payload["items"]) == 2),
+        ("/api/v1/seo/competitors", lambda payload: len(payload["items"]) == 2),
+        ("/api/v1/seo/competitors/rankings", lambda payload: len(payload["items"]) == 4),
+    ],
+)
+def test_enabled_menu_pages_have_deterministic_demo_read_models(path, assertion):
+    result = resolve_demo_response("GET", path, query(tenant_id=16, site_id=1601))
+    assert result.status_code == 200
+    assert assertion(result.payload)
+    if isinstance(result.payload, dict) and path != "/api/v1/seo/tasks":
+        assert result.payload["demo_meta"]["dataset_version"] == DEMO_DATASET_VERSION
+
+
+def test_demo_records_are_marked_synthetic_and_external_calls_stay_disabled():
+    fixture = load_fixture()
+    for section in ("alerts", "backlinks", "competitors", "competitor_events", "task_runs"):
+        assert fixture[section]
+        assert all(row["synthetic"] is True for row in fixture[section])
+    provider = resolve_demo_response(
+        "GET", "/api/v1/seo/backlinks/index-status", query(tenant_id=16, site_id=1601)
+    ).payload
+    assert provider["status"] == "not_connected"
+    assert provider["configured"] is False
+
+
+@pytest.mark.parametrize(
     "path",
     [
         "/api/v1/seo/content-assets/1602003/review",
@@ -309,7 +352,7 @@ def test_superadmin_never_enters_static_demo(monkeypatch):
 
 def test_unknown_tenant16_endpoint_fails_closed():
     result = resolve_demo_response(
-        "GET", "/api/v1/seo/competitors", query(tenant_id=16, site_id=1601)
+        "GET", "/api/v1/seo/qa/questions", query(tenant_id=16, site_id=1601)
     )
     assert result.status_code == 404
     assert result.payload["code"] == "seo_static_demo_endpoint_unavailable"

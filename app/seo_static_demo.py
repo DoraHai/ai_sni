@@ -223,6 +223,45 @@ def _keyword_list(fixture: dict[str, Any], query: Mapping[str, str]) -> dict[str
     return result
 
 
+def _demo_provider(fixture: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "configured": False,
+        "status": "not_connected",
+        "message": "静态演示未连接付费外链索引；页面不会产生供应商调用。",
+        "demo_meta": _dataset_meta(fixture),
+    }
+
+
+def _backlink_analysis(fixture: dict[str, Any]) -> dict[str, Any]:
+    rows = fixture["backlinks"]
+    found = [row for row in rows if row.get("verification", {}).get("state") == "found"]
+    def counts(field: str) -> list[dict[str, Any]]:
+        values: dict[str, int] = {}
+        for row in found:
+            value = str(row.get(field) or "未提供")
+            values[value] = values.get(value, 0) + 1
+        return [{"name": name, "count": count} for name, count in sorted(values.items(), key=lambda item: (-item[1], item[0]))]
+    domains = counts("source_domain")
+    top = domains[0]["count"] if domains else 0
+    attributes: dict[str, int] = {}
+    for row in found:
+        labels = row.get("verification", {}).get("rel") or ["follow"]
+        for label in labels:
+            attributes[label] = attributes.get(label, 0) + 1
+    return {
+        "pending": sum(row.get("verification", {}).get("state") == "pending" for row in rows),
+        "unavailable": sum(row.get("verification", {}).get("state") in {"blocked", "unreachable"} for row in rows),
+        "referring_domains": len(domains),
+        "top_domain_share": round(top / max(len(found), 1) * 100, 1),
+        "domains": domains,
+        "anchors": counts("anchor_text"),
+        "targets": counts("target_url"),
+        "attributes": [{"name": name, "count": count} for name, count in sorted(attributes.items())],
+        "trend": deepcopy(fixture["backlink_trend"]),
+        "demo_meta": _dataset_meta(fixture),
+    }
+
+
 def resolve_demo_response(
     method: str,
     path: str,
@@ -240,6 +279,29 @@ def resolve_demo_response(
         return DemoResponse(200, {"tenant_id": DEMO_TENANT_ID, "selection_policy": {"selectable_statuses": ["active"], "disabled_statuses": ["paused", "archived"]}, "sites": [{"id": site["id"], "name": site["name"], "domain": site["domain"], "status": site["status"]}], "demo_meta": _dataset_meta(fixture)})
     if method == "GET" and path == "/api/v1/seo/overview":
         return DemoResponse(200, _overview(fixture))
+    if method == "GET" and path == "/api/v1/seo/overview/task-center":
+        rows = _select(deepcopy(fixture["task_runs"]), query)
+        kind = str(query.get("kind") or "").strip()
+        if kind:
+            rows = [row for row in rows if row.get("kind") == kind]
+        result = _page(rows, query)
+        result["summary"] = {
+            status: sum(row["status"] == status for row in fixture["task_runs"])
+            for status in {row["status"] for row in fixture["task_runs"]}
+        }
+        result["schedules"] = deepcopy(fixture["task_schedules"])
+        result["demo_meta"] = _dataset_meta(fixture)
+        return DemoResponse(200, result)
+    if method == "GET" and path == "/api/v1/seo/alerts":
+        rows = deepcopy(fixture["alerts"])
+        return DemoResponse(200, {
+            "items": rows,
+            "total": len(rows),
+            "high": sum(row["severity"] == "high" for row in rows),
+            "demo_meta": _dataset_meta(fixture),
+        })
+    if method == "GET" and path == "/api/v1/seo/rank-serp/brand-profile":
+        return DemoResponse(200, deepcopy(fixture["brand_profile"]) | {"demo_meta": _dataset_meta(fixture)})
     if method == "GET" and path == "/api/v1/seo/content-assets":
         rows = _select(deepcopy(fixture["contents"]), query)
         result = _page(rows, query)
@@ -259,9 +321,11 @@ def resolve_demo_response(
     if method == "GET" and path in {
         "/api/v1/seo/content-distribution/connections",
         "/api/v1/seo/content-distribution/variants",
-        "/api/v1/seo/rank-serp/brand-assets",
     }:
         return DemoResponse(200, {"items": [], "total": 0, "status_counts": {}, "demo_meta": _dataset_meta(fixture)})
+    if method == "GET" and path == "/api/v1/seo/rank-serp/brand-assets":
+        rows = deepcopy(fixture["brand_assets"])
+        return DemoResponse(200, {"items": rows, "total": len(rows), "demo_meta": _dataset_meta(fixture)})
     match = _ATTEMPTS_RE.fullmatch(path)
     if method == "GET" and match:
         publication_id = match.group(1)
@@ -320,6 +384,42 @@ def resolve_demo_response(
         if row is None:
             return DemoResponse(404, {"detail": "演示页面不存在", "code": "demo_not_found"})
         return DemoResponse(200, {"page_id": page_id, "snapshot_id": None, "source": row["evidence_source"], "images_count": row["images_count"], "candidate_count": row["images_missing_alt_count"], "items": [], "truncated": True, "demo_meta": _dataset_meta(fixture)})
+    if method == "GET" and path == "/api/v1/seo/internal-links":
+        pages = {row["id"]: row for row in fixture["pages"]}
+        edges = deepcopy(fixture["internal_links"])
+        incoming = {page_id: 0 for page_id in pages}
+        outgoing = {page_id: 0 for page_id in pages}
+        for edge in edges:
+            outgoing[edge["source"]] += 1
+            incoming[edge["target"]] += 1
+        nodes = [{
+            "id": page_id, "url": row["url"], "title": row["title"],
+            "page_type": row.get("page_type"), "incoming": incoming[page_id],
+            "outgoing": outgoing[page_id], "orphan": incoming[page_id] == 0,
+        } for page_id, row in pages.items()]
+        return DemoResponse(200, {"nodes": nodes, "edges": edges, "stats": {"pages": len(nodes), "links": len(edges), "orphans": sum(row["orphan"] for row in nodes)}, "demo_meta": _dataset_meta(fixture)})
+    if method == "GET" and path == "/api/v1/seo/backlinks":
+        rows = _select(deepcopy(fixture["backlinks"]), query)
+        return DemoResponse(200, {"items": rows, "total": len(rows), "stats": {"active": sum(row["status"] == "active" and row.get("verification", {}).get("state") == "found" for row in rows), "pending": sum(row.get("verification", {}).get("state") == "pending" for row in rows), "lost": sum(row["status"] == "lost" for row in rows), "toxic": sum((row.get("toxic_score") or 0) >= 70 for row in rows), "domains": len({row["source_domain"] for row in rows})}, "demo_meta": _dataset_meta(fixture)})
+    if method == "GET" and path == "/api/v1/seo/backlinks/discovery-sources":
+        rows = deepcopy(fixture["backlink_sources"])
+        return DemoResponse(200, {"items": rows, "total": len(rows), "demo_meta": _dataset_meta(fixture)})
+    if method == "GET" and path == "/api/v1/seo/backlinks/analysis":
+        return DemoResponse(200, _backlink_analysis(fixture))
+    if method == "GET" and path == "/api/v1/seo/backlinks/index-status":
+        return DemoResponse(200, _demo_provider(fixture) | {"last_query": None})
+    if method == "GET" and path == "/api/v1/seo/backlinks/opportunities":
+        return DemoResponse(200, {"provider": _demo_provider(fixture), "result": deepcopy(fixture["backlink_opportunities"]), "demo_meta": _dataset_meta(fixture)})
+    if method == "GET" and path == "/api/v1/seo/tasks":
+        rows = deepcopy(fixture["work_orders"])
+        return DemoResponse(200, rows)
+    if method == "GET" and path == "/api/v1/seo/backlinks/outcomes":
+        provider = _demo_provider(fixture)
+        return DemoResponse(200, {"items": deepcopy(fixture["backlink_outcomes"]), "usage": {"provider": provider, "quotas": [{"kind": "backlink_index", "limit_calls_24h": 1, "reserved_calls": 0, "remaining_calls": 1, "attempted_at": None, "next_available_at": None}, {"kind": "backlink_opportunities", "limit_calls_24h": 4, "reserved_calls": 0, "remaining_calls": 4, "attempted_at": None, "next_available_at": None}], "cost": None, "note": "演示身份不会调用外部供应商。"}, "note": "演示中的发布、外链核验与引荐数据分别展示，不作搜索效果归因。", "demo_meta": _dataset_meta(fixture)})
+    if method == "GET" and path == "/api/v1/seo/competitors":
+        return DemoResponse(200, {"items": deepcopy(fixture["competitors"]), "events": deepcopy(fixture["competitor_events"]), "demo_meta": _dataset_meta(fixture)})
+    if method == "GET" and path == "/api/v1/seo/competitors/rankings":
+        return DemoResponse(200, {"device": query.get("device") or "desktop", "competitors": deepcopy(fixture["competitors"]), "items": deepcopy(fixture["competitor_rankings"]), "demo_meta": _dataset_meta(fixture)})
     if any(pattern.fullmatch(path) for pattern in _SIMULATED_ACTIONS):
         return DemoResponse(200, {"status": "simulated", "simulated": True, "persisted": False, "side_effects": [], "message": "演示动作已模拟；未写数据库，未触发采集、生成、调度或发布。", "request": deepcopy(dict(body or {})), "demo_meta": _dataset_meta(fixture)})
     return DemoResponse(404, {"detail": "该 SEO 功能尚未接入演示数据层", "code": "seo_static_demo_endpoint_unavailable", "demo_meta": _dataset_meta(fixture)})
@@ -353,11 +453,19 @@ def _validate_demo_site(query: Mapping[str, str], body: Mapping[str, Any] | None
 
 
 def _required_demo_permission(path: str) -> str:
+    if path.rstrip("/") == "/api/v1/seo/sites":
+        return "seo.assets"
+    if "/alerts" in path:
+        return "seo.alerts"
+    if "/backlinks" in path or "/internal-links" in path or path.rstrip("/") == "/api/v1/seo/tasks":
+        return "seo.links"
+    if "/competitors" in path:
+        return "seo.competitors"
     if "/content-assets" in path or "/content-distribution" in path:
         return "seo.content"
     if "/keywords" in path or "/rank-" in path:
         return "seo.keywords"
-    if "/site" in path or "/workbench/sites" in path:
+    if "/site-pages" in path or "/site/" in path or "/workbench/sites" in path:
         return "seo.site"
     return "seo.dashboard"
 
