@@ -4,8 +4,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAdgroups, setAdgroupPause, setAdgroupBid, setAdgroupLandingUrl } from '../../api/manage'
 import { WRITEBACK_CONFIRMATION } from '../../api/writeback'
 import { session } from '../../store/session'
+import { isSemDemoIdentity } from '../../utils/semDemo'
 
 const TENANT_ID = computed(() => session.tenantId)
+const demoMode = computed(() => isSemDemoIdentity(session.user, TENANT_ID.value))
 
 const loading = ref(false)
 const error = ref('')
@@ -196,12 +198,14 @@ async function togglePause(row) {
       </div>
     </div>
 
+    <el-alert v-if="demoMode" title="演示数据，仅供体验；操作不会影响真实投放。" type="info" :closable="false" show-icon style="margin-bottom: 14px" />
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
     <el-alert
       type="warning"
       :closable="false"
       show-icon
       style="margin-bottom: 14px"
+      v-if="!demoMode"
       title="回写模式按客户、推广账户和动作门禁判定；已开放动作会真实修改百度账户。"
     />
 
@@ -239,7 +243,7 @@ async function togglePause(row) {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="270" align="center" fixed="right">
+        <el-table-column v-if="session.canEdit('manage.adgroups') && !demoMode" label="操作" width="270" align="center" fixed="right">
           <template #default="{ row }">
             <el-button size="small" :loading="savingId === row.adgroup_id" @click="editBid(row)">出价建议</el-button>
             <el-button size="small" :loading="savingId === row.adgroup_id" @click="openLanding(row)">落地页建议</el-button>

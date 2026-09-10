@@ -18,9 +18,11 @@ import {
   formatActionMoney,
 } from '../../utils/actionLedger'
 import { formatLocalDate, formatUtcTimestamp } from '../../utils/dateTime'
+import { isSemDemoIdentity } from '../../utils/semDemo'
 
 const router = useRouter()
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
+const demoMode = computed(() => isSemDemoIdentity(session.user, TENANT_ID.value))
 
 // 顶层视图：baidu=百度后台操作记录（只读同步）｜writeback=平台主动发起的回写台账
 const mainView = ref('baidu')
@@ -360,12 +362,12 @@ onMounted(() => Promise.all([load(), loadWb()]))
       </div>
       <div class="header-actions">
         <el-button
-          v-if="mainView === 'baidu' && session.canEdit('verify.adjustments')"
+          v-if="mainView === 'baidu' && session.canEdit('verify.adjustments') && !demoMode"
           :loading="syncingOperations"
           @click="syncBaiduOperations"
         >同步百度记录（只读）</el-button>
         <el-button
-          v-if="session.canView('verify.adjustments')"
+          v-if="session.canView('verify.adjustments') && !demoMode"
           type="warning" plain
           @click="router.push({ path: '/verify/pending', query: { mode: 'queue' } })"
         >人工对账队列</el-button>
@@ -373,6 +375,7 @@ onMounted(() => Promise.all([load(), loadWb()]))
     </div>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
+    <el-alert v-if="demoMode" title="演示数据，仅供体验；操作不会影响真实投放。" type="info" :closable="false" show-icon style="margin-bottom: 14px" />
 
     <!-- 顶层视图切换：百度后台操作记录 / 平台主动回写台账 -->
     <div class="view-tabs main-tabs">
@@ -654,7 +657,7 @@ onMounted(() => Promise.all([load(), loadWb()]))
             <el-table-column label="备注" min-width="150">
               <template #default="{ row }">{{ row.decision_note || row.request_note || '—' }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="150" fixed="right">
+            <el-table-column v-if="session.canEdit('verify.adjustments') && !demoMode" label="操作" width="150" fixed="right">
               <template #default="{ row }">
                 <template v-if="row.status === 'pending'">
                   <el-button size="small" type="success" @click="decideApproval(row, 'approved')">确认</el-button>
