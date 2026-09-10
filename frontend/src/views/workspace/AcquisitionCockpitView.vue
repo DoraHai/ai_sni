@@ -140,6 +140,13 @@ function applyDatePeriod() {
 function displayTime(value) {
   return value ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' }).format(value) : '尚未读取'
 }
+const outcomeSummaryMetricIds = new Set([
+  'sem-click',
+  'seo-contents', 'seo-pages',
+  'geo-demo-mention_rate', 'geo-demo-mention_count', 'geo-demo-own_domain_citation_count',
+  'geo-geo.visibility.ai_mention_count_7d', 'geo-geo.visibility.ai_mention_rate_7d',
+  'geo-geo.visibility.ai_visibility_score',
+])
 function attentionCopy(card) {
   if (Number(card?.urgentCount) > 0) return `${card.urgentCount} 项已有数据依据，等待推进`
   return card?.reason || '当前证据仍需补齐或重新读取'
@@ -193,8 +200,9 @@ function unavailableSemDetailCard(id, label, error) {
   }
 }
 function publishCard(card) {
-  const ticket = viewState.begin(card.moduleCode || 'sem', card.id)
-  if (ticket.publish(card)) cards.value = viewState.snapshot().map(item => item.metric)
+  const publishedCard = outcomeSummaryMetricIds.has(card.id) ? { ...card, summaryRole: 'outcome' } : card
+  const ticket = viewState.begin(publishedCard.moduleCode || 'sem', publishedCard.id)
+  if (ticket.publish(publishedCard)) cards.value = viewState.snapshot().map(item => item.metric)
 }
 async function loadSem(generation) {
   if (!session.tenantId || !availableModules.value.some(item => item.module_code === 'sem')) return

@@ -12,7 +12,7 @@ function belongsToDelivery(card) {
 export function buildPanoramaSummary(cards = []) {
   const scoped = Array.isArray(cards) ? cards.filter(card => card && typeof card.id === 'string') : []
   const attention = scoped.filter(needsAttention)
-  const outcomes = scoped.filter(card => card.state === 'available' && !needsAttention(card))
+  const outcomes = scoped.filter(card => card.summaryRole === 'outcome' && card.state === 'available' && !needsAttention(card))
 
   return {
     outcomes: outcomes.slice(0, 3),
