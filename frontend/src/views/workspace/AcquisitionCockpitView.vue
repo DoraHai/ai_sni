@@ -701,7 +701,7 @@ onBeforeUnmount(() => {
             </template>
           </div>
           <div v-else class="data-empty"><i></i><strong>当前范围尚无可展示数字</strong><span>系统正在核对模块、权限与业务对象，不会显示演示值。</span></div>
-          <aside class="event-feed"><header><div><small>EVENT STREAM</small><strong>战况事件</strong></div><button type="button" @click="feedPaused = !feedPaused">{{ feedPaused ? '继续' : '暂停' }}</button></header><div v-if="liveEvents.length" class="event-list"><button v-for="item in liveEvents" :key="item.id" :class="`event-${item.module}`" type="button" @click="focusEvent(item)"><time>{{ item.time }}</time><i></i><span>{{ item.title }}</span><b>定位 ↗</b></button></div><p v-else>当前没有新的异常事件</p><footer><span :class="{ paused: feedPaused }"></span>{{ feedPaused ? '事件流已暂停' : (demoMode ? '演示数据中的待办提示' : '等待真实数据变化') }}</footer></aside>
+          <aside v-if="liveEvents.length" class="event-feed"><header><div><small>EVENT STREAM</small><strong>战况事件</strong></div><button type="button" @click="feedPaused = !feedPaused">{{ feedPaused ? '继续' : '暂停' }}</button></header><div v-if="liveEvents.length" class="event-list"><button v-for="item in liveEvents" :key="item.id" :class="`event-${item.module}`" type="button" @click="focusEvent(item)"><time>{{ item.time }}</time><i></i><span>{{ item.title }}</span><b>定位 ↗</b></button></div><p v-else>当前没有新的异常事件</p><footer><span :class="{ paused: feedPaused }"></span>{{ feedPaused ? '事件流已暂停' : (demoMode ? '演示数据中的待办提示' : '等待真实数据变化') }}</footer></aside>
           </div>
         </template>
 
