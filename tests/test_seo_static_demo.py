@@ -172,7 +172,10 @@ def test_detail_review_and_attempt_clicks_return_linked_records():
     )
     assert page.status_code == 200
     assert page.payload["latest_snapshot"]["source"] == "public_preflight"
+    assert page.payload["latest_snapshot"]["site_id"] == DEMO_SITE_ID
+    assert page.payload["latest_snapshot"]["fetch_error"] is None
     assert page.payload["page"]["id"] == 1601001
+    assert page.payload["page"]["diagnostic"]["assessment_state"] == "assessed"
 
     keyword = resolve_demo_response(
         "GET", "/api/v1/seo/keywords/1604001", query(tenant_id=16)
@@ -191,6 +194,46 @@ def test_detail_review_and_attempt_clicks_return_linked_records():
         query(tenant_id=16),
     )
     assert attempts.payload["items"][0]["status"] == "failed"
+
+
+def test_site_pages_match_workbench_readonly_contract():
+    result = resolve_demo_response(
+        "GET",
+        "/api/v1/seo/site-pages",
+        query(tenant_id=16, site_id=1601, page=1, page_size=50),
+    )
+    assert result.status_code == 200
+    payload = result.payload
+    assert payload["total"] == 26
+    assert payload["page"] == 1
+    assert payload["page_size"] == 50
+    assert isinstance(payload["stats"], dict)
+    for row in payload["items"]:
+        assert row["tenant_id"] == DEMO_TENANT_ID
+        assert row["site_id"] == DEMO_SITE_ID
+        assert row["url"]
+        assert row["http_status"] is None or row["http_status"] >= 0
+        assert row["diagnostic"]["assessment_state"] in {"assessed", "unavailable"}
+        assert row["diagnostic"]["checked_at"] == row["last_checked_at"]
+        assert row["diagnostic"]["http_status"] is None or row["diagnostic"]["http_status"] >= 0
+
+    evidence = resolve_demo_response(
+        "GET",
+        "/api/v1/seo/site-pages/image-evidence",
+        query(tenant_id=16, site_id=1601, page_id=1601001),
+    ).payload
+    assert evidence["url"] == payload["items"][0]["url"]
+    assert evidence["snapshot_id"] == 1701001
+    assert evidence["fetched_at"] == payload["items"][0]["last_checked_at"]
+    assert evidence["fetch_error"] is None
+    assert evidence["evidence"] is None
+
+    stale = resolve_demo_response(
+        "GET",
+        "/api/v1/seo/site-pages/image-evidence",
+        query(tenant_id=16, site_id=1601, page_id=1601001, snapshot_id=1),
+    )
+    assert stale.status_code == 404
 
 
 def test_search_clicks_are_explicitly_unavailable_not_fabricated():
