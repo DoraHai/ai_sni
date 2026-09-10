@@ -28,7 +28,7 @@ from app.models import (
 from app.security.auth import AuthContext, require_scoped_auth
 from app.security.crypto import decrypt
 from app.sem_cockpit_readonly import read_report, validate_query
-from app.sem_demo_adapter import is_demo_read, read_demo_report
+from app.sem_demo_adapter import is_demo_read, read_demo_dashboard_today, read_demo_report
 
 logger = logging.getLogger(__name__)
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
@@ -171,10 +171,12 @@ async def dashboard_today(
 
     苏尔寿 6 月起停投，演示时传 start_date=2026-05-01&end_date=2026-05-31 看 5 月数据。
     """
+    ctx.ensure_tenant(tenant_id)
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_dashboard_today(start_date, end_date)
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
-    ctx.ensure_tenant(tenant_id)
 
     end = end_date or datetime.now(_SHANGHAI_TZ).date()
     start = start_date or end.replace(day=1)

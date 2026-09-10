@@ -32,6 +32,7 @@ from app.models import (
 )
 from app.security.auth import AuthContext, require_scoped_auth
 from app.security.sem_identity import ensure_sem_identity_access
+from app.sem_demo_adapter import is_demo_read, read_demo_writeback_mode
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,8 @@ async def get_writeback_mode(
 ) -> dict:
     """返回当前客户可见的有效回写模式，不暴露其他客户白名单。"""
     ctx.ensure_tenant(tenant_id)
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_writeback_mode()
     await ensure_module_access(session, ctx, tenant_id, "sem")
     await ensure_sem_identity_access(session, tenant_id)
     accounts = list(
