@@ -378,6 +378,148 @@ def read_demo_search_terms(account_id: int | None, q: str | None,
             "scope_note": "内置演示搜索词使用固定同步窗口；触发词文本不是点击级归因，不返回跨窗口总量。"}
 
 
+def _demo_meta() -> dict[str, Any]:
+    return {
+        "is_demo": True, "read_only": True, "demo_revision": DEMO_REVISION,
+        "demo_policy": {"data_origin": "embedded_synthetic_fixture", "external_calls": False,
+                        "persistent_writes": False, "actions": "disabled"},
+    }
+
+
+def read_demo_account_budget(account_id: int | None) -> dict[str, Any]:
+    _account_scope(account_id)
+    if account_id is None:
+        raise HTTPException(409, "当前演示客户有多个推广账户，请先选择账户")
+    index = DEMO_ACCOUNTS.index(account_id)
+    return {**_demo_meta(), "status": "ok", "baidu_account_id": account_id,
+            "baidu_account_name": f"演示账户 {'AB'[index]}", "budget": 600.0 + index * 200,
+            "budget_type": 1, "has_daily_budget": True, "balance": 3200.0 + index * 900,
+            "cost": 186.4 + index * 42.8, "min_budget": 50, "max_budget": 10_000_000,
+            "updated_at": "2026-09-10T00:45:00+00:00",
+            "scope_note": "内置演示快照；未访问百度实时账户接口。"}
+
+
+def read_demo_campaigns(account_id: int | None) -> dict[str, Any]:
+    _account_scope(account_id)
+    rows = []
+    for index, (campaign_id, name) in enumerate(_CAMPAIGN_NAMES.items()):
+        aid = DEMO_ACCOUNTS[0 if index < 2 else 1]
+        if account_id is not None and aid != account_id:
+            continue
+        rows.append({"campaign_id": campaign_id, "campaign_name": name,
+                     "baidu_account_id": aid, "baidu_account_name": f"演示账户 {'A' if aid == 160001 else 'B'}",
+                     "budget": 220.0 + index * 60, "pause": index == 3, "status": 23 if index == 3 else 21,
+                     "region_target": [1000 + index], "region_price_factor": [], "geo_location_status": 0,
+                     "schedule_price_factors": [{"timeId": day * 100 + hour, "priceFactor": 1.0}
+                                                for day in range(1, 6) for hour in range(9, 18)],
+                     "synced_at": "2026-09-10T00:42:00+00:00"})
+    return {**_demo_meta(), "total": len(rows), "campaigns": rows,
+            "accounts": [{"id": aid, "name": f"演示账户 {'A' if aid == 160001 else 'B'}", "status": "active"}
+                         for aid in DEMO_ACCOUNTS], "min_budget": 50, "max_budget": 10_000_000}
+
+
+def read_demo_adgroups(campaign_id: int | None) -> dict[str, Any]:
+    rows = []
+    for index, (adgroup_id, name) in enumerate(_ADGROUP_NAMES.items()):
+        campaign = list(_CAMPAIGN_NAMES)[index]
+        if campaign_id is not None and campaign != campaign_id:
+            continue
+        rows.append({"adgroup_id": adgroup_id, "adgroup_name": name, "campaign_id": campaign,
+                     "campaign_name": _CAMPAIGN_NAMES[campaign], "max_price": 7.2 + index * 1.1,
+                     "pause": index == 3, "status": 23 if index == 3 else 21,
+                     "pc_final_url": f"https://demo.invalid/landing/{adgroup_id}",
+                     "mobile_final_url": f"https://demo.invalid/landing/{adgroup_id}",
+                     "pc_track_param": None, "mobile_track_param": None,
+                     "pc_track_template": None, "mobile_track_template": None})
+    return {**_demo_meta(), "total": len(rows), "adgroups": rows,
+            "sync": {"accounts": 2, "active_accounts": 2, "status": "demo",
+                     "last_synced_at": "2026-09-10T00:42:00+00:00", "error": None}}
+
+
+_DEMO_ALERTS = (
+    {"id": 160500001, "priority": "P1", "title": "点击成本上升", "message": "演示关键词近日报告成本上升，请结合业务目标复核。",
+     "report_date": "2026-09-10", "keyword_id": 160100001, "keyword": "工业泵选型", "campaign_id": 160201,
+     "campaign_name": "工业泵核心推广", "metrics": {"成本": 38.6, "点击": 7}, "status": "open", "source": "rule",
+     "detected_at": "2026-09-10T00:50:00", "resolved_at": None, "streak": {"days": 2, "first_date": "2026-09-09"}},
+    {"id": 160500002, "priority": "P3", "title": "展现下降", "message": "演示计划展现较前一观察窗口下降。",
+     "report_date": "2026-09-09", "keyword_id": 160100004, "keyword": "污水提升泵", "campaign_id": 160203,
+     "campaign_name": "泵站解决方案", "metrics": {"展现": 184}, "status": "resolved", "source": "rule",
+     "detected_at": "2026-09-09T00:50:00", "resolved_at": "2026-09-09T03:10:00"},
+)
+
+
+def read_demo_alerts(status: str | None, priority: str | None, campaign_id: int | None,
+                     alert_type: str | None, limit: int) -> dict[str, Any]:
+    rows = list(_DEMO_ALERTS)
+    if status and status != "all": rows = [row for row in rows if row["status"] == status]
+    if priority: rows = [row for row in rows if row["priority"] == priority]
+    if campaign_id is not None: rows = [row for row in rows if row["campaign_id"] == campaign_id]
+    if alert_type: rows = [row for row in rows if row["title"] == alert_type]
+    counts = {f"P{i}": 0 for i in range(6)}
+    for row in _DEMO_ALERTS:
+        if row["status"] == "open": counts[row["priority"]] += 1
+    return {**_demo_meta(), "open_counts": counts, "total_open": sum(counts.values()), "today_new": 1,
+            "group_options": {"campaigns": [{"id": cid, "name": name} for cid, name in _CAMPAIGN_NAMES.items()],
+                              "types": sorted({row["title"] for row in _DEMO_ALERTS})}, "alerts": rows[:limit],
+            "updated_at": "2026-09-10T00:50:00+00:00"}
+
+
+def read_demo_operations(opt_level: int | None, opt_content: str | None, q: str | None,
+                         start_date: date | None, end_date: date | None, over_limit: bool | None,
+                         page: int, page_size: int) -> dict[str, Any]:
+    records = [
+        {"id": 160600001, "opt_time": "2026-09-10T09:20:00", "opt_level": 5, "level_label": "关键词",
+         "opt_type": 4, "type_label": "修改", "opt_content": "bidPriceWord", "content_label": "关键词出价",
+         "opt_obj": "工业泵选型", "keyword_id": 160100001, "campaign_name": "工业泵核心推广", "adgroup_name": "选型咨询",
+         "old_value": "8.00", "new_value": "8.60", "change": {"pct": 7.5, "over_limit": False}, "source": "演示快照",
+         "ai_suggestion": None, "adopted": None, "effect_review": None},
+        {"id": 160600002, "opt_time": "2026-09-08T15:10:00", "opt_level": 2, "level_label": "计划",
+         "opt_type": 4, "type_label": "修改", "opt_content": "budget", "content_label": "计划预算",
+         "opt_obj": "泵站解决方案", "keyword_id": None, "campaign_name": "泵站解决方案", "adgroup_name": None,
+         "old_value": "200", "new_value": "260", "change": {"pct": 30.0, "over_limit": True}, "source": "演示快照",
+         "ai_suggestion": None, "adopted": None, "effect_review": None},
+    ]
+    if opt_level is not None: records = [r for r in records if r["opt_level"] == opt_level]
+    if opt_content: records = [r for r in records if r["opt_content"] == opt_content]
+    if q: records = [r for r in records if q.casefold() in r["opt_obj"].casefold()]
+    if start_date: records = [r for r in records if r["opt_time"][:10] >= start_date.isoformat()]
+    if end_date: records = [r for r in records if r["opt_time"][:10] <= end_date.isoformat()]
+    if over_limit: records = [r for r in records if r["change"] and r["change"]["over_limit"]]
+    total = len(records)
+    return {**_demo_meta(), "summary": {"month_total": 2, "month_keyword_level": 1,
+            "month_coef_level": 1, "month_over_limit": 1}, "total": total, "page": page, "page_size": page_size,
+            "last_synced_at": "2026-09-10T00:55:00+00:00",
+            "content_options": [{"code": "bidPriceWord", "label": "关键词出价"}, {"code": "budget", "label": "计划预算"}],
+            "records": records[(page - 1) * page_size:page * page_size]}
+
+
+def read_demo_writebacks(status: str | None = None, limit: int = 200) -> dict[str, Any]:
+    rows = [{"id": 160700001, "baidu_account_id": 160001, "keyword_id": 160100001,
+             "keyword": "工业泵选型", "old_bid": 8.0, "new_bid": 8.6, "status": "dry_run", "dry_run": True,
+             "error_msg": None, "operator_name": "演示用户", "created_at": "2026-09-10T01:00:00"}]
+    if status and status != "all": rows = [r for r in rows if r["status"] == status]
+    return {**_demo_meta(), "writebacks": rows[:limit]}
+
+
+def read_demo_approvals(status: str | None = None, limit: int = 100) -> dict[str, Any]:
+    rows = [{"id": 160710001, "tenant_id": 16, "action_type": "campaign_budget",
+             "payload": {"campaign_id": 160201, "new_budget": 280}, "status": "consumed",
+             "request_note": "演示审计记录", "decision_note": "演示数据", "requested_by": 5016,
+             "approved_by": 5016, "consumed_by": 5016, "created_at": "2026-09-08T02:00:00",
+             "decided_at": "2026-09-08T02:01:00", "consumed_at": "2026-09-08T02:02:00"}]
+    if status and status != "all": rows = [r for r in rows if r["status"] == status]
+    return {**_demo_meta(), "approvals": rows[:limit]}
+
+
+def read_demo_actions(action_type: str | None = None, limit: int = 200) -> dict[str, Any]:
+    rows = [{"id": 160720001, "baidu_account_id": 160001, "action_type": "negative", "action_label": "加否词",
+             "word": "工业泵二手", "campaign_name": "工业泵核心推广", "adgroup_name": "选型咨询",
+             "status": "dry_run", "status_label": "演练", "dry_run": True, "execution_mode_label": "演练（未修改百度）",
+             "operator_name": "演示用户", "created_at": "2026-09-09T03:00:00", "result_note": "演示记录"}]
+    if action_type: rows = [r for r in rows if r["action_type"] == action_type]
+    return {**_demo_meta(), "actions": rows[:limit]}
+
+
 _CATEGORY_BY_KEYWORD = {
     160100001: "focus",
     160100002: "focus",

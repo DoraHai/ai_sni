@@ -9,12 +9,14 @@ import { WRITEBACK_CONFIRMATION } from '../../api/writeback'
 import { session } from '../../store/session'
 import { createLatestRequestGuard } from '../../utils/latestRequest'
 import { chooseSemAccount } from '../../utils/accountScope'
+import { isSemDemoIdentity, SEM_DEMO_ACCOUNTS } from '../../utils/semDemo'
 
 const TENANT_ID = computed(() => session.tenantId)
+const demoMode = computed(() => isSemDemoIdentity(session.user, TENANT_ID.value))
 const currentTenant = computed(() => session.tenants.find((row) => row.id === TENANT_ID.value))
-const readableAccounts = computed(() => (currentTenant.value?.sem_accounts || []).filter((row) => row.status !== 'archived'))
+const readableAccounts = computed(() => (demoMode.value ? SEM_DEMO_ACCOUNTS : (currentTenant.value?.sem_accounts || [])).filter((row) => row.status !== 'archived'))
 const activeAccountIds = computed(() => new Set(
-  (currentTenant.value?.sem_accounts || []).filter((row) => row.status === 'active').map((row) => Number(row.id)),
+  readableAccounts.value.filter((row) => row.status === 'active').map((row) => Number(row.id)),
 ))
 
 const loading = ref(false)
@@ -591,6 +593,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <el-alert v-if="demoMode" title="演示数据，仅供体验；操作不会影响真实投放。" type="info" :closable="false" show-icon style="margin-bottom: 14px" />
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
     <el-alert
       type="warning"
@@ -654,7 +657,7 @@ onBeforeUnmount(() => {
         <el-table-column label="投放地域" width="110" align="center">
           <template #default="{ row }">{{ regionSummary(row) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="390" align="center">
+        <el-table-column v-if="session.canEdit('manage.campaigns') && !demoMode" label="操作" width="390" align="center">
           <template #default="{ row }">
             <el-button size="small" :disabled="!canWriteAccount(row.baidu_account_id)" :loading="savingId === row.campaign_id" @click="editBudget(row)">预算建议</el-button>
             <el-button size="small" :disabled="!canWriteAccount(row.baidu_account_id)" :loading="savingId === row.campaign_id" @click="openSchedule(row)">时段建议</el-button>

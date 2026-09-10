@@ -4,10 +4,12 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { batchResolveAlerts, fetchAlerts, resolveAlert } from '../../api/alerts'
 import { session } from '../../store/session'
+import { isSemDemoIdentity } from '../../utils/semDemo'
 
 const router = useRouter()
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
+const demoMode = computed(() => isSemDemoIdentity(session.user, TENANT_ID.value))
 
 const loading = ref(false)
 const error = ref('')
@@ -161,6 +163,7 @@ onMounted(load)
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
 
     <!-- 过滤栏：P0-P5 chips + 状态 tabs（原型 p-chips / view-tabs） -->
+    <el-alert v-if="demoMode" title="演示数据，仅供体验；操作不会影响真实投放。" type="info" :closable="false" show-icon style="margin-bottom: 14px" />
     <div class="filter-row">
       <div class="p-chips">
         <div class="p-chip" :class="{ active: priorityFilter === '' }" @click="setPriority('')">
@@ -188,7 +191,7 @@ onMounted(load)
       </div>
     </div>
 
-    <div v-if="statusFilter === 'open' && alerts.length" class="bulk-toolbar">
+    <div v-if="statusFilter === 'open' && alerts.length && !demoMode" class="bulk-toolbar">
       <label class="bulk-check">
         <input type="checkbox" :checked="allOpenSelected" @change="toggleSelectAllOpen" />
         <span>选择当前列表未处理告警</span>
@@ -215,7 +218,7 @@ onMounted(load)
       <div class="ac-body">
         <div class="ac-head">
           <input
-            v-if="row.status === 'open'"
+            v-if="row.status === 'open' && !demoMode"
             class="row-check"
             type="checkbox"
             :checked="selection.includes(row.id)"
@@ -257,7 +260,7 @@ onMounted(load)
         <span>检出于 {{ row.detected_at?.slice(0, 16).replace('T', ' ') }}</span>
         <span class="ac-foot-spacer" />
         <button v-if="row.keyword_id" class="row-action" @click="router.push(`/monitor/keywords/${row.keyword_id}?from=alerts`)">查看详情</button>
-        <button v-if="row.status === 'open' && session.canEdit('monitor.alerts')" class="row-action primary" @click="onResolve(row)">标记已处理</button>
+        <button v-if="row.status === 'open' && session.canEdit('monitor.alerts') && !demoMode" class="row-action primary" @click="onResolve(row)">标记已处理</button>
       </div>
     </div>
 
