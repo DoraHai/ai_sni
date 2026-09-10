@@ -23,8 +23,10 @@ import { session } from '../../store/session'
 import MetricLabel from '../../components/MetricLabel.vue'
 import { formatLocalDate, formatUtcTimestamp } from '../../utils/dateTime'
 import { createLatestRequestGuard } from '../../utils/latestRequest'
+import { isSemDemoIdentity } from '../../utils/semDemo'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
+const demoMode = computed(() => data.value?.is_demo === true || isSemDemoIdentity(session.user, TENANT_ID.value))
 const currentTenant = computed(() => session.tenants.find((row) => row.id === TENANT_ID.value))
 const activeAccountIds = computed(() => new Set(
   (currentTenant.value?.sem_accounts || [])
@@ -585,7 +587,7 @@ async function refreshData() {
   error.value = ''
   let syncStatus = 'local'
   try {
-    if (session.canEdit('optimize.keywords')) {
+    if (session.canEdit('optimize.keywords') && !demoMode.value) {
       const result = await refreshKeywordWorkbench({ tenantId })
       if (!attempt.isCurrent()) return
       syncStatus = result.status
@@ -1020,6 +1022,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="workbench">
     <el-alert v-if="error" :title="error" type="error" show-icon style="margin-bottom: 12px" />
+    <el-alert v-if="demoMode" title="演示数据，仅供体验；操作不会影响真实投放。" type="info" :closable="false" show-icon style="margin-bottom: 12px" />
 
     <div class="page-header">
       <div class="page-header-main">
@@ -1041,7 +1044,7 @@ onBeforeUnmount(() => {
             <span class="refresh-icon" :class="{ spinning: refreshing }">↻</span>
             {{ refreshing ? '同步中…' : '刷新数据' }}
           </button>
-          <button class="pbtn" :disabled="exporting" @click="exportCsv">{{ exporting ? '导出中…' : '导出' }}</button>
+          <button v-if="!demoMode" class="pbtn" :disabled="exporting" @click="exportCsv">{{ exporting ? '导出中…' : '导出' }}</button>
           <el-tooltip content="导入/新建的执行模式由当前客户、推广账户和动作门禁决定" placement="bottom">
             <button class="pbtn" disabled>导入关键词</button>
           </el-tooltip>

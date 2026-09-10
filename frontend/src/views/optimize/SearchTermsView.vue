@@ -6,10 +6,16 @@ import { session } from '../../store/session'
 import { formatUtcTimestamp } from '../../utils/dateTime'
 import { createLatestRequestGuard } from '../../utils/latestRequest'
 import { canWriteScopedAsset, chooseSemAccount } from '../../utils/accountScope'
+import { isSemDemoIdentity, SEM_DEMO_ACCOUNTS } from '../../utils/semDemo'
 
 const TENANT_ID = computed(() => session.tenantId)
+const demoMode = computed(() => data.value?.is_demo === true || isSemDemoIdentity(session.user, TENANT_ID.value))
 const currentTenant = computed(() => session.tenants.find((row) => row.id === TENANT_ID.value))
-const readableAccounts = computed(() => (currentTenant.value?.sem_accounts || []).filter((row) => row.status !== 'archived'))
+const readableAccounts = computed(() => (
+  isSemDemoIdentity(session.user, TENANT_ID.value)
+    ? SEM_DEMO_ACCOUNTS
+    : (currentTenant.value?.sem_accounts || []).filter((row) => row.status !== 'archived')
+))
 const activeAccounts = computed(() => readableAccounts.value.filter((row) => row.status === 'active'))
 const selectedAccountId = ref(null)
 const loading = ref(false)
@@ -278,8 +284,9 @@ const statCards = computed(() => {
           <template v-if="data?.window?.synced_at"> · 同步于 {{ fmtTime(data.window.synced_at) }}</template>
         </div>
       </div>
-      <el-button type="primary" :loading="syncing" :disabled="!selectedAccountIsActive" @click="runSync">同步搜索词（近 30 天）</el-button>
+      <el-button v-if="session.canEdit('optimize.searchterms') && !demoMode" type="primary" :loading="syncing" :disabled="!selectedAccountIsActive" @click="runSync">同步搜索词（近 30 天）</el-button>
     </div>
+    <el-alert v-if="demoMode" title="演示数据，仅供体验；操作不会影响真实投放。" type="info" :closable="false" show-icon style="margin-bottom: 12px" />
     <el-alert v-if="emptyDiagnosis" type="warning" :title="emptyDiagnosis" :closable="false" show-icon style="margin-bottom: 12px" />
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
@@ -390,7 +397,7 @@ const statCards = computed(() => {
             <div class="kw-cell-sub">{{ fmtPct(row.cvr) }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="156">
+        <el-table-column v-if="session.canEdit('optimize.searchterms') && !demoMode" label="操作" min-width="156">
           <template #default="{ row }">
             <div class="search-term-actions">
               <el-button class="search-action is-negative" size="small" :disabled="(!row.adgroup_id && !row.campaign_id) || !canWriteRow(row)" @click="addNeg(row)">待回写否词</el-button>
