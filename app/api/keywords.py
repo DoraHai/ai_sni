@@ -47,6 +47,8 @@ from app.sem_cockpit_details import read_keyword_detail, read_keywords
 from app.sem_cockpit_readonly import validate_query
 from app.sem_demo_adapter import (
     is_demo_read,
+    read_demo_classic_keyword_detail,
+    read_demo_classic_keywords,
     read_demo_keyword_detail,
     read_demo_keywords,
 )
@@ -638,11 +640,18 @@ async def list_keywords(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """关键词工作台列表：分页 + 筛选 + 7 天指标 + 峰值系数预警。
 
     7 天窗口锚定该租户最近有数据的日期（苏尔寿 6 月零星投放，锚 today 会全空）。
     """
+    ctx.ensure_tenant(tenant_id)
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_classic_keywords(
+            category, campaign_id, pause, serving, q, coef_warning,
+            has_suggestion, sort_by, order, page, page_size,
+        )
     # ===== 计划 / 单元维度（算系数乘积 + 名称映射 + 筛选下拉） =====
     campaigns = {
         c.campaign_id: c
@@ -1126,11 +1135,15 @@ async def keyword_detail(
     start_date: date | None = Query(None, description="统计起始日期，默认该词首次有数据的日期（全历史，至多 366 天）"),
     end_date: date | None = Query(None, description="统计截止日期，默认该词最近有数据的日期"),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """关键词详情：基础信息 + 时段 KPI + 环比 + 日趋势 + 设备维度 + 关联告警。
 
     苏尔寿 6 月停投，默认时段锚定该词最近有数据的日期，演示无需手动传 5 月区间。
     """
+    ctx.ensure_tenant(tenant_id)
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_classic_keyword_detail(keyword_id, start_date, end_date)
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")

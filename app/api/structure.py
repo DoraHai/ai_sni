@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dashboard import _f
 from app.database import get_session
 from app.models import Adgroup, Campaign, Keyword, KwReportSnapshot, Lead
-from app.security.auth import require_scoped_auth
+from app.security.auth import AuthContext, require_scoped_auth
+from app.sem_demo_adapter import is_demo_read, read_demo_structure
 
 router = APIRouter(
     prefix="/api/v1/structure",
@@ -102,8 +103,12 @@ async def _counts_by(session: AsyncSession, tenant_id: int, model, group_col) ->
 async def list_campaigns(
     tenant_id: int = Query(..., description="本地租户 ID"),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """计划列表：预算/状态/出价系数概览/移动比例 + 单元数/关键词数 + 7 天指标。"""
+    ctx.ensure_tenant(tenant_id)
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_structure("campaigns")
     campaigns = (
         await session.scalars(
             select(Campaign).where(Campaign.tenant_id == tenant_id)
@@ -155,8 +160,12 @@ async def list_adgroups(
     tenant_id: int = Query(..., description="本地租户 ID"),
     campaign_id: int | None = Query(None, description="按计划筛选"),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """单元列表：出价/移动比例/否词数 + 关键词数 + 7 天指标。"""
+    ctx.ensure_tenant(tenant_id)
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_structure("adgroups", campaign_id)
     cond = [Adgroup.tenant_id == tenant_id]
     if campaign_id is not None:
         cond.append(Adgroup.campaign_id == campaign_id)

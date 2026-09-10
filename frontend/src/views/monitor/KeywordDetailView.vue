@@ -14,6 +14,7 @@ import { useKeywordWriteback } from '../../composables/useKeywordWriteback'
 import { session } from '../../store/session'
 import { createLatestRequestGuard } from '../../utils/latestRequest'
 import MetricLabel from '../../components/MetricLabel.vue'
+import { isSemDemoIdentity } from '../../utils/semDemo'
 
 const route = useRoute()
 const router = useRouter()
@@ -24,6 +25,7 @@ use([
 ])
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
+const demoMode = computed(() => data.value?.is_demo === true || isSemDemoIdentity(session.user, TENANT_ID.value))
 const canViewDetail = () => ['monitor.dashboard', 'monitor.alerts', 'optimize.keywords'].some((key) => session.canView(key))
 
 const loading = ref(false)
@@ -613,6 +615,7 @@ onBeforeUnmount(() => {
     </el-alert>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
+    <el-alert v-if="demoMode" title="演示数据，仅供体验；操作不会影响真实投放。" type="info" :closable="false" show-icon style="margin-bottom: 14px" />
 
     <template v-if="data">
       <!-- 页头 -->
@@ -628,7 +631,7 @@ onBeforeUnmount(() => {
           >{{ data.keyword.category.label }}<template v-if="data.keyword.category.source === 'manual'">（人工）</template></el-tag>
           <el-tag v-else size="small" type="info" effect="plain" style="margin-left: 8px">未分级</el-tag>
           <el-tag v-if="data.keyword.pause === true" size="small" type="info" style="margin-left: 4px">已暂停</el-tag>
-          <el-dropdown trigger="click" style="margin-left: 8px" @command="onChangeCategory">
+          <el-dropdown v-if="session.canEdit('optimize.keywords') && !demoMode" trigger="click" style="margin-left: 8px" @command="onChangeCategory">
             <el-button size="small" link type="primary">编辑分级 ▾</el-button>
             <template #dropdown>
               <el-dropdown-menu>
@@ -644,7 +647,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="head-controls">
-          <div class="detail-actions">
+          <div v-if="session.canEdit('optimize.keywords') && !demoMode" class="detail-actions">
             <el-input-number v-model="editPrice" :precision="2" :min="0.01" :step="0.01" placeholder="新出价" controls-position="right" />
             <el-button type="primary" @click="handleWriteback">回写出价</el-button>
             <el-dropdown trigger="click" @command="handleMatchChange">

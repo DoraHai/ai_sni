@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.insight import generate_insight
 from app.database import get_session
 from app.models import Tenant
-from app.security.auth import require_scoped_auth
+from app.security.auth import AuthContext, require_scoped_auth
+from app.sem_demo_adapter import is_demo_read, read_demo_dashboard_insight
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +31,12 @@ async def get_insight(
     ),
     force: bool = Query(False, description="true=强制重新生成（忽略当天缓存）"),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """取所选结束日的 AI 洞察。未传日期时回退到最新数据日。"""
+    ctx.ensure_tenant(tenant_id)
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_dashboard_insight(target_date, force)
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
