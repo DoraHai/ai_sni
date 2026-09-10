@@ -80,6 +80,9 @@ const filteredCards = computed(() => activeModule.value === 'all'
   : cards.value.filter(item => item.moduleCode === activeModule.value))
 const selectedMetric = computed(() => cards.value.find(item => item.id === selectedMetricId.value) || null)
 const demoMode = computed(() => session.user?.id === 5 && session.user?.tenant_id === 16 && session.user?.username === 'workbench_test_readonly' && Number(session.tenantId) === 16)
+const agentName = computed(() => demoMode.value ? 'AI 演示助手' : 'DeepSeek')
+const agentTitle = computed(() => demoMode.value ? '交互演示台' : '作战指令台')
+const agentStatus = computed(() => aiBusy.value ? '分析中' : (demoMode.value ? '演示模式' : '可下达指令'))
 const cardGroups = computed(() => [
   { id: 'performance', title: '趋势与投入', cards: filteredCards.value.filter(card => card.moduleCode === 'sem') },
   { id: 'presence', title: '内容与品牌', cards: filteredCards.value.filter(card => card.moduleCode !== 'sem') },
@@ -650,17 +653,17 @@ onBeforeUnmount(() => {
 
     <section class="operations-grid">
       <aside v-if="viewMode !== 'data'" class="agent-panel">
-        <div class="agent-head"><div class="agent-orb"><i></i></div><div><span>DeepSeek · 获客推广AI智能体</span><strong>作战指令台</strong></div><em><i></i> {{ aiBusy ? '分析中' : '可下达指令' }}</em></div>
+        <div class="agent-head"><div class="agent-orb"><i></i></div><div><span>{{ agentName }} · 获客数据引导</span><strong>{{ agentTitle }}</strong></div><em><i></i> {{ agentStatus }}</em></div>
         <div class="context-ribbon"><span>当前关注</span><b>{{ urgentItems ? `${urgentItems} 项待处理事项` : '本周期整体获客表现' }}</b></div>
         <div ref="messagesEl" class="messages" aria-live="polite">
           <div v-for="(item, index) in conversation" :key="index" :class="['message', item.role]">
-            <small>{{ item.role === 'assistant' ? 'DeepSeek' : '我' }}</small><p>{{ item.text }}</p><span v-if="item.screenCommand" class="screen-applied">已同步调整大屏</span>
+            <small>{{ item.role === 'assistant' ? agentName : '我' }}</small><p>{{ item.text }}</p><span v-if="item.screenCommand" class="screen-applied">已同步调整大屏</span>
             <div v-if="item.screenCommand?.actions?.length" class="message-actions"><button v-for="action in item.screenCommand.actions" :key="`${action.type}-${action.target}`" type="button" @click="runScreenAction(action)">{{ action.label }}</button></div>
           </div>
         </div>
         <div class="guides"><button v-for="item in guideQuestions.slice(0, 4)" :key="item" type="button" @click="send(item)">{{ item }}</button></div>
         <form class="composer" @submit.prevent="send()"><textarea v-model="question" rows="3" placeholder="问数据、锁定风险，或直接说“只看 GEO”…"></textarea><button type="submit" :disabled="aiBusy" aria-label="发送指令">{{ aiBusy ? '…' : '↑' }}</button></form>
-        <p class="agent-note"><i></i> 回答仅使用当前已核验数据；执行前会单独确认范围。</p>
+        <p class="agent-note"><i></i> {{ demoMode ? '当前是演示模式；回答和屏幕联动仅用于产品体验。' : '回答仅使用当前已核验数据；执行前会单独确认范围。' }}</p>
       </aside>
 
       <div v-if="viewMode !== 'chat'" class="data-stage">
@@ -725,9 +728,9 @@ onBeforeUnmount(() => {
     <aside v-if="selectedMetric" class="command-drawer" aria-live="polite">
       <header><div><small>{{ selectedMetric.moduleLabel }} · TARGET LOCK</small><h2>{{ selectedMetric.label }}</h2></div><button type="button" aria-label="关闭详情" @click="selectedMetricId = null">×</button></header>
       <div class="drawer-value">{{ selectedMetric.display }}</div>
-      <p>{{ selectedMetric.reason || '当前指标已锁定，可以继续向 DeepSeek 追问原因和下一步。' }}</p>
+      <p>{{ selectedMetric.reason || `当前指标已锁定，可以继续向${agentName}追问原因和下一步。` }}</p>
       <dl><div><dt>统计范围</dt><dd>{{ selectedMetric.periodLabel }}</dd></div><div><dt>数据来源</dt><dd>{{ selectedMetric.sourceLabel }}</dd></div><div><dt>更新时间</dt><dd>{{ selectedMetric.updatedLabel }}</dd></div></dl>
-      <div class="drawer-actions"><button type="button" @click="discuss({ metricId: selectedMetric.id, contextRevision: viewState.revision }); setViewMode('split')">就这项问 DeepSeek</button><button type="button" @click="openModule(selectedMetric.moduleCode)">进入模块 ↗</button></div>
+      <div class="drawer-actions"><button type="button" @click="discuss({ metricId: selectedMetric.id, contextRevision: viewState.revision }); setViewMode('split')">就这项问{{ agentName }}</button><button type="button" @click="openModule(selectedMetric.moduleCode)">进入模块 ↗</button></div>
     </aside>
     <button v-if="viewMode === 'data'" class="agent-fab" type="button" @click="setViewMode('split')"><i></i><span>打开智能体</span></button>
   </main>
