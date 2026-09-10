@@ -1389,5 +1389,514 @@
     "reason_code": "search_console_not_connected",
     "message": "演示账号未连接搜索平台，不能提供业务主题或单篇文章点击。",
     "as_of": null
-  }
+  },
+  "brand_profile": {
+    "tenant_id": 16,
+    "brand_name": "TIGER 老虎粉末涂料",
+    "website": "https://www.tiger-coatings.cn/",
+    "official_domains": [
+      "tiger-coatings.cn"
+    ],
+    "ranking_ready": true,
+    "synthetic": true
+  },
+  "brand_assets": [
+    {
+      "id": 1608001,
+      "tenant_id": 16,
+      "site_id": 1601,
+      "asset_type": "official_domain",
+      "name": "主官网",
+      "match_value": "tiger-coatings.cn",
+      "platform": "website",
+      "status": "active",
+      "created_at": "2026-09-01T02:00:00Z",
+      "updated_at": "2026-09-09T16:30:55.281696+00:00",
+      "synthetic": true
+    }
+  ],
+  "alerts": [
+    {
+      "type": "rank_drop",
+      "severity": "high",
+      "title": "粉末涂料排名下降",
+      "detail": "从第 8 位下降到第 19 位",
+      "evidence": "演示排名快照显示最近两次百度/桌面/全国下降 11 位",
+      "action_label": "查看关键词诊断",
+      "href": "/seo/keywords/1604001?engine=baidu&device=desktop&region=全国",
+      "object_id": 1604001,
+      "site_id": 1601,
+      "occurred_at": "2026-09-09T16:30:55.281696+00:00",
+      "synthetic": true
+    },
+    {
+      "type": "missing_landing",
+      "severity": "medium",
+      "title": "粉末喷涂方案缺少明确承接页面",
+      "detail": "高价值关键词尚未绑定唯一站内页面",
+      "evidence": "演示关键词 target page 为空",
+      "action_label": "查看关键词",
+      "href": "/seo/keywords/1604003",
+      "object_id": 1604003,
+      "site_id": 1601,
+      "occurred_at": "2026-09-09T16:30:55.281696+00:00",
+      "synthetic": true
+    },
+    {
+      "type": "site_issue",
+      "severity": "medium",
+      "title": "站内页面需要处理",
+      "detail": "https://www.tiger-coatings.cn/onlineOptimization/",
+      "evidence": "image_alt_missing",
+      "action_label": "查看页面问题",
+      "href": "/seo/site?page_id=1601003&site_id=1601",
+      "object_id": 1601003,
+      "site_id": 1601,
+      "occurred_at": "2026-09-09T16:30:55.281696+00:00",
+      "synthetic": true
+    },
+    {
+      "type": "toxic_backlink",
+      "severity": "high",
+      "title": "发现高风险外链",
+      "detail": "unknown-directory.demo.invalid",
+      "evidence": "演示风险分 82；尚未作为真实证据",
+      "action_label": "查看外链",
+      "href": "/seo/links?tab=backlink&backlink_id=1606003&site_id=1601",
+      "object_id": 1606003,
+      "site_id": 1601,
+      "occurred_at": "2026-09-09T16:30:55.281696+00:00",
+      "synthetic": true
+    }
+  ],
+  "internal_links": [
+    {
+      "id": 1607001,
+      "source": 1601001,
+      "target": 1601002,
+      "anchor_text": "应用行业"
+    },
+    {
+      "id": 1607002,
+      "source": 1601001,
+      "target": 1601003,
+      "anchor_text": "在线优选"
+    },
+    {
+      "id": 1607003,
+      "source": 1601002,
+      "target": 1601004,
+      "anchor_text": "粉末涂料产品"
+    },
+    {
+      "id": 1607004,
+      "source": 1601004,
+      "target": 1601005,
+      "anchor_text": "技术服务"
+    },
+    {
+      "id": 1607005,
+      "source": 1601005,
+      "target": 1601001,
+      "anchor_text": "返回官网"
+    }
+  ],
+  "backlinks": [
+    {
+      "id": 1606001,
+      "site_id": 1601,
+      "source_url": "https://demo.invalid/zhihu/1603001",
+      "target_url": "https://www.tiger-coatings.cn/",
+      "source_domain": "demo.invalid",
+      "anchor_text": "TIGER 粉末涂料",
+      "authority_score": 58,
+      "toxic_score": 8,
+      "status": "active",
+      "first_seen_at": "2026-09-03T02:00:00Z",
+      "last_seen_at": "2026-09-09T16:30:55.281696+00:00",
+      "last_checked_at": "2026-09-09T16:30:55.281696+00:00",
+      "missing_checks": 0,
+      "verification": {
+        "state": "found",
+        "rel": [
+          "nofollow"
+        ],
+        "checked_at": "2026-09-09T16:30:55.281696+00:00",
+        "http_status": 200,
+        "history": [
+          {
+            "state": "found",
+            "checked_at": "2026-09-09T16:30:55.281696+00:00",
+            "http_status": 200,
+            "reason": null
+          }
+        ]
+      },
+      "synthetic": true
+    },
+    {
+      "id": 1606002,
+      "site_id": 1601,
+      "source_url": "https://demo.invalid/baijiahao/1603002",
+      "target_url": "https://www.tiger-coatings.cn/applicationIndustry/",
+      "source_domain": "demo.invalid",
+      "anchor_text": "工业粉末涂装方案",
+      "authority_score": 51,
+      "toxic_score": 12,
+      "status": "active",
+      "first_seen_at": "2026-09-04T02:00:00Z",
+      "last_seen_at": "2026-09-09T16:30:55.281696+00:00",
+      "last_checked_at": "2026-09-09T16:30:55.281696+00:00",
+      "missing_checks": 0,
+      "verification": {
+        "state": "found",
+        "rel": [
+          "nofollow"
+        ],
+        "checked_at": "2026-09-09T16:30:55.281696+00:00",
+        "http_status": 200,
+        "history": [
+          {
+            "state": "found",
+            "checked_at": "2026-09-09T16:30:55.281696+00:00",
+            "http_status": 200,
+            "reason": null
+          }
+        ]
+      },
+      "synthetic": true
+    },
+    {
+      "id": 1606003,
+      "site_id": 1601,
+      "source_url": "https://unknown-directory.demo.invalid/item/16",
+      "target_url": "https://www.tiger-coatings.cn/",
+      "source_domain": "unknown-directory.demo.invalid",
+      "anchor_text": "老虎涂料",
+      "authority_score": 9,
+      "toxic_score": 82,
+      "status": "active",
+      "first_seen_at": "2026-09-05T02:00:00Z",
+      "last_seen_at": null,
+      "last_checked_at": "2026-09-09T16:30:55.281696+00:00",
+      "missing_checks": 0,
+      "verification": {
+        "state": "pending",
+        "history": []
+      },
+      "synthetic": true
+    }
+  ],
+  "backlink_sources": [
+    {
+      "id": 1603001,
+      "source_url": "https://demo.invalid/zhihu/1603001",
+      "platform_name": "知乎",
+      "discovery": {
+        "state": "readable",
+        "found": 1,
+        "created": 1,
+        "checked_at": "2026-09-09T16:30:55.281696+00:00",
+        "reason": null
+      },
+      "synthetic": true
+    },
+    {
+      "id": 1603002,
+      "source_url": "https://demo.invalid/baijiahao/1603002",
+      "platform_name": "百家号",
+      "discovery": {
+        "state": "readable",
+        "found": 1,
+        "created": 1,
+        "checked_at": "2026-09-09T16:30:55.281696+00:00",
+        "reason": null
+      },
+      "synthetic": true
+    }
+  ],
+  "backlink_trend": [
+    {
+      "date": "2026-09-03",
+      "new": 1,
+      "lost": 0
+    },
+    {
+      "date": "2026-09-04",
+      "new": 1,
+      "lost": 0
+    },
+    {
+      "date": "2026-09-05",
+      "new": 1,
+      "lost": 0
+    }
+  ],
+  "backlink_opportunities": {
+    "request_id": "demo-opportunity-1601",
+    "attempted_at": "2026-09-09T16:30:55.281696+00:00",
+    "completed_at": "2026-09-09T16:30:55.281696+00:00",
+    "state": "completed",
+    "provider": "static_demo",
+    "message": "演示样本用于展示流程，不代表真实合作机会。",
+    "samples": {
+      "example-competitor.cn": {
+        "state": "completed",
+        "items": [
+          {
+            "source_url": "https://industry-media.demo.invalid/powder-coating",
+            "source_domain": "industry-media.demo.invalid"
+          }
+        ],
+        "as_of": "2026-09-09T16:30:55.281696+00:00"
+      }
+    },
+    "items": [
+      {
+        "source_domain": "industry-media.demo.invalid",
+        "competitor_count": 2,
+        "evidence": [
+          {
+            "competitor": "example-competitor.cn",
+            "source_url": "https://industry-media.demo.invalid/powder-coating"
+          }
+        ]
+      }
+    ],
+    "synthetic": true
+  },
+  "work_orders": [
+    {
+      "id": 1609001,
+      "module": "seo",
+      "action_type": "backlink_outreach",
+      "title": "评估行业媒体合作机会（演示）",
+      "params": {
+        "source_url": "https://industry-media.demo.invalid/powder-coating",
+        "followups": [
+          {
+            "at": "2026-09-09T03:00:00Z",
+            "note": "演示：已完成来源相关性初审"
+          }
+        ]
+      },
+      "status": "in_progress",
+      "created_by": "cockpit",
+      "assignee_role": "seo_operator",
+      "completion_evidence": null,
+      "created_at": "2026-09-08T03:00:00Z",
+      "updated_at": "2026-09-09T16:30:55.281696+00:00",
+      "site_id": 1601,
+      "synthetic": true
+    }
+  ],
+  "backlink_outcomes": [
+    {
+      "publication_id": 1603001,
+      "source_url": "https://demo.invalid/zhihu/1603001",
+      "platform_name": "知乎",
+      "publication_status": "published",
+      "verified_backlinks": 1,
+      "backlink_ids": [
+        1606001
+      ],
+      "visits": null,
+      "conversions": null,
+      "observation": null,
+      "synthetic": true
+    },
+    {
+      "publication_id": 1603002,
+      "source_url": "https://demo.invalid/baijiahao/1603002",
+      "platform_name": "百家号",
+      "publication_status": "published",
+      "verified_backlinks": 1,
+      "backlink_ids": [
+        1606002
+      ],
+      "visits": null,
+      "conversions": null,
+      "observation": null,
+      "synthetic": true
+    }
+  ],
+  "competitors": [
+    {
+      "id": 1608101,
+      "tenant_id": 16,
+      "site_id": 1601,
+      "name": "阿克苏诺贝尔（演示）",
+      "domain": "akzonobel.com",
+      "notes": "公开站点对比样本",
+      "status": "active",
+      "last_checked_at": "2026-09-09T05:00:00Z",
+      "next_collection_allowed_at": null,
+      "collection_retry_after_seconds": 0,
+      "created_at": "2026-09-01T02:00:00Z",
+      "content": 2,
+      "backlink": 1,
+      "synthetic": true
+    },
+    {
+      "id": 1608102,
+      "tenant_id": 16,
+      "site_id": 1601,
+      "name": "PPG（演示）",
+      "domain": "ppg.com",
+      "notes": "公开站点对比样本",
+      "status": "active",
+      "last_checked_at": "2026-09-09T05:00:00Z",
+      "next_collection_allowed_at": null,
+      "collection_retry_after_seconds": 0,
+      "created_at": "2026-09-01T02:00:00Z",
+      "content": 1,
+      "backlink": 1,
+      "synthetic": true
+    }
+  ],
+  "competitor_events": [
+    {
+      "id": 1608201,
+      "competitor_id": 1608101,
+      "event_type": "content",
+      "title": "粉末涂料应用页更新（演示）",
+      "url": "https://www.akzonobel.com/en/about-us/our-businesses/powder-coatings",
+      "source_url": null,
+      "summary": "公开页面变化的演示记录，不代表实时监测结果。",
+      "event_at": "2026-09-08T04:00:00Z",
+      "detected_at": "2026-09-09T05:00:00Z",
+      "synthetic": true
+    },
+    {
+      "id": 1608202,
+      "competitor_id": 1608102,
+      "event_type": "backlink",
+      "title": "行业媒体来源记录（演示）",
+      "url": "https://industry-media.demo.invalid/ppg",
+      "source_url": "https://industry-media.demo.invalid/",
+      "summary": "外链候选演示记录，尚未核实合作价值。",
+      "event_at": "2026-09-07T04:00:00Z",
+      "detected_at": "2026-09-09T05:00:00Z",
+      "synthetic": true
+    }
+  ],
+  "competitor_rankings": [
+    {
+      "keyword_id": 1604001,
+      "captured_at": "2026-09-09T16:30:55.281696+00:00",
+      "rankings": {
+        "1608101": {
+          "state": "ranked",
+          "rank": 12
+        },
+        "1608102": {
+          "state": "ranked",
+          "rank": 18
+        }
+      },
+      "synthetic": true
+    },
+    {
+      "keyword_id": 1604002,
+      "captured_at": "2026-09-09T16:30:55.281696+00:00",
+      "rankings": {
+        "1608101": {
+          "state": "ranked",
+          "rank": 17
+        },
+        "1608102": {
+          "state": "ranked",
+          "rank": 24
+        }
+      },
+      "synthetic": true
+    },
+    {
+      "keyword_id": 1604003,
+      "captured_at": "2026-09-09T16:30:55.281696+00:00",
+      "rankings": {
+        "1608101": {
+          "state": "ranked",
+          "rank": 22
+        },
+        "1608102": {
+          "state": "ranked",
+          "rank": 30
+        }
+      },
+      "synthetic": true
+    },
+    {
+      "keyword_id": 1604004,
+      "captured_at": "2026-09-09T16:30:55.281696+00:00",
+      "rankings": {
+        "1608101": {
+          "state": "ranked",
+          "rank": 27
+        },
+        "1608102": {
+          "state": "outside_top50",
+          "rank": null
+        }
+      },
+      "synthetic": true
+    }
+  ],
+  "task_runs": [
+    {
+      "id": "demo-crawl-1601",
+      "source": "crawl",
+      "kind": "crawl",
+      "site_id": 1601,
+      "status": "completed",
+      "planned": 26,
+      "succeeded": 26,
+      "failed": 0,
+      "skipped": 0,
+      "detail": "公开页面预检演示数据已准备；未启动生产爬虫。",
+      "started_at": "2026-09-09T01:00:00Z",
+      "completed_at": "2026-09-09T01:03:00Z",
+      "stale": false,
+      "has_result": false,
+      "can_retry": false,
+      "retry_site_id": null,
+      "synthetic": true
+    },
+    {
+      "id": "demo-rank-1601",
+      "source": "automation",
+      "kind": "ranking",
+      "site_id": 1601,
+      "status": "partial",
+      "planned": 4,
+      "succeeded": 3,
+      "failed": 1,
+      "skipped": 0,
+      "detail": "3 个关键词有演示排名，1 个标记为外部供应商未连接。",
+      "started_at": "2026-09-09T02:00:00Z",
+      "completed_at": "2026-09-09T02:01:00Z",
+      "stale": false,
+      "has_result": false,
+      "can_retry": false,
+      "retry_site_id": 1601,
+      "synthetic": true
+    }
+  ],
+  "task_schedules": [
+    {
+      "job_type": "ranking",
+      "next_check_at": "2026-09-11T02:00:00Z",
+      "synthetic": true
+    },
+    {
+      "job_type": "competitor",
+      "next_check_at": "2026-09-11T03:00:00Z",
+      "synthetic": true
+    },
+    {
+      "job_type": "backlink",
+      "next_check_at": "2026-09-11T04:00:00Z",
+      "synthetic": true
+    }
+  ]
 }
