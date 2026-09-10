@@ -32,7 +32,7 @@ from app.models import (
 from app.security.auth import AuthContext, require_scoped_auth
 from app.sem_cockpit_details import read_search_terms
 from app.sem_cockpit_readonly import validate_query
-from app.sem_demo_adapter import is_demo_read, read_demo_search_terms
+from app.sem_demo_adapter import is_demo_read, read_demo_classic_search_terms, read_demo_search_terms
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +98,14 @@ async def list_search_terms(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, le=200),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """搜索词列表（分页 + 筛选）+ 汇总（总数/有点击数/展现·点击·消费合计 + 窗口）。"""
+    ctx.ensure_tenant(tenant_id)
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_classic_search_terms(
+            baidu_account_id, campaign_id, adgroup_id, status, has_click, q, page, page_size
+        )
     cond = [SearchTermReport.tenant_id == tenant_id]
     if baidu_account_id is not None:
         cond.append(SearchTermReport.baidu_account_id == baidu_account_id)

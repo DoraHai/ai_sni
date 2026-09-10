@@ -376,3 +376,345 @@ def read_demo_search_terms(account_id: int | None, q: str | None,
                        "window": _window(window_start, window_end, "sync_snapshot"),
                        "updated_at": stamp} for item in page_rows],
             "scope_note": "内置演示搜索词使用固定同步窗口；触发词文本不是点击级归因，不返回跨窗口总量。"}
+
+
+_CATEGORY_BY_KEYWORD = {
+    160100001: "focus",
+    160100002: "focus",
+    160100003: "normal",
+    160100004: "longtail",
+    160100005: "normal",
+    160100006: "new",
+}
+_CATEGORY_LABELS = {
+    "brand": "品牌词",
+    "focus": "重点词",
+    "normal": "普通词",
+    "longtail": "长尾词",
+    "new": "新词",
+}
+_CAMPAIGN_NAMES = {
+    160201: "工业泵核心推广",
+    160202: "化工行业获客",
+    160203: "水处理解决方案",
+    160204: "泵站改造专项",
+}
+_ADGROUP_NAMES = {
+    160301: "选型与报价",
+    160302: "化工泵厂家",
+    160303: "污水与高扬程",
+    160304: "泵站节能改造",
+}
+
+
+def _classic_change(current: float | int | None, previous: float | int | None) -> float | None:
+    if current is None or previous in (None, 0):
+        return None
+    return round((current - previous) / previous * 100, 1)
+
+
+def _classic_compare(current: dict[str, Any], previous: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: {
+            "current": current.get(key),
+            "previous": previous.get(key),
+            "change_pct": _classic_change(current.get(key), previous.get(key)),
+        }
+        for key in ("cost", "click", "impression", "cpc", "ctr")
+    }
+
+
+def read_demo_dashboard_today(start: date | None, end: date | None) -> dict[str, Any]:
+    """Return the classic dashboard shape without DB, Baidu, cache, or AI calls."""
+    end = end or DEMO_DEFAULT_END
+    start = start or end.replace(day=1)
+    days = _days(start, end)
+    previous_end = start - timedelta(days=1)
+    previous_start = previous_end - timedelta(days=len(days) - 1)
+    report = read_demo_report(start, end, None)
+    previous = read_demo_report(previous_start, previous_end, None)
+    metrics = report["metrics"]
+    previous_metrics = previous["metrics"]
+    device_split = []
+    total_cost = metrics.get("cost") or 0
+    for row in report["devices"]:
+        device_split.append({
+            "device": row["label"],
+            "cost": row["cost"],
+            "click": row["click"],
+            "impression": row["impression"],
+            "cpc": row["cpc"],
+            "ctr": row["ctr"],
+            "cost_share_pct": round(row["cost"] / total_cost * 100, 1) if total_cost else None,
+        })
+    campaign_weights = ((160201, 0.38), (160202, 0.22), (160203, 0.27), (160204, 0.13))
+    top_campaigns = []
+    for campaign_id, weight in campaign_weights:
+        cost = round((metrics.get("cost") or 0) * weight, 2)
+        click = round((metrics.get("click") or 0) * weight)
+        impression = round((metrics.get("impression") or 0) * weight)
+        top_campaigns.append({
+            "campaign_id": campaign_id,
+            "campaign_name": _CAMPAIGN_NAMES[campaign_id],
+            **_metrics(cost, click, impression),
+        })
+    month_cost = metrics.get("cost") or 0
+    complete = not report["coverage"]["missing_dates"]
+    kpi = _classic_compare(metrics, previous_metrics)
+    if not complete:
+        for item in kpi.values():
+            item["change_pct"] = None
+    return {
+        **_envelope("embedded_synthetic_fixture:classic_dashboard", _account_scope(None)),
+        "tenant": {"id": DEMO_TENANT_ID, "name": "SEM 演示客户", "strategy": "只读演示"},
+        "period": {"start_date": start.isoformat(), "end_date": end.isoformat(), "days": len(days)},
+        "kpi": kpi,
+        "lead": {"current": 0, "previous": 0, "change_pct": None},
+        "cpl": {"current": None, "previous": None, "change_pct": None},
+        "budget": {"monthly_budget": 5000.0, "month_cost": month_cost,
+                   "usage_pct": round(month_cost / 5000 * 100, 1)},
+        "alert_counts": {},
+        "trend": [{"date": row["date"], "cost": row["cost"], "click": row["click"],
+                   "impression": row["impression"]} for row in report["trend"]],
+        "trend_7d": [{"date": row["date"], "cost": row["cost"], "click": row["click"],
+                     "impression": row["impression"]} for row in report["trend"]],
+        "device_split": device_split,
+        "top_campaigns": top_campaigns,
+        "account": {"status": "error", "message": "只读演示不调用百度实时账户接口，余额与累计消费不可用。"},
+        "freshness": {"latest_report_date": report["coverage"]["latest_report_date"],
+                      "last_synced_at": report["coverage"]["updated_at"],
+                      "sync_interval_minutes": None, "requested_data_complete": complete,
+                      "missing_dates": report["coverage"]["missing_dates"]},
+        "connection": {"state": "ready", "message": "版本化演示数据已加载",
+                       "active_accounts": 2, "last_account_synced_at": "2026-09-10T00:35:00+00:00",
+                       "asset_counts": {"campaigns": 4, "adgroups": 4, "keywords": 6, "search_terms": 6}},
+    }
+
+
+def read_demo_dashboard_insight(target_date: date | None, force: bool) -> dict[str, Any]:
+    """Do not invoke or pretend to invoke AI for the demo identity."""
+    return {
+        **_envelope("embedded_synthetic_fixture:classic_dashboard_insight", _account_scope(None)),
+        "enabled": False,
+        "insight_date": (target_date or DEMO_DEFAULT_END).isoformat(),
+        "force_ignored": bool(force),
+        "reason": "只读演示不会生成 AI 洞察或写入洞察缓存。",
+    }
+
+
+def read_demo_classic_keywords(
+    category: str | None, campaign_id: int | None, pause: bool | None,
+    serving: bool | None, q: str | None, coef_warning: str | None,
+    has_suggestion: bool | None, sort_by: str, order: str, page: int, page_size: int,
+) -> dict[str, Any]:
+    assets = list(_KEYWORDS)
+    all_category_counts = {key: 0 for key in _CATEGORY_LABELS}
+    for asset in assets:
+        all_category_counts[_CATEGORY_BY_KEYWORD[asset[0]]] += 1
+    if category:
+        assets = [row for row in assets if _CATEGORY_BY_KEYWORD[row[0]] == category]
+    if campaign_id is not None:
+        assets = [row for row in assets if row[3] == campaign_id]
+    if pause is not None:
+        assets = [row for row in assets if row[6] is pause]
+    if serving is not None:
+        assets = [row for row in assets if (not row[6]) is serving]
+    if q:
+        assets = [row for row in assets if q.casefold() in row[2].casefold()]
+    if coef_warning:
+        expected = "orange" if coef_warning == "orange" else "normal"
+        assets = [row for row in assets if ("orange" if (row[5] or 0) >= 10 else "normal") == expected]
+    if has_suggestion is True:
+        assets = []
+    days = _days(DEMO_DEFAULT_END - timedelta(days=6), DEMO_DEFAULT_END)
+
+    def row_metrics(asset: tuple) -> dict[str, Any]:
+        return _sum(_keyword_rows(asset, days))
+
+    sort_keys = {
+        "impression": lambda row: row_metrics(row).get("impression") or -1,
+        "price": lambda row: row[5] or -1,
+        "clicks_7d": lambda row: row_metrics(row).get("click") or -1,
+        "cost_7d": lambda row: row_metrics(row).get("cost") or -1,
+    }
+    assets.sort(key=sort_keys.get(sort_by, sort_keys["impression"]), reverse=order != "asc")
+    total = len(assets)
+    page_assets = assets[(page - 1) * page_size: page * page_size]
+    rows = []
+    for index, asset in enumerate(page_assets):
+        keyword_id, account_id, word, camp_id, adgroup_id, price, is_paused = asset
+        metrics = row_metrics(asset)
+        code = _CATEGORY_BY_KEYWORD[keyword_id]
+        rows.append({
+            "keyword_id": keyword_id, "baidu_account_id": account_id, "keyword": word,
+            "category": {"code": code, "label": _CATEGORY_LABELS[code], "source": "demo"},
+            "campaign_id": camp_id, "campaign_name": _CAMPAIGN_NAMES[camp_id],
+            "adgroup_id": adgroup_id, "adgroup_name": _ADGROUP_NAMES[adgroup_id],
+            "match_type": "短语匹配", "price": price,
+            "effective": {"multiplier": 1.0, "price": price, "warning": "normal"},
+            "pause": is_paused, "serving": {"now": not is_paused, "reason": "关键词已暂停" if is_paused else "演示投放中"},
+            "quality": 7 + index % 3, "total_impression": metrics.get("impression"),
+            "metrics_7d": {"click": metrics.get("click"), "cost": metrics.get("cost"),
+                           "impression": metrics.get("impression"),
+                           "ctr": round(metrics["ctr"] * 100, 2) if metrics.get("ctr") is not None else None,
+                           "cpc": metrics.get("cpc"), "avg_rank": round(1.8 + index * 0.35, 2),
+                           "conversions": None, "conv_cost": None},
+            "conversions": None, "first_seen_date": "2026-08-01",
+            "rank_trend": [round(2.8 - index * 0.1 - day * 0.08, 2) for day in range(7)],
+        })
+    return {
+        **_envelope("embedded_synthetic_fixture:classic_keywords", _account_scope(None)),
+        "totals": {"campaigns": 4, "adgroups": 4, "keywords": 6, "serving_now": 5,
+                   "current_slot": "演示时段", "last_synced_at": "2026-09-10T00:35:00+00:00"},
+        "category_counts": all_category_counts,
+        "campaign_options": [{"campaign_id": key, "campaign_name": value}
+                             for key, value in _CAMPAIGN_NAMES.items()],
+        "metrics_window": {"start": days[0].isoformat(), "end": days[-1].isoformat()},
+        "page": page, "page_size": page_size, "total": total, "keywords": rows,
+    }
+
+
+def read_demo_classic_search_terms(
+    account_id: int | None, campaign_id: int | None, adgroup_id: int | None,
+    status: str | None, has_click: bool | None, q: str | None, page: int, page_size: int,
+) -> dict[str, Any]:
+    source = read_demo_search_terms(account_id, q, campaign_id, adgroup_id, 1, 200)
+    rows = list(source["items"])
+    for index, row in enumerate(rows):
+        row["is_added"] = index % 3 == 2
+    if status == "added":
+        rows = [row for row in rows if row["is_added"]]
+    elif status == "not_added":
+        rows = [row for row in rows if not row["is_added"]]
+    if has_click is not None:
+        rows = [row for row in rows if (row["metrics"]["click"] > 0) is has_click]
+    total = len(rows)
+    page_rows = rows[(page - 1) * page_size: page * page_size]
+    terms = []
+    for row in page_rows:
+        metrics = row["metrics"]
+        terms.append({
+            "id": row["id"], "baidu_account_id": row["baidu_account_id"],
+            "query_word": row["query_word"], "trigger_keyword": row["trigger_keyword"],
+            "query_status": 0 if row["is_added"] else 1,
+            "status_label": "已加成关键词" if row["is_added"] else "未加成关键词",
+            "is_added": row["is_added"], "campaign_id": row["campaign_id"],
+            "campaign_name": _CAMPAIGN_NAMES[row["campaign_id"]],
+            "adgroup_id": row["adgroup_id"], "adgroup_name": _ADGROUP_NAMES[row["adgroup_id"]],
+            "impression": metrics["impression"], "click": metrics["click"], "cost": metrics["cost"],
+            "ctr": round(metrics["ctr"] * 100, 2) if metrics["ctr"] is not None else None,
+            "cpc": metrics["cpc"],
+        })
+    all_metrics = _sum([row["metrics"] for row in rows])
+    window = {"baidu_account_id": account_id, "start": "2026-09-04", "end": "2026-09-10",
+              "synced_at": "2026-09-10T00:40:00+00:00", "stored_rows": total}
+    return {
+        **_envelope("embedded_synthetic_fixture:classic_search_terms", source["account_scope"]),
+        "total": total,
+        "summary": {"terms": total, "with_click": sum(row["metrics"]["click"] > 0 for row in rows),
+                    "impression": all_metrics["impression"] or 0, "click": all_metrics["click"] or 0,
+                    "cost": all_metrics["cost"] or 0.0},
+        "windows": [window], "mixed_windows": False, "summary_comparable": True,
+        "window": window, "search_terms": terms, "scope_note": "版本化内置演示搜索词；所有动作均禁用。",
+    }
+
+
+def read_demo_classic_keyword_detail(keyword_id: int, start: date | None, end: date | None) -> dict[str, Any]:
+    end = end or DEMO_DEFAULT_END
+    start = start or end - timedelta(days=6)
+    detail = read_demo_keyword_detail(keyword_id, None, start, end)
+    asset = next(row for row in _KEYWORDS if row[0] == keyword_id)
+    metrics = detail["metrics"]
+    kpi = {key: {"current": metrics.get(key), "previous": None, "change_pct": None}
+           for key in ("cost", "click", "impression", "cpc", "ctr")}
+    kpi.update({"avg_rank": {"current": 2.3, "previous": None, "change_pct": None},
+                "conversions": {"current": None, "previous": None, "change_pct": None},
+                "conv_cost": {"current": None, "previous": None, "change_pct": None}})
+    region_rows = [{**row["metrics"], "region_name": row["region_name"], "region_level": row["region_level"]}
+                   for row in detail["dimensions"]["region"]["rows"]]
+    schedule_cells = []
+    for cell in detail["dimensions"]["schedule"]["cells"]:
+        value = cell["metrics"]
+        schedule_cells.append({"weekday": cell["weekday"], "weekday_label": f"周{cell['weekday']}",
+                               "hour": cell["hour"], "active": cell["status"] == "observed", **value})
+    return {
+        **_envelope("embedded_synthetic_fixture:classic_keyword_detail", _account_scope(None, [asset[1]])),
+        "tenant": {"id": DEMO_TENANT_ID, "name": "SEM 演示客户"},
+        "keyword": {"keyword_id": keyword_id, "keyword": asset[2],
+                    "category": {"code": _CATEGORY_BY_KEYWORD[keyword_id],
+                                 "label": _CATEGORY_LABELS[_CATEGORY_BY_KEYWORD[keyword_id]], "source": "demo"},
+                    "pause": asset[6], "campaign_id": asset[3], "campaign_name": _CAMPAIGN_NAMES[asset[3]],
+                    "adgroup_id": asset[4], "adgroup_name": _ADGROUP_NAMES[asset[4]],
+                    "match_type": 17, "match_type_label": "短语匹配", "first_date": start.isoformat(),
+                    "last_date": end.isoformat(), "active_days": detail["coverage"]["observed_days"]},
+        "latest": {"report_date": detail["coverage"]["latest_report_date"], "bid": asset[5],
+                   "quality": 8, "quality_detail": {}, "avg_rank": 2.3},
+        "period": {"start_date": start.isoformat(), "end_date": end.isoformat(),
+                   "days": (end - start).days + 1},
+        "kpi": kpi,
+        "trend": [{"date": row["date"], "cost": row["cost"], "click": row["click"],
+                   "impression": row["impression"], "avg_rank": 2.3 if row["status"] == "observed" else None}
+                  for row in detail["trend"]],
+        "bid_trend": [{"date": start.isoformat(), "bid": asset[5]}] if asset[5] is not None else [],
+        "device_split": [{"device": row["label"], "cost": row["cost"], "click": row["click"],
+                          "impression": row["impression"], "cpc": row["cpc"], "ctr": row["ctr"],
+                          "avg_rank": 2.3} for row in detail["devices"]],
+        "region_analysis": {"source": "embedded_synthetic_fixture", "metric": "performance",
+                            "summary": f"演示地域共 {len(region_rows)} 行。", "totals": _sum(region_rows),
+                            "rows": region_rows},
+        "schedule_analysis": {"source": "embedded_synthetic_fixture", "metric": "performance",
+                              "summary": "演示星期小时数据；无数据格保持缺失。",
+                              "active_hours": sum(row["active"] for row in schedule_cells), "total_hours": 168,
+                              "peak_impression": max((row["impression"] or 0 for row in schedule_cells), default=0),
+                              "totals": _sum([row for row in schedule_cells if row["active"]]),
+                              "cells": schedule_cells},
+        "alerts": [], "bid_coefficients": None,
+        "search_queries": [{"query_word": row[2], "impression": row[8], "click": row[7], "cost": row[6],
+                            "is_added": False, "status_label": "未加成关键词"}
+                           for row in _SEARCH_TERMS if row[3] == asset[2]],
+        "funnel": None, "adjustment_log": None,
+    }
+
+
+def read_demo_structure(kind: str, campaign_id: int | None = None) -> dict[str, Any]:
+    if kind == "campaigns":
+        rows = []
+        for index, (campaign, name) in enumerate(_CAMPAIGN_NAMES.items()):
+            rows.append({"campaign_id": campaign, "campaign_name": name, "budget": 500 + index * 150,
+                         "pause": False, "status": 0, "equipment_type": 0, "price_ratio": 1.0,
+                         "schedule_entries": 20, "region_entries": 2,
+                         "adgroup_count": 1, "keyword_count": sum(row[3] == campaign for row in _KEYWORDS),
+                         "metrics_7d": {"cost": 80 + index * 23, "click": 12 + index * 3,
+                                        "impression": 820 + index * 170},
+                         "leads_total": 0, "lead_cost": None, "synced_at": "2026-09-10T00:35:00+00:00"})
+        return {**_envelope("embedded_synthetic_fixture:campaigns", _account_scope(None)),
+                "total": len(rows), "campaigns": rows}
+    rows = []
+    for index, (adgroup, name) in enumerate(_ADGROUP_NAMES.items()):
+        campaign = next(row[3] for row in _KEYWORDS if row[4] == adgroup)
+        if campaign_id is not None and campaign != campaign_id:
+            continue
+        rows.append({"adgroup_id": adgroup, "adgroup_name": name, "campaign_id": campaign,
+                     "campaign_name": _CAMPAIGN_NAMES[campaign], "max_price": 12 + index,
+                     "pause": False, "status": 0, "price_ratio": 1.0,
+                     "pc_final_url": None, "mobile_final_url": None, "pc_track_param": None,
+                     "mobile_track_param": None, "pc_track_template": None, "mobile_track_template": None,
+                     "negative_word_count": index, "keyword_count": sum(row[4] == adgroup for row in _KEYWORDS),
+                     "metrics_7d": {"cost": 65 + index * 19, "click": 10 + index * 2,
+                                    "impression": 640 + index * 150}})
+    return {**_envelope("embedded_synthetic_fixture:adgroups", _account_scope(None)),
+            "total": len(rows), "adgroups": rows}
+
+
+def read_demo_suggestions() -> dict[str, Any]:
+    return {**_envelope("embedded_synthetic_fixture:suggestions", _account_scope(None)),
+            "total_pending": 0, "type_counts": {}, "suggestions": []}
+
+
+def read_demo_assignees() -> dict[str, Any]:
+    return {**_envelope("embedded_synthetic_fixture:assignees", _account_scope(None)), "assignees": []}
+
+
+def read_demo_writeback_mode() -> dict[str, Any]:
+    return {**_envelope("embedded_synthetic_fixture:writeback_mode", _account_scope(None)),
+            "mode": "disabled", "writeback_enabled": False, "live_scopes": [], "accounts": []}

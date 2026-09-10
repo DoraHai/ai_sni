@@ -24,6 +24,7 @@ from app.models import (
 )
 from app.security.auth import AuthContext, require_scoped_auth
 from app.security.sem_identity import ensure_sem_identity_access
+from app.sem_demo_adapter import is_demo_read, read_demo_assignees, read_demo_suggestions
 from app.suggestions import run_suggestions_for_tenant
 
 logger = logging.getLogger(__name__)
@@ -102,8 +103,12 @@ async def list_suggestions(
     min_confidence: str | None = Query(None, description="high/mid/low，按及以上过滤"),
     limit: int = Query(200, le=500),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """建议列表 + 按类型计数。默认只看待处理（pending）。按优先级、数据日期降序。"""
+    ctx.ensure_tenant(tenant_id)
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_suggestions()
     cond = [Suggestion.tenant_id == tenant_id]
     if status and status != "all":
         cond.append(Suggestion.status == status)
@@ -153,8 +158,12 @@ async def list_suggestions(
 async def list_assignees(
     tenant_id: int = Query(..., description="本地租户 ID"),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """返回当前客户可分配的内部成员；不暴露账号权限或认证信息。"""
+    ctx.ensure_tenant(tenant_id)
+    if is_demo_read(ctx, tenant_id):
+        return read_demo_assignees()
     users = (await session.scalars(
         select(User).where(
             User.is_active.is_(True),

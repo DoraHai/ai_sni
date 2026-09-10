@@ -16,7 +16,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api import dashboard, keywords, search_terms
+from app.api import dashboard, insights, keywords, search_terms, structure, suggestions, writeback
 from app.database import get_session
 from app.security import auth
 from app.security.auth import AuthContext
@@ -31,7 +31,10 @@ class NoDataSession:
 @pytest.fixture
 def demo_client(monkeypatch):
     app = FastAPI()
-    for router in (dashboard.router, keywords.router, search_terms.router):
+    for router in (
+        dashboard.router, insights.router, keywords.router, search_terms.router,
+        structure.router, suggestions.router, writeback.router,
+    ):
         app.include_router(router)
     ctx = AuthContext(
         5016,
@@ -129,3 +132,74 @@ def test_demo_scope_requires_exact_non_admin_identity_and_tenant(demo_client):
         params={"tenant_id": 16, "start_date": "2026-09-04", "end_date": "2026-09-10",
                 "baidu_account_id": 999999},
     ).status_code == 404
+
+
+def test_classic_dashboard_and_insight_use_demo_without_session_or_ai(demo_client):
+    dashboard_response = demo_client.get(
+        "/api/v1/dashboard/today",
+        params={"tenant_id": 16, "start_date": "2026-09-04", "end_date": "2026-09-10"},
+    )
+    assert dashboard_response.status_code == 200, dashboard_response.text
+    data = dashboard_response.json()
+    assert data["is_demo"] is True and data["read_only"] is True
+    assert data["tenant"]["id"] == 16
+    assert data["connection"]["asset_counts"]["keywords"] == 6
+    assert data["account"]["status"] == "error"
+    assert data["freshness"]["missing_dates"] == ["2026-09-06"]
+
+    insight_response = demo_client.get(
+        "/api/v1/dashboard/insight",
+        params={"tenant_id": 16, "target_date": "2026-09-10", "force": True},
+    )
+    assert insight_response.status_code == 200, insight_response.text
+    insight = insight_response.json()
+    assert insight["is_demo"] is True and insight["enabled"] is False
+    assert insight["force_ignored"] is True
+    assert "不会生成 AI" in insight["reason"]
+
+
+def test_classic_keyword_page_reads_are_complete_and_writeback_disabled(demo_client):
+    listing = demo_client.get(
+        "/api/v1/keywords",
+        params={"tenant_id": 16, "page": 1, "page_size": 20},
+    )
+    assert listing.status_code == 200, listing.text
+    data = listing.json()
+    assert data["is_demo"] is True and data["total"] == 6
+    assert data["totals"] == {
+        "campaigns": 4, "adgroups": 4, "keywords": 6, "serving_now": 5,
+        "current_slot": "演示时段", "last_synced_at": "2026-09-10T00:35:00+00:00",
+    }
+    assert data["keywords"][0]["metrics_7d"]["ctr"] >= 0
+
+    detail = demo_client.get(
+        "/api/v1/keywords/160100001", params={"tenant_id": 16}
+    )
+    assert detail.status_code == 200, detail.text
+    detail_data = detail.json()
+    assert detail_data["is_demo"] is True
+    assert detail_data["keyword"]["keyword"] == "工业泵选型"
+    assert len(detail_data["schedule_analysis"]["cells"]) == 168
+
+    campaigns = demo_client.get("/api/v1/structure/campaigns", params={"tenant_id": 16}).json()
+    adgroups = demo_client.get("/api/v1/structure/adgroups", params={"tenant_id": 16}).json()
+    assert campaigns["total"] == 4 and campaigns["is_demo"] is True
+    assert adgroups["total"] == 4 and adgroups["is_demo"] is True
+    assert demo_client.get("/api/v1/suggestions", params={"tenant_id": 16}).json()["suggestions"] == []
+    assert demo_client.get("/api/v1/suggestions/assignees", params={"tenant_id": 16}).json()["assignees"] == []
+    mode = demo_client.get("/api/v1/writeback/mode", params={"tenant_id": 16}).json()
+    assert mode["mode"] == "disabled" and mode["writeback_enabled"] is False
+
+
+def test_classic_search_term_page_reads_embedded_rows(demo_client):
+    response = demo_client.get(
+        "/api/v1/search-terms",
+        params={"tenant_id": 16, "status": "not_added", "page": 1, "page_size": 50},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["is_demo"] is True
+    assert data["total"] == 4
+    assert len(data["search_terms"]) == 4
+    assert data["window"]["start"] == "2026-09-04"
+    assert all(row["status_label"] == "未加成关键词" for row in data["search_terms"])
