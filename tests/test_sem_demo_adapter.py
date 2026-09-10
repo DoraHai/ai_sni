@@ -104,7 +104,7 @@ def test_demo_keywords_detail_dimensions_and_phone_boundary(demo_client):
     detail = demo_client.get(
         "/api/v1/keywords/cockpit/160100001", params=params
     ).json()
-    assert detail["keyword_assets"][0]["keyword"] == "工业泵选型"
+    assert detail["keyword_assets"][0]["keyword"] == "TIGER粉末涂料"
     assert detail["phone_button_clicks"]["status"] == "unavailable"
     assert len(detail["dimensions"]["region"]["rows"]) == 4
     assert len(detail["dimensions"]["schedule"]["cells"]) == 168
@@ -114,7 +114,7 @@ def test_demo_keywords_detail_dimensions_and_phone_boundary(demo_client):
 def test_demo_search_terms_filter_pagination_and_account_scope(demo_client):
     response = demo_client.get(
         "/api/v1/search-terms/cockpit",
-        params={"tenant_id": 16, "baidu_account_id": 160001, "q": "泵", "page": 1, "page_size": 2},
+        params={"tenant_id": 16, "baidu_account_id": 160001, "q": "粉末", "page": 1, "page_size": 2},
     )
     assert response.status_code == 200, response.text
     data = response.json()
@@ -184,7 +184,7 @@ def test_classic_keyword_page_reads_are_complete_and_writeback_disabled(demo_cli
     assert detail.status_code == 200, detail.text
     detail_data = detail.json()
     assert detail_data["is_demo"] is True
-    assert detail_data["keyword"]["keyword"] == "工业泵选型"
+    assert detail_data["keyword"]["keyword"] == "TIGER粉末涂料"
     assert len(detail_data["schedule_analysis"]["cells"]) == 168
 
     campaigns = demo_client.get("/api/v1/structure/campaigns", params={"tenant_id": 16}).json()
@@ -217,13 +217,14 @@ def test_demo_manage_reads_never_touch_database_or_realtime_account(demo_client)
     })
     assert account.status_code == 200, account.text
     assert account.json()["demo_policy"]["external_calls"] is False
-    assert account.json()["baidu_account_name"] == "演示账户 A"
+    assert account.json()["baidu_account_name"] == "TIGER品牌推广（演示）"
 
     campaigns = demo_client.get("/api/v1/manage/campaigns", params={
         "tenant_id": 16, "baidu_account_id": 160002,
     }).json()
     assert campaigns["is_demo"] is True and campaigns["total"] == 2
     assert {row["baidu_account_id"] for row in campaigns["campaigns"]} == {160002}
+    assert {row["baidu_account_name"] for row in campaigns["campaigns"]} == {"TIGER行业推广（演示）"}
 
     adgroups = demo_client.get("/api/v1/manage/adgroups", params={
         "tenant_id": 16, "campaign_id": 160201,
@@ -248,3 +249,22 @@ def test_demo_alerts_and_all_adjustment_tabs_are_embedded_reads(demo_client):
     assert writebacks["is_demo"] is True and writebacks["writebacks"][0]["dry_run"] is True
     assert approvals["is_demo"] is True and approvals["approvals"][0]["status"] == "consumed"
     assert actions["is_demo"] is True and actions["actions"][0]["status"] == "dry_run"
+
+
+def test_demo_visible_copy_uses_tiger_powder_coating_branding(demo_client):
+    responses = [
+        demo_client.get("/api/v1/keywords", params={"tenant_id": 16, "page": 1, "page_size": 20}).json(),
+        demo_client.get("/api/v1/search-terms", params={"tenant_id": 16, "page": 1, "page_size": 50}).json(),
+        demo_client.get("/api/v1/manage/campaigns", params={"tenant_id": 16}).json(),
+        demo_client.get("/api/v1/manage/adgroups", params={"tenant_id": 16}).json(),
+        demo_client.get("/api/v1/alerts", params={"tenant_id": 16, "status": "all"}).json(),
+        demo_client.get("/api/v1/operation-records", params={"tenant_id": 16, "page": 1, "page_size": 20}).json(),
+        demo_client.get("/api/v1/writeback", params={"tenant_id": 16}).json(),
+        demo_client.get("/api/v1/search-terms/actions", params={"tenant_id": 16}).json(),
+    ]
+    visible_copy = str(responses)
+    assert "TIGER粉末涂料" in visible_copy
+    assert "表面技术解决方案" in visible_copy
+    assert "TIGER品牌推广（演示）" in visible_copy
+    assert "TIGER行业推广（演示）" in visible_copy
+    assert not any(legacy in visible_copy for legacy in ("工业泵", "水泵", "泵站", "化工泵", "污水提升泵"))
