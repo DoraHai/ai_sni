@@ -87,3 +87,10 @@ SEO实际current已为20260910T092707Z-d77143dc485f。以普通演示身份验�
 - SEM PR #536 已部署 production-sem-backend=`6674930beb1a9915de2b875a4da962d0b56ecca8`（run34482880274）。演示关键词、搜索词、账户、计划、预警与调整记录统一为 TIGER 粉末涂料及表面技术场景；演示ID、指标和只读边界未变。
 - GEO PR #537 已部署 production-geo=`2aff472b39ab02c70a903d06547d311310960fc0`（run34483721529）。12个问题、72条回答、事实卡、任务及渠道稿统一为 TIGER 粉末涂料场景；全部继续标记 synthetic/never_official，正式指标仍不采纳这些样本。
 - 普通演示身份线上核验：SEM关键词与搜索词、GEO demo-summary 均HTTP 200，均命中 TIGER/老虎内容且不再出现旧设备运维/G-Snipers Demo主题。线上驾驶舱资源包含新的演示助手文案；浏览器视觉仍需用户刷新后查看。
+
+## 22:42 经营全景信息层级恢复
+
+- 用户确认以历史原型V57的信息架构为蓝本，保留当前真实只读数据接入。PR #538 已合并并部署 production-sem=`ae974093e6fb0e1c49f981cb571dfb7323876f1a`（run34491717107）。
+- 首屏恢复“正在积累的成果 / 需要推进的事”，其下按“趋势与投入 / 内容与品牌 / 待办与结果”分区；卡片提供“讨论这项 / 展开依据”，对话区与数据区约30/70。
+- 摘要只使用当前 cards/state/urgentCount；无固定事件或伪实时。独立审查发现并修复“花费/展现被误称成果”的P2，最终仅显式 `summaryRole=outcome` 的业务结果进入成果摘要。
+- CI 的 pytest、sem-frontend-build、Deploy SEM frontend only 全部成功；线上资源 `AcquisitionCockpitView-D4a4A8j9.js` 已包含新双栏、三个分区和卡片动作，旧“实时战况”文案已移除。
