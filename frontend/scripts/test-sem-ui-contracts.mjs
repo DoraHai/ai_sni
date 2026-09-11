@@ -83,6 +83,8 @@ const keywordApi = await source('src/api/keywords.js')
 const manageApi = await source('src/api/manage.js')
 const keywordWriteback = await source('src/composables/useKeywordWriteback.js')
 const keywordDetail = await source('src/views/monitor/KeywordDetailView.vue')
+const campaignManage = await source('src/views/manage/CampaignManageView.vue')
+const adgroupManage = await source('src/views/manage/AdgroupManageView.vue')
 const writebackPreflight = await source('src/utils/writebackPreflight.js')
 assert.match(idempotency, /crypto\?\.randomUUID/)
 assert.match(idempotency, /pendingWritebacks\.get\(operationKey\)/)
@@ -100,7 +102,7 @@ assert.match(writebackPreflight, /行动台账/)
 assert.match(writebackPreflight, /资金确认/)
 assert.match(keywordDetail, /data\.value\.keyword\.baidu_account_id/)
 
-const { keywordActionPreflight, keywordBidPreflight, writebackTrace } = await import(
+const { accountActionPreflight, keywordActionPreflight, keywordBidPreflight, writebackTrace } = await import(
   new URL('../src/utils/writebackPreflight.js', import.meta.url)
 )
 const livePreflight = keywordBidPreflight({
@@ -184,6 +186,27 @@ const livePause = keywordActionPreflight({
 assert.equal(livePause.ok, true)
 assert.equal(livePause.executionMode, 'live')
 assert.match(livePause.message, /服务器旧策略/)
+for (const scope of ['campaign_pause', 'adgroup_pause']) {
+  const structurePreflight = accountActionPreflight({
+    tenant_id: 3,
+    accounts: [{
+      baidu_account_id: 17,
+      mode: 'limited_live',
+      live_scopes: [scope],
+      policy_source: 'policy',
+      policy_reason: 'configured_grant',
+      daily_live_actions_used: 1,
+      daily_live_action_limit: 3,
+    }],
+  }, { tenantId: 3, accountId: 17, scope })
+  assert.equal(structurePreflight.ok, true)
+  assert.equal(structurePreflight.executionMode, 'live')
+  assert.match(structurePreflight.message, /今日真实动作额度 1\/3/)
+  assert.match(structurePreflight.message, /提交时服务端会再次校验/)
+}
+assert.equal(accountActionPreflight(matchMode, {
+  tenantId: 3, accountId: 17, scope: 'campaign_pause',
+}).executionMode, 'dry_run')
 assert.equal(
   keywordActionPreflight(matchMode, { tenantId: 3, accountId: 17, scope: 'keyword_match' }).ok,
   false,
@@ -223,6 +246,19 @@ assert.match(
 assert.equal((keywordWriteback.match(/reconciliationRequired: true/g) || []).length, 3)
 assert.equal((keywordDetail.match(/data\.value\.keyword\.baidu_account_id/g) || []).length, 3)
 assert.match(keywordDetail, /tenantListRevision: session\.tenantListRevision/)
+assert.match(
+  campaignManage,
+  /togglePause[\s\S]*fetchWritebackMode\(attempt\.context\.tenantId\)[\s\S]*scope: 'campaign_pause'[\s\S]*setCampaignPause/,
+)
+assert.match(campaignManage, /writebackTrace\(res\.writeback\)/)
+assert.match(campaignManage, /已转入人工对账/)
+assert.match(
+  adgroupManage,
+  /togglePause[\s\S]*fetchWritebackMode\(attempt\.context\.tenantId\)[\s\S]*scope: 'adgroup_pause'[\s\S]*setAdgroupPause/,
+)
+assert.match(adgroupManage, /baidu_account_id/)
+assert.match(adgroupManage, /writebackTrace\(res\.writeback\)/)
+assert.match(adgroupManage, /tenantListRevision: session\.tenantListRevision/)
 
 const idempotencyModule = await import(new URL('../src/api/idempotency.js', import.meta.url))
 let releaseWrite

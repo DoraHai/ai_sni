@@ -19,20 +19,22 @@ function positiveInteger(value) {
   return Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null
 }
 
-const KEYWORD_ACTIONS = {
+const WRITEBACK_ACTIONS = {
   keyword_bid: { label: '关键词调价', fundsApproval: true },
   keyword_match_type: { label: '关键词匹配方式修改', fundsApproval: false },
   keyword_pause: { label: '关键词暂停或启用', fundsApproval: false },
+  campaign_pause: { label: '计划暂停或启用', fundsApproval: false },
+  adgroup_pause: { label: '单元暂停或启用', fundsApproval: false },
 }
 
 function reject(actionLabel, reason) {
   return { ok: false, message: `无法核验${actionLabel}执行范围：${reason}。已禁止提交，请刷新后重试。` }
 }
 
-/** Build a fail-closed, account-specific explanation immediately before a keyword write. */
-export function keywordActionPreflight(payload, { tenantId, accountId, scope }) {
-  const action = KEYWORD_ACTIONS[scope]
-  if (!action) return reject('关键词动作', '动作范围不受支持')
+/** Build a fail-closed, account-specific explanation immediately before a SEM write. */
+export function accountActionPreflight(payload, { tenantId, accountId, scope }) {
+  const action = WRITEBACK_ACTIONS[scope]
+  if (!action) return reject('SEM 动作', '动作范围不受支持')
   const expectedTenantId = positiveInteger(tenantId)
   const expectedAccountId = positiveInteger(accountId)
   if (!expectedTenantId || !expectedAccountId) return reject(action.label, '客户或推广账户标识缺失')
@@ -88,8 +90,12 @@ export function keywordActionPreflight(payload, { tenantId, accountId, scope }) 
   }
 }
 
+export function keywordActionPreflight(payload, options) {
+  return accountActionPreflight(payload, options)
+}
+
 export function keywordBidPreflight(payload, options) {
-  return keywordActionPreflight(payload, { ...options, scope: 'keyword_bid' })
+  return accountActionPreflight(payload, { ...options, scope: 'keyword_bid' })
 }
 
 export function writebackTrace(writeback) {

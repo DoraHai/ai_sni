@@ -5,11 +5,12 @@ import {
   fetchCampaigns, fetchRegionOptions, setCampaignBudget, setCampaignPause,
   setCampaignRegion, setCampaignSchedule,
 } from '../../api/manage'
-import { WRITEBACK_CONFIRMATION } from '../../api/writeback'
+import { fetchWritebackMode, WRITEBACK_CONFIRMATION } from '../../api/writeback'
 import { session } from '../../store/session'
 import { createLatestRequestGuard } from '../../utils/latestRequest'
 import { chooseSemAccount } from '../../utils/accountScope'
 import { isSemDemoIdentity, SEM_DEMO_ACCOUNTS } from '../../utils/semDemo'
+import { accountActionPreflight, writebackTrace } from '../../utils/writebackPreflight'
 
 const TENANT_ID = computed(() => session.tenantId)
 const demoMode = computed(() => isSemDemoIdentity(session.user, TENANT_ID.value))
@@ -553,11 +554,27 @@ async function togglePause(row) {
   const asset = { campaignId: row.campaign_id, accountId: row.baidu_account_id, name: row.campaign_name, pause: row.pause, status: row.status }
   const paused = asset.pause || asset.status === 23
   const toPause = !paused
+  let preflight
+  try {
+    const mode = await fetchWritebackMode(attempt.context.tenantId)
+    if (!attempt.isCurrent() || !canWriteAccount(asset.accountId)) return
+    preflight = accountActionPreflight(mode, {
+      tenantId: attempt.context.tenantId,
+      accountId: asset.accountId,
+      scope: 'campaign_pause',
+    })
+    if (!preflight.ok) return ElMessage.error(preflight.message)
+  } catch (e) {
+    if (attempt.isCurrent()) {
+      ElMessage.error(e.response?.data?.detail || '无法完成计划启停预检，已禁止提交，请刷新后重试')
+    }
+    return
+  }
   try {
     await ElMessageBox.confirm(
-      `确认${toPause ? '暂停' : '恢复投放'}计划「${asset.name}」？实际执行模式由当前客户、推广账户和动作门禁决定，真实执行会修改百度账户。`,
+      `确认${toPause ? '暂停' : '恢复投放'}计划「${asset.name}」？\n${preflight.message}`,
       toPause ? '暂停计划' : '恢复投放',
-      { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' },
+      { confirmButtonText: preflight.confirmButtonText, cancelButtonText: '取消', type: 'warning' },
     )
   } catch { return }
   if (!attempt.isCurrent() || !canWriteAccount(asset.accountId)) return
@@ -565,9 +582,17 @@ async function togglePause(row) {
   try {
     const res = await setCampaignPause({ tenantId: attempt.context.tenantId, campaignId: asset.campaignId, pause: toPause })
     if (!attempt.isCurrent()) return
-    const tag = res.dry_run ? '（演练：未真改）' : ''
-    if (res.status === 'failed') ElMessage.error('失败：' + (res.error_msg || '未知错误'))
-    else ElMessage.success(`已${toPause ? '暂停' : '恢复投放'}${tag}`)
+    const trace = writebackTrace(res.writeback)
+    const traceSuffix = trace ? `（${trace}）` : ''
+    if (res.status === 'dry_run') {
+      ElMessage.success(`已加入行动台账，百度计划未修改${traceSuffix}`)
+    } else if (['pending', 'reconcile'].includes(res.status)) {
+      ElMessage.warning(`${res.error_msg || '百度执行结果未知，已转入人工对账'}${traceSuffix}`)
+    } else if (res.status === 'success') {
+      ElMessage.success(`已${toPause ? '暂停' : '恢复投放'}${traceSuffix}`)
+    } else {
+      ElMessage.error(`失败：${res.error_msg || '未知错误'}${traceSuffix}`)
+    }
     await load()
   } catch (e) {
     if (attempt.isCurrent()) ElMessage.error(e.response?.data?.detail || e.message)
