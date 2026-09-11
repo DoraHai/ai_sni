@@ -26,16 +26,25 @@ export function semImpressionClickFunnel(report, formatImpression, formatClick) 
   const coverage = report?.coverage
   const impression = report?.metrics?.impression
   const click = report?.metrics?.click
+  const ctr = report?.metrics?.ctr
   const covered = coverage?.status === 'observed' && Array.isArray(coverage.missing_dates) && coverage.missing_dates.length === 0
   const metricsValid = integer(impression) && integer(click)
-  if (!covered || !metricsValid) {
+  const relationshipValid = metricsValid && click <= impression
+  const expectedRate = relationshipValid && impression > 0 ? click / impression : null
+  const ctrValid = relationshipValid && (impression === 0
+    ? ctr === null
+    : finite(ctr) && ctr <= 1 && Math.abs(ctr - expectedRate) <= 0.000001)
+  if (!covered || !metricsValid || !relationshipValid || !ctrValid) {
+    const rateLabel = !covered ? '存在缺报，漏斗暂不展示且不计算点击率'
+      : !metricsValid ? '曝光或点击数据无效，漏斗暂不展示且不计算点击率'
+        : '曝光、点击与点击率的数据关系无法核验，漏斗暂不展示且不计算点击率'
     return {
       type: 'funnel', state: 'unavailable', stages: [], rate: null,
-      rateLabel: covered ? '曝光或点击数据无效，漏斗暂不展示且不计算点击率' : '存在缺报，漏斗暂不展示且不计算点击率',
+      rateLabel,
       coverage: { state: 'partial', missingCount: Array.isArray(coverage?.missing_dates) ? coverage.missing_dates.length : null, label: '仅在所选日期无缺报时展示曝光到点击' },
     }
   }
-  const rate = impression > 0 ? click / impression : null
+  const rate = impression > 0 ? ctr : null
   return {
     type: 'funnel', state: 'available', stages: [
       { key: 'impression', metricId: 'sem-impression', label: '曝光', value: impression, display: String(formatImpression) },
@@ -76,7 +85,7 @@ export function validVisualization(value) {
   if (value.type === 'funnel') return Array.isArray(value.stages) && (value.state === 'unavailable' ? value.stages.length === 0 : value.stages.length === 2)
     && (value.state === 'unavailable' || value.stages.map(item => item.key).join(',') === 'impression,click')
     && value.stages.every(item => record(item) && finite(item.value) && typeof item.metricId === 'string' && typeof item.display === 'string')
-    && (value.rate === null || finite(value.rate)) && typeof value.rateLabel === 'string' && record(value.coverage) && typeof value.coverage.label === 'string'
+    && (value.rate === null || (finite(value.rate) && value.rate <= 1)) && typeof value.rateLabel === 'string' && record(value.coverage) && typeof value.coverage.label === 'string'
   return Array.isArray(value.items) && typeof value.note === 'string' && new Set(value.items.map(item => item.key)).size === value.items.length
     && value.items.every(item => record(item) && typeof item.key === 'string' && item.key.length > 0 && typeof item.label === 'string' && integer(item.value) && typeof item.display === 'string')
 }
@@ -88,4 +97,15 @@ export function visualizationIndexAfterKey(index, length, key) {
   if (key === 'ArrowLeft' || key === 'ArrowUp') return Math.max(0, index - 1)
   if (key === 'ArrowRight' || key === 'ArrowDown') return Math.min(length - 1, index + 1)
   return Math.max(0, Math.min(length - 1, index))
+}
+
+export function visualizationIndexFromPointer(clientX, left, width, length) {
+  if (![clientX, left, width].every(value => typeof value === 'number' && Number.isFinite(value)) || width <= 0 || !Number.isSafeInteger(length) || length <= 0) return -1
+  const ratio = Math.max(0, Math.min(1, (clientX - left) / width))
+  return Math.round(ratio * (length - 1))
+}
+
+export function visualizationBarPercent(value, maxValue, minimumVisible = 3) {
+  if (!finite(value) || !finite(maxValue) || maxValue <= 0 || value === 0) return 0
+  return Math.min(100, Math.max(minimumVisible, value / maxValue * 100))
 }
