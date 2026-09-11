@@ -28,6 +28,8 @@ from app.baidu.writeback import (
     apply_pause_writeback,
 )
 from app.api import keywords as keywords_api
+from app.api import manage as manage_api
+from app.security.auth import AuthContext
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +47,87 @@ NON_FUNDS_ACTIONS = {
     "apply_adgroup_pause_writeback",
     "apply_adgroup_landing_url_writeback",
 }
+
+
+def test_manage_adgroup_rows_expose_trusted_account_id() -> None:
+    adgroup = SimpleNamespace(
+        adgroup_id=55,
+        baidu_account_id=88,
+        adgroup_name="工业泵单元",
+        campaign_id=12,
+        max_price=None,
+        pause=False,
+        status=21,
+        pc_final_url=None,
+        mobile_final_url=None,
+        pc_track_param=None,
+        mobile_track_param=None,
+        pc_track_template=None,
+        mobile_track_template=None,
+    )
+    campaign = SimpleNamespace(campaign_id=12, campaign_name="工业泵计划")
+    account = SimpleNamespace(
+        status="active",
+        sync_status="ok",
+        last_synced_at=None,
+        last_sync_error=None,
+    )
+    results = [
+        SimpleNamespace(all=lambda: [adgroup]),
+        SimpleNamespace(all=lambda: [campaign]),
+        SimpleNamespace(all=lambda: [account]),
+    ]
+    session = SimpleNamespace(scalars=AsyncMock(side_effect=results))
+    ctx = AuthContext(
+        user_id=3,
+        username="tester",
+        role_name="operator",
+        tenant_id=7,
+        permissions={"manage.adgroups": "edit"},
+    )
+
+    result = asyncio.run(
+        manage_api.list_adgroups_manage(7, None, ctx, session)
+    )
+
+    assert result["adgroups"][0]["baidu_account_id"] == 88
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "request_type", "apply_name", "asset_field"),
+    [
+        (manage_api.set_campaign_pause, manage_api.CampaignPauseReq,
+         "apply_campaign_pause_writeback", "campaign_id"),
+        (manage_api.set_adgroup_pause, manage_api.AdgroupPauseReq,
+         "apply_adgroup_pause_writeback", "adgroup_id"),
+    ],
+)
+def test_structure_pause_routes_return_action_ledger_reference(
+    monkeypatch, endpoint, request_type, apply_name, asset_field
+) -> None:
+    rec = SimpleNamespace(
+        id=44,
+        approval_id=None,
+        dry_run=True,
+        status="dry_run",
+        error_msg=None,
+    )
+    apply = AsyncMock(return_value=rec)
+    monkeypatch.setattr(manage_api, apply_name, apply)
+    ctx = SimpleNamespace(user_id=3, username="tester", ensure_tenant=Mock())
+    req = request_type(tenant_id=7, pause=True, **{asset_field: 55})
+
+    result = asyncio.run(endpoint(req, ctx, SimpleNamespace()))
+
+    ctx.ensure_tenant.assert_called_once_with(7)
+    apply.assert_awaited_once()
+    assert result["writeback"] == {
+        "id": 44,
+        "approval_id": None,
+        "status": "dry_run",
+        "dry_run": True,
+        "error_msg": None,
+    }
 
 
 def test_match_type_route_returns_action_ledger_reference(monkeypatch) -> None:
