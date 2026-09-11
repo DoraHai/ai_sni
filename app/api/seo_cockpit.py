@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from typing import Literal
 from fastapi import APIRouter,Depends,HTTPException,Query
 from pydantic import BaseModel,Field,PositiveInt,ConfigDict
-from sqlalchemy import select
+from sqlalchemy import func,select
 from app.seo_demo_source import (
     get_seo_session as get_session,
     require_seo_scoped_auth as require_scoped_auth,
@@ -11,7 +11,7 @@ from app.seo_demo_source import (
 from app.models.module_workspace import SeoSite
 from app.models.seo import (
     SeoBacklink, SeoContentAsset, SeoContentPublication, SeoImageAltReview,
-    SeoSitePage,
+    SeoPublishAttempt, SeoSitePage,
 )
 from app.models.seo_cockpit import SeoTask,SeoImageVerification
 from app.seo_cockpit_metrics import metric_snapshot,metric_values,DEFINITIONS
@@ -48,7 +48,7 @@ def image_queue_item(row,allow_retry=False):
         item['retry_reason']='当前账号只有查看权限，请由具备站点编辑权限的人员重新核实'
     return item
 
-def publication_queue_item(row):
+def publication_queue_item(row,latest_attempt=None):
     discovery=row.link_discovery or {}
     if row.status=='failed':state,detail='failed_retry',row.last_error or '发布尝试失败，可在分发模块重试'
     elif row.status in {'manual_required','draft_created'}:state,detail='pending_customer_action','平台尚未确认正式发布，需要客户或运营人员完成发布并回填公开地址'
@@ -56,8 +56,16 @@ def publication_queue_item(row):
     elif discovery.get('state') in {'unavailable','failed'}:state,detail='failed_retry','公开地址抓取失败，可重新核验'
     elif row.status=='published' and not row.page_url:state,detail='failed_retry','记录已发布但缺少公开地址，需要补录后重新核验'
     else:state,detail='pending_system_check','发布正在处理，或公开地址正在等待系统抓取核验'
-    evidence={'page_url':row.page_url,'published_at':row.published_at,'link_discovery':row.link_discovery} if row.page_url else None
-    return _queue_item('publication_url',row,state,f'{row.platform_name}发布地址 · {row.adapted_title or "内容"}',detail,evidence,
+    evidence={}
+    if row.page_url:
+        evidence.update({'page_url':row.page_url,'published_at':row.published_at,'link_discovery':row.link_discovery})
+    if latest_attempt is not None:
+        evidence['latest_attempt']={
+            'id':int(latest_attempt.id),'action':latest_attempt.action,'status':latest_attempt.status,
+            'created_by':int(latest_attempt.created_by) if latest_attempt.created_by is not None else None,
+            'started_at':latest_attempt.started_at,'completed_at':latest_attempt.completed_at,
+        }
+    return _queue_item('publication_url',row,state,f'{row.platform_name}发布地址 · {row.adapted_title or "内容"}',detail,evidence or None,
                        f'/seo/distribution?site_id={getattr(row,"site_id","") or ""}')
 
 def page_queue_item(row):
@@ -293,8 +301,28 @@ async def customer_verification_queue(
         source_counts['publication_url']=min(len(rows),500)
         if len(rows)>500:truncated_sources.append('publication_url')
         rows=rows[:500]
+        publication_ids=[int(row.id) for row,_ in rows]
+        latest_attempts={}
+        if publication_ids:
+            ranked_attempts=select(
+                SeoPublishAttempt.id.label('attempt_id'),
+                func.row_number().over(
+                    partition_by=SeoPublishAttempt.publication_id,
+                    order_by=(SeoPublishAttempt.started_at.desc(),SeoPublishAttempt.id.desc()),
+                ).label('recency_rank'),
+            ).where(
+                SeoPublishAttempt.tenant_id==tenant_id,
+                SeoPublishAttempt.publication_id.in_(publication_ids),
+            ).subquery()
+            attempts=list(await session.scalars(select(SeoPublishAttempt).join(
+                ranked_attempts,ranked_attempts.c.attempt_id==SeoPublishAttempt.id,
+            ).where(
+                SeoPublishAttempt.tenant_id==tenant_id,
+                ranked_attempts.c.recency_rank==1,
+            )))
+            latest_attempts={int(attempt.publication_id):attempt for attempt in attempts}
         for row,row_site_id in rows:
-            row.site_id=row_site_id;items.append(publication_queue_item(row))
+            row.site_id=row_site_id;items.append(publication_queue_item(row,latest_attempts.get(int(row.id))))
     if ctx.can_view('seo.site') and kind in (None,'page_recheck'):
         rows=list(await session.scalars(select(SeoSitePage).where(SeoSitePage.tenant_id==tenant_id,
             SeoSitePage.site_id==site_id,SeoSitePage.status.in_(['proposed','approved','needs_fix','pending','implemented','verified','error']))

@@ -33,6 +33,16 @@ const busyCount = computed(() => (data.value.summary.running || 0) + (data.value
 const rowKey = row => `${row.source}:${row.id}`
 const verificationStates = { pending_customer_action: '待客户执行', pending_system_check: '待系统核验', verified: '已核实', failed_retry: '失败可重试' }
 const verificationKinds = { image_repair: '图片修复', publication_url: '发布地址', page_recheck: '页面重查', backlink_verification: '外链核验' }
+const publicationActions = { draft: '创建草稿', publish: '发布', manual_complete: '人工回填', sync: '同步', retry_publish: '重试发布', retry_draft: '重建草稿' }
+const publicationAttemptStates = { started: '处理中', succeeded: '成功', failed: '失败' }
+const publicationAttempt = row => row.kind === 'publication_url' ? row.evidence?.latest_attempt : null
+const publicationAttemptLabel = attempt => {
+  if (!attempt) return ''
+  const action = publicationActions[attempt.action] || '发布处理'
+  const status = publicationAttemptStates[attempt.status] || attempt.status
+  const actor = attempt.created_by == null ? '系统任务' : `操作人 #${attempt.created_by}`
+  return `${action} #${attempt.id} · ${status} · ${actor} · ${time(attempt.started_at)}`
+}
 
 async function load() {
   const token = ++sequence
@@ -152,7 +162,7 @@ onUnmounted(() => { sequence++; resultSequence++; clearInterval(timer) })
         <div v-else-if="!verification.items.length" class="empty">当前没有待处理或已核实记录。</div>
         <div v-else class="table-wrap"><table><thead><tr><th>事项</th><th>状态</th><th>依据</th><th>更新时间</th><th>入口</th></tr></thead>
           <tbody><tr v-for="row in verification.items" :key="row.id"><td><strong>{{ verificationKinds[row.kind] }}</strong><small>{{ row.title }}</small></td>
-            <td><span class="status" :class="row.state">{{ verificationStates[row.state] }}</span></td><td>{{ row.detail }}</td><td>{{ time(row.updated_at) }}</td>
+            <td><span class="status" :class="row.state">{{ verificationStates[row.state] }}</span></td><td>{{ row.detail }}<small v-if="publicationAttempt(row)">{{ publicationAttemptLabel(publicationAttempt(row)) }}<template v-if="publicationAttempt(row).completed_at"><br>结束 {{ time(publicationAttempt(row).completed_at) }}</template></small></td><td>{{ time(row.updated_at) }}</td>
             <td><button v-if="row.retry_action" :disabled="!!verificationRetrying" @click="retryVerification(row)">{{ verificationRetrying === row.id ? '提交中…' : '重新核实' }}</button><button v-if="row.action_url" @click="router.push(row.action_url)">查看处理</button><small v-if="row.retry_reason">{{ row.retry_reason }}</small></td></tr></tbody></table></div>
         <p v-if="verification.truncated" class="scope-note">当前仅展示已读取的 {{ verification.scanned_count }} 条来源记录，{{ verification.truncated_sources.join('、') }} 仍有更多记录，请按类型分批查看。</p>
       </section>
