@@ -28,6 +28,10 @@ export function coreActionFlow(item) {
   return flow
 }
 
+export function canOpenControlledActionQueue(permissions = {}) {
+  return ['view', 'edit'].includes(permissions?.['verify.adjustments'])
+}
+
 export function flowControlLabel(flow) {
   if (!flow) return '历史记录，未提供流程明细'
   if (flow.control.recorded_mode === 'dry_run') return '演练留痕，未调用百度写接口'
@@ -37,6 +41,14 @@ export function flowControlLabel(flow) {
       : '真实执行，历史记录未关联资金确认'
   }
   return '真实执行，已通过账户与动作范围门禁'
+}
+
+export function flowAccountScopeLabel(flow) {
+  return {
+    configured: '账户有效，该动作范围已配置真写',
+    scope_disabled: '账户有效，该动作范围未配置真写',
+    account_unavailable: '台账账户已停用或当前客户下不存在',
+  }[flow?.control?.account_action_scope_state] || '账户动作范围配置未知'
 }
 
 export function flowBasisLabel(flow) {

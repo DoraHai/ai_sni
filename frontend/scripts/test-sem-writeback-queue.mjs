@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
+  canOpenControlledActionQueue,
   coreActionFlow,
   filterQueue,
+  flowAccountScopeLabel,
   flowBasisLabel,
   flowControlLabel,
   queueCounts,
@@ -23,18 +25,23 @@ assert.equal(queueCounts([]).reconciliation_required, 0)
 assert.equal(rows.length, 5)
 const flow = {
   version: 'sem-controlled-action-v1', family: 'keyword_bid',
-  control: { recorded_mode: 'dry_run', current_live_allowed: false },
+  control: { recorded_mode: 'dry_run', account_action_scope_state: 'scope_disabled' },
   check_basis: { baidu_account_id: 17, keyword_id: 701 },
 }
 assert.equal(coreActionFlow({ flow }), flow)
 assert.equal(coreActionFlow({ flow: { ...flow, family: 'other' } }), null)
 assert.equal(flowControlLabel(flow), '演练留痕，未调用百度写接口')
+assert.equal(flowAccountScopeLabel(flow), '账户有效，该动作范围未配置真写')
 assert.equal(flowBasisLabel(flow), '账户 17 · 关键词 701')
+assert.equal(canOpenControlledActionQueue({ 'optimize.keywords': 'edit' }), false)
+assert.equal(canOpenControlledActionQueue({ 'optimize.negatives': 'edit', 'optimize.searchterms': 'edit' }), false)
+assert.equal(canOpenControlledActionQueue({ 'verify.adjustments': 'view' }), true)
+assert.equal(canOpenControlledActionQueue({ 'verify.adjustments': 'edit' }), true)
 const view = readFileSync(new URL('../src/views/verify/PendingAdjustmentsView.vue', import.meta.url), 'utf8')
 assert.ok(view.includes("? route.query.stage"))
 assert.ok(view.includes(':data="filteredQueue"'))
 assert.ok(view.includes('mode === \'queue\' && data && !error'))
-assert.ok(view.includes("session.canView('verify.adjustments')"))
+assert.ok(view.includes('canOpenControlledActionQueue(session.permissions)'))
 assert.ok(view.includes('最多 200 条记录，不代表全部历史'))
 assert.ok(view.includes("row.stage === 'reconciliation_required'"))
 assert.ok(view.includes('待调整'))
@@ -98,5 +105,6 @@ for (const relative of [
   const source = readFileSync(new URL(relative, import.meta.url), 'utf8')
   assert.ok(source.includes("path: '/verify/pending'"), `${relative} must link to the controlled-action queue`)
   assert.ok(source.includes('执行与核对'))
+  assert.ok(source.includes('v-if="canOpenActionQueue"'))
 }
 console.log('SEM writeback queue tests passed')

@@ -54,7 +54,7 @@ def test_keyword_bid_flow_keeps_dry_run_as_record_only():
         "permission": "optimize.keywords",
         "write_scope": "keyword_bid",
         "recorded_mode": "dry_run",
-        "current_live_allowed": True,
+        "account_action_scope_state": "configured",
         "approval_required_for_live": True,
         "approval_id": None,
         "default_behavior": "record_only",
@@ -86,7 +86,7 @@ def test_keyword_pause_flow_reports_confirmed_live_result_without_new_approval_g
     assert flow["family"] == "keyword_pause"
     assert flow["control"]["permission"] == "optimize.keywords"
     assert flow["control"]["approval_required_for_live"] is False
-    assert flow["control"]["current_live_allowed"] is True
+    assert flow["control"]["account_action_scope_state"] == "configured"
     assert flow["result"]["stage"] == "executed"
     assert flow["result"]["readback_status"] == "platform_success_recorded"
     assert flow["result"]["confirmed_at"] == "2026-09-11T09:30:00"
@@ -104,9 +104,14 @@ def test_negative_flow_distinguishes_adgroup_and_campaign_live_scopes():
 
     assert adgroup["family"] == campaign["family"] == "negative_word"
     assert adgroup["control"]["write_scope"] == "adgroup_negative_words"
-    assert adgroup["control"]["current_live_allowed"] is True
+    assert adgroup["control"]["account_action_scope_state"] == "configured"
     assert campaign["control"]["write_scope"] == "campaign_negative_words"
-    assert campaign["control"]["current_live_allowed"] is False
+    assert campaign["control"]["account_action_scope_state"] == "scope_disabled"
+
+    unavailable = _build_action_flow(
+        "action", row(action_type="negative", keyword_id=None), None
+    )
+    assert unavailable["control"]["account_action_scope_state"] == "account_unavailable"
 
 
 def test_uncertain_result_requires_external_basis_and_never_implies_success():

@@ -8,9 +8,11 @@ import { formatUtcTimestamp } from '../../utils/dateTime'
 import { createLatestRequestGuard } from '../../utils/latestRequest'
 import { canWriteScopedAsset, chooseSemAccount } from '../../utils/accountScope'
 import { isSemDemoIdentity, SEM_DEMO_ACCOUNTS } from '../../utils/semDemo'
+import { canOpenControlledActionQueue } from '../../utils/writebackQueue'
 
 const TENANT_ID = computed(() => session.tenantId)
 const router = useRouter()
+const canOpenActionQueue = computed(() => canOpenControlledActionQueue(session.permissions))
 const demoMode = computed(() => data.value?.is_demo === true || isSemDemoIdentity(session.user, TENANT_ID.value))
 const currentTenant = computed(() => session.tenants.find((row) => row.id === TENANT_ID.value))
 const readableAccounts = computed(() => (
@@ -287,7 +289,7 @@ const statCards = computed(() => {
         </div>
       </div>
       <div class="page-actions">
-        <el-button @click="router.push({ path: '/verify/pending', query: { mode: 'queue' } })">执行与核对</el-button>
+        <el-button v-if="canOpenActionQueue" @click="router.push({ path: '/verify/pending', query: { mode: 'queue' } })">执行与核对</el-button>
         <el-button v-if="session.canEdit('optimize.searchterms') && !demoMode" type="primary" :loading="syncing" :disabled="!selectedAccountIsActive" @click="runSync">同步搜索词（近 30 天）</el-button>
       </div>
     </div>

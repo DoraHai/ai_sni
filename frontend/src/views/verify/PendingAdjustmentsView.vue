@@ -13,8 +13,10 @@ import {
 import { session } from '../../store/session'
 import {
   QUEUE_STAGES,
+  canOpenControlledActionQueue,
   coreActionFlow,
   filterQueue,
+  flowAccountScopeLabel,
   flowBasisLabel,
   flowControlLabel,
   queueCounts,
@@ -27,6 +29,7 @@ const TENANT_ID = computed(() => session.tenantId)
 const canEdit = computed(() => session.canEdit('verify.pending'))
 const canReconcile = computed(() => session.canEdit('verify.adjustments'))
 const canViewPending = computed(() => session.canView('verify.pending'))
+const canOpenQueue = computed(() => canOpenControlledActionQueue(session.permissions))
 
 const loading = ref(false)
 const error = ref('')
@@ -251,7 +254,7 @@ onMounted(load)
       <span v-if="queueServerPaged" class="summary">统计当前客户全部历史；按状态筛选后分页，每页最多 200 条。</span>
       <span v-else class="summary">仅统计最近加载的最多 200 条记录，不代表全部历史。后端尚不支持历史分页。</span>
       <span v-if="counts.unknown" class="summary">另有 {{ counts.unknown }} 条未知状态，请切换全部核查。</span>
-      <el-button v-if="session.canView('verify.adjustments')" @click="router.push('/verify/adjustments')">查看调价台账</el-button>
+      <el-button v-if="canOpenQueue" @click="router.push('/verify/adjustments')">查看调价台账</el-button>
     </div>
     <el-table v-if="mode === 'queue' && !error" :data="filteredQueue" border :empty-text="loading ? '正在加载记录' : '当前页暂无此状态记录'">
       <el-table-column type="expand" width="48">
@@ -261,7 +264,7 @@ onMounted(load)
               <span v-for="step in coreActionFlow(row).steps" :key="step.code" class="flow-step" :class="`is-${step.state}`">{{ step.label }}</span>
             </div>
             <div><b>受控执行：</b>{{ flowControlLabel(coreActionFlow(row)) }}</div>
-            <div><b>当前真写资格：</b>{{ coreActionFlow(row).control.current_live_allowed ? '该账户与动作范围当前已授权' : '当前未开放，重新发起仍将默认演练' }}</div>
+            <div><b>账户动作范围配置：</b>{{ flowAccountScopeLabel(coreActionFlow(row)) }}</div>
             <div><b>检查依据：</b>{{ flowBasisLabel(coreActionFlow(row)) }} · 本地回写台账</div>
             <div v-if="coreActionFlow(row).result.reconciliation_note"><b>人工对账：</b>{{ coreActionFlow(row).result.reconciliation_note }}</div>
             <div><b>下一步：</b>{{ coreActionFlow(row).next_action }}</div>

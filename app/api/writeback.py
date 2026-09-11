@@ -406,14 +406,18 @@ def _flow_readback_status(stage: str) -> str:
     }.get(stage, "unknown")
 
 
-def _build_action_flow(record_type: str, row, current_live_scopes: set[str]) -> dict | None:
+def _build_action_flow(record_type: str, row, account_live_scopes: set[str] | None) -> dict | None:
     meta = _core_action_meta(record_type, row)
     if meta is None:
         return None
     stage = _queue_stage(row.status, row.dry_run)
     recorded_mode = "dry_run" if row.dry_run else "live"
     scope = meta["scope"]
-    current_live_allowed = scope in current_live_scopes
+    account_scope_state = (
+        "account_unavailable"
+        if account_live_scopes is None
+        else "configured" if scope in account_live_scopes else "scope_disabled"
+    )
     approval_id = getattr(row, "approval_id", None)
     reconciliation_note = getattr(row, "reconciliation_note", None)
     executed_at = getattr(row, "executed_at", None)
@@ -432,7 +436,7 @@ def _build_action_flow(record_type: str, row, current_live_scopes: set[str]) -> 
             "permission": meta["permission"],
             "write_scope": scope,
             "recorded_mode": recorded_mode,
-            "current_live_allowed": current_live_allowed,
+            "account_action_scope_state": account_scope_state,
             "approval_required_for_live": meta["approval_required_for_live"],
             "approval_id": approval_id,
             "default_behavior": "record_only" if row.dry_run else "controlled_live",
@@ -600,7 +604,7 @@ async def list_writeback_queue(
             "error": row.error_msg, "reconciliation_result": row.reconciliation_result,
             "reconciliation_note": row.reconciliation_note,
             "flow": _build_action_flow(
-                "bid", row, live_scopes_by_account.get(row.baidu_account_id, set())
+                "bid", row, live_scopes_by_account.get(row.baidu_account_id)
             ),
         }
         for row in bids
@@ -615,7 +619,7 @@ async def list_writeback_queue(
             "reconciliation_result": row.reconciliation_result,
             "reconciliation_note": row.reconciliation_note,
             "flow": _build_action_flow(
-                "action", row, live_scopes_by_account.get(row.baidu_account_id, set())
+                "action", row, live_scopes_by_account.get(row.baidu_account_id)
             ),
         }
         for row in actions
