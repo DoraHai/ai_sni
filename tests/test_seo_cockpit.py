@@ -216,6 +216,35 @@ def test_customer_verification_publication_draft_is_not_verified():
     assert publication_queue_item(_queue_row(status='failed', page_url=None, link_discovery=None, **base))['state'] == 'failed_retry'
 
 
+def test_customer_verification_publication_failure_is_safe_and_actionable():
+    row=_queue_row(status='failed',platform_name='知乎',adapted_title='选型指南',published_at=None,
+        page_url=None,link_discovery=None,last_error='Bearer private-token from provider response')
+    item=publication_queue_item(row)
+    assert item['state']=='failed_retry'
+    assert '核对平台后台' in item['detail'] and '重试' in item['detail']
+    assert 'private-token' not in str(item)
+
+    row=_queue_row(status='published',platform_name='知乎',adapted_title='选型指南',published_at=None,
+        page_url='https://zhuanlan.zhihu.com/p/1',last_error=None,
+        link_discovery={'state':'unreachable','reason':'timeout','http_status':504,'found':0,
+            'checked_at':'2026-09-12T08:00:00Z','error':'password=private','final_url':'https://example.test/?token=private',
+            'history':[{'response':'private'}]})
+    item=publication_queue_item(row)
+    assert item['state']=='failed_retry' and '核验超时' in item['detail']
+    assert item['evidence']['link_discovery']=={'state':'unreachable','http_status':504,'found':0,
+        'checked_at':'2026-09-12T08:00:00Z','reason_code':'timeout'}
+    assert 'private' not in str(item)
+
+
+def test_customer_verification_publication_blocked_is_not_reported_as_pending():
+    row=_queue_row(status='published',platform_name='知乎',adapted_title='选型指南',published_at=None,
+        page_url='https://zhuanlan.zhihu.com/p/1',last_error=None,
+        link_discovery={'state':'blocked','reason':'login_or_challenge','http_status':200})
+    item=publication_queue_item(row)
+    assert item['state']=='failed_retry'
+    assert '登录或安全验证' in item['detail'] and '公开权限' in item['detail']
+
+
 def test_customer_verification_publication_includes_sanitized_latest_attempt_provenance():
     started=datetime(2026,9,11,7,30,tzinfo=timezone.utc)
     completed=started+timedelta(seconds=8)

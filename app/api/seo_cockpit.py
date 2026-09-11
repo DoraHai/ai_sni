@@ -22,6 +22,13 @@ TASK_PERMS={'content_review':'seo.content','image_repair':'seo.site','ranking_im
 TASK_METRICS={'content_review':'seo.content.published_7d_count','image_repair':'seo.images.verified_repair_count','ranking_improvement':'seo.ranking.top10_keyword_count','backlink_outreach':'seo.backlinks.verified_count'}
 
 QUEUE_STATES=('pending_customer_action','pending_system_check','verified','failed_retry')
+PUBLICATION_DISCOVERY_FAILURES={'unavailable','failed','unreachable','blocked'}
+PUBLICATION_DISCOVERY_REASONS={
+    'timeout':'公开地址核验超时','dns_error':'公开地址域名解析失败','connection_error':'公开地址连接失败',
+    'tls_error':'公开地址安全连接失败','http_error':'公开地址返回异常状态',
+    'http_4xx':'公开地址拒绝访问','http_5xx':'公开地址服务异常','empty_response':'公开地址没有返回可核验内容',
+    'non_html':'公开地址没有返回网页内容','login_or_challenge':'公开地址要求登录或安全验证',
+}
 
 def _queue_item(kind,row,state,title,detail,evidence=None,action_url=None):
     updated=getattr(row,'updated_at',None) or getattr(row,'checked_at',None) or getattr(row,'last_checked_at',None) or getattr(row,'created_at',None)
@@ -48,17 +55,38 @@ def image_queue_item(row,allow_retry=False):
         item['retry_reason']='当前账号只有查看权限，请由具备站点编辑权限的人员重新核实'
     return item
 
+def _safe_publication_discovery(discovery):
+    if not isinstance(discovery,dict):return None
+    safe={}
+    state=discovery.get('state')
+    if state in {'readable','found','unavailable','failed','unreachable','blocked','internal'}:safe['state']=state
+    status=discovery.get('http_status')
+    if isinstance(status,int) and not isinstance(status,bool):safe['http_status']=status
+    found=discovery.get('found')
+    if isinstance(found,int) and not isinstance(found,bool) and found>=0:safe['found']=found
+    checked_at=discovery.get('checked_at')
+    if isinstance(checked_at,(str,datetime)):safe['checked_at']=checked_at
+    reason=discovery.get('reason')
+    if reason in PUBLICATION_DISCOVERY_REASONS:safe['reason_code']=reason
+    return safe or None
+
+def _publication_failure_detail(discovery):
+    reason=PUBLICATION_DISCOVERY_REASONS.get(discovery.get('reason')) if isinstance(discovery,dict) else None
+    prefix=reason or '系统未能核实公开地址'
+    return f'{prefix}；请检查页面公开权限和地址是否正确，系统将在后续周期重新核验'
+
 def publication_queue_item(row,latest_attempt=None):
     discovery=row.link_discovery or {}
-    if row.status=='failed':state,detail='failed_retry',row.last_error or '发布尝试失败，可在分发模块重试'
+    if row.status=='failed':state,detail='failed_retry','发布处理失败；请先核对平台后台是否已产生内容，再到分发模块决定是否重试'
     elif row.status in {'manual_required','draft_created'}:state,detail='pending_customer_action','平台尚未确认正式发布，需要客户或运营人员完成发布并回填公开地址'
     elif row.status=='published' and row.page_url and (discovery.get('state') in {'readable','found'} or discovery.get('found')):state,detail='verified','系统已抓取并确认公开地址可访问'
-    elif discovery.get('state') in {'unavailable','failed'}:state,detail='failed_retry','公开地址抓取失败，可重新核验'
+    elif discovery.get('state') in PUBLICATION_DISCOVERY_FAILURES:state,detail='failed_retry',_publication_failure_detail(discovery)
     elif row.status=='published' and not row.page_url:state,detail='failed_retry','记录已发布但缺少公开地址，需要补录后重新核验'
     else:state,detail='pending_system_check','发布正在处理，或公开地址正在等待系统抓取核验'
     evidence={}
     if row.page_url:
-        evidence.update({'page_url':row.page_url,'published_at':row.published_at,'link_discovery':row.link_discovery})
+        evidence.update({'page_url':row.page_url,'published_at':row.published_at,
+                         'link_discovery':_safe_publication_discovery(row.link_discovery)})
     if latest_attempt is not None:
         evidence['latest_attempt']={
             'id':int(latest_attempt.id),'action':latest_attempt.action,'status':latest_attempt.status,
