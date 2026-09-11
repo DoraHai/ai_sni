@@ -14,7 +14,10 @@ const bindings = { computed:Vue.computed, onMounted:Vue.onMounted, onUnmounted:V
   ElMessage: { success(){},warning(){},error(){} },
   ElMessageBox: { confirm: (...args) => { const d=deferred(args);confirmations.push(d);return d.promise } },
   fetchSeoTaskCenter: args => { const d=deferred(args);reads.push(d);return d.promise },
-  fetchSeoCustomerVerificationQueue: () => Promise.resolve({ items: [], total: 0, summary: {} }),
+  fetchSeoCustomerVerificationQueue: args => args.tenant_id === 4
+    ? Promise.reject(new Error('queue unavailable'))
+    : Promise.resolve({ items: [], total: 0, summary: {} }),
+  retrySeoImageVerification: () => Promise.resolve({}),
   recoverSeoAiOperation: (...args) => { const d=deferred(args);recoveries.push(d);return d.promise },
   retrySeoTask: (...args) => { retries.push(args); return Promise.resolve({}) },
 }
@@ -42,6 +45,10 @@ try {
   assert.equal(retries.length,0)
   await state.retry({id:'8',can_retry:false})
   assert.equal(confirmations.length,1)
+  tenant.value=4;await Vue.nextTick()
+  reads.at(-1).resolve(response('task-history-survives'));await Vue.nextTick();await Vue.nextTick()
+  assert.equal(state.data.items[0].id,'task-history-survives')
+  assert.equal(state.verificationError,'queue unavailable')
   assert.ok(!source.includes('v-html'))
   console.log('Task center checks passed: stale tenant response, user-private recovery, scope switch before confirmation, read-only retry')
 } finally { app.unmount() }

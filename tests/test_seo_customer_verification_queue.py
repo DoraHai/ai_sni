@@ -12,7 +12,7 @@ from app.security.auth import _required
 NOW = datetime(2026, 9, 11, tzinfo=timezone.utc)
 
 def row(**values):
-    defaults = dict(id=1, site_id=7, updated_at=NOW, created_at=NOW, checked_at=None, last_checked_at=None)
+    defaults = dict(id=1, tenant_id=3, site_id=7, updated_at=NOW, created_at=NOW, checked_at=None, last_checked_at=None)
     defaults.update(values)
     return SimpleNamespace(**defaults)
 
@@ -20,11 +20,14 @@ def test_image_queue_requires_crawl_evidence_before_verified():
     assert image_queue_item(row(status='unverified', page_id=8, evidence={'actual_alt': ''}))['state'] == 'pending_customer_action'
     assert image_queue_item(row(status='pending', page_id=8, evidence=None))['state'] == 'pending_system_check'
     assert image_queue_item(row(status='verified', page_id=8, evidence={'actual_alt': '减速机'}))['state'] == 'verified'
-    assert image_queue_item(row(status='unavailable', page_id=8, evidence={'error': 'timeout'}))['state'] == 'failed_retry'
+    unavailable = image_queue_item(row(status='unavailable', page_id=8, evidence={'error': 'timeout'}))
+    assert unavailable['state'] == 'failed_retry'
+    assert unavailable['retry_action'] == {'method':'POST','url':'/api/v1/seo/image-verifications/1/retry','verification_id':1,'tenant_id':3,'site_id':7}
 
 def test_publication_url_backfill_does_not_equal_verification():
     base = dict(platform_name='知乎', adapted_title='选型指南', published_at=NOW, last_error=None)
     assert publication_queue_item(row(status='manual_required', page_url=None, link_discovery=None, **base))['state'] == 'pending_customer_action'
+    assert publication_queue_item(row(status='draft_created', page_url='https://draft.example/1', link_discovery={'state':'readable'}, **base))['state'] == 'pending_customer_action'
     assert publication_queue_item(row(status='published', page_url='https://zhuanlan.zhihu.com/p/1', link_discovery=None, **base))['state'] == 'pending_system_check'
     assert publication_queue_item(row(status='published', page_url='https://zhuanlan.zhihu.com/p/1', link_discovery={'state':'readable','found':0}, **base))['state'] == 'verified'
     assert publication_queue_item(row(status='published', page_url='https://zhuanlan.zhihu.com/p/1', link_discovery={'state':'found','found':1}, **base))['state'] == 'verified'

@@ -4,11 +4,13 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId } from './seoSiteContext'
-import { fetchSeoCustomerVerificationQueue, fetchSeoTaskCenter, recoverSeoAiOperation, retrySeoTask } from '../../api/seo'
+import { fetchSeoCustomerVerificationQueue, fetchSeoTaskCenter, recoverSeoAiOperation, retrySeoImageVerification, retrySeoTask } from '../../api/seo'
 
 const router = useRouter()
 const data = ref({ items: [], total: 0, summary: {}, schedules: [] })
 const verification = ref({ items: [], total: 0, summary: {} })
+const verificationError = ref('')
+const verificationRetrying = ref('')
 const filters = reactive({ kind: '', status: '', page: 1 })
 const loading = ref(false)
 const error = ref('')
@@ -39,16 +41,35 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [response, queue] = await Promise.all([
+    const [taskResult, queueResult] = await Promise.allSettled([
       fetchSeoTaskCenter({ tenant_id: currentTenantId.value, site_id: currentSeoSiteId.value || undefined,
         kind: filters.kind || undefined, status: filters.status || undefined, page: filters.page, page_size: 20 }),
       currentSeoSiteId.value ? fetchSeoCustomerVerificationQueue({ tenant_id: currentTenantId.value,
         site_id: currentSeoSiteId.value, page_size: 50 }) : Promise.resolve({ items: [], total: 0, summary: {} }),
     ])
-    if (token === sequence && scope() === requestedScope) { data.value = response; verification.value = queue }
+    if (token !== sequence || scope() !== requestedScope) return
+    if (taskResult.status === 'rejected') throw taskResult.reason
+    data.value = taskResult.value
+    if (queueResult.status === 'fulfilled') { verification.value = queueResult.value; verificationError.value = '' }
+    else { verification.value = { items: [], total: 0, summary: {} }; verificationError.value = queueResult.reason?.message || '核验队列读取失败' }
   } catch (e) {
     if (token === sequence && scope() === requestedScope) error.value = e.message
   } finally { if (token === sequence) loading.value = false }
+}
+
+async function retryVerification(row) {
+  if (!row.retry_action || verificationRetrying.value) return
+  const requestedScope = scope()
+  const tenantId = currentTenantId.value
+  const siteId = currentSeoSiteId.value
+  if (row.retry_action.tenant_id !== tenantId || row.retry_action.site_id !== siteId) return
+  verificationRetrying.value = row.id
+  try {
+    await retrySeoImageVerification({ verificationId: row.retry_action.verification_id,
+      tenantId, siteId })
+    if (scope() === requestedScope) { ElMessage.success('图片重新核实已进入队列'); await load() }
+  } catch (e) { if (scope() === requestedScope) ElMessage.error(e?.message || '重新核实失败') }
+  finally { verificationRetrying.value = '' }
 }
 
 async function retry(row) {
@@ -92,7 +113,9 @@ function openSource(row) {
 
 watch(() => [currentTenantId.value, currentSeoSiteId.value, session.user?.id], () => {
   sequence++; resultSequence++; resultOpen.value = false; resultText.value = ''; resultError.value = ''
-  data.value = { items: [], total: 0, summary: {}, schedules: [] }; filters.page = 1; load()
+  data.value = { items: [], total: 0, summary: {}, schedules: [] }
+  verification.value = { items: [], total: 0, summary: {} }; verificationError.value = ''; verificationRetrying.value = ''
+  filters.page = 1; load()
 })
 watch(() => [filters.kind, filters.status], () => { filters.page = 1; load() })
 watch(() => filters.page, load)
@@ -125,11 +148,13 @@ onUnmounted(() => { sequence++; resultSequence++; clearInterval(timer) })
         <div class="task-filters"><h2>客户执行与系统核验</h2><span>共 {{ verification.total }} 项</span></div>
         <p class="scope-note">汇总已有记录；读取不会启动采集、发布或修改客户网站。已审核、已发布和已核实分别判断。</p>
         <div v-if="!currentSeoSiteId" class="empty">请选择网站后查看核验队列。</div>
+        <div v-else-if="verificationError" class="error" role="alert">核验队列加载失败：{{ verificationError }} <button @click="load">重试加载</button></div>
         <div v-else-if="!verification.items.length" class="empty">当前没有待处理或已核实记录。</div>
         <div v-else class="table-wrap"><table><thead><tr><th>事项</th><th>状态</th><th>依据</th><th>更新时间</th><th>入口</th></tr></thead>
           <tbody><tr v-for="row in verification.items" :key="row.id"><td><strong>{{ verificationKinds[row.kind] }}</strong><small>{{ row.title }}</small></td>
             <td><span class="status" :class="row.state">{{ verificationStates[row.state] }}</span></td><td>{{ row.detail }}</td><td>{{ time(row.updated_at) }}</td>
-            <td><button v-if="row.action_url" @click="router.push(row.action_url)">查看处理</button></td></tr></tbody></table></div>
+            <td><button v-if="row.retry_action" :disabled="!!verificationRetrying" @click="retryVerification(row)">{{ verificationRetrying === row.id ? '提交中…' : '重新核实' }}</button><button v-if="row.action_url" @click="router.push(row.action_url)">查看处理</button></td></tr></tbody></table></div>
+        <p v-if="verification.truncated" class="scope-note">当前仅展示已读取的 {{ verification.scanned_count }} 条来源记录，{{ verification.truncated_sources.join('、') }} 仍有更多记录，请按类型分批查看。</p>
       </section>
       <section class="task-history">
         <div class="task-filters">

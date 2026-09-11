@@ -36,14 +36,18 @@ def image_queue_item(row):
     if not state:return None
     details={'pending':'已进入重新抓取队列','checking':'正在重新抓取页面','verified':'重新抓取已确认图片问题解决',
              'unverified':'重新抓取确认修改尚未生效，请客户完成网站修改','unavailable':'抓取或证据不可用，可重试核实'}
-    return _queue_item('image_repair',row,state,f'图片修复核实 · 页面 #{row.page_id}',details[row.status],row.evidence,
-                       f'/seo/site?site_id={row.site_id}&page_id={row.page_id}')
+    item=_queue_item('image_repair',row,state,f'图片修复核实 · 页面 #{row.page_id}',details[row.status],row.evidence,
+                     f'/seo/site?site_id={row.site_id}&page_id={row.page_id}')
+    if row.status=='unavailable':
+        item['retry_action']={'method':'POST','url':f'/api/v1/seo/image-verifications/{row.id}/retry',
+                              'verification_id':int(row.id),'tenant_id':int(row.tenant_id),'site_id':int(row.site_id)}
+    return item
 
 def publication_queue_item(row):
     discovery=row.link_discovery or {}
     if row.status=='failed':state,detail='failed_retry',row.last_error or '发布尝试失败，可在分发模块重试'
-    elif row.status in {'manual_required','draft_created'} and not row.page_url:state,detail='pending_customer_action','需要客户或运营人员完成平台发布并回填公开地址'
-    elif row.page_url and (discovery.get('state') in {'readable','found'} or discovery.get('found')):state,detail='verified','系统已抓取并确认公开地址可访问'
+    elif row.status in {'manual_required','draft_created'}:state,detail='pending_customer_action','平台尚未确认正式发布，需要客户或运营人员完成发布并回填公开地址'
+    elif row.status=='published' and row.page_url and (discovery.get('state') in {'readable','found'} or discovery.get('found')):state,detail='verified','系统已抓取并确认公开地址可访问'
     elif discovery.get('state') in {'unavailable','failed'}:state,detail='failed_retry','公开地址抓取失败，可重新核验'
     elif row.status=='published' and not row.page_url:state,detail='failed_retry','记录已发布但缺少公开地址，需要补录后重新核验'
     else:state,detail='pending_system_check','发布正在处理，或公开地址正在等待系统抓取核验'
@@ -267,27 +271,39 @@ async def customer_verification_queue(
     if not ctx.can_view('seo.dashboard'):raise HTTPException(403,'没有任务中心查看权限')
     site_row=await session.get(SeoSite,site_id)
     if site_row is None or site_row.tenant_id!=tenant_id:raise HTTPException(404,'网站不存在')
-    items=[]
+    items=[];truncated_sources=[];source_counts={}
     if ctx.can_view('seo.site') and kind in (None,'image_repair'):
-        rows=await session.scalars(select(SeoImageVerification).where(
+        rows=list(await session.scalars(select(SeoImageVerification).where(
             SeoImageVerification.tenant_id==tenant_id,SeoImageVerification.site_id==site_id,
-            SeoImageVerification.status!='superseded').order_by(SeoImageVerification.id.desc()).limit(500))
+            SeoImageVerification.status!='superseded').order_by(SeoImageVerification.id.desc()).limit(501)))
+        source_counts['image_repair']=min(len(rows),500)
+        if len(rows)>500:truncated_sources.append('image_repair')
+        rows=rows[:500]
         items.extend(filter(None,(image_queue_item(row) for row in rows)))
     if ctx.can_view('seo.content') and kind in (None,'publication_url'):
         rows=(await session.execute(select(SeoContentPublication,SeoContentAsset.site_id).join(
             SeoContentAsset,SeoContentAsset.id==SeoContentPublication.content_asset_id).where(
             SeoContentPublication.tenant_id==tenant_id,SeoContentAsset.tenant_id==tenant_id,
-            SeoContentAsset.site_id==site_id).order_by(SeoContentPublication.id.desc()).limit(500))).all()
+            SeoContentAsset.site_id==site_id).order_by(SeoContentPublication.id.desc()).limit(501))).all()
+        source_counts['publication_url']=min(len(rows),500)
+        if len(rows)>500:truncated_sources.append('publication_url')
+        rows=rows[:500]
         for row,row_site_id in rows:
             row.site_id=row_site_id;items.append(publication_queue_item(row))
     if ctx.can_view('seo.site') and kind in (None,'page_recheck'):
-        rows=await session.scalars(select(SeoSitePage).where(SeoSitePage.tenant_id==tenant_id,
+        rows=list(await session.scalars(select(SeoSitePage).where(SeoSitePage.tenant_id==tenant_id,
             SeoSitePage.site_id==site_id,SeoSitePage.status.in_(['proposed','approved','needs_fix','pending','implemented','verified','error']))
-            .order_by(SeoSitePage.updated_at.desc(),SeoSitePage.id.desc()).limit(500))
+            .order_by(SeoSitePage.updated_at.desc(),SeoSitePage.id.desc()).limit(501)))
+        source_counts['page_recheck']=min(len(rows),500)
+        if len(rows)>500:truncated_sources.append('page_recheck')
+        rows=rows[:500]
         items.extend(filter(None,(page_queue_item(row) for row in rows)))
     if ctx.can_view('seo.links') and kind in (None,'backlink_verification'):
-        rows=await session.scalars(select(SeoBacklink).where(SeoBacklink.tenant_id==tenant_id,
-            SeoBacklink.site_id==site_id).order_by(SeoBacklink.updated_at.desc(),SeoBacklink.id.desc()).limit(500))
+        rows=list(await session.scalars(select(SeoBacklink).where(SeoBacklink.tenant_id==tenant_id,
+            SeoBacklink.site_id==site_id).order_by(SeoBacklink.updated_at.desc(),SeoBacklink.id.desc()).limit(501)))
+        source_counts['backlink_verification']=min(len(rows),500)
+        if len(rows)>500:truncated_sources.append('backlink_verification')
+        rows=rows[:500]
         items.extend(backlink_queue_item(row) for row in rows)
     summary={value:sum(item['state']==value for item in items) for value in QUEUE_STATES}
     if state:items=[item for item in items if item['state']==state]
@@ -299,7 +315,8 @@ async def customer_verification_queue(
                 'pending_system_check':'客户动作已有记录，等待系统抓取或平台核验',
                 'verified':'系统已取得真实页面或平台证据',
                 'failed_retry':'核验失败或证据不可用，可以重试'},
-            'read_only':True,'as_of':datetime.now(timezone.utc)}
+            'read_only':True,'as_of':datetime.now(timezone.utc),'scanned_count':sum(source_counts.values()),
+            'source_counts':source_counts,'truncated':bool(truncated_sources),'truncated_sources':truncated_sources,'has_more':bool(truncated_sources)}
 
 @router.get('/image-verifications')
 async def image_verifications(tenant_id:PositiveInt,site_id:PositiveInt,limit:int=Query(50,ge=1,le=100),ctx=Depends(require_scoped_auth),session=Depends(get_session)):

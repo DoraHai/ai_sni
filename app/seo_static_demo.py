@@ -346,7 +346,9 @@ def resolve_demo_response(
         result = _page(rows, query)
         result.update({"summary": {value: sum(row["state"] == value for row in rows) for value in ("pending_customer_action", "pending_system_check", "verified", "failed_retry")},
                        "state_definitions": {"pending_customer_action": "需要客户或运营人员先完成真实网站/平台操作", "pending_system_check": "等待系统抓取或平台核验", "verified": "系统已取得真实页面或平台证据", "failed_retry": "核验失败或证据不可用，可以重试"},
-                       "read_only": True, "as_of": fixture["dataset"]["as_of"], "demo_meta": _dataset_meta(fixture)})
+                       "read_only": True, "as_of": fixture["dataset"]["as_of"], "scanned_count": len(rows),
+                       "source_counts": {}, "truncated": False, "truncated_sources": [], "has_more": False,
+                       "demo_meta": _dataset_meta(fixture)})
         return DemoResponse(200, result)
     if method == "GET" and path == "/api/v1/seo/alerts":
         rows = deepcopy(fixture["alerts"])
