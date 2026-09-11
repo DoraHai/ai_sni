@@ -15,6 +15,7 @@ from app.models.seo import (
 )
 from app.models.seo_cockpit import SeoTask,SeoImageVerification
 from app.seo_cockpit_metrics import metric_snapshot,metric_values,DEFINITIONS
+from app.seo_image_verification import prepare_image_verification_retry
 
 router=APIRouter()
 TASK_PERMS={'content_review':'seo.content','image_repair':'seo.site','ranking_improvement':'seo.keywords','backlink_outreach':'seo.links'}
@@ -337,9 +338,10 @@ async def retry_image_verification(verification_id:int,tenant_id:PositiveInt,sit
     from datetime import timedelta
     now=datetime.now(timezone.utc)
     if row.checked_at and now-row.checked_at<timedelta(minutes=5):raise HTTPException(429,'请在上次核实五分钟后重试')
+    row.evidence=prepare_image_verification_retry(row,now,ctx.user_id)
     row.status='pending';row.available_at=now
     await session.commit()
-    return {'id':row.id,'status':'pending'}
+    return {'id':row.id,'status':'pending','attempt':row.evidence['attempt'],'retry_request':row.evidence['retry_request']}
 
 async def stage_review_task(session,content,ctx,decision=None):
     """Reuse submit-review/review; approval advances work but is not completion."""
