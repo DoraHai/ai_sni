@@ -199,7 +199,11 @@ done
 admin_status="$(curl -sS --retry 5 --retry-delay 1 -D "$smoke_headers" -o /dev/null -w '%{http_code}' \
   "$public_origin/admin/internal")" || fail 'legacy admin redirect smoke failed'
 [[ "$admin_status" == 308 ]] || fail "legacy admin redirect returned $admin_status"
-tr -d '\r' < "$smoke_headers" | grep -Fiqx 'Location: /settings/accounts' || fail 'legacy admin redirect target changed'
+admin_location="$(tr -d '\r' < "$smoke_headers" | awk 'tolower($1) == "location:" { print $2; exit }')"
+case "$admin_location" in
+  '/settings/accounts'|"${public_origin%/}/settings/accounts") ;;
+  *) fail 'legacy admin redirect target changed' ;;
+esac
 curl -fsS --retry 5 "$public_origin/health" >/dev/null || fail 'health smoke failed'
 
 committed=true

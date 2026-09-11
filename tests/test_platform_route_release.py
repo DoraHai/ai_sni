@@ -219,7 +219,7 @@ while [[ "$#" -gt 0 ]]; do
   shift
 done
 if [[ "$url" == */admin/internal ]]; then
-  printf 'HTTP/2 308\\r\\nLocation: /settings/accounts\\r\\n\\r\\n' > "$headers"
+  printf 'HTTP/2 308\\r\\nLocation: https://gsnipers.snipers.com.cn/settings/accounts\\r\\n\\r\\n' > "$headers"
   printf '308'
 elif [[ -n "$output" ]]; then
   cp "$PLATFORM_SEM_INDEX" "$output"
