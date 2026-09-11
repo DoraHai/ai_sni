@@ -230,6 +230,7 @@ def test_demo_manage_reads_never_touch_database_or_realtime_account(demo_client)
         "tenant_id": 16, "campaign_id": 160201,
     }).json()
     assert adgroups["is_demo"] is True and adgroups["total"] == 1
+    assert adgroups["adgroups"][0]["baidu_account_id"] == 160001
 
 
 def test_demo_alerts_and_all_adjustment_tabs_are_embedded_reads(demo_client):

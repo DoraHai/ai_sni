@@ -422,9 +422,11 @@ def read_demo_adgroups(campaign_id: int | None) -> dict[str, Any]:
     rows = []
     for index, (adgroup_id, name) in enumerate(_ADGROUP_NAMES.items()):
         campaign = list(_CAMPAIGN_NAMES)[index]
+        account_id = DEMO_ACCOUNTS[0 if index < 2 else 1]
         if campaign_id is not None and campaign != campaign_id:
             continue
-        rows.append({"adgroup_id": adgroup_id, "adgroup_name": name, "campaign_id": campaign,
+        rows.append({"adgroup_id": adgroup_id, "baidu_account_id": account_id,
+                     "adgroup_name": name, "campaign_id": campaign,
                      "campaign_name": _CAMPAIGN_NAMES[campaign], "max_price": 7.2 + index * 1.1,
                      "pause": index == 3, "status": 23 if index == 3 else 21,
                      "pc_final_url": f"https://demo.invalid/landing/{adgroup_id}",
