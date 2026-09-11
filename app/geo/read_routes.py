@@ -97,6 +97,29 @@ async def get_scheduler_eligibility(
     }
 
 
+@router.get('/runtime-status')
+async def get_runtime_status(
+    tenant_id: int,
+    ctx=Depends(require_scoped_auth),
+    session=Depends(tenant_read_session),
+):
+    """Expose scheduler ownership and run telemetry without changing runtime state."""
+    from app.geo.content.geo_scheduler import scheduler_runtime_status
+    from app.geo.scheduler import followup_scheduler_runtime_status
+
+    ctx.ensure_tenant(tenant_id)
+    return {
+        'tenant_id': tenant_id,
+        'evaluated_at': iso(datetime.now(timezone.utc)),
+        'read_only': True,
+        'observation_scope': 'request_serving_process',
+        'schedulers': {
+            'content': scheduler_runtime_status(),
+            'followup': followup_scheduler_runtime_status(),
+        },
+    }
+
+
 @router.get('/simulate-action')
 async def simulate_action(
     tenant_id: int,
@@ -581,5 +604,45 @@ async def get_content_task(content_task_id: int, tenant_id: int, ctx=Depends(req
                           'channel': r.channel, 'stored_status': r.status} for r in valid_variants],
             'publications': [{'ref': ref('publication', r.id), 'variant_ref': ref('channel_variant', r.variant_id),
                               'published_url': r.published_url, 'stored_status': r.status} for r in publications if r.variant_id in variant_ids],
+            'acceptance_summary_url': f'/api/v1/geo/integration/read/content-tasks/{task.id}/acceptance-summary?tenant_id={tenant_id}',
             'relations': [{'relation': 'measured_by', 'target': ref('metric_task', r.id)} for r in metric_tasks
                           if ((r.progress_first or {}).get('params') or {}).get('content_task_id') == task.id]}
+
+
+@router.get('/content-tasks/{content_task_id}/acceptance-summary')
+async def get_content_task_acceptance_summary(
+    content_task_id: int,
+    tenant_id: int,
+    ctx=Depends(require_scoped_auth),
+    session=Depends(tenant_read_session),
+):
+    """Summarize stored H3/H4 evidence; never publish, fetch, retry, or mutate."""
+    from app.geo.acceptance_readiness import build_h3_h4_summary
+    from app.geo.tenant16_demo import is_tenant16_demo
+
+    ctx.ensure_tenant(tenant_id)
+    if is_tenant16_demo(ctx, tenant_id):
+        raise HTTPException(
+            404,
+            '只读演示数据不提供 H3/H4 真实发布验收摘要',
+        )
+    data_id = data_tenant_id(session, tenant_id)
+    task = await tenant_object(session, GeoContentTask, data_id, content_task_id)
+    articles = list(await session.scalars(
+        select(GeoArticleVersion)
+        .where(GeoArticleVersion.task_id == task.id)
+        .order_by(GeoArticleVersion.version_no.desc(), GeoArticleVersion.id.desc())
+    ))
+    variants = list(await session.scalars(
+        select(GeoChannelVariant).where(GeoChannelVariant.task_id == task.id)
+    ))
+    publications = list(await session.scalars(
+        select(GeoPublication)
+        .join(GeoChannelVariant, GeoChannelVariant.id == GeoPublication.variant_id)
+        .where(GeoChannelVariant.task_id == task.id)
+    ))
+    return {
+        'tenant_id': tenant_id,
+        'evaluated_at': iso(datetime.now(timezone.utc)),
+        **build_h3_h4_summary(task, articles, variants, publications),
+    }

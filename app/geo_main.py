@@ -18,11 +18,13 @@ from app.geo.content.oauth_public import router as geo_oauth_public_router
 from app.geo.routes import router as geo_router
 from app.geo.demo_runtime import validate_geo_demo_runtime
 from app.geo.content.geo_scheduler import (
+    scheduler_runtime_status,
     scheduler_status,
     shutdown_geo_scheduler,
     start_geo_scheduler,
 )
 from app.geo.scheduler import (
+    followup_scheduler_runtime_status,
     geo_scheduler as followup_scheduler,
     supervise_geo_followups,
     shutdown_geo_scheduler as shutdown_geo_followup_scheduler,
@@ -126,6 +128,10 @@ async def geo_health(response: Response) -> dict:
         "db_error": db_error,
         "geo_scheduler": scheduler_status(),
         "geo_followup_scheduler": "running" if followup_scheduler.running else "standby",
+        "scheduler_runtime": {
+            "content": scheduler_runtime_status(),
+            "followup": followup_scheduler_runtime_status(),
+        },
         "demo_runtime": settings.app_env == "demo",
         "execution_enabled": settings.app_env != "demo",
     }
