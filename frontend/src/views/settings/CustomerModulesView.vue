@@ -8,7 +8,9 @@ import {
   fetchCustomers,
   fetchSemIdentityRepairCandidates,
   fetchSemIdentityRepairPreview,
+  fetchSemExecutionPolicy,
   setCustomerModule,
+  setSemExecutionPolicy,
   updateCustomer,
 } from '../../api/moduleAssets'
 import { fetchUsers } from '../../api/auth'
@@ -30,6 +32,19 @@ const moduleContext = reactive({ tenantId: null, customerName: '', code: '' })
 const moduleForm = reactive({ status: 'trial', expires_at: '' })
 const accountVisible = ref(false)
 const accountCustomer = ref(null)
+const executionVisible = ref(false)
+const executionLoading = ref(false)
+const executionSaving = ref(false)
+const executionCustomer = ref(null)
+const executionPolicy = ref(null)
+const executionForm = reactive({
+  account_id: null,
+  enabled: false,
+  scopes: [],
+  daily_live_action_limit: 20,
+  max_bid_change_pct: 10,
+  change_reason: '',
+})
 const repairVisible = ref(false)
 const repairLoading = ref(false)
 const repairCandidates = ref({ groups: [], summary: {} })
@@ -43,6 +58,13 @@ const repairCandidateRequests = createRequestController()
 const repairPreviewRequests = createRequestController()
 const moduleLabels = { sem: 'SEM', seo: 'SEO', geo: 'GEO' }
 const moduleStatusLabels = { active: '正式', trial: '试用', suspended: '停用', closed: '关闭' }
+const semScopeLabels = {
+  account_budget: '账户预算', adgroup_bid: '单元出价', adgroup_landing_url: '单元落地页',
+  adgroup_negative_words: '单元否词', adgroup_pause: '单元启停', campaign_budget: '计划预算',
+  campaign_negative_words: '计划否词', campaign_pause: '计划启停', campaign_region: '计划地域',
+  campaign_schedule: '计划时段', keyword_bid: '关键词出价', keyword_create: '新增关键词',
+  keyword_match_type: '关键词匹配', keyword_pause: '关键词启停',
+}
 const editingCustomer = computed(() => customers.value.find((row) => row.id === editingId.value))
 const repairCandidateCustomers = computed(() => {
   const seen = new Set()
@@ -273,6 +295,91 @@ function rebindAccount(row) {
   router.push({ path: '/onboarding', query: { tenant_id: row.id, rebind: '1' } })
 }
 
+const selectedExecutionAccount = computed(() => (
+  executionPolicy.value?.accounts?.find((item) => item.id === executionForm.account_id) || null
+))
+
+function hydrateExecutionForm(account) {
+  Object.assign(executionForm, {
+    account_id: account?.id || null,
+    enabled: account?.enabled === true,
+    scopes: [...(account?.scopes || [])],
+    daily_live_action_limit: account?.daily_live_action_limit || 20,
+    max_bid_change_pct: account?.max_bid_change_pct || 10,
+    change_reason: '',
+  })
+}
+
+function selectExecutionAccount(accountId) {
+  hydrateExecutionForm(executionPolicy.value?.accounts?.find((item) => item.id === accountId))
+}
+
+async function openExecutionPolicy(row) {
+  executionVisible.value = true
+  executionLoading.value = true
+  executionCustomer.value = row
+  executionPolicy.value = null
+  try {
+    const result = await fetchSemExecutionPolicy(row.id)
+    executionPolicy.value = result
+    const first = result.accounts?.find((item) => item.status === 'active') || result.accounts?.[0]
+    hydrateExecutionForm(first)
+  } catch (error) {
+    ElMessage.error(error.message || '执行权限读取失败')
+    executionVisible.value = false
+  } finally { executionLoading.value = false }
+}
+
+function isExpandedGrant() {
+  const current = selectedExecutionAccount.value
+  if (!current) return executionForm.enabled
+  const currentScopes = new Set(current.scopes || [])
+  return (
+    (executionForm.enabled && !current.enabled)
+    || executionForm.scopes.some((scope) => !currentScopes.has(scope))
+    || executionForm.daily_live_action_limit > current.daily_live_action_limit
+    || executionForm.max_bid_change_pct > current.max_bid_change_pct
+  )
+}
+
+async function persistExecutionPolicy({ pause = false } = {}) {
+  const current = selectedExecutionAccount.value
+  if (!current || current.status !== 'active') return ElMessage.warning('请选择 active 推广账户')
+  const enabled = pause ? false : executionForm.enabled
+  if (enabled && !executionForm.scopes.length) return ElMessage.warning('有限真写至少选择一个动作')
+  if (executionForm.change_reason.trim().length < 4) return ElMessage.warning('请填写至少 4 个字的变更原因')
+  const needsStrongConfirm = pause || (current.enabled && !enabled) || isExpandedGrant()
+  try {
+    await ElMessageBox.confirm(
+      pause
+        ? `确认立即暂停“${current.username}”的全部真实回写？后续动作将降为演练。`
+        : `确认保存“${current.username}”的执行权限？${enabled ? '命中环境总闸后将允许所选动作有限真写。' : '后续动作将保持演练。'}`,
+      needsStrongConfirm ? '执行权限二次确认' : '确认执行权限变更',
+      { type: needsStrongConfirm ? 'warning' : 'info', confirmButtonText: pause ? '立即暂停' : '确认保存' },
+    )
+  } catch { return }
+  executionSaving.value = true
+  try {
+    const result = await setSemExecutionPolicy(executionCustomer.value.id, current.id, {
+      enabled,
+      scopes: [...executionForm.scopes],
+      daily_live_action_limit: executionForm.daily_live_action_limit,
+      max_bid_change_pct: executionForm.max_bid_change_pct,
+      expected_version: executionPolicy.value.version,
+      change_reason: executionForm.change_reason.trim(),
+    })
+    executionPolicy.value = result
+    hydrateExecutionForm(result.accounts?.find((item) => item.id === current.id))
+    ElMessage.success(pause ? '真实回写已暂停' : '执行权限已保存')
+  } catch (error) {
+    ElMessage.error(error.message || '执行权限保存失败，请刷新后重试')
+    try {
+      executionPolicy.value = await fetchSemExecutionPolicy(executionCustomer.value.id)
+      hydrateExecutionForm(executionPolicy.value.accounts?.find((item) => item.id === current.id))
+    } catch { /* keep the original error visible */ }
+  } finally { executionSaving.value = false }
+}
+
 async function loadRepairCandidates() {
   const requestId = ++repairCandidateRequestId.value
   const controller = repairCandidateRequests.start()
@@ -402,6 +509,10 @@ onMounted(load)
             v-if="moduleRow(row, 'sem')?.available"
             type="primary" plain size="small" @click="rebindAccount(row)"
           >重新绑定并授权</el-button>
+          <el-button
+            v-if="moduleRow(row, 'sem')"
+            type="warning" plain size="small" @click="openExecutionPolicy(row)"
+          >执行权限</el-button>
         </template>
       </el-table-column>
       <el-table-column label="归属检查" min-width="230">
@@ -459,6 +570,91 @@ onMounted(load)
         <el-alert title="每个模块独立确认并单独提交；失败时重新读取该模块原状态，不宣称多模块原子更新。" type="warning" :closable="false" />
       </el-form>
       <template #footer><el-button @click="moduleVisible=false">取消</el-button><el-button type="primary" :loading="moduleSaving" @click="saveModule">确认更新</el-button></template>
+    </el-dialog>
+    <el-dialog v-model="executionVisible" :title="`${executionCustomer?.name || ''} · SEM 执行权限`" width="780px">
+      <div v-loading="executionLoading" class="execution-policy">
+        <el-alert
+          :title="executionPolicy?.global_gate_open ? '环境总闸已具备有限真写条件；仍须同时命中本页账户与动作策略。' : '环境总闸当前保持演练；本页策略不会绕过环境总闸。'"
+          :type="executionPolicy?.global_gate_open ? 'warning' : 'info'"
+          :closable="false"
+          show-icon
+        />
+        <el-alert
+          v-if="executionPolicy?.configuration_error"
+          :title="executionPolicy.configuration_error"
+          type="error"
+          :closable="false"
+          show-icon
+        />
+        <el-form v-if="executionPolicy" label-width="130px" class="execution-form">
+          <el-form-item label="百度推广账户">
+            <el-select :model-value="executionForm.account_id" style="width:100%" @change="selectExecutionAccount">
+              <el-option
+                v-for="account in executionPolicy.accounts"
+                :key="account.id"
+                :value="account.id"
+                :disabled="account.status !== 'active'"
+                :label="`${account.username} · UCID ${account.ucid} · ${account.status}`"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="当前模式">
+            <el-tag :type="selectedExecutionAccount?.effective_mode === 'limited_live' ? 'danger' : 'info'">
+              {{ selectedExecutionAccount?.effective_mode === 'limited_live' ? '有限真写' : '演练' }}
+            </el-tag>
+            <span class="policy-note">关闭开关后，下一次动作判定立即按演练处理。</span>
+            <span v-if="selectedExecutionAccount" class="policy-note">
+              来源 {{ selectedExecutionAccount.policy_source }} · {{ selectedExecutionAccount.policy_reason }}
+            </span>
+          </el-form-item>
+          <el-form-item label="允许有限真写">
+            <el-switch v-model="executionForm.enabled" active-text="启用" inactive-text="停用" />
+          </el-form-item>
+          <el-form-item label="允许动作">
+            <el-checkbox-group v-model="executionForm.scopes">
+              <el-checkbox v-for="scope in executionPolicy.available_scopes" :key="scope" :value="scope">
+                {{ semScopeLabels[scope] || scope }}
+              </el-checkbox>
+            </el-checkbox-group>
+          </el-form-item>
+          <el-form-item label="每日真实动作上限">
+            <el-input-number v-model="executionForm.daily_live_action_limit" :min="1" :max="1000" />
+            <span class="policy-note">按北京时间自然日统计真实台账；待执行、成功、失败及待对账均占用额度。</span>
+          </el-form-item>
+          <el-form-item label="单次调价上限">
+            <el-input-number v-model="executionForm.max_bid_change_pct" :min="0.1" :max="20" :step="0.5" />
+            <span class="policy-note">%，只能小于等于系统 20% 硬上限。</span>
+          </el-form-item>
+          <el-form-item label="资金动作确认">
+            <el-tag type="warning">强制开启，不可关闭</el-tag>
+            <span class="policy-note">账户预算、计划预算及出价仍需现有一次性参数确认。</span>
+          </el-form-item>
+          <el-form-item label="变更原因" required>
+            <el-input v-model="executionForm.change_reason" type="textarea" :rows="2" maxlength="500" show-word-limit placeholder="至少 4 个字" />
+          </el-form-item>
+          <el-form-item label="最近变更">
+            <div v-if="selectedExecutionAccount?.history?.length" class="policy-history">
+              <div v-for="item in selectedExecutionAccount.history" :key="item.version">
+                <b>v{{ item.version }} · {{ item.enabled ? '启用' : '停用' }}</b>
+                <span>{{ item.updated_at }} · {{ item.updated_by?.username || '未知操作人' }}</span>
+                <small>{{ item.change_reason }}</small>
+              </div>
+            </div>
+            <el-alert
+              v-else-if="selectedExecutionAccount?.policy_source === 'legacy_environment' && selectedExecutionAccount?.enabled"
+              title="继承服务器旧策略，保存后由本页策略接管"
+              type="warning"
+              :closable="false"
+            />
+            <span v-else>尚未配置且无服务器旧授权，默认全部演练</span>
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="executionVisible=false">关闭</el-button>
+        <el-button type="danger" plain :loading="executionSaving" :disabled="!selectedExecutionAccount?.enabled" @click="persistExecutionPolicy({ pause: true })">一键暂停</el-button>
+        <el-button type="primary" :loading="executionSaving" @click="persistExecutionPolicy()">保存执行权限</el-button>
+      </template>
     </el-dialog>
     <el-drawer v-model="accountVisible" :title="`${accountCustomer?.name || ''} · 登录账号`" size="560px">
       <el-alert v-if="!session.canEdit('settings.accounts')" title="当前权限只能查看账号汇总" type="info" :closable="false" />
@@ -564,5 +760,5 @@ onMounted(load)
 </template>
 
 <style scoped>
-.module-page{padding:24px}.page-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}.page-head h2{margin:0 0 7px;font-size:24px}.page-head p{margin:0;color:#6b7280}.head-actions{display:flex;gap:8px}.identity-summary{margin-bottom:16px}.account-bindings{display:grid;gap:5px;margin-bottom:6px}.account-bindings>span{display:flex;justify-content:space-between;align-items:center;gap:10px}.account-label{display:flex;flex-direction:column}.account-bindings small,.unbound{color:#8b95a5}.identity-issues{display:grid;justify-items:start;gap:5px}.identity-issues span{color:#8a4b08;font-size:12px;line-height:1.35}.identity-alert{margin-bottom:16px}.repair-preview{display:grid;gap:16px}.repair-candidates h4,.repair-columns h4{margin:0 0 6px}.repair-candidates p{margin:0;color:#6b7280}.candidate-group{display:grid;gap:3px;padding:10px 12px;margin-top:8px;border:1px solid #e5e7eb;border-radius:8px}.candidate-group small{color:#8b5e16}.repair-form{padding:14px;background:#f8fafc;border-radius:8px}.repair-columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}.repair-columns section{display:grid;gap:4px;padding:12px;border:1px solid #e5e7eb;border-radius:8px}.repair-columns span,.repair-safety{color:#6b7280}.repair-accounts{display:grid;gap:3px;margin-top:6px;padding-top:7px;border-top:1px dashed #d8dee8}.repair-accounts span{font-size:12px;color:#374151}.repair-accounts small{color:#8b95a5}.repair-issues{margin:0;padding-left:22px;color:#8a4b08}.repair-issues.blockers{color:#b42318}.repair-safety{margin:0;font-family:monospace;font-size:12px}
+.module-page{padding:24px}.page-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}.page-head h2{margin:0 0 7px;font-size:24px}.page-head p{margin:0;color:#6b7280}.head-actions{display:flex;gap:8px}.identity-summary{margin-bottom:16px}.account-bindings{display:grid;gap:5px;margin-bottom:6px}.account-bindings>span{display:flex;justify-content:space-between;align-items:center;gap:10px}.account-label{display:flex;flex-direction:column}.account-bindings small,.unbound{color:#8b95a5}.identity-issues{display:grid;justify-items:start;gap:5px}.identity-issues span{color:#8a4b08;font-size:12px;line-height:1.35}.identity-alert{margin-bottom:16px}.execution-policy{display:grid;gap:12px;min-height:240px}.execution-form{margin-top:16px}.execution-form :deep(.el-checkbox-group){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%}.policy-note{margin-left:10px;color:#6b7280;font-size:12px}.policy-history{display:grid;gap:8px;width:100%;max-height:150px;overflow:auto}.policy-history>div{display:grid;grid-template-columns:110px 1fr;gap:2px 10px;padding:8px 10px;border:1px solid #e5e7eb;border-radius:7px}.policy-history small{grid-column:1/-1;color:#6b7280}.repair-preview{display:grid;gap:16px}.repair-candidates h4,.repair-columns h4{margin:0 0 6px}.repair-candidates p{margin:0;color:#6b7280}.candidate-group{display:grid;gap:3px;padding:10px 12px;margin-top:8px;border:1px solid #e5e7eb;border-radius:8px}.candidate-group small{color:#8b5e16}.repair-form{padding:14px;background:#f8fafc;border-radius:8px}.repair-columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}.repair-columns section{display:grid;gap:4px;padding:12px;border:1px solid #e5e7eb;border-radius:8px}.repair-columns span,.repair-safety{color:#6b7280}.repair-accounts{display:grid;gap:3px;margin-top:6px;padding-top:7px;border-top:1px dashed #d8dee8}.repair-accounts span{font-size:12px;color:#374151}.repair-accounts small{color:#8b95a5}.repair-issues{margin:0;padding-left:22px;color:#8a4b08}.repair-issues.blockers{color:#b42318}.repair-safety{margin:0;font-family:monospace;font-size:12px}
 </style>
