@@ -88,6 +88,13 @@ export function matchTypeWriteback({ keywordId, tenantId, matchType, phraseType 
   })
 }
 
+export function pauseKeywordWriteback({ keywordId, tenantId, pause }) {
+  return client.post(`/api/v1/keywords/${keywordId}/pause-writeback`, {
+    tenant_id: tenantId,
+    pause,
+  })
+}
+
 export function writebackKeywordBatch({ tenantId, items }) {
   return client.post('/api/v1/keywords/writeback-batch', {
     tenant_id: tenantId,

@@ -171,6 +171,7 @@ const {
   readContext: () => ({
     tenantId: TENANT_ID.value,
     authRevision: session.authRevision,
+    tenantListRevision: session.tenantListRevision,
     keywordId: route.params.keywordId,
   }),
 })
@@ -517,13 +518,19 @@ async function handleMatchChange(command) {
     data.value.keyword.keyword,
     data.value.keyword.match_type_label || data.value.keyword.match_type,
     command,
+    data.value.keyword.baidu_account_id,
   )
 }
 
 async function handleTogglePause() {
   if (!session.canEdit('optimize.keywords')) return
   if (!data.value) return
-  await togglePause(data.value.keyword.keyword_id, data.value.keyword.keyword, data.value.keyword.pause)
+  await togglePause(
+    data.value.keyword.keyword_id,
+    data.value.keyword.keyword,
+    data.value.keyword.pause,
+    data.value.keyword.baidu_account_id,
+  )
 }
 
 function resizeCharts() {

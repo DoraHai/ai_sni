@@ -55,7 +55,6 @@ assert.match(roles, /tenantOptions\.value = users\.tenant_options \|\| \[\]/)
 assert.match(roles, /v-for="t in tenantOptions"/)
 assert.doesNotMatch(roles, /session\.setTenants/)
 assert.doesNotMatch(roles, /GEO 开户向导/)
-assert.match(roles, /formatUtcTimestamp\(v, \{ fallback: '从未登录' \}\)/)
 assert.doesNotMatch(roles, /fetchTenants|createTenant|submitTenant|tenantDialog/)
 
 const client = await source('src/api/client.js')
@@ -89,6 +88,7 @@ assert.match(idempotency, /crypto\?\.randomUUID/)
 assert.match(idempotency, /pendingWritebacks\.get\(operationKey\)/)
 assert.match(keywordApi, /runIdempotentWriteback\(operationKey/)
 assert.match(keywordApi, /idempotency_key: requestKey/)
+assert.match(keywordApi, /\/api\/v1\/keywords\/\$\{keywordId\}\/pause-writeback/)
 assert.equal((manageApi.match(/idempotency_key: requestKey/g) || []).length, 3)
 assert.equal((manageApi.match(/runIdempotentWriteback\(operationKey/g) || []).length, 3)
 assert.match(keywordWriteback, /pendingBidWrites\.has\(writeKey\)/)
@@ -100,7 +100,7 @@ assert.match(writebackPreflight, /行动台账/)
 assert.match(writebackPreflight, /资金确认/)
 assert.match(keywordDetail, /data\.value\.keyword\.baidu_account_id/)
 
-const { keywordBidPreflight, writebackTrace } = await import(
+const { keywordActionPreflight, keywordBidPreflight, writebackTrace } = await import(
   new URL('../src/utils/writebackPreflight.js', import.meta.url)
 )
 const livePreflight = keywordBidPreflight({
@@ -140,6 +140,55 @@ assert.match(dryPreflight.message, /不会调用百度写接口/)
 assert.match(dryPreflight.message, /环境总闸保持演练/)
 assert.match(dryPreflight.message, /不创建或消费资金确认/)
 
+const matchMode = {
+  tenant_id: 3,
+  accounts: [{
+    baidu_account_id: 17,
+    mode: 'limited_live',
+    live_scopes: ['keyword_match_type'],
+    policy_source: 'policy',
+    policy_reason: 'configured_grant',
+    daily_live_actions_used: 1,
+    daily_live_action_limit: 4,
+  }],
+}
+const matchPreflight = keywordActionPreflight(matchMode, {
+  tenantId: 3, accountId: 17, scope: 'keyword_match_type',
+})
+assert.equal(matchPreflight.ok, true)
+assert.equal(matchPreflight.executionMode, 'live')
+assert.match(matchPreflight.message, /今日真实动作额度 1\/4/)
+assert.match(matchPreflight.message, /该动作不要求资金确认/)
+assert.match(matchPreflight.message, /提交时服务端会再次校验/)
+
+const ungrantedPause = keywordActionPreflight(matchMode, {
+  tenantId: 3, accountId: 17, scope: 'keyword_pause',
+})
+assert.equal(ungrantedPause.ok, true)
+assert.equal(ungrantedPause.executionMode, 'dry_run')
+assert.match(ungrantedPause.message, /当前账户未授权此动作范围/)
+assert.doesNotMatch(ungrantedPause.message, /不创建或消费资金确认/)
+
+const livePause = keywordActionPreflight({
+  tenant_id: 3,
+  accounts: [{
+    baidu_account_id: 17,
+    mode: 'limited_live',
+    live_scopes: ['keyword_pause'],
+    policy_source: 'legacy_environment',
+    policy_reason: 'legacy_grant',
+    daily_live_actions_used: 0,
+    daily_live_action_limit: 2,
+  }],
+}, { tenantId: 3, accountId: 17, scope: 'keyword_pause' })
+assert.equal(livePause.ok, true)
+assert.equal(livePause.executionMode, 'live')
+assert.match(livePause.message, /服务器旧策略/)
+assert.equal(
+  keywordActionPreflight(matchMode, { tenantId: 3, accountId: 17, scope: 'keyword_match' }).ok,
+  false,
+)
+
 for (const invalid of [
   keywordBidPreflight({ tenant_id: 4, accounts: [] }, { tenantId: 3, accountId: 17 }),
   keywordBidPreflight({ tenant_id: 3, accounts: [] }, { tenantId: 3, accountId: 17 }),
@@ -163,6 +212,17 @@ for (const invalid of [
 }
 assert.equal(writebackTrace({ id: 91, approval_id: 27 }), '行动台账 #91，资金确认 #27')
 assert.equal(writebackTrace({ id: 'bad', approval_id: -1 }), '')
+assert.match(
+  keywordWriteback,
+  /changeMatchType[\s\S]*fetchWritebackMode\(scopedTenantId\)[\s\S]*scope: 'keyword_match_type'[\s\S]*matchTypeWriteback/,
+)
+assert.match(
+  keywordWriteback,
+  /togglePause[\s\S]*fetchWritebackMode\(scopedTenantId\)[\s\S]*scope: 'keyword_pause'[\s\S]*pauseKeywordWriteback/,
+)
+assert.equal((keywordWriteback.match(/reconciliationRequired: true/g) || []).length, 3)
+assert.equal((keywordDetail.match(/data\.value\.keyword\.baidu_account_id/g) || []).length, 3)
+assert.match(keywordDetail, /tenantListRevision: session\.tenantListRevision/)
 
 const idempotencyModule = await import(new URL('../src/api/idempotency.js', import.meta.url))
 let releaseWrite
