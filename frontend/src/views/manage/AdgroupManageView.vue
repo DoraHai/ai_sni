@@ -1,13 +1,28 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAdgroups, setAdgroupPause, setAdgroupBid, setAdgroupLandingUrl } from '../../api/manage'
-import { WRITEBACK_CONFIRMATION } from '../../api/writeback'
+import { fetchWritebackMode, WRITEBACK_CONFIRMATION } from '../../api/writeback'
 import { session } from '../../store/session'
-import { isSemDemoIdentity } from '../../utils/semDemo'
+import { createLatestRequestGuard } from '../../utils/latestRequest'
+import { isSemDemoIdentity, SEM_DEMO_ACCOUNTS } from '../../utils/semDemo'
+import { accountActionPreflight, writebackTrace } from '../../utils/writebackPreflight'
 
 const TENANT_ID = computed(() => session.tenantId)
 const demoMode = computed(() => isSemDemoIdentity(session.user, TENANT_ID.value))
+const currentTenant = computed(() => session.tenants.find((row) => row.id === TENANT_ID.value))
+const readableAccounts = computed(() => demoMode.value ? SEM_DEMO_ACCOUNTS : (currentTenant.value?.sem_accounts || []))
+const activeAccountIds = computed(() => new Set(
+  readableAccounts.value
+    .filter((row) => row.status === 'active')
+    .map((row) => Number(row.id)),
+))
+const actionGuard = createLatestRequestGuard(() => ({
+  tenantId: TENANT_ID.value,
+  authRevision: session.authRevision,
+  tenantListRevision: session.tenantListRevision,
+}))
+const canWriteAccount = (value) => value != null && activeAccountIds.value.has(Number(value))
 
 const loading = ref(false)
 const error = ref('')
@@ -41,7 +56,11 @@ async function load() {
   }
 }
 
-watch(TENANT_ID, load)
+watch(TENANT_ID, () => {
+  actionGuard.invalidate()
+  load()
+})
+watch([() => session.authRevision, () => session.tenantListRevision], () => actionGuard.invalidate())
 onMounted(load)
 
 const fmtMoney = (v) => (v == null ? '跟随计划' : '¥' + Number(v).toFixed(2))
@@ -166,27 +185,68 @@ async function editBid(row) {
 }
 
 async function togglePause(row) {
-  const toPause = !isPaused(row)
+  if (!session.canEdit('manage.adgroups')) return
+  if (!canWriteAccount(row.baidu_account_id)) return ElMessage.warning('无法核验该单元所属的可用推广账户')
+  const attempt = actionGuard.begin()
+  const asset = {
+    adgroupId: row.adgroup_id,
+    accountId: row.baidu_account_id,
+    name: row.adgroup_name,
+    pause: isPaused(row),
+  }
+  const toPause = !asset.pause
+  let preflight
+  try {
+    const mode = await fetchWritebackMode(attempt.context.tenantId)
+    if (!attempt.isCurrent() || !canWriteAccount(asset.accountId)) return
+    preflight = accountActionPreflight(mode, {
+      tenantId: attempt.context.tenantId,
+      accountId: asset.accountId,
+      scope: 'adgroup_pause',
+    })
+    if (!preflight.ok) return ElMessage.error(preflight.message)
+  } catch (e) {
+    if (attempt.isCurrent()) {
+      ElMessage.error(e.response?.data?.detail || '无法完成单元启停预检，已禁止提交，请刷新后重试')
+    }
+    return
+  }
   try {
     await ElMessageBox.confirm(
-      `确认${toPause ? '暂停' : '恢复投放'}单元「${row.adgroup_name}」？实际执行模式由当前客户、推广账户和动作门禁决定，真实执行会修改百度账户。`,
+      `确认${toPause ? '暂停' : '恢复投放'}单元「${asset.name}」？\n${preflight.message}`,
       toPause ? '暂停单元' : '恢复投放',
-      { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' },
+      { confirmButtonText: preflight.confirmButtonText, cancelButtonText: '取消', type: 'warning' },
     )
   } catch { return }
-  savingId.value = row.adgroup_id
+  if (!attempt.isCurrent() || !canWriteAccount(asset.accountId)) return
+  savingId.value = asset.adgroupId
   try {
-    const res = await setAdgroupPause({ tenantId: TENANT_ID.value, adgroupId: row.adgroup_id, pause: toPause })
-    const tag = res.dry_run ? '（演练：未真改）' : ''
-    if (res.status === 'failed') ElMessage.error('失败：' + (res.error_msg || '未知错误'))
-    else ElMessage.success(`已${toPause ? '暂停' : '恢复投放'}${tag}`)
+    const res = await setAdgroupPause({
+      tenantId: attempt.context.tenantId,
+      adgroupId: asset.adgroupId,
+      pause: toPause,
+    })
+    if (!attempt.isCurrent()) return
+    const trace = writebackTrace(res.writeback)
+    const traceSuffix = trace ? `（${trace}）` : ''
+    if (res.status === 'dry_run') {
+      ElMessage.success(`已加入行动台账，百度单元未修改${traceSuffix}`)
+    } else if (['pending', 'reconcile'].includes(res.status)) {
+      ElMessage.warning(`${res.error_msg || '百度执行结果未知，已转入人工对账'}${traceSuffix}`)
+    } else if (res.status === 'success') {
+      ElMessage.success(`已${toPause ? '暂停' : '恢复投放'}${traceSuffix}`)
+    } else {
+      ElMessage.error(`失败：${res.error_msg || '未知错误'}${traceSuffix}`)
+    }
     await load()
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
+    if (attempt.isCurrent()) ElMessage.error(e.response?.data?.detail || e.message)
   } finally {
-    savingId.value = null
+    if (attempt.isCurrent()) savingId.value = null
   }
 }
+
+onBeforeUnmount(() => actionGuard.invalidate())
 </script>
 
 <template>
@@ -249,6 +309,7 @@ async function togglePause(row) {
             <el-button size="small" :loading="savingId === row.adgroup_id" @click="openLanding(row)">落地页建议</el-button>
             <el-button
               size="small"
+              :disabled="!canWriteAccount(row.baidu_account_id)"
               :type="isPaused(row) ? 'success' : 'warning'"
               plain
               :loading="savingId === row.adgroup_id"

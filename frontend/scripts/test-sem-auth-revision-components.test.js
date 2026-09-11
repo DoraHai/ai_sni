@@ -3,7 +3,7 @@ import { shallowMount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
 const state = vi.hoisted(() => ({
-  campaignLoads: [], keywordLoads: [], detailLoads: [], modeLoads: [], confirmations: [], writes: [],
+  campaignLoads: [], adgroupLoads: [], keywordLoads: [], detailLoads: [], modeLoads: [], confirmations: [], writes: [],
 }))
 const deferred = () => {
   let resolve
@@ -49,12 +49,14 @@ vi.mock('echarts/renderers', () => ({ CanvasRenderer: {} }))
 
 vi.mock('../src/api/manage', () => ({
   fetchCampaigns: vi.fn((args) => queued(state.campaignLoads, args)),
+  fetchAdgroups: vi.fn((args) => queued(state.adgroupLoads, args)),
   fetchRegionOptions: vi.fn(() => Promise.resolve({ regions: [] })),
   setCampaignBudget: vi.fn((args) => { state.writes.push(['campaign-budget', args]); return Promise.resolve({ status: 'dry_run' }) }),
   setCampaignPause: vi.fn((args) => { state.writes.push(['campaign-pause', args]); return Promise.resolve({ status: 'dry_run' }) }),
   setCampaignRegion: vi.fn((args) => { state.writes.push(['campaign-region', args]); return Promise.resolve({ status: 'dry_run' }) }),
   setCampaignSchedule: vi.fn((args) => { state.writes.push(['campaign-schedule', args]); return Promise.resolve({ status: 'dry_run' }) }),
   setAdgroupBid: vi.fn((args) => { state.writes.push(['adgroup-bid', args]); return Promise.resolve({ status: 'dry_run' }) }),
+  setAdgroupPause: vi.fn((args) => { state.writes.push(['adgroup-pause', args]); return Promise.resolve({ status: 'dry_run' }) }),
   setAdgroupLandingUrl: vi.fn((args) => { state.writes.push(['landing', args]); return Promise.resolve({ status: 'dry_run' }) }),
 }))
 
@@ -85,6 +87,7 @@ vi.mock('../src/api/suggestions', () => ({
 vi.mock('../src/api/alerts', () => ({ resolveAlert: vi.fn(() => Promise.resolve({})) }))
 
 import CampaignManageView from '../src/views/manage/CampaignManageView.vue'
+import AdgroupManageView from '../src/views/manage/AdgroupManageView.vue'
 import KeywordWorkbenchView from '../src/views/optimize/KeywordWorkbenchView.vue'
 import KeywordDetailView from '../src/views/monitor/KeywordDetailView.vue'
 import { session } from '../src/store/session'
@@ -131,6 +134,54 @@ afterEach(() => {
 })
 
 describe('SEM auth revision invalidation', () => {
+  it('blocks campaign pause when permission is revoked during account preflight', async () => {
+    login('manage.campaigns')
+    const wrapper = mountView(CampaignManageView)
+    await settle()
+    wrapper.vm.accountId = 11
+    await settle()
+    const row = { campaign_id: 101, baidu_account_id: 11, campaign_name: 'A计划', pause: false, status: 21 }
+    expect(wrapper.vm.accountId).toBe(11)
+    expect(wrapper.vm.canWriteAccount(11)).toBe(true)
+
+    const action = wrapper.vm.togglePause(row)
+    expect(action).toBeInstanceOf(Promise)
+    expect(state.modeLoads).toHaveLength(1)
+    const resolvePreflight = state.modeLoads[0].resolve
+    expect(resolvePreflight).toEqual(expect.any(Function))
+    expect(state.confirmations).toHaveLength(0)
+    revoke()
+    resolvePreflight(dryRunMode())
+    await action
+    expect(state.confirmations).toHaveLength(0)
+    expect(state.writes).toHaveLength(0)
+  })
+
+  it('blocks adgroup pause when its account is disabled during account preflight', async () => {
+    login('manage.adgroups')
+    const wrapper = mountView(AdgroupManageView)
+    await settle()
+    const row = { adgroup_id: 301, baidu_account_id: 11, adgroup_name: 'A单元', pause: false, status: 21 }
+    state.adgroupLoads.at(-1).resolve({ adgroups: [row], total: 1, sync: {} })
+    await settle()
+
+    const action = wrapper.vm.togglePause(row)
+    await settle()
+    const preflight = state.modeLoads.at(-1)
+    expect(state.confirmations).toHaveLength(0)
+    session.setTenants([{
+      id: 1,
+      name: '测试租户',
+      sem_accounts: [{ ...account, status: 'disabled' }],
+    }])
+    session.requestTenantReload()
+    await settle()
+    preflight.resolve(dryRunMode())
+    await action
+    expect(state.confirmations).toHaveLength(0)
+    expect(state.writes).toHaveLength(0)
+  })
+
   it('clears campaign data and cancels an open campaign prompt after permission revocation', async () => {
     login('manage.campaigns')
     const wrapper = mountView(CampaignManageView)
