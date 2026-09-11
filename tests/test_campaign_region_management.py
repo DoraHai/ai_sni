@@ -31,6 +31,14 @@ from app.baidu.writeback import (
 from app.security.auth import AuthContext
 
 
+@pytest.fixture(autouse=True)
+def _configured_live_policy(monkeypatch):
+    async def resolve(*_args, **_kwargs):
+        return SimpleNamespace(dry_run=False)
+
+    monkeypatch.setattr("app.baidu.writeback.resolve_live_write_decision", resolve)
+
+
 def test_region_snapshot_is_valid_and_contains_all_regions():
     rows = load_regions()
 

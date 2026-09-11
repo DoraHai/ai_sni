@@ -219,9 +219,13 @@ def test_bulk_negative_writeback_is_idempotent_across_candidate_sources() -> Non
                 "app.baidu.writeback._active_account",
                 new=AsyncMock(return_value=account),
             ),
-            patch("app.baidu.writeback._account_client", return_value=object()),
-            patch("app.baidu.writeback.AdgroupService", return_value=service),
-            patch(
+                patch("app.baidu.writeback._account_client", return_value=object()),
+                patch("app.baidu.writeback.AdgroupService", return_value=service),
+                patch(
+                    "app.baidu.writeback.resolve_live_write_decision",
+                    new=AsyncMock(return_value=SimpleNamespace(dry_run=False)),
+                ),
+                patch(
                 "app.baidu.writeback.get_settings",
                 return_value=SimpleNamespace(
                     baidu_write_dry_run=False,

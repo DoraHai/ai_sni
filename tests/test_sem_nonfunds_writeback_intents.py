@@ -46,6 +46,14 @@ NON_FUNDS_ACTIONS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _configured_live_policy(monkeypatch):
+    async def resolve(*_args, **_kwargs):
+        return SimpleNamespace(dry_run=False)
+
+    monkeypatch.setattr("app.baidu.writeback.resolve_live_write_decision", resolve)
+
+
 def test_disabled_account_cannot_overwrite_reconciled_action() -> None:
     asset = SimpleNamespace(baidu_account_id=88)
     account = SimpleNamespace(id=88, status="active")

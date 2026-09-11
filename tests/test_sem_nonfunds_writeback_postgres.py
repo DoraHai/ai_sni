@@ -29,6 +29,14 @@ from app.baidu.writeback import (
 from app.models import Adgroup, BaiduAccount, Campaign, Keyword, WritebackAction
 
 
+@pytest.fixture(autouse=True)
+def _configured_live_policy(monkeypatch):
+    async def resolve(*_args, **_kwargs):
+        return SimpleNamespace(dry_run=False)
+
+    monkeypatch.setattr("app.baidu.writeback.resolve_live_write_decision", resolve)
+
+
 @asynccontextmanager
 async def database():
     url = os.environ.get("SEM_ALERT_TEST_DATABASE_URL")

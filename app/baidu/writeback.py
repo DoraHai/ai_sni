@@ -32,7 +32,11 @@ from app.baidu.writeback_approval import (
     claim_approval,
     create_self_approved_approval,
 )
-from app.config import get_settings, resolve_baidu_write_dry_run
+from app.config import get_settings
+from app.sem_live_write_policy import (
+    SemLiveWritePolicyLimitError,
+    resolve_live_write_decision,
+)
 from app.models import (
     Adgroup,
     BaiduAccount,
@@ -386,7 +390,9 @@ async def apply_keyword_writeback(
         ).with_for_update()
     )
 
-    dry_run = _effective_dry_run(tenant_id, acc.id, "keyword_bid")
+    dry_run = await _effective_dry_run(
+        session, tenant_id, acc, "keyword_bid", bid_change_pct=change_pct
+    )
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session, BidWriteback,
@@ -532,15 +538,33 @@ def _asset_account_id(asset: Any, label: str) -> int:
     return int(account_id)
 
 
-def _effective_dry_run(
+async def _effective_dry_run(
+    session: AsyncSession,
     tenant_id: int,
-    account_id: int,
+    account: BaiduAccount,
     write_scope: str,
+    *,
+    requested_attempts: int = 1,
+    bid_change_pct: float | None = None,
 ) -> bool:
-    """按客户、推广账户和动作计算本次回写模式。"""
-    return resolve_baidu_write_dry_run(
-        get_settings(), tenant_id, account_id, write_scope
+    """读取数据库策略，并向 HTTP 二次门禁传递本次动作能力。"""
+    try:
+        decision = await resolve_live_write_decision(
+            session,
+            get_settings(),
+            tenant_id=tenant_id,
+            account_id=account.id,
+            write_scope=write_scope,
+            requested_attempts=requested_attempts,
+            bid_change_pct=bid_change_pct,
+        )
+    except SemLiveWritePolicyLimitError as exc:
+        account._sem_live_write_authorized_scopes = frozenset()
+        raise WritebackError(str(exc)) from exc
+    account._sem_live_write_authorized_scopes = (
+        frozenset() if decision.dry_run else frozenset({write_scope})
     )
+    return decision.dry_run
 
 
 async def apply_negative_writeback(
@@ -578,7 +602,7 @@ async def apply_negative_writeback(
         raise WritebackError(f"「{word}」已在该单元的{'精确' if match_mode == 'exact' else '短语'}否词中")
     new_list = current + [word]
 
-    dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_negative_words")
+    dry_run = await _effective_dry_run(session, tenant_id, acc, "adgroup_negative_words")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session,
@@ -664,7 +688,14 @@ async def apply_negative_batch_writeback(
     current = list(getattr(adg, field) or [])
     current_words = set(current)
     new_words: list[str] = []
-    dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_negative_words")
+    requested_attempts = len({word for word in normalized_words if word not in current_words})
+    dry_run = await _effective_dry_run(
+        session,
+        tenant_id,
+        acc,
+        "adgroup_negative_words",
+        requested_attempts=requested_attempts,
+    )
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session,
@@ -830,7 +861,7 @@ async def apply_negative_writeback_campaign(
         )
     new_list = current + [word]
 
-    dry_run = _effective_dry_run(tenant_id, acc.id, "campaign_negative_words")
+    dry_run = await _effective_dry_run(session, tenant_id, acc, "campaign_negative_words")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session,
@@ -922,7 +953,7 @@ async def apply_add_word_writeback(
     if adg is None:
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
     acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
-    dry_run = _effective_dry_run(tenant_id, acc.id, "keyword_create")
+    dry_run = await _effective_dry_run(session, tenant_id, acc, "keyword_create")
     await _ensure_add_word_not_duplicate(
         session,
         tenant_id=tenant_id,
@@ -990,7 +1021,7 @@ async def apply_pause_writeback(
         raise WritebackError("关键词不在维度表中，请先执行关键词维度同步")
     acc = await _active_account(session, tenant_id, _asset_account_id(kw, "关键词"))
     old_pause = kw.pause
-    dry_run = _effective_dry_run(tenant_id, acc.id, "keyword_pause")
+    dry_run = await _effective_dry_run(session, tenant_id, acc, "keyword_pause")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session,
@@ -1063,7 +1094,7 @@ async def apply_match_type_writeback(
     acc = await _active_account(session, tenant_id, _asset_account_id(kw, "关键词"))
     old_match_combo = (kw.match_type, kw.phrase_type)
 
-    dry_run = _effective_dry_run(tenant_id, acc.id, "keyword_match_type")
+    dry_run = await _effective_dry_run(session, tenant_id, acc, "keyword_match_type")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session,
@@ -1153,7 +1184,7 @@ async def apply_remove_negative_writeback(
         raise WritebackError(f"「{word}」不在该单元的{'精确' if match_mode == 'exact' else '短语'}否词中")
     new_list = [w for w in current if w != word]
 
-    dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_negative_words")
+    dry_run = await _effective_dry_run(session, tenant_id, acc, "adgroup_negative_words")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session,
@@ -1269,7 +1300,7 @@ async def apply_campaign_budget_writeback(
     acc = await _active_account(session, tenant_id, locked_account_id)
 
     old_budget = float(camp.budget) if camp.budget is not None else None
-    dry_run = _effective_dry_run(tenant_id, acc.id, "campaign_budget")
+    dry_run = await _effective_dry_run(session, tenant_id, acc, "campaign_budget")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session, WritebackAction,
@@ -1347,7 +1378,7 @@ async def apply_campaign_pause_writeback(
     acc = await _active_account(session, tenant_id, _asset_account_id(camp, "计划"))
     old_pause = camp.pause
 
-    dry_run = _effective_dry_run(tenant_id, acc.id, "campaign_pause")
+    dry_run = await _effective_dry_run(session, tenant_id, acc, "campaign_pause")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session,
@@ -1446,7 +1477,7 @@ async def apply_campaign_schedule_writeback(
     acc = await _active_account(session, tenant_id, camp.baidu_account_id)
     old_schedule = list(camp.schedule_price_factors or [])
     old_pause = bool(camp.pause)
-    dry_run = _effective_dry_run(tenant_id, acc.id, "campaign_schedule")
+    dry_run = await _effective_dry_run(session, tenant_id, acc, "campaign_schedule")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session,
@@ -1577,7 +1608,7 @@ async def apply_campaign_region_writeback(
     old_regions = list(camp.region_target or [])
     old_region_factors = list(camp.region_price_factor or [])
     old_geo_location_status = camp.geo_location_status
-    dry_run = _effective_dry_run(tenant_id, acc.id, "campaign_region")
+    dry_run = await _effective_dry_run(session, tenant_id, acc, "campaign_region")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session,
@@ -1657,7 +1688,7 @@ async def apply_adgroup_pause_writeback(
     acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
     old_pause = adg.pause
 
-    dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_pause")
+    dry_run = await _effective_dry_run(session, tenant_id, acc, "adgroup_pause")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session,
@@ -1742,7 +1773,10 @@ async def apply_adgroup_bid_writeback(
     acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
 
     old_price = float(adg.max_price) if adg.max_price is not None else None
-    dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_bid")
+    change_pct = _validate(old_price, new_price)
+    dry_run = await _effective_dry_run(
+        session, tenant_id, acc, "adgroup_bid", bid_change_pct=change_pct
+    )
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session, WritebackAction,
@@ -1875,7 +1909,7 @@ async def apply_adgroup_landing_url_writeback(
     if old_snapshot == new_snapshot:
         raise WritebackError("落地页设置没有变化")
 
-    dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_landing_url")
+    dry_run = await _effective_dry_run(session, tenant_id, acc, "adgroup_landing_url")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session,
@@ -1992,7 +2026,7 @@ async def apply_account_budget_writeback(
     if acc.id != preflight_account_id:
         raise WritebackError("推广账户状态已变化，请重试")
 
-    dry_run = _effective_dry_run(tenant_id, acc.id, "account_budget")
+    dry_run = await _effective_dry_run(session, tenant_id, acc, "account_budget")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session, WritebackAction,
