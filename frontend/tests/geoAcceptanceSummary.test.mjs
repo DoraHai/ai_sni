@@ -75,3 +75,51 @@ test('acceptance summary client uses the query-only integration endpoint', () =>
   assert.match(declaration, /\/integration\/read\/content-tasks\/\$\{contentId\}\/acceptance-summary/)
   assert.doesNotMatch(declaration, /client\.(post|put|patch|delete)\(/)
 })
+
+test('links an H4 blocker to safe stored evidence, times, and recovery guidance', () => {
+  const [, h4] = describeAcceptanceSummary({
+    h3: { status: 'awaiting_human_evidence', system_ready: true, requirements: [] },
+    h4: {
+      status: 'awaiting_successful_recheck',
+      system_ready: false,
+      blocking_reasons: ['publication_body_matched'],
+      requirements: [requirement('publication_body_matched', '重新抓取的正文与登记渠道稿匹配')],
+      monitoring: [{
+        publication_ref: { module: 'geo', type: 'publication', id: 9 },
+        channel: 'website',
+        state: 'unreachable',
+        checked_at: '2026-09-11T01:00:00Z',
+        next_check_at: '2026-09-11T02:00:00Z',
+        failures: 2,
+        evidence_reasons: ['monitor_not_healthy'],
+        last_error: { kind: 'check_incomplete', at: '2026-09-11T01:30:00Z', secret: 'must-not-leak' },
+        url: 'https://example.com/private?token=must-not-leak',
+      }],
+    },
+  })
+
+  assert.deepEqual(h4.observations[0], {
+    publicationLabel: '发布记录 #9',
+    channelLabel: '官网',
+    stateLabel: '页面暂时无法检查',
+    checkedAt: '2026/09/11 09:00',
+    nextCheckAt: '2026/09/11 10:00',
+    failures: 2,
+    evidenceReasons: ['最近保存的监测结论尚未通过'],
+    checkIncomplete: true,
+    recoveryGuide: '请等待系统按计划检查，并在“分发记录 → 发布后监测”查看已有记录。',
+  })
+  assert.doesNotMatch(JSON.stringify(h4), /must-not-leak/)
+})
+
+test('invalid monitor timestamps and unknown evidence stay fail closed', () => {
+  const [, h4] = describeAcceptanceSummary({
+    h3: {},
+    h4: { monitoring: [{ checked_at: '2026-09-11T01:00:00', next_check_at: 123, failures: true, evidence_reasons: ['future_reason'] }] },
+  })
+
+  assert.equal(h4.observations[0].checkedAt, null)
+  assert.equal(h4.observations[0].nextCheckAt, null)
+  assert.equal(h4.observations[0].failures, 0)
+  assert.deepEqual(h4.observations[0].evidenceReasons, ['检查依据尚未满足'])
+})

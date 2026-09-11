@@ -114,6 +114,18 @@ onBeforeUnmount(() => { epoch++ })
             </li>
           </ul>
           <p v-else-if="stage.systemReady">系统前置检查已满足。</p>
+          <div v-if="stage.observations.length" class="monitor-evidence">
+            <p><b>已保存的发布后检查依据</b></p>
+            <div v-for="(item, index) in stage.observations" :key="`${stage.key}-${item.publicationLabel}-${index}`">
+              <strong>{{ item.publicationLabel }} · {{ item.channelLabel }}：{{ item.stateLabel }}</strong>
+              <small>
+                最近检查：{{ item.checkedAt || '时间未记录' }}；下次计划：{{ item.nextCheckAt || '尚未安排' }}；连续异常：{{ item.failures }} 次
+              </small>
+              <small v-if="item.evidenceReasons.length">依据不足：{{ item.evidenceReasons.join('；') }}</small>
+              <small v-if="item.checkIncomplete">最近一次后台检查未完成；当前结论仍来自此前已保存记录。</small>
+              <small>{{ item.recoveryGuide }}</small>
+            </div>
+          </div>
         </article>
       </section>
       <p><b>6. 复测与验收：</b>{{ next ? `${next.stage}：${next.next}` : '建立验收任务后查看同题同模型复测条件' }} <el-button v-if="selected" link @click="openEvidence">处理指标验收</el-button></p>
@@ -135,4 +147,6 @@ p { font-size:13px; line-height:1.7; color:#475569; }
 .h3h4-summary article + article { margin-top: 10px; padding-top: 10px; border-top: 1px solid #e2e8f0; }
 .h3h4-summary ul { margin: 6px 0 0; padding-left: 20px; color: #475569; font-size: 13px; line-height: 1.65; }
 .h3h4-summary small { display: block; color: #64748b; }
+.monitor-evidence { margin-top: 8px; padding: 8px 10px; border-left: 3px solid #94a3b8; background: #fff; }
+.monitor-evidence > div + div { margin-top: 8px; }
 </style>

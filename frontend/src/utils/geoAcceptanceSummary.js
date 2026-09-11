@@ -15,6 +15,72 @@ const REASON_LABELS = {
   publication_body_matched: '尚无当前渠道稿正文匹配的成功复查',
 }
 
+const CHANNEL_LABELS = {
+  website: '官网',
+  wechat: '微信',
+  zhihu: '知乎',
+  baijiahao: '百家号',
+  toutiao: '头条',
+  docs: '文档',
+  industry_media: '行业媒体',
+}
+
+const MONITOR_STATE_LABELS = {
+  pending: '等待首次检查',
+  healthy: '正文匹配',
+  unreachable: '页面暂时无法检查',
+  mismatch: '正文与登记稿件不匹配',
+  version_changed: '登记后稿件已变化',
+}
+
+const EVIDENCE_REASON_LABELS = {
+  monitor_not_healthy: '最近保存的监测结论尚未通过',
+  fingerprint_missing_or_mismatch: '检查依据与当前渠道稿不一致',
+  article_version_mismatch: '检查依据不属于当前母稿版本',
+  checked_at_missing_or_invalid: '缺少可信的检查时间',
+}
+
+function safeTime(value) {
+  if (typeof value !== 'string' || !value.trim()) return null
+  if (!/[zZ]$|[+-]\d\d:\d\d$/.test(value.trim())) return null
+  const timestamp = Date.parse(value)
+  if (!Number.isFinite(timestamp)) return null
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(timestamp)
+}
+
+function recoveryGuide(reasons) {
+  if (reasons.includes('fingerprint_missing_or_mismatch') || reasons.includes('article_version_mismatch')) {
+    return '当前稿件版本已变化；请到“分发记录 → 发布后监测”核对当前版本的发布登记。'
+  }
+  if (reasons.includes('checked_at_missing_or_invalid')) {
+    return '当前记录缺少可信检查时间；请等待后续监测更新，并在“分发记录 → 发布后监测”查看已有记录。'
+  }
+  return '请等待系统按计划检查，并在“分发记录 → 发布后监测”查看已有记录。'
+}
+
+function monitorObservation(row) {
+  const reasons = Array.isArray(row?.evidence_reasons)
+    ? row.evidence_reasons.map((value) => String(value || '')).filter(Boolean)
+    : []
+  const id = Number(row?.publication_ref?.id)
+  const failures = row?.failures
+  return {
+    publicationLabel: Number.isSafeInteger(id) && id > 0 ? `发布记录 #${id}` : '发布记录',
+    channelLabel: CHANNEL_LABELS[row?.channel] || '渠道未标记',
+    stateLabel: MONITOR_STATE_LABELS[row?.state] || '状态待确认',
+    checkedAt: safeTime(row?.checked_at),
+    nextCheckAt: safeTime(row?.next_check_at),
+    failures: typeof failures === 'number' && Number.isSafeInteger(failures) && failures >= 0 ? failures : 0,
+    evidenceReasons: reasons.map((reason) => EVIDENCE_REASON_LABELS[reason] || '检查依据尚未满足'),
+    checkIncomplete: row?.last_error?.kind === 'check_incomplete',
+    recoveryGuide: recoveryGuide(reasons),
+  }
+}
+
 function requirementFor(summary, stage, key) {
   const requirements = summary?.[stage]?.requirements
   return Array.isArray(requirements) ? requirements.find((item) => item?.key === key) : null
@@ -50,6 +116,9 @@ export function describeAcceptanceSummary(summary) {
       systemReady: data.system_ready === true,
       blockers: reasons.map((reason) => blocker(summary, stage, reason)),
       humanRequirements,
+      observations: stage === 'h4' && Array.isArray(data.monitoring)
+        ? data.monitoring.map(monitorObservation)
+        : [],
     }
   })
 }
