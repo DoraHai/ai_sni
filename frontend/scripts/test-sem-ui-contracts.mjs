@@ -83,6 +83,8 @@ const idempotency = await source('src/api/idempotency.js')
 const keywordApi = await source('src/api/keywords.js')
 const manageApi = await source('src/api/manage.js')
 const keywordWriteback = await source('src/composables/useKeywordWriteback.js')
+const keywordDetail = await source('src/views/monitor/KeywordDetailView.vue')
+const writebackPreflight = await source('src/utils/writebackPreflight.js')
 assert.match(idempotency, /crypto\?\.randomUUID/)
 assert.match(idempotency, /pendingWritebacks\.get\(operationKey\)/)
 assert.match(keywordApi, /runIdempotentWriteback\(operationKey/)
@@ -91,6 +93,76 @@ assert.equal((manageApi.match(/idempotency_key: requestKey/g) || []).length, 3)
 assert.equal((manageApi.match(/runIdempotentWriteback\(operationKey/g) || []).length, 3)
 assert.match(keywordWriteback, /pendingBidWrites\.has\(writeKey\)/)
 assert.match(keywordWriteback, /idempotencyKey = createWritebackIdempotencyKey\(\)/)
+assert.match(keywordWriteback, /fetchWritebackMode\(scopedTenantId\)/)
+assert.match(keywordWriteback, /keywordBidPreflight\(mode, \{ tenantId: scopedTenantId, accountId \}\)/)
+assert.ok(keywordWriteback.indexOf('fetchWritebackMode(scopedTenantId)') < keywordWriteback.indexOf('writebackKeyword({'))
+assert.match(writebackPreflight, /行动台账/)
+assert.match(writebackPreflight, /资金确认/)
+assert.match(keywordDetail, /data\.value\.keyword\.baidu_account_id/)
+
+const { keywordBidPreflight, writebackTrace } = await import(
+  new URL('../src/utils/writebackPreflight.js', import.meta.url)
+)
+const livePreflight = keywordBidPreflight({
+  tenant_id: 3,
+  accounts: [{
+    baidu_account_id: 17,
+    mode: 'limited_live',
+    live_scopes: ['keyword_bid'],
+    policy_source: 'policy',
+    policy_reason: 'configured_grant',
+    daily_live_actions_used: 2,
+    daily_live_action_limit: 5,
+    max_bid_change_pct: 8,
+  }],
+}, { tenantId: 3, accountId: 17 })
+assert.equal(livePreflight.ok, true)
+assert.equal(livePreflight.executionMode, 'live')
+assert.match(livePreflight.message, /真实执行候选/)
+assert.match(livePreflight.message, /2\/5/)
+assert.match(livePreflight.message, /±8%/)
+assert.match(livePreflight.message, /一次性资金确认/)
+assert.match(livePreflight.message, /提交时服务端会再次校验/)
+
+const dryPreflight = keywordBidPreflight({
+  tenant_id: 3,
+  accounts: [{
+    baidu_account_id: 17,
+    mode: 'dry_run',
+    live_scopes: [],
+    policy_source: 'legacy_environment',
+    policy_reason: 'global_dry_run',
+  }],
+}, { tenantId: 3, accountId: 17 })
+assert.equal(dryPreflight.ok, true)
+assert.equal(dryPreflight.executionMode, 'dry_run')
+assert.match(dryPreflight.message, /不会调用百度写接口/)
+assert.match(dryPreflight.message, /环境总闸保持演练/)
+assert.match(dryPreflight.message, /不创建或消费资金确认/)
+
+for (const invalid of [
+  keywordBidPreflight({ tenant_id: 4, accounts: [] }, { tenantId: 3, accountId: 17 }),
+  keywordBidPreflight({ tenant_id: 3, accounts: [] }, { tenantId: 3, accountId: 17 }),
+  keywordBidPreflight({ tenant_id: 3, accounts: [
+    { baidu_account_id: 17, mode: 'dry_run', live_scopes: [] },
+    { baidu_account_id: 17, mode: 'dry_run', live_scopes: [] },
+  ] }, { tenantId: 3, accountId: 17 }),
+  keywordBidPreflight({ tenant_id: 3, accounts: [{
+    baidu_account_id: 17, mode: 'limited_live', live_scopes: ['keyword_bid'],
+    policy_source: 'policy', policy_reason: 'configured_grant',
+    daily_live_actions_used: 5, daily_live_action_limit: 5, max_bid_change_pct: 8,
+  }] }, { tenantId: 3, accountId: 17 }),
+  keywordBidPreflight({ tenant_id: 3, accounts: [{
+    baidu_account_id: 17, mode: 'limited_live', live_scopes: ['keyword_bid'],
+    policy_source: 'policy', policy_reason: 'configured_grant',
+    daily_live_actions_used: 0, daily_live_action_limit: 5, max_bid_change_pct: 25,
+  }] }, { tenantId: 3, accountId: 17 }),
+]) {
+  assert.equal(invalid.ok, false)
+  assert.match(invalid.message, /已禁止提交/)
+}
+assert.equal(writebackTrace({ id: 91, approval_id: 27 }), '行动台账 #91，资金确认 #27')
+assert.equal(writebackTrace({ id: 'bad', approval_id: -1 }), '')
 
 const idempotencyModule = await import(new URL('../src/api/idempotency.js', import.meta.url))
 let releaseWrite

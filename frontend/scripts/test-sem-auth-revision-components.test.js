@@ -3,7 +3,7 @@ import { shallowMount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
 const state = vi.hoisted(() => ({
-  campaignLoads: [], keywordLoads: [], detailLoads: [], confirmations: [], writes: [],
+  campaignLoads: [], keywordLoads: [], detailLoads: [], modeLoads: [], confirmations: [], writes: [],
 }))
 const deferred = () => {
   let resolve
@@ -74,7 +74,7 @@ vi.mock('../src/api/keywords', () => ({
 
 vi.mock('../src/api/writeback', () => ({
   WRITEBACK_CONFIRMATION: 'test-confirmation',
-  fetchWritebackMode: vi.fn(() => Promise.resolve({ accounts: [{ baidu_account_id: 11, live_scopes: [] }] })),
+  fetchWritebackMode: vi.fn((tenantId) => queued(state.modeLoads, tenantId)),
 }))
 vi.mock('../src/api/suggestions', () => ({
   fetchSuggestionAssignees: vi.fn(() => Promise.resolve({ users: [] })),
@@ -105,6 +105,18 @@ function login(permission) {
 function revoke() {
   session.refreshUser({ id: 17, tenant_id: null, permissions: {} })
 }
+const dryRunMode = () => ({
+  tenant_id: 1,
+  mode: 'dry_run',
+  live_scopes: [],
+  accounts: [{
+    baidu_account_id: 11,
+    mode: 'dry_run',
+    live_scopes: [],
+    policy_source: 'legacy_environment',
+    policy_reason: 'global_dry_run',
+  }],
+})
 async function settle() {
   await nextTick()
   await Promise.resolve()
@@ -151,10 +163,11 @@ describe('SEM auth revision invalidation', () => {
     expect(wrapper.vm.data).toBe(null)
   })
 
-  it('clears keyword workbench data and cancels an open keyword confirmation after revocation', async () => {
+  it('cancels keyword writeback when permission is revoked during its read-only preflight', async () => {
     login('optimize.keywords')
     const wrapper = mountView(KeywordWorkbenchView)
     await settle()
+    state.modeLoads.at(-1).resolve(dryRunMode())
     const row = { keyword_id: 201, baidu_account_id: 11, keyword: 'A词', price: 1.1, pause: false }
     state.keywordLoads.at(-1).resolve({
       total: 1, keywords: [row], totals: { keywords: 1, campaigns: 1, adgroups: 1 },
@@ -170,13 +183,19 @@ describe('SEM auth revision invalidation', () => {
     expect(wrapper.vm.landingDialog.visible).toBe(true)
     const action = wrapper.vm.applyWriteback(row)
     await settle()
+    const preflight = state.modeLoads.at(-1)
+    expect(state.modeLoads).toHaveLength(2)
+    expect(state.confirmations).toHaveLength(0)
     revoke()
     await settle()
     expect(wrapper.vm.data).toBe(null)
     expect(wrapper.vm.landingDialog.visible).toBe(false)
     expect(wrapper.vm.landingDialog.pcFinalUrl).toBe('')
-    state.confirmations.at(-1).resolve()
+    expect(state.confirmations).toHaveLength(0)
+    expect(state.writes).toHaveLength(0)
+    preflight.resolve(dryRunMode())
     await action
+    expect(state.confirmations).toHaveLength(0)
     expect(state.writes).toHaveLength(0)
 
     late.resolve({ total: 1, keywords: [{ keyword_id: 999 }], totals: {}, category_counts: {} })
@@ -216,6 +235,7 @@ describe('SEM auth revision invalidation', () => {
     login('optimize.keywords')
     const wrapper = mountView(KeywordWorkbenchView)
     await settle()
+    state.modeLoads.at(-1).resolve(dryRunMode())
     const row = { keyword_id: 301, baidu_account_id: 11, keyword: 'A词', price: 1.1, pause: false }
     state.keywordLoads.at(-1).resolve({
       total: 1, keywords: [row], totals: { keywords: 1, campaigns: 1, adgroups: 1 },

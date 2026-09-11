@@ -2,8 +2,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { matchTypeWriteback, pauseKeywordBatch, writebackKeyword } from '../api/keywords'
 import { createWritebackIdempotencyKey } from '../api/idempotency'
-import { WRITEBACK_CONFIRMATION } from '../api/writeback'
+import { fetchWritebackMode, WRITEBACK_CONFIRMATION } from '../api/writeback'
 import { createLatestRequestGuard } from '../utils/latestRequest'
+import { keywordBidPreflight, writebackTrace } from '../utils/writebackPreflight'
 
 export const MATCH_TYPE_OPTIONS = {
   exact: { matchType: 1, phraseType: 1, label: '精确匹配' },
@@ -34,13 +35,32 @@ export function useKeywordWriteback({ tenantId, onSuccess, readContext } = {}) {
     const writeKey = `${scopedTenantId}:${accountId ?? ''}:${keywordId}`
     if (pendingBidWrites.has(writeKey)) return null
     pendingBidWrites.add(writeKey)
+
+    let preflight
+    try {
+      const mode = await fetchWritebackMode(scopedTenantId)
+      if (!attempt.isCurrent()) return null
+      preflight = keywordBidPreflight(mode, { tenantId: scopedTenantId, accountId })
+      if (!preflight.ok) {
+        ElMessage.error(preflight.message)
+        return null
+      }
+    } catch (error) {
+      if (attempt.isCurrent()) {
+        ElMessage.error(error.response?.data?.detail || '无法完成关键词调价预检，已禁止提交，请刷新后重试')
+      }
+      return null
+    } finally {
+      if (!preflight?.ok) pendingBidWrites.delete(writeKey)
+    }
+
     const idempotencyKey = createWritebackIdempotencyKey()
 
     try {
       await ElMessageBox.confirm(
-        `将把「${keywordText || `关键词 #${keywordId}`}」的建议出价 ¥${Number(price).toFixed(2)}${currentPrice == null ? '' : `（当前 ¥${Number(currentPrice).toFixed(2)}）`}提交回写。\n系统将按当前客户、推广账户和动作门禁决定演练或真实执行；真实执行会修改百度账户。仍会执行 ±20% 渐进调价校验。`,
+        `将把「${keywordText || `关键词 #${keywordId}`}」的建议出价 ¥${Number(price).toFixed(2)}${currentPrice == null ? '' : `（当前 ¥${Number(currentPrice).toFixed(2)}）`}提交回写。\n${preflight.message}`,
         '确认关键词出价',
-        { confirmButtonText: '确认并执行', cancelButtonText: '取消', type: 'warning' },
+        { confirmButtonText: preflight.confirmButtonText, cancelButtonText: '取消', type: 'warning' },
       )
     } catch {
       pendingBidWrites.delete(writeKey)
@@ -60,19 +80,21 @@ export function useKeywordWriteback({ tenantId, onSuccess, readContext } = {}) {
         idempotencyKey,
       })
       if (!attempt.isCurrent()) return null
+      const trace = writebackTrace(response.writeback)
+      const traceSuffix = trace ? `（${trace}）` : ''
       if (response.dry_run) {
-        ElMessage.success('已加入待回写台账，百度账户未修改')
+        ElMessage.success(`已加入待回写台账，百度账户未修改，未创建或消费资金确认${traceSuffix}`)
         return { response, success: false, dryRun: true }
       }
       if (['pending', 'reconcile'].includes(response.writeback?.status)) {
-        ElMessage.warning(response.writeback.error_msg || '百度执行结果未知，已转入人工对账')
+        ElMessage.warning(`${response.writeback.error_msg || '百度执行结果未知，已转入人工对账'}${traceSuffix}`)
         return { response, success: false, reconciliationRequired: true }
       }
       if (response.writeback?.status !== 'success') {
-        ElMessage.error(response.writeback.error_msg || '回写出价失败')
+        ElMessage.error(`${response.writeback.error_msg || '回写出价失败'}${traceSuffix}`)
         return { response, success: false }
       }
-      ElMessage.success(`已回写百度：¥${Number(price).toFixed(2)}`)
+      ElMessage.success(`已回写百度：¥${Number(price).toFixed(2)}${traceSuffix}`)
       return await notifySuccess({ response, success: true }, attempt)
     } catch (error) {
       if (attempt.isCurrent()) ElMessage.error(error.response?.data?.detail || error.message)
