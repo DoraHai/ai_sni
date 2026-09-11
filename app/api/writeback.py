@@ -33,6 +33,10 @@ from app.models import (
 from app.security.auth import AuthContext, require_scoped_auth
 from app.security.sem_identity import ensure_sem_identity_access
 from app.sem_demo_adapter import is_demo_read, read_demo_writeback_mode
+from app.sem_live_write_policy import (
+    count_live_attempts_today,
+    evaluate_live_write_grant,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +73,7 @@ async def get_writeback_mode(
     ctx.ensure_tenant(tenant_id)
     if is_demo_read(ctx, tenant_id):
         return read_demo_writeback_mode()
-    await ensure_module_access(session, ctx, tenant_id, "sem")
+    module = await ensure_module_access(session, ctx, tenant_id, "sem")
     await ensure_sem_identity_access(session, tenant_id)
     accounts = list(
         (
@@ -86,11 +90,26 @@ async def get_writeback_mode(
     settings = get_settings()
     account_modes = []
     for account in accounts:
-        live_scopes = sorted(
-            scope
+        decisions = {
+            scope: evaluate_live_write_grant(
+                settings,
+                module,
+                tenant_id=tenant_id,
+                account_id=account.id,
+                write_scope=scope,
+            )
             for scope in SEM_CUSTOMER_LIVE_WRITE_SCOPES
-            if not settings.baidu_write_is_dry_run(tenant_id, account.id, scope)
+        }
+        live_scopes = sorted(scope for scope, decision in decisions.items() if not decision.dry_run)
+        representative = next(
+            (decisions[scope] for scope in live_scopes),
+            next(iter(decisions.values())),
         )
+        used_today = await count_live_attempts_today(session, tenant_id, account.id)
+        limit = representative.daily_limit
+        quota_exhausted = bool(live_scopes) and used_today >= limit
+        if quota_exhausted:
+            live_scopes = []
         account_modes.append(
             {
                 "baidu_account_id": account.id,
@@ -98,6 +117,11 @@ async def get_writeback_mode(
                 "external_account_id": str(account.baidu_ucid),
                 "live_scopes": live_scopes,
                 "mode": "limited_live" if live_scopes else "dry_run",
+                "policy_source": representative.source,
+                "policy_reason": "daily_limit_reached" if quota_exhausted else representative.reason,
+                "daily_live_actions_used": used_today,
+                "daily_live_action_limit": limit,
+                "max_bid_change_pct": representative.max_bid_change_pct,
             }
         )
     live_scopes = sorted(

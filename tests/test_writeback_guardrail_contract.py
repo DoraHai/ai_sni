@@ -154,15 +154,11 @@ def test_live_write_scope_is_checked_in_orchestration_and_http_client():
     )
     effective_mode = ast.get_source_segment(
         orchestration,
-        next(
-            node
-            for node in ast.parse(orchestration).body
-            if isinstance(node, ast.FunctionDef) and node.name == "_effective_dry_run"
-        ),
+        _async_function(ast.parse(orchestration), "_effective_dry_run"),
     )
     assert "return acc" in loader
-    assert "resolve_baidu_write_dry_run(" in effective_mode
-    assert orchestration.count("_effective_dry_run(tenant_id, acc.id") == 16
+    assert "resolve_live_write_decision(" in effective_mode
+    assert orchestration.count("await _effective_dry_run(") == 16
     assert "get_settings().baidu_write_dry_run" not in orchestration
     tree = ast.parse(orchestration)
     approval_calls = [
@@ -183,14 +179,14 @@ def test_live_write_scope_is_checked_in_orchestration_and_http_client():
     assert "baidu_account_id=baidu_account.id" in account_client
 
     orchestration_scopes = {
-        node.args[2].value
+        node.args[3].value
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "_effective_dry_run"
-        and len(node.args) >= 3
-        and isinstance(node.args[2], ast.Constant)
-        and isinstance(node.args[2].value, str)
+        and len(node.args) >= 4
+        and isinstance(node.args[3], ast.Constant)
+        and isinstance(node.args[3].value, str)
     }
     assert orchestration_scopes == SEM_CUSTOMER_LIVE_WRITE_SCOPES
 
@@ -204,20 +200,24 @@ def test_writeback_mode_only_reports_current_tenant_account_permissions():
     session = SimpleNamespace(
         scalars=AsyncMock(
             return_value=SimpleNamespace(all=lambda: [account])
-        )
+        ),
+        scalar=AsyncMock(side_effect=[0, 0]),
     )
     ctx = SimpleNamespace(ensure_tenant=lambda tenant_id: None)
     settings = SimpleNamespace(
-        baidu_write_is_dry_run=lambda tenant_id, account_id, scope: not (
+        baidu_write_dry_run=False,
+        baidu_legacy_split_confirmation_enabled=False,
+        baidu_live_write_allowed=lambda tenant_id, account_id, scope: (
             tenant_id == 3
             and account_id == 17
             and scope == "keyword_bid"
         )
     )
+    module = SimpleNamespace(status="active", expires_at=None, module_settings={})
 
     async def run():
         with (
-            patch("app.api.writeback.ensure_module_access", new_callable=AsyncMock),
+            patch("app.api.writeback.ensure_module_access", new_callable=AsyncMock, return_value=module),
             patch("app.api.writeback.ensure_sem_identity_access", new_callable=AsyncMock),
             patch("app.api.writeback.get_settings", return_value=settings),
         ):
@@ -234,6 +234,11 @@ def test_writeback_mode_only_reports_current_tenant_account_permissions():
             "external_account_id": "50661708",
             "live_scopes": ["keyword_bid"],
             "mode": "limited_live",
+            "policy_source": "legacy_environment",
+            "policy_reason": "legacy_grant",
+            "daily_live_actions_used": 0,
+            "daily_live_action_limit": 100,
+            "max_bid_change_pct": 20.0,
         }
     ]
 

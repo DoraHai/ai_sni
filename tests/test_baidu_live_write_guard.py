@@ -251,6 +251,40 @@ class BaiduLiveWriteGuardTests(unittest.TestCase):
             )
         self.assertTrue(result["_dry_run"])
 
+    def test_db_policy_capability_is_rechecked_by_http_client(self):
+        settings = _settings(dry_run=False, tenants=set(), accounts=set(), scopes=set())
+        response = SimpleNamespace(
+            status_code=200,
+            json=lambda: {"header": {"status": 0}, "body": {"ok": True}},
+        )
+        http = AsyncMock()
+        http.post.return_value = response
+        context = AsyncMock()
+        context.__aenter__.return_value = http
+        context.__aexit__.return_value = False
+        with (
+            patch("app.baidu.client.get_settings", return_value=settings),
+            patch("app.baidu.client.httpx.AsyncClient", return_value=context),
+        ):
+            client = BaiduAPIClient(
+                "user",
+                "token",
+                tenant_id=3,
+                baidu_account_id=17,
+                live_write_authorized_scopes=frozenset({"keyword_bid"}),
+            )
+            result = asyncio.run(client.call(
+                "KeywordService", "updateWord", {}, is_write=True,
+                write_scope="keyword_bid",
+            ))
+            blocked = asyncio.run(client.call(
+                "KeywordService", "updateWord", {}, is_write=True,
+                write_scope="keyword_pause",
+            ))
+        self.assertEqual(result, {"ok": True})
+        self.assertTrue(blocked["_dry_run"])
+        http.post.assert_awaited_once()
+
     def test_missing_action_stays_in_dry_run_for_allowed_account(self):
         settings = _settings(
             dry_run=False, tenants={3}, accounts={17}, scopes={"keyword_bid"}
