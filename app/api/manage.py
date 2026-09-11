@@ -245,6 +245,16 @@ class CampaignPauseReq(BaseModel):
     pause: bool
 
 
+def _pause_writeback_reference(rec) -> dict:
+    return {
+        "id": rec.id,
+        "approval_id": rec.approval_id,
+        "status": rec.status,
+        "dry_run": rec.dry_run,
+        "error_msg": rec.error_msg,
+    }
+
+
 @router.post("/campaign-pause")
 async def set_campaign_pause(
     req: CampaignPauseReq,
@@ -260,7 +270,13 @@ async def set_campaign_pause(
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
-    return {"status": rec.status, "dry_run": rec.dry_run, "pause": req.pause, "error_msg": rec.error_msg}
+    return {
+        "status": rec.status,
+        "dry_run": rec.dry_run,
+        "pause": req.pause,
+        "error_msg": rec.error_msg,
+        "writeback": _pause_writeback_reference(rec),
+    }
 
 
 class CampaignScheduleFactorReq(BaseModel):
@@ -388,6 +404,7 @@ async def list_adgroups_manage(
     rows = [
         {
             "adgroup_id": a.adgroup_id,
+            "baidu_account_id": a.baidu_account_id,
             "adgroup_name": a.adgroup_name,
             "campaign_id": a.campaign_id,
             "campaign_name": camp_names.get(a.campaign_id),
@@ -460,7 +477,13 @@ async def set_adgroup_pause(
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
-    return {"status": rec.status, "dry_run": rec.dry_run, "pause": req.pause, "error_msg": rec.error_msg}
+    return {
+        "status": rec.status,
+        "dry_run": rec.dry_run,
+        "pause": req.pause,
+        "error_msg": rec.error_msg,
+        "writeback": _pause_writeback_reference(rec),
+    }
 
 
 class AdgroupBidReq(BaseModel):
