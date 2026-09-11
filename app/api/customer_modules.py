@@ -5,7 +5,7 @@ import logging
 import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import AsyncIterator, Awaitable, Callable
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from app.database import Base, async_session_factory, get_session
+from app.config import SEM_CUSTOMER_LIVE_WRITE_SCOPES, get_settings
 from app.models import (
     Adgroup,
     BaiduAccount,
@@ -52,6 +53,16 @@ from app.module_scope import (
 )
 from app.security.auth import AuthContext, require_auth, require_scoped_auth
 from app.sem_asset_sync import public_sync_error
+from app.sem_live_write_policy import (
+    DEFAULT_DAILY_LIVE_ACTION_LIMIT,
+    HARD_MAX_BID_CHANGE_PCT,
+    MAX_DAILY_LIVE_ACTION_LIMIT,
+    POLICY_KEY,
+    build_policy_update,
+    empty_policy,
+    evaluate_live_write_grant,
+    parse_policy,
+)
 
 
 router = APIRouter(tags=["客户与模块"])
@@ -725,6 +736,199 @@ class ModuleUpdate(BaseModel):
 
 class SemAccountArchive(BaseModel):
     reason: str = Field(min_length=4, max_length=500)
+
+
+class SemLiveWritePolicyUpdate(BaseModel):
+    enabled: bool
+    scopes: list[str] = Field(default_factory=list)
+    daily_live_action_limit: int = Field(ge=1, le=MAX_DAILY_LIVE_ACTION_LIMIT)
+    max_bid_change_pct: float = Field(gt=0, le=HARD_MAX_BID_CHANGE_PCT)
+    expected_version: int = Field(ge=0)
+    change_reason: str = Field(min_length=4, max_length=500)
+
+
+def _sem_live_write_policy_payload(
+    module: TenantModule,
+    accounts: list[BaiduAccount],
+) -> dict:
+    blob = module.module_settings if isinstance(module.module_settings, dict) else {}
+    configuration_error = None
+    try:
+        policy = parse_policy(blob[POLICY_KEY]) if POLICY_KEY in blob else empty_policy()
+    except (TypeError, ValueError):
+        policy = empty_policy()
+        configuration_error = "策略配置异常，已按演练模式处理；请重新保存"
+    settings = get_settings()
+    global_gate_open = not bool(settings.baidu_write_dry_run) and not bool(
+        settings.baidu_legacy_split_confirmation_enabled
+    )
+    account_payloads = []
+    for account in accounts:
+        decisions = {
+            scope: evaluate_live_write_grant(
+                settings,
+                module,
+                tenant_id=module.tenant_id,
+                account_id=account.id,
+                write_scope=scope,
+            )
+            for scope in SEM_CUSTOMER_LIVE_WRITE_SCOPES
+        }
+        representative = next(
+            (decision for decision in decisions.values() if not decision.dry_run),
+            next(iter(decisions.values())),
+        )
+        configured = policy["accounts"].get(str(account.id)) or {}
+        policy_source = representative.source
+        if policy["version"] == 0 and configuration_error is None:
+            policy_source = "legacy_environment"
+            try:
+                legacy_scopes = sorted(
+                    scope for scope in SEM_CUSTOMER_LIVE_WRITE_SCOPES
+                    if settings.baidu_live_write_allowed(module.tenant_id, account.id, scope)
+                )
+            except (TypeError, ValueError):
+                legacy_scopes = []
+            configured = {
+                "enabled": bool(legacy_scopes),
+                "scopes": legacy_scopes,
+                "daily_live_action_limit": DEFAULT_DAILY_LIVE_ACTION_LIMIT,
+                "max_bid_change_pct": HARD_MAX_BID_CHANGE_PCT,
+            }
+        account_payloads.append({
+            "id": account.id,
+            "username": account.baidu_username,
+            "ucid": str(account.baidu_ucid),
+            "status": account.status,
+            "policy_source": policy_source,
+            "policy_reason": representative.reason,
+            "enabled": bool(configured.get("enabled")),
+            "scopes": list(configured.get("scopes") or []),
+            "daily_live_action_limit": int(configured.get("daily_live_action_limit") or DEFAULT_DAILY_LIVE_ACTION_LIMIT),
+            "max_bid_change_pct": float(configured.get("max_bid_change_pct") or HARD_MAX_BID_CHANGE_PCT),
+            "effective_mode": (
+                "limited_live"
+                if global_gate_open and module_is_available(module)
+                and account.status == "active" and bool(configured.get("enabled"))
+                else "dry_run"
+            ),
+            "history": [
+                item for item in reversed(policy.get("history") or [])
+                if item.get("account_id") == account.id
+            ][:10],
+        })
+    return {
+        "tenant_id": module.tenant_id,
+        "module_status": module.status,
+        "module_available": module_is_available(module),
+        "version": policy["version"],
+        "updated_at": policy.get("updated_at"),
+        "updated_by": policy.get("updated_by"),
+        "change_reason": policy.get("change_reason"),
+        "configuration_error": configuration_error,
+        "global_gate_open": global_gate_open,
+        "funds_confirmation_required": True,
+        "available_scopes": sorted(SEM_CUSTOMER_LIVE_WRITE_SCOPES),
+        "accounts": account_payloads,
+    }
+
+
+@router.get(
+    "/api/v1/admin/customers/{tenant_id}/sem-execution-policy",
+    dependencies=[Depends(require_customer_admin)],
+)
+async def get_sem_execution_policy(
+    tenant_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    module = await session.scalar(select(TenantModule).where(
+        TenantModule.tenant_id == tenant_id,
+        TenantModule.module_code == "sem",
+    ))
+    if module is None:
+        raise HTTPException(409, "该客户尚未开通 SEM 模块")
+    accounts = list((await session.scalars(select(BaiduAccount).where(
+        BaiduAccount.tenant_id == tenant_id,
+        BaiduAccount.status != "archived",
+    ).order_by(BaiduAccount.id))).all())
+    return _sem_live_write_policy_payload(module, accounts)
+
+
+@router.put(
+    "/api/v1/admin/customers/{tenant_id}/sem-execution-policy/{account_id}",
+)
+async def set_sem_execution_policy(
+    tenant_id: int,
+    account_id: int,
+    req: SemLiveWritePolicyUpdate,
+    ctx: AuthContext = Depends(require_customer_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    account = await session.scalar(select(BaiduAccount).where(
+        BaiduAccount.id == account_id,
+        BaiduAccount.tenant_id == tenant_id,
+    ).with_for_update())
+    if account is None:
+        raise HTTPException(404, "推广账户不属于该客户")
+    if account.status != "active":
+        raise HTTPException(409, "只有 active 推广账户可以配置执行权限")
+    module = await session.scalar(select(TenantModule).where(
+        TenantModule.tenant_id == tenant_id,
+        TenantModule.module_code == "sem",
+    ).with_for_update())
+    if module is None or not module_is_available(module):
+        raise HTTPException(409, "SEM 模块未开通、已停用或已过期")
+
+    scopes = set(req.scopes)
+    unsupported = scopes - SEM_CUSTOMER_LIVE_WRITE_SCOPES
+    if unsupported:
+        raise HTTPException(422, f"包含不支持的动作范围：{', '.join(sorted(unsupported))}")
+    if req.enabled and not scopes:
+        raise HTTPException(422, "启用有限真写时至少选择一个动作范围")
+    reason = req.change_reason.strip()
+    if len(reason) < 4:
+        raise HTTPException(422, "请填写至少 4 个字的变更原因")
+
+    blob = dict(module.module_settings or {})
+    current_raw = blob.get(POLICY_KEY)
+    try:
+        current = empty_policy() if current_raw is None else parse_policy(current_raw)
+    except (TypeError, ValueError):
+        # Corrupt policy is already fail-closed at execution time.  A version-0
+        # save lets a super administrator replace it with a validated policy.
+        current = empty_policy()
+        current_raw = None
+    if req.expected_version != current["version"]:
+        raise HTTPException(409, "执行策略已被其他管理员更新，请刷新后重试")
+    updated = build_policy_update(
+        current_raw,
+        account_id=account_id,
+        enabled=req.enabled,
+        scopes=scopes,
+        daily_limit=req.daily_live_action_limit,
+        max_bid_change_pct=req.max_bid_change_pct,
+        change_reason=reason,
+        actor_user_id=ctx.user_id,
+        actor_username=ctx.username,
+        now=datetime.now(timezone.utc),
+    )
+    blob[POLICY_KEY] = updated
+    module.module_settings = blob
+    await session.commit()
+    await session.refresh(module)
+    logger.warning(
+        "AUDIT sem_execution_policy_changed actor_user_id=%r actor_username=%r "
+        "tenant_id=%r account_id=%r enabled=%r scopes=%r daily_limit=%r "
+        "max_bid_change_pct=%r reason=%r version=%r",
+        ctx.user_id, ctx.username, tenant_id, account_id, req.enabled,
+        sorted(scopes), req.daily_live_action_limit, req.max_bid_change_pct,
+        reason, updated["version"],
+    )
+    accounts = list((await session.scalars(select(BaiduAccount).where(
+        BaiduAccount.tenant_id == tenant_id,
+        BaiduAccount.status != "archived",
+    ).order_by(BaiduAccount.id))).all())
+    return _sem_live_write_policy_payload(module, accounts)
 
 
 @router.get("/api/v1/admin/customers", dependencies=[Depends(require_customer_admin)])

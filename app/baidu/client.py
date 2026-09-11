@@ -105,6 +105,7 @@ class BaiduAPIClient:
         *,
         tenant_id: int | None = None,
         baidu_account_id: int | None = None,
+        live_write_authorized_scopes: frozenset[str] | None = None,
     ):
         if not username or not access_token:
             raise ValueError("BaiduAPIClient 必须提供 username 和 access_token")
@@ -113,6 +114,10 @@ class BaiduAPIClient:
         self._timeout = timeout
         self._tenant_id = tenant_id
         self._baidu_account_id = baidu_account_id
+        # None keeps the legacy environment-grant path for callers that have
+        # not opted into DB policy.  An explicit set is a short-lived
+        # capability produced by the locked orchestration policy check.
+        self._live_write_authorized_scopes = live_write_authorized_scopes
         self._base_url = get_settings().baidu_api_base_url.rstrip("/")
 
     async def call(
@@ -137,9 +142,16 @@ class BaiduAPIClient:
         # 一律不发 HTTP，直接返回模拟成功体。保证开发/验证阶段绝无写请求落到百度线上。
         settings = get_settings()
         is_write_request = is_write or _looks_like_write(method)
-        effective_dry_run = is_write_request and resolve_baidu_write_dry_run(
-            settings, self._tenant_id, self._baidu_account_id, write_scope
-        )
+        if self._live_write_authorized_scopes is None:
+            effective_dry_run = is_write_request and resolve_baidu_write_dry_run(
+                settings, self._tenant_id, self._baidu_account_id, write_scope
+            )
+        else:
+            effective_dry_run = is_write_request and (
+                bool(settings.baidu_write_dry_run)
+                or bool(settings.baidu_legacy_split_confirmation_enabled)
+                or write_scope not in self._live_write_authorized_scopes
+            )
         if effective_dry_run:
             logger.warning(
                 "[DRY-RUN] 拦截写请求 tenant=%s account=%s scope=%s "
@@ -160,10 +172,14 @@ class BaiduAPIClient:
                     "旧回写确认协议兼容期间禁止真实回写"
                 )
             try:
-                allowed = settings.baidu_live_write_allowed(
-                    self._tenant_id,
-                    self._baidu_account_id,
-                    write_scope,
+                allowed = (
+                    settings.baidu_live_write_allowed(
+                        self._tenant_id,
+                        self._baidu_account_id,
+                        write_scope,
+                    )
+                    if self._live_write_authorized_scopes is None
+                    else write_scope in self._live_write_authorized_scopes
                 )
             except (TypeError, ValueError) as exc:
                 raise BaiduLiveWriteBlockedError(
