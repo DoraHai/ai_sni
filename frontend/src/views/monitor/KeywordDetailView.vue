@@ -505,6 +505,7 @@ async function handleWriteback() {
     editPrice.value,
     data.value.keyword.keyword,
     data.value.latest.bid,
+    data.value.keyword.baidu_account_id,
   )
 }
 

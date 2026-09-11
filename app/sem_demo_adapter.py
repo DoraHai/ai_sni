@@ -782,7 +782,7 @@ def read_demo_classic_keyword_detail(keyword_id: int, start: date | None, end: d
     return {
         **_envelope("embedded_synthetic_fixture:classic_keyword_detail", _account_scope(None, [asset[1]])),
         "tenant": {"id": DEMO_TENANT_ID, "name": "SEM 演示客户"},
-        "keyword": {"keyword_id": keyword_id, "keyword": asset[2],
+        "keyword": {"keyword_id": keyword_id, "baidu_account_id": asset[1], "keyword": asset[2],
                     "category": {"code": _CATEGORY_BY_KEYWORD[keyword_id],
                                  "label": _CATEGORY_LABELS[_CATEGORY_BY_KEYWORD[keyword_id]], "source": "demo"},
                     "pause": asset[6], "campaign_id": asset[3], "campaign_name": _CAMPAIGN_NAMES[asset[3]],

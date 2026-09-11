@@ -1389,6 +1389,11 @@ async def keyword_detail(
         "tenant": {"id": tenant.id, "name": tenant.name},
         "keyword": {
             "keyword_id": keyword_id,
+            "baidu_account_id": (
+                dim.baidu_account_id
+                if dim and dim.baidu_account_id is not None
+                else _first_non_null(latest_rows, "baidu_account_id")
+            ),
             "keyword": keyword_text,
             "category": category,
             "pause": dim.pause if dim else None,
