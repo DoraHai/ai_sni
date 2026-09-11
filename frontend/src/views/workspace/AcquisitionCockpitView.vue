@@ -93,7 +93,9 @@ const canGoForward = computed(() => explorationIndex.value >= 0 && explorationIn
 const currentPathLabel = computed(() => {
   const metric = selectedMetric.value?.label || '模块总览'
   const module = activeModule.value === 'all' ? '全域' : (moduleMeta[activeModule.value]?.label || activeModule.value.toUpperCase())
-  return `${module} / ${metric} / ${dateStart.value} 至 ${dateEnd.value}`
+  const showsSeoSite = activeModule.value === 'seo' || selectedMetric.value?.moduleCode === 'seo'
+  const site = showsSeoSite ? seoSites.value.find(item => Number(item.id) === Number(currentSeoSiteId.value)) : null
+  return `${module} / ${metric}${showsSeoSite ? ` / ${site?.name || '未选网站'}` : ''} / ${dateStart.value} 至 ${dateEnd.value}`
 })
 const readProgress = computed(() => {
   return readCompletionProgress({ availableCount: availableModules.value.length, completedCount: readyModules.value })
@@ -447,7 +449,7 @@ function localScreenCommand(text) {
 function recordExplorationPath(source = 'user') {
   const next = appendExplorationPath(explorationHistory.value, explorationIndex.value, {
     metricId: selectedMetricId.value, moduleCode: activeModule.value,
-    dateStart: dateStart.value, dateEnd: dateEnd.value, source,
+    dateStart: dateStart.value, dateEnd: dateEnd.value, seoSiteId: currentSeoSiteId.value, source,
   })
   explorationHistory.value = next.history
   explorationIndex.value = next.index
@@ -469,18 +471,21 @@ function navigateExploration(direction) {
   dateEnd.value = next.path.dateEnd
   draftDateStart.value = next.path.dateStart
   draftDateEnd.value = next.path.dateEnd
+  if (next.path.seoSiteId) seoSiteSelectionGuard.confirmExplicitSelection(session.tenantId)
+  else seoSiteSelectionGuard.blockAutomaticSelection(session.tenantId)
+  currentSeoSiteId.value = next.path.seoSiteId
   selectedMetricId.value = next.path.metricId
   highlightedMetricIds.value = next.path.metricId ? [next.path.metricId] : []
   metricComparison.value = null
 }
 function saveCurrentMetricScope() {
   savedMetricScope.value = saveMetricScope(selectedMetric.value, {
-    tenantId: session.tenantId, dateStart: dateStart.value, dateEnd: dateEnd.value,
+    tenantId: session.tenantId, dateStart: dateStart.value, dateEnd: dateEnd.value, seoSiteId: currentSeoSiteId.value,
   })
   metricComparison.value = null
 }
 function compareWithSavedScope() {
-  metricComparison.value = compareMetricScope(selectedMetric.value, savedMetricScope.value, { tenantId: session.tenantId })
+  metricComparison.value = compareMetricScope(selectedMetric.value, savedMetricScope.value, { tenantId: session.tenantId, seoSiteId: currentSeoSiteId.value })
 }
 function applyScreenCommand(command) {
   const allowedModules = new Set(['all', ...availableModules.value.map(item => item.module_code)])
@@ -569,6 +574,7 @@ function selectSeoSite(event) {
   const value = Number(event.target.value)
   seoSiteSelectionGuard.confirmExplicitSelection(session.tenantId)
   currentSeoSiteId.value = Number.isSafeInteger(value) && value > 0 ? value : null
+  recordExplorationPath('seo-site')
 }
 function selectTenant(event) {
   const value = Number(event.target.value)
@@ -796,7 +802,7 @@ onBeforeUnmount(() => {
       <dl><div><dt>统计范围</dt><dd>{{ selectedMetric.periodLabel }}</dd></div><div><dt>数据来源</dt><dd>{{ selectedMetric.sourceLabel }}</dd></div><div><dt>更新时间</dt><dd>{{ selectedMetric.updatedLabel }}</dd></div></dl>
       <section class="scope-tools" aria-label="范围比较">
         <div><button type="button" @click="saveCurrentMetricScope">保存当前范围</button><button type="button" @click="compareWithSavedScope">与保存范围比较</button></div>
-        <p v-if="savedMetricScope">已保存：{{ savedMetricScope.label }} · {{ savedMetricScope.dateStart }} 至 {{ savedMetricScope.dateEnd }}</p>
+        <p v-if="savedMetricScope">已保存：{{ savedMetricScope.label }} · {{ savedMetricScope.dateStart }} 至 {{ savedMetricScope.dateEnd }}<template v-if="savedMetricScope.moduleCode === 'seo'"> · 网站 #{{ savedMetricScope.seoSiteId || '未选' }}</template></p>
         <p v-if="metricComparison?.status === 'ready'" class="comparison-ready"><span>当前值 <b>{{ metricComparison.currentDisplay }}</b></span><span>保存值 <b>{{ metricComparison.savedDisplay }}</b></span><span>差值 <b>{{ metricComparison.deltaDisplay }}</b></span></p>
         <p v-else-if="metricComparison">{{ metricComparison.message }}</p>
       </section>
