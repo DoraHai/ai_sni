@@ -185,6 +185,7 @@ def test_classic_keyword_page_reads_are_complete_and_writeback_disabled(demo_cli
     detail_data = detail.json()
     assert detail_data["is_demo"] is True
     assert detail_data["keyword"]["keyword"] == "TIGER粉末涂料"
+    assert detail_data["keyword"]["baidu_account_id"] == 160001
     assert len(detail_data["schedule_analysis"]["cells"]) == 168
 
     campaigns = demo_client.get("/api/v1/structure/campaigns", params={"tenant_id": 16}).json()
