@@ -20,7 +20,11 @@ os.environ.setdefault("BAIDU_SELF_TOKEN_EXPIRES_AT", "2099-01-01T00:00:00")
 os.environ.setdefault("CRYPTO_MASTER_KEY_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
-from app.api.customer_modules import SemLiveWritePolicyUpdate, set_sem_execution_policy
+from app.api.customer_modules import (
+    SemLiveWritePolicyUpdate,
+    _sem_live_write_policy_payload,
+    set_sem_execution_policy,
+)
 from app.api.writeback import get_writeback_mode
 from app.sem_live_write_policy import (
     POLICY_HISTORY_LIMIT,
@@ -235,6 +239,8 @@ def test_frontend_admin_entry_requires_platform_permission_and_confirms_risky_ch
     assert "执行权限" in view and "一键暂停" in view
     assert "执行权限二次确认" in view and "资金动作确认" in view
     assert "current.enabled && !enabled" in view
+    assert "继承服务器旧策略，保存后由本页策略接管" in view
+    assert "尚未配置且无服务器旧授权，默认全部演练" in view
     assert "expected_version: executionPolicy.value.version" in view
     assert "sem-execution-policy" in api
     assert "perm: 'settings.customers'" in router
@@ -259,3 +265,24 @@ def test_mode_read_uses_saved_policy_and_reads_quota_without_locking(monkeypatch
     assert result["accounts"][0]["daily_live_action_limit"] == 5
     assert result["accounts"][0]["max_bid_change_pct"] == 8
     assert all("FOR UPDATE" not in str(call.args[0]).upper() for call in session.scalar.await_args_list)
+
+
+def test_admin_payload_distinguishes_inherited_legacy_grant_from_default_dry_run(monkeypatch):
+    account = SimpleNamespace(
+        id=17, baidu_username="Tiger SEM", baidu_ucid=50661708, status="active"
+    )
+    monkeypatch.setattr(
+        "app.api.customer_modules.get_settings", lambda: _settings(legacy_allowed=True)
+    )
+    inherited = _sem_live_write_policy_payload(_module(), [account])["accounts"][0]
+    monkeypatch.setattr(
+        "app.api.customer_modules.get_settings", lambda: _settings(legacy_allowed=False)
+    )
+    default_dry = _sem_live_write_policy_payload(_module(), [account])["accounts"][0]
+
+    assert inherited["policy_source"] == "legacy_environment"
+    assert inherited["policy_reason"] == "legacy_grant"
+    assert inherited["enabled"] is True
+    assert default_dry["policy_source"] == "legacy_environment"
+    assert default_dry["policy_reason"] == "legacy_grant_missing"
+    assert default_dry["enabled"] is False

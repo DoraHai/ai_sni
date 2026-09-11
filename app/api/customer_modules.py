@@ -61,6 +61,7 @@ from app.sem_live_write_policy import (
     POLICY_KEY,
     build_policy_update,
     empty_policy,
+    evaluate_live_write_grant,
     parse_policy,
 )
 
@@ -764,8 +765,22 @@ def _sem_live_write_policy_payload(
     )
     account_payloads = []
     for account in accounts:
+        decisions = {
+            scope: evaluate_live_write_grant(
+                settings,
+                module,
+                tenant_id=module.tenant_id,
+                account_id=account.id,
+                write_scope=scope,
+            )
+            for scope in SEM_CUSTOMER_LIVE_WRITE_SCOPES
+        }
+        representative = next(
+            (decision for decision in decisions.values() if not decision.dry_run),
+            next(iter(decisions.values())),
+        )
         configured = policy["accounts"].get(str(account.id)) or {}
-        policy_source = "policy"
+        policy_source = representative.source
         if policy["version"] == 0 and configuration_error is None:
             policy_source = "legacy_environment"
             try:
@@ -787,6 +802,7 @@ def _sem_live_write_policy_payload(
             "ucid": str(account.baidu_ucid),
             "status": account.status,
             "policy_source": policy_source,
+            "policy_reason": representative.reason,
             "enabled": bool(configured.get("enabled")),
             "scopes": list(configured.get("scopes") or []),
             "daily_live_action_limit": int(configured.get("daily_live_action_limit") or DEFAULT_DAILY_LIVE_ACTION_LIMIT),

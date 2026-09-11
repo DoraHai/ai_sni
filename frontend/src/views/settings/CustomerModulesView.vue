@@ -603,6 +603,9 @@ onMounted(load)
               {{ selectedExecutionAccount?.effective_mode === 'limited_live' ? '有限真写' : '演练' }}
             </el-tag>
             <span class="policy-note">关闭开关后，下一次动作判定立即按演练处理。</span>
+            <span v-if="selectedExecutionAccount" class="policy-note">
+              来源 {{ selectedExecutionAccount.policy_source }} · {{ selectedExecutionAccount.policy_reason }}
+            </span>
           </el-form-item>
           <el-form-item label="允许有限真写">
             <el-switch v-model="executionForm.enabled" active-text="启用" inactive-text="停用" />
@@ -637,7 +640,13 @@ onMounted(load)
                 <small>{{ item.change_reason }}</small>
               </div>
             </div>
-            <span v-else>尚未配置，默认全部演练</span>
+            <el-alert
+              v-else-if="selectedExecutionAccount?.policy_source === 'legacy_environment' && selectedExecutionAccount?.enabled"
+              title="继承服务器旧策略，保存后由本页策略接管"
+              type="warning"
+              :closable="false"
+            />
+            <span v-else>尚未配置且无服务器旧授权，默认全部演练</span>
           </el-form-item>
         </el-form>
       </div>

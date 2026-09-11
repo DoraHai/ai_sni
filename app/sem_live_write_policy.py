@@ -215,12 +215,20 @@ def evaluate_live_write_grant(
     settings_blob = module.module_settings if isinstance(module.module_settings, dict) else {}
     policy = None
     account_policy = None
+    legacy_allowed = False
     if POLICY_KEY in settings_blob:
         try:
             policy = parse_policy(settings_blob[POLICY_KEY])
         except (TypeError, ValueError):
             return SemLiveWriteDecision(True, "policy", "invalid_policy")
         account_policy = policy["accounts"].get(str(account_id))
+    else:
+        try:
+            legacy_allowed = bool(
+                settings.baidu_live_write_allowed(tenant_id, account_id, write_scope)
+            )
+        except (AttributeError, TypeError, ValueError):
+            legacy_allowed = False
     bid_limit = (
         account_policy["max_bid_change_pct"]
         if account_policy is not None else HARD_MAX_BID_CHANGE_PCT
@@ -231,18 +239,22 @@ def evaluate_live_write_grant(
     )
     if bool(getattr(settings, "baidu_write_dry_run", True)):
         return SemLiveWriteDecision(
-            True, "environment", "global_dry_run", bid_limit, daily_limit
+            True,
+            "policy" if policy is not None else "legacy_environment",
+            "global_dry_run",
+            bid_limit,
+            daily_limit,
         )
     if bool(getattr(settings, "baidu_legacy_split_confirmation_enabled", True)):
         return SemLiveWriteDecision(
-            True, "environment", "legacy_confirmation_gate", bid_limit, daily_limit
+            True,
+            "policy" if policy is not None else "legacy_environment",
+            "legacy_confirmation_gate",
+            bid_limit,
+            daily_limit,
         )
     if POLICY_KEY not in settings_blob:
-        try:
-            allowed = bool(settings.baidu_live_write_allowed(tenant_id, account_id, write_scope))
-        except (AttributeError, TypeError, ValueError):
-            allowed = False
-        if not allowed:
+        if not legacy_allowed:
             return SemLiveWriteDecision(True, "legacy_environment", "legacy_grant_missing")
         return SemLiveWriteDecision(
             False,
