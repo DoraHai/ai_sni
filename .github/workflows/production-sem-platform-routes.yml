@@ -2,6 +2,7 @@ name: Production SEM platform routes
 
 # Retrigger the exact reviewed route package after the restricted server module
 # was upgraded; the previous run correctly stopped on a stale branch head.
+# Requeue it from the current production head so the reviewed routes become active.
 
 on:
   pull_request:
