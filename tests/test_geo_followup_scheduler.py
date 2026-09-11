@@ -25,12 +25,16 @@ def test_other_geo_worker_holds_lock_so_no_duplicate_jobs_start():
 
 def test_startup_failure_releases_ownership_for_retry():
     import pytest
-    from app.geo.scheduler import start_geo_followup_scheduler
+    from app.geo.scheduler import followup_scheduler_runtime_status, start_geo_followup_scheduler
     scheduler=NS(running=False,add_job=Mock(),start=Mock(side_effect=RuntimeError('startup')))
     with patch('app.geo.scheduler.geo_scheduler',scheduler), patch('app.geo.scheduler._acquire_scheduler_lock',return_value=True), \
          patch('app.geo.scheduler._release_scheduler_lock') as release:
         with pytest.raises(RuntimeError):start_geo_followup_scheduler()
+        state = followup_scheduler_runtime_status()
     release.assert_called_once()
+    startup = next(item for item in state['jobs'] if item['job_id'] == 'scheduler_startup')
+    assert startup['callback_status'] == 'failed'
+    assert startup['run_status'] == 'failed'
 
 
 def test_standby_retries_without_starting_duplicate_patrol():

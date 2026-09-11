@@ -62,6 +62,14 @@ class SchedulerTelemetry:
             job["callback_status"] = "in_progress"
             self._recent_failure = failure
 
+    def record_startup_failure(self, error: BaseException) -> None:
+        """Record a terminal scheduler startup failure with no later job event."""
+        self.record_failure("scheduler_startup", error)
+        with self._lock:
+            job = self._jobs["scheduler_startup"]
+            job["run_status"] = "failed"
+            job["callback_status"] = "failed"
+
     def _listener(self, event: Any) -> None:
         job_id = str(getattr(event, "job_id", "unknown"))
         at = _iso(getattr(event, "scheduled_run_time", None))

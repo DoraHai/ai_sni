@@ -257,7 +257,7 @@ def start_geo_followup_scheduler() -> bool:
                               next_run_time=now)
         geo_scheduler.start()
     except Exception as exc:
-        _followup_telemetry.record_failure('scheduler_startup', exc)
+        _followup_telemetry.record_startup_failure(exc)
         _followup_telemetry.set_state("stopped", "none")
         _release_scheduler_lock()
         raise

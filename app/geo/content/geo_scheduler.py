@@ -297,7 +297,7 @@ def start_geo_scheduler() -> bool:
         scheduler.start()
     except Exception as exc:
         _status = "stopped"
-        _telemetry.record_failure("scheduler_startup", exc)
+        _telemetry.record_startup_failure(exc)
         _telemetry.set_state("stopped", "none")
         _release_lock()
         raise

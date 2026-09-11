@@ -62,6 +62,19 @@ def test_later_clean_callback_can_become_successful_after_older_failure():
     assert item["last_success"] is not None
 
 
+def test_scheduler_startup_failure_is_terminal_without_waiting_for_job_event():
+    telemetry = SchedulerTelemetry("test")
+
+    telemetry.record_startup_failure(RuntimeError("cannot start"))
+    item = telemetry.snapshot(NS(get_jobs=lambda: []))["jobs"][0]
+
+    assert item["job_id"] == "scheduler_startup"
+    assert item["callback_status"] == "failed"
+    assert item["run_status"] == "failed"
+    assert item["last_success"] is None
+    assert item["recent_failure"]["error_type"] == "RuntimeError"
+
+
 def test_content_scheduler_reports_skipped_when_another_process_owns_lock():
     from app.geo.content import geo_scheduler
 
