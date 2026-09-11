@@ -108,7 +108,10 @@ async def run_outcome_reviews():
             # Keep historical task evidence unchanged. Expiry is not a failed
             # assessment and must not schedule another customer action.
             continue
-        except Exception:
+        except Exception as exc:
+            from app.geo.scheduler import record_followup_failure
+
+            record_followup_failure('geo_outcome_reviews', exc)
             logging.getLogger(__name__).exception('GEO outcome review failed for task %s', task_id)
             try:
                 async with async_session_factory() as session:
@@ -124,5 +127,8 @@ async def run_outcome_reviews():
                         await session.commit()
             except GeoEntitlementUnavailable:
                 pass
-            except Exception:
+            except Exception as exc:
+                from app.geo.scheduler import record_followup_failure
+
+                record_followup_failure('geo_outcome_reviews', exc)
                 logging.getLogger(__name__).exception('Could not defer GEO outcome task %s', task_id)

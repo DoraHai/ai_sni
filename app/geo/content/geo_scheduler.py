@@ -17,16 +17,23 @@ except ModuleNotFoundError:
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from app.geo.tenant16_demo import DEMO_TENANT_ID
+from app.geo.scheduler_observability import SchedulerTelemetry
 
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 _lock_fh = None
 _status = "stopped"
+_telemetry = SchedulerTelemetry("geo_content_scheduler")
 
 
 def scheduler_status() -> str:
     return _status
+
+
+def scheduler_runtime_status() -> dict:
+    """Structured current-process status for health and read-only operations."""
+    return _telemetry.snapshot(scheduler)
 
 
 def scheduled_patrol_settings_query(*, tenant_id: int | None = None):
@@ -75,7 +82,8 @@ async def run_geo_daily_metrics_nightly() -> None:
     try:
         summary = await nightly_rebuild_recent_tenants(lookback_days=2)
         logger.info("[geo-scheduler] daily metrics nightly %s", summary)
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        _telemetry.record_failure("geo_daily_metrics_nightly", exc)
         logger.exception("[geo-scheduler] daily metrics nightly failed")
 
 
@@ -182,7 +190,8 @@ async def run_geo_visibility_patrols() -> None:
                     end_h,
                     interval,
                 )
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                _telemetry.record_failure("geo_visibility_patrols", exc)
                 logger.exception(
                     "[geo-scheduler] patrol failed tenant=%s run=%s",
                     st.tenant_id,
@@ -260,29 +269,40 @@ def start_geo_scheduler() -> bool:
     global _status
     if scheduler.running:
         _status = "running"
+        _telemetry.set_state("active", "current_process")
         return True
     if not _acquire_lock():
         _status = "skipped"
+        _telemetry.set_state("skipped", "another_process")
         logger.info("[geo-scheduler] lock held elsewhere, this process will not tick")
         return False
-    scheduler.add_job(
-        run_geo_visibility_patrols,
-        CronTrigger(minute=5),
-        id="geo_visibility_patrols",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-    scheduler.add_job(
-        run_geo_daily_metrics_nightly,
-        CronTrigger(hour=0, minute=40),
-        id="geo_daily_metrics_nightly",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-    scheduler.start()
+    try:
+        _telemetry.attach(scheduler)
+        scheduler.add_job(
+            run_geo_visibility_patrols,
+            CronTrigger(minute=5),
+            id="geo_visibility_patrols",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.add_job(
+            run_geo_daily_metrics_nightly,
+            CronTrigger(hour=0, minute=40),
+            id="geo_daily_metrics_nightly",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.start()
+    except Exception as exc:
+        _status = "stopped"
+        _telemetry.record_failure("scheduler_startup", exc)
+        _telemetry.set_state("stopped", "none")
+        _release_lock()
+        raise
     _status = "running"
+    _telemetry.set_state("active", "current_process")
     jobs = scheduler.get_jobs()
     nxt = str(jobs[0].next_run_time) if jobs else None
     logger.info("[geo-scheduler] started, next=%s", nxt)
@@ -295,3 +315,4 @@ def shutdown_geo_scheduler() -> None:
         scheduler.shutdown(wait=False)
     _release_lock()
     _status = "stopped"
+    _telemetry.set_state("stopped", "none")

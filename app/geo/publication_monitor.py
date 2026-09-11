@@ -177,14 +177,20 @@ async def run_monitor_batch():
             # Expiry is an intentional stop, not a monitor failure. Do not write
             # backoff/error state for a customer whose GEO access is unavailable.
             continue
-        except Exception:
+        except Exception as exc:
+            from app.geo.scheduler import record_followup_failure
+
+            record_followup_failure('geo_publication_monitor', exc)
             logging.getLogger(__name__).exception('GEO publication monitor failed for record %s', publication_id)
             try:
                 async with async_session_factory() as session:
                     await defer_monitor_failure(session, tenant_id, task_id, publication_id)
             except GeoEntitlementUnavailable:
                 pass
-            except Exception:
+            except Exception as exc:
+                from app.geo.scheduler import record_followup_failure
+
+                record_followup_failure('geo_publication_monitor', exc)
                 logging.getLogger(__name__).exception('Could not defer GEO publication %s', publication_id)
 
 

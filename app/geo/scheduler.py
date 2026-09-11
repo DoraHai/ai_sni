@@ -25,6 +25,7 @@ from app.geo.content.patrol import (
     execute_patrol_run_owned,
     should_run_scheduled_patrol,
 )
+from app.geo.scheduler_observability import SchedulerTelemetry
 from app.models import GeoVisibilityPatrolRun, GeoVisibilityPatrolSettings
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,25 @@ geo_scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 _LOCK_PATH = "/tmp/geo_scheduler.lock"
 _lock_file: IO[str] | None = None
 _windows_lock = ThreadLock()
+_followup_telemetry = SchedulerTelemetry("geo_followup_scheduler")
+
+
+def followup_scheduler_runtime_status() -> dict:
+    """Structured current-process status for publishing follow-up jobs."""
+    return _followup_telemetry.snapshot(geo_scheduler)
+
+
+def record_followup_failure(job_id: str, error: BaseException) -> None:
+    """Record an item-level failure caught by a resilient batch runner."""
+    _followup_telemetry.record_failure(job_id, error)
+
+
+async def _run_followup_job(job_id: str, runner) -> None:
+    try:
+        await runner()
+    except Exception as exc:
+        _followup_telemetry.record_failure(job_id, exc)
+        raise
 
 
 def _acquire_scheduler_lock() -> bool:
@@ -202,6 +222,7 @@ def shutdown_geo_scheduler() -> None:
     if geo_scheduler.running:
         geo_scheduler.shutdown(wait=False)
     _release_scheduler_lock()
+    _followup_telemetry.set_state("stopped", "none")
 
 
 def start_geo_followup_scheduler() -> bool:
@@ -211,23 +232,36 @@ def start_geo_followup_scheduler() -> bool:
     on that process adopting a GEO-only release, or start a second patrol job.
     """
     if geo_scheduler.running:
+        _followup_telemetry.set_state("active", "current_process")
         return True
     if not _acquire_scheduler_lock():
+        _followup_telemetry.set_state("standby", "another_process")
         return False
     try:
         from app.geo.publication_monitor import run_monitor_batch
         from app.geo.outcome_review import run_outcome_reviews
         now = datetime.now(ZoneInfo('Asia/Shanghai'))
-        geo_scheduler.add_job(run_monitor_batch, CronTrigger(minute='*/10', timezone=ZoneInfo('Asia/Shanghai')),
+        _followup_telemetry.attach(geo_scheduler)
+
+        async def publication_monitor_job():
+            await _run_followup_job('geo_publication_monitor', run_monitor_batch)
+
+        async def outcome_reviews_job():
+            await _run_followup_job('geo_outcome_reviews', run_outcome_reviews)
+
+        geo_scheduler.add_job(publication_monitor_job, CronTrigger(minute='*/10', timezone=ZoneInfo('Asia/Shanghai')),
                               id='geo_publication_monitor', replace_existing=True, max_instances=1, coalesce=True,
                               next_run_time=now)
-        geo_scheduler.add_job(run_outcome_reviews, CronTrigger(minute=15, timezone=ZoneInfo('Asia/Shanghai')),
+        geo_scheduler.add_job(outcome_reviews_job, CronTrigger(minute=15, timezone=ZoneInfo('Asia/Shanghai')),
                               id='geo_outcome_reviews', replace_existing=True, max_instances=1, coalesce=True,
                               next_run_time=now)
         geo_scheduler.start()
-    except Exception:
+    except Exception as exc:
+        _followup_telemetry.record_failure('scheduler_startup', exc)
+        _followup_telemetry.set_state("stopped", "none")
         _release_scheduler_lock()
         raise
+    _followup_telemetry.set_state("active", "current_process")
     logger.info('[geo-followup-scheduler] started publication monitoring and outcome reviews')
     return True
 
