@@ -1,10 +1,10 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { matchTypeWriteback, pauseKeywordBatch, writebackKeyword } from '../api/keywords'
+import { matchTypeWriteback, pauseKeywordWriteback, writebackKeyword } from '../api/keywords'
 import { createWritebackIdempotencyKey } from '../api/idempotency'
 import { fetchWritebackMode, WRITEBACK_CONFIRMATION } from '../api/writeback'
 import { createLatestRequestGuard } from '../utils/latestRequest'
-import { keywordBidPreflight, writebackTrace } from '../utils/writebackPreflight'
+import { keywordActionPreflight, keywordBidPreflight, writebackTrace } from '../utils/writebackPreflight'
 
 export const MATCH_TYPE_OPTIONS = {
   exact: { matchType: 1, phraseType: 1, label: '精确匹配' },
@@ -15,6 +15,7 @@ export const MATCH_TYPE_OPTIONS = {
 /** Reusable keyword writeback controls for the workbench and detail view. */
 export function useKeywordWriteback({ tenantId, onSuccess, readContext } = {}) {
   const pendingBidWrites = new Set()
+  const pendingActionWrites = new Set()
   const actionGuard = createLatestRequestGuard(() => (
     readContext?.() || { tenantId: tenantId.value }
   ))
@@ -109,17 +110,46 @@ export function useKeywordWriteback({ tenantId, onSuccess, readContext } = {}) {
     if (!target) return null
     const attempt = actionGuard.begin()
     const scopedTenantId = attempt.context.tenantId
+    const writeKey = `${scopedTenantId}:${accountId ?? ''}:${keywordId}:keyword_match_type`
+    if (pendingActionWrites.has(writeKey)) return null
+    pendingActionWrites.add(writeKey)
+
+    let preflight
+    try {
+      const mode = await fetchWritebackMode(scopedTenantId)
+      if (!attempt.isCurrent()) return null
+      preflight = keywordActionPreflight(mode, {
+        tenantId: scopedTenantId,
+        accountId,
+        scope: 'keyword_match_type',
+      })
+      if (!preflight.ok) {
+        ElMessage.error(preflight.message)
+        return null
+      }
+    } catch (error) {
+      if (attempt.isCurrent()) {
+        ElMessage.error(error.response?.data?.detail || '无法完成关键词匹配方式预检，已禁止提交，请刷新后重试')
+      }
+      return null
+    } finally {
+      if (!preflight?.ok) pendingActionWrites.delete(writeKey)
+    }
 
     try {
       await ElMessageBox.confirm(
-        `确认将「${keywordText}」的匹配模式从「${currentMatchLabel || '—'}」改为「${target.label}」？\n系统将按当前客户、推广账户和动作门禁决定演练或真实执行；真实执行会修改百度账户。`,
+        `确认将「${keywordText}」的匹配模式从「${currentMatchLabel || '—'}」改为「${target.label}」？\n${preflight.message}`,
         '确认修改匹配模式',
-        { confirmButtonText: '确认修改', cancelButtonText: '取消', type: 'warning' },
+        { confirmButtonText: preflight.confirmButtonText, cancelButtonText: '取消', type: 'warning' },
       )
     } catch {
+      pendingActionWrites.delete(writeKey)
       return null
     }
-    if (!attempt.isCurrent()) return null
+    if (!attempt.isCurrent()) {
+      pendingActionWrites.delete(writeKey)
+      return null
+    }
 
     try {
       const response = await matchTypeWriteback({
@@ -129,19 +159,27 @@ export function useKeywordWriteback({ tenantId, onSuccess, readContext } = {}) {
         phraseType: target.phraseType,
       })
       if (!attempt.isCurrent()) return null
+      const trace = writebackTrace(response.writeback || response.action)
+      const traceSuffix = trace ? `（${trace}）` : ''
       if (response.dry_run) {
-        ElMessage.warning('演练模式：已记入台账，未真改线上匹配模式')
+        ElMessage.warning(`演练模式：已记入台账，未真改线上匹配模式${traceSuffix}`)
         return { response, success: false, dryRun: true }
       }
-      if (response.writeback?.status === 'failed') {
-        ElMessage.error(response.writeback.error_msg || '修改匹配模式失败')
+      if (['pending', 'reconcile'].includes(response.writeback?.status)) {
+        ElMessage.warning(`${response.writeback.error_msg || '百度修改匹配方式结果未知，已转入人工对账'}${traceSuffix}`)
+        return { response, success: false, reconciliationRequired: true }
+      }
+      if (response.writeback?.status !== 'success') {
+        ElMessage.error(`${response.writeback?.error_msg || '修改匹配模式失败'}${traceSuffix}`)
         return { response, success: false }
       }
-      ElMessage.success(`已回写百度：${target.label}`)
+      ElMessage.success(`已回写百度：${target.label}${traceSuffix}`)
       return await notifySuccess({ response, success: true }, attempt)
     } catch (error) {
       if (attempt.isCurrent()) ElMessage.error(error.response?.data?.detail || error.message)
       return null
+    } finally {
+      pendingActionWrites.delete(writeKey)
     }
   }
 
@@ -150,42 +188,75 @@ export function useKeywordWriteback({ tenantId, onSuccess, readContext } = {}) {
     const scopedTenantId = attempt.context.tenantId
     const pause = !currentPause
     const action = pause ? '暂停' : '启用'
+    const writeKey = `${scopedTenantId}:${accountId ?? ''}:${keywordId}:keyword_pause`
+    if (pendingActionWrites.has(writeKey)) return null
+    pendingActionWrites.add(writeKey)
+
+    let preflight
+    try {
+      const mode = await fetchWritebackMode(scopedTenantId)
+      if (!attempt.isCurrent()) return null
+      preflight = keywordActionPreflight(mode, {
+        tenantId: scopedTenantId,
+        accountId,
+        scope: 'keyword_pause',
+      })
+      if (!preflight.ok) {
+        ElMessage.error(preflight.message)
+        return null
+      }
+    } catch (error) {
+      if (attempt.isCurrent()) {
+        ElMessage.error(error.response?.data?.detail || `无法完成关键词${action}预检，已禁止提交，请刷新后重试`)
+      }
+      return null
+    } finally {
+      if (!preflight?.ok) pendingActionWrites.delete(writeKey)
+    }
 
     try {
       await ElMessageBox.confirm(
-        `将${action}关键词「${keywordText}」。\n系统将按当前客户、推广账户和动作门禁决定演练或真实执行；真实执行会修改百度账户。`,
+        `将${action}关键词「${keywordText}」。\n${preflight.message}`,
         `确认${action}`,
-        { confirmButtonText: `确认${action}`, cancelButtonText: '取消', type: 'warning' },
+        { confirmButtonText: preflight.confirmButtonText, cancelButtonText: '取消', type: 'warning' },
       )
     } catch {
+      pendingActionWrites.delete(writeKey)
       return null
     }
-    if (!attempt.isCurrent()) return null
+    if (!attempt.isCurrent()) {
+      pendingActionWrites.delete(writeKey)
+      return null
+    }
 
     try {
-      const response = await pauseKeywordBatch({
+      const response = await pauseKeywordWriteback({
+        keywordId,
         tenantId: scopedTenantId,
-        keywordIds: [keywordId],
         pause,
       })
       if (!attempt.isCurrent()) return null
-      if (response.simulated?.includes(keywordId)) {
-        ElMessage.warning(`演练 ${action} 1（未真改线上）`)
+      const trace = writebackTrace(response.writeback || response.action)
+      const traceSuffix = trace ? `（${trace}）` : ''
+      if (response.dry_run) {
+        ElMessage.warning(`演练 ${action} 1（未真改线上）${traceSuffix}`)
         return { response, success: false, dryRun: true }
       }
-      if (response.failed?.length) {
-        ElMessage.error(response.failed[0]?.reason || `${action}失败`)
+      if (['pending', 'reconcile'].includes(response.writeback?.status)) {
+        ElMessage.warning(`${response.writeback.error_msg || `百度${action}结果未知，已转入人工对账`}${traceSuffix}`)
+        return { response, success: false, reconciliationRequired: true }
+      }
+      if (response.writeback?.status !== 'success') {
+        ElMessage.error(`${response.writeback?.error_msg || `${action}失败`}${traceSuffix}`)
         return { response, success: false }
       }
-      if (response.applied?.includes(keywordId)) {
-        ElMessage.success(`已${action}`)
-        return await notifySuccess({ response, success: true }, attempt)
-      }
-      ElMessage.error(`${action}未执行`)
-      return { response, success: false }
+      ElMessage.success(`已${action}${traceSuffix}`)
+      return await notifySuccess({ response, success: true }, attempt)
     } catch (error) {
       if (attempt.isCurrent()) ElMessage.error(error.response?.data?.detail || error.message)
       return null
+    } finally {
+      pendingActionWrites.delete(writeKey)
     }
   }
 

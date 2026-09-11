@@ -41,7 +41,12 @@ from app.models import (
     SearchTermReport,
     Tenant,
 )
-from app.baidu.writeback import WritebackError, apply_keyword_writeback, apply_pause_writeback
+from app.baidu.writeback import (
+    WritebackError,
+    apply_keyword_writeback,
+    apply_match_type_writeback,
+    apply_pause_writeback,
+)
 from app.security.auth import AuthContext, require_scoped_auth
 from app.sem_cockpit_details import read_keyword_detail, read_keywords
 from app.sem_cockpit_readonly import validate_query
@@ -1459,6 +1464,17 @@ class KeywordWritebackRequest(BaseModel):
     idempotency_key: str | None = Field(default=None, min_length=16, max_length=128)
 
 
+class MatchTypeWritebackRequest(BaseModel):
+    tenant_id: int
+    match_type: int
+    phrase_type: int
+
+
+class PauseKeywordWritebackRequest(BaseModel):
+    tenant_id: int
+    pause: bool
+
+
 class WritebackBatchItem(BaseModel):
     keyword_id: int
     price: float = Field(..., gt=0)
@@ -1577,3 +1593,79 @@ async def writeback_one(
     except WritebackError as e:
         raise HTTPException(400, str(e))
     return {"status": "ok", "dry_run": rec.dry_run, "writeback": wb_to_dict(rec)}
+
+
+@router.post("/{keyword_id}/match-type-writeback")
+async def match_type_writeback(
+    keyword_id: int,
+    req: MatchTypeWritebackRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """把单个关键词的匹配模式回写百度；仍由服务端动作策略决定演练或真实执行。"""
+    ctx.ensure_tenant(req.tenant_id)
+    try:
+        rec = await apply_match_type_writeback(
+            session,
+            req.tenant_id,
+            keyword_id,
+            req.match_type,
+            req.phrase_type,
+            operator_user_id=ctx.user_id,
+            operator_name=ctx.username,
+        )
+    except WritebackError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "status": "ok",
+        "dry_run": rec.dry_run,
+        "writeback": _keyword_action_writeback_dict(
+            rec,
+            match_type=req.match_type,
+            phrase_type=req.phrase_type,
+            match_label=rec.match_mode,
+        ),
+    }
+
+
+def _keyword_action_writeback_dict(rec, **extra) -> dict:
+    return {
+        "id": rec.id,
+        "approval_id": rec.approval_id,
+        "action_type": rec.action_type,
+        "word": rec.word,
+        "dry_run": rec.dry_run,
+        "status": rec.status,
+        "error_msg": rec.error_msg,
+        "operator_name": rec.operator_name,
+        "created_at": rec.created_at.isoformat() if rec.created_at else None,
+        "executed_at": rec.executed_at.isoformat() if rec.executed_at else None,
+        **extra,
+    }
+
+
+@router.post("/{keyword_id}/pause-writeback")
+async def pause_keyword_writeback(
+    keyword_id: int,
+    req: PauseKeywordWritebackRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """暂停或启用单个关键词；批量接口保持独立且不由此入口调用。"""
+    ctx.ensure_tenant(req.tenant_id)
+    try:
+        rec = await apply_pause_writeback(
+            session,
+            req.tenant_id,
+            keyword_id,
+            req.pause,
+            operator_user_id=ctx.user_id,
+            operator_name=ctx.username,
+        )
+    except WritebackError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "status": "ok",
+        "dry_run": rec.dry_run,
+        "writeback": _keyword_action_writeback_dict(rec, pause=req.pause),
+    }
