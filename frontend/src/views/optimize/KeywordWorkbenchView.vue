@@ -1045,6 +1045,7 @@ onBeforeUnmount(() => {
             {{ refreshing ? '同步中…' : '刷新数据' }}
           </button>
           <button v-if="!demoMode" class="pbtn" :disabled="exporting" @click="exportCsv">{{ exporting ? '导出中…' : '导出' }}</button>
+          <button class="pbtn" @click="router.push({ path: '/verify/pending', query: { mode: 'queue' } })">执行与核对</button>
           <el-tooltip content="导入/新建的执行模式由当前客户、推广账户和动作门禁决定" placement="bottom">
             <button class="pbtn" disabled>导入关键词</button>
           </el-tooltip>

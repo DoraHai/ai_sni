@@ -11,7 +11,15 @@ import {
   reconcileWriteback,
 } from '../../api/adjustmentVerify'
 import { session } from '../../store/session'
-import { QUEUE_STAGES, filterQueue, queueCounts, queueStageMeta } from '../../utils/writebackQueue'
+import {
+  QUEUE_STAGES,
+  coreActionFlow,
+  filterQueue,
+  flowBasisLabel,
+  flowControlLabel,
+  queueCounts,
+  queueStageMeta,
+} from '../../utils/writebackQueue'
 
 const router = useRouter()
 const route = useRoute()
@@ -27,7 +35,9 @@ const days = ref(7)
 const statusFilter = ref('')
 const mode = ref(route.query.mode === 'queue' || !canViewPending.value ? 'queue' : 'keyword')
 const aiLoading = ref({})
-const queueFilter = ref('reconciliation_required')
+const queueFilter = ref(QUEUE_STAGES.some((item) => item.value === route.query.stage)
+  ? route.query.stage
+  : 'reconciliation_required')
 const queueOffset = ref(0)
 const effectOffset = ref(0)
 const queueServerPaged = computed(() => data.value?.counts_scope === 'tenant_history')
@@ -200,8 +210,8 @@ onMounted(load)
   <div v-loading="loading">
     <div class="page-header">
       <div>
-        <div class="page-title">待验证调价</div>
-        <div class="page-desc">对比调整前后效果，核对是否达成目标；预算调整复用同一套人工验证状态。</div>
+        <div class="page-title">调整执行与核对</div>
+        <div class="page-desc">将待调整、受控执行、结果读取、检查依据和行动台账放在同一流程中；关键词调价、暂停和否词优先展示完整明细。</div>
       </div>
     </div>
 
@@ -244,6 +254,22 @@ onMounted(load)
       <el-button v-if="session.canView('verify.adjustments')" @click="router.push('/verify/adjustments')">查看调价台账</el-button>
     </div>
     <el-table v-if="mode === 'queue' && !error" :data="filteredQueue" border :empty-text="loading ? '正在加载记录' : '当前页暂无此状态记录'">
+      <el-table-column type="expand" width="48">
+        <template #default="{row}">
+          <div v-if="coreActionFlow(row)" class="flow-detail">
+            <div class="flow-steps">
+              <span v-for="step in coreActionFlow(row).steps" :key="step.code" class="flow-step" :class="`is-${step.state}`">{{ step.label }}</span>
+            </div>
+            <div><b>受控执行：</b>{{ flowControlLabel(coreActionFlow(row)) }}</div>
+            <div><b>当前真写资格：</b>{{ coreActionFlow(row).control.current_live_allowed ? '该账户与动作范围当前已授权' : '当前未开放，重新发起仍将默认演练' }}</div>
+            <div><b>检查依据：</b>{{ flowBasisLabel(coreActionFlow(row)) }} · 本地回写台账</div>
+            <div v-if="coreActionFlow(row).result.reconciliation_note"><b>人工对账：</b>{{ coreActionFlow(row).result.reconciliation_note }}</div>
+            <div><b>下一步：</b>{{ coreActionFlow(row).next_action }}</div>
+            <div class="flow-ledger"><b>行动台账：</b>{{ row.key }} · 记录人 {{ row.operator || '—' }} · {{ fmtTime(row.created_at) }}</div>
+          </div>
+          <div v-else class="flow-detail">该历史动作仍可按状态和台账核对，本批次未纳入三类优先流程。</div>
+        </template>
+      </el-table-column>
       <el-table-column prop="created_at" label="记录时间" min-width="150"><template #default="{row}">{{ fmtTime(row.created_at) }}</template></el-table-column>
       <el-table-column prop="kind" label="动作" min-width="120" />
       <el-table-column prop="target" label="对象" min-width="180" />
@@ -440,6 +466,13 @@ onMounted(load)
 .time { font-size: 11px; color: #9ca3af; margin-left: auto; }
 .st { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
 .st-pending { background: #fcf6ea; color: #ba7517; }
+.flow-detail { padding: 12px 18px; display: grid; gap: 8px; color: #475569; line-height: 1.55; }
+.flow-steps { display: flex; flex-wrap: wrap; gap: 8px; }
+.flow-step { padding: 3px 9px; border-radius: 12px; background: #eef2f6; color: #64748b; }
+.flow-step.is-complete { background: #e8f5ef; color: #187452; }
+.flow-step.is-held { background: #fff5df; color: #98620b; }
+.flow-step.is-attention { background: #fdecec; color: #b42318; }
+.flow-ledger { color: #64748b; }
 .st-ok { background: #e5f4ed; color: #1d9e75; }
 
 .eff { width: 100%; border-collapse: collapse; font-size: 12.5px; }

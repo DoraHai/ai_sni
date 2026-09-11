@@ -337,6 +337,151 @@ def _queue_stage(status: str, dry_run: bool) -> str:
     return "reconciliation_required"
 
 
+_CORE_ACTION_FLOW = {
+    "bid": {
+        "family": "keyword_bid",
+        "family_label": "关键词调价",
+        "scope": "keyword_bid",
+        "permission": "optimize.keywords",
+        "approval_required_for_live": True,
+    },
+    "pause": {
+        "family": "keyword_pause",
+        "family_label": "关键词暂停",
+        "scope": "keyword_pause",
+        "permission": "optimize.keywords",
+        "approval_required_for_live": False,
+    },
+    "enable": {
+        "family": "keyword_pause",
+        "family_label": "关键词启用",
+        "scope": "keyword_pause",
+        "permission": "optimize.keywords",
+        "approval_required_for_live": False,
+    },
+    "negative": {
+        "family": "negative_word",
+        "family_label": "添加否词",
+        "scope": "adgroup_negative_words",
+        "permission": "optimize.negatives",
+        "approval_required_for_live": False,
+    },
+    "remove_negative": {
+        "family": "negative_word",
+        "family_label": "删除否词",
+        "scope": "adgroup_negative_words",
+        "permission": "optimize.negatives",
+        "approval_required_for_live": False,
+    },
+}
+
+
+def _core_action_meta(record_type: str, row) -> dict | None:
+    """Describe the three first-batch actions without changing their write gates."""
+    key = "bid" if record_type == "bid" else getattr(row, "action_type", None)
+    meta = _CORE_ACTION_FLOW.get(key)
+    if meta is None:
+        return None
+    result = dict(meta)
+    if key in {"negative", "remove_negative"} and getattr(row, "adgroup_id", None) is None:
+        result["scope"] = "campaign_negative_words"
+    return result
+
+
+def _flow_next_action(stage: str) -> str:
+    return {
+        "pending_writeback": "当前是演练记录，未修改百度；如需真实执行，请回到原业务页面并重新通过权限与动作门禁。",
+        "reconciliation_required": "结果不确定，请由非原执行人核对百度后记录依据，不要重复提交。",
+        "executed": "平台已记录执行成功；可按账户、计划、单元和时间继续核对只读数据。",
+        "failed": "先阅读失败原因和对账结论，确认未执行后再从原业务页面发起。",
+    }.get(stage, "状态未知，请先人工核查。")
+
+
+def _flow_readback_status(stage: str) -> str:
+    return {
+        "pending_writeback": "not_sent",
+        "reconciliation_required": "needs_external_confirmation",
+        "executed": "platform_success_recorded",
+        "failed": "platform_failure_recorded",
+    }.get(stage, "unknown")
+
+
+def _build_action_flow(record_type: str, row, current_live_scopes: set[str]) -> dict | None:
+    meta = _core_action_meta(record_type, row)
+    if meta is None:
+        return None
+    stage = _queue_stage(row.status, row.dry_run)
+    recorded_mode = "dry_run" if row.dry_run else "live"
+    scope = meta["scope"]
+    current_live_allowed = scope in current_live_scopes
+    approval_id = getattr(row, "approval_id", None)
+    reconciliation_note = getattr(row, "reconciliation_note", None)
+    executed_at = getattr(row, "executed_at", None)
+    return {
+        "version": "sem-controlled-action-v1",
+        "family": meta["family"],
+        "family_label": meta["family_label"],
+        "steps": [
+            {"code": "intent", "label": "待调整", "state": "complete"},
+            {"code": "control", "label": "受控执行", "state": "held" if row.dry_run else "complete"},
+            {"code": "result", "label": "结果读取", "state": "attention" if stage in {"reconciliation_required", "failed"} else "complete"},
+            {"code": "basis", "label": "检查依据", "state": "attention" if stage == "reconciliation_required" and not reconciliation_note else "complete"},
+            {"code": "ledger", "label": "行动台账", "state": "complete"},
+        ],
+        "control": {
+            "permission": meta["permission"],
+            "write_scope": scope,
+            "recorded_mode": recorded_mode,
+            "current_live_allowed": current_live_allowed,
+            "approval_required_for_live": meta["approval_required_for_live"],
+            "approval_id": approval_id,
+            "default_behavior": "record_only" if row.dry_run else "controlled_live",
+            "existing_gates": [
+                "authenticated_identity",
+                "tenant_scope",
+                "sem_identity",
+                meta["permission"],
+                f"account_scope:{scope}",
+                *(["one_time_funds_confirmation"] if meta["approval_required_for_live"] else []),
+            ],
+        },
+        "result": {
+            "stage": stage,
+            "status": row.status,
+            "source": "local_writeback_ledger",
+            "readback_status": _flow_readback_status(stage),
+            "confirmed_at": (
+                executed_at.isoformat()
+                if not row.dry_run and row.status == "success" and executed_at
+                else None
+            ),
+            "error": getattr(row, "error_msg", None),
+            "reconciliation_result": getattr(row, "reconciliation_result", None),
+            "reconciliation_note": reconciliation_note,
+        },
+        "check_basis": {
+            "source": "local_writeback_ledger",
+            "baidu_account_id": getattr(row, "baidu_account_id", None),
+            "keyword_id": getattr(row, "keyword_id", None),
+            "campaign_id": getattr(row, "campaign_id", None),
+            "adgroup_id": getattr(row, "adgroup_id", None),
+            "match_mode": getattr(row, "match_mode", None),
+            "target": getattr(row, "keyword", None) or getattr(row, "word", None),
+            "before": (
+                float(row.old_bid) if record_type == "bid" and getattr(row, "old_bid", None) is not None
+                else float(row.old_value) if getattr(row, "old_value", None) is not None else None
+            ),
+            "requested": (
+                float(row.new_bid) if record_type == "bid" and getattr(row, "new_bid", None) is not None
+                else float(row.new_value) if getattr(row, "new_value", None) is not None else None
+            ),
+            "recorded_at": row.created_at.isoformat() if getattr(row, "created_at", None) else None,
+            "external_confirmation_required": stage == "reconciliation_required",
+        },
+        "next_action": _flow_next_action(stage),
+    }
+
+
 def _queue_rows_query(tenant_id: int):
     """SQL stage classification precedes pagination, including old unresolved rows."""
     queries = []
@@ -441,6 +586,10 @@ async def list_writeback_queue(
     actions = list((await session.scalars(
         select(WritebackAction).where(WritebackAction.tenant_id == tenant_id, WritebackAction.id.in_(action_ids))
     )).all()) if action_ids else []
+    live_scopes_by_account = {
+        account["baidu_account_id"]: set(account.get("live_scopes") or [])
+        for account in mode.get("accounts", [])
+    }
     items = [
         {
             "key": f"bid:{row.id}", "kind": "关键词调价", "target": row.keyword,
@@ -450,6 +599,9 @@ async def list_writeback_queue(
             "operator": row.operator_name, "created_at": row.created_at.isoformat() if row.created_at else None,
             "error": row.error_msg, "reconciliation_result": row.reconciliation_result,
             "reconciliation_note": row.reconciliation_note,
+            "flow": _build_action_flow(
+                "bid", row, live_scopes_by_account.get(row.baidu_account_id, set())
+            ),
         }
         for row in bids
     ] + [
@@ -462,6 +614,9 @@ async def list_writeback_queue(
             "created_at": row.created_at.isoformat() if row.created_at else None, "error": row.error_msg,
             "reconciliation_result": row.reconciliation_result,
             "reconciliation_note": row.reconciliation_note,
+            "flow": _build_action_flow(
+                "action", row, live_scopes_by_account.get(row.baidu_account_id, set())
+            ),
         }
         for row in actions
     ]

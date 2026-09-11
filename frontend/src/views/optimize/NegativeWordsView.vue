@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRouter } from 'vue-router'
 import { addNegativeWord, fetchNegativeWords, removeNegativeWord } from '../../api/negatives'
 import { fetchCandidates, updateCandidateStatus } from '../../api/expansion'
 import { fetchAdgroupList, fetchCampaignList } from '../../api/keywords'
@@ -8,6 +9,7 @@ import AddToPlanDialog from '../../components/AddToPlanDialog.vue'
 import { session } from '../../store/session'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
+const router = useRouter()
 
 const loading = ref(false)
 const error = ref('')
@@ -214,6 +216,7 @@ onMounted(load)
         </div>
       </div>
       <div class="page-actions">
+        <el-button @click="router.push({ path: '/verify/pending', query: { mode: 'queue' } })">执行与核对</el-button>
         <el-button v-if="session.canEdit('optimize.negatives')" type="primary" @click="openAddNeg()">新增待回写否词</el-button>
       </div>
     </div>

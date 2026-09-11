@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRouter } from 'vue-router'
 import { addNegative, expandKeyword, fetchSearchTerms, syncSearchTerms } from '../../api/searchTerms'
 import { session } from '../../store/session'
 import { formatUtcTimestamp } from '../../utils/dateTime'
@@ -9,6 +10,7 @@ import { canWriteScopedAsset, chooseSemAccount } from '../../utils/accountScope'
 import { isSemDemoIdentity, SEM_DEMO_ACCOUNTS } from '../../utils/semDemo'
 
 const TENANT_ID = computed(() => session.tenantId)
+const router = useRouter()
 const demoMode = computed(() => data.value?.is_demo === true || isSemDemoIdentity(session.user, TENANT_ID.value))
 const currentTenant = computed(() => session.tenants.find((row) => row.id === TENANT_ID.value))
 const readableAccounts = computed(() => (
@@ -284,7 +286,10 @@ const statCards = computed(() => {
           <template v-if="data?.window?.synced_at"> · 同步于 {{ fmtTime(data.window.synced_at) }}</template>
         </div>
       </div>
-      <el-button v-if="session.canEdit('optimize.searchterms') && !demoMode" type="primary" :loading="syncing" :disabled="!selectedAccountIsActive" @click="runSync">同步搜索词（近 30 天）</el-button>
+      <div class="page-actions">
+        <el-button @click="router.push({ path: '/verify/pending', query: { mode: 'queue' } })">执行与核对</el-button>
+        <el-button v-if="session.canEdit('optimize.searchterms') && !demoMode" type="primary" :loading="syncing" :disabled="!selectedAccountIsActive" @click="runSync">同步搜索词（近 30 天）</el-button>
+      </div>
     </div>
     <el-alert v-if="demoMode" title="演示数据，仅供体验；操作不会影响真实投放。" type="info" :closable="false" show-icon style="margin-bottom: 12px" />
     <el-alert v-if="emptyDiagnosis" type="warning" :title="emptyDiagnosis" :closable="false" show-icon style="margin-bottom: 12px" />
