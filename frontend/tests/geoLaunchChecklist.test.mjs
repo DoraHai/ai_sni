@@ -7,9 +7,9 @@ const handlers=source.slice(source.indexOf('async function load()'),source.index
 function fixture(){
  const events=[]
  const ctx=vm.createContext({epoch:0,props:{tenantId:7,task:{id:12,article:{id:17},updated_at:'revision'},disabled:false},
- targets:{value:[]},linked:{value:[]},selectedId:{value:null},detail:{value:null},error:{value:''},loading:{value:false},busy:{value:false},confirmed:{value:true},
+ targets:{value:[]},linked:{value:[]},selectedId:{value:null},detail:{value:null},acceptance:{value:null},acceptanceError:{value:''},error:{value:''},loading:{value:false},busy:{value:false},confirmed:{value:true},
  canSubmit:{value:true},canDecide:{value:true},
- fetchTaskPushTargets:async()=>({targets:[]}),evidenceApi:{listForContent:async()=>[],readiness:async()=>({})},
+ fetchTaskPushTargets:async()=>({targets:[]}),evidenceApi:{listForContent:async()=>[],readiness:async()=>({}),acceptanceSummary:async()=>({h3:{},h4:{}})},
  submitGeoTaskReview:async()=>{},decideGeoTaskReview:async()=>{},emit:x=>events.push(x)})
  vm.runInContext(handlers,ctx);return{ctx,events}
 }
@@ -40,6 +40,16 @@ test('late checklist reads are discarded after customer switch',async()=>{
  const pending=ctx.load();ctx.epoch++;ctx.props.tenantId=8
  done([{id:99,status:'open'}]);await pending
  assert.equal(ctx.linked.value.length,0)
+})
+test('acceptance summary failure does not hide existing launch checks',async()=>{
+ const {ctx}=fixture()
+ ctx.fetchTaskPushTargets=async()=>({targets:[{accounts:[{has_credentials:true,push_kind:'api'}]}]})
+ ctx.evidenceApi.acceptanceSummary=async()=>{throw new Error('摘要暂不可用')}
+ await ctx.load()
+ assert.equal(ctx.targets.value.length,1)
+ assert.equal(ctx.acceptance.value,null)
+ assert.equal(ctx.acceptanceError.value,'摘要暂不可用')
+ assert.equal(ctx.error.value,'')
 })
 test('frontend review handler rejects actions hidden by the permission gate',async()=>{
  const {ctx}=fixture();let submit=0,decide=0
