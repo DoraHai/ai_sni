@@ -49,6 +49,10 @@ try {
   reads.at(-1).resolve(response('task-history-survives'));await Vue.nextTick();await Vue.nextTick()
   assert.equal(state.data.items[0].id,'task-history-survives')
   assert.equal(state.verificationError,'queue unavailable')
+  const attempt={id:42,action:'manual_complete',status:'succeeded',created_by:17,started_at:'2026-09-11T07:30:00Z'}
+  assert.match(state.publicationAttemptLabel(attempt),/\u4eba\u5de5\u56de\u586b #42 · 成功 · 操作人 #17/)
+  assert.equal(state.publicationAttempt({kind:'publication_url',evidence:{latest_attempt:attempt}}),attempt)
+  assert.equal(state.publicationAttempt({kind:'page_recheck',evidence:{latest_attempt:attempt}}),null)
   assert.ok(!source.includes('v-html'))
   console.log('Task center checks passed: stale tenant response, user-private recovery, scope switch before confirmation, read-only retry')
 } finally { app.unmount() }

@@ -216,6 +216,22 @@ def test_customer_verification_publication_draft_is_not_verified():
     assert publication_queue_item(_queue_row(status='failed', page_url=None, link_discovery=None, **base))['state'] == 'failed_retry'
 
 
+def test_customer_verification_publication_includes_sanitized_latest_attempt_provenance():
+    started=datetime(2026,9,11,7,30,tzinfo=timezone.utc)
+    completed=started+timedelta(seconds=8)
+    attempt=SimpleNamespace(id=42,action='manual_complete',status='succeeded',created_by=17,
+        started_at=started,completed_at=completed,request_summary={'secret':'must-not-leak'},
+        response_summary={'remote_payload':'must-not-leak'},error='raw provider error')
+    row=_queue_row(status='published',platform_name='知乎',adapted_title='选型指南',published_at=completed,
+        page_url='https://zhuanlan.zhihu.com/p/1',link_discovery=None,last_error=None)
+    item=publication_queue_item(row,attempt)
+    assert item['state']=='pending_system_check'
+    assert item['evidence']=={'page_url':'https://zhuanlan.zhihu.com/p/1','published_at':completed,'link_discovery':None,
+        'latest_attempt':{'id':42,'action':'manual_complete','status':'succeeded',
+        'created_by':17,'started_at':started,'completed_at':completed}}
+    assert 'request_summary' not in str(item['evidence']) and 'raw provider error' not in str(item['evidence'])
+
+
 def test_customer_verification_page_and_backlink_use_observed_state():
     assert page_queue_item(_queue_row(status='approved', url='https://example.cn/a', title='A', http_status=200, audit_score=80, issue_codes=[], last_error=None))['state'] == 'pending_customer_action'
     assert page_queue_item(_queue_row(status='implemented', url='https://example.cn/a', title='A', http_status=200, audit_score=80, issue_codes=[], last_error=None))['state'] == 'pending_system_check'
