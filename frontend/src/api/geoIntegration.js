@@ -17,3 +17,8 @@ export const cancel = (tenant, id) => client.patch(`${base}/${id}`, { status: 'c
 export const baselineReadiness = (tenant, id) => client.get(`${base}/${id}/baseline-readiness`, config(tenant))
 
 export const listForContent = (tenant, contentId) => client.get(base, { params: { tenant_id: tenant, content_task_id: contentId, limit: 200 } })
+
+export const acceptanceSummary = (tenant, contentId) => client.get(
+  `/api/v1/geo/integration/read/content-tasks/${contentId}/acceptance-summary`,
+  config(tenant),
+)

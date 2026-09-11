@@ -5,6 +5,7 @@ import { fetchTaskPushTargets, submitGeoTaskReview, decideGeoTaskReview } from '
 import * as evidenceApi from '../api/geoIntegration'
 import { evidenceTaskLink } from '../utils/geoEvidenceLinks'
 import { executionNext } from '../utils/geoExecutionOverview'
+import { describeAcceptanceSummary } from '../utils/geoAcceptanceSummary'
 import { canDecideGeoReview, canSubmitGeoReview } from '../utils/geoReviewAccess'
 import { session } from '../store/session'
 import GeoCreateEvidenceTask from './GeoCreateEvidenceTask.vue'
@@ -12,6 +13,7 @@ const props = defineProps({ tenantId: [Number, String], task: Object, disabled: 
 const emit = defineEmits(['changed'])
 const router = useRouter()
 const targets = ref([]), linked = ref([]), selectedId = ref(null), detail = ref(null)
+const acceptance = ref(null), acceptanceError = ref('')
 const expanded = ref(false)
 const error = ref(''), loading = ref(false), busy = ref(false), confirmed = ref(false), createOpen = ref(false)
 let epoch = 0
@@ -22,15 +24,24 @@ const next = computed(() => selected.value ? executionNext(selected.value, detai
 const currentProof = computed(() => detail.value?.publication_evidence?.article_id === props.task?.article?.id ? detail.value.publication_evidence : null)
 const canSubmit = computed(() => canSubmitGeoReview(session.user))
 const canDecide = computed(() => canDecideGeoReview(session.user))
+const acceptanceStages = computed(() => describeAcceptanceSummary(acceptance.value))
 async function load() {
   const run = ++epoch
-  targets.value = []; linked.value = []; detail.value = null; confirmed.value = false; error.value = ''; busy.value = false
+  targets.value = []; linked.value = []; detail.value = null; acceptance.value = null; acceptanceError.value = ''; confirmed.value = false; error.value = ''; busy.value = false
   if (!props.tenantId || !props.task?.id) { loading.value = false; return }
   loading.value = true
   try {
-    const [push, tasks] = await Promise.all([fetchTaskPushTargets(props.tenantId, props.task.id), evidenceApi.listForContent(props.tenantId, props.task.id)])
+    const acceptanceRead = evidenceApi.acceptanceSummary(props.tenantId, props.task.id)
+      .then((value) => ({ value, error: '' }))
+      .catch((e) => ({ value: null, error: e.message || 'H3/H4 验收摘要读取失败' }))
+    const [push, tasks, acceptanceResult] = await Promise.all([
+      fetchTaskPushTargets(props.tenantId, props.task.id),
+      evidenceApi.listForContent(props.tenantId, props.task.id),
+      acceptanceRead,
+    ])
     if (run !== epoch) return
     targets.value = push.targets || []; linked.value = tasks
+    acceptance.value = acceptanceResult.value; acceptanceError.value = acceptanceResult.error
     if (!tasks.some(row => row.id === selectedId.value)) selectedId.value = [...tasks].reverse().find(row => !['done','cancelled'].includes(row.status))?.id || tasks.at(-1)?.id || null
     if (selectedId.value) {
       const data = await evidenceApi.readiness(props.tenantId, selectedId.value)
@@ -86,6 +97,25 @@ onBeforeUnmount(() => { epoch++ })
       </el-select>
       <p v-if="linked.length === 200">当前显示前 200 个关联任务，其余请到指标验收列表查看。</p>
       <p><b>5. 上线核验：</b>{{ currentProof ? '当前母稿已有抓取核验记录，验收时仍会重新检查' : '尚未核实当前版本上线；回填链接不等于核验通过' }} <el-button link @click="distribution">发布 / 回填 / 恢复</el-button></p>
+      <section class="h3h4-summary" aria-label="H3 H4 只读验收摘要">
+        <p><b>H3/H4 只读验收：</b>以下结论只读取已保存记录，不会自动发布、抓取或重试。</p>
+        <p v-if="acceptanceError" role="alert">{{ acceptanceError }}；不影响上方已有发布检查，请刷新后重试。</p>
+        <article v-for="stage in acceptanceStages" :key="stage.key">
+          <strong>{{ stage.title }}：{{ stage.statusLabel }}</strong>
+          <ul v-if="stage.blockers.length">
+            <li v-for="item in stage.blockers" :key="`${stage.key}-${item.stage}-${item.key}`">
+              {{ item.label }}
+              <small v-if="item.requirement">对应{{ item.stage.toUpperCase() }}要求：{{ item.requirement }}</small>
+            </li>
+          </ul>
+          <ul v-else-if="stage.humanRequirements.length">
+            <li v-for="item in stage.humanRequirements" :key="`${stage.key}-${item.key}`">
+              待人工确认：{{ item.description }}
+            </li>
+          </ul>
+          <p v-else-if="stage.systemReady">系统前置检查已满足。</p>
+        </article>
+      </section>
       <p><b>6. 复测与验收：</b>{{ next ? `${next.stage}：${next.next}` : '建立验收任务后查看同题同模型复测条件' }} <el-button v-if="selected" link @click="openEvidence">处理指标验收</el-button></p>
       <p v-if="detail?.outcome_review_error" role="alert">{{ detail.outcome_review_error }}；下方显示的是此前评估。</p>
       <p v-if="detail?.outcome_review"><b>7. 效果复盘：</b>{{ {waiting:'待观察',needs_review:'完整周指标未达目标，已生成复盘工单',target_met:'观察指标已达到目标，仍需完成原任务验收'}[detail.outcome_review.state] }} {{ detail.outcome_review.reason || '' }} <el-button link @click="router.push('/geo/tickets')">查看复盘工单</el-button></p>
@@ -101,4 +131,8 @@ h3 { margin:0; font-size:16px; }
 p { font-size:13px; line-height:1.7; color:#475569; }
 :deep(.el-checkbox) { white-space:normal; height:auto; margin:8px 12px 8px 0; }
 :deep(.el-checkbox__label) { white-space:normal; }
+.h3h4-summary { margin: 12px 0; padding: 12px; border: 1px solid #dbe4ee; border-radius: 8px; background: #f8fafc; }
+.h3h4-summary article + article { margin-top: 10px; padding-top: 10px; border-top: 1px solid #e2e8f0; }
+.h3h4-summary ul { margin: 6px 0 0; padding-left: 20px; color: #475569; font-size: 13px; line-height: 1.65; }
+.h3h4-summary small { display: block; color: #64748b; }
 </style>
