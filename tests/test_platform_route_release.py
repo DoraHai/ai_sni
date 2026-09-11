@@ -36,17 +36,20 @@ def block(config: str, declaration: str) -> str:
     raise AssertionError(f"unterminated Nginx block: {declaration}")
 
 
-def test_candidate_is_exact_reviewed_base_plus_one_narrow_spa_location():
+def test_candidate_is_exact_reviewed_base_plus_one_narrow_seo_schema_location():
     base = read("tests/fixtures/gsnipers-platform-routes-reviewed-base.conf")
     candidate = read("deploy/gsnipers-platform-routes.conf")
-    marker = "    # Only declared business routes enter the SEM SPA."
+    marker = "    # GEO and SEO use independent processes and release directories."
     added = candidate[len(base[: base.index(marker)]) : candidate.index(marker)]
     assert candidate == base.replace(marker, added + marker, 1)
-    assert "location ~ ^/platform(/|$)" in added
-    assert "location = /admin/internal" not in added
+    assert "location = /seo-openapi.json" in added
+    assert "proxy_pass http://127.0.0.1:8020/openapi.json;" in added
+    assert "if ($request_method != GET)" in added
+    assert "return 405;" in added
+    assert "location = /openapi.json" not in added
     assert added.count("location ") == 1
-    assert hashlib.sha256(base.encode()).hexdigest() == "3fd57506ca30704d5201d15ac9ab2408bda951f1b8fd0c4118c47d7023506fc1"
-    assert hashlib.sha256(candidate.encode()).hexdigest() == "d710448c24f61e14c0e69a5c2636987781b09042a3a72cd7a11605d316ad12f3"
+    assert hashlib.sha256(base.encode()).hexdigest() == "d710448c24f61e14c0e69a5c2636987781b09042a3a72cd7a11605d316ad12f3"
+    assert hashlib.sha256(candidate.encode()).hexdigest() == "d52f853cd154709faebca4c10067d3243a80418a3e41cf420b13a8e871c65047"
 
 
 def test_platform_serves_sem_index_and_preserves_legacy_admin_redirect():
@@ -89,7 +92,11 @@ def test_release_module_validates_before_reload_and_has_complete_rollback():
     assert "*) return 1" in script
     assert "already_current=true" in script
     assert 'git ls-remote --refs "$authoritative_repo" "$authoritative_ref"' in script
+    assert "authoritative_query_attempts=3" in script
+    assert "authoritative_retry_delay_seconds=2" in script
+    assert '[[ "$attempt" -eq "$authoritative_query_attempts" ]] || sleep "$authoritative_retry_delay_seconds"' in script
     assert script.count('live_head="$(query_authoritative_head)"') == 2
+    assert script.index("flock -n 9") < script.index('live_head="$(query_authoritative_head)"')
     assert script.rindex('live_head="$(query_authoritative_head)"') < script.index('mv -Tf "$archive" "$published_archive"')
     assert script.index('expected_index="${PLATFORM_SEM_INDEX:-/opt/sem-frontend/current/index.html}"') < script.index("status=already-current")
     for route in (
@@ -103,6 +110,7 @@ def test_release_module_validates_before_reload_and_has_complete_rollback():
         "/workspace/cockpit",
         "/monitor/dashboard",
         "/optimize/keywords",
+        "/seo-openapi.json",
     ):
         assert route in script
     assert "migration=not-run" in script
@@ -116,6 +124,11 @@ def test_installer_and_workflow_are_exact_revision_and_prewrite_gated():
     first_install = installer.index("install -d")
     assert digest_gate < first_install
     assert "0330e2c14f2ff7074df140e02d56136aa2a5248ebce296d9c35007437c09937a" in installer
+    module_bytes = (ROOT / "ops/platform-deploy/modules/platform").read_bytes().replace(b"\r\n", b"\n")
+    module_digest = hashlib.sha256(module_bytes).hexdigest()
+    assert module_digest == "d1522668411f34c7329e3777aea2bbf138fc99820baef1c1dc295a22f6ad9a2d"
+    assert module_digest in installer
+    assert 'sha256sum "$source_module"' in installer
     assert "platform=enabled" in installer
     assert "platform route installer rollback failed" in installer
     assert 'if [[ "$committed" != true ]]' in installer
@@ -221,6 +234,8 @@ done
 if [[ "$url" == */admin/internal ]]; then
   printf 'HTTP/2 308\\r\\nLocation: /settings/accounts\\r\\n\\r\\n' > "$headers"
   printf '308'
+elif [[ "$url" == */seo-openapi.json ]]; then
+  printf '%s' '{"info":{"title":"Growth Sniper SEO API"},"paths":{"/api/v1/seo/metrics/snapshot":{"get":{}}}}' > "$output"
 elif [[ -n "$output" ]]; then
   cp "$PLATFORM_SEM_INDEX" "$output"
 fi
@@ -252,6 +267,32 @@ fi
     )
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     return base, target, calls, archive, commit, digest, env
+
+
+def _set_git_response_sequence(env: dict[str, str], responses: list[str], commit: str) -> None:
+    fake_bin = Path(env["PATH"].split(":", 1)[0])
+    response_file = Path(env["PLATFORM_TEST_STATE"]) / "git-responses"
+    response_file.write_text("\n".join(responses) + "\n", encoding="utf-8")
+    env["PLATFORM_TEST_GIT_RESPONSES"] = str(response_file)
+    env["PLATFORM_TEST_COMMIT"] = commit
+    _write_command(
+        fake_bin / "git",
+        '''response="$(head -n 1 "$PLATFORM_TEST_GIT_RESPONSES")"
+tail -n +2 "$PLATFORM_TEST_GIT_RESPONSES" > "$PLATFORM_TEST_GIT_RESPONSES.next"
+mv "$PLATFORM_TEST_GIT_RESPONSES.next" "$PLATFORM_TEST_GIT_RESPONSES"
+printf 'git %s -> %s\n' "$*" "$response" >> "$PLATFORM_TEST_CALLS"
+case "$response" in
+  network) exit 128 ;;
+  current) printf '%s\trefs/heads/codex/production-sem\n' "$PLATFORM_TEST_COMMIT" ;;
+  newer) printf '%040d\trefs/heads/codex/production-sem\n' 0 ;;
+  malformed) printf 'not-a-sha\trefs/heads/codex/production-sem\n' ;;
+  multiple) printf '%s\trefs/heads/codex/production-sem\n%s\trefs/heads/codex/production-sem\n' "$PLATFORM_TEST_COMMIT" "$PLATFORM_TEST_COMMIT" ;;
+  wrong_ref) printf '%s\trefs/heads/main\n' "$PLATFORM_TEST_COMMIT" ;;
+  missing|'') exit 0 ;;
+  *) exit 98 ;;
+esac
+''',
+    )
 
 
 @pytest.mark.skipif(os.name == "nt", reason="deployment state machine executes on Linux")
@@ -319,6 +360,7 @@ def test_release_module_reports_70_and_never_masks_rollback_stage_failure(tmp_pa
         "network_failure",
         "malformed",
         "multiple_refs",
+        "ref_mismatch",
         "missing_ref",
         "boundary_drift",
     ),
@@ -331,6 +373,7 @@ def test_server_boundary_fails_closed_before_publish_or_active_mutation(tmp_path
         "network_failure": "printf 'git %s\\n' \"$*\" >> \"$PLATFORM_TEST_CALLS\"\nexit 128\n",
         "malformed": "printf 'git %s\\n' \"$*\" >> \"$PLATFORM_TEST_CALLS\"\nprintf 'not-a-sha\\trefs/heads/codex/production-sem\\n'\n",
         "multiple_refs": f"printf 'git %s\\n' \"$*\" >> \"$PLATFORM_TEST_CALLS\"\nprintf '{commit}\\trefs/heads/codex/production-sem\\n{commit}\\trefs/heads/codex/production-sem\\n'\n",
+        "ref_mismatch": f"printf 'git %s\\n' \"$*\" >> \"$PLATFORM_TEST_CALLS\"\nprintf '{commit}\\trefs/heads/main\\n'\n",
         "missing_ref": "printf 'git %s\\n' \"$*\" >> \"$PLATFORM_TEST_CALLS\"\n",
         "boundary_drift": f'''count_file="$PLATFORM_TEST_STATE/git-boundary"
 count=0
@@ -362,6 +405,29 @@ fi
     assert "systemctl " not in recorded
     assert "curl " not in recorded
     assert "active_sha256=" not in result.stdout
+    assert not any(line.startswith(f"mv -Tf {archive} ") for line in recorded.splitlines())
+    expected_queries = 3 if server_result == "network_failure" else 2 if server_result == "boundary_drift" else 1
+    assert recorded.count("git ls-remote --refs ") == expected_queries
+    assert recorded.count("sleep 2") == (2 if server_result == "network_failure" else 0)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="server publication retry executes on Linux")
+def test_server_boundary_retries_network_failures_then_uses_fresh_live_head(tmp_path: Path):
+    _, target, calls, archive, commit, digest, env = _release_fixture(tmp_path, curl_mode="success")
+    _set_git_response_sequence(env, ["network", "network", "current", "current"], commit)
+    result = subprocess.run(
+        ["bash", str(ROOT / "ops/platform-deploy/modules/platform"), str(archive), commit, digest, "DEPLOY_PLATFORM_ROUTES"],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert target.read_bytes() == (ROOT / "deploy/gsnipers-platform-routes.conf").read_bytes()
+    recorded = calls.read_text(encoding="utf-8")
+    assert recorded.count("git ls-remote --refs ") == 4
+    assert recorded.count("sleep 2") == 2
+    assert recorded.index("git ls-remote --refs ") < recorded.index("mv -Tf ")
+    assert "active_sha256=" in result.stdout
 
 
 @pytest.mark.skipif(os.name == "nt", reason="idempotent archive state machine executes on Linux")
@@ -423,7 +489,8 @@ def test_release_waits_for_new_nginx_worker_after_transient_404(tmp_path: Path):
     assert result.returncode == 0, result.stderr
     assert target.read_bytes() == (ROOT / "deploy/gsnipers-platform-routes.conf").read_bytes()
     recorded = calls.read_text(encoding="utf-8")
-    assert recorded.count("curl ") == 13
+    assert recorded.count("curl ") == 14
+    assert recorded.count("https://gsnipers.snipers.com.cn/seo-openapi.json") == 1
     assert recorded.count("sleep 1") == 1
 
 
