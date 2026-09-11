@@ -34,6 +34,18 @@ def _trusted_checked_at(value: Any) -> bool:
     return parsed.tzinfo is not None
 
 
+def _public_monitor_error(value: Any) -> dict | None:
+    """Expose only the bounded failure classification stored by current workers."""
+    if not isinstance(value, dict):
+        return None
+    kind = value.get("kind")
+    at = value.get("at")
+    return {
+        "kind": kind if kind in {"check_incomplete"} else "check_incomplete",
+        "at": at if _trusted_checked_at(at) else None,
+    }
+
+
 def build_h3_h4_summary(task, articles: Iterable, variants: Iterable, publications: Iterable) -> dict:
     """Describe stored evidence and the remaining human checks without writes."""
     article_rows = list(articles)
@@ -113,10 +125,17 @@ def build_h3_h4_summary(task, articles: Iterable, variants: Iterable, publicatio
         ),
     ]
     h3_system_ready = all(item["satisfied"] for item in h3_requirements if item["source"] == "system")
+    h3_blocking_reasons = [
+        item["key"]
+        for item in h3_requirements
+        if item["source"] == "system" and not item["satisfied"]
+    ]
     if not latest or not review_approved or not latest_variants:
         h3_status = "blocked"
     elif not current_publications:
         h3_status = "awaiting_real_publication"
+    elif not h3_system_ready:
+        h3_status = "blocked"
     else:
         h3_status = "awaiting_human_evidence"
 
@@ -144,7 +163,7 @@ def build_h3_h4_summary(task, articles: Iterable, variants: Iterable, publicatio
             "checked_at": state.get("checked_at"),
             "next_check_at": state.get("next_check_at"),
             "failures": int(state.get("failures") or 0),
-            "last_error": state.get("last_error"),
+            "last_error": _public_monitor_error(state.get("last_error")),
             "evidence_valid": not evidence_reasons,
             "evidence_reasons": evidence_reasons,
         })
@@ -177,12 +196,17 @@ def build_h3_h4_summary(task, articles: Iterable, variants: Iterable, publicatio
             False,
         ),
     ]
-    if not current_publications:
+    if not h3_system_ready:
         h4_status = "blocked_by_h3"
     elif not healthy:
         h4_status = "awaiting_successful_recheck"
     else:
         h4_status = "awaiting_human_evidence"
+    h4_blocking_reasons = (
+        [f"h3:{reason}" for reason in h3_blocking_reasons]
+        if not h3_system_ready
+        else ([] if healthy else ["publication_body_matched"])
+    )
 
     return {
         "schema_version": "geo.h3h4.acceptance.v1",
@@ -193,12 +217,14 @@ def build_h3_h4_summary(task, articles: Iterable, variants: Iterable, publicatio
         "h3": {
             "status": h3_status,
             "system_ready": h3_system_ready,
+            "blocking_reasons": h3_blocking_reasons,
             "formal_acceptance": "requires_human_evidence",
             "requirements": h3_requirements,
         },
         "h4": {
             "status": h4_status,
-            "system_ready": bool(current_publications) and bool(healthy),
+            "system_ready": h3_system_ready and bool(healthy),
+            "blocking_reasons": h4_blocking_reasons,
             "formal_acceptance": "requires_human_evidence",
             "monitoring": monitor_items,
             "requirements": h4_requirements,

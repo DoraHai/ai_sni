@@ -23,6 +23,45 @@ def test_h3_h4_summary_blocks_before_current_approved_channel_draft():
     assert result["h3"]["formal_acceptance"] == "requires_human_evidence"
 
 
+def test_h4_fails_closed_when_h3_review_is_not_approved_despite_healthy_monitor():
+    task = row(id=14, review_status="pending")
+    article = row(id=23, version_no=6)
+    variant = row(
+        id=6,
+        article_version_id=23,
+        channel="website",
+        title="Current title",
+        body_markdown="Current body",
+        adapt_meta={},
+    )
+    variant.adapt_meta = {
+        "publication_monitor": {
+            "9": {
+                "state": "healthy",
+                "article_id": 23,
+                "expected_fingerprint": _variant_fingerprint(variant),
+                "checked_at": "2026-09-11T01:00:00Z",
+            }
+        }
+    }
+    publication = row(
+        id=9,
+        variant_id=6,
+        channel="website",
+        canonical_url="https://example.com/a",
+        published_url="https://example.com/a",
+        status="published",
+    )
+
+    result = build_h3_h4_summary(task, [article], [variant], [publication])
+
+    assert result["h3"]["status"] == "blocked"
+    assert result["h3"]["blocking_reasons"] == ["customer_review_approved"]
+    assert result["h4"]["status"] == "blocked_by_h3"
+    assert result["h4"]["system_ready"] is False
+    assert result["h4"]["blocking_reasons"] == ["h3:customer_review_approved"]
+
+
 def test_h3_h4_summary_separates_stored_proof_from_human_channel_checks():
     task = row(id=14, review_status="approved")
     article = row(id=23, version_no=6)
@@ -142,6 +181,70 @@ def test_stale_version_publication_does_not_make_h3_ready():
 
     assert result["h3"]["status"] == "blocked"
     assert result["h4"]["status"] == "blocked_by_h3"
+
+
+def test_duplicate_registration_blocks_both_stages_and_recovers_when_removed():
+    task = row(id=14, review_status="approved")
+    article = row(id=23, version_no=6)
+    variant = row(
+        id=6,
+        article_version_id=23,
+        channel="website",
+        title="Current title",
+        body_markdown="Current body",
+        adapt_meta={},
+    )
+    publications = [
+        row(id=9, variant_id=6, channel="website", canonical_url=None,
+            published_url="https://example.com/a", status="published"),
+        row(id=10, variant_id=6, channel="website", canonical_url=None,
+            published_url="https://example.com/a", status="published"),
+    ]
+
+    blocked = build_h3_h4_summary(task, [article], [variant], publications)
+    recovered = build_h3_h4_summary(task, [article], [variant], publications[:1])
+
+    assert blocked["h3"]["status"] == "blocked"
+    assert blocked["h3"]["blocking_reasons"] == ["no_duplicate_registration"]
+    assert blocked["h4"]["status"] == "blocked_by_h3"
+    assert recovered["h3"]["status"] == "awaiting_human_evidence"
+    assert recovered["h3"]["blocking_reasons"] == []
+    assert recovered["h4"]["status"] == "awaiting_successful_recheck"
+    assert recovered["h4"]["blocking_reasons"] == ["publication_body_matched"]
+
+
+def test_acceptance_summary_does_not_expose_legacy_monitor_error_text():
+    task = row(id=14, review_status="approved")
+    article = row(id=23, version_no=6)
+    variant = row(
+        id=6,
+        article_version_id=23,
+        channel="website",
+        title="Current title",
+        body_markdown="Current body",
+        adapt_meta={
+            "publication_monitor": {
+                "9": {
+                    "state": "unreachable",
+                    "last_error": "token=must-not-leak",
+                    "failures": 1,
+                }
+            }
+        },
+    )
+    publication = row(
+        id=9,
+        variant_id=6,
+        channel="website",
+        canonical_url=None,
+        published_url="https://example.com/a",
+        status="published",
+    )
+
+    result = build_h3_h4_summary(task, [article], [variant], [publication])
+
+    assert result["h4"]["monitoring"][0]["last_error"] is None
+    assert "must-not-leak" not in str(result)
 
 
 def test_acceptance_summary_route_only_reads_stored_records():
