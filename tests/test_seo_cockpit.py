@@ -153,12 +153,18 @@ def _queue_row(**values):
 
 
 def test_customer_verification_image_requires_crawl_evidence_before_verified():
-    assert image_queue_item(_queue_row(status='unverified', page_id=8, evidence={'actual_alt': ''}))['state'] == 'pending_customer_action'
+    readonly = image_queue_item(_queue_row(status='unverified', page_id=8, evidence={'actual_alt': ''}))
+    assert readonly['state'] == 'pending_customer_action'
+    assert readonly['can_retry'] is False and 'retry_action' not in readonly
+    assert '查看权限' in readonly['retry_reason']
     assert image_queue_item(_queue_row(status='pending', page_id=8, evidence=None))['state'] == 'pending_system_check'
     assert image_queue_item(_queue_row(status='verified', page_id=8, evidence={'actual_alt': '减速机'}))['state'] == 'verified'
-    unavailable = image_queue_item(_queue_row(status='unavailable', page_id=8, evidence={'error': 'timeout'}))
+    unavailable = image_queue_item(_queue_row(status='unavailable', page_id=8, evidence={'error': 'timeout'}),allow_retry=True)
     assert unavailable['state'] == 'failed_retry'
+    assert unavailable['can_retry'] is True
     assert unavailable['retry_action'] == {'method':'POST','url':'/api/v1/seo/image-verifications/1/retry','verification_id':1,'tenant_id':3,'site_id':7}
+    unverified = image_queue_item(_queue_row(status='unverified', page_id=8, evidence={'actual_alt': ''}),allow_retry=True)
+    assert unverified['can_retry'] is True and unverified['retry_action']['verification_id'] == 1
 
 
 def test_customer_verification_publication_draft_is_not_verified():

@@ -29,7 +29,7 @@ def _queue_item(kind,row,state,title,detail,evidence=None,action_url=None):
             'source_id':int(row.id),'site_id':int(row.site_id) if getattr(row,'site_id',None) is not None else None,
             'updated_at':updated,'evidence':evidence,'action_url':action_url}
 
-def image_queue_item(row):
+def image_queue_item(row,allow_retry=False):
     states={'pending':'pending_system_check','checking':'pending_system_check','verified':'verified',
             'unverified':'pending_customer_action','unavailable':'failed_retry'}
     state=states.get(row.status)
@@ -38,9 +38,13 @@ def image_queue_item(row):
              'unverified':'重新抓取确认修改尚未生效，请客户完成网站修改','unavailable':'抓取或证据不可用，可重试核实'}
     item=_queue_item('image_repair',row,state,f'图片修复核实 · 页面 #{row.page_id}',details[row.status],row.evidence,
                      f'/seo/site?site_id={row.site_id}&page_id={row.page_id}')
-    if row.status=='unavailable':
+    retryable=row.status in {'unverified','unavailable'}
+    item['can_retry']=bool(retryable and allow_retry)
+    if retryable and allow_retry:
         item['retry_action']={'method':'POST','url':f'/api/v1/seo/image-verifications/{row.id}/retry',
                               'verification_id':int(row.id),'tenant_id':int(row.tenant_id),'site_id':int(row.site_id)}
+    elif retryable:
+        item['retry_reason']='当前账号只有查看权限，请由具备站点编辑权限的人员重新核实'
     return item
 
 def publication_queue_item(row):
@@ -279,7 +283,7 @@ async def customer_verification_queue(
         source_counts['image_repair']=min(len(rows),500)
         if len(rows)>500:truncated_sources.append('image_repair')
         rows=rows[:500]
-        items.extend(filter(None,(image_queue_item(row) for row in rows)))
+        items.extend(filter(None,(image_queue_item(row,ctx.can_edit('seo.site')) for row in rows)))
     if ctx.can_view('seo.content') and kind in (None,'publication_url'):
         rows=(await session.execute(select(SeoContentPublication,SeoContentAsset.site_id).join(
             SeoContentAsset,SeoContentAsset.id==SeoContentPublication.content_asset_id).where(

@@ -153,7 +153,7 @@ onUnmounted(() => { sequence++; resultSequence++; clearInterval(timer) })
         <div v-else class="table-wrap"><table><thead><tr><th>事项</th><th>状态</th><th>依据</th><th>更新时间</th><th>入口</th></tr></thead>
           <tbody><tr v-for="row in verification.items" :key="row.id"><td><strong>{{ verificationKinds[row.kind] }}</strong><small>{{ row.title }}</small></td>
             <td><span class="status" :class="row.state">{{ verificationStates[row.state] }}</span></td><td>{{ row.detail }}</td><td>{{ time(row.updated_at) }}</td>
-            <td><button v-if="row.retry_action" :disabled="!!verificationRetrying" @click="retryVerification(row)">{{ verificationRetrying === row.id ? '提交中…' : '重新核实' }}</button><button v-if="row.action_url" @click="router.push(row.action_url)">查看处理</button></td></tr></tbody></table></div>
+            <td><button v-if="row.retry_action" :disabled="!!verificationRetrying" @click="retryVerification(row)">{{ verificationRetrying === row.id ? '提交中…' : '重新核实' }}</button><button v-if="row.action_url" @click="router.push(row.action_url)">查看处理</button><small v-if="row.retry_reason">{{ row.retry_reason }}</small></td></tr></tbody></table></div>
         <p v-if="verification.truncated" class="scope-note">当前仅展示已读取的 {{ verification.scanned_count }} 条来源记录，{{ verification.truncated_sources.join('、') }} 仍有更多记录，请按类型分批查看。</p>
       </section>
       <section class="task-history">
