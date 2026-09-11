@@ -14,6 +14,7 @@ const bindings = { computed:Vue.computed, onMounted:Vue.onMounted, onUnmounted:V
   ElMessage: { success(){},warning(){},error(){} },
   ElMessageBox: { confirm: (...args) => { const d=deferred(args);confirmations.push(d);return d.promise } },
   fetchSeoTaskCenter: args => { const d=deferred(args);reads.push(d);return d.promise },
+  fetchSeoCustomerVerificationQueue: () => Promise.resolve({ items: [], total: 0, summary: {} }),
   recoverSeoAiOperation: (...args) => { const d=deferred(args);recoveries.push(d);return d.promise },
   retrySeoTask: (...args) => { retries.push(args); return Promise.resolve({}) },
 }

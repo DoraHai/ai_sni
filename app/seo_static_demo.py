@@ -318,6 +318,36 @@ def resolve_demo_response(
         result["schedules"] = deepcopy(fixture["task_schedules"])
         result["demo_meta"] = _dataset_meta(fixture)
         return DemoResponse(200, result)
+    if method == "GET" and path == "/api/v1/seo/overview/customer-verification-queue":
+        first_page = fixture["pages"][0]
+        first_publication = fixture["publications"][0]
+        first_backlink = fixture["backlinks"][0]
+        rows = [
+            {"id": f"page_recheck:{first_page['id']}", "kind": "page_recheck", "state": "pending_customer_action",
+             "title": f"页面重新检查 · {first_page['title']}", "detail": "优化建议尚待客户在网站实施",
+             "source_id": first_page["id"], "site_id": DEMO_SITE_ID, "updated_at": first_page["updated_at"],
+             "evidence": {"url": first_page["url"], "http_status": first_page["http_status"], "audit_score": first_page["audit_score"], "issue_codes": first_page["issue_codes"], "last_checked_at": first_page["last_checked_at"]},
+             "action_url": f"/seo/site?site_id={DEMO_SITE_ID}"},
+            {"id": f"publication_url:{first_publication['id']}", "kind": "publication_url", "state": "pending_system_check",
+             "title": f"{first_publication['platform_name']}发布地址 · {first_publication['content_title']}", "detail": "已回填公开地址，等待系统抓取核验",
+             "source_id": first_publication["id"], "site_id": DEMO_SITE_ID, "updated_at": first_publication["updated_at"],
+             "evidence": {"page_url": first_publication["page_url"], "published_at": first_publication["published_at"], "link_discovery": None},
+             "action_url": f"/seo/distribution?site_id={DEMO_SITE_ID}"},
+            {"id": f"backlink_verification:{first_backlink['id']}", "kind": "backlink_verification", "state": "verified",
+             "title": f"外链核验 · {first_backlink['source_domain']}", "detail": "抓取已确认来源页存在目标链接",
+             "source_id": first_backlink["id"], "site_id": DEMO_SITE_ID, "updated_at": first_backlink["last_checked_at"],
+             "evidence": {"source_url": first_backlink["source_url"], "target_url": first_backlink["target_url"], "verification": first_backlink["verification"], "last_checked_at": first_backlink["last_checked_at"]},
+             "action_url": f"/seo/links?site_id={DEMO_SITE_ID}&tab=backlink"},
+        ]
+        state = str(query.get("state") or "").strip()
+        kind = str(query.get("kind") or "").strip()
+        if state: rows = [row for row in rows if row["state"] == state]
+        if kind: rows = [row for row in rows if row["kind"] == kind]
+        result = _page(rows, query)
+        result.update({"summary": {value: sum(row["state"] == value for row in rows) for value in ("pending_customer_action", "pending_system_check", "verified", "failed_retry")},
+                       "state_definitions": {"pending_customer_action": "需要客户或运营人员先完成真实网站/平台操作", "pending_system_check": "等待系统抓取或平台核验", "verified": "系统已取得真实页面或平台证据", "failed_retry": "核验失败或证据不可用，可以重试"},
+                       "read_only": True, "as_of": fixture["dataset"]["as_of"], "demo_meta": _dataset_meta(fixture)})
+        return DemoResponse(200, result)
     if method == "GET" and path == "/api/v1/seo/alerts":
         rows = deepcopy(fixture["alerts"])
         return DemoResponse(200, {

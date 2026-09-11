@@ -9,13 +9,68 @@ from app.seo_demo_source import (
     require_seo_scoped_auth as require_scoped_auth,
 )
 from app.models.module_workspace import SeoSite
-from app.models.seo import SeoContentAsset,SeoImageAltReview
+from app.models.seo import (
+    SeoBacklink, SeoContentAsset, SeoContentPublication, SeoImageAltReview,
+    SeoSitePage,
+)
 from app.models.seo_cockpit import SeoTask,SeoImageVerification
 from app.seo_cockpit_metrics import metric_snapshot,metric_values,DEFINITIONS
 
 router=APIRouter()
 TASK_PERMS={'content_review':'seo.content','image_repair':'seo.site','ranking_improvement':'seo.keywords','backlink_outreach':'seo.links'}
 TASK_METRICS={'content_review':'seo.content.published_7d_count','image_repair':'seo.images.verified_repair_count','ranking_improvement':'seo.ranking.top10_keyword_count','backlink_outreach':'seo.backlinks.verified_count'}
+
+QUEUE_STATES=('pending_customer_action','pending_system_check','verified','failed_retry')
+
+def _queue_item(kind,row,state,title,detail,evidence=None,action_url=None):
+    updated=getattr(row,'updated_at',None) or getattr(row,'checked_at',None) or getattr(row,'last_checked_at',None) or getattr(row,'created_at',None)
+    if updated is not None and updated.tzinfo is None:updated=updated.replace(tzinfo=timezone.utc)
+    return {'id':f'{kind}:{row.id}','kind':kind,'state':state,'title':title,'detail':detail,
+            'source_id':int(row.id),'site_id':int(row.site_id) if getattr(row,'site_id',None) is not None else None,
+            'updated_at':updated,'evidence':evidence,'action_url':action_url}
+
+def image_queue_item(row):
+    states={'pending':'pending_system_check','checking':'pending_system_check','verified':'verified',
+            'unverified':'pending_customer_action','unavailable':'failed_retry'}
+    state=states.get(row.status)
+    if not state:return None
+    details={'pending':'已进入重新抓取队列','checking':'正在重新抓取页面','verified':'重新抓取已确认图片问题解决',
+             'unverified':'重新抓取确认修改尚未生效，请客户完成网站修改','unavailable':'抓取或证据不可用，可重试核实'}
+    return _queue_item('image_repair',row,state,f'图片修复核实 · 页面 #{row.page_id}',details[row.status],row.evidence,
+                       f'/seo/site?site_id={row.site_id}&page_id={row.page_id}')
+
+def publication_queue_item(row):
+    discovery=row.link_discovery or {}
+    if row.status=='failed':state,detail='failed_retry',row.last_error or '发布尝试失败，可在分发模块重试'
+    elif row.status in {'manual_required','draft_created'} and not row.page_url:state,detail='pending_customer_action','需要客户或运营人员完成平台发布并回填公开地址'
+    elif row.page_url and (discovery.get('state') in {'readable','found'} or discovery.get('found')):state,detail='verified','系统已抓取并确认公开地址可访问'
+    elif discovery.get('state') in {'unavailable','failed'}:state,detail='failed_retry','公开地址抓取失败，可重新核验'
+    elif row.status=='published' and not row.page_url:state,detail='failed_retry','记录已发布但缺少公开地址，需要补录后重新核验'
+    else:state,detail='pending_system_check','发布正在处理，或公开地址正在等待系统抓取核验'
+    evidence={'page_url':row.page_url,'published_at':row.published_at,'link_discovery':row.link_discovery} if row.page_url else None
+    return _queue_item('publication_url',row,state,f'{row.platform_name}发布地址 · {row.adapted_title or "内容"}',detail,evidence,
+                       f'/seo/distribution?site_id={getattr(row,"site_id","") or ""}')
+
+def page_queue_item(row):
+    if row.status in {'proposed','approved','needs_fix'}:state,detail='pending_customer_action','优化建议尚待客户在网站实施'
+    elif row.status in {'pending','implemented'}:state,detail='pending_system_check','等待页面抓取并核对实际结果'
+    elif row.status=='verified':state,detail='verified','重新抓取已确认修改生效'
+    elif row.status=='error':state,detail='failed_retry',row.last_error or '页面抓取失败，可重新检查'
+    else:return None
+    evidence={'url':row.url,'http_status':row.http_status,'audit_score':row.audit_score,
+              'issue_codes':row.issue_codes,'last_checked_at':row.last_checked_at} if row.last_checked_at else None
+    return _queue_item('page_recheck',row,state,f'页面重新检查 · {row.title or row.url}',detail,evidence,
+                       f'/seo/site?site_id={row.site_id}')
+
+def backlink_queue_item(row):
+    verification=row.verification or {}; observed=verification.get('state')
+    if row.status=='active' and observed=='found':state,detail='verified','抓取已确认来源页存在目标链接'
+    elif observed in {None,'pending','not_checked'} and row.status!='lost':state,detail='pending_system_check','等待抓取来源页核验外链'
+    else:state,detail='failed_retry',verification.get('error') or '未确认有效外链，可重新核验'
+    evidence={'source_url':row.source_url,'target_url':row.target_url,'verification':verification,
+              'last_checked_at':row.last_checked_at} if row.last_checked_at or verification else None
+    return _queue_item('backlink_verification',row,state,f'外链核验 · {row.source_domain}',detail,evidence,
+                       f'/seo/links?site_id={row.site_id}&tab=backlink')
 
 class TrendContract(BaseModel):
     direction:Literal['up','down','flat']|None
@@ -198,6 +253,53 @@ async def cancel_task(task_id:int,tenant_id:PositiveInt,site_id:PositiveInt,ctx=
     row.status='cancelled';row.updated_at=datetime.now(timezone.utc)
     await session.commit();await session.refresh(row)
     return payload(row)
+
+@router.get('/overview/customer-verification-queue')
+async def customer_verification_queue(
+    tenant_id:PositiveInt,site_id:PositiveInt,
+    state:Literal['pending_customer_action','pending_system_check','verified','failed_retry']|None=None,
+    kind:Literal['image_repair','publication_url','page_recheck','backlink_verification']|None=None,
+    page:int=Query(1,ge=1,le=10000),page_size:int=Query(20,ge=1,le=50),
+    ctx=Depends(require_scoped_auth),session=Depends(get_session),
+):
+    """Evidence-backed handoff queue. Reading never starts a crawl or publication."""
+    ctx.ensure_tenant(tenant_id)
+    if not ctx.can_view('seo.dashboard'):raise HTTPException(403,'没有任务中心查看权限')
+    site_row=await session.get(SeoSite,site_id)
+    if site_row is None or site_row.tenant_id!=tenant_id:raise HTTPException(404,'网站不存在')
+    items=[]
+    if ctx.can_view('seo.site') and kind in (None,'image_repair'):
+        rows=await session.scalars(select(SeoImageVerification).where(
+            SeoImageVerification.tenant_id==tenant_id,SeoImageVerification.site_id==site_id,
+            SeoImageVerification.status!='superseded').order_by(SeoImageVerification.id.desc()).limit(500))
+        items.extend(filter(None,(image_queue_item(row) for row in rows)))
+    if ctx.can_view('seo.content') and kind in (None,'publication_url'):
+        rows=(await session.execute(select(SeoContentPublication,SeoContentAsset.site_id).join(
+            SeoContentAsset,SeoContentAsset.id==SeoContentPublication.content_asset_id).where(
+            SeoContentPublication.tenant_id==tenant_id,SeoContentAsset.tenant_id==tenant_id,
+            SeoContentAsset.site_id==site_id).order_by(SeoContentPublication.id.desc()).limit(500))).all()
+        for row,row_site_id in rows:
+            row.site_id=row_site_id;items.append(publication_queue_item(row))
+    if ctx.can_view('seo.site') and kind in (None,'page_recheck'):
+        rows=await session.scalars(select(SeoSitePage).where(SeoSitePage.tenant_id==tenant_id,
+            SeoSitePage.site_id==site_id,SeoSitePage.status.in_(['proposed','approved','needs_fix','pending','implemented','verified','error']))
+            .order_by(SeoSitePage.updated_at.desc(),SeoSitePage.id.desc()).limit(500))
+        items.extend(filter(None,(page_queue_item(row) for row in rows)))
+    if ctx.can_view('seo.links') and kind in (None,'backlink_verification'):
+        rows=await session.scalars(select(SeoBacklink).where(SeoBacklink.tenant_id==tenant_id,
+            SeoBacklink.site_id==site_id).order_by(SeoBacklink.updated_at.desc(),SeoBacklink.id.desc()).limit(500))
+        items.extend(backlink_queue_item(row) for row in rows)
+    summary={value:sum(item['state']==value for item in items) for value in QUEUE_STATES}
+    if state:items=[item for item in items if item['state']==state]
+    items.sort(key=lambda item:(item['updated_at'] is not None,item['updated_at'] or datetime.min.replace(tzinfo=timezone.utc),item['id']),reverse=True)
+    total=len(items);start=(page-1)*page_size
+    return {'items':items[start:start+page_size],'total':total,'page':page,'page_size':page_size,'summary':summary,
+            'state_definitions':{
+                'pending_customer_action':'需要客户或运营人员先完成真实网站/平台操作',
+                'pending_system_check':'客户动作已有记录，等待系统抓取或平台核验',
+                'verified':'系统已取得真实页面或平台证据',
+                'failed_retry':'核验失败或证据不可用，可以重试'},
+            'read_only':True,'as_of':datetime.now(timezone.utc)}
 
 @router.get('/image-verifications')
 async def image_verifications(tenant_id:PositiveInt,site_id:PositiveInt,limit:int=Query(50,ge=1,le=100),ctx=Depends(require_scoped_auth),session=Depends(get_session)):

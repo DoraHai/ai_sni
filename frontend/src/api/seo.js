@@ -23,6 +23,10 @@ export function fetchSeoTaskCenter(params) {
   return client.get('/api/v1/seo/overview/task-center', { params })
 }
 
+export function fetchSeoCustomerVerificationQueue(params) {
+  return client.get('/api/v1/seo/overview/customer-verification-queue', { params })
+}
+
 export function recoverSeoAiOperation(operationId, tenantId) {
   return client.get(`/api/v1/seo/content-ai/operations/${encodeURIComponent(operationId)}`, { params: { tenant_id: tenantId } })
 }

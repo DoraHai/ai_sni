@@ -4,10 +4,11 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId } from './seoSiteContext'
-import { fetchSeoTaskCenter, recoverSeoAiOperation, retrySeoTask } from '../../api/seo'
+import { fetchSeoCustomerVerificationQueue, fetchSeoTaskCenter, recoverSeoAiOperation, retrySeoTask } from '../../api/seo'
 
 const router = useRouter()
 const data = ref({ items: [], total: 0, summary: {}, schedules: [] })
+const verification = ref({ items: [], total: 0, summary: {} })
 const filters = reactive({ kind: '', status: '', page: 1 })
 const loading = ref(false)
 const error = ref('')
@@ -28,6 +29,8 @@ const totalPages = computed(() => Math.max(1, Math.ceil(data.value.total / 20)))
 const attentionCount = computed(() => (data.value.summary.failed || 0) + (data.value.summary.partial || 0))
 const busyCount = computed(() => (data.value.summary.running || 0) + (data.value.summary.queued || 0))
 const rowKey = row => `${row.source}:${row.id}`
+const verificationStates = { pending_customer_action: '待客户执行', pending_system_check: '待系统核验', verified: '已核实', failed_retry: '失败可重试' }
+const verificationKinds = { image_repair: '图片修复', publication_url: '发布地址', page_recheck: '页面重查', backlink_verification: '外链核验' }
 
 async function load() {
   const token = ++sequence
@@ -36,10 +39,13 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const response = await fetchSeoTaskCenter({ tenant_id: currentTenantId.value,
-      site_id: currentSeoSiteId.value || undefined, kind: filters.kind || undefined,
-      status: filters.status || undefined, page: filters.page, page_size: 20 })
-    if (token === sequence && scope() === requestedScope) data.value = response
+    const [response, queue] = await Promise.all([
+      fetchSeoTaskCenter({ tenant_id: currentTenantId.value, site_id: currentSeoSiteId.value || undefined,
+        kind: filters.kind || undefined, status: filters.status || undefined, page: filters.page, page_size: 20 }),
+      currentSeoSiteId.value ? fetchSeoCustomerVerificationQueue({ tenant_id: currentTenantId.value,
+        site_id: currentSeoSiteId.value, page_size: 50 }) : Promise.resolve({ items: [], total: 0, summary: {} }),
+    ])
+    if (token === sequence && scope() === requestedScope) { data.value = response; verification.value = queue }
   } catch (e) {
     if (token === sequence && scope() === requestedScope) error.value = e.message
   } finally { if (token === sequence) loading.value = false }
@@ -115,6 +121,16 @@ onUnmounted(() => { sequence++; resultSequence++; clearInterval(timer) })
         <div v-for="item in data.schedules" :key="item.job_type"><span>{{ kinds[item.job_type] }}</span><b>{{ time(item.next_check_at) }}</b><small>下次调度检查</small></div>
         <p>实际执行还取决于配置、采集间隔、额度及服务运行状态。页面抓取和 AI 操作按需发起。</p>
       </section>
+      <section class="task-history verification-queue">
+        <div class="task-filters"><h2>客户执行与系统核验</h2><span>共 {{ verification.total }} 项</span></div>
+        <p class="scope-note">汇总已有记录；读取不会启动采集、发布或修改客户网站。已审核、已发布和已核实分别判断。</p>
+        <div v-if="!currentSeoSiteId" class="empty">请选择网站后查看核验队列。</div>
+        <div v-else-if="!verification.items.length" class="empty">当前没有待处理或已核实记录。</div>
+        <div v-else class="table-wrap"><table><thead><tr><th>事项</th><th>状态</th><th>依据</th><th>更新时间</th><th>入口</th></tr></thead>
+          <tbody><tr v-for="row in verification.items" :key="row.id"><td><strong>{{ verificationKinds[row.kind] }}</strong><small>{{ row.title }}</small></td>
+            <td><span class="status" :class="row.state">{{ verificationStates[row.state] }}</span></td><td>{{ row.detail }}</td><td>{{ time(row.updated_at) }}</td>
+            <td><button v-if="row.action_url" @click="router.push(row.action_url)">查看处理</button></td></tr></tbody></table></div>
+      </section>
       <section class="task-history">
         <div class="task-filters">
           <h2>任务历史</h2>
@@ -153,5 +169,5 @@ onUnmounted(() => { sequence++; resultSequence++; clearInterval(timer) })
 </template>
 
 <style scoped>
-.task-center{max-width:1440px;margin:auto;padding:26px;color:#223047}.task-heading{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:24px}.eyebrow{font-size:11px;letter-spacing:2px;color:#71829c;margin:0 0 7px}h1{font-size:26px;margin:0 0 10px}.task-heading p:not(.eyebrow){font-size:13px;color:#728197;margin:0}.refresh-controls{display:flex;align-items:center;gap:14px;font-size:12px}.refresh-controls label{display:flex;align-items:center;gap:5px}button,select{font:inherit;border:1px solid #dbe2eb;background:white;border-radius:7px;padding:8px 12px;color:#315274}button{cursor:pointer;font-size:12px;white-space:nowrap}button:disabled{opacity:.45;cursor:not-allowed}button.primary{background:#2864e8;color:white;border-color:#2864e8}.task-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:18px}.task-summary article{background:white;border:1px solid #e0e6ee;border-radius:12px;padding:19px 23px;display:grid;gap:7px}.task-summary span{font-size:12px;color:#66788e}.task-summary strong{font-size:30px}.task-summary small,.schedules small{color:#8591a2;font-size:11px}.attention{color:#c97617!important}.schedules{display:flex;flex-wrap:wrap;gap:14px 35px;background:#edf3fa;border:1px solid #dbe5f1;border-radius:10px;padding:15px 20px;margin-bottom:22px}.schedules div{display:grid;gap:4px}.schedules span{font-size:11px;color:#67788c}.schedules b{font-size:12px}.schedules p{width:100%;margin:0;color:#75879c;font-size:11px}.task-history{background:white;border:1px solid #e0e6ee;border-radius:12px;overflow:hidden}.task-filters{display:flex;gap:18px;align-items:center;flex-wrap:wrap;padding:18px 20px 8px}.task-filters h2{font-size:15px;margin:0 auto 0 0}.task-filters label{font-size:12px;color:#63768e;display:flex;gap:8px;align-items:center}.scope-note{font-size:11px;color:#7e8ca0;margin:0;padding:8px 20px 16px}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;text-align:left;font-size:12px}th{background:#f6f8fb;font-size:11px;font-weight:500;color:#7b899b;padding:12px 16px}td{padding:17px 16px;border-top:1px solid #edf0f4;vertical-align:top;min-width:110px}td:nth-child(3){max-width:300px;overflow-wrap:anywhere}td strong{font-size:13px}td small{display:block;color:#8995a5;font-size:10px;margin-top:5px}.task-id{max-width:180px;overflow:hidden;text-overflow:ellipsis}.status{display:inline-block;border-radius:12px;padding:4px 9px;background:#f0f3f7;color:#64748b;white-space:nowrap}.status.running,.status.queued,.status.partial{background:#fff3da;color:#ac751e}.status.completed{background:#e7f6ed;color:#218654}.status.failed{background:#fff0ee;color:#c45846}details{margin-top:8px}summary{cursor:pointer;color:#a4612c}details p{white-space:pre-wrap;line-height:1.6}.pagination{display:flex;align-items:center;justify-content:flex-end;gap:14px;border-top:1px solid #edf0f4;padding:14px 20px;font-size:12px;color:#7e8ca0}.pagination>span:first-child{margin-right:auto}.empty{padding:60px 20px;text-align:center;color:#8592a5;font-size:13px}.error{padding:20px;color:#bb5348}.recovered-result{white-space:pre-wrap;overflow-wrap:anywhere;max-height:55vh;overflow:auto;font:13px/1.8 inherit;padding:15px;background:#f5f7fa;border-radius:8px}td button+button{margin-left:5px}@media(max-width:800px){.task-center{padding:16px}.task-heading{align-items:flex-start;flex-direction:column}.task-summary{grid-template-columns:1fr;gap:8px}.task-summary article{padding:12px 16px;grid-template-columns:1fr auto;align-items:center}.task-summary small{grid-column:1/-1}.task-summary strong{font-size:24px}.task-filters{gap:12px}.task-filters h2{width:100%}.schedules{gap:14px}.schedules div{flex:1;min-width:160px}}
+.task-center{max-width:1440px;margin:auto;padding:26px;color:#223047}.task-heading{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:24px}.eyebrow{font-size:11px;letter-spacing:2px;color:#71829c;margin:0 0 7px}h1{font-size:26px;margin:0 0 10px}.task-heading p:not(.eyebrow){font-size:13px;color:#728197;margin:0}.refresh-controls{display:flex;align-items:center;gap:14px;font-size:12px}.refresh-controls label{display:flex;align-items:center;gap:5px}button,select{font:inherit;border:1px solid #dbe2eb;background:white;border-radius:7px;padding:8px 12px;color:#315274}button{cursor:pointer;font-size:12px;white-space:nowrap}button:disabled{opacity:.45;cursor:not-allowed}button.primary{background:#2864e8;color:white;border-color:#2864e8}.task-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:18px}.task-summary article{background:white;border:1px solid #e0e6ee;border-radius:12px;padding:19px 23px;display:grid;gap:7px}.task-summary span{font-size:12px;color:#66788e}.task-summary strong{font-size:30px}.task-summary small,.schedules small{color:#8591a2;font-size:11px}.attention{color:#c97617!important}.schedules{display:flex;flex-wrap:wrap;gap:14px 35px;background:#edf3fa;border:1px solid #dbe5f1;border-radius:10px;padding:15px 20px;margin-bottom:22px}.schedules div{display:grid;gap:4px}.schedules span{font-size:11px;color:#67788c}.schedules b{font-size:12px}.schedules p{width:100%;margin:0;color:#75879c;font-size:11px}.task-history{background:white;border:1px solid #e0e6ee;border-radius:12px;overflow:hidden}.task-filters{display:flex;gap:18px;align-items:center;flex-wrap:wrap;padding:18px 20px 8px}.task-filters h2{font-size:15px;margin:0 auto 0 0}.task-filters label{font-size:12px;color:#63768e;display:flex;gap:8px;align-items:center}.scope-note{font-size:11px;color:#7e8ca0;margin:0;padding:8px 20px 16px}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;text-align:left;font-size:12px}th{background:#f6f8fb;font-size:11px;font-weight:500;color:#7b899b;padding:12px 16px}td{padding:17px 16px;border-top:1px solid #edf0f4;vertical-align:top;min-width:110px}td:nth-child(3){max-width:300px;overflow-wrap:anywhere}td strong{font-size:13px}td small{display:block;color:#8995a5;font-size:10px;margin-top:5px}.task-id{max-width:180px;overflow:hidden;text-overflow:ellipsis}.status{display:inline-block;border-radius:12px;padding:4px 9px;background:#f0f3f7;color:#64748b;white-space:nowrap}.status.running,.status.queued,.status.partial,.status.pending_customer_action,.status.pending_system_check{background:#fff3da;color:#ac751e}.status.completed,.status.verified{background:#e7f6ed;color:#218654}.status.failed,.status.failed_retry{background:#fff0ee;color:#c45846}.verification-queue{margin-bottom:22px}details{margin-top:8px}summary{cursor:pointer;color:#a4612c}details p{white-space:pre-wrap;line-height:1.6}.pagination{display:flex;align-items:center;justify-content:flex-end;gap:14px;border-top:1px solid #edf0f4;padding:14px 20px;font-size:12px;color:#7e8ca0}.pagination>span:first-child{margin-right:auto}.empty{padding:60px 20px;text-align:center;color:#8592a5;font-size:13px}.error{padding:20px;color:#bb5348}.recovered-result{white-space:pre-wrap;overflow-wrap:anywhere;max-height:55vh;overflow:auto;font:13px/1.8 inherit;padding:15px;background:#f5f7fa;border-radius:8px}td button+button{margin-left:5px}@media(max-width:800px){.task-center{padding:16px}.task-heading{align-items:flex-start;flex-direction:column}.task-summary{grid-template-columns:1fr;gap:8px}.task-summary article{padding:12px 16px;grid-template-columns:1fr auto;align-items:center}.task-summary small{grid-column:1/-1}.task-summary strong{font-size:24px}.task-filters{gap:12px}.task-filters h2{width:100%}.schedules{gap:14px}.schedules div{flex:1;min-width:160px}}
 </style>
