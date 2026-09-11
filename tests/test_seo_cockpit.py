@@ -16,7 +16,10 @@ from app.models.seo import SeoSitePage,SeoImageAltReview,SeoPageSnapshot,SeoCraw
 from app.models.module_workspace import SeoSite,TenantModule
 from app.models.seo import SeoBacklink
 from app.security.auth import AuthContext
-from app.api.seo_cockpit import TaskCreate,TaskUpdate,create_task,update_task,get_task,cancel_task
+from app.api.seo_cockpit import (
+    TaskCreate,TaskUpdate,create_task,update_task,get_task,cancel_task,
+    backlink_queue_item,image_queue_item,page_queue_item,publication_queue_item,
+)
 
 def test_trend_null_zero_and_direction_contract():
     assert trend(0,None) is None
@@ -140,3 +143,45 @@ def test_image_worker_does_not_fetch_after_site_becomes_inactive():
         fetch.assert_not_awaited()
 
     run_database(scenario)
+
+
+def _queue_row(**values):
+    now = datetime(2026, 9, 11, tzinfo=timezone.utc)
+    defaults = dict(id=1, tenant_id=3, site_id=7, updated_at=now, created_at=now, checked_at=None, last_checked_at=None)
+    defaults.update(values)
+    return SimpleNamespace(**defaults)
+
+
+def test_customer_verification_image_requires_crawl_evidence_before_verified():
+    readonly = image_queue_item(_queue_row(status='unverified', page_id=8, evidence={'actual_alt': ''}))
+    assert readonly['state'] == 'pending_customer_action'
+    assert readonly['can_retry'] is False and 'retry_action' not in readonly
+    assert '查看权限' in readonly['retry_reason']
+    assert image_queue_item(_queue_row(status='pending', page_id=8, evidence=None))['state'] == 'pending_system_check'
+    assert image_queue_item(_queue_row(status='verified', page_id=8, evidence={'actual_alt': '减速机'}))['state'] == 'verified'
+    unavailable = image_queue_item(_queue_row(status='unavailable', page_id=8, evidence={'error': 'timeout'}),allow_retry=True)
+    assert unavailable['state'] == 'failed_retry'
+    assert unavailable['can_retry'] is True
+    assert unavailable['retry_action'] == {'method':'POST','url':'/api/v1/seo/image-verifications/1/retry','verification_id':1,'tenant_id':3,'site_id':7}
+    unverified = image_queue_item(_queue_row(status='unverified', page_id=8, evidence={'actual_alt': ''}),allow_retry=True)
+    assert unverified['can_retry'] is True and unverified['retry_action']['verification_id'] == 1
+
+
+def test_customer_verification_publication_draft_is_not_verified():
+    now = datetime(2026, 9, 11, tzinfo=timezone.utc)
+    base = dict(platform_name='知乎', adapted_title='选型指南', published_at=now, last_error=None)
+    assert publication_queue_item(_queue_row(status='manual_required', page_url=None, link_discovery=None, **base))['state'] == 'pending_customer_action'
+    assert publication_queue_item(_queue_row(status='draft_created', page_url='https://draft.example/1', link_discovery={'state':'readable'}, **base))['state'] == 'pending_customer_action'
+    assert publication_queue_item(_queue_row(status='published', page_url='https://zhuanlan.zhihu.com/p/1', link_discovery=None, **base))['state'] == 'pending_system_check'
+    assert publication_queue_item(_queue_row(status='published', page_url='https://zhuanlan.zhihu.com/p/1', link_discovery={'state':'readable','found':0}, **base))['state'] == 'verified'
+    assert publication_queue_item(_queue_row(status='failed', page_url=None, link_discovery=None, **base))['state'] == 'failed_retry'
+
+
+def test_customer_verification_page_and_backlink_use_observed_state():
+    assert page_queue_item(_queue_row(status='approved', url='https://example.cn/a', title='A', http_status=200, audit_score=80, issue_codes=[], last_error=None))['state'] == 'pending_customer_action'
+    assert page_queue_item(_queue_row(status='implemented', url='https://example.cn/a', title='A', http_status=200, audit_score=80, issue_codes=[], last_error=None))['state'] == 'pending_system_check'
+    assert page_queue_item(_queue_row(status='verified', url='https://example.cn/a', title='A', http_status=200, audit_score=100, issue_codes=[], last_error=None))['state'] == 'verified'
+    link = dict(status='active', source_url='https://source.cn/a', target_url='https://example.cn/a', source_domain='source.cn')
+    assert backlink_queue_item(_queue_row(verification={'state':'found'}, **link))['state'] == 'verified'
+    assert backlink_queue_item(_queue_row(verification={'state':'pending'}, **link))['state'] == 'pending_system_check'
+    assert backlink_queue_item(_queue_row(verification={'state':'missing'}, **link))['state'] == 'failed_retry'

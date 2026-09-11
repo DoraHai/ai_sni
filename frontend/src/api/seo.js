@@ -23,6 +23,16 @@ export function fetchSeoTaskCenter(params) {
   return client.get('/api/v1/seo/overview/task-center', { params })
 }
 
+export function fetchSeoCustomerVerificationQueue(params) {
+  return client.get('/api/v1/seo/overview/customer-verification-queue', { params })
+}
+
+export function retrySeoImageVerification({ verificationId, tenantId, siteId }) {
+  return client.post(`/api/v1/seo/image-verifications/${verificationId}/retry`, null, {
+    params: { tenant_id: tenantId, site_id: siteId },
+  })
+}
+
 export function recoverSeoAiOperation(operationId, tenantId) {
   return client.get(`/api/v1/seo/content-ai/operations/${encodeURIComponent(operationId)}`, { params: { tenant_id: tenantId } })
 }
