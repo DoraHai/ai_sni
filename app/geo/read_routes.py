@@ -618,8 +618,14 @@ async def get_content_task_acceptance_summary(
 ):
     """Summarize stored H3/H4 evidence; never publish, fetch, retry, or mutate."""
     from app.geo.acceptance_readiness import build_h3_h4_summary
+    from app.geo.tenant16_demo import is_tenant16_demo
 
     ctx.ensure_tenant(tenant_id)
+    if is_tenant16_demo(ctx, tenant_id):
+        raise HTTPException(
+            404,
+            '只读演示数据不提供 H3/H4 真实发布验收摘要',
+        )
     data_id = data_tenant_id(session, tenant_id)
     task = await tenant_object(session, GeoContentTask, data_id, content_task_id)
     articles = list(await session.scalars(

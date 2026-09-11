@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import datetime
+import hashlib
 from typing import Any, Iterable
 
 from app.geo.read_model import ref
@@ -15,6 +17,21 @@ def _requirement(key: str, description: str, source: str, satisfied: bool, evide
         "satisfied": bool(satisfied),
         "evidence": evidence,
     }
+
+
+def _variant_fingerprint(variant) -> str:
+    raw = f"{variant.article_version_id}\n{variant.title}\n{variant.body_markdown}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _trusted_checked_at(value: Any) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
 
 
 def build_h3_h4_summary(task, articles: Iterable, variants: Iterable, publications: Iterable) -> dict:
@@ -110,6 +127,15 @@ def build_h3_h4_summary(task, articles: Iterable, variants: Iterable, publicatio
             ((variant.adapt_meta or {}).get("publication_monitor") or {}).get(str(publication.id))
             or {}
         )
+        evidence_reasons = []
+        if state.get("state") != "healthy":
+            evidence_reasons.append("monitor_not_healthy")
+        if state.get("expected_fingerprint") != _variant_fingerprint(variant):
+            evidence_reasons.append("fingerprint_missing_or_mismatch")
+        if latest is None or state.get("article_id") != latest.id:
+            evidence_reasons.append("article_version_mismatch")
+        if not _trusted_checked_at(state.get("checked_at")):
+            evidence_reasons.append("checked_at_missing_or_invalid")
         monitor_items.append({
             "publication_ref": ref("publication", publication.id),
             "channel": publication.channel,
@@ -119,8 +145,10 @@ def build_h3_h4_summary(task, articles: Iterable, variants: Iterable, publicatio
             "next_check_at": state.get("next_check_at"),
             "failures": int(state.get("failures") or 0),
             "last_error": state.get("last_error"),
+            "evidence_valid": not evidence_reasons,
+            "evidence_reasons": evidence_reasons,
         })
-    healthy = [item for item in monitor_items if item["state"] == "healthy"]
+    healthy = [item for item in monitor_items if item["evidence_valid"]]
     h4_requirements = [
         _requirement(
             "current_publication_available",

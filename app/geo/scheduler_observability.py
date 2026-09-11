@@ -58,6 +58,8 @@ class SchedulerTelemetry:
             job = self._jobs.setdefault(job_id, {})
             job["recent_failure"] = failure
             job["last_run"] = failure["at"]
+            job["run_status"] = "degraded"
+            job["callback_status"] = "in_progress"
             self._recent_failure = failure
 
     def _listener(self, event: Any) -> None:
@@ -65,10 +67,19 @@ class SchedulerTelemetry:
         at = _iso(getattr(event, "scheduled_run_time", None))
         with self._lock:
             job = self._jobs.setdefault(job_id, {})
-            job["last_run"] = at
+            job["last_run"] = max(at, job.get("last_run") or at)
             if getattr(event, "code", None) == EVENT_JOB_EXECUTED:
-                job["last_success"] = at
-                job["run_status"] = "succeeded"
+                job["callback_status"] = "completed"
+                failure = job.get("recent_failure") or {}
+                # Resilient batch callbacks catch item failures so later work can
+                # continue. APScheduler then emits EXECUTED. Keep that run
+                # degraded instead of presenting the callback completion as a
+                # successful business run.
+                if failure.get("at") and failure["at"] >= at:
+                    job["run_status"] = "degraded"
+                else:
+                    job["last_success"] = at
+                    job["run_status"] = "succeeded"
                 return
             error_type = (
                 type(event.exception).__name__
@@ -78,6 +89,7 @@ class SchedulerTelemetry:
             failure = {"job_id": job_id, "at": at, "error_type": error_type}
             job["recent_failure"] = failure
             job["run_status"] = "failed" if event.code == EVENT_JOB_ERROR else "missed"
+            job["callback_status"] = "failed" if event.code == EVENT_JOB_ERROR else "missed"
             self._recent_failure = failure
 
     def attach(self, scheduler: Any) -> None:
@@ -110,6 +122,7 @@ class SchedulerTelemetry:
                 jobs.append({
                     "job_id": job_id,
                     "run_status": saved.get("run_status", "scheduled" if job_id in scheduled else "not_scheduled"),
+                    "callback_status": saved.get("callback_status", "waiting" if job_id in scheduled else "unknown"),
                     "last_run": saved.get("last_run"),
                     "last_success": saved.get("last_success"),
                     "next_run": scheduled.get(job_id),

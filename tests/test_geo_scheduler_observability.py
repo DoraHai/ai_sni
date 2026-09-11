@@ -2,6 +2,8 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, Mock, patch
 
+from apscheduler.events import EVENT_JOB_EXECUTED
+
 from app.geo.scheduler_observability import SchedulerTelemetry
 
 
@@ -21,6 +23,43 @@ def test_scheduler_telemetry_explains_owner_runs_and_failure_without_message():
     assert result["last_run"].endswith("Z")
     assert result["recent_failure"]["error_type"] == "RuntimeError"
     assert "must-not-leak" not in str(result)
+
+
+def test_callback_executed_event_does_not_hide_business_failure_from_same_run():
+    telemetry = SchedulerTelemetry("test")
+    scheduled_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    telemetry.record_failure("job-a", RuntimeError("one item failed"))
+
+    telemetry._listener(NS(
+        job_id="job-a",
+        code=EVENT_JOB_EXECUTED,
+        scheduled_run_time=scheduled_at,
+        exception=None,
+    ))
+    item = telemetry.snapshot(NS(get_jobs=lambda: []))["jobs"][0]
+
+    assert item["callback_status"] == "completed"
+    assert item["run_status"] == "degraded"
+    assert item["last_success"] is None
+    assert item["recent_failure"]["error_type"] == "RuntimeError"
+
+
+def test_later_clean_callback_can_become_successful_after_older_failure():
+    telemetry = SchedulerTelemetry("test")
+    telemetry.record_failure("job-a", RuntimeError("old item failure"))
+    later_run = datetime.now(timezone.utc) + timedelta(minutes=1)
+
+    telemetry._listener(NS(
+        job_id="job-a",
+        code=EVENT_JOB_EXECUTED,
+        scheduled_run_time=later_run,
+        exception=None,
+    ))
+    item = telemetry.snapshot(NS(get_jobs=lambda: []))["jobs"][0]
+
+    assert item["callback_status"] == "completed"
+    assert item["run_status"] == "succeeded"
+    assert item["last_success"] is not None
 
 
 def test_content_scheduler_reports_skipped_when_another_process_owns_lock():
