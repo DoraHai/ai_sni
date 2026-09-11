@@ -286,6 +286,12 @@ async def resolve_live_write_decision(
     requested_attempts: int = 1,
     bid_change_pct: float | None = None,
 ) -> SemLiveWriteDecision:
+    # The environment kill switches are sufficient to prove rehearsal mode;
+    # avoid taking a database lock when no live request can be emitted.
+    if bool(getattr(settings, "baidu_write_dry_run", True)):
+        return SemLiveWriteDecision(True, "environment", "global_dry_run")
+    if bool(getattr(settings, "baidu_legacy_split_confirmation_enabled", True)):
+        return SemLiveWriteDecision(True, "environment", "legacy_confirmation_gate")
     # All real attempts and policy updates serialize on this existing row.  The
     # caller keeps the transaction open until its pending intent is persisted,
     # so count + reservation cannot race past the configured daily limit.
