@@ -10,7 +10,10 @@ from sqlalchemy import MetaData,text,select
 from sqlalchemy.ext.asyncio import create_async_engine,async_sessionmaker
 from app.seo_cockpit_metrics import trend,metric_snapshot
 from app.seo_image_evidence import image_alt_evidence
-from app.seo_image_verification import evaluate_image_repair,enqueue_image_verification,verify_pending_images
+from app.seo_image_verification import (
+    complete_image_verification_evidence,evaluate_image_repair,enqueue_image_verification,
+    prepare_image_verification_retry,verify_pending_images,
+)
 from app.models.seo_cockpit import SeoTask,SeoImageVerification
 from app.models.seo import SeoSitePage,SeoImageAltReview,SeoPageSnapshot,SeoCrawlRun,SeoKeywordAsset,SeoRankSnapshot,SeoContentAsset,SeoMetricSnapshot
 from app.models.module_workspace import SeoSite,TenantModule
@@ -18,7 +21,7 @@ from app.models.seo import SeoBacklink
 from app.security.auth import AuthContext
 from app.api.seo_cockpit import (
     TaskCreate,TaskUpdate,create_task,update_task,get_task,cancel_task,
-    backlink_queue_item,image_queue_item,page_queue_item,publication_queue_item,
+    backlink_queue_item,image_queue_item,page_queue_item,publication_queue_item,retry_image_verification,
 )
 
 def test_trend_null_zero_and_direction_contract():
@@ -123,6 +126,7 @@ def test_database_approval_queue_reuses_page_snapshot_and_preserves_proof():
             job=await db.scalar(select(SeoImageVerification))
             assert job.status=='verified' and job.result_snapshot_id is not None
             assert job.evidence['before_snapshot_id']==1 and job.evidence['change_abs']==1
+            assert job.evidence['attempt']==1 and job.evidence['attempt_history']==[]
             assert (await db.get(SeoPageSnapshot,job.result_snapshot_id)).image_alt_evidence['observations'][0]['alt']=='品牌产品'
     run_database(scenario)
 
@@ -150,6 +154,41 @@ def _queue_row(**values):
     defaults = dict(id=1, tenant_id=3, site_id=7, updated_at=now, created_at=now, checked_at=None, last_checked_at=None)
     defaults.update(values)
     return SimpleNamespace(**defaults)
+
+
+def test_image_retry_preserves_bounded_attempt_history_and_actor():
+    now=datetime(2026,9,11,8,30,tzinfo=timezone.utc)
+    old_history=[{'attempt':value,'status':'unavailable'} for value in range(1,21)]
+    verification=_queue_row(status='unverified',checked_at=now-timedelta(minutes=10),result_snapshot_id=81,
+        evidence={'attempt':21,'attempt_history':old_history,'reason':'新 Alt 尚未生效','before_snapshot_id':10,
+                  'after_snapshot_id':81,'change_abs':0})
+    pending=prepare_image_verification_retry(verification,now,actor_id=17)
+    assert pending['attempt']==22 and len(pending['attempt_history'])==20
+    assert pending['attempt_history'][-1]=={'attempt':21,'status':'unverified','checked_at':(now-timedelta(minutes=10)).isoformat(),
+        'result_snapshot_id':81,'reason':'新 Alt 尚未生效','before_snapshot_id':10,'after_snapshot_id':81,'change_abs':0}
+    assert pending['retry_request']=={'requested_at':now.isoformat(),'requested_by':'17','from_status':'unverified'}
+    completed=complete_image_verification_evidence(pending,{'reason':'重新抓取已确认','change_abs':1},1,81,82)
+    assert completed['attempt']==22 and completed['attempt_history']==pending['attempt_history']
+    assert completed['retry_request']==pending['retry_request']
+    assert completed['before_snapshot_id']==81 and completed['after_snapshot_id']==82
+
+
+def test_image_retry_endpoint_records_actor_before_requeue():
+    now=datetime.now(timezone.utc)
+    verification=_queue_row(status='unavailable',checked_at=now-timedelta(minutes=10),result_snapshot_id=9,
+        evidence={'attempt':1,'reason':'timeout','before_snapshot_id':1,'after_snapshot_id':9,'change_abs':0})
+    session=SimpleNamespace(get=AsyncMock(return_value=verification),commit=AsyncMock())
+    ctx=SimpleNamespace(user_id=17)
+
+    async def run():
+        with patch('app.api.seo_cockpit.scope',new=AsyncMock()):
+            result=await retry_image_verification(1,3,7,ctx,session)
+        assert result['status']=='pending' and result['attempt']==2
+        assert result['retry_request']['requested_by']=='17'
+        assert verification.status=='pending' and verification.evidence['attempt_history'][-1]['status']=='unavailable'
+        session.commit.assert_awaited_once()
+
+    asyncio.run(run())
 
 
 def test_customer_verification_image_requires_crawl_evidence_before_verified():

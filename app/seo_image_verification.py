@@ -9,6 +9,56 @@ from app.models.module_workspace import SeoSite
 from app.seo_page_audit import collect_page_snapshot, save_page_snapshot
 
 logger=logging.getLogger(__name__)
+ATTEMPT_HISTORY_LIMIT=20
+
+
+def _iso(value):
+    if value is None:return None
+    if value.tzinfo is None:value=value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def _attempt_history(evidence):
+    values=evidence.get('attempt_history') if isinstance(evidence,dict) else None
+    if not isinstance(values,list):return []
+    return [dict(item) for item in values[-ATTEMPT_HISTORY_LIMIT:] if isinstance(item,dict)]
+
+
+def prepare_image_verification_retry(row,now,actor_id):
+    """Archive the terminal observation before making the same job runnable again."""
+    previous=row.evidence if isinstance(row.evidence,dict) else {}
+    history=_attempt_history(previous)
+    attempt=previous.get('attempt')
+    if not isinstance(attempt,int) or isinstance(attempt,bool) or attempt<1:attempt=len(history)+1
+    archived={
+        'attempt':attempt,'status':row.status,'checked_at':_iso(row.checked_at),
+        'result_snapshot_id':row.result_snapshot_id,'reason':previous.get('reason'),
+        'before_snapshot_id':previous.get('before_snapshot_id'),
+        'after_snapshot_id':previous.get('after_snapshot_id'),
+        'change_abs':previous.get('change_abs'),
+    }
+    history.append({key:value for key,value in archived.items() if value is not None})
+    requested_at=_iso(now)
+    return {
+        'attempt':attempt+1,'attempt_history':history[-ATTEMPT_HISTORY_LIMIT:],
+        'retry_request':{'requested_at':requested_at,'requested_by':str(actor_id) if actor_id is not None else 'service',
+                         'from_status':row.status},
+    }
+
+
+def complete_image_verification_evidence(previous,result,review_id,before_snapshot_id,after_snapshot_id):
+    """Attach the current result without discarding bounded evidence from earlier attempts."""
+    previous=previous if isinstance(previous,dict) else {}
+    history=_attempt_history(previous)
+    attempt=previous.get('attempt')
+    if not isinstance(attempt,int) or isinstance(attempt,bool) or attempt<1:attempt=len(history)+1
+    evidence={**result,'review_id':review_id,'before_snapshot_id':before_snapshot_id,
+              'after_snapshot_id':after_snapshot_id,'attempt':attempt,'attempt_history':history}
+    retry_request=previous.get('retry_request')
+    if isinstance(retry_request,dict):
+        evidence['retry_request']={key:retry_request.get(key) for key in ('requested_at','requested_by','from_status')
+                                   if retry_request.get(key) is not None}
+    return evidence
 
 async def enqueue_image_verification(session, review):
     await session.flush()
@@ -87,8 +137,10 @@ async def verify_pending_images():
                 original=await session.get(SeoPageSnapshot,review.snapshot_id)
                 snapshot=await save_page_snapshot(session,page,values,review.actor_id,started)
                 await session.flush()
-                job.status,job.evidence=evaluate_image_repair(review,original,values)
-                job.evidence={**job.evidence,'review_id':review.id,'before_snapshot_id':original.id,'after_snapshot_id':snapshot.id}
+                previous_evidence=job.evidence
+                job.status,result=evaluate_image_repair(review,original,values)
+                job.evidence=complete_image_verification_evidence(
+                    previous_evidence,result,review.id,original.id,snapshot.id)
                 job.result_snapshot_id=snapshot.id;job.checked_at=datetime.now(timezone.utc)
                 await session.commit()
         except Exception:
