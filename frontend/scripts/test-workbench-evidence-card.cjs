@@ -12,7 +12,20 @@ const filename = path.join(__dirname, '../src/views/workspace/cockpit/MetricEvid
 const { descriptor } = parse(fs.readFileSync(filename, 'utf8'), { filename })
 const compiled = compileScript(descriptor, { id: 'evidence-test', inlineTemplate: true }).content
   .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"];?/g, (_, names) => `const {${names.replace(/\bas\b/g, ':')}} = require('vue');`)
+  .replace(
+    /import\s+MetricVisualization\s+from\s+['"]\.\/MetricVisualization\.vue['"];?/,
+    `const MetricVisualization = {
+      name: 'MetricVisualizationStub',
+      props: ['visualization', 'metricLabel'],
+      setup() { return () => require('vue').h('div', { class: 'metric-visualization-stub' }); },
+    };`,
+  )
+  .replace(
+    /import\s*\{\s*validVisualization\s*\}\s*from\s*['"]\.\/visualization-model\.mjs['"];?/,
+    `const validVisualization = value => Boolean(value && value.type === 'trend' && Array.isArray(value.points));`,
+  )
   .replace('export default', 'return')
+assert.doesNotMatch(compiled, /^import\s/m, 'all SFC imports must be explicitly injected by the harness')
 const Component = new Function('require', compiled)(require)
 
 async function main() {
@@ -43,7 +56,24 @@ async function main() {
   assert.equal(document.querySelectorAll('.trend-line').length, 2)
   document.querySelector('.card-footer button').click()
   assert.deepEqual(events, [{ metricId: 'new', contextRevision: 2 }])
+
+  props.metric = {
+    contextRevision: 2,
+    id: 'visual',
+    state: 'available',
+    label: 'Visual',
+    display: '1',
+    series: [],
+    visualization: {
+      type: 'trend',
+      state: 'available',
+      points: [],
+      coverage: { state: 'covered', missingCount: 0, label: 'covered' },
+    },
+  }
+  await nextTick()
+  assert.equal(document.querySelectorAll('.metric-visualization-stub').length, 2)
   app.unmount()
-  console.log('Evidence card mount: stale data, dialog name, gaps, zero and discussion reference passed')
+  console.log('Evidence card mount: stale data, dialog name, gaps, zero, visualization injection and discussion reference passed')
 }
 main().catch(error => { console.error(error); process.exitCode = 1 })
