@@ -238,7 +238,8 @@ def test_module_contract_preserves_trial_and_expiry_without_checkbox_projection(
     assert "setCustomerModule(moduleContext.tenantId, moduleContext.code" in customer_view
     assert "status: moduleForm.status" in customer_view
     assert "expires_at: moduleForm.expires_at || null" in customer_view
-    assert "checkbox-group" not in customer_view
+    assert 'v-model="moduleForm.status"' in customer_view
+    assert 'v-model="moduleForm"' not in customer_view
     assert "不宣称多模块原子更新" in customer_view
 
 

@@ -494,6 +494,9 @@ def _account_client(baidu_account: BaiduAccount) -> BaiduAPIClient:
         access_token=decrypt(baidu_account.access_token_encrypted),
         tenant_id=baidu_account.tenant_id,
         baidu_account_id=baidu_account.id,
+        live_write_authorized_scopes=getattr(
+            baidu_account, "_sem_live_write_authorized_scopes", None
+        ),
     )
 
 
