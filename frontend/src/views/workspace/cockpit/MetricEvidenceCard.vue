@@ -84,7 +84,7 @@ watch(() => props.metric, () => { selected.value = null; close() }, { flush: 'sy
       <p class="point-readout" aria-live="polite">{{ activePoint ? `${activePoint.label} · ${activePoint.display ?? (finite(activePoint.value) ? activePoint.value : '暂无数据')}` : '移到趋势上查看每期数据' }}</p>
     </div>
     <p v-else class="empty-trend">{{ metric.reason || '当前没有可展示的趋势数据' }}</p>
-    <div class="card-footer"><span>{{ metric.periodLabel || '统计周期待确认' }}</span><div class="card-actions"><button type="button" :disabled="!canDiscuss" @click="discuss">讨论这项</button><button type="button" @click="open">展开依据 ↗</button></div></div>
+    <div class="card-footer"><span>{{ metric.periodLabel || '统计周期待确认' }}</span><div class="card-actions"><button type="button" :disabled="!canDiscuss" @click="discuss">讨论这项</button><button type="button" @click="open">独立查看 ↗</button></div></div>
 
     <dialog ref="dialog" class="evidence-dialog" :aria-labelledby="titleId" @click="event => { if (event.target === dialog) close() }" @close="trigger?.focus()">
       <header><div><span class="module-name">{{ metric.moduleLabel }} · {{ status }}</span><h2 :id="titleId">{{ metric.label }}</h2></div><button type="button" class="close-button" aria-label="关闭明细" @click="close">×</button></header>

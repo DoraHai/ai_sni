@@ -23,6 +23,7 @@ import { createSeoSiteSelectionGuard, resolveSeoSiteSelection } from './cockpit/
 import { geoReadyReply, urgencyReply } from './cockpit/status-copy.mjs'
 import { evidenceBoundaryCount, isCurrentCommandContext, normalizeModuleSelection, readCompletionProgress } from './cockpit/experience-state.mjs'
 import { buildPanoramaSummary } from './cockpit/panorama-summary.mjs'
+import { appendExplorationPath, compareMetricScope, moveExplorationPath, saveMetricScope } from './cockpit/exploration-state.mjs'
 
 const router = useRouter()
 const shellEl = ref(null)
@@ -43,6 +44,10 @@ const dateStart = ref(shiftDate(dateEnd.value, -6))
 const draftDateEnd = ref(dateEnd.value)
 const draftDateStart = ref(dateStart.value)
 const cards = ref([])
+const explorationHistory = ref([])
+const explorationIndex = ref(-1)
+const savedMetricScope = ref(null)
+const metricComparison = ref(null)
 const initialConversation = () => [
   { role: 'assistant', text: '我会先说明数据是否完整，再帮你判断现在最该处理什么。你可以直接问，也可以从下面的问题开始。' },
 ]
@@ -83,6 +88,13 @@ const agentTitle = computed(() => demoMode.value ? '交互演示台' : '作战�
 const agentStatus = computed(() => aiBusy.value ? '分析中' : (demoMode.value ? '演示模式' : '可下达指令'))
 const panoramaSummary = computed(() => buildPanoramaSummary(filteredCards.value))
 const cardGroups = computed(() => panoramaSummary.value.groups)
+const canGoBack = computed(() => explorationIndex.value > 0)
+const canGoForward = computed(() => explorationIndex.value >= 0 && explorationIndex.value < explorationHistory.value.length - 1)
+const currentPathLabel = computed(() => {
+  const metric = selectedMetric.value?.label || '模块总览'
+  const module = activeModule.value === 'all' ? '全域' : (moduleMeta[activeModule.value]?.label || activeModule.value.toUpperCase())
+  return `${module} / ${metric} / ${dateStart.value} 至 ${dateEnd.value}`
+})
 const readProgress = computed(() => {
   return readCompletionProgress({ availableCount: availableModules.value.length, completedCount: readyModules.value })
 })
@@ -128,6 +140,7 @@ function usePeriodPreset(days) {
   draftDateStart.value = start
   dateEnd.value = draftDateEnd.value
   dateStart.value = draftDateStart.value
+  recordExplorationPath('date')
   if (!changed) loadAll()
 }
 function applyDatePeriod() {
@@ -135,6 +148,7 @@ function applyDatePeriod() {
   const changed = dateStart.value !== draftDateStart.value || dateEnd.value !== draftDateEnd.value
   dateStart.value = draftDateStart.value
   dateEnd.value = draftDateEnd.value
+  recordExplorationPath('date')
   if (!changed) loadAll()
 }
 function displayTime(value) {
@@ -430,6 +444,44 @@ function localScreenCommand(text) {
     drawer_metric_id: highlighted[0]?.id || null, actions: [],
   }
 }
+function recordExplorationPath(source = 'user') {
+  const next = appendExplorationPath(explorationHistory.value, explorationIndex.value, {
+    metricId: selectedMetricId.value, moduleCode: activeModule.value,
+    dateStart: dateStart.value, dateEnd: dateEnd.value, source,
+  })
+  explorationHistory.value = next.history
+  explorationIndex.value = next.index
+}
+function chooseModule(code, source = 'user') {
+  activeSection.value = 'dashboard'
+  activeModule.value = code
+  selectedMetricId.value = null
+  highlightedMetricIds.value = []
+  recordExplorationPath(source)
+}
+function navigateExploration(direction) {
+  const next = moveExplorationPath(explorationHistory.value, explorationIndex.value, direction)
+  if (!next.path || next.index === explorationIndex.value) return
+  explorationIndex.value = next.index
+  activeSection.value = 'dashboard'
+  activeModule.value = next.path.moduleCode
+  dateStart.value = next.path.dateStart
+  dateEnd.value = next.path.dateEnd
+  draftDateStart.value = next.path.dateStart
+  draftDateEnd.value = next.path.dateEnd
+  selectedMetricId.value = next.path.metricId
+  highlightedMetricIds.value = next.path.metricId ? [next.path.metricId] : []
+  metricComparison.value = null
+}
+function saveCurrentMetricScope() {
+  savedMetricScope.value = saveMetricScope(selectedMetric.value, {
+    tenantId: session.tenantId, dateStart: dateStart.value, dateEnd: dateEnd.value,
+  })
+  metricComparison.value = null
+}
+function compareWithSavedScope() {
+  metricComparison.value = compareMetricScope(selectedMetric.value, savedMetricScope.value, { tenantId: session.tenantId })
+}
 function applyScreenCommand(command) {
   const allowedModules = new Set(['all', ...availableModules.value.map(item => item.module_code)])
   const allowedIds = new Set(cards.value.map(item => item.id))
@@ -437,13 +489,17 @@ function applyScreenCommand(command) {
   activeModule.value = allowedModules.has(command?.focus_module) ? command.focus_module : 'all'
   highlightedMetricIds.value = (command?.highlight?.ids || []).filter(id => allowedIds.has(id)).slice(0, 12)
   selectedMetricId.value = allowedIds.has(command?.drawer_metric_id) ? command.drawer_metric_id : null
+  metricComparison.value = null
+  recordExplorationPath('ai')
 }
-function focusMetric(metricId) {
+function focusMetric(metricId, source = 'user') {
   if (!cards.value.some(item => item.id === metricId)) return
   selectedMetricId.value = metricId
   highlightedMetricIds.value = [metricId]
   const card = cards.value.find(item => item.id === metricId)
   if (card?.moduleCode) activeModule.value = card.moduleCode
+  metricComparison.value = null
+  recordExplorationPath(source)
 }
 function scrollToSection(id) {
   document.getElementById(`cockpit-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -453,10 +509,10 @@ function runScreenAction(action) {
   if (action.type === 'open-metric') return focusMetric(action.target)
   if (action.type === 'open-module' && availableModules.value.some(item => item.module_code === action.target)) return openModule(action.target)
   if (action.type === 'focus-module' && availableModules.value.some(item => item.module_code === action.target)) {
-    activeSection.value = 'dashboard'; activeModule.value = action.target; return
+    chooseModule(action.target, 'ai-action'); return
   }
   if (action.type === 'reset-view') {
-    activeSection.value = 'dashboard'; activeModule.value = 'all'; selectedMetricId.value = null; highlightedMetricIds.value = []
+    chooseModule('all', 'ai-action')
   }
 }
 async function send(text = question.value) {
@@ -518,6 +574,10 @@ function selectTenant(event) {
   const value = Number(event.target.value)
   if (!Number.isSafeInteger(value) || value <= 0 || value === Number(session.tenantId)) return
   currentSeoSiteId.value = null
+  explorationHistory.value = []
+  explorationIndex.value = -1
+  savedMetricScope.value = null
+  metricComparison.value = null
   invalidateEvidence({ clearConversation: true })
   session.setTenant(value)
 }
@@ -543,9 +603,9 @@ function onKeydown(event) {
     return
   }
   if (event.key === 'f' || event.key === 'F') toggleFullscreen()
-  if (event.key === '1') activeModule.value = availableModules.value.some(item => item.module_code === 'sem') ? 'sem' : activeModule.value
-  if (event.key === '2') activeModule.value = availableModules.value.some(item => item.module_code === 'seo') ? 'seo' : activeModule.value
-  if (event.key === '3') activeModule.value = availableModules.value.some(item => item.module_code === 'geo') ? 'geo' : activeModule.value
+  if (event.key === '1' && availableModules.value.some(item => item.module_code === 'sem')) chooseModule('sem')
+  if (event.key === '2' && availableModules.value.some(item => item.module_code === 'seo')) chooseModule('seo')
+  if (event.key === '3' && availableModules.value.some(item => item.module_code === 'geo')) chooseModule('geo')
   if (event.key === '/') {
     event.preventDefault()
     setViewMode('split')
@@ -567,13 +627,21 @@ try {
   moduleState.value.sem = 'error'
 }
 watch(() => [session.tenantId, currentSeoSiteId.value, dateStart.value, dateEnd.value], () => { if (session.modules.length) prepare() })
-watch(() => session.authRevision, prepare)
+watch(() => session.authRevision, () => {
+  explorationHistory.value = []
+  explorationIndex.value = -1
+  savedMetricScope.value = null
+  metricComparison.value = null
+  recordExplorationPath('identity')
+  prepare()
+})
 watch(() => availableModules.value.map(item => item.module_code).join(','), (codes) => {
   activeModule.value = normalizeModuleSelection(activeModule.value, codes ? codes.split(',') : [])
 })
 onMounted(() => {
   document.addEventListener('fullscreenchange', syncFullscreen)
   document.addEventListener('keydown', onKeydown)
+  recordExplorationPath('initial')
   prepare()
 })
 onBeforeUnmount(() => {
@@ -659,9 +727,15 @@ onBeforeUnmount(() => {
           <div class="stage-actions"><button type="button" @click="compactCards = !compactCards">{{ compactCards ? '展开卡片' : '收拢卡片' }}</button><button type="button" @click="setViewMode('data')">专注大盘 ↗</button></div>
         </div>
 
+        <nav class="exploration-path" aria-label="当前查看路径">
+          <button type="button" :disabled="!canGoBack" aria-label="返回上一查看路径" @click="navigateExploration(-1)">←</button>
+          <button type="button" :disabled="!canGoForward" aria-label="前往下一查看路径" @click="navigateExploration(1)">→</button>
+          <span><small>当前查看路径</small><b>{{ currentPathLabel }}</b></span>
+        </nav>
+
         <div v-if="activeSection === 'dashboard'" class="module-tabs" role="tablist" aria-label="指标模块筛选">
-          <button :class="{ active: activeModule === 'all' }" type="button" role="tab" :aria-selected="activeModule === 'all'" @click="activeModule = 'all'"><span>全域</span><b>{{ cards.length }}</b><small>全部数据</small></button>
-          <button v-for="item in availableModules" :key="item.module_code" :class="[{ active: activeModule === item.module_code }, `module-${item.module_code}`]" type="button" role="tab" :aria-selected="activeModule === item.module_code" @click="activeModule = item.module_code">
+          <button :class="{ active: activeModule === 'all' }" type="button" role="tab" :aria-selected="activeModule === 'all'" @click="chooseModule('all')"><span>全域</span><b>{{ cards.length }}</b><small>全部数据</small></button>
+          <button v-for="item in availableModules" :key="item.module_code" :class="[{ active: activeModule === item.module_code }, `module-${item.module_code}`]" type="button" role="tab" :aria-selected="activeModule === item.module_code" @click="chooseModule(item.module_code)">
             <span>{{ moduleMeta[item.module_code].label }}</span><b>{{ cards.filter(card => card.moduleCode === item.module_code).length }}</b><small>{{ moduleStatusLabel(item.module_code) }}</small>
           </button>
         </div>
@@ -716,10 +790,16 @@ onBeforeUnmount(() => {
       </div>
     </section>
     <aside v-if="selectedMetric" class="command-drawer" aria-live="polite">
-      <header><div><small>{{ selectedMetric.moduleLabel }} · TARGET LOCK</small><h2>{{ selectedMetric.label }}</h2></div><button type="button" aria-label="关闭详情" @click="selectedMetricId = null">×</button></header>
+      <header><div><small>{{ selectedMetric.moduleLabel }} · 独立查看</small><h2>{{ selectedMetric.label }}</h2></div><button type="button" aria-label="关闭详情" @click="selectedMetricId = null">×</button></header>
       <div class="drawer-value">{{ selectedMetric.display }}</div>
       <p>{{ selectedMetric.reason || `当前指标已锁定，可以继续向${agentName}追问原因和下一步。` }}</p>
       <dl><div><dt>统计范围</dt><dd>{{ selectedMetric.periodLabel }}</dd></div><div><dt>数据来源</dt><dd>{{ selectedMetric.sourceLabel }}</dd></div><div><dt>更新时间</dt><dd>{{ selectedMetric.updatedLabel }}</dd></div></dl>
+      <section class="scope-tools" aria-label="范围比较">
+        <div><button type="button" @click="saveCurrentMetricScope">保存当前范围</button><button type="button" @click="compareWithSavedScope">与保存范围比较</button></div>
+        <p v-if="savedMetricScope">已保存：{{ savedMetricScope.label }} · {{ savedMetricScope.dateStart }} 至 {{ savedMetricScope.dateEnd }}</p>
+        <p v-if="metricComparison?.status === 'ready'" class="comparison-ready"><span>当前值 <b>{{ metricComparison.currentDisplay }}</b></span><span>保存值 <b>{{ metricComparison.savedDisplay }}</b></span><span>差值 <b>{{ metricComparison.deltaDisplay }}</b></span></p>
+        <p v-else-if="metricComparison">{{ metricComparison.message }}</p>
+      </section>
       <div class="drawer-actions"><button type="button" @click="discuss({ metricId: selectedMetric.id, contextRevision: viewState.revision }); setViewMode('split')">就这项问{{ agentName }}</button><button type="button" @click="openModule(selectedMetric.moduleCode)">进入模块 ↗</button></div>
     </aside>
     <button v-if="viewMode === 'data'" class="agent-fab" type="button" @click="setViewMode('split')"><i></i><span>打开智能体</span></button>
@@ -728,6 +808,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .dashboard-group{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;margin:8px 0 0;padding:12px 0;border-bottom:1px solid #294154;font-size:15px}.dashboard-group small{color:#86a0b5;font-size:11px;font-weight:400}.event-feed{min-height:0!important}.event-list{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.exploration-path{display:flex;align-items:center;gap:6px;margin:-4px 0 12px;padding:8px 10px;border:1px solid #203b50;border-radius:11px;background:#091827}.exploration-path button{width:28px;height:28px;border:1px solid #315168;border-radius:7px;background:#102638;color:#b8d2df;cursor:pointer}.exploration-path button:disabled{opacity:.3;cursor:not-allowed}.exploration-path span{display:grid;gap:2px;min-width:0;margin-left:4px}.exploration-path small{color:#648095;font-size:8px}.exploration-path b{overflow:hidden;color:#bcd0de;font-size:9px;text-overflow:ellipsis;white-space:nowrap}.scope-tools{display:grid;gap:8px;margin:0 0 12px;padding:11px;border:1px solid #28465a;border-radius:11px;background:#0b1d2c}.scope-tools>div{display:grid;grid-template-columns:1fr 1fr;gap:7px}.scope-tools button{padding:8px;border:1px solid #356776;border-radius:8px;background:#10323a;color:#aef7ed;font-size:9px;cursor:pointer}.scope-tools p{margin:0;color:#7892a6;font-size:9px;line-height:1.5}.comparison-ready{display:grid!important;grid-template-columns:repeat(3,1fr);gap:6px}.comparison-ready span{display:grid;gap:3px}.comparison-ready b{color:#e4f4fb;font-size:12px}
+.command-drawer{overflow-y:auto}
 
 *{box-sizing:border-box}.cockpit-shell{--cyan:#59e8d3;--blue:#5798ff;--violet:#9f72ff;--orange:#ff9f5a;position:relative;isolation:isolate;min-height:100vh;padding:18px 22px 28px;overflow:hidden;background-color:#070b16;background-image:radial-gradient(#87a5c015 1px,transparent 1px);background-size:22px 22px;color:#edf6ff;font-variant-numeric:tabular-nums}.ambient{position:fixed;z-index:-2;pointer-events:none;border-radius:50%;filter:blur(36px);opacity:.16}.ambient-a{width:700px;height:700px;right:-220px;top:-360px;background:radial-gradient(circle,#285bd8 0,transparent 68%)}.ambient-b{width:620px;height:620px;left:-360px;bottom:-360px;background:radial-gradient(circle,#006b73 0,transparent 70%)}button,input,select,textarea{font:inherit}.command-bar{display:grid;grid-template-columns:minmax(250px,1fr) auto minmax(680px,1.7fr);align-items:end;gap:18px;position:relative}.brand-block{min-width:0}.back-link{padding:0 0 9px;border:0;background:none;color:#7690a9;font-size:11px;cursor:pointer}.brand-line{display:flex;align-items:center;gap:12px}.brand-mark{display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:linear-gradient(145deg,#2b6eff,#784cff);box-shadow:0 9px 28px #3d55ff66;font-style:normal;font-weight:800}.brand-line p,.mission-heading p{margin:0;color:#62d6d0;font-size:9px;font-weight:800;letter-spacing:.18em}.brand-line h1{margin:4px 0 0;font-size:21px;letter-spacing:-.02em}.live-badge{align-self:center;display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid #254057;border-radius:999px;background:#091827cc;color:#90a6b9;font-size:10px}.live-badge i,.agent-head em i,.agent-note i{width:6px;height:6px;border-radius:50%;background:var(--cyan);box-shadow:0 0 12px var(--cyan);animation:signal 2s ease-in-out infinite}.live-badge.replay{border-color:#8a6b35}.live-badge.replay i{background:#f5a524;box-shadow:0 0 12px #f5a524}.live-badge b{color:#dbeaff;font-weight:600}.live-badge small{color:#60798d}.command-controls{display:flex;justify-content:flex-end;align-items:end;gap:8px}.command-controls label,.period-control{display:grid;gap:5px;color:#7f96aa;font-size:9px}.period-control{min-width:390px}.period-control>span{font-weight:700;color:#9ab0c2}.period-shortcuts{display:flex;gap:4px}.period-shortcuts button,.apply-period{height:25px;padding:0 9px;border:1px solid #284258;border-radius:7px;background:#0a1928;color:#8ba2b5;font-size:9px;cursor:pointer}.period-shortcuts button.active{border-color:#4aa6a3;background:#143d43;color:#cafff7}.apply-period{height:35px;border-color:#386d72;color:#bceee9}.apply-period:disabled{cursor:not-allowed;opacity:.4}.command-controls input,.command-controls select,.refresh-button{height:35px;border:1px solid #284258;border-radius:9px;background:#0a1928;color:#eaf5ff;padding:0 10px}.command-controls select{max-width:210px}.date-range{display:flex;align-items:center;gap:5px}.date-range span{color:#486176}.date-range input{width:118px}.refresh-button{border-color:#327b78;background:linear-gradient(135deg,#176d6b,#1f8376);cursor:pointer;font-size:11px;font-weight:700}.refresh-button span{font-size:15px}.workspace-toolbar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:4px 12px;margin-top:16px;padding:0 4px;border-bottom:1px solid #1c3042}.page-tabs,.view-tools{display:flex;align-items:center;gap:4px}.page-tabs button{position:relative;padding:11px 14px;border:0;background:none;color:#71899f;font-size:11px;cursor:pointer}.page-tabs button.active{color:#eef8ff}.page-tabs button.active:after{content:'';position:absolute;left:12px;right:12px;bottom:-1px;height:2px;background:linear-gradient(90deg,var(--cyan),var(--blue));box-shadow:0 0 12px var(--cyan)}.page-tabs b{display:inline-grid;place-items:center;min-width:17px;height:17px;margin-left:5px;border-radius:999px;background:#713927;color:#ffc59c;font-size:9px}.page-tabs i{display:inline-block;width:5px;height:5px;margin-left:5px;border-radius:50%;background:var(--orange)}.view-tools{padding-bottom:6px}.view-tools span{margin-right:4px;color:#5f778d;font-size:9px}.view-tools button{display:grid;place-items:center;width:29px;height:27px;border:1px solid transparent;border-radius:7px;background:transparent;color:#738ba1;cursor:pointer}.view-tools button.active,.view-tools button:hover{border-color:#29475d;background:#112436;color:#bceef0}.pulse-strip{display:grid;grid-template-columns:1.5fr repeat(4,1fr);gap:1px;margin-top:14px;overflow:hidden;border:1px solid #21394e;border-radius:16px;background:#20364a;box-shadow:0 18px 52px #02071080}.pulse-strip>div{position:relative;min-height:82px;padding:13px 16px;background:linear-gradient(145deg,#0d1b2b,#0a1624);display:grid;align-content:center;gap:5px;overflow:hidden}.pulse-strip>div:before{content:'';position:absolute;inset:auto 0 0;height:1px;background:linear-gradient(90deg,transparent,#4e7089,transparent)}.pulse-strip span{color:#70879c;font-size:9px}.pulse-strip strong{font-size:23px;line-height:1}.pulse-strip strong small{font-size:11px;color:#647c92}.pulse-strip small{color:#5f778d;font-size:9px}.pulse-strip em{width:72px;height:3px;border-radius:9px;background:linear-gradient(90deg,var(--cyan) var(--progress),#203548 var(--progress));margin-top:4px}.pulse-strip .urgent strong{color:#ffab6d;text-shadow:0 0 22px #ff7b3c66}.pulse-strip .caution strong{color:#e9c276}.customer-cell strong{font-size:17px}.operations-grid{display:grid;grid-template-columns:340px minmax(0,1fr);gap:14px;margin-top:14px;align-items:stretch}.mode-data .operations-grid{grid-template-columns:1fr}.mode-chat .operations-grid{grid-template-columns:minmax(340px,720px);justify-content:center}.agent-panel,.data-stage{min-width:0;border:1px solid #20384c;border-radius:19px;background:linear-gradient(155deg,#0b1928e8,#07121ee8);box-shadow:0 22px 70px #02071180;backdrop-filter:blur(16px)}.agent-panel{display:flex;flex-direction:column;height:calc(100vh - 210px);min-height:600px;position:sticky;top:14px;overflow:hidden}.mode-chat .agent-panel{height:calc(100vh - 220px);position:relative;top:auto}.agent-head{display:flex;align-items:center;gap:11px;padding:15px 16px;border-bottom:1px solid #1c3245}.agent-head>div:nth-child(2){display:grid;gap:2px}.agent-head span{font-size:9px;color:#6e879e}.agent-head strong{font-size:14px}.agent-head em{display:flex;align-items:center;gap:6px;margin-left:auto;color:#69d8cc;font-size:9px;font-style:normal}.agent-orb{position:relative;width:34px;height:34px;border-radius:50%;background:conic-gradient(from 40deg,#9d76ff,#3986ff,#4ce7d1,#9d76ff);box-shadow:0 0 24px #5798ff66;animation:float 3.2s ease-in-out infinite}.agent-orb:after{content:'';position:absolute;inset:5px;border-radius:50%;background:radial-gradient(circle at 36% 28%,#fff 0 6%,#88e9ed 10%,#182c52 54%,#070f1b 70%)}.agent-orb i{position:absolute;z-index:1;inset:-5px;border:1px solid #5ce6d466;border-radius:50%;animation:orbit 5s linear infinite}.context-ribbon{display:flex;align-items:center;gap:8px;margin:12px 14px 0;padding:9px 10px;border:1px solid #244159;border-radius:10px;background:#0c2133}.context-ribbon span{color:#6c879d;font-size:8px}.context-ribbon b{color:#bdd1e2;font-size:10px}.messages{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:10px}.message{max-width:92%;padding:10px 12px;border:1px solid #1e3a50;border-radius:4px 13px 13px;background:#102437}.message.user{align-self:flex-end;border-color:#27665f;border-radius:13px 4px 13px 13px;background:#145047}.message small{color:#63d4c9;font-size:8px}.message p{margin:4px 0 0;color:#d7e5f1;font-size:11px;line-height:1.65}.guides{padding:0 13px 9px;display:flex;gap:6px;flex-wrap:wrap}.guides button{border:1px solid #28455b;border-radius:999px;background:#0a1c2b;color:#91a9bc;padding:6px 8px;font-size:9px;cursor:pointer}.guides button:hover{border-color:#52aaad;color:#d6ffff}.composer{position:relative;margin:0 13px}.composer textarea{display:block;width:100%;resize:none;border:1px solid #31526b;border-radius:13px;background:#050e18;color:#eff9ff;padding:11px 48px 11px 11px;font-size:11px;line-height:1.5}.composer textarea:focus{outline:1px solid #50b9ba;box-shadow:0 0 24px #3bd8c622}.composer button{position:absolute;right:8px;bottom:8px;width:32px;height:32px;border:0;border-radius:9px;background:linear-gradient(145deg,#4be0cc,#338de4);color:#04111a;font-size:17px;font-weight:900;cursor:pointer}.agent-note{display:flex;align-items:center;gap:7px;margin:8px 15px 13px;color:#58738a;font-size:8px}.data-stage{padding:17px}.mission-heading{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;margin-bottom:14px}.mission-heading h2{margin:5px 0 3px;font-size:21px}.mission-heading span{color:#70899e;font-size:9px}.stage-actions{display:flex;gap:6px}.stage-actions button{padding:7px 10px;border:1px solid #28455b;border-radius:8px;background:#0c1e2e;color:#8da7ba;font-size:9px;cursor:pointer}.stage-actions button:hover{border-color:#4b8894;color:#d6ffff}.module-tabs{display:grid;grid-template-columns:repeat(4,minmax(100px,1fr));gap:7px;margin-bottom:12px}.module-tabs button{position:relative;display:grid;grid-template-columns:1fr auto;gap:5px 9px;text-align:left;padding:10px 12px;border:1px solid #223d52;border-radius:11px;background:#0b1b2a;color:#dce9f5;cursor:pointer;overflow:hidden}.module-tabs button:after{content:'';position:absolute;inset:auto 0 0;height:2px;background:#526a7c;opacity:.4}.module-tabs button.active{border-color:#3f6b83;background:#10283b;box-shadow:inset 0 0 20px #2a668122}.module-tabs button.active:after{background:var(--cyan);opacity:1;box-shadow:0 0 14px var(--cyan)}.module-tabs .module-sem.active:after{background:var(--orange)}.module-tabs .module-seo.active:after{background:var(--blue)}.module-tabs .module-geo.active:after{background:var(--violet)}.module-tabs span{font-size:10px;font-weight:800}.module-tabs b{font-size:15px}.module-tabs small{grid-column:1/-1;color:#698299;font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:10px;max-height:none;overflow:visible;padding:2px 3px 12px}.mode-data .metric-grid{grid-template-columns:repeat(auto-fit,minmax(260px,1fr));max-height:none}.metric-grid.compact{grid-template-columns:repeat(auto-fit,minmax(185px,1fr))}.metric-grid.compact :deep(.evidence-card){padding:15px;border-radius:16px}.metric-grid.compact :deep(.trend-wrap),.metric-grid.compact :deep(.empty-trend){display:none}.metric-grid.compact :deep(.metric-trigger){padding:14px 0 4px}.metric-grid.compact :deep(.metric-number){font-size:30px}.metric-grid :deep(.evidence-card){background:linear-gradient(155deg,#12263a,#0b1725);border-color:#253f55;border-radius:17px;padding:17px}.metric-grid :deep(.evidence-card:hover){transform:translateY(-2px);border-color:#4b718b;box-shadow:0 14px 40px #02071188}.metric-grid :deep(.metric-number){font-size:clamp(28px,2.6vw,40px)}.metric-grid :deep(.trend){height:70px}.metric-grid :deep(.metric-trigger){padding:15px 0 6px}.data-empty{min-height:320px;border:1px dashed #29475e;border-radius:14px;display:grid;place-content:center;justify-items:center;text-align:center;gap:7px;color:#718ba0}.data-empty i{width:34px;height:34px;border:2px solid #2f5b6d;border-top-color:var(--cyan);border-radius:50%;animation:orbit 2s linear infinite}.data-empty strong{color:#d8e6f2}.data-empty span{font-size:10px}
 .key-help{padding-right:8px;border-right:1px solid #1c3042;letter-spacing:.04em}.screen-applied{display:inline-flex;margin-top:7px;padding:3px 7px;border:1px solid #3c6f70;border-radius:999px;color:#77dfd3;font-size:8px}.message-actions{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}.message-actions button{padding:5px 7px;border:1px solid #346278;border-radius:7px;background:#102c3c;color:#a7e9e2;font-size:8px;cursor:pointer}.channel-control-strip{display:grid;grid-template-columns:minmax(150px,1.05fr) minmax(390px,2.4fr) auto;align-items:stretch;gap:8px;margin:0 0 12px;padding:9px;border:1px solid #20394d;border-radius:14px;background:#0a1826cc}.control-summary{display:grid;align-content:center;gap:4px;padding:4px 9px}.control-summary small{color:#6f899d;font-size:8px}.control-summary strong{font-size:14px}.control-summary span{color:#728a9d;font-size:8px}.channel-controls{display:grid;grid-template-columns:repeat(3,minmax(105px,1fr));gap:6px}.channel-control{display:grid;grid-template-columns:1fr auto;gap:3px 8px;min-width:0;padding:9px 10px;border:1px solid #263f52;border-radius:10px;background:#0c1c2a;color:#dbe8f1;text-align:left;cursor:pointer;transition:background .16s,border-color .16s}.channel-control:hover{background:#102536;border-color:#3b5b70}.channel-control.active{background:#132b3c;border-color:#5c8297}.channel-control span{display:flex;align-items:center;gap:6px;font-size:9px;font-weight:800;letter-spacing:.08em}.channel-control span i{width:6px;height:6px;border-radius:50%;background:#7b8f9e}.channel-control b{font-size:12px}.channel-control b small{color:#6f879a;font-size:8px;font-weight:400}.channel-control em{grid-column:1/-1;overflow:hidden;color:#6d8699;font-size:8px;font-style:normal;text-overflow:ellipsis;white-space:nowrap}.channel-sem span i{background:var(--orange)}.channel-seo span i{background:var(--blue)}.channel-geo span i{background:var(--violet)}.show-all-control{align-self:center;padding:8px 9px;border:1px solid #2b485c;border-radius:8px;background:transparent;color:#8da4b6;font-size:8px;cursor:pointer}.battle-layout{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;align-items:start}.event-feed{min-height:280px;border:1px solid #213d51;border-radius:15px;background:#091725bb;overflow:hidden}.event-feed header{display:flex;justify-content:space-between;align-items:center;padding:12px;border-bottom:1px solid #1c3549}.event-feed header div{display:grid;gap:3px}.event-feed header small{color:#61d8cf;font-size:7px;letter-spacing:.14em}.event-feed header strong{font-size:12px}.event-feed header button{border:1px solid #29475b;border-radius:7px;background:#102538;color:#83a1b5;font-size:8px;padding:5px 7px;cursor:pointer}.event-list{display:grid}.event-list button{position:relative;display:grid;grid-template-columns:35px 6px 1fr;gap:7px;padding:11px 10px;border:0;border-bottom:1px solid #162d3e;background:transparent;color:#9cb2c3;text-align:left;cursor:pointer}.event-list button:hover{background:#102638}.event-list time{font-size:8px;color:#557189}.event-list i{width:5px;height:5px;margin-top:3px;border-radius:50%;background:var(--cyan);box-shadow:0 0 9px currentColor}.event-list span{font-size:9px;line-height:1.5}.event-list b{grid-column:3;color:#5d879b;font-size:8px;font-weight:500}.event-sem i{background:var(--orange)}.event-seo i{background:var(--blue)}.event-geo i{background:var(--violet)}.event-feed>p{padding:26px 12px;color:#607a8e;font-size:9px}.event-feed footer{display:flex;align-items:center;gap:7px;padding:10px 12px;color:#607a8e;font-size:8px}.event-feed footer span{width:5px;height:5px;border-radius:50%;background:var(--cyan);box-shadow:0 0 10px var(--cyan);animation:signal 2s infinite}.event-feed footer span.paused{background:#8b96a1;box-shadow:none;animation:none}.command-drawer{position:fixed;z-index:20;right:18px;top:18px;bottom:18px;width:min(420px,calc(100vw - 36px));padding:20px;border:1px solid #3a6075;border-radius:18px;background:#091725ed;box-shadow:-25px 0 80px #000a;backdrop-filter:blur(18px) saturate(1.15);animation:drawerIn .2s ease-out}.command-drawer header{display:flex;justify-content:space-between;align-items:flex-start}.command-drawer header small{color:#68d9d0;font-size:8px;letter-spacing:.12em}.command-drawer h2{margin:5px 0;font-size:19px}.command-drawer header button{width:31px;height:31px;border:1px solid #315066;border-radius:50%;background:#102538;color:#c4d6e2;font-size:19px;cursor:pointer}.drawer-value{margin:26px 0 10px;font-size:46px;font-weight:700;letter-spacing:-.04em}.command-drawer>p{color:#9fb2c1;font-size:11px;line-height:1.7}.command-drawer dl{margin:22px 0;border-top:1px solid #244053}.command-drawer dl div{display:grid;grid-template-columns:72px 1fr;gap:10px;padding:11px 0;border-bottom:1px solid #1e374a}.command-drawer dt{color:#628096;font-size:9px}.command-drawer dd{margin:0;color:#b9cad6;font-size:10px;overflow-wrap:anywhere}.drawer-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.drawer-actions button{padding:10px;border:1px solid #356776;border-radius:9px;background:#10323a;color:#aef7ed;font-size:9px;cursor:pointer}.drawer-actions button+button{border-color:#334f68;background:#12263a;color:#b3cadb}
