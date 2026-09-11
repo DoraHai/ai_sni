@@ -68,7 +68,7 @@ vi.mock('../src/api/keywords', () => ({
   writebackKeywordBatch: vi.fn((args) => { state.writes.push(['keyword-batch', args]); return Promise.resolve({ applied: [], simulated: [], rejected: [], failed: [] }) }),
   writebackKeyword: vi.fn((args) => { state.writes.push(['keyword-bid', args]); return Promise.resolve({ dry_run: true }) }),
   matchTypeWriteback: vi.fn((args) => { state.writes.push(['keyword-match', args]); return Promise.resolve({ dry_run: true }) }),
-  pauseKeywordBatch: vi.fn((args) => { state.writes.push(['keyword-pause', args]); return Promise.resolve({ applied: [], simulated: args.keywordIds, failed: [] }) }),
+  pauseKeywordWriteback: vi.fn((args) => { state.writes.push(['keyword-pause', args]); return Promise.resolve({ dry_run: true, writeback: { id: 4, status: 'dry_run' } }) }),
   updateKeywordCategory: vi.fn(() => Promise.resolve({ status: 'ok' })),
 }))
 
@@ -229,6 +229,89 @@ describe('SEM auth revision invalidation', () => {
     late.resolve({ keyword: { keyword_id: 999 }, period: { start_date: '2026-09-01', end_date: '2026-09-01' } })
     await settle()
     expect(wrapper.vm.data).toBe(null)
+  })
+
+  it('cancels match-type writeback when permission is revoked during its preflight', async () => {
+    login('optimize.keywords')
+    const wrapper = mountView(KeywordWorkbenchView)
+    await settle()
+    state.modeLoads.at(-1).resolve(dryRunMode())
+    const row = { keyword_id: 211, baidu_account_id: 11, keyword: '匹配词', match_type: '短语匹配', price: 1.1, pause: false }
+    state.keywordLoads.at(-1).resolve({
+      total: 1, keywords: [row], totals: {}, category_counts: {}, metrics_window: null,
+    })
+    await settle()
+
+    const action = wrapper.vm.openMatchTypeDialog(row, 'exact')
+    await settle()
+    const preflight = state.modeLoads.at(-1)
+    expect(state.confirmations).toHaveLength(0)
+    revoke()
+    await settle()
+    preflight.resolve(dryRunMode())
+    await action
+    expect(state.confirmations).toHaveLength(0)
+    expect(state.writes).toHaveLength(0)
+  })
+
+  it('cancels keyword pause when the account is disabled during its preflight', async () => {
+    login('optimize.keywords')
+    const wrapper = mountView(KeywordWorkbenchView)
+    await settle()
+    state.modeLoads.at(-1).resolve(dryRunMode())
+    const row = { keyword_id: 212, baidu_account_id: 11, keyword: '启停词', price: 1.1, pause: false }
+    state.keywordLoads.at(-1).resolve({
+      total: 1, keywords: [row], totals: {}, category_counts: {}, metrics_window: null,
+    })
+    await settle()
+
+    const action = wrapper.vm.togglePause(row)
+    await settle()
+    const preflight = state.modeLoads.at(-1)
+    expect(state.confirmations).toHaveLength(0)
+    session.setTenants([{
+      id: 1,
+      name: '测试租户',
+      sem_accounts: [{ ...account, status: 'disabled' }],
+    }])
+    session.requestTenantReload()
+    await settle()
+    preflight.resolve(dryRunMode())
+    await action
+    expect(state.confirmations).toHaveLength(0)
+    expect(state.writes).toHaveLength(0)
+  })
+
+  it('opens non-funds confirmations only after the account preflight succeeds', async () => {
+    login('optimize.keywords')
+    const wrapper = mountView(KeywordWorkbenchView)
+    await settle()
+    state.modeLoads.at(-1).resolve(dryRunMode())
+    const row = { keyword_id: 213, baidu_account_id: 11, keyword: '操作词', match_type: '短语匹配', price: 1.1, pause: false }
+    state.keywordLoads.at(-1).resolve({
+      total: 1, keywords: [row], totals: {}, category_counts: {}, metrics_window: null,
+    })
+    await settle()
+
+    const matchAction = wrapper.vm.openMatchTypeDialog(row, 'exact')
+    await settle()
+    expect(state.confirmations).toHaveLength(0)
+    state.modeLoads.at(-1).resolve(dryRunMode())
+    await settle()
+    expect(state.confirmations).toHaveLength(1)
+    state.confirmations.at(-1).resolve()
+    await matchAction
+    expect(state.writes.at(-1)[0]).toBe('keyword-match')
+
+    const pauseAction = wrapper.vm.togglePause(row)
+    await settle()
+    expect(state.confirmations).toHaveLength(1)
+    state.modeLoads.at(-1).resolve(dryRunMode())
+    await settle()
+    expect(state.confirmations).toHaveLength(2)
+    state.confirmations.at(-1).resolve()
+    await pauseAction
+    expect(state.writes.at(-1)[0]).toBe('keyword-pause')
   })
 
   it('clears keyword workbench mode and blocks writes when the same account becomes disabled', async () => {

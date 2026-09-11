@@ -27,6 +27,7 @@ from app.baidu.writeback import (
     apply_match_type_writeback,
     apply_pause_writeback,
 )
+from app.api import keywords as keywords_api
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,6 +45,79 @@ NON_FUNDS_ACTIONS = {
     "apply_adgroup_pause_writeback",
     "apply_adgroup_landing_url_writeback",
 }
+
+
+def test_match_type_route_returns_action_ledger_reference(monkeypatch) -> None:
+    rec = SimpleNamespace(
+        id=42,
+        approval_id=None,
+        action_type="set_match_type",
+        word="工业泵",
+        match_mode="smart",
+        dry_run=True,
+        status="dry_run",
+        error_msg=None,
+        operator_name="tester",
+        created_at=None,
+        executed_at=None,
+    )
+    apply = AsyncMock(return_value=rec)
+    monkeypatch.setattr(keywords_api, "apply_match_type_writeback", apply)
+    ctx = SimpleNamespace(
+        user_id=3,
+        username="tester",
+        ensure_tenant=Mock(),
+    )
+    req = keywords_api.MatchTypeWritebackRequest(
+        tenant_id=7,
+        match_type=2,
+        phrase_type=3,
+    )
+
+    result = asyncio.run(
+        keywords_api.match_type_writeback(55, req, ctx, SimpleNamespace())
+    )
+
+    ctx.ensure_tenant.assert_called_once_with(7)
+    apply.assert_awaited_once()
+    assert result["dry_run"] is True
+    assert result["writeback"]["id"] == 42
+    assert result["writeback"]["approval_id"] is None
+    assert result["writeback"]["status"] == "dry_run"
+
+
+def test_single_pause_route_returns_action_ledger_reference(monkeypatch) -> None:
+    rec = SimpleNamespace(
+        id=43,
+        approval_id=None,
+        action_type="pause",
+        word="工业泵",
+        dry_run=False,
+        status="success",
+        error_msg=None,
+        operator_name="tester",
+        created_at=None,
+        executed_at=None,
+    )
+    apply = AsyncMock(return_value=rec)
+    monkeypatch.setattr(keywords_api, "apply_pause_writeback", apply)
+    ctx = SimpleNamespace(
+        user_id=3,
+        username="tester",
+        ensure_tenant=Mock(),
+    )
+    req = keywords_api.PauseKeywordWritebackRequest(tenant_id=7, pause=True)
+
+    result = asyncio.run(
+        keywords_api.pause_keyword_writeback(55, req, ctx, SimpleNamespace())
+    )
+
+    ctx.ensure_tenant.assert_called_once_with(7)
+    apply.assert_awaited_once()
+    assert result["dry_run"] is False
+    assert result["writeback"]["id"] == 43
+    assert result["writeback"]["pause"] is True
+    assert result["writeback"]["status"] == "success"
 
 
 @pytest.fixture(autouse=True)
