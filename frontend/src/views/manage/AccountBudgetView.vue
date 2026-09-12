@@ -2,11 +2,12 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAccountBudget, setAccountBudget } from '../../api/manage'
-import { WRITEBACK_CONFIRMATION } from '../../api/writeback'
+import { fetchWritebackMode, WRITEBACK_CONFIRMATION } from '../../api/writeback'
 import { session } from '../../store/session'
 import { createLatestRequestGuard } from '../../utils/latestRequest'
 import { chooseSemAccount } from '../../utils/accountScope'
 import { isSemDemoIdentity, SEM_DEMO_ACCOUNTS } from '../../utils/semDemo'
+import { accountActionPreflight } from '../../utils/writebackPreflight'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
 const demoMode = computed(() => isSemDemoIdentity(session.user, TENANT_ID.value))
@@ -125,17 +126,32 @@ async function save() {
     ElMessage.warning(`日预算需在 ¥${minBudget} ~ ¥${maxBudget} 之间`)
     return
   }
-  const modeNote = '系统将按当前客户、推广账户和账户预算动作门禁决定演练或真实执行；真实执行会修改百度账户。'
+  let preflight
+  try {
+    const mode = await fetchWritebackMode(tenantId)
+    if (!attempt.isCurrent() || !selectedAccountIsActive.value) return
+    preflight = accountActionPreflight(mode, {
+      tenantId,
+      accountId,
+      scope: 'account_budget',
+    })
+    if (!preflight.ok) return ElMessage.error(preflight.message)
+  } catch (e) {
+    if (attempt.isCurrent()) {
+      ElMessage.error(e.response?.data?.detail || '无法完成账户预算预检，已禁止提交，请刷新后重试')
+    }
+    return
+  }
   try {
     await ElMessageBox.confirm(
-      `确认把账户日预算从 ${fmtMoney(budgetSnapshot.budget)} 改为 ¥${v.toFixed(2)}？\n${modeNote}`,
+      `确认把账户日预算从 ${fmtMoney(budgetSnapshot.budget)} 改为 ¥${v.toFixed(2)}？\n${preflight.message}`,
       '确认修改账户日预算',
-      { confirmButtonText: '确认提交', cancelButtonText: '取消', type: 'warning' },
+      { confirmButtonText: preflight.confirmButtonText, cancelButtonText: '取消', type: 'warning' },
     )
   } catch {
     return // 用户取消
   }
-  if (!attempt.isCurrent()) return
+  if (!attempt.isCurrent() || !selectedAccountIsActive.value) return
   saving.value = true
   try {
     const res = await setAccountBudget({

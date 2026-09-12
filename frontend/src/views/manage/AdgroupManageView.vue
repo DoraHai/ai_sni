@@ -140,32 +140,67 @@ async function saveLanding() {
 }
 
 async function editBid(row) {
+  if (!session.canEdit('manage.adgroups')) return
+  if (!canWriteAccount(row.baidu_account_id)) return ElMessage.warning('无法核验该单元所属的可用推广账户')
+  const attempt = actionGuard.begin()
+  const asset = {
+    adgroupId: row.adgroup_id,
+    accountId: row.baidu_account_id,
+    name: row.adgroup_name,
+    maxPrice: row.max_price,
+  }
   const { value } = await ElMessageBox.prompt(
-    `单元「${row.adgroup_name}」当前出价 ${fmtMoney(row.max_price)}。\n输入新的单元出价（¥0.01 ~ 999.99，且不超过所属计划日预算）。实际执行模式由当前客户、推广账户和动作门禁决定。`,
+    `单元「${asset.name}」当前出价 ${fmtMoney(asset.maxPrice)}。\n输入新的单元出价（¥0.01 ~ 999.99，且不超过所属计划日预算），下一步将读取当前账户执行策略。`,
     '修改单元出价',
     {
-      confirmButtonText: '加入待回写',
+      confirmButtonText: '下一步：执行预检',
       cancelButtonText: '取消',
-      inputValue: row.max_price != null ? String(row.max_price) : '',
+      inputValue: asset.maxPrice != null ? String(asset.maxPrice) : '',
       inputPattern: /^\d+(\.\d{1,2})?$/,
       inputErrorMessage: '请输入合法金额（最多两位小数）',
     },
   ).catch(() => ({ value: null }))
   if (value == null) return
+  if (!attempt.isCurrent() || !canWriteAccount(asset.accountId)) return
 
   const v = Number(value)
   if (!Number.isFinite(v) || v < 0.01 || v > 999.99) {
     ElMessage.warning('单元出价需在 ¥0.01 ~ 999.99 之间')
     return
   }
-  savingId.value = row.adgroup_id
+  let preflight
+  try {
+    const mode = await fetchWritebackMode(attempt.context.tenantId)
+    if (!attempt.isCurrent() || !canWriteAccount(asset.accountId)) return
+    preflight = accountActionPreflight(mode, {
+      tenantId: attempt.context.tenantId,
+      accountId: asset.accountId,
+      scope: 'adgroup_bid',
+    })
+    if (!preflight.ok) return ElMessage.error(preflight.message)
+  } catch (e) {
+    if (attempt.isCurrent()) {
+      ElMessage.error(e.response?.data?.detail || '无法完成单元调价预检，已禁止提交，请刷新后重试')
+    }
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认把单元「${asset.name}」的出价从 ${fmtMoney(asset.maxPrice)} 改为 ¥${v.toFixed(2)}？\n${preflight.message}`,
+      '确认修改单元出价',
+      { confirmButtonText: preflight.confirmButtonText, cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch { return }
+  if (!attempt.isCurrent() || !canWriteAccount(asset.accountId)) return
+  savingId.value = asset.adgroupId
   try {
     const res = await setAdgroupBid({
-      tenantId: TENANT_ID.value,
-      adgroupId: row.adgroup_id,
+      tenantId: attempt.context.tenantId,
+      adgroupId: asset.adgroupId,
       maxPrice: v,
       confirmation: WRITEBACK_CONFIRMATION,
     })
+    if (!attempt.isCurrent()) return
     const tag = res.dry_run ? '（演练：未真改）' : ''
     if (['pending', 'reconcile'].includes(res.status)) {
       ElMessage.warning(res.error_msg || '百度执行结果未知，已转入人工对账')
@@ -178,9 +213,9 @@ async function editBid(row) {
     }
     await load()
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
+    if (attempt.isCurrent()) ElMessage.error(e.response?.data?.detail || e.message)
   } finally {
-    savingId.value = null
+    if (attempt.isCurrent()) savingId.value = null
   }
 }
 

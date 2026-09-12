@@ -3,7 +3,7 @@ import { shallowMount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
 const state = vi.hoisted(() => ({
-  campaignLoads: [], adgroupLoads: [], keywordLoads: [], detailLoads: [], modeLoads: [], confirmations: [], writes: [],
+  accountLoads: [], campaignLoads: [], adgroupLoads: [], keywordLoads: [], detailLoads: [], modeLoads: [], confirmations: [], writes: [],
 }))
 const deferred = () => {
   let resolve
@@ -48,9 +48,11 @@ vi.mock('echarts/components', () => ({ GridComponent: {}, LegendComponent: {}, M
 vi.mock('echarts/renderers', () => ({ CanvasRenderer: {} }))
 
 vi.mock('../src/api/manage', () => ({
+  fetchAccountBudget: vi.fn((args) => queued(state.accountLoads, args)),
   fetchCampaigns: vi.fn((args) => queued(state.campaignLoads, args)),
   fetchAdgroups: vi.fn((args) => queued(state.adgroupLoads, args)),
   fetchRegionOptions: vi.fn(() => Promise.resolve({ regions: [] })),
+  setAccountBudget: vi.fn((args) => { state.writes.push(['account-budget', args]); return Promise.resolve({ status: 'dry_run' }) }),
   setCampaignBudget: vi.fn((args) => { state.writes.push(['campaign-budget', args]); return Promise.resolve({ status: 'dry_run' }) }),
   setCampaignPause: vi.fn((args) => { state.writes.push(['campaign-pause', args]); return Promise.resolve({ status: 'dry_run' }) }),
   setCampaignRegion: vi.fn((args) => { state.writes.push(['campaign-region', args]); return Promise.resolve({ status: 'dry_run' }) }),
@@ -88,6 +90,7 @@ vi.mock('../src/api/alerts', () => ({ resolveAlert: vi.fn(() => Promise.resolve(
 
 import CampaignManageView from '../src/views/manage/CampaignManageView.vue'
 import AdgroupManageView from '../src/views/manage/AdgroupManageView.vue'
+import AccountBudgetView from '../src/views/manage/AccountBudgetView.vue'
 import KeywordWorkbenchView from '../src/views/optimize/KeywordWorkbenchView.vue'
 import KeywordDetailView from '../src/views/monitor/KeywordDetailView.vue'
 import { session } from '../src/store/session'
@@ -134,6 +137,26 @@ afterEach(() => {
 })
 
 describe('SEM auth revision invalidation', () => {
+  it('blocks account budget when permission is revoked during account preflight', async () => {
+    login('manage.account')
+    const wrapper = mountView(AccountBudgetView)
+    await settle()
+    wrapper.vm.data = {
+      status: 'ok', baidu_account_id: 11, budget: 100,
+      min_budget: 50, max_budget: 1000,
+    }
+    wrapper.vm.input = 120
+
+    const action = wrapper.vm.save()
+    expect(state.modeLoads).toHaveLength(1)
+    expect(state.confirmations).toHaveLength(0)
+    revoke()
+    state.modeLoads[0].resolve(dryRunMode())
+    await action
+    expect(state.confirmations).toHaveLength(0)
+    expect(state.writes).toHaveLength(0)
+  })
+
   it('blocks campaign pause when permission is revoked during account preflight', async () => {
     login('manage.campaigns')
     const wrapper = mountView(CampaignManageView)
@@ -154,6 +177,31 @@ describe('SEM auth revision invalidation', () => {
     resolvePreflight(dryRunMode())
     await action
     expect(state.confirmations).toHaveLength(0)
+    expect(state.writes).toHaveLength(0)
+  })
+
+  it('blocks campaign budget when its account is disabled during account preflight', async () => {
+    login('manage.campaigns')
+    const wrapper = mountView(CampaignManageView)
+    await settle()
+    const row = {
+      campaign_id: 101, baidu_account_id: 11, campaign_name: 'A计划', budget: 100,
+    }
+
+    const action = wrapper.vm.editBudget(row)
+    expect(state.confirmations).toHaveLength(1)
+    state.confirmations[0].resolve({ value: '120' })
+    await settle()
+    expect(state.modeLoads).toHaveLength(1)
+    session.setTenants([{
+      id: 1,
+      name: '测试租户',
+      sem_accounts: [{ ...account, status: 'disabled' }],
+    }])
+    session.requestTenantReload()
+    state.modeLoads[0].resolve(dryRunMode())
+    await action
+    expect(state.confirmations).toHaveLength(1)
     expect(state.writes).toHaveLength(0)
   })
 
@@ -179,6 +227,29 @@ describe('SEM auth revision invalidation', () => {
     preflight.resolve(dryRunMode())
     await action
     expect(state.confirmations).toHaveLength(0)
+    expect(state.writes).toHaveLength(0)
+  })
+
+  it('blocks adgroup bid when its account is disabled during account preflight', async () => {
+    login('manage.adgroups')
+    const wrapper = mountView(AdgroupManageView)
+    await settle()
+    const row = { adgroup_id: 301, baidu_account_id: 11, adgroup_name: 'A单元', max_price: 1.5 }
+
+    const action = wrapper.vm.editBid(row)
+    expect(state.confirmations).toHaveLength(1)
+    state.confirmations[0].resolve({ value: '2.00' })
+    await settle()
+    expect(state.modeLoads).toHaveLength(1)
+    session.setTenants([{
+      id: 1,
+      name: '测试租户',
+      sem_accounts: [{ ...account, status: 'disabled' }],
+    }])
+    session.requestTenantReload()
+    state.modeLoads[0].resolve(dryRunMode())
+    await action
+    expect(state.confirmations).toHaveLength(1)
     expect(state.writes).toHaveLength(0)
   })
 

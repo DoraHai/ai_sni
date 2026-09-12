@@ -503,10 +503,10 @@ async function editBudget(row) {
     maxBudget: max.value,
   }
   const { value } = await ElMessageBox.prompt(
-    `计划「${asset.name}」当前日预算 ${fmtMoney(asset.budget)}。\n输入新的日预算（¥${min.value} ~ 不超过账户日预算）。实际执行模式由当前客户、推广账户和动作门禁决定。`,
+    `计划「${asset.name}」当前日预算 ${fmtMoney(asset.budget)}。\n输入新的日预算（¥${min.value} ~ 不超过账户日预算），下一步将读取当前账户执行策略。`,
     '修改计划日预算',
     {
-      confirmButtonText: '加入待回写',
+      confirmButtonText: '下一步：执行预检',
       cancelButtonText: '取消',
       inputValue: asset.budget != null ? String(asset.budget) : '',
       inputPattern: /^\d+(\.\d{1,2})?$/,
@@ -521,6 +521,30 @@ async function editBudget(row) {
     ElMessage.warning(`日预算需在 ¥${asset.minBudget} ~ ¥${asset.maxBudget} 之间`)
     return
   }
+  let preflight
+  try {
+    const mode = await fetchWritebackMode(attempt.context.tenantId)
+    if (!attempt.isCurrent() || !canWriteAccount(asset.accountId)) return
+    preflight = accountActionPreflight(mode, {
+      tenantId: attempt.context.tenantId,
+      accountId: asset.accountId,
+      scope: 'campaign_budget',
+    })
+    if (!preflight.ok) return ElMessage.error(preflight.message)
+  } catch (e) {
+    if (attempt.isCurrent()) {
+      ElMessage.error(e.response?.data?.detail || '无法完成计划预算预检，已禁止提交，请刷新后重试')
+    }
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认把计划「${asset.name}」的日预算从 ${fmtMoney(asset.budget)} 改为 ¥${v.toFixed(2)}？\n${preflight.message}`,
+      '确认修改计划日预算',
+      { confirmButtonText: preflight.confirmButtonText, cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch { return }
+  if (!attempt.isCurrent() || !canWriteAccount(asset.accountId)) return
   savingId.value = asset.campaignId
   try {
     const res = await setCampaignBudget({
