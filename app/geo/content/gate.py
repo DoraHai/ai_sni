@@ -18,6 +18,7 @@ def assert_can_publish(
     *,
     task: Any | None = None,
     brand: str | None = None,
+    article_id: int | None = None,
 ) -> list:
     from app.geo.content.draft_lint import lint_draft, lint_summary
 
@@ -61,7 +62,7 @@ def assert_can_publish(
             raise PublishGateError("品牌标准未通过：" + str(issues[0]))
         from app.geo.content.review import assert_review_approved
         try:
-            assert_review_approved(task)
+            assert_review_approved(task, article_id=article_id)
         except ValueError as exc:
             raise PublishGateError(str(exc)) from exc
         rr = getattr(task, "rule_result", None) or {}

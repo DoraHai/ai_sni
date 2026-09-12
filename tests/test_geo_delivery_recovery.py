@@ -10,7 +10,15 @@ from app.geo.content.multi_push import delivery_key
 
 
 def case(**overrides):
-    task = NS(id=12, tenant_id=1, review_status='approved')
+    task = NS(id=12, tenant_id=1, review_status='approved', review_audit={
+        'schema_version': 'geo.review.audit.v1',
+        'events': [
+            {'event': 'submitted', 'actor_user_id': 9, 'actor_role': '编辑',
+             'tenant_id': 1, 'article_id': 16, 'occurred_at': '2026-01-01T00:00:00Z'},
+            {'event': 'approved', 'actor_user_id': 9, 'actor_role': '编辑',
+             'tenant_id': 1, 'article_id': 16, 'occurred_at': '2026-01-01T00:01:00Z'},
+        ],
+    })
     variant = NS(id=3, task_id=12, article_version_id=16, title='测试文章',
                  channel='website', body_markdown='这是需要在网站实际出现的段落内容。' * 40, adapt_meta={})
     account = NS(id=4, tenant_id=1)
