@@ -166,9 +166,11 @@ def _mem_dict(m: TenantMemory) -> dict:
 @router.get("/memories")
 async def list_memories(
     tenant_id: int = Query(..., description="本地租户 ID"),
+    ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """当前生效的客户记忆（目标/约束/偏好…）。"""
+    ctx.ensure_tenant(tenant_id)
     mems = await get_active_memories(session, tenant_id)
     return {"memories": [_mem_dict(m) for m in mems]}
 
