@@ -118,6 +118,7 @@ onBeforeUnmount(() => { epoch++ })
             <p><b>已保存的发布后检查依据</b></p>
             <div v-for="(item, index) in stage.observations" :key="`${stage.key}-${item.publicationLabel}-${index}`">
               <strong>{{ item.publicationLabel }} · {{ item.channelLabel }}：{{ item.stateLabel }}</strong>
+              <small :class="item.evidenceValid ? 'evidence-valid' : 'evidence-invalid'">{{ item.evidenceStatusLabel }}</small>
               <small>
                 最近检查：{{ item.checkedAt || '时间未记录' }}；下次计划：{{ item.nextCheckAt || '尚未安排' }}；连续异常：{{ item.failures }} 次
               </small>
@@ -149,4 +150,6 @@ p { font-size:13px; line-height:1.7; color:#475569; }
 .h3h4-summary small { display: block; color: #64748b; }
 .monitor-evidence { margin-top: 8px; padding: 8px 10px; border-left: 3px solid #94a3b8; background: #fff; }
 .monitor-evidence > div + div { margin-top: 8px; }
+.evidence-valid { color: #16794b !important; }
+.evidence-invalid { color: #b45309 !important; }
 </style>

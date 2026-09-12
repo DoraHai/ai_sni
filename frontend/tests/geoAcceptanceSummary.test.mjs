@@ -91,6 +91,7 @@ test('links an H4 blocker to safe stored evidence, times, and recovery guidance'
         checked_at: '2026-09-11T01:00:00Z',
         next_check_at: '2026-09-11T02:00:00Z',
         failures: 2,
+        evidence_valid: false,
         evidence_reasons: ['monitor_not_healthy'],
         last_error: { kind: 'check_incomplete', at: '2026-09-11T01:30:00Z', secret: 'must-not-leak' },
         url: 'https://example.com/private?token=must-not-leak',
@@ -102,6 +103,8 @@ test('links an H4 blocker to safe stored evidence, times, and recovery guidance'
     publicationLabel: '发布记录 #9',
     channelLabel: '官网',
     stateLabel: '页面暂时无法检查',
+    evidenceValid: false,
+    evidenceStatusLabel: '当前检查依据无效',
     checkedAt: '2026/09/11 09:00',
     nextCheckAt: '2026/09/11 10:00',
     failures: 2,
@@ -122,4 +125,23 @@ test('invalid monitor timestamps and unknown evidence stay fail closed', () => {
   assert.equal(h4.observations[0].nextCheckAt, null)
   assert.equal(h4.observations[0].failures, 0)
   assert.deepEqual(h4.observations[0].evidenceReasons, ['检查依据尚未满足'])
+})
+
+test('never presents a stored healthy state as current when its evidence is invalid', () => {
+  const [, stale] = describeAcceptanceSummary({
+    h3: {},
+    h4: { monitoring: [{
+      state: 'healthy', evidence_valid: false,
+      evidence_reasons: ['fingerprint_missing_or_mismatch'],
+    }] },
+  })
+  const [, current] = describeAcceptanceSummary({
+    h3: {},
+    h4: { monitoring: [{ state: 'healthy', evidence_valid: true, evidence_reasons: [] }] },
+  })
+
+  assert.equal(stale.observations[0].stateLabel, '历史检查曾匹配，当前证据无效')
+  assert.equal(stale.observations[0].evidenceStatusLabel, '当前检查依据无效')
+  assert.equal(current.observations[0].stateLabel, '正文匹配')
+  assert.equal(current.observations[0].evidenceStatusLabel, '当前检查依据有效')
 })
