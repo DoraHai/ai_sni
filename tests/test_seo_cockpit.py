@@ -268,4 +268,52 @@ def test_customer_verification_page_and_backlink_use_observed_state():
     link = dict(status='active', source_url='https://source.cn/a', target_url='https://example.cn/a', source_domain='source.cn')
     assert backlink_queue_item(_queue_row(verification={'state':'found'}, **link))['state'] == 'verified'
     assert backlink_queue_item(_queue_row(verification={'state':'pending'}, **link))['state'] == 'pending_system_check'
-    assert backlink_queue_item(_queue_row(verification={'state':'missing'}, **link))['state'] == 'failed_retry'
+    assert backlink_queue_item(_queue_row(verification={'state':'missing'}, missing_checks=2, **link))['state'] == 'failed_retry'
+
+
+def test_customer_verification_page_failure_uses_safe_evidence_and_next_step():
+    row=_queue_row(status='error',url='https://user:password@example.cn/a?token=private#fragment',title=None,
+        http_status=503,audit_score=None,issue_codes=['http_5xx','private provider response'],
+        last_error='password=private from raw exception',last_checked_at=datetime(2026,9,12,tzinfo=timezone.utc))
+    item=page_queue_item(row)
+    assert item['state']=='failed_retry'
+    assert '页面服务异常' in item['detail'] and '访问权限' in item['detail']
+    assert item['title']=='页面重新检查 · https://example.cn/a'
+    assert item['evidence']=={'url':'https://example.cn/a','http_status':503,'audit_score':None,
+        'issue_codes':['http_5xx'],'last_checked_at':datetime(2026,9,12,tzinfo=timezone.utc)}
+    assert 'private' not in str(item) and 'password' not in str(item)
+
+
+def test_customer_verification_page_needs_fix_explains_customer_next_step_without_claiming_recheck():
+    row=_queue_row(status='needs_fix',url='https://example.cn/a',title='A',http_status=200,audit_score=80,
+        issue_codes=['title_missing'],last_error=None,last_checked_at=datetime(2026,9,12,tzinfo=timezone.utc))
+    item=page_queue_item(row)
+    assert item['state']=='pending_customer_action'
+    assert '系统最近检查发现' in item['detail'] and '完成后再检查' in item['detail']
+    assert '复核' not in item['detail']
+
+
+def test_customer_verification_backlink_first_missing_waits_for_second_observation():
+    link=dict(status='active',source_url='https://source.cn/a?signature=private',
+        target_url='https://example.cn/a?token=private',source_domain='source.cn',missing_checks=1)
+    row=_queue_row(verification={'state':'missing','checked_at':'2026-09-12T08:00:00Z',
+        'error':'Bearer private','final_url':'https://source.cn/login?token=private','history':[{'response':'private'}]},**link)
+    item=backlink_queue_item(row)
+    assert item['state']=='pending_system_check'
+    assert '第二次系统核验' in item['detail'] and '暂不判定丢失' in item['detail']
+    assert item['evidence']['source_url']=='https://source.cn/a'
+    assert item['evidence']['target_url']=='https://example.cn/a'
+    assert item['evidence']['verification']=={'state':'missing','checked_at':'2026-09-12T08:00:00Z'}
+    assert item['evidence']['missing_checks']==1 and 'private' not in str(item)
+
+
+def test_customer_verification_backlink_failure_is_safe_and_actionable():
+    link=dict(status='active',source_url='https://source.cn/a',target_url='https://example.cn/a',
+        source_domain='source.cn',missing_checks=0)
+    row=_queue_row(verification={'state':'blocked','reason':'login_or_challenge','http_status':200,
+        'error':'password=private'},**link)
+    item=backlink_queue_item(row)
+    assert item['state']=='failed_retry'
+    assert '登录或安全验证' in item['detail'] and '公开权限' in item['detail']
+    assert item['evidence']['verification']=={'state':'blocked','http_status':200,'reason_code':'login_or_challenge'}
+    assert 'private' not in str(item)
