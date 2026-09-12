@@ -31,14 +31,14 @@ from app.seo_static_demo import serve_static_demo
 settings = get_settings()
 enforce_production_secrets(settings, hard_fail=True)
 validate_seo_demo_runtime_settings(settings)
-SEO_REQUIRED_SCHEMA_REVISION = "0098_demo_binding_no_truncate"
+SEO_REQUIRED_SCHEMA_REVISION = "0099_geo_review_audit"
 # Runtime compatibility supports code-first rollout; it never authorizes the
 # separately reviewed migration operation.
 SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset(
-    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", SEO_REQUIRED_SCHEMA_REVISION}
+    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION}
 )
 SEO_GEO_TICKET_REQUIRED_REVISIONS = frozenset(
-    {"0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate"}
+    {"0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION}
 )
 SEO_GEO_TICKET_SHAPE = {
     "owner_name": ("character varying(100)", False, None, "", "", "b", None, True),
@@ -220,6 +220,21 @@ SEO_GEO_TICKET_SHAPE_SQL = text("""
     ORDER BY a.attname
 """)
 
+SEO_GEO_REVIEW_AUDIT_SHAPE_SQL = text("""
+    SELECT pg_catalog.format_type(a.atttypid, a.atttypmod),
+           a.attnotnull,
+           pg_catalog.pg_get_expr(ad.adbin, ad.adrelid)
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+    LEFT JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+    WHERE n.nspname = 'public'
+      AND c.relname = 'geo_content_tasks'
+      AND c.relkind = 'r'
+      AND a.attname = 'review_audit'
+      AND a.attnum > 0 AND NOT a.attisdropped
+""")
+
 
 async def _check_seo_structure(conn):
     rows = await conn.execute(SEO_SCHEMA_COLUMNS_SQL,
@@ -242,6 +257,15 @@ async def _check_geo_ticket_adoption(conn):
         raise RuntimeError(
             "0095 GEO ticket assignment columns missing or incompatible: "
             f"found {sorted(actual)}"
+        )
+
+
+async def _check_geo_review_audit(conn):
+    rows = list(await conn.execute(SEO_GEO_REVIEW_AUDIT_SHAPE_SQL))
+    if rows != [("jsonb", False, None)]:
+        raise RuntimeError(
+            "0099 GEO review audit column missing or incompatible: "
+            f"found {rows}"
         )
 
 
@@ -412,10 +436,12 @@ async def seo_health(response: Response) -> dict:
             await _check_seo_structure(conn)
             if revisions[0] in SEO_GEO_TICKET_REQUIRED_REVISIONS:
                 await _check_geo_ticket_adoption(conn)
-            if revisions[0] in {"0097_demo_tenant_bindings", "0098_demo_binding_no_truncate"}:
+            if revisions[0] in {"0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", "0099_geo_review_audit"}:
                 await _check_demo_binding_structure(
-                    conn, require_current_truncate=revisions[0] == "0098_demo_binding_no_truncate"
+                    conn, require_current_truncate=revisions[0] in {"0098_demo_binding_no_truncate", "0099_geo_review_audit"}
                 )
+            if revisions[0] == "0099_geo_review_audit":
+                await _check_geo_review_audit(conn)
             schema_status = "ok"
     except Exception as exc:  # noqa: BLE001 - health must report infra failure
         db_status = "error"

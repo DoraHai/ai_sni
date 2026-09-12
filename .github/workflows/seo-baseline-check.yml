@@ -103,6 +103,7 @@ jobs:
           tests/test_sem_task_migration.py
           tests/test_demo_tenant_binding_migration.py
           tests/test_demo_binding_no_truncate_migration.py
+          tests/test_geo_review_audit_migration.py
           tests/test_seo_demo_runtime.py
           tests/test_seo_demo_source.py
           tests/test_seo_static_demo.py
@@ -207,5 +208,5 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0098_demo_binding_no_truncate (head)'
-          python -m pytest -q tests/test_geo_ticket_adoption_migration.py tests/test_sem_task_migration.py tests/test_demo_tenant_binding_migration.py tests/test_demo_binding_no_truncate_migration.py tests/test_seo_migration_merge.py tests/test_seo_qa.py tests/test_seo_video_platforms.py tests/test_seo_backlink_workflow.py tests/test_seo_cockpit.py tests/test_seo_cockpit_auth.py tests/test_seo_usage_limits.py tests/test_seo_ai_operations.py tests/test_seo_task_center.py tests/test_seo_site_onboarding_contract.py
+          printf '%s\n' "$heads" | grep -F '0099_geo_review_audit (head)'
+          python -m pytest -q tests/test_geo_ticket_adoption_migration.py tests/test_sem_task_migration.py tests/test_demo_tenant_binding_migration.py tests/test_demo_binding_no_truncate_migration.py tests/test_geo_review_audit_migration.py tests/test_seo_migration_merge.py tests/test_seo_qa.py tests/test_seo_video_platforms.py tests/test_seo_backlink_workflow.py tests/test_seo_cockpit.py tests/test_seo_cockpit_auth.py tests/test_seo_usage_limits.py tests/test_seo_ai_operations.py tests/test_seo_task_center.py tests/test_seo_site_onboarding_contract.py
