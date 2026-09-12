@@ -83,6 +83,7 @@ const keywordApi = await source('src/api/keywords.js')
 const manageApi = await source('src/api/manage.js')
 const keywordWriteback = await source('src/composables/useKeywordWriteback.js')
 const keywordDetail = await source('src/views/monitor/KeywordDetailView.vue')
+const accountBudget = await source('src/views/manage/AccountBudgetView.vue')
 const campaignManage = await source('src/views/manage/CampaignManageView.vue')
 const adgroupManage = await source('src/views/manage/AdgroupManageView.vue')
 const writebackPreflight = await source('src/utils/writebackPreflight.js')
@@ -204,6 +205,30 @@ for (const scope of ['campaign_pause', 'adgroup_pause']) {
   assert.match(structurePreflight.message, /今日真实动作额度 1\/3/)
   assert.match(structurePreflight.message, /提交时服务端会再次校验/)
 }
+for (const scope of ['account_budget', 'campaign_budget', 'adgroup_bid']) {
+  const fundsPreflight = accountActionPreflight({
+    tenant_id: 3,
+    accounts: [{
+      baidu_account_id: 17,
+      mode: 'limited_live',
+      live_scopes: [scope],
+      policy_source: 'policy',
+      policy_reason: 'configured_grant',
+      daily_live_actions_used: 1,
+      daily_live_action_limit: 3,
+      max_bid_change_pct: 8,
+    }],
+  }, { tenantId: 3, accountId: 17, scope })
+  assert.equal(fundsPreflight.ok, true)
+  assert.equal(fundsPreflight.executionMode, 'live')
+  assert.match(fundsPreflight.message, /一次性资金确认/)
+  assert.match(fundsPreflight.message, /提交时服务端会再次校验/)
+  if (scope === 'account_budget' || scope === 'campaign_budget') {
+    assert.doesNotMatch(fundsPreflight.message, /单次调价上限/)
+  } else {
+    assert.match(fundsPreflight.message, /单次调价上限 ±8%/)
+  }
+}
 assert.equal(accountActionPreflight(matchMode, {
   tenantId: 3, accountId: 17, scope: 'campaign_pause',
 }).executionMode, 'dry_run')
@@ -247,11 +272,24 @@ assert.equal((keywordWriteback.match(/reconciliationRequired: true/g) || []).len
 assert.equal((keywordDetail.match(/data\.value\.keyword\.baidu_account_id/g) || []).length, 3)
 assert.match(keywordDetail, /tenantListRevision: session\.tenantListRevision/)
 assert.match(
+  accountBudget,
+  /save[\s\S]*fetchWritebackMode\(tenantId\)[\s\S]*scope: 'account_budget'[\s\S]*setAccountBudget/,
+)
+assert.match(accountBudget, /!attempt\.isCurrent\(\) \|\| !selectedAccountIsActive\.value/)
+assert.match(
+  campaignManage,
+  /editBudget[\s\S]*fetchWritebackMode\(attempt\.context\.tenantId\)[\s\S]*scope: 'campaign_budget'[\s\S]*setCampaignBudget/,
+)
+assert.match(
   campaignManage,
   /togglePause[\s\S]*fetchWritebackMode\(attempt\.context\.tenantId\)[\s\S]*scope: 'campaign_pause'[\s\S]*setCampaignPause/,
 )
 assert.match(campaignManage, /writebackTrace\(res\.writeback\)/)
 assert.match(campaignManage, /已转入人工对账/)
+assert.match(
+  adgroupManage,
+  /editBid[\s\S]*session\.canEdit\('manage\.adgroups'\)[\s\S]*canWriteAccount\(row\.baidu_account_id\)[\s\S]*fetchWritebackMode\(attempt\.context\.tenantId\)[\s\S]*scope: 'adgroup_bid'[\s\S]*setAdgroupBid/,
+)
 assert.match(
   adgroupManage,
   /togglePause[\s\S]*fetchWritebackMode\(attempt\.context\.tenantId\)[\s\S]*scope: 'adgroup_pause'[\s\S]*setAdgroupPause/,

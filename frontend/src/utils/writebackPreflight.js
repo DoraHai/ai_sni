@@ -20,7 +20,10 @@ function positiveInteger(value) {
 }
 
 const WRITEBACK_ACTIONS = {
-  keyword_bid: { label: '关键词调价', fundsApproval: true },
+  account_budget: { label: '账户日预算修改', fundsApproval: true, bidLimit: false },
+  campaign_budget: { label: '计划日预算修改', fundsApproval: true, bidLimit: false },
+  adgroup_bid: { label: '单元调价', fundsApproval: true, bidLimit: true },
+  keyword_bid: { label: '关键词调价', fundsApproval: true, bidLimit: true },
   keyword_match_type: { label: '关键词匹配方式修改', fundsApproval: false },
   keyword_pause: { label: '关键词暂停或启用', fundsApproval: false },
   campaign_pause: { label: '计划暂停或启用', fundsApproval: false },
@@ -75,12 +78,12 @@ export function accountActionPreflight(payload, { tenantId, accountId, scope }) 
     return reject(action.label, '今日真实动作额度异常')
   }
   if (used >= limit) return reject(action.label, '今日真实动作额度已经用尽')
-  if (action.fundsApproval
+  if (action.bidLimit
       && (!Number.isFinite(maxBidChangePct) || maxBidChangePct <= 0 || maxBidChangePct > 20)) {
     return reject(action.label, '单次调价上限异常')
   }
   const actionDetail = action.fundsApproval
-    ? `，单次调价上限 ±${maxBidChangePct}%。服务端最终复核通过后，会创建并消费一条与当前参数绑定的一次性资金确认`
+    ? `${action.bidLimit ? `，单次调价上限 ±${maxBidChangePct}%` : ''}。服务端最终复核通过后，会创建并消费一条与当前参数绑定的一次性资金确认`
     : '。该动作不要求资金确认'
   return {
     ok: true,
