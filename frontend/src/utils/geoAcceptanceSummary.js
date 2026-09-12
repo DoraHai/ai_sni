@@ -68,10 +68,16 @@ function monitorObservation(row) {
     : []
   const id = Number(row?.publication_ref?.id)
   const failures = row?.failures
+  const evidenceValid = row?.evidence_valid === true
+  const storedStateLabel = MONITOR_STATE_LABELS[row?.state] || '状态待确认'
   return {
     publicationLabel: Number.isSafeInteger(id) && id > 0 ? `发布记录 #${id}` : '发布记录',
     channelLabel: CHANNEL_LABELS[row?.channel] || '渠道未标记',
-    stateLabel: MONITOR_STATE_LABELS[row?.state] || '状态待确认',
+    stateLabel: row?.state === 'healthy' && !evidenceValid
+      ? '历史检查曾匹配，当前证据无效'
+      : storedStateLabel,
+    evidenceValid,
+    evidenceStatusLabel: evidenceValid ? '当前检查依据有效' : '当前检查依据无效',
     checkedAt: safeTime(row?.checked_at),
     nextCheckAt: safeTime(row?.next_check_at),
     failures: typeof failures === 'number' && Number.isSafeInteger(failures) && failures >= 0 ? failures : 0,
