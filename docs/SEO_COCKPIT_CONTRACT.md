@@ -52,6 +52,14 @@
 
 `GET /image-verifications?tenant_id=…&site_id=…` 查询中间状态及证据。`POST /image-verifications/{id}/retry?tenant_id=…&site_id=…` 在网站实际应用修改后重新排队，仅未生效/异常任务允许，上次检查后至少五分钟。重试会保留最近 20 次结果摘要，并记录发起时间和操作人；后续抓取结果不覆盖这些留痕。审核批准本身不代表修复。
 
+## 客户执行与页面复检
+
+`GET /overview/customer-verification-queue?tenant_id=…&site_id=…` 将已标记 `implemented` 的站内页面列为 `page_recheck / pending_system_check`。这一状态只表示客户声明修改已上线，不表示系统已验收。队列 GET 仍为纯读，不会自动抓取。
+
+具备 `seo.site` 编辑权限时，该队列项附带指向既有 `POST /site-pages/{page_id}/audit` 的 `recheck_action`；只读账号仅看到权限说明，不返回可执行动作。前端要求操作人显式确认后才调用单页复检，并校验动作中的 tenant/site 与当前上下文一致。
+
+单页 audit 按现有 robots、公网地址和站点归属门禁重新抓取，保存 crawl run 与 page snapshot，并由观测结果产生 `verified / needs_fix / error`。本流程不修改客户网站、不发布内容、不新建第二套状态或自动调度。
+
 ## 数据库及故障修复
 
 新增迁移 `0092_seo_cockpit`，仅新建 seo_tasks 与 seo_image_verifications，不改 SEM/GEO 表。生产迁移应与应用部署分开备份、验证，不将 upgrade 隐藏在应用发布中。

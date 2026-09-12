@@ -5,7 +5,7 @@ import * as Vue from 'vue'
 
 const source = await readFile(new URL('../src/views/seo/SeoTaskCenterView.vue', import.meta.url), 'utf8')
 const code = compileScript(parse(source).descriptor, { id: 'task-center-test', genDefaultAs: 'component' }).content.replace(/^import .* from .*$/gm, '')
-const reads = [], recoveries = [], retries = [], confirmations = []
+const reads = [], recoveries = [], retries = [], audits = [], confirmations = []
 function deferred(args) { let resolve, reject; const promise = new Promise((r,j) => { resolve=r; reject=j }); return { args, promise, resolve, reject } }
 const tenant = Vue.ref(1), site = Vue.ref(10), session = Vue.reactive({ user: { id: 7 } })
 const bindings = { computed:Vue.computed, onMounted:Vue.onMounted, onUnmounted:Vue.onUnmounted,
@@ -18,6 +18,7 @@ const bindings = { computed:Vue.computed, onMounted:Vue.onMounted, onUnmounted:V
     ? Promise.reject(new Error('queue unavailable'))
     : Promise.resolve({ items: [], total: 0, summary: {} }),
   retrySeoImageVerification: () => Promise.resolve({}),
+  auditSeoSitePage: args => { const d=deferred(args);audits.push(d);return d.promise },
   recoverSeoAiOperation: (...args) => { const d=deferred(args);recoveries.push(d);return d.promise },
   retrySeoTask: (...args) => { retries.push(args); return Promise.resolve({}) },
 }
@@ -35,16 +36,26 @@ try {
   reads.at(-1).resolve(response('new-tenant'));await Vue.nextTick();await Vue.nextTick()
   reads[0].resolve(response('stale-tenant'));await Vue.nextTick();await Vue.nextTick()
   assert.equal(state.data.items[0].id,'new-tenant')
+  const pageRecheck=state.recheckPage({id:'page_recheck:31',kind:'page_recheck',state:'pending_system_check',can_recheck:true,
+    recheck_action:{method:'POST',page_id:31,tenant_id:2,site_id:20}})
+  confirmations[0].resolve();await Vue.nextTick()
+  assert.deepEqual(audits[0].args,{pageId:31,tenantId:2,siteId:20})
+  audits[0].resolve({status:'verified'});await Vue.nextTick();await Vue.nextTick()
+  reads.at(-1).resolve(response('after-page-recheck'));await pageRecheck
+  assert.equal(state.data.items[0].id,'after-page-recheck')
+  await state.recheckPage({id:'page_recheck:32',kind:'page_recheck',state:'pending_system_check',can_recheck:true,
+    recheck_action:{method:'POST',page_id:32,tenant_id:99,site_id:20}})
+  assert.equal(audits.length,1)
   const recovering=state.recover({id:'op-1',has_result:true})
   session.user={id:8};await Vue.nextTick()
   recoveries[0].resolve({title:'private previous-user result'});await recovering
   assert.equal(state.resultText,'');assert.equal(state.resultOpen,false)
   const pendingRetry=state.retry({id:'7',source:'automation',kind:'ranking',can_retry:true,retry_site_id:20})
   tenant.value=3;await Vue.nextTick()
-  confirmations[0].resolve();await pendingRetry
+  confirmations[1].resolve();await pendingRetry
   assert.equal(retries.length,0)
   await state.retry({id:'8',can_retry:false})
-  assert.equal(confirmations.length,1)
+  assert.equal(confirmations.length,2)
   tenant.value=4;await Vue.nextTick()
   reads.at(-1).resolve(response('task-history-survives'));await Vue.nextTick();await Vue.nextTick()
   assert.equal(state.data.items[0].id,'task-history-survives')
@@ -54,5 +65,5 @@ try {
   assert.equal(state.publicationAttempt({kind:'publication_url',evidence:{latest_attempt:attempt}}),attempt)
   assert.equal(state.publicationAttempt({kind:'page_recheck',evidence:{latest_attempt:attempt}}),null)
   assert.ok(!source.includes('v-html'))
-  console.log('Task center checks passed: stale tenant response, user-private recovery, scope switch before confirmation, read-only retry')
+  console.log('Task center checks passed: page recheck, stale tenant response, user-private recovery, scope switch before confirmation, read-only retry')
 } finally { app.unmount() }
