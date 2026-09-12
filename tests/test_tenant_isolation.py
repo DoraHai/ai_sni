@@ -22,6 +22,7 @@ os.environ.setdefault("CRYPTO_MASTER_KEY_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.api.keywords import BatchCategoryRequest, batch_update_category
+from app.api.assistant import list_memories
 from app.permissions import OPERATOR_PERMS
 from app.security.auth import AuthContext, require_scoped_auth
 
@@ -60,6 +61,17 @@ class TenantIsolationTests(unittest.IsolatedAsyncioTestCase):
     def test_superadmin_any(self):
         ctx = self._ctx(None, superadmin=True)
         ctx.ensure_tenant(42)
+
+    async def test_assistant_memories_reject_cross_tenant_read(self):
+        ctx = self._ctx(10)
+        with (
+            patch("app.api.assistant.get_active_memories", new_callable=AsyncMock) as read_memories,
+            self.assertRaises(HTTPException) as cm,
+        ):
+            await list_memories(tenant_id=11, ctx=ctx, session=object())
+
+        self.assertEqual(cm.exception.status_code, 403)
+        read_memories.assert_not_awaited()
 
     async def test_sem_write_body_is_checked_by_identity_guard(self):
         body = b'{"tenant_id":10,"budget":500}'
