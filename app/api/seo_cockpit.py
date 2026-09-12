@@ -51,6 +51,16 @@ BACKLINK_REASONS={
     'timeout':'来源页核验超时','http_error':'来源页返回异常状态','empty_response':'来源页没有返回可核验内容',
     'login_or_challenge':'来源页要求登录或安全验证','same_site':'来源页不是站外页面',
 }
+IMAGE_REASON_CODES={
+    '抓取失败或缺少完整图片观测，不能判定修复':'fetch_unavailable',
+    '图片观测被截断，不能唯一核实':'observation_truncated',
+    '原快照缺少完整图片观测，请重新检测并审核后核实':'baseline_incomplete',
+    '原图地址缺失或重复，不能唯一匹配':'source_ambiguous',
+    '原图消失、替换或重复，不能视为修复':'image_changed',
+    '重新抓取确认已应用审核方案':'applied',
+    '重新抓取尚未确认审核方案生效':'not_applied',
+}
+IMAGE_TERMINAL_STATES={'verified','unverified','unavailable'}
 
 def _queue_item(kind,row,state,title,detail,evidence=None,action_url=None):
     updated=getattr(row,'updated_at',None) or getattr(row,'checked_at',None) or getattr(row,'last_checked_at',None) or getattr(row,'created_at',None)
@@ -71,14 +81,114 @@ def _safe_evidence_url(value):
     except ValueError:
         return None
 
+def _safe_positive_int(value):
+    return value if isinstance(value,int) and not isinstance(value,bool) and value>0 else None
+
+def _safe_evidence_time(value):
+    if isinstance(value,datetime):return value
+    if not isinstance(value,str) or len(value)>40:return None
+    try:datetime.fromisoformat(value.replace('Z','+00:00'))
+    except ValueError:return None
+    return value
+
+def _safe_image_observation(evidence):
+    if not isinstance(evidence,dict):return None
+    current={}
+    reason_code=IMAGE_REASON_CODES.get(evidence.get('reason'))
+    if reason_code:current['reason_code']=reason_code
+    source_url=_safe_evidence_url(evidence.get('source_url'))
+    if source_url:current['source_url']=source_url
+    for key in ('review_id','before_snapshot_id','after_snapshot_id'):
+        value=_safe_positive_int(evidence.get(key))
+        if value is not None:current[key]=value
+    for key in ('before_alt_state','after_alt_state'):
+        value=evidence.get(key)
+        if value in {'missing','empty','whitespace','present'}:current[key]=value
+    actual_alt=evidence.get('actual_alt')
+    if isinstance(actual_alt,str):current['actual_alt']=actual_alt[:1000]
+    if evidence.get('metric_key')=='seo.images.verified_repair_count':current['metric_key']='seo.images.verified_repair_count'
+    change=evidence.get('change_abs')
+    if isinstance(change,int) and not isinstance(change,bool) and change in {0,1}:current['change_abs']=change
+    return current or None
+
+def _safe_image_attempt_history(evidence):
+    values=evidence.get('attempt_history') if isinstance(evidence,dict) else None
+    if not isinstance(values,list):return []
+    history=[]
+    for raw in values[-20:]:
+        if not isinstance(raw,dict):continue
+        item={}
+        for key in ('attempt','result_snapshot_id','before_snapshot_id','after_snapshot_id'):
+            value=_safe_positive_int(raw.get(key))
+            if value is not None:item[key]=value
+        if raw.get('status') in IMAGE_TERMINAL_STATES:item['status']=raw['status']
+        checked_at=_safe_evidence_time(raw.get('checked_at'))
+        if checked_at is not None:item['checked_at']=checked_at
+        reason_code=IMAGE_REASON_CODES.get(raw.get('reason'))
+        if reason_code:item['reason_code']=reason_code
+        change=raw.get('change_abs')
+        if isinstance(change,int) and not isinstance(change,bool) and change in {0,1}:item['change_abs']=change
+        if item:history.append(item)
+    return history
+
+def _safe_image_evidence(row):
+    evidence=row.evidence if isinstance(row.evidence,dict) else {}
+    safe={}
+    attempt=_safe_positive_int(evidence.get('attempt'))
+    if attempt is not None:safe['attempt']=attempt
+    if row.status in IMAGE_TERMINAL_STATES:
+        current=_safe_image_observation(evidence)
+        if current:safe['current_observation']=current
+    history=_safe_image_attempt_history(evidence)
+    if history:safe['attempt_history']=history
+    retry=evidence.get('retry_request')
+    if isinstance(retry,dict):
+        requested_at=_safe_evidence_time(retry.get('requested_at'))
+        requested_by=retry.get('requested_by')
+        from_status=retry.get('from_status')
+        request={}
+        if requested_at is not None:request['requested_at']=requested_at
+        if requested_by=='service' or (isinstance(requested_by,str) and requested_by.isdigit() and len(requested_by)<=20):request['requested_by']=requested_by
+        if from_status in {'unverified','unavailable'}:request['from_status']=from_status
+        if request:safe['retry_request']=request
+    return safe or None
+
+def _image_observation_matches_row(row,evidence):
+    current=(evidence or {}).get('current_observation') or {}
+    row_review_id=_safe_positive_int(getattr(row,'review_id',None))
+    row_result_id=_safe_positive_int(getattr(row,'result_snapshot_id',None))
+    return bool(
+        getattr(row,'checked_at',None) is not None
+        and (evidence or {}).get('attempt') is not None
+        and row_review_id is not None and current.get('review_id')==row_review_id
+        and row_result_id is not None and current.get('after_snapshot_id')==row_result_id
+        and current.get('before_snapshot_id') is not None
+        and current.get('before_snapshot_id')!=current.get('after_snapshot_id')
+    )
+
+def _image_terminal_evidence_is_current(row,evidence):
+    if not _image_observation_matches_row(row,evidence):return False
+    current=evidence['current_observation'];reason=current.get('reason_code')
+    if row.status=='verified':
+        return reason=='applied' and current.get('change_abs')==1 and current.get('metric_key')=='seo.images.verified_repair_count'
+    if row.status=='unverified':return reason in {'not_applied','source_ambiguous','image_changed'}
+    if row.status=='unavailable':return reason in {'fetch_unavailable','observation_truncated','baseline_incomplete'}
+    return False
+
 def image_queue_item(row,allow_retry=False):
     states={'pending':'pending_system_check','checking':'pending_system_check','verified':'verified',
             'unverified':'pending_customer_action','unavailable':'failed_retry'}
     state=states.get(row.status)
     if not state:return None
+    evidence=_safe_image_evidence(row)
     details={'pending':'已进入重新抓取队列','checking':'正在重新抓取页面','verified':'重新抓取已确认图片问题解决',
              'unverified':'重新抓取确认修改尚未生效，请客户完成网站修改','unavailable':'抓取或证据不可用，可重试核实'}
-    item=_queue_item('image_repair',row,state,f'图片修复核实 · 页面 #{row.page_id}',details[row.status],row.evidence,
+    detail=details[row.status]
+    if row.status in IMAGE_TERMINAL_STATES and not _image_terminal_evidence_is_current(row,evidence):
+        state,detail='failed_retry','当前记录缺少与本次结果一致的审核及前后快照依据，不能作为有效复核结果；请在站内优化重新检查并审核后核验'
+    elif row.status=='unavailable' and ((evidence or {}).get('current_observation') or {}).get('reason_code')=='baseline_incomplete':
+        detail='原始快照证据不完整；请先重新检查并审核图片建议，再发起既有核验流程'
+    item=_queue_item('image_repair',row,state,f'图片修复核实 · 页面 #{row.page_id}',detail,evidence,
                      f'/seo/site?site_id={row.site_id}&page_id={row.page_id}')
     retryable=row.status in {'unverified','unavailable'}
     item['can_retry']=bool(retryable and allow_retry)

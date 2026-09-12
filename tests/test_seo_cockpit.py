@@ -192,18 +192,77 @@ def test_image_retry_endpoint_records_actor_before_requeue():
 
 
 def test_customer_verification_image_requires_crawl_evidence_before_verified():
-    readonly = image_queue_item(_queue_row(status='unverified', page_id=8, evidence={'actual_alt': ''}))
+    unverified_evidence={'attempt':1,'reason':'重新抓取尚未确认审核方案生效','review_id':12,
+        'before_snapshot_id':80,'after_snapshot_id':81,'metric_key':'seo.images.verified_repair_count','change_abs':0}
+    readonly = image_queue_item(_queue_row(status='unverified',page_id=8,review_id=12,result_snapshot_id=81,
+        checked_at=datetime(2026,9,11,tzinfo=timezone.utc),evidence=unverified_evidence))
     assert readonly['state'] == 'pending_customer_action'
     assert readonly['can_retry'] is False and 'retry_action' not in readonly
     assert '查看权限' in readonly['retry_reason']
     assert image_queue_item(_queue_row(status='pending', page_id=8, evidence=None))['state'] == 'pending_system_check'
-    assert image_queue_item(_queue_row(status='verified', page_id=8, evidence={'actual_alt': '减速机'}))['state'] == 'verified'
+    verified=image_queue_item(_queue_row(status='verified',page_id=8,review_id=12,result_snapshot_id=82,
+        checked_at=datetime(2026,9,11,tzinfo=timezone.utc),evidence={'attempt':2,'reason':'重新抓取确认已应用审核方案',
+            'review_id':12,'before_snapshot_id':81,'after_snapshot_id':82,'metric_key':'seo.images.verified_repair_count',
+            'change_abs':1,'source_url':'https://example.cn/a.png?signature=private','actual_alt':'减速机'}))
+    assert verified['state']=='verified'
+    assert verified['evidence']['current_observation']['source_url']=='https://example.cn/a.png'
     unavailable = image_queue_item(_queue_row(status='unavailable', page_id=8, evidence={'error': 'timeout'}),allow_retry=True)
     assert unavailable['state'] == 'failed_retry'
     assert unavailable['can_retry'] is True
     assert unavailable['retry_action'] == {'method':'POST','url':'/api/v1/seo/image-verifications/1/retry','verification_id':1,'tenant_id':3,'site_id':7}
-    unverified = image_queue_item(_queue_row(status='unverified', page_id=8, evidence={'actual_alt': ''}),allow_retry=True)
+    unverified = image_queue_item(_queue_row(status='unverified',page_id=8,review_id=12,result_snapshot_id=81,
+        checked_at=datetime(2026,9,11,tzinfo=timezone.utc),evidence=unverified_evidence),allow_retry=True)
     assert unverified['can_retry'] is True and unverified['retry_action']['verification_id'] == 1
+
+
+def test_customer_verification_image_evidence_is_allowlisted_and_separates_history():
+    checked=datetime(2026,9,11,tzinfo=timezone.utc)
+    row=_queue_row(status='unverified',page_id=8,review_id=12,result_snapshot_id=82,checked_at=checked,
+        evidence={'attempt':3,'reason':'重新抓取尚未确认审核方案生效','review_id':12,
+            'before_snapshot_id':81,'after_snapshot_id':82,'metric_key':'seo.images.verified_repair_count','change_abs':0,
+            'source_url':'https://user:password@example.cn/a.png?signature=private#fragment','actual_alt':'待修正',
+            'error':'Bearer private','raw_response':{'password':'private'},
+            'attempt_history':[{'attempt':2,'status':'unavailable','checked_at':checked.isoformat(),
+                'result_snapshot_id':81,'reason':'抓取失败或缺少完整图片观测，不能判定修复',
+                'response':'private','source_url':'https://example.cn/a.png?token=private'}],
+            'retry_request':{'requested_at':checked.isoformat(),'requested_by':'17','from_status':'unavailable',
+                'request_headers':'Bearer private'}})
+    item=image_queue_item(row,allow_retry=True)
+    assert item['state']=='pending_customer_action'
+    assert item['evidence']=={
+        'attempt':3,
+        'current_observation':{'reason_code':'not_applied','source_url':'https://example.cn/a.png','review_id':12,
+            'before_snapshot_id':81,'after_snapshot_id':82,'actual_alt':'待修正',
+            'metric_key':'seo.images.verified_repair_count','change_abs':0},
+        'attempt_history':[{'attempt':2,'result_snapshot_id':81,'status':'unavailable','checked_at':checked.isoformat(),
+            'reason_code':'fetch_unavailable'}],
+        'retry_request':{'requested_at':checked.isoformat(),'requested_by':'17','from_status':'unavailable'},
+    }
+    assert 'private' not in str(item) and 'password' not in str(item)
+
+
+def test_customer_verification_image_pending_does_not_relabel_old_result_as_current():
+    checked=datetime(2026,9,11,tzinfo=timezone.utc)
+    row=_queue_row(status='pending',page_id=8,review_id=12,result_snapshot_id=82,evidence={
+        'attempt':3,'reason':'重新抓取确认已应用审核方案','review_id':12,'before_snapshot_id':81,
+        'after_snapshot_id':82,'metric_key':'seo.images.verified_repair_count','change_abs':1,
+        'attempt_history':[{'attempt':2,'status':'verified','checked_at':checked.isoformat(),
+            'reason':'重新抓取确认已应用审核方案','before_snapshot_id':80,'after_snapshot_id':81,'change_abs':1}]})
+    item=image_queue_item(row)
+    assert item['state']=='pending_system_check'
+    assert 'current_observation' not in item['evidence']
+    assert item['evidence']['attempt_history'][0]['reason_code']=='applied'
+
+
+def test_customer_verification_image_verified_fails_closed_without_current_snapshot_proof():
+    row=_queue_row(status='verified',page_id=8,review_id=12,result_snapshot_id=82,
+        checked_at=datetime(2026,9,11,tzinfo=timezone.utc),evidence={'reason':'重新抓取确认已应用审核方案',
+            'review_id':12,'before_snapshot_id':80,'after_snapshot_id':81,'metric_key':'seo.images.verified_repair_count',
+            'change_abs':1,'error':'password=private'})
+    item=image_queue_item(row,allow_retry=True)
+    assert item['state']=='failed_retry' and '不能作为有效复核结果' in item['detail']
+    assert item['can_retry'] is False and 'retry_action' not in item
+    assert 'private' not in str(item)
 
 
 def test_customer_verification_publication_draft_is_not_verified():
