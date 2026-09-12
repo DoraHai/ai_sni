@@ -32,6 +32,27 @@ class _HealthConnection:
 
     async def execute(self, statement, parameters=None):
         sql = str(statement)
+        if "demo_control" in sql and "pg_attribute" in sql:
+            return [
+                (name, kind, not_null, default)
+                for name, (kind, not_null, default) in seo_main.SEO_FIXTURE_REGISTRY_COLUMNS.items()
+            ]
+        if "demo_control" in sql and "pg_constraint" in sql:
+            return [
+                (name, " ".join(seo_main.SEO_FIXTURE_REGISTRY_CONSTRAINT_RULES[name]))
+                for name in seo_main.SEO_FIXTURE_REGISTRY_CONSTRAINTS
+            ]
+        if "demo_control" in sql and "pg_trigger" in sql:
+            return [
+                ("trg_fixture_registry_no_update", "before update for each row execute function reject_fixture_registry_mutation()", "O"),
+                ("trg_fixture_registry_no_delete", "before delete for each row execute function reject_fixture_registry_mutation()", "O"),
+                ("trg_fixture_registry_no_truncate", "before truncate for each statement execute function reject_fixture_registry_mutation()", "O"),
+            ]
+        if "demo_control" in sql and "pg_get_functiondef" in sql:
+            return [
+                ("is_nonnegative_integer_object", "returns boolean language sql jsonb_typeof jsonb_each not exists 0-9 value <> '{}'::jsonb", "i", True, "s"),
+                ("reject_fixture_registry_mutation", "returns trigger language plpgsql raise exception demo_control.fixture_registry is immutable", "v", False, "u"),
+            ]
         if "demo_tenant_binding_history" in sql and "pg_attribute" in sql:
             return [
                 (table, name, kind, not_null, seo_main.SEO_DEMO_BINDING_DEFAULTS.get((table, name)))
@@ -50,7 +71,7 @@ class _HealthConnection:
                 ("demo_tenant_binding_history", "trg_demo_tenant_binding_history_no_truncate", "before truncate for each statement reject_demo_tenant_binding_history_mutation"),
                 ("demo_tenant_bindings", "trg_demo_tenant_bindings_no_delete", "before delete for each row reject_demo_tenant_binding_delete"),
             ]
-            if self.revisions == ["0098_demo_binding_no_truncate"]:
+            if self.revisions in (["0098_demo_binding_no_truncate"], ["0099_demo_fixture_registry"]):
                 rows.append(("demo_tenant_bindings", "trg_demo_tenant_bindings_no_truncate", "before truncate for each statement reject_demo_tenant_binding_delete"))
             return rows
         if "pg_get_serial_sequence" in sql:
@@ -97,7 +118,7 @@ def test_seo_service_mounts_only_seo_routes() -> None:
     assert "from app.scheduler" not in source
     assert "start_seo_scheduler" in source
     assert "shutdown_seo_scheduler" in source
-    assert 'SEO_REQUIRED_SCHEMA_REVISION = "0098_demo_binding_no_truncate"' in source
+    assert 'SEO_REQUIRED_SCHEMA_REVISION = "0099_demo_fixture_registry"' in source
     assert "SELECT version_num FROM alembic_version ORDER BY version_num" in source
     assert 'schema_status = "error"' in source
     assert "response.status_code = 503" in source
@@ -126,7 +147,7 @@ def test_seo_health_fails_closed_when_database_revision_is_stale() -> None:
     assert response.status_code == 503
     assert result["db"] == "error"
     assert result["schema"] == "error"
-    assert "expected 0098_demo_binding_no_truncate" in result["db_error"]
+    assert "expected 0099_demo_fixture_registry" in result["db_error"]
 
 
 def test_seo_scheduler_registers_only_rank_collection() -> None:
@@ -261,7 +282,7 @@ def test_health_rejects_unknown_empty_or_multiple_revisions(revisions):
     structure.assert_not_called()
 
 
-@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate'])
+@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_demo_fixture_registry'])
 def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
     response = Response()
     with patch.object(seo_main, 'engine', _HealthEngine([revision])):
@@ -269,8 +290,8 @@ def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
     assert response.status_code == 200 and result['schema'] == 'ok'
     assert result['db'] == 'ok' and result['db_error'] is None
     assert result['schema_revision'] == revision
-    assert result['required_schema_revision'] == '0098_demo_binding_no_truncate'
-    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate']
+    assert result['required_schema_revision'] == '0099_demo_fixture_registry'
+    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_demo_fixture_registry']
 
 
 @pytest.mark.parametrize('failure', ['missing_column', 'wrong_type', 'has_index', 'has_constraint'])
@@ -306,7 +327,7 @@ def test_health_rejects_0095_when_geo_ticket_adoption_shape_is_incomplete(failur
 
 
 @pytest.mark.parametrize('failure', ['missing_table','missing_column','wrong_bigint','wrong_jsonb','catalog_denied'])
-@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate'])
+@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_demo_fixture_registry'])
 def test_health_rejects_incomplete_schema_even_at_allowed_revision(failure, revision):
     async def execute(self, statement, parameters=None):
         if 'geo_action_tickets' in str(statement):
@@ -353,8 +374,8 @@ def test_structure_contract_preserves_smallint_fields():
 
 
 def test_runtime_allowlist_contains_only_exact_reviewed_versions():
-    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate'})
-    assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate'})
+    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_demo_fixture_registry'})
+    assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_demo_fixture_registry'})
     assert (
         seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS - {'0094_seo_qa_batches'}
     ) <= seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS
@@ -387,6 +408,7 @@ def test_pre_0097_compatible_health_does_not_require_future_binding_tables(revis
 @pytest.mark.parametrize("revision,required", [
     ("0097_demo_tenant_bindings", False),
     ("0098_demo_binding_no_truncate", True),
+    ("0099_demo_fixture_registry", True),
 ])
 def test_binding_health_requires_current_truncate_only_at_0098(revision, required) -> None:
     response = Response()
@@ -398,6 +420,63 @@ def test_binding_health_requires_current_truncate_only_at_0098(revision, require
     assert binding_check.await_args.kwargs == {"require_current_truncate": required}
     assert response.status_code == 200
     assert result["schema"] == "ok"
+
+
+def test_0098_health_remains_compatible_without_fixture_registry() -> None:
+    response = Response()
+    with patch.object(seo_main, "engine", _HealthEngine(["0098_demo_binding_no_truncate"])), patch.object(
+        seo_main, "_check_fixture_registry_structure"
+    ) as registry_check:
+        result = asyncio.run(seo_main.seo_health(response))
+    assert response.status_code == 200
+    assert result["schema"] == "ok"
+    registry_check.assert_not_called()
+
+
+def test_0099_health_requires_strict_fixture_registry() -> None:
+    response = Response()
+    with patch.object(seo_main, "engine", _HealthEngine(["0099_demo_fixture_registry"])), patch.object(
+        seo_main, "_check_fixture_registry_structure", side_effect=RuntimeError("registry drift")
+    ) as registry_check:
+        result = asyncio.run(seo_main.seo_health(response))
+    registry_check.assert_awaited_once()
+    assert response.status_code == 503
+    assert result["schema"] == "error"
+    assert "registry drift" in result["db_error"]
+
+
+@pytest.mark.parametrize("failure", ["extra_trigger", "disabled_trigger", "wrong_function", "nullable", "missing_constraint"])
+def test_0099_health_rejects_fixture_registry_drift(failure) -> None:
+    original = _HealthConnection.execute
+
+    async def execute(self, statement, parameters=None):
+        sql = str(statement)
+        rows = await original(self, statement, parameters)
+        if failure == "extra_trigger" and "demo_control" in sql and "pg_trigger" in sql:
+            return [*rows, ("trg_fixture_registry_duplicate", "before update for each row execute function reject_fixture_registry_mutation()", "O")]
+        if failure == "disabled_trigger" and "demo_control" in sql and "pg_trigger" in sql:
+            return [(name, definition, "D" if name == "trg_fixture_registry_no_update" else enabled)
+                    for name, definition, enabled in rows]
+        if failure == "wrong_function" and "demo_control" in sql and "pg_get_functiondef" in sql:
+            return [
+                (name, "returns trigger language plpgsql return new" if name == "reject_fixture_registry_mutation" else definition,
+                 volatility, strict, parallel)
+                for name, definition, volatility, strict, parallel in rows
+            ]
+        if failure == "nullable" and "demo_control" in sql and "pg_attribute" in sql:
+            return [(name, kind, False if name == "status" else not_null, default) for name, kind, not_null, default in rows]
+        if failure == "missing_constraint" and "demo_control" in sql and "pg_constraint" in sql:
+            return [(name, definition) for name, definition in rows if name != "ck_demo_fixture_registry_status"]
+        return rows
+
+    response = Response()
+    with patch.object(_HealthConnection, "execute", execute), patch.object(
+        seo_main, "engine", _HealthEngine(["0099_demo_fixture_registry"])
+    ):
+        result = asyncio.run(seo_main.seo_health(response))
+    assert response.status_code == 503
+    assert result["schema"] == "error"
+    assert "fixture registry objects" in result["db_error"]
 
 
 def test_demo_binding_health_catalog_contract_is_exact_and_read_only() -> None:
