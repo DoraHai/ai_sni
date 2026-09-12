@@ -932,6 +932,13 @@ class SitePageUpdate(BaseModel):
         "error",
     ] | None = None
 
+    @field_validator("status")
+    @classmethod
+    def reject_system_verified_status(cls, value: str | None) -> str | None:
+        if value == "verified":
+            raise ValueError("已复检状态只能由系统抓取验收产生")
+        return value
+
 
 class SitePageSuggestionRequest(BaseModel):
     tenant_id: PositiveInt
@@ -4278,7 +4285,11 @@ async def update_site_page(
     tenant_id: int,
     req: SitePageUpdate,
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    if not ctx.can_edit("seo.site"):
+        raise HTTPException(403, "无权修改站内优化")
     row = await _site_page(session, page_id, tenant_id)
     await _require_resource_operational_site(session, tenant_id, row.site_id)
     values = req.model_dump(exclude_unset=True)

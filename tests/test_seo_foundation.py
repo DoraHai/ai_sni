@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from starlette.requests import Request
@@ -22,6 +23,7 @@ from app.api.seo import (
     KeywordImport,
     MetricSnapshotCreate,
     RankSnapshotCreate,
+    router as seo_router,
     SerpCollectRequest,
     SeoCrawlRequest,
     SeoContentAssistRequest,
@@ -51,6 +53,7 @@ from app.api.seo import (
     _rank_iso,
     _rank_provider_display_status,
     require_seo_module_access,
+    require_scoped_auth,
     _serp_error_payload,
     _normalize_brand_homepage,
     _page_tdk_suggestions,
@@ -77,6 +80,7 @@ from app.api.seo import (
     list_site_pages,
     submit_content_review,
     update_content_asset,
+    update_site_page,
 )
 from app.models.seo import (
     SeoBacklink,
@@ -370,8 +374,39 @@ def test_tdk_suggestions_preserve_manual_product_entities() -> None:
 
 
 def test_site_page_workflow_statuses_are_validated() -> None:
-    for status in ("proposed", "approved", "implemented", "verified"):
+    for status in ("proposed", "approved", "implemented"):
         assert SitePageUpdate(status=status).status == status
+    with pytest.raises(ValidationError, match="已复检状态只能由系统抓取验收产生"):
+        SitePageUpdate(status="verified")
+
+
+def test_site_page_patch_has_explicit_auth_and_edit_guard() -> None:
+    path = "/api/v1/seo/site-pages/{page_id}"
+    route = next(r for r in seo_router.routes if r.path == path and "PATCH" in r.methods)
+    dependencies = [dependency.call for dependency in route.dependant.dependencies]
+    assert require_seo_module_access in dependencies
+    assert require_scoped_auth in dependencies
+    assert _required("/api/v1/seo/site-pages/234", "PATCH") == ({"seo.site"}, True)
+
+
+def test_site_page_patch_rejects_cross_tenant_before_lookup() -> None:
+    context = AuthContext(7, "operator", "运营", 12, {"seo.site": "edit"})
+    session = AsyncMock()
+    with patch("app.api.seo._site_page", new=AsyncMock()) as lookup:
+        with pytest.raises(HTTPException) as error:
+            asyncio.run(update_site_page(234, 13, SitePageUpdate(status="implemented"), session, context))
+    assert getattr(error.value, "status_code", None) == 403
+    lookup.assert_not_awaited()
+
+
+def test_site_page_patch_rejects_view_only_before_lookup() -> None:
+    context = AuthContext(7, "viewer", "查看", 12, {"seo.site": "view"})
+    session = AsyncMock()
+    with patch("app.api.seo._site_page", new=AsyncMock()) as lookup:
+        with pytest.raises(HTTPException) as error:
+            asyncio.run(update_site_page(234, 12, SitePageUpdate(status="implemented"), session, context))
+    assert getattr(error.value, "status_code", None) == 403
+    lookup.assert_not_awaited()
 
 
 def test_manual_rank_snapshot_normalizes_browser_utc_timestamp() -> None:
