@@ -4,13 +4,14 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId } from './seoSiteContext'
-import { fetchSeoCustomerVerificationQueue, fetchSeoTaskCenter, recoverSeoAiOperation, retrySeoImageVerification, retrySeoTask } from '../../api/seo'
+import { auditSeoSitePage, fetchSeoCustomerVerificationQueue, fetchSeoTaskCenter, recoverSeoAiOperation, retrySeoImageVerification, retrySeoTask } from '../../api/seo'
 
 const router = useRouter()
 const data = ref({ items: [], total: 0, summary: {}, schedules: [] })
 const verification = ref({ items: [], total: 0, summary: {} })
 const verificationError = ref('')
 const verificationRetrying = ref('')
+const verificationRechecking = ref('')
 const filters = reactive({ kind: '', status: '', page: 1 })
 const loading = ref(false)
 const error = ref('')
@@ -82,6 +83,24 @@ async function retryVerification(row) {
   finally { verificationRetrying.value = '' }
 }
 
+async function recheckPage(row) {
+  if (row.kind !== 'page_recheck' || row.state !== 'pending_system_check' || !row.can_recheck || !row.recheck_action || verificationRechecking.value) return
+  const requestedScope = scope()
+  const tenantId = currentTenantId.value
+  const siteId = currentSeoSiteId.value
+  if (row.recheck_action.method !== 'POST' || row.recheck_action.tenant_id !== tenantId || row.recheck_action.site_id !== siteId) return
+  verificationRechecking.value = row.id
+  try {
+    await ElMessageBox.confirm('系统将重新抓取该公开页面并保存本次检测证据，不会修改客户网站。', '发起页面复检', { confirmButtonText: '开始复检', cancelButtonText: '取消', type: 'warning' })
+    if (scope() !== requestedScope) return
+    await auditSeoSitePage({ pageId: row.recheck_action.page_id, tenantId, siteId })
+    if (scope() === requestedScope) { ElMessage.success('页面复检已完成，队列已更新'); await load() }
+  } catch (e) {
+    if (e?.message && e.message !== 'cancel' && scope() === requestedScope) { ElMessage.error(e.message); await load() }
+  }
+  finally { verificationRechecking.value = '' }
+}
+
 async function retry(row) {
   if (!row.can_retry || retrying.value) return
   const requestedScope = scope()
@@ -124,7 +143,7 @@ function openSource(row) {
 watch(() => [currentTenantId.value, currentSeoSiteId.value, session.user?.id], () => {
   sequence++; resultSequence++; resultOpen.value = false; resultText.value = ''; resultError.value = ''
   data.value = { items: [], total: 0, summary: {}, schedules: [] }
-  verification.value = { items: [], total: 0, summary: {} }; verificationError.value = ''; verificationRetrying.value = ''
+  verification.value = { items: [], total: 0, summary: {} }; verificationError.value = ''; verificationRetrying.value = ''; verificationRechecking.value = ''
   filters.page = 1; load()
 })
 watch(() => [filters.kind, filters.status], () => { filters.page = 1; load() })
@@ -163,7 +182,7 @@ onUnmounted(() => { sequence++; resultSequence++; clearInterval(timer) })
         <div v-else class="table-wrap"><table><thead><tr><th>事项</th><th>状态</th><th>依据</th><th>更新时间</th><th>入口</th></tr></thead>
           <tbody><tr v-for="row in verification.items" :key="row.id"><td><strong>{{ verificationKinds[row.kind] }}</strong><small>{{ row.title }}</small></td>
             <td><span class="status" :class="row.state">{{ verificationStates[row.state] }}</span></td><td>{{ row.detail }}<small v-if="publicationAttempt(row)">{{ publicationAttemptLabel(publicationAttempt(row)) }}<template v-if="publicationAttempt(row).completed_at"><br>结束 {{ time(publicationAttempt(row).completed_at) }}</template></small></td><td>{{ time(row.updated_at) }}</td>
-            <td><button v-if="row.retry_action" :disabled="!!verificationRetrying" @click="retryVerification(row)">{{ verificationRetrying === row.id ? '提交中…' : '重新核实' }}</button><button v-if="row.action_url" @click="router.push(row.action_url)">查看处理</button><small v-if="row.retry_reason">{{ row.retry_reason }}</small></td></tr></tbody></table></div>
+            <td><button v-if="row.retry_action" :disabled="!!verificationRetrying || !!verificationRechecking" @click="retryVerification(row)">{{ verificationRetrying === row.id ? '提交中…' : '重新核实' }}</button><button v-if="row.recheck_action" :disabled="!!verificationRechecking || !!verificationRetrying" @click="recheckPage(row)">{{ verificationRechecking === row.id ? '复检中…' : '发起页面复检' }}</button><button v-if="row.action_url" @click="router.push(row.action_url)">查看处理</button><small v-if="row.retry_reason">{{ row.retry_reason }}</small><small v-if="row.recheck_reason">{{ row.recheck_reason }}</small></td></tr></tbody></table></div>
         <p v-if="verification.truncated" class="scope-note">当前仅展示已读取的 {{ verification.scanned_count }} 条来源记录，{{ verification.truncated_sources.join('、') }} 仍有更多记录，请按类型分批查看。</p>
       </section>
       <section class="task-history">

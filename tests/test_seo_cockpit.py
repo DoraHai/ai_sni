@@ -330,6 +330,23 @@ def test_customer_verification_page_and_backlink_use_observed_state():
     assert backlink_queue_item(_queue_row(verification={'state':'missing'}, missing_checks=2, **link))['state'] == 'failed_retry'
 
 
+def test_customer_verification_implemented_page_exposes_recheck_only_to_editors():
+    row=_queue_row(status='implemented',url='https://example.cn/a',title='A',http_status=200,
+        audit_score=80,issue_codes=[],last_error=None)
+    readonly=page_queue_item(row)
+    assert readonly['state']=='pending_system_check' and readonly['can_recheck'] is False
+    assert '客户已标记修改完成' in readonly['detail'] and '发起页面复检' in readonly['detail']
+    assert 'recheck_action' not in readonly and '只有查看权限' in readonly['recheck_reason']
+    editable=page_queue_item(row,allow_recheck=True)
+    assert editable['can_recheck'] is True
+    assert editable['recheck_action']=={'method':'POST','url':'/api/v1/seo/site-pages/1/audit',
+        'page_id':1,'tenant_id':3,'site_id':7}
+    pending=page_queue_item(_queue_row(status='pending',url='https://example.cn/b',title='B',
+        http_status=None,audit_score=None,issue_codes=[],last_error=None),allow_recheck=True)
+    assert pending['state']=='pending_system_check' and pending['can_recheck'] is False
+    assert 'recheck_action' not in pending and 'recheck_reason' not in pending
+
+
 def test_customer_verification_page_failure_uses_safe_evidence_and_next_step():
     row=_queue_row(status='error',url='https://user:password@example.cn/a?token=private#fragment',title=None,
         http_status=503,audit_score=None,issue_codes=['http_5xx','private provider response'],

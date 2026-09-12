@@ -240,13 +240,14 @@ def publication_queue_item(row,latest_attempt=None):
     return _queue_item('publication_url',row,state,f'{row.platform_name}发布地址 · {row.adapted_title or "内容"}',detail,evidence or None,
                        f'/seo/distribution?site_id={getattr(row,"site_id","") or ""}')
 
-def page_queue_item(row):
+def page_queue_item(row,allow_recheck=False):
     raw_issues=row.issue_codes if isinstance(row.issue_codes,list) else []
     issues=[code for code in raw_issues if isinstance(code,str) and code in PAGE_SAFE_ISSUE_CODES]
     if row.status in {'proposed','approved'}:state,detail='pending_customer_action','优化建议尚待客户在网站实施；完成后请回到站内优化发起既有页面检查'
     elif row.status=='needs_fix' and row.last_checked_at:state,detail='pending_customer_action','系统最近检查发现页面问题；请客户按当前建议修正，完成后再检查'
     elif row.status=='needs_fix':state,detail='pending_customer_action','页面仍有待处理问题；请客户按当前建议修正后再检查'
-    elif row.status in {'pending','implemented'}:state,detail='pending_system_check','等待页面抓取并核对实际结果'
+    elif row.status=='implemented':state,detail='pending_system_check','客户已标记修改完成，等待有权限的人员发起页面复检'
+    elif row.status=='pending':state,detail='pending_system_check','页面等待首次抓取并核对实际结果'
     elif row.status=='verified':state,detail='verified','重新抓取已确认修改生效'
     elif row.status=='error':
         reason=next((PAGE_FAILURE_REASONS[code] for code in issues if code in PAGE_FAILURE_REASONS),None)
@@ -256,8 +257,16 @@ def page_queue_item(row):
     evidence={'url':safe_url,'http_status':row.http_status if isinstance(row.http_status,int) and not isinstance(row.http_status,bool) else None,
               'audit_score':row.audit_score if isinstance(row.audit_score,(int,float)) and not isinstance(row.audit_score,bool) else None,
               'issue_codes':issues,'last_checked_at':row.last_checked_at} if row.last_checked_at else None
-    return _queue_item('page_recheck',row,state,f'页面重新检查 · {row.title or safe_url or ("页面 #"+str(row.id))}',detail,evidence,
-                       f'/seo/site?site_id={row.site_id}')
+    item=_queue_item('page_recheck',row,state,f'页面重新检查 · {row.title or safe_url or ("页面 #"+str(row.id))}',detail,evidence,
+                     f'/seo/site?site_id={row.site_id}')
+    recheckable=row.status=='implemented'
+    item['can_recheck']=bool(recheckable and allow_recheck)
+    if recheckable and allow_recheck:
+        item['recheck_action']={'method':'POST','url':f'/api/v1/seo/site-pages/{row.id}/audit',
+                                'page_id':int(row.id),'tenant_id':int(row.tenant_id),'site_id':int(row.site_id)}
+    elif recheckable:
+        item['recheck_reason']='当前账号只有查看权限，请由具备站内优化编辑权限的人员发起页面复检'
+    return item
 
 def _safe_backlink_verification(verification):
     if not isinstance(verification,dict):return None
@@ -536,7 +545,7 @@ async def customer_verification_queue(
         source_counts['page_recheck']=min(len(rows),500)
         if len(rows)>500:truncated_sources.append('page_recheck')
         rows=rows[:500]
-        items.extend(filter(None,(page_queue_item(row) for row in rows)))
+        items.extend(filter(None,(page_queue_item(row,ctx.can_edit('seo.site')) for row in rows)))
     if ctx.can_view('seo.links') and kind in (None,'backlink_verification'):
         rows=list(await session.scalars(select(SeoBacklink).where(SeoBacklink.tenant_id==tenant_id,
             SeoBacklink.site_id==site_id,SeoBacklink.status!='disavow').order_by(SeoBacklink.updated_at.desc(),SeoBacklink.id.desc()).limit(501)))
