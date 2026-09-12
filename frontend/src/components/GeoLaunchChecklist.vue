@@ -106,6 +106,7 @@ onBeforeUnmount(() => { epoch++ })
             <li v-for="item in stage.blockers" :key="`${stage.key}-${item.stage}-${item.key}`">
               {{ item.label }}
               <small v-if="item.requirement">对应{{ item.stage.toUpperCase() }}要求：{{ item.requirement }}</small>
+              <small v-if="item.evidenceNote">检查依据：{{ item.evidenceNote }}</small>
             </li>
           </ul>
           <ul v-else-if="stage.humanRequirements.length">

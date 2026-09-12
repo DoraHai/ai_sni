@@ -30,8 +30,9 @@ test('maps H3 blockers to customer Chinese and the exact backend requirement', (
   assert.deepEqual(stages[0].blockers[0], {
     key: 'customer_review_approved',
     stage: 'h3',
-    label: '当前母稿尚未通过客户确认',
+    label: '当前母稿尚未获得对应版本的客户确认',
     requirement: '当前母稿已经客户确认',
+    evidenceNote: null,
   })
   assert.equal(stages[1].blockers[0].stage, 'h3')
   assert.equal(stages[1].blockers[0].requirement, '当前母稿已经客户确认')
@@ -54,6 +55,31 @@ test('shows the H4 recheck blocker and preserves human acceptance as pending', (
   assert.equal(stages[1].statusLabel, '等待成功复查')
   assert.equal(stages[1].blockers[0].label, '尚无当前渠道稿正文匹配的成功复查')
   assert.equal(stages[1].blockers[0].requirement, '重新抓取的正文与登记渠道稿匹配')
+})
+
+test('explains when customer approval belongs to an older master version', () => {
+  const [h3] = describeAcceptanceSummary({
+    h3: {
+      status: 'blocked', system_ready: false,
+      blocking_reasons: ['customer_review_approved'],
+      requirements: [{
+        key: 'customer_review_approved',
+        description: '客户确认记录覆盖当前母稿版本',
+        source: 'system', satisfied: false,
+        evidence: {
+          article_created_at: '2026-09-11T02:00:00Z',
+          reviewed_at: '2026-09-11T01:00:00Z',
+          unsafe_note: 'must-not-leak',
+        },
+      }],
+    },
+    h4: {},
+  })
+
+  assert.equal(h3.blockers[0].label, '当前母稿尚未获得对应版本的客户确认')
+  assert.equal(h3.blockers[0].requirement, '客户确认记录覆盖当前母稿版本')
+  assert.equal(h3.blockers[0].evidenceNote, '当前母稿保存：2026/09/11 10:00；客户确认：2026/09/11 09:00')
+  assert.doesNotMatch(JSON.stringify(h3), /must-not-leak/)
 })
 
 test('unknown server reasons stay understandable and never become an action', () => {

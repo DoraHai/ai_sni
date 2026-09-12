@@ -8,7 +8,7 @@ const STATUS_LABELS = {
 
 const REASON_LABELS = {
   latest_master_exists: '当前母稿尚未保存',
-  customer_review_approved: '当前母稿尚未通过客户确认',
+  customer_review_approved: '当前母稿尚未获得对应版本的客户确认',
   current_channel_variant_exists: '当前母稿还没有渠道稿',
   published_record_exists: '当前版本尚未登记真实发布网址',
   no_duplicate_registration: '同一渠道和网址存在重复发布登记',
@@ -98,11 +98,16 @@ function blocker(summary, defaultStage, rawReason) {
   const stage = inherited ? 'h3' : defaultStage
   const key = inherited ? raw.slice(3) : raw
   const requirement = requirementFor(summary, stage, key)
+  const evidence = requirement?.evidence
+  const evidenceNote = key === 'customer_review_approved' && evidence
+    ? `当前母稿保存：${safeTime(evidence.article_created_at) || '时间未记录'}；客户确认：${safeTime(evidence.reviewed_at) || '时间未记录'}`
+    : null
   return {
     key,
     stage,
     label: REASON_LABELS[key] || requirement?.description || '对应验收条件尚未满足',
     requirement: requirement?.description || null,
+    evidenceNote,
   }
 }
 
