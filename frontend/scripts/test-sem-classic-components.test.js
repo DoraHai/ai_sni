@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
-const state = vi.hoisted(() => ({ loads: [], budgetLoads: [], prompts: [], confirmations: [], writes: [] }))
+const state = vi.hoisted(() => ({ loads: [], budgetLoads: [], modeLoads: [], prompts: [], confirmations: [], writes: [] }))
 const deferred = () => {
   let resolve
   let reject
@@ -50,6 +50,15 @@ vi.mock('../src/api/manage', () => ({
   }),
 }))
 
+vi.mock('../src/api/writeback', () => ({
+  WRITEBACK_CONFIRMATION: 'test-confirmation',
+  fetchWritebackMode: vi.fn((tenantId) => {
+    const request = deferred()
+    state.modeLoads.push({ tenantId, ...request })
+    return request.promise
+  }),
+}))
+
 import SearchTermsView from '../src/views/optimize/SearchTermsView.vue'
 import AccountBudgetView from '../src/views/manage/AccountBudgetView.vue'
 import { session } from '../src/store/session'
@@ -57,6 +66,7 @@ import { session } from '../src/store/session'
 afterEach(() => {
   state.loads.length = 0
   state.budgetLoads.length = 0
+  state.modeLoads.length = 0
   state.prompts.length = 0
   state.confirmations.length = 0
   state.writes.length = 0
@@ -163,13 +173,15 @@ describe('SEM classic account context', () => {
     wrapper.vm.input = 120
     const confirmingA = wrapper.vm.save()
     await nextTick()
+    const preflightA = state.modeLoads.at(-1)
 
     wrapper.vm.selectedAccountId = 12
     await nextTick()
     expect(wrapper.vm.data).toBe(null)
     expect(wrapper.vm.input).toBe(null)
-    state.confirmations.at(-1).resolve()
+    preflightA.resolve({ tenant_id: 1, accounts: [] })
     await confirmingA
+    expect(state.confirmations).toHaveLength(0)
     expect(state.writes).toHaveLength(0)
 
     const loadB = state.budgetLoads.find((item) => item.args.baiduAccountId === 12)
@@ -181,12 +193,13 @@ describe('SEM classic account context', () => {
     const lateAfterRevoke = state.budgetLoads.filter((item) => item.args.baiduAccountId === 12).at(-1)
     const revoking = wrapper.vm.save()
     await nextTick()
+    const preflightB = state.modeLoads.at(-1)
     session.refreshUser({ id: 7, tenant_id: null, permissions: {} })
     await nextTick()
     expect(wrapper.vm.data).toBe(null)
     expect(wrapper.vm.input).toBe(null)
     expect(wrapper.vm.loading).toBe(false)
-    state.confirmations.at(-1).resolve()
+    preflightB.resolve({ tenant_id: 1, accounts: [] })
     await revoking
     lateAfterRevoke.resolve({ status: 'ok', baidu_account_id: 12, budget: 999 })
     await nextTick()
