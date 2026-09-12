@@ -140,7 +140,9 @@ function openEdit(row) {
 async function saveEdit() {
   saving.value = true
   try {
-    await updateSeoSitePage({ pageId: editing.value.id, tenantId: currentTenantId.value, payload: { ...editForm, page_type: editForm.page_type || null, title_suggestion: editForm.title_suggestion || null, description_suggestion: editForm.description_suggestion || null } })
+    const payload = { ...editForm, page_type: editForm.page_type || null, title_suggestion: editForm.title_suggestion || null, description_suggestion: editForm.description_suggestion || null }
+    if (payload.status === 'verified') delete payload.status
+    await updateSeoSitePage({ pageId: editing.value.id, tenantId: currentTenantId.value, payload })
     editOpen.value = false; ElMessage.success('页面优化记录已保存'); await load()
   } catch (e) { ElMessage.error(e.message) } finally { saving.value = false }
 }
@@ -417,7 +419,7 @@ onBeforeUnmount(() => { disposed = true; ++sitesGeneration; clearTimeout(timer) 
         <el-form-item label="目标关键词"><el-select v-model="editForm.target_keyword_id" clearable filterable placeholder="选择该页面主攻关键词"><el-option v-for="item in keywordOptions" :key="item.id" :label="item.keyword" :value="item.id" /></el-select></el-form-item>
         <el-form-item label="建议 Title"><el-input v-model="editForm.title_suggestion" maxlength="300" show-word-limit /></el-form-item>
         <el-form-item label="建议 Description"><el-input v-model="editForm.description_suggestion" type="textarea" :rows="4" maxlength="1000" show-word-limit /></el-form-item>
-        <el-form-item label="处理状态"><el-select v-model="editForm.status"><el-option label="待检测" value="pending" /><el-option label="需优化" value="needs_fix" /><el-option label="待确认" value="proposed" /><el-option label="已确认" value="approved" /><el-option label="已实施，待复检" value="implemented" /><el-option label="已复检" value="verified" /><el-option label="健康" value="healthy" /><el-option label="检测失败" value="error" /></el-select></el-form-item>
+        <el-form-item label="处理状态"><el-select v-model="editForm.status"><el-option label="待检测" value="pending" /><el-option label="需优化" value="needs_fix" /><el-option label="待确认" value="proposed" /><el-option label="已确认" value="approved" /><el-option label="已实施，待复检" value="implemented" /><el-option v-if="editing?.status === 'verified'" label="已复检（系统验收）" value="verified" disabled /><el-option label="健康" value="healthy" /><el-option label="检测失败" value="error" /></el-select></el-form-item>
       </el-form>
       <template #footer><el-button @click="editOpen=false">取消</el-button><el-button type="primary" :loading="saving" @click="saveEdit">保存记录</el-button></template>
     </el-dialog>
