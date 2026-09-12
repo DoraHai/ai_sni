@@ -14,8 +14,15 @@
 `ctx.ensure_tenant` 和任务自身 `tenant_id` 双重限定。
 
 旧的 `approved`/`pending` 行如果没有完整审计事件，不能发布，也不能让 H3 显示客户审核已满足；需重新
-执行一次“提交审核 → 审核通过”。本变更需要迁移草案 `0075_geo_review_audit`，上线前须由数据库负责人
-在当前单线迁移头和生产变更窗口内协调执行；开发和测试阶段不运行生产迁移。
+执行一次“提交审核 → 审核通过”。本变更需要迁移 `0100_geo_review_audit`，并明确依赖共享规范迁移
+`0099_demo_fixture_registry`。已知生产共享库当前为 `0098_demo_binding_no_truncate`，上线时必须先完成并验证
+0099，再执行 0100；不得从 GEO 已退休的 `0074_geo_ticket_assignment` 直接升级。本分支仅同步规范迁移历史并
+移除该退休迁移文件，开发和测试阶段不运行生产迁移。
+
+迁移整合基准为 `codex/production-seo@bdb66d1290c62752d6bc898113b6bb51fa167cdb` 的规范历史，
+并使用 Draft PR #514 最终 HEAD `f6050b62aa12799d40e776457f025cfbf16e3ac4` 中逐字一致的 0099
+迁移文件。PR #514 尚未合并时，0100 只能审查和测试，不能先行部署。原 GEO 0074 的两列由规范
+`0095_adopt_geo_ticket` 以在线目录校验方式接管；同步分支不再保留第二个 Alembic head。
 
 ## 生产复验依据
 

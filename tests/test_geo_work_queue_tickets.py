@@ -213,22 +213,16 @@ async def test_conflicting_verdict_and_status_rejected_before_mutation():
         await patch_action_ticket(10, TicketUpdate(status=None), 7, ctx, session)
 
 
-def test_assignment_migration_preserves_existing_rows():
+def test_assignment_migration_is_adopted_by_canonical_chain():
     import importlib.util
     from pathlib import Path
-    from sqlalchemy import create_engine, text
-    from alembic.migration import MigrationContext
-    from alembic.operations import Operations
-    path = Path(__file__).parents[1] / 'migrations/versions/20260905_0074_geo_ticket_assignment.py'
+    path = Path(__file__).parents[1] / 'migrations/versions/20260909_0095_adopt_geo_ticket.py'
     spec = importlib.util.spec_from_file_location('ticket_assignment_migration', path)
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
-    with create_engine('sqlite://').begin() as connection:
-        connection.execute(text('CREATE TABLE geo_action_tickets (id INTEGER PRIMARY KEY, title TEXT)'))
-        connection.execute(text("INSERT INTO geo_action_tickets VALUES (1, 'existing')"))
-        migration.op = Operations(MigrationContext.configure(connection))
-        migration.upgrade()
-        row = connection.execute(text('SELECT title, owner_name, due_date FROM geo_action_tickets')).one()
-        assert tuple(row) == ('existing', None, None)
-        migration.downgrade()
-        assert connection.execute(text('SELECT title FROM geo_action_tickets')).scalar_one() == 'existing'
+    assert migration.revision == '0095_adopt_geo_ticket'
+    assert migration.down_revision == '0094_seo_qa_batches'
+    assert set(migration._EXPECTED_COLUMNS) == {'owner_name', 'due_date'}
+    assert migration._EXPECTED_COLUMNS['owner_name']['attnotnull'] is False
+    assert migration._EXPECTED_COLUMNS['due_date']['attnotnull'] is False
+    assert not (Path(__file__).parents[1] / 'migrations/versions/20260905_0074_geo_ticket_assignment.py').exists()
