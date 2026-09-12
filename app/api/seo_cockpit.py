@@ -1,6 +1,7 @@
 """Module contracts only: no cockpit callbacks and no external task execution."""
 from datetime import datetime,timezone
 from typing import Literal
+from urllib.parse import urlsplit,urlunsplit
 from fastapi import APIRouter,Depends,HTTPException,Query
 from pydantic import BaseModel,Field,PositiveInt,ConfigDict
 from sqlalchemy import func,select
@@ -29,6 +30,27 @@ PUBLICATION_DISCOVERY_REASONS={
     'http_4xx':'公开地址拒绝访问','http_5xx':'公开地址服务异常','empty_response':'公开地址没有返回可核验内容',
     'non_html':'公开地址没有返回网页内容','login_or_challenge':'公开地址要求登录或安全验证',
 }
+PAGE_SAFE_ISSUE_CODES={
+    'title','title_missing','title_too_long','description','description_missing','h1','h1_missing','h1_multiple',
+    'canonical','indexable','noindex','robots_blocked','schema','entity_schema','schema_invalid','heading_depth',
+    'substantial','thin_content','faq','citations','freshness','block_definition','block_numbers','block_comparison',
+    'block_howto','block_faq','NO_DEFINITION','NO_NUMBERS','NO_COMPARISON','NO_HOWTO','NO_FAQ','image_alt_missing',
+    'language','html_lang_missing','https','robots','ai_crawlers','llms','http_4xx','http_5xx','empty_response',
+    'non_html','timeout','too_many_redirects','dns_error','tls_error','blocked_address','connection_error',
+    'robots_unavailable','invalid_url','http_status_unavailable',
+}
+PAGE_FAILURE_REASONS={
+    'robots_blocked':'robots.txt 禁止系统核验','robots_unavailable':'robots.txt 暂时无法核实',
+    'timeout':'页面核验超时','too_many_redirects':'页面重定向次数过多','dns_error':'页面域名解析失败',
+    'tls_error':'页面安全连接失败','blocked_address':'页面地址不允许访问','connection_error':'页面连接失败',
+    'http_4xx':'页面拒绝访问','http_5xx':'页面服务异常','empty_response':'页面没有返回可核验内容',
+    'non_html':'页面没有返回 HTML 内容','invalid_url':'页面地址无效','http_status_unavailable':'页面状态不可用',
+}
+BACKLINK_STATES={'pending','not_checked','found','missing','unreachable','blocked','readable','internal'}
+BACKLINK_REASONS={
+    'timeout':'来源页核验超时','http_error':'来源页返回异常状态','empty_response':'来源页没有返回可核验内容',
+    'login_or_challenge':'来源页要求登录或安全验证','same_site':'来源页不是站外页面',
+}
 
 def _queue_item(kind,row,state,title,detail,evidence=None,action_url=None):
     updated=getattr(row,'updated_at',None) or getattr(row,'checked_at',None) or getattr(row,'last_checked_at',None) or getattr(row,'created_at',None)
@@ -36,6 +58,18 @@ def _queue_item(kind,row,state,title,detail,evidence=None,action_url=None):
     return {'id':f'{kind}:{row.id}','kind':kind,'state':state,'title':title,'detail':detail,
             'source_id':int(row.id),'site_id':int(row.site_id) if getattr(row,'site_id',None) is not None else None,
             'updated_at':updated,'evidence':evidence,'action_url':action_url}
+
+def _safe_evidence_url(value):
+    if not isinstance(value,str):return None
+    try:
+        parsed=urlsplit(value)
+        if parsed.scheme not in {'http','https'} or not parsed.hostname:return None
+        host=f'[{parsed.hostname}]' if ':' in parsed.hostname else parsed.hostname
+        port=parsed.port
+        netloc=f'{host}:{port}' if port is not None else host
+        return urlunsplit((parsed.scheme,netloc,parsed.path or '/', '', ''))
+    except ValueError:
+        return None
 
 def image_queue_item(row,allow_retry=False):
     states={'pending':'pending_system_check','checking':'pending_system_check','verified':'verified',
@@ -97,22 +131,56 @@ def publication_queue_item(row,latest_attempt=None):
                        f'/seo/distribution?site_id={getattr(row,"site_id","") or ""}')
 
 def page_queue_item(row):
-    if row.status in {'proposed','approved','needs_fix'}:state,detail='pending_customer_action','优化建议尚待客户在网站实施'
+    raw_issues=row.issue_codes if isinstance(row.issue_codes,list) else []
+    issues=[code for code in raw_issues if isinstance(code,str) and code in PAGE_SAFE_ISSUE_CODES]
+    if row.status in {'proposed','approved'}:state,detail='pending_customer_action','优化建议尚待客户在网站实施；完成后请回到站内优化发起既有页面检查'
+    elif row.status=='needs_fix' and row.last_checked_at:state,detail='pending_customer_action','系统最近检查发现页面问题；请客户按当前建议修正，完成后再检查'
+    elif row.status=='needs_fix':state,detail='pending_customer_action','页面仍有待处理问题；请客户按当前建议修正后再检查'
     elif row.status in {'pending','implemented'}:state,detail='pending_system_check','等待页面抓取并核对实际结果'
     elif row.status=='verified':state,detail='verified','重新抓取已确认修改生效'
-    elif row.status=='error':state,detail='failed_retry',row.last_error or '页面抓取失败，可重新检查'
+    elif row.status=='error':
+        reason=next((PAGE_FAILURE_REASONS[code] for code in issues if code in PAGE_FAILURE_REASONS),None)
+        state,detail='failed_retry',f'{reason or "系统未能核实页面"}；请检查页面地址、访问权限与网站状态后再检查'
     else:return None
-    evidence={'url':row.url,'http_status':row.http_status,'audit_score':row.audit_score,
-              'issue_codes':row.issue_codes,'last_checked_at':row.last_checked_at} if row.last_checked_at else None
-    return _queue_item('page_recheck',row,state,f'页面重新检查 · {row.title or row.url}',detail,evidence,
+    safe_url=_safe_evidence_url(row.url)
+    evidence={'url':safe_url,'http_status':row.http_status if isinstance(row.http_status,int) and not isinstance(row.http_status,bool) else None,
+              'audit_score':row.audit_score if isinstance(row.audit_score,(int,float)) and not isinstance(row.audit_score,bool) else None,
+              'issue_codes':issues,'last_checked_at':row.last_checked_at} if row.last_checked_at else None
+    return _queue_item('page_recheck',row,state,f'页面重新检查 · {row.title or safe_url or ("页面 #"+str(row.id))}',detail,evidence,
                        f'/seo/site?site_id={row.site_id}')
 
+def _safe_backlink_verification(verification):
+    if not isinstance(verification,dict):return None
+    safe={}
+    state=verification.get('state')
+    if state in BACKLINK_STATES:safe['state']=state
+    status=verification.get('http_status')
+    if isinstance(status,int) and not isinstance(status,bool):safe['http_status']=status
+    checked_at=verification.get('checked_at')
+    if isinstance(checked_at,(str,datetime)):safe['checked_at']=checked_at
+    reason=verification.get('reason')
+    if reason in BACKLINK_REASONS:safe['reason_code']=reason
+    rel=verification.get('rel')
+    if isinstance(rel,list):safe['rel']=[value for value in rel if isinstance(value,str) and value in {'nofollow','ugc','sponsored','noopener','noreferrer','external'}]
+    transition=verification.get('transition')
+    if transition in {'lost','recovered'}:safe['transition']=transition
+    return safe or None
+
 def backlink_queue_item(row):
-    verification=row.verification or {}; observed=verification.get('state')
+    verification=row.verification if isinstance(row.verification,dict) else {}; observed=verification.get('state')
+    raw_missing_checks=getattr(row,'missing_checks',0)
+    missing_checks=max(raw_missing_checks,0) if isinstance(raw_missing_checks,int) and not isinstance(raw_missing_checks,bool) else 0
     if row.status=='active' and observed=='found':state,detail='verified','抓取已确认来源页存在目标链接'
     elif observed in {None,'pending','not_checked'} and row.status!='lost':state,detail='pending_system_check','等待抓取来源页核验外链'
-    else:state,detail='failed_retry',verification.get('error') or '未确认有效外链，可重新核验'
-    evidence={'source_url':row.source_url,'target_url':row.target_url,'verification':verification,
+    elif row.status=='active' and observed=='missing' and missing_checks<2:
+        state,detail='pending_system_check','首次复核未发现目标链接；等待间隔期后的第二次系统核验，暂不判定丢失'
+    elif row.status=='lost' or observed=='missing':state,detail='failed_retry','连续复核未发现目标链接；请客户确认来源页链接恢复后再核验'
+    elif observed in {'unreachable','blocked'}:
+        reason=BACKLINK_REASONS.get(verification.get('reason')) or '系统未能读取来源页'
+        state,detail='failed_retry',f'{reason}；请检查来源页公开权限与可访问性，系统后续再核验'
+    else:state,detail='failed_retry','未取得有效外链证据；请在外链模块确认来源页和目标地址后再核验'
+    evidence={'source_url':_safe_evidence_url(row.source_url),'target_url':_safe_evidence_url(row.target_url),
+              'verification':_safe_backlink_verification(verification),'missing_checks':missing_checks,
               'last_checked_at':row.last_checked_at} if row.last_checked_at or verification else None
     return _queue_item('backlink_verification',row,state,f'外链核验 · {row.source_domain}',detail,evidence,
                        f'/seo/links?site_id={row.site_id}&tab=backlink')
@@ -361,7 +429,7 @@ async def customer_verification_queue(
         items.extend(filter(None,(page_queue_item(row) for row in rows)))
     if ctx.can_view('seo.links') and kind in (None,'backlink_verification'):
         rows=list(await session.scalars(select(SeoBacklink).where(SeoBacklink.tenant_id==tenant_id,
-            SeoBacklink.site_id==site_id).order_by(SeoBacklink.updated_at.desc(),SeoBacklink.id.desc()).limit(501)))
+            SeoBacklink.site_id==site_id,SeoBacklink.status!='disavow').order_by(SeoBacklink.updated_at.desc(),SeoBacklink.id.desc()).limit(501)))
         source_counts['backlink_verification']=min(len(rows),500)
         if len(rows)>500:truncated_sources.append('backlink_verification')
         rows=rows[:500]
