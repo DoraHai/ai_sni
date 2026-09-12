@@ -3,11 +3,16 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import asyncio
 import pytest
+from datetime import datetime
 
 from app.geo.acceptance_readiness import _variant_fingerprint, build_h3_h4_summary
 
 
 def row(**values):
+    if values.get("review_status") == "approved":
+        values.setdefault("reviewed_at", datetime(2026, 9, 11, 2, 0))
+    if "version_no" in values:
+        values.setdefault("created_at", datetime(2026, 9, 11, 1, 0))
     return NS(**values)
 
 
@@ -60,6 +65,25 @@ def test_h4_fails_closed_when_h3_review_is_not_approved_despite_healthy_monitor(
     assert result["h4"]["status"] == "blocked_by_h3"
     assert result["h4"]["system_ready"] is False
     assert result["h4"]["blocking_reasons"] == ["h3:customer_review_approved"]
+
+
+@pytest.mark.parametrize("reviewed_at", [None, datetime(2026, 9, 11, 0, 59)])
+def test_h3_rejects_missing_or_older_review_for_latest_master(reviewed_at):
+    task = row(id=14, review_status="approved", reviewed_at=reviewed_at)
+    article = row(id=23, version_no=6, created_at=datetime(2026, 9, 11, 1, 0))
+
+    result = build_h3_h4_summary(task, [article], [], [])
+
+    assert "customer_review_approved" in result["h3"]["blocking_reasons"]
+    requirement = next(
+        item for item in result["h3"]["requirements"]
+        if item["key"] == "customer_review_approved"
+    )
+    assert requirement["satisfied"] is False
+    assert requirement["evidence"]["article_ref"] == {
+        "module": "geo", "type": "article_version", "id": 23,
+    }
+    assert requirement["evidence"]["article_created_at"] == "2026-09-11T01:00:00Z"
 
 
 def test_h3_h4_summary_separates_stored_proof_from_human_channel_checks():

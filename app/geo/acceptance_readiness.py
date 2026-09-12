@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 from typing import Any, Iterable
 
@@ -46,6 +46,19 @@ def _public_monitor_error(value: Any) -> dict | None:
     }
 
 
+def _utc_naive(value: Any) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _safe_time(value: Any) -> str | None:
+    parsed = _utc_naive(value)
+    return parsed.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z") if parsed else None
+
+
 def build_h3_h4_summary(task, articles: Iterable, variants: Iterable, publications: Iterable) -> dict:
     """Describe stored evidence and the remaining human checks without writes."""
     article_rows = list(articles)
@@ -75,6 +88,14 @@ def build_h3_h4_summary(task, articles: Iterable, variants: Iterable, publicatio
     ]
 
     review_approved = task.review_status == "approved"
+    reviewed_at = _utc_naive(getattr(task, "reviewed_at", None))
+    latest_created_at = _utc_naive(getattr(latest, "created_at", None))
+    review_covers_latest = bool(
+        review_approved
+        and reviewed_at is not None
+        and latest_created_at is not None
+        and reviewed_at >= latest_created_at
+    )
     h3_requirements = [
         _requirement(
             "latest_master_exists",
@@ -85,10 +106,15 @@ def build_h3_h4_summary(task, articles: Iterable, variants: Iterable, publicatio
         ),
         _requirement(
             "customer_review_approved",
-            "当前母稿已经客户确认",
+            "客户确认记录覆盖当前母稿版本",
             "system",
-            review_approved,
-            {"review_status": task.review_status},
+            review_covers_latest,
+            {
+                "review_status": task.review_status,
+                "article_ref": ref("article_version", latest.id) if latest else None,
+                "article_created_at": _safe_time(getattr(latest, "created_at", None)),
+                "reviewed_at": _safe_time(getattr(task, "reviewed_at", None)),
+            },
         ),
         _requirement(
             "current_channel_variant_exists",
@@ -130,7 +156,7 @@ def build_h3_h4_summary(task, articles: Iterable, variants: Iterable, publicatio
         for item in h3_requirements
         if item["source"] == "system" and not item["satisfied"]
     ]
-    if not latest or not review_approved or not latest_variants:
+    if not latest or not review_covers_latest or not latest_variants:
         h3_status = "blocked"
     elif not current_publications:
         h3_status = "awaiting_real_publication"
