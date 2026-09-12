@@ -15,7 +15,30 @@ from app.geo.tenant_scope import GeoEntitlementUnavailable
 
 
 def setup_case(review='approved'):
-    task=NS(id=12,tenant_id=1,review_status=review)
+    review_audit = None
+    if review == 'approved':
+        review_audit = {
+            'schema_version': 'geo.review.audit.v1',
+            'events': [
+                {
+                    'event': 'submitted',
+                    'actor_user_id': 9,
+                    'actor_role': '编辑',
+                    'tenant_id': 1,
+                    'article_id': 16,
+                    'occurred_at': '2026-09-13T01:00:00Z',
+                },
+                {
+                    'event': 'approved',
+                    'actor_user_id': 9,
+                    'actor_role': '编辑',
+                    'tenant_id': 1,
+                    'article_id': 16,
+                    'occurred_at': '2026-09-13T01:01:00Z',
+                },
+            ],
+        }
+    task=NS(id=12,tenant_id=1,review_status=review,review_audit=review_audit)
     variant=NS(id=3,task_id=12,article_version_id=16,title='title',body_markdown='body',adapt_meta={})
     account=NS(id=4,channel_id=5,tenant_id=1,status='active',auth_type='webhook',credentials_encrypted='encrypted')
     channel=NS(id=5,tenant_id=1,enabled=True,publish_mode='auto_publish',channel_type='website')
@@ -32,7 +55,12 @@ def patches(args,perform, *, entitlement=True):
     stack.enter_context(patch('app.geo.content.routes._build_rule_input',AsyncMock(return_value=None)))
     stack.enter_context(patch('app.geo.content.routes._ensure_tenant_exists',AsyncMock(return_value=NS(id=1,name='租户名'))))
     stack.enter_context(patch('app.geo.content.routes._brand_context_for_task',AsyncMock(return_value=('业务品牌',['业务品牌']))))
-    stack.enter_context(patch('app.geo.content.gate.assert_can_publish',side_effect=lambda _,task,brand:assert_review_approved(task)))
+    stack.enter_context(patch(
+        'app.geo.content.gate.assert_can_publish',
+        side_effect=lambda _, task, brand, article_id=None: assert_review_approved(
+            task, article_id=article_id
+        ),
+    ))
     stack.enter_context(patch('app.geo.content.multi_push._perform_single_push',perform))
     stack.enter_context(patch('app.geo.content.multi_push.decrypt_credentials_json',return_value={'webhook_url':'https://example.com/publish'}))
     stack.enter_context(patch('app.geo.content.multi_push.asyncio.sleep',AsyncMock()))
@@ -45,8 +73,8 @@ def test_execution_gate_uses_current_business_brand_before_connector():
     session,args=setup_case();send=AsyncMock(return_value={'ok':True})
     gate=AsyncMock(return_value=('MAXXDRIVE',['MAXXDRIVE']))
     checked=[]
-    def assert_gate(_,*,task,brand):
-        assert_review_approved(task)
+    def assert_gate(_,*,task,brand,article_id=None):
+        assert_review_approved(task, article_id=article_id)
         checked.append(brand)
     with patches(args,send), \
          patch('app.geo.content.routes._brand_context_for_task',gate), \
@@ -71,8 +99,8 @@ def test_brand_change_after_reservation_blocks_before_connector():
     session,args=setup_case();send=AsyncMock()
     brands=iter([('旧品牌',['旧品牌']),('新品牌',['新品牌'])])
     gate=AsyncMock(side_effect=lambda *_,**__: next(brands))
-    def assert_gate(_,*,task,brand):
-        assert_review_approved(task)
+    def assert_gate(_,*,task,brand,article_id=None):
+        assert_review_approved(task, article_id=article_id)
         if brand == '新品牌':
             raise ValueError('品牌标准未通过')
     with patches(args,send), \

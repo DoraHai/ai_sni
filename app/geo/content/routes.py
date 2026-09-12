@@ -869,6 +869,15 @@ async def _task_payload(
     from app.geo.content.evidence import generation_evidence_readiness
     payload['generation_evidence'] = generation_evidence_readiness(_fact_dicts(facts))
     article = await _latest_article(session, task.id)
+    if article is not None:
+        payload.update(review_payload(task, article_id=article.id))
+    else:
+        payload.update({
+            "review_approved": False,
+            "review_audit_verified": False,
+            "review_submission_event": None,
+            "review_decision_event": None,
+        })
     variants = await _variants(session, task.id)
     current_brand_validation = None
     if article is not None:
@@ -8359,7 +8368,14 @@ async def submit_task_review(
     if article is None:
         raise HTTPException(400, "请先生成母稿后再提交审校")
     try:
-        apply_submit(task, note=req.note, submitter_id=ctx.user_id)
+        apply_submit(
+            task,
+            note=req.note,
+            submitter_id=ctx.user_id,
+            submitter_role=ctx.role_name,
+            tenant_id=task.tenant_id,
+            article_id=article.id,
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     await _sync_task_pipeline(session, task)
@@ -8388,9 +8404,13 @@ async def decide_task_review(
         raise HTTPException(400, "客户审核必须携带当前母稿和任务版本")
     task = await _get_task(session, task_id, tenant_id)
     await session.refresh(task, with_for_update=True)
+    if task.review_status != "pending":
+        raise HTTPException(400, "仅「待审」任务可审批")
+    article = await _latest_article(session, task.id, fresh=True)
+    if article is None:
+        raise HTTPException(400, "请先保存母稿后再审核")
     if req.expected_article_id is not None:
-        article = await _latest_article(session, task.id)
-        if article is None or article.id != req.expected_article_id:
+        if article.id != req.expected_article_id:
             raise HTTPException(409, "稿件版本已变化，请刷新后重新审核")
     if req.expected_updated_at is not None and req.expected_updated_at != _iso(task.updated_at):
         raise HTTPException(409, "任务或渠道稿已变化，请刷新后重新审核")
@@ -8400,6 +8420,9 @@ async def decide_task_review(
             decision=req.decision,
             note=req.note,
             reviewer_id=ctx.user_id,
+            reviewer_role=ctx.role_name,
+            tenant_id=task.tenant_id,
+            article_id=article.id,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -8472,7 +8495,7 @@ async def _write_publication(
     # This is the final write-side gate shared by manual registration, delivery
     # recovery, synchronous pushes and async workers. The route-level check is
     # only an early error; this locked check is authoritative.
-    assert_can_publish(rule_input, task=task, brand=brand)
+    assert_can_publish(rule_input, task=task, brand=brand, article_id=article.id)
     existing = await session.scalar(select(GeoPublication).where(
         GeoPublication.variant_id == variant.id,
         GeoPublication.published_url == published_url,
@@ -8531,7 +8554,7 @@ async def record_publication(
     tenant = await _ensure_tenant_exists(session, task.tenant_id)
     brand, _ = await _brand_context_for_task(session, task, tenant)
     try:
-        assert_can_publish(rule_input, task=task, brand=brand)
+        assert_can_publish(rule_input, task=task, brand=brand, article_id=article.id)
     except PublishGateError as exc:
         raise HTTPException(400, str(exc)) from exc
     registry_rows = registry_row_dicts(
@@ -8665,7 +8688,7 @@ async def push_variant_webhook(
     tenant = await _ensure_tenant_exists(session, task.tenant_id)
     brand, _ = await _brand_context_for_task(session, task, tenant)
     try:
-        assert_can_publish(rule_input, task=task, brand=brand)
+        assert_can_publish(rule_input, task=task, brand=brand, article_id=article.id)
     except PublishGateError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -8764,7 +8787,7 @@ async def push_variant_batch(
     tenant = await _ensure_tenant_exists(session, task.tenant_id)
     brand, _ = await _brand_context_for_task(session, task, tenant)
     try:
-        assert_can_publish(rule_input, task=task, brand=brand)
+        assert_can_publish(rule_input, task=task, brand=brand, article_id=article.id)
     except PublishGateError as exc:
         raise HTTPException(400, str(exc)) from exc
 
