@@ -23,6 +23,8 @@ SOURCE_ALLOWED_EXACT = {
     "tests/test_demo_tenant_binding_migration.py",
     "migrations/versions/20260909_0098_demo_binding_no_truncate.py",
     "tests/test_demo_binding_no_truncate_migration.py",
+    "migrations/versions/20260913_0099_geo_review_audit.py",
+    "tests/test_geo_review_audit_migration.py",
     "docs/DEMO_DATABASE_MIGRATION_0095.md",
     "app/seo_qa_documents.py",
     "tests/test_seo_qa_documents.py",

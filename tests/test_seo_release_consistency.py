@@ -23,6 +23,10 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("tests/test_demo_tenant_binding_migration.py")
     assert source_path_allowed("migrations/versions/20260909_0098_demo_binding_no_truncate.py")
     assert source_path_allowed("tests/test_demo_binding_no_truncate_migration.py")
+    assert source_path_allowed("migrations/versions/20260913_0099_geo_review_audit.py")
+    assert source_path_allowed("tests/test_geo_review_audit_migration.py")
+    assert not source_path_allowed("migrations/versions/20260913_0099_unreviewed_geo_change.py")
+    assert not source_path_allowed("tests/test_unreviewed_geo_migration.py")
     assert source_path_allowed("tests/test_sem_task_migration.py")
     assert source_path_allowed("frontend/package-lock.json")
     assert source_path_allowed("frontend/scripts/test-seo-editor.mjs")
@@ -86,6 +90,7 @@ def test_canonical_migrations_are_add_once_then_immutable() -> None:
         "migrations/versions/20260909_0096_sem_tasks.py",
         "migrations/versions/20260909_0097_demo_tenant_bindings.py",
         "migrations/versions/20260909_0098_demo_binding_no_truncate.py",
+        "migrations/versions/20260913_0099_geo_review_audit.py",
     ):
         assert source_change_allowed("A", migration)
         assert not source_change_allowed("M", migration)
@@ -118,7 +123,8 @@ def test_seo_workflows_gate_the_sem_task_migration_contract() -> None:
         assert "tests/test_sem_task_migration.py" in workflow
         assert "tests/test_demo_tenant_binding_migration.py" in workflow
         assert "tests/test_demo_binding_no_truncate_migration.py" in workflow
-        assert "0098_demo_binding_no_truncate (head)" in workflow
+        assert "tests/test_geo_review_audit_migration.py" in workflow
+        assert "0099_geo_review_audit (head)" in workflow
 
 
 def test_seo_frontend_workflows_gate_shared_session_regressions() -> None:
@@ -387,7 +393,7 @@ def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
 
 def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     root = Path(__file__).parents[1]
-    expected = "0098_demo_binding_no_truncate (head)"
+    expected = "0099_geo_review_audit (head)"
     baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
     production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
     assert expected in baseline
