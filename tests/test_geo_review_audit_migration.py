@@ -3,6 +3,7 @@ from pathlib import Path
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+import pytest
 from sqlalchemy.dialects.postgresql import JSONB
 
 
@@ -38,16 +39,13 @@ def test_review_audit_is_single_canonical_head_after_shared_0099():
     ).exists()
 
 
-def test_review_audit_upgrade_and_downgrade_touch_only_nullable_jsonb(monkeypatch):
+def test_review_audit_upgrade_adds_only_nullable_jsonb_and_downgrade_refuses(monkeypatch):
     migration = _migration()
     calls = []
 
     class Operations:
         def add_column(self, table, column):
             calls.append(("add", table, column))
-
-        def drop_column(self, table, column):
-            calls.append(("drop", table, column))
 
     monkeypatch.setattr(migration, "op", Operations())
     migration.upgrade()
@@ -60,5 +58,6 @@ def test_review_audit_upgrade_and_downgrade_touch_only_nullable_jsonb(monkeypatc
     )
     assert isinstance(column.type, JSONB)
 
-    migration.downgrade()
-    assert calls == [("drop", "geo_content_tasks", "review_audit")]
+    with pytest.raises(RuntimeError, match="retain persisted human review evidence"):
+        migration.downgrade()
+    assert calls == []

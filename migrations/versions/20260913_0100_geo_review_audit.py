@@ -27,4 +27,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column("geo_content_tasks", "review_audit")
+    raise RuntimeError(
+        "0100_geo_review_audit is irreversible: retain persisted human review evidence"
+    )
