@@ -174,6 +174,7 @@ python scripts/smoke_geo_webhook_push.py
 | 文档 | 用途 |
 | --- | --- |
 | 本文 `GEO_CODE_DELIVERY.md` | **仅代码交付**边界与验收 |
+| `GEO_SNIPERS_TENANT17_FIRST_ORDER_RUNBOOK_20260913.md` | tenant 17 正式首单唯一对象、账号权限、品牌事实与 website Webhook 配置顺序 |
 | `GEO_DELIVERY_CHECKLIST.md` | 功能清单；§4.2 生产机为后置 |
 | `LOCAL_GEO_DEMO.md` | 本地端口与入口 |
 | `GEO_PRODUCTION_RUNBOOK.md` | 将来有机器时的上线步骤 |
