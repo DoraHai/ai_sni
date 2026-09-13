@@ -5,12 +5,18 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   archiveSemAccount,
   createCustomer,
+  createGeoProject,
+  createSeoSite,
   fetchCustomers,
   fetchSemIdentityRepairCandidates,
   fetchSemIdentityRepairPreview,
+  fetchSemExecutionPolicy,
   setCustomerModule,
+  setSemExecutionPolicy,
   updateCustomer,
 } from '../../api/moduleAssets'
+import { createUser, fetchUsers } from '../../api/auth'
+import { fetchRoles } from '../../api/roles'
 import { session } from '../../store/session'
 import { createRequestController } from './semIdentityRepairRequests'
 
@@ -18,10 +24,46 @@ const router = useRouter()
 
 const loading = ref(false)
 const customers = ref([])
+const loginUsers = ref([])
 const identitySummary = ref({ checked_customers: 0, checked_accounts: 0, errors: 0, warnings: 0, healthy: true })
 const visible = ref(false)
 const editingId = ref(null)
-const form = reactive({ name: '', industry: '', business_desc: '', modules: ['sem'] })
+const form = reactive({ name: '', industry: '', business_desc: '' })
+const onboardingStep = ref(0)
+const onboardingSaving = ref(false)
+const onboardingRoles = ref([])
+const onboarding = reactive({
+  brand_name: '',
+  website: '',
+  create_account: true,
+  username: '',
+  password: '',
+  role_id: null,
+})
+const onboardingModules = reactive({
+  sem: { selected: false, status: 'trial', expires_at: '' },
+  seo: { selected: false, status: 'trial', expires_at: '' },
+  geo: { selected: false, status: 'trial', expires_at: '' },
+})
+const moduleVisible = ref(false)
+const moduleSaving = ref(false)
+const moduleContext = reactive({ tenantId: null, customerName: '', code: '' })
+const moduleForm = reactive({ status: 'trial', expires_at: '' })
+const accountVisible = ref(false)
+const accountCustomer = ref(null)
+const executionVisible = ref(false)
+const executionLoading = ref(false)
+const executionSaving = ref(false)
+const executionCustomer = ref(null)
+const executionPolicy = ref(null)
+const executionForm = reactive({
+  account_id: null,
+  enabled: false,
+  scopes: [],
+  daily_live_action_limit: 20,
+  max_bid_change_pct: 10,
+  change_reason: '',
+})
 const repairVisible = ref(false)
 const repairLoading = ref(false)
 const repairCandidates = ref({ groups: [], summary: {} })
@@ -34,7 +76,22 @@ const repairPreviewRequestId = ref(0)
 const repairCandidateRequests = createRequestController()
 const repairPreviewRequests = createRequestController()
 const moduleLabels = { sem: 'SEM', seo: 'SEO', geo: 'GEO' }
+const moduleStatusLabels = { active: '正式', trial: '试用', suspended: '停用', closed: '关闭' }
+const semScopeLabels = {
+  account_budget: '账户预算', adgroup_bid: '单元出价', adgroup_landing_url: '单元落地页',
+  adgroup_negative_words: '单元否词', adgroup_pause: '单元启停', campaign_budget: '计划预算',
+  campaign_negative_words: '计划否词', campaign_pause: '计划启停', campaign_region: '计划地域',
+  campaign_schedule: '计划时段', keyword_bid: '关键词出价', keyword_create: '新增关键词',
+  keyword_match_type: '关键词匹配', keyword_pause: '关键词启停',
+}
 const editingCustomer = computed(() => customers.value.find((row) => row.id === editingId.value))
+const selectedOnboardingModules = computed(() => (
+  Object.entries(onboardingModules).filter(([, value]) => value.selected).map(([code]) => code)
+))
+const needsWebsite = computed(() => onboardingModules.seo.selected || onboardingModules.geo.selected)
+const selectedOnboardingRole = computed(() => (
+  onboardingRoles.value.find((role) => role.id === onboarding.role_id)
+))
 const repairCandidateCustomers = computed(() => {
   const seen = new Set()
   return (repairCandidates.value.groups || []).flatMap((group) => group.customers || []).filter((row) => {
@@ -90,8 +147,15 @@ function moduleRow(row, code) {
 async function load() {
   loading.value = true
   try {
-    const result = await fetchCustomers()
+    const canManageAccounts = session.canEdit('settings.accounts')
+    const [result, users, roles] = await Promise.all([
+      fetchCustomers(),
+      canManageAccounts ? fetchUsers() : Promise.resolve(null),
+      canManageAccounts ? fetchRoles() : Promise.resolve(null),
+    ])
     customers.value = result.customers || []
+    loginUsers.value = users?.users || []
+    onboardingRoles.value = roles?.roles || []
     identitySummary.value = result.identity_summary || { checked_customers: 0, checked_accounts: 0, errors: 0, warnings: 0, healthy: true }
   }
   catch (error) { ElMessage.error(error.message) }
@@ -100,13 +164,22 @@ async function load() {
 
 function openCreate() {
   editingId.value = null
-  Object.assign(form, { name: '', industry: '', business_desc: '', modules: ['sem'] })
+  Object.assign(form, { name: '', industry: '', business_desc: '' })
+  Object.assign(onboarding, {
+    brand_name: '', website: '', create_account: session.canEdit('settings.accounts'),
+    username: '', password: '', role_id: null,
+  })
+  const trialExpiry = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)
+  for (const item of Object.values(onboardingModules)) {
+    Object.assign(item, { selected: false, status: 'trial', expires_at: trialExpiry })
+  }
+  onboardingStep.value = 0
   visible.value = true
 }
 
 function openEdit(row) {
   editingId.value = row.id
-  Object.assign(form, { name: row.name, industry: row.industry || '', business_desc: row.business_desc || '', modules: row.modules.filter((m) => m.available).map((m) => m.module_code) })
+  Object.assign(form, { name: row.name, industry: row.industry || '', business_desc: row.business_desc || '' })
   visible.value = true
 }
 
@@ -148,17 +221,196 @@ async function save() {
         confirm_bound_name_change: boundNameChanged,
         name_change_reason: nameChangeReason,
       })
-      for (const code of Object.keys(moduleLabels)) {
-        await setCustomerModule(editingId.value, code, { status: form.modules.includes(code) ? 'active' : 'suspended' })
-      }
     } else {
-      await createCustomer({ name: form.name, industry: form.industry || null, business_desc: form.business_desc || null, modules: form.modules })
+      await createCustomer({ name: form.name, industry: form.industry || null, business_desc: form.business_desc || null, modules: [] })
     }
     visible.value = false
-    ElMessage.success('客户与模块配置已保存')
+    ElMessage.success('客户资料已保存')
     await load()
     session.requestTenantReload()
   } catch (error) { ElMessage.error(error.message) }
+}
+
+function validateOnboardingStep(step = onboardingStep.value) {
+  if (step === 0 && !form.name.trim()) {
+    ElMessage.warning('请填写客户名称')
+    return false
+  }
+  if (step === 1 && !selectedOnboardingModules.value.length) {
+    ElMessage.warning('请至少开通一个模块')
+    return false
+  }
+  if (step === 2 && needsWebsite.value) {
+    const value = onboarding.website.trim()
+    if (!value) {
+      ElMessage.warning('SEO 或 GEO 开户必须填写客户官网')
+      return false
+    }
+    try {
+      const parsed = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`)
+      if (!parsed.hostname.includes('.')) throw new Error('invalid hostname')
+    } catch {
+      ElMessage.warning('请填写有效的官网域名或网址')
+      return false
+    }
+  }
+  if (step === 3 && onboarding.create_account) {
+    if (!onboarding.username.trim() || onboarding.password.length < 8 || !onboarding.role_id) {
+      ElMessage.warning('请填写用户名、至少 8 位的初始密码并选择角色')
+      return false
+    }
+  }
+  return true
+}
+
+function nextOnboardingStep() {
+  if (!validateOnboardingStep()) return
+  onboardingStep.value = Math.min(4, onboardingStep.value + 1)
+}
+
+async function submitOnboarding() {
+  for (let step = 0; step <= 3; step += 1) {
+    if (!validateOnboardingStep(step)) {
+      onboardingStep.value = step
+      return
+    }
+  }
+  onboardingSaving.value = true
+  let tenantId = null
+  const completed = []
+  try {
+    const customer = await createCustomer({
+      name: form.name.trim(),
+      industry: form.industry.trim() || null,
+      business_desc: form.business_desc.trim() || null,
+      modules: [],
+    })
+    tenantId = customer.id
+    completed.push('客户资料')
+
+    for (const code of selectedOnboardingModules.value) {
+      const config = onboardingModules[code]
+      await setCustomerModule(tenantId, code, {
+        status: config.status,
+        expires_at: config.expires_at || null,
+      })
+      completed.push(`${moduleLabels[code]} 开通`)
+    }
+
+    const brandName = onboarding.brand_name.trim() || form.name.trim()
+    if (onboardingModules.seo.selected) {
+      await createSeoSite({ tenant_id: tenantId, name: `${brandName}官网`, domain: onboarding.website.trim() })
+      completed.push('SEO 网站')
+    }
+    if (onboardingModules.geo.selected) {
+      await createGeoProject({
+        tenant_id: tenantId,
+        name: `${brandName} GEO 项目`,
+        brand_name: brandName,
+        domain: onboarding.website.trim(),
+        description: form.business_desc.trim() || null,
+      })
+      completed.push('GEO 项目')
+    }
+    if (onboarding.create_account) {
+      await createUser({
+        username: onboarding.username.trim(),
+        password: onboarding.password,
+        displayName: `${brandName} 操作账号`,
+        roleId: onboarding.role_id,
+        tenantId,
+      })
+      completed.push('登录账号')
+    }
+
+    visible.value = false
+    onboarding.password = ''
+    ElMessage.success(`开户完成：${completed.join('、')}`)
+    await load()
+    session.requestTenantReload()
+  } catch (error) {
+    const prefix = tenantId
+      ? `客户 #${tenantId} 已创建，已完成：${completed.join('、') || '无'}。`
+      : ''
+    ElMessage({
+      type: 'error',
+      message: `${prefix}${error.message || '开户失败'}；请在客户列表继续补齐，系统不会重复创建客户。`,
+      duration: 8000,
+    })
+    if (tenantId) visible.value = false
+    onboarding.password = ''
+    await load()
+    session.requestTenantReload()
+  } finally {
+    onboardingSaving.value = false
+  }
+}
+
+function effectiveModuleState(row, code) {
+  const item = moduleRow(row, code)
+  if (!item) return { label: '未开通', type: 'info' }
+  if (['active', 'trial'].includes(item.status) && item.available !== true) {
+    return { label: '已过期', type: 'warning' }
+  }
+  return {
+    label: moduleStatusLabels[item.status] || '状态未知',
+    type: item.available ? 'success' : item.status === 'suspended' ? 'warning' : 'info',
+  }
+}
+
+function openModule(row, code) {
+  const item = moduleRow(row, code)
+  Object.assign(moduleContext, { tenantId: row.id, customerName: row.name, code })
+  Object.assign(moduleForm, {
+    status: item?.status || 'trial',
+    expires_at: item?.expires_at || '',
+  })
+  moduleVisible.value = true
+}
+
+async function saveModule() {
+  const label = moduleLabels[moduleContext.code]
+  const status = moduleStatusLabels[moduleForm.status]
+  const expiry = moduleForm.expires_at || '不设到期日'
+  try {
+    await ElMessageBox.confirm(
+      `确认将“${moduleContext.customerName}”的 ${label} 设置为“${status}”，${expiry}？历史数据会保留。`,
+      '确认模块变更',
+      { type: ['suspended', 'closed'].includes(moduleForm.status) ? 'warning' : 'info' },
+    )
+  } catch { return }
+  moduleSaving.value = true
+  try {
+    await setCustomerModule(moduleContext.tenantId, moduleContext.code, {
+      status: moduleForm.status,
+      expires_at: moduleForm.expires_at || null,
+    })
+    moduleVisible.value = false
+    ElMessage.success(`${label} 模块已更新`)
+    await load()
+    session.requestTenantReload()
+  } catch (error) {
+    ElMessage.error(error.message || `${label} 模块更新失败，原显示状态将重新读取`)
+    await load()
+  } finally {
+    moduleSaving.value = false
+  }
+}
+
+function showAccounts(row) {
+  accountCustomer.value = row
+  accountVisible.value = true
+}
+
+const selectedLoginUsers = computed(() => (
+  accountCustomer.value
+    ? loginUsers.value.filter((item) => item.tenant_id === accountCustomer.value.id)
+    : []
+))
+
+function connectionLabel(item) {
+  if (!item || item.state === 'no_records') return '无接入记录'
+  return `${item.record_count} 条记录 · 完整性未评估`
 }
 
 async function archiveAccount(row, account) {
@@ -194,6 +446,91 @@ async function archiveAccount(row, account) {
 
 function rebindAccount(row) {
   router.push({ path: '/onboarding', query: { tenant_id: row.id, rebind: '1' } })
+}
+
+const selectedExecutionAccount = computed(() => (
+  executionPolicy.value?.accounts?.find((item) => item.id === executionForm.account_id) || null
+))
+
+function hydrateExecutionForm(account) {
+  Object.assign(executionForm, {
+    account_id: account?.id || null,
+    enabled: account?.enabled === true,
+    scopes: [...(account?.scopes || [])],
+    daily_live_action_limit: account?.daily_live_action_limit || 20,
+    max_bid_change_pct: account?.max_bid_change_pct || 10,
+    change_reason: '',
+  })
+}
+
+function selectExecutionAccount(accountId) {
+  hydrateExecutionForm(executionPolicy.value?.accounts?.find((item) => item.id === accountId))
+}
+
+async function openExecutionPolicy(row) {
+  executionVisible.value = true
+  executionLoading.value = true
+  executionCustomer.value = row
+  executionPolicy.value = null
+  try {
+    const result = await fetchSemExecutionPolicy(row.id)
+    executionPolicy.value = result
+    const first = result.accounts?.find((item) => item.status === 'active') || result.accounts?.[0]
+    hydrateExecutionForm(first)
+  } catch (error) {
+    ElMessage.error(error.message || '执行权限读取失败')
+    executionVisible.value = false
+  } finally { executionLoading.value = false }
+}
+
+function isExpandedGrant() {
+  const current = selectedExecutionAccount.value
+  if (!current) return executionForm.enabled
+  const currentScopes = new Set(current.scopes || [])
+  return (
+    (executionForm.enabled && !current.enabled)
+    || executionForm.scopes.some((scope) => !currentScopes.has(scope))
+    || executionForm.daily_live_action_limit > current.daily_live_action_limit
+    || executionForm.max_bid_change_pct > current.max_bid_change_pct
+  )
+}
+
+async function persistExecutionPolicy({ pause = false } = {}) {
+  const current = selectedExecutionAccount.value
+  if (!current || current.status !== 'active') return ElMessage.warning('请选择 active 推广账户')
+  const enabled = pause ? false : executionForm.enabled
+  if (enabled && !executionForm.scopes.length) return ElMessage.warning('有限真写至少选择一个动作')
+  if (executionForm.change_reason.trim().length < 4) return ElMessage.warning('请填写至少 4 个字的变更原因')
+  const needsStrongConfirm = pause || (current.enabled && !enabled) || isExpandedGrant()
+  try {
+    await ElMessageBox.confirm(
+      pause
+        ? `确认立即暂停“${current.username}”的全部真实回写？后续动作将降为演练。`
+        : `确认保存“${current.username}”的执行权限？${enabled ? '命中环境总闸后将允许所选动作有限真写。' : '后续动作将保持演练。'}`,
+      needsStrongConfirm ? '执行权限二次确认' : '确认执行权限变更',
+      { type: needsStrongConfirm ? 'warning' : 'info', confirmButtonText: pause ? '立即暂停' : '确认保存' },
+    )
+  } catch { return }
+  executionSaving.value = true
+  try {
+    const result = await setSemExecutionPolicy(executionCustomer.value.id, current.id, {
+      enabled,
+      scopes: [...executionForm.scopes],
+      daily_live_action_limit: executionForm.daily_live_action_limit,
+      max_bid_change_pct: executionForm.max_bid_change_pct,
+      expected_version: executionPolicy.value.version,
+      change_reason: executionForm.change_reason.trim(),
+    })
+    executionPolicy.value = result
+    hydrateExecutionForm(result.accounts?.find((item) => item.id === current.id))
+    ElMessage.success(pause ? '真实回写已暂停' : '执行权限已保存')
+  } catch (error) {
+    ElMessage.error(error.message || '执行权限保存失败，请刷新后重试')
+    try {
+      executionPolicy.value = await fetchSemExecutionPolicy(executionCustomer.value.id)
+      hydrateExecutionForm(executionPolicy.value.accounts?.find((item) => item.id === current.id))
+    } catch { /* keep the original error visible */ }
+  } finally { executionSaving.value = false }
 }
 
 async function loadRepairCandidates() {
@@ -282,7 +619,7 @@ onMounted(load)
 <template>
   <div class="module-page" v-loading="loading">
     <header class="page-head">
-      <div><h2>客户与模块</h2><p>平台级客户主档仅由超级管理员维护；模块内只显示已开通该模块的客户。</p></div>
+      <div><h2>客户与业务</h2><p>客户主档、模块订阅和已有接入记录；数据完整性不会由记录数量推断。</p></div>
       <div class="head-actions">
         <el-button @click="load">重新检查归属</el-button>
         <el-button type="warning" plain @click="openRepairPreview">重复客户只读预演</el-button>
@@ -299,6 +636,16 @@ onMounted(load)
     <el-table :data="customers" border>
       <el-table-column prop="name" label="客户" min-width="180" />
       <el-table-column prop="industry" label="行业" min-width="150" />
+      <el-table-column label="客户状态" width="110">
+        <template #default><el-tag type="info">未提供</el-tag></template>
+      </el-table-column>
+      <el-table-column label="登录账号" min-width="160">
+        <template #default="{ row }">
+          <div>{{ row.login_accounts?.account_count || 0 }} 个 · 启用 {{ row.login_accounts?.active_count || 0 }}</div>
+          <small>{{ row.login_accounts?.last_login_at ? `最近登录 ${row.login_accounts.last_login_at}` : '从未登录' }}</small>
+          <el-button v-if="session.canEdit('settings.accounts')" link type="primary" @click="showAccounts(row)">查看账号</el-button>
+        </template>
+      </el-table-column>
       <el-table-column label="SEM 推广账户归属" min-width="320">
         <template #default="{ row }">
           <div v-if="row.sem_accounts?.some((a) => a.status !== 'archived')" class="account-bindings">
@@ -315,6 +662,10 @@ onMounted(load)
             v-if="moduleRow(row, 'sem')?.available"
             type="primary" plain size="small" @click="rebindAccount(row)"
           >重新绑定并授权</el-button>
+          <el-button
+            v-if="moduleRow(row, 'sem')"
+            type="warning" plain size="small" @click="openExecutionPolicy(row)"
+          >执行权限</el-button>
         </template>
       </el-table-column>
       <el-table-column label="归属检查" min-width="230">
@@ -328,13 +679,18 @@ onMounted(load)
           </div>
         </template>
       </el-table-column>
-      <el-table-column v-for="code in ['sem','seo','geo']" :key="code" :label="moduleLabels[code]" width="105" align="center">
-        <template #default="{ row }"><el-tag :type="moduleRow(row, code)?.available ? 'success' : 'info'">{{ moduleRow(row, code)?.available ? '已开通' : '未开通' }}</el-tag></template>
+      <el-table-column v-for="code in ['sem','seo','geo']" :key="code" :label="moduleLabels[code]" min-width="145" align="center">
+        <template #default="{ row }">
+          <el-tag :type="effectiveModuleState(row, code).type">{{ effectiveModuleState(row, code).label }}</el-tag>
+          <small class="module-expiry">{{ moduleRow(row, code)?.expires_at ? `至 ${moduleRow(row, code).expires_at}` : '无到期日' }}</small>
+          <small class="connection-state">{{ connectionLabel(row.data_connections?.[code]) }}</small>
+          <el-button link type="primary" @click="openModule(row, code)">配置</el-button>
+        </template>
       </el-table-column>
       <el-table-column label="操作" width="100"><template #default="{ row }"><el-button link type="primary" @click="openEdit(row)">配置</el-button></template></el-table-column>
     </el-table>
-    <el-dialog v-model="visible" :title="editingId ? '配置客户' : '新建客户'" width="560px">
-      <el-form label-width="90px">
+    <el-dialog v-model="visible" :title="editingId ? '配置客户' : '新客户开户'" :width="editingId ? '560px' : '760px'" :close-on-click-modal="false">
+      <el-form v-if="editingId" label-width="90px">
         <el-alert
           v-if="editingCustomer?.identity_locked"
           title="该客户已绑定百度推广账户。正常品牌更名需填写原因并二次确认；若账户归属错误，必须走人工审核的数据迁移流程。"
@@ -346,10 +702,210 @@ onMounted(load)
         <el-form-item label="客户名称"><el-input v-model="form.name" maxlength="100" /></el-form-item>
         <el-form-item label="所属行业"><el-input v-model="form.industry" maxlength="100" /></el-form-item>
         <el-form-item label="业务说明"><el-input v-model="form.business_desc" type="textarea" :rows="3" /></el-form-item>
-        <el-form-item label="开通模块"><el-checkbox-group v-model="form.modules"><el-checkbox v-for="(label, code) in moduleLabels" :key="code" :value="code">{{ label }}</el-checkbox></el-checkbox-group></el-form-item>
       </el-form>
-      <template #footer><el-button @click="visible=false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template>
+      <div v-else class="onboarding-wizard">
+        <el-steps :active="onboardingStep" finish-status="success" align-center>
+          <el-step title="客户资料" />
+          <el-step title="开通业务" />
+          <el-step title="官网与项目" />
+          <el-step title="登录账号" />
+          <el-step title="确认开户" />
+        </el-steps>
+
+        <section v-if="onboardingStep === 0" class="onboarding-panel">
+          <h3>先建立客户主档</h3>
+          <p>这些资料会被 SEO、GEO 和获客工作台共同使用。</p>
+          <el-form label-width="96px">
+            <el-form-item label="客户名称" required><el-input v-model="form.name" maxlength="100" placeholder="公司或签约主体名称" /></el-form-item>
+            <el-form-item label="品牌名称"><el-input v-model="onboarding.brand_name" maxlength="160" placeholder="对外使用的品牌；不填则沿用客户名称" /></el-form-item>
+            <el-form-item label="所属行业"><el-input v-model="form.industry" maxlength="100" placeholder="例如：工业涂料" /></el-form-item>
+            <el-form-item label="业务说明"><el-input v-model="form.business_desc" type="textarea" :rows="4" placeholder="主要产品、服务对象和服务区域" /></el-form-item>
+          </el-form>
+        </section>
+
+        <section v-else-if="onboardingStep === 1" class="onboarding-panel">
+          <h3>选择客户购买的业务</h3>
+          <p>可以只开一个模块；以后可在客户列表继续增开或停用。</p>
+          <div class="onboarding-module-grid">
+            <article v-for="code in ['sem','seo','geo']" :key="code" :class="{ selected: onboardingModules[code].selected }">
+              <el-checkbox v-model="onboardingModules[code].selected"><b>{{ moduleLabels[code] }}</b></el-checkbox>
+              <small>{{ code === 'sem' ? '百度推广账户与投放优化' : code === 'seo' ? '官网搜索表现与内容优化' : 'AI 可见度、内容与渠道运营' }}</small>
+              <template v-if="onboardingModules[code].selected">
+                <el-select v-model="onboardingModules[code].status" size="small">
+                  <el-option label="试用" value="trial" /><el-option label="正式" value="active" />
+                </el-select>
+                <el-date-picker v-model="onboardingModules[code].expires_at" size="small" type="date" value-format="YYYY-MM-DD" clearable placeholder="不设到期日" />
+              </template>
+            </article>
+          </div>
+        </section>
+
+        <section v-else-if="onboardingStep === 2" class="onboarding-panel">
+          <h3>{{ needsWebsite ? '绑定官网并初始化业务项目' : '模块接入方式' }}</h3>
+          <template v-if="needsWebsite">
+            <p>一个客户可以继续增加多个网站；这里先创建首个官网，避免进入模块后只有空页面。</p>
+            <el-form label-width="96px">
+              <el-form-item label="官方网站" required><el-input v-model="onboarding.website" placeholder="https://www.example.com" /></el-form-item>
+            </el-form>
+            <div class="onboarding-created-preview">
+              <span v-if="onboardingModules.seo.selected"><b>SEO 网站</b> {{ onboarding.brand_name || form.name || '客户' }}官网</span>
+              <span v-if="onboardingModules.geo.selected"><b>GEO 项目</b> {{ onboarding.brand_name || form.name || '客户' }} GEO 项目</span>
+            </div>
+          </template>
+          <el-alert v-else title="SEM 将在开户后进入百度账号授权流程；这里不要求填写或保存推广平台密码。" type="info" :closable="false" show-icon />
+        </section>
+
+        <section v-else-if="onboardingStep === 3" class="onboarding-panel">
+          <h3>创建客户登录账号</h3>
+          <p v-if="session.canEdit('settings.accounts')">账号会限定到本客户，权限由所选角色统一控制。</p>
+          <el-alert v-else title="当前管理员没有账号管理权限，可先完成客户开户，再由账号管理员创建登录账号。" type="warning" :closable="false" />
+          <template v-if="session.canEdit('settings.accounts')">
+            <el-switch v-model="onboarding.create_account" active-text="同时创建账号" inactive-text="稍后创建" />
+            <el-form v-if="onboarding.create_account" label-width="96px" class="onboarding-account-form">
+              <el-form-item label="用户名" required><el-input v-model="onboarding.username" maxlength="50" autocomplete="off" /></el-form-item>
+              <el-form-item label="初始密码" required><el-input v-model="onboarding.password" type="password" show-password autocomplete="new-password" placeholder="至少 8 位" /></el-form-item>
+              <el-form-item label="角色" required>
+                <el-select v-model="onboarding.role_id" style="width:100%">
+                  <el-option v-for="role in onboardingRoles" :key="role.id" :label="role.name" :value="role.id" />
+                </el-select>
+              </el-form-item>
+              <el-alert
+                v-if="selectedOnboardingRole"
+                :title="`角色“${selectedOnboardingRole.name}”：${Object.values(selectedOnboardingRole.permissions || {}).filter(v => v === 'edit').length} 项可编辑、${Object.values(selectedOnboardingRole.permissions || {}).filter(v => v === 'view').length} 项可查看`"
+                type="info" :closable="false"
+              />
+            </el-form>
+          </template>
+        </section>
+
+        <section v-else class="onboarding-panel onboarding-review">
+          <h3>确认开户内容</h3>
+          <dl><dt>客户</dt><dd>{{ form.name }}</dd><dt>品牌</dt><dd>{{ onboarding.brand_name || form.name }}</dd><dt>行业</dt><dd>{{ form.industry || '未填写' }}</dd><dt>开通模块</dt><dd>{{ selectedOnboardingModules.map(code => moduleLabels[code]).join('、') }}</dd><dt>官网</dt><dd>{{ needsWebsite ? onboarding.website : '本次不需要' }}</dd><dt>登录账号</dt><dd>{{ onboarding.create_account ? `${onboarding.username} · ${selectedOnboardingRole?.name || ''}` : '稍后创建' }}</dd></dl>
+          <el-alert title="开户会按顺序创建客户、开通模块、建立 SEO/GEO 首个项目并创建账号；任何一步失败都会明确保留已完成结果，方便继续补齐。" type="info" :closable="false" show-icon />
+        </section>
+      </div>
+      <template #footer>
+        <template v-if="editingId"><el-button @click="visible=false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template>
+        <template v-else>
+          <el-button @click="visible=false">取消</el-button>
+          <el-button v-if="onboardingStep > 0" :disabled="onboardingSaving" @click="onboardingStep--">上一步</el-button>
+          <el-button v-if="onboardingStep < 4" type="primary" @click="nextOnboardingStep">下一步</el-button>
+          <el-button v-else type="primary" :loading="onboardingSaving" @click="submitOnboarding">确认开户</el-button>
+        </template>
+      </template>
     </el-dialog>
+    <el-dialog v-model="moduleVisible" :title="`配置 ${moduleLabels[moduleContext.code]} 模块`" width="480px">
+      <el-form label-width="96px">
+        <el-form-item label="客户"><b>{{ moduleContext.customerName }}</b></el-form-item>
+        <el-form-item label="状态" required>
+          <el-select v-model="moduleForm.status" style="width:100%">
+            <el-option label="试用" value="trial" />
+            <el-option label="正式" value="active" />
+            <el-option label="停用" value="suspended" />
+            <el-option label="关闭" value="closed" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="到期日">
+          <el-date-picker v-model="moduleForm.expires_at" type="date" value-format="YYYY-MM-DD" clearable style="width:100%" />
+        </el-form-item>
+        <el-alert title="每个模块独立确认并单独提交；失败时重新读取该模块原状态，不宣称多模块原子更新。" type="warning" :closable="false" />
+      </el-form>
+      <template #footer><el-button @click="moduleVisible=false">取消</el-button><el-button type="primary" :loading="moduleSaving" @click="saveModule">确认更新</el-button></template>
+    </el-dialog>
+    <el-dialog v-model="executionVisible" :title="`${executionCustomer?.name || ''} · SEM 执行权限`" width="780px">
+      <div v-loading="executionLoading" class="execution-policy">
+        <el-alert
+          :title="executionPolicy?.global_gate_open ? '环境总闸已具备有限真写条件；仍须同时命中本页账户与动作策略。' : '环境总闸当前保持演练；本页策略不会绕过环境总闸。'"
+          :type="executionPolicy?.global_gate_open ? 'warning' : 'info'"
+          :closable="false"
+          show-icon
+        />
+        <el-alert
+          v-if="executionPolicy?.configuration_error"
+          :title="executionPolicy.configuration_error"
+          type="error"
+          :closable="false"
+          show-icon
+        />
+        <el-form v-if="executionPolicy" label-width="130px" class="execution-form">
+          <el-form-item label="百度推广账户">
+            <el-select :model-value="executionForm.account_id" style="width:100%" @change="selectExecutionAccount">
+              <el-option
+                v-for="account in executionPolicy.accounts"
+                :key="account.id"
+                :value="account.id"
+                :disabled="account.status !== 'active'"
+                :label="`${account.username} · UCID ${account.ucid} · ${account.status}`"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="当前模式">
+            <el-tag :type="selectedExecutionAccount?.effective_mode === 'limited_live' ? 'danger' : 'info'">
+              {{ selectedExecutionAccount?.effective_mode === 'limited_live' ? '有限真写' : '演练' }}
+            </el-tag>
+            <span class="policy-note">关闭开关后，下一次动作判定立即按演练处理。</span>
+            <span v-if="selectedExecutionAccount" class="policy-note">
+              来源 {{ selectedExecutionAccount.policy_source }} · {{ selectedExecutionAccount.policy_reason }}
+            </span>
+          </el-form-item>
+          <el-form-item label="允许有限真写">
+            <el-switch v-model="executionForm.enabled" active-text="启用" inactive-text="停用" />
+          </el-form-item>
+          <el-form-item label="允许动作">
+            <el-checkbox-group v-model="executionForm.scopes">
+              <el-checkbox v-for="scope in executionPolicy.available_scopes" :key="scope" :value="scope">
+                {{ semScopeLabels[scope] || scope }}
+              </el-checkbox>
+            </el-checkbox-group>
+          </el-form-item>
+          <el-form-item label="每日真实动作上限">
+            <el-input-number v-model="executionForm.daily_live_action_limit" :min="1" :max="1000" />
+            <span class="policy-note">按北京时间自然日统计真实台账；待执行、成功、失败及待对账均占用额度。</span>
+          </el-form-item>
+          <el-form-item label="单次调价上限">
+            <el-input-number v-model="executionForm.max_bid_change_pct" :min="0.1" :max="20" :step="0.5" />
+            <span class="policy-note">%，只能小于等于系统 20% 硬上限。</span>
+          </el-form-item>
+          <el-form-item label="资金动作确认">
+            <el-tag type="warning">强制开启，不可关闭</el-tag>
+            <span class="policy-note">账户预算、计划预算及出价仍需现有一次性参数确认。</span>
+          </el-form-item>
+          <el-form-item label="变更原因" required>
+            <el-input v-model="executionForm.change_reason" type="textarea" :rows="2" maxlength="500" show-word-limit placeholder="至少 4 个字" />
+          </el-form-item>
+          <el-form-item label="最近变更">
+            <div v-if="selectedExecutionAccount?.history?.length" class="policy-history">
+              <div v-for="item in selectedExecutionAccount.history" :key="item.version">
+                <b>v{{ item.version }} · {{ item.enabled ? '启用' : '停用' }}</b>
+                <span>{{ item.updated_at }} · {{ item.updated_by?.username || '未知操作人' }}</span>
+                <small>{{ item.change_reason }}</small>
+              </div>
+            </div>
+            <el-alert
+              v-else-if="selectedExecutionAccount?.policy_source === 'legacy_environment' && selectedExecutionAccount?.enabled"
+              title="继承服务器旧策略，保存后由本页策略接管"
+              type="warning"
+              :closable="false"
+            />
+            <span v-else>尚未配置且无服务器旧授权，默认全部演练</span>
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="executionVisible=false">关闭</el-button>
+        <el-button type="danger" plain :loading="executionSaving" :disabled="!selectedExecutionAccount?.enabled" @click="persistExecutionPolicy({ pause: true })">一键暂停</el-button>
+        <el-button type="primary" :loading="executionSaving" @click="persistExecutionPolicy()">保存执行权限</el-button>
+      </template>
+    </el-dialog>
+    <el-drawer v-model="accountVisible" :title="`${accountCustomer?.name || ''} · 登录账号`" size="560px">
+      <el-alert v-if="!session.canEdit('settings.accounts')" title="当前权限只能查看账号汇总" type="info" :closable="false" />
+      <el-table v-else :data="selectedLoginUsers" border>
+        <el-table-column prop="username" label="用户名" />
+        <el-table-column prop="role_label" label="角色" />
+        <el-table-column label="状态"><template #default="{ row }">{{ row.is_active ? '启用' : '停用' }}</template></el-table-column>
+        <el-table-column prop="last_login_at" label="最近登录"><template #default="{ row }">{{ row.last_login_at || '从未登录' }}</template></el-table-column>
+      </el-table>
+    </el-drawer>
     <el-dialog v-model="repairVisible" title="SEM 重复客户只读检测与修复预演" width="900px" @closed="closeRepairPreview">
       <div v-loading="repairLoading" class="repair-preview">
         <el-alert
@@ -445,5 +1001,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-.module-page{padding:24px}.page-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}.page-head h2{margin:0 0 7px;font-size:24px}.page-head p{margin:0;color:#6b7280}.head-actions{display:flex;gap:8px}.identity-summary{margin-bottom:16px}.account-bindings{display:grid;gap:5px;margin-bottom:6px}.account-bindings>span{display:flex;justify-content:space-between;align-items:center;gap:10px}.account-label{display:flex;flex-direction:column}.account-bindings small,.unbound{color:#8b95a5}.identity-issues{display:grid;justify-items:start;gap:5px}.identity-issues span{color:#8a4b08;font-size:12px;line-height:1.35}.identity-alert{margin-bottom:16px}.repair-preview{display:grid;gap:16px}.repair-candidates h4,.repair-columns h4{margin:0 0 6px}.repair-candidates p{margin:0;color:#6b7280}.candidate-group{display:grid;gap:3px;padding:10px 12px;margin-top:8px;border:1px solid #e5e7eb;border-radius:8px}.candidate-group small{color:#8b5e16}.repair-form{padding:14px;background:#f8fafc;border-radius:8px}.repair-columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}.repair-columns section{display:grid;gap:4px;padding:12px;border:1px solid #e5e7eb;border-radius:8px}.repair-columns span,.repair-safety{color:#6b7280}.repair-accounts{display:grid;gap:3px;margin-top:6px;padding-top:7px;border-top:1px dashed #d8dee8}.repair-accounts span{font-size:12px;color:#374151}.repair-accounts small{color:#8b95a5}.repair-issues{margin:0;padding-left:22px;color:#8a4b08}.repair-issues.blockers{color:#b42318}.repair-safety{margin:0;font-family:monospace;font-size:12px}
+.module-page{padding:24px}.page-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}.page-head h2{margin:0 0 7px;font-size:24px}.page-head p{margin:0;color:#6b7280}.head-actions{display:flex;gap:8px}.identity-summary{margin-bottom:16px}.account-bindings{display:grid;gap:5px;margin-bottom:6px}.account-bindings>span{display:flex;justify-content:space-between;align-items:center;gap:10px}.account-label{display:flex;flex-direction:column}.account-bindings small,.unbound{color:#8b95a5}.identity-issues{display:grid;justify-items:start;gap:5px}.identity-issues span{color:#8a4b08;font-size:12px;line-height:1.35}.identity-alert{margin-bottom:16px}.execution-policy{display:grid;gap:12px;min-height:240px}.execution-form{margin-top:16px}.execution-form :deep(.el-checkbox-group){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%}.policy-note{margin-left:10px;color:#6b7280;font-size:12px}.policy-history{display:grid;gap:8px;width:100%;max-height:150px;overflow:auto}.policy-history>div{display:grid;grid-template-columns:110px 1fr;gap:2px 10px;padding:8px 10px;border:1px solid #e5e7eb;border-radius:7px}.policy-history small{grid-column:1/-1;color:#6b7280}.repair-preview{display:grid;gap:16px}.repair-candidates h4,.repair-columns h4{margin:0 0 6px}.repair-candidates p{margin:0;color:#6b7280}.candidate-group{display:grid;gap:3px;padding:10px 12px;margin-top:8px;border:1px solid #e5e7eb;border-radius:8px}.candidate-group small{color:#8b5e16}.repair-form{padding:14px;background:#f8fafc;border-radius:8px}.repair-columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}.repair-columns section{display:grid;gap:4px;padding:12px;border:1px solid #e5e7eb;border-radius:8px}.repair-columns span,.repair-safety{color:#6b7280}.repair-accounts{display:grid;gap:3px;margin-top:6px;padding-top:7px;border-top:1px dashed #d8dee8}.repair-accounts span{font-size:12px;color:#374151}.repair-accounts small{color:#8b95a5}.repair-issues{margin:0;padding-left:22px;color:#8a4b08}.repair-issues.blockers{color:#b42318}.repair-safety{margin:0;font-family:monospace;font-size:12px}
+.onboarding-wizard{padding:4px 4px 0}.onboarding-panel{min-height:330px;margin-top:24px;padding:22px 24px;border:1px solid #e5eaf2;border-radius:14px;background:#f8fafc}.onboarding-panel h3{margin:0 0 6px;font-size:18px;color:#172033}.onboarding-panel>p{margin:0 0 20px;color:#697386;font-size:13px}.onboarding-module-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.onboarding-module-grid article{min-height:170px;padding:17px;display:flex;flex-direction:column;gap:13px;border:1px solid #dfe5ef;border-radius:12px;background:#fff;transition:.18s ease}.onboarding-module-grid article.selected{border-color:#5b67e8;box-shadow:0 0 0 3px rgba(91,103,232,.09)}.onboarding-module-grid small{min-height:35px;color:#7a8497;line-height:1.55}.onboarding-created-preview{display:grid;gap:10px;margin-left:96px}.onboarding-created-preview span{padding:12px 14px;border:1px solid #dfe5ef;border-radius:10px;background:#fff;color:#566074}.onboarding-created-preview b{margin-right:12px;color:#263247}.onboarding-account-form{margin-top:18px}.onboarding-review dl{display:grid;grid-template-columns:100px 1fr;gap:12px;margin:0 0 20px}.onboarding-review dt{color:#788398}.onboarding-review dd{margin:0;color:#172033;font-weight:600;word-break:break-all}@media(max-width:760px){.onboarding-module-grid{grid-template-columns:1fr}.onboarding-panel{padding:16px}.onboarding-created-preview{margin-left:0}}
 </style>
