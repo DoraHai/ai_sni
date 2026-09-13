@@ -1,0 +1,58 @@
+# Platform 路由受限发布说明
+
+适用分支：`codex/production-sem`。Platform 路由发布只更新受审 Nginx 配置，
+不包含前端、后端、数据库迁移或客户数据操作。
+
+## 权威分支校验
+
+服务器端 `platform` 模块持有 `/run/lock/platform-route-deploy.lock` 后，直接对
+`https://github.com/DoraHai/ai_sni.git` 的
+`refs/heads/codex/production-sem` 执行 `git ls-remote --refs`。它不接受 runner
+传入的分支头、缓存结果或本地 remote-tracking ref。
+
+每个发布边界最多查询三次。只有 `git ls-remote` 网络失败才等待两秒后重试；一次成功查询
+必须恰好返回一行、一个小写 40 位 SHA 和完全相同的 ref。空结果、格式错误、多行、ref 不符
+或 SHA 与待发布提交不符均立即关闭。第一次校验位于发布归档前，第二次校验位于归档发布及
+Nginx 配置变更的最终边界前。网络重试耗尽仍以状态 64 退出。
+
+## 安装受审模块
+
+本轮 SEO OpenAPI 路由对应 Draft PR #474。该 PR 审查通过后，管理员必须先从其精确
+head 检出并安装下面的受限模块；此步骤只更新受限部署入口，不修改 Nginx 活动配置。
+安装证据回传并复核后，才可把 PR #474 转为 ready 并合入生产路由分支。
+
+在合并前，从 PR #474 当前已审查的完整 head SHA 建立干净 detached checkout，检出以下文件并核对工作区无改动。不得改用当时的 `codex/production-sem` 分支头，也不得使用短 SHA；安装证据中的 Git SHA 必须与 GitHub 上 PR #474 的 head 完全一致：
+
+- `ops/platform-deploy/install-platform-routes.sh`
+- `ops/platform-deploy/modules/platform`
+
+当前受审模块 SHA-256：
+
+```text
+d1522668411f34c7329e3777aea2bbf138fc99820baef1c1dc295a22f6ad9a2d
+```
+
+安装器会在写入 `/etc/platform-deploy/modules/platform` 前同时校验 dispatcher 和上述模块
+哈希，任一不符即停止。由服务器管理员执行：
+
+```bash
+sudo -n ops/platform-deploy/install-platform-routes.sh --enable
+sudo -n /usr/local/sbin/platform-deploy status
+sha256sum /etc/platform-deploy/modules/platform
+```
+
+应记录安装器输出的备份目录、`platform=enabled` 与模块 SHA-256。不要直接编辑服务器上的
+module 文件。
+
+## 重新发布与验收
+
+安装完成后，使用 GitHub Actions 的 `Production SEM platform routes` workflow 发布当前
+`codex/production-sem` 精确提交。不得复用失败 run 的 artifact、runner 分支头或旧 SHA。
+
+成功记录应包含服务器输出的 commit、active SHA-256、备份目录，以及 `/platform`、
+`/platform/customers`、`/platform/accounts`、`/platform/roles`、旧设置入口、获客工作台、
+SEM 看板与关键词页的 smoke 结果。若本次发布包含 SEO OpenAPI 精确路由，还必须记录
+`GET /seo-openapi.json` 返回 `Growth Sniper SEO API` 且挂载
+`GET /api/v1/seo/metrics/snapshot`；任何其它方法必须由 Nginx 拒绝，根路径
+`/openapi.json` 的所有权保持不变。若权威查询最终失败，应确认没有发布归档、Nginx 配置、
+reload 或公网 smoke 操作，然后另起 workflow attempt；不能跳过服务器权威校验。

@@ -10,10 +10,14 @@ enabled='/etc/platform-deploy/enabled/platform'
 backup_parent='/var/backups/platform-deploy'
 dispatcher='/usr/local/sbin/platform-deploy'
 reviewed_dispatcher_sha256='0330e2c14f2ff7074df140e02d56136aa2a5248ebce296d9c35007437c09937a'
+reviewed_module_sha256='d1522668411f34c7329e3777aea2bbf138fc99820baef1c1dc295a22f6ad9a2d'
 
 [[ -x "$dispatcher" && -f "$source_module" ]] || { echo 'dispatcher or reviewed module missing' >&2; exit 1; }
 [[ "$(sha256sum "$dispatcher" | cut -d' ' -f1)" == "$reviewed_dispatcher_sha256" ]] || {
   echo "Refusing unknown dispatcher: observed=$(sha256sum "$dispatcher" | cut -d' ' -f1)" >&2; exit 1;
+}
+[[ "$(sha256sum "$source_module" | cut -d' ' -f1)" == "$reviewed_module_sha256" ]] || {
+  echo "Refusing unknown platform route module: observed=$(sha256sum "$source_module" | cut -d' ' -f1)" >&2; exit 1;
 }
 bash -n "$source_module"
 install -d -m 755 "$backup_parent" /etc/platform-deploy/modules /etc/platform-deploy/enabled
