@@ -5,6 +5,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   archiveSemAccount,
   createCustomer,
+  createGeoProject,
+  createSeoSite,
   fetchCustomers,
   fetchSemIdentityRepairCandidates,
   fetchSemIdentityRepairPreview,
@@ -13,7 +15,8 @@ import {
   setSemExecutionPolicy,
   updateCustomer,
 } from '../../api/moduleAssets'
-import { fetchUsers } from '../../api/auth'
+import { createUser, fetchUsers } from '../../api/auth'
+import { fetchRoles } from '../../api/roles'
 import { session } from '../../store/session'
 import { createRequestController } from './semIdentityRepairRequests'
 
@@ -26,6 +29,22 @@ const identitySummary = ref({ checked_customers: 0, checked_accounts: 0, errors:
 const visible = ref(false)
 const editingId = ref(null)
 const form = reactive({ name: '', industry: '', business_desc: '' })
+const onboardingStep = ref(0)
+const onboardingSaving = ref(false)
+const onboardingRoles = ref([])
+const onboarding = reactive({
+  brand_name: '',
+  website: '',
+  create_account: true,
+  username: '',
+  password: '',
+  role_id: null,
+})
+const onboardingModules = reactive({
+  sem: { selected: false, status: 'trial', expires_at: '' },
+  seo: { selected: false, status: 'trial', expires_at: '' },
+  geo: { selected: false, status: 'trial', expires_at: '' },
+})
 const moduleVisible = ref(false)
 const moduleSaving = ref(false)
 const moduleContext = reactive({ tenantId: null, customerName: '', code: '' })
@@ -66,6 +85,13 @@ const semScopeLabels = {
   keyword_match_type: '关键词匹配', keyword_pause: '关键词启停',
 }
 const editingCustomer = computed(() => customers.value.find((row) => row.id === editingId.value))
+const selectedOnboardingModules = computed(() => (
+  Object.entries(onboardingModules).filter(([, value]) => value.selected).map(([code]) => code)
+))
+const needsWebsite = computed(() => onboardingModules.seo.selected || onboardingModules.geo.selected)
+const selectedOnboardingRole = computed(() => (
+  onboardingRoles.value.find((role) => role.id === onboarding.role_id)
+))
 const repairCandidateCustomers = computed(() => {
   const seen = new Set()
   return (repairCandidates.value.groups || []).flatMap((group) => group.customers || []).filter((row) => {
@@ -121,12 +147,15 @@ function moduleRow(row, code) {
 async function load() {
   loading.value = true
   try {
-    const [result, users] = await Promise.all([
+    const canManageAccounts = session.canEdit('settings.accounts')
+    const [result, users, roles] = await Promise.all([
       fetchCustomers(),
-      session.canEdit('settings.accounts') ? fetchUsers() : Promise.resolve(null),
+      canManageAccounts ? fetchUsers() : Promise.resolve(null),
+      canManageAccounts ? fetchRoles() : Promise.resolve(null),
     ])
     customers.value = result.customers || []
     loginUsers.value = users?.users || []
+    onboardingRoles.value = roles?.roles || []
     identitySummary.value = result.identity_summary || { checked_customers: 0, checked_accounts: 0, errors: 0, warnings: 0, healthy: true }
   }
   catch (error) { ElMessage.error(error.message) }
@@ -136,6 +165,15 @@ async function load() {
 function openCreate() {
   editingId.value = null
   Object.assign(form, { name: '', industry: '', business_desc: '' })
+  Object.assign(onboarding, {
+    brand_name: '', website: '', create_account: session.canEdit('settings.accounts'),
+    username: '', password: '', role_id: null,
+  })
+  const trialExpiry = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)
+  for (const item of Object.values(onboardingModules)) {
+    Object.assign(item, { selected: false, status: 'trial', expires_at: trialExpiry })
+  }
+  onboardingStep.value = 0
   visible.value = true
 }
 
@@ -191,6 +229,121 @@ async function save() {
     await load()
     session.requestTenantReload()
   } catch (error) { ElMessage.error(error.message) }
+}
+
+function validateOnboardingStep(step = onboardingStep.value) {
+  if (step === 0 && !form.name.trim()) {
+    ElMessage.warning('请填写客户名称')
+    return false
+  }
+  if (step === 1 && !selectedOnboardingModules.value.length) {
+    ElMessage.warning('请至少开通一个模块')
+    return false
+  }
+  if (step === 2 && needsWebsite.value) {
+    const value = onboarding.website.trim()
+    if (!value) {
+      ElMessage.warning('SEO 或 GEO 开户必须填写客户官网')
+      return false
+    }
+    try {
+      const parsed = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`)
+      if (!parsed.hostname.includes('.')) throw new Error('invalid hostname')
+    } catch {
+      ElMessage.warning('请填写有效的官网域名或网址')
+      return false
+    }
+  }
+  if (step === 3 && onboarding.create_account) {
+    if (!onboarding.username.trim() || onboarding.password.length < 8 || !onboarding.role_id) {
+      ElMessage.warning('请填写用户名、至少 8 位的初始密码并选择角色')
+      return false
+    }
+  }
+  return true
+}
+
+function nextOnboardingStep() {
+  if (!validateOnboardingStep()) return
+  onboardingStep.value = Math.min(4, onboardingStep.value + 1)
+}
+
+async function submitOnboarding() {
+  for (let step = 0; step <= 3; step += 1) {
+    if (!validateOnboardingStep(step)) {
+      onboardingStep.value = step
+      return
+    }
+  }
+  onboardingSaving.value = true
+  let tenantId = null
+  const completed = []
+  try {
+    const customer = await createCustomer({
+      name: form.name.trim(),
+      industry: form.industry.trim() || null,
+      business_desc: form.business_desc.trim() || null,
+      modules: [],
+    })
+    tenantId = customer.id
+    completed.push('客户资料')
+
+    for (const code of selectedOnboardingModules.value) {
+      const config = onboardingModules[code]
+      await setCustomerModule(tenantId, code, {
+        status: config.status,
+        expires_at: config.expires_at || null,
+      })
+      completed.push(`${moduleLabels[code]} 开通`)
+    }
+
+    const brandName = onboarding.brand_name.trim() || form.name.trim()
+    if (onboardingModules.seo.selected) {
+      await createSeoSite({ tenant_id: tenantId, name: `${brandName}官网`, domain: onboarding.website.trim() })
+      completed.push('SEO 网站')
+    }
+    if (onboardingModules.geo.selected) {
+      await createGeoProject({
+        tenant_id: tenantId,
+        name: `${brandName} GEO 项目`,
+        brand_name: brandName,
+        domain: onboarding.website.trim(),
+        description: form.business_desc.trim() || null,
+      })
+      completed.push('GEO 项目')
+    }
+    if (onboarding.create_account) {
+      await createUser({
+        username: onboarding.username.trim(),
+        password: onboarding.password,
+        displayName: `${brandName} 操作账号`,
+        roleId: onboarding.role_id,
+        tenantId,
+      })
+      completed.push('登录账号')
+    }
+
+    visible.value = false
+    onboarding.password = ''
+    ElMessage.success(`开户完成：${completed.join('、')}`)
+    await load()
+    session.requestTenantReload()
+  } catch (error) {
+    const prefix = tenantId
+      ? `客户 #${tenantId} 已创建，已完成：${completed.join('、') || '无'}。`
+      : ''
+    ElMessage({
+      type: 'error',
+      message: `${prefix}${error.message || '开户失败'}；请在客户列表继续补齐，系统不会重复创建客户。`,
+      duration: 8000,
+    })
+    if (tenantId) visible.value = false
+    onboarding.password = ''
+    await load()
+    session.requestTenantReload()
+  } finally {
+    onboardingSaving.value = false
+  }
 }
 
 function effectiveModuleState(row, code) {
@@ -536,8 +689,8 @@ onMounted(load)
       </el-table-column>
       <el-table-column label="操作" width="100"><template #default="{ row }"><el-button link type="primary" @click="openEdit(row)">配置</el-button></template></el-table-column>
     </el-table>
-    <el-dialog v-model="visible" :title="editingId ? '配置客户' : '新建客户'" width="560px">
-      <el-form label-width="90px">
+    <el-dialog v-model="visible" :title="editingId ? '配置客户' : '新客户开户'" :width="editingId ? '560px' : '760px'" :close-on-click-modal="false">
+      <el-form v-if="editingId" label-width="90px">
         <el-alert
           v-if="editingCustomer?.identity_locked"
           title="该客户已绑定百度推广账户。正常品牌更名需填写原因并二次确认；若账户归属错误，必须走人工审核的数据迁移流程。"
@@ -549,9 +702,97 @@ onMounted(load)
         <el-form-item label="客户名称"><el-input v-model="form.name" maxlength="100" /></el-form-item>
         <el-form-item label="所属行业"><el-input v-model="form.industry" maxlength="100" /></el-form-item>
         <el-form-item label="业务说明"><el-input v-model="form.business_desc" type="textarea" :rows="3" /></el-form-item>
-        <el-alert title="客户保存与模块配置分开提交；创建后请逐个配置模块状态和期限。" type="info" :closable="false" />
       </el-form>
-      <template #footer><el-button @click="visible=false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template>
+      <div v-else class="onboarding-wizard">
+        <el-steps :active="onboardingStep" finish-status="success" align-center>
+          <el-step title="客户资料" />
+          <el-step title="开通业务" />
+          <el-step title="官网与项目" />
+          <el-step title="登录账号" />
+          <el-step title="确认开户" />
+        </el-steps>
+
+        <section v-if="onboardingStep === 0" class="onboarding-panel">
+          <h3>先建立客户主档</h3>
+          <p>这些资料会被 SEO、GEO 和获客工作台共同使用。</p>
+          <el-form label-width="96px">
+            <el-form-item label="客户名称" required><el-input v-model="form.name" maxlength="100" placeholder="公司或签约主体名称" /></el-form-item>
+            <el-form-item label="品牌名称"><el-input v-model="onboarding.brand_name" maxlength="160" placeholder="对外使用的品牌；不填则沿用客户名称" /></el-form-item>
+            <el-form-item label="所属行业"><el-input v-model="form.industry" maxlength="100" placeholder="例如：工业涂料" /></el-form-item>
+            <el-form-item label="业务说明"><el-input v-model="form.business_desc" type="textarea" :rows="4" placeholder="主要产品、服务对象和服务区域" /></el-form-item>
+          </el-form>
+        </section>
+
+        <section v-else-if="onboardingStep === 1" class="onboarding-panel">
+          <h3>选择客户购买的业务</h3>
+          <p>可以只开一个模块；以后可在客户列表继续增开或停用。</p>
+          <div class="onboarding-module-grid">
+            <article v-for="code in ['sem','seo','geo']" :key="code" :class="{ selected: onboardingModules[code].selected }">
+              <el-checkbox v-model="onboardingModules[code].selected"><b>{{ moduleLabels[code] }}</b></el-checkbox>
+              <small>{{ code === 'sem' ? '百度推广账户与投放优化' : code === 'seo' ? '官网搜索表现与内容优化' : 'AI 可见度、内容与渠道运营' }}</small>
+              <template v-if="onboardingModules[code].selected">
+                <el-select v-model="onboardingModules[code].status" size="small">
+                  <el-option label="试用" value="trial" /><el-option label="正式" value="active" />
+                </el-select>
+                <el-date-picker v-model="onboardingModules[code].expires_at" size="small" type="date" value-format="YYYY-MM-DD" clearable placeholder="不设到期日" />
+              </template>
+            </article>
+          </div>
+        </section>
+
+        <section v-else-if="onboardingStep === 2" class="onboarding-panel">
+          <h3>{{ needsWebsite ? '绑定官网并初始化业务项目' : '模块接入方式' }}</h3>
+          <template v-if="needsWebsite">
+            <p>一个客户可以继续增加多个网站；这里先创建首个官网，避免进入模块后只有空页面。</p>
+            <el-form label-width="96px">
+              <el-form-item label="官方网站" required><el-input v-model="onboarding.website" placeholder="https://www.example.com" /></el-form-item>
+            </el-form>
+            <div class="onboarding-created-preview">
+              <span v-if="onboardingModules.seo.selected"><b>SEO 网站</b> {{ onboarding.brand_name || form.name || '客户' }}官网</span>
+              <span v-if="onboardingModules.geo.selected"><b>GEO 项目</b> {{ onboarding.brand_name || form.name || '客户' }} GEO 项目</span>
+            </div>
+          </template>
+          <el-alert v-else title="SEM 将在开户后进入百度账号授权流程；这里不要求填写或保存推广平台密码。" type="info" :closable="false" show-icon />
+        </section>
+
+        <section v-else-if="onboardingStep === 3" class="onboarding-panel">
+          <h3>创建客户登录账号</h3>
+          <p v-if="session.canEdit('settings.accounts')">账号会限定到本客户，权限由所选角色统一控制。</p>
+          <el-alert v-else title="当前管理员没有账号管理权限，可先完成客户开户，再由账号管理员创建登录账号。" type="warning" :closable="false" />
+          <template v-if="session.canEdit('settings.accounts')">
+            <el-switch v-model="onboarding.create_account" active-text="同时创建账号" inactive-text="稍后创建" />
+            <el-form v-if="onboarding.create_account" label-width="96px" class="onboarding-account-form">
+              <el-form-item label="用户名" required><el-input v-model="onboarding.username" maxlength="50" autocomplete="off" /></el-form-item>
+              <el-form-item label="初始密码" required><el-input v-model="onboarding.password" type="password" show-password autocomplete="new-password" placeholder="至少 8 位" /></el-form-item>
+              <el-form-item label="角色" required>
+                <el-select v-model="onboarding.role_id" style="width:100%">
+                  <el-option v-for="role in onboardingRoles" :key="role.id" :label="role.name" :value="role.id" />
+                </el-select>
+              </el-form-item>
+              <el-alert
+                v-if="selectedOnboardingRole"
+                :title="`角色“${selectedOnboardingRole.name}”：${Object.values(selectedOnboardingRole.permissions || {}).filter(v => v === 'edit').length} 项可编辑、${Object.values(selectedOnboardingRole.permissions || {}).filter(v => v === 'view').length} 项可查看`"
+                type="info" :closable="false"
+              />
+            </el-form>
+          </template>
+        </section>
+
+        <section v-else class="onboarding-panel onboarding-review">
+          <h3>确认开户内容</h3>
+          <dl><dt>客户</dt><dd>{{ form.name }}</dd><dt>品牌</dt><dd>{{ onboarding.brand_name || form.name }}</dd><dt>行业</dt><dd>{{ form.industry || '未填写' }}</dd><dt>开通模块</dt><dd>{{ selectedOnboardingModules.map(code => moduleLabels[code]).join('、') }}</dd><dt>官网</dt><dd>{{ needsWebsite ? onboarding.website : '本次不需要' }}</dd><dt>登录账号</dt><dd>{{ onboarding.create_account ? `${onboarding.username} · ${selectedOnboardingRole?.name || ''}` : '稍后创建' }}</dd></dl>
+          <el-alert title="开户会按顺序创建客户、开通模块、建立 SEO/GEO 首个项目并创建账号；任何一步失败都会明确保留已完成结果，方便继续补齐。" type="info" :closable="false" show-icon />
+        </section>
+      </div>
+      <template #footer>
+        <template v-if="editingId"><el-button @click="visible=false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template>
+        <template v-else>
+          <el-button @click="visible=false">取消</el-button>
+          <el-button v-if="onboardingStep > 0" :disabled="onboardingSaving" @click="onboardingStep--">上一步</el-button>
+          <el-button v-if="onboardingStep < 4" type="primary" @click="nextOnboardingStep">下一步</el-button>
+          <el-button v-else type="primary" :loading="onboardingSaving" @click="submitOnboarding">确认开户</el-button>
+        </template>
+      </template>
     </el-dialog>
     <el-dialog v-model="moduleVisible" :title="`配置 ${moduleLabels[moduleContext.code]} 模块`" width="480px">
       <el-form label-width="96px">
@@ -761,4 +1002,5 @@ onMounted(load)
 
 <style scoped>
 .module-page{padding:24px}.page-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}.page-head h2{margin:0 0 7px;font-size:24px}.page-head p{margin:0;color:#6b7280}.head-actions{display:flex;gap:8px}.identity-summary{margin-bottom:16px}.account-bindings{display:grid;gap:5px;margin-bottom:6px}.account-bindings>span{display:flex;justify-content:space-between;align-items:center;gap:10px}.account-label{display:flex;flex-direction:column}.account-bindings small,.unbound{color:#8b95a5}.identity-issues{display:grid;justify-items:start;gap:5px}.identity-issues span{color:#8a4b08;font-size:12px;line-height:1.35}.identity-alert{margin-bottom:16px}.execution-policy{display:grid;gap:12px;min-height:240px}.execution-form{margin-top:16px}.execution-form :deep(.el-checkbox-group){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%}.policy-note{margin-left:10px;color:#6b7280;font-size:12px}.policy-history{display:grid;gap:8px;width:100%;max-height:150px;overflow:auto}.policy-history>div{display:grid;grid-template-columns:110px 1fr;gap:2px 10px;padding:8px 10px;border:1px solid #e5e7eb;border-radius:7px}.policy-history small{grid-column:1/-1;color:#6b7280}.repair-preview{display:grid;gap:16px}.repair-candidates h4,.repair-columns h4{margin:0 0 6px}.repair-candidates p{margin:0;color:#6b7280}.candidate-group{display:grid;gap:3px;padding:10px 12px;margin-top:8px;border:1px solid #e5e7eb;border-radius:8px}.candidate-group small{color:#8b5e16}.repair-form{padding:14px;background:#f8fafc;border-radius:8px}.repair-columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}.repair-columns section{display:grid;gap:4px;padding:12px;border:1px solid #e5e7eb;border-radius:8px}.repair-columns span,.repair-safety{color:#6b7280}.repair-accounts{display:grid;gap:3px;margin-top:6px;padding-top:7px;border-top:1px dashed #d8dee8}.repair-accounts span{font-size:12px;color:#374151}.repair-accounts small{color:#8b95a5}.repair-issues{margin:0;padding-left:22px;color:#8a4b08}.repair-issues.blockers{color:#b42318}.repair-safety{margin:0;font-family:monospace;font-size:12px}
+.onboarding-wizard{padding:4px 4px 0}.onboarding-panel{min-height:330px;margin-top:24px;padding:22px 24px;border:1px solid #e5eaf2;border-radius:14px;background:#f8fafc}.onboarding-panel h3{margin:0 0 6px;font-size:18px;color:#172033}.onboarding-panel>p{margin:0 0 20px;color:#697386;font-size:13px}.onboarding-module-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.onboarding-module-grid article{min-height:170px;padding:17px;display:flex;flex-direction:column;gap:13px;border:1px solid #dfe5ef;border-radius:12px;background:#fff;transition:.18s ease}.onboarding-module-grid article.selected{border-color:#5b67e8;box-shadow:0 0 0 3px rgba(91,103,232,.09)}.onboarding-module-grid small{min-height:35px;color:#7a8497;line-height:1.55}.onboarding-created-preview{display:grid;gap:10px;margin-left:96px}.onboarding-created-preview span{padding:12px 14px;border:1px solid #dfe5ef;border-radius:10px;background:#fff;color:#566074}.onboarding-created-preview b{margin-right:12px;color:#263247}.onboarding-account-form{margin-top:18px}.onboarding-review dl{display:grid;grid-template-columns:100px 1fr;gap:12px;margin:0 0 20px}.onboarding-review dt{color:#788398}.onboarding-review dd{margin:0;color:#172033;font-weight:600;word-break:break-all}@media(max-width:760px){.onboarding-module-grid{grid-template-columns:1fr}.onboarding-panel{padding:16px}.onboarding-created-preview{margin-left:0}}
 </style>
