@@ -6638,4 +6638,27 @@ onBeforeUnmount(() => {
     max-width:none !important;
   }
 }
+
+/* Final guard for AI guide chips: keep the leading icon out of the label. */
+.guides button{
+  position:relative !important;
+  display:flex !important;
+  align-items:center !important;
+  width:100% !important;
+  min-height:38px !important;
+  padding:8px 42px 8px 42px !important;
+  overflow:hidden !important;
+  line-height:1.25 !important;
+}
+.guides button:before{
+  left:14px !important;
+  top:50% !important;
+  width:18px !important;
+  height:18px !important;
+  margin-top:-9px !important;
+  flex:0 0 auto !important;
+}
+.guides button:after{
+  right:14px !important;
+}
 </style>
