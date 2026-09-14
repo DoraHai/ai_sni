@@ -5,8 +5,12 @@ from __future__ import annotations
 import unittest
 from unittest.mock import AsyncMock, patch
 
+import httpx
+
+from app.ai.deepseek import DeepSeekError, safe_ai_error_detail
 from app.geo.content.probe import (
     ENGINE_PERSONAS,
+    PROBE_ANSWER_TIMEOUT_SECONDS,
     SAMPLE_MODE_PERSONA,
     SAMPLE_MODE_REAL,
     SKIP_DASHSCOPE_OTHER_ENGINE,
@@ -160,7 +164,13 @@ class ProbeBatchHelpersTests(unittest.IsolatedAsyncioTestCase):
             chat_json=chat_json,
             sample_mode=SAMPLE_MODE_REAL,
         )
-        self.assertEqual(chat_json.await_args.kwargs["temperature"], 1.0)
+        self.assertEqual(chat_json.await_args_list[0].kwargs["temperature"], 1.0)
+        self.assertEqual(chat_json.await_args_list[1].kwargs["temperature"], 1.0)
+        self.assertEqual(
+            chat_json.await_args_list[0].kwargs["timeout"],
+            PROBE_ANSWER_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(chat_json.await_args_list[1].kwargs["timeout"], 60.0)
 
     async def test_run_probe_draft_keeps_other_model_default_temperature(self):
         chat_json = AsyncMock(
@@ -193,6 +203,101 @@ class ProbeBatchHelpersTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(probe_temperature_for_model("KIMI-K2-latest"), 1.0)
         self.assertIsNone(probe_temperature_for_model("qwen3.8-max"))
         self.assertIsNone(probe_temperature_for_model(None))
+
+    async def test_answer_sampling_retries_read_timeout_once(self):
+        timeout = httpx.ReadTimeout("")
+        first_error = DeepSeekError("timeout")
+        first_error.__cause__ = timeout
+        chat_json = AsyncMock(
+            side_effect=[
+                first_error,
+                {"raw_text": "Kimi 真实回答。"},
+                {"suggested_mentions_brand": False},
+            ]
+        )
+
+        draft = await run_probe_draft(
+            question="如何选择？",
+            brand="Acme",
+            brand_names=["Acme"],
+            engine="kimi",
+            llm={
+                "api_key": "k",
+                "base_url": "https://api.moonshot.cn/v1",
+                "model": "kimi-k2.6",
+                "provider": "kimi",
+            },
+            chat_json=chat_json,
+            sample_mode=SAMPLE_MODE_REAL,
+        )
+
+        self.assertEqual(chat_json.await_count, 3)
+        self.assertEqual(draft["raw_text"], "Kimi 真实回答。")
+        self.assertEqual(chat_json.await_args_list[0].kwargs["timeout"], 120.0)
+        self.assertEqual(chat_json.await_args_list[1].kwargs["timeout"], 120.0)
+        self.assertEqual(chat_json.await_args_list[2].kwargs["timeout"], 60.0)
+
+    async def test_answer_sampling_final_timeout_records_attempt_budget(self):
+        errors = []
+        for _ in range(2):
+            error = DeepSeekError("timeout")
+            error.__cause__ = httpx.ConnectTimeout("")
+            errors.append(error)
+        chat_json = AsyncMock(side_effect=errors)
+
+        with self.assertRaises(DeepSeekError) as caught:
+            await run_probe_draft(
+                question="如何选择？",
+                brand="Acme",
+                brand_names=["Acme"],
+                engine="doubao",
+                llm={
+                    "api_key": "k",
+                    "base_url": "https://example.com/v1",
+                    "model": "m",
+                    "provider": "doubao",
+                },
+                chat_json=chat_json,
+                sample_mode=SAMPLE_MODE_REAL,
+            )
+
+        detail = safe_ai_error_detail(caught.exception, provider="doubao")
+        self.assertEqual(chat_json.await_count, 2)
+        self.assertEqual(detail["exception_class"], "ConnectTimeout")
+        self.assertEqual(detail["attempts"], 2)
+        self.assertEqual(detail["timeout_seconds"], 120.0)
+
+    async def test_answer_sampling_does_not_retry_http_or_parse_errors(self):
+        cases = [
+            httpx.HTTPStatusError(
+                "bad request",
+                request=httpx.Request("POST", "https://example.com"),
+                response=httpx.Response(
+                    400, request=httpx.Request("POST", "https://example.com")
+                ),
+            ),
+            ValueError("bad response shape"),
+        ]
+        for cause in cases:
+            error = DeepSeekError("failed")
+            error.__cause__ = cause
+            chat_json = AsyncMock(side_effect=error)
+            with self.assertRaises(DeepSeekError):
+                await run_probe_draft(
+                    question="如何选择？",
+                    brand="Acme",
+                    brand_names=["Acme"],
+                    engine="doubao",
+                    llm={
+                        "api_key": "k",
+                        "base_url": "https://example.com/v1",
+                        "model": "m",
+                        "provider": "doubao",
+                    },
+                    chat_json=chat_json,
+                    sample_mode=SAMPLE_MODE_REAL,
+                )
+            self.assertEqual(chat_json.await_count, 1)
 
     def test_dashscope_only_usable_for_deepseek(self):
         self.assertTrue(
