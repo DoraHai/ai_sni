@@ -1135,7 +1135,7 @@ onBeforeUnmount(() => {
       <button class="active" type="button" aria-label="驾驶舱" @click="router.push('/workspace/cockpit')">⌂<span>驾驶舱</span></button>
       <button type="button" aria-label="SEM" @click="router.push('/monitor/dashboard')">⌕<span>SEM</span></button>
       <button type="button" aria-label="SEO" @click="router.push('/seo/dashboard')">◎<span>SEO</span></button>
-      <button type="button" aria-label="GEO" @click="router.push('/geo/diagnosis')">∞<span>GEO</span></button>
+      <button type="button" aria-label="GEO" @click="openModule('geo')">∞<span>GEO</span></button>
       <button type="button" aria-label="欢迎页" @click="router.push('/workspace')">▤<span>欢迎页</span></button>
       <button type="button" aria-label="设置">⚙<span>设置</span></button>
     </aside>
