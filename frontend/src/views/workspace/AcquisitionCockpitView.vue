@@ -1132,11 +1132,11 @@ onBeforeUnmount(() => {
     <div class="ambient ambient-a"></div><div class="ambient ambient-b"></div><div class="energy-field"></div>
     <aside class="app-rail" aria-label="全域驾驶舱主导航">
       <div class="rail-logo">W</div>
-      <button class="active" type="button" aria-label="驾驶舱">⌂<span>驾驶舱</span></button>
-      <button type="button" aria-label="SEM">⌕<span>SEM</span></button>
-      <button type="button" aria-label="SEO">◎<span>SEO</span></button>
-      <button type="button" aria-label="GEO">∞<span>GEO</span></button>
-      <button type="button" aria-label="报告">▤<span>报告</span></button>
+      <button class="active" type="button" aria-label="驾驶舱" @click="router.push('/workspace/cockpit')">⌂<span>驾驶舱</span></button>
+      <button type="button" aria-label="SEM" @click="router.push('/monitor/dashboard')">⌕<span>SEM</span></button>
+      <button type="button" aria-label="SEO" @click="router.push('/seo/dashboard')">◎<span>SEO</span></button>
+      <button type="button" aria-label="GEO" @click="router.push('/geo/diagnosis')">∞<span>GEO</span></button>
+      <button type="button" aria-label="欢迎页" @click="router.push('/workspace')">▤<span>欢迎页</span></button>
       <button type="button" aria-label="设置">⚙<span>设置</span></button>
     </aside>
     <header class="command-bar">
