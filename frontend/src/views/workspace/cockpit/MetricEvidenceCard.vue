@@ -32,11 +32,28 @@ const segments = computed(() => {
   const result = []; let current = []
   for (const point of coords.value) {
     if (point.y === null) { if (current.length) result.push(current); current = [] }
-    else current.push(`${point.x},${point.y}`)
+    else current.push(point)
   }
   if (current.length) result.push(current)
-  return result.map(segment => segment.join(' '))
+  return result.map(smoothPath)
 })
+function smoothPath(segment) {
+  if (!segment.length) return ''
+  if (segment.length === 1) return `M${segment[0].x} ${segment[0].y}`
+  let path = `M${segment[0].x} ${segment[0].y}`
+  for (let index = 0; index < segment.length - 1; index += 1) {
+    const prev = segment[index - 1] || segment[index]
+    const current = segment[index]
+    const next = segment[index + 1]
+    const after = segment[index + 2] || next
+    const cp1x = current.x + (next.x - prev.x) / 6
+    const cp1y = current.y + (next.y - prev.y) / 6
+    const cp2x = next.x - (after.x - current.x) / 6
+    const cp2y = next.y - (after.y - current.y) / 6
+    path += ` C${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${next.x} ${next.y}`
+  }
+  return path
+}
 const status = computed(() => ({ loading: '读取中', available: '已读取', partial: '部分数据',
   no_data: '暂无数据', unavailable: '暂不可用', denied: '无查看权限' }[metric.value.state] ?? '待核验'))
 const activePoint = computed(() => points.value[selected.value] ?? null)
@@ -76,9 +93,9 @@ watch(() => props.metric, () => { selected.value = null; close() }, { flush: 'sy
     <div v-else-if="usable.length" class="trend-wrap">
       <svg viewBox="0 0 300 90" class="trend" role="img" :aria-label="`${metric.label}趋势，缺失日期不连线`">
         <path d="M12 76H288" class="baseline" />
-        <polyline v-for="(segment, index) in segments" :key="index" :points="segment" class="trend-line" />
+        <path v-for="(segment, index) in segments" :key="index" :d="segment" class="trend-line" />
         <template v-for="(point, index) in coords" :key="index">
-          <circle v-if="point.y !== null" :cx="point.x" :cy="point.y" :r="selected === index ? 5 : 3" class="trend-point">
+          <circle v-if="point.y !== null" :cx="point.x" :cy="point.y" :r="selected === index ? 4.5 : 0" class="trend-point">
             <title>{{ point.label }}：{{ point.display ?? point.value }}</title>
           </circle>
         </template>
