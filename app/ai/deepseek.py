@@ -18,6 +18,44 @@ class DeepSeekError(Exception):
     pass
 
 
+def safe_ai_error_detail(exc: Exception, *, provider: str | None = None) -> dict:
+    """Return stable diagnostics without response bodies, request headers, or keys."""
+    cause = exc.__cause__ if isinstance(exc, DeepSeekError) and exc.__cause__ else exc
+    detail = {
+        "provider": (provider or "unknown").strip() or "unknown",
+        "exception_class": type(cause).__name__,
+        "http_status": None,
+        "message": "AI provider request failed",
+    }
+    if isinstance(cause, httpx.HTTPStatusError):
+        detail["http_status"] = cause.response.status_code
+        detail["message"] = f"provider returned HTTP {cause.response.status_code}"
+    elif isinstance(cause, httpx.TimeoutException):
+        detail["message"] = "provider request timed out"
+    elif isinstance(cause, httpx.ConnectError):
+        detail["message"] = "provider connection failed"
+    elif isinstance(cause, json.JSONDecodeError):
+        detail["message"] = "provider returned invalid JSON"
+    elif isinstance(cause, KeyError):
+        detail["message"] = f"provider response missing field {cause.args[0]!r}"
+    elif isinstance(cause, ValueError):
+        detail["message"] = "provider response could not be parsed"
+    return detail
+
+
+def safe_ai_error_message(exc: Exception, *, provider: str | None = None) -> str:
+    detail = safe_ai_error_detail(exc, provider=provider)
+    status = (
+        f"; http_status={detail['http_status']}"
+        if detail["http_status"] is not None
+        else ""
+    )
+    return (
+        f"provider={detail['provider']}; exception={detail['exception_class']}"
+        f"{status}; message={detail['message']}"
+    )
+
+
 def _parse_json_content(content: str) -> dict:
     """Parse model JSON output with a few tolerant cleanups."""
     text = (content or "").strip()
@@ -142,7 +180,7 @@ async def chat_json(
             raise DeepSeekError(
                 f"AI 返回了非 JSON 内容（模型 {mdl}）：{snippet!r}"
             ) from e
-        raise DeepSeekError(f"AI 调用/解析失败: {e}") from e
+        raise DeepSeekError(safe_ai_error_message(e)) from e
 
 
 async def chat_messages(

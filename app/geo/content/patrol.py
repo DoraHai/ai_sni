@@ -668,6 +668,7 @@ async def execute_patrol_run(
                     "sample_mode": None,
                     "simulated": None,
                 }
+                llm: dict[str, Any] | None = None
                 try:
                     engine_row = row_by_key.get(engine)
                     # prefer_real: if engine is mock but tenant has llm, still try resolve
@@ -836,15 +837,20 @@ async def execute_patrol_run(
                 except GeoEntitlementUnavailable:
                     raise
                 except (DeepSeekError, ValueError) as exc:
+                    from app.ai.deepseek import safe_ai_error_detail, safe_ai_error_message
+
+                    provider = str((llm or {}).get("provider") or engine)
+                    detail = safe_ai_error_detail(exc, provider=provider)
                     cell["ok"] = False
-                    cell["error"] = str(exc)
+                    cell["error"] = safe_ai_error_message(exc, provider=provider)
+                    cell["error_detail"] = detail
                     summary["cells_fail"] += 1
                     logger.warning(
                         "patrol cell fail tenant=%s prompt=%s engine=%s: %s",
                         row.tenant_id,
                         prompt.id,
                         engine,
-                        exc,
+                        cell["error"],
                     )
                 except Exception as exc:  # noqa: BLE001
                     cell["ok"] = False
