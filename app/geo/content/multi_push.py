@@ -110,6 +110,8 @@ async def list_push_targets(
         )
     var_map = {str(v.channel).lower(): v for v in variants}
 
+    from app.geo.content.review import current_review_receipt
+
     targets: list[dict[str, Any]] = []
     for ch in channels:
         ctype = str(ch.channel_type or "").lower()
@@ -160,8 +162,12 @@ async def list_push_targets(
             continue
 
         reasons: list[str] = []
-        if getattr(task, "review_status", None) != "approved":
-            reasons.append("尚未通过人工审批")
+        review_ready = bool(
+            variant
+            and current_review_receipt(task, article_id=variant.article_version_id) is not None
+        )
+        if getattr(task, "review_status", None) != "approved" or not review_ready:
+            reasons.append("尚未形成当前客户和版本的完整人工审核记录")
         if mode != "auto_publish":
             reasons.append("发布模式不是 auto_publish（在发布渠道里改为 auto_publish）")
         if variant is None:
@@ -429,6 +435,7 @@ async def execute_single_push(session, *, task, variant, channel_row, account, m
             ),
             task=task,
             brand=brand,
+            article_id=current_article.id,
         )
 
     if mode not in {"draft", "publish"}:

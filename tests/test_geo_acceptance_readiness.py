@@ -11,6 +11,16 @@ from app.geo.acceptance_readiness import _variant_fingerprint, build_h3_h4_summa
 def row(**values):
     if values.get("review_status") == "approved":
         values.setdefault("reviewed_at", datetime(2026, 9, 11, 2, 0))
+        values.setdefault("tenant_id", 7)
+        values.setdefault("review_audit", {
+            "schema_version": "geo.review.audit.v1",
+            "events": [
+                {"event": "submitted", "actor_user_id": 9, "actor_role": "编辑", "tenant_id": 7,
+                 "article_id": 23, "occurred_at": "2026-09-11T01:30:00Z"},
+                {"event": "approved", "actor_user_id": 9, "actor_role": "编辑", "tenant_id": 7,
+                 "article_id": 23, "occurred_at": "2026-09-11T02:00:00Z"},
+            ],
+        })
     if "version_no" in values:
         values.setdefault("created_at", datetime(2026, 9, 11, 1, 0))
     return NS(**values)
@@ -84,6 +94,17 @@ def test_h3_rejects_missing_or_older_review_for_latest_master(reviewed_at):
         "module": "geo", "type": "article_version", "id": 23,
     }
     assert requirement["evidence"]["article_created_at"] == "2026-09-11T01:00:00Z"
+
+
+def test_h3_rejects_legacy_approval_without_tenant_role_version_audit():
+    task = row(id=14, review_status="approved", review_audit=None)
+    article = row(id=23, version_no=6)
+
+    result = build_h3_h4_summary(task, [article], [], [])
+
+    assert "customer_review_approved" in result["h3"]["blocking_reasons"]
+    requirement = next(item for item in result["h3"]["requirements"] if item["key"] == "customer_review_approved")
+    assert requirement["evidence"]["review_audit_verified"] is False
 
 
 def test_h3_h4_summary_separates_stored_proof_from_human_channel_checks():
