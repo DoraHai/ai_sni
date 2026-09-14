@@ -303,6 +303,51 @@ def resolve_demo_response(
     if method == "GET" and path == "/api/v1/seo/workbench/sites":
         site = fixture["site"]
         return DemoResponse(200, {"tenant_id": DEMO_TENANT_ID, "selection_policy": {"selectable_statuses": ["active"], "disabled_statuses": ["paused", "archived"]}, "sites": [{"id": site["id"], "name": site["name"], "domain": site["domain"], "status": site["status"]}], "demo_meta": _dataset_meta(fixture)})
+    if method == "GET" and path == "/api/v1/seo/workbench/readiness":
+        site = fixture["site"]
+        contents = fixture["contents"]
+        publications = fixture["publications"]
+        attempts = [item for values in fixture["publication_attempts"].values() for item in values]
+        pages = fixture["pages"]
+        tasks = fixture["work_orders"]
+        def counts(values):
+            return {status: sum(item["status"] == status for item in values) for status in {item["status"] for item in values}}
+        def freshness(values, field, reason):
+            observed = [item.get(field) for item in values if item.get(field)]
+            return {"state": "observed" if observed else "no_data", "as_of": max(observed) if observed else None,
+                    "age_seconds": None, "stale_after_seconds": None,
+                    "reason": "static_demo_snapshot;no_live_freshness_sla" if observed else reason}
+        published_content_ids = {item["content_id"] for item in publications}
+        approved_without_publication = sum(item.get("review_status") == "approved" and item["id"] not in published_content_ids for item in contents)
+        public_url_missing = sum(not item.get("page_url") for item in publications)
+        unchecked_pages = sum(not item.get("last_checked_at") for item in pages)
+        done_with_evidence = sum(item["status"] == "done" and item.get("completion_evidence") for item in tasks)
+        done_without_evidence = sum(item["status"] == "done" and not item.get("completion_evidence") for item in tasks)
+        gaps = []
+        for code, count, description in (
+            ("approved_content_without_publication", approved_without_publication, "已审核内容尚无分平台发布记录"),
+            ("publication_url_missing", public_url_missing, "发布记录缺少公开地址，不能关联页面检查"),
+            ("page_check_missing", unchecked_pages, "页面尚无检查时间，不能作为页面通过依据"),
+            ("task_completion_evidence_missing", done_without_evidence, "已完成任务缺少真实指标变化证据"),
+        ):
+            if count: gaps.append({"code": code, "count": count, "description": description})
+        return DemoResponse(200, {
+            "tenant_id": DEMO_TENANT_ID, "site_id": DEMO_SITE_ID,
+            "site_scope": {"tenant_id": DEMO_TENANT_ID, "site_id": DEMO_SITE_ID, "name": site["name"], "domain": site["domain"], "canonical_domain": site["canonical_domain"], "status": site["status"]},
+            "read_at": fixture["dataset"]["as_of"],
+            "contracts": {
+                "content_assets": {"endpoint": "/api/v1/seo/content-assets", "review_history_endpoint_template": "/api/v1/seo/content-assets/{content_id}/review-history", "total": len(contents), "status_counts": counts(contents), "approved_without_publication": approved_without_publication, "freshness": freshness(contents, "updated_at", "no_content_assets")},
+                "publications": {"endpoint": "/api/v1/seo/content-distribution/publications", "total": len(publications), "status_counts": counts(publications), "public_url_missing": public_url_missing, "freshness": freshness(publications, "updated_at", "no_publication_records")},
+                "publication_attempts": {"endpoint_template": "/api/v1/seo/content-distribution/publications/{publication_id}/attempts", "total": len(attempts), "status_counts": counts(attempts), "freshness": freshness(attempts, "started_at", "no_publication_attempts;manual_records_may_legitimately_have_none")},
+                "page_checks": {"endpoint": "/api/v1/seo/workbench/publication-page-evidence", "total_pages": len(pages), "status_counts": counts(pages), "unchecked_pages": unchecked_pages, "freshness": freshness(pages, "last_checked_at", "no_page_check_evidence")},
+                "tasks": {"endpoint": "/api/v1/seo/tasks", "total": len(tasks), "status_counts": counts(tasks), "included_action_types": ["content_review", "image_repair", "ranking_improvement", "backlink_outreach"], "done_with_completion_evidence": done_with_evidence, "done_without_completion_evidence": done_without_evidence, "completion_rule": "done_requires_server_verified_metric_change", "freshness": freshness(tasks, "updated_at", "no_visible_seo_tasks")},
+            },
+            "gaps": gaps,
+            "state_rules": {"review_approved": "content.status == approved;review_history remains the audit source", "publication_succeeded": "publication.status == published;public_url is reported separately", "page_check_passed": "no_single_pass_flag;inspect page_check.coverage,verified_after_publication,http,body,links,images", "task_completed": "task.status == done and completion_evidence is server_verified", "search_effect_improved": "not_available_from_this_contract"},
+            "freshness_policy": "static_demo_snapshot;event_ledgers_have_no_global_expiry",
+            "read_only": True,
+            "demo_meta": _dataset_meta(fixture),
+        })
     if method == "GET" and path == "/api/v1/seo/overview":
         return DemoResponse(200, _overview(fixture))
     if method == "GET" and path == "/api/v1/seo/overview/task-center":

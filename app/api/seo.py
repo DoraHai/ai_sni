@@ -18,6 +18,7 @@ from app.seo_backlink_sources import parse_backlink_csv, import_candidates, inde
 from app.seo_backlink_opportunities import competitor_domains, compare_samples
 from app.seo_task_center import list_task_center, planned_checks, actor_key, JOB_PERMISSIONS
 from app.models.seo import SeoAiOperation
+from app.models.seo_cockpit import SeoTask
 
 from app.seo_ai_operations import (
     SeoAiReplay, claim_seo_ai_operation, settle_seo_ai_operation, refund_failed_operation, retained_result,
@@ -5590,6 +5591,12 @@ def _publication_payload(
 WORKBENCH_PAGE_INVENTORY_SCAN_LIMIT = 5000
 WORKBENCH_ASSOCIATION_CANDIDATE_LIMIT = 5
 _INVALID_URL_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+WORKBENCH_TASK_PERMISSIONS = {
+    "content_review": "seo.content",
+    "image_repair": "seo.site",
+    "ranking_improvement": "seo.keywords",
+    "backlink_outreach": "seo.links",
+}
 
 
 def _normalize_workbench_publication_url(value: str | None) -> str | None:
@@ -5928,6 +5935,47 @@ def _workbench_attempt_identity(row: SeoPublishAttempt | None) -> dict[str, Any]
         "started_at": _database_iso(row.started_at),
         "completed_at": _iso(row.completed_at),
     }
+
+
+def _workbench_latest(values: list[datetime | None]) -> datetime | None:
+    present = [value for value in values if value is not None]
+    return max(present) if present else None
+
+
+def _workbench_freshness(
+    latest: datetime | None,
+    read_at: datetime,
+    *,
+    timestamp_kind: Literal["database_wall_clock", "utc_observation"],
+    missing_reason: str,
+) -> dict[str, Any]:
+    """Describe recency without inventing an expiry SLA for event-ledger data."""
+    if latest is None:
+        return {
+            "state": "no_data",
+            "as_of": None,
+            "age_seconds": None,
+            "stale_after_seconds": None,
+            "reason": missing_reason,
+        }
+    if latest.tzinfo is None:
+        zone = timezone(timedelta(hours=8)) if timestamp_kind == "database_wall_clock" else timezone.utc
+        aware = latest.replace(tzinfo=zone)
+    else:
+        aware = latest
+    age_seconds = max(0, int((read_at - aware.astimezone(timezone.utc)).total_seconds()))
+    return {
+        "state": "observed",
+        "as_of": _database_iso(latest) if timestamp_kind == "database_wall_clock" else _iso(latest),
+        "age_seconds": age_seconds,
+        "stale_after_seconds": None,
+        "reason": "no_global_freshness_sla;use_as_of_and_age_seconds",
+    }
+
+
+def _status_readiness(rows: list[tuple[Any, ...]]) -> tuple[dict[str, int], int, datetime | None]:
+    counts = {str(row[0]): int(row[1] or 0) for row in rows}
+    return counts, sum(counts.values()), _workbench_latest([row[2] for row in rows])
 
 
 async def _distribution_connection(
@@ -6983,6 +7031,182 @@ async def list_workbench_publication_page_evidence(
             "association_counts": dict(association_counts),
         },
         "items": items,
+        "read_only": True,
+    }
+
+
+@router.get("/workbench/readiness")
+async def get_workbench_readiness(
+    tenant_id: PositiveInt,
+    site_id: PositiveInt,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    """Summarize stored SEO workbench coverage without refreshing any source."""
+    ctx.ensure_tenant(tenant_id)
+    if not (ctx.can_view("seo.content") and ctx.can_view("seo.site")):
+        raise HTTPException(403, "当前账号需要同时具有 SEO 内容和页面查看权限")
+    await ensure_module_access(session, ctx, tenant_id, "seo")
+    await _tenant(session, tenant_id)
+    site = await _seo_site(session, tenant_id, site_id)
+
+    content_rows = (await session.execute(
+        select(SeoContentAsset.status, func.count(), func.max(SeoContentAsset.updated_at))
+        .where(SeoContentAsset.tenant_id == tenant_id, SeoContentAsset.site_id == site_id)
+        .group_by(SeoContentAsset.status)
+    )).all()
+    publication_rows = (await session.execute(
+        select(
+            SeoContentPublication.status,
+            func.count(),
+            func.max(SeoContentPublication.updated_at),
+            func.count().filter(SeoContentPublication.page_url.is_(None)),
+        )
+        .join(SeoContentAsset, and_(
+            SeoContentAsset.id == SeoContentPublication.content_asset_id,
+            SeoContentAsset.tenant_id == SeoContentPublication.tenant_id,
+        ))
+        .where(
+            SeoContentPublication.tenant_id == tenant_id,
+            SeoContentAsset.site_id == site_id,
+        )
+        .group_by(SeoContentPublication.status)
+    )).all()
+    attempt_rows = (await session.execute(
+        select(SeoPublishAttempt.status, func.count(), func.max(SeoPublishAttempt.started_at))
+        .join(SeoContentPublication, and_(
+            SeoContentPublication.id == SeoPublishAttempt.publication_id,
+            SeoContentPublication.tenant_id == SeoPublishAttempt.tenant_id,
+        ))
+        .join(SeoContentAsset, and_(
+            SeoContentAsset.id == SeoContentPublication.content_asset_id,
+            SeoContentAsset.tenant_id == SeoContentPublication.tenant_id,
+        ))
+        .where(SeoPublishAttempt.tenant_id == tenant_id, SeoContentAsset.site_id == site_id)
+        .group_by(SeoPublishAttempt.status)
+    )).all()
+    page_rows = (await session.execute(
+        select(
+            SeoSitePage.status,
+            func.count(),
+            func.max(SeoSitePage.last_checked_at),
+            func.count().filter(SeoSitePage.last_checked_at.is_(None)),
+        )
+        .where(SeoSitePage.tenant_id == tenant_id, SeoSitePage.site_id == site_id)
+        .group_by(SeoSitePage.status)
+    )).all()
+    allowed_actions = [
+        action for action, permission in WORKBENCH_TASK_PERMISSIONS.items()
+        if ctx.can_view(permission)
+    ]
+    task_rows = (await session.execute(
+        select(
+            SeoTask.status,
+            func.count(),
+            func.max(SeoTask.updated_at),
+            func.count().filter(SeoTask.completion_evidence.is_not(None)),
+        )
+        .where(
+            SeoTask.tenant_id == tenant_id,
+            SeoTask.site_id == site_id,
+            SeoTask.action_type.in_(allowed_actions),
+        )
+        .group_by(SeoTask.status)
+    )).all() if allowed_actions else []
+    approved_without_publication = int(await session.scalar(
+        select(func.count()).select_from(SeoContentAsset)
+        .outerjoin(SeoContentPublication, and_(
+            SeoContentPublication.content_asset_id == SeoContentAsset.id,
+            SeoContentPublication.tenant_id == SeoContentAsset.tenant_id,
+        ))
+        .where(
+            SeoContentAsset.tenant_id == tenant_id,
+            SeoContentAsset.site_id == site_id,
+            SeoContentAsset.status == "approved",
+            SeoContentPublication.id.is_(None),
+        )
+    ) or 0)
+
+    content_counts, content_total, content_latest = _status_readiness(content_rows)
+    publication_counts, publication_total, publication_latest = _status_readiness(publication_rows)
+    attempt_counts, attempt_total, attempt_latest = _status_readiness(attempt_rows)
+    page_counts, page_total, page_latest = _status_readiness(page_rows)
+    task_counts, task_total, task_latest = _status_readiness(task_rows)
+    publication_url_missing = sum(int(row[3] or 0) for row in publication_rows)
+    page_unchecked = sum(int(row[3] or 0) for row in page_rows)
+    done_with_evidence = sum(int(row[3] or 0) for row in task_rows if str(row[0]) == "done")
+    done_without_evidence = max(0, task_counts.get("done", 0) - done_with_evidence)
+    read_at = datetime.now(timezone.utc)
+    gaps = []
+    for code, count, description in (
+        ("approved_content_without_publication", approved_without_publication, "已审核内容尚无分平台发布记录"),
+        ("publication_url_missing", publication_url_missing, "发布记录缺少公开地址，不能关联页面检查"),
+        ("page_check_missing", page_unchecked, "页面尚无检查时间，不能作为页面通过依据"),
+        ("task_completion_evidence_missing", done_without_evidence, "已完成任务缺少真实指标变化证据"),
+    ):
+        if count:
+            gaps.append({"code": code, "count": count, "description": description})
+    return {
+        "tenant_id": tenant_id,
+        "site_id": site_id,
+        "site_scope": {
+            "tenant_id": tenant_id,
+            "site_id": site_id,
+            "name": site.name,
+            "domain": site.domain,
+            "canonical_domain": site.canonical_domain,
+            "status": site.status,
+        },
+        "read_at": _iso(read_at),
+        "contracts": {
+            "content_assets": {
+                "endpoint": "/api/v1/seo/content-assets",
+                "review_history_endpoint_template": "/api/v1/seo/content-assets/{content_id}/review-history",
+                "total": content_total,
+                "status_counts": content_counts,
+                "approved_without_publication": approved_without_publication,
+                "freshness": _workbench_freshness(content_latest, read_at, timestamp_kind="database_wall_clock", missing_reason="no_content_assets"),
+            },
+            "publications": {
+                "endpoint": "/api/v1/seo/content-distribution/publications",
+                "total": publication_total,
+                "status_counts": publication_counts,
+                "public_url_missing": publication_url_missing,
+                "freshness": _workbench_freshness(publication_latest, read_at, timestamp_kind="database_wall_clock", missing_reason="no_publication_records"),
+            },
+            "publication_attempts": {
+                "endpoint_template": "/api/v1/seo/content-distribution/publications/{publication_id}/attempts",
+                "total": attempt_total,
+                "status_counts": attempt_counts,
+                "freshness": _workbench_freshness(attempt_latest, read_at, timestamp_kind="database_wall_clock", missing_reason="no_publication_attempts;manual_records_may_legitimately_have_none"),
+            },
+            "page_checks": {
+                "endpoint": "/api/v1/seo/workbench/publication-page-evidence",
+                "total_pages": page_total,
+                "status_counts": page_counts,
+                "unchecked_pages": page_unchecked,
+                "freshness": _workbench_freshness(page_latest, read_at, timestamp_kind="utc_observation", missing_reason="no_page_check_evidence"),
+            },
+            "tasks": {
+                "endpoint": "/api/v1/seo/tasks",
+                "total": task_total,
+                "status_counts": task_counts,
+                "included_action_types": allowed_actions,
+                "done_with_completion_evidence": done_with_evidence,
+                "done_without_completion_evidence": done_without_evidence,
+                "completion_rule": "done_requires_server_verified_metric_change",
+                "freshness": _workbench_freshness(task_latest, read_at, timestamp_kind="utc_observation", missing_reason="no_visible_seo_tasks"),
+            },
+        },
+        "gaps": gaps,
+        "state_rules": {
+            "review_approved": "content.status == approved;review_history remains the audit source",
+            "publication_succeeded": "publication.status == published;public_url is reported separately",
+            "page_check_passed": "no_single_pass_flag;inspect page_check.coverage,verified_after_publication,http,body,links,images",
+            "task_completed": "task.status == done and completion_evidence is server_verified",
+            "search_effect_improved": "not_available_from_this_contract",
+        },
+        "freshness_policy": "event_ledgers_have_no_global_expiry;page_checks_report_observation_age_without_inferred_pass_or_stale_status",
         "read_only": True,
     }
 

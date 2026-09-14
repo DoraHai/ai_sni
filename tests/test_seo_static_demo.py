@@ -249,6 +249,7 @@ def test_search_clicks_are_explicitly_unavailable_not_fabricated():
 @pytest.mark.parametrize(
     ("path", "assertion"),
     [
+        ("/api/v1/seo/workbench/readiness", lambda payload: payload["read_only"] is True and payload["site_scope"]["site_id"] == 1601),
         ("/api/v1/seo/overview/task-center", lambda payload: payload["total"] == 2),
         ("/api/v1/seo/overview/customer-verification-queue", lambda payload: payload["total"] == 3 and payload["read_only"] is True and payload["truncated"] is False),
         ("/api/v1/seo/alerts", lambda payload: payload["total"] == 4 and payload["high"] == 2),
