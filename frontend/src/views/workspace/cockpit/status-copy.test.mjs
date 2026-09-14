@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { urgencyReply } from './status-copy.mjs'
+import { geoReadyReply, urgencyReply } from './status-copy.mjs'
 
 test('does not describe business actions as modules', () => {
   assert.equal(urgencyReply({ unresolvedModules: 0, businessUrgentItems: 6 }),
@@ -13,4 +13,10 @@ test('describes unresolved data scope separately', () => {
   assert.equal(urgencyReply({ unresolvedModules: 2, businessUrgentItems: 0 }),
     '有 2 个模块还需要选择业务范围，或处理读取异常。')
   assert.equal(urgencyReply({ unresolvedModules: 0, businessUrgentItems: 0 }), '')
+})
+
+test('describes a completed GEO week through its inclusive Sunday', () => {
+  const reply = geoReadyReply('2026-09-06')
+  assert.match(reply, /截至 2026-09-06 的最近完整自然周/)
+  assert.doesNotMatch(reply, /2026-09-07/)
 })

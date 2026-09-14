@@ -6,3 +6,8 @@ export function urgencyReply({ unresolvedModules, businessUrgentItems }) {
   if (actions) return `已读取的数据中有 ${actions} 项业务事项建议现在处理，可以从行动台账进入。`
   return ''
 }
+
+export function geoReadyReply(inclusiveEnd) {
+  const end = /^\d{4}-\d{2}-\d{2}$/.test(inclusiveEnd || '') ? inclusiveEnd : '未知日期'
+  return `已按截至 ${end} 的最近完整自然周读取 GEO 正式指标。模拟回答、人工记录和不合格样本没有算入数字。`
+}

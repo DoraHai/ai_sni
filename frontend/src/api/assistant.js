@@ -6,6 +6,17 @@ export function chat({ tenantId, message }) {
   return client.post('/api/v1/assistant/chat', { tenant_id: tenantId, message })
 }
 
+// DeepSeek returns a display-only command. The server whitelists modules/card ids;
+// this endpoint never executes campaign, content or publishing actions.
+export function commandCockpit({ tenantId, message, availableModules, visibleCards }) {
+  return client.post('/api/v1/assistant/cockpit-command', {
+    tenant_id: tenantId,
+    message,
+    available_modules: availableModules,
+    visible_cards: visibleCards,
+  })
+}
+
 // 加载对话历史（保留期内，时间正序）。返回 {retain_days, messages:[{role,content,created_at}]}
 export function fetchHistory({ tenantId }) {
   return client.get('/api/v1/assistant/history', { params: { tenant_id: tenantId } })
