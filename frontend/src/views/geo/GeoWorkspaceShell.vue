@@ -29,6 +29,11 @@ const visibleNavigation = computed(() => (
         ] },
       ]
     : GEO_WORKBENCH_NAV
+        .map((group) => ({
+          ...group,
+          children: group.children.filter((item) => session.canView(item.key)),
+        }))
+        .filter((group) => group.children.length)
 ))
 const geoNavRail = computed(() => geoNavCollapsed.value && !geoNavHover.value && !isMobile.value)
 const expandedGroups = ref({

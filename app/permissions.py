@@ -9,6 +9,7 @@
 # 菜单注册表：key 唯一，group 用于侧边栏分组，path 是前端路由（settings.accounts 仅 edit 有意义）
 MENUS: list[dict] = [
     {"key": "assistant", "label": "AI 助手", "group": "智能助手", "path": "/assistant"},
+    {"key": "geo.assets", "label": "项目管理", "group": "GEO 增长", "path": "/geo/projects"},
     {"key": "geo.diagnosis", "label": "GEO 诊断", "group": "GEO 增长", "path": "/geo/diagnosis"},
     {"key": "geo.content", "label": "GEO 概览", "group": "GEO 增长", "path": "/geo/overview"},
     {"key": "seo.dashboard", "label": "排名看板", "group": "SEO 增长", "path": "/seo/dashboard"},
@@ -47,6 +48,7 @@ ALL_EDIT = {m["key"]: "edit" for m in MENUS}
 OPERATOR_PERMS = {k: "edit" for k in MENU_KEYS if k != "settings.accounts"}
 # 品牌方客户：只读看板 + 画像 + 报告
 CLIENT_PERMS = {
+    "geo.assets": "edit",
     "monitor.dashboard": "view",
     "monitor.profile": "view",
     "delivery.report": "view",

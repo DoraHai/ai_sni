@@ -79,6 +79,7 @@ from app.models.geo_content import (
     GeoPublication,
     GeoTaskFact,
 )
+from app.models.module_workspace import GeoProject, TenantModule
 from app.models.seo import (
     SeoBacklink,
     SeoBrandAsset,
@@ -175,6 +176,8 @@ __all__ = [
     "GeoArticleVersion",
     "GeoChannelVariant",
     "GeoPublication",
+    "GeoProject",
+    "TenantModule",
     "SeoKeywordAsset",
     "SeoRankSnapshot",
     "SeoBrandAsset",

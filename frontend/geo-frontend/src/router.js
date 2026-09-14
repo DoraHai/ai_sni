@@ -21,6 +21,7 @@ const routes = [
     redirect: GEO_WORKBENCH_START,
     meta: geoMeta('GEO 工作台', { bare: true }),
     children: [
+      { path: 'projects', component: () => import('../../src/views/geo/GeoProjectsView.vue'), meta: geoMeta('项目管理', { perm: 'geo.assets' }) },
       { path: 'demo', redirect: GEO_DEMO_HOME },
       { path: 'demo/overview', component: () => import('../../src/views/geo/GeoDemoView.vue'), meta: geoMeta('GEO 演示总览') },
       { path: 'demo/questions', component: () => import('../../src/views/geo/GeoDemoView.vue'), meta: geoMeta('演示问题监测') },
