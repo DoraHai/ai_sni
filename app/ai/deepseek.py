@@ -40,6 +40,12 @@ def safe_ai_error_detail(exc: Exception, *, provider: str | None = None) -> dict
         detail["message"] = f"provider response missing field {cause.args[0]!r}"
     elif isinstance(cause, ValueError):
         detail["message"] = "provider response could not be parsed"
+    attempts = getattr(exc, "attempts", None)
+    timeout_seconds = getattr(exc, "timeout_seconds", None)
+    if isinstance(attempts, int) and attempts > 0:
+        detail["attempts"] = attempts
+    if isinstance(timeout_seconds, (int, float)) and timeout_seconds > 0:
+        detail["timeout_seconds"] = timeout_seconds
     return detail
 
 
@@ -50,9 +56,14 @@ def safe_ai_error_message(exc: Exception, *, provider: str | None = None) -> str
         if detail["http_status"] is not None
         else ""
     )
+    retry = (
+        f"; attempts={detail['attempts']}; timeout_seconds={detail['timeout_seconds']}"
+        if "attempts" in detail and "timeout_seconds" in detail
+        else ""
+    )
     return (
         f"provider={detail['provider']}; exception={detail['exception_class']}"
-        f"{status}; message={detail['message']}"
+        f"{status}{retry}; message={detail['message']}"
     )
 
 
