@@ -6646,17 +6646,13 @@ onBeforeUnmount(() => {
   align-items:center !important;
   width:100% !important;
   min-height:38px !important;
-  padding:8px 42px 8px 42px !important;
+  padding:8px 42px 8px 18px !important;
   overflow:hidden !important;
   line-height:1.25 !important;
 }
 .guides button:before{
-  left:14px !important;
-  top:50% !important;
-  width:18px !important;
-  height:18px !important;
-  margin-top:-9px !important;
-  flex:0 0 auto !important;
+  content:none !important;
+  display:none !important;
 }
 .guides button:after{
   right:14px !important;
