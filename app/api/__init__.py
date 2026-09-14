@@ -3,10 +3,7 @@ from app.api.alerts import router as alerts_router
 from app.api.assistant import router as assistant_router
 from app.api.auth import router as auth_router
 from app.api.customer_profile import router as customer_profile_router
-from app.api.customer_modules import (
-    geo_projects_router,
-    router as customer_modules_router,
-)
+from app.api.customer_modules import router as customer_modules_router
 from app.api.dashboard import router as dashboard_router
 from app.api.expansion import router as expansion_router
 from app.api.keywords import router as keywords_router
@@ -30,6 +27,7 @@ from app.api.users import router as users_router
 from app.api.writeback import router as writeback_router
 from app.api.geo import router as geo_router
 from app.api.seo import router as seo_router
+from app.geo.project_routes import geo_projects_router
 
 __all__ = [
     "adjustments_verify_router",

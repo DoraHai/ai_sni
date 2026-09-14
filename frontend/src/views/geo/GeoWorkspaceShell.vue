@@ -9,6 +9,13 @@ import { GEO_WORKBENCH_NAV } from '../../utils/geoPrototypeNavigation'
 const route = useRoute()
 const router = useRouter()
 const mobileOpen = ref(false)
+const devBypass = !session.isLoggedIn && import.meta.env.VITE_API_KEY && import.meta.env.DEV
+const visibleNavigation = computed(() => GEO_WORKBENCH_NAV
+  .map((group) => ({
+    ...group,
+    children: group.children.filter((item) => devBypass || !item.key || session.canView(item.key)),
+  }))
+  .filter((group) => group.children.length))
 const expandedGroups = ref({
   [GEO_WORKBENCH_NAV[0]?.label]: true,
 })
@@ -101,7 +108,7 @@ async function onUserCommand(cmd) {
       </div>
       <nav class="geo-shell-nav">
         <div class="geo-nav-section-title">GEO 增长工作流</div>
-        <section v-for="(group, groupIndex) in GEO_WORKBENCH_NAV" :key="group.label" class="geo-nav-group">
+        <section v-for="(group, groupIndex) in visibleNavigation" :key="group.label" class="geo-nav-group">
           <button
             type="button"
             class="geo-nav-group-toggle"

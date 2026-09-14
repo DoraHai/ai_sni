@@ -3,7 +3,7 @@
  * Canonical 名称（侧栏 / 页面 h1 / documentTitle 必须一致）：
  * GEO 概览 · AI 可见度 · 采集与判断 · 优化意图词 · 竞品分析 · AI 引用次数 ·
  * 知识库 · 优化文章 · 信源策略 · 分发平台 · 品牌资料 · AI 能力配置 ·
- * 渠道成稿提示词 · 引擎
+ * 渠道成稿提示词 · 引擎 · 项目管理
  */
 export const GEO_WORKBENCH_START = '/geo/overview'
 
@@ -35,6 +35,7 @@ export const GEO_WORKBENCH_NAV = [
   {
     label: '设置',
     children: [
+      { label: '项目管理', path: '/geo/projects', key: 'geo.assets', icon: '▣' },
       { label: '品牌资料', path: '/geo/brand', key: 'geo.content', icon: '▰' },
       { label: 'AI 能力配置', path: '/geo/ai-settings', key: 'geo.content', icon: '⚙' },
       { label: '渠道成稿提示词', path: '/geo/channel-polish-prompts', key: 'geo.content', icon: '✎' },
