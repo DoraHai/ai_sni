@@ -118,3 +118,38 @@ retain the database wall-clock convention with an explicit `+08:00` offset.
 An empty `items` array with `total: 0` is an authorized empty result. Tenant,
 module, permission, and site failures use the existing 403/404 SEO error
 contracts and never fall back to another tenant or site.
+
+## Site readiness manifest
+
+`GET /api/v1/seo/workbench/readiness?tenant_id=…&site_id=…` is the bounded
+read-only entry point a workbench can call before requesting detail pages. It
+requires the same tenant, module, site, `seo.content`, and `seo.site` view
+scope. The response identifies the exact site and summarizes stored rows for:
+
+- content assets and their raw workflow status counts;
+- per-platform publication records, including records with no public URL;
+- publication attempts and their raw outcome counts;
+- stored site pages, including pages without a check timestamp;
+- visible SEO tasks, their status counts, and whether every `done` row has
+  server-produced completion evidence.
+
+The manifest reports these explicit gap codes only when the count is nonzero:
+`approved_content_without_publication`, `publication_url_missing`,
+`page_check_missing`, and `task_completion_evidence_missing`. A publication
+attempt may legitimately be absent for a manually imported publication, so an
+empty attempt ledger is described as unavailable rather than treated as a
+failed publication.
+
+Every source includes `freshness.state`, `as_of`, and `age_seconds`. Event
+ledgers have no global expiry SLA, and page-check age alone does not imply that
+a page passed, failed, or became stale. Accordingly `stale_after_seconds` is
+`null`; consumers must show the observation time and use the detail endpoint's
+stored evidence instead of inventing a success state. Reading the manifest
+does not crawl, publish, retry, generate, or modify any row.
+
+`state_rules` keeps the boundaries explicit: content `approved`, publication
+`published`, stored page observations, and task `done` are independent facts.
+There is no single page-pass flag in this contract; the consumer must inspect
+the page-check coverage and evidence fields. Search-effect improvement is not
+available from this endpoint and must not be inferred from publication or page
+checks.

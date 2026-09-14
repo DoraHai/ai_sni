@@ -548,3 +548,69 @@ def test_route_has_exact_read_permission_and_page_size_maximum():
     page_limits = {type(item).__name__: item for item in page_number.field_info.metadata}
     assert size_limits["Le"].le == 100 and size_limits["Ge"].ge == 1
     assert page_limits["Ge"].ge == 1
+
+
+def test_workbench_readiness_summarizes_scoped_records_without_starting_work(monkeypatch):
+    content_time = datetime(2026, 9, 13, 10, 0)
+    publication_time = datetime(2026, 9, 13, 11, 0)
+    attempt_time = datetime(2026, 9, 13, 11, 5)
+    page_time = datetime(2026, 9, 13, 3, 0)
+    task_time = datetime(2026, 9, 13, 4, 0)
+    db = SimpleNamespace(
+        execute=AsyncMock(side_effect=[
+            Rows([('approved', 2, content_time), ('published', 1, content_time)]),
+            Rows([('manual_required', 1, publication_time, 1), ('published', 1, publication_time, 0)]),
+            Rows([('failed', 1, attempt_time), ('succeeded', 1, attempt_time)]),
+            Rows([('pending', 1, None, 1), ('verified', 2, page_time, 0)]),
+            Rows([('in_progress', 1, task_time, 0), ('done', 2, task_time, 1)]),
+        ]),
+        scalar=AsyncMock(return_value=1),
+        add=MagicMock(), commit=AsyncMock(), flush=AsyncMock(), refresh=AsyncMock(),
+        rollback=AsyncMock(), delete=AsyncMock(),
+    )
+    monkeypatch.setattr(api, 'ensure_module_access', AsyncMock())
+    monkeypatch.setattr(api, '_tenant', AsyncMock(return_value=SimpleNamespace(id=7)))
+    monkeypatch.setattr(api, '_seo_site', AsyncMock(return_value=SimpleNamespace(
+        id=9, tenant_id=7, name='Example', domain='https://example.com', canonical_domain='example.com', status='active'
+    )))
+    monkeypatch.setattr(api, 'crawl_site', AsyncMock(side_effect=AssertionError('GET must not crawl')))
+    monkeypatch.setattr(api, 'publish_content', AsyncMock(side_effect=AssertionError('GET must not publish')))
+
+    result = asyncio.run(api.get_workbench_readiness(
+        tenant_id=7, site_id=9, session=db,
+        ctx=_ctx(permissions={'seo.content':'view','seo.site':'view','seo.links':'view'}),
+    ))
+
+    assert result['read_only'] is True
+    assert result['site_scope'] == {'tenant_id':7,'site_id':9,'name':'Example','domain':'https://example.com','canonical_domain':'example.com','status':'active'}
+    assert result['contracts']['content_assets']['status_counts'] == {'approved':2,'published':1}
+    assert result['contracts']['content_assets']['review_history_endpoint_template'].endswith('/review-history')
+    assert result['contracts']['content_assets']['approved_without_publication'] == 1
+    assert result['contracts']['publications']['public_url_missing'] == 1
+    assert result['contracts']['page_checks']['unchecked_pages'] == 1
+    assert result['contracts']['tasks']['included_action_types'] == ['content_review','image_repair','backlink_outreach']
+    assert result['contracts']['tasks']['done_with_completion_evidence'] == 1
+    assert result['contracts']['tasks']['done_without_completion_evidence'] == 1
+    assert {item['code'] for item in result['gaps']} == {
+        'approved_content_without_publication','publication_url_missing','page_check_missing','task_completion_evidence_missing'
+    }
+    assert result['contracts']['page_checks']['freshness']['state'] == 'observed'
+    assert result['contracts']['page_checks']['freshness']['stale_after_seconds'] is None
+    assert result['state_rules']['search_effect_improved'] == 'not_available_from_this_contract'
+    assert len(db.execute.await_args_list) == 5
+    for call in db.execute.await_args_list:
+        sql = str(call.args[0].compile(compile_kwargs={'literal_binds': True}))
+        assert 'tenant_id = 7' in sql and 'site_id = 9' in sql
+    db.add.assert_not_called(); db.commit.assert_not_awaited(); db.flush.assert_not_awaited()
+
+
+def test_workbench_readiness_permission_and_missing_freshness_contract(monkeypatch):
+    no_data = api._workbench_freshness(None, datetime(2026, 9, 14, tzinfo=api.timezone.utc), timestamp_kind='utc_observation', missing_reason='no_page_check_evidence')
+    assert no_data == {'state':'no_data','as_of':None,'age_seconds':None,'stale_after_seconds':None,'reason':'no_page_check_evidence'}
+    assert _required('/api/v1/seo/workbench/readiness', 'GET') == ({'seo.content','seo.site'}, False)
+    db = SimpleNamespace(execute=AsyncMock(), scalar=AsyncMock())
+    monkeypatch.setattr(api, 'ensure_module_access', AsyncMock())
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(api.get_workbench_readiness(tenant_id=7, site_id=9, session=db, ctx=_ctx(permissions={'seo.content':'view'})))
+    assert error.value.status_code == 403
+    db.execute.assert_not_awaited(); db.scalar.assert_not_awaited()
