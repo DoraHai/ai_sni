@@ -31,6 +31,7 @@ export const GEO_WORKBENCH_NAV = [
   {
     label: '设置',
     children: [
+      { label: '项目管理', path: '/geo/projects', key: 'geo.assets', icon: '▧' },
       { label: '品牌信息', path: '/geo/brand', key: 'geo.content', icon: '▰' },
       { label: '知识库', path: '/geo/knowledge', key: 'geo.content', icon: '▣' },
       { label: 'AI 引擎管理', path: '/geo/models', key: 'geo.content', icon: '◇' },
