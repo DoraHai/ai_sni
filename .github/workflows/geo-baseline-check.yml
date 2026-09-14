@@ -45,6 +45,7 @@ jobs:
           tests/test_geo_content_rules.py
           tests/test_geo_evidence_cite.py
           tests/test_geo_pagespeed.py
+          tests/test_geo_projects.py
           tests/test_geo_release_isolation.py
           tests/test_geo_site_audit.py
 
@@ -62,6 +63,9 @@ jobs:
       - name: Install shared frontend dependencies
         working-directory: frontend
         run: npm ci --no-audit
+      - name: Test GEO project management surface
+        working-directory: frontend
+        run: node --test tests/geoProjectsSurface.test.mjs
       - name: Build independent GEO frontend
         working-directory: frontend/geo-frontend
         run: npm ci --no-audit && npm run build

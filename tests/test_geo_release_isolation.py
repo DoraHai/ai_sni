@@ -24,6 +24,8 @@ def test_geo_service_owns_routes_guard_and_scheduler():
     geo_scheduler = _read("app/geo/scheduler.py")
     assert "app.include_router(geo_router)" in geo_main
     assert "app.include_router(geo_oauth_public_router)" in geo_main
+    assert "app.include_router(geo_projects_router)" in geo_main
+    assert "from app.api" not in geo_main
     assert "start_geo_scheduler()" in geo_main
     assert "enforce_production_secrets" in geo_main
     assert "geo_visibility_patrols" in geo_scheduler

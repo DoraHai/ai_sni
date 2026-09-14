@@ -27,6 +27,7 @@ const routes = [
       { path: 'questions', component: () => import('../../src/views/geo/GeoPromptsView.vue'), meta: geoMeta('优化意图词') },
       { path: 'knowledge', component: () => import('../../src/views/geo/GeoFactsView.vue'), meta: geoMeta('知识库') },
       { path: 'brand', component: () => import('../../src/views/geo/GeoBrandSettingsView.vue'), meta: geoMeta('品牌资料') },
+      { path: 'projects', component: () => import('../../src/views/geo/GeoProjectsView.vue'), meta: geoMeta('项目管理', { perm: 'geo.assets' }) },
       { path: 'models', component: () => import('../../src/views/geo/GeoEnginesView.vue'), meta: geoMeta('引擎') },
       { path: 'citations', component: () => import('../../src/views/geo/GeoCitationsView.vue'), meta: geoMeta('AI 引用次数') },
       { path: 'competitors', component: () => import('../../src/views/geo/GeoCompetitorsView.vue'), meta: geoMeta('竞品分析') },
