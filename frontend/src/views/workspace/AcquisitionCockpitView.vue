@@ -6518,4 +6518,124 @@ onBeforeUnmount(() => {
   44%{box-shadow:0 0 0 12px rgba(113,130,255,.12),0 22px 56px rgba(33,88,190,.28),inset 0 1px 0 rgba(255,255,255,.78)}
   100%{box-shadow:0 0 0 0 rgba(113,130,255,0),0 8px 30px rgba(5,35,70,.12),inset 0 1px 0 rgba(255,255,255,.7)}
 }
+
+/* Final production guard: real customer/date labels can vary, so the filter bar
+   must size by content instead of assuming four fixed columns. */
+.command-bar{
+  grid-template-columns:minmax(300px,420px) minmax(0,1fr) !important;
+  overflow:visible !important;
+}
+.command-controls{
+  display:flex !important;
+  align-items:center !important;
+  justify-content:flex-end !important;
+  flex-wrap:nowrap !important;
+  gap:8px !important;
+  width:100% !important;
+  max-width:none !important;
+  min-width:0 !important;
+  height:44px !important;
+  padding:0 !important;
+  overflow:visible !important;
+  background:transparent !important;
+  border:0 !important;
+  box-shadow:none !important;
+}
+.command-controls label,
+.period-control,
+.refresh-button{
+  position:relative !important;
+  min-width:0 !important;
+  height:38px !important;
+  margin:0 !important;
+}
+.command-controls label{
+  flex:0 1 230px !important;
+  display:grid !important;
+  grid-template-columns:auto minmax(0,1fr) !important;
+  align-items:center !important;
+  gap:10px !important;
+  padding:0 12px !important;
+  white-space:nowrap !important;
+}
+.command-controls select{
+  min-width:0 !important;
+  width:100% !important;
+  overflow:hidden !important;
+  text-overflow:ellipsis !important;
+}
+.period-control{
+  flex:1 1 600px !important;
+  max-width:720px !important;
+  display:flex !important;
+  align-items:center !important;
+  gap:10px !important;
+  padding:0 10px !important;
+  white-space:nowrap !important;
+}
+.period-control>span{
+  flex:0 0 auto !important;
+}
+.period-shortcuts{
+  flex:0 0 auto !important;
+  display:flex !important;
+  align-items:center !important;
+  gap:4px !important;
+}
+.period-shortcuts button{
+  flex:0 0 auto !important;
+  min-width:42px !important;
+  height:28px !important;
+  padding:0 8px !important;
+}
+.date-range{
+  flex:1 1 auto !important;
+  min-width:270px !important;
+  display:flex !important;
+  align-items:center !important;
+  justify-content:flex-end !important;
+  gap:6px !important;
+  overflow:hidden !important;
+}
+.date-range input{
+  flex:0 0 112px !important;
+  width:112px !important;
+  min-width:112px !important;
+  height:28px !important;
+}
+.date-range span{
+  flex:0 0 auto !important;
+}
+.apply-period{
+  flex:0 0 42px !important;
+  width:42px !important;
+  min-width:42px !important;
+  height:28px !important;
+}
+.refresh-button{
+  flex:0 0 110px !important;
+  width:110px !important;
+  min-width:110px !important;
+  height:38px !important;
+  display:inline-flex !important;
+  align-items:center !important;
+  justify-content:center !important;
+  gap:5px !important;
+  white-space:normal !important;
+}
+@media(max-width:1280px){
+  .command-bar{
+    grid-template-columns:300px minmax(0,1fr) !important;
+  }
+  .command-controls{
+    flex-wrap:wrap !important;
+    align-content:flex-start !important;
+    height:auto !important;
+  }
+  .period-control{
+    order:10 !important;
+    flex:1 0 100% !important;
+    max-width:none !important;
+  }
+}
 </style>
