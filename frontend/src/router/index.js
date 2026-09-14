@@ -389,12 +389,18 @@ function permOk(perm) {
   const keys = Array.isArray(perm) ? perm : [perm]
   return keys.some((k) => session.canView(k))
 }
+function isLocalCockpitPreview(to) {
+  if (!import.meta.env.DEV || to.path !== '/workspace/cockpit') return false
+  return ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
+}
 function sessionRouteDecision(to, warn = true) {
   const devBypass = !session.isLoggedIn && import.meta.env.VITE_API_KEY && import.meta.env.DEV
-  if (!to.meta.public && !session.isLoggedIn && !devBypass) {
+  const localCockpitPreview = isLocalCockpitPreview(to)
+  if (!to.meta.public && !session.isLoggedIn && !devBypass && !localCockpitPreview) {
     window.location.assign(loginUrl(to.fullPath))
     return false
   }
+  if (localCockpitPreview) return true
   if (devBypass || !session.isLoggedIn) return
   if (to.path.startsWith('/platform') && session.user?.tenant_id) {
     if (warn) ElMessage.warning('单客户账号不能进入全局平台管理')
