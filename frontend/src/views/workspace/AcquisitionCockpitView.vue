@@ -6573,6 +6573,17 @@ onBeforeUnmount(() => {
   overflow:hidden !important;
   text-overflow:ellipsis !important;
 }
+.command-controls label:focus-within{
+  border-color:rgba(126,158,198,.78) !important;
+  box-shadow:inset 0 1px rgba(255,255,255,.86),0 8px 18px rgba(22,58,102,.16) !important;
+}
+.command-controls select:focus,
+.command-controls select:focus-visible,
+.command-controls input:focus,
+.command-controls input:focus-visible{
+  outline:none !important;
+  box-shadow:none !important;
+}
 .period-control{
   flex:1 1 600px !important;
   max-width:720px !important;
