@@ -13,9 +13,11 @@ export function buildPanoramaSummary(cards = []) {
   const scoped = Array.isArray(cards) ? cards.filter(card => card && typeof card.id === 'string') : []
   const attention = scoped.filter(needsAttention)
   const outcomes = scoped.filter(card => card.summaryRole === 'outcome' && card.state === 'available' && !needsAttention(card))
+  const observations = scoped.filter(card => card.summaryRole === 'outcome' && card.state === 'partial' && Number(card.urgentCount || 0) <= 0)
 
   return {
     outcomes: outcomes.slice(0, 3),
+    observations: observations.slice(0, 3),
     attention: attention
       .sort((left, right) => Number(right.urgentCount || 0) - Number(left.urgentCount || 0))
       .slice(0, 3),

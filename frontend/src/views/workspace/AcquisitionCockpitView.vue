@@ -1334,12 +1334,21 @@ onBeforeUnmount(() => {
           <div v-if="filteredCards.length" class="panorama-content" role="tabpanel" :aria-label="activeModule === 'all' ? '全域指标' : `${activeModule.toUpperCase()} 指标`">
             <section class="decision-summary" aria-label="经营摘要">
               <article class="outcome-summary">
-                <header><div><small>当前范围</small><h3>正在积累的成果</h3></div><span>{{ panoramaSummary.outcomes.length }} 项可核对</span></header>
+                <header>
+                  <div>
+                    <small>当前范围</small>
+                    <h3>{{ panoramaSummary.outcomes.length ? '正在积累的成果' : '正在观察的信号' }}</h3>
+                  </div>
+                  <span>{{ panoramaSummary.outcomes.length ? `${panoramaSummary.outcomes.length} 项可核对` : `${panoramaSummary.observations.length} 项待核对` }}</span>
+                </header>
                 <div v-if="panoramaSummary.outcomes.length" class="summary-items">
                   <button v-for="card in panoramaSummary.outcomes" :key="`outcome-${card.id}`" type="button" @click="focusMetric(card.id)"><small>{{ card.moduleLabel }}</small><strong>{{ outcomeHeadline(card) }}</strong><span>{{ outcomeEvidence(card) }}</span><em>展开依据 ↗</em></button>
                 </div>
-                <p v-else>当前筛选范围尚无完整可核对的成果数据。</p>
-                <footer>各项指标分别衡量，业务效果仍以对应来源和周期为准。</footer>
+                <div v-else-if="panoramaSummary.observations.length" class="summary-items observed-items">
+                  <button v-for="card in panoramaSummary.observations" :key="`observed-${card.id}`" type="button" @click="focusMetric(card.id)"><small>{{ card.moduleLabel }} · 部分数据</small><strong>{{ outcomeHeadline(card) }}</strong><span>{{ outcomeEvidence(card) }}</span><em>查看边界 ↗</em></button>
+                </div>
+                <p v-else>当前筛选范围尚无可展示的经营信号。</p>
+                <footer>{{ panoramaSummary.outcomes.length ? '各项指标分别衡量，业务效果仍以对应来源和周期为准。' : '当前只展示已读取信号，缺报补齐前不作为完整周期结论。' }}</footer>
               </article>
               <article class="attention-summary">
                 <header><div><small>尚未确认不代表有问题</small><h3>需要推进的事</h3></div><span>{{ panoramaSummary.attention.length }} 项</span></header>

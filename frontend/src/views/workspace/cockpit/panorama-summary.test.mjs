@@ -15,6 +15,7 @@ test('builds truthful outcome and attention summaries without inventing cards', 
   const model = buildPanoramaSummary(cards)
 
   assert.deepEqual(model.outcomes.map(card => card.id), ['sem-click', 'seo-contents'])
+  assert.deepEqual(model.observations.map(card => card.id), [])
   assert.deepEqual(model.attention.map(card => card.id), ['seo-review', 'geo-missing', 'geo-partial'])
   assert.deepEqual(model.groups.map(group => group.cards.map(card => card.id)), [
     ['sem-click', 'sem-cost'], ['seo-contents', 'geo-qualified-samples', 'geo-partial'], ['seo-review', 'geo-missing'],
@@ -23,6 +24,7 @@ test('builds truthful outcome and attention summaries without inventing cards', 
 
 test('keeps missing and zero distinct and returns empty summaries for empty input', () => {
   assert.deepEqual(buildPanoramaSummary([]).outcomes, [])
+  assert.deepEqual(buildPanoramaSummary([]).observations, [])
   assert.deepEqual(buildPanoramaSummary([]).attention, [])
   const model = buildPanoramaSummary([
     { id: 'observed-zero', moduleCode: 'sem', state: 'available', summaryRole: 'outcome', display: '0', urgentCount: 0 },
@@ -30,6 +32,16 @@ test('keeps missing and zero distinct and returns empty summaries for empty inpu
   ])
   assert.equal(model.outcomes[0].id, 'observed-zero')
   assert.equal(model.attention[0].id, 'missing')
+})
+
+test('keeps partial outcome signals visible as observations', () => {
+  const model = buildPanoramaSummary([
+    { id: 'sem-click', moduleCode: 'sem', state: 'partial', summaryRole: 'outcome', display: '68', urgentCount: 0 },
+    { id: 'sem-cost', moduleCode: 'sem', state: 'partial', summaryRole: 'outcome', display: '120', urgentCount: 0 },
+    { id: 'sem-keywords', moduleCode: 'sem', state: 'partial', display: '8', urgentCount: 0 },
+  ])
+  assert.deepEqual(model.outcomes, [])
+  assert.deepEqual(model.observations.map(card => card.id), ['sem-click', 'sem-cost'])
 })
 
 test('does not infer outcomes from availability for scope, spend, impressions or sample counts', () => {
