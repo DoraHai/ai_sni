@@ -6657,4 +6657,18 @@ onBeforeUnmount(() => {
 .guides button:after{
   right:14px !important;
 }
+
+/* Focus dashboard guard: when the AI panel is hidden, the data stage must take
+   the full cockpit width instead of falling into the former left column. */
+.mode-data .operations-grid{
+  grid-template-columns:minmax(0,1fr) !important;
+}
+.mode-data .data-stage{
+  grid-column:1 / -1 !important;
+  width:100% !important;
+  max-width:none !important;
+}
+.mode-data .agent-fab{
+  z-index:40 !important;
+}
 </style>
