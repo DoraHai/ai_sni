@@ -26,6 +26,8 @@ DEFAULT_TENANT_ID = 4
 EXPECTED_DOMAIN = "tiger-coatings.cn"
 TOKEN_ENV = "GSNIPERS_BEARER_TOKEN"
 METRICS_PATH = "/api/v1/seo/metrics/snapshot"
+SEO_OPENAPI_PATH = "/seo-openapi.json"
+EXPECTED_OPENAPI_TITLE = "Growth Sniper SEO API"
 REQUIRED_SEO_PERMISSIONS = (
     "seo.assets",
     "seo.content",
@@ -311,10 +313,21 @@ def run_acceptance(
         "probes": [],
     }
 
-    openapi = get_json("/openapi.json", None)
+    # This exact public route is owned by the platform-routes release and
+    # proxies only the independent SEO process on 127.0.0.1:8020.  Do not use
+    # the root /openapi.json: that path belongs to a different public service.
+    openapi = get_json(SEO_OPENAPI_PATH, None)
+    info = openapi.get("info") if isinstance(openapi, dict) else None
+    if not isinstance(info, dict) or info.get("title") != EXPECTED_OPENAPI_TITLE:
+        raise AcceptanceError("SEO OpenAPI route returned the wrong service schema")
     if not _route_is_mounted(openapi, METRICS_PATH):
         raise AcceptanceError(f"required GET route is not mounted: {METRICS_PATH}")
-    report["route_contract"] = {"path": METRICS_PATH, "get_mounted": True}
+    report["route_contract"] = {
+        "schema_path": SEO_OPENAPI_PATH,
+        "service_title": EXPECTED_OPENAPI_TITLE,
+        "path": METRICS_PATH,
+        "get_mounted": True,
+    }
 
     identity_payload = get_json("/api/v1/auth/me", None)
     identity = _identity_user(identity_payload)
