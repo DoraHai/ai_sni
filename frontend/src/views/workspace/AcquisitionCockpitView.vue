@@ -6530,20 +6530,27 @@ onBeforeUnmount(() => {
 
 /* Final production guard: real customer/date labels can vary, so the filter bar
    must size by content instead of assuming four fixed columns. */
+.cockpit-shell{
+  grid-template-rows:auto minmax(0,1fr) !important;
+}
 .command-bar{
   grid-template-columns:minmax(300px,420px) minmax(0,1fr) !important;
+  grid-template-rows:auto !important;
+  height:auto !important;
+  min-height:44px !important;
   overflow:visible !important;
 }
 .command-controls{
   display:flex !important;
   align-items:center !important;
   justify-content:flex-end !important;
-  flex-wrap:nowrap !important;
+  flex-wrap:wrap !important;
   gap:8px !important;
   width:100% !important;
   max-width:none !important;
   min-width:0 !important;
-  height:44px !important;
+  height:auto !important;
+  min-height:44px !important;
   padding:0 !important;
   overflow:visible !important;
   background:transparent !important;
@@ -6559,7 +6566,8 @@ onBeforeUnmount(() => {
   margin:0 !important;
 }
 .command-controls label{
-  flex:0 1 230px !important;
+  flex:1 1 140px !important;
+  min-width:140px !important;
   display:grid !important;
   grid-template-columns:auto minmax(0,1fr) !important;
   align-items:center !important;
@@ -6585,8 +6593,9 @@ onBeforeUnmount(() => {
   box-shadow:none !important;
 }
 .period-control{
-  flex:1 1 600px !important;
-  max-width:720px !important;
+  flex:1 0 auto !important;
+  min-width:max-content !important;
+  max-width:none !important;
   display:flex !important;
   align-items:center !important;
   gap:10px !important;
@@ -6609,18 +6618,18 @@ onBeforeUnmount(() => {
   padding:0 8px !important;
 }
 .date-range{
-  flex:1 1 auto !important;
-  min-width:270px !important;
+  flex:1 0 auto !important;
+  min-width:max-content !important;
   display:flex !important;
   align-items:center !important;
   justify-content:flex-end !important;
   gap:6px !important;
-  overflow:hidden !important;
+  overflow:visible !important;
 }
 .date-range input{
-  flex:0 0 112px !important;
-  width:112px !important;
-  min-width:112px !important;
+  flex:0 0 124px !important;
+  width:124px !important;
+  min-width:124px !important;
   height:28px !important;
 }
 .date-range span{
