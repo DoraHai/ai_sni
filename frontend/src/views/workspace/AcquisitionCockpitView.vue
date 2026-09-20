@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import MetricEvidenceCard from './cockpit/MetricEvidenceCard.vue'
+import DashboardSignals from './cockpit/DashboardSignals.vue'
 import ElementsWaterBackground from './cockpit/elements/ElementsWaterBackground.vue'
 import { fetchModules, fetchTenants } from '../../api/auth'
 import { commandCockpit } from '../../api/assistant'
@@ -187,9 +188,9 @@ function attentionCopy(card) {
 function outcomeHeadline(card) {
   if (!card) return '经营信号待确认'
   const label = card.label || ''
-  if (card.moduleCode === 'sem') return /点击|流量/.test(label) ? 'SEM 流量持续增长' : 'SEM 投放信号稳定'
-  if (card.moduleCode === 'seo') return /内容|发布/.test(label) ? 'SEO 内容资产继续积累' : 'SEO 页面资产持续完善'
-  if (card.moduleCode === 'geo') return /品牌|提及|可见/.test(label) ? 'GEO 品牌可见度改善' : 'GEO AI 触达信号可核对'
+  if (card.moduleCode === 'sem') return /点击|流量/.test(label) ? 'SEM 流量观测' : 'SEM 投放信号'
+  if (card.moduleCode === 'seo') return /内容|发布/.test(label) ? 'SEO 内容资产' : 'SEO 页面资产'
+  if (card.moduleCode === 'geo') return /品牌|提及|可见/.test(label) ? 'GEO 品牌可见度' : 'GEO AI 触达信号'
   return `${card.moduleLabel || '全域'} ${label}`
 }
 function outcomeEvidence(card) {
@@ -1332,6 +1333,17 @@ onBeforeUnmount(() => {
 
         <template v-else-if="activeSection === 'dashboard'">
           <div v-if="filteredCards.length" class="panorama-content" role="tabpanel" :aria-label="activeModule === 'all' ? '全域指标' : `${activeModule.toUpperCase()} 指标`">
+            <DashboardSignals
+              :cards="filteredCards"
+              :modules="availableModules.filter(item => activeModule === 'all' || item.module_code === activeModule)"
+              :revision="viewState.revision"
+              :demo="demoMode || localPreview"
+              :compact="compactCards"
+              :updated="displayTime(lastReadAt)"
+              @focus="focusMetric"
+              @discuss="id => { discuss({ metricId: id, contextRevision: viewState.revision }); setViewMode('split') }"
+              @open="openModule"
+            />
             <section class="decision-summary" aria-label="经营摘要">
               <article class="outcome-summary">
                 <header>
@@ -1376,7 +1388,7 @@ onBeforeUnmount(() => {
                 <p>数据未读取不补成 0，所有结论只基于当前已核验范围。</p>
               </aside>
             </section>
-            <section v-for="group in businessGroups" :id="`cockpit-${group.id}`" :key="group.id" class="dashboard-section">
+            <section v-for="group in businessGroups.filter(item => !item.businessCards.length && item.cards.length)" :id="`cockpit-${group.id}`" :key="group.id" class="dashboard-section">
               <header class="dashboard-group"><div><small>0{{ businessGroups.indexOf(group) + 1 }}</small><h3>{{ group.title }}</h3><p>{{ group.note }}</p></div><span v-if="demoMode">演示数据 · 不计入正式统计</span></header>
               <div v-if="group.businessCards.length" class="business-card-grid" :class="`business-${group.id}`">
                 <article
@@ -1559,6 +1571,7 @@ onBeforeUnmount(() => {
   border-radius:10px !important;
 }
 .decision-summary>article>header{margin-bottom:6px !important}
+.decision-summary header small{color:#9eb8ce !important}.decision-summary header>span{background:#164038 !important;color:#95e4d4 !important;border-color:#63cbbb55 !important}.decision-summary .summary-items small{color:#70baff !important}
 .decision-summary h3{font-size:15px !important}
 .decision-summary header small,.decision-summary header>span{font-size:9px !important}
 .summary-items{gap:6px !important}
@@ -3539,6 +3552,7 @@ onBeforeUnmount(() => {
 .attention-summary{
   background:linear-gradient(110deg,#fff1f4,#fff9fb)!important;
 }
+.decision-summary header small{color:#9eb8ce !important}.decision-summary header>span{background:#164038 !important;color:#95e4d4 !important;border-color:#63cbbb55 !important}.decision-summary .summary-items small{color:#70baff !important}
 .decision-summary h3{font-size:18px;color:#061b55}
 .decision-summary header small{font-size:12px;color:#516b91}
 .decision-summary header>span{
@@ -3706,6 +3720,7 @@ onBeforeUnmount(() => {
 .decision-summary>article{min-height:138px;border:0;border-radius:12px;padding:16px;color:#092054;box-shadow:0 14px 30px #6c8bb12e}
 .outcome-summary{background:linear-gradient(110deg,#e1fff7,#f7ffff)!important}
 .attention-summary{background:linear-gradient(110deg,#fff1f4,#fff9fb)!important}
+.decision-summary header small{color:#9eb8ce !important}.decision-summary header>span{background:#164038 !important;color:#95e4d4 !important;border-color:#63cbbb55 !important}.decision-summary .summary-items small{color:#70baff !important}
 .decision-summary h3{font-size:18px;color:#061b55}
 .decision-summary header small{font-size:12px;color:#516b91}
 .decision-summary header>span{border-color:#a8d9d0;color:#0c8b76;background:#ffffff99}
@@ -4973,6 +4988,7 @@ onBeforeUnmount(() => {
 .decision-summary{gap:8px !important}
 .decision-summary>article{min-height:96px !important;padding:10px 12px !important;border-radius:10px !important}
 .decision-summary>article>header{margin-bottom:6px !important}
+.decision-summary header small{color:#9eb8ce !important}.decision-summary header>span{background:#164038 !important;color:#95e4d4 !important;border-color:#63cbbb55 !important}.decision-summary .summary-items small{color:#70baff !important}
 .decision-summary h3{font-size:15px !important}
 .decision-summary header small,.decision-summary header>span{font-size:9px !important}
 .summary-items{gap:6px !important}
@@ -6700,4 +6716,23 @@ onBeforeUnmount(() => {
 .mode-data .agent-fab{
   z-index:40 !important;
 }
+</style>
+
+<style scoped>
+/* Rich overview: preserve the water canvas and existing control bar. */
+.data-stage .mission-heading{min-height:108px !important;padding:20px 26px !important;margin-bottom:0 !important;align-items:center !important;background:linear-gradient(110deg,rgba(18,49,74,.92),rgba(6,24,39,.75)) !important;border:1px solid rgba(140,188,230,.24) !important;border-radius:16px !important;color:#e5f2ff !important;box-shadow:none !important}
+.data-stage .mission-heading:after{display:none !important}
+.data-stage .mission-heading h2{font-size:28px !important;color:#e5f2ff !important;margin:7px 0 !important}
+.data-stage .mission-heading>div>span{font-size:12px !important;color:#9db8ce !important}
+.data-stage .mission-heading>div>p{font-size:9px !important;color:#66bfff !important}
+.data-stage .stage-actions{position:static !important;align-self:center !important;flex-shrink:0}
+.data-stage .stage-actions button{background:#153a54 !important;border:1px solid #77aacf55 !important;color:#c7e7ff !important}
+.data-stage .module-tabs{margin:14px 24px !important;transform:none !important;display:flex !important;gap:8px !important}
+.data-stage .module-tabs button{flex:1;min-width:0;min-height:58px !important;padding:10px 14px !important;background:#102b40e8 !important;border:1px solid #5d87aa55 !important;box-shadow:none !important;color:#c4d7e8 !important;border-radius:10px !important;display:flex !important;align-items:center !important;gap:10px !important}
+.data-stage .module-tabs button span{font-size:12px !important;color:inherit !important}.data-stage .module-tabs button b{font-size:20px !important;color:#edf7ff !important;margin-left:auto}.data-stage .module-tabs button small{font-size:10px !important;color:#90acc2 !important}.data-stage .module-tabs button.active{background:#16446b !important;border-color:#57bfff !important}.data-stage .module-tabs button:after{display:none !important}
+.panorama-content{padding-top:0 !important}.panorama-content>.signals-board{display:block !important;grid-column:1/-1;order:-1}
+.decision-summary .outcome-summary,.decision-summary .attention-summary{min-height:0 !important;padding:20px !important;background:#0b2032ed !important;border:1px solid #719dc63b !important;color:#c2d7e8 !important;box-shadow:none !important}
+.decision-summary header small{color:#9eb8ce !important}.decision-summary header>span{background:#164038 !important;color:#95e4d4 !important;border-color:#63cbbb55 !important}.decision-summary .summary-items small{color:#70baff !important}
+.decision-summary h3{font-size:19px !important;color:#e4f1ff !important}.decision-summary .summary-items button,.decision-summary .attention-items button{background:#153149 !important;border-color:#5282ac40 !important;box-shadow:none !important}.decision-summary .summary-items strong,.decision-summary .attention-items strong{color:#dceaff !important}.decision-summary .summary-items span,.decision-summary .attention-items small{color:#a0b9cd !important}.decision-summary .summary-items strong{font-size:16px !important}.decision-summary .summary-items button{min-height:125px !important}.decision-summary footer{color:#87a4ba !important}
+@media(max-width:1380px){.data-stage .mission-heading{padding:18px !important}.data-stage .mission-heading h2{font-size:24px !important}.data-stage .module-tabs button{flex-wrap:wrap}.data-stage .module-tabs button small{width:100%}}
 </style>

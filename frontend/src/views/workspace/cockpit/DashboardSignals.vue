@@ -1,0 +1,68 @@
+<script setup>
+import { computed, ref, watch } from 'vue'
+import MetricVisualization from './MetricVisualization.vue'
+import { dashboardChannels, dashboardHighlights } from './dashboard-signals.mjs'
+const props = defineProps({ cards: { type: Array, required: true }, modules: { type: Array, required: true }, revision: { type: Number, required: true }, demo: Boolean, compact: Boolean, updated: String })
+const emit = defineEmits(['focus', 'discuss', 'open'])
+const channels = computed(() => dashboardChannels(props.cards, props.modules, props.revision))
+const highlights = computed(() => dashboardHighlights(channels.value))
+const trendMetrics = computed(() => channels.value.flatMap(channel => channel.charts.filter(card => card.visualization.type === 'trend')))
+const selectedId = ref('')
+const selected = computed(() => trendMetrics.value.find(card => card.id === selectedId.value) || trendMetrics.value[0])
+const channelTitles = { sem: '付费触达', seo: '搜索资产', geo: 'AI 品牌可见性' }
+const channelNotes = { sem: '曝光 → 点击 · 投放效率', seo: '内容库存 · 页面与收录', geo: '品牌提及 · 回答与引用' }
+const status = card => ({ available: '已读取', partial: '部分数据', unavailable: '暂不可用', no_data: '暂无数据', loading: '读取中', denied: '无权限' }[card.state] || '待核验')
+const readable = card => ['available', 'partial'].includes(card.state)
+const display = card => readable(card) ? (card.display ?? '—') : '—'
+const channelVisual = channel => channel.charts.find(card => card.visualization.type !== 'trend') || channel.charts[0]
+watch(() => props.revision, () => { selectedId.value = '' }, { flush: 'sync' })
+</script>
+
+<template>
+  <section class="signals-board" aria-label="全域经营数据看板">
+    <div class="signals-meta"><span><i></i>{{ demo ? '演示数据 · 不计入正式统计' : '当前授权范围' }}</span><span>最近读取 {{ updated }} · {{ channels.length }} 个渠道</span></div>
+    <div v-if="highlights.length" class="signal-kpis">
+      <button v-for="card in highlights" :key="card.id" type="button" :class="`accent-${card.moduleCode}`" @click="emit('focus', card.id)">
+        <span class="kpi-label"><em>{{ card.moduleLabel }}</em>{{ card.label }}</span>
+        <strong>{{ display(card) }}<small v-if="readable(card)">{{ card.unit }}</small></strong>
+        <span class="kpi-footer"><span>{{ readable(card) && card.changeLabel ? card.changeLabel : status(card) }}</span><b>↗</b></span>
+      </button>
+    </div>
+
+    <section id="cockpit-performance" class="signal-trend" aria-label="全域趋势观察">
+      <header class="signal-heading"><div><small>01 / PERFORMANCE PULSE</small><h3>全域趋势观察</h3></div><span>各指标独立口径 · 缺报不连线</span></header>
+      <div class="trend-layout">
+        <div class="trend-primary">
+          <div v-if="trendMetrics.length" class="trend-switch" aria-label="选择趋势指标">
+            <button v-for="card in trendMetrics" :key="card.id" type="button" :aria-pressed="selected?.id === card.id" @click="selectedId = card.id">{{ card.moduleLabel }} · {{ card.label }}</button>
+          </div>
+          <template v-if="selected">
+            <div class="trend-current"><div><span>{{ selected.label }}</span><strong>{{ display(selected) }} <small>{{ selected.unit }}</small></strong></div><span>{{ selected.periodLabel }}</span></div>
+            <MetricVisualization :key="`${revision}-${selected.id}`" :visualization="selected.visualization" :metric-label="selected.label" @select="emit('focus', selected.id)" />
+            <div class="trend-axis" aria-hidden="true"><span>{{ selected.visualization.points[0]?.label }}</span><span>{{ selected.visualization.points.at(-1)?.label }}</span></div>
+            <footer><span>{{ selected.sourceLabel }}</span><button type="button" @click="emit('discuss', selected.id)">让 AI 分析这项趋势 ↗</button></footer>
+          </template>
+          <div v-else class="trend-empty"><svg viewBox="0 0 240 80" aria-hidden="true"><path d="M0 20H240M0 40H240M0 60H240M40 0V80M80 0V80M120 0V80M160 0V80M200 0V80" /></svg><strong>当前范围暂无可绘制的历史序列</strong><p>下方仍可查看已读取的指标快照。接入历史观测后，这里将展示对应趋势。</p></div>
+        </div>
+        <aside class="trend-context"><small>CHANNEL COVERAGE</small><h4>渠道数据覆盖</h4><article v-for="channel in channels" :key="channel.code" :class="`accent-${channel.code}`"><header><b>{{ channel.code.toUpperCase() }}</b><span>{{ channel.readable }} / {{ channel.metrics.length }} 项可查看</span></header><div class="coverage-track"><i :style="{ width: `${channel.metrics.length ? channel.readable / channel.metrics.length * 100 : 0}%` }"></i></div><p>{{ channel.charts.some(card => card.visualization.type === 'trend') ? '已接入历史趋势' : '当前为指标快照，暂无历史趋势' }}</p></article><p class="context-note">读取状态不代表业务效果；不同来源、周期的指标不合并计算。</p></aside>
+      </div>
+    </section>
+
+    <header id="cockpit-presence" class="signal-heading channel-heading"><div><small>02 / CHANNEL INTELLIGENCE</small><h3>渠道深度看板</h3></div><span>点击指标，展开原始依据</span></header>
+    <div class="channel-deck">
+      <article v-for="channel in channels" :key="channel.code" class="channel-panel" :class="`accent-${channel.code}`">
+        <header><span class="channel-code">{{ channel.code.toUpperCase() }}</span><button type="button" @click="emit('open', channel.code)" :aria-label="`进入 ${channel.code.toUpperCase()} 工作区`">工作区 ↗</button></header>
+        <h4>{{ channelTitles[channel.code] }}</h4><p class="channel-subtitle">{{ channelNotes[channel.code] }}</p>
+        <div v-if="channelVisual(channel)" class="channel-visual"><span>{{ channelVisual(channel).label }}</span><MetricVisualization :visualization="channelVisual(channel).visualization" :metric-label="channelVisual(channel).label" @select="item => emit('focus', item.metricId || channelVisual(channel).id)" /></div>
+        <div v-else class="snapshot-label"><i></i>指标快照 <span>历史 / 分布数据暂未接入</span></div>
+        <div class="channel-metrics"><button v-for="card in (compact ? channel.metrics.slice(0, 3) : channel.metrics)" :key="card.id" type="button" @click="emit('focus', card.id)"><span>{{ card.label }}<small>{{ status(card) }}</small></span><strong>{{ display(card) }}<small v-if="readable(card)">{{ card.unit }}</small></strong></button></div>
+        <p v-if="!channel.metrics.length" class="channel-subtitle">当前渠道尚未读取到指标。</p>
+        <footer><span>{{ channel.metrics[0]?.periodLabel || '统计周期待确认' }}</span></footer>
+      </article>
+    </div>
+  </section>
+</template>
+
+<style scoped>
+.signals-board{--ink:#e8f2ff;--muted:#91a8bf;--line:#90b7e524;--accent:#55caff;position:relative;pointer-events:auto;color:var(--ink);font-variant-numeric:tabular-nums;margin:0 0 24px}.signals-board *{box-sizing:border-box}.signals-board button{font:inherit;cursor:pointer}.signals-board button:focus-visible{outline:2px solid #a4dfff;outline-offset:3px}.signals-meta{display:flex;justify-content:space-between;gap:12px;font-size:11px;color:var(--muted);margin:0 0 12px}.signals-meta i,.snapshot-label i{display:inline-block;width:6px;height:6px;border-radius:50%;background:#55d9ca;margin-right:7px}.accent-sem{--accent:#55b5ff}.accent-seo{--accent:#51dec6}.accent-geo{--accent:#c2acff}.signal-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:10px;margin-bottom:18px}.signal-kpis>button{min-width:0;text-align:left;color:var(--ink);padding:17px 16px 12px;border:1px solid var(--line);border-radius:12px;background:linear-gradient(145deg,#102a44ed,#071827ed);transition:border-color .2s,transform .2s}.signal-kpis>button:hover{border-color:var(--accent);transform:translateY(-2px)}.kpi-label{display:block;font-size:11px;color:#afc3d7;min-height:30px}.kpi-label em{display:inline-block;font-style:normal;font-size:9px;color:var(--accent);margin-right:6px}.signal-kpis strong{display:block;font-size:27px;line-height:1.3;font-weight:600;letter-spacing:-.04em;overflow-wrap:anywhere}.signal-kpis strong small{font-size:11px;letter-spacing:0;margin-left:4px}.kpi-footer{display:flex;justify-content:space-between;align-items:center;gap:6px;border-top:1px solid var(--line);margin-top:12px;padding-top:9px;font-size:10px;color:var(--muted)}.kpi-footer b{color:var(--accent);font-size:15px}.signal-trend{border:1px solid #6992c23d;border-radius:16px;background:radial-gradient(ellipse at 40% 60%,#10447340,transparent 65%),#071624ee;box-shadow:0 18px 48px #0003;overflow:hidden}.signal-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:22px 24px;border-bottom:1px solid var(--line)}.signal-heading small{font-size:9px;letter-spacing:.16em;color:#6ea8ce}.signal-heading h3{font-size:21px;letter-spacing:.04em;margin:7px 0 0;color:#e8f2ff}.signal-heading>span{font-size:10px;color:var(--muted)}.trend-layout{display:grid;grid-template-columns:minmax(0,1fr) 225px}.trend-primary{min-width:0;padding:20px 24px}.trend-switch{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px}.trend-switch button{border:1px solid #7098c22e;background:transparent;color:#98b1c9;border-radius:6px;padding:7px 10px;font-size:10px}.trend-switch button[aria-pressed=true]{color:#dbf3ff;background:#1a4564;border-color:#63c9ff80}.trend-current{display:flex;justify-content:space-between;align-items:end;gap:12px}.trend-current span{font-size:11px;color:var(--muted)}.trend-current strong{display:block;font-size:33px;font-weight:500;letter-spacing:-.03em;margin-top:6px}.trend-current strong small{font-size:12px}.trend-primary :deep(.trend){height:190px;background:repeating-linear-gradient(to bottom,transparent,transparent calc(25% - 1px),#6997bc17 calc(25% - 1px),#6997bc17 25%)}.trend-primary :deep(.trend-line){stroke:#57c5ff;filter:drop-shadow(0 0 4px #41baff55)}.trend-primary :deep(.trend-point){fill:#8edfff}.trend-primary :deep(.visual-readout){font-size:12px}.trend-axis{display:flex;justify-content:space-between;color:#8fa9c2;font-size:10px;margin:10px 8px 0}.trend-primary footer{display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid var(--line);margin-top:14px;padding-top:12px;font-size:10px;color:var(--muted)}.trend-primary footer button,.channel-panel header button{background:none;border:0;color:#83cfff;font-size:11px;padding:5px}.trend-context{padding:24px 20px;background:#0d24356b;border-left:1px solid var(--line)}.trend-context>small{font-size:9px;letter-spacing:.12em;color:#7898b2}.trend-context h4{font-size:15px;margin:8px 0 25px}.trend-context article{margin-bottom:24px}.trend-context article header{display:flex;justify-content:space-between;align-items:center;gap:6px}.trend-context b{font-size:13px;color:var(--accent)}.trend-context header span{font-size:10px;color:#99b1c8}.coverage-track{height:3px;background:#4d709b30;margin-top:12px;overflow:hidden}.coverage-track i{display:block;height:100%;background:var(--accent)}.trend-context p{font-size:10px;line-height:1.6;color:#91a8bf}.context-note{border-top:1px solid var(--line);padding-top:14px}.trend-empty{display:grid;align-content:center;justify-items:center;min-height:300px;text-align:center}.trend-empty svg{width:70%;height:90px;stroke:#5b8aae28;fill:none}.trend-empty strong{font-size:15px;font-weight:500;margin-top:12px}.trend-empty p{max-width:380px;font-size:12px;line-height:1.8;color:var(--muted)}.channel-heading{border:0;padding:28px 2px 16px}.channel-deck{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;align-items:start}.channel-panel{min-width:0;border:1px solid var(--line);border-top:2px solid var(--accent);border-radius:12px;background:linear-gradient(160deg,#102639ed,#071522f5);padding:20px}.channel-panel>header{display:flex;align-items:center;justify-content:space-between}.channel-code{font-size:12px;font-weight:700;letter-spacing:.15em;color:var(--accent)}.channel-panel h4{font-size:20px;font-weight:500;margin:18px 0 6px;color:var(--ink)}.channel-subtitle{font-size:11px;color:var(--muted);margin:0 0 18px}.channel-visual{border-top:1px solid var(--line);padding-top:12px;margin-bottom:12px}.channel-visual>span{font-size:11px;color:#b6c8db}.channel-visual :deep(.distribution){grid-template-columns:1fr}.channel-metrics{display:grid}.channel-metrics button{display:flex;justify-content:space-between;align-items:center;gap:10px;text-align:left;background:transparent;border:0;border-top:1px solid var(--line);color:#c2d1df;padding:13px 0}.channel-metrics button:hover{color:var(--accent)}.channel-metrics span{font-size:11px}.channel-metrics span small{display:block;font-size:9px;color:#809cb4;margin-top:4px}.channel-metrics strong{font-size:19px;font-weight:500;text-align:right;overflow-wrap:anywhere}.channel-metrics strong small{font-size:10px;margin-left:3px}.channel-panel footer{font-size:9px;color:#7e9ab2;padding-top:10px;border-top:1px solid var(--line);line-height:1.6}.snapshot-label{font-size:11px;color:#bdcddd;padding:17px 0}.snapshot-label span{display:block;font-size:10px;color:var(--muted);margin-top:6px}@media(max-width:1380px){.trend-layout{grid-template-columns:minmax(0,1fr) 190px}.trend-primary{padding:18px}.signal-kpis{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}.signal-kpis:has(>button:nth-child(4)){grid-template-columns:repeat(3,minmax(0,1fr))}.signal-kpis>button{padding:12px}.kpi-label{min-height:18px}.signal-kpis strong{font-size:24px}.kpi-footer{margin-top:8px;padding-top:6px}}@media(max-width:1100px){.trend-layout{grid-template-columns:minmax(0,1fr)}.trend-context{border-left:0;border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.trend-context>small,.trend-context>h4,.context-note{grid-column:1/-1}.trend-context h4,.trend-context article{margin:0}.signal-heading>span{max-width:145px;text-align:right}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
