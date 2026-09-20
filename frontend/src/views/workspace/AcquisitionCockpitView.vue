@@ -932,6 +932,9 @@ function discuss({ metricId, contextRevision }) {
   if ((!ref || !viewState.resolve(ref)) && !(localPreview && !session.isLoggedIn)) return
   conversation.value.push({ role: 'assistant', text: `已带入“${card.label}”（${card.display}）及其统计范围和来源。你想判断原因、风险，还是下一步动作？`, ref })
 }
+function openWelcomePage() {
+  window.location.assign('/deal-sniper/portal')
+}
 function openModule(code) {
   const path = code === 'sem' ? '/monitor/dashboard' : code === 'seo' ? '/seo/site' : '/deal-sniper/geo/dashboard.html#/geo/projects'
   if (code === 'geo') window.location.assign(path)
@@ -1035,7 +1038,7 @@ onBeforeUnmount(() => {
       <button type="button" aria-label="SEM" @click="router.push('/monitor/dashboard')">⌕<span>SEM</span></button>
       <button type="button" aria-label="SEO" @click="router.push('/seo/dashboard')">◎<span>SEO</span></button>
       <button type="button" aria-label="GEO" @click="openModule('geo')">∞<span>GEO</span></button>
-      <button type="button" aria-label="欢迎页" @click="router.push('/workspace')">▤<span>欢迎页</span></button>
+      <button type="button" aria-label="欢迎页" @click="openWelcomePage">▤<span>欢迎页</span></button>
       <button type="button" aria-label="设置">⚙<span>设置</span></button>
     </aside>
     <header class="command-bar">
