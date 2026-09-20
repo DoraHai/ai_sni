@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref, watch, useId } from 'vue'
+import { vChartDraw, useChartDrawKey } from './chart-draw'
 import CommandIcon from './CommandIcon.vue'
 import { trendSelection, indexedTrends, costAnnotation } from './command-center.mjs'
 const props=defineProps({cards:{type:Array,required:true},initialModule:{type:String,default:'all'}})
@@ -13,6 +14,7 @@ const maximum=computed(()=>Math.max(120,...model.value.series.flatMap(s=>s.point
 const x=i=>48+i*694/Math.max(1,model.value.keys.length-1)
 const y=value=>190-value/maximum.value*162
 const colors={sem:'#72bbff',seo:'#69d5bf',geo:'#b5a2ea'}
+const drawKey=useChartDrawKey(()=>`${selected.value}:${model.value.keys.join(',')}:${chosen.value.map(c=>c.id).join(',')}`)
 const activeKey=computed(()=>model.value.keys[cursor.value])
 function segments(series){
  const groups=[];let group=[]
@@ -32,7 +34,7 @@ watch(()=>props.cards,()=>{if(selected.value!=='all'&&!codes.value.includes(sele
 watch(selected,()=>cursor.value=0)
 </script>
 <template>
- <section class="command-trend" aria-label="全域获客趋势">
+ <section v-chart-draw="drawKey" class="command-trend" aria-label="全域获客趋势">
   <header><div><small>ACQUISITION PULSE</small><h3><CommandIcon name="activity" />全域获客趋势</h3></div><div class="chart-tabs" aria-label="趋势渠道"><button type="button" :aria-pressed="selected==='all'" @click="selected='all'">全域</button><button v-for="code in codes" :key="code" type="button" :aria-pressed="selected===code" @click="selected=code">{{ code.toUpperCase() }}</button></div></header>
   <p class="axis-explainer">各指标首个有效观测 = 100 · 比较走势，不合并不同单位的业务量</p>
   <template v-if="model.series.some(s=>s.baseline!==null)">
@@ -41,20 +43,20 @@ watch(selected,()=>cursor.value=0)
      <defs><linearGradient v-for="s in model.series" :id="`${uid}-${s.card.id}`" :key="s.card.id" x1="0" y1="0" x2="0" y2="1"><stop offset="0" :stop-color="colors[s.card.moduleCode]" stop-opacity=".13"/><stop offset="1" :stop-color="colors[s.card.moduleCode]" stop-opacity="0"/></linearGradient></defs>
      <g v-for="n in [0,1,2,3]" :key="n" class="chart-grid"><line x1="48" x2="742" :y1="28+n*54" :y2="28+n*54"/><text x="5" :y="32+n*54">{{ Math.round(maximum*(1-n/3)) }}</text></g>
      <g v-for="(s,si) in model.series" :key="s.card.id" :style="{color:colors[s.card.moduleCode]}">
-      <template v-for="(points,i) in segments(s)" :key="i"><path :d="`${line(points)} L${points.at(-1).x} 190 L${points[0].x} 190 Z`" :fill="`url(#${uid}-${s.card.id})`"/><path class="series-line" :d="line(points)" :stroke-dasharray="['','6 3','2 3','8 3 2 3'][si]"/></template>
-      <circle v-for="(p,i) in s.points.filter(p=>p.value!==null)" :key="p.key" :cx="x(model.keys.indexOf(p.key))" :cy="y(p.value)" r="2.5" fill="currentColor" />
-      <circle v-if="s.points[cursor]?.value!==null && s.points[cursor]?.value!==undefined" :cx="x(cursor)" :cy="y(s.points[cursor].value)" r="4.5" fill="currentColor" stroke="#102a3d" stroke-width="2"/>
+      <template v-for="(points,i) in segments(s)" :key="i"><path data-draw="area" :d="`${line(points)} L${points.at(-1).x} 190 L${points[0].x} 190 Z`" :fill="`url(#${uid}-${s.card.id})`"/><path data-draw="line" class="series-line" :d="line(points)" :stroke-dasharray="['','6 3','2 3','8 3 2 3'][si]"/></template>
+      <circle data-draw="reveal" v-for="(p,i) in s.points.filter(p=>p.value!==null)" :key="p.key" :cx="x(model.keys.indexOf(p.key))" :cy="y(p.value)" r="2.5" fill="currentColor" />
+      <circle data-draw="reveal" v-if="s.points[cursor]?.value!==null && s.points[cursor]?.value!==undefined" :cx="x(cursor)" :cy="y(s.points[cursor].value)" r="4.5" fill="currentColor" stroke="#102a3d" stroke-width="2"/>
      </g>
      <line v-if="activeKey" class="cursor-line" :x1="x(cursor)" :x2="x(cursor)" y1="22" y2="190"/>
-     <g v-if="annotation && model.keys.includes(annotation.key)" class="annotation-pin"><circle :cx="x(model.keys.indexOf(annotation.key))" cy="17" r="5"/><path :d="`M${x(model.keys.indexOf(annotation.key))} 24 V190`"/></g>
+     <g v-if="annotation && model.keys.includes(annotation.key)" data-draw="reveal" class="annotation-pin"><circle :cx="x(model.keys.indexOf(annotation.key))" cy="17" r="5"/><path :d="`M${x(model.keys.indexOf(annotation.key))} 24 V190`"/></g>
      <text v-for="i in [...new Set([0,Math.floor((model.keys.length-1)/2),model.keys.length-1])]" :key="i" :x="x(i)" y="214" :text-anchor="i===0?'start':i===model.keys.length-1?'end':'middle'" class="date-tick">{{ model.keys[i]?.slice(5) || model.keys[i] }}</text>
     </svg>
    </div>
-   <div class="chart-tooltip" aria-live="polite"><time>{{ activeKey }}</time><button v-for="s in model.series" :key="s.card.id" type="button" @click="emit('focus',s.card.id)"><i :style="{background:colors[s.card.moduleCode]}"/><span>{{ s.card.moduleLabel }} · {{ s.card.label }}</span><b>{{ s.points[cursor]?.display || '未提供观测' }}</b></button></div>
+   <div data-draw="reveal" class="chart-tooltip" aria-live="polite"><time>{{ activeKey }}</time><button v-for="s in model.series" :key="s.card.id" type="button" @click="emit('focus',s.card.id)"><i :style="{background:colors[s.card.moduleCode]}"/><span>{{ s.card.moduleLabel }} · {{ s.card.label }}</span><b>{{ s.points[cursor]?.display || '未提供观测' }}</b></button></div>
    <p v-if="model.series.some(s=>s.baseline===null)" class="chart-note">部分指标首个观测为 0 或无有效值，无法基准化；原始观测仍可展开查看。</p>
   </template>
   <div v-else class="history-empty"><CommandIcon name="activity"/><strong>{{ chosen.length?'当前序列无法基准化':'历史序列等待接入' }}</strong><p>{{ chosen.length?'首个有效观测为 0 时不绘制基准化趋势，原始数值可展开证据查看。':'当前指标快照仍可查看；至少两次有效观测才能绘制走势。' }}</p><div><span v-for="code in codes" :key="code">{{ code.toUpperCase() }} <b>{{ trendSelection(cards,code).length ? '基准值不可计算' : '暂无可绘制序列' }}</b></span></div></div>
-  <footer v-if="annotation && (selected==='all'||selected==='sem')" class="chart-annotation"><CommandIcon name="spark"/><span><b>AI 观测标记 · {{ annotation.label }}</b>{{ annotation.text }}</span><button type="button" @click="emit('ask','分析 SEM 消耗与点击的趋势')">深入分析 ↗</button></footer>
+  <footer v-if="annotation && (selected==='all'||selected==='sem')" data-draw="reveal" class="chart-annotation"><CommandIcon name="spark"/><span><b>AI 观测标记 · {{ annotation.label }}</b>{{ annotation.text }}</span><button type="button" @click="emit('ask','分析 SEM 消耗与点击的趋势')">深入分析 ↗</button></footer>
   <footer v-else class="chart-note"><CommandIcon name="shield"/>{{ chosen.length }} 条可核验序列 · 缺报不连线；观测状态不等于业务效果。</footer>
  </section>
 </template>

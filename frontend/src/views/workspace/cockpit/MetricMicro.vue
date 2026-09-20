@@ -10,8 +10,8 @@ const total=computed(()=>distribution.value.reduce((sum,p)=>sum+p.value,0))
 </script>
 <template>
  <span class="micro-visual" aria-hidden="true">
-  <svg v-if="points.length" viewBox="0 0 120 34" preserveAspectRatio="none"><template v-if="/内容|收录/.test(card.label)"><rect v-for="(p,i) in points" :key="p.key" :x="2+i*116/points.length" :y="p.value===null?32:30-p.value/high*25" :width="Math.max(1,100/points.length)" :height="p.value===null?0:p.value/high*25" fill="currentColor" opacity=".6"/></template><template v-else><polyline v-for="(part,i) in segments" :key="i" :points="part.join(' ')" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"/></template></svg>
-  <span v-else-if="distribution.length && total" class="micro-distribution"><i v-for="(item,i) in distribution" :key="item.key" :style="{width:`${item.value/total*100}%`,opacity:.3+i/distribution.length*.7}" /></span>
+  <svg v-if="points.length" viewBox="0 0 120 34" preserveAspectRatio="none"><template v-if="/内容|收录/.test(card.label)"><rect data-draw="column" v-for="(p,i) in points" :key="p.key" :x="2+i*116/points.length" :y="p.value===null?32:30-p.value/high*25" :width="Math.max(1,100/points.length)" :height="p.value===null?0:p.value/high*25" fill="currentColor" opacity=".6"/></template><template v-else><polyline data-draw="line" v-for="(part,i) in segments" :key="i" :points="part.join(' ')" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"/></template></svg>
+  <span v-else-if="distribution.length && total" class="micro-distribution"><i data-draw="bar" v-for="(item,i) in distribution" :key="item.key" :style="{width:`${item.value/total*100}%`,opacity:.3+i/distribution.length*.7}" /></span>
   <span v-else class="micro-state"><i :class="card.state"/>{{ stateLabel(card.state) }}<small>指标快照</small></span>
  </span>
 </template>

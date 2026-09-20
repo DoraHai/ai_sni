@@ -1,5 +1,6 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, provide } from 'vue'
+import { chartDrawScope, vChartDraw } from './chart-draw'
 import MetricVisualization from './MetricVisualization.vue'
 import CommandIcon from './CommandIcon.vue'
 import CommandTrend from './CommandTrend.vue'
@@ -8,6 +9,8 @@ import SemPlacement from './SemPlacement.vue'
 import { dashboardChannels, dashboardHighlights } from './dashboard-signals.mjs'
 import { shown, stateLabel, metricIcon, health, commandInsights, acquisitionTouches } from './command-center.mjs'
 const props=defineProps({cards:{type:Array,required:true},modules:{type:Array,required:true},revision:{type:Number,required:true},activeModule:{type:String,default:'all'},demo:Boolean,compact:Boolean,updated:String})
+const drawScope=computed(()=>`${props.activeModule}:${props.revision}`)
+provide(chartDrawScope,drawScope)
 const emit=defineEmits(['focus','discuss','open','ask'])
 const channels=computed(()=>dashboardChannels(props.cards,props.modules,props.revision))
 const current=computed(()=>channels.value.flatMap(c=>c.metrics))
@@ -24,45 +27,45 @@ const channelTitles={sem:'付费触达',seo:'搜索资产',geo:'AI 品牌可见�
   <div class="signals-meta"><span><i/>{{ demo?'演示数据 · 不计入正式统计':'当前授权数据 · 随读取更新' }}</span><span><CommandIcon name="database"/>最近读取 {{ updated }} · {{ current.length }} 项指标</span></div>
   <SemPlacement v-if="activeModule==='sem' && channels.some(c=>c.code==='sem')" :cards="current" />
   <div class="signal-kpis" :style="{'--kpi-count':Math.max(1,highlights.length)}">
-   <button v-for="card in highlights" :key="card.id" type="button" :data-metric-id="card.id" :class="`accent-${card.moduleCode}`" @click="emit('focus',card.id)">
+   <button v-chart-draw="drawScope" v-for="card in highlights" :key="card.id" type="button" :data-metric-id="card.id" :class="`accent-${card.moduleCode}`" @click="emit('focus',card.id)">
     <span class="kpi-label"><CommandIcon :name="metricIcon(card)"/><span>{{ card.label }}</span><em>{{ card.moduleLabel }}</em></span>
-    <strong :data-shared-metric="card.id" :data-metric-value="shown(card)">{{ shown(card) }}<small>{{ ['available','partial'].includes(card.state)?card.unit:'' }}</small></strong>
+    <strong data-draw="reveal" :data-shared-metric="card.id" :data-metric-value="shown(card)">{{ shown(card) }}<small>{{ ['available','partial'].includes(card.state)?card.unit:'' }}</small></strong>
     <span class="kpi-delta">{{ ['available','partial'].includes(card.state)?card.changeLabel || stateLabel(card.state):stateLabel(card.state) }}</span>
     <MetricMicro :card="card"/>
    </button>
   </div>
   <div class="command-bento">
    <div id="cockpit-performance" class="signal-trend command-panel"><CommandTrend :cards="current" @focus="emit('focus',$event)" @ask="emit('ask',$event)"/></div>
-   <aside class="coverage-panel command-panel" aria-label="渠道数据覆盖">
+   <aside v-chart-draw="drawScope" class="coverage-panel command-panel" aria-label="渠道数据覆盖">
     <header class="panel-heading"><small>CHANNEL COVERAGE</small><h3><CommandIcon name="radar"/>渠道数据覆盖</h3></header>
-    <div class="coverage-rings"><button v-for="channel in channels" :key="channel.code" type="button" :class="`accent-${channel.code}`" @click="emit('ask',`查看 ${channel.code.toUpperCase()} 数据读取状态`)"><span class="coverage-ring"><svg viewBox="0 0 80 80" aria-hidden="true"><circle cx="40" cy="40" r="32" class="ring-track"/><circle v-if="channel.metrics.length" cx="40" cy="40" r="32" class="ring-value" pathLength="100" :stroke-dasharray="`${channel.readable/channel.metrics.length*100} 100`" transform="rotate(-90 40 40)"/></svg><b>{{ channel.readable }}<small>/{{ channel.metrics.length }}</small></b></span><strong>{{ channel.code.toUpperCase() }}</strong><small>{{ health(channel) }}</small></button></div>
-    <div class="coverage-ledger"><div v-for="channel in channels" :key="channel.code" :class="`accent-${channel.code}`"><span>{{ channel.code.toUpperCase() }}</span><div class="status-cells"><button v-for="card in channel.metrics" :key="card.id" type="button" :class="card.state" :title="`${card.label} · ${stateLabel(card.state)}`" :aria-label="`${card.label} · ${stateLabel(card.state)}，查看证据`" @click="emit('focus',card.id)"/></div><b>{{ channel.readable }}/{{ channel.metrics.length }}</b></div></div>
+    <div class="coverage-rings"><button v-for="channel in channels" :key="channel.code" type="button" :class="`accent-${channel.code}`" @click="emit('ask',`查看 ${channel.code.toUpperCase()} 数据读取状态`)"><span class="coverage-ring"><svg viewBox="0 0 80 80" aria-hidden="true"><circle cx="40" cy="40" r="32" class="ring-track"/><circle v-if="channel.metrics.length" cx="40" cy="40" r="32" data-draw="ring" class="ring-value" pathLength="100" :stroke-dasharray="`${channel.readable/channel.metrics.length*100} 100`" transform="rotate(-90 40 40)"/></svg><b data-draw="reveal">{{ channel.readable }}<small>/{{ channel.metrics.length }}</small></b></span><strong>{{ channel.code.toUpperCase() }}</strong><small>{{ health(channel) }}</small></button></div>
+    <div class="coverage-ledger"><div v-for="channel in channels" :key="channel.code" :class="`accent-${channel.code}`"><span>{{ channel.code.toUpperCase() }}</span><div data-draw="line" class="status-cells"><button v-for="card in channel.metrics" :key="card.id" type="button" :class="card.state" :title="`${card.label} · ${stateLabel(card.state)}`" :aria-label="`${card.label} · ${stateLabel(card.state)}，查看证据`" @click="emit('focus',card.id)"/></div><b data-draw="reveal">{{ channel.readable }}/{{ channel.metrics.length }}</b></div></div>
     <p class="panel-note">环形与色块表示指标可查看情况（含部分数据），不代表渠道贡献或上游数据完整率。</p>
    </aside>
-   <section class="flow-panel command-panel" aria-label="全域获客链路">
+   <section v-chart-draw="drawScope" class="flow-panel command-panel" aria-label="全域获客链路">
     <header class="panel-heading"><small>ACQUISITION FLOW</small><h3><CommandIcon name="flow"/>全域获客链路</h3><p>跨渠道触点示意 · 非转化漏斗</p></header>
-    <div class="touch-flow"><button v-for="(touch,index) in touches" :key="touch.label" type="button" :class="`accent-${touch.code}`" :disabled="!touch.card" @click="touch.card && emit('focus',touch.card.id)"><span class="touch-symbol"><CommandIcon :name="touch.icon"/><small>{{ String(index+1).padStart(2,'0') }}</small></span><span class="touch-copy"><em>{{ touch.code.toUpperCase() }}</em><b>{{ touch.label }}</b><strong :data-shared-metric="touch.card?.id" :data-metric-value="shown(touch.card)">{{ shown(touch.card) }}</strong><small>{{ touch.card?stateLabel(touch.card.state):'等待接入' }}</small></span></button></div>
+    <div class="touch-flow"><button v-for="(touch,index) in touches" :key="touch.label" type="button" :class="`accent-${touch.code}`" :disabled="!touch.card" @click="touch.card && emit('focus',touch.card.id)"><span class="touch-symbol"><CommandIcon :name="touch.icon"/><small>{{ String(index+1).padStart(2,'0') }}</small></span><span class="touch-copy"><em>{{ touch.code.toUpperCase() }}</em><b>{{ touch.label }}</b><strong data-draw="reveal" :data-shared-metric="touch.card?.id" :data-metric-value="shown(touch.card)">{{ shown(touch.card) }}</strong><small>{{ touch.card?stateLabel(touch.card.state):'等待接入' }}</small></span></button></div>
     <footer class="panel-note">独立来源、独立周期；点击节点核对依据，不计算跨渠道转化率。</footer>
    </section>
-   <section class="insight-panel command-panel" aria-label="AI 实时洞察">
+   <section v-chart-draw="drawScope" class="insight-panel command-panel" aria-label="AI 实时洞察">
     <header class="panel-heading"><div><small>AI LIVE INSIGHT</small><h3><CommandIcon name="spark"/>AI 实时洞察</h3></div><span class="insight-badge">随数据读取更新</span></header>
-    <article v-for="(insight,index) in insights" :key="insight.code" :class="`accent-${insight.code}`"><span class="insight-number">0{{ index+1 }}</span><CommandIcon :name="insight.icon"/><div><header><b>{{ insight.code.toUpperCase() }}</b><small>{{ insight.status }}</small></header><p>{{ insight.title }}</p><button type="button" @click="emit('ask',insight.question)">让 AI 深入分析 <CommandIcon name="arrow"/></button></div></article>
+    <article data-draw="reveal" v-for="(insight,index) in insights" :key="insight.code" :class="`accent-${insight.code}`"><span class="insight-number">0{{ index+1 }}</span><CommandIcon :name="insight.icon"/><div><header><b>{{ insight.code.toUpperCase() }}</b><small>{{ insight.status }}</small></header><p>{{ insight.title }}</p><button type="button" @click="emit('ask',insight.question)">让 AI 深入分析 <CommandIcon name="arrow"/></button></div></article>
     <p class="panel-note">当前读取范围 · 展开证据核对统计周期与来源。</p>
    </section>
-   <section class="health-panel command-panel" aria-label="数据健康">
+   <section v-chart-draw="drawScope" class="health-panel command-panel" aria-label="数据健康">
     <header class="panel-heading"><small>DATA HEALTH</small><h3><CommandIcon name="shield"/>数据健康</h3></header>
-    <div class="health-summary"><strong>{{ readableCount }}<small>/{{ current.length }}</small></strong><span>项指标可查看<b>读取状态 ≠ 数据完整性</b></span></div>
+    <div data-draw="reveal" class="health-summary"><strong>{{ readableCount }}<small>/{{ current.length }}</small></strong><span>项指标可查看<b>读取状态 ≠ 数据完整性</b></span></div>
     <div v-for="channel in channels" :key="channel.code" class="health-row" :class="`accent-${channel.code}`"><span>{{ channel.code.toUpperCase() }}</span><i :class="{partial:health(channel)!=='已读取'}"/><b>{{ health(channel) }}</b><small>{{ channel.charts.filter(c=>c.visualization.state==='available').length }} 项图形依据</small></div>
    </section>
-   <section class="action-panel command-panel" aria-label="待处理与数据边界">
+   <section v-chart-draw="drawScope" class="action-panel command-panel" aria-label="待处理与数据边界">
     <header class="panel-heading"><div><small>ACTION QUEUE</small><h3><CommandIcon name="alert"/>待处理与数据边界</h3></div><span>{{ attention.length }} 项依据</span></header>
-    <div class="action-list"><button v-for="card in attention.slice(0,4)" :key="card.id" type="button" @click="emit('focus',card.id)"><span :class="`accent-${card.moduleCode}`">{{ card.moduleLabel }}</span><b>{{ card.label }}</b><small>{{ Number(card.urgentCount)>0?`${card.urgentCount} 项待核对`:stateLabel(card.state) }}</small><CommandIcon name="arrow"/></button><p v-if="!attention.length">当前未识别到待处理项或读取边界，继续观察业务效果。</p></div>
+    <div data-draw="reveal" class="action-list"><button v-for="card in attention.slice(0,4)" :key="card.id" type="button" @click="emit('focus',card.id)"><span :class="`accent-${card.moduleCode}`">{{ card.moduleLabel }}</span><b>{{ card.label }}</b><small>{{ Number(card.urgentCount)>0?`${card.urgentCount} 项待核对`:stateLabel(card.state) }}</small><CommandIcon name="arrow"/></button><p v-if="!attention.length">当前未识别到待处理项或读取边界，继续观察业务效果。</p></div>
     <button v-if="attention.length>4" class="more-actions" type="button" @click="emit('ask','今天最需要关注的事项和数据边界')">还有 {{ attention.length-4 }} 项 · 让 AI 汇总 ↗</button>
    </section>
   </div>
   <SemPlacement v-if="activeModule!=='sem' && channels.some(c=>c.code==='sem')" :cards="current" />
   <footer class="frontline" aria-label="战线状态"><span><CommandIcon name="activity"/>战线状态</span><button v-for="channel in channels" :key="channel.code" type="button" :class="`accent-${channel.code}`" @click="emit('ask',`分析 ${channel.code.toUpperCase()} 的当前表现`)"><i/><b>{{ channel.code.toUpperCase() }}</b>{{ health(channel) }}<span>进入指挥视图 ↗</span></button></footer>
-  <details class="evidence-deck"><summary><CommandIcon name="database"/>全部指标与图形依据 <span>{{ current.length }} 项 · 展开核对</span></summary><div class="channel-deck"><article v-for="channel in channels" :key="channel.code" class="channel-panel" :class="`accent-${channel.code}`"><header><h4>{{ channel.code.toUpperCase() }} · {{ channelTitles[channel.code] }}</h4><button type="button" @click="emit('open',channel.code)">工作区 ↗</button></header><MetricVisualization v-if="channelVisual(channel)" :visualization="channelVisual(channel).visualization" :metric-label="channelVisual(channel).label" @select="emit('focus',$event.metricId || channelVisual(channel).id)"/><div class="channel-metrics"><button v-for="card in channel.metrics" :key="card.id" type="button" @click="emit('focus',card.id)"><span>{{ card.label }}<small>{{ stateLabel(card.state) }}</small></span><strong :data-shared-metric="card.id" :data-metric-value="shown(card)">{{ shown(card) }}</strong></button></div></article></div></details>
+  <details class="evidence-deck"><summary><CommandIcon name="database"/>全部指标与图形依据 <span>{{ current.length }} 项 · 展开核对</span></summary><div class="channel-deck"><article v-for="channel in channels" :key="channel.code" class="channel-panel" :class="`accent-${channel.code}`"><header><h4>{{ channel.code.toUpperCase() }} · {{ channelTitles[channel.code] }}</h4><button type="button" @click="emit('open',channel.code)">工作区 ↗</button></header><MetricVisualization v-if="channelVisual(channel)" :visualization="channelVisual(channel).visualization" :metric-label="channelVisual(channel).label" @select="emit('focus',$event.metricId || channelVisual(channel).id)"/><div class="channel-metrics"><button v-for="card in channel.metrics" :key="card.id" type="button" @click="emit('focus',card.id)"><span>{{ card.label }}<small>{{ stateLabel(card.state) }}</small></span><strong data-draw="reveal" :data-shared-metric="card.id" :data-metric-value="shown(card)">{{ shown(card) }}</strong></button></div></article></div></details>
  </section>
 </template>
 <style scoped>

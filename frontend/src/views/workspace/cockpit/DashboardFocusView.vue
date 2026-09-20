@@ -1,5 +1,6 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, provide } from 'vue'
+import { chartDrawScope, vChartDraw } from './chart-draw'
 import CommandTrend from './CommandTrend.vue'
 import SemPlacement from './SemPlacement.vue'
 import { validVisualization } from './visualization-model.mjs'
@@ -7,6 +8,7 @@ import SharedMetric from './SharedMetric.vue'
 import MetricVisualization from './MetricVisualization.vue'
 import { metricStatus } from './dashboard-orchestrator.mjs'
 const props = defineProps({ plan:{type:Object,required:true}, state:String, demo:Boolean })
+provide(chartDrawScope,computed(()=>props.plan))
 const emit=defineEmits(['return','focus','discuss','open','ask'])
 const structure = computed(() => props.plan.visualCards?.find(card => ['available','partial'].includes(card.state) && validVisualization(card.visualization) && card.visualization.state === 'available' && card.visualization.type !== 'trend'))
 const primary = computed(()=>props.plan.metrics.find(item=>['available','partial'].includes(item.state)) || props.plan.metrics[0])
@@ -40,7 +42,7 @@ const center=computed(()=>['sem-focus','seo-focus'].includes(props.plan.mode)?{x
       <CommandTrend :cards="plan.visualCards || []" :initial-module="plan.moduleCode || 'all'" @focus="emit('focus',$event)" @ask="emit('ask',$event)" />
       <section class="focus-structure"><small>{{ modeLabel }} · 图形依据</small><template v-if="structure"><h3>{{ structure.label }}</h3><MetricVisualization :visualization="structure.visualization" :metric-label="structure.label" @select="emit('focus',$event.metricId || structure.id)" /></template><template v-else><h3>结构数据等待接入</h3><p>{{ plan.moduleCode==='geo'?'模型分布、引用来源与竞品对比需要对应的可核验明细。':'当前没有可核验的构成或漏斗数据。' }}</p><span>保留已读取指标，不补造比例或关系。</span></template></section>
     </div>
-    <section v-if="state==='ready'" class="focus-insight-panel" aria-live="polite"><small>AI INSIGHT · 当前证据</small><p>{{ plan.insight }}</p><div v-if="primary"><button v-if="plan.moduleCode" type="button" @click="emit('open',plan.moduleCode)">查看 {{ modeLabel }} 详情 ↗</button><button type="button" @click="emit('focus',primary.id)">查看证据</button><button type="button" @click="emit('discuss',primary.id)">讨论这项</button></div><footer>各节点保留原始统计口径；{{ demo ? '当前为演示数据。' : '数据来源与完整周期请展开证据核对。' }}</footer></section>
+    <section v-chart-draw="plan" v-if="state==='ready'" class="focus-insight-panel" aria-live="polite"><small>AI INSIGHT · 当前证据</small><p data-draw="reveal">{{ plan.insight }}</p><div data-draw="reveal" v-if="primary"><button v-if="plan.moduleCode" type="button" @click="emit('open',plan.moduleCode)">查看 {{ modeLabel }} 详情 ↗</button><button type="button" @click="emit('focus',primary.id)">查看证据</button><button type="button" @click="emit('discuss',primary.id)">讨论这项</button></div><footer>各节点保留原始统计口径；{{ demo ? '当前为演示数据。' : '数据来源与完整周期请展开证据核对。' }}</footer></section>
   </section>
 </template>
 <style scoped>

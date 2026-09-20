@@ -1,0 +1,25 @@
+/* Layout is always present; only painted marks and readouts are staged. */
+.chart-draw-wait [data-draw]{opacity:0}
+.chart-draw-active{animation:cockpit-frame-in 200ms ease-out both;animation-delay:var(--draw-delay,0ms)}
+.chart-draw-active [data-draw="line"]{animation:cockpit-ink-sweep 780ms cubic-bezier(.22,.65,.3,1) both;animation-delay:calc(var(--draw-delay,0ms) + 180ms)}
+.chart-draw-active [data-draw="area"]{animation:cockpit-fill-in 650ms ease-out both;animation-delay:calc(var(--draw-delay,0ms) + 430ms)}
+.chart-draw-active [data-draw="bar"]{transform-origin:left center;animation:cockpit-bar-grow 700ms cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--draw-delay,0ms) + 220ms)}
+.chart-draw-active [data-draw="column"]{transform-box:fill-box;transform-origin:center bottom;animation:cockpit-column-grow 700ms cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--draw-delay,0ms) + 220ms)}
+.chart-draw-active [data-draw="ring"]{animation:cockpit-ring-draw 800ms ease-out both;animation-delay:calc(var(--draw-delay,0ms) + 220ms)}
+.chart-draw-active [data-draw="map"]{animation:cockpit-map-outline 750ms ease-out both,cockpit-map-fill 450ms ease-out both;animation-delay:calc(var(--draw-delay,0ms) + 160ms),calc(var(--draw-delay,0ms) + 690ms)}
+.chart-draw-active [data-draw="cell"]{animation:cockpit-cell-in 310ms ease-out both;animation-delay:calc(var(--draw-delay,0ms) + 200ms + var(--draw-step,0)*24ms)}
+.chart-draw-active [data-draw="reveal"]{animation:cockpit-readout-in 220ms ease-out both;animation-delay:calc(var(--draw-delay,0ms) + 1060ms)}
+.chart-surface,.heatmap-wrap,.map-body{position:relative}
+.chart-draw-active .chart-surface::after,.chart-draw-active .heatmap-wrap::after{content:"";position:absolute;top:8%;bottom:12%;left:0;width:2px;background:linear-gradient(transparent,#c9edff8c,transparent);box-shadow:0 0 9px #8bd5ff35;pointer-events:none;animation:cockpit-brush-pass 780ms cubic-bezier(.22,.65,.3,1) both;animation-delay:calc(var(--draw-delay,0ms) + 180ms)}
+@keyframes cockpit-frame-in{from{box-shadow:inset 0 0 0 1px #bce8ff00}to{box-shadow:inset 0 0 0 1px #bce8ff16}}
+@keyframes cockpit-ink-sweep{from{clip-path:inset(-10px 100% -10px -10px)}to{clip-path:inset(-10px -10px -10px -10px)}}
+@keyframes cockpit-fill-in{from{opacity:0}to{opacity:1}}
+@keyframes cockpit-bar-grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes cockpit-column-grow{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+@keyframes cockpit-ring-draw{from{stroke-dasharray:0 100}}
+@keyframes cockpit-map-outline{0%{stroke:#b8dff4;stroke-dasharray:1;stroke-dashoffset:1}70%{stroke:#83b6d0}100%{stroke-dasharray:1;stroke-dashoffset:0}}
+@keyframes cockpit-map-fill{from{fill-opacity:0}to{fill-opacity:1}}
+@keyframes cockpit-cell-in{from{opacity:0}to{opacity:1}}
+@keyframes cockpit-readout-in{from{opacity:0}to{opacity:1}}
+@keyframes cockpit-brush-pass{0%{left:4%;opacity:0}10%{opacity:.8}90%{opacity:.6}100%{left:96%;opacity:0}}
+@media(prefers-reduced-motion:reduce){.chart-draw-active,.chart-draw-active [data-draw]{animation:none!important}.chart-draw-wait [data-draw]{opacity:1}.chart-draw-active .chart-surface::after,.chart-draw-active .heatmap-wrap::after{display:none}}

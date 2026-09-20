@@ -1,8 +1,10 @@
 <script setup>
 import { computed, ref, useId, watch } from 'vue'
+import { vChartDraw, useChartDrawKey } from './chart-draw'
 import { visualizationBarPercent, visualizationIndexAfterKey, visualizationIndexFromPointer } from './visualization-model.mjs'
 
 const props = defineProps({ visualization: { type: Object, required: true }, metricLabel: { type: String, required: true } })
+const drawKey = useChartDrawKey(() => `${props.metricLabel}:${props.visualization.type}:${(props.visualization.points || []).map(p=>p.key).join(',')}`)
 const emit = defineEmits(['select'])
 const visualId = useId()
 const selectedIndex = ref(0)
@@ -49,23 +51,23 @@ watch(() => props.visualization, () => { selectedIndex.value = 0 })
 </script>
 
 <template>
-  <section class="metric-visual" :class="`visual-${visualization.type}`" tabindex="0" role="listbox" :aria-label="`${metricLabel}图形；方向键选择，回车确认`" :aria-activedescendant="activeOptionId" @keydown="onKeydown">
+  <section v-chart-draw="drawKey" class="metric-visual" :class="`visual-${visualization.type}`" tabindex="0" role="listbox" :aria-label="`${metricLabel}图形；方向键选择，回车确认`" :aria-activedescendant="activeOptionId" @keydown="onKeydown">
     <template v-if="visualization.type === 'trend'">
       <div class="trend-scrubber" @pointermove.passive="scrubTrend($event)" @click="scrubTrend($event, true)">
         <svg v-if="usable.length" viewBox="0 0 300 90" class="trend" role="img" :aria-label="`${metricLabel}趋势，缺失日期不连线`">
-          <path d="M12 76H288" class="baseline" /><polyline v-for="(segment, index) in segments" :key="index" :points="segment" class="trend-line" />
-          <template v-for="(point, index) in coords" :key="point.key"><circle v-if="point.y !== null" :cx="point.x" :cy="point.y" :r="selectedIndex === index ? 5 : 3" class="trend-point"><title>{{ point.label }}：{{ point.display }}</title></circle></template>
+          <path d="M12 76H288" class="baseline" /><polyline v-for="(segment, index) in segments" :key="index" :points="segment" data-draw="line" class="trend-line" />
+          <template v-for="(point, index) in coords" :key="point.key"><circle v-if="point.y !== null" :cx="point.x" :cy="point.y" :r="selectedIndex === index ? 5 : 3" data-draw="reveal" class="trend-point"><title>{{ point.label }}：{{ point.display }}</title></circle></template>
         </svg><p v-else class="empty-visual">当前周期没有可绘制的观测点。</p>
       </div>
       <span v-if="selectedItem" :id="activeOptionId" class="sr-only" role="option" aria-selected="true">{{ selectedItem.label }}：{{ selectedItem.display }}</span>
       <p class="coverage" :class="`coverage-${visualization.coverage?.state}`">{{ visualization.coverage?.label }}</p>
     </template>
     <template v-else-if="visualization.type === 'funnel'">
-      <div v-if="items.length" class="funnel-stages"><button v-for="(item, index) in items" :id="`visual-${visualId}-funnel-${item.key}`" :key="item.key" type="button" tabindex="-1" role="option" :aria-selected="selectedIndex === index" @pointerenter="select(index, false)" @click="select(index)"><span>{{ item.label }}</span><b>{{ item.display }}</b><i :style="{ width: `${visualizationBarPercent(item.value, maxValue, 4)}%` }"></i></button></div>
+      <div v-if="items.length" class="funnel-stages"><button v-for="(item, index) in items" :id="`visual-${visualId}-funnel-${item.key}`" :key="item.key" type="button" tabindex="-1" role="option" :aria-selected="selectedIndex === index" @pointerenter="select(index, false)" @click="select(index)"><span>{{ item.label }}</span><b data-draw="reveal">{{ item.display }}</b><i data-draw="bar" :style="{ width: `${visualizationBarPercent(item.value, maxValue, 4)}%` }"></i></button></div>
       <p class="rate-copy">{{ visualization.rateLabel }}</p><p class="coverage">{{ visualization.coverage?.label }}</p>
     </template>
     <template v-else-if="visualization.type === 'distribution'">
-      <div v-if="items.length" class="distribution"><button v-for="(item, index) in items" :id="`visual-${visualId}-distribution-${item.key}`" :key="item.key" type="button" tabindex="-1" role="option" :aria-selected="selectedIndex === index" @pointerenter="select(index, false)" @click="select(index)"><span>{{ item.label }}</span><i><em :style="{ width: `${visualizationBarPercent(item.value, maxValue)}%` }"></em></i><b>{{ item.display }}</b></button></div>
+      <div v-if="items.length" class="distribution"><button v-for="(item, index) in items" :id="`visual-${visualId}-distribution-${item.key}`" :key="item.key" type="button" tabindex="-1" role="option" :aria-selected="selectedIndex === index" @pointerenter="select(index, false)" @click="select(index)"><span>{{ item.label }}</span><i><em data-draw="bar" :style="{ width: `${visualizationBarPercent(item.value, maxValue)}%` }"></em></i><b data-draw="reveal">{{ item.display }}</b></button></div>
       <p class="coverage">{{ visualization.note }}</p>
     </template>
     <p v-if="selectedItem" class="visual-readout" aria-live="polite">当前选择 {{ selectedItem.label }} · {{ selectedItem.display }}</p>
