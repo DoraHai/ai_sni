@@ -25,6 +25,7 @@ import { currentSeoSiteId } from '../seo/seoSiteContext'
 import { countUnresolvedModules, hasDataReadPermission, isCurrentCockpitScope, isSecureCockpitRuntime, resolveTenantModuleCodes, selectAvailableModules, selectCockpitTenants } from './cockpit/scope.mjs'
 import { completedWeekEnd, completedWeekInclusiveEnd, geoSummaryCards } from './cockpit/geo-summary.mjs'
 import { geoDemoCards } from './cockpit/demo-summary.mjs'
+import { isTigerDemoTenant, tigerDemoCards } from './cockpit/tiger-demo.mjs'
 import { createSeoSiteSelectionGuard, resolveSeoSiteSelection } from './cockpit/site-selection.mjs'
 import { geoReadyReply, urgencyReply } from './cockpit/status-copy.mjs'
 import { evidenceBoundaryCount, isCurrentCommandContext, normalizeModuleSelection, readCompletionProgress } from './cockpit/experience-state.mjs'
@@ -96,7 +97,8 @@ const filteredCards = computed(() => activeModule.value === 'all'
   ? cards.value
   : cards.value.filter(item => item.moduleCode === activeModule.value))
 const selectedMetric = computed(() => cards.value.find(item => item.id === selectedMetricId.value) || null)
-const demoMode = computed(() => session.user?.id === 5 && session.user?.tenant_id === 16 && session.user?.username === 'workbench_test_readonly' && Number(session.tenantId) === 16)
+const tigerDemoMode = computed(() => session.isLoggedIn && isTigerDemoTenant(session.tenantId, session.tenants))
+const demoMode = computed(() => tigerDemoMode.value || session.user?.id === 5 && session.user?.tenant_id === 16 && session.user?.username === 'workbench_test_readonly' && Number(session.tenantId) === 16)
 const agentName = computed(() => demoMode.value ? 'AI 演示助手' : 'DeepSeek')
 const agentTitle = computed(() => demoMode.value ? '交互演示台' : '作战指令台')
 const agentStatus = computed(() => aiBusy.value ? '分析中' : (demoMode.value ? '演示模式' : '可下达指令'))
@@ -691,6 +693,15 @@ async function loadAll() {
     return
   }
   invalidateEvidence({ clearConversation: true })
+  if (tigerDemoMode.value) {
+    const modules = availableModules.value.filter(item => hasDataReadPermission(item.module_code, key => session.canView(key), moduleMeta)).map(item => item.module_code)
+    for (const card of tigerDemoCards({dateStart: dateStart.value, dateEnd: dateEnd.value, contextRevision: viewState.revision, modules})) publishCard(card)
+    for (const item of availableModules.value) moduleState.value[item.module_code] = modules.includes(item.module_code) ? 'ready' : 'denied'
+    lastReadAt.value = new Date()
+    loading.value = false
+    conversation.value = [{role: 'assistant', text: '当前为 TIGER 演示客户。右侧全部为模拟数据，不代表真实投放或品牌表现。可以提问“帮我看看 SEM”“只看 GEO”，体验看板动态重组；本模式不会写入真实业务数据。'}]
+    return
+  }
   const generation = loadGeneration
   loading.value = true
   for (const item of availableModules.value) moduleState.value[item.module_code] = ['sem', 'seo', 'geo'].includes(item.module_code) ? 'loading' : 'needs_scope'
@@ -756,6 +767,7 @@ async function prepare() {
   }
 }
 function answerFor(text) {
+  if (tigerDemoMode.value) return '已按你的问题重组演示看板。所有数字、趋势和模型分布均为模拟样本，仅用于产品体验，不代表真实业务结果。'
   if (!availableModules.value.length) return '当前账号没有可查看的获客模块，请联系管理员确认模块和查看权限。'
   if (text.includes('SEM') && moduleState.value.sem === 'ready') return `已按 ${dateStart.value} 至 ${dateEnd.value} 读取 SEM 数据。点击任意数字可以看每日明细和数据依据。`
   if (text.includes('SEO') && moduleState.value.seo === 'ready') return '已读取当前 SEO 网站的内容和页面检查数字。审核、发布、页面检查分别判断，单篇搜索点击仍明确标为未接入。'
@@ -888,7 +900,7 @@ async function send(text = question.value) {
   const requestContext = { tenantId: session.tenantId, loadGeneration, contextRevision: viewState.revision }
   let command, timeout
   try {
-    command = localPreview && !session.isLoggedIn ? localScreenCommand(value) : await Promise.race([
+    command = tigerDemoMode.value || (localPreview && !session.isLoggedIn) ? localScreenCommand(value) : await Promise.race([
       commandCockpit({
         tenantId: session.tenantId, message: value,
         availableModules: availableModules.value.map(item => item.module_code),
