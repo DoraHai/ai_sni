@@ -16,6 +16,7 @@ from app.database import Base
 
 # 非出价类写回动作（出价回写见 bid_writebacks）
 WRITEBACK_ACTION_LABELS = {
+    "set_ocpc_bid": "改 oCPC 目标转化出价",
     "negative": "加否词",
     "add_word": "转拓词",
     "remove_negative": "删否词",

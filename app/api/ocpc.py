@@ -1,13 +1,14 @@
-"""oCPC 投放管理（查看层，只读）。
+"""oCPC 投放管理与目标转化出价修改。
 
 展示 OcpcService/getTargetPackageList 同步下来的目标转化包：目标转化出价、学习状态、
 绑定计划、转化口径（数据来源 + 目标转化类型），并结合本地已落库的电话转化量给出
-「数据够不够喂 OCPC」的判断。本路由不写回百度。
+「数据够不够喂 OCPC」的判断。调价通过独立审批与台账流程执行。
 """
 from datetime import timedelta
-from typing import Any
+from typing import Any, Literal
+from pydantic import BaseModel, Field, field_validator
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +23,10 @@ from app.models import (
     KwReportSnapshot,
     OcpcPackage,
 )
-from app.security.auth import require_scoped_auth
+from app.security.auth import AuthContext, require_scoped_auth
+from app.baidu.ocpc_writeback import apply_ocpc_bid, ocpc_execution_mode
+from app.baidu.services.ocpc import normalize_ocpc_bid
+from app.baidu.writeback import WritebackError
 
 router = APIRouter(
     prefix="/api/v1/ocpc",
@@ -119,6 +123,8 @@ async def list_ocpc_packages(
         rows.append(
             {
                 "package_id": p.package_id,
+                "execution_mode": await ocpc_execution_mode(session, tenant_id, p.baidu_account_id),
+                "baidu_account_id": p.baidu_account_id,
                 "package_name": p.package_name,
                 "ocpc_bid_type": p.ocpc_bid_type,
                 "ocpc_bid_type_label": OCPC_BID_TYPE_LABELS.get(p.ocpc_bid_type, "—"),
@@ -143,6 +149,7 @@ async def list_ocpc_packages(
 
     return {
         "total": len(rows),
+        "execution_mode": "dry_run",  # 未选策略时默认演练；逐账户模式见 packages。
         "packages": rows,
         "summary": {
             "account_conv_7d": acct_conv7,
@@ -161,3 +168,44 @@ def _status_counts(packages) -> dict[str, int]:
         label = PACKAGE_STATUS_LABELS.get(p.package_status, "未知")
         c[label] = c.get(label, 0) + 1
     return c
+
+
+class OcpcBidRequest(BaseModel):
+    tenant_id: int = Field(gt=0)
+    baidu_account_id: int = Field(gt=0)
+    old_bid: float
+    new_bid: float
+    execution_mode: Literal["dry_run", "live"]
+    approval_id: int | None = Field(default=None, gt=0)
+    confirmation: str | None = None
+    idempotency_key: str | None = Field(default=None, min_length=16, max_length=128)
+
+    @field_validator("old_bid", "new_bid", mode="before")
+    @classmethod
+    def validate_money(cls, value):
+        return normalize_ocpc_bid(value)
+
+
+@router.post("/packages/{package_id}/bid")
+async def update_ocpc_bid(
+    package_id: int,
+    req: OcpcBidRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    ctx.ensure_tenant(req.tenant_id)
+    if not ctx.can_edit("manage.ocpc"):
+        raise HTTPException(403, "需要 oCPC 投放编辑权限")
+    try:
+        record = await apply_ocpc_bid(
+            session, package_id=package_id, **req.model_dump(),
+            operator_user_id=ctx.user_id, operator_name=ctx.username,
+        )
+    except WritebackError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "id": record.id, "status": record.status, "dry_run": record.dry_run,
+        "approval_id": record.approval_id, "package_id": package_id,
+        "old_bid": float(record.old_value), "new_bid": float(record.new_value),
+        "error_msg": record.error_msg,
+    }

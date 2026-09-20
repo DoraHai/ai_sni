@@ -188,7 +188,20 @@ def test_live_write_scope_is_checked_in_orchestration_and_http_client():
         and isinstance(node.args[3], ast.Constant)
         and isinstance(node.args[3].value, str)
     }
-    assert orchestration_scopes == SEM_CUSTOMER_LIVE_WRITE_SCOPES
+    ocpc_source = (ROOT / "app/baidu/ocpc_writeback.py").read_text(encoding="utf-8")
+    ocpc_tree = ast.parse(ocpc_source)
+    ocpc_calls = _call_names(_async_function(ocpc_tree, "apply_ocpc_bid"))
+    assert "_claim_funds_approval" in ocpc_calls
+    assert "with_for_update" in ocpc_calls
+    assert "_ensure_no_unresolved_funds_writeback" in ocpc_calls
+    ocpc_scopes = {
+        node.args[3].value for node in ast.walk(ocpc_tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id == "_effective_dry_run" and len(node.args) >= 4
+        and isinstance(node.args[3], ast.Constant)
+    }
+    assert ocpc_scopes == {"ocpc_bid"}
+    assert orchestration_scopes | ocpc_scopes == SEM_CUSTOMER_LIVE_WRITE_SCOPES
 
 
 def test_writeback_mode_only_reports_current_tenant_account_permissions():

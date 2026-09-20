@@ -18,6 +18,7 @@ SEM_CUSTOMER_LIVE_WRITE_SCOPES = frozenset(
         "campaign_region",
         "campaign_schedule",
         "keyword_bid",
+        "ocpc_bid",
         "keyword_create",
         "keyword_match_type",
         "keyword_pause",
@@ -168,6 +169,7 @@ class Settings(BaseSettings):
     # 写回演练开关：True=dry-run，所有写百度的请求只算改动+记台账，绝不真发（开发/验证默认）。
     # 关闭=真写线上出价，必须用户明确批准后才在生产改为 False（红线 feedback-no-baidu-writeback）。
     baidu_write_dry_run: bool = True
+    baidu_ocpc_write_enabled: bool = False
     # 真写必须同时命中租户和本地百度账户双白名单。空值表示拒绝全部真实写请求。
     baidu_live_write_tenant_ids: str = ""
     baidu_live_write_account_ids: str = ""

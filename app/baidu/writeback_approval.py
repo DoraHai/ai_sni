@@ -17,6 +17,7 @@ from app.config import get_settings
 from app.models.writeback_approval import WritebackApproval
 
 
+ACTION_OCPC_BID = "ocpc_bid"
 ACTION_KEYWORD_BID = "keyword_bid"
 ACTION_ADGROUP_BID = "adgroup_bid"
 ACTION_CAMPAIGN_BUDGET = "campaign_budget"
@@ -24,6 +25,7 @@ ACTION_ACCOUNT_BUDGET = "account_budget"
 ALLOWED_ACTIONS = frozenset(
     {
         ACTION_KEYWORD_BID,
+        ACTION_OCPC_BID,
         ACTION_ADGROUP_BID,
         ACTION_CAMPAIGN_BUDGET,
         ACTION_ACCOUNT_BUDGET,
@@ -82,6 +84,14 @@ def normalize_payload(action_type: str, payload: dict[str, Any]) -> dict[str, An
     """只保留审批所需字段，并统一数值精度。"""
     if not isinstance(payload, dict):
         raise WritebackApprovalError("payload 必须是对象")
+    if action_type == ACTION_OCPC_BID:
+        from app.baidu.services.ocpc import normalize_ocpc_bid
+        return {
+            "package_id": _positive_id(payload, "package_id"),
+            "baidu_account_id": _positive_id(payload, "baidu_account_id"),
+            "old_bid": normalize_ocpc_bid(payload.get("old_bid")),
+            "new_bid": normalize_ocpc_bid(payload.get("new_bid")),
+        }
     if action_type == ACTION_KEYWORD_BID:
         return {
             "keyword_id": _positive_id(payload, "keyword_id"),
