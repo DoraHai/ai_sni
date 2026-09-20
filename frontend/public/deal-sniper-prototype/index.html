@@ -23,7 +23,11 @@
   .nav { display:flex; align-items:center; gap:12px; padding: 18px 40px; min-height:72px; }
   .nav .logo { width:34px; height:34px; border-radius:9px; background:linear-gradient(135deg,#2563eb,#7c3aed); color:#fff; display:grid; place-items:center; font-weight:800; }
   .nav b { font-size:18px; }
-  .nav .right { margin-left:auto; font-size:13px; color:#6b7280; display:flex; gap:24px; }
+  .nav .right { margin-left:auto; font-size:13px; color:#6b7280; display:flex; align-items:center; gap:24px; }
+  .nav .right a { color:inherit; text-decoration:none; }
+  .nav .right a:hover { color:#4338ca; }
+  .nav .admin-link { padding:7px 12px; border:1px solid #c7d2fe; border-radius:9px; color:#3730a3; font-weight:700; background:rgba(255,255,255,.72); }
+  .nav .admin-link:hover { border-color:#818cf8; background:#fff; }
   .hero { text-align:center; padding: 30px 20px 22px; }
   .hero .pill { display:inline-block; padding:6px 14px; border-radius:999px; background:#fff; border:1px solid #e8eaf0; font-size:12px; color:#6b7280; margin-bottom:14px; }
   .hero h1 { font-size: 36px; letter-spacing:0; margin-bottom:10px; line-height:1.16; }
@@ -127,7 +131,11 @@
   <div class="nav">
     <div class="logo">S</div>
     <b>G-Snipers</b>
-    <div class="right"><span>文档</span><span>价格</span><span>登录</span></div>
+    <div class="right">
+      <span>文档</span><span>价格</span>
+      <a id="platform-admin-link" class="admin-link" href="/platform" target="_top" hidden>⚙ 平台管理</a>
+      <span>登录</span>
+    </div>
   </div>
 
   <div class="hero">
@@ -192,5 +200,25 @@
   </div>
 
   <div class="foot">© 2026 G-Snipers · SEM · SEO · GEO 智能获客平台</div>
+  <script>
+    (() => {
+      const link = document.getElementById('platform-admin-link')
+      const readUser = (storage) => {
+        try {
+          const envelope = JSON.parse(storage.getItem('sem_auth_v1') || 'null')
+          return envelope?.version === 1 ? envelope.user : null
+        } catch {
+          return null
+        }
+      }
+      const user = readUser(sessionStorage) || readUser(localStorage)
+      if (!user || user.tenant_id) return
+      const permissions = user.permissions || {}
+      if (permissions['settings.customers'] === 'edit') link.href = '/platform/customers'
+      else if (permissions['settings.accounts'] === 'edit') link.href = '/platform/accounts'
+      else return
+      link.hidden = false
+    })()
+  </script>
 </body>
 </html>

@@ -325,7 +325,10 @@ const adequacyBanner = computed(() => {
 .status-pill.red { background: #fdeaea; color: var(--sem-danger); }
 .status-pill.gray { background: #f3f4f6; color: var(--sem-text-sub); }
 .pkg-bid { text-align: right; }
-.bid-edit { margin-left: 12px; }
+.bid-edit { margin-left: 12px; color: #fff !important; }
+.bid-edit:hover,
+.bid-edit:focus,
+.bid-edit:active { color: #fff !important; }
 .edit-context { color: var(--sem-text-sub); line-height: 1.7; }
 .edit-error { margin-top: 12px; }
 .bid-label { font-size: 11px; color: var(--sem-text-sub); margin-right: 8px; }

@@ -74,7 +74,7 @@ def test_backend_and_frontend_keep_approval_id_wiring():
     assert keyword_api.count("approval_id=") >= 2
     assert manage_client.count("approval_id: approvalId") == 3
     assert "approval_id: approvalId" in keyword_client
-    assert approval_view.count("approvalId: row.id") == 4
+    assert approval_view.count("approvalId: row.id") == 5
 
     orchestration = (ROOT / "app/baidu/writeback.py").read_text(encoding="utf-8")
     assert orchestration.count("approval_id=approval_id if not dry_run else None") == 4
