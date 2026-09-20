@@ -1,3 +1,4 @@
+import { demoSemPlacement } from './sem-placement.mjs'
 // Explicit presentation-only fixture. Never persisted or used as production metrics.
 export const TIGER_DEMO_NAME = 'TIGER 老虎新材料（演示）'
 export function isTigerDemoTenant(tenantId, authorizedTenants = []) {
@@ -57,5 +58,6 @@ export function tigerDemoCards({ dateStart, dateEnd, contextRevision, modules = 
       {key:'impression',metricId:'tiger-demo-impression',label:'曝光',value:total('impression'),display:num(total('impression'))},
       {key:'click',metricId:'tiger-demo-click',label:'点击',value:total('click'),display:num(total('click'))}],
       rate:total('click')/total('impression'),rateLabel:`模拟点击率 ${num(total('click')/total('impression')*100)}%`,coverage:{state:'covered',label:'仅 SEM 模拟曝光与点击'}}})
+  cards.find(c=>c.id==='tiger-demo-click').semPlacement = demoSemPlacement(days)
   return cards.filter(c=>modules.includes(c.moduleCode))
 }
