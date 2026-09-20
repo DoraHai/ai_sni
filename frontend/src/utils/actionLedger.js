@@ -6,6 +6,7 @@ export const ACTION_TYPES = [
   { code: 'pause', label: '暂停关键词' },
   { code: 'enable', label: '启用关键词' },
   { code: 'set_match_type', label: '改匹配模式' },
+  { code: 'set_ocpc_bid', label: 'oCPC 目标转化出价' },
   { code: 'set_account_budget', label: '账户预算' },
   { code: 'set_campaign_budget', label: '计划预算' },
   { code: 'set_campaign_region', label: '计划投放地域' },
@@ -23,6 +24,7 @@ export const ACTION_TYPES = [
 ]
 
 const MONEY_ACTIONS = new Set([
+  'set_ocpc_bid',
   'set_account_budget',
   'set_campaign_budget',
   'set_adgroup_bid',

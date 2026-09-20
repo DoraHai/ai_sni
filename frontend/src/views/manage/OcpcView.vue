@@ -1,6 +1,11 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
-import { fetchOcpcPackages } from '../../api/ocpc'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { fetchOcpcPackages, updateOcpcBid } from '../../api/ocpc'
+import { ElMessage } from 'element-plus'
+import { WRITEBACK_CONFIRMATION } from '../../api/writeback'
+import { createWritebackIdempotencyKey } from '../../api/idempotency'
+import { createLatestRequestGuard } from '../../utils/latestRequest'
+import { isSemDemoIdentity } from '../../utils/semDemo'
 import { session } from '../../store/session'
 import { formatUtcTimestamp } from '../../utils/dateTime'
 
@@ -11,6 +16,69 @@ const loading = ref(false)
 const error = ref('')
 const data = ref(null)
 let loadVersion = 0
+const editPackage = ref(null)
+const bidInput = ref('')
+const saving = ref(false)
+const editError = ref('')
+const context = () => ({ tenantId: TENANT_ID.value, authRevision: session.authRevision })
+const actionGuard = createLatestRequestGuard(context)
+const isDryRun = computed(() => (editPackage.value?.executionMode || data.value?.execution_mode) === 'dry_run')
+const canEdit = computed(() => session.canEdit('manage.ocpc') && !isSemDemoIdentity(session.user, TENANT_ID.value))
+const accountLabel = (id) => session.tenants.find(t => t.id === TENANT_ID.value)?.sem_accounts?.find(a => Number(a.id) === Number(id))?.username || `推广账户 #${id}`
+
+function openBidEditor(p) {
+  if (!canEdit.value || !p.baidu_account_id || p.ocpc_bid_type !== 1) return
+  actionGuard.invalidate()
+  editPackage.value = { ...p, tenantId: TENANT_ID.value, executionMode: p.execution_mode || data.value.execution_mode, idempotencyKey: createWritebackIdempotencyKey() }
+  bidInput.value = String(p.ocpc_bid ?? '')
+  editError.value = ''
+}
+
+async function submitBid() {
+  if (saving.value || !canEdit.value || !editPackage.value) return
+  const asset = editPackage.value
+  const amount = Number(bidInput.value)
+  if (!/^\d+(\.\d{1,2})?$/.test(bidInput.value) || !Number.isFinite(amount) || amount < 0.01 || amount > 9999) {
+    editError.value = '请输入 0.01～9999.00 元，最多两位小数'
+    return
+  }
+  if (amount === Number(asset.ocpc_bid)) { editError.value = '目标转化出价未变化'; return }
+  if (Math.abs(amount - Number(asset.ocpc_bid)) / Number(asset.ocpc_bid) > 0.20 + 1e-9) {
+    editError.value = '单次调价幅度不得超过 20%'
+    return
+  }
+  const attempt = actionGuard.begin()
+  saving.value = true
+  editError.value = ''
+  try {
+    const fresh = await fetchOcpcPackages({ tenantId: asset.tenantId })
+    if (!attempt.isCurrent()) return
+    const current = fresh.packages.find(p => p.package_id === asset.package_id && p.baidu_account_id === asset.baidu_account_id)
+    if (!current || current.ocpc_bid_type !== 1 || current.ocpc_bid !== asset.ocpc_bid || (current.execution_mode || fresh.execution_mode) !== asset.executionMode) {
+      throw new Error('策略或执行模式已变化，请关闭弹窗并刷新后重试')
+    }
+    if (asset.executionMode === 'live') {
+      const result = await updateOcpcBid({ tenantId: asset.tenantId, packageId: asset.package_id,
+        accountId: asset.baidu_account_id, oldBid: asset.ocpc_bid, newBid: amount, executionMode: 'live',
+        confirmation: WRITEBACK_CONFIRMATION, idempotencyKey: asset.idempotencyKey })
+      if (!attempt.isCurrent()) return
+      if (result.status !== 'success') throw new Error(result.error_msg || '执行结果未确认，请核对行动台账，勿重复提交')
+      ElMessage.success(`目标转化出价已修改，行动台账 #${result.id}`)
+    } else if (asset.executionMode === 'dry_run') {
+      const result = await updateOcpcBid({ tenantId: asset.tenantId, packageId: asset.package_id,
+        accountId: asset.baidu_account_id, oldBid: asset.ocpc_bid, newBid: amount, executionMode: 'dry_run' })
+      if (!attempt.isCurrent()) return
+      if (result.status !== 'dry_run') throw new Error(result.error_msg || '执行结果异常，请核对行动台账')
+      ElMessage.success(`演练已记录到行动台账 #${result.id}，百度出价未修改`)
+    } else { throw new Error('无法确定执行模式，请刷新重试') }
+    editPackage.value = null
+    await load()
+  } catch (e) {
+    if (attempt.isCurrent()) editError.value = e.response?.data?.detail || e.message || '提交失败'
+  } finally {
+    if (attempt.isCurrent()) saving.value = false
+  }
+}
 
 async function load() {
   const version = ++loadVersion
@@ -31,8 +99,17 @@ async function load() {
   }
 }
 
-watch(TENANT_ID, () => { data.value = null; load() })
+watch(() => [TENANT_ID.value, session.authRevision], () => {
+  actionGuard.invalidate()
+  ++loadVersion
+  editPackage.value = null
+  saving.value = false
+  loading.value = false
+  data.value = null
+  load()
+})
 onMounted(load)
+onBeforeUnmount(() => { actionGuard.invalidate(); ++loadVersion })
 
 const fmtMoney = (v) => (v == null ? '—' : '¥' + Number(v).toFixed(2))
 const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
@@ -64,7 +141,7 @@ const adequacyBanner = computed(() => {
       <div>
         <div class="page-title">oCPC 投放</div>
         <div class="page-desc">
-          数据源：百度 OcpcService/getTargetPackageList 同步（只读）· oCPC = 设「目标转化出价」由百度算法自动出价，与关键词 CPC 出价是两套机制
+          设置目标转化出价，由百度自动调整点击出价。策略数据来自百度同步。
           <template v-if="summary.data_until"> · 转化数据截至 {{ summary.data_until }}</template>
         </div>
       </div>
@@ -122,6 +199,8 @@ const adequacyBanner = computed(() => {
             <span class="bid-label">{{ p.ocpc_bid_type_label }}</span>
             <span class="bid-value">{{ fmtMoney(p.ocpc_bid) }}</span>
             <span class="bid-unit">/ 转化</span>
+            <el-button v-if="canEdit && p.ocpc_bid_type === 1 && p.baidu_account_id && p.ocpc_bid != null"
+              class="bid-edit" size="small" type="primary" plain @click="openBidEditor(p)">修改出价</el-button>
           </div>
         </div>
 
@@ -191,9 +270,31 @@ const adequacyBanner = computed(() => {
         {{ tenantName }}目前以关键词 CPC 出价投放，未启用 oCPC（目标转化出价）。<br />
         oCPC 让你设「目标转化成本」、由百度算法自动出价，但它<b>靠转化数据喂模型</b>：
         转化量太少模型学不动，效果可能不如手动调价。<br />
-        是否值得开，先看上方近 7/30 天的电话转化量够不够。开通与调价能力在后续版本提供。
+        是否值得开，先看上方近 7/30 天的电话转化量够不够。新建策略请前往百度推广后台。
       </div>
     </div>
+    <el-dialog :model-value="!!editPackage" title="修改目标转化出价" width="min(520px, 92vw)"
+      :close-on-click-modal="false" :close-on-press-escape="!saving" :show-close="!saving"
+      @update:model-value="value => { if (!value && !saving) editPackage = null }">
+      <template v-if="editPackage">
+        <p class="edit-context">{{ tenantName }} · {{ accountLabel(editPackage.baidu_account_id) }}</p>
+        <p>{{ editPackage.package_name }}（#{{ editPackage.package_id }}）</p>
+        <p>当前出价 <strong>{{ fmtMoney(editPackage.ocpc_bid) }} / 转化</strong></p>
+        <el-form label-position="top" @submit.prevent="submitBid">
+          <el-form-item label="新的目标转化出价（元 / 转化）">
+            <el-input v-model="bidInput" aria-label="新的目标转化出价" inputmode="decimal" :disabled="saving" />
+          </el-form-item>
+        </el-form>
+        <p class="edit-context">0.01～9999.00 元，最多两位小数；单次调整不超过 20%。影响此策略绑定的 {{ editPackage.bound_campaigns.length }} 个计划。</p>
+        <el-alert :closable="false" :type="isDryRun ? 'info' : 'warning'"
+          :title="isDryRun ? '本次为演练：仅记录行动台账，不修改百度出价。' : '本次将修改百度目标转化出价，并记录与当前参数绑定的一次性确认。'" />
+        <el-alert v-if="editError" class="edit-error" type="error" :closable="false" :title="editError" />
+      </template>
+      <template #footer>
+        <el-button :disabled="saving" @click="editPackage = null">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="submitBid">{{ isDryRun ? '确认演练' : '确认修改百度出价' }}</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -224,6 +325,9 @@ const adequacyBanner = computed(() => {
 .status-pill.red { background: #fdeaea; color: var(--sem-danger); }
 .status-pill.gray { background: #f3f4f6; color: var(--sem-text-sub); }
 .pkg-bid { text-align: right; }
+.bid-edit { margin-left: 12px; }
+.edit-context { color: var(--sem-text-sub); line-height: 1.7; }
+.edit-error { margin-top: 12px; }
 .bid-label { font-size: 11px; color: var(--sem-text-sub); margin-right: 8px; }
 .bid-value { font-size: 20px; font-weight: 700; color: var(--sem-primary); font-variant-numeric: tabular-nums; }
 .bid-unit { font-size: 11px; color: #9ca3af; margin-left: 3px; }

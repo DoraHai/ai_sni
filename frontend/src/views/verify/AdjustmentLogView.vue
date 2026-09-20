@@ -7,6 +7,7 @@ import {
   decideWritebackApproval, fetchWritebackApprovals, fetchWritebacks,
 } from '../../api/writeback'
 import { fetchActions } from '../../api/searchTerms'
+import { updateOcpcBid } from '../../api/ocpc'
 import { writebackKeyword } from '../../api/keywords'
 import { setAccountBudget, setAdgroupBid, setCampaignBudget } from '../../api/manage'
 import { session } from '../../store/session'
@@ -35,6 +36,7 @@ const wbError = ref('')
 const approvalData = ref(null)
 const approvalLoading = ref(false)
 const APPROVAL_ACTIONS = {
+  ocpc_bid: 'oCPC 目标转化出价',
   keyword_bid: '关键词出价',
   adgroup_bid: '单元出价',
   campaign_budget: '计划预算',
@@ -118,12 +120,22 @@ async function decideApproval(row, decision) {
 }
 
 async function executeApproval(row) {
+  const tenantId = TENANT_ID.value
+  const authRevision = session.authRevision
   try {
     await ElMessageBox.confirm('确认按已绑定参数执行？确认记录执行后不可重复使用。', '执行资金回写', {
       type: 'warning', confirmButtonText: '确认执行', cancelButtonText: '取消',
     })
+    if (tenantId !== TENANT_ID.value || authRevision !== session.authRevision || row.tenant_id !== tenantId) return
     const p = row.payload || {}
-    if (row.action_type === 'keyword_bid') {
+    if (row.action_type === 'ocpc_bid') {
+      if (!session.canEdit('manage.ocpc')) throw new Error('需要 oCPC 投放编辑权限')
+      const result = await updateOcpcBid({ tenantId: row.tenant_id, packageId: p.package_id,
+        accountId: p.baidu_account_id, oldBid: p.old_bid, newBid: p.new_bid,
+        executionMode: 'live', approvalId: row.id })
+      if (tenantId !== TENANT_ID.value || authRevision !== session.authRevision) return
+      if (result.status !== 'success') throw new Error(result.error_msg || '执行未成功，请核对行动台账')
+    } else if (row.action_type === 'keyword_bid') {
       await writebackKeyword({ keywordId: p.keyword_id, tenantId: row.tenant_id, price: p.new_bid, approvalId: row.id })
     } else if (row.action_type === 'adgroup_bid') {
       await setAdgroupBid({ tenantId: row.tenant_id, adgroupId: p.adgroup_id, maxPrice: p.new_price, approvalId: row.id })

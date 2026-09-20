@@ -34,7 +34,7 @@
     "deploy:website": "bash scripts/deploy-website.sh",
     "preview": "vite preview",
     "test:sem-latest-request": "node scripts/test-latest-request.mjs",
-    "test:sem-classic-components": "vitest run scripts/test-sem-classic-components.test.js scripts/test-sem-auth-revision-components.test.js --environment jsdom"
+    "test:sem-classic-components": "vitest run scripts/test-sem-classic-components.test.js scripts/test-sem-auth-revision-components.test.js scripts/test-ocpc-bid.test.js --environment jsdom"
   },
   "dependencies": {
     "axios": "^1.18.0",
