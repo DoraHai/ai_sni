@@ -1129,6 +1129,7 @@ onBeforeUnmount(() => {
         <div v-if="activeSection === 'dashboard'" v-show="!aiFocusActive" :inert="scanning || aiFocusActive" class="overview-response">
           <div v-if="filteredCards.length" class="panorama-content" role="tabpanel" :aria-label="activeModule === 'all' ? '全域指标' : `${activeModule.toUpperCase()} 指标`">
             <DashboardSignals
+              :active-module="activeModule"
               :cards="filteredCards"
               :modules="availableModules.filter(item => activeModule === 'all' || item.module_code === activeModule)"
               :revision="viewState.revision"
