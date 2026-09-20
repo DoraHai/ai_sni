@@ -24,7 +24,7 @@ watch(() => props.revision, () => { selectedId.value = '' }, { flush: 'sync' })
     <div v-if="highlights.length" class="signal-kpis">
       <button v-for="card in highlights" :key="card.id" type="button" :class="`accent-${card.moduleCode}`" @click="emit('focus', card.id)">
         <span class="kpi-label"><em>{{ card.moduleLabel }}</em>{{ card.label }}</span>
-        <strong>{{ display(card) }}<small v-if="readable(card)">{{ card.unit }}</small></strong>
+        <strong :data-shared-metric="card.id" :data-metric-value="display(card)">{{ display(card) }}<small v-if="readable(card)">{{ card.unit }}</small></strong>
         <span class="kpi-footer"><span>{{ readable(card) && card.changeLabel ? card.changeLabel : status(card) }}</span><b>↗</b></span>
       </button>
     </div>
@@ -55,7 +55,7 @@ watch(() => props.revision, () => { selectedId.value = '' }, { flush: 'sync' })
         <h4>{{ channelTitles[channel.code] }}</h4><p class="channel-subtitle">{{ channelNotes[channel.code] }}</p>
         <div v-if="channelVisual(channel)" class="channel-visual"><span>{{ channelVisual(channel).label }}</span><MetricVisualization :visualization="channelVisual(channel).visualization" :metric-label="channelVisual(channel).label" @select="item => emit('focus', item.metricId || channelVisual(channel).id)" /></div>
         <div v-else class="snapshot-label"><i></i>指标快照 <span>历史 / 分布数据暂未接入</span></div>
-        <div class="channel-metrics"><button v-for="card in (compact ? channel.metrics.slice(0, 3) : channel.metrics)" :key="card.id" type="button" @click="emit('focus', card.id)"><span>{{ card.label }}<small>{{ status(card) }}</small></span><strong>{{ display(card) }}<small v-if="readable(card)">{{ card.unit }}</small></strong></button></div>
+        <div class="channel-metrics"><button v-for="card in (compact ? channel.metrics.slice(0, 3) : channel.metrics)" :key="card.id" type="button" @click="emit('focus', card.id)"><span>{{ card.label }}<small>{{ status(card) }}</small></span><strong :data-shared-metric="card.id" :data-metric-value="display(card)">{{ display(card) }}<small v-if="readable(card)">{{ card.unit }}</small></strong></button></div>
         <p v-if="!channel.metrics.length" class="channel-subtitle">当前渠道尚未读取到指标。</p>
         <footer><span>{{ channel.metrics[0]?.periodLabel || '统计周期待确认' }}</span></footer>
       </article>

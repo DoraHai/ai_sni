@@ -3,6 +3,10 @@ import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import MetricEvidenceCard from './cockpit/MetricEvidenceCard.vue'
 import DashboardSignals from './cockpit/DashboardSignals.vue'
+import DashboardFocusView from './cockpit/DashboardFocusView.vue'
+import AIScanningState from './cockpit/AIScanningState.vue'
+import { useDashboardOrchestrator } from './cockpit/useDashboardOrchestrator'
+import { createDashboardPlan } from './cockpit/dashboard-orchestrator.mjs'
 import ElementsWaterBackground from './cockpit/elements/ElementsWaterBackground.vue'
 import { fetchModules, fetchTenants } from '../../api/auth'
 import { commandCockpit } from '../../api/assistant'
@@ -52,10 +56,7 @@ const explorationIndex = ref(-1)
 const savedMetricScope = ref(null)
 const metricComparison = ref(null)
 const waterBackgroundRef = ref(null)
-const dashboardMode = ref('overview')
-const aiState = ref('idle')
-const focusQuestion = ref('')
-const focusRevision = ref(0)
+const stageEl = ref(null)
 const initialConversation = () => [
   { role: 'assistant', text: '我会先说明数据是否完整，再帮你判断现在最该处理什么。你可以直接问，也可以从下面的问题开始。' },
 ]
@@ -68,6 +69,10 @@ const seoSiteSelectionGuard = createSeoSiteSelectionGuard()
 const localPreview = import.meta.env.DEV && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
 const secureRuntime = isSecureCockpitRuntime(window.location)
 const viewState = createWorkbenchViewState()
+const orchestrator = useDashboardOrchestrator({ root: stageEl, pulse: pulseWaterAtStage, getData: () => ({ cards: cards.value, modules: availableModules.value, revision: viewState.revision }) })
+const { dashboardMode, aiState, plan: dashboardPlan, returning } = orchestrator
+const scanCoverage = computed(() => createDashboardPlan({ text: '', cards: cards.value, modules: availableModules.value, revision: viewState.revision }).coverage)
+const scanning = computed(() => ['thinking', 'scanning'].includes(aiState.value))
 let workbenchSession
 let boundary
 let semClient
@@ -101,7 +106,7 @@ const businessGroups = computed(() => cardGroups.value.map(group => ({
   ...group,
   businessCards: buildBusinessCards(group.id),
 })))
-const aiFocusActive = computed(() => dashboardMode.value !== 'overview' || ['thinking', 'assembling'].includes(aiState.value))
+const aiFocusActive = computed(() => dashboardMode.value !== 'overview')
 const canGoBack = computed(() => explorationIndex.value > 0)
 const canGoForward = computed(() => explorationIndex.value >= 0 && explorationIndex.value < explorationHistory.value.length - 1)
 const currentPathLabel = computed(() => {
@@ -212,14 +217,8 @@ function cardMatches(card, pattern) {
 function findModuleCard(moduleCode, pattern) {
   return filteredCards.value.find(card => card.moduleCode === moduleCode && cardMatches(card, pattern))
 }
-function findAnyModuleCard(moduleCode, pattern) {
-  return cards.value.find(card => card.moduleCode === moduleCode && cardMatches(card, pattern))
-}
 function moduleCards(moduleCode) {
   return filteredCards.value.filter(card => card.moduleCode === moduleCode)
-}
-function allModuleCards(moduleCode) {
-  return cards.value.filter(card => card.moduleCode === moduleCode)
 }
 function changeValue(card) {
   const text = String(card?.changeLabel || '')
@@ -244,10 +243,6 @@ function metricItem(card, fallbackLabel = '') {
     value: card?.display ?? '—',
     change: card?.changeLabel ? cleanChange(card) : '',
   }
-}
-function focusMetricItem(card, fallbackLabel = '', tone = 'blue') {
-  const item = metricItem(card, fallbackLabel)
-  return { ...item, tone, changeValue: changeValue(card), raw: card }
 }
 function semBusinessStatement(impression, click, cost) {
   const impressionChange = changeValue(impression)
@@ -369,77 +364,6 @@ function buildBusinessCards(groupId) {
   if (groupId === 'presence') return [buildSeoBusinessCard(), buildGeoBusinessCard()].filter(Boolean)
   return []
 }
-const semFocus = computed(() => {
-  const impression = findAnyModuleCard('sem', /展现|曝光/)
-  const click = findAnyModuleCard('sem', /点击量|广告点击|点击/)
-  const cost = findAnyModuleCard('sem', /消耗|花费/)
-  const cpc = findAnyModuleCard('sem', /CPC|点击价格/)
-  return {
-    title: 'SEM 本周投放表现',
-    statement: semBusinessStatement(impression, click, cost),
-    insight: semInsight(impression, click, cost, cpc),
-    nodes: [
-      focusMetricItem(impression, '广告展现', 'cyan'),
-      focusMetricItem(click, '广告点击', 'blue'),
-      focusMetricItem(cost, '广告消耗', 'amber'),
-      focusMetricItem(cpc, '平均 CPC', 'violet'),
-    ].filter(item => item.id),
-  }
-})
-const geoFocus = computed(() => {
-  const mention = findAnyModuleCard('geo', /品牌|提及/)
-  const visibility = findAnyModuleCard('geo', /可见/)
-  const boundary = allModuleCards('geo').find(card => ['partial', 'no_data', 'unavailable', 'denied'].includes(card.state))
-  const supporting = allModuleCards('geo').filter(card => ![mention?.id, visibility?.id, boundary?.id].includes(card.id)).slice(0, 3)
-  return {
-    title: 'GEO AI 品牌可见性',
-    statement: geoBusinessStatement(mention, visibility, boundary),
-    insight: geoInsight(mention, visibility, boundary),
-    core: focusMetricItem(mention || visibility || boundary, mention ? '品牌提及率' : '核心指标', 'violet'),
-    nodes: [
-      focusMetricItem(visibility, 'AI 可见度', 'blue'),
-      boundary ? focusMetricItem(boundary, '数据边界', 'amber') : null,
-      ...supporting.map(card => focusMetricItem(card, card.label, 'cyan')),
-    ].filter(item => item?.id),
-  }
-})
-const priorityView = computed(() => {
-  const seoPending = findAnyModuleCard('seo', /待处理|页面/)
-  const geoBoundary = allModuleCards('geo').find(card => ['partial', 'no_data', 'unavailable', 'denied'].includes(card.state))
-  const geoMention = findAnyModuleCard('geo', /品牌|提及/)
-  const semCost = findAnyModuleCard('sem', /消耗|花费/)
-  const semClick = findAnyModuleCard('sem', /点击量|广告点击|点击/)
-  const semRisk = semCost && semClick ? {
-    id: semCost.id,
-    module: 'SEM',
-    title: '消耗增长快于点击',
-    value: `${cleanChange(semCost) || semCost.display} / ${cleanChange(semClick) || semClick.display}`,
-    detail: '建议继续核对转化是否同步增长',
-    tone: 'amber',
-  } : null
-  const geoNode = (geoBoundary || geoMention) ? {
-    id: (geoBoundary || geoMention).id,
-    module: 'GEO',
-    title: geoBoundary ? '数据边界需要核对' : '品牌可见度需要关注',
-    value: (geoBoundary || geoMention).display ?? '—',
-    detail: geoBoundary ? attentionCopy(geoBoundary) : outcomeEvidence(geoMention),
-    tone: 'violet',
-  } : null
-  const seoNode = seoPending ? {
-    id: seoPending.id,
-    module: 'SEO',
-    title: `${seoPending.display ?? seoPending.urgentCount ?? '—'} 个页面需要处理`,
-    value: Number(seoPending.urgentCount) > 0 ? `优先级 ${seoPending.urgentCount}` : (seoPending.display ?? '待核对'),
-    detail: attentionCopy(seoPending),
-    tone: 'blue',
-  } : null
-  const nodes = [geoNode, seoNode, semRisk].filter(Boolean).slice(0, 3)
-  return {
-    count: String(nodes.length).padStart(2, '0'),
-    judgement: nodes[0] ? `${nodes[0].module} 是当前最值得优先处理的方向。` : '当前没有系统已识别的紧急事项。',
-    nodes,
-  }
-})
 function runBusinessAction(action) {
   if (!action?.target) return
   if (action.discuss) discuss({ metricId: action.target, contextRevision: viewState.revision })
@@ -447,11 +371,17 @@ function runBusinessAction(action) {
 }
 function clearCards() { cards.value = [] }
 function clearModuleCards(module) {
+  orchestrator.reset()
+  aiBusy.value = false
+  selectedMetricId.value = null
   viewState.invalidateModule(module)
   cards.value = viewState.snapshot().map(item => item.metric)
 }
 function resetDerivedConversation() { conversation.value = initialConversation() }
 function invalidateEvidence({ clearConversation = false } = {}) {
+  orchestrator.reset()
+  aiBusy.value = false
+  selectedMetricId.value = null
   ++loadGeneration
   boundary?.invalidate()
   semClient?.invalidate()
@@ -593,7 +523,6 @@ function pulseWaterAtStage() {
     clientY: rect.top + rect.height * 0.42,
   }, { down: true, pulse: true })
 }
-const delay = ms => new Promise(resolve => window.setTimeout(resolve, ms))
 function unavailableSemDetailCard(id, label, error) {
   return {
     id, moduleCode: 'sem', moduleLabel: 'SEM', label, display: '读取失败', state: 'unavailable',
@@ -754,6 +683,9 @@ async function loadGeo(generation) {
   }
 }
 async function loadAll() {
+  orchestrator.reset()
+  aiBusy.value = false
+  selectedMetricId.value = null
   if (localPreview && !session.isLoggedIn) {
     applyLocalPreviewData()
     return
@@ -845,41 +777,11 @@ function localScreenCommand(text) {
     drawer_metric_id: highlighted[0]?.id || null, actions: defaultCommandActions(),
   }
 }
-function inferDashboardMode(text = '', command = {}) {
-  const upper = String(text).toUpperCase()
-  if (/只看\s*GEO|GEO/.test(upper)) return 'geo-focus'
-  if (/SEM|投放|点击|消耗|CPC/.test(upper)) return 'sem-focus'
-  if (/今天|关注|异常|优先|处理|最需要/.test(text)) return 'priority'
-  if (command?.focus_module === 'geo') return 'geo-focus'
-  if (command?.focus_module === 'sem') return 'sem-focus'
-  return 'priority'
-}
-function startDashboardAnalysis(text) {
-  focusQuestion.value = text
-  dashboardMode.value = 'analysis'
-  aiState.value = 'thinking'
-  highlightedMetricIds.value = []
-  nextTick(pulseWaterAtStage)
-}
-async function orchestrateDashboard(text, command) {
-  const mode = inferDashboardMode(text, command)
-  dashboardMode.value = mode
-  aiState.value = 'assembling'
-  focusRevision.value += 1
-  await nextTick()
-  pulseWaterAtStage()
-  await delay(680)
-  aiState.value = 'ready'
-}
 async function returnOverview() {
-  aiState.value = 'assembling'
+  aiBusy.value = false
+  selectedMetricId.value = null
   highlightedMetricIds.value = []
-  activeModule.value = 'all'
-  focusQuestion.value = ''
-  pulseWaterAtStage()
-  await delay(420)
-  dashboardMode.value = 'overview'
-  aiState.value = 'idle'
+  await orchestrator.returnOverview()
 }
 function preferredCard(moduleCode, matcher = /./, fallbackUrgent = false) {
   return cards.value.find(card => card.moduleCode === moduleCode && matcher.test(card.label || ''))
@@ -907,9 +809,8 @@ function recordExplorationPath(source = 'user') {
 function chooseModule(code, source = 'user') {
   activeSection.value = 'dashboard'
   if (source === 'user') {
-    dashboardMode.value = 'overview'
-    aiState.value = 'idle'
-    focusQuestion.value = ''
+    orchestrator.reset()
+    aiBusy.value = false
   }
   activeModule.value = code
   selectedMetricId.value = null
@@ -942,24 +843,12 @@ function saveCurrentMetricScope() {
 function compareWithSavedScope() {
   metricComparison.value = compareMetricScope(selectedMetric.value, savedMetricScope.value, { tenantId: session.tenantId, seoSiteId: currentSeoSiteId.value })
 }
-function applyScreenCommand(command) {
-  if (!command) command = localScreenCommand('')
-  const allowedModules = new Set(['all', ...availableModules.value.map(item => item.module_code)])
-  const allowedIds = new Set(cards.value.map(item => item.id))
-  if (!Array.isArray(command.actions) || !command.actions.length) command.actions = defaultCommandActions()
-  activeSection.value = 'dashboard'
-  activeModule.value = allowedModules.has(command?.focus_module) ? command.focus_module : 'all'
-  highlightedMetricIds.value = (command?.highlight?.ids || []).filter(id => allowedIds.has(id)).slice(0, 12)
-  selectedMetricId.value = allowedIds.has(command?.drawer_metric_id) ? command.drawer_metric_id : null
-  metricComparison.value = null
-  recordExplorationPath('ai')
-}
 async function focusMetric(metricId, source = 'user') {
   if (!cards.value.some(item => item.id === metricId)) return
   selectedMetricId.value = metricId
   highlightedMetricIds.value = [metricId]
   const card = cards.value.find(item => item.id === metricId)
-  if (card?.moduleCode) activeModule.value = card.moduleCode
+  if (card?.moduleCode && !aiFocusActive.value) activeModule.value = card.moduleCode
   metricComparison.value = null
   recordExplorationPath(source)
   await nextTick()
@@ -967,7 +856,7 @@ async function focusMetric(metricId, source = 'user') {
     if (element.dataset.metricId === metricId) return true
     return String(element.dataset.metricIds || '').split(/\s+/).includes(metricId)
   })
-  metricEl?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
+  if (!aiFocusActive.value) metricEl?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
   pulseWaterAtElement(metricEl)
   window.setTimeout(() => {
     if (highlightedMetricIds.value.length === 1 && highlightedMetricIds.value[0] === metricId) highlightedMetricIds.value = []
@@ -981,10 +870,10 @@ function runScreenAction(action) {
   if (action.type === 'open-metric') return focusMetric(action.target, 'ai-action')
   if (action.type === 'open-module' && availableModules.value.some(item => item.module_code === action.target)) return openModule(action.target)
   if (action.type === 'focus-module' && availableModules.value.some(item => item.module_code === action.target)) {
-    chooseModule(action.target, 'ai-action'); return
+    send(`只看 ${action.target.toUpperCase()}`); return
   }
   if (action.type === 'reset-view') {
-    chooseModule('all', 'ai-action')
+    returnOverview()
   }
 }
 async function send(text = question.value) {
@@ -993,45 +882,42 @@ async function send(text = question.value) {
   conversation.value.push({ role: 'user', text: value })
   question.value = ''
   aiBusy.value = true
-  startDashboardAnalysis(value)
-  const requestContext = {
-    tenantId: session.tenantId,
-    loadGeneration,
-    contextRevision: viewState.revision,
-  }
-  let command
+  selectedMetricId.value = null
+  activeSection.value = 'dashboard'
+  const ticket = orchestrator.begin(value)
+  const requestContext = { tenantId: session.tenantId, loadGeneration, contextRevision: viewState.revision }
+  let command, timeout
   try {
-    command = await commandCockpit({
-      tenantId: session.tenantId,
-      message: value,
-      availableModules: availableModules.value.map(item => item.module_code),
-      visibleCards: cards.value.map(card => ({
-        id: card.id, module: card.moduleCode, label: card.label, value: card.display,
-        state: card.state, period: card.periodLabel, source: card.sourceLabel,
-      })),
-    })
+    command = localPreview && !session.isLoggedIn ? localScreenCommand(value) : await Promise.race([
+      commandCockpit({
+        tenantId: session.tenantId, message: value,
+        availableModules: availableModules.value.map(item => item.module_code),
+        visibleCards: cards.value.map(card => ({ id: card.id, module: card.moduleCode, label: card.label, value: card.display, state: card.state, period: card.periodLabel, source: card.sourceLabel })),
+      }),
+      new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('COMMAND_TIMEOUT')), 20000) }),
+    ])
   } catch {
     command = localScreenCommand(value)
     command.answer = `DeepSeek 暂时不可用，已按当前数据完成本地定位。${command.answer}`
   } finally {
-    aiBusy.value = false
+    clearTimeout(timeout)
   }
-  if (!isCurrentCommandContext(requestContext, {
-    tenantId: session.tenantId,
-    loadGeneration,
-    contextRevision: viewState.revision,
+  if (!orchestrator.isCurrent(ticket) || !isCurrentCommandContext(requestContext, {
+    tenantId: session.tenantId, loadGeneration, contextRevision: viewState.revision,
   })) return
-  applyScreenCommand(command)
-  conversation.value.push({ role: 'assistant', text: command.answer || answerFor(value), screenCommand: command })
+  const applied = await orchestrator.present(ticket, value, command)
+  if (!applied) return
+  // The orchestrator owns the right-hand space; opening drawers is an explicit user action.
+  conversation.value.push({ role: 'assistant', text: command?.answer || answerFor(value), screenCommand: command })
+  aiBusy.value = false
   await nextTick()
   messagesEl.value?.scrollTo({ top: messagesEl.value.scrollHeight, behavior: 'smooth' })
-  await orchestrateDashboard(value, command)
 }
 function discuss({ metricId, contextRevision }) {
   const card = cards.value.find(item => item.id === metricId)
   if (!card) return
   const ref = viewState.reference(card.moduleCode || 'sem', metricId, contextRevision)
-  if (!ref || !viewState.resolve(ref)) return
+  if ((!ref || !viewState.resolve(ref)) && !(localPreview && !session.isLoggedIn)) return
   conversation.value.push({ role: 'assistant', text: `已带入“${card.label}”（${card.display}）及其统计范围和来源。你想判断原因、风险，还是下一步动作？`, ref })
 }
 function openModule(code) {
@@ -1129,7 +1015,7 @@ onBeforeUnmount(() => {
 
 <template>
   <main ref="shellEl" class="cockpit-shell" :class="[`mode-${viewMode}`, { 'is-fullscreen': fullscreen }]" v-loading="loading">
-    <ElementsWaterBackground ref="waterBackgroundRef" class="water-element-backdrop" :speed="0.55" :size="1.22" :particle-amount="0" :opacity="0.72" :hue="-8" :saturation="0.9" :brightness="0.76" />
+    <ElementsWaterBackground ref="waterBackgroundRef" class="water-element-backdrop" :speed="({ idle: 0.55, thinking: 0.6, scanning: 0.8, assembling: 0.95, ready: 0.55 })[aiState]" :size="1.22" :particle-amount="0" :opacity="0.72" :hue="-8" :saturation="0.9" :brightness="0.76" />
     <div class="ambient ambient-a"></div><div class="ambient ambient-b"></div><div class="energy-field"></div>
     <aside class="app-rail" aria-label="全域驾驶舱主导航">
       <div class="rail-logo">W</div>
@@ -1197,141 +1083,38 @@ onBeforeUnmount(() => {
 
       <div
         v-if="viewMode !== 'chat'"
+        ref="stageEl"
         class="data-stage"
+        :class="{ 'response-scanning': scanning, 'response-returning': returning, 'response-focus': aiFocusActive }"
+        :aria-busy="aiBusy"
         @pointermove="forwardWaterPointer"
         @pointerdown="event => forwardWaterPointer(event, { down: true })"
         @pointerleave="event => forwardWaterPointer(event, { leave: true })"
       >
-        <div class="mission-heading">
+        <AIScanningState v-if="scanning" :state="aiState" :coverage="scanCoverage" @cancel="returnOverview" />
+        <div v-if="!aiFocusActive" class="mission-heading">
           <div><p>ACQUISITION OVERVIEW</p><h2>全域视野，增长更确定</h2><span>整合 SEM、SEO 与 GEO，发现机会，解决问题，让每一次投入都有回报。</span></div>
           <div class="stage-actions"><button type="button" @click="compactCards = !compactCards">{{ compactCards ? '展开卡片' : '收拢卡片' }}</button><button type="button" @click="setViewMode('data')">专注大盘 ↗</button></div>
         </div>
 
-        <nav class="exploration-path" aria-label="当前查看路径">
+        <nav v-if="!aiFocusActive" class="exploration-path" aria-label="当前查看路径">
           <button type="button" :disabled="!canGoBack" aria-label="返回上一查看路径" @click="navigateExploration(-1)">←</button>
           <button type="button" :disabled="!canGoForward" aria-label="前往下一查看路径" @click="navigateExploration(1)">→</button>
           <span><small>当前查看路径</small><b>{{ currentPathLabel }}</b></span>
         </nav>
 
-        <div v-if="activeSection === 'dashboard'" class="module-tabs" role="tablist" aria-label="指标模块筛选">
+        <div v-if="!aiFocusActive && activeSection === 'dashboard'" class="module-tabs" role="tablist" aria-label="指标模块筛选">
           <button :class="{ active: activeModule === 'all' }" type="button" role="tab" :aria-selected="activeModule === 'all'" @click="chooseModule('all')"><span>全域</span><b>{{ cards.length }}</b><small>全部数据</small></button>
           <button v-for="item in availableModules" :key="item.module_code" :class="[{ active: activeModule === item.module_code }, `module-${item.module_code}`]" type="button" role="tab" :aria-selected="activeModule === item.module_code" @click="chooseModule(item.module_code)">
             <span>{{ moduleMeta[item.module_code].label }}</span><b>{{ cards.filter(card => card.moduleCode === item.module_code).length }}</b><small>{{ moduleStatusLabel(item.module_code) }}</small>
           </button>
         </div>
 
-        <section
-          v-if="activeSection === 'dashboard' && aiFocusActive"
-          :key="`${dashboardMode}-${focusRevision}`"
-          class="dynamic-canvas"
-          :class="[`mode-${dashboardMode}`, `state-${aiState}`]"
-          aria-live="polite"
-        >
-          <header class="dynamic-topline">
-            <div>
-              <small>AI DYNAMIC DATA CANVAS</small>
-              <h3 v-if="aiState === 'thinking'">正在分析当前获客数据</h3>
-              <h3 v-else-if="dashboardMode === 'priority'">今日值得关注</h3>
-              <h3 v-else-if="dashboardMode === 'sem-focus'">{{ semFocus.title }}</h3>
-              <h3 v-else-if="dashboardMode === 'geo-focus'">{{ geoFocus.title }}</h3>
-              <h3 v-else>正在组织数据视图</h3>
-              <p>{{ focusQuestion || 'AI 会根据问题重组右侧数据。' }}</p>
-            </div>
-            <button type="button" @click="returnOverview">返回全域</button>
-          </header>
+        <DashboardFocusView v-if="aiFocusActive && dashboardPlan" :plan="dashboardPlan" :state="aiState" :demo="demoMode || localPreview"
+          @return="returnOverview" @focus="focusMetric" @open="openModule"
+          @discuss="id => { discuss({ metricId: id, contextRevision: viewState.revision }); setViewMode('split') }" />
 
-          <div v-if="aiState === 'thinking'" class="analysis-state">
-            <div class="analysis-radar" aria-hidden="true"><i></i><i></i><i></i></div>
-            <div>
-              <b>扫描 SEM / SEO / GEO 当前范围</b>
-              <p>正在识别可用数据、待处理项与业务关联。</p>
-            </div>
-            <div class="analysis-modules">
-              <span v-for="item in analysisModules" :key="item.code" :class="{ ready: item.ready }">
-                {{ item.label }} <em>{{ item.status }}</em>
-              </span>
-            </div>
-          </div>
-
-          <div v-else-if="dashboardMode === 'priority'" class="priority-view">
-            <article class="priority-judgement">
-              <small>AI PRIORITY</small>
-              <strong>{{ priorityView.count }}</strong>
-              <p>{{ priorityView.judgement }}</p>
-            </article>
-            <div class="priority-node-list">
-              <button
-                v-for="(node, index) in priorityView.nodes"
-                :key="node.id"
-                type="button"
-                class="priority-node"
-                :class="`tone-${node.tone}`"
-                :data-metric-id="node.id"
-                :style="{ '--delay': `${index * 110}ms` }"
-                @click="focusMetric(node.id, 'ai-focus')"
-              >
-                <em>0{{ index + 1 }}</em>
-                <small>{{ node.module }}</small>
-                <strong>{{ node.title }}</strong>
-                <b>{{ node.value }}</b>
-                <span>{{ node.detail }}</span>
-              </button>
-            </div>
-          </div>
-
-          <div v-else-if="dashboardMode === 'sem-focus'" class="relationship-view sem-relationship">
-            <p class="focus-statement">{{ semFocus.statement }}</p>
-            <div class="sem-node-map">
-              <div class="node-center">
-                <b>SEM</b>
-                <span>本周投放表现</span>
-              </div>
-              <button
-                v-for="(node, index) in semFocus.nodes"
-                :key="node.id"
-                type="button"
-                class="data-node"
-                :class="[`node-${index + 1}`, `tone-${node.tone}`]"
-                :data-metric-id="node.id"
-                :style="{ '--delay': `${index * 120}ms` }"
-                @click="focusMetric(node.id, 'ai-focus')"
-              >
-                <small>{{ node.label }}</small>
-                <strong>{{ node.value }}</strong>
-                <em v-if="node.changeValue">{{ node.changeValue }}</em>
-              </button>
-            </div>
-            <aside class="focus-insight"><b>AI 判断</b><p>{{ semFocus.insight }}</p></aside>
-          </div>
-
-          <div v-else-if="dashboardMode === 'geo-focus'" class="relationship-view geo-relationship">
-            <p class="focus-statement">{{ geoFocus.statement }}</p>
-            <div class="geo-constellation">
-              <button v-if="geoFocus.core.id" type="button" class="geo-core" :data-metric-id="geoFocus.core.id" @click="focusMetric(geoFocus.core.id, 'ai-focus')">
-                <small>{{ geoFocus.core.label }}</small>
-                <strong>{{ geoFocus.core.value }}</strong>
-                <em v-if="geoFocus.core.changeValue">{{ geoFocus.core.changeValue }}</em>
-              </button>
-              <button
-                v-for="(node, index) in geoFocus.nodes"
-                :key="node.id"
-                type="button"
-                class="data-node geo-node"
-                :class="[`geo-node-${index + 1}`, `tone-${node.tone}`]"
-                :data-metric-id="node.id"
-                :style="{ '--delay': `${index * 120}ms` }"
-                @click="focusMetric(node.id, 'ai-focus')"
-              >
-                <small>{{ node.label }}</small>
-                <strong>{{ node.value }}</strong>
-                <em v-if="node.changeValue">{{ node.changeValue }}</em>
-              </button>
-            </div>
-            <aside class="focus-insight"><b>AI 判断</b><p>{{ geoFocus.insight }}</p></aside>
-          </div>
-        </section>
-
-        <template v-else-if="activeSection === 'dashboard'">
+        <div v-if="activeSection === 'dashboard'" v-show="!aiFocusActive" class="overview-response">
           <div v-if="filteredCards.length" class="panorama-content" role="tabpanel" :aria-label="activeModule === 'all' ? '全域指标' : `${activeModule.toUpperCase()} 指标`">
             <DashboardSignals
               :cards="filteredCards"
@@ -1439,7 +1222,7 @@ onBeforeUnmount(() => {
             </section>
           </div>
           <div v-else class="data-empty"><i></i><strong>当前范围尚无可展示数字</strong><span>系统正在核对模块、权限与业务对象，不会显示演示值。</span></div>
-        </template>
+        </div>
 
         <div v-else-if="activeSection === 'actions'" class="ledger">
           <article v-for="item in availableModules" :key="`action-${item.module_code}`" :class="{ urgent: moduleUrgent(item.module_code) }">
@@ -6735,4 +6518,14 @@ onBeforeUnmount(() => {
 .decision-summary header small{color:#9eb8ce !important}.decision-summary header>span{background:#164038 !important;color:#95e4d4 !important;border-color:#63cbbb55 !important}.decision-summary .summary-items small{color:#70baff !important}
 .decision-summary h3{font-size:19px !important;color:#e4f1ff !important}.decision-summary .summary-items button,.decision-summary .attention-items button{background:#153149 !important;border-color:#5282ac40 !important;box-shadow:none !important}.decision-summary .summary-items strong,.decision-summary .attention-items strong{color:#dceaff !important}.decision-summary .summary-items span,.decision-summary .attention-items small{color:#a0b9cd !important}.decision-summary .summary-items strong{font-size:16px !important}.decision-summary .summary-items button{min-height:125px !important}.decision-summary footer{color:#87a4ba !important}
 @media(max-width:1380px){.data-stage .mission-heading{padding:18px !important}.data-stage .mission-heading h2{font-size:24px !important}.data-stage .module-tabs button{flex-wrap:wrap}.data-stage .module-tabs button small{width:100%}}
+</style>
+
+<style scoped>
+.overview-response{display:contents}
+.response-scanning>.mission-heading,.response-scanning>.module-tabs,.response-scanning>.overview-response>.panorama-content,.response-scanning>.focus-response{opacity:.35;filter:blur(3px);transform:scale(.98);transform-origin:center top;transition:opacity .32s,filter .32s,transform .32s;pointer-events:none!important}
+.response-scanning :deep(.signals-board),.response-scanning :deep(.signals-board button),.response-scanning :deep(.floating-metric){pointer-events:none!important}
+.response-returning>.focus-response{opacity:0;filter:blur(3px);transform:scale(.98) translateY(12px);transition:opacity .28s,filter .28s,transform .28s}
+.response-returning>.overview-response>.panorama-content{animation:overviewReassemble .56s cubic-bezier(.2,.8,.2,1) both}
+@keyframes overviewReassemble{from{opacity:.4;filter:blur(3px)}to{opacity:1;filter:blur(0)}}
+@media(prefers-reduced-motion:reduce){.response-scanning>.mission-heading,.response-scanning>.module-tabs,.response-scanning>.overview-response>.panorama-content,.response-scanning>.focus-response{filter:none;transform:none;transition:none}.response-returning>.focus-response{transition:none;filter:none;transform:none}.response-returning>.overview-response>.panorama-content{animation:none}}
 </style>
