@@ -22,6 +22,7 @@ const channelTitles={sem:'付费触达',seo:'搜索资产',geo:'AI 品牌可见�
 <template>
  <section class="signals-board" :class="{'is-compact':compact}" aria-label="全域经营数据看板">
   <div class="signals-meta"><span><i/>{{ demo?'演示数据 · 不计入正式统计':'当前授权数据 · 随读取更新' }}</span><span><CommandIcon name="database"/>最近读取 {{ updated }} · {{ current.length }} 项指标</span></div>
+  <SemPlacement v-if="channels.some(c=>c.code==='sem')" :cards="current" />
   <div class="signal-kpis" :style="{'--kpi-count':Math.max(1,highlights.length)}">
    <button v-for="card in highlights" :key="card.id" type="button" :data-metric-id="card.id" :class="`accent-${card.moduleCode}`" @click="emit('focus',card.id)">
     <span class="kpi-label"><CommandIcon :name="metricIcon(card)"/><span>{{ card.label }}</span><em>{{ card.moduleLabel }}</em></span>
@@ -59,7 +60,6 @@ const channelTitles={sem:'付费触达',seo:'搜索资产',geo:'AI 品牌可见�
     <button v-if="attention.length>4" class="more-actions" type="button" @click="emit('ask','今天最需要关注的事项和数据边界')">还有 {{ attention.length-4 }} 项 · 让 AI 汇总 ↗</button>
    </section>
   </div>
-  <SemPlacement v-if="channels.some(c=>c.code==='sem')" :cards="current" />
   <footer class="frontline" aria-label="战线状态"><span><CommandIcon name="activity"/>战线状态</span><button v-for="channel in channels" :key="channel.code" type="button" :class="`accent-${channel.code}`" @click="emit('ask',`分析 ${channel.code.toUpperCase()} 的当前表现`)"><i/><b>{{ channel.code.toUpperCase() }}</b>{{ health(channel) }}<span>进入指挥视图 ↗</span></button></footer>
   <details class="evidence-deck"><summary><CommandIcon name="database"/>全部指标与图形依据 <span>{{ current.length }} 项 · 展开核对</span></summary><div class="channel-deck"><article v-for="channel in channels" :key="channel.code" class="channel-panel" :class="`accent-${channel.code}`"><header><h4>{{ channel.code.toUpperCase() }} · {{ channelTitles[channel.code] }}</h4><button type="button" @click="emit('open',channel.code)">工作区 ↗</button></header><MetricVisualization v-if="channelVisual(channel)" :visualization="channelVisual(channel).visualization" :metric-label="channelVisual(channel).label" @select="emit('focus',$event.metricId || channelVisual(channel).id)"/><div class="channel-metrics"><button v-for="card in channel.metrics" :key="card.id" type="button" @click="emit('focus',card.id)"><span>{{ card.label }}<small>{{ stateLabel(card.state) }}</small></span><strong :data-shared-metric="card.id" :data-metric-value="shown(card)">{{ shown(card) }}</strong></button></div></article></div></details>
  </section>

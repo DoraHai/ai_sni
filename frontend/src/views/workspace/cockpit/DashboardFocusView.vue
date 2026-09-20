@@ -22,6 +22,7 @@ const center=computed(()=>['sem-focus','seo-focus'].includes(props.plan.mode)?{x
 <template>
   <section class="focus-response" :class="[`focus-${plan.mode}`,`phase-${state}`]" aria-label="AI 生成的数据视图">
     <header class="focus-heading"><div><small>AI FOCUS · {{ modeLabel }}<span v-if="demo"> · 演示数据</span></small><h2>{{ plan.title }}</h2><p>{{ plan.question }}</p></div><button type="button" @click="emit('return')">返回全域 ↗</button></header>
+    <SemPlacement v-if="plan.moduleCode==='sem'" :cards="plan.visualCards || []" />
     <div v-if="plan.metrics.length" class="metric-space" :class="{'is-assembling':state==='assembling'}">
       <svg class="relationship-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path v-for="(card,index) in plan.metrics" :key="card.id" :d="`M${center.x} ${center.y} Q${positions[index].x} ${center.y} ${positions[index].x} ${positions[index].y}`" pathLength="1" :style="{'--node-delay':`${index*90}ms`}" /></svg>
       <div v-if="plan.mode==='priority'" class="space-origin priority-origin"><strong>{{ String(plan.metrics.length).padStart(2,'0') }}</strong><span>值得核对的关注依据</span></div>
@@ -39,7 +40,6 @@ const center=computed(()=>['sem-focus','seo-focus'].includes(props.plan.mode)?{x
       <CommandTrend :cards="plan.visualCards || []" :initial-module="plan.moduleCode || 'all'" @focus="emit('focus',$event)" @ask="emit('ask',$event)" />
       <section class="focus-structure"><small>{{ modeLabel }} · 图形依据</small><template v-if="structure"><h3>{{ structure.label }}</h3><MetricVisualization :visualization="structure.visualization" :metric-label="structure.label" @select="emit('focus',$event.metricId || structure.id)" /></template><template v-else><h3>结构数据等待接入</h3><p>{{ plan.moduleCode==='geo'?'模型分布、引用来源与竞品对比需要对应的可核验明细。':'当前没有可核验的构成或漏斗数据。' }}</p><span>保留已读取指标，不补造比例或关系。</span></template></section>
     </div>
-    <SemPlacement v-if="plan.moduleCode==='sem'" :cards="plan.visualCards || []" />
     <section v-if="state==='ready'" class="focus-insight-panel" aria-live="polite"><small>AI INSIGHT · 当前证据</small><p>{{ plan.insight }}</p><div v-if="primary"><button v-if="plan.moduleCode" type="button" @click="emit('open',plan.moduleCode)">查看 {{ modeLabel }} 详情 ↗</button><button type="button" @click="emit('focus',primary.id)">查看证据</button><button type="button" @click="emit('discuss',primary.id)">讨论这项</button></div><footer>各节点保留原始统计口径；{{ demo ? '当前为演示数据。' : '数据来源与完整周期请展开证据核对。' }}</footer></section>
   </section>
 </template>
