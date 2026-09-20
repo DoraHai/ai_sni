@@ -45,3 +45,15 @@ def test_public_portal_keeps_all_four_module_entries():
     assert "SEO 模块" in portal
     assert "GEO 模块" in portal
     assert "诊断中心" in portal
+
+
+def test_public_portal_keeps_permission_scoped_platform_admin_entry():
+    portal = _read("frontend/public/deal-sniper-prototype/index.html")
+
+    assert 'id="platform-admin-link"' in portal
+    assert "⚙ 平台管理" in portal
+    assert "sem_auth_v1" in portal
+    assert "if (!user || user.tenant_id) return" in portal
+    assert "permissions['settings.customers'] === 'edit'" in portal
+    assert "permissions['settings.accounts'] === 'edit'" in portal
+    assert "link.hidden = false" in portal
