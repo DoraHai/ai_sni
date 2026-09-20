@@ -89,9 +89,9 @@ export function useDashboardOrchestrator({ root, pulse, getData }) {
     if (!epoch.current(ticket)) return false
     await sleep(Math.max(0, MOTION.scanning - (performance.now() - scanStarted)))
     if (!epoch.current(ticket)) return false
-    const outgoing = [...(root.value?.querySelectorAll('.signal-kpis > button, .signal-trend, .channel-panel, .floating-metric') || [])]
+    const outgoing = [...(root.value?.querySelectorAll('.signal-kpis > button, .command-panel, .floating-metric') || [])]
       .filter(element => { const rect = element.getBoundingClientRect(); const bounds = root.value.getBoundingClientRect(); return rect.height && rect.bottom > bounds.top && rect.top < bounds.bottom })
-    await Promise.all(outgoing.slice(0, 8).map((element, index) => animate(element, [{ opacity: 1, filter: 'blur(0px)' }, { opacity: 0, filter: 'blur(8px)' }], { duration: 240, delay: index * 60, fill: 'forwards' })))
+    await Promise.all(outgoing.slice(0, 14).map((element, index) => animate(element, [{ opacity: 1, filter: 'blur(0px)' }, { opacity: 0, filter: 'blur(8px)' }], { duration: 240, delay: Math.min(index, 6) * 60, fill: 'forwards' })))
     if (!epoch.current(ticket)) return false
     const next = createDashboardPlan({ text, command, ...getData() })
     aiState.value = 'assembling'; plan.value = next; dashboardMode.value = next.mode

@@ -1093,7 +1093,7 @@ onBeforeUnmount(() => {
       >
         <AIScanningState v-if="scanning" :state="aiState" :coverage="scanCoverage" @cancel="returnOverview" />
         <div v-if="!aiFocusActive" class="mission-heading">
-          <div><p>ACQUISITION OVERVIEW</p><h2>全域视野，增长更确定</h2><span>整合 SEM、SEO 与 GEO，发现机会，解决问题，让每一次投入都有回报。</span></div>
+          <div><p>AI ACQUISITION COMMAND CENTER</p><h2>全域获客态势</h2><span>连接付费触达、搜索资产与 AI 品牌发现，让每个判断都有数据依据。</span></div>
           <div class="stage-actions"><button type="button" @click="compactCards = !compactCards">{{ compactCards ? '展开卡片' : '收拢卡片' }}</button><button type="button" @click="setViewMode('data')">专注大盘 ↗</button></div>
         </div>
 
@@ -1111,10 +1111,10 @@ onBeforeUnmount(() => {
         </div>
 
         <DashboardFocusView v-if="aiFocusActive && dashboardPlan" :plan="dashboardPlan" :state="aiState" :demo="demoMode || localPreview"
-          @return="returnOverview" @focus="focusMetric" @open="openModule"
+          @return="returnOverview" @focus="focusMetric" @open="openModule" @ask="send"
           @discuss="id => { discuss({ metricId: id, contextRevision: viewState.revision }); setViewMode('split') }" />
 
-        <div v-if="activeSection === 'dashboard'" v-show="!aiFocusActive" class="overview-response">
+        <div v-if="activeSection === 'dashboard'" v-show="!aiFocusActive" :inert="scanning || aiFocusActive" class="overview-response">
           <div v-if="filteredCards.length" class="panorama-content" role="tabpanel" :aria-label="activeModule === 'all' ? '全域指标' : `${activeModule.toUpperCase()} 指标`">
             <DashboardSignals
               :cards="filteredCards"
@@ -1126,100 +1126,8 @@ onBeforeUnmount(() => {
               @focus="focusMetric"
               @discuss="id => { discuss({ metricId: id, contextRevision: viewState.revision }); setViewMode('split') }"
               @open="openModule"
+              @ask="send"
             />
-            <section class="decision-summary" aria-label="经营摘要">
-              <article class="outcome-summary">
-                <header>
-                  <div>
-                    <small>当前范围</small>
-                    <h3>{{ panoramaSummary.outcomes.length ? '正在积累的成果' : '正在观察的信号' }}</h3>
-                  </div>
-                  <span>{{ panoramaSummary.outcomes.length ? `${panoramaSummary.outcomes.length} 项可核对` : `${panoramaSummary.observations.length} 项待核对` }}</span>
-                </header>
-                <div v-if="panoramaSummary.outcomes.length" class="summary-items">
-                  <button v-for="card in panoramaSummary.outcomes" :key="`outcome-${card.id}`" type="button" @click="focusMetric(card.id)"><small>{{ card.moduleLabel }}</small><strong>{{ outcomeHeadline(card) }}</strong><span>{{ outcomeEvidence(card) }}</span><em>展开依据 ↗</em></button>
-                </div>
-                <div v-else-if="panoramaSummary.observations.length" class="summary-items observed-items">
-                  <button v-for="card in panoramaSummary.observations" :key="`observed-${card.id}`" type="button" @click="focusMetric(card.id)"><small>{{ card.moduleLabel }} · 部分数据</small><strong>{{ outcomeHeadline(card) }}</strong><span>{{ outcomeEvidence(card) }}</span><em>查看边界 ↗</em></button>
-                </div>
-                <p v-else>当前筛选范围尚无可展示的经营信号。</p>
-                <footer>{{ panoramaSummary.outcomes.length ? '各项指标分别衡量，业务效果仍以对应来源和周期为准。' : '当前只展示已读取信号，缺报补齐前不作为完整周期结论。' }}</footer>
-              </article>
-              <article class="attention-summary">
-                <header><div><small>尚未确认不代表有问题</small><h3>需要推进的事</h3></div><span>{{ panoramaSummary.attention.length }} 项</span></header>
-                <div v-if="panoramaSummary.attention.length" class="attention-items">
-                  <button v-for="card in panoramaSummary.attention" :key="`attention-${card.id}`" type="button" @click="focusMetric(card.id)"><b>{{ Number(card.urgentCount) > 0 ? card.urgentCount : '—' }}</b><span><strong>{{ card.label }}</strong><small>{{ attentionCopy(card) }}</small></span><em>核对 ↗</em></button>
-                </div>
-                <p v-else>当前没有系统已识别的待推进事项。</p>
-                <footer>只展示当前卡片状态，不补造任务、日期或结果。</footer>
-              </article>
-            </section>
-            <nav class="section-jumps" aria-label="经营全景分区"><button v-for="group in cardGroups" :key="`jump-${group.id}`" type="button" @click="scrollToSection(group.id)">{{ group.title }} <small>{{ group.cards.length }}</small></button></nav>
-            <section class="cockpit-bottom-deck" aria-label="驾驶舱快捷入口与数据状态">
-              <div class="quick-entry-grid">
-                <button type="button" @click="chooseModule('all')"><i>▣</i><span><b>查看经营全景</b><small>快速了解全域获客表现</small></span></button>
-                <button type="button" @click="panoramaSummary.attention[0] && focusMetric(panoramaSummary.attention[0].id)"><i>▤</i><span><b>定位待办事项</b><small>集中处理待推进卡片</small></span></button>
-                <button type="button" @click="loadAll"><i>◎</i><span><b>刷新数据边界</b><small>重新核对读取状态</small></span></button>
-                <button type="button" @click="setViewMode('split')"><i>✦</i><span><b>切换到对话模式</b><small>让 AI 帮你进一步分析</small></span></button>
-              </div>
-              <aside class="readiness-panel">
-                <header><h3>数据读取状态</h3><button type="button" @click="loadAll">重新读取边界 ↗</button></header>
-                <div v-for="item in availableModules" :key="`readiness-${item.module_code}`" class="readiness-row">
-                  <span>{{ moduleMeta[item.module_code].label }}</span>
-                  <b :class="moduleState[item.module_code]">{{ statusLabel(moduleState[item.module_code]) }}</b>
-                </div>
-                <p>数据未读取不补成 0，所有结论只基于当前已核验范围。</p>
-              </aside>
-            </section>
-            <section v-for="group in businessGroups.filter(item => !item.businessCards.length && item.cards.length)" :id="`cockpit-${group.id}`" :key="group.id" class="dashboard-section">
-              <header class="dashboard-group"><div><small>0{{ businessGroups.indexOf(group) + 1 }}</small><h3>{{ group.title }}</h3><p>{{ group.note }}</p></div><span v-if="demoMode">演示数据 · 不计入正式统计</span></header>
-              <div v-if="group.businessCards.length" class="business-card-grid" :class="`business-${group.id}`">
-                <article
-                  v-for="business in group.businessCards"
-                  :key="business.id"
-                  class="business-performance-card"
-                  :class="[`business-card-${business.moduleCode}`, { 'is-highlighted': business.metricIds.some(id => highlightedMetricIds.includes(id)) }]"
-                  :data-metric-ids="business.metricIds.join(' ')"
-                >
-                  <header>
-                    <div>
-                      <small>{{ business.title.split(' · ')[0] }}</small>
-                      <h4>{{ business.title }}</h4>
-                    </div>
-                    <span :class="{ partial: business.status !== '数据已读取' }"><i></i>{{ business.status }}</span>
-                  </header>
-                  <p class="business-statement">{{ business.statement }}</p>
-                  <div class="business-metrics">
-                    <button v-for="item in business.metrics" :key="item.id" type="button" @click="focusMetric(item.id, 'business-card')">
-                      <small>{{ item.label }}</small>
-                      <strong>{{ item.value }}</strong>
-                      <em v-if="item.change">{{ item.change }}</em>
-                    </button>
-                  </div>
-                  <div v-if="business.support" class="support-metric">
-                    <small>{{ business.support.label }}</small>
-                    <strong>{{ business.support.value }}</strong>
-                    <em v-if="business.support.change">{{ business.support.change }}</em>
-                    <span>{{ business.support.note }}</span>
-                  </div>
-                  <div class="business-insight">
-                    <b>{{ business.insightLabel || 'AI 解读' }}</b>
-                    <template v-if="business.statusRows?.length">
-                      <p>{{ business.insight }}</p>
-                      <ul><li v-for="row in business.statusRows" :key="row.label"><span>{{ row.label }}</span><em>{{ row.status }}</em></li></ul>
-                    </template>
-                    <p v-else>{{ business.insight }}</p>
-                  </div>
-                  <footer>
-                    <button v-for="action in business.actions" :key="`${business.id}-${action.label}`" type="button" @click="runBusinessAction(action)">{{ action.label }}</button>
-                  </footer>
-                </article>
-              </div>
-              <div v-else-if="group.cards.length" class="metric-grid evidence-task-grid" :class="{ compact: compactCards }">
-                <MetricEvidenceCard v-for="card in group.cards" :key="card.id" :data-metric-id="card.id" :metric="card" :context-revision="viewState.revision" :highlighted="highlightedMetricIds.includes(card.id)" @focus="focusMetric" @discuss="discuss" @retry="loadAll" />
-              </div>
-              <p v-else class="section-empty">当前筛选范围没有此类指标。</p>
-            </section>
           </div>
           <div v-else class="data-empty"><i></i><strong>当前范围尚无可展示数字</strong><span>系统正在核对模块、权限与业务对象，不会显示演示值。</span></div>
         </div>
@@ -6528,4 +6436,15 @@ onBeforeUnmount(() => {
 .response-returning>.overview-response>.panorama-content{animation:overviewReassemble .56s cubic-bezier(.2,.8,.2,1) both}
 @keyframes overviewReassemble{from{opacity:.4;filter:blur(3px)}to{opacity:1;filter:blur(0)}}
 @media(prefers-reduced-motion:reduce){.response-scanning>.mission-heading,.response-scanning>.module-tabs,.response-scanning>.overview-response>.panorama-content,.response-scanning>.focus-response{filter:none;transform:none;transition:none}.response-returning>.focus-response{transition:none;filter:none;transform:none}.response-returning>.overview-response>.panorama-content{animation:none}}
+</style>
+
+<style scoped>
+/* Command center density applies only to the right response surface. */
+.data-stage .mission-heading{min-height:76px!important;padding:14px 22px!important;background:linear-gradient(110deg,#15374a77,#07192444)!important;border-color:#78a4be24!important;border-radius:10px!important}
+.data-stage .mission-heading h2{font-size:24px!important;margin:5px 0!important;letter-spacing:.04em}
+.data-stage .mission-heading>div>span{font-size:11px!important}.data-stage .mission-heading>div>p{margin:0!important}
+.data-stage .module-tabs{margin:10px 24px!important;gap:7px!important}
+.data-stage .module-tabs button{min-height:37px!important;padding:7px 12px!important;border-radius:6px!important;background:#10293bdd!important;flex-wrap:nowrap!important}
+.data-stage .module-tabs button b{font-size:15px!important}.data-stage .module-tabs button small{width:auto!important;font-size:9px!important}
+@media(max-width:1200px){.data-stage .module-tabs button small{display:none!important}.data-stage .mission-heading{padding:14px!important}.data-stage .mission-heading h2{font-size:21px!important}}
 </style>

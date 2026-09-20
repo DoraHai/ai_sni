@@ -9,10 +9,11 @@ export function createCommandEpoch() {
 }
 export function inferDashboardIntent(text, command = {}) {
   if (/\bGEO\b|品牌提及|AI\s*可见度/i.test(text)) return 'geo-focus'
+  if (/\bSEO\b|搜索承接|新增收录|内容资产/i.test(text)) return 'seo-focus'
   if (/\bSEM\b|投放|点击|消耗|CPC/i.test(text)) return 'sem-focus'
   if (/今天|关注|风险|异常|优先|重要|attention|priority|risk/i.test(text)) return 'priority'
-  // Only these three scenes are supported in this iteration.
-  return ['sem', 'geo'].includes(command.focus_module) ? `${command.focus_module}-focus` : 'priority'
+  // Each channel uses the same scope-safe command pipeline.
+  return ['sem', 'seo', 'geo'].includes(command.focus_module) ? `${command.focus_module}-focus` : 'priority'
 }
 const readable = card => ['available', 'partial'].includes(card.state)
 export function metricDisplay(card) { return readable(card) ? String(card.display ?? '—') : '—' }
@@ -37,6 +38,8 @@ export function createDashboardPlan({ text, command = {}, cards, modules, revisi
   if (mode === 'sem-focus') {
     const matches = [/展现|曝光/, /点击量|广告点击|^点击$/, /消耗|花费/, /CPC|点击价格/]
     metrics = [...new Map(matches.map(pattern => candidates.find(card => pattern.test(card.label))).filter(Boolean).map(card => [card.id, card])).values()]
+  } else if (mode === 'seo-focus') {
+    metrics = candidates.slice(0, 4)
   } else if (mode === 'geo-focus') {
     const core = candidates.find(card => /提及率/.test(card.label)) || candidates.find(card => /可见度/.test(card.label)) || candidates[0]
     metrics = core ? [core, ...candidates.filter(card => card.id !== core.id)].slice(0, 5) : []
@@ -56,6 +59,7 @@ export function createDashboardPlan({ text, command = {}, cards, modules, revisi
   let insight = mode === 'priority'
     ? evidence.length ? `当前提取 ${evidence.length} 项关注依据，其中 ${businessCount} 项包含待处理事项，${boundaryCount} 项需要核对数据边界。缺失或部分数据不等于业务异常。` : '当前授权范围未识别到待处理或边界异常，不代表业务没有风险。可继续查看各渠道明细。'
     : mode === 'sem-focus' ? '当前展示投放侧已读取指标；缺少转化依据时，不能判断线索质量或转化是否改善。'
+      : mode === 'seo-focus' ? '内容库存、收录与页面任务按独立口径展示；未提供搜索访问数据时，不推断自然流量或获客效果。'
       : '品牌提及、可见度和引用分别按原始口径展示；未提供模型拆分的数据，不生成模型占比。正式结论以已核验样本为准。'
   if (efficiency && mode !== 'geo-focus') insight = `${mode === 'priority' ? insight + ' ' : ''}同一统计周期内，消耗变化 ${cost.changeLabel}，点击变化 ${click.changeLabel}，消耗增速高于点击。建议进一步核对转化是否同步增长；现有数据不能证明转化下降。`
   if (!candidates.length && moduleCode) insight = `${moduleCode.toUpperCase()} 在当前授权范围暂无可用指标。请先核对模块开通、查看权限和数据读取状态。`
@@ -64,8 +68,8 @@ export function createDashboardPlan({ text, command = {}, cards, modules, revisi
   const topic = [/CPC|点击价格/i, /消耗|花费|成本/, /展现|曝光/, /点击/, /提及/, /可见度/, /收录/, /内容/].find(pattern => pattern.test(text))
   const trend = (topic && trendCandidates.find(card => topic.test(card.label))) || trendCandidates[0] || null
   return {
-    mode, moduleCode, question: text, metrics: evidence, insight,
-    title: ({ priority: '今日关注', 'sem-focus': 'SEM 投放关系视图', 'geo-focus': 'GEO 品牌可见性' })[mode],
+    mode, moduleCode, question: text, metrics: evidence, insight, visualCards: candidates,
+    title: ({ priority: '今日关注', 'sem-focus': 'SEM 投放指挥视图', 'seo-focus': 'SEO 搜索资产指挥视图', 'geo-focus': 'GEO 品牌可见性' })[mode],
     trend: trend || null, trendRequested,
     coverage: modules.filter(item => !moduleCode || item.module_code === moduleCode).map(item => {
       const list = current.filter(card => card.moduleCode === item.module_code)

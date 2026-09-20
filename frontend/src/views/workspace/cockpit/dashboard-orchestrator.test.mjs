@@ -4,10 +4,11 @@ import { createCommandEpoch, createDashboardPlan, inferDashboardIntent, metricDi
 const modules=['sem','seo','geo'].map(module_code=>({module_code}))
 const card=(id,label,extra={})=>({id,label,moduleCode:'sem',contextRevision:4,state:'available',display:'12',periodLabel:'本周',...extra})
 const plan=(text,cards,extra={})=>createDashboardPlan({text,cards,modules,revision:4,...extra})
-test('routes three supported scenes and respects explicit module over generic attention',()=>{
+test('routes supported scenes and respects explicit module over generic attention',()=>{
  assert.equal(inferDashboardIntent('今天关注什么'),'priority')
  assert.equal(inferDashboardIntent('SEM 今天怎么样'),'sem-focus')
  assert.equal(inferDashboardIntent('只看 GEO'),'geo-focus')
+ assert.equal(inferDashboardIntent('查看 SEO 数据边界'),'seo-focus')
  assert.equal(inferDashboardIntent('分析一下',{focus_module:'sem'}),'sem-focus')
 })
 test('never includes revoked modules or stale scope metrics',()=>{
@@ -36,7 +37,7 @@ test('GEO reuses only provided metrics and never fabricates provider breakdown',
  assert.deepEqual(result.metrics.map(x=>x.id),['mention','visibility'])
  assert.equal(result.trend,null); assert.doesNotMatch(JSON.stringify(result),/豆包|通义|DeepSeek/)
 })
-test('trend only appears when requested and validated; missing history stays absent',()=>{
+test('explicit trend requests are preserved; missing history stays absent',()=>{
  assert.equal(plan('SEM',[card('click','点击量')]).trendRequested,false)
  const result=plan('SEM 最近趋势',[card('click','点击量')])
  assert.equal(result.trendRequested,true); assert.equal(result.trend,null)
@@ -52,4 +53,10 @@ test('requested metric determines trend and retains missing observations',()=>{
  const result=plan('SEM 消耗趋势',[card('click','点击量',{visualization}),card('cost','广告消耗',{visualization})])
  assert.equal(result.trend.id,'cost'); assert.equal(result.trend.visualization.points[0].value,null)
  assert.equal(plan('SEM',[card('cost','广告消耗',{visualization})]).trend,null)
+})
+
+test('SEO command contains only current search evidence and visualizations',()=>{
+ const result=plan('分析 SEO 内容',[card('sem','广告点击量'),card('seo','已发布内容',{moduleCode:'seo'})])
+ assert.equal(result.mode,'seo-focus');assert.deepEqual(result.visualCards.map(c=>c.id),['seo'])
+ assert.deepEqual(result.metrics.map(c=>c.id),['seo']);assert.match(result.insight,/不推断自然流量/)
 })
