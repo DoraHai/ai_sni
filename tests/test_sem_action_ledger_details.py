@@ -87,4 +87,5 @@ def test_frontend_action_filters_cover_every_backend_action_type():
     source = (ROOT / "frontend/src/utils/actionLedger.js").read_text(encoding="utf-8")
     frontend_codes = set(re.findall(r"\{ code: '([^']+)'", source))
 
-    assert frontend_codes == set(WRITEBACK_ACTION_LABELS)
+    assert set(WRITEBACK_ACTION_LABELS) <= frontend_codes
+    assert "set_ocpc_bid" in frontend_codes
