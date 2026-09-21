@@ -20,6 +20,15 @@ export function demoSemPlacement(days) {
   return {state:'available',demo:true,metric:'click',total,regions,cells,
     period:`${days[0].date} 至 ${days.at(-1).date}`,source:'TIGER 驾驶舱模拟数据 v1',timezone:'Asia/Shanghai'}
 }
+export function realSemPlacement(report) {
+  const region = report.region, hourly = report.hourly
+  return {state:'available',demo:false,metric:'click',total:region.total,
+    hourlyTotal:hourly.total,regions:region.regions,cells:hourly.cells,
+    regionCoverage:region.coverage,hourlyCoverage:hourly.coverage,
+    unmappedClicks:region.unmapped_clicks,
+    period:`${report.window.start} 至 ${report.window.end}`, timezone:'Asia/Shanghai',
+    source:'百度关键词地域 / 小时报表 · 已观测小计，完整性未知'}
+}
 export function validSemPlacement(data) {
   return data?.state==='available' && data.metric==='click' && integer(data.total)
     && Array.isArray(data.regions) && data.regions.every(r=>provinceCodes.includes(r.code)&&integer(r.clicks))
@@ -27,7 +36,7 @@ export function validSemPlacement(data) {
     && data.regions.reduce((s,r)=>s+r.clicks,0)===data.total
     && Array.isArray(data.cells)&&data.cells.length===168
     && data.cells.every((c,i)=>c.weekday===Math.floor(i/24)&&c.hour===i%24&&(c.clicks===null||integer(c.clicks)))
-    && data.cells.reduce((s,c)=>s+(c.clicks??0),0)===data.total
+    && data.cells.reduce((s,c)=>s+(c.clicks??0),0)===(data.demo===false?data.hourlyTotal:data.total)
 }
 export function clickColor(value,max) {
   if(value===null || value===undefined) return '#163142'

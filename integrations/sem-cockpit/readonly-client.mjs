@@ -4,6 +4,7 @@
  * Client gates are usability guards; the SEM server remains the authority.
  */
 const routes = Object.freeze({
+  placement: { path: "/api/v1/dashboard/cockpit/placement", source: "keyword_dimension_reports", dates: "required", fields: [] },
   report: { path: '/api/v1/dashboard/cockpit', source: 'kw_report_snapshots', dates: 'required', fields: [] },
   keywords: { path: '/api/v1/keywords/cockpit', source: 'keywords+kw_report_snapshots', dates: 'optional', fields: ['q', 'campaign_id', 'page', 'page_size'] },
   keywordDetail: { path: '/api/v1/keywords/cockpit/', source: 'kw_report_snapshots', dates: 'required', fields: ['keyword_id'] },
@@ -368,6 +369,20 @@ function validateSearchTerms(data, params) {
 function validatePayload(resource, data, params) {
   validateUnits(data.units); validateAccountScope(data.account_scope, params.baidu_account_id)
   contract(typeof data.retrieved_at === 'string' && validStamp(data.retrieved_at))
+  if (resource === 'placement') {
+    validateWindow(data.window, params.start_date, params.end_date)
+    for (const key of ['region', 'hourly']) {
+      contract(object(data[key]) && nonnegativeInteger(data[key].total))
+      validateCoverage(data[key].coverage, data.window)
+    }
+    contract(nonnegativeInteger(data.region.unmapped_clicks) && Array.isArray(data.region.regions))
+    contract(data.region.regions.every(r => /^\d{6}$/.test(r.code) && nonnegativeInteger(r.clicks)))
+    contract(new Set(data.region.regions.map(r => r.code)).size === data.region.regions.length)
+    contract(data.region.regions.reduce((n,r) => n+r.clicks, 0) === data.region.total)
+    contract(Array.isArray(data.hourly.cells) && data.hourly.cells.length === 168)
+    contract(data.hourly.cells.every((c,i) => c.weekday === Math.floor(i/24) && c.hour === i%24 && nullableCount(c.clicks)))
+    contract(data.hourly.cells.reduce((n,c) => n+(c.clicks ?? 0), 0) === data.hourly.total)
+  }
   if (resource === 'report') validateReport(data, params)
   if (resource === 'keywords') validateKeywords(data, params)
   if (resource === 'keywordDetail') {

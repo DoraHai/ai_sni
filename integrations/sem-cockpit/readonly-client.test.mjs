@@ -528,3 +528,15 @@ test('all-account dimensions retain independently observed unassigned rows', asy
   const result = await client.read('keywordDetail', { ...dates, keyword_id: 100 })
   assert.equal(result.dimensions.region.accounts.at(-1).baidu_account_id, null)
 })
+
+test('placement validates independent totals and rejects a foreign customer', async () => {
+  const data = { ...structuredClone(payload), source:'keyword_dimension_reports',
+    region:{coverage:structuredClone(payload.coverage),total:3,unmapped_clicks:0,regions:[{code:'320000',clicks:3}]},
+    hourly:{coverage:structuredClone(payload.coverage),total:1,cells:Array.from({length:168},(_,i)=>({weekday:Math.floor(i/24),hour:i%24,clicks:i===9?1:null}))} }
+  const client=createSemReadonlyClient({onClear(){},transport:async()=>response(data)})
+  client.setContext({...context,allowedReads:['placement']})
+  const result=await client.read('placement',examples.report.consumer_params)
+  assert.equal(result.hourly.total,1)
+  data.tenant_id=2
+  await assert.rejects(client.read('placement',examples.report.consumer_params),{code:'CONTRACT_MISMATCH'})
+})

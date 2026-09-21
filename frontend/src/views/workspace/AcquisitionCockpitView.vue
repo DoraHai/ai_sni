@@ -1,4 +1,5 @@
 <script setup>
+import { realSemPlacement } from './cockpit/sem-placement.mjs'
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import MetricEvidenceCard from './cockpit/MetricEvidenceCard.vue'
@@ -577,6 +578,16 @@ async function loadSem(generation) {
     else if (context.allowedReads.includes('keywords')) publishCard(unavailableSemDetailCard('sem-keywords', '关键词资产', details[0].error))
     if (details[1].value) publishCard(semSearchTermCard(details[1].value, viewState.revision))
     else if (context.allowedReads.includes('searchTerms')) publishCard(unavailableSemDetailCard('sem-search-terms', '实际搜索词', details[1].error))
+    if (context.allowedReads.includes('placement')) {
+      try {
+        const placement = await semClient.read('placement', { start_date: dateStart.value, end_date: dateEnd.value })
+        if (generation !== loadGeneration) return
+        publishCard({ ...metricCard(report, 'click', '广告点击', 'count'), semPlacement: realSemPlacement(placement) })
+      } catch (error) {
+        if (generation !== loadGeneration) return
+        publishCard({ ...metricCard(report, 'click', '广告点击', 'count'), placementError: error.message })
+      }
+    }
     moduleState.value.sem = 'ready'
     lastReadAt.value = new Date()
   } catch (error) {

@@ -2,6 +2,7 @@ import { createSemReadonlyClient } from './readonly-client.mjs'
 
 const READ_PERMISSIONS = Object.freeze({
   report: 'monitor.dashboard',
+  placement: 'monitor.dashboard',
   keywords: 'optimize.keywords',
   keywordDetail: 'optimize.keywords',
   searchTerms: 'optimize.searchterms',

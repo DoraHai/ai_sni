@@ -26,7 +26,7 @@ test('preflight derives exact SEM reads from current role permissions', async ()
   const context = await resolveSemReadonlyContext({ transport: preflightTransport(), tenantId: 16 })
   assert.equal(context.userId, 5)
   assert.equal(context.tenantId, 16)
-  assert.deepEqual(context.allowedReads, ['report', 'keywords', 'keywordDetail', 'searchTerms'])
+  assert.deepEqual(context.allowedReads, ['report', 'placement', 'keywords', 'keywordDetail', 'searchTerms'])
   assert.match(context.authorizationRevision, /monitor\.dashboard/)
 })
 
