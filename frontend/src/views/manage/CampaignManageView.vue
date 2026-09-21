@@ -90,15 +90,14 @@ async function load() {
   }
 }
 
-watch(TENANT_ID, () => {
+watch([TENANT_ID, readableAccounts, () => session.tenantListRevision], ([, accounts]) => {
   loadGuard.invalidate()
   actionGuard.invalidate()
   data.value = null
   loading.value = false
   savingId.value = null
   const previousAccountId = accountId.value
-  const activeIds = [...activeAccountIds.value]
-  accountId.value = activeIds.length === 1 ? activeIds[0] : null
+  accountId.value = chooseSemAccount(accounts, previousAccountId)
   selectedCampaigns.value = []
   scheduleVisible.value = false
   regionVisible.value = false
@@ -120,22 +119,6 @@ watch(accountId, () => {
   regionBatchResult.value = null
   resetActionForms()
   load()
-})
-watch(() => session.tenantListRevision, () => {
-  loadGuard.invalidate()
-  actionGuard.invalidate()
-  data.value = null
-  loading.value = false
-  savingId.value = null
-  selectedCampaigns.value = []
-  scheduleVisible.value = false
-  regionVisible.value = false
-  batchResult.value = null
-  regionBatchResult.value = null
-  resetActionForms()
-  const previousAccountId = accountId.value
-  accountId.value = chooseSemAccount(readableAccounts.value, previousAccountId)
-  if (accountId.value === previousAccountId) load()
 })
 watch(() => session.authRevision, () => {
   loadGuard.invalidate()
