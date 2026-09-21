@@ -317,7 +317,7 @@ onMounted(load)
           已标记引用不准确 {{ data.source_opportunities.excluded_samples.inaccurate_citation }} 条。
         </p>
         <el-alert v-if="!data.source_opportunities.own_domains_configured" title="尚未配置自有域，引用归属需核对，暂不判断自有域缺口。" type="info" :closable="false" />
-        <el-table :data="opportunities" empty-text="当前没有满足条件的内容机会；这不代表没有缺口，请补充采样或核对排除原因。">
+        <el-table class="opportunities-table" :data="opportunities" empty-text="当前没有满足条件的内容机会；这不代表没有缺口，请补充采样或核对排除原因。">
           <el-table-column type="expand">
             <template #default="{ row }">
               <div style="padding:12px 24px">
@@ -334,7 +334,7 @@ onMounted(load)
           <el-table-column prop="priority" label="核对顺序" width="110" />
           <el-table-column prop="reason" label="观察依据" min-width="250" />
           <el-table-column prop="sample_count" label="可用样本" width="95" />
-          <el-table-column label="行动" width="135">
+          <el-table-column label="行动" width="180" fixed="right">
             <template #default="{ row }">
               <el-button text type="primary" :loading="creatingOpportunity === row.prompt_id" :disabled="creatingOpportunity !== null || !row.sample_ids?.length || row.sample_ids.length > 1000" @click="createOpportunityTask(row)">创建 / 打开任务</el-button>
               <small v-if="row.sample_ids?.length > 1000">请缩小观察窗口</small>
@@ -601,6 +601,11 @@ onMounted(load)
 
 <style scoped>
 .geo-page { display: flex; flex-direction: column; }
+/* Dashboard native-table padding otherwise consumes the component's column widths. */
+.opportunities-table :deep(th.el-table__cell),
+.opportunities-table :deep(td.el-table__cell) {
+  padding: 12px 0;
+}
 .mb { margin-bottom: 14px; }
 .clickable-rows :deep(tbody tr),
 .click-row { cursor: pointer; }
