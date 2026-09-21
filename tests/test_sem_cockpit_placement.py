@@ -48,6 +48,10 @@ def test_province_alias_and_unknown():
     assert province_code('苏州市') == '320000'
     assert province_code('广西壮族自治区') == '450000'
     assert province_code('unknown') is None
+    assert province_code('江苏-苏州') == '320000'
+    assert province_code('上海-上海') == '310000'
+    assert province_code('广东-深圳') == '440000'
+    assert province_code('未知-苏州') is None
 
 
 def test_http_guards_reject_cross_tenant_and_unprivileged_requests(monkeypatch):
