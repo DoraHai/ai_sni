@@ -26,6 +26,7 @@ const loading = ref(false)
 const syncing = ref(false)
 const error = ref('')
 const data = ref(null)
+const autoSyncAttempted = ref(false)
 const negDialogVisible = ref(false)
 const negForm = ref({
   word: '',
@@ -76,7 +77,12 @@ const filters = reactive({
   pageSize: 50,
 })
 
-async function load() {
+function autoSyncKey(tenantId, accountId) {
+  if (!tenantId || !accountId) return ''
+  return `sem-search-terms-auto-sync:${session.authRevision}:${tenantId}:${accountId}`
+}
+
+async function load({ allowAutoSync = true } = {}) {
   const attempt = loadGuard.begin()
   const { tenantId, accountId } = attempt.context
   if (!session.canView('optimize.searchterms') || !tenantId) {
@@ -91,6 +97,21 @@ async function load() {
     const result = await fetchSearchTerms({ tenantId, baiduAccountId: accountId, ...filters })
     if (!attempt.isCurrent()) return
     data.value = result
+    const key = autoSyncKey(tenantId, accountId)
+    const unfiltered = !filters.status && filters.hasClick === null && !filters.q
+    if (
+      allowAutoSync &&
+      !autoSyncAttempted.value &&
+      key &&
+      unfiltered &&
+      result.total === 0 &&
+      !result.window?.synced_at &&
+      !sessionStorage.getItem(key)
+    ) {
+      autoSyncAttempted.value = true
+      sessionStorage.setItem(key, '1')
+      await runSync(true)
+    }
   } catch (e) {
     if (attempt.isCurrent()) error.value = e.response?.data?.detail || e.message
   } finally {
@@ -98,7 +119,7 @@ async function load() {
   }
 }
 
-async function runSync() {
+async function runSync(silent = false) {
   if (!session.canEdit('optimize.searchterms')) return
   const attempt = syncGuard.begin()
   const { tenantId, accountId } = attempt.context
@@ -110,11 +131,11 @@ async function runSync() {
   try {
     const res = await syncSearchTerms({ tenantId, baiduAccountId: accountId, days: 30 })
     if (!attempt.isCurrent()) return
-    ElMessage.success(`已同步 ${res.synced} 条搜索词（${res.window.start} ~ ${res.window.end}）`)
+    if (!silent) ElMessage.success(`已同步 ${res.synced} 条搜索词（${res.window.start} ~ ${res.window.end}）`)
     filters.page = 1
-    await load()
+    await load({ allowAutoSync: false })
   } catch (e) {
-    if (attempt.isCurrent()) ElMessage.error(e.response?.data?.detail || e.message)
+    if (attempt.isCurrent() && !silent) ElMessage.error(e.response?.data?.detail || e.message)
   } finally {
     if (attempt.isCurrent()) syncing.value = false
   }
@@ -129,6 +150,7 @@ watch([TENANT_ID, readableAccounts, () => session.tenantListRevision], ([, accou
   syncGuard.invalidate()
   actionGuard.invalidate()
   data.value = null
+  autoSyncAttempted.value = false
   error.value = ''
   loading.value = false
   syncing.value = false
@@ -145,6 +167,7 @@ watch(selectedAccountId, () => {
   syncGuard.invalidate()
   actionGuard.invalidate()
   data.value = null
+  autoSyncAttempted.value = false
   error.value = ''
   loading.value = false
   syncing.value = false
@@ -158,6 +181,7 @@ watch(() => session.authRevision, () => {
   syncGuard.invalidate()
   actionGuard.invalidate()
   data.value = null
+  autoSyncAttempted.value = false
   error.value = ''
   loading.value = false
   syncing.value = false
