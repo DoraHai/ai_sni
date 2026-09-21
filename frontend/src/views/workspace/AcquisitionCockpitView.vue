@@ -582,11 +582,11 @@ async function loadSem(generation) {
       try {
         const placement = await semClient.read('placement', { start_date: dateStart.value, end_date: dateEnd.value })
         if (generation !== loadGeneration) return
-        publishCard({ ...metricCard(report, 'click', '广告点击', 'count'), semPlacement: realSemPlacement(placement) })
+        publishCard({ ...semScopeCard(report, viewState.revision), semPlacement: realSemPlacement(placement) })
       } catch (error) {
         if (generation !== loadGeneration) return
         if (['STALE_SESSION', 'STALE_AUTHORIZATION', 'STALE_RESPONSE', 'NOT_AUTHORIZED', 'ACCESS_REVOKED', 'NOT_AUTHENTICATED', 'CONTRACT_MISMATCH'].includes(error?.code)) throw error
-        publishCard({ ...metricCard(report, 'click', '广告点击', 'count'), placementError: error.message })
+        publishCard({ ...semScopeCard(report, viewState.revision), placementError: error.message })
       }
     }
     moduleState.value.sem = 'ready'
