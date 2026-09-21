@@ -62,6 +62,23 @@ async def cockpit_report(
     return await read_report(session, tenant_id, start_date, end_date, baidu_account_id)
 
 
+
+@router.get("/cockpit/placement")
+async def cockpit_placement(
+    request: Request,
+    tenant_id: int = Query(..., gt=0),
+    start_date: date = Query(...),
+    end_date: date = Query(...),
+    baidu_account_id: int | None = Query(None, gt=0),
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict:
+    from app.sem_cockpit_placement import read_placement
+    ctx.ensure_tenant(tenant_id)
+    validate_query(request.query_params, {"tenant_id", "start_date", "end_date", "baidu_account_id"})
+    return await read_placement(session, tenant_id, start_date, end_date, baidu_account_id)
+
+
 def _f(v: Any) -> float:
     """Decimal/None → float，金额统一保留 2 位。"""
     return round(float(v), 2) if v is not None else 0.0
