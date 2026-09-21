@@ -45,12 +45,12 @@ test('rejects raw or encoded controls and malformed percent escapes', () => {
   }
 })
 
-test('a valid redirect has priority over the permission default', () => {
+test('all login entry points land on the cockpit by default', () => {
   assert.equal(resolvePostLoginPath({
     redirect: '/seo/dashboard?tab=sites#summary',
     currentOrigin: ORIGIN,
     modules: [],
-  }), '/seo/dashboard?tab=sites#summary')
+  }), '/workspace/cockpit')
 })
 
 test('each purchased acquisition module defaults to the cockpit', () => {
@@ -73,18 +73,18 @@ test('two or three purchased acquisition modules default to the cockpit', () => 
   }
 })
 
-test('no available acquisition module or a failed module lookup falls back to workspace', () => {
+test('no available acquisition module or a failed module lookup still lands on the cockpit', () => {
   for (const modules of [
     [],
     undefined,
     [{ module_code: 'sem', available: false }],
     [{ module_code: 'diagnostic', available: true }],
   ]) {
-    assert.equal(resolvePostLoginPath({ redirect: '', currentOrigin: ORIGIN, modules }), '/workspace')
+    assert.equal(resolvePostLoginPath({ redirect: '', currentOrigin: ORIGIN, modules }), '/workspace/cockpit')
   }
   assert.equal(resolvePostLoginPath({
     redirect: '/\\evil.example',
     currentOrigin: ORIGIN,
     modules: undefined,
-  }), '/workspace')
+  }), '/workspace/cockpit')
 })

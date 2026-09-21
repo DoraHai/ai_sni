@@ -41,8 +41,6 @@ export function hasAvailableAcquisitionModule(modules) {
 }
 
 export function resolvePostLoginPath({ redirect, currentOrigin, modules }) {
-  const safeRedirect = parseSameOriginRedirect(redirect, currentOrigin)
-  if (safeRedirect) return safeRedirect
   // Every login entry point has the same stable landing page. The workspace
   // shell can still explain missing module access after the cockpit loads.
   return '/workspace/cockpit'
