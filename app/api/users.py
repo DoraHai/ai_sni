@@ -120,3 +120,22 @@ async def update_user(
         user.password_hash = hash_password(req.new_password)
     await session.commit()
     return {"status": "ok"}
+
+
+class ResetPasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=8, max_length=100)
+
+
+@router.patch("/{user_id}/password")
+async def reset_user_password(
+    user_id: int,
+    req: ResetPasswordRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Admin-only password reset; existing sessions retain their normal expiry."""
+    user = await session.scalar(select(User).where(User.id == user_id).with_for_update())
+    if user is None:
+        raise HTTPException(404, "用户不存在")
+    user.password_hash = hash_password(req.new_password)
+    await session.commit()
+    return {"status": "ok"}
