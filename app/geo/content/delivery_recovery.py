@@ -50,7 +50,7 @@ def assert_recoverable(*, task, variant, account, article, key, entry, user_id, 
             or delivery_key(task, variant, account, entry.get('mode')) != key):
         raise HTTPException(409, '稿件版本已经变化，不能用当前稿件核销历史发送')
     try:
-        assert_review_approved(task)
+        assert_review_approved(task, article_id=article.id)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     history = list(entry.get('recovery_history') or [])

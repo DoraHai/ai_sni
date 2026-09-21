@@ -159,7 +159,8 @@ def test_delivery_reloads_brand_after_reservation_commit():
                         await other.commit()
                 return result
 
-            def gate(_,*,task,brand):
+            def gate(_,*,task,brand,article_id):
+                assert article_id == 16
                 if brand=='新品牌':
                     raise ValueError('品牌标准未通过')
 

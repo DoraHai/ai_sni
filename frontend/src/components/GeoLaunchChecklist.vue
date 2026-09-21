@@ -81,7 +81,7 @@ onBeforeUnmount(() => { epoch++ })
     <div v-else-if="task">
       <p><b>1. 自动发布账号：</b>{{ error ? '状态读取失败，请刷新' : configured.length ? `已有 ${configured.length} 个渠道配置账号` : '尚未配置；也可手工发布后回填链接' }} <el-button link @click="router.push('/geo/publishing')">配置渠道</el-button></p>
       <p><b>2. 渠道稿版本：</b>{{ currentVariants.length }} 个与当前母稿一致，共 {{ (task.variants || []).length }} 个。<el-button link @click="distribution">查看渠道稿与发布</el-button></p>
-      <p><b>3. 客户审核：</b>{{ {none:'待提交客户审核',pending:'等待客户确认',approved:'客户已确认',rejected:'客户要求修改'}[task.review_status || 'none'] }}</p>
+      <p><b>3. 客户审核：</b>{{ task.review_status === 'approved' && task.review_audit_verified === false ? '旧审核记录依据不完整，需重新提交审核' : {none:'待提交客户审核',pending:'等待客户确认',approved:'客户已确认',rejected:'客户要求修改'}[task.review_status || 'none'] }}</p>
       <p v-if="disabled">请先保存当前修改或等待当前操作结束，再进行客户审核。</p>
       <el-button v-if="canSubmit && ['none','rejected'].includes(task.review_status || 'none')" :disabled="disabled || busy || !task.article" @click="review('submit')">提交客户审核</el-button>
       <div v-if="task.review_status === 'pending' && canDecide">

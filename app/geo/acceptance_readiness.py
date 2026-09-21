@@ -87,7 +87,10 @@ def build_h3_h4_summary(task, articles: Iterable, variants: Iterable, publicatio
         if count > 1
     ]
 
-    review_approved = task.review_status == "approved"
+    from app.geo.content.review import current_review_receipt
+
+    review_receipt = current_review_receipt(task, article_id=latest.id if latest else None)
+    review_approved = task.review_status == "approved" and review_receipt is not None
     reviewed_at = _utc_naive(getattr(task, "reviewed_at", None))
     latest_created_at = _utc_naive(getattr(latest, "created_at", None))
     review_covers_latest = bool(
@@ -114,6 +117,7 @@ def build_h3_h4_summary(task, articles: Iterable, variants: Iterable, publicatio
                 "article_ref": ref("article_version", latest.id) if latest else None,
                 "article_created_at": _safe_time(getattr(latest, "created_at", None)),
                 "reviewed_at": _safe_time(getattr(task, "reviewed_at", None)),
+                "review_audit_verified": review_receipt is not None,
             },
         ),
         _requirement(

@@ -144,8 +144,16 @@ def test_body_tenant_configuration_and_recovery_routes_fail_closed(case):
 
 
 def test_push_targets_is_read_only_and_explains_zero_accounts():
-    task = NS(id=14, review_status="approved")
-    variant = NS(channel="website", status="exported", body_markdown="正文")
+    task = NS(id=14, tenant_id=7, review_status="approved", review_audit={
+        "schema_version": "geo.review.audit.v1",
+        "events": [
+            {"event": "submitted", "actor_user_id": 9, "actor_role": "编辑", "tenant_id": 7,
+             "article_id": 22, "occurred_at": "2026-09-13T01:00:00Z"},
+            {"event": "approved", "actor_user_id": 9, "actor_role": "编辑", "tenant_id": 7,
+             "article_id": 22, "occurred_at": "2026-09-13T01:01:00Z"},
+        ],
+    })
+    variant = NS(channel="website", status="exported", body_markdown="正文", article_version_id=22)
     virtual_channel = NS(
         id=None,
         name="官网",
@@ -175,4 +183,21 @@ def test_push_targets_is_read_only_and_explains_zero_accounts():
     session.commit.assert_not_awaited()
     session.flush.assert_not_awaited()
     session.add.assert_not_called()
-    session.add_all.assert_not_called()
+
+
+def test_push_targets_fail_closed_for_legacy_approved_row_without_audit():
+    from app.geo.content.multi_push import list_push_targets
+
+    task = NS(id=14, tenant_id=7, review_status="approved", review_audit=None)
+    variant = NS(channel="website", status="exported", body_markdown="正文", article_version_id=22)
+    channel = NS(id=5, name="官网", channel_type="website", publish_mode="auto_publish", enabled=True)
+    account = NS(id=6, channel_id=5, display_name="CMS", auth_type="webhook",
+                 credentials_encrypted="encrypted", status="active")
+    session = NS(scalars=AsyncMock(return_value=[account]))
+
+    result = asyncio.run(list_push_targets(
+        session, tenant_id=7, task=task, variants=[variant], channels=[channel]
+    ))
+
+    assert result[0]["ready"] is False
+    assert result[0]["block_reasons"] == ["尚未形成当前客户和版本的完整人工审核记录"]
