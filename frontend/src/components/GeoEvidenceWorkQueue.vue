@@ -56,21 +56,19 @@ onBeforeUnmount(() => { generation++ })
 </script>
 
 <template>
-  <section class="work-queue" aria-label="GEO 下一步工作">
-    <div class="queue-heading"><div><h2>下一步做什么</h2><p>{{ label }} · 根据当前客户的采样证据整理，待你确认后执行。</p></div><el-button :loading="loading" :disabled="!tenantId" @click="load">刷新工作线索</el-button></div>
-    <p>可将建议加入执行待办，记录进度与验收结果；需要制作内容时再创建内容任务。</p>
+  <section class="work-queue" aria-label="GEO 本期优化建议">
+    <div class="queue-heading"><div><span class="eyebrow">INSIGHT → ACTION</span><h2>本期优化建议</h2><p>{{ label }} · 根据当前客户的采样证据整理</p></div><el-button text :loading="loading" :disabled="!tenantId" @click="load">刷新</el-button></div>
     <el-alert v-if="error" type="error" :title="error" :closable="false" />
     <p v-else-if="!tenantId">请先选择客户。</p>
     <p v-else-if="loading" role="status">正在检查样本与工作线索…</p>
     <p v-else-if="insights && !work.length">当前可用样本未触发引用机会规则。已有内容任务仍可继续；这不代表所有业务问题都已覆盖。</p>
     <article v-for="item in work" :key="item.id" class="work-item">
-      <el-tag size="small">待确认 · {{ item.kind }}</el-tag><h3>{{ item.title }}</h3>
-      <p><b>为什么做：</b>{{ item.reason }}</p>
-      <p><b>具体动作：</b>{{ item.action }}</p>
-      <p><b>怎样验收：</b>{{ item.acceptance }}</p>
+      <div class="insight-top"><el-tag size="small">{{ item.kind }}</el-tag><span class="insight-priority">{{ item.opportunity ? '高优先级' : '待确认' }}</span></div>
+      <h3>{{ item.title }}</h3>
+      <div class="insight-grid"><div><small>发现了什么</small><p>{{ item.reason }}</p></div><div><small>建议动作</small><p>{{ item.action }}</p></div><div><small>验收标准</small><p>{{ item.acceptance }}</p></div></div>
       <div class="queue-actions">
-        <el-button @click="router.push(geoSnapshotLink({ prompt_id: item.promptId }))">{{ item.kind === '补充采样' ? '去采样' : '查看回答证据' }}</el-button>
-        <el-button v-if="item.opportunity" type="primary" :loading="creating === item.id" :disabled="creating !== null || !item.opportunity.sample_ids?.length || item.opportunity.sample_ids.length > 1000 || !item.opportunity.evidence_version" @click="create(item)">创建 / 打开内容任务</el-button>
+        <el-button type="primary" plain @click="router.push(geoSnapshotLink({ prompt_id: item.promptId }))">{{ item.kind === '补充采样' ? '去采样 →' : '查看回答证据 →' }}</el-button>
+        <el-button v-if="item.opportunity" text :loading="creating === item.id" :disabled="creating !== null || !item.opportunity.sample_ids?.length || item.opportunity.sample_ids.length > 1000 || !item.opportunity.evidence_version" @click="create(item)">创建内容任务</el-button>
       </div>
     </article>
     <GeoWorkTickets :tenant-id="tenantId" :suggestions="work" :period="label" />
@@ -78,8 +76,5 @@ onBeforeUnmount(() => { generation++ })
 </template>
 
 <style scoped>
-.work-queue{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:20px;margin-bottom:20px;color:#334155}
-.queue-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
-h2{margin:0;font-size:20px}h3{font-size:16px;margin:10px 0}p{line-height:1.65;margin:8px 0}
-.work-item{border-top:1px solid #e2e8f0;margin-top:16px;padding-top:16px}.queue-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.work-queue{margin-bottom:24px;color:#303645}.queue-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-bottom:12px;border-bottom:1px solid #e8eaf0}.eyebrow{display:block;color:#a1a7b3;font-size:10px;font-weight:800;letter-spacing:.14em;margin-bottom:4px}h2{margin:0;font-size:19px;color:#202533}h3{font-size:15px;margin:10px 0 13px;color:#202533}p{line-height:1.5;margin:4px 0}.queue-heading p{color:#8a91a0;font-size:12px}.work-item{padding:17px 0 18px;border-bottom:1px solid #e8eaf0}.work-item:last-of-type{border-bottom:0}.insight-top{display:flex;align-items:center;gap:8px}.insight-priority{font-size:11px;color:#a36f1b}.insight-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}.insight-grid small{color:#9299a7;font-size:11px}.insight-grid p{color:#586071;font-size:12px}.queue-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}@media(max-width:800px){.insight-grid{grid-template-columns:1fr}.status-note{display:none}}
 </style>

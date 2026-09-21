@@ -94,9 +94,7 @@ onBeforeUnmount(() => { generation++; clearInterval(dateTimer) })
 
 <template>
   <section class="tickets" aria-label="GEO 执行待办">
-    <h3>执行待办 · 未完成 {{ pending }} · 逾期 {{ overdue }}</h3>
-    <p>加入后会保存观察期、原因、动作与验收要求。建议变化不会覆盖已有待办；人工验收表示本次工作完成，不代表 GEO 效果提升。</p>
-    <el-button :loading="loading" :disabled="busy || !tenantId" @click="load">刷新待办</el-button>
+    <div class="tickets-heading"><div><span class="eyebrow">WORK IN PROGRESS</span><h3>执行中的任务</h3><span class="ticket-summary">{{ pending }} 未完成 · {{ overdue }} 即将逾期</span></div><el-button text :loading="loading" :disabled="busy || !tenantId" @click="load">刷新</el-button></div>
     <div class="actions" aria-label="待办筛选">
       <label>状态 <select v-model="statusFilter" :disabled="busy" aria-label="待办状态筛选"><option value="open">未完成</option><option value="">全部状态</option><option v-for="(name, key) in states" :key="key" :value="key">{{ name }}</option></select></label>
       <label>负责人 <select v-model="ownerFilter" :disabled="busy" aria-label="待办负责人筛选"><option value="">全部负责人</option><option value="__unassigned__">未指定</option><option v-for="owner in owners" :key="owner" :value="owner">{{ owner }}</option></select></label>
@@ -104,7 +102,7 @@ onBeforeUnmount(() => { generation++; clearInterval(dateTimer) })
       <input v-model="search" :disabled="busy" aria-label="搜索执行待办" placeholder="搜索标题、负责人或工作内容" />
       <el-button :disabled="busy" @click="resetFilters">重置筛选</el-button>
     </div>
-    <p>当前显示 {{ visible.length }} / {{ tickets.length }} 项；上方未完成与逾期统计为当前客户全部待办。未完成优先，逾期优先，其后按截止日期排序。</p>
+    <p class="ticket-count">当前显示 {{ visible.length }} / {{ tickets.length }} 项</p>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <div v-for="item in suggestions" :key="item.id" class="accept-row">
       <span>{{ item.kind }} · {{ item.title }}</span>
@@ -152,5 +150,5 @@ onBeforeUnmount(() => { generation++; clearInterval(dateTimer) })
   </section>
 </template>
 <style scoped>
-.tickets{border-top:2px solid #e2e8f0;margin-top:24px;padding-top:12px}.tickets p{line-height:1.6}.accept-row,.actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:12px 0}.accept-row{justify-content:space-between}.ticket{border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-top:16px}.details{white-space:pre-wrap;overflow-wrap:anywhere}
+.tickets{margin-top:26px;padding-top:18px;border-top:1px solid #e8eaf0}.tickets p{line-height:1.55}.tickets-heading{display:flex;justify-content:space-between;align-items:center;gap:12px}.eyebrow{display:block;color:#a1a7b3;font-size:10px;font-weight:800;letter-spacing:.14em;margin-bottom:4px}.tickets h3{margin:0;color:#202533;font-size:19px}.ticket-summary{display:block;color:#8a91a0;font-size:12px;margin-top:4px}.ticket-count{color:#9299a7;font-size:12px;margin:14px 0}.accept-row,.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}.accept-row{justify-content:space-between;padding:10px 0;border-bottom:1px solid #f0f1f4}.ticket{border-left:2px solid #d9d2f7;padding:11px 0 13px 14px;margin-top:13px}.ticket h4{margin:0 0 7px;color:#303645}.details{white-space:pre-wrap;overflow-wrap:anywhere;color:#697181}.assignment-help{color:#9299a7;font-size:11px}.history{margin:10px 0;color:#697181;font-size:12px}.tickets :deep(.el-input__wrapper),.tickets input,.tickets select{border-radius:7px}
 </style>

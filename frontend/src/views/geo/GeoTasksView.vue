@@ -49,6 +49,14 @@ const tabs = computed(() => [
   { value: 'published', label: '已发布', count: workbenchCounts.value.published },
 ])
 
+const statusSummary = computed(() => [
+  { label: '内容', value: workbenchCounts.value.all, tone: 'neutral' },
+  { label: '草稿', value: workbenchCounts.value.draft, tone: 'muted' },
+  { label: '待优化', value: workbenchCounts.value.polish, tone: 'violet' },
+  { label: '待发布', value: workbenchCounts.value.ready, tone: 'amber' },
+  { label: '已发布', value: workbenchCounts.value.published, tone: 'green' },
+])
+
 function statusTagType(status) {
   if (status === 'published' || status === 'ready') return 'success'
   if (status === 'needs_fix' || status === 'failed') return 'danger'
@@ -65,6 +73,12 @@ function pubsText(row) {
   const channels = row.publication_channels || []
   if (!channels.length) return '—'
   return channels.map((key) => CHANNEL_CN[key] || key).join('、')
+}
+
+function geoState(row) {
+  if (row.geo_score == null) return { label: '待检测', detail: '尚无检测结果', tone: 'muted' }
+  const score = Number(row.geo_score)
+  return { label: `GEO 完整度 ${score}%`, detail: score >= 80 ? '结构与事实已就绪' : '仍有优化空间', tone: score >= 80 ? 'green' : 'violet' }
 }
 
 async function load() {
@@ -216,7 +230,7 @@ onMounted(load)
 <template>
   <GeoWorkbenchPage
     title="GEO 文章工作台"
-    sub="从零生产或导入已有内容，统一进行 GEO 检测、优化与发布"
+    sub="让内容从生产走向被 AI 理解、引用和验证"
     :loading="loading"
     class="geo-tasks"
   >
@@ -230,26 +244,20 @@ onMounted(load)
       <GeoCreateEvidenceTask :tenant-id="tenantId" :content="evidenceContent" @close="evidenceContent = null" />
       <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
-      <section class="geo-intro mb">
-        <div>
-          <span class="kicker">Citation-ready Content</span>
-          <h2>GEO 写作的核心不是“多写”，而是让事实更容易被 AI 找到、理解和引用</h2>
-          <p>无论从目标问题生成新文章，还是导入已有内容，系统都会结合品牌资料、知识库与可信信源，完成 GEO 检测、内容补强和持续优化。</p>
-          <div class="geo-principles">
-            <span>独家信息</span><span>事实可核验</span><span>明确来源</span><span>定义 / 对比 / FAQ</span><span>不堆关键词</span>
-          </div>
-        </div>
-        <div class="geo-flow" aria-label="GEO 内容工作流">
-          <div class="geo-flow-step"><span class="geo-flow-no">1</span><b>选择文章起点</b><small>AI 新建或导入已有内容</small></div>
-          <div class="geo-flow-step"><span class="geo-flow-no">2</span><b>关联目标问题</b><small>明确文章需要回答什么</small></div>
-          <div class="geo-flow-step"><span class="geo-flow-no">3</span><b>GEO 检测与优化</b><small>补强结构、事实与可信信源</small></div>
-          <div class="geo-flow-step"><span class="geo-flow-no">4</span><b>发布与回流</b><small>分发成稿并跟进引用表现</small></div>
-        </div>
+      <section class="status-strip" aria-label="内容状态摘要">
+        <div class="status-summary"><span v-for="item in statusSummary" :key="item.label" class="status-summary-item" :class="`is-${item.tone}`"><b>{{ item.value }}</b><span>{{ item.label }}</span></span></div>
+        <span class="status-note">近 14 天 · 内容状态与 AI 引用效果持续回流</span>
+      </section>
+
+      <section class="principle-line" aria-label="GEO 内容原则">
+        <span class="principle-label">GEO 内容原则</span>
+        <span>独家信息</span><i>·</i><span>事实可核验</span><i>·</i><span>明确来源</span><i>·</i><span>定义 / 对比 / FAQ</span><i>·</i><span>避免关键词堆砌</span>
+        <button type="button" class="text-action" @click="ElMessage.info('GEO 写作规范将在内容编辑器中逐步提示')">查看 GEO 写作规范 →</button>
       </section>
 
       <div class="gd-card">
         <div class="gd-hd workbench-bar">
-          <h3>内容任务</h3>
+          <div><span class="eyebrow">WORKSPACE</span><h3>内容工作台</h3></div>
           <button
             v-for="tab in tabs"
             :key="tab.value || 'all'"
@@ -275,29 +283,26 @@ onMounted(load)
                 <div class="sub">#{{ row.id }}</div>
               </template>
             </el-table-column>
-            <el-table-column label="目标提问" min-width="200">
-              <template #default="{ row }">{{ row.prompt_question || `提问 #${row.prompt_id}` }}</template>
+            <el-table-column label="关联 AI 提问" min-width="220">
+              <template #default="{ row }"><span class="question-cell">{{ row.prompt_question || `提问 #${row.prompt_id}` }}</span></template>
             </el-table-column>
-            <el-table-column label="适配引擎" min-width="140">
-              <template #default="{ row }">{{ enginesText(row) }}</template>
+            <el-table-column label="GEO 状态" width="155">
+              <template #default="{ row }"><span class="geo-state" :class="`is-${geoState(row).tone}`"><b>{{ geoState(row).label }}</b><small>{{ geoState(row).detail }}</small></span></template>
             </el-table-column>
-            <el-table-column label="AI 友好度" width="110">
-              <template #default="{ row }">{{ row.geo_score == null ? '—' : row.geo_score }}</template>
-            </el-table-column>
-            <el-table-column label="状态" width="110">
+            <el-table-column label="发布状态" width="105">
               <template #default="{ row }">
                 <el-tag size="small" :type="statusTagType(row.status)" effect="light">
                   {{ taskStatusLabel(row.status) }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="发布信源" min-width="140">
+            <el-table-column label="信源" min-width="120">
               <template #default="{ row }">{{ pubsText(row) }}</template>
             </el-table-column>
-            <el-table-column label="下一步与验收" min-width="300">
+            <el-table-column label="下一步" min-width="180">
               <template #default="{ row }">
-                <strong>{{ taskNextWork(row).action }}</strong>
-                <p>{{ taskNextWork(row).acceptance }}</p>
+                <strong class="next-action">{{ taskNextWork(row).action }}</strong>
+                <small v-if="taskNextWork(row).retest">发布后复测引用效果</small>
                 <el-button v-if="taskNextWork(row).retest" link type="primary" @click="router.push(geoSnapshotLink({ prompt_id: row.prompt_id }))">去同题复测</el-button>
               </template>
             </el-table-column>
@@ -374,32 +379,18 @@ onMounted(load)
 .title-cell { font-weight: 650; color: #0f172a; }
 .sub { font-size: 12px; color: #94a3b8; margin-top: 3px; }
 .mb { margin-bottom: 12px; }
-.kicker { color: #5b5ce2; font-size: 12px; font-weight: 800; letter-spacing: .04em; }
-.geo-intro {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(440px, .85fr);
-  gap: 0;
-  overflow: hidden;
-  padding: 0;
-  border: 1px solid #2d3d48;
-  border-radius: 12px;
-  background: #1f2b34;
-}
-.geo-intro > div:first-child { padding: 28px 34px; }
-.kicker { color: #62d5cf; }
-.geo-intro h2 { max-width: 900px; margin: 12px 0; color: #f8fafc; font-size: 22px; line-height: 1.45; }
-.geo-intro p { max-width: 980px; margin: 0; color: #b7c3cc; font-size: 13px; line-height: 1.7; }
-.geo-principles { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
-.geo-principles span { padding: 5px 9px; border: 1px solid #40515c; border-radius: 7px; background: #293843; color: #cbd6dd; font-size: 11px; font-weight: 650; }
-.geo-flow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: stretch; border-left: 1px solid #33434e; }
-.geo-flow-step { display: grid; grid-template-columns: 30px minmax(0, 1fr); column-gap: 9px; align-content: center; padding: 20px 24px; border-bottom: 1px solid #33434e; }
-.geo-flow-step:nth-child(odd) { border-right: 1px solid #33434e; }
-.geo-flow-step:nth-last-child(-n + 2) { border-bottom: 0; }
-.geo-flow-no { grid-row: span 2; display: grid; width: 30px; height: 30px; place-items: center; border-radius: 50%; background: #62d5cf; color: #17323a; font-size: 12px; font-weight: 850; }
-.geo-flow b { display: block; color: #f8fafc; font-size: 13px; }
-.geo-flow small { margin-top: 4px; color: #9cafba; font-size: 11px; line-height: 1.45; }
+.tasks-workspace { --ink: #202533; --muted: #7d8494; --line: #e8eaf0; --violet: #6d43df; }
+.status-strip { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:14px 2px 16px; border-bottom:1px solid var(--line); margin-bottom:18px; }
+.status-summary { display:flex; align-items:baseline; gap:22px; }
+.status-summary-item { display:inline-flex; align-items:baseline; gap:6px; color:var(--muted); font-size:12px; }
+.status-summary-item b { color:var(--ink); font-size:19px; font-weight:700; letter-spacing:-.03em; }
+.status-summary-item.is-violet b { color:var(--violet); }.status-summary-item.is-amber b { color:#b7791f; }.status-summary-item.is-green b { color:#26866b; }
+.status-note { color:var(--muted); font-size:12px; }
+.principle-line { display:flex; align-items:center; flex-wrap:wrap; gap:9px; padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:#fbfbfd; color:#697181; font-size:12px; margin-bottom:22px; }
+.principle-label { color:var(--ink); font-weight:700; margin-right:4px; }.principle-line i { color:#b8bdc8; font-style:normal; }.text-action { margin-left:auto; border:0; background:none; color:var(--violet); font-size:12px; font-weight:650; cursor:pointer; }
+.eyebrow { display:block; color:#a1a7b3; font-size:10px; font-weight:800; letter-spacing:.14em; margin-bottom:3px; }.workbench-bar h3 { margin:0; color:var(--ink); font-size:18px; }
 .workbench-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.workbench-bar h3 { margin-right: 8px; }
+.workbench-bar > div:first-child { margin-right:8px; }
 .geo-filter {
   border: 1px solid #e7e9ef;
   background: #fff;
@@ -411,6 +402,9 @@ onMounted(load)
 .geo-filter.active { background: #eef0ff; border-color: #c9ccf5; color: #4338ca; font-weight: 700; }
 .gd-search { margin-left: auto; min-width: 220px; }
 .task-table { width: 100%; }
+.question-cell { display:block; max-width:300px; color:#414858; line-height:1.45; }
+.geo-state { display:flex; flex-direction:column; gap:3px; }.geo-state b { font-size:12px; font-weight:700; }.geo-state small { color:var(--muted); font-size:11px; }.geo-state.is-green b { color:#25866b; }.geo-state.is-violet b { color:var(--violet); }.geo-state.is-muted b { color:#89909d; }
+.next-action { display:block; max-width:165px; color:#343a48; font-size:12px; line-height:1.4; }.task-table :deep(.el-table__cell) { padding:14px 0; }.task-table :deep(.cell) { padding-left:12px; padding-right:12px; }
 .task-actions { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .geo-pager { display: flex; justify-content: flex-end; padding: 12px 14px; }
 @media (max-width: 900px) {
