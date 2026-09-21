@@ -5,6 +5,7 @@ const paths = [
   /^\/api\/v1\/auth\/modules$/,
   /^\/api\/v1\/auth\/tenants$/,
   /^\/api\/v1\/dashboard\/cockpit$/,
+  /^\/api\/v1\/dashboard\/cockpit\/placement$/,
   /^\/api\/v1\/keywords\/cockpit$/,
   /^\/api\/v1\/keywords\/cockpit\/[1-9]\d*$/,
   /^\/api\/v1\/search-terms\/cockpit$/,

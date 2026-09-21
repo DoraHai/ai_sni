@@ -140,3 +140,13 @@ test('allows only the three exact SEM authorization preflight requests', async (
     await assert.rejects(client.transport(path, { method: 'GET' }))
   }
 })
+
+test('SEM placement is an exact read-only route; adjacent paths remain denied',async()=>{
+ let calls=0
+ const boundary=fixture(async()=>{calls++;return {ok:true,status:200}})
+ const path='/api/v1/dashboard/cockpit/placement?start_date=2026-09-01&end_date=2026-09-03'
+ await boundary.transport(path,{method:'GET'})
+ assert.equal(calls,1)
+ await assert.rejects(boundary.transport(path,{method:'POST'}),{code:'READ_ONLY'})
+ await assert.rejects(boundary.transport('/api/v1/dashboard/cockpit/placement/sync',{method:'GET'}),{code:'ROUTE_DENIED'})
+})
