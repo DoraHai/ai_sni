@@ -39,6 +39,10 @@ def city_provinces():
 
 
 def province_code(name):
+    # Baidu provinceCityName is e.g. "江苏-苏州" or "上海-上海".
+    parts = name.strip().split("-")
+    if len(parts) == 2 and parts[1].strip():
+        return PROVINCES.get(short_name(parts[0].strip()))
     name = short_name(name.strip())
     return PROVINCES.get(name) or city_provinces().get(name)
 
