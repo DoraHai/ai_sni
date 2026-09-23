@@ -21,6 +21,7 @@ MAX_HTML_BYTES = 3 * 1024 * 1024
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT = 18.0
 FETCH_TOTAL_TIMEOUT = 30.0
+FETCH_CONNECT_TIMEOUT = 5.0
 logger = logging.getLogger(__name__)
 USER_AGENT = "Mozilla/5.0 (compatible; GrowthSniper-GEO/1.0)"
 RULE_VERSION = "1.1.1"
@@ -190,7 +191,7 @@ def normalize_url(value: str) -> str:
     return url
 
 
-async def _ensure_public_host(url: str) -> None:
+async def _ensure_public_host(url: str) -> list[str]:
     parsed = urlparse(url)
     host = parsed.hostname
     if not host:
@@ -211,10 +212,13 @@ async def _ensure_public_host(url: str) -> None:
         addresses = list({ipaddress.ip_address(info[4][0]) for info in infos})
     if not addresses or any(not address.is_global for address in addresses):
         raise GeoAuditError("禁止诊断本机、内网或保留地址")
+    return sorted(str(address) for address in addresses)
 
 
 def _fetch_failure(exc: BaseException, reference: str) -> GeoAuditError:
-    if isinstance(exc, (httpx.TimeoutException, asyncio.TimeoutError)):
+    if isinstance(exc, httpx.ConnectTimeout):
+        reason = "连接官网超时"
+    elif isinstance(exc, (httpx.TimeoutException, asyncio.TimeoutError)):
         reason = "读取官网超时"
     elif isinstance(exc, httpx.RemoteProtocolError):
         reason = "官网连接被提前关闭"
@@ -233,10 +237,11 @@ async def safe_fetch(
     reference = uuid.uuid4().hex[:12]
     started = time.monotonic()
     for attempt in range(1, 3):
+        connection = {"phase": "dns", "host": urlparse(normalized).hostname, "port": urlparse(normalized).port or (443 if urlparse(normalized).scheme == "https" else 80)}
         try:
             remaining = FETCH_TOTAL_TIMEOUT - (time.monotonic() - started)
             return await asyncio.wait_for(
-                _safe_fetch_once(normalized, allow_text=allow_text, allow_xml=allow_xml),
+                _safe_fetch_once(normalized, allow_text=allow_text, allow_xml=allow_xml, connection=connection),
                 timeout=max(0, remaining),
             )
         except (GeoAuditError, asyncio.TimeoutError) as error:
@@ -250,9 +255,11 @@ async def safe_fetch(
             retry = retryable and attempt == 1 and time.monotonic() - started < FETCH_TOTAL_TIMEOUT - 0.25
             # Never log URL paths, query strings, credentials or exception messages.
             logger.warning(
-                "diagnostic_fetch_failed ref=%s host=%s attempt=%s error_type=%s elapsed=%.2f retry=%s",
+                "diagnostic_fetch_failed ref=%s host=%s attempt=%s error_type=%s elapsed=%.2f retry=%s phase=%s target_host=%s port=%s dns_candidates=%s peer=%s",
                 reference, urlparse(normalized).hostname, attempt,
                 type(cause).__name__, time.monotonic() - started, retry,
+                connection.get("phase"), connection.get("host"), connection.get("port"),
+                connection.get("dns_candidates"), connection.get("peer"),
             )
             if not retry:
                 raise _fetch_failure(cause, reference) from cause
@@ -261,12 +268,23 @@ async def safe_fetch(
 
 
 async def _safe_fetch_once(
-    url: str, *, allow_text: bool = False, allow_xml: bool = False
+    url: str, *, allow_text: bool = False, allow_xml: bool = False, connection: dict | None = None
 ) -> PageDocument:
     """逐跳校验重定向目标，阻止 SSRF，并限制响应类型和体积。"""
     current = normalize_url(url)
+    connection = connection if connection is not None else {}
+
+    async def trace(event: str, info: dict) -> None:
+        # Store phase and peer only; never capture request headers, paths or bodies.
+        if event.endswith(".started"):
+            connection["phase"] = event.removesuffix(".started")
+        if event == "connection.connect_tcp.complete":
+            stream = info.get("return_value")
+            if stream is not None:
+                connection["peer"] = stream.get_extra_info("server_addr")
+
     async with httpx.AsyncClient(
-        timeout=FETCH_TIMEOUT,
+        timeout=httpx.Timeout(FETCH_TIMEOUT, connect=FETCH_CONNECT_TIMEOUT),
         follow_redirects=False,
         headers={
             "User-Agent": USER_AGENT,
@@ -274,9 +292,13 @@ async def _safe_fetch_once(
         },
     ) as client:
         for _ in range(MAX_REDIRECTS + 1):
-            await _ensure_public_host(current)
+            parsed = urlparse(current)
+            connection.update(phase="dns", host=parsed.hostname,
+                              port=parsed.port or (443 if parsed.scheme == "https" else 80),
+                              dns_candidates=None, peer=None)
+            connection["dns_candidates"] = await _ensure_public_host(current)
             try:
-                async with client.stream("GET", current) as response:
+                async with client.stream("GET", current, extensions={"trace": trace}) as response:
                     if response.status_code in {301, 302, 303, 307, 308}:
                         location = response.headers.get("location")
                         if not location:

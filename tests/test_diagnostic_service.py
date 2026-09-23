@@ -225,7 +225,7 @@ def test_fetch_retries_empty_timeout_and_revalidates_host(monkeypatch, caplog):
 
 
 @pytest.mark.parametrize('exception_name, message', [
-    ('ConnectTimeout', '读取官网超时'),
+    ('ConnectTimeout', '连接官网超时'),
     ('ReadTimeout', '读取官网超时'),
     ('ConnectError', '无法建立官网连接'),
     ('RemoteProtocolError', '官网连接被提前关闭'),
@@ -290,3 +290,27 @@ def test_fetch_total_deadline_cancels_slow_request(monkeypatch):
     with pytest.raises(rules.GeoAuditError, match='读取官网超时'):
         asyncio.run(rules.safe_fetch('https://example.com'))
     assert cancelled == [True]
+
+
+def test_fetch_logs_redirect_tls_phase_without_url_secrets(monkeypatch, caplog):
+    import asyncio
+    import httpx
+    calls = []
+    async def handler(request):
+        calls.append(request)
+        assert request.extensions['timeout']['connect'] == 5.0
+        assert request.extensions['timeout']['read'] == 18.0
+        if request.url.host == 'example.com':
+            return httpx.Response(302, headers={'location':'https://cdn.example.com/page?token=private'})
+        await request.extensions['trace']('connection.start_tls.started', {})
+        raise httpx.ConnectTimeout('')
+    rules, check = _fetch_transport(monkeypatch, handler)
+    check.return_value = ['93.184.216.34']
+    with pytest.raises(rules.GeoAuditError, match='连接官网超时'):
+        asyncio.run(rules.safe_fetch('https://example.com/secret-path'))
+    assert len(calls) == 4
+    assert 'phase=connection.start_tls' in caplog.text
+    assert 'target_host=cdn.example.com' in caplog.text
+    assert '93.184.216.34' in caplog.text
+    assert 'secret-path' not in caplog.text
+    assert 'token' not in caplog.text and 'private' not in caplog.text
