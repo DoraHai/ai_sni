@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
+import logging
+import time
+import uuid
 import re
 import socket
 from dataclasses import dataclass
@@ -17,6 +20,8 @@ from bs4 import BeautifulSoup
 MAX_HTML_BYTES = 3 * 1024 * 1024
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT = 18.0
+FETCH_TOTAL_TIMEOUT = 30.0
+logger = logging.getLogger(__name__)
 USER_AGENT = "Mozilla/5.0 (compatible; GrowthSniper-GEO/1.0)"
 RULE_VERSION = "1.1.1"
 
@@ -208,7 +213,54 @@ async def _ensure_public_host(url: str) -> None:
         raise GeoAuditError("禁止诊断本机、内网或保留地址")
 
 
+def _fetch_failure(exc: BaseException, reference: str) -> GeoAuditError:
+    if isinstance(exc, (httpx.TimeoutException, asyncio.TimeoutError)):
+        reason = "读取官网超时"
+    elif isinstance(exc, httpx.RemoteProtocolError):
+        reason = "官网连接被提前关闭"
+    elif isinstance(exc, httpx.ConnectError):
+        reason = "无法建立官网连接"
+    else:
+        reason = "读取官网时连接中断"
+    return GeoAuditError(f"{reason}，请稍后重试或手动补充信息（排查编号：{reference}）")
+
+
 async def safe_fetch(
+    url: str, *, allow_text: bool = False, allow_xml: bool = False
+) -> PageDocument:
+    """最多尝试两次，总耗时有上限；每次仍执行完整的公开地址校验。"""
+    normalized = normalize_url(url)
+    reference = uuid.uuid4().hex[:12]
+    started = time.monotonic()
+    for attempt in range(1, 3):
+        try:
+            remaining = FETCH_TOTAL_TIMEOUT - (time.monotonic() - started)
+            return await asyncio.wait_for(
+                _safe_fetch_once(normalized, allow_text=allow_text, allow_xml=allow_xml),
+                timeout=max(0, remaining),
+            )
+        except (GeoAuditError, asyncio.TimeoutError) as error:
+            cause = error.__cause__ if isinstance(error, GeoAuditError) else error
+            if not isinstance(cause, (httpx.HTTPError, asyncio.TimeoutError)):
+                raise
+            retryable = isinstance(cause, (
+                httpx.TimeoutException, httpx.NetworkError,
+                httpx.RemoteProtocolError, asyncio.TimeoutError,
+            ))
+            retry = retryable and attempt == 1 and time.monotonic() - started < FETCH_TOTAL_TIMEOUT - 0.25
+            # Never log URL paths, query strings, credentials or exception messages.
+            logger.warning(
+                "diagnostic_fetch_failed ref=%s host=%s attempt=%s error_type=%s elapsed=%.2f retry=%s",
+                reference, urlparse(normalized).hostname, attempt,
+                type(cause).__name__, time.monotonic() - started, retry,
+            )
+            if not retry:
+                raise _fetch_failure(cause, reference) from cause
+            await asyncio.sleep(0.25)
+    raise AssertionError("unreachable")
+
+
+async def _safe_fetch_once(
     url: str, *, allow_text: bool = False, allow_xml: bool = False
 ) -> PageDocument:
     """逐跳校验重定向目标，阻止 SSRF，并限制响应类型和体积。"""

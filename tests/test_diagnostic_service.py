@@ -194,3 +194,99 @@ def test_ai_advice_never_receives_unknown_crawler(monkeypatch):
     assert asyncio.run(ai_advice(tenant_name='Example', url='https://example.com', score=100,
                                 title='', description='', findings=findings)) == ([], 'rules')
     assert 'ai_crawlers' not in chat.await_args.args[1]
+
+
+def _fetch_transport(monkeypatch, handler):
+    import httpx
+    from app.diagnostic import audit as rules
+    original = httpx.AsyncClient
+    monkeypatch.setattr(rules.httpx, 'AsyncClient',
+                        lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs))
+    check = AsyncMock()
+    monkeypatch.setattr(rules, '_ensure_public_host', check)
+    return rules, check
+
+
+def test_fetch_retries_empty_timeout_and_revalidates_host(monkeypatch, caplog):
+    import asyncio
+    import httpx
+    calls = []
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 1:
+            raise httpx.ReadTimeout('')
+        return httpx.Response(200, headers={'content-type':'text/html'}, text='<title>OK</title>')
+    rules, check = _fetch_transport(monkeypatch, handler)
+    doc = asyncio.run(rules.safe_fetch('https://example.com/?secret=hidden'))
+    assert doc.html == '<title>OK</title>'
+    assert check.await_count == 2
+    assert 'error_type=ReadTimeout' in caplog.text
+    assert 'secret' not in caplog.text and 'hidden' not in caplog.text
+
+
+@pytest.mark.parametrize('exception_name, message', [
+    ('ConnectTimeout', '读取官网超时'),
+    ('ReadTimeout', '读取官网超时'),
+    ('ConnectError', '无法建立官网连接'),
+    ('RemoteProtocolError', '官网连接被提前关闭'),
+])
+def test_fetch_persistent_failure_is_bounded_and_explained(monkeypatch, exception_name, message):
+    import asyncio
+    import httpx
+    calls = []
+    def handler(request):
+        calls.append(request)
+        raise getattr(httpx, exception_name)('')
+    rules, _ = _fetch_transport(monkeypatch, handler)
+    with pytest.raises(rules.GeoAuditError, match=message + '.*排查编号'):
+        asyncio.run(rules.safe_fetch('https://example.com'))
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize('status', [403, 404, 500])
+def test_fetch_does_not_retry_http_rejections(monkeypatch, status):
+    import asyncio
+    import httpx
+    calls = []
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(status)
+    rules, _ = _fetch_transport(monkeypatch, handler)
+    with pytest.raises(rules.GeoAuditError, match=f'HTTP {status}'):
+        asyncio.run(rules.safe_fetch('https://example.com'))
+    assert len(calls) == 1
+
+
+def test_fetch_retry_does_not_bypass_private_redirect(monkeypatch):
+    import asyncio
+    import httpx
+    calls = []
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 1:
+            raise httpx.ReadError('')
+        return httpx.Response(302, headers={'location':'http://127.0.0.1/private'})
+    rules, _ = _fetch_transport(monkeypatch, handler)
+    async def check(url):
+        if '127.0.0.1' in url:
+            raise rules.GeoAuditError('禁止诊断本机、内网或保留地址')
+    monkeypatch.setattr(rules, '_ensure_public_host', check)
+    with pytest.raises(rules.GeoAuditError, match='禁止诊断'):
+        asyncio.run(rules.safe_fetch('https://example.com'))
+    assert len(calls) == 2
+
+
+def test_fetch_total_deadline_cancels_slow_request(monkeypatch):
+    import asyncio
+    rules, _ = _fetch_transport(monkeypatch, lambda request: None)
+    cancelled = []
+    async def slow(*args, **kwargs):
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cancelled.append(True)
+    monkeypatch.setattr(rules, '_safe_fetch_once', slow)
+    monkeypatch.setattr(rules, 'FETCH_TOTAL_TIMEOUT', 0.02)
+    with pytest.raises(rules.GeoAuditError, match='读取官网超时'):
+        asyncio.run(rules.safe_fetch('https://example.com'))
+    assert cancelled == [True]

@@ -61,7 +61,7 @@ export function discoverGeoBrand({ tenantId, website }) {
   return client.post('/api/v1/diagnostic/assets/brand/discover', {
     tenant_id: tenantId,
     website,
-  }, { timeout: 45000 })
+  }, { timeout: 65000 })
 }
 
 export function saveGeoBrand(payload) {
