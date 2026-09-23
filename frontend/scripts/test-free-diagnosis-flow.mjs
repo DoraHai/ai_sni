@@ -60,17 +60,30 @@ await test('租户切换与旧识别/audit 响应隔离',async()=>{const pending
 await test('未启用 AI 不调用模型，已有抽样不重复调用',async()=>{for(const r of [{...record(),ai_enabled:false},{...record(),snapshot:{ai_sampling:{results:[]}}}]){const t=setup();t.state.audit.value=r;await flush();assert.equal(t.calls.sample.length,0);t.scope.stop()}})
 await test('正式导航仅报告状态显示，打印入口保留，假进度已移除',()=>{const view=readFileSync(new URL('DiagnosisCenterView.vue',root),'utf8');assert.ok(view.includes("flow.stage.value !== 'report'"));assert.ok(view.includes('v-else class="diagnosis-center"'));assert.ok(view.includes('window.print()'));assert.ok(view.includes('@export="printReport"'));assert.ok(!view.includes('2600'));assert.ok(!view.includes('loadingStage'));})
 await test('旧 audit 响应不覆盖新一轮状态',async()=>{const old=deferred();const t=setup({runGeoAudit:()=>old.promise});t.state.url.value=brand.website;const task=t.flow.runAudit();t.flow.reset();old.resolve(record(99));await task;assert.equal(t.state.audit.value,null);assert.equal(t.flow.stage.value,'entry');t.scope.stop()})
-await test('报告内部内容及原始卡片样式保持不变，外框独立适配',()=>{
+await test('报告布局与流程保持不变，只允许三态修正和独立打印接入',()=>{
   const path='frontend/src/views/diagnosis/DiagnosisCenterView.vue'
   const before=execFileSync('git',['show',`HEAD:${path}`],{encoding:'utf8'})
   const after=readFileSync(new URL('DiagnosisCenterView.vue',root),'utf8')
   const css=s=>s.slice(s.indexOf('<style scoped>'),s.indexOf('</style>'))
-  assert.equal(css(after),css(before))
+  assert.equal(css(after),css(before).replace('  @page { size:A4 portrait; margin:12mm; }', '  @page { size:A4 portrait; margin:16mm 15mm 18mm; }\n  .diagnosis-center > :deep(.report-shell) { display:none !important; }'))
   const content=s=>s.slice(s.indexOf('<section class="flow-screen overview-screen">'),s.indexOf('\n        </template>\n      </div>')).replaceAll('v-show="printing || expandedEvidence === item.code"','v-if="expandedEvidence === item.code"')
   const expected = content(before)
     .replace(/                <small>关联 {{ item.count }} 项当前问题<\/small>\n                <button class="bridge-btn" :disabled="bridgeLoading" @click="bridgeToContent\(item.codes\[0\]\)">\n                  创建 GEO 优化文章 →\n                <\/button>\n/, '')
     .replace('href="/deal-sniper/geo/dashboard">获取完整优化方案', 'href="/deal-sniper/portal">获取完整优化方案')
-  assert.equal(content(after),expected)
+  // Enumerate the permitted state expressions. All other report markup stays protected.
+  const stateChanges = [
+    ['Math.max(0, findings.length - passedCount)', 'problems.length'],
+    ['/\{\{ findings.length \}\}', '/\{\{ evaluatedFindings.length \}\}'],
+    ['Math.max(findings.length, 1)', 'Math.max(evaluatedFindings.length, 1)'],
+    ['{{ item.score }}', "{{ item.score ?? '未检测' }}"],
+    ['{ failed: !item.passed }', '{ failed: item.passed === false }'],
+    ["{{ item.passed ? '✓' : '!' }}", "{{ item.passed == null ? '—' : item.passed ? '✓' : '!' }}"],
+    [":class=\"item.passed ? 'passed' : item.severity\"", ":class=\"item.passed == null ? '' : item.passed ? 'passed' : item.severity\""],
+  ]
+  const corrected = stateChanges.reduce((value,[from,to]) => value.replaceAll(from,to), expected)
+  assert.equal(content(after),corrected)
+  assert.ok(after.includes('<DiagnosticPrintReport v-if="audit"'))
+  assert.ok(!after.includes('node.open = true'))
   const directions = after.slice(after.indexOf('<div v-if="priorityDirections.length"'), after.indexOf('<div v-else class="priority-clean-state">'))
   assert.ok(!directions.includes('<button'))
   assert.ok(!directions.includes('项当前问题'))

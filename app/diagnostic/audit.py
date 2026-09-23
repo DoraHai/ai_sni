@@ -18,7 +18,7 @@ MAX_HTML_BYTES = 3 * 1024 * 1024
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT = 18.0
 USER_AGENT = "Mozilla/5.0 (compatible; GrowthSniper-GEO/1.0)"
-RULE_VERSION = "1.1.0"
+RULE_VERSION = "1.1.1"
 
 # Keep the established score contract for callers that aggregate multi-page audits.
 RULE_WEIGHTS = {
@@ -136,7 +136,7 @@ def parse_robots_ai_agents(robots_text: str) -> dict[str, Any]:
         if any(path.strip() == "/" for path in disallows):
             return "blocked", disallows
         if matched:
-            return ("blocked" if disallows else "allowed"), disallows
+            return "allowed", disallows
         return "unspecified", disallows
 
     agents = []
@@ -304,7 +304,7 @@ def _finding(
     title: str,
     category: str,
     severity: str,
-    passed: bool,
+    passed: bool | None,
     evidence: str,
     recommendation: str,
     deduction: int,
@@ -318,11 +318,12 @@ def _finding(
         "category": category,
         "severity": severity,
         "passed": passed,
+        "status": "unavailable" if passed is None else "passed" if passed else "failed",
         "evidence": evidence,
-        "reason": "" if passed else f"未满足“{title}”规则：{evidence}",
+        "reason": evidence if passed is None else "" if passed else f"未满足“{title}”规则：{evidence}",
         "recommendation": recommendation,
         "weight": weight,
-        "deduction": 0 if passed else weight,
+        "deduction": weight if passed is False else 0,
         "automatable": automatable,
     }
 
@@ -397,14 +398,18 @@ async def audit_url(url: str) -> dict[str, Any]:
     )
     block_checks = block_findings(block_info["blocks"])
 
-    robots_ai = parse_robots_ai_agents(robots_text if robots_ok else "")
-    ai_ok = robots_ok and robots_ai["blocked_count"] == 0
+    # HTML error/login pages and truncated robots responses cannot establish access rules.
+    robots_confirmed = robots_ok and not re.search(r"<\s*(?:!doctype|html|head|body)\b", robots_text, re.I) and len(robots_text) < 20_000
+    robots_ai = parse_robots_ai_agents(robots_text if robots_confirmed else "")
+    ai_ok = robots_ai["blocked_count"] == 0 if robots_confirmed else None
+    if not robots_confirmed:
+        robots_ai = {"status": "unavailable", "agents": [], "allowed_count": None, "blocked_count": None, "unspecified_count": None}
     ai_detail = (
         f"允许 {robots_ai['allowed_count']} · "
         f"拦截 {robots_ai['blocked_count']} · "
         f"未声明 {robots_ai['unspecified_count']}"
-        if robots_ok
-        else "robots.txt 不可读，无法审计 AI 爬虫 UA"
+        if robots_confirmed
+        else "robots.txt 不可读或内容无法确认，无法审计 AI 爬虫 UA"
     )
 
     checks = [
@@ -425,12 +430,12 @@ async def audit_url(url: str) -> dict[str, Any]:
         _finding("robots", "robots.txt 可访问", "技术基础", "medium", robots_ok and bool(robots_text.strip()), robots_url, "发布 robots.txt，明确允许公开页面被合规抓取。", 3),
         _finding(
             "ai_crawlers",
-            "主流 AI 爬虫未被整站拦截",
+            "无法确认主流 AI 爬虫访问规则" if ai_ok is None else "主流 AI 爬虫未被整站拦截" if ai_ok else "主流 AI 爬虫被整站拦截",
             "AI 可访问性",
             "high",
             ai_ok,
             ai_detail,
-            "在 robots.txt 中为 GPTBot / ClaudeBot / Google-Extended 等声明 Allow，避免 Disallow: /。",
+            "恢复 robots.txt 的可读性后重新检测；当前无法确认是否整站拦截。" if ai_ok is None else "在 robots.txt 中为 GPTBot / ClaudeBot / Google-Extended 等声明 Allow，避免 Disallow: /。",
             6,
             True,
         ),
@@ -477,6 +482,8 @@ async def audit_url(url: str) -> dict[str, Any]:
             "blocks": block_info["blocks"],
             "block_issue_codes": block_info["issue_codes"],
             "passed": sum(1 for item in checks if item["passed"]),
-            "total": len(checks),
+            "total": sum(1 for item in checks if item["passed"] is not None),
+            "unavailable": sum(1 for item in checks if item["passed"] is None),
+            "rule_version": RULE_VERSION,
         },
     }

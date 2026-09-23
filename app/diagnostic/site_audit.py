@@ -145,23 +145,33 @@ def aggregate_site_results(
     for code, template in first_checks.items():
         page_checks = []
         passed_weight = 0
+        evaluated_weight = 0
         for result, weight, _ in weighted_pages:
             item = next(row for row in result["checks"] if row["code"] == code)
-            if item["passed"]:
+            if item["passed"] is not None:
+                evaluated_weight += weight
+            if item["passed"] is True:
                 passed_weight += weight
             page_checks.append(
                 {
                     "url": result["final_url"],
                     "title": result["title"],
                     "passed": item["passed"],
+                    "status": "unavailable" if item["passed"] is None else "passed" if item["passed"] else "failed",
                     "evidence": item["evidence"],
                     "reason": item.get("reason") or (
-                        "" if item["passed"] else f"未满足“{item['title']}”规则：{item['evidence']}"
+                        item["evidence"] if item["passed"] is None else "" if item["passed"] else f"未满足“{item['title']}”规则：{item['evidence']}"
                     ),
                 }
             )
-        pass_rate = passed_weight / max(total_weight, 1)
-        passed_pages = sum(1 for item in page_checks if item["passed"])
+        pass_rate = passed_weight / evaluated_weight if evaluated_weight else None
+        evaluated_pages = sum(1 for item in page_checks if item["passed"] is not None)
+        passed = None if pass_rate is None else pass_rate == 1
+        evidence = (
+            f"{sum(1 for item in page_checks if item['passed'] is True)}/{evaluated_pages} 个已评估页面通过 · "
+            f"核心页面加权通过率 {round(pass_rate * 100)}% · "
+            f"未检测 {len(page_checks) - evaluated_pages} 页"
+        ) if pass_rate is not None else "所有页面均未检测，无法确认此项规则；不计入评分扣分。"
         # 新规则可能先由单页诊断产出，再被加入固定权重表。全站汇总应优先
         # 使用固定权重，同时对尚未登记的规则保持兼容，避免整次诊断返回 500。
         rule_weight = RULE_WEIGHTS.get(
@@ -170,13 +180,14 @@ def aggregate_site_results(
         checks.append(
             {
                 **template,
-                "passed": pass_rate == 1,
-                "evidence": (
-                    f"{passed_pages}/{len(page_checks)} 个页面通过 · "
-                    f"核心页面加权通过率 {round(pass_rate * 100)}%"
-                ),
+                "passed": passed,
+                "status": "unavailable" if passed is None else "passed" if passed else "failed",
+                "title": ("无法确认主流 AI 爬虫访问规则" if passed is None else "主流 AI 爬虫未被整站拦截" if passed else "主流 AI 爬虫被整站拦截") if code == "ai_crawlers" else template["title"],
+                "recommendation": ("恢复 robots.txt 的可读性后重新检测。" if passed is None else "核查 robots.txt 中的 AI 爬虫规则，避免明确的整站 Disallow: /。") if code == "ai_crawlers" else template["recommendation"],
+                "evidence": evidence,
+                "reason": evidence if passed is not True else "",
                 "weight": rule_weight,
-                "deduction": round(rule_weight * (1 - pass_rate), 1),
+                "deduction": round(rule_weight * (1 - pass_rate), 1) if pass_rate is not None else 0,
                 "page_evidence": page_checks,
             }
         )
@@ -229,7 +240,8 @@ def aggregate_site_results(
             "external_links": union_external_links,
             "schema_types": union_schema_types,
             "passed": sum(1 for item in checks if item["passed"]),
-            "total": len(checks),
+            "total": sum(1 for item in checks if item["passed"] is not None),
+            "unavailable": sum(1 for item in checks if item["passed"] is None),
             "site_audit": {
                 "discovery_source": discovery_source,
                 "requested_pages": requested_count,

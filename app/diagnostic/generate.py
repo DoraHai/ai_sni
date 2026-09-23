@@ -10,7 +10,7 @@ PRIORITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
 def deterministic_advice(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     failed = sorted(
-        (item for item in findings if not item.get("passed")),
+        (item for item in findings if item.get("passed") is False),
         key=lambda item: (PRIORITY_ORDER.get(item.get("severity"), 9), -item.get("deduction", 0)),
     )
     return [
@@ -50,7 +50,7 @@ async def ai_advice(
             "recommendation": item["recommendation"],
         }
         for item in findings
-        if not item.get("passed")
+        if item.get("passed") is False
     ]
     system = """你是严谨的 GEO（生成式引擎优化）顾问。根据规则诊断给出可执行整改项。
 只返回 JSON 对象：{"recommendations":[...]}。每项必须包含 code、priority、title、action、

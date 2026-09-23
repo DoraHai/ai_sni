@@ -14,6 +14,8 @@ import diagnosticLogo from '../../assets/g-snipers-purple-logo.png'
 import DiagnosisAssetsView from './DiagnosisAssetsView.vue'
 import FreeDiagnosisFlow from './flow/FreeDiagnosisFlow.vue'
 import ReportShell from './ReportShell.vue'
+import DiagnosticPrintReport from './DiagnosticPrintReport.vue'
+import { normalizeFindings, isEvaluated, legacyScoreNote } from './diagnosticFindingState'
 import { useFreeDiagnosisFlow } from './useFreeDiagnosisFlow'
 
 const tenantId = computed(() => session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null))
@@ -203,8 +205,10 @@ const scoreLabel = computed(() => {
   return '需要优化'
 })
 
-const findings = computed(() => audit.value?.findings || [])
-const problems = computed(() => audit.value?.problems || [])
+const findings = computed(() => normalizeFindings(audit.value?.findings))
+const evaluatedFindings = computed(() => findings.value.filter(isEvaluated))
+const hasLegacyCrawler = computed(() => findings.value.some(item => item.legacyIndeterminate))
+const problems = computed(() => normalizeFindings(audit.value?.problems || audit.value?.findings).filter(item => item.passed === false && !findings.value.some(row => row.code === item.code && row.passed == null)))
 const aiSample = computed(() => audit.value?.snapshot?.ai_sampling || null)
 const isCompetitorAudit = computed(() => audit.value?.snapshot?.audit_mode === 'competitor')
 const siteAudit = computed(() => audit.value?.snapshot?.site_audit || null)
@@ -276,7 +280,7 @@ const chinazSourceState = computed(() => {
   return '站长之家接口 · 待配置 API Key'
 })
 const passedCount = computed(() => findings.value.filter((item) => item.passed).length)
-const rulePassRate = computed(() => Math.round(passedCount.value / Math.max(findings.value.length, 1) * 100))
+const rulePassRate = computed(() => Math.round(passedCount.value / Math.max(evaluatedFindings.value.length, 1) * 100))
 const confirmedCompetitors = computed(() =>
   (brandProfile.value?.competitors || []).filter((item) => item.confirmed),
 )
@@ -355,10 +359,10 @@ const dimensions = computed(() => {
     { key: 'trust', label: '可信信号', categories: ['可信度'] },
   ]
   return definitions.map((definition) => {
-    const rows = findings.value.filter((item) => definition.categories.includes(item.category))
+    const rows = evaluatedFindings.value.filter((item) => definition.categories.includes(item.category))
     const totalWeight = rows.reduce((sum, item) => sum + Number(item.weight || item.deduction || 0), 0)
-    const lost = rows.filter((item) => !item.passed).reduce((sum, item) => sum + Number(item.deduction || 0), 0)
-    const score = rows.length ? Math.max(0, Math.round(100 - (lost / Math.max(totalWeight, 1)) * 100)) : 100
+    const lost = rows.filter((item) => item.passed === false).reduce((sum, item) => sum + Number(item.deduction || 0), 0)
+    const score = rows.length ? Math.max(0, Math.round(100 - (lost / Math.max(totalWeight, 1)) * 100)) : null
     return { ...definition, score, passed: rows.filter((item) => item.passed).length, total: rows.length }
   })
 })
@@ -388,6 +392,7 @@ function dimensionTone(score) {
 }
 
 function dimensionStatus(score) {
+  if (score == null) return "未检测"
   if (score >= 80) return '优势项'
   if (score >= 60) return '待增强'
   if (score > 0) return '明显短板'
@@ -409,7 +414,7 @@ const geoFindings = computed(() => findings.value.filter((item) =>
 ))
 
 const featuredFindings = computed(() =>
-  [...findings.value]
+  [...evaluatedFindings.value]
     .sort((a, b) => Number(a.passed) - Number(b.passed) || Number(b.deduction || 0) - Number(a.deduction || 0))
     .slice(0, 3),
 )
@@ -419,7 +424,7 @@ function evidenceRows(item) {
   if (item.page_evidence?.length) {
     return item.page_evidence.map((page) => ({
       passed: page.passed,
-      text: page.passed
+      text: page.passed == null ? `未检测 · ${page.title || page.url} · ${page.evidence}` : page.passed
         ? `通过 · ${page.title || page.url} · ${page.evidence}`
         : `未通过 · ${page.title || page.url} · 原因：${page.reason || `未满足“${item.title}”规则：${page.evidence}`}`,
     }))
@@ -439,7 +444,8 @@ function evidenceDetails(item) {
 }
 
 function failureSummary(item) {
-  const failedPages = (item.page_evidence || []).filter((page) => !page.passed)
+  if (item.passed == null) return `未检测 / 无法确认：${item.evidence || "缺少检测证据"}。不计入失败或评分扣分。`
+  const failedPages = (item.page_evidence || []).filter((page) => page.passed === false)
   if (failedPages.length) {
     return `${failedPages.length} 个页面未满足“${item.title}”规则，展开明细可查看每个页面的具体原因。`
   }
@@ -447,6 +453,7 @@ function failureSummary(item) {
 }
 
 function ruleNarrative(item) {
+  if (item?.passed == null) return { userTitle: item.title, why: "目前无法确认此项规则。", direction: "恢复检测条件后重新诊断。" }
   return ruleNarratives[item?.code] || {
     userTitle: item?.title || '发现一项需要关注的问题',
     why: item?.recommendation || '这项信号会影响搜索工具和 AI 对官网内容的理解。',
@@ -455,11 +462,13 @@ function ruleNarrative(item) {
 }
 
 function businessImpact(item) {
+  if (item?.passed == null) return "缺少检测证据，无法判断是否存在此项风险。"
   return businessImpactByCode[item?.code]
     || '这项问题会增加客户理解成本，并降低官网被搜索工具和 AI 正确推荐的机会。'
 }
 
 function impactLevel(item) {
+  if (item?.passed == null) return "未检测"
   if (item?.passed) return '当前通过'
   if (['critical', 'high'].includes(item?.severity)) return '高影响'
   if (item?.severity === 'medium') return '中等影响'
@@ -892,19 +901,14 @@ async function loadPageSpeed(targetUrl) {
 let printState = null
 async function preparePrint() {
   if (!audit.value || printState) return
-  printState = { asset: activeAsset.value, title: document.title, details: [] }
+  printState = { title: document.title }
   printing.value = true
-  activeAsset.value = ''
   await nextTick()
-  printState?.details.push(...Array.from(document.querySelectorAll('.diagnosis-content details')).map(node => ({ node, open: node.open })))
-  printState?.details.forEach(({ node }) => { node.open = true })
 }
 function finishPrint() {
   if (!printState) return
   const previous = printState
   printState = null
-  previous.details.forEach(({ node, open }) => { node.open = open })
-  activeAsset.value = previous.asset
   document.title = previous.title
   printing.value = false
 }
@@ -949,6 +953,7 @@ onMounted(async () => {
 <template>
   <FreeDiagnosisFlow v-if="flow.stage.value !== 'report'" :flow="flow" :audit="audit" @report="showFlowReport" />
   <main v-else class="diagnosis-center">
+    <DiagnosticPrintReport v-if="audit" :audit="audit" :brand="brandProfile" :page-speed="pageSpeed" />
     <ReportShell :audit="audit" :brand="brandProfile" :user="session.user" :loading="loading"
       :active-asset="activeAsset" :asset-title="currentAsset.label" :competitor="isCompetitorAudit"
       :site-audit="isSiteAudit" :page-count="sitePages.length"
@@ -957,6 +962,7 @@ onMounted(async () => {
       <div v-if="!activeAsset" class="diagnosis-content">
         <div id="section-overview" class="report-overview-anchor" />
         <p v-if="error" class="diagnosis-error-banner">{{ error }}</p>
+        <p v-if="hasLegacyCrawler" class="diagnosis-error-banner">{{ legacyScoreNote }}</p>
 
         <section v-if="newDiagnosisOpen && !loading" id="quick-audit" class="quick-audit-bar" :class="quickMode">
           <header>
@@ -1172,7 +1178,7 @@ onMounted(async () => {
                 </article>
                 <article class="pending">
                   <span>待优化项</span>
-                  <strong>{{ Math.max(0, findings.length - passedCount) }}</strong>
+                  <strong>{{ problems.length }}</strong>
                   <small>影响当前准备度</small>
                 </article>
                 <article class="risk">
@@ -1209,7 +1215,7 @@ onMounted(async () => {
             <article class="dashboard-card metrics-dashboard-card">
               <header><div><h3>核心指标</h3><small>KEY METRICS</small></div><span>···</span></header>
               <div class="dashboard-metrics">
-                <section><span>规则通过</span><strong>{{ passedCount }}<small>/{{ findings.length }}</small></strong><i>✓</i><b>{{ Math.round(passedCount / Math.max(findings.length, 1) * 100) }}%</b></section>
+                <section><span>规则通过</span><strong>{{ passedCount }}<small>/{{ evaluatedFindings.length }}</small></strong><i>✓</i><b>{{ Math.round(passedCount / Math.max(evaluatedFindings.length, 1) * 100) }}%</b></section>
                 <section><span>高优先问题</span><strong>{{ problemCounts.critical + problemCounts.high }}</strong><i>!</i><b>{{ problemCounts.critical }} 阻断</b></section>
                 <section><span>{{ isSiteAudit ? '抽样页面' : '内容单元' }}</span><strong>{{ isSiteAudit ? sitePages.length : (audit.snapshot?.content_units || 0) }}</strong><i>↗</i><b>{{ isSiteAudit ? '全站诊断' : '当前页面' }}</b></section>
                 <section><span>已确认竞品</span><strong>{{ confirmedCompetitors.length }}</strong><i>◎</i><b>品牌参照</b></section>
@@ -1227,7 +1233,7 @@ onMounted(async () => {
             <article class="dashboard-card signals-dashboard-card">
               <header><div><h3>六维诊断信号</h3><small>READINESS SIGNALS</small></div><span>···</span></header>
               <div class="signal-chart">
-                <div v-for="item in dimensions" :key="`signal-${item.key}`"><span>{{ item.label }}</span><i><b :style="{ width: `${item.score}%` }" /></i><strong>{{ item.score }}</strong></div>
+                <div v-for="item in dimensions" :key="`signal-${item.key}`"><span>{{ item.label }}</span><i><b :style="{ width: `${item.score}%` }" /></i><strong>{{ item.score ?? '未检测' }}</strong></div>
               </div>
             </article>
 
@@ -1280,8 +1286,8 @@ onMounted(async () => {
               <div><span>综合健康度</span><h2>{{ scoreLabel }}</h2><p>基于 {{ findings.length }} 项可解释规则</p></div>
             </article>
             <article class="metric-card">
-              <span>{{ isSiteAudit ? '规则全站通过' : '检查通过' }}</span><strong>{{ passedCount }}<small>/{{ findings.length }}</small></strong>
-              <div class="mini-bar"><i :style="{ width: `${passedCount / Math.max(findings.length, 1) * 100}%` }" /></div>
+              <span>{{ isSiteAudit ? '规则全站通过' : '检查通过' }}</span><strong>{{ passedCount }}<small>/{{ evaluatedFindings.length }}</small></strong>
+              <div class="mini-bar"><i :style="{ width: `${passedCount / Math.max(evaluatedFindings.length, 1) * 100}%` }" /></div>
             </article>
             <article class="metric-card risk-card">
               <span>高优先问题</span><strong>{{ problemCounts.critical + problemCounts.high }}</strong>
@@ -1358,7 +1364,7 @@ onMounted(async () => {
                   <div class="dimension-title">
                     <span>{{ item.label }}</span>
                     <em>{{ dimensionStatus(item.score) }}</em>
-                    <strong>{{ item.score }}<small>/100</small></strong>
+                    <strong>{{ item.score ?? '未检测' }}<small>/100</small></strong>
                   </div>
                   <div class="dimension-bar"><i :style="{ width: `${item.score}%` }" /></div>
                   <small>规则通过 {{ item.passed }} / {{ item.total }}</small>
@@ -1512,8 +1518,8 @@ onMounted(async () => {
             <details class="seo-technical-details">
               <summary><span>查看现有 SEO 技术检测明细</span><small>保留全部规则、证据和业务影响解释</small><b>展开 ↓</b></summary>
               <div class="check-grid">
-                <article v-for="item in seoFindings" :key="item.code" :class="{ failed: !item.passed }">
-                  <span class="check-status">{{ item.passed ? '✓' : '!' }}</span>
+                <article v-for="item in seoFindings" :key="item.code" :class="{ failed: item.passed === false }">
+                  <span class="check-status">{{ item.passed == null ? '—' : item.passed ? '✓' : '!' }}</span>
                   <div class="check-copy">
                     <small>{{ categoryLabel(item) }}</small>
                     <h3>{{ ruleNarrative(item).userTitle }}</h3>
@@ -1532,7 +1538,7 @@ onMounted(async () => {
                       {{ expandedEvidence === item.code ? '收起明细 ↑' : `查看 ${evidenceDetails(item).length} 条明细 ↓` }}
                     </button>
                   </div>
-                  <span class="impact-badge" :class="item.passed ? 'passed' : item.severity">{{ impactLevel(item) }}</span>
+                  <span class="impact-badge" :class="item.passed == null ? '' : item.passed ? 'passed' : item.severity">{{ impactLevel(item) }}</span>
                   <div v-show="printing || expandedEvidence === item.code" class="evidence-detail">
                     <header><span>抓取证据明细</span><button type="button" @click="copyEvidence(item)">复制全部</button></header>
                     <ol>
@@ -1556,8 +1562,8 @@ onMounted(async () => {
               <a v-if="!isCompetitorAudit" href="/deal-sniper/geo/dashboard">去 GEO 执行 →</a>
             </div>
             <div class="check-grid">
-              <article v-for="item in geoFindings" :key="item.code" :class="{ failed: !item.passed }">
-                <span class="check-status">{{ item.passed ? '✓' : '!' }}</span>
+              <article v-for="item in geoFindings" :key="item.code" :class="{ failed: item.passed === false }">
+                <span class="check-status">{{ item.passed == null ? '—' : item.passed ? '✓' : '!' }}</span>
                 <div class="check-copy">
                   <small>{{ categoryLabel(item) }}</small>
                   <h3>{{ ruleNarrative(item).userTitle }}</h3>
@@ -1581,7 +1587,7 @@ onMounted(async () => {
                     {{ expandedEvidence === item.code ? '收起明细 ↑' : `查看 ${evidenceDetails(item).length} 条明细 ↓` }}
                   </button>
                 </div>
-                <span class="impact-badge" :class="item.passed ? 'passed' : item.severity">{{ impactLevel(item) }}</span>
+                <span class="impact-badge" :class="item.passed == null ? '' : item.passed ? 'passed' : item.severity">{{ impactLevel(item) }}</span>
                 <div v-show="printing || expandedEvidence === item.code" class="evidence-detail">
                   <header><span>抓取证据明细</span><button type="button" @click="copyEvidence(item)">复制全部</button></header>
                   <ol>
@@ -2688,7 +2694,8 @@ button { color: inherit; }
 }
 
 @media print {
-  @page { size:A4 portrait; margin:12mm; }
+  @page { size:A4 portrait; margin:16mm 15mm 18mm; }
+  .diagnosis-center > :deep(.report-shell) { display:none !important; }
   * { -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
   .diagnosis-center { display:block; background:#fff; }
   .diagnosis-sidebar,.diagnosis-topbar,.quick-audit-bar,.scan-panel,.preflight-grid,.topbar-actions,.issue-filters,.action-empty button,.history-modal-backdrop { display:none !important; }

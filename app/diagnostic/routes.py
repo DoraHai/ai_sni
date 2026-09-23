@@ -255,13 +255,13 @@ def _payload(run: GeoAuditRun) -> dict[str, Any]:
         "page_description": run.page_description,
         "snapshot": run.snapshot or {},
         "findings": findings,
-        "problems": [item for item in findings if not item.get("passed")],
+        "problems": [item for item in findings if item.get("passed") is False],
         "advice": run.advice or [],
         "advice_source": run.advice_source,
         "json_ld": run.json_ld,
         "llms_text": run.llms_text,
         "ai_enabled": ai_enabled(),
-        "rule_version": RULE_VERSION,
+        "rule_version": (run.snapshot or {}).get("rule_version"),
         "created_at": run.created_at.isoformat() if run.created_at else None,
         "updated_at": run.updated_at.isoformat() if run.updated_at else None,
     }
@@ -304,7 +304,7 @@ def _preview_payload(result: dict[str, Any], tenant_id: int) -> dict[str, Any]:
             "data_scope": "public_website_only",
         },
         "findings": findings,
-        "problems": [item for item in findings if not item.get("passed")],
+        "problems": [item for item in findings if item.get("passed") is False],
         "advice": [],
         "advice_source": "",
         "json_ld": "",
@@ -367,6 +367,7 @@ async def create_audit(
         page_description=result["description"],
         snapshot={
             **result["snapshot"],
+            "rule_version": result.get("rule_version", RULE_VERSION),
             "brand_profile": {
                 "name": brand_profile["name"],
                 "website": brand_profile["website"],
