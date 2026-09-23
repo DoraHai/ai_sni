@@ -11,6 +11,9 @@ const { descriptor } = parse(source)
 let code = compileScript(descriptor, { id:'diagnostic-report-test', inlineTemplate:true }).content
 code = code.replaceAll('from "vue"', `from '${import.meta.resolve('vue')}'`).replaceAll("from 'vue'", `from '${import.meta.resolve('vue')}'`)
 for (const file of ['diagnosticReportModel.js','diagnosticFindingState.js']) code = code.replaceAll(`'./${file}'`, `'${new URL(file, root)}'`)
+// Resolve the real logo in the standalone SSR harness (Vite handles this in production).
+const logo = readFileSync(new URL('../../assets/g-snipers-purple-logo.png', root)).toString('base64')
+code = code.replace("import brandLogo from '../../assets/g-snipers-purple-logo.png'", `const brandLogo = 'data:image/png;base64,${logo}'`)
 const { default: PrintReport } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
 const crawler = { code:'ai_crawlers', title:'主流 AI 爬虫未被整站拦截', category:'AI 可访问性', severity:'high', passed:null, status:'unavailable', deduction:0, evidence:'robots.txt 不可读，无法审计 AI 爬虫 UA' }
 const success = { code:'https', title:'HTTPS 安全访问', passed:true, status:'passed', weight:8, deduction:0, evidence:'https://example.com/' }

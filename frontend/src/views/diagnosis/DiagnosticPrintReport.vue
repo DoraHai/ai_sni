@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import brandLogo from '../../assets/g-snipers-purple-logo.png'
 import { reportModel, reportDate } from './diagnosticReportModel.js'
 import { statusLabel } from './diagnosticFindingState.js'
 const props = defineProps({ audit: { type: Object, required: true }, brand: Object, pageSpeed: Object })
@@ -9,20 +10,29 @@ const severity = value => ({ critical:'阻断', high:'高', medium:'中', low:'�
 
 <template>
   <article class="diagnostic-print-report" aria-label="网站诊断报告打印正文">
-    <header class="dp-masthead"><b>G-SNIPERS<span>获客狙击手</span></b><span>WEBSITE DIAGNOSTIC / 网站诊断</span></header>
+    <header class="dp-masthead">
+      <div class="dp-brand"><img :src="brandLogo" alt=""><div><b>获客狙击手</b><span>G-SNIPERS</span></div></div>
+      <div class="dp-edition">WEBSITE DIAGNOSTIC<span>网站基础与 AI 搜索准备度</span></div>
+    </header>
     <section class="dp-cover">
-      <p class="dp-eyebrow">{{ report.competitor ? '竞品公开网站分析' : 'SEO + GEO / 网站基础与 AI 搜索准备度' }}</p>
-      <h1>{{ report.name }}<br><span>网站诊断报告</span></h1>
+      <p class="dp-eyebrow">{{ report.competitor ? 'COMPETITIVE WEBSITE REVIEW / 竞品公开网站分析' : 'SEO + GEO / 网站诊断' }}</p>
+      <h1>{{ report.name }}<span>网站诊断报告</span></h1>
       <p class="dp-url">{{ report.website }}</p>
-      <div class="dp-meta"><span>检测时间<br><b>{{ report.date }}</b></span><span>检测范围<br><b>{{ report.scope }}</b></span><span>规则版本<br><b>{{ report.version }}</b></span></div>
+      <div class="dp-meta"><span>检测时间<b>{{ report.date }}</b></span><span>检测范围<b>{{ report.scope }}</b></span><span>规则版本<b>{{ report.version }}</b></span></div>
       <div class="dp-summary">
-        <div class="dp-score"><span>{{ report.legacy ? '历史记录评分' : '基础规则评分' }}</span><strong>{{ report.score ?? '—' }}<small v-if="report.score !== null">/100</small></strong><p>{{ report.scoreNote }}</p></div>
-        <div class="dp-conclusion"><h2>本次诊断摘要</h2><p>已评估 <b>{{ report.evaluated.length }}</b> 项规则，其中 <b>{{ report.passed }}</b> 项通过、<b>{{ report.failed.length }}</b> 项未通过，另有 <b>{{ report.unavailable.length }}</b> 项未检测。</p><p v-if="report.failed.length">建议优先核查 {{ report.high }} 项高优先级问题，并依据后文列出的证据完成修复和复检。</p><p v-else>当前已评估规则未发现明确失败项；未检测部分仍需补充验证。</p><p class="dp-muted">{{ report.competitor ? '仅分析竞品公开页面，不推断内部经营表现。' : '结果仅反映记录时间与本次抽样范围内的检测证据。' }}</p></div>
+        <div class="dp-score"><span>{{ report.legacy ? '历史记录评分' : '基础规则评分' }}</span><strong>{{ report.score ?? '—' }}<small v-if="report.score !== null">/ 100</small></strong><p>{{ report.legacy ? '保留原记录，建议复检' : report.score === null ? '暂无可用评分' : '基于本次已评估规则' }}</p></div>
+        <div class="dp-conclusion"><p class="dp-kicker">本次诊断摘要</p><h2>{{ report.high ? `${report.high} 项问题建议优先处理` : report.failed.length ? `${report.failed.length} 项规则有待完善` : report.evaluated.length ? '已评估规则均通过' : '检测信息尚待补全' }}</h2><p>本次评估 <b>{{ report.evaluated.length }}</b> 项规则，<b>{{ report.passed }}</b> 项通过，<b>{{ report.failed.length }}</b> 项未通过。</p><p class="dp-muted">{{ report.unavailable.length ? `另有 ${report.unavailable.length} 项未检测，需补充验证。` : '请结合后文证据核查检测结果。' }}</p></div>
       </div>
+      <p class="dp-score-note">{{ report.scoreNote }}</p>
       <div class="dp-statline"><span>规则通过率 <b>{{ report.passRate === null ? '未检测' : `${report.passRate}%` }}</b></span><span>高优先级问题 <b>{{ report.high }}</b></span><span>待补充检测 <b>{{ report.unavailable.length }}</b></span></div>
-      <h2 class="dp-section-title">阅读指引</h2>
-      <p>先阅读问题与优化建议，再核对检测明细。外部搜索指标和模型抽样单独列示；未获得结果的维度均标记为“未检测”。</p>
-      <p class="dp-note">通过率仅以已评估规则为分母。未检测既不通过也不失败，不计入本次评分扣分。全站抽样按首页 3、核心页 2、其他页 1 加权，未检测页面不进入对应规则的已评估分母。扣分表示规则评分变化，不表示流量或业务损失。</p>
+      <div class="dp-priorities">
+        <div class="dp-section-heading"><h2>优先行动</h2><span>按检测严重程度排序</span></div>
+        <div v-for="(item, index) in report.failed.slice(0, 3)" :key="item.code" class="dp-action">
+          <span class="dp-action-number">{{ String(index + 1).padStart(2, '0') }}</span><div><h3>{{ item.title }}</h3><p>{{ item.recommendation ? item.recommendation.slice(0, 90) + (item.recommendation.length > 90 ? '…' : '') : '核查对应页面证据，修复后重新检测。' }}</p></div><span class="dp-priority">{{ severity(item.severity) }}优先级</span>
+        </div>
+        <p v-if="!report.failed.length" class="dp-note">{{ report.unavailable.length ? '优先补齐未检测项，再复核网站更新后的表现。' : '当前已评估规则未发现明确失败项，建议网站更新后复检。' }}</p>
+      </div>
+      <div class="dp-guide"><b>报告导读</b><span>问题与建议 → 检测明细 → AI 品牌提及抽样 → 证据附录</span><p>本页为行动摘要，完整建议与检测证据见后文。{{ report.competitor ? '仅分析竞品公开页面，不推断内部经营表现。' : '结果仅反映检测时点与本次抽样范围。' }}</p></div>
     </section>
 
     <section class="dp-chapter">
@@ -70,6 +80,8 @@ const severity = value => ({ critical:'阻断', high:'高', medium:'中', low:'�
     <section class="dp-chapter dp-appendix">
       <p class="dp-eyebrow">EVIDENCE & SCOPE</p><h2 class="dp-chapter-title">证据附录与说明</h2>
       <template v-for="item in report.findings" :key="item.code"><div v-if="item.page_evidence?.length" class="dp-page-evidence"><h3>{{ item.title }} / 逐页证据</h3><p v-for="(page, index) in item.page_evidence" :key="index"><b>{{ statusLabel(page) }} · {{ page.title || page.url }}</b><br>{{ page.url }}<br>{{ page.evidence }}</p></div></template>
+      <h3 class="dp-section-title">评分口径与阅读说明</h3>
+      <p class="dp-note">通过率仅以已评估规则为分母。未检测既不通过也不失败，不计入本次评分扣分。全站抽样按首页 3、核心页 2、其他页 1 加权，未检测页面不进入对应规则的已评估分母。扣分表示规则评分变化，不表示流量或业务损失。</p>
       <h3 class="dp-section-title">页面结构与来源</h3>
       <p><b>页面标题</b> {{ audit.page_title || '未记录' }}</p>
       <p><b>Schema 类型</b> {{ report.snapshot.schema_types?.join('、') || '未记录' }}</p>
@@ -82,27 +94,30 @@ const severity = value => ({ critical:'阻断', high:'高', medium:'中', low:'�
 </template>
 
 <style scoped>
-.diagnostic-print-report { display:none; background:#fff; color:#22302f; font:10pt/1.65 "PingFang SC","Microsoft YaHei",sans-serif; text-align:left; }
+.diagnostic-print-report { --dp-purple:#7138bf; --dp-ink:#252033; --dp-muted:#777181; --dp-line:#e4dfeb; display:none; background:#fff; color:var(--dp-ink); font:9.5pt/1.7 "PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif; text-align:left; }
 .diagnostic-print-report * { box-sizing:border-box; }
-.dp-masthead { display:flex; align-items:center; justify-content:space-between; padding-bottom:5mm; border-bottom:1.5pt solid #244f49; font-size:8pt; letter-spacing:.08em; }
-.dp-masthead b { font-size:13pt; }.dp-masthead b span { margin-left:3mm; font-size:8pt; font-weight:400; letter-spacing:0; }
-.dp-eyebrow { margin:7mm 0 3mm; color:#28635b; font-size:8pt; font-weight:600; letter-spacing:.1em; }
-h1 { font:600 32pt/1.3 "Songti SC","SimSun",serif; margin:7mm 0 5mm; overflow-wrap:anywhere; }h1 span { font-size:25pt; font-weight:400; }
-.dp-url { color:#536562; overflow-wrap:anywhere; }.dp-meta { display:flex; gap:12mm; padding:5mm 0 7mm; color:#64706e; font-size:8pt; }.dp-meta b { color:#22302f; font-weight:500; }
-.dp-summary { display:grid; grid-template-columns:58mm 1fr; border-top:1pt solid #b9c9c5; border-bottom:1pt solid #b9c9c5; margin-top:2mm; }
-.dp-score { padding:6mm 6mm 6mm 0; }.dp-score>span { font-size:9pt; }.dp-score strong { display:block; font:500 48pt/1.15 Georgia,serif; margin:3mm 0; color:#244f49; }.dp-score small { font:10pt sans-serif; margin-left:2mm; }.dp-score p { font-size:8pt; color:#64706e; margin:0; }
-.dp-conclusion { border-left:1pt solid #dce3e1; padding:6mm 0 6mm 7mm; }.dp-conclusion h2 { font-size:14pt; margin:0 0 4mm; }
-p { margin:2.5mm 0; overflow-wrap:anywhere; }h3 { font-size:11pt; margin:3mm 0; }h2,h3 { break-after:avoid; }
-.dp-statline { display:flex; justify-content:space-between; padding:5mm 0; border-bottom:1pt solid #dce3e1; gap:5mm; }.dp-statline span { font-size:9pt; }.dp-statline b { margin-left:3mm; font-size:15pt; color:#244f49; }
-.dp-section-title { margin:7mm 0 3mm; font-size:13pt; }.dp-note { padding:4mm 5mm; border-left:2pt solid #86aaa2; background:#f3f6f5; font-size:9pt; color:#4b5d59; margin:5mm 0; }.dp-note h3 { margin-top:0; }
-.dp-chapter { margin-top:9mm; break-before:auto; }.dp-cover + .dp-chapter { break-before:page; }.dp-chapter>.dp-eyebrow,.dp-intro { break-after:avoid; }.dp-chapter-title { font:600 23pt/1.4 "Songti SC","SimSun",serif; margin:0 0 4mm; padding-bottom:4mm; border-bottom:1.5pt solid #244f49; }.dp-intro,.dp-muted { color:#64706e; font-size:9pt; }
-.dp-issue { padding:5mm 0; border-bottom:1pt solid #dce3e1; break-inside:avoid; }.dp-issue header { display:flex; align-items:baseline; gap:3mm; }.dp-issue h3 { margin:0; flex:1; }.dp-number { color:#28635b; font:600 16pt Georgia,serif; }.dp-issue header>span:last-child { color:#64706e; font-size:8pt; white-space:nowrap; }
-dl { display:grid; grid-template-columns:18mm 1fr; gap:2mm 3mm; margin:4mm 0 0; font-size:9pt; }dt { color:#64706e; }dd { margin:0; overflow-wrap:anywhere; }
-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:8.5pt; margin:4mm 0; }thead { display:table-header-group; }tr { break-inside:avoid; }th { text-align:left; background:#eef3f1; font-weight:600; }td,th { padding:2mm 2.5mm; border-bottom:1pt solid #dce3e1; vertical-align:top; overflow-wrap:anywhere; }td small { display:block; color:#64706e; font-size:7.5pt; margin-top:1mm; }.dp-passed { color:#28635b; }.dp-failed { color:#a34c35; }.dp-unavailable { color:#64706e; }
-.dp-data-panel { break-inside:avoid; }.dp-answer { margin-top:7mm; }.dp-answer header { break-inside:avoid; break-after:avoid; }.dp-answer h3 { font-size:12pt; }.dp-response { break-inside:avoid; white-space:pre-wrap; font-size:9pt; line-height:1.8; orphans:3; widows:3; }.dp-source { font-size:8pt; color:#64706e; overflow-wrap:anywhere; }.dp-page-evidence p { break-inside:avoid; font-size:8.5pt; }.dp-evidence-line { font-size:9pt; }.dp-end { display:flex; justify-content:space-between; border-top:1pt solid #244f49; margin-top:10mm; padding-top:4mm; font-size:8pt; color:#64706e; }
+.dp-masthead { display:flex; align-items:center; justify-content:space-between; padding-bottom:5mm; border-bottom:1pt solid var(--dp-line); }
+.dp-brand { display:flex; align-items:center; gap:2.5mm; }.dp-brand img { width:12mm; height:12mm; object-fit:contain; }.dp-brand b { display:block; font-size:13pt; letter-spacing:.04em; }.dp-brand span { display:block; color:var(--dp-muted); font-size:6.5pt; font-weight:700; letter-spacing:.18em; }
+.dp-edition { text-align:right; font-size:7pt; letter-spacing:.1em; color:var(--dp-muted); }.dp-edition span { display:block; font-size:8pt; margin-top:1mm; letter-spacing:.04em; }
+.dp-eyebrow { margin:7mm 0 3mm; color:var(--dp-purple); font-size:7.5pt; font-weight:700; letter-spacing:.12em; }
+h1 { font-size:30pt; line-height:1.35; font-weight:700; letter-spacing:-.03em; margin:5mm 0 3mm; overflow-wrap:anywhere; }h1 span { display:block; margin-top:1.5mm; font-size:23pt; font-weight:500; letter-spacing:.02em; }
+.dp-url { color:var(--dp-muted); font-size:8.5pt; overflow-wrap:anywhere; }.dp-meta { display:grid; grid-template-columns:1.6fr 1.2fr .7fr; gap:5mm; padding:4mm 0 5mm; color:var(--dp-muted); font-size:7pt; }.dp-meta b { display:block; color:var(--dp-ink); font-size:8.5pt; font-weight:500; margin-top:1mm; }
+.dp-summary { display:grid; grid-template-columns:53mm 1fr; background:#f6f2fc; border-top:2.5pt solid var(--dp-purple); }
+.dp-score { padding:5mm 6mm; }.dp-score>span { font-size:8pt; font-weight:600; color:#554265; }.dp-score strong { display:block; font-size:51pt; font-weight:650; letter-spacing:-.06em; line-height:1.1; margin:2mm 0; color:var(--dp-purple); font-variant-numeric:tabular-nums; }.dp-score small { font-size:10pt; font-weight:400; letter-spacing:0; margin-left:2mm; color:#81718f; }.dp-score p { font-size:7pt; color:var(--dp-muted); margin:0; }
+.dp-conclusion { padding:5mm 5mm 5mm 6mm; border-left:1pt solid #e7dff3; }.dp-kicker { font-size:6.5pt; color:var(--dp-purple); letter-spacing:.12em; margin:0 0 2mm; }.dp-conclusion h2 { font-size:15pt; margin:0 0 3mm; line-height:1.5; }.dp-conclusion p:not(.dp-kicker) { font-size:9pt; }.dp-score-note { color:var(--dp-muted); font-size:7pt; margin:2mm 0 0; line-height:1.65; }
+p { margin:2.5mm 0; overflow-wrap:anywhere; }h3 { font-size:10.5pt; margin:3mm 0; }h2,h3 { break-after:avoid; }
+.dp-statline { display:grid; grid-template-columns:repeat(3,1fr); padding:4mm 0; border-bottom:1pt solid var(--dp-line); gap:5mm; }.dp-statline span { font-size:8pt; color:var(--dp-muted); }.dp-statline span+span { border-left:1pt solid var(--dp-line); padding-left:5mm; }.dp-statline b { display:block; margin-top:1mm; font-size:19pt; font-weight:600; color:var(--dp-ink); line-height:1.35; }
+.dp-section-heading { display:flex; align-items:baseline; justify-content:space-between; margin:6mm 0 1mm; }.dp-section-heading h2 { font-size:13pt; margin:0; }.dp-section-heading>span { font-size:7pt; color:var(--dp-muted); }
+.dp-action { display:flex; gap:3mm; padding:3mm 0; border-bottom:.6pt solid var(--dp-line); break-inside:avoid; }.dp-action-number { color:var(--dp-purple); font-size:12pt; font-weight:600; padding-top:.5mm; }.dp-action>div { flex:1; min-width:0; }.dp-action h3 { margin:0 0 1mm; font-size:9.5pt; }.dp-action p { margin:0; color:var(--dp-muted); font-size:7.5pt; line-height:1.65; }.dp-priority { font-size:7pt; color:var(--dp-purple); white-space:nowrap; padding-top:1mm; }
+.dp-guide { margin-top:5mm; border-left:2pt solid var(--dp-purple); padding-left:3mm; font-size:7pt; color:var(--dp-muted); }.dp-guide b { color:var(--dp-ink); margin-right:3mm; }.dp-guide p { margin:1mm 0 0; }
+.dp-section-title { margin:6mm 0 3mm; font-size:12pt; }.dp-note { padding:3.5mm 4mm; border-left:2pt solid #bea5df; background:#f7f5fa; font-size:8pt; color:#696071; margin:4mm 0; }.dp-note h3 { margin-top:0; }
+.dp-chapter { margin-top:3mm; break-before:page; }.dp-cover + .dp-chapter { break-before:page; }.dp-chapter>.dp-eyebrow,.dp-intro { break-after:avoid; }.dp-chapter-title { font-size:21pt; font-weight:600; line-height:1.4; margin:0 0 3mm; padding-bottom:4mm; border-bottom:1.5pt solid var(--dp-purple); }.dp-intro,.dp-muted { color:var(--dp-muted); font-size:8.5pt; }
+.dp-issue { padding:5mm 0; border-bottom:1pt solid var(--dp-line); break-inside:avoid; }.dp-issue header { display:flex; align-items:baseline; gap:3mm; }.dp-issue h3 { margin:0; flex:1; }.dp-number { color:var(--dp-purple); font-size:15pt; font-weight:600; }.dp-issue header>span:last-child { color:var(--dp-muted); font-size:7.5pt; white-space:nowrap; }
+dl { display:grid; grid-template-columns:18mm 1fr; gap:2mm 3mm; margin:4mm 0 0; font-size:8.5pt; }dt { color:var(--dp-muted); }dd { margin:0; overflow-wrap:anywhere; }
+table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:8pt; margin:4mm 0; }thead { display:table-header-group; }tr { break-inside:avoid; }th { text-align:left; background:#f1edf7; color:#554265; font-weight:600; }td,th { padding:2.5mm; border-bottom:.7pt solid var(--dp-line); vertical-align:top; overflow-wrap:anywhere; }td small { display:block; color:var(--dp-muted); font-size:7pt; margin-top:1mm; }.dp-passed { color:#43725b; }.dp-failed { color:#a24e42; }.dp-unavailable { color:var(--dp-muted); }
+.dp-data-panel { break-inside:avoid; }.dp-answer { margin-top:7mm; }.dp-answer header { break-inside:avoid; break-after:avoid; }.dp-answer h3 { font-size:11pt; }.dp-response { break-inside:avoid; white-space:pre-wrap; font-size:9pt; line-height:1.85; orphans:3; widows:3; }.dp-source { font-size:7.5pt; color:var(--dp-muted); overflow-wrap:anywhere; }.dp-page-evidence p { break-inside:avoid; font-size:8pt; }.dp-evidence-line { font-size:8.5pt; }.dp-end { display:flex; justify-content:space-between; border-top:1pt solid var(--dp-purple); margin-top:8mm; padding-top:3mm; font-size:7.5pt; color:var(--dp-muted); }
 @media print {
-  .diagnostic-print-report { display:block!important; width:100%; }
-  .diagnostic-print-report { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-  @page { size:A4 portrait; margin:16mm 15mm 18mm; @bottom-left { content:"G-SNIPERS · 网站诊断报告"; font:8pt sans-serif; color:#64706e; } @bottom-right { content:counter(page) " / " counter(pages); font:8pt sans-serif; color:#64706e; } }
+  .diagnostic-print-report { display:block!important; width:100%; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  @page { size:A4 portrait; margin:14mm 15mm 17mm; @top-left { content:""; } @top-center { content:""; } @top-right { content:""; } @bottom-left { content:"G-SNIPERS  /  网站诊断报告"; font:7pt "PingFang SC",sans-serif; color:#81778e; } @bottom-center { content:""; } @bottom-right { content:counter(page) " / " counter(pages); font:7pt sans-serif; color:#81778e; } }
 }
 </style>
