@@ -15,6 +15,7 @@ import DiagnosisAssetsView from './DiagnosisAssetsView.vue'
 import FreeDiagnosisFlow from './flow/FreeDiagnosisFlow.vue'
 import ReportShell from './ReportShell.vue'
 import DiagnosticPrintReport from './DiagnosticPrintReport.vue'
+import { reportModel } from './diagnosticReportModel.js'
 import { normalizeFindings, isEvaluated, legacyScoreNote } from './diagnosticFindingState'
 import { useFreeDiagnosisFlow } from './useFreeDiagnosisFlow'
 
@@ -32,6 +33,7 @@ const auditScope = ref('single')
 const audit = ref(null)
 const pageSpeed = ref(null)
 const pageSpeedLoading = ref(false)
+const seoReport = computed(() => reportModel(audit.value || {}, {}, pageSpeed.value).seo)
 const loading = ref(false)
 const tenantLoading = ref(false)
 const adviceLoading = ref(false)
@@ -240,23 +242,6 @@ const whoisMetric = computed(() => audit.value?.snapshot?.external_metrics?.whoi
   expiration_date: null,
   registrar: null,
   reason: 'Whois 查询接口待配置',
-})
-const seoDomainAgeLabel = computed(() => Number.isFinite(Number(whoisMetric.value.domain_age_years))
-  ? `${Number(whoisMetric.value.domain_age_years)}年`
-  : '待接入')
-const seoDomainAssetSummary = computed(() => {
-  if (whoisMetric.value.status !== 'available') return whoisMetric.value.reason
-  const created = String(whoisMetric.value.creation_date || '').slice(0, 10)
-  const expires = String(whoisMetric.value.expiration_date || '').slice(0, 10)
-  if (created && expires) return `注册 ${created} · 到期 ${expires}`
-  if (created) return `注册于 ${created}`
-  return whoisMetric.value.registrar || '域名资产信息已获取'
-})
-const seoPcKeywordCount = computed(() => baiduPcKeywordsMetric.value.total)
-const seoMobileKeywordCount = computed(() => baiduMobileKeywordsMetric.value.total)
-const seoKeywordTotal = computed(() => {
-  const values = [seoPcKeywordCount.value, seoMobileKeywordCount.value].filter((item) => Number.isFinite(Number(item)))
-  return values.length ? values.reduce((sum, item) => sum + Number(item), 0) : null
 })
 const seoPcWeight = computed(() => comprehensiveWeightMetric.value.baidu_pc?.weight ?? null)
 const seoMobileWeight = computed(() => comprehensiveWeightMetric.value.baidu_mobile?.weight ?? null)
@@ -1106,10 +1091,8 @@ onMounted(async () => {
               <p v-if="audit.score < 100">距离优秀还有 <b>{{ 100 - audit.score }} 分</b>提升空间</p>
               <p v-else>当前已达到满分基准</p>
               <div class="overview-capability-composition" aria-label="AI 搜索准备度能力组成">
-                <div><span>SEO 基础能力</span><strong>68<small>/100</small></strong><i><b style="width:68%" /></i></div>
-                <div><span>GEO 理解能力</span><strong>55<small>/100</small></strong><i><b style="width:55%" /></i></div>
-                <div><span>AI 引用准备度</span><strong>40<small>/100</small></strong><i><b style="width:40%" /></i></div>
-                <p>SEO 是 AI 搜索能力的一部分，但不是最终结果。</p>
+                <div v-for="label in ['SEO 基础能力', 'GEO 理解能力', 'AI 引用准备度']" :key="label"><span>{{ label }}</span><strong>未检测</strong><i /></div>
+                <p>三个分项暂无独立综合评分；总分基于本次基础规则。</p>
               </div>
             </div>
             <div class="conclusion-copy">
@@ -1417,28 +1400,20 @@ onMounted(async () => {
               <div class="seo-score-column">
                 <span>SEO HEALTH SCORE</span>
                 <small>SEO 健康度</small>
-                <div class="seo-parent-score"><strong>68</strong><b>/100</b></div>
-                <em>基础良好</em>
-                <p>衡量搜索引擎发现、索引和呈现网站内容的基础能力。</p>
+                <div class="seo-parent-score"><strong class="seo-score-missing">{{ seoReport.scoreText }}</strong></div>
+                <em>{{ seoReport.scoreLabel }}</em>
+                <p>{{ seoReport.scoreNote }}</p>
               </div>
 
               <div class="seo-overview-copy">
                 <span class="seo-overview-kicker">SEO 健康总览</span>
-                <h3>网站已经具备基础搜索能力，<br><b>但关键词覆盖、索引质量和访问体验仍有提升空间。</b></h3>
-                <p>当前官网能够被搜索引擎发现，但搜索曝光仍偏向品牌词。下一阶段应提升产品与行业需求覆盖，并核查索引质量和真实访问体验。</p>
-                <div class="seo-overview-status">
-                  <span><i /> 基础可访问</span>
-                  <span><i /> 百度索引规模充足</span>
-                  <span class="attention"><i /> 产品词覆盖待提升</span>
-                </div>
+                <h3>{{ seoReport.headline[0] }}<br><b>{{ seoReport.headline[1] }}</b></h3>
+                <p>{{ seoReport.description }}</p>
+                <div class="seo-overview-status"><span v-for="tag in seoReport.tags" :key="tag"><i /> {{ tag }}</span></div>
               </div>
 
               <div class="seo-fact-grid" aria-label="SEO 总览数据">
-                <article><span>百度索引</span><strong>{{ formatCompactMetric(baiduIndexMetric.site_count) }}</strong><b>{{ baiduIndexMetric.status === 'available' ? '搜索引擎发现页面规模' : baiduIndexMetric.reason }}</b></article>
-                <article><span>PC 关键词</span><strong>{{ formatCompactMetric(seoPcKeywordCount) }}</strong><b>{{ baiduPcKeywordsMetric.status === 'available' ? '桌面搜索覆盖' : baiduPcKeywordsMetric.reason }}</b></article>
-                <article><span>移动关键词</span><strong>{{ formatCompactMetric(seoMobileKeywordCount) }}</strong><b>{{ baiduMobileKeywordsMetric.status === 'available' ? '移动搜索覆盖' : baiduMobileKeywordsMetric.reason }}</b></article>
-                <article class="weight"><span>百度综合权重</span><strong>{{ seoPcWeight ?? '—' }} / {{ seoMobileWeight ?? '—' }}<small>PC / 移动</small></strong><b>预估流量 {{ seoTrafficLabel }}</b></article>
-                <article :class="{ pending: whoisMetric.status !== 'available' }"><span>网站年龄</span><strong class="word-value">{{ seoDomainAgeLabel }}</strong><b>{{ seoDomainAssetSummary }}</b></article>
+                <article v-for="fact in seoReport.facts" :key="fact.label" :class="{ weight: fact.unit, pending: fact.value === '未检测' }"><span>{{ fact.label }}</span><strong :class="{ 'word-value': fact.label === '网站年龄' }">{{ fact.value }}<small v-if="fact.unit">{{ fact.unit }}</small></strong><b>{{ fact.note }}</b></article>
               </div>
             </section>
 
@@ -1448,19 +1423,19 @@ onMounted(async () => {
                 <article class="index">
                   <div class="seo-metric-icon">⌕</div>
                   <span>搜索引擎索引规模</span>
-                  <strong>{{ formatCompactMetric(baiduIndexMetric.site_count) }}<small>页面</small></strong>
+                  <strong>{{ seoReport.facts[0].value }}<small>页面</small></strong>
                   <p>索引数量代表搜索引擎发现页面规模，不代表有效商业页面数量。</p>
                   <small class="seo-source-note">{{ metricSourceLabel(baiduIndexMetric, 'BD 收录量接口') }}</small>
-                  <i><b style="width:88%" /></i>
+                  <i></i>
                 </article>
                 <article class="keyword">
                   <div class="seo-metric-icon">K</div>
                   <span>关键词覆盖</span>
-                  <strong>{{ formatCompactMetric(seoKeywordTotal) }}<small>PC/移动合计</small></strong>
-                  <div class="seo-mini-breakdown"><span>PC 关键词 <b>{{ formatCompactMetric(seoPcKeywordCount) }}</b></span><span>移动关键词 <b>{{ formatCompactMetric(seoMobileKeywordCount) }}</b></span><span>样本词 <b>{{ (baiduPcKeywordsMetric.sample_count || 0) + (baiduMobileKeywordsMetric.sample_count || 0) }}</b></span></div>
+                  <strong>{{ seoReport.keywordTotal }}<small>PC/移动合计</small></strong>
+                  <div class="seo-mini-breakdown"><span>PC 关键词 <b>{{ seoReport.facts[1].value }}</b></span><span>移动关键词 <b>{{ seoReport.facts[2].value }}</b></span><span>样本词 <b>{{ seoReport.sampleCount }}</b></span></div>
                   <p>关键词总量来自两个终端接口；样本词用于后续分析品牌词、产品词与行业词结构。</p>
                   <small class="seo-source-note">{{ metricSourceLabel(baiduPcKeywordsMetric, 'PC 关键词接口') }} · {{ metricSourceLabel(baiduMobileKeywordsMetric, '移动关键词接口') }}</small>
-                  <i><b style="width:46%" /></i>
+                  <i></i>
                 </article>
                 <article class="weight">
                   <div class="seo-metric-icon">W</div>
@@ -1472,7 +1447,7 @@ onMounted(async () => {
                   <div class="seo-weight-traffic"><span>百度预估流量</span><b>{{ seoTrafficLabel }}</b></div>
                   <p>综合观察网站在百度 PC 与移动搜索中的关键词覆盖和预估流量表现。</p>
                   <small class="seo-source-note">{{ metricSourceLabel(comprehensiveWeightMetric, '综合权重接口') }}</small>
-                  <i><b style="width:30%" /></i>
+                  <i></i>
                 </article>
                 <article class="technical website-experience">
                   <div class="seo-metric-icon">✓</div>
@@ -1492,28 +1467,28 @@ onMounted(async () => {
 
             <section class="seo-analysis-grid">
               <article class="seo-insight-card index-quality">
-                <header><div><span>INDEX QUALITY</span><h3>索引质量分析</h3></div><b>需要关注</b></header>
+                <header><div><span>INDEX QUALITY</span><h3>索引质量分析</h3></div><b>待补充数据</b></header>
                 <div class="seo-index-compare" aria-label="索引规模与实际页面对比">
-                  <div><span>百度索引</span><strong>{{ formatCompactMetric(baiduIndexMetric.site_count) }}</strong><i><b style="width:100%" /></i></div>
-                  <div><span>网站实际页面</span><strong>3,588</strong><i><b style="width:18%" /></i></div>
+                  <div><span>百度索引</span><strong>{{ seoReport.facts[0].value }}</strong><i></i></div>
+                  <div><span>网站实际页面总量</span><strong>未检测</strong><i></i></div>
                 </div>
                 <dl>
-                  <div><dt>分析</dt><dd>检测到索引规模明显高于实际内容规模。</dd></div>
+                  <div><dt>分析</dt><dd>{{ seoReport.indexAnalysis }}</dd></div>
                   <div class="risk"><dt>可能存在风险</dt><dd><span class="seo-risk-list">参数页面 · 重复 URL · 历史页面 · 低价值索引</span></dd></div>
                   <div class="advice"><dt>优化建议</dt><dd>集中搜索权重到核心产品页面和解决方案页面。</dd></div>
                 </dl>
               </article>
 
               <article class="seo-insight-card keyword-opportunity">
-                <header><div><span>KEYWORD OPPORTUNITY</span><h3>关键词机会分析</h3></div><b>增长机会</b></header>
+                <header><div><span>KEYWORD OPPORTUNITY</span><h3>关键词机会分析</h3></div><b>待补充数据</b></header>
                 <div class="keyword-balance" aria-label="关键词结构分析">
-                  <span>品牌词覆盖 <b>72%</b></span><i><b style="width:72%" /></i>
-                  <span>产品词覆盖 <b>28%</b></span><i><b style="width:28%" /></i>
-                  <span>行业词覆盖 <b>待提升</b></span><i><b style="width:2%" /></i>
+                  <span>品牌词覆盖 <b>未检测</b></span><i></i>
+                  <span>产品词覆盖 <b>未检测</b></span><i></i>
+                  <span>行业词覆盖 <b>未检测</b></span><i></i>
                 </div>
                 <dl>
-                  <div><dt>诊断</dt><dd>当前网站搜索流量主要依赖品牌认知。</dd></div>
-                  <div class="risk"><dt>分析</dt><dd>当前搜索曝光主要依赖品牌词，产品和行业关键词覆盖不足。</dd></div>
+                  <div><dt>诊断</dt><dd>{{ seoReport.keywordAnalysis }}</dd></div>
+                  <div class="risk"><dt>分析</dt><dd>取得关键词样本并完成分类后，再判断覆盖机会。</dd></div>
                   <div class="advice"><dt>优化建议</dt><dd><span class="seo-opportunity-list">产品页面 · 行业解决方案 · 应用案例 · 专业知识内容</span></dd></div>
                 </dl>
               </article>
@@ -2718,10 +2693,13 @@ button { color: inherit; }
   .report-meta { margin-top:0; }
   .site-coverage-panel,.capability-panel,.diagnostic-section,.issues-panel,.action-panel,.ai-sample-panel,.summary-grid article { break-inside:avoid; box-shadow:none; }
 }
+.seo-parent-score .seo-score-missing { font-size:42px; }
 </style>
 
-<style scoped src="./report-shell-layout.css"></style>
-<style scoped src="./report-motion.css"></style>
+<style scoped src="./report-shell-layout.css">.seo-parent-score .seo-score-missing { font-size:42px; }
+</style>
+<style scoped src="./report-motion.css">.seo-parent-score .seo-score-missing { font-size:42px; }
+</style>
 
 <style>
 @media print {
@@ -2733,4 +2711,5 @@ button { color: inherit; }
     display:none !important;
   }
 }
+.seo-parent-score .seo-score-missing { font-size:42px; }
 </style>

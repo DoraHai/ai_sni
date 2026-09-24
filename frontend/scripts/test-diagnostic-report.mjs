@@ -106,4 +106,22 @@ await test('未知维度和真实零值分别输出，不伪造雷达或综合�
   const zero=slideReportModel({...base,findings:[{...failed,category:'技术基础',weight:8,deduction:8}]})
   assert.equal(zero.dimensions[0].score,0)
 })
+await test('SEO 共用模型区分缺失、真实零值和部分接入，并保留五卡顺序', async () => {
+  const missing = reportModel(base).seo
+  assert.equal(missing.score,null)
+  assert.deepEqual(missing.facts.map(f=>f.label),['百度索引','PC 关键词','移动关键词','百度综合权重','网站年龄'])
+  assert.equal(missing.facts[4].value,'未检测')
+  assert.equal(missing.keywordTotal,'未检测')
+  const snapshot = {external_metrics:{baidu_index:{status:'available',site_count:0},baidu_pc_keywords:{status:'available',total:10},baidu_mobile_keywords:{status:'unavailable',total:90},comprehensive_weight:{status:'available',baidu_pc:{weight:0},baidu_mobile:{weight:2}},whois:{status:'available',domain_age_years:0}}}
+  const seo=reportModel({...base,snapshot}).seo
+  assert.equal(seo.facts[0].value,'0'); assert.equal(seo.facts[1].value,'10')
+  assert.equal(seo.facts[2].value,'未检测'); assert.equal(seo.keywordTotal,'未检测')
+  assert.equal(seo.facts[3].value,'0 / 2'); assert.equal(seo.facts[4].value,'0年')
+  const html=await renderToString(createSSRApp(PrintReport,{audit:{...base,snapshot}}))
+  assert.ok(html.includes('0 / 2'));assert.ok(html.includes('0年'))
+  const screen=readFileSync(new URL('DiagnosisCenterView.vue',root),'utf8')
+  const section=screen.slice(screen.indexOf('<section id="section-seo"'),screen.indexOf('<details class="seo-technical-details">'))
+  assert.ok(section.includes('seoReport.facts'));assert.ok(section.includes('seoReport.headline'))
+  assert.ok(!/3,588|72%|28%|<strong>68<|百度索引规模充足|当前网站搜索流量主要依赖品牌认知/.test(section))
+})
 console.log(`${count} report test groups passed`)
