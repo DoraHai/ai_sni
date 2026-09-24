@@ -915,22 +915,32 @@ function finishPrint() {
 onMounted(() => { window.addEventListener('beforeprint', preparePrint); window.addEventListener('afterprint', finishPrint) })
 onBeforeUnmount(() => { window.removeEventListener('beforeprint', preparePrint); window.removeEventListener('afterprint', finishPrint) })
 
+let exportWaiting = false
 async function printReport() {
-  if (!audit.value) return
-  ElMessage.closeAll()
-  ElMessageBox.close()
-  await preparePrint()
-  const domain = (() => {
-    try { return new URL(audit.value.final_url || audit.value.url).hostname.replace(/^www\./, '') }
-    catch { return 'website' }
-  })()
-  const date = new Date(audit.value.created_at || Date.now()).toISOString().slice(0, 10)
-  document.title = `G-Snipers_${domain}_诊断报告_${date}`
-  await nextTick()
-  await document.fonts?.ready
-  const images = [...document.querySelectorAll('.diagnostic-print-report img')]
-  await Promise.all(images.map(image => image.decode?.().catch(() => {})))
-  window.print()
+  if (!audit.value || exportWaiting) return
+  exportWaiting = true
+  const pendingNotice = samplingLoading.value || pageSpeedLoading.value
+    ? ElMessage.info({ message: '正在等待 AI 抽样和性能检测完成，随后生成报告…', duration: 0 }) : null
+  try {
+    if (!await flow.waitForReportData()) return
+    ElMessage.closeAll()
+    ElMessageBox.close()
+    await preparePrint()
+    const domain = (() => {
+      try { return new URL(audit.value.final_url || audit.value.url).hostname.replace(/^www\./, '') }
+      catch { return 'website' }
+    })()
+    const date = new Date(audit.value.created_at || Date.now()).toISOString().slice(0, 10)
+    document.title = `G-Snipers_${domain}_诊断报告_${date}`
+    await nextTick()
+    await document.fonts?.ready
+    const images = [...document.querySelectorAll('.diagnostic-print-report img')]
+    await Promise.all(images.map(image => image.decode?.().catch(() => {})))
+    window.print()
+  } finally {
+    pendingNotice?.close()
+    exportWaiting = false
+  }
 }
 
 watch(tenantId, () => {

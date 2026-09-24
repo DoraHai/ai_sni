@@ -1,4 +1,4 @@
-import { computed, onScopeDispose, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onScopeDispose, reactive, ref, watch } from 'vue'
 import * as diagnosticApi from '../../api/diagnostic'
 import { brandDraft, mergeBrandProfile, missingBrandFields } from './brandProfileFields'
 import { initialWebsite, validWebsite } from './diagnosisWebsite'
@@ -132,6 +132,21 @@ export function useFreeDiagnosisFlow({ tenantId, audit, pageSpeed, brandProfile,
       if (current(g, tenant) && keyFor() === key && run === performanceRun) pageSpeedLoading.value = false
     }
   }
+  async function waitForReportData() {
+    const key = keyFor(), g = generation
+    // Flush the audit watcher which starts the supplemental requests.
+    await nextTick()
+    if (keyFor() !== key || g !== generation) return false
+    if (samplingLoading.value || pageSpeedLoading.value) {
+      await new Promise(resolve => {
+        const stop = watch(() => [samplingLoading.value, pageSpeedLoading.value, keyFor(), stage.value], () => {
+          if (keyFor() !== key || g !== generation || (!samplingLoading.value && !pageSpeedLoading.value)) { stop(); resolve() }
+        }, { flush: 'post' })
+      })
+    }
+    await nextTick()
+    return keyFor() === key && g === generation
+  }
   watch(() => [tenantId.value, audit.value?.id], ([tenant, id], old = []) => {
     if (!tenant || !id) return
     if (old[1] !== id) { sampleRun++; performanceRun++; samplingLoading.value = false; pageSpeedLoading.value = false }
@@ -143,7 +158,7 @@ export function useFreeDiagnosisFlow({ tenantId, audit, pageSpeed, brandProfile,
   })
   watch(tenantId, (next, previous) => { if (previous && next !== previous) reset() })
   onScopeDispose(() => { generation++; sampleRun++; performanceRun++ })
-  return { stage, website, error, draft, missing, editAll, statuses, errors, discover, manual, confirm, runAudit, sample, performance, reset, setField,
+  return { stage, website, error, draft, missing, editAll, statuses, errors, waitForReportData, discover, manual, confirm, runAudit, sample, performance, reset, setField,
     showReport:() => { if (audit.value) stage.value = 'report' },
   }
 }
