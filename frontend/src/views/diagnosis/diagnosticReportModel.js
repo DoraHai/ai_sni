@@ -9,7 +9,7 @@ export const reportDate = value => {
 export function reportModel(audit = {}, brand = {}, pageSpeed = null) {
   const snapshot = audit.snapshot || {}
   const competitor = snapshot.audit_mode === 'competitor'
-  const profile = snapshot.brand_profile || (competitor ? {} : brand)
+  const profile = snapshot.brand_profile || (competitor ? {} : brand) || {}
   const findings = normalizeFindings(audit.findings)
   const evaluated = findings.filter(isEvaluated)
   const failed = findings.filter(item => item.passed === false).sort((a,b) =>
@@ -30,7 +30,7 @@ export function reportModel(audit = {}, brand = {}, pageSpeed = null) {
     const metric = metrics[key] || {}
     const value = read(metric)
     return { label, value: metric.status === 'available' && finite(value) ? `${value}${unit}` : '未检测',
-      note: metric.reason || '未取得可用结果', source: metric.source_url || '', time: metric.queried_at }
+      note: metric.reason || (metric.status === 'available' ? '已取得检测结果' : '未取得可用结果'), source: metric.source_url || '', time: metric.queried_at }
   })
   const performance = pageSpeed || snapshot.pagespeed || {}
   const performanceRows = [

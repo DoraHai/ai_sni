@@ -65,7 +65,7 @@ await test('报告布局与流程保持不变，只允许三态修正和独立�
   const before=execFileSync('git',['show',`HEAD:${path}`],{encoding:'utf8'})
   const after=readFileSync(new URL('DiagnosisCenterView.vue',root),'utf8')
   const css=s=>s.slice(s.indexOf('<style scoped>'),s.indexOf('</style>'))
-  assert.equal(css(after),css(before).replace('  @page { size:A4 portrait; margin:12mm; }', '  @page { size:A4 portrait; margin:16mm 15mm 18mm; }\n  .diagnosis-center > :deep(.report-shell) { display:none !important; }'))
+  assert.equal(css(after),css(before).replace('  @page { size:A4 portrait; margin:16mm 15mm 18mm; }', '  @page { size:1280px 720px; margin:0; }').replace('  @page { size:A4 portrait; margin:12mm; }', '  @page { size:1280px 720px; margin:0; }\n  .diagnosis-center > :deep(.report-shell) { display:none !important; }'))
   const content=s=>s.slice(s.indexOf('<section class="flow-screen overview-screen">'),s.indexOf('\n        </template>\n      </div>')).replaceAll('v-show="printing || expandedEvidence === item.code"','v-if="expandedEvidence === item.code"')
   const expected = content(before)
     .replace(/                <small>关联 {{ item.count }} 项当前问题<\/small>\n                <button class="bridge-btn" :disabled="bridgeLoading" @click="bridgeToContent\(item.codes\[0\]\)">\n                  创建 GEO 优化文章 →\n                <\/button>\n/, '')

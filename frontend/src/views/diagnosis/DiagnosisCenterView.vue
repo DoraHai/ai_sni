@@ -927,6 +927,9 @@ async function printReport() {
   const date = new Date(audit.value.created_at || Date.now()).toISOString().slice(0, 10)
   document.title = `G-Snipers_${domain}_诊断报告_${date}`
   await nextTick()
+  await document.fonts?.ready
+  const images = [...document.querySelectorAll('.diagnostic-print-report img')]
+  await Promise.all(images.map(image => image.decode?.().catch(() => {})))
   window.print()
 }
 
@@ -2694,7 +2697,7 @@ button { color: inherit; }
 }
 
 @media print {
-  @page { size:A4 portrait; margin:16mm 15mm 18mm; }
+  @page { size:1280px 720px; margin:0; }
   .diagnosis-center > :deep(.report-shell) { display:none !important; }
   * { -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
   .diagnosis-center { display:block; background:#fff; }
