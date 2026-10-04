@@ -2,11 +2,36 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+import ast
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
+
+
+def test_editor_sanitizer_layout_and_source_parity():
+    from app.seo_distribution import sanitize_article_html, export_article_layout
+    source = (Path(__file__).parents[1] / 'frontend/src/views/seo/seoEditorHtml.js').read_text(encoding='utf-8')
+    backend = ast.parse((Path(__file__).parents[1] / 'app/seo_distribution.py').read_text(encoding='utf-8'))
+    sanitizer = next(node for node in backend.body if isinstance(node, ast.FunctionDef) and node.name == 'sanitize_article_html')
+    sets = {node.targets[0].id: ast.literal_eval(node.value) for node in ast.walk(sanitizer)
+            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Set)}
+    for frontend, python in [('allowedClasses', 'allowed_classes'), ('allowedAttributes', 'allowed_attributes'), ('allowedTags', 'allowed_tags')]:
+        tokens = set(re.findall(r"'([^']+)'", re.search(rf'{frontend} = new Set\(\[(.*?)\]\)', source).group(1)))
+        assert {token.lower() for token in tokens} == sets[python]
+    clean = sanitize_article_html('<!--Office--><span style="color:red" class="MsoNormal">x</span><table class="seo-table MsoTable"><tr><th colspan="20" rowspan="21">A</th><td colspan="0">B</td></tr></table><figure class="seo-figure seo-w-50 bad"><img src="data:image/png;base64,abc"></figure><p colspan="2">x</p>')
+    assert 'class="seo-table"' in clean
+    assert 'class="seo-figure seo-w-50"' in clean
+    assert 'colspan="20"' in clean
+    for forbidden in ['Mso', 'style=', '<span', '<!--', 'rowspan', 'colspan="0"', 'colspan="2"', 'data:']:
+        assert forbidden not in clean
+    for url in ['javascript:alert(1)', 'data:a', 'blob:a', '//evil.com', '/\\evil', '#image']:
+        assert 'src=' not in sanitize_article_html(f'<img src="{url}">')
+    exported = export_article_layout('<figure class="seo-figure seo-align-left seo-w-50" style="evil"><img src="/x.png"></figure>')
+    assert 'float:left' in exported and 'width:50%' in exported and 'evil' not in exported
+    assert 'style=' not in sanitize_article_html(exported)
 from sqlalchemy.exc import IntegrityError
 
 from app.api.seo import (

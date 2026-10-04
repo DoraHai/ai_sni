@@ -2,7 +2,11 @@
 // DIV is emitted by contenteditable when Enter creates a paragraph.
 const allowedTags = new Set(['P','DIV','H1','H2','H3','H4','H5','H6','A','IMG','UL','OL','LI','STRONG','B','EM','I','U','S','BLOCKQUOTE','PRE','CODE','BR','HR','TABLE','THEAD','TBODY','TR','TH','TD','FIGURE','FIGCAPTION'])
 const blockedTags = new Set(['SCRIPT','STYLE','IFRAME','OBJECT','EMBED','FORM','INPUT','BUTTON','LINK','META'])
-const allowedAttributes = new Set(['href','src','data-src','alt','title'])
+const allowedAttributes = new Set(['href','src','data-src','alt','title','class','colspan','rowspan'])
+export const allowedClasses = new Set(['seo-table','seo-figure','seo-align-left','seo-align-center','seo-align-right','seo-w-25','seo-w-50','seo-w-75','seo-w-100'])
+export function safeSeoUrl(value, image = false) {
+  return /^(https?:\/\/[^\s/]+|\/(?![/\\])|#)/i.test(value) && !/[\u0000-\u0020\u007f\\]/.test(value) && (!image || !value.startsWith('#'))
+}
 const handoffHeading = '页面整改交接单（AI 辅助，人工编辑，勿直接发布）'
 
 // Use before sending plain text to the HTML-capable content API. Escaping first
@@ -50,12 +54,22 @@ export function sanitizeSeoEditorHtml(value, doc = document) {
     for (const attribute of [...node.attributes]) {
       if (!allowedAttributes.has(attribute.name.toLowerCase())) node.removeAttribute(attribute.name)
     }
+    const classes = (node.getAttribute('class') || '').split(/\s+/).filter(token => allowedClasses.has(token))
+    if (classes.length) node.setAttribute('class', [...new Set(classes)].join(' '))
+    else node.removeAttribute('class')
+    for (const name of ['colspan', 'rowspan']) {
+      const value = node.getAttribute(name)
+      if (value !== null && (!['TH','TD'].includes(node.tagName) || !/^\d{1,2}$/.test(value) || Number(value) < 1 || Number(value) > 20)) node.removeAttribute(name)
+    }
     for (const name of ['href', 'src', 'data-src']) {
       const target = node.getAttribute(name)?.trim()
-      if (target && !/^(https?:|\/|#)/i.test(target)) node.removeAttribute(name)
+      if (target !== undefined && !safeSeoUrl(target, name !== 'href')) node.removeAttribute(name)
     }
   }
 
+  const comments = doc.createTreeWalker(template.content, 128)
+  const remove = []; while (comments.nextNode()) remove.push(comments.currentNode)
+  remove.forEach(node => node.remove())
   // Legacy handoffs may be top-level text appended after rich content. Only
   // convert their text nodes, never tags or whitespace inside rich blocks.
   const plainText = !template.content.querySelector('*')
@@ -69,4 +83,14 @@ export function sanitizeSeoEditorHtml(value, doc = document) {
   // An HTML serialization with entities but no tag would be mistaken for raw
   // text by the API on the next save. Keep the storage format unambiguous.
   return html && !html.includes('<') ? `<div>${html}</div>` : html
+}
+
+export function seoPasteHtml(html, text, doc = document) {
+  if (!html) return seoPlainTextHtml(text)
+  const template = doc.createElement('template')
+  template.innerHTML = sanitizeSeoEditorHtml(html, doc)
+  template.content.querySelectorAll('img').forEach(img => {
+    if (!/^https?:\/\//i.test(img.getAttribute('src') || '')) img.remove()
+  })
+  return template.innerHTML
 }
