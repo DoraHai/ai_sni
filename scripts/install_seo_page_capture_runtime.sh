@@ -48,16 +48,34 @@ run() {
   fi
 }
 
-if [[ "$dry_run" == true ]]; then
-  echo 'dry-run: check fonts-noto-cjk with dpkg-query; install with apt-get if absent'
-elif ! dpkg-query -W -f='${Status}' fonts-noto-cjk 2>/dev/null | grep -q 'install ok installed'; then
-  run apt-get update
-  run apt-get install -y fonts-noto-cjk
+# Debian/Ubuntu: apt fonts + Playwright's own dependency installer.
+# RHEL/CentOS Stream (the current SEO host): playwright install-deps only supports
+# apt, so install the Noto CJK font with dnf and verify browser libraries with ldd below.
+if command -v dpkg-query >/dev/null 2>&1; then
+  pkg_family=deb
+elif command -v rpm >/dev/null 2>&1; then
+  pkg_family=rpm
+else
+  echo 'Unsupported host: neither dpkg nor rpm found' >&2; exit 1
+fi
+if [[ "$pkg_family" == deb ]]; then
+  if [[ "$dry_run" == true ]]; then
+    echo 'dry-run: check fonts-noto-cjk with dpkg-query; install with apt-get if absent'
+  elif ! dpkg-query -W -f='${Status}' fonts-noto-cjk 2>/dev/null | grep -q 'install ok installed'; then
+    run apt-get update
+    run apt-get install -y fonts-noto-cjk
+  fi
+  run "$python_bin" -m playwright install-deps chromium
+else
+  if [[ "$dry_run" == true ]]; then
+    echo 'dry-run: rpm host; check google-noto-sans-cjk-ttc-fonts with rpm -q; install with dnf if absent'
+  elif ! rpm -q google-noto-sans-cjk-ttc-fonts >/dev/null 2>&1; then
+    run dnf install -y google-noto-sans-cjk-ttc-fonts
+  fi
 fi
 # System libraries need root; the browser itself goes into the service user's
 # own Playwright cache (~/.cache/ms-playwright), which is where the service
 # (systemd User=) looks for it. Installing it as root would put it in /root.
-run "$python_bin" -m playwright install-deps chromium
 service_home="$(getent passwd "$service_user" | cut -d: -f6 || true)"
 if [[ -z "$service_home" ]]; then
   [[ "$dry_run" == true ]] || { echo "No home directory for $service_user" >&2; exit 1; }
@@ -70,4 +88,12 @@ if [[ "$dry_run" == true ]]; then
 else
   service_group="$(id -gn "$service_user")"
   run install -d -o "$service_user" -g "$service_group" -m 750 -- "$storage_dir"
+fi
+if [[ "$pkg_family" == rpm && "$dry_run" != true ]]; then
+  missing="$(find "$service_home/.cache/ms-playwright" -maxdepth 3 -type f \( -name chrome-headless-shell -o -name chrome \) \
+    -exec ldd {} \; 2>/dev/null | awk '/not found/ {print $1}' | sort -u | tr '\n' ' ')"
+  if [[ -n "$missing" ]]; then
+    echo "Chromium shared libraries missing on this rpm host: $missing(install them with dnf, e.g. dnf install -y chromium)" >&2
+    exit 1
+  fi
 fi
