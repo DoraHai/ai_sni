@@ -24,4 +24,4 @@ apscheduler==3.10.4
 
 python-multipart==0.0.20
 pypdf==6.17.0
-playwright==1.55.0
+playwright==1.62.0
