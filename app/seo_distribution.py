@@ -375,6 +375,7 @@ def export_article_layout(value: str) -> str:
             styles.append("max-width:100%;height:auto")
             if tag.find_parent("figure"): styles.append("display:block;width:100%")
         if tag.name == "figcaption": styles.append("color:#64748b;font-size:12px;text-align:center")
+        if tag.name == "blockquote": styles.append("border-left:3px solid #cbd5e1;padding:8px 16px;background:#f8fafc;margin:16px 0;clear:both")
         if styles: tag["style"] = ";".join(styles)
     return str(soup)
 

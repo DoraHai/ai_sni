@@ -31,6 +31,7 @@ def test_editor_sanitizer_layout_and_source_parity():
         assert 'src=' not in sanitize_article_html(f'<img src="{url}">')
     exported = export_article_layout('<figure class="seo-figure seo-align-left seo-w-50" style="evil"><img src="/x.png"></figure>')
     assert 'float:left' in exported and 'width:50%' in exported and 'evil' not in exported
+    assert 'border-left:3px solid' in export_article_layout('<blockquote>引用</blockquote>')
     assert 'style=' not in sanitize_article_html(exported)
 from sqlalchemy.exc import IntegrityError
 
