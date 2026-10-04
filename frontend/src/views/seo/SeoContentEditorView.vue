@@ -142,19 +142,49 @@ function finishEditorComposition() {
 }
 
 // HTML snapshots cover native typing and custom DOM edits consistently, capped at 50.
+// Each snapshot keeps the caret as a text offset so undo/redo returns to the edit point.
 const history = [], future = []
 let historyCurrent = ''
+let historyCaret = 0
+function caretOffset() {
+  const selection = window.getSelection()
+  if (!editor.value || !selection?.rangeCount || !editor.value.contains(selection.anchorNode)) return null
+  const range = document.createRange(); range.selectNodeContents(editor.value)
+  range.setEnd(selection.anchorNode, selection.anchorOffset)
+  return range.toString().length
+}
+function restoreCaret(offset) {
+  const range = document.createRange()
+  const walker = document.createTreeWalker(editor.value, 4)
+  let remaining = offset ?? Infinity, node = null, placed = false
+  while ((node = walker.nextNode())) {
+    if (remaining <= node.textContent.length) { range.setStart(node, remaining); placed = true; break }
+    remaining -= node.textContent.length
+  }
+  if (!placed) { range.selectNodeContents(editor.value); range.collapse(false) }
+  range.collapse(true)
+  const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range)
+}
+// Chrome's execCommand copies computed styles into <span style> when pasting or
+// inserting HTML; the sanitizer would drop them on save, so drop them live too.
+function normalizeEditorDom() {
+  if (!editor.value) return
+  for (const node of editor.value.querySelectorAll('[style]')) node.removeAttribute('style')
+  for (const node of editor.value.querySelectorAll('span,font')) node.replaceWith(...node.childNodes)
+}
 const selectedCell = ref(null), selectedFigure = ref(null)
 function rememberDraft() {
   const html = editor.value?.innerHTML || ''
   if (historyCurrent !== null && html !== historyCurrent) {
-    history.push(historyCurrent); if (history.length > 50) history.shift()
+    history.push({ html: historyCurrent, caret: historyCaret }); if (history.length > 50) history.shift()
     future.length = 0
   }
   historyCurrent = html
+  historyCaret = caretOffset() ?? historyCaret
 }
 function editorSelection(event) {
-  const node = event?.target?.closest?.('img') || window.getSelection()?.anchorNode
+  const target = event?.target?.nodeType === 1 && editor.value?.contains(event.target) ? event.target : null
+  const node = target?.closest?.('img,td,th,figure') || window.getSelection()?.anchorNode
   const element = node?.nodeType === 1 ? node : node?.parentElement
   selectedCell.value = editor.value?.contains(element) ? element.closest('td,th') : null
   selectedFigure.value = editor.value?.contains(element) ? element.closest('figure') || element.closest('img') : null
@@ -164,12 +194,12 @@ function editorUndo(redo = false) {
   rememberDraft()
   const from = redo ? future : history, to = redo ? history : future
   if (!from.length) return
-  to.push(historyCurrent); historyCurrent = from.pop()
+  to.push({ html: historyCurrent, caret: caretOffset() ?? historyCaret })
+  const entry = from.pop(); historyCurrent = entry.html; historyCaret = entry.caret
   editor.value.innerHTML = historyCurrent; form.draft = historyCurrent
   selectedCell.value = null; selectedFigure.value = null
   editor.value.focus()
-  const range = document.createRange(); range.selectNodeContents(editor.value); range.collapse(false)
-  const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range)
+  restoreCaret(entry.caret)
 }
 function editorKeydown(event) {
   if ((event.ctrlKey || event.metaKey) && ['z','y'].includes(event.key.toLowerCase()) && !editorComposing.value) {
@@ -202,7 +232,17 @@ function insertTable() {
 }
 function tableAction(action) {
   if (workflowLocked.value || editorComposing.value) return
-  try { rememberDraft(); editSeoTable(selectedCell.value, action); syncDraft(); editorSelection() }
+  const cell = selectedCell.value, table = cell?.closest('table')
+  const rowIndex = cell?.closest('tr')?.rowIndex ?? 0, colIndex = cell?.cellIndex ?? 0
+  try {
+    rememberDraft(); editSeoTable(cell, action); syncDraft()
+    // Keep the caret in the table after deleting the current row/column so follow-up edits stay available.
+    const rows = table?.isConnected ? [...table.rows] : []
+    const row = rows[Math.min(rowIndex, rows.length - 1)]
+    const next = cell?.isConnected ? cell : row?.cells[Math.min(colIndex, row.cells.length - 1)]
+    if (next) { const range = document.createRange(); range.selectNodeContents(next); range.collapse(true); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range) }
+    selectedCell.value = next || null
+  }
   catch (e) { ElMessage.warning(e.message) }
 }
 function insertImage() {
@@ -242,6 +282,7 @@ function command(name, value = null) {
   rememberDraft()
   editor.value?.focus()
   document.execCommand(name, false, value)
+  normalizeEditorDom()
   syncDraft()
 }
 
