@@ -30,6 +30,7 @@ from app.seo_serp import canonical_url, domain_matches
 router = APIRouter()
 logger = logging.getLogger(__name__)
 _COOLDOWN = timedelta(seconds=60)
+_BEIJING = timezone(timedelta(hours=8))  # China has no DST; works without Windows tzdata.
 _INVALID_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
 
 
@@ -133,11 +134,12 @@ def _publication_url(value: str | None) -> str | None:
 
 
 def _capture_boundary(value: str, *, upper: bool) -> tuple[datetime, bool]:
-    """Date-only bounds are UTC calendar days; timestamps require an offset."""
+    """Date-only bounds are Asia/Shanghai calendar days; timestamps keep their offset."""
     try:
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
             day = date.fromisoformat(value)
-            return datetime.combine(day + timedelta(days=1) if upper else day, time.min, timezone.utc), upper
+            local = datetime.combine(day + timedelta(days=1) if upper else day, time.min, _BEIJING)
+            return local.astimezone(timezone.utc), upper
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         if parsed.tzinfo is None or parsed.utcoffset() is None:
             raise ValueError

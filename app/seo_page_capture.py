@@ -1,8 +1,7 @@
 """Opt-in SEO page screenshots. Call only after checking tenant/site ownership.
 
-Chromium uses a deliberately unavailable proxy. Every HTTP request is fulfilled
-through the crawler's pinned public-IP transport, including redirects and assets.
-The SEO deployment should additionally deny direct browser network egress.
+Chromium loads documents itself using a public-IP pinned host resolver. Unmapped
+hosts fail DNS; assets on them use the crawler's pinned transport.
 """
 
 from __future__ import annotations
@@ -23,10 +22,20 @@ from app.config import get_settings
 from app.seo_crawler import SeoCrawlError, pin_public_target, pinned_async_client
 
 _KEY = re.compile(r"[0-9a-f]{32}\.png\Z")
+_DNS_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 _PNG = b"\x89PNG\r\n\x1a\n"
 _REDIRECT = {301, 302, 303, 307, 308}
 _RETRYABLE = {429, 503}
 _MAX_SUBRESOURCE_RETRIES = 2
+_SECOND_LEVEL_SUFFIXES = frozenset({
+    "com.cn", "net.cn", "org.cn", "gov.cn", "edu.cn", "ac.cn", "co.uk",
+    "org.uk", "gov.uk", "ac.uk", "com.hk", "net.hk", "org.hk", "com.au",
+    "net.au", "org.au", "co.jp", "com.tw",
+})
+_VALIDATION_HOSTS = frozenset({"wappass.baidu.com"})
+_VALIDATION_PATH = re.compile(r"/(?:captcha|challenge|verify|verification|security-check)(?:/|$)", re.I)
+_CAPTCHA_MARKERS = ("安全验证", "人机验证", "滑动验证", "验证码", "captcha", "verify you are human", "verification required", "cloudflare challenge")
+_BLOCK_MARKERS = ("40362", "请求存在异常", "网络不给力", "access denied", "temporarily restricted")
 _BROWSER_CHANNELS = frozenset({
     "chrome", "chrome-beta", "chrome-dev", "chrome-canary",
     "msedge", "msedge-beta", "msedge-dev", "msedge-canary",
@@ -81,32 +90,96 @@ def capture_storage_path(directory: str, key: str) -> Path:
 
 
 def _check_url(url: str) -> None:
+    if re.search(r"[\x00-\x20\x7f]", url):
+        raise CaptureError("blocked_url")
     try:
         parts = urlsplit(url)
         _ = parts.port
         host = parts.hostname
     except ValueError as exc:
         raise CaptureError("blocked_url") from exc
-    if parts.scheme not in {"http", "https"} or not host or parts.username or parts.password:
+    if parts.scheme not in {"http", "https"} or not host or parts.username is not None or parts.password is not None:
         raise CaptureError("blocked_url")
-    if host.lower().rstrip(".") == "localhost" or host.lower().endswith((".local", ".internal")):
+    plain_host = host.lower().rstrip(".")
+    if plain_host == "localhost" or plain_host.endswith((".local", ".internal")):
         raise CaptureError("blocked_address")
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
+        try:
+            ascii_host = host.rstrip(".").encode("idna").decode("ascii").lower()
+        except UnicodeError as exc:
+            raise CaptureError("blocked_url") from exc
+        if len(ascii_host) > 253 or not all(_DNS_LABEL.fullmatch(label) for label in ascii_host.split(".")):
+            # Host resolver rules are command-line syntax. Never interpolate a
+            # hostname with spaces, commas, or other rule separators.
+            raise CaptureError("blocked_url")
         return
     if not address.is_global:
         raise CaptureError("blocked_address")
 
 
-async def _public(url: str) -> None:
+async def _public(url: str) -> str:
     _check_url(url)
     try:
-        async with pin_public_target(url):
-            pass
+        async with pin_public_target(url) as approved_ip:
+            return approved_ip
     except SeoCrawlError as exc:
-        code = "blocked_address" if "private" in str(exc).lower() or "local" in str(exc).lower() else "dns_error"
+        code = "blocked_address" if any(word in str(exc).lower() for word in ("private", "local", "reserved")) else "dns_error"
         raise CaptureError(code) from exc
+
+
+def _host(url: str) -> str:
+    host = (urlsplit(url).hostname or "").lower().rstrip(".")
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        return host.encode("idna").decode("ascii").lower()
+
+
+def _registrable_domain(url: str) -> str:
+    """Conservative eTLD+1 approximation; intentionally does not use live PSL data."""
+    host = _host(url)
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        labels = host.split(".")
+        count = 3 if ".".join(labels[-2:]) in _SECOND_LEVEL_SUFFIXES else 2
+        return ".".join(labels[-count:]) if len(labels) >= count else host
+
+
+def _blocked_page_code(source_url: str, final_url: str, status: int, info: dict) -> str | None:
+    """Inspect URL always; inspect text only on error, short pages, or short titles.
+
+    Long ordinary articles may discuss CAPTCHAs, so their body is never scanned.
+    """
+    host = _host(final_url)
+    path = urlsplit(final_url).path
+    if host in _VALIDATION_HOSTS or host.startswith("passport.") or ".passport." in host or _VALIDATION_PATH.search(path):
+        return "captcha_page"
+    if _registrable_domain(source_url) != _registrable_domain(final_url):
+        return "blocked_by_platform"
+    title = str(info.get("title") or "").strip().lower()
+    body = str(info.get("text") or "").strip().lower()
+    challenge = bool(info.get("challenge"))
+    inspect = (body if status in {403, 429} or len(body) <= 1200 else "")
+    if challenge:
+        return "captcha_page"
+    if len(title) <= 120 and (len(body) <= 2000 or status in {403, 429}) and any(marker in title for marker in _CAPTCHA_MARKERS):
+        return "captcha_page"
+    if any(marker in inspect for marker in _CAPTCHA_MARKERS):
+        return "captcha_page"
+    if len(title) <= 120 and (len(body) <= 2000 or status in {403, 429}) and any(marker in title for marker in _BLOCK_MARKERS):
+        return "blocked_by_platform"
+    if any(marker in inspect for marker in _BLOCK_MARKERS):
+        return "blocked_by_platform"
+    return None
+
+
+def _resolver_rules(hosts: dict[str, str]) -> str:
+    # Pin validated DNS answers. DNS rebinding cannot change Chromium's TCP peer.
+    rules = [f"MAP {host} {f'[{ip}]' if ':' in ip else ip}" for host, ip in sorted(hosts.items())]
+    return ", ".join([*rules, "MAP * ~NOTFOUND"])
 
 
 def _dimensions(png: bytes) -> tuple[int, int]:
@@ -147,11 +220,11 @@ class _CaptureState:
     redirect_chain: list[dict[str, str | int]] = field(default_factory=list)
     warnings: dict = field(default_factory=_empty_warnings)
     host_semaphores: dict[str, asyncio.Semaphore] = field(default_factory=dict)
-    document_url: str | None = None
-    document_status: int | None = None
-    document_headers: dict[str, str] = field(default_factory=dict)
-    document_body: bytes = b""
-    document_pending: bool = True
+    mapped_hosts: dict[str, str] = field(default_factory=dict)
+    native_responses: list = field(default_factory=list)
+    native_tasks: list[asyncio.Task] = field(default_factory=list)
+    native_request_ids: set[int] = field(default_factory=set)
+    fatal_error: CaptureError | None = None
 
     def warn(self, code: str, url: str | None = None) -> None:
         reason = _warning_reason(code)
@@ -192,21 +265,19 @@ class PageCaptureService:
         self.playwright_factory = playwright_factory
         self._semaphore = asyncio.Semaphore(self.settings.seo_page_capture_concurrency)
 
-    async def _fetch(self, url: str, headers: dict[str, str], state: _CaptureState,
-                     *, document: bool) -> tuple[str, int, dict[str, str], bytes]:
+    async def _fetch(self, url: str, headers: dict[str, str], state: _CaptureState
+                     ) -> tuple[str, int, dict[str, str], bytes]:
         settings = self.settings
         current = url
         for redirects in range(settings.seo_page_capture_max_redirects + 1):
             _check_url(current)
             host = urlsplit(current).hostname or ""
-            if not document:
-                semaphore = state.host_semaphores.setdefault(
-                    host.lower().rstrip("."), asyncio.Semaphore(settings.seo_page_capture_per_host_concurrency))
-            for attempt in range(1 if document else _MAX_SUBRESOURCE_RETRIES + 1):
+            semaphore = state.host_semaphores.setdefault(
+                host.lower().rstrip("."), asyncio.Semaphore(settings.seo_page_capture_per_host_concurrency))
+            for attempt in range(_MAX_SUBRESOURCE_RETRIES + 1):
                 retry_delay = None
                 try:
-                    if not document:
-                        await semaphore.acquire()
+                    await semaphore.acquire()
                     try:
                         state.traffic["requests"] += 1
                         if state.traffic["requests"] > settings.seo_page_capture_max_requests:
@@ -218,8 +289,6 @@ class PageCaptureService:
                                                            follow_redirects=False) as client:
                                 async with client.stream("GET", current, headers=headers) as response:
                                     status = response.status_code
-                                    if document:
-                                        state.redirect_chain.append({"url": current, "status_code": status})
                                     if status in _REDIRECT:
                                         location = response.headers.get("location")
                                         if not location:
@@ -230,11 +299,11 @@ class PageCaptureService:
                                             raise CaptureError("too_many_redirects", current, status)
                                         current = target
                                         break
-                                    if not document and status in _RETRYABLE:
+                                    if status in _RETRYABLE:
                                         if attempt == _MAX_SUBRESOURCE_RETRIES:
                                             raise CaptureError("rate_limited", current, status)
                                         retry_delay = _retry_delay(response.headers.get("retry-after"), attempt)
-                                    elif not document and status >= 400:
+                                    elif status >= 400:
                                         raise CaptureError("http_error", current, status)
                                     else:
                                         length = response.headers.get("content-length", "0")
@@ -253,8 +322,7 @@ class PageCaptureService:
                                                         if name.lower() in {"content-type", "cache-control"}}
                                         return current, status, safe_headers, b"".join(chunks)
                     finally:
-                        if not document:
-                            semaphore.release()
+                        semaphore.release()
                 except CaptureError:
                     raise
                 except Exception as exc:
@@ -267,18 +335,26 @@ class PageCaptureService:
         request = None
         try:
             request = route.request
-            if state.document_pending and request.url == state.document_url:
-                state.document_pending = False
-                await route.fulfill(status=state.document_status, headers=state.document_headers,
-                                    body=state.document_body)
-                return
+            _check_url(request.url)
             if request.method != "GET":
                 raise CaptureError("blocked_method")
+            if request.is_navigation_request():
+                if _host(request.url) not in state.mapped_hosts:
+                    raise CaptureError("blocked_address", request.url)
+                self._count_request(state, request.url)
+                state.native_request_ids.add(id(request))
+                await route.continue_()
+                return
             if state.traffic["bytes"] >= self.settings.seo_page_capture_max_total_bytes:
                 raise CaptureError("resources_too_large")
+            if _host(request.url) in state.mapped_hosts:
+                self._count_request(state, request.url)
+                state.native_request_ids.add(id(request))
+                await route.continue_()
+                return
             headers = {name: value for name, value in request.headers.items()
                        if name.lower() in {"accept", "accept-language", "user-agent", "range"}}
-            _final, status, safe_headers, body = await self._fetch(request.url, headers, state, document=False)
+            _final, status, safe_headers, body = await self._fetch(request.url, headers, state)
             await route.fulfill(status=status, headers=safe_headers, body=body)
         except asyncio.CancelledError:
             raise
@@ -286,6 +362,8 @@ class PageCaptureService:
             if _target_closed(exc):
                 return
             code = exc.code if isinstance(exc, CaptureError) else _fetch_error(exc)
+            if request is not None and request.is_navigation_request() and state.fatal_error is None:
+                state.fatal_error = exc if isinstance(exc, CaptureError) else CaptureError(code, request.url)
             state.warn(code, request.url if request is not None else None)
             try:
                 await route.abort()
@@ -293,15 +371,52 @@ class PageCaptureService:
                 if not _target_closed(closed):
                     raise
 
+    def _count_request(self, state: _CaptureState, url: str) -> None:
+        state.traffic["requests"] += 1
+        if state.traffic["requests"] > self.settings.seo_page_capture_max_requests:
+            raise CaptureError("too_many_requests", url)
+
+    async def _account_native_response(self, response, state: _CaptureState) -> None:
+        # Playwright exposes completed bodies rather than a bounded stream. The
+        # header is checked first; an absent/wrong length is only best effort.
+        try:
+            length = response.headers.get("content-length", "")
+            if length.isdigit() and int(length) > self.settings.seo_page_capture_max_response_bytes:
+                raise CaptureError("response_too_large", response.url, response.status)
+            body = await response.body()
+            size = len(body)
+            state.traffic["bytes"] += size
+            if size > self.settings.seo_page_capture_max_response_bytes:
+                raise CaptureError("response_too_large", response.url, response.status)
+            if state.traffic["bytes"] > self.settings.seo_page_capture_max_total_bytes:
+                raise CaptureError("resources_too_large", response.url, response.status)
+        except CaptureError as exc:
+            if response.request.is_navigation_request() or exc.code == "resources_too_large":
+                state.fatal_error = exc
+            else:
+                state.warn(exc.code, response.url)
+        except Exception:
+            # A navigation can be interrupted by a restart. Its response is
+            # still captured in the redirect chain below.
+            pass
+
+    async def _drain_native_tasks(self, state: _CaptureState) -> None:
+        while state.native_tasks:
+            tasks, state.native_tasks = state.native_tasks, []
+            await asyncio.gather(*tasks)
+        if state.fatal_error is not None:
+            raise state.fatal_error
+
     async def _render(self, url: str, state: _CaptureState) -> tuple[str, int, bytes, int, int]:
-        await _public(url)
+        _check_url(url)
+        state.mapped_hosts[_host(url)] = await _public(url)
         channel = self.settings.seo_page_capture_browser_channel
         executable_path = self.settings.seo_page_capture_executable_path
         if channel and channel not in _BROWSER_CHANNELS:
             raise CaptureError("invalid_browser_channel")
         if executable_path and not Path(executable_path).is_file():
             raise CaptureError("browser_executable_missing")
-        launch_options = {"headless": True, "proxy": {"server": "http://127.0.0.1:9"}}
+        launch_options = {"headless": True}
         if executable_path:
             launch_options["executable_path"] = executable_path
         elif channel:
@@ -314,70 +429,143 @@ class PageCaptureService:
                 raise CaptureError("playwright_not_installed") from exc
             factory = async_playwright
         async with factory() as playwright:
-            try:
-                browser = await playwright.chromium.launch(**launch_options)
-            except Exception as exc:
-                raise CaptureError("chromium_unavailable") from exc
-            try:
-                context = await browser.new_context(
-                    viewport={"width": self.settings.seo_page_capture_viewport_width,
-                              "height": self.settings.seo_page_capture_viewport_height},
-                    service_workers="block", accept_downloads=False)
+            current = url
+            while True:
+                # Chrome reads these rules at process launch. A newly approved
+                # redirect host therefore needs a new browser process.
+                options = {**launch_options, "args": [
+                    f"--host-resolver-rules={_resolver_rules(state.mapped_hosts)}",
+                    "--no-proxy-server", "--disable-quic",
+                    "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+                ]}
                 try:
-                    await context.route("**/*", lambda route: self._serve(route, state))
-                    await context.route_web_socket("**/*", lambda route: route.close())
-                    page = await context.new_page()
-                    user_agent = await page.evaluate("() => navigator.userAgent")
-                    document_headers = {"accept": "text/html,application/xhtml+xml"}
-                    if isinstance(user_agent, str):
-                        document_headers["user-agent"] = user_agent
-                    final_url, http_status, headers, body = await self._fetch(
-                        url, document_headers, state, document=True)
-                    state.document_url, state.document_status = final_url, http_status
-                    state.document_headers, state.document_body = headers, body
-                    if http_status >= 400:
-                        raise CaptureError("http_error", final_url, http_status)
+                    browser = await playwright.chromium.launch(**options)
+                except Exception as exc:
+                    raise CaptureError("chromium_unavailable") from exc
+                try:
+                    context = await browser.new_context(
+                        viewport={"width": self.settings.seo_page_capture_viewport_width,
+                                  "height": self.settings.seo_page_capture_viewport_height},
+                        service_workers="block", accept_downloads=False)
                     try:
-                        response = await page.goto(final_url, wait_until="domcontentloaded",
-                                                   timeout=self.settings.seo_page_capture_timeout_seconds * 1000)
-                    except Exception as exc:
-                        raise CaptureError(_fetch_error(exc), final_url) from exc
-                    if response is None:
-                        raise CaptureError("empty_response", final_url)
-                    if page.url != final_url:
-                        raise CaptureError("unexpected_navigation", page.url)
-                    if state.document_pending:
-                        raise CaptureError("empty_response", final_url)
-                    if response.status >= 400:
-                        raise CaptureError("http_error", final_url, response.status)
-                    await self._settle(page)
-                    info = await page.evaluate("""() => ({
-                        height: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0),
-                        text: (document.body?.innerText || '').trim(),
-                        password: !!document.querySelector('input[type=password]')
-                    })""")
-                    if info["password"]:
-                        raise CaptureError("login_wall", final_url, response.status)
-                    if "验证码" in info["text"] or "captcha" in info["text"].lower():
-                        raise CaptureError("captcha", final_url, response.status)
-                    if not info["text"]:
-                        raise CaptureError("blank_page", final_url, response.status)
-                    height = max(self.settings.seo_page_capture_viewport_height, int(info["height"]))
-                    if (height > self.settings.seo_page_capture_max_height or
-                            height * self.settings.seo_page_capture_viewport_width > self.settings.seo_page_capture_max_pixels):
-                        raise CaptureError("page_too_large", final_url, response.status)
-                    png = await page.screenshot(type="png", full_page=True, animations="disabled")
-                    if len(png) > self.settings.seo_page_capture_max_image_bytes:
-                        raise CaptureError("image_too_large")
-                    width, image_height = _dimensions(png)
-                    if width * image_height > self.settings.seo_page_capture_max_pixels:
-                        raise CaptureError("image_too_large")
-                    return final_url, response.status, png, width, image_height
+                        await context.route("**/*", lambda route: self._serve(route, state))
+                        await context.route_web_socket("**/*", lambda route: route.close())
+                        page = await context.new_page()
+                        responses = []
+                        failed_navigations = []
+
+                        def on_response(item):
+                            if (_host(item.url) in state.mapped_hosts and
+                                    id(item.request) not in state.native_request_ids):
+                                try:
+                                    self._count_request(state, item.url)
+                                except CaptureError as exc:
+                                    state.fatal_error = exc
+                                state.native_request_ids.add(id(item.request))
+                            if item.request.is_navigation_request() and item.request.frame == page.main_frame:
+                                responses.append(item)
+                                state.redirect_chain.append({"url": item.url, "status_code": item.status})
+                            if (item.request.is_navigation_request() or
+                                    id(item.request) in state.native_request_ids):
+                                state.native_tasks.append(asyncio.create_task(
+                                    self._account_native_response(item, state)))
+
+                        page.on("response", on_response)
+
+                        def on_requestfailed(request):
+                            if request.is_navigation_request() and request.frame == page.main_frame:
+                                failed_navigations.append(request.url)
+
+                        page.on("requestfailed", on_requestfailed)
+                        navigation_error = None
+                        try:
+                            response = await page.goto(current, wait_until="domcontentloaded",
+                                                       timeout=self.settings.seo_page_capture_timeout_seconds * 1000)
+                        except Exception as exc:
+                            response, navigation_error = None, exc
+                        await self._drain_native_tasks(state)
+                        last = responses[-1] if responses else None
+                        if len(state.redirect_chain) - 1 > self.settings.seo_page_capture_max_redirects:
+                            raise CaptureError("too_many_redirects", last.url if last else current,
+                                               last.status if last else None)
+                        # Playwright routes do not see redirect requests. DNS
+                        # fails on an unmapped target, but the 3xx Location is
+                        # observable; validate and pin it before retrying.
+                        target = None
+                        if response is None and last is not None and last.status in _REDIRECT:
+                            location = last.headers.get("location")
+                            if not location:
+                                raise CaptureError("invalid_redirect", last.url, last.status)
+                            target = urljoin(last.url, location)
+                        elif response is None and failed_navigations:
+                            target = failed_navigations[-1]
+                        if target is not None:
+                            if len(state.redirect_chain) > self.settings.seo_page_capture_max_redirects:
+                                raise CaptureError("too_many_redirects", last.url if last else current,
+                                                   last.status if last else None)
+                            _check_url(target)
+                            if _host(target) not in state.mapped_hosts:
+                                state.mapped_hosts[_host(target)] = await _public(target)
+                                current = target
+                                continue
+                        if response is None:
+                            raise CaptureError(_fetch_error(navigation_error) if navigation_error else "empty_response", current)
+                        final_url, http_status = page.url, response.status
+                        _check_url(final_url)
+                        if _host(final_url) not in state.mapped_hosts:
+                            raise CaptureError("blocked_address", final_url, http_status)
+                        await self._settle(page)
+                        await self._drain_native_tasks(state)
+                        if failed_navigations and _host(failed_navigations[-1]) not in state.mapped_hosts:
+                            target = failed_navigations[-1]
+                            if len(state.redirect_chain) > self.settings.seo_page_capture_max_redirects:
+                                raise CaptureError("too_many_redirects", final_url, http_status)
+                            state.mapped_hosts[_host(target)] = await _public(target)
+                            current = target
+                            continue
+                        final_url = page.url
+                        http_status = responses[-1].status if responses else response.status
+                        _check_url(final_url)
+                        if _host(final_url) not in state.mapped_hosts:
+                            raise CaptureError("blocked_address", final_url, http_status)
+                        if len(state.redirect_chain) - 1 > self.settings.seo_page_capture_max_redirects:
+                            raise CaptureError("too_many_redirects", final_url, http_status)
+                        info = await page.evaluate("""() => ({
+                            height: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0),
+                            title: document.title || '',
+                            text: (document.body?.innerText || '').trim(),
+                            password: !!document.querySelector('input[type=password]'),
+                            challenge: !!document.querySelector('[id*=captcha i], [class*=captcha i], [id*=challenge i], [class*=challenge i]')
+                        })""")
+                        blocked = _blocked_page_code(url, final_url, http_status, info)
+                        if blocked:
+                            raise CaptureError(blocked, final_url, http_status)
+                        if http_status >= 400:
+                            raise CaptureError("http_error", final_url, http_status)
+                        if info["password"]:
+                            raise CaptureError("login_wall", final_url, http_status)
+                        if not info["text"]:
+                            raise CaptureError("blank_page", final_url, http_status)
+                        height = max(self.settings.seo_page_capture_viewport_height, int(info["height"]))
+                        if (height > self.settings.seo_page_capture_max_height or
+                                height * self.settings.seo_page_capture_viewport_width > self.settings.seo_page_capture_max_pixels):
+                            raise CaptureError("page_too_large", final_url, http_status)
+                        png = await page.screenshot(type="png", full_page=True, animations="disabled")
+                        await self._drain_native_tasks(state)
+                        if page.url != final_url:
+                            changed = _blocked_page_code(url, page.url, http_status, info)
+                            raise CaptureError(changed or "unexpected_navigation", page.url, http_status)
+                        if len(png) > self.settings.seo_page_capture_max_image_bytes:
+                            raise CaptureError("image_too_large")
+                        width, image_height = _dimensions(png)
+                        if width * image_height > self.settings.seo_page_capture_max_pixels:
+                            raise CaptureError("image_too_large")
+                        return final_url, http_status, png, width, image_height
+                    finally:
+                        await context.unroute_all(behavior="ignoreErrors")
+                        await context.close()
                 finally:
-                    await context.unroute_all(behavior="ignoreErrors")
-                    await context.close()
-            finally:
-                await browser.close()
+                    await browser.close()
 
     async def _settle(self, page) -> None:
         seconds = self.settings.seo_page_capture_settle_seconds

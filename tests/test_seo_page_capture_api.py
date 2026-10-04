@@ -311,3 +311,26 @@ def test_list_date_status_latest_per_relation_and_pagination(monkeypatch):
     assert client.get(base, params={**params, "captured_from": "2026-10-03T00:00:00+08:00"}).json()["total"] == 1
     assert client.get(base, params={**params, "captured_from": "2026-10-05"}).json()["detail"]["code"] == "invalid_capture_range"
     assert client.get(base, params={**params, "captured_from": "2026-10-02T00:00:00"}).json()["detail"]["code"] == "invalid_capture_range"
+
+
+def test_date_only_list_uses_beijing_calendar_day(monkeypatch):
+    store = Store()
+    client = _client(monkeypatch, store, worker=_noop)
+    with store.session().db as db:
+        for ident, captured_at in [
+            (91, datetime(2026, 9, 30, 15, 59, tzinfo=timezone.utc)),
+            (92, datetime(2026, 9, 30, 16, 30, tzinfo=timezone.utc)),
+            (93, datetime(2026, 10, 1, 15, 59, 59, 999000, tzinfo=timezone.utc)),
+            (94, datetime(2026, 10, 1, 16, 0, tzinfo=timezone.utc)),
+        ]:
+            db.add(SeoPageCapture(id=ident, tenant_id=4, site_id=2, relation_type="publication",
+                relation_id=21, source_url="https://example.com/page", status="succeeded",
+                captured_at=captured_at, redirect_chain=[], warnings={},
+                viewport_width=800, viewport_height=600))
+        db.commit()
+    base = "/api/v1/seo/site/page-captures"
+    params = {"tenant_id": 4, "site_id": 2, "captured_from": "2026-10-01", "captured_to": "2026-10-01"}
+    assert {row["id"] for row in client.get(base, params=params).json()["items"]} == {92, 93}
+    assert {row["id"] for row in client.get(base, params={**params,
+        "captured_from": "2026-09-30T16:30:00Z",
+        "captured_to": "2026-09-30T16:30:00Z"}).json()["items"]} == {92}

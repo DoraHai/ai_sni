@@ -17,7 +17,7 @@ PNG = b"\x89PNG\r\n\x1a\n" + b"\0\0\0\rIHDR" + struct.pack(">II", 800, 600)
 def fake_network(monkeypatch):
     @asynccontextmanager
     async def pinned(_url):
-        yield
+        yield "93.184.216.34"
     monkeypatch.setattr(capture, "pin_public_target", pinned)
     monkeypatch.setattr(capture, "pinned_async_client", lambda **_: FakeClient(FakeResponse()))
     monkeypatch.setattr(capture, "__file__", "C:/outside/app/seo_page_capture.py")
@@ -41,27 +41,49 @@ class FakePage:
     def __init__(self, context):
         self.context = context
         self.url = "about:blank"
+        self.main_frame = object()
+        self.listeners = {}
+
+    def on(self, event, callback):
+        self.listeners[event] = callback
 
     async def goto(self, url, **_kwargs):
-        self.url = url
-        route = FakeRoute(url)
+        route = FakeRoute(url, navigation=True, frame=self.main_frame)
         await self.context.routes[0][1](route)
         if route.aborted:
             raise RuntimeError("navigation aborted")
-        assert route.fulfilled is not None
-        return SimpleNamespace(status=200)
+        assert route.continued and route.fulfilled is None
+        while True:
+            result = self.context.browser.owner.documents.get(url, (200, {}, b"body"))
+            status, headers, body = result
+            response = FakeBrowserResponse(url, status, headers, body, self.main_frame, route.request)
+            self.listeners["response"](response)
+            if status not in capture._REDIRECT:
+                self.url = url
+                if self.context.browser.owner.failed_navigation:
+                    failed = self.context.browser.owner.failed_navigation
+                    self.context.browser.owner.failed_navigation = None
+                    self.listeners["requestfailed"](FakeRequest(failed, navigation=True, frame=self.main_frame))
+                return response
+            target = capture.urljoin(url, headers["location"])
+            if capture._host(target) not in self.context.browser.owner.mapped_hosts:
+                self.listeners["requestfailed"](FakeRequest(target, navigation=True, frame=self.main_frame))
+                raise RuntimeError("net::ERR_NAME_NOT_RESOLVED")
+            url = target
+            route = FakeRoute(url, navigation=True, frame=self.main_frame)
 
     async def evaluate(self, expression):
         if "navigator.userAgent" in expression:
             return "Mock Chromium"
-        return {"height": 600, "text": "Visible page", "password": False}
+        return self.context.browser.owner.info
 
     async def screenshot(self, **_kwargs):
         return PNG
 
 
 class FakeContext:
-    def __init__(self):
+    def __init__(self, browser):
+        self.browser = browser
         self.routes = []
         self.unrouted = False
 
@@ -83,9 +105,12 @@ class FakeContext:
 
 
 class FakeBrowser:
+    def __init__(self, owner):
+        self.owner = owner
+
     async def new_context(self, **kwargs):
         assert kwargs["service_workers"] == "block"
-        return FakeContext()
+        return FakeContext(self)
 
     async def close(self):
         pass
@@ -96,6 +121,11 @@ class FakePlaywright:
 
     def __init__(self):
         self.chromium = self
+        self.documents = {}
+        self.info = {"height": 600, "title": "Article", "text": "Visible page", "password": False, "challenge": False}
+        self.launches = []
+        self.mapped_hosts = set()
+        self.failed_navigation = None
 
     async def __aenter__(self):
         return self
@@ -104,8 +134,14 @@ class FakePlaywright:
         pass
 
     async def launch(self, **kwargs):
-        assert kwargs["proxy"]["server"] == "http://127.0.0.1:9"
-        return FakeBrowser()
+        assert "proxy" not in kwargs
+        args = kwargs["args"]
+        rules = next(arg for arg in args if arg.startswith("--host-resolver-rules="))
+        assert "MAP * ~NOTFOUND" in rules
+        self.mapped_hosts = {rule.split()[1] for rule in rules.split("=", 1)[1].split(", ")
+                             if rule != "MAP * ~NOTFOUND"}
+        self.launches.append(kwargs)
+        return FakeBrowser(self)
 
     async def launch_persistent_context(self, *_args, **_kwargs):
         pytest.fail("page capture must use a fresh browser context")
@@ -118,10 +154,8 @@ def attempt(service, url="https://example.com/start"):
 
 def test_success_writes_true_png_metadata_and_hash(tmp_path, monkeypatch):
     monkeypatch.setattr(capture, "__file__", "C:/outside/app/seo_page_capture.py")
-    async def public(_url):
-        pass
-    monkeypatch.setattr(capture, "_public", public)
-    service = capture.PageCaptureService(settings(tmp_path), playwright_factory=FakePlaywright)
+    fake = FakePlaywright()
+    service = capture.PageCaptureService(settings(tmp_path), playwright_factory=lambda: fake)
     result = attempt(service)
     assert result.success and result.error_code is None
     assert (result.final_url, result.http_status) == ("https://example.com/start", 200)
@@ -129,6 +163,7 @@ def test_success_writes_true_png_metadata_and_hash(tmp_path, monkeypatch):
     assert (result.image_width, result.image_height) == (800, 600)
     assert result.sha256 == hashlib.sha256(PNG).hexdigest()
     assert capture.capture_storage_path(str(tmp_path), result.storage_key).read_bytes() == PNG
+    assert "MAP example.com 93.184.216.34" in fake.launches[0]["args"][0]
 
 
 @pytest.mark.parametrize("url", ["http://127.0.0.1/a", "http://10.0.0.1/a",
@@ -172,16 +207,38 @@ class FakeClient:
 
 
 class FakeRoute:
-    def __init__(self, url):
-        self.request = SimpleNamespace(url=url, method="GET", headers={"cookie": "secret", "accept": "*/*"})
+    def __init__(self, url, *, navigation=False, frame=None):
+        self.request = FakeRequest(url, navigation=navigation, frame=frame)
         self.aborted = False
         self.fulfilled = None
+        self.continued = False
 
     async def abort(self):
         self.aborted = True
 
     async def fulfill(self, **kwargs):
         self.fulfilled = kwargs
+
+    async def continue_(self):
+        self.continued = True
+
+
+class FakeRequest:
+    def __init__(self, url, *, navigation=False, frame=None):
+        self.url, self.method, self.headers = url, "GET", {"cookie": "secret", "accept": "*/*"}
+        self.navigation, self.frame = navigation, frame
+
+    def is_navigation_request(self):
+        return self.navigation
+
+
+class FakeBrowserResponse:
+    def __init__(self, url, status, headers, body, frame, request=None):
+        self.url, self.status, self.headers, self._body = url, status, headers, body
+        self.request = request or FakeRequest(url, navigation=True, frame=frame)
+
+    async def body(self):
+        return self._body
 
 
 def response_map(monkeypatch, responses):
@@ -193,12 +250,12 @@ def response_map(monkeypatch, responses):
 
 
 def test_document_redirects_use_final_browser_url_and_record_chain(tmp_path, monkeypatch):
-    response_map(monkeypatch, {
-        "https://example.com/start": FakeResponse(301, {"location": "/de/home"}),
-        "https://example.com/de/home": FakeResponse(307, {"location": "home.jsp"}),
-        "https://example.com/de/home.jsp": FakeResponse(),
-    })
-    result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=FakePlaywright))
+    fake = FakePlaywright()
+    fake.documents = {
+        "https://example.com/start": (301, {"location": "/de/home"}, b""),
+        "https://example.com/de/home": (307, {"location": "home.jsp"}, b""),
+    }
+    result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=lambda: fake))
     assert result.success and result.final_url == "https://example.com/de/home.jsp"
     assert result.redirect_chain == [
         {"url": "https://example.com/start", "status_code": 301},
@@ -208,13 +265,12 @@ def test_document_redirects_use_final_browser_url_and_record_chain(tmp_path, mon
 
 
 def test_document_redirect_limit(tmp_path, monkeypatch):
-    response_map(monkeypatch, {
-        "https://example.com/start": FakeResponse(301, {"location": "/next"}),
-    })
+    fake = FakePlaywright()
+    fake.documents = {"https://example.com/start": (301, {"location": "/next"}, b"")}
     result = attempt(capture.PageCaptureService(settings(
-        tmp_path, seo_page_capture_max_redirects=0), playwright_factory=FakePlaywright))
+        tmp_path, seo_page_capture_max_redirects=0), playwright_factory=lambda: fake))
     assert result.error_code == "too_many_redirects"
-    assert result.redirect_chain == [{"url": "https://example.com/start", "status_code": 301}]
+    assert result.redirect_chain[0] == {"url": "https://example.com/start", "status_code": 301}
 
 
 def test_subresource_block_does_not_fail_screenshot(tmp_path, monkeypatch):
@@ -230,10 +286,11 @@ def test_subresource_block_does_not_fail_screenshot(tmp_path, monkeypatch):
             return AssetPage(self)
     class AssetBrowser(FakeBrowser):
         async def new_context(self, **kwargs):
-            return AssetContext()
+            return AssetContext(self)
     class AssetPlaywright(FakePlaywright):
         async def launch(self, **kwargs):
-            return AssetBrowser()
+            await super().launch(**kwargs)
+            return AssetBrowser(self)
     result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=AssetPlaywright))
     assert result.success
     assert result.warnings == {
@@ -244,23 +301,33 @@ def test_subresource_block_does_not_fail_screenshot(tmp_path, monkeypatch):
 
 
 def test_main_document_fetch_failure_still_fails(tmp_path, monkeypatch):
-    class FailedClient(FakeClient):
-        def stream(self, method, url, headers):
+    class FailedPage(FakePage):
+        async def goto(self, *_args, **_kwargs):
             raise TimeoutError("main document timed out")
-    monkeypatch.setattr(capture, "pinned_async_client", lambda **_: FailedClient(None))
-    result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=FakePlaywright))
+    class FailedContext(FakeContext):
+        async def new_page(self):
+            return FailedPage(self)
+    class FailedBrowser(FakeBrowser):
+        async def new_context(self, **_kwargs):
+            return FailedContext(self)
+    class FailedPlaywright(FakePlaywright):
+        async def launch(self, **kwargs):
+            await super().launch(**kwargs)
+            return FailedBrowser(self)
+    result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=FailedPlaywright))
     assert result.error_code == "timeout" and result.storage_key is None
 
 
-@pytest.mark.parametrize("response, code", [
-    (FakeResponse(503), "http_error"),
-    (FakeResponse(200, {"content-length": "1001"}), "response_too_large"),
+@pytest.mark.parametrize("status, headers, code", [
+    (503, {}, "http_error"),
+    (200, {"content-length": "1001"}, "response_too_large"),
 ])
-def test_main_document_status_and_size_fail(tmp_path, monkeypatch, response, code):
-    monkeypatch.setattr(capture, "pinned_async_client", lambda **_: FakeClient(response))
-    result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=FakePlaywright))
+def test_main_document_status_and_size_fail(tmp_path, monkeypatch, status, headers, code):
+    fake = FakePlaywright()
+    fake.documents = {"https://example.com/start": (status, headers, b"body")}
+    result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=lambda: fake))
     assert result.error_code == code and result.storage_key is None
-    assert result.redirect_chain[0]["status_code"] == response.status_code
+    assert result.redirect_chain[0]["status_code"] == status
 
 
 def test_subresource_http_error_is_warning(tmp_path, monkeypatch):
@@ -285,10 +352,11 @@ def test_settle_calls_scroll_and_ignores_failure(tmp_path, monkeypatch):
             return SettlingPage(self)
     class SettlingBrowser(FakeBrowser):
         async def new_context(self, **kwargs):
-            return SettlingContext()
+            return SettlingContext(self)
     class SettlingPlaywright(FakePlaywright):
         async def launch(self, **kwargs):
-            return SettlingBrowser()
+            await super().launch(**kwargs)
+            return SettlingBrowser(self)
     result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=SettlingPlaywright))
     assert result.success and any("window.scrollTo" in call and "img.complete" in call for call in calls)
 
@@ -313,12 +381,124 @@ def test_closed_target_during_route_is_quiet(tmp_path):
 
 
 def test_redirect_to_private_address_is_blocked(tmp_path, monkeypatch):
-    monkeypatch.setattr(capture, "pinned_async_client", lambda **_: FakeClient(
-        FakeResponse(302, {"location": "http://10.0.0.4/secret"})))
-    service = capture.PageCaptureService(settings(tmp_path), playwright_factory=FakePlaywright)
+    fake = FakePlaywright()
+    fake.documents = {"https://example.com/start": (302, {"location": "http://10.0.0.4/secret"}, b"")}
+    service = capture.PageCaptureService(settings(tmp_path), playwright_factory=lambda: fake)
     result = attempt(service)
     assert result.error_code == "blocked_address"
     assert result.redirect_chain == [{"url": "https://example.com/start", "status_code": 302}]
+
+
+def test_cross_host_redirect_restarts_with_approved_mapping(tmp_path):
+    fake = FakePlaywright()
+    fake.documents = {"https://example.com/start": (302, {"location": "https://other.example.com/story"}, b"")}
+    result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=lambda: fake))
+    assert result.success and result.final_url == "https://other.example.com/story"
+    assert len(fake.launches) == 2
+    assert "MAP other.example.com 93.184.216.34" in fake.launches[1]["args"][0]
+    assert result.redirect_chain == [
+        {"url": "https://example.com/start", "status_code": 302},
+        {"url": "https://other.example.com/story", "status_code": 200},
+    ]
+
+
+def test_cross_host_redirect_limit(tmp_path):
+    fake = FakePlaywright()
+    fake.documents = {"https://example.com/start": (302, {"location": "https://other.example.com/story"}, b"")}
+    result = attempt(capture.PageCaptureService(
+        settings(tmp_path, seo_page_capture_max_redirects=0), playwright_factory=lambda: fake))
+    assert result.error_code == "too_many_redirects" and len(fake.launches) == 1
+
+
+def test_failed_client_navigation_to_new_host_restarts(tmp_path):
+    fake = FakePlaywright()
+    fake.failed_navigation = "https://other.example.com/article"
+    result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=lambda: fake))
+    assert result.success and result.final_url == "https://other.example.com/article"
+    assert len(fake.launches) == 2
+
+
+def test_private_dns_answer_is_rejected_before_browser(tmp_path, monkeypatch):
+    @asynccontextmanager
+    async def private(_url):
+        raise capture.SeoCrawlError("Private, local, or reserved addresses are not allowed")
+        yield
+    monkeypatch.setattr(capture, "pin_public_target", private)
+    fake = FakePlaywright()
+    result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=lambda: fake),
+                     "https://internal.example.com/start")
+    assert result.error_code == "blocked_address" and fake.launches == []
+
+
+def test_host_resolver_rule_injection_is_rejected(tmp_path):
+    fake = FakePlaywright()
+    result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=lambda: fake),
+                     "https://example.com,MAP%20internal.local%20127.0.0.1/path")
+    assert result.error_code == "blocked_url" and fake.launches == []
+
+
+def test_subresources_continue_only_for_mapped_host(tmp_path):
+    state = capture._CaptureState(mapped_hosts={"example.com": "93.184.216.34"})
+    mapped = FakeRoute("https://example.com/a.css")
+    other = FakeRoute("https://media.example.net/b.css")
+    service = capture.PageCaptureService(settings(tmp_path))
+    async def run():
+        await service._serve(mapped, state)
+        await service._serve(other, state)
+    asyncio.run(run())
+    assert mapped.continued and mapped.fulfilled is None
+    assert other.fulfilled is not None and not other.continued
+
+
+def test_block_pages_never_write_success_image(tmp_path):
+    cases = [
+        ("https://baijiahao.baidu.com/s?id=1", "https://wappass.baidu.com/static/captcha", 200,
+         {"text": "网络不给力", "title": "安全验证"}, "captcha_page"),
+        ("https://zhuanlan.zhihu.com/p/1", "https://zhuanlan.zhihu.com/p/1", 403,
+         {"text": '{"code":40362,"message":"您当前请求存在异常，暂时限制本次访问"}', "title": ""}, "blocked_by_platform"),
+        ("https://example.com/start", "https://example.com/start", 200,
+         {"text": "Verify you are human", "title": "Cloudflare challenge"}, "captcha_page"),
+    ]
+    for source, final, status, info, expected in cases:
+        fake = FakePlaywright()
+        if source != final:
+            fake.documents[source] = (302, {"location": final}, b"")
+        fake.documents[final] = (status, {}, b"body")
+        fake.info = {**fake.info, **info}
+        result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=lambda: fake), source)
+        assert result.status == "failed" and result.error_code == expected
+        assert result.final_url == final and result.http_status == status and result.storage_key is None
+    assert not list(tmp_path.iterdir())
+
+
+def test_cross_registrable_domain_is_blocked_and_normal_article_is_not(tmp_path):
+    fake = FakePlaywright()
+    fake.documents = {"https://news.example.com/start": (302, {"location": "https://other.org/story"}, b"")}
+    blocked = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=lambda: fake),
+                      "https://news.example.com/start")
+    assert blocked.error_code == "blocked_by_platform"
+    normal = FakePlaywright()
+    normal.info["title"] = "How CAPTCHA systems work"
+    normal.info["text"] = "A long article about CAPTCHA design. " * 100
+    okay = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=lambda: normal))
+    assert okay.success
+
+
+def test_native_total_bytes_over_limit_fails_capture(tmp_path):
+    fake = FakePlaywright()
+    fake.documents = {"https://example.com/start": (200, {}, b"x" * 11)}
+    result = attempt(capture.PageCaptureService(
+        settings(tmp_path, seo_page_capture_max_total_bytes=10), playwright_factory=lambda: fake))
+    assert result.error_code == "resources_too_large" and result.storage_key is None
+
+
+@pytest.mark.parametrize("url, expected", [
+    ("https://a.example.com.cn/x", "example.com.cn"),
+    ("https://b.example.co.uk/", "example.co.uk"),
+    ("https://news.example.com/", "example.com"),
+])
+def test_registrable_domain(url, expected):
+    assert capture._registrable_domain(url) == expected
 
 
 @pytest.mark.parametrize("url", ["http://127.0.0.1/asset", "data:text/plain,secret", "http://192.168.1.1/"])
@@ -349,7 +529,8 @@ def test_total_bytes_cap_keeps_document_and_warns_on_assets(tmp_path, monkeypatc
     service = capture.PageCaptureService(settings(tmp_path, seo_page_capture_max_total_bytes=10))
     state = capture._CaptureState()
     async def scenario():
-        await service._fetch("https://example.com/start", {}, state, document=True)
+        await service._account_native_response(
+            FakeBrowserResponse("https://example.com/start", 200, {}, b"document", object()), state)
         first = FakeRoute("https://example.com/asset")
         await service._serve(first, state)
         second = FakeRoute("https://example.com/asset")
@@ -378,18 +559,12 @@ def test_missing_playwright_has_explicit_code(tmp_path, monkeypatch):
             raise ImportError("simulated missing playwright")
         return original_import(name, *args, **kwargs)
     monkeypatch.setattr(builtins, "__import__", without_playwright)
-    async def public(_url):
-        pass
-    monkeypatch.setattr(capture, "_public", public)
     result = attempt(capture.PageCaptureService(settings(tmp_path)))
     assert result.error_code == "playwright_not_installed"
 
 
 @pytest.mark.parametrize("channel", ["", "chrome"])
 def test_missing_chromium_has_explicit_code(tmp_path, monkeypatch, channel):
-    async def public(_url):
-        pass
-    monkeypatch.setattr(capture, "_public", public)
     class NoChromium(FakePlaywright):
         async def launch(self, **_kwargs):
             raise RuntimeError("missing executable")
@@ -409,9 +584,6 @@ def test_missing_chromium_has_explicit_code(tmp_path, monkeypatch, channel):
      {"executable_path": "installed-browser"}),
 ])
 def test_browser_launch_options_and_fresh_context(tmp_path, monkeypatch, browser_options, expected):
-    async def public(_url):
-        pass
-    monkeypatch.setattr(capture, "_public", public)
     monkeypatch.setattr(capture, "__file__", "C:/outside/app/seo_page_capture.py")
     if "seo_page_capture_executable_path" in browser_options:
         executable = tmp_path / "installed-browser"
@@ -428,26 +600,27 @@ def test_browser_launch_options_and_fresh_context(tmp_path, monkeypatch, browser
 
     class RecordingPlaywright(FakePlaywright):
         launch_options = None
-        browser = RecordingBrowser()
 
         async def launch(self, **kwargs):
+            await super().launch(**kwargs)
             self.launch_options = kwargs
+            self.browser = RecordingBrowser(self)
             return self.browser
 
     fake = RecordingPlaywright()
     result = attempt(capture.PageCaptureService(settings(tmp_path, **browser_options),
                                                  playwright_factory=lambda: fake))
     assert result.success
-    assert fake.launch_options == {
-        "headless": True, "proxy": {"server": "http://127.0.0.1:9"}, **expected,
+    assert {key: value for key, value in fake.launch_options.items() if key != "args"} == {
+        "headless": True, **expected,
     }
+    assert "--disable-quic" in fake.launch_options["args"]
+    assert "--force-webrtc-ip-handling-policy=disable_non_proxied_udp" in fake.launch_options["args"]
+    assert "--no-proxy-server" in fake.launch_options["args"]
     assert fake.browser.contexts == 1
 
 
 def test_invalid_browser_channel_is_rejected(tmp_path, monkeypatch):
-    async def public(_url):
-        pass
-    monkeypatch.setattr(capture, "_public", public)
     result = attempt(capture.PageCaptureService(
         settings(tmp_path, seo_page_capture_browser_channel="firefox"),
         playwright_factory=FakePlaywright))
@@ -455,9 +628,6 @@ def test_invalid_browser_channel_is_rejected(tmp_path, monkeypatch):
 
 
 def test_missing_browser_executable_is_rejected(tmp_path, monkeypatch):
-    async def public(_url):
-        pass
-    monkeypatch.setattr(capture, "_public", public)
     result = attempt(capture.PageCaptureService(
         settings(tmp_path, seo_page_capture_executable_path=str(tmp_path / "missing-browser")),
         playwright_factory=FakePlaywright))

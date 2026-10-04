@@ -13,6 +13,8 @@ export function pageCaptureError(code) {
     invalid_site_url: '链接不属于该站点', timeout: '截图超时',
     publication_url_missing: '该发布记录没有已登记的发布链接',
     publication_url_mismatch: '链接与发布记录不一致',
+    captcha_page: '目标平台要求人机验证，未能截取正文',
+    blocked_by_platform: '目标平台拒绝了自动访问（可能需要登录）',
   }[code] || code || '截图失败'
 }
 

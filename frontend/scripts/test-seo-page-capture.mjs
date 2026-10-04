@@ -36,6 +36,8 @@ test('状态和错误码使用中文，未知错误保留错误码', () => {
     ['截图功能未开启', '刚提交过请稍后', '链接不属于该站点', '截图超时', 'browser_error'])
   assert.deepEqual(['publication_url_missing', 'publication_url_mismatch'].map(pageCaptureError),
     ['该发布记录没有已登记的发布链接', '链接与发布记录不一致'])
+  assert.deepEqual(['captcha_page', 'blocked_by_platform'].map(pageCaptureError),
+    ['目标平台要求人机验证，未能截取正文', '目标平台拒绝了自动访问（可能需要登录）'])
 })
 
 test('只轮询未完成任务，次数和时长都有上限', () => {
