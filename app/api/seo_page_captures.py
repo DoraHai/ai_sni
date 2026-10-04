@@ -26,13 +26,14 @@ from app.database import async_session_factory
 from app.models.module_workspace import SeoSite
 from app.models.seo import SeoContentAsset, SeoContentPublication, SeoKeywordAsset, SeoSitePage
 from app.models.seo_page_capture import SeoPageCapture
+from app.models.seo_site_analytics import SeoSiteExportTemplate
 from app.module_scope import seo_site_is_operational
 from app.security.auth import AuthContext
 from app.seo_demo_source import get_seo_session as get_session, require_seo_scoped_auth as require_scoped_auth
 from app.seo_page_capture import CaptureError, PageCaptureService, _check_url, capture_storage_path
 from app.seo_capture_upload import UploadImageError, clean_image
 from app.seo_serp import canonical_url, domain_matches
-from app.seo_publication_export import (build_publication_list_workbook, capture_fields,
+from app.seo_publication_export import (DEFAULT_PUBLICATION_LIST_TEMPLATE, effective_publication_template, build_publication_list_workbook, capture_fields,
                                         month_bounds, publication_summary)
 
 router = APIRouter()
@@ -107,7 +108,9 @@ async def export_publication_list(tenant_id: PositiveInt, site_id: PositiveInt, 
     def load_image(key: str) -> bytes:
         return capture_storage_path(settings.seo_page_capture_storage_dir, key).read_bytes()
     summary = publication_summary(rows, site.name, month, datetime.now(timezone.utc))
-    workbook = build_publication_list_workbook(rows, summary, image_loader=load_image,
+    template_row = await session.get(SeoSiteExportTemplate, site_id)
+    template = template_row.columns if template_row and template_row.tenant_id == tenant_id else None
+    workbook = build_publication_list_workbook(rows, summary, template=effective_publication_template(template), image_loader=load_image,
                                                max_pixels=settings.seo_page_capture_max_pixels)
     safe_site = re.sub(r'[\\/:*?"<>|\r\n]+', "_", site.name).strip(" .") or "站点"
     filename = f"发布清单-{safe_site}-{month}.xlsx"

@@ -38,6 +38,9 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed(".gitattributes")
     assert source_path_allowed("app/api/seo.py")
     assert source_path_allowed("app/api/seo_page_captures.py")
+    assert source_path_allowed("app/api/seo_site_analytics.py")
+    assert source_path_allowed("app/models/seo_site_analytics.py")
+    assert source_path_allowed("migrations/versions/20261004_0101_seo_site_analytics.py")
     assert source_path_allowed("app/seo_capture_upload.py")
     assert source_path_allowed("app/seo_publication_export.py")
     assert source_path_allowed("tests/test_seo_publication_export.py")
@@ -45,6 +48,7 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("scripts/generate_publication_list_sample.py")
     assert source_path_allowed("frontend/src/api/seoPublicationExport.js")
     assert source_path_allowed("frontend/scripts/test-seo-publication-export.mjs")
+    assert source_path_allowed("frontend/scripts/test-seo-site-analytics.mjs")
     assert source_path_allowed("tests/test_seo_page_capture_api.py")
     assert source_path_allowed("tests/test_seo_capture_upload.py")
     assert source_path_allowed("app/seo_distribution_import.py")
@@ -130,6 +134,9 @@ def test_seo_workflows_run_site_association_and_traffic_regressions() -> None:
         assert "tests/test_seo_page_capture_api.py" in workflow
         assert "tests/test_seo_publication_export.py" in workflow
         assert "tests/test_seo_publication_export_api.py" in workflow
+        assert "tests/test_seo_site_analytics.py" in workflow
+        assert "tests/test_seo_site_analytics_api.py" in workflow
+        assert "tests/test_seo_site_analytics_migration.py" in workflow
         assert "npm run test:seo-publication-export" in workflow
 
 
@@ -144,7 +151,7 @@ def test_seo_workflows_gate_the_sem_task_migration_contract() -> None:
         assert "tests/test_demo_tenant_binding_migration.py" in workflow
         assert "tests/test_demo_binding_no_truncate_migration.py" in workflow
         assert "tests/test_geo_review_audit_migration.py" in workflow
-        assert "0100_seo_page_captures (head)" in workflow
+        assert "0101_seo_site_analytics (head)" in workflow
 
 
 def test_seo_frontend_workflows_gate_shared_session_regressions() -> None:
@@ -413,7 +420,7 @@ def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
 
 def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     root = Path(__file__).parents[1]
-    expected = "0100_seo_page_captures (head)"
+    expected = "0101_seo_site_analytics (head)"
     baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
     production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
     assert expected in baseline

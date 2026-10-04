@@ -19,7 +19,9 @@ from app.api.seo import router as seo_router, require_seo_module_access
 from app.models.module_workspace import SeoSite
 from app.models.seo import SeoContentAsset, SeoContentPublication, SeoKeywordAsset
 from app.models.seo_page_capture import SeoPageCapture
+from app.models.seo_site_analytics import SeoSiteExportTemplate
 from app.security.auth import AuthContext
+from app.seo_site_analytics import validate_template
 from app.seo_demo_source import require_seo_auth
 
 
@@ -42,10 +44,10 @@ class Adapter:
         return self.db.scalars(statement)
 
 
-def _client(monkeypatch, actor):
+def _client(monkeypatch, actor, columns=None):
     engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
     with engine.begin() as connection:
-        for model in (SeoSite, SeoContentAsset, SeoContentPublication, SeoKeywordAsset, SeoPageCapture):
+        for model in (SeoSite, SeoContentAsset, SeoContentPublication, SeoKeywordAsset, SeoPageCapture, SeoSiteExportTemplate):
             connection.execute(CreateTable(model.__table__, include_foreign_key_constraints=[]))
     with Session(engine) as db:
         db.add_all([
@@ -60,6 +62,8 @@ def _client(monkeypatch, actor):
             SeoContentPublication(id=24, tenant_id=5, content_asset_id=12, platform_code="web", platform_name="其他", status="published", published_at=datetime(2026, 9, 12)),
             SeoPageCapture(id=1, tenant_id=4, site_id=2, relation_type="publication", relation_id=21, source_url="https://example.com/a", status="failed", error_code="timeout", captured_at=datetime(2026, 9, 29, tzinfo=timezone.utc), viewport_width=800, viewport_height=600, redirect_chain=[], warnings={}),
         ])
+        if columns:
+            db.add(SeoSiteExportTemplate(site_id=2, tenant_id=4, columns=validate_template(columns), updated_by=9))
         db.commit()
     app = FastAPI()
     app.include_router(seo_router)
@@ -77,7 +81,9 @@ def _client(monkeypatch, actor):
     app.dependency_overrides[require_seo_module_access] = auth
     app.dependency_overrides[api.get_session] = session
     monkeypatch.setattr(api, "get_settings", lambda: SimpleNamespace(seo_page_capture_storage_dir="C:/missing", seo_page_capture_max_pixels=16_000_000))
-    return TestClient(app)
+    result = TestClient(app)
+    result.engine = engine
+    return result
 
 
 def _actor(tenant=4, permission="view"):
@@ -110,3 +116,27 @@ def test_export_permissions_month_filter_and_headers(monkeypatch):
     assert october_sheet["B2"].value == "官网"
     assert october_sheet["E2"].value is None
     assert _client(monkeypatch, _actor()).get(path, params={**params, "month": "2026-13"}).status_code == 422
+
+
+def test_export_uses_site_template_order_and_titles(monkeypatch):
+    response = _client(monkeypatch, _actor(), [{"key": "title", "title": "客户标题"},
+        {"key": "number", "title": "序号"}, {"key": "image_key", "title": "截图"}]).get(
+            "/api/v1/seo/site/publications/export", params={"tenant_id": 4, "site_id": 2, "month": "2026-09"})
+    assert response.status_code == 200
+    sheet = load_workbook(BytesIO(response.content))["发布明细"]
+    assert [sheet.cell(1, i).value for i in range(1, 4)] == ["客户标题", "序号", "截图"]
+    assert sheet["A2"].value == "原文" and sheet["B2"].value == 1
+
+
+def test_export_ignores_stale_stored_type_and_removed_key(monkeypatch):
+    http = _client(monkeypatch, _actor())
+    with Session(http.engine) as db:
+        db.add(SeoSiteExportTemplate(site_id=2, tenant_id=4, columns=[
+            {"key": "title", "title": "现用标题", "type": "image", "width": 28},
+            {"key": "removed", "title": "旧列", "type": "text"}], updated_by=9))
+        db.commit()
+    response = http.get("/api/v1/seo/site/publications/export", params={"tenant_id": 4, "site_id": 2, "month": "2026-09"})
+    assert response.status_code == 200
+    sheet = load_workbook(BytesIO(response.content))["发布明细"]
+    assert sheet.max_column == 1
+    assert sheet["A1"].value == "现用标题" and sheet["A2"].value == "原文"

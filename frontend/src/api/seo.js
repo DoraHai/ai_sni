@@ -1,4 +1,14 @@
 import client from './client'
+export const fetchSeoAnalyticsSources = params => client.get('/api/v1/seo/site/analytics-sources', { params })
+export const saveSeoAnalyticsSource = payload => client.put('/api/v1/seo/site/analytics-sources', payload)
+export const deleteSeoAnalyticsSource = (source, params) => client.delete(`/api/v1/seo/site/analytics-sources/${source}`, { params })
+export const testSeoAnalyticsSource = (source, payload) => client.post(`/api/v1/seo/site/analytics-sources/${source}/test`, payload)
+export const exchangeSeoBaiduCode = payload => client.post('/api/v1/seo/site/analytics-sources/baidu_tongji/oauth/exchange', payload)
+export const pullSeoAnalytics = payload => client.post('/api/v1/seo/site/analytics/pull', payload, { timeout: 60000 })
+export const fetchSeoAnalyticsMonthly = params => client.get('/api/v1/seo/site/analytics/monthly', { params })
+export const fetchSeoExportTemplate = params => client.get('/api/v1/seo/site/publications/export-template', { params })
+export const saveSeoExportTemplate = payload => client.put('/api/v1/seo/site/publications/export-template', payload)
+export const resetSeoExportTemplate = params => client.delete('/api/v1/seo/site/publications/export-template', { params })
 import { pageCaptureCreatePayload, pageCaptureListParams, pageCaptureUploadPayload } from './seoPageCaptureParams.js'
 
 export function downloadSeoPublicationList({ tenantId, siteId, month }) {

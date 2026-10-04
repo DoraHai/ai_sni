@@ -27,6 +27,28 @@ DEFAULT_PUBLICATION_LIST_TEMPLATE = (
     {"key": "notes", "title": "备注", "width": 40, "type": "text"},
 )
 
+
+def public_template_columns(columns=None):
+    """Keep only editable fields, including for older stored templates."""
+    columns = DEFAULT_PUBLICATION_LIST_TEMPLATE if columns is None else columns
+    allowed = {spec["key"] for spec in DEFAULT_PUBLICATION_LIST_TEMPLATE}
+    return [{key: column[key] for key in ("key", "title", "width") if key in column}
+            for column in columns if isinstance(column, dict) and column.get("key") in allowed]
+
+
+def effective_publication_template(columns):
+    allowed = {spec["key"]: spec for spec in DEFAULT_PUBLICATION_LIST_TEMPLATE}
+    result = []
+    for column in columns or []:
+        if not isinstance(column, dict) or column.get("key") not in allowed:
+            continue
+        spec = dict(allowed[column["key"]])
+        for key in ("title", "width"):
+            if key in column:
+                spec[key] = column[key]
+        result.append(spec)
+    return result or list(DEFAULT_PUBLICATION_LIST_TEMPLATE)
+
 CAPTURE_ERRORS = {
     "capture_disabled": "截图功能未开启", "capture_recent": "刚提交过请稍后",
     "invalid_site_url": "链接不属于该站点", "timeout": "截图超时",
@@ -101,7 +123,7 @@ def build_publication_list_workbook(rows: list[dict], summary: dict, template=DE
     workbook = Workbook()
     detail = workbook.active
     detail.title = "发布明细"
-    detail.append([column["title"] for column in template])
+    detail.append([_safe_text(column["title"]) for column in template])
     detail.freeze_panes = "A2"
     detail.auto_filter.ref = f"A1:{detail.cell(1, len(template)).column_letter}{len(rows) + 1}"
     for index, column in enumerate(template, 1):
