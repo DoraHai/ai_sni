@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
 import logging
+import os
 from pathlib import Path
 import re
 from typing import Literal
+import uuid
 from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, PositiveInt
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +28,7 @@ from app.module_scope import seo_site_is_operational
 from app.security.auth import AuthContext
 from app.seo_demo_source import get_seo_session as get_session, require_seo_scoped_auth as require_scoped_auth
 from app.seo_page_capture import CaptureError, PageCaptureService, _check_url, capture_storage_path
+from app.seo_capture_upload import UploadImageError, clean_image
 from app.seo_serp import canonical_url, domain_matches
 
 router = APIRouter()
@@ -111,6 +115,7 @@ def _payload(row: SeoPageCapture) -> dict:
         "id", "tenant_id", "site_id", "relation_type", "relation_id", "source_url", "status",
         "error_code", "final_url", "http_status", "redirect_chain", "warnings",
         "viewport_width", "viewport_height", "image_width", "image_height", "sha256", "captured_at",
+        "source", "uploaded_by", "uploaded_at", "content_type",
     )}
 
 
@@ -305,6 +310,63 @@ async def create_page_capture(req: CaptureCreate, background_tasks: BackgroundTa
     return {"id": row.id, "status": row.status}
 
 
+@router.post("/site/page-captures/upload", status_code=201)
+async def upload_page_capture(tenant_id: PositiveInt = Form(...), site_id: PositiveInt = Form(...),
+                              relation_type: Literal["publication"] = Form(...),
+                              relation_id: PositiveInt = Form(...), file: UploadFile = File(...),
+                              session: AsyncSession = Depends(get_session),
+                              ctx: AuthContext = Depends(require_scoped_auth)) -> dict:
+    """Manual evidence remains available when browser capture is disabled."""
+    ctx.ensure_tenant(tenant_id)
+    if not ctx.can_edit("seo.site") or ctx.user_id is None:
+        raise _error(403, "forbidden", "需要网站编辑权限和登录用户")
+    site = await _site(session, tenant_id, site_id)
+    if site.status != "active":
+        raise _error(409, "site_inactive", "SEO 网站已暂停或归档")
+    _, _, url = await _relation(session, tenant_id, site_id, None, relation_type, relation_id)
+    settings = get_settings()
+    limit = settings.seo_page_capture_upload_max_bytes
+    data = bytearray()
+    while chunk := await file.read(min(65536, limit + 1 - len(data))):
+        data.extend(chunk)
+        if len(data) > limit:
+            raise _error(413, "image_too_large", "图片过大")
+    try:
+        cleaned, mime, extension, width, height = clean_image(bytes(data), settings.seo_page_capture_max_pixels)
+    except UploadImageError as exc:
+        raise _error(422 if exc.code != "image_too_large" else 413, exc.code, str(exc)) from exc
+    key = f"{uuid.uuid4().hex}.{extension}"
+    try:
+        path = capture_storage_path(settings.seo_page_capture_storage_dir, key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(cleaned)
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+    except (OSError, ValueError) as exc:
+        raise _error(500, "storage_error", "截图存储失败") from exc
+    now = datetime.now(timezone.utc)
+    row = SeoPageCapture(tenant_id=tenant_id, site_id=site_id, relation_type="publication",
+                         relation_id=relation_id, source_url=url, final_url=url, status="succeeded",
+                         source="manual", uploaded_by=ctx.user_id, uploaded_at=now,
+                         captured_at=now, content_type=mime, redirect_chain=[], warnings={},
+                         viewport_width=settings.seo_page_capture_viewport_width,
+                         viewport_height=settings.seo_page_capture_viewport_height,
+                         image_width=width, image_height=height, sha256=hashlib.sha256(cleaned).hexdigest(),
+                         storage_key=key)
+    try:
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    return _payload(row)
+
+
 @router.get("/site/page-captures/{capture_id}")
 async def get_page_capture(capture_id: PositiveInt, tenant_id: PositiveInt,
                            request: Request,
@@ -332,9 +394,11 @@ async def get_page_capture_image(capture_id: PositiveInt, tenant_id: PositiveInt
         data = Path(path).read_bytes()
     except (OSError, ValueError):
         raise _error(404, "image_not_found", "截图图片不可用") from None
-    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+    signatures = {"image/png": b"\x89PNG\r\n\x1a\n", "image/jpeg": b"\xff\xd8", "image/webp": b"RIFF"}
+    mime = row.content_type
+    if mime not in signatures or not data.startswith(signatures[mime]) or (mime == "image/webp" and data[8:12] != b"WEBP"):
         raise _error(404, "image_not_found", "截图图片不可用")
-    return Response(data, media_type="image/png", headers={
+    return Response(data, media_type=mime, headers={
         "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
     })
 
@@ -346,6 +410,7 @@ async def list_page_captures(tenant_id: PositiveInt, site_id: PositiveInt,
                              relation_id: PositiveInt | None = None,
                              captured_from: str | None = None, captured_to: str | None = None,
                              status: Literal["pending", "running", "succeeded", "failed"] | None = None,
+                             source: Literal["auto", "manual"] | None = None,
                              latest_per_relation: bool = False,
                              page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
                              session: AsyncSession = Depends(get_session),
@@ -373,6 +438,8 @@ async def list_page_captures(tenant_id: PositiveInt, site_id: PositiveInt,
         conditions.append(SeoPageCapture.captured_at < upper if exclusive else SeoPageCapture.captured_at <= upper)
     if status is not None:
         conditions.append(SeoPageCapture.status == status)
+    if source is not None:
+        conditions.append(SeoPageCapture.source == source)
     if latest_per_relation:
         ranked = select(
             SeoPageCapture.id.label("capture_id"),

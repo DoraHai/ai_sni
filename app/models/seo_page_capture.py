@@ -15,6 +15,8 @@ class SeoPageCapture(Base):
         Index("ix_seo_page_captures_scope", "tenant_id", "site_id", "relation_type", "relation_id"),
         Index("ix_seo_page_captures_timeline", "tenant_id", "site_id", "captured_at", "id"),
         CheckConstraint("status IN ('pending', 'running', 'succeeded', 'failed')", name="ck_seo_page_captures_status"),
+        CheckConstraint("source IN ('auto', 'manual')", name="ck_seo_page_captures_source"),
+        CheckConstraint("source <> 'manual' OR (uploaded_by IS NOT NULL AND uploaded_at IS NOT NULL)", name="ck_seo_page_captures_manual_upload"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -29,6 +31,10 @@ class SeoPageCapture(Base):
     warnings: Mapped[dict] = mapped_column(JSONB, nullable=False)
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     status: Mapped[str] = mapped_column(String(16), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, server_default="auto")
+    uploaded_by: Mapped[int | None] = mapped_column(BigInteger)
+    uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    content_type: Mapped[str] = mapped_column(String(32), nullable=False, server_default="image/png")
     error_code: Mapped[str | None] = mapped_column(String(40))
     viewport_width: Mapped[int] = mapped_column(Integer, nullable=False)
     viewport_height: Mapped[int] = mapped_column(Integer, nullable=False)

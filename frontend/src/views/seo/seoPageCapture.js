@@ -15,7 +15,20 @@ export function pageCaptureError(code) {
     publication_url_mismatch: '链接与发布记录不一致',
     captcha_page: '目标平台要求人机验证，未能截取正文',
     blocked_by_platform: '目标平台拒绝了自动访问（可能需要登录）',
+    invalid_image: '图片文件无法识别', unsupported_image_type: '仅支持 PNG、JPG、WebP 图片',
+    image_too_large: '图片过大',
   }[code] || code || '截图失败'
+}
+
+export function suggestManualPageCapture(code) {
+  return ['blocked_by_platform', 'captcha_page'].includes(code)
+}
+
+export function pageCaptureUploadCheck(file, maxBytes = 10_000_000) {
+  if (!file || !/\.(png|jpe?g|webp)$/i.test(file.name) ||
+      (file.type && !['image/png', 'image/jpeg', 'image/webp'].includes(file.type))) return 'unsupported_image_type'
+  if (file.size > maxBytes) return 'image_too_large'
+  return ''
 }
 
 export function pageCaptureWarningCount(warnings) {

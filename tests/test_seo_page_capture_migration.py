@@ -17,4 +17,10 @@ def test_capture_migration_is_single_additive_head():
     assert 'sa.Column("redirect_chain", JSONB(), nullable=False)' in source
     assert 'sa.Column("warnings", JSONB(), nullable=False)' in source
     assert "status IN ('pending', 'running', 'succeeded', 'failed')" in source
+    assert 'sa.Column("source", sa.String(16), server_default="auto", nullable=False)' in source
+    assert 'sa.Column("uploaded_by", sa.BigInteger())' in source
+    assert 'sa.Column("uploaded_at", sa.DateTime(timezone=True))' in source
+    assert 'sa.Column("content_type", sa.String(32), server_default="image/png", nullable=False)' in source
+    assert "source IN ('auto', 'manual')" in source
+    assert "uploaded_by IS NOT NULL AND uploaded_at IS NOT NULL" in source
     assert '"ix_seo_page_captures_timeline"' in source

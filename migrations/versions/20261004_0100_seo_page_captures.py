@@ -31,6 +31,10 @@ def upgrade() -> None:
         sa.Column("warnings", JSONB(), nullable=False),
         sa.Column("captured_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("status", sa.String(16), nullable=False),
+        sa.Column("source", sa.String(16), server_default="auto", nullable=False),
+        sa.Column("uploaded_by", sa.BigInteger()),
+        sa.Column("uploaded_at", sa.DateTime(timezone=True)),
+        sa.Column("content_type", sa.String(32), server_default="image/png", nullable=False),
         sa.Column("error_code", sa.String(40)),
         sa.Column("viewport_width", sa.Integer(), nullable=False),
         sa.Column("viewport_height", sa.Integer(), nullable=False),
@@ -39,6 +43,8 @@ def upgrade() -> None:
         sa.Column("sha256", sa.String(64)),
         sa.Column("storage_key", sa.String(120)),
         sa.CheckConstraint("status IN ('pending', 'running', 'succeeded', 'failed')", name="ck_seo_page_captures_status"),
+        sa.CheckConstraint("source IN ('auto', 'manual')", name="ck_seo_page_captures_source"),
+        sa.CheckConstraint("source <> 'manual' OR (uploaded_by IS NOT NULL AND uploaded_at IS NOT NULL)", name="ck_seo_page_captures_manual_upload"),
     )
     op.create_index("ix_seo_page_captures_scope", "seo_page_captures", ["tenant_id", "site_id", "relation_type", "relation_id"])
     op.create_index("ix_seo_page_captures_timeline", "seo_page_captures", ["tenant_id", "site_id", "captured_at", "id"])

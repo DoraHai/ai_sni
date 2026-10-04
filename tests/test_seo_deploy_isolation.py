@@ -64,6 +64,9 @@ class _HealthConnection:
             return [("jsonb", False, None)]
         if "seo_page_captures" in sql and "pg_attribute" in sql:
             return [(name, *shape) for name, shape in seo_main.SEO_CAPTURE_COLUMNS.items()]
+        if "ck_seo_page_captures_manual_upload" in sql:
+            return [("ck_seo_page_captures_source", "CHECK (source IN ('auto', 'manual'))"),
+                    ("ck_seo_page_captures_manual_upload", "CHECK (source <> 'manual' OR (uploaded_by IS NOT NULL AND uploaded_at IS NOT NULL))")]
         if "ck_seo_page_captures_status" in sql:
             return _HealthResult(["CHECK (status IN ('pending', 'running', 'succeeded', 'failed'))"])
         if "pg_attribute" in sql:
@@ -380,6 +383,21 @@ def test_0100_health_rejects_capture_table_drift() -> None:
         result = asyncio.run(seo_main.seo_health(response))
     assert response.status_code == 503
     assert "SEO page capture table structure mismatch" in result["db_error"]
+
+
+def test_0100_health_rejects_missing_manual_upload_constraint() -> None:
+    original = _HealthConnection.execute
+    async def execute(self, statement, parameters=None):
+        if "ck_seo_page_captures_manual_upload" in str(statement):
+            return [("ck_seo_page_captures_source", "CHECK (source IN ('auto', 'manual'))")]
+        return await original(self, statement, parameters)
+    response = Response()
+    with patch.object(_HealthConnection, "execute", execute), patch.object(
+        seo_main, "engine", _HealthEngine(["0100_seo_page_captures"])
+    ):
+        result = asyncio.run(seo_main.seo_health(response))
+    assert response.status_code == 503
+    assert "SEO page capture provenance constraint mismatch" in result["db_error"]
 
 
 @pytest.mark.parametrize("rows", [[], [("text", False, None)], [("jsonb", True, None)], [("jsonb", False, "'{}'::jsonb")]])

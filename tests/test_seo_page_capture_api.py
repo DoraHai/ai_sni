@@ -1,6 +1,8 @@
 """API contract checks with an in-memory metadata store and no browser/network."""
 
 import asyncio
+import hashlib
+import pytest
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -107,7 +109,8 @@ def _actor(tenant=4, permission="edit"):
     return AuthContext(9, "capture-user", "client", tenant, {"seo.site": permission})
 
 
-def _client(monkeypatch, store, actor=None, *, enabled=True, worker=None, storage_dir=None):
+def _client(monkeypatch, store, actor=None, *, enabled=True, worker=None, storage_dir=None,
+            upload_max_bytes=10_000_000, max_pixels=16_000_000):
     from fastapi import FastAPI
     app = FastAPI()
     app.include_router(seo_router)
@@ -130,12 +133,19 @@ def _client(monkeypatch, store, actor=None, *, enabled=True, worker=None, storag
     app.dependency_overrides[api.get_session] = session
     monkeypatch.setattr(api, "get_settings", lambda: SimpleNamespace(
         seo_page_capture_enabled=enabled, seo_page_capture_timeout_seconds=5,
+        seo_page_capture_upload_max_bytes=upload_max_bytes, seo_page_capture_max_pixels=max_pixels,
         seo_page_capture_storage_dir=str(storage_dir or "C:/outside/page-captures"),
         seo_page_capture_viewport_width=800, seo_page_capture_viewport_height=600,
     ))
     if worker is not None:
         monkeypatch.setattr(api, "execute_page_capture", worker)
     return TestClient(app)
+
+
+def _upload(client, content, *, relation_id=21, site_id=2, filename="fake.txt", mime="text/plain"):
+    return client.post("/api/v1/seo/site/page-captures/upload",
+        data={"tenant_id": "4", "site_id": str(site_id), "relation_type": "publication",
+              "relation_id": str(relation_id)}, files={"file": (filename, content, mime)})
 
 
 def _create(client, **changes):
@@ -334,3 +344,90 @@ def test_date_only_list_uses_beijing_calendar_day(monkeypatch):
     assert {row["id"] for row in client.get(base, params={**params,
         "captured_from": "2026-09-30T16:30:00Z",
         "captured_to": "2026-09-30T16:30:00Z"}).json()["items"]} == {92}
+
+
+def test_manual_upload_permissions_formats_and_image_types(monkeypatch, tmp_path):
+    from app import seo_page_capture as capture
+    from test_seo_capture_upload import png, jpeg, webp
+    monkeypatch.setattr(capture, "__file__", "C:/outside/app/seo_page_capture.py")
+    store = Store()
+    assert _upload(_client(monkeypatch, store, "anonymous", storage_dir=tmp_path), png()).status_code == 401
+    assert _upload(_client(monkeypatch, store, _actor(tenant=5), storage_dir=tmp_path), png()).status_code == 403
+    assert _upload(_client(monkeypatch, store, _actor(permission="view"), storage_dir=tmp_path), png()).status_code == 403
+    client = _client(monkeypatch, store, enabled=False, storage_dir=tmp_path)
+    assert _upload(client, png(), relation_id=22).status_code == 404
+    assert _upload(client, png(), relation_id=23).status_code == 404
+    assert _upload(client, png(), site_id=3).status_code == 404
+    for fixture, mime in ((png, "image/png"), (jpeg, "image/jpeg"), (webp, "image/webp")):
+        response = _upload(client, fixture(), filename="wrong.gif", mime="application/octet-stream")
+        assert response.status_code == 201, response.text
+        row = response.json()
+        assert (row["source"], row["uploaded_by"], row["content_type"]) == ("manual", 9, mime)
+        assert (row["image_width"], row["image_height"]) == (2, 3)
+        assert row["uploaded_at"] and row["final_url"] == row["source_url"]
+        assert row["http_status"] is None and row["redirect_chain"] == [] and row["warnings"] == {}
+        image = client.get(f'/api/v1/seo/site/page-captures/{row["id"]}/image', params={"tenant_id": 4})
+        assert image.status_code == 200 and image.headers["content-type"] == mime
+        assert image.headers["cache-control"] == "private, no-store"
+        assert image.headers["x-content-type-options"] == "nosniff"
+        assert b"secret" not in image.content
+        assert row["sha256"] == hashlib.sha256(image.content).hexdigest()
+    base = "/api/v1/seo/site/page-captures"
+    manual = client.get(base, params={"tenant_id": 4, "site_id": 2, "source": "manual"}).json()
+    assert manual["total"] == 3 and all(row["source"] == "manual" for row in manual["items"])
+
+
+def test_manual_upload_invalid_and_stream_limit(monkeypatch, tmp_path):
+    from app import seo_page_capture as capture
+    from test_seo_capture_upload import png, jpeg, webp
+    monkeypatch.setattr(capture, "__file__", "C:/outside/app/seo_page_capture.py")
+    client = _client(monkeypatch, Store(), storage_dir=tmp_path)
+    for content, code in ((b"GIF89a", "unsupported_image_type"), (png()[:-1], "invalid_image"),
+                          (jpeg()[:-2], "invalid_image"), (webp()[:-1], "invalid_image")):
+        assert _upload(client, content).json()["detail"]["code"] == code
+    limited = _client(monkeypatch, Store(), storage_dir=tmp_path, upload_max_bytes=100)
+    assert _upload(limited, png() + b"x" * 101).json()["detail"]["code"] == "image_too_large"
+    pixel_limited = _client(monkeypatch, Store(), storage_dir=tmp_path, max_pixels=5)
+    assert _upload(pixel_limited, png()).json()["detail"]["code"] == "image_too_large"
+    assert not list(tmp_path.iterdir())
+
+
+def test_manual_upload_stops_reading_after_limit(monkeypatch):
+    async def site(*_args):
+        return SimpleNamespace(status="active")
+    async def relation(*_args):
+        return "publication", 21, "https://zhihu.example/article"
+    class Stream:
+        def __init__(self):
+            self.calls = []
+        async def read(self, size):
+            self.calls.append(size)
+            return b"x" * size
+    monkeypatch.setattr(api, "_site", site)
+    monkeypatch.setattr(api, "_relation", relation)
+    monkeypatch.setattr(api, "get_settings", lambda: SimpleNamespace(seo_page_capture_upload_max_bytes=100))
+    stream = Stream()
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(api.upload_page_capture(tenant_id=4, site_id=2, relation_type="publication",
+            relation_id=21, file=stream, session=None, ctx=_actor()))
+    assert exc.value.status_code == 413 and exc.value.detail["code"] == "image_too_large"
+    assert sum(stream.calls) == 101
+
+
+def test_latest_mixes_auto_and_manual_with_id_tie_break(monkeypatch):
+    store = Store()
+    client = _client(monkeypatch, store, worker=_noop)
+    with store.session().db as db:
+        moment = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        for ident, source in ((1, "auto"), (2, "manual")):
+            db.add(SeoPageCapture(id=ident, tenant_id=4, site_id=2, relation_type="publication",
+                relation_id=21, source_url="https://zhihu.example/article", status="succeeded",
+                source=source, uploaded_by=9 if source == "manual" else None,
+                uploaded_at=moment if source == "manual" else None,
+                captured_at=moment, redirect_chain=[], warnings={}, viewport_width=800, viewport_height=600))
+        db.commit()
+    params = {"tenant_id": 4, "site_id": 2, "latest_per_relation": "true"}
+    result = client.get("/api/v1/seo/site/page-captures", params=params).json()
+    assert result["total"] == 1 and result["items"][0]["id"] == 2
+    auto = client.get("/api/v1/seo/site/page-captures", params={**params, "source": "auto"}).json()
+    assert auto["total"] == 1 and auto["items"][0]["id"] == 1

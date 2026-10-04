@@ -107,6 +107,7 @@ jobs:
           tests/test_seo_page_capture_migration.py
           tests/test_seo_page_capture.py
           tests/test_seo_page_capture_api.py
+          tests/test_seo_capture_upload.py
           tests/test_seo_demo_runtime.py
           tests/test_seo_demo_source.py
           tests/test_seo_static_demo.py

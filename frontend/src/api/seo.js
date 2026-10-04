@@ -1,8 +1,12 @@
 import client from './client'
-import { pageCaptureCreatePayload, pageCaptureListParams } from './seoPageCaptureParams.js'
+import { pageCaptureCreatePayload, pageCaptureListParams, pageCaptureUploadPayload } from './seoPageCaptureParams.js'
 
 export function createSeoPageCapture(target) {
   return client.post('/api/v1/seo/site/page-captures', pageCaptureCreatePayload(target))
+}
+
+export function uploadSeoPageCapture(target) {
+  return client.post('/api/v1/seo/site/page-captures/upload', pageCaptureUploadPayload(target), { timeout: 60000 })
 }
 
 export function fetchSeoPageCapture({ captureId, tenantId }) {

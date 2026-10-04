@@ -21,7 +21,7 @@ from urllib.parse import urljoin, urlsplit
 from app.config import get_settings
 from app.seo_crawler import SeoCrawlError, pin_public_target, pinned_async_client
 
-_KEY = re.compile(r"[0-9a-f]{32}\.png\Z")
+_KEY = re.compile(r"[0-9a-f]{32}\.(?:png|jpg|webp)\Z")
 _DNS_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 _PNG = b"\x89PNG\r\n\x1a\n"
 _REDIRECT = {301, 302, 303, 307, 308}

@@ -52,6 +52,10 @@ SEO_CAPTURE_COLUMNS = {
     "redirect_chain": ("jsonb", True), "warnings": ("jsonb", True),
     "captured_at": ("timestamp with time zone", True),
     "status": ("character varying(16)", True),
+    "source": ("character varying(16)", True),
+    "uploaded_by": ("bigint", False),
+    "uploaded_at": ("timestamp with time zone", False),
+    "content_type": ("character varying(32)", True),
     "error_code": ("character varying(40)", False),
     "viewport_width": ("integer", True), "viewport_height": ("integer", True),
     "image_width": ("integer", False), "image_height": ("integer", False),
@@ -72,6 +76,12 @@ SEO_CAPTURE_STATUS_SQL = text("""
     WHERE con.conrelid = to_regclass('public.seo_page_captures')
       AND con.conname = 'ck_seo_page_captures_status'
 """)
+SEO_CAPTURE_PROVENANCE_SQL = text("""
+    SELECT con.conname, pg_catalog.pg_get_constraintdef(con.oid, true)
+    FROM pg_catalog.pg_constraint con
+    WHERE con.conrelid = to_regclass('public.seo_page_captures')
+      AND con.conname IN ('ck_seo_page_captures_source', 'ck_seo_page_captures_manual_upload')
+""")
 
 
 async def _check_capture_structure(conn) -> None:
@@ -84,6 +94,11 @@ async def _check_capture_structure(conn) -> None:
         f"'{status}'" in constraints[0] for status in ("pending", "running", "succeeded", "failed")
     ):
         raise RuntimeError("SEO page capture status constraint mismatch")
+    provenance = dict(await conn.execute(SEO_CAPTURE_PROVENANCE_SQL))
+    if set(provenance) != {"ck_seo_page_captures_source", "ck_seo_page_captures_manual_upload"} or not all(
+        f"'{source}'" in provenance["ck_seo_page_captures_source"] for source in ("auto", "manual")
+    ) or "uploaded_by" not in provenance["ck_seo_page_captures_manual_upload"] or "uploaded_at" not in provenance["ck_seo_page_captures_manual_upload"]:
+        raise RuntimeError("SEO page capture provenance constraint mismatch")
 SEO_DEMO_BINDING_COLUMNS = {
     "demo_tenant_bindings": {
         "tenant_id": ("bigint", True), "demo_tenant_id": ("bigint", True),
