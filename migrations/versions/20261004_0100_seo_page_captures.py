@@ -8,6 +8,7 @@ Revises: 0099_geo_review_audit
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 
 revision = "0100_seo_page_captures"
 down_revision = "0099_geo_review_audit"
@@ -26,6 +27,8 @@ def upgrade() -> None:
         sa.Column("source_url", sa.Text(), nullable=False),
         sa.Column("final_url", sa.Text()),
         sa.Column("http_status", sa.Integer()),
+        sa.Column("redirect_chain", JSONB(), nullable=False),
+        sa.Column("warnings", JSONB(), nullable=False),
         sa.Column("captured_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("status", sa.String(16), nullable=False),
         sa.Column("error_code", sa.String(40)),

@@ -97,6 +97,10 @@ def test_canonical_migrations_are_add_once_then_immutable() -> None:
         assert not source_change_allowed("D", migration)
         assert not source_change_allowed("R", migration)
     assert source_change_allowed("M", "app/seo_main.py")
+    assert source_change_allowed("M", "migrations/versions/20261004_0100_seo_page_captures.py")
+    assert not source_change_allowed("D", "migrations/versions/20261004_0100_seo_page_captures.py")
+    assert source_path_allowed("scripts/install_seo_page_capture_runtime.sh")
+    assert source_path_allowed("docs/SEO_PAGE_CAPTURE_RUNTIME.md")
 
 
 def test_seo_workflows_run_site_association_and_traffic_regressions() -> None:

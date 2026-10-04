@@ -4,6 +4,7 @@ from datetime import datetime
 
 from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.database import Base
 
@@ -23,6 +24,8 @@ class SeoPageCapture(Base):
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
     final_url: Mapped[str | None] = mapped_column(Text)
     http_status: Mapped[int | None] = mapped_column(Integer)
+    redirect_chain: Mapped[list] = mapped_column(JSONB, nullable=False)
+    warnings: Mapped[dict] = mapped_column(JSONB, nullable=False)
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     error_code: Mapped[str | None] = mapped_column(String(40))

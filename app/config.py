@@ -185,6 +185,8 @@ class Settings(BaseSettings):
     seo_page_capture_browser_channel: str = ""
     seo_page_capture_executable_path: str = ""
     seo_page_capture_timeout_seconds: int = Field(30, ge=5, le=120)
+    seo_page_capture_max_redirects: int = Field(5, ge=0, le=20)
+    seo_page_capture_settle_seconds: float = Field(3.0, ge=0, le=15)
     seo_page_capture_viewport_width: int = Field(1365, ge=320, le=2560)
     seo_page_capture_viewport_height: int = Field(768, ge=240, le=1600)
     seo_page_capture_max_height: int = Field(12000, ge=768, le=30000)

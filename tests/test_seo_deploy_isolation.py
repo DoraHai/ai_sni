@@ -241,6 +241,23 @@ def test_production_workflow_auto_deploys_only_the_exact_production_head() -> No
     assert "production-geo" not in workflow
 
 
+def test_capture_runtime_install_is_opt_in_and_cannot_fail_release() -> None:
+    workflow = _read(".github/workflows/production-seo-deploy.yml")
+    script = _read("scripts/install_seo_page_capture_runtime.sh")
+    assert "if: vars.SEO_PAGE_CAPTURE_RUNTIME == 'install'" in workflow
+    assert "continue-on-error: true" in workflow
+    assert workflow.index("Apply schema-compatible SEO release") < workflow.index("Install optional SEO page capture runtime")
+    assert "< scripts/install_seo_page_capture_runtime.sh" in workflow
+    assert "set -euo pipefail" in script
+    assert "-m playwright install-deps chromium" in script
+    assert 'runuser -u "$service_user" -- env HOME="$service_home" "$python_bin" -m playwright install chromium' in script
+    assert "fonts-noto-cjk" in script
+    assert "--dry-run" in script
+    assert "SEO_PAGE_CAPTURE_ENABLED" in script
+    assert "redirect_chain" in seo_main.SEO_CAPTURE_COLUMNS
+    assert seo_main.SEO_CAPTURE_COLUMNS["warnings"] == ("jsonb", True)
+
+
 def test_shared_ci_defers_production_seo_prs_to_seo_baseline() -> None:
     workflow = _read(".github/workflows/ci.yml")
     assert "branches-ignore:" in workflow

@@ -14,3 +14,5 @@ def test_capture_migration_is_single_additive_head():
     source = (ROOT / "migrations/versions/20261004_0100_seo_page_captures.py").read_text(encoding="utf-8")
     assert "未在任何环境执行" in source and "生产执行前须单独审核" in source
     assert "op.create_table(" in source and '"seo_page_captures"' in source
+    assert 'sa.Column("redirect_chain", JSONB(), nullable=False)' in source
+    assert 'sa.Column("warnings", JSONB(), nullable=False)' in source

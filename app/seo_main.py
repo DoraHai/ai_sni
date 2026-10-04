@@ -49,6 +49,7 @@ SEO_CAPTURE_COLUMNS = {
     "site_id": ("bigint", True), "relation_type": ("character varying(24)", True),
     "relation_id": ("bigint", True), "source_url": ("text", True),
     "final_url": ("text", False), "http_status": ("integer", False),
+    "redirect_chain": ("jsonb", True), "warnings": ("jsonb", True),
     "captured_at": ("timestamp with time zone", True),
     "status": ("character varying(16)", True),
     "error_code": ("character varying(40)", False),

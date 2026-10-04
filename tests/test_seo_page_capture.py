@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 import struct
 from types import SimpleNamespace
+from contextlib import asynccontextmanager
 
 import pytest
 
@@ -12,6 +13,16 @@ from app import seo_page_capture as capture
 PNG = b"\x89PNG\r\n\x1a\n" + b"\0\0\0\rIHDR" + struct.pack(">II", 800, 600)
 
 
+@pytest.fixture(autouse=True)
+def fake_network(monkeypatch):
+    @asynccontextmanager
+    async def pinned(_url):
+        yield
+    monkeypatch.setattr(capture, "pin_public_target", pinned)
+    monkeypatch.setattr(capture, "pinned_async_client", lambda **_: FakeClient(FakeResponse()))
+    monkeypatch.setattr(capture, "__file__", "C:/outside/app/seo_page_capture.py")
+
+
 def settings(tmp_path, **changes):
     values = dict(seo_page_capture_enabled=True, seo_page_capture_storage_dir=str(tmp_path),
                   seo_page_capture_browser_channel="", seo_page_capture_executable_path="",
@@ -19,18 +30,29 @@ def settings(tmp_path, **changes):
                   seo_page_capture_viewport_width=800, seo_page_capture_viewport_height=600,
                   seo_page_capture_max_height=12000, seo_page_capture_max_pixels=16_000_000,
                   seo_page_capture_max_response_bytes=1000, seo_page_capture_max_total_bytes=2000,
-                  seo_page_capture_max_requests=10, seo_page_capture_max_image_bytes=1000)
+                  seo_page_capture_max_requests=10, seo_page_capture_max_image_bytes=1000,
+                  seo_page_capture_max_redirects=5, seo_page_capture_settle_seconds=0.1)
     values.update(changes)
     return SimpleNamespace(**values)
 
 
 class FakePage:
-    url = "https://example.com/final"
+    def __init__(self, context):
+        self.context = context
+        self.url = "about:blank"
 
-    async def goto(self, *_args, **_kwargs):
+    async def goto(self, url, **_kwargs):
+        self.url = url
+        route = FakeRoute(url)
+        await self.context.routes[0][1](route)
+        if route.aborted:
+            raise RuntimeError("navigation aborted")
+        assert route.fulfilled is not None
         return SimpleNamespace(status=200)
 
-    async def evaluate(self, *_args):
+    async def evaluate(self, expression):
+        if "navigator.userAgent" in expression:
+            return "Mock Chromium"
         return {"height": 600, "text": "Visible page", "password": False}
 
     async def screenshot(self, **_kwargs):
@@ -40,6 +62,7 @@ class FakePage:
 class FakeContext:
     def __init__(self):
         self.routes = []
+        self.unrouted = False
 
     async def route(self, pattern, callback):
         self.routes.append((pattern, callback))
@@ -48,10 +71,14 @@ class FakeContext:
         self.routes.append((pattern, callback))
 
     async def new_page(self):
-        return FakePage()
+        return FakePage(self)
+
+    async def unroute_all(self, **kwargs):
+        assert kwargs == {"behavior": "ignoreErrors"}
+        self.unrouted = True
 
     async def close(self):
-        pass
+        assert self.unrouted
 
 
 class FakeBrowser:
@@ -96,7 +123,8 @@ def test_success_writes_true_png_metadata_and_hash(tmp_path, monkeypatch):
     service = capture.PageCaptureService(settings(tmp_path), playwright_factory=FakePlaywright)
     result = attempt(service)
     assert result.success and result.error_code is None
-    assert (result.final_url, result.http_status) == ("https://example.com/final", 200)
+    assert (result.final_url, result.http_status) == ("https://example.com/start", 200)
+    assert result.redirect_chain == [{"url": "https://example.com/start", "status_code": 200}]
     assert (result.image_width, result.image_height) == (800, 600)
     assert result.sha256 == hashlib.sha256(PNG).hexdigest()
     assert capture.capture_storage_path(str(tmp_path), result.storage_key).read_bytes() == PNG
@@ -112,9 +140,10 @@ def test_local_and_non_http_urls_rejected_before_browser(tmp_path, url):
 
 
 class FakeResponse:
-    def __init__(self, status=200, headers=None):
+    def __init__(self, status=200, headers=None, body=b"body"):
         self.status_code = status
-        self.headers = headers or {"content-type": "text/css"}
+        self.headers = headers or {"content-type": "text/html"}
+        self.body = body
 
     async def __aenter__(self):
         return self
@@ -123,7 +152,7 @@ class FakeResponse:
         pass
 
     async def aiter_bytes(self):
-        yield b"body"
+        yield self.body
 
 
 class FakeClient:
@@ -154,32 +183,184 @@ class FakeRoute:
         self.fulfilled = kwargs
 
 
+def response_map(monkeypatch, responses):
+    class MappingClient(FakeClient):
+        def stream(self, method, url, headers):
+            assert method == "GET" and "cookie" not in headers
+            return responses[url]
+    monkeypatch.setattr(capture, "pinned_async_client", lambda **_: MappingClient(None))
+
+
+def test_document_redirects_use_final_browser_url_and_record_chain(tmp_path, monkeypatch):
+    response_map(monkeypatch, {
+        "https://example.com/start": FakeResponse(301, {"location": "/de/home"}),
+        "https://example.com/de/home": FakeResponse(307, {"location": "home.jsp"}),
+        "https://example.com/de/home.jsp": FakeResponse(),
+    })
+    result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=FakePlaywright))
+    assert result.success and result.final_url == "https://example.com/de/home.jsp"
+    assert result.redirect_chain == [
+        {"url": "https://example.com/start", "status_code": 301},
+        {"url": "https://example.com/de/home", "status_code": 307},
+        {"url": "https://example.com/de/home.jsp", "status_code": 200},
+    ]
+
+
+def test_document_redirect_limit(tmp_path, monkeypatch):
+    response_map(monkeypatch, {
+        "https://example.com/start": FakeResponse(301, {"location": "/next"}),
+    })
+    result = attempt(capture.PageCaptureService(settings(
+        tmp_path, seo_page_capture_max_redirects=0), playwright_factory=FakePlaywright))
+    assert result.error_code == "too_many_redirects"
+    assert result.redirect_chain == [{"url": "https://example.com/start", "status_code": 301}]
+
+
+def test_subresource_block_does_not_fail_screenshot(tmp_path, monkeypatch):
+    class AssetPage(FakePage):
+        async def goto(self, url, **kwargs):
+            response = await super().goto(url, **kwargs)
+            asset = FakeRoute("http://127.0.0.1/private.png")
+            await self.context.routes[0][1](asset)
+            assert asset.aborted
+            return response
+    class AssetContext(FakeContext):
+        async def new_page(self):
+            return AssetPage(self)
+    class AssetBrowser(FakeBrowser):
+        async def new_context(self, **kwargs):
+            return AssetContext()
+    class AssetPlaywright(FakePlaywright):
+        async def launch(self, **kwargs):
+            return AssetBrowser()
+    result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=AssetPlaywright))
+    assert result.success
+    assert result.warnings == {
+        "blocked_subresources": 1, "failed_subresources": 0, "samples": ["blocked_address"],
+    }
+
+
+def test_main_document_fetch_failure_still_fails(tmp_path, monkeypatch):
+    class FailedClient(FakeClient):
+        def stream(self, method, url, headers):
+            raise TimeoutError("main document timed out")
+    monkeypatch.setattr(capture, "pinned_async_client", lambda **_: FailedClient(None))
+    result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=FakePlaywright))
+    assert result.error_code == "timeout" and result.storage_key is None
+
+
+@pytest.mark.parametrize("response, code", [
+    (FakeResponse(503), "http_error"),
+    (FakeResponse(200, {"content-length": "1001"}), "response_too_large"),
+])
+def test_main_document_status_and_size_fail(tmp_path, monkeypatch, response, code):
+    monkeypatch.setattr(capture, "pinned_async_client", lambda **_: FakeClient(response))
+    result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=FakePlaywright))
+    assert result.error_code == code and result.storage_key is None
+    assert result.redirect_chain[0]["status_code"] == response.status_code
+
+
+def test_subresource_http_error_is_warning(tmp_path, monkeypatch):
+    monkeypatch.setattr(capture, "pinned_async_client", lambda **_: FakeClient(FakeResponse(404)))
+    state = capture._CaptureState()
+    route = FakeRoute("https://example.com/missing.png")
+    asyncio.run(capture.PageCaptureService(settings(tmp_path))._serve(route, state))
+    assert route.aborted and state.warnings["failed_subresources"] == 1
+    assert state.warnings["samples"] == ["http_error"]
+
+
+def test_settle_calls_scroll_and_ignores_failure(tmp_path, monkeypatch):
+    calls = []
+    class SettlingPage(FakePage):
+        async def evaluate(self, expression):
+            calls.append(expression)
+            if "window.scrollTo" in expression:
+                raise RuntimeError("scroll script failed")
+            return await super().evaluate(expression)
+    class SettlingContext(FakeContext):
+        async def new_page(self):
+            return SettlingPage(self)
+    class SettlingBrowser(FakeBrowser):
+        async def new_context(self, **kwargs):
+            return SettlingContext()
+    class SettlingPlaywright(FakePlaywright):
+        async def launch(self, **kwargs):
+            return SettlingBrowser()
+    result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=SettlingPlaywright))
+    assert result.success and any("window.scrollTo" in call and "img.complete" in call for call in calls)
+
+
+def test_closed_target_during_route_is_quiet(tmp_path):
+    class TargetClosedError(Exception):
+        pass
+    class ClosedRoute(FakeRoute):
+        async def abort(self):
+            raise TargetClosedError()
+    state = capture._CaptureState()
+    asyncio.run(capture.PageCaptureService(settings(tmp_path))._serve(
+        ClosedRoute("http://127.0.0.1/asset"), state))
+    assert state.warnings["blocked_subresources"] == 1
+
+    class ClosedBeforeRequest:
+        @property
+        def request(self):
+            raise TargetClosedError()
+    asyncio.run(capture.PageCaptureService(settings(tmp_path))._serve(ClosedBeforeRequest(), state))
+    assert state.warnings["blocked_subresources"] == 1
+
+
 def test_redirect_to_private_address_is_blocked(tmp_path, monkeypatch):
-    from contextlib import asynccontextmanager
-    @asynccontextmanager
-    async def pinned(_url):
-        yield
-    monkeypatch.setattr(capture, "pin_public_target", pinned)
     monkeypatch.setattr(capture, "pinned_async_client", lambda **_: FakeClient(
         FakeResponse(302, {"location": "http://10.0.0.4/secret"})))
-    service = capture.PageCaptureService(settings(tmp_path))
-    route, failures = FakeRoute("https://example.com/start"), []
-    asyncio.run(service._serve(route, failures, {"requests": 0, "bytes": 0, "redirects": 0}))
-    assert route.aborted and route.fulfilled is None and failures == ["blocked_address"]
+    service = capture.PageCaptureService(settings(tmp_path), playwright_factory=FakePlaywright)
+    result = attempt(service)
+    assert result.error_code == "blocked_address"
+    assert result.redirect_chain == [{"url": "https://example.com/start", "status_code": 302}]
 
 
 @pytest.mark.parametrize("url", ["http://127.0.0.1/asset", "data:text/plain,secret", "http://192.168.1.1/"])
 def test_subresource_request_is_aborted(tmp_path, url):
     service = capture.PageCaptureService(settings(tmp_path))
-    route, failures = FakeRoute(url), []
-    asyncio.run(service._serve(route, failures, {"requests": 0, "bytes": 0, "redirects": 0}))
+    route, state = FakeRoute(url), capture._CaptureState()
+    asyncio.run(service._serve(route, state))
     assert route.aborted and route.fulfilled is None
-    assert failures[0] in {"blocked_address", "blocked_url"}
+    assert state.warnings["blocked_subresources"] == 1
+    assert state.warnings["samples"][0] in {"blocked_address", "blocked_url"}
+
+
+def test_subresource_redirect_to_private_is_warning(tmp_path, monkeypatch):
+    response_map(monkeypatch, {
+        "https://example.com/asset.css": FakeResponse(302, {"location": "http://10.1.2.3/asset.css"}),
+    })
+    state = capture._CaptureState()
+    route = FakeRoute("https://example.com/asset.css")
+    asyncio.run(capture.PageCaptureService(settings(tmp_path))._serve(route, state))
+    assert route.aborted and state.warnings["blocked_subresources"] == 1
+
+
+def test_total_bytes_cap_keeps_document_and_warns_on_assets(tmp_path, monkeypatch):
+    response_map(monkeypatch, {
+        "https://example.com/start": FakeResponse(body=b"document"),
+        "https://example.com/asset": FakeResponse(body=b"12345"),
+    })
+    service = capture.PageCaptureService(settings(tmp_path, seo_page_capture_max_total_bytes=10))
+    state = capture._CaptureState()
+    async def scenario():
+        await service._fetch("https://example.com/start", {}, state, document=True)
+        first = FakeRoute("https://example.com/asset")
+        await service._serve(first, state)
+        second = FakeRoute("https://example.com/asset")
+        await service._serve(second, state)
+        return first, second
+    first, second = asyncio.run(scenario())
+    assert first.aborted and second.aborted
+    assert state.warnings["blocked_subresources"] == 2
+    assert state.warnings["samples"] == ["resources_too_large", "resources_too_large"]
 
 
 def test_timeout_is_recorded_without_image(tmp_path):
     service = capture.PageCaptureService(settings(tmp_path))
-    async def timeout(_url):
+    async def timeout(_url, _state):
         raise asyncio.TimeoutError
     service._render = timeout
     result = attempt(service)

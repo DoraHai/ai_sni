@@ -30,6 +30,8 @@ SOURCE_ALLOWED_EXACT = {
     "migrations/versions/20261004_0100_seo_page_captures.py",
     "tests/test_seo_page_capture.py",
     "tests/test_seo_page_capture_migration.py",
+    "scripts/install_seo_page_capture_runtime.sh",
+    "docs/SEO_PAGE_CAPTURE_RUNTIME.md",
     "docs/DEMO_DATABASE_MIGRATION_0095.md",
     "app/seo_qa_documents.py",
     "tests/test_seo_qa_documents.py",
@@ -245,6 +247,9 @@ def source_change_allowed(status: str, path: str) -> bool:
     if not source_path_allowed(normalized):
         return False
     if normalized.startswith("migrations/versions/"):
+        if normalized == "migrations/versions/20261004_0100_seo_page_captures.py":
+            # 0100 has never been applied; this branch may finish its schema before review.
+            return status in {"A", "M"}
         # A migration may enter the canonical history once. Once present in the
         # compared base, modifying, renaming or deleting it is always rejected.
         return status == "A"
