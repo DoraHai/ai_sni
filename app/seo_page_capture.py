@@ -25,6 +25,8 @@ from app.seo_crawler import SeoCrawlError, pin_public_target, pinned_async_clien
 _KEY = re.compile(r"[0-9a-f]{32}\.png\Z")
 _PNG = b"\x89PNG\r\n\x1a\n"
 _REDIRECT = {301, 302, 303, 307, 308}
+_RETRYABLE = {429, 503}
+_MAX_SUBRESOURCE_RETRIES = 2
 _BROWSER_CHANNELS = frozenset({
     "chrome", "chrome-beta", "chrome-dev", "chrome-canary",
     "msedge", "msedge-beta", "msedge-dev", "msedge-canary",
@@ -56,9 +58,7 @@ class CaptureResult:
     sha256: str | None = None
     storage_key: str | None = None
     redirect_chain: list[dict[str, str | int]] = field(default_factory=list)
-    warnings: dict = field(default_factory=lambda: {
-        "blocked_subresources": 0, "failed_subresources": 0, "samples": [],
-    })
+    warnings: dict = field(default_factory=lambda: _empty_warnings())
 
     @property
     def success(self) -> bool:
@@ -115,24 +115,62 @@ def _dimensions(png: bytes) -> tuple[int, int]:
     return struct.unpack(">II", png[16:24])
 
 
+def _empty_warnings() -> dict:
+    return {"blocked_subresources": 0, "failed_subresources": 0,
+            "by_reason": {}, "hosts": [], "samples": []}
+
+
+def _warning_reason(code: str) -> str:
+    if code == "blocked_address":
+        return "blocked_private"
+    if code == "too_many_requests":
+        return "request_limit"
+    if code.startswith("blocked_") or code in {
+        "response_too_large", "resources_too_large", "too_many_redirects", "invalid_redirect",
+    }:
+        return "blocked_policy"
+    if code in {"fetch_error", "connection_error"}:
+        return "network_failed"
+    return code
+
+
+def _retry_delay(value: str | None, attempt: int) -> float:
+    # Retry-After HTTP dates are intentionally ignored; only bounded seconds apply.
+    if value is not None and re.fullmatch(r"\s*\d+(?:\.\d+)?\s*", value):
+        return min(float(value), 2.0)
+    return min(0.2 * (2 ** attempt), 2.0)
+
+
 @dataclass
 class _CaptureState:
     traffic: dict[str, int] = field(default_factory=lambda: {"requests": 0, "bytes": 0})
     redirect_chain: list[dict[str, str | int]] = field(default_factory=list)
-    warnings: dict = field(default_factory=lambda: {
-        "blocked_subresources": 0, "failed_subresources": 0, "samples": [],
-    })
+    warnings: dict = field(default_factory=_empty_warnings)
+    host_semaphores: dict[str, asyncio.Semaphore] = field(default_factory=dict)
     document_url: str | None = None
     document_status: int | None = None
     document_headers: dict[str, str] = field(default_factory=dict)
     document_body: bytes = b""
     document_pending: bool = True
 
-    def warn(self, code: str) -> None:
-        category = "blocked_subresources" if code.startswith(("blocked_", "too_many_")) or code in {
-            "response_too_large", "resources_too_large",
+    def warn(self, code: str, url: str | None = None) -> None:
+        reason = _warning_reason(code)
+        category = "blocked_subresources" if reason in {
+            "blocked_private", "blocked_policy", "request_limit",
         } else "failed_subresources"
         self.warnings[category] += 1
+        reasons = self.warnings["by_reason"]
+        reasons[reason] = reasons.get(reason, 0) + 1
+        if url:
+            try:
+                host = urlsplit(url).hostname
+            except ValueError:
+                host = None
+            if host and len(host) <= 253:
+                host = host.lower().rstrip(".")
+                hosts = self.warnings["hosts"]
+                if host not in hosts and len(hosts) < 10:
+                    hosts.append(host)
         if len(self.warnings["samples"]) < 5:
             self.warnings["samples"].append(code)
 
@@ -160,52 +198,73 @@ class PageCaptureService:
         current = url
         for redirects in range(settings.seo_page_capture_max_redirects + 1):
             _check_url(current)
-            state.traffic["requests"] += 1
-            if state.traffic["requests"] > settings.seo_page_capture_max_requests:
-                raise CaptureError("too_many_requests")
-            try:
-                async with pin_public_target(current):
-                    # One client per hop prevents cookie sharing and implicit redirects.
-                    async with pinned_async_client(timeout=settings.seo_page_capture_timeout_seconds,
-                                                   follow_redirects=False) as client:
-                        async with client.stream("GET", current, headers=headers) as response:
-                            status = response.status_code
-                            if document:
-                                state.redirect_chain.append({"url": current, "status_code": status})
-                            if status in _REDIRECT:
-                                location = response.headers.get("location")
-                                if not location:
-                                    raise CaptureError("invalid_redirect", current, status)
-                                target = urljoin(current, location)
-                                await _public(target)
-                                if redirects >= settings.seo_page_capture_max_redirects:
-                                    raise CaptureError("too_many_redirects", current, status)
-                                current = target
-                                continue
-                            if not document and status >= 400:
-                                raise CaptureError("http_error", current, status)
-                            length = response.headers.get("content-length", "0")
-                            if length.isdigit() and int(length) > settings.seo_page_capture_max_response_bytes:
-                                raise CaptureError("response_too_large", current, status)
-                            chunks, size = [], 0
-                            async for chunk in response.aiter_bytes():
-                                size += len(chunk)
-                                state.traffic["bytes"] += len(chunk)
-                                if size > settings.seo_page_capture_max_response_bytes:
-                                    raise CaptureError("response_too_large", current, status)
-                                if state.traffic["bytes"] > settings.seo_page_capture_max_total_bytes:
-                                    raise CaptureError("resources_too_large", current, status)
-                                chunks.append(chunk)
-                            safe_headers = {name: value for name, value in response.headers.items()
-                                            if name.lower() in {"content-type", "cache-control"}}
-                            return current, status, safe_headers, b"".join(chunks)
-            except CaptureError:
-                raise
-            except Exception as exc:
-                raise CaptureError(_fetch_error(exc), current) from exc
+            host = urlsplit(current).hostname or ""
+            if not document:
+                semaphore = state.host_semaphores.setdefault(
+                    host.lower().rstrip("."), asyncio.Semaphore(settings.seo_page_capture_per_host_concurrency))
+            for attempt in range(1 if document else _MAX_SUBRESOURCE_RETRIES + 1):
+                retry_delay = None
+                try:
+                    if not document:
+                        await semaphore.acquire()
+                    try:
+                        state.traffic["requests"] += 1
+                        if state.traffic["requests"] > settings.seo_page_capture_max_requests:
+                            raise CaptureError("too_many_requests", current)
+                        async with pin_public_target(current):
+                            # A fresh pool prevents a connection pinned on an earlier DNS result
+                            # from being reused after this request's validation.
+                            async with pinned_async_client(timeout=settings.seo_page_capture_timeout_seconds,
+                                                           follow_redirects=False) as client:
+                                async with client.stream("GET", current, headers=headers) as response:
+                                    status = response.status_code
+                                    if document:
+                                        state.redirect_chain.append({"url": current, "status_code": status})
+                                    if status in _REDIRECT:
+                                        location = response.headers.get("location")
+                                        if not location:
+                                            raise CaptureError("invalid_redirect", current, status)
+                                        target = urljoin(current, location)
+                                        await _public(target)
+                                        if redirects >= settings.seo_page_capture_max_redirects:
+                                            raise CaptureError("too_many_redirects", current, status)
+                                        current = target
+                                        break
+                                    if not document and status in _RETRYABLE:
+                                        if attempt == _MAX_SUBRESOURCE_RETRIES:
+                                            raise CaptureError("rate_limited", current, status)
+                                        retry_delay = _retry_delay(response.headers.get("retry-after"), attempt)
+                                    elif not document and status >= 400:
+                                        raise CaptureError("http_error", current, status)
+                                    else:
+                                        length = response.headers.get("content-length", "0")
+                                        if length.isdigit() and int(length) > settings.seo_page_capture_max_response_bytes:
+                                            raise CaptureError("response_too_large", current, status)
+                                        chunks, size = [], 0
+                                        async for chunk in response.aiter_bytes():
+                                            size += len(chunk)
+                                            state.traffic["bytes"] += len(chunk)
+                                            if size > settings.seo_page_capture_max_response_bytes:
+                                                raise CaptureError("response_too_large", current, status)
+                                            if state.traffic["bytes"] > settings.seo_page_capture_max_total_bytes:
+                                                raise CaptureError("resources_too_large", current, status)
+                                            chunks.append(chunk)
+                                        safe_headers = {name: value for name, value in response.headers.items()
+                                                        if name.lower() in {"content-type", "cache-control"}}
+                                        return current, status, safe_headers, b"".join(chunks)
+                    finally:
+                        if not document:
+                            semaphore.release()
+                except CaptureError:
+                    raise
+                except Exception as exc:
+                    raise CaptureError(_fetch_error(exc), current) from exc
+                if retry_delay is not None:
+                    await asyncio.sleep(retry_delay)
         raise CaptureError("too_many_redirects", current)
 
     async def _serve(self, route, state: _CaptureState) -> None:
+        request = None
         try:
             request = route.request
             if state.document_pending and request.url == state.document_url:
@@ -227,7 +286,7 @@ class PageCaptureService:
             if _target_closed(exc):
                 return
             code = exc.code if isinstance(exc, CaptureError) else _fetch_error(exc)
-            state.warn(code)
+            state.warn(code, request.url if request is not None else None)
             try:
                 await route.abort()
             except Exception as closed:

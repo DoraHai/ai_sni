@@ -193,9 +193,10 @@ class Settings(BaseSettings):
     seo_page_capture_max_pixels: int = Field(16_000_000, ge=1_000_000, le=40_000_000)
     seo_page_capture_max_response_bytes: int = Field(5_000_000, ge=100_000, le=20_000_000)
     seo_page_capture_max_total_bytes: int = Field(30_000_000, ge=1_000_000, le=100_000_000)
-    seo_page_capture_max_requests: int = Field(100, ge=1, le=500)
+    seo_page_capture_max_requests: int = Field(300, ge=1, le=500)
     seo_page_capture_max_image_bytes: int = Field(20_000_000, ge=100_000, le=50_000_000)
     seo_page_capture_concurrency: int = Field(2, ge=1, le=8)
+    seo_page_capture_per_host_concurrency: int = Field(4, ge=1, le=16)
 
     # Google PageSpeed Insights。仅由后端调用，Key 不得进入前端构建产物。
     pagespeed_api_key: str = ""

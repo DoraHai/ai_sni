@@ -31,7 +31,8 @@ def settings(tmp_path, **changes):
                   seo_page_capture_max_height=12000, seo_page_capture_max_pixels=16_000_000,
                   seo_page_capture_max_response_bytes=1000, seo_page_capture_max_total_bytes=2000,
                   seo_page_capture_max_requests=10, seo_page_capture_max_image_bytes=1000,
-                  seo_page_capture_max_redirects=5, seo_page_capture_settle_seconds=0.1)
+                  seo_page_capture_max_redirects=5, seo_page_capture_settle_seconds=0.1,
+                  seo_page_capture_per_host_concurrency=4)
     values.update(changes)
     return SimpleNamespace(**values)
 
@@ -236,7 +237,9 @@ def test_subresource_block_does_not_fail_screenshot(tmp_path, monkeypatch):
     result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=AssetPlaywright))
     assert result.success
     assert result.warnings == {
-        "blocked_subresources": 1, "failed_subresources": 0, "samples": ["blocked_address"],
+        "blocked_subresources": 1, "failed_subresources": 0,
+        "by_reason": {"blocked_private": 1}, "hosts": ["127.0.0.1"],
+        "samples": ["blocked_address"],
     }
 
 
@@ -472,3 +475,135 @@ def test_storage_key_cannot_escape_root(tmp_path):
 def test_disabled_switch_never_invokes_browser(tmp_path):
     result = attempt(capture.PageCaptureService(settings(tmp_path, seo_page_capture_enabled=False)))
     assert result.error_code == "capture_disabled" and not list(tmp_path.iterdir())
+
+
+def test_warning_reasons_and_host_sampling():
+    state = capture._CaptureState()
+    state.warn("blocked_address", "http://10.0.0.1/private?token=secret")
+    state.warn("blocked_method", "https://example.com/post?token=secret")
+    state.warn("too_many_requests", "https://example.com/asset")
+    state.warn("http_error", "https://cdn.example.com/missing")
+    state.warn("fetch_error", "https://cdn.example.com/broken")
+    for index in range(12):
+        state.warn("dns_error", f"https://host{index}.example.com/path?secret=1")
+    assert state.warnings["blocked_subresources"] == 3
+    assert state.warnings["failed_subresources"] == 14
+    assert state.warnings["by_reason"] == {
+        "blocked_private": 1, "blocked_policy": 1, "request_limit": 1,
+        "http_error": 1, "network_failed": 1, "dns_error": 12,
+    }
+    assert state.warnings["hosts"][:3] == ["10.0.0.1", "example.com", "cdn.example.com"]
+    assert len(state.warnings["hosts"]) == 10
+    assert all("/" not in host and "?" not in host for host in state.warnings["hosts"])
+
+
+def test_subresource_429_retries_then_succeeds(tmp_path, monkeypatch):
+    statuses = iter([429, 503, 200])
+    attempts = []
+    pins = []
+    sleeps = []
+
+    @asynccontextmanager
+    async def pinned(url):
+        pins.append(url)
+        yield
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+
+    def client(**_kwargs):
+        status = next(statuses)
+        attempts.append(status)
+        return FakeClient(FakeResponse(status, {"retry-after": "0", "content-type": "image/png"}))
+
+    monkeypatch.setattr(capture, "pin_public_target", pinned)
+    monkeypatch.setattr(capture, "pinned_async_client", client)
+    monkeypatch.setattr(capture.asyncio, "sleep", sleep)
+    state = capture._CaptureState()
+    route = FakeRoute("https://media.example.com/photo.webp")
+    asyncio.run(capture.PageCaptureService(settings(tmp_path))._serve(route, state))
+    assert route.fulfilled is not None and not route.aborted
+    assert attempts == [429, 503, 200] and len(pins) == 3
+    assert sleeps == [0, 0] and state.traffic["requests"] == 3
+    assert state.warnings["failed_subresources"] == 0
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_subresource_retry_exhaustion_is_rate_limited(tmp_path, monkeypatch, status):
+    calls = []
+    async def sleep(seconds):
+        calls.append(seconds)
+    monkeypatch.setattr(capture.asyncio, "sleep", sleep)
+    monkeypatch.setattr(capture, "pinned_async_client", lambda **_: FakeClient(FakeResponse(status)))
+    state = capture._CaptureState()
+    route = FakeRoute("https://media.example.com/image.webp?secret=1")
+    asyncio.run(capture.PageCaptureService(settings(tmp_path))._serve(route, state))
+    assert route.aborted and state.traffic["requests"] == 3
+    assert state.warnings["by_reason"] == {"rate_limited": 1}
+    assert state.warnings["failed_subresources"] == 1
+    assert state.warnings["hosts"] == ["media.example.com"]
+    assert len(calls) == 2
+
+
+def test_retry_after_seconds_are_capped(tmp_path, monkeypatch):
+    sleeps = []
+    async def sleep(seconds):
+        sleeps.append(seconds)
+    monkeypatch.setattr(capture.asyncio, "sleep", sleep)
+    monkeypatch.setattr(capture, "pinned_async_client", lambda **_: FakeClient(
+        FakeResponse(429, {"retry-after": "120"})))
+    route = FakeRoute("https://media.example.com/image.webp")
+    asyncio.run(capture.PageCaptureService(settings(tmp_path))._serve(route, capture._CaptureState()))
+    assert route.aborted and sleeps == [2.0, 2.0]
+
+
+def test_per_host_concurrency_applies_to_subresources(tmp_path, monkeypatch):
+    active = 0
+    peak = 0
+    class SlowResponse(FakeResponse):
+        async def __aenter__(self):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            return self
+
+        async def __aexit__(self, *_args):
+            nonlocal active
+            active -= 1
+
+        async def aiter_bytes(self):
+            await asyncio.sleep(0.01)
+            yield b"image"
+
+    monkeypatch.setattr(capture, "pinned_async_client", lambda **_: FakeClient(SlowResponse()))
+    state = capture._CaptureState()
+    routes = [FakeRoute(f"https://media.example.com/{i}.webp") for i in range(8)]
+    service = capture.PageCaptureService(settings(tmp_path, seo_page_capture_per_host_concurrency=2))
+    async def run():
+        await asyncio.gather(*(service._serve(route, state) for route in routes))
+    asyncio.run(run())
+    assert peak == 2 and all(route.fulfilled is not None for route in routes)
+
+
+def test_request_limit_default_and_private_warning(tmp_path):
+    from app.config import Settings
+    assert Settings.model_fields["seo_page_capture_max_requests"].default == 300
+    assert Settings.model_fields["seo_page_capture_per_host_concurrency"].default == 4
+    route = FakeRoute("http://192.168.1.1/private.png")
+    state = capture._CaptureState()
+    asyncio.run(capture.PageCaptureService(settings(tmp_path))._serve(route, state))
+    assert route.aborted and state.warnings["by_reason"] == {"blocked_private": 1}
+
+
+def test_request_limit_is_counted_as_its_own_reason(tmp_path):
+    service = capture.PageCaptureService(settings(tmp_path, seo_page_capture_max_requests=1))
+    state = capture._CaptureState()
+    first = FakeRoute("https://example.com/first.png")
+    second = FakeRoute("https://example.com/second.png")
+    async def run():
+        await service._serve(first, state)
+        await service._serve(second, state)
+    asyncio.run(run())
+    assert first.fulfilled is not None and second.aborted
+    assert state.warnings["by_reason"] == {"request_limit": 1}
+    assert state.warnings["blocked_subresources"] == 1
