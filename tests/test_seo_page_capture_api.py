@@ -42,9 +42,15 @@ class Store:
             (SeoContentAsset, 11): SimpleNamespace(id=11, tenant_id=4, site_id=2),
             (SeoContentAsset, 12): SimpleNamespace(id=12, tenant_id=4, site_id=3),
             (SeoContentPublication, 21): SimpleNamespace(id=21, tenant_id=4, content_asset_id=11,
-                                                         page_url="https://example.com/page"),
+                                                         status="published", page_url="https://ZHIHU.example:443/article/?a=1&b=2#section"),
             (SeoContentPublication, 22): SimpleNamespace(id=22, tenant_id=4, content_asset_id=12,
-                                                         page_url="https://example.com/page"),
+                                                         status="published", page_url="https://example.com/page"),
+            (SeoContentPublication, 23): SimpleNamespace(id=23, tenant_id=5, content_asset_id=11,
+                                                         status="published", page_url="https://zhihu.example/article/"),
+            (SeoContentPublication, 24): SimpleNamespace(id=24, tenant_id=4, content_asset_id=11,
+                                                         status="published", page_url=None),
+            (SeoContentPublication, 25): SimpleNamespace(id=25, tenant_id=4, content_asset_id=11,
+                                                         status="draft_created", page_url="https://zhihu.example/draft"),
         }
         self.next_id = 1
 
@@ -154,7 +160,7 @@ def test_auth_tenant_site_domain_relation_and_switch(monkeypatch):
     assert _create(client, url="ftp://example.com/page").status_code == 422
     assert _create(client, relation_id=8).json()["detail"]["code"] == "relation_not_found"
     assert _create(client, relation_type="publication", relation_id=22).status_code == 404
-    assert _create(client, relation_type="publication", relation_id=21).status_code == 202
+    assert _create(client, relation_type="publication", relation_id=21, url=None).status_code == 202
     assert _create(_client(monkeypatch, store, worker=_noop, enabled=False)).json()["detail"]["code"] == "capture_disabled"
 
 
@@ -171,12 +177,28 @@ def test_create_pending_default_relation_and_duplicate(monkeypatch):
     assert _create(client, relation_type=None, relation_id=None, url="https://example.com/missing").json()["detail"]["code"] == "site_page_required"
 
 
+def test_publication_external_url_identity_and_scope(monkeypatch):
+    store = Store()
+    client = _client(monkeypatch, store, worker=_noop)
+    body = {"relation_type": "publication", "relation_id": 21}
+    assert _create(client, **body, url="https://zhihu.example/article/?a=1&b=2#other").status_code == 202
+    with store.session().db as db:
+        assert db.get(SeoPageCapture, 1).source_url == "https://zhihu.example/article/?a=1&b=2#other"
+    assert _create(client, **body, url="https://zhihu.example/article?a=1&b=2").json()["detail"]["code"] == "publication_url_mismatch"
+    assert _create(client, **body, url="https://zhihu.example/article/?b=2&a=1").json()["detail"]["code"] == "publication_url_mismatch"
+    assert _create(client, relation_type="publication", relation_id=24, url=None).json()["detail"]["code"] == "publication_url_missing"
+    assert _create(client, relation_type="publication", relation_id=25, url=None).json()["detail"]["code"] == "publication_url_missing"
+    assert _create(client, relation_type="publication", relation_id=23, url=None).status_code == 404
+    assert _create(client, relation_type="publication", relation_id=22, url=None).status_code == 404
+    assert _create(client, relation_type="site_page", relation_id=7, url="https://zhihu.example/article/").json()["detail"]["code"] == "invalid_site_url"
+
+
 def test_worker_sets_success_and_failure(monkeypatch):
     store = Store()
     worker_fn = api.execute_page_capture
     client = _client(monkeypatch, store, worker=_noop)
     first = _create(client).json()["id"]
-    second = _create(client, relation_type="publication", relation_id=21).json()["id"]
+    second = _create(client, relation_type="publication", relation_id=21, url=None).json()["id"]
 
     @asynccontextmanager
     async def factory():
@@ -228,6 +250,10 @@ def test_detail_image_scope_headers_and_escape(monkeypatch, tmp_path):
     assert image.headers["cache-control"] == "private, no-store"
     assert image.headers["x-content-type-options"] == "nosniff"
     assert client.get(path + "/image", params={"tenant_id": 5}).status_code == 403
+    assert _client(monkeypatch, store, _actor(permission=""), worker=_noop, storage_dir=tmp_path).get(
+        path, params={"tenant_id": 4}).status_code == 403
+    assert _client(monkeypatch, store, _actor(permission="view"), worker=_noop, storage_dir=tmp_path).get(
+        path + "/image", params={"tenant_id": 4}).status_code == 200
     assert _client(monkeypatch, store, "anonymous", worker=_noop, storage_dir=tmp_path).get(
         path + "/image", params={"tenant_id": 4}).status_code == 401
     with store.session().db as db:
@@ -240,7 +266,7 @@ def test_list_filter_pagination_and_stale_timeout(monkeypatch):
     store = Store()
     client = _client(monkeypatch, store, worker=_noop)
     first = _create(client).json()["id"]
-    _create(client, relation_type="publication", relation_id=21)
+    _create(client, relation_type="publication", relation_id=21, url=None)
     with store.session().db as db:
         db.get(SeoPageCapture, first).captured_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
         db.commit()
@@ -253,3 +279,35 @@ def test_list_filter_pagination_and_stale_timeout(monkeypatch):
     assert older["items"][0]["error_code"] == "timeout"
     filtered = client.get(base, params={**params, "relation_type": "site_page", "relation_id": 7}).json()
     assert filtered["total"] == 1 and filtered["items"][0]["id"] == first
+    assert _client(monkeypatch, store, _actor(permission=""), worker=_noop).get(base, params=params).status_code == 403
+
+
+def test_list_date_status_latest_per_relation_and_pagination(monkeypatch):
+    store = Store()
+    client = _client(monkeypatch, store, worker=_noop)
+    with store.session().db as db:
+        for ident, relation_type, relation_id, day, status in [
+            (1, "publication", 21, 1, "succeeded"),
+            (2, "publication", 21, 2, "succeeded"),
+            (3, "publication", 21, 3, "failed"),
+            (4, "site_page", 7, 2, "succeeded"),
+            (5, "site_page", 7, 4, "succeeded"),
+        ]:
+            db.add(SeoPageCapture(id=ident, tenant_id=4, site_id=2, relation_type=relation_type,
+                relation_id=relation_id, source_url="https://example.com/page", status=status,
+                captured_at=datetime(2026, 10, day, 12, tzinfo=timezone.utc),
+                redirect_chain=[], warnings={}, viewport_width=800, viewport_height=600))
+        db.commit()
+    base = "/api/v1/seo/site/page-captures"
+    params = {"tenant_id": 4, "site_id": 2, "captured_from": "2026-10-02",
+              "captured_to": "2026-10-04", "status": "succeeded", "latest_per_relation": "true",
+              "page_size": 1}
+    first = client.get(base, params=params).json()
+    second = client.get(base, params={**params, "page": 2}).json()
+    assert first["total"] == second["total"] == 2
+    assert [first["items"][0]["id"], second["items"][0]["id"]] == [5, 2]
+    only_publications = client.get(base, params={**params, "relation_type": "publication"}).json()
+    assert only_publications["total"] == 1 and only_publications["items"][0]["id"] == 2
+    assert client.get(base, params={**params, "captured_from": "2026-10-03T00:00:00+08:00"}).json()["total"] == 1
+    assert client.get(base, params={**params, "captured_from": "2026-10-05"}).json()["detail"]["code"] == "invalid_capture_range"
+    assert client.get(base, params={**params, "captured_from": "2026-10-02T00:00:00"}).json()["detail"]["code"] == "invalid_capture_range"

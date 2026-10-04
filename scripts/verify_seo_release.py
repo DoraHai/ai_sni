@@ -148,6 +148,7 @@ SOURCE_ALLOWED_EXACT = {
     "frontend/scripts/test-seo-workspace-access.mjs",
     "frontend/scripts/test-seo-editor.mjs",
     "frontend/scripts/test-seo-page-capture.mjs",
+    "frontend/src/api/seoPageCaptureParams.js",
     "frontend/scripts/test-session-storage.mjs",
     "frontend/scripts/test-session-store-integration.mjs",
     "frontend/src/api/moduleAssets.js",

@@ -33,6 +33,7 @@ import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
 import { validateResults } from './publisher/core.js'
 import SeoVideoPublishing from './SeoVideoPublishing.vue'
+import SeoPageCapturePanel from './SeoPageCapturePanel.vue'
 import { createPublisherPackage, publisherZip } from './seoPublisher'
 const publisherFiles = import.meta.glob('./publisher/*', { query: '?raw', import: 'default', eager: true })
 const runnerFiles = import.meta.glob('./publisher-runner/*', { query: '?raw', import: 'default', eager: true })
@@ -100,6 +101,10 @@ const publications = ref([])
 const variants = ref([])
 const sites = ref([])
 const canEdit = computed(() => !session.isLoggedIn || session.canEdit('seo.content'))
+const canCapture = computed(() => !session.isLoggedIn || session.canEdit('seo.site'))
+const canViewCapture = computed(() => !session.isLoggedIn || session.canView('seo.site'))
+const capturePublication = ref(null)
+const captureDialog = ref(false)
 
 const importInput = ref(null)
 const importDialog = ref(false)
@@ -1056,7 +1061,7 @@ onMounted(loadSites)
           <el-table-column prop="page_url" label="发布链接" min-width="260" show-overflow-tooltip><template #default="scope"><a :href="scope.row.page_url" target="_blank" rel="noopener">{{ scope.row.page_url }}</a></template></el-table-column>
           <el-table-column label="发布依据" width="200"><template #default="scope">{{ publicationEvidence(scope.row) }}</template></el-table-column>
           <el-table-column prop="published_at" label="发布/登记时间" width="150"><template #default="scope">{{ scope.row.published_at ? date(scope.row.published_at) : '时间未记录' }}</template></el-table-column>
-          <el-table-column label="操作" width="100"><template #default="scope"><el-button link type="primary" @click="showAttempts(scope.row)">尝试记录</el-button></template></el-table-column>
+          <el-table-column label="操作" width="150"><template #default="scope"><el-button link type="primary" @click="showAttempts(scope.row)">尝试记录</el-button><el-button v-if="canViewCapture" link type="primary" @click="capturePublication = scope.row; captureDialog = true">截图</el-button></template></el-table-column>
         </el-table>
       </section>
     </template>
@@ -1177,6 +1182,10 @@ onMounted(loadSites)
         <el-table-column prop="created_at" label="保存时间" width="145"><template #default="scope">{{ date(scope.row.created_at) }}</template></el-table-column>
       </el-table>
       <template #footer><el-button @click="variantHistoryDialog = false">关闭</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="captureDialog" title="发布记录截图" width="700px" destroy-on-close>
+      <SeoPageCapturePanel v-if="capturePublication" :key="capturePublication.id" :tenant-id="currentTenantId" :site-id="siteId" :can-edit="canCapture" :page="capturePublication" relation-type="publication" />
     </el-dialog>
 
     <el-dialog v-model="attemptsDialog" title="发布尝试记录" width="760px">

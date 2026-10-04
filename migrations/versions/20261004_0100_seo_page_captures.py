@@ -41,8 +41,10 @@ def upgrade() -> None:
         sa.CheckConstraint("status IN ('pending', 'running', 'succeeded', 'failed')", name="ck_seo_page_captures_status"),
     )
     op.create_index("ix_seo_page_captures_scope", "seo_page_captures", ["tenant_id", "site_id", "relation_type", "relation_id"])
+    op.create_index("ix_seo_page_captures_timeline", "seo_page_captures", ["tenant_id", "site_id", "captured_at", "id"])
 
 
 def downgrade() -> None:
+    op.drop_index("ix_seo_page_captures_timeline", table_name="seo_page_captures")
     op.drop_index("ix_seo_page_captures_scope", table_name="seo_page_captures")
     op.drop_table("seo_page_captures")

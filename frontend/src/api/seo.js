@@ -1,18 +1,17 @@
 import client from './client'
+import { pageCaptureCreatePayload, pageCaptureListParams } from './seoPageCaptureParams.js'
 
-export function createSeoPageCapture({ tenantId, siteId, pageId, url }) {
-  return client.post('/api/v1/seo/site/page-captures', {
-    tenant_id: tenantId, site_id: siteId, relation_type: 'site_page', relation_id: pageId, url,
-  })
+export function createSeoPageCapture(target) {
+  return client.post('/api/v1/seo/site/page-captures', pageCaptureCreatePayload(target))
 }
 
 export function fetchSeoPageCapture({ captureId, tenantId }) {
   return client.get(`/api/v1/seo/site/page-captures/${captureId}`, { params: { tenant_id: tenantId } })
 }
 
-export function fetchSeoPageCaptures({ tenantId, siteId, relationType, relationId, page = 1, pageSize = 1 }) {
+export function fetchSeoPageCaptures(filters) {
   return client.get('/api/v1/seo/site/page-captures', {
-    params: { tenant_id: tenantId, site_id: siteId, relation_type: relationType, relation_id: relationId, page, page_size: pageSize },
+    params: pageCaptureListParams(filters),
   })
 }
 

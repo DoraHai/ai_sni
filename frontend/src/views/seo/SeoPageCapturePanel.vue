@@ -3,7 +3,8 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { createSeoPageCapture, fetchSeoPageCapture, fetchSeoPageCaptureImage, fetchSeoPageCaptures } from '../../api/seo'
 import { pageCaptureError, pageCaptureStatus, pageCaptureTarget, pageCaptureWarningCount, shouldPollPageCapture } from './seoPageCapture'
 
-const props = defineProps({ tenantId: Number, siteId: Number, canEdit: Boolean, page: { type: Object, required: true } })
+const props = defineProps({ tenantId: Number, siteId: Number, canEdit: Boolean,
+  relationType: { type: String, default: 'site_page' }, page: { type: Object, required: true } })
 const capture = ref(null)
 const imageUrl = ref('')
 const error = ref('')
@@ -58,7 +59,7 @@ async function loadLatest() {
   try {
     const response = await fetchSeoPageCaptures({
       tenantId: props.tenantId, siteId: props.siteId,
-      relationType: 'site_page', relationId: props.page.id,
+      relationType: props.relationType, relationId: props.page.id,
     })
     if (token !== generation) return
     const row = response.items?.[0]
@@ -74,7 +75,7 @@ async function createCapture() {
   stop(); error.value = ''; loading.value = true
   const token = generation
   try {
-    const created = await createSeoPageCapture(pageCaptureTarget({ tenantId: props.tenantId, siteId: props.siteId, page: props.page }))
+    const created = await createSeoPageCapture(pageCaptureTarget({ tenantId: props.tenantId, siteId: props.siteId, page: props.page, relationType: props.relationType }))
     if (token !== generation) return
     capture.value = { id: created.id, status: created.status }
     startedAt = Date.now(); attempts = 0
@@ -83,7 +84,7 @@ async function createCapture() {
   finally { if (token === generation) loading.value = false }
 }
 
-watch(() => [props.tenantId, props.siteId, props.page.id], loadLatest, { immediate: true })
+watch(() => [props.tenantId, props.siteId, props.relationType, props.page.id], loadLatest, { immediate: true })
 onBeforeUnmount(stop)
 </script>
 

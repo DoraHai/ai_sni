@@ -13,6 +13,7 @@ class SeoPageCapture(Base):
     __tablename__ = "seo_page_captures"
     __table_args__ = (
         Index("ix_seo_page_captures_scope", "tenant_id", "site_id", "relation_type", "relation_id"),
+        Index("ix_seo_page_captures_timeline", "tenant_id", "site_id", "captured_at", "id"),
         CheckConstraint("status IN ('pending', 'running', 'succeeded', 'failed')", name="ck_seo_page_captures_status"),
     )
 

@@ -17,3 +17,4 @@ def test_capture_migration_is_single_additive_head():
     assert 'sa.Column("redirect_chain", JSONB(), nullable=False)' in source
     assert 'sa.Column("warnings", JSONB(), nullable=False)' in source
     assert "status IN ('pending', 'running', 'succeeded', 'failed')" in source
+    assert '"ix_seo_page_captures_timeline"' in source

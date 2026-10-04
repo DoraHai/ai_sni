@@ -1,4 +1,5 @@
-export function pageCaptureTarget({ tenantId, siteId, page }) {
+export function pageCaptureTarget({ tenantId, siteId, page, relationType = 'site_page' }) {
+  if (relationType === 'publication') return { tenantId, siteId, relationType, relationId: page.id, ...(page.page_url ? { url: page.page_url } : {}) }
   return { tenantId, siteId, pageId: page.id, url: page.url }
 }
 
@@ -10,6 +11,8 @@ export function pageCaptureError(code) {
   return {
     capture_disabled: '截图功能未开启', capture_recent: '刚提交过请稍后',
     invalid_site_url: '链接不属于该站点', timeout: '截图超时',
+    publication_url_missing: '该发布记录没有已登记的发布链接',
+    publication_url_mismatch: '链接与发布记录不一致',
   }[code] || code || '截图失败'
 }
 

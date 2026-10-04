@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
 import logging
 from pathlib import Path
+import re
 from typing import Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, PositiveInt
@@ -28,18 +30,24 @@ from app.seo_serp import canonical_url, domain_matches
 router = APIRouter()
 logger = logging.getLogger(__name__)
 _COOLDOWN = timedelta(seconds=60)
+_INVALID_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
 
 
 class CaptureCreate(BaseModel):
     tenant_id: PositiveInt
     site_id: PositiveInt
-    url: str
+    url: str | None = None
     relation_type: Literal["site_page", "publication"] | None = None
     relation_id: PositiveInt | None = None
 
 
 def _error(status: int, code: str, message: str) -> HTTPException:
     return HTTPException(status, {"code": code, "message": message})
+
+
+def _require_capture_view(ctx: AuthContext) -> None:
+    if not ctx.can_view("seo.site"):
+        raise _error(403, "forbidden", "需要网站查看权限")
 
 
 def _deadline() -> datetime:
@@ -105,19 +113,56 @@ def _payload(row: SeoPageCapture) -> dict:
     )}
 
 
-async def _relation(session: AsyncSession, tenant_id: int, site_id: int, url: str,
-                    relation_type: str | None, relation_id: int | None) -> tuple[str, int]:
+def _publication_url(value: str | None) -> str | None:
+    """Conservative identity: retain path, trailing slash, query spelling and order."""
+    if not value or value != value.strip() or _INVALID_ESCAPE.search(value):
+        return None
+    try:
+        parts = urlsplit(value)
+        scheme = parts.scheme.lower()
+        if scheme not in {"http", "https"} or not parts.hostname or parts.username is not None or parts.password is not None:
+            return None
+        port = parts.port
+        host = parts.hostname.lower()
+        netloc = f"[{host}]" if ":" in host else host
+        if port is not None and (scheme, port) not in {("http", 80), ("https", 443)}:
+            netloc += f":{port}"
+        return urlunsplit((scheme, netloc, parts.path, parts.query, ""))
+    except (UnicodeError, ValueError):
+        return None
+
+
+def _capture_boundary(value: str, *, upper: bool) -> tuple[datetime, bool]:
+    """Date-only bounds are UTC calendar days; timestamps require an offset."""
+    try:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            day = date.fromisoformat(value)
+            return datetime.combine(day + timedelta(days=1) if upper else day, time.min, timezone.utc), upper
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError
+        return parsed.astimezone(timezone.utc), False
+    except ValueError:
+        raise _error(422, "invalid_capture_range", "日期使用 YYYY-MM-DD；时间须含时区偏移") from None
+
+
+async def _relation(session: AsyncSession, tenant_id: int, site_id: int, url: str | None,
+                    relation_type: str | None, relation_id: int | None) -> tuple[str, int, str]:
     if (relation_type is None) != (relation_id is None):
         raise _error(422, "invalid_relation", "relation_type 和 relation_id 必须同时提供")
     if relation_type is None:
+        if url is None:
+            raise _error(422, "site_page_required", "请提供站内页面 URL 或发布记录关联")
         # An omitted relation means one exact URL match in this site's page inventory.
         pages = list(await session.scalars(select(SeoSitePage).where(
             SeoSitePage.tenant_id == tenant_id, SeoSitePage.site_id == site_id, SeoSitePage.url == url,
         ).limit(2)))
         if len(pages) != 1:
             raise _error(422, "site_page_required", "请指定站内页面，或提供唯一匹配的页面 URL")
-        return "site_page", pages[0].id
+        return "site_page", pages[0].id, url
     if relation_type == "site_page":
+        if url is None:
+            raise _error(422, "invalid_site_url", "站内页面截图必须提供 URL")
         page = await session.get(SeoSitePage, relation_id)
         if page is None or page.tenant_id != tenant_id or page.site_id != site_id:
             raise _error(404, "relation_not_found", "站内页面不属于当前网站")
@@ -130,9 +175,14 @@ async def _relation(session: AsyncSession, tenant_id: int, site_id: int, url: st
         content = await session.get(SeoContentAsset, publication.content_asset_id)
         if content is None or content.tenant_id != tenant_id or content.site_id != site_id:
             raise _error(404, "relation_not_found", "发布记录不属于当前网站")
-        if not publication.page_url or canonical_url(publication.page_url) != canonical_url(url):
-            raise _error(422, "relation_url_mismatch", "截图 URL 与发布页面 URL 不一致")
-    return relation_type, relation_id
+        registered = _publication_url(publication.page_url) if publication.status == "published" else None
+        if registered is None:
+            raise _error(422, "publication_url_missing", "该发布记录没有已登记的发布链接")
+        if url is None:
+            url = publication.page_url
+        elif _publication_url(url) != registered:
+            raise _error(422, "publication_url_mismatch", "链接与发布记录不一致")
+    return relation_type, relation_id, url
 
 
 async def execute_page_capture(capture_id: int) -> None:
@@ -143,9 +193,20 @@ async def execute_page_capture(capture_id: int) -> None:
             return
         site = await session.get(SeoSite, row.site_id)
         if (site is None or site.tenant_id != row.tenant_id
-                or not domain_matches(row.source_url, f"https://{site.canonical_domain}")
                 or not await seo_site_is_operational(session, row.tenant_id, row.site_id)):
             row.status, row.error_code = "failed", "site_inactive"
+            await session.commit()
+            return
+        try:
+            await _relation(session, row.tenant_id, row.site_id, row.source_url,
+                            row.relation_type, row.relation_id)
+            _check_url(row.source_url)
+            if row.relation_type == "site_page" and not domain_matches(
+                    row.source_url, f"https://{site.canonical_domain}"):
+                raise _error(422, "invalid_site_url", "链接不属于该站点")
+        except (HTTPException, CaptureError) as exc:
+            row.status = "failed"
+            row.error_code = exc.detail["code"] if isinstance(exc, HTTPException) else exc.code
             await session.commit()
             return
         row.status = "running"
@@ -197,16 +258,30 @@ async def create_page_capture(req: CaptureCreate, background_tasks: BackgroundTa
         raise _error(404, "site_not_found", "SEO 网站不属于当前客户")
     if site.status != "active":
         raise _error(409, "site_inactive", "SEO 网站已暂停或归档")
-    try:
-        _check_url(req.url)
-        valid_domain = domain_matches(req.url, f"https://{site.canonical_domain}")
-    except (CaptureError, ValueError):
-        valid_domain = False
-    if not valid_domain:
-        raise _error(422, "invalid_site_url", "URL 必须是当前网站域名下的 HTTP 或 HTTPS 地址")
-    relation_type, relation_id = await _relation(
+    if req.relation_type != "publication" and req.url is not None:
+        try:
+            _check_url(req.url)
+            valid_domain = domain_matches(req.url, f"https://{site.canonical_domain}")
+        except (CaptureError, ValueError):
+            valid_domain = False
+        if not valid_domain:
+            raise _error(422, "invalid_site_url", "URL 必须是当前网站域名下的 HTTP 或 HTTPS 地址")
+    relation_type, relation_id, url = await _relation(
         session, req.tenant_id, req.site_id, req.url, req.relation_type, req.relation_id,
     )
+    if relation_type == "site_page":
+        try:
+            _check_url(url)
+            valid_domain = domain_matches(url, f"https://{site.canonical_domain}")
+        except (CaptureError, ValueError):
+            valid_domain = False
+        if not valid_domain:
+            raise _error(422, "invalid_site_url", "URL 必须是当前网站域名下的 HTTP 或 HTTPS 地址")
+    else:
+        try:
+            _check_url(url)
+        except CaptureError as exc:
+            raise _error(422, exc.code, "发布链接必须是可访问的公网 HTTP 或 HTTPS 地址") from exc
     await _expire_stale(session, req.tenant_id, req.site_id)
     recent = await session.scalar(select(SeoPageCapture).where(
         SeoPageCapture.tenant_id == req.tenant_id, SeoPageCapture.site_id == req.site_id,
@@ -217,7 +292,7 @@ async def create_page_capture(req: CaptureCreate, background_tasks: BackgroundTa
         raise _error(409, "capture_recent", "该页面刚刚提交过截图请求")
     row = SeoPageCapture(tenant_id=req.tenant_id, site_id=req.site_id,
                          relation_type=relation_type, relation_id=relation_id,
-                         source_url=req.url, status="pending", captured_at=datetime.now(timezone.utc),
+                         source_url=url, status="pending", captured_at=datetime.now(timezone.utc),
                          redirect_chain=[], warnings={},
                          viewport_width=settings.seo_page_capture_viewport_width,
                          viewport_height=settings.seo_page_capture_viewport_height)
@@ -234,6 +309,7 @@ async def get_page_capture(capture_id: PositiveInt, tenant_id: PositiveInt,
                            session: AsyncSession = Depends(get_session),
                            ctx: AuthContext = Depends(require_scoped_auth)) -> dict:
     ctx.ensure_tenant(tenant_id)
+    _require_capture_view(ctx)
     return _payload(await _capture(session, tenant_id, capture_id,
                                    allow_stale_update=_primary_source(request)))
 
@@ -244,6 +320,7 @@ async def get_page_capture_image(capture_id: PositiveInt, tenant_id: PositiveInt
                                  session: AsyncSession = Depends(get_session),
                                  ctx: AuthContext = Depends(require_scoped_auth)) -> Response:
     ctx.ensure_tenant(tenant_id)
+    _require_capture_view(ctx)
     row = await _capture(session, tenant_id, capture_id,
                          allow_stale_update=_primary_source(request))
     if row.status != "succeeded" or not row.storage_key:
@@ -265,22 +342,50 @@ async def list_page_captures(tenant_id: PositiveInt, site_id: PositiveInt,
                              request: Request,
                              relation_type: Literal["site_page", "publication"] | None = None,
                              relation_id: PositiveInt | None = None,
+                             captured_from: str | None = None, captured_to: str | None = None,
+                             status: Literal["pending", "running", "succeeded", "failed"] | None = None,
+                             latest_per_relation: bool = False,
                              page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
                              session: AsyncSession = Depends(get_session),
                              ctx: AuthContext = Depends(require_scoped_auth)) -> dict:
     ctx.ensure_tenant(tenant_id)
+    _require_capture_view(ctx)
     await _site(session, tenant_id, site_id)
-    if (relation_type is None) != (relation_id is None):
+    if relation_id is not None and relation_type is None:
         raise _error(422, "invalid_relation", "relation_type 和 relation_id 必须同时提供")
     if _primary_source(request):
         await _expire_stale(session, tenant_id, site_id)
         await session.commit()
     conditions = [SeoPageCapture.tenant_id == tenant_id, SeoPageCapture.site_id == site_id]
     if relation_type is not None:
-        conditions.extend((SeoPageCapture.relation_type == relation_type,
-                           SeoPageCapture.relation_id == relation_id))
-    total = await session.scalar(select(func.count()).select_from(SeoPageCapture).where(*conditions))
-    rows = list(await session.scalars(select(SeoPageCapture).where(*conditions)
+        conditions.append(SeoPageCapture.relation_type == relation_type)
+    if relation_id is not None:
+        conditions.append(SeoPageCapture.relation_id == relation_id)
+    lower = _capture_boundary(captured_from, upper=False)[0] if captured_from else None
+    upper, exclusive = _capture_boundary(captured_to, upper=True) if captured_to else (None, False)
+    if lower is not None and upper is not None and (upper < lower or (exclusive and upper == lower)):
+        raise _error(422, "invalid_capture_range", "结束时间不能早于开始时间")
+    if lower is not None:
+        conditions.append(SeoPageCapture.captured_at >= lower)
+    if upper is not None:
+        conditions.append(SeoPageCapture.captured_at < upper if exclusive else SeoPageCapture.captured_at <= upper)
+    if status is not None:
+        conditions.append(SeoPageCapture.status == status)
+    if latest_per_relation:
+        ranked = select(
+            SeoPageCapture.id.label("capture_id"),
+            func.row_number().over(
+                partition_by=(SeoPageCapture.relation_type, SeoPageCapture.relation_id),
+                order_by=(SeoPageCapture.captured_at.desc(), SeoPageCapture.id.desc()),
+            ).label("rank"),
+        ).where(*conditions).subquery()
+        selected = select(SeoPageCapture).join(ranked, SeoPageCapture.id == ranked.c.capture_id).where(ranked.c.rank == 1)
+        total_query = select(func.count()).select_from(ranked).where(ranked.c.rank == 1)
+    else:
+        selected = select(SeoPageCapture).where(*conditions)
+        total_query = select(func.count()).select_from(SeoPageCapture).where(*conditions)
+    total = await session.scalar(total_query)
+    rows = list(await session.scalars(selected
         .order_by(SeoPageCapture.captured_at.desc(), SeoPageCapture.id.desc())
         .offset((page - 1) * page_size).limit(page_size)))
     return {"items": [_payload(row) for row in rows], "total": total or 0,
