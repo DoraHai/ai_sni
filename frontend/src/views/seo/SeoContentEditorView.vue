@@ -6,8 +6,10 @@ import { assistSeoContent, createSeoContentAsset, fetchSeoContentAssets, fetchSe
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
-import { sanitizeSeoEditorHtml, seoContentWordCount } from './seoEditorHtml'
+import { sanitizeSeoEditorHtml, seoContentWordCount, safeSeoUrl, seoPasteHtml } from './seoEditorHtml'
 import { buildSourcePageAssistInstruction, sourcePageRemediationContext } from './seoContentRemediationContext'
+
+import { createSeoTable, editSeoTable } from './seoEditorTable'
 
 const route = useRoute()
 const router = useRouter()
@@ -95,6 +97,7 @@ async function load() {
       assetStatus.value=item.status||'planned'
       await nextTick()
       if(editor.value)editor.value.innerHTML=form.draft
+      historyCurrent = form.draft; history.length = 0; future.length = 0
       saveState.value = item.status === 'review' ? '待审核（只读）' : item.status === 'ready' ? '待发布（只读）' : item.status === 'published' ? '已发布（只读）' : '已载入任务'
     }
   } catch (e) { ElMessage.warning(e.message) }
@@ -138,14 +141,105 @@ function finishEditorComposition() {
   syncDraft()
 }
 
+// HTML snapshots cover native typing and custom DOM edits consistently, capped at 50.
+const history = [], future = []
+let historyCurrent = ''
+const selectedCell = ref(null), selectedFigure = ref(null)
+function rememberDraft() {
+  const html = editor.value?.innerHTML || ''
+  if (historyCurrent !== null && html !== historyCurrent) {
+    history.push(historyCurrent); if (history.length > 50) history.shift()
+    future.length = 0
+  }
+  historyCurrent = html
+}
+function editorSelection(event) {
+  const node = event?.target?.closest?.('img') || window.getSelection()?.anchorNode
+  const element = node?.nodeType === 1 ? node : node?.parentElement
+  selectedCell.value = editor.value?.contains(element) ? element.closest('td,th') : null
+  selectedFigure.value = editor.value?.contains(element) ? element.closest('figure') || element.closest('img') : null
+}
+function editorUndo(redo = false) {
+  if (workflowLocked.value || editorComposing.value) return
+  rememberDraft()
+  const from = redo ? future : history, to = redo ? history : future
+  if (!from.length) return
+  to.push(historyCurrent); historyCurrent = from.pop()
+  editor.value.innerHTML = historyCurrent; form.draft = historyCurrent
+  selectedCell.value = null; selectedFigure.value = null
+  editor.value.focus()
+  const range = document.createRange(); range.selectNodeContents(editor.value); range.collapse(false)
+  const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range)
+}
+function editorKeydown(event) {
+  if ((event.ctrlKey || event.metaKey) && ['z','y'].includes(event.key.toLowerCase()) && !editorComposing.value) {
+    event.preventDefault(); editorUndo(event.key.toLowerCase() === 'y' || event.shiftKey)
+  }
+}
+function pasteEditor(event) {
+  event.preventDefault()
+  if (workflowLocked.value || editorComposing.value) return
+  command('insertHTML', seoPasteHtml(event.clipboardData.getData('text/html'), event.clipboardData.getData('text/plain')))
+}
+function insertLink() {
+  if (workflowLocked.value || editorComposing.value) return
+  const anchor = window.getSelection()?.anchorNode
+  const link = (anchor?.nodeType === 1 ? anchor : anchor?.parentElement)?.closest('a')
+  const url = window.prompt('链接 URL（http、https、/ 路径或 # 锚点）', link?.getAttribute('href') || '')
+  if (url === null) return
+  if (!safeSeoUrl(url.trim())) return ElMessage.warning('URL 不安全或格式不正确')
+  if (link && editor.value.contains(link)) { rememberDraft(); link.setAttribute('href', url.trim()); syncDraft() }
+  else command('createLink', url.trim())
+}
+function insertTable() {
+  if (workflowLocked.value || editorComposing.value) return
+  const size = window.prompt('表格行 × 列（1–20 × 1–10）', '3x3')
+  if (size === null) return
+  const match = size.match(/^\s*(\d+)\s*[x×*]\s*(\d+)\s*$/i)
+  if (!match) return ElMessage.warning('请输入行 x 列，例如 3x3')
+  try { command('insertHTML', createSeoTable(document, Number(match[1]), Number(match[2]), window.confirm('首行作为表头？')).outerHTML + '<p><br></p>') }
+  catch (e) { ElMessage.warning(e.message) }
+}
+function tableAction(action) {
+  if (workflowLocked.value || editorComposing.value) return
+  try { rememberDraft(); editSeoTable(selectedCell.value, action); syncDraft(); editorSelection() }
+  catch (e) { ElMessage.warning(e.message) }
+}
+function insertImage() {
+  if (workflowLocked.value || editorComposing.value) return
+  const url = window.prompt('图片 URL（http、https 或 / 路径）', '')
+  if (url === null) return
+  if (!safeSeoUrl(url.trim(), true)) return ElMessage.warning('URL 不安全或格式不正确')
+  const alt = window.prompt('替代文本（建议填写，可留空）', '')
+  if (alt === null) return
+  const caption = window.prompt('图片说明（可留空）', '')
+  if (caption === null) return
+  const figure = document.createElement('figure'); figure.className = 'seo-figure seo-align-center seo-w-100'
+  const img = document.createElement('img'); img.setAttribute('src', url.trim()); img.setAttribute('alt', alt); figure.append(img)
+  if (caption) { const node = document.createElement('figcaption'); node.textContent = caption; figure.append(node) }
+  command('insertHTML', figure.outerHTML + '<p><br></p>')
+}
+function imageLayout(token) {
+  if (workflowLocked.value || editorComposing.value || !selectedFigure.value) return
+  rememberDraft()
+  let figure = selectedFigure.value
+  if (figure.tagName === 'IMG') { const wrapper = document.createElement('figure'); figure.before(wrapper); wrapper.append(figure); figure = wrapper }
+  figure.classList.add('seo-figure')
+  const prefix = token.startsWith('seo-w-') ? 'seo-w-' : 'seo-align-'
+  for (const name of [...figure.classList]) if (name.startsWith(prefix)) figure.classList.remove(name)
+  figure.classList.add(token); selectedFigure.value = figure; syncDraft()
+}
 function syncDraft() {
   if (editorComposing.value) return
+  rememberDraft()
   form.draft = editor.value?.innerHTML || ''
   saveState.value = '编辑中…'
 }
 
 function command(name, value = null) {
   if (workflowLocked.value) return ElMessage.warning('当前任务处于只读流程状态')
+  if (editorComposing.value) return
+  rememberDraft()
   editor.value?.focus()
   document.execCommand(name, false, value)
   syncDraft()
@@ -429,8 +523,8 @@ onMounted(async () => {
 
       <section class="editor-center">
         <div class="document-frame">
-          <div class="editor-toolbar"><button type="button" title="标题 2" @click="command('formatBlock', 'h2')">H2</button><button type="button" title="标题 3" @click="command('formatBlock', 'h3')">H3</button><i /><button type="button" title="加粗" @click="command('bold')">B</button><button type="button" title="斜体" @click="command('italic')">I</button><button type="button" title="无序列表" @click="command('insertUnorderedList')">•</button><button type="button" title="有序列表" @click="command('insertOrderedList')">1.</button></div>
-          <div class="document-scroll"><input v-model="form.title" class="document-title" :readonly="workflowLocked" :placeholder="mode==='qa'?'输入问题标题':'输入文章标题'"><div ref="editor" class="article-editor" :contenteditable="!workflowLocked" :data-placeholder="mode==='qa'?'从这里开始撰写回答…':'从这里开始撰写正文…'" @compositionstart="startEditorComposition" @compositionend="finishEditorComposition" @input="syncDraft" @blur="syncDraft" /></div>
+          <div class="editor-toolbar" @mousedown.prevent><button type="button" :disabled="workflowLocked || editorComposing" @click="command('formatBlock', 'p')">正文</button><button type="button" :disabled="workflowLocked || editorComposing" @click="command('formatBlock', 'h2')">H2</button><button type="button" :disabled="workflowLocked || editorComposing" @click="command('formatBlock', 'h3')">H3</button><button type="button" :disabled="workflowLocked || editorComposing" @click="command('formatBlock', 'blockquote')">引用</button><button type="button" :disabled="workflowLocked || editorComposing" @click="command('insertHorizontalRule')">分隔线</button><i /><button type="button" :disabled="workflowLocked || editorComposing" @click="command('bold')">B</button><button type="button" :disabled="workflowLocked || editorComposing" @click="command('italic')">I</button><button type="button" :disabled="workflowLocked || editorComposing" @click="command('insertUnorderedList')">无序列表</button><button type="button" :disabled="workflowLocked || editorComposing" @click="command('insertOrderedList')">有序列表</button><i /><button type="button" :disabled="workflowLocked || editorComposing" @click="insertLink">插入/编辑链接</button><button type="button" :disabled="workflowLocked || editorComposing" @click="command('unlink')">取消链接</button><button type="button" :disabled="workflowLocked || editorComposing" @click="editorUndo()">撤销</button><button type="button" :disabled="workflowLocked || editorComposing" @click="editorUndo(true)">重做</button><button type="button" :disabled="workflowLocked || editorComposing" @click="command('removeFormat')">清除格式</button><i /><button type="button" :disabled="workflowLocked || editorComposing" @click="insertTable">插入表格</button><button type="button" :disabled="workflowLocked || editorComposing" @click="insertImage">插入图片</button><button v-if="selectedCell" type="button" :disabled="workflowLocked || editorComposing" @click="tableAction('rowAbove')">上方插入行</button><button v-if="selectedCell" type="button" :disabled="workflowLocked || editorComposing" @click="tableAction('rowBelow')">下方插入行</button><button v-if="selectedCell" type="button" :disabled="workflowLocked || editorComposing" @click="tableAction('columnLeft')">左插入列</button><button v-if="selectedCell" type="button" :disabled="workflowLocked || editorComposing" @click="tableAction('columnRight')">右插入列</button><button v-if="selectedCell" type="button" :disabled="workflowLocked || editorComposing" @click="tableAction('deleteRow')">删除行</button><button v-if="selectedCell" type="button" :disabled="workflowLocked || editorComposing" @click="tableAction('deleteColumn')">删除列</button><button v-if="selectedCell" type="button" :disabled="workflowLocked || editorComposing" @click="tableAction('deleteTable')">删除表格</button><button v-if="selectedFigure" type="button" :disabled="workflowLocked || editorComposing" @click="imageLayout('seo-align-left')">左对齐</button><button v-if="selectedFigure" type="button" :disabled="workflowLocked || editorComposing" @click="imageLayout('seo-align-center')">居中</button><button v-if="selectedFigure" type="button" :disabled="workflowLocked || editorComposing" @click="imageLayout('seo-align-right')">右对齐</button><button v-if="selectedFigure" type="button" :disabled="workflowLocked || editorComposing" @click="imageLayout('seo-w-25')">25%</button><button v-if="selectedFigure" type="button" :disabled="workflowLocked || editorComposing" @click="imageLayout('seo-w-50')">50%</button><button v-if="selectedFigure" type="button" :disabled="workflowLocked || editorComposing" @click="imageLayout('seo-w-75')">75%</button><button v-if="selectedFigure" type="button" :disabled="workflowLocked || editorComposing" @click="imageLayout('seo-w-100')">100%</button></div>
+          <div class="document-scroll"><input v-model="form.title" class="document-title" :readonly="workflowLocked" :placeholder="mode==='qa'?'输入问题标题':'输入文章标题'"><div ref="editor" class="article-editor" :contenteditable="!workflowLocked" :data-placeholder="mode==='qa'?'从这里开始撰写回答…':'从这里开始撰写正文…'" @compositionstart="startEditorComposition" @compositionend="finishEditorComposition" @input="syncDraft" @blur="syncDraft" @paste="pasteEditor" @keydown="editorKeydown" @keyup="editorSelection" @mouseup="editorSelection" @click="editorSelection" /></div>
           <footer class="document-status"><span>{{ wordCount.toLocaleString() }} 字</span><span>{{ engine }}</span><span :title="keywordSummary">{{ keywordNames.length }} 个目标词</span><span>{{ saveState }}</span></footer>
         </div>
       </section>
@@ -452,6 +546,21 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.editor-toolbar{flex-wrap:wrap}.editor-toolbar button{width:auto!important;min-width:30px;padding:0 6px!important}.editor-toolbar button:disabled{opacity:.45;cursor:default}
+.article-editor :deep(.seo-table){display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;clear:both;margin:16px 0}
+.article-editor :deep(th),.article-editor :deep(td){border:1px solid #cbd5e1;padding:8px;min-width:70px}
+.article-editor :deep(th){background:#f1f5f9}
+.article-editor :deep(.seo-figure){max-width:100%;margin:16px 0}
+.article-editor :deep(img){max-width:100%;height:auto}
+.article-editor :deep(.seo-figure img){display:block;width:100%}
+.article-editor :deep(figcaption){color:#64748b;font-size:12px;text-align:center}
+.article-editor :deep(.seo-align-left){float:left;margin:8px 16px 8px 0}
+.article-editor :deep(.seo-align-center){float:none;clear:both;margin:16px auto}
+.article-editor :deep(.seo-align-right){float:right;margin:8px 0 8px 16px}
+.article-editor :deep(.seo-w-25){width:25%}.article-editor :deep(.seo-w-50){width:50%}.article-editor :deep(.seo-w-75){width:75%}.article-editor :deep(.seo-w-100){width:100%}
+.article-editor :deep(blockquote){border-left:3px solid #cbd5e1;padding:8px 16px;background:#f8fafc;margin:16px 0;clear:both}
+.article-editor :deep(hr){border:0;border-top:1px solid #cbd5e1;clear:both}
+.article-editor::after{content:'';display:block;clear:both}
 .article-editor { overflow-wrap: anywhere; }
 .grounding-note{margin:8px 0 0;padding:8px;border-left:2px solid #d97706;background:#fff8ee;color:#705a3b;font-size:10px;line-height:1.55}
 .source-link{margin-bottom:10px;padding:9px;border:1px solid #cfe0ff;border-radius:7px;background:#f4f7ff}.source-link b,.source-link span{display:block}.source-link b{color:#1d4ed8;font-size:10.5px}.source-link span{margin:4px 0 7px;overflow:hidden;color:#667085;font-size:10px;text-overflow:ellipsis;white-space:nowrap}.source-link button{padding:0;border:0;background:transparent;color:#2563eb;font-size:10px;cursor:pointer}

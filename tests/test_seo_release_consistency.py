@@ -66,6 +66,7 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("ops/platform-deploy/install-seo-frontend.sh")
     assert source_path_allowed("ops/platform-deploy/modules/seo-frontend")
     assert source_path_allowed("frontend/src/views/seo/SeoDashboardView.vue")
+    assert source_path_allowed("frontend/src/views/seo/seoEditorTable.js")
     assert source_path_allowed("frontend/src/api/client.js")
     assert source_path_allowed("frontend/src/authContextRouting.js")
     assert source_path_allowed("frontend/src/store/session.js")
