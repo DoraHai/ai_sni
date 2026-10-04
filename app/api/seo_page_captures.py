@@ -10,8 +10,10 @@ import logging
 import os
 from pathlib import Path
 import re
+from collections import defaultdict
 from typing import Literal
 import uuid
+from urllib.parse import quote
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
@@ -22,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.database import async_session_factory
 from app.models.module_workspace import SeoSite
-from app.models.seo import SeoContentAsset, SeoContentPublication, SeoSitePage
+from app.models.seo import SeoContentAsset, SeoContentPublication, SeoKeywordAsset, SeoSitePage
 from app.models.seo_page_capture import SeoPageCapture
 from app.module_scope import seo_site_is_operational
 from app.security.auth import AuthContext
@@ -30,6 +32,8 @@ from app.seo_demo_source import get_seo_session as get_session, require_seo_scop
 from app.seo_page_capture import CaptureError, PageCaptureService, _check_url, capture_storage_path
 from app.seo_capture_upload import UploadImageError, clean_image
 from app.seo_serp import canonical_url, domain_matches
+from app.seo_publication_export import (build_publication_list_workbook, capture_fields,
+                                        month_bounds, publication_summary)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -53,6 +57,63 @@ def _error(status: int, code: str, message: str) -> HTTPException:
 def _require_capture_view(ctx: AuthContext) -> None:
     if not ctx.can_view("seo.site"):
         raise _error(403, "forbidden", "需要网站查看权限")
+
+
+@router.get("/site/publications/export")
+async def export_publication_list(tenant_id: PositiveInt, site_id: PositiveInt, month: str,
+                                  session: AsyncSession = Depends(get_session),
+                                  ctx: AuthContext = Depends(require_scoped_auth)) -> Response:
+    ctx.ensure_tenant(tenant_id)
+    _require_capture_view(ctx)
+    site = await _site(session, tenant_id, site_id)
+    try:
+        start, end = month_bounds(month)
+    except ValueError:
+        raise _error(422, "invalid_month", "月份须为 YYYY-MM") from None
+    # Publication timestamps in this branch are naive UTC; captured_at is aware UTC.
+    pairs = (await session.execute(select(SeoContentPublication, SeoContentAsset).join(
+        SeoContentAsset, SeoContentPublication.content_asset_id == SeoContentAsset.id).where(
+        SeoContentPublication.tenant_id == tenant_id, SeoContentAsset.tenant_id == tenant_id,
+        SeoContentAsset.site_id == site_id, SeoContentPublication.status == "published",
+        SeoContentPublication.published_at >= start, SeoContentPublication.published_at < end,
+    ).order_by(SeoContentPublication.published_at, SeoContentPublication.id))).all()
+    publication_ids = [publication.id for publication, _ in pairs]
+    captures = defaultdict(list)
+    if publication_ids:
+        evidence = (await session.scalars(select(SeoPageCapture).where(
+            SeoPageCapture.tenant_id == tenant_id, SeoPageCapture.site_id == site_id,
+            SeoPageCapture.relation_type == "publication", SeoPageCapture.relation_id.in_(publication_ids),
+        ))).all()
+        for capture in evidence:
+            captures[capture.relation_id].append(capture)
+    keyword_ids = {key for _, asset in pairs for key in (asset.keyword_ids or ([asset.keyword_id] if asset.keyword_id else [])) if isinstance(key, int)}
+    keywords = {}
+    if keyword_ids:
+        found = (await session.scalars(select(SeoKeywordAsset).where(
+            SeoKeywordAsset.tenant_id == tenant_id, SeoKeywordAsset.site_id == site_id,
+            SeoKeywordAsset.id.in_(keyword_ids)))).all()
+        keywords = {keyword.id: keyword.keyword for keyword in found}
+    rows = []
+    for publication, asset in pairs:
+        selected = asset.keyword_ids or ([asset.keyword_id] if asset.keyword_id else [])
+        capture = capture_fields(captures[publication.id])
+        rows.append({"platform": publication.platform_name, "title": asset.title,
+                     "keywords": "、".join(keywords[key] for key in selected if key in keywords),
+                     "page_url": publication.page_url, "published_at": publication.published_at,
+                     "capture_status": capture["capture_status"], "image_key": capture["image_key"],
+                     "captured_at": capture["captured_at"], "notes": capture["capture_note"],
+                     "capture_kind": capture["capture_kind"]})
+    settings = get_settings()
+    def load_image(key: str) -> bytes:
+        return capture_storage_path(settings.seo_page_capture_storage_dir, key).read_bytes()
+    summary = publication_summary(rows, site.name, month, datetime.now(timezone.utc))
+    workbook = build_publication_list_workbook(rows, summary, image_loader=load_image,
+                                               max_pixels=settings.seo_page_capture_max_pixels)
+    safe_site = re.sub(r'[\\/:*?"<>|\r\n]+', "_", site.name).strip(" .") or "站点"
+    filename = f"发布清单-{safe_site}-{month}.xlsx"
+    return Response(workbook, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename=publication-list-{month}.xlsx; filename*=UTF-8''{quote(filename)}",
+                             "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
 
 def _deadline() -> datetime:

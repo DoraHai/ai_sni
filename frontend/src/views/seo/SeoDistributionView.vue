@@ -4,6 +4,7 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   downloadSeoPublicationMaterials,
+  downloadSeoPublicationList,
   discoverSeoBacklinks,
   adaptSeoDistributionContent,
   completeSeoManualPublication,
@@ -28,6 +29,7 @@ import {
   updateSeoDistributionConnection,
   saveSeoDistributionVariant,
 } from '../../api/seo'
+import { previousBeijingMonth, publicationListFilename } from '../../api/seoPublicationExport.js'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
@@ -44,6 +46,22 @@ const activeTab = ref('channels')
 const query = ref('')
 const channelFilter = ref('all')
 const materialsBusy = ref(false)
+const exportMonth = ref(previousBeijingMonth())
+const exportBusy = ref(false)
+async function exportPublicationList() {
+  if (!canViewCapture.value || exportBusy.value || !currentTenantId.value || !siteId.value) return
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(exportMonth.value)) return ElMessage.error('请选择有效月份')
+  const requested = currentResultScope()
+  exportBusy.value = true
+  try {
+    const response = await downloadSeoPublicationList({ tenantId: currentTenantId.value, siteId: siteId.value, month: exportMonth.value })
+    if (requested === currentResultScope()) {
+      downloadBlob(response.data, publicationListFilename(response.headers?.['content-disposition'], `发布清单-${exportMonth.value}.xlsx`))
+      ElMessage.success('发布清单已下载')
+    }
+  } catch (e) { if (requested === currentResultScope()) ElMessage.error(`导出失败：${e.message || '请稍后重试'}`) }
+  finally { exportBusy.value = false }
+}
 async function downloadMaterials(item) {
   if (!canEdit.value || materialsBusy.value) return
   const requested = currentResultScope()
@@ -1053,7 +1071,7 @@ onMounted(loadSites)
 
     <template v-else>
       <section class="table-panel">
-        <header><div><h2>发布成功记录</h2><p>包含人工确认和平台接口返回，均不代表页面正文、外链或搜索收录已核验。核验结果请查看问答跟进或外链模块。</p></div><el-button @click="selectImport">批量登记</el-button></header>
+        <header><div><h2>发布成功记录</h2><p>包含人工确认和平台接口返回，均不代表页面正文、外链或搜索收录已核验。核验结果请查看问答跟进或外链模块。</p></div><div class="task-toolbar"><el-date-picker v-if="canViewCapture" v-model="exportMonth" type="month" value-format="YYYY-MM" placeholder="选择月份" /><el-button v-if="canViewCapture" :disabled="!siteId || exportBusy" @click="exportPublicationList">{{ exportBusy ? '导出中…' : '导出发布清单' }}</el-button><el-button @click="selectImport">批量登记</el-button></div></header>
         <el-table :data="published" empty-text="暂无已发布记录">
           <el-table-column prop="content_title" label="文章" min-width="220" show-overflow-tooltip />
           <el-table-column prop="platform_name" label="平台" width="130" />

@@ -39,6 +39,12 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("app/api/seo.py")
     assert source_path_allowed("app/api/seo_page_captures.py")
     assert source_path_allowed("app/seo_capture_upload.py")
+    assert source_path_allowed("app/seo_publication_export.py")
+    assert source_path_allowed("tests/test_seo_publication_export.py")
+    assert source_path_allowed("tests/test_seo_publication_export_api.py")
+    assert source_path_allowed("scripts/generate_publication_list_sample.py")
+    assert source_path_allowed("frontend/src/api/seoPublicationExport.js")
+    assert source_path_allowed("frontend/scripts/test-seo-publication-export.mjs")
     assert source_path_allowed("tests/test_seo_page_capture_api.py")
     assert source_path_allowed("tests/test_seo_capture_upload.py")
     assert source_path_allowed("app/seo_distribution_import.py")
@@ -122,6 +128,9 @@ def test_seo_workflows_run_site_association_and_traffic_regressions() -> None:
         assert "tests/test_seo_traffic.py" in workflow
         assert "tests/test_seo_static_demo.py" in workflow
         assert "tests/test_seo_page_capture_api.py" in workflow
+        assert "tests/test_seo_publication_export.py" in workflow
+        assert "tests/test_seo_publication_export_api.py" in workflow
+        assert "npm run test:seo-publication-export" in workflow
 
 
 def test_seo_workflows_gate_the_sem_task_migration_contract() -> None:

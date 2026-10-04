@@ -1,6 +1,12 @@
 import client from './client'
 import { pageCaptureCreatePayload, pageCaptureListParams, pageCaptureUploadPayload } from './seoPageCaptureParams.js'
 
+export function downloadSeoPublicationList({ tenantId, siteId, month }) {
+  return client.get('/api/v1/seo/site/publications/export', {
+    params: { tenant_id: tenantId, site_id: siteId, month }, responseType: 'blob', rawResponse: true, timeout: 60000,
+  })
+}
+
 export function createSeoPageCapture(target) {
   return client.post('/api/v1/seo/site/page-captures', pageCaptureCreatePayload(target))
 }

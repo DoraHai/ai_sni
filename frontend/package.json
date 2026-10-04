@@ -12,6 +12,7 @@
     "verify:seo-build": "node scripts/verify-seo-build.mjs dist-seo",
     "test:seo-editor": "node --test scripts/test-seo-editor.mjs",
     "test:seo-page-capture": "node --test scripts/test-seo-page-capture.mjs",
+    "test:seo-publication-export": "node --test scripts/test-seo-publication-export.mjs",
     "verify:auth-build": "node scripts/verify-auth-build.mjs dist-auth",
     "verify:sem-build": "node scripts/verify-sem-build.mjs dist",
     "test:session-storage": "node --test scripts/test-session-storage.mjs && node scripts/test-session-store-integration.mjs",

@@ -27,7 +27,7 @@ function normalizeDetail(detail) {
   if (Array.isArray(detail)) {
     return detail.map((d) => d?.msg || JSON.stringify(d)).join('; ')
   }
-  if (typeof detail === 'object') return detail.msg || JSON.stringify(detail)
+  if (typeof detail === 'object') return detail.message || detail.msg || JSON.stringify(detail)
   return String(detail)
 }
 
@@ -38,9 +38,9 @@ client.interceptors.response.use(
       stale.code = 'AUTH_CONTEXT_CHANGED'
       return Promise.reject(stale)
     }
-    return resp.data
+    return resp.config?.rawResponse ? resp : resp.data
   },
-  (error) => {
+  async (error) => {
     if (error.config?._authRevision !== undefined && error.config._authRevision !== session.authRevision) {
       const stale = new Error('登录身份或权限已变化，已忽略旧请求结果')
       stale.code = 'AUTH_CONTEXT_CHANGED'
@@ -54,8 +54,12 @@ client.interceptors.response.use(
       expired.code = 'AUTH_EXPIRED'
       return Promise.reject(expired)
     }
+    let errorData = error.response?.data
+    if (errorData instanceof Blob) {
+      try { errorData = JSON.parse(await errorData.text()) } catch { errorData = null }
+    }
     const detail =
-      normalizeDetail(error.response?.data?.detail) ||
+      normalizeDetail(errorData?.detail) ||
       (error.response?.status >= 500
         ? '服务暂时不可用，请稍后重试；若持续失败，请记录当前时间并联系管理员'
         : error.code === 'ECONNABORTED'
@@ -64,7 +68,7 @@ client.interceptors.response.use(
       '网络异常，请稍后重试'
     const normalized = new Error(detail)
     normalized.status = error.response?.status
-    normalized.code = error.response?.data?.detail?.code
+    normalized.code = errorData?.detail?.code
       || (error.response?.status === 403 ? 'PERMISSION_DENIED' : error.code === 'ECONNABORTED' ? 'REQUEST_TIMEOUT' : error.code)
     return Promise.reject(normalized)
   },
