@@ -15,6 +15,7 @@ from app.models.module_workspace import SeoSite
 from app.models.seo import SeoInternalLink, SeoKeywordAsset, SeoSitePage
 from app.models.seo_page_capture import SeoPageCapture
 from app.models.seo_tdk_review import SeoSiteTdkReviewTemplate, SeoTdkReviewBatch
+from app.models.seo_ai_tdk import SeoPageAiTdkSuggestion
 from app.models.tenant import Tenant
 from app.security.auth import AuthContext
 
@@ -41,7 +42,7 @@ def client(permission="edit"):
     engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
     with engine.begin() as conn:
         for model in (Tenant, SeoSite, SeoSitePage, SeoKeywordAsset, SeoInternalLink,
-                      SeoPageCapture, SeoTdkReviewBatch, SeoSiteTdkReviewTemplate):
+                      SeoPageCapture, SeoTdkReviewBatch, SeoSiteTdkReviewTemplate, SeoPageAiTdkSuggestion):
             conn.execute(CreateTable(model.__table__, include_foreign_key_constraints=[]))
     with Session(engine) as db:
         db.add_all([Tenant(id=4, name="客户"),

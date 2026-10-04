@@ -53,6 +53,12 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
                  "scripts/generate_tdk_review_sample.py", "frontend/src/api/seoTdkReview.js",
                  "frontend/scripts/test-seo-tdk-review.mjs"):
         assert source_path_allowed(path)
+    for path in ("app/seo_ai_tdk.py", "app/api/seo_ai_tdk.py", "app/models/seo_ai_tdk.py",
+                 "migrations/versions/20261005_0104_seo_page_ai_tdk.py",
+                 "tests/test_seo_ai_tdk.py", "tests/test_seo_ai_tdk_api.py", "tests/test_seo_ai_tdk_migration.py",
+                 "scripts/generate_ai_tdk_review_sample.py", "frontend/src/api/seoAiTdk.js",
+                 "frontend/scripts/test-seo-ai-tdk.mjs"):
+        assert source_path_allowed(path)
     assert source_path_allowed("app/seo_capture_upload.py")
     assert source_path_allowed("app/seo_publication_export.py")
     assert source_path_allowed("tests/test_seo_publication_export.py")
@@ -157,6 +163,10 @@ def test_seo_workflows_run_site_association_and_traffic_regressions() -> None:
         assert "tests/test_seo_tdk_review_api.py" in workflow
         assert "tests/test_seo_tdk_review_migration.py" in workflow
         assert "npm run test:seo-tdk-review" in workflow
+        assert "tests/test_seo_ai_tdk.py" in workflow
+        assert "tests/test_seo_ai_tdk_api.py" in workflow
+        assert "tests/test_seo_ai_tdk_migration.py" in workflow
+        assert "npm run test:seo-ai-tdk" in workflow
         assert "npm run test:seo-publication-export" in workflow
 
 
@@ -171,7 +181,7 @@ def test_seo_workflows_gate_the_sem_task_migration_contract() -> None:
         assert "tests/test_demo_tenant_binding_migration.py" in workflow
         assert "tests/test_demo_binding_no_truncate_migration.py" in workflow
         assert "tests/test_geo_review_audit_migration.py" in workflow
-        assert "0103_seo_tdk_review (head)" in workflow
+        assert "0104_seo_page_ai_tdk (head)" in workflow
 
 
 def test_seo_frontend_workflows_gate_shared_session_regressions() -> None:
@@ -440,7 +450,7 @@ def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
 
 def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     root = Path(__file__).parents[1]
-    expected = "0103_seo_tdk_review (head)"
+    expected = "0104_seo_page_ai_tdk (head)"
     baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
     production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
     assert expected in baseline

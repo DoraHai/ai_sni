@@ -63,3 +63,28 @@ def test_html_escapes_script_and_word_strips_xml_invalid_controls():
     assert "\x01" not in html and "\x02" not in html
     doc = Document(BytesIO(render_tdk_review_docx(context)))
     assert "\x01" not in _text(doc) and "\x02" not in _text(doc)
+
+
+def test_ai_export_requires_human_confirmation_for_fields_and_links():
+    context = sample_context()
+    page = Row(id=51, url="https://example.invalid/p", title="当前标题", meta_description="当前描述",
+        meta_keywords=None, h1=None, title_suggestion="系统标题", description_suggestion=None,
+        target_keyword_id=None, status="pending")
+    target = Row(id=52, url="https://example.invalid/target", title="目标页", meta_description=None,
+        meta_keywords=None, h1=None, title_suggestion=None, description_suggestion=None,
+        target_keyword_id=None, status="pending")
+    ai = Row(title_status="confirmed", title_final_value="确认标题", description_status="ai_draft",
+        description_ai_value="绝不能导出的草稿", keywords_status="rejected", keywords_ai_value="绝不能导出的驳回词",
+        reason="人工确认理由", internal_link_suggestions=[
+            {"target_page_id": 52, "anchor": "已确认锚文本", "status": "confirmed", "final_anchor": "已确认锚文本"},
+            {"target_page_id": 52, "anchor": "绝不能导出的草稿锚文本", "status": "ai_draft"}])
+    context = build_tdk_review_context(site_name="测试站", pages=[page, target], batch_id=1,
+        ai_suggestions={51: ai})
+    context["pages"] = context["pages"][:1]
+    text = _text(Document(BytesIO(render_tdk_review_docx(context))))
+    html = render_tdk_review_html(context)
+    for content in (text, html):
+        assert "AI建议（已人工确认）" in content and "确认标题" in content
+        assert "人工确认理由" in content and "AI内链建议（已人工确认）" in content
+        assert "系统标题" not in content and "绝不能导出的" not in content
+        assert "已确认锚文本" in content and "暂无建议" in content

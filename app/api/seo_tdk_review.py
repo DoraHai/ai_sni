@@ -17,6 +17,7 @@ from app.config import get_settings
 from app.models.seo import SeoInternalLink, SeoKeywordAsset, SeoSitePage
 from app.models.seo_page_capture import SeoPageCapture
 from app.models.seo_tdk_review import SeoSiteTdkReviewTemplate, SeoTdkReviewBatch
+from app.models.seo_ai_tdk import SeoPageAiTdkSuggestion
 from app.security.auth import AuthContext
 from app.seo_demo_source import get_seo_session as get_session, require_seo_scoped_auth as require_scoped_auth
 from app.seo_monthly_report import render_report_pdf
@@ -156,9 +157,24 @@ async def export_tdk_review(req: TdkReviewExport, background_tasks: BackgroundTa
                 notes[page.id] = "暂无截图"
         template_row = await session.get(SeoSiteTdkReviewTemplate, req.site_id)
         template = _template_payload(template_row, req.tenant_id)
+        ai_rows = (await session.scalars(select(SeoPageAiTdkSuggestion).where(
+            SeoPageAiTdkSuggestion.tenant_id == req.tenant_id,
+            SeoPageAiTdkSuggestion.site_id == req.site_id,
+            SeoPageAiTdkSuggestion.page_id.in_(ids)).order_by(SeoPageAiTdkSuggestion.id.desc()))).all()
+        latest_ai = {}
+        for item in ai_rows:
+            latest_ai.setdefault(item.page_id, item)
+        ai_target_ids = {link.get("target_page_id") for item in latest_ai.values()
+                         for link in (item.internal_link_suggestions or [])
+                         if link.get("status") in {"confirmed", "modified"}} - set(ids) - related_ids
+        if ai_target_ids:
+            related += (await session.scalars(select(SeoSitePage).where(
+                SeoSitePage.tenant_id == req.tenant_id, SeoSitePage.site_id == req.site_id,
+                SeoSitePage.id.in_(ai_target_ids)))).all()
         context = build_tdk_review_context(site_name=site.name, pages=pages + related,
             batch_id=batch.id, generated_at=datetime.now(timezone.utc), keywords=keywords,
-            links=edges, captures=captures, images=images, capture_notes=notes)
+            links=edges, captures=captures, images=images, capture_notes=notes,
+            ai_suggestions=latest_ai)
         context["pages"] = context["pages"][:len(pages)]
         if req.format == "docx":
             content = render_tdk_review_docx(context, template)

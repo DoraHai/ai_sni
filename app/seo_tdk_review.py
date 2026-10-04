@@ -61,7 +61,7 @@ def _display(value, empty="空"):
 
 def build_tdk_review_context(*, site_name, pages, batch_id, generated_at=None,
                              keywords=(), links=(), captures=(), images=None,
-                             capture_notes=None, sample_label=None):
+                             capture_notes=None, sample_label=None, ai_suggestions=None):
     """Accept already scoped rows; derive only literal keyword substring matches."""
     generated_at = generated_at or datetime.now(timezone.utc)
     keyword_rows = list(keywords)
@@ -72,6 +72,7 @@ def build_tdk_review_context(*, site_name, pages, batch_id, generated_at=None,
     rendered = []
     for page in pages:
         page_id, url = _get(page, "id"), _get(page, "url")
+        ai = (ai_suggestions or {}).get(page_id)
         capture = next((row for row in sorted(captures, key=lambda row: (_get(row, "captured_at") or datetime.min.replace(tzinfo=timezone.utc), _get(row, "id") or 0), reverse=True)
                         if _get(row, "relation_id") == page_id and _get(row, "status") == "succeeded" and _get(row, "storage_key")), None)
         tdk = []
@@ -80,10 +81,16 @@ def build_tdk_review_context(*, site_name, pages, batch_id, generated_at=None,
             ("②", "Description", _get(page, "meta_description"), _get(page, "description_suggestion")),
             ("③", "Keywords", _get(page, "meta_keywords"), None),
         ):
+            field = label.lower()
+            ai_status = _get(ai, f"{field}_status")
+            ai_confirmed = ai_status in {"confirmed", "modified"}
+            if ai_confirmed:
+                suggested = _get(ai, f"{field}_final_value")
+            source = ("AI建议（人工修改后确认）" if ai_status == "modified" else "AI建议（已人工确认）") if ai_confirmed else ("系统建议" if suggested else "")
             tdk.append({"marker": marker, "label": label, "current": _display(current),
-                        "suggested": _display(suggested, "暂无建议"),
+                        "suggested": _display(suggested, "暂无建议"), "suggestion_source": source,
                         "counts": f"{len(xml_text(current or ''))} / {len(xml_text(suggested or ''))}",
-                        "rationale": "", "client_comment": ""})
+                        "rationale": _display(_get(ai, "reason"), "") if ai_confirmed else "", "client_comment": ""})
         mapped = []
         seen = set()
         for keyword in keyword_rows:
@@ -103,7 +110,12 @@ def build_tdk_review_context(*, site_name, pages, batch_id, generated_at=None,
             if page_id in (source_id, target_id) and source_id in page_by_id and target_id in page_by_id:
                 edges.append({"source": _get(page_by_id[source_id], "url"),
                               "target": _get(page_by_id[target_id], "url"),
-                              "anchor": _display(_get(link, "anchor_text"), "空")})
+                              "anchor": _display(_get(link, "anchor_text"), "空"), "source_label": "已发现内链"})
+        for link in _get(ai, "internal_link_suggestions", []) or []:
+            if _get(link, "status") in {"confirmed", "modified"} and _get(link, "target_page_id") in page_by_id and _get(link, "target_page_id") != page_id:
+                edges.append({"source": url, "target": _get(page_by_id[_get(link, "target_page_id")], "url"),
+                              "anchor": _display(_get(link, "final_anchor") or _get(link, "anchor"), "空"),
+                              "source_label": "AI内链建议（已人工确认）"})
         rendered.append({"id": page_id, "url": url, "title": _display(_get(page, "title")),
                          "tdk": tdk, "keywords": mapped, "links": edges,
                          "image_key": _get(capture, "storage_key") if capture else None,
@@ -177,7 +189,8 @@ def render_tdk_review_docx(context, template=None, image_loader=None) -> bytes:
                 for cell, value in zip(table.rows[0].cells, columns):
                     cell.text = value
                 for item in page["tdk"]:
-                    values = [item["marker"], item["label"], item["current"], item["suggested"]]
+                    values = [item["marker"], item["label"], item["current"],
+                              (item.get("suggestion_source", "") + "：" if item.get("suggestion_source") else "") + item["suggested"]]
                     if settings["columns"]["char_counts"]:
                         values.append(item["counts"])
                     if settings["columns"]["rationale"]:
@@ -200,9 +213,8 @@ def render_tdk_review_docx(context, template=None, image_loader=None) -> bytes:
                 if not page["links"]:
                     document.add_paragraph("暂无内链建议数据")
                 else:
-                    document.add_paragraph("以下为系统已发现的实际链接关系，非新增建议。")
                     for link in page["links"]:
-                        document.add_paragraph(xml_text(f"来源：{link['source']}\n目标：{link['target']}\n锚文本：{link['anchor']}"))
+                        document.add_paragraph(xml_text(f"{link['source_label']}\n来源：{link['source']}\n目标：{link['target']}\n锚文本：{link['anchor']}"))
             elif key == "client_comment":
                 document.add_paragraph("审核结论：□ 同意　□ 修改　□ 驳回")
                 document.add_paragraph("意见：________________________________________________________")
@@ -247,7 +259,13 @@ def render_tdk_review_html(context, template=None):
                 cols.append(("client_comment", "客户意见"))
                 body.append('<table><tr>' + ''.join(f'<th>{e(title)}</th>' for _, title in cols) + '</tr>')
                 for item in page["tdk"]:
-                    body.append('<tr>' + ''.join(f'<td>{e(item[field])}</td>' for field, _ in cols) + '</tr>')
+                    cells = []
+                    for field, _ in cols:
+                        value = item[field]
+                        if field == "suggested" and item.get("suggestion_source"):
+                            value = item["suggestion_source"] + "：" + value
+                        cells.append(f'<td>{e(value)}</td>')
+                    body.append('<tr>' + ''.join(cells) + '</tr>')
                 body.append('</table>')
             elif key == "keyword_layout":
                 if not page["keywords"]:
@@ -262,9 +280,8 @@ def render_tdk_review_html(context, template=None):
                 if not page["links"]:
                     body.append('<p>暂无内链建议数据</p>')
                 else:
-                    body.append('<p>以下为系统已发现的实际链接关系，非新增建议。</p>')
                     for link in page["links"]:
-                        body.append(f'<p>来源：{e(link["source"])}<br>目标：{e(link["target"])}<br>锚文本：{e(link["anchor"])}</p>')
+                        body.append(f'<p>{e(link["source_label"])}<br>来源：{e(link["source"])}<br>目标：{e(link["target"])}<br>锚文本：{e(link["anchor"])}</p>')
             elif key == "client_comment":
                 body.append('<p>审核结论：□ 同意　□ 修改　□ 驳回</p><p>意见：____________________________________________</p><p>____________________________________________</p>')
         body.append('</article>')

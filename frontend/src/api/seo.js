@@ -18,6 +18,9 @@ export const resetSeoTdkReviewTemplate = params => client.delete('/api/v1/seo/si
 export const downloadSeoTdkReview = payload => client.post('/api/v1/seo/site/tdk-review/export', payload, {
   responseType: 'blob', rawResponse: true, timeout: 120000,
 })
+export const generateSeoAiTdk = payload => client.post('/api/v1/seo/site/pages/ai-tdk/generate', payload, { timeout: 180000 })
+export const fetchSeoAiTdk = ({ pageId, tenantId, siteId }) => client.get(`/api/v1/seo/site/pages/${pageId}/ai-tdk`, { params: { tenant_id: tenantId, site_id: siteId } })
+export const reviewSeoAiTdk = ({ pageId, suggestionId, payload }) => client.post(`/api/v1/seo/site/pages/${pageId}/ai-tdk/${suggestionId}/review`, payload)
 export function downloadSeoMonthlyReport({ tenantId, siteId, month }) {
   return client.get('/api/v1/seo/site/reports/monthly', {
     params: { tenant_id: tenantId, site_id: siteId, month }, responseType: 'blob', rawResponse: true, timeout: 120000,

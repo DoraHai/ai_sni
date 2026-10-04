@@ -101,6 +101,7 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
+    seo_ai_tdk_min_interval_seconds: float = Field(0.8, ge=0, le=30)
 
     # 站长之家 SEO 数据。仅在 GEO 诊断后端调用，Key 不得进入前端构建产物。
     # 不同商品可能下发不同 API Key；各项独立 Key 为空时回退到通用 Key。

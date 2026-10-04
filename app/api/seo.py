@@ -360,6 +360,8 @@ from app.api.seo_monthly_report import router as monthly_report_router
 router.include_router(monthly_report_router)
 from app.api.seo_tdk_review import router as tdk_review_router
 router.include_router(tdk_review_router)
+from app.api.seo_ai_tdk import router as ai_tdk_router
+router.include_router(ai_tdk_router)
 
 ENGINES = {"baidu", "google", "bing", "360", "sogou"}
 PRIORITIES = {"P0", "P1", "P2", "P3"}

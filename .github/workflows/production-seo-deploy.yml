@@ -121,6 +121,9 @@ jobs:
           tests/test_seo_tdk_review.py
           tests/test_seo_tdk_review_api.py
           tests/test_seo_tdk_review_migration.py
+          tests/test_seo_ai_tdk.py
+          tests/test_seo_ai_tdk_api.py
+          tests/test_seo_ai_tdk_migration.py
           tests/test_seo_demo_runtime.py
           tests/test_seo_demo_source.py
           tests/test_seo_static_demo.py
@@ -163,14 +166,14 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0103_seo_tdk_review (head)'
+          printf '%s\n' "$heads" | grep -F '0104_seo_page_ai_tdk (head)'
 
       - working-directory: frontend
         run: npm ci --no-audit
 
       - name: Rebuild and verify the isolated SEO frontend
         working-directory: frontend
-        run: node --test scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs scripts/test-seo-backlinks.mjs scripts/test-seo-video-workflow.mjs scripts/test-seo-qa.mjs scripts/test-seo-workspace-access.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run test:seo-page-capture && npm run test:seo-publication-export && npm run test:seo-site-analytics && npm run test:seo-monthly-report && npm run test:seo-tdk-review && npm run build:seo && npm run verify:seo-build
+        run: node --test scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs scripts/test-seo-backlinks.mjs scripts/test-seo-video-workflow.mjs scripts/test-seo-qa.mjs scripts/test-seo-workspace-access.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run test:seo-page-capture && npm run test:seo-publication-export && npm run test:seo-site-analytics && npm run test:seo-monthly-report && npm run test:seo-tdk-review && npm run test:seo-ai-tdk && npm run build:seo && npm run verify:seo-build
 
       - name: Create immutable SEO-only release archive
         env:

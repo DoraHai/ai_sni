@@ -35,10 +35,10 @@ SEO_REQUIRED_SCHEMA_REVISION = "0099_geo_review_audit"
 # Runtime compatibility supports code-first rollout; it never authorizes the
 # separately reviewed migration operation.
 SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset(
-    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION, "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review"}
+    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION, "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}
 )
 SEO_GEO_TICKET_REQUIRED_REVISIONS = frozenset(
-    {"0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION, "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review"}
+    {"0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION, "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}
 )
 SEO_GEO_TICKET_SHAPE = {
     "owner_name": ("character varying(100)", False, None, "", "", "b", None, True),
@@ -491,13 +491,13 @@ async def seo_health(response: Response) -> dict:
             await _check_seo_structure(conn)
             if revisions[0] in SEO_GEO_TICKET_REQUIRED_REVISIONS:
                 await _check_geo_ticket_adoption(conn)
-            if revisions[0] in {"0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", "0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review"}:
+            if revisions[0] in {"0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", "0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}:
                 await _check_demo_binding_structure(
-                    conn, require_current_truncate=revisions[0] in {"0098_demo_binding_no_truncate", "0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review"}
+                    conn, require_current_truncate=revisions[0] in {"0098_demo_binding_no_truncate", "0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}
                 )
-            if revisions[0] in {"0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review"}:
+            if revisions[0] in {"0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}:
                 await _check_geo_review_audit(conn)
-            if revisions[0] in {"0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review"}:
+            if revisions[0] in {"0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}:
                 await _check_capture_structure(conn)
             schema_status = "ok"
     except Exception as exc:  # noqa: BLE001 - health must report infra failure
