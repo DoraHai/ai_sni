@@ -2,8 +2,10 @@
 import asyncio
 from types import SimpleNamespace as Row
 
+import httpx
 import pytest
 
+from app.ai.deepseek import DeepSeekError
 from app.seo_ai_tdk import SYSTEM_PROMPT, digest, generate_batch, generate_one, grounding, validate_response
 
 
@@ -62,9 +64,58 @@ def test_missing_key_prevents_transport_and_invalid_json_is_chinese():
     with pytest.raises(ValueError, match="未配置 DeepSeek API Key"):
         asyncio.run(generate_one(source(), api_key="", base_url="", model="test", caller=transport))
     assert not calls
+    async def no_sleep(_delay):
+        return None
     with pytest.raises(ValueError, match="无效 JSON"):
-        asyncio.run(generate_one(source(), api_key="fake", base_url="", model="test", caller=transport))
-    assert calls == [True]
+        asyncio.run(generate_one(source(), api_key="fake", base_url="", model="test", caller=transport, sleep=no_sleep))
+    assert calls == [True, True]
+
+
+def test_one_retry_for_malformed_or_overlong_output_but_not_rate_limits():
+    slept = []
+    async def no_sleep(delay):
+        slept.append(delay)
+    replies = [ValueError("invalid JSON"), raw()]
+    async def flaky(*_args, **_kwargs):
+        reply = replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+    assert asyncio.run(generate_one(source(), api_key="k", base_url="", model="m", caller=flaky, sleep=no_sleep))["title"] == "工业泵配件"
+    assert slept == [1.0]
+    prompts = []
+    long_then_ok = [{**raw(), "title": "工业泵配件" * 10}, raw()]
+    async def lengthy(_system, user, **_kwargs):
+        prompts.append(user)
+        return long_then_ok.pop(0)
+    result = asyncio.run(generate_one(source(), api_key="k", base_url="", model="m", caller=lengthy, sleep=no_sleep))
+    assert result["title"] == "工业泵配件" and not result["warnings"]
+    assert len(prompts) == 2 and "长度校正" in prompts[1] and "Title 为 50 字符" in prompts[1]
+    always_long = []
+    async def stubborn(*_args, **_kwargs):
+        always_long.append(True)
+        return {**raw(), "title": "工业泵配件 - 工业泵配件 - 工业泵配件 - 工业泵配件 - 工业泵配件"}
+    result = asyncio.run(generate_one(source(), api_key="k", base_url="", model="m", caller=stubborn, sleep=no_sleep))
+    assert len(always_long) == 2 and result["title"] == "工业泵配件 - 工业泵配件 - 工业泵配件 - 工业泵配件 - 工业泵配件"[:30].rstrip(" -")
+    limited = []
+    async def rate_limited(*_args, **_kwargs):
+        limited.append(True)
+        request = httpx.Request("POST", "https://api.deepseek.com/chat/completions")
+        response = httpx.Response(429, request=request)
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise DeepSeekError("AI 请求/解析失败: 429") from exc
+    with pytest.raises(ValueError, match="DeepSeek 服务请求失败"):
+        asyncio.run(generate_one(source(), api_key="k", base_url="", model="m", caller=rate_limited, sleep=no_sleep))
+    assert limited == [True]
+
+
+def test_numbers_from_other_pages_do_not_ground_current_page():
+    data = source()
+    data["site_pages"].append({"id": 3, "url": "https://example.test/sk-500p", "title": "SK-500P 100 行业"})
+    result = validate_response({**raw(), "title": "工业泵 SK-500P"}, data)
+    assert any("SK-500P" in warning for warning in result["warnings"])
 
 
 def test_rate_limit_and_serial_concurrency_with_fake_clock():
