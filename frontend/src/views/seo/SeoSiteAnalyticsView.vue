@@ -4,12 +4,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
 import { fetchSeoSites } from '../../api/moduleAssets'
-import { fetchSeoAnalyticsSources, saveSeoAnalyticsSource, deleteSeoAnalyticsSource, testSeoAnalyticsSource, exchangeSeoBaiduCode, pullSeoAnalytics, fetchSeoAnalyticsMonthly, fetchSeoExportTemplate, saveSeoExportTemplate, resetSeoExportTemplate, fetchSeoMonthlyReportTemplate, saveSeoMonthlyReportTemplate, resetSeoMonthlyReportTemplate } from '../../api/seo'
+import { fetchSeoAnalyticsSources, saveSeoAnalyticsSource, deleteSeoAnalyticsSource, testSeoAnalyticsSource, exchangeSeoBaiduCode, pullSeoAnalytics, fetchSeoAnalyticsMonthly, fetchSeoExportTemplate, saveSeoExportTemplate, resetSeoExportTemplate, fetchSeoMonthlyReportTemplate, saveSeoMonthlyReportTemplate, resetSeoMonthlyReportTemplate, fetchSeoTdkReviewTemplate, saveSeoTdkReviewTemplate, resetSeoTdkReviewTemplate } from '../../api/seo'
 import { moveReportSection, validReportSections } from '../../api/seoMonthlyReport.js'
+import { moveTdkReviewSection, validTdkReviewTemplate } from '../../api/seoTdkReview.js'
 import { previousBeijingMonth, monthRange, metricText, beijingTime, baiduAuthorizeUrl, sanitizedSecrets } from './seoSiteAnalytics.js'
 
 const sites = ref([]), sources = ref([]), monthly = ref([]), columns = ref([]), available = ref([])
 const reportSections = ref([])
+const tdkSections = ref([]), tdkColumns = ref({ char_counts: true, rationale: true })
 const busy = ref(false), month = ref(previousBeijingMonth()), code = ref(''), ga4Json = ref(''), ga4UploadJson = ref(''), ga4File = ref('')
 const baiduEnabled = ref(true), ga4Enabled = ref(true)
 const baidu = reactive({ mode: 'account', tongji_site_id: '', api_key: '', username: '', secret_key: '', refresh_token: '', access_token: '', token_entered_at: '' })
@@ -26,14 +28,17 @@ const explainError = error => error.response?.data?.detail?.message || error.mes
 async function load() {
   if (!currentTenantId.value || !siteId.value) return
   try {
-    const [a, b, c, d] = await Promise.all([
+    const [a, b, c, d, tdk] = await Promise.all([
       fetchSeoAnalyticsSources(scoped()),
       fetchSeoAnalyticsMonthly({ ...scoped(), ...monthRange(month.value) }),
       fetchSeoExportTemplate(scoped()),
       fetchSeoMonthlyReportTemplate(scoped()),
+      fetchSeoTdkReviewTemplate(scoped()),
     ])
     sources.value = a.items || []; monthly.value = b.items || []; columns.value = structuredClone(c.columns || [])
     reportSections.value = structuredClone(d.sections || [])
+    tdkSections.value = structuredClone(tdk.sections || [])
+    tdkColumns.value = structuredClone(tdk.columns || { char_counts: true, rationale: true })
     baiduEnabled.value = source('baidu_tongji')?.enabled ?? true; ga4Enabled.value = source('ga4')?.enabled ?? true
     if (!available.value.length) available.value = structuredClone(c.available || c.columns || [])
     const bsource = source('baidu_tongji')?.config || {}, gsource = source('ga4')?.config || {}
@@ -75,6 +80,12 @@ async function saveReportTemplate() {
   await run(() => saveSeoMonthlyReportTemplate({ ...scoped(), sections: reportSections.value }), '月报章节已保存')
 }
 async function resetReportTemplate() { await run(() => resetSeoMonthlyReportTemplate(scoped()), '月报章节已恢复默认') }
+function moveTdk(index, direction) { tdkSections.value = moveTdkReviewSection(tdkSections.value, index, direction) }
+async function saveTdkTemplate() {
+  if (!validTdkReviewTemplate(tdkSections.value, tdkColumns.value)) return ElMessage.error('请检查审核稿章节和列设置')
+  await run(() => saveSeoTdkReviewTemplate({ ...scoped(), sections: tdkSections.value, columns: tdkColumns.value }), 'TDK 审核稿模板已保存')
+}
+async function resetTdkTemplate() { await run(() => resetSeoTdkReviewTemplate(scoped()), 'TDK 审核稿模板已恢复默认') }
 watch([currentTenantId, siteId], init); watch(month, load); onMounted(init)
 </script>
 
@@ -101,6 +112,7 @@ watch([currentTenantId, siteId], init); watch(month, load); onMounted(init)
       <el-card><template #header><b>月度流量</b></template><div class="actions"><el-date-picker v-model="month" type="month" value-format="YYYY-MM" placeholder="选择月份" /><el-button type="primary" :disabled="!canEdit" :loading="busy" @click="pull">拉取</el-button></div><p v-if="month===currentMonth()">本月未结束，数据为截至拉取时。</p><el-table :data="monthly" empty-text="暂无数据"><el-table-column prop="month" label="月份" /><el-table-column label="数据源"><template #default="{row}">{{ row.source==='ga4'?'GA4':'百度统计' }}</template></el-table-column><el-table-column label="UV"><template #default="{row}">{{ metricText(row.uv) }}</template></el-table-column><el-table-column label="PV"><template #default="{row}">{{ metricText(row.pv) }}</template></el-table-column><el-table-column label="状态"><template #default="{row}">{{ statusText(row) }}<span v-if="row.last_error_message && row.status==='ok'">（上次拉取失败：{{ row.last_error_message }}）</span></template></el-table-column><el-table-column label="拉取时间（北京时间）"><template #default="{row}">{{ beijingTime(row.fetched_at) }}</template></el-table-column></el-table></el-card>
       <el-card><template #header><b>导出列模板</b></template><p>选择发布清单列，调整顺序并修改标题。</p><div class="columns"><label v-for="spec in available" :key="spec.key"><el-checkbox :model-value="enabled(spec.key)" @change="toggle(spec)">{{ spec.title }}</el-checkbox></label></div><div v-for="(col,index) in columns" :key="col.key" class="column"><span>{{ col.key }}</span><el-input v-model="col.title" maxlength="30" /><el-button :disabled="index===0" @click="move(index,-1)">上移</el-button><el-button :disabled="index===columns.length-1" @click="move(index,1)">下移</el-button></div><div class="actions"><el-button type="primary" :disabled="!canEdit || !columns.length" @click="saveTemplate">保存</el-button><el-button :disabled="!canEdit" @click="resetTemplate">恢复默认</el-button></div></el-card>
       <el-card><template #header><b>月报章节</b></template><p>选择显示的章节、调整顺序并修改标题。</p><div v-for="(section,index) in reportSections" :key="section.key" class="column"><el-checkbox v-model="section.enabled" :disabled="!canEdit">显示</el-checkbox><span>{{ section.key }}</span><el-input v-model="section.title" maxlength="40" :disabled="!canEdit" /><el-button :disabled="!canEdit || index===0" @click="moveReport(index,-1)">上移</el-button><el-button :disabled="!canEdit || index===reportSections.length-1" @click="moveReport(index,1)">下移</el-button></div><div class="actions"><el-button type="primary" :disabled="!canEdit || busy || !validReportSections(reportSections)" @click="saveReportTemplate">保存</el-button><el-button :disabled="!canEdit || busy" @click="resetReportTemplate">恢复默认</el-button></div></el-card>
+      <el-card><template #header><b>TDK 审核稿模板</b></template><p>选择显示的章节、调整顺序并修改标题。</p><div v-for="(section,index) in tdkSections" :key="section.key" class="column"><el-checkbox v-model="section.enabled" :disabled="!canEdit">显示</el-checkbox><span>{{ section.key }}</span><el-input v-model="section.title" maxlength="40" :disabled="!canEdit" /><el-button :disabled="!canEdit || index===0" @click="moveTdk(index,-1)">上移</el-button><el-button :disabled="!canEdit || index===tdkSections.length-1" @click="moveTdk(index,1)">下移</el-button></div><div class="actions"><el-checkbox v-model="tdkColumns.char_counts" :disabled="!canEdit">显示字数</el-checkbox><el-checkbox v-model="tdkColumns.rationale" :disabled="!canEdit">显示说明 / 批注</el-checkbox></div><div class="actions"><el-button type="primary" :disabled="!canEdit || busy || !validTdkReviewTemplate(tdkSections, tdkColumns)" @click="saveTdkTemplate">保存</el-button><el-button :disabled="!canEdit || busy" @click="resetTdkTemplate">恢复默认</el-button></div></el-card>
     </template>
   </div>
 </template>

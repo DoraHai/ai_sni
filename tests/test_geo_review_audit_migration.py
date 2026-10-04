@@ -21,7 +21,7 @@ def _migration():
 
 def test_review_audit_is_the_single_head_after_shared_0098():
     script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
-    assert script.get_heads() == ["0102_seo_monthly_report_template"]
+    assert script.get_heads() == ["0103_seo_tdk_review"]
     assert script.get_revision("0099_geo_review_audit").down_revision == (
         "0098_demo_binding_no_truncate"
     )

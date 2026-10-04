@@ -12,6 +12,12 @@ export const resetSeoExportTemplate = params => client.delete('/api/v1/seo/site/
 export const fetchSeoMonthlyReportTemplate = params => client.get('/api/v1/seo/site/reports/monthly-template', { params })
 export const saveSeoMonthlyReportTemplate = payload => client.put('/api/v1/seo/site/reports/monthly-template', payload)
 export const resetSeoMonthlyReportTemplate = params => client.delete('/api/v1/seo/site/reports/monthly-template', { params })
+export const fetchSeoTdkReviewTemplate = params => client.get('/api/v1/seo/site/tdk-review/template', { params })
+export const saveSeoTdkReviewTemplate = payload => client.put('/api/v1/seo/site/tdk-review/template', payload)
+export const resetSeoTdkReviewTemplate = params => client.delete('/api/v1/seo/site/tdk-review/template', { params })
+export const downloadSeoTdkReview = payload => client.post('/api/v1/seo/site/tdk-review/export', payload, {
+  responseType: 'blob', rawResponse: true, timeout: 120000,
+})
 export function downloadSeoMonthlyReport({ tenantId, siteId, month }) {
   return client.get('/api/v1/seo/site/reports/monthly', {
     params: { tenant_id: tenantId, site_id: siteId, month }, responseType: 'blob', rawResponse: true, timeout: 120000,

@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { auditPendingSeoSitePages, auditSeoSitePage, cleanupSeoNonHtmlSitePages, fetchSeoBrokenLinkReport, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePageDetail, fetchSeoSitePageIssues, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoContentAsset, updateSeoSitePage } from '../../api/seo'
+import { auditPendingSeoSitePages, auditSeoSitePage, cleanupSeoNonHtmlSitePages, fetchSeoBrokenLinkReport, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePageDetail, fetchSeoSitePageIssues, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoContentAsset, updateSeoSitePage, downloadSeoTdkReview } from '../../api/seo'
+import { reviewFilename, reviewPageIds } from '../../api/seoTdkReview.js'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { formatSeoCsvTime } from './seoRankTime'
@@ -32,6 +33,7 @@ const generating = ref(false)
 const cleaningNonHtml = ref(false)
 const exportingBrokenLinks = ref(false)
 const selectedRows = ref([])
+const reviewDialogOpen = ref(false), reviewFormat = ref('docx'), reviewTriggerCapture = ref(false), reviewExporting = ref(false)
 const page = ref(1)
 const pageSize = ref(50)
 const keywordOptions = ref([])
@@ -251,6 +253,25 @@ function exportHandoff() {
   const blob = new Blob(['\ufeff' + [headers,...body].map((line) => line.map(csvCell).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' })
   const anchor = document.createElement('a'); anchor.href = URL.createObjectURL(blob); anchor.download = `SEO站内优化交接-${siteId.value}.csv`; anchor.click(); URL.revokeObjectURL(anchor.href)
 }
+async function exportTdkReview() {
+  const ids = reviewPageIds(selectedRows.value)
+  if (!ids.length) return ElMessage.warning('请先选择页面')
+  if (ids.length > 50) return ElMessage.warning('每批最多导出 50 个页面')
+  reviewExporting.value = true
+  try {
+    const response = await downloadSeoTdkReview({ tenant_id: Number(currentTenantId.value), site_id: Number(siteId.value), page_ids: ids,
+      format: reviewFormat.value, trigger_capture: canEdit.value && reviewTriggerCapture.value })
+    const fallback = `TDK审核稿-${siteId.value}.${reviewFormat.value}`
+    const filename = reviewFilename(response.headers?.['content-disposition'], fallback)
+    const anchor = document.createElement('a')
+    const url = URL.createObjectURL(response.data)
+    anchor.href = url; anchor.download = filename; anchor.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    reviewDialogOpen.value = false
+    ElMessage.success('TDK 审核稿已下载')
+  } catch (e) { ElMessage.error(e.message || '审核稿导出失败') }
+  finally { reviewExporting.value = false }
+}
 async function createContentTask(row) {
   if (row.content_task_id) return router.push({ path: '/seo/content/editor', query: { site_id: siteId.value, id: row.content_task_id, source_page_id: row.id } })
   try {
@@ -319,8 +340,9 @@ onBeforeUnmount(() => { disposed = true; ++sitesGeneration; clearTimeout(timer) 
   <div class="site-page">
     <section class="site-hero">
       <div><span>SEO / ONSITE OPTIMIZATION</span><h1>站内优化</h1><p>管理页面资产、TDK、H1、Canonical 与索引状态。检测结果保存到页面档案，可用于上线前后复核。</p></div>
-      <div class="hero-actions"><el-button @click="router.push('/seo/site/analytics')">数据源与导出设置</el-button><el-select v-model="siteId" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id"/></el-select><button v-if="canEdit" :disabled="generating||batchAuditing||cleaningNonHtml||!siteId" :title="`作用范围：${actionScopeLabel}`" @click="generateSuggestions">{{generating?'生成中…':`生成 TDK（${actionScopeLabel}）`}}</button><button :disabled="batchAuditing||cleaningNonHtml||!siteId" class="secondary" :title="`作用范围：${actionScopeLabel}`" @click="exportHandoff">导出交接单（{{ actionScopeLabel }}）</button><button class="secondary" :disabled="exportingBrokenLinks||!siteId" @click="exportBrokenLinks">{{ exportingBrokenLinks ? '导出中…' : '导出 404 修复清单' }}</button><button v-if="canEdit" :disabled="batchAuditing||auditing.size>0||cleaningNonHtml||!siteId" :title="selectedRows.length ? '最多处理已选的前 50 个页面' : '补抓最多 10 个待检测页面'" @click="auditPending">{{batchAuditing?'检测中…':(selectedRows.length?`批量检测（已选 ${selectedRows.length}）`:'补抓待检测页面')}}</button><button v-if="canEdit" class="secondary" :disabled="batchAuditing||cleaningNonHtml||!siteId" @click="cleanupNonHtmlAssets">{{ cleaningNonHtml ? '检查中…' : '清理非网页资源' }}</button><button v-if="canEdit" :disabled="batchAuditing||cleaningNonHtml||!siteId" @click="importOpen = true">＋ 导入页面</button></div>
+      <div class="hero-actions"><el-button @click="router.push('/seo/site/analytics')">数据源与导出设置</el-button><el-select v-model="siteId" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id"/></el-select><button v-if="canEdit" :disabled="generating||batchAuditing||cleaningNonHtml||!siteId" :title="`作用范围：${actionScopeLabel}`" @click="generateSuggestions">{{generating?'生成中…':`生成 TDK（${actionScopeLabel}）`}}</button><button :disabled="batchAuditing||cleaningNonHtml||!siteId" class="secondary" :title="`作用范围：${actionScopeLabel}`" @click="exportHandoff">导出交接单（{{ actionScopeLabel }}）</button><button class="secondary" :disabled="!selectedRows.length || reviewExporting || !siteId" @click="reviewDialogOpen = true">导出TDK审核稿</button><button class="secondary" :disabled="exportingBrokenLinks||!siteId" @click="exportBrokenLinks">{{ exportingBrokenLinks ? '导出中…' : '导出 404 修复清单' }}</button><button v-if="canEdit" :disabled="batchAuditing||auditing.size>0||cleaningNonHtml||!siteId" :title="selectedRows.length ? '最多处理已选的前 50 个页面' : '补抓最多 10 个待检测页面'" @click="auditPending">{{batchAuditing?'检测中…':(selectedRows.length?`批量检测（已选 ${selectedRows.length}）`:'补抓待检测页面')}}</button><button v-if="canEdit" class="secondary" :disabled="batchAuditing||cleaningNonHtml||!siteId" @click="cleanupNonHtmlAssets">{{ cleaningNonHtml ? '检查中…' : '清理非网页资源' }}</button><button v-if="canEdit" :disabled="batchAuditing||cleaningNonHtml||!siteId" @click="importOpen = true">＋ 导入页面</button></div>
     </section>
+    <el-dialog v-model="reviewDialogOpen" title="导出 TDK 审核稿" width="420px"><p>已选 {{ selectedRows.length }} 个页面，每批最多 50 个。</p><el-alert v-if="selectedRows.length > 50" title="每批最多导出 50 个页面，请减少选择" type="warning" :closable="false" /><el-radio-group v-model="reviewFormat"><el-radio value="docx">Word</el-radio><el-radio value="pdf">PDF</el-radio></el-radio-group><p v-if="canEdit"><el-checkbox v-model="reviewTriggerCapture">无截图的页面提交截图任务</el-checkbox></p><template #footer><el-button @click="reviewDialogOpen = false">取消</el-button><el-button type="primary" :loading="reviewExporting" :disabled="selectedRows.length > 50" @click="exportTdkReview">下载</el-button></template></el-dialog>
     <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon />
     <section class="metrics">
       <article><span>页面资产</span><strong>{{ fmt(stats.total || 0) }}</strong><small>已纳入持续维护</small></article>
