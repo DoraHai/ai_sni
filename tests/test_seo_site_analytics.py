@@ -212,3 +212,23 @@ def test_baidu_openapi_error_messages_and_redaction():
             assert str(failure.value) == "百度统计接口返回错误：" + "x" * 100
             assert "NEW-ACCESS-SENTINEL" not in str(failure.value)
     asyncio.run(run())
+
+
+def test_real_baidu_expired_token_code_and_ga4_network_failure_are_explained(monkeypatch):
+    # Response shape captured from api.baidu.com on 2026-10-05 with an expired business token.
+    expired = {"header": {"desc": "failure", "failures": [{"code": 894061, "position": "_user",
+        "message": "The access token you provided is expried."}], "status": 2}, "body": {"data": [], "expand": {}}}
+    monkeypatch.setattr("app.seo_site_analytics.jwt.encode", lambda *a, **k: "assertion")
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            raise httpx.ConnectTimeout("timed out", request=request)
+        return httpx.Response(200, json=expired)
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = ProviderClient(http)
+            with pytest.raises(AnalyticsError, match="Token 无效或已过期"):
+                await client.baidu({"mode": "business", "username": "u", "tongji_site_id": "1"}, {"access_token": "t"}, "2026-09-01", "2026-09-30")
+            with pytest.raises(AnalyticsError, match="无法连接 Google") as caught:
+                await client.ga4({"property_id": "123"}, {"service_account_json": {"client_email": "a@b.c", "private_key": "k"}}, "2026-09-01", "2026-09-30")
+            assert caught.value.code == "ga4_unreachable"
+    asyncio.run(run())

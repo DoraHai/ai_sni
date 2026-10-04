@@ -21,6 +21,8 @@ BAIDU_BUSINESS = "https://api.baidu.com/json/tongji/v1/ReportService"
 GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
 GA4_API = "https://analyticsdata.googleapis.com/v1beta/properties"
 GA4_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
+# Mainland servers usually cannot reach Google; never blame the uploaded JSON for a network failure.
+GA4_UNREACHABLE = "无法连接 Google 接口，服务器网络可能无法访问 Google，请为 SEO 服务配置可访问 Google 的出口代理后重试"
 
 
 class AnalyticsError(ValueError):
@@ -268,7 +270,7 @@ class ProviderClient:
         if header.get("status") not in (None, 0, "0"):
             failures = header.get("failures") or []
             codes = {str(item.get("code")) for item in failures if isinstance(item, dict)}
-            if codes & {"2", "1001", "110", "111"}:
+            if codes & {"2", "1001", "110", "111", "894061"}:
                 message = "百度商业账号 Token 无效或已过期，请在数据 API 页面更新"
             elif codes & {"3", "1002", "403"}:
                 message = "百度商业账号无该站点的访问权限，请核对用户名和站点 ID"
@@ -293,7 +295,9 @@ class ProviderClient:
             if exc.response.status_code == 429:
                 raise AnalyticsError("ga4_quota", "GA4 配额已用尽，请稍后再试") from exc
             raise AnalyticsError("ga4_token_failed", "服务账号 JSON 无效或已被禁用") from exc
-        except (KeyError, jwt.PyJWTError, httpx.RequestError, ValueError) as exc:
+        except httpx.RequestError as exc:
+            raise AnalyticsError("ga4_unreachable", GA4_UNREACHABLE) from exc
+        except (KeyError, jwt.PyJWTError, ValueError) as exc:
             raise AnalyticsError("ga4_token_failed", "服务账号 JSON 无效或已被禁用") from exc
         url = f"{GA4_API}/{config['property_id']}" + ("/metadata" if metadata else ":runReport")
         try:
@@ -313,7 +317,9 @@ class ProviderClient:
                 raise AnalyticsError("ga4_quota", "GA4 配额已用尽，请稍后再试") from exc
             raise AnalyticsError("ga4_not_found" if status == 404 else "ga4_bad_request" if status == 400 else "ga4_http_error",
                 "媒体资源 ID 不存在" if status == 404 else "参数错误" if status == 400 else "GA4 接口暂时不可用") from exc
-        except (httpx.RequestError, ValueError) as exc:
+        except httpx.RequestError as exc:
+            raise AnalyticsError("ga4_unreachable", GA4_UNREACHABLE) from exc
+        except ValueError as exc:
             raise AnalyticsError("ga4_error", "GA4 连接失败，请稍后重试") from exc
 
 
