@@ -51,6 +51,8 @@ class Settings(BaseSettings):
 
     # GEO：是否允许同一人提交审校又审批通过（默认禁止）
     geo_allow_self_review: bool = False
+    geo_report_browser_executable_path: str = ""
+    geo_report_browser_channel: str = ""
 
     # GEO isolated demo runtime. Normal environments keep existing behavior.
     # APP_ENV=demo additionally requires every switch to be explicitly present

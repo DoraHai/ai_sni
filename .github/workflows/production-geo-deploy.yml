@@ -53,6 +53,7 @@ jobs:
       - name: Run all GEO regressions including PostgreSQL concurrency
         env:
           GEO_TEST_POSTGRES_URL: postgresql+asyncpg://geo_ci:geo_ci_test@127.0.0.1:5432/geo_ci
+        # The runner discovers tests/test_geo*.py, including GEO report regressions.
         run: python ops/run_geo_checks.py --postgres
 
 

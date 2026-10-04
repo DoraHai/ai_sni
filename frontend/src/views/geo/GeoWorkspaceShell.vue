@@ -36,9 +36,9 @@ const visibleNavigation = computed(() => (
         .filter((group) => group.children.length)
 ))
 const geoNavRail = computed(() => geoNavCollapsed.value && !geoNavHover.value && !isMobile.value)
-const expandedGroups = ref(Object.fromEntries(
-  GEO_WORKBENCH_NAV.map((group) => [group.label, true]),
-))
+const expandedGroups = ref({
+  [GEO_WORKBENCH_NAV[0]?.label]: true,
+})
 const isActive = (item) => route.path === item.path || route.path.startsWith(`${item.path}/`)
 const isGroupExpanded = (group) => Boolean(expandedGroups.value[group.label])
 const isCurrentGroup = (group) => group.children.some((item) => isActive(item))
@@ -152,6 +152,9 @@ onUnmounted(() => {
         </section>
       </nav>
       <div class="geo-shell-links">
+        <a v-if="showCockpitShortcut" href="/monitor/dashboard" target="_top"><span>↗</span><span class="geo-quick-label">搜索广告工作台</span></a>
+        <a v-if="showCockpitShortcut" href="/seo/dashboard"><span>↗</span><span class="geo-quick-label">SEO 内容工作台</span></a>
+        <a v-if="showCockpitShortcut" href="/diagnostic-center/"><span>↗</span><span class="geo-quick-label">诊断中心</span></a>
         <a v-if="showCockpitShortcut" class="portal-link" href="/workspace/cockpit" target="_top"><span>←</span><span class="geo-quick-label">G‑Snipers 获客工作台</span></a>
       </div>
     </aside>
