@@ -1,4 +1,4 @@
-"""Append-only metadata for SEO page evidence."""
+"""Metadata and execution state for SEO page evidence."""
 
 from datetime import datetime
 
@@ -13,7 +13,7 @@ class SeoPageCapture(Base):
     __tablename__ = "seo_page_captures"
     __table_args__ = (
         Index("ix_seo_page_captures_scope", "tenant_id", "site_id", "relation_type", "relation_id"),
-        CheckConstraint("status IN ('succeeded', 'failed')", name="ck_seo_page_captures_status"),
+        CheckConstraint("status IN ('pending', 'running', 'succeeded', 'failed')", name="ck_seo_page_captures_status"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)

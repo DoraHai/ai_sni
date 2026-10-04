@@ -38,7 +38,7 @@ def upgrade() -> None:
         sa.Column("image_height", sa.Integer()),
         sa.Column("sha256", sa.String(64)),
         sa.Column("storage_key", sa.String(120)),
-        sa.CheckConstraint("status IN ('succeeded', 'failed')", name="ck_seo_page_captures_status"),
+        sa.CheckConstraint("status IN ('pending', 'running', 'succeeded', 'failed')", name="ck_seo_page_captures_status"),
     )
     op.create_index("ix_seo_page_captures_scope", "seo_page_captures", ["tenant_id", "site_id", "relation_type", "relation_id"])
 

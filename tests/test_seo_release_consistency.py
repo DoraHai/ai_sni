@@ -35,6 +35,8 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert not source_path_allowed("tests/fixtures/sem_editor_html_roundtrip.json")
     assert source_path_allowed(".gitattributes")
     assert source_path_allowed("app/api/seo.py")
+    assert source_path_allowed("app/api/seo_page_captures.py")
+    assert source_path_allowed("tests/test_seo_page_capture_api.py")
     assert source_path_allowed("app/seo_distribution_import.py")
     assert source_path_allowed("app/seo_distribution.py")
     assert source_path_allowed("app/seo_ranking_jobs.py")
@@ -115,6 +117,7 @@ def test_seo_workflows_run_site_association_and_traffic_regressions() -> None:
         assert "tests/test_seo_workbench_site_scope.py" in workflow
         assert "tests/test_seo_traffic.py" in workflow
         assert "tests/test_seo_static_demo.py" in workflow
+        assert "tests/test_seo_page_capture_api.py" in workflow
 
 
 def test_seo_workflows_gate_the_sem_task_migration_contract() -> None:

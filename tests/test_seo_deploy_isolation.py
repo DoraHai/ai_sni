@@ -64,6 +64,8 @@ class _HealthConnection:
             return [("jsonb", False, None)]
         if "seo_page_captures" in sql and "pg_attribute" in sql:
             return [(name, *shape) for name, shape in seo_main.SEO_CAPTURE_COLUMNS.items()]
+        if "ck_seo_page_captures_status" in sql:
+            return _HealthResult(["CHECK (status IN ('pending', 'running', 'succeeded', 'failed'))"])
         if "pg_attribute" in sql:
             return [(table, column, kind or "text") for (table, column), kind in seo_main.SEO_REQUIRED_COLUMNS.items()]
         return _HealthResult(self.revisions if "alembic_version" in sql else [])

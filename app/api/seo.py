@@ -352,6 +352,8 @@ from app.api.seo_video import router as video_router
 router.include_router(video_router)
 from app.api.seo_qa import router as qa_router
 router.include_router(qa_router)
+from app.api.seo_page_captures import router as page_captures_router
+router.include_router(page_captures_router)
 
 ENGINES = {"baidu", "google", "bing", "360", "sogou"}
 PRIORITIES = {"P0", "P1", "P2", "P3"}

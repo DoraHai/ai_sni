@@ -66,6 +66,12 @@ SEO_CAPTURE_COLUMNS_SQL = text("""
     WHERE n.nspname = 'public' AND c.relname = 'seo_page_captures'
       AND c.relkind = 'r' AND a.attnum > 0 AND NOT a.attisdropped
 """)
+SEO_CAPTURE_STATUS_SQL = text("""
+    SELECT pg_catalog.pg_get_constraintdef(con.oid, true)
+    FROM pg_catalog.pg_constraint con
+    WHERE con.conrelid = to_regclass('public.seo_page_captures')
+      AND con.conname = 'ck_seo_page_captures_status'
+""")
 
 
 async def _check_capture_structure(conn) -> None:
@@ -73,6 +79,11 @@ async def _check_capture_structure(conn) -> None:
     found = {name: (kind, not_null) for name, kind, not_null in rows}
     if found != SEO_CAPTURE_COLUMNS:
         raise RuntimeError("SEO page capture table structure mismatch")
+    constraints = list((await conn.execute(SEO_CAPTURE_STATUS_SQL)).scalars())
+    if len(constraints) != 1 or not all(
+        f"'{status}'" in constraints[0] for status in ("pending", "running", "succeeded", "failed")
+    ):
+        raise RuntimeError("SEO page capture status constraint mismatch")
 SEO_DEMO_BINDING_COLUMNS = {
     "demo_tenant_bindings": {
         "tenant_id": ("bigint", True), "demo_tenant_id": ("bigint", True),

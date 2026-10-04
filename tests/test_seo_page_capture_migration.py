@@ -16,3 +16,4 @@ def test_capture_migration_is_single_additive_head():
     assert "op.create_table(" in source and '"seo_page_captures"' in source
     assert 'sa.Column("redirect_chain", JSONB(), nullable=False)' in source
     assert 'sa.Column("warnings", JSONB(), nullable=False)' in source
+    assert "status IN ('pending', 'running', 'succeeded', 'failed')" in source
