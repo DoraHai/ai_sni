@@ -106,6 +106,8 @@ jobs:
           tests/test_demo_tenant_binding_migration.py
           tests/test_demo_binding_no_truncate_migration.py
           tests/test_geo_review_audit_migration.py
+          tests/test_seo_page_capture_migration.py
+          tests/test_seo_page_capture.py
           tests/test_seo_demo_runtime.py
           tests/test_seo_demo_source.py
           tests/test_seo_static_demo.py
@@ -148,7 +150,7 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0099_geo_review_audit (head)'
+          printf '%s\n' "$heads" | grep -F '0100_seo_page_captures (head)'
 
       - working-directory: frontend
         run: npm ci --no-audit

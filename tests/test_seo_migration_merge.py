@@ -73,7 +73,7 @@ def test_merge_revisions_are_noop_and_sem_seo_merge_is_only_head() -> None:
     _assert_noop_revision(SEM_SEO_MERGE_REVISION)
 
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == ["0099_geo_review_audit"]
+    assert script.get_heads() == ["0100_seo_page_captures"]
     merge = script.get_revision("0074_merge_geo_seo_heads")
     assert set(merge._normalized_down_revisions) == {
         "0073_geo_schema_repair",
@@ -106,7 +106,8 @@ def test_seo_health_required_revision_matches_alembic_head() -> None:
     source = (ROOT / "app/seo_main.py").read_text(encoding="utf-8")
     match = re.search(r'SEO_REQUIRED_SCHEMA_REVISION = "([^"]+)"', source)
     assert match is not None
-    assert ScriptDirectory.from_config(_config()).get_heads() == [match.group(1)]
+    assert match.group(1) in {"0099_geo_review_audit", "0100_seo_page_captures"}
+    assert ScriptDirectory.from_config(_config()).get_heads() == ["0100_seo_page_captures"]
 
 
 def test_crawl_status_migration_allows_queued_and_has_safe_downgrade() -> None:
@@ -201,6 +202,7 @@ def test_upgrade_plan_from_production_sem_head_runs_only_seo_branch() -> None:
         "0097_demo_tenant_bindings",
         "0098_demo_binding_no_truncate",
         "0099_geo_review_audit",
+        "0100_seo_page_captures",
     ]
 
 
@@ -226,6 +228,7 @@ def test_index_review_promotion_preserves_both_histories_and_upgrades_only_new_t
         "0097_demo_tenant_bindings",
         "0098_demo_binding_no_truncate",
         "0099_geo_review_audit",
+        "0100_seo_page_captures",
     ]
     assert script.get_revision("0087_seo_image_alt_evidence").down_revision == "0086_seo_index_review_merge"
     assert [step.revision.revision for step in script._upgrade_revs("head", "0086_seo_index_review_merge")] == [
@@ -242,6 +245,7 @@ def test_index_review_promotion_preserves_both_histories_and_upgrades_only_new_t
         "0097_demo_tenant_bindings",
         "0098_demo_binding_no_truncate",
         "0099_geo_review_audit",
+        "0100_seo_page_captures",
     ]
 
 

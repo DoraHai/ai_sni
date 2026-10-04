@@ -179,6 +179,20 @@ class Settings(BaseSettings):
     seo_gsc_service_account_json_b64: str = ""
     seo_gsc_timeout_seconds: float = 30.0
 
+    # Optional SEO page evidence; mount this directory outside release trees.
+    seo_page_capture_enabled: bool = False
+    seo_page_capture_storage_dir: str = "/var/lib/seo-service/page-captures"
+    seo_page_capture_timeout_seconds: int = Field(30, ge=5, le=120)
+    seo_page_capture_viewport_width: int = Field(1365, ge=320, le=2560)
+    seo_page_capture_viewport_height: int = Field(768, ge=240, le=1600)
+    seo_page_capture_max_height: int = Field(12000, ge=768, le=30000)
+    seo_page_capture_max_pixels: int = Field(16_000_000, ge=1_000_000, le=40_000_000)
+    seo_page_capture_max_response_bytes: int = Field(5_000_000, ge=100_000, le=20_000_000)
+    seo_page_capture_max_total_bytes: int = Field(30_000_000, ge=1_000_000, le=100_000_000)
+    seo_page_capture_max_requests: int = Field(100, ge=1, le=500)
+    seo_page_capture_max_image_bytes: int = Field(20_000_000, ge=100_000, le=50_000_000)
+    seo_page_capture_concurrency: int = Field(2, ge=1, le=8)
+
     # Google PageSpeed Insights。仅由后端调用，Key 不得进入前端构建产物。
     pagespeed_api_key: str = ""
     pagespeed_api_base_url: str = (

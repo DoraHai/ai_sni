@@ -100,6 +100,7 @@ from app.models.seo import (
     SeoSitePage,
 )
 from app.models.module_workspace import GeoProject, SeoSite, TenantModule
+from app.models.seo_page_capture import SeoPageCapture
 
 __all__ = [
     "Suggestion",
