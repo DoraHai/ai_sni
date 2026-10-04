@@ -30,6 +30,7 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("tests/test_sem_task_migration.py")
     assert source_path_allowed("frontend/package-lock.json")
     assert source_path_allowed("frontend/scripts/test-seo-editor.mjs")
+    assert source_path_allowed("frontend/scripts/test-seo-page-capture.mjs")
     assert source_path_allowed("tests/fixtures/seo_editor_html_roundtrip.json")
     assert not source_path_allowed("frontend/scripts/test-sem-editor.mjs")
     assert not source_path_allowed("tests/fixtures/sem_editor_html_roundtrip.json")

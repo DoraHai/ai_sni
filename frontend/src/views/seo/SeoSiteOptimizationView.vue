@@ -10,6 +10,7 @@ import { runSeoBatch } from './seoBatchOperations'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
 import SeoSiteDiagnosticsPanel from './SeoSiteDiagnosticsPanel.vue'
 import SeoImageRemediationWorkbench from './SeoImageRemediationWorkbench.vue'
+import SeoPageCapturePanel from './SeoPageCapturePanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -374,6 +375,7 @@ onBeforeUnmount(() => { disposed = true; ++sitesGeneration; clearTimeout(timer) 
             <div><h3>{{ detailResult.page.title || '未读取页面标题' }}</h3><a :href="detailResult.page.url" target="_blank" rel="noopener noreferrer">{{ detailResult.page.url }}</a></div>
             <el-tag :type="statusType(detailResult.page.status)" effect="light">{{ statusLabel(detailResult.page.status) }}</el-tag>
           </section>
+          <SeoPageCapturePanel v-if="detailOpen" :key="detailResult.page.id" :tenant-id="currentTenantId" :site-id="detailResult.page.site_id" :can-edit="canEdit" :page="detailResult.page" />
           <section class="detail-metrics">
             <article><span>健康度</span><strong>{{ detailResult.page.audit_score ?? '—' }}</strong></article>
             <article><span>HTTP</span><strong>{{ detailResult.page.http_status ?? detailResult.latest_snapshot?.status_code ?? '—' }}</strong></article>

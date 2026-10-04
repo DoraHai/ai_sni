@@ -1,4 +1,26 @@
 import client from './client'
+
+export function createSeoPageCapture({ tenantId, siteId, pageId, url }) {
+  return client.post('/api/v1/seo/site/page-captures', {
+    tenant_id: tenantId, site_id: siteId, relation_type: 'site_page', relation_id: pageId, url,
+  })
+}
+
+export function fetchSeoPageCapture({ captureId, tenantId }) {
+  return client.get(`/api/v1/seo/site/page-captures/${captureId}`, { params: { tenant_id: tenantId } })
+}
+
+export function fetchSeoPageCaptures({ tenantId, siteId, relationType, relationId, page = 1, pageSize = 1 }) {
+  return client.get('/api/v1/seo/site/page-captures', {
+    params: { tenant_id: tenantId, site_id: siteId, relation_type: relationType, relation_id: relationId, page, page_size: pageSize },
+  })
+}
+
+export function fetchSeoPageCaptureImage({ captureId, tenantId }) {
+  return client.get(`/api/v1/seo/site/page-captures/${captureId}/image`, {
+    params: { tenant_id: tenantId }, responseType: 'blob',
+  })
+}
 export const seoQaGet = (path, params) => client.get(`/api/v1/seo/qa/${path}`, { params })
 export const seoQaPost = (path, payload) => client.post(`/api/v1/seo/qa/${path}`, payload, { timeout: 35000 })
 export const seoQaPatch = (path, payload) => client.patch(`/api/v1/seo/qa/${path}`, payload)

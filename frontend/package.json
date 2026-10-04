@@ -11,6 +11,7 @@
     "build:seo": "vite build --config vite.seo.config.js",
     "verify:seo-build": "node scripts/verify-seo-build.mjs dist-seo",
     "test:seo-editor": "node --test scripts/test-seo-editor.mjs",
+    "test:seo-page-capture": "node --test scripts/test-seo-page-capture.mjs",
     "verify:auth-build": "node scripts/verify-auth-build.mjs dist-auth",
     "verify:sem-build": "node scripts/verify-sem-build.mjs dist",
     "test:session-storage": "node --test scripts/test-session-storage.mjs && node scripts/test-session-store-integration.mjs",
