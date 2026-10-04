@@ -182,6 +182,8 @@ class Settings(BaseSettings):
     # Optional SEO page evidence; mount this directory outside release trees.
     seo_page_capture_enabled: bool = False
     seo_page_capture_storage_dir: str = "/var/lib/seo-service/page-captures"
+    seo_page_capture_browser_channel: str = ""
+    seo_page_capture_executable_path: str = ""
     seo_page_capture_timeout_seconds: int = Field(30, ge=5, le=120)
     seo_page_capture_viewport_width: int = Field(1365, ge=320, le=2560)
     seo_page_capture_viewport_height: int = Field(768, ge=240, le=1600)

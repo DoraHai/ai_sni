@@ -14,6 +14,7 @@ PNG = b"\x89PNG\r\n\x1a\n" + b"\0\0\0\rIHDR" + struct.pack(">II", 800, 600)
 
 def settings(tmp_path, **changes):
     values = dict(seo_page_capture_enabled=True, seo_page_capture_storage_dir=str(tmp_path),
+                  seo_page_capture_browser_channel="", seo_page_capture_executable_path="",
                   seo_page_capture_concurrency=2, seo_page_capture_timeout_seconds=5,
                   seo_page_capture_viewport_width=800, seo_page_capture_viewport_height=600,
                   seo_page_capture_max_height=12000, seo_page_capture_max_pixels=16_000_000,
@@ -77,6 +78,9 @@ class FakePlaywright:
     async def launch(self, **kwargs):
         assert kwargs["proxy"]["server"] == "http://127.0.0.1:9"
         return FakeBrowser()
+
+    async def launch_persistent_context(self, *_args, **_kwargs):
+        pytest.fail("page capture must use a fresh browser context")
 
 
 def attempt(service, url="https://example.com/start"):
@@ -197,15 +201,83 @@ def test_missing_playwright_has_explicit_code(tmp_path, monkeypatch):
     assert result.error_code == "playwright_not_installed"
 
 
-def test_missing_chromium_has_explicit_code(tmp_path, monkeypatch):
+@pytest.mark.parametrize("channel", ["", "chrome"])
+def test_missing_chromium_has_explicit_code(tmp_path, monkeypatch, channel):
     async def public(_url):
         pass
     monkeypatch.setattr(capture, "_public", public)
     class NoChromium(FakePlaywright):
         async def launch(self, **_kwargs):
             raise RuntimeError("missing executable")
-    result = attempt(capture.PageCaptureService(settings(tmp_path), playwright_factory=NoChromium))
-    assert result.error_code == "chromium_unavailable"
+    result = attempt(capture.PageCaptureService(
+        settings(tmp_path, seo_page_capture_browser_channel=channel),
+        playwright_factory=NoChromium))
+    assert result.error_code == "chromium_unavailable" and result.storage_key is None
+
+
+@pytest.mark.parametrize("browser_options, expected", [
+    ({}, {}),
+    ({"seo_page_capture_browser_channel": "chrome"}, {"channel": "chrome"}),
+    ({"seo_page_capture_executable_path": "installed-browser"},
+     {"executable_path": "installed-browser"}),
+    ({"seo_page_capture_browser_channel": "msedge",
+      "seo_page_capture_executable_path": "installed-browser"},
+     {"executable_path": "installed-browser"}),
+])
+def test_browser_launch_options_and_fresh_context(tmp_path, monkeypatch, browser_options, expected):
+    async def public(_url):
+        pass
+    monkeypatch.setattr(capture, "_public", public)
+    monkeypatch.setattr(capture, "__file__", "C:/outside/app/seo_page_capture.py")
+    if "seo_page_capture_executable_path" in browser_options:
+        executable = tmp_path / "installed-browser"
+        executable.touch()
+        browser_options = {**browser_options, "seo_page_capture_executable_path": str(executable)}
+        expected = {**expected, "executable_path": str(executable)}
+
+    class RecordingBrowser(FakeBrowser):
+        contexts = 0
+
+        async def new_context(self, **kwargs):
+            self.contexts += 1
+            return await super().new_context(**kwargs)
+
+    class RecordingPlaywright(FakePlaywright):
+        launch_options = None
+        browser = RecordingBrowser()
+
+        async def launch(self, **kwargs):
+            self.launch_options = kwargs
+            return self.browser
+
+    fake = RecordingPlaywright()
+    result = attempt(capture.PageCaptureService(settings(tmp_path, **browser_options),
+                                                 playwright_factory=lambda: fake))
+    assert result.success
+    assert fake.launch_options == {
+        "headless": True, "proxy": {"server": "http://127.0.0.1:9"}, **expected,
+    }
+    assert fake.browser.contexts == 1
+
+
+def test_invalid_browser_channel_is_rejected(tmp_path, monkeypatch):
+    async def public(_url):
+        pass
+    monkeypatch.setattr(capture, "_public", public)
+    result = attempt(capture.PageCaptureService(
+        settings(tmp_path, seo_page_capture_browser_channel="firefox"),
+        playwright_factory=FakePlaywright))
+    assert result.error_code == "invalid_browser_channel" and result.storage_key is None
+
+
+def test_missing_browser_executable_is_rejected(tmp_path, monkeypatch):
+    async def public(_url):
+        pass
+    monkeypatch.setattr(capture, "_public", public)
+    result = attempt(capture.PageCaptureService(
+        settings(tmp_path, seo_page_capture_executable_path=str(tmp_path / "missing-browser")),
+        playwright_factory=FakePlaywright))
+    assert result.error_code == "browser_executable_missing" and result.storage_key is None
 
 
 def test_storage_key_cannot_escape_root(tmp_path):

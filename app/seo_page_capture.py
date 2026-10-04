@@ -25,6 +25,10 @@ from app.seo_crawler import SeoCrawlError, pin_public_target, pinned_async_clien
 _KEY = re.compile(r"[0-9a-f]{32}\.png\Z")
 _PNG = b"\x89PNG\r\n\x1a\n"
 _REDIRECT = {301, 302, 303, 307, 308}
+_BROWSER_CHANNELS = frozenset({
+    "chrome", "chrome-beta", "chrome-dev", "chrome-canary",
+    "msedge", "msedge-beta", "msedge-dev", "msedge-canary",
+})
 
 
 class CaptureError(Exception):
@@ -165,6 +169,17 @@ class PageCaptureService:
 
     async def _render(self, url: str) -> tuple[str, int, bytes, int, int]:
         await _public(url)
+        channel = self.settings.seo_page_capture_browser_channel
+        executable_path = self.settings.seo_page_capture_executable_path
+        if channel and channel not in _BROWSER_CHANNELS:
+            raise CaptureError("invalid_browser_channel")
+        if executable_path and not Path(executable_path).is_file():
+            raise CaptureError("browser_executable_missing")
+        launch_options = {"headless": True, "proxy": {"server": "http://127.0.0.1:9"}}
+        if executable_path:
+            launch_options["executable_path"] = executable_path
+        elif channel:
+            launch_options["channel"] = channel
         factory = self.playwright_factory
         if factory is None:
             try:
@@ -176,8 +191,7 @@ class PageCaptureService:
         traffic = {"requests": 0, "bytes": 0, "redirects": 0}
         async with factory() as playwright:
             try:
-                browser = await playwright.chromium.launch(headless=True,
-                    proxy={"server": "http://127.0.0.1:9"})
+                browser = await playwright.chromium.launch(**launch_options)
             except Exception as exc:
                 raise CaptureError("chromium_unavailable") from exc
             try:
