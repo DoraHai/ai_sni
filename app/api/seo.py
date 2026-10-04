@@ -356,6 +356,8 @@ from app.api.seo_page_captures import router as page_captures_router
 router.include_router(page_captures_router)
 from app.api.seo_site_analytics import router as site_analytics_router
 router.include_router(site_analytics_router)
+from app.api.seo_monthly_report import router as monthly_report_router
+router.include_router(monthly_report_router)
 
 ENGINES = {"baidu", "google", "bing", "360", "sogou"}
 PRIORITIES = {"P0", "P1", "P2", "P3"}

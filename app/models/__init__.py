@@ -102,6 +102,7 @@ from app.models.seo import (
 from app.models.module_workspace import GeoProject, SeoSite, TenantModule
 from app.models.seo_page_capture import SeoPageCapture
 from app.models.seo_site_analytics import SeoSiteAnalyticsSource, SeoSiteAnalyticsMonthly, SeoSiteExportTemplate
+from app.models.seo_monthly_report import SeoSiteReportTemplate
 
 __all__ = [
     "Suggestion",

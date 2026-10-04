@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install optional SEO screenshot runtime on the SEO server. Run as root.
+# Install optional SEO screenshot and monthly PDF runtime on the SEO server. Run as root.
 # Usage: [--service-user USER] [--python VENV_PYTHON] [--storage-dir ABS_PATH] [--dry-run]
 # Environment overrides: SEO_PAGE_CAPTURE_SERVICE_USER, SEO_PAGE_CAPTURE_PYTHON,
 # SEO_PAGE_CAPTURE_STORAGE_DIR. This script does not enable SEO_PAGE_CAPTURE_ENABLED.

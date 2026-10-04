@@ -9,6 +9,14 @@ export const fetchSeoAnalyticsMonthly = params => client.get('/api/v1/seo/site/a
 export const fetchSeoExportTemplate = params => client.get('/api/v1/seo/site/publications/export-template', { params })
 export const saveSeoExportTemplate = payload => client.put('/api/v1/seo/site/publications/export-template', payload)
 export const resetSeoExportTemplate = params => client.delete('/api/v1/seo/site/publications/export-template', { params })
+export const fetchSeoMonthlyReportTemplate = params => client.get('/api/v1/seo/site/reports/monthly-template', { params })
+export const saveSeoMonthlyReportTemplate = payload => client.put('/api/v1/seo/site/reports/monthly-template', payload)
+export const resetSeoMonthlyReportTemplate = params => client.delete('/api/v1/seo/site/reports/monthly-template', { params })
+export function downloadSeoMonthlyReport({ tenantId, siteId, month }) {
+  return client.get('/api/v1/seo/site/reports/monthly', {
+    params: { tenant_id: tenantId, site_id: siteId, month }, responseType: 'blob', rawResponse: true, timeout: 120000,
+  })
+}
 import { pageCaptureCreatePayload, pageCaptureListParams, pageCaptureUploadPayload } from './seoPageCaptureParams.js'
 
 export function downloadSeoPublicationList({ tenantId, siteId, month }) {

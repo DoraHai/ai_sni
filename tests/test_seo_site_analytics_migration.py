@@ -9,7 +9,7 @@ ROOT = Path(__file__).parents[1]
 
 def test_analytics_migration_is_new_single_head():
     script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
-    assert script.get_heads() == ["0101_seo_site_analytics"]
+    assert script.get_heads() == ["0102_seo_monthly_report_template"]
     assert script.get_revision("0101_seo_site_analytics").down_revision == "0100_seo_page_captures"
     text = (ROOT / "migrations/versions/20261004_0101_seo_site_analytics.py").read_text(encoding="utf-8")
     assert "未在任何环境执行；生产执行前须单独审核" in text

@@ -1,6 +1,6 @@
 # SEO 页面截图运行环境
 
-截图默认关闭。SEO 服务以 `sem` 用户运行，使用 `/opt/sem-backend/.venv/bin/python`；浏览器需要该 venv 中的 Playwright、Chromium 及系统依赖，并需要 `fonts-noto-cjk`。截图目录必须持久化，且位于 `/opt/seo-service` 发布目录之外。浏览器直连外网应由服务器网络策略阻断；服务会代理并校验 HTTP 资源。
+截图默认关闭。SEO 服务以 `sem` 用户运行，使用 `/opt/sem-backend/.venv/bin/python`；浏览器需要该 venv 中的 Playwright、Chromium 及系统依赖，并需要 `fonts-noto-cjk`。月报 PDF 也使用此 Chromium 运行环境；Debian/Ubuntu 必须安装 `fonts-noto-cjk` 才能正确显示中文，Windows 使用系统自带的 Microsoft YaHei。截图目录必须持久化，且位于 `/opt/seo-service` 发布目录之外。浏览器直连外网应由服务器网络策略阻断；服务会代理并校验 HTTP 资源。
 
 在服务器上以 root 手动运行：
 
