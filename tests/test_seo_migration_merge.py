@@ -318,6 +318,16 @@ def test_postgres_upgrade_from_sem_head_applies_only_pending_seo_branch(monkeypa
                 assert "seo_distribution_variants" in inspector.get_table_names()
                 assert "seo_content_review_events" in inspector.get_table_names()
                 assert "seo_automation_runs" in inspector.get_table_names()
+                assert {
+                    "seo_page_captures",
+                    "seo_site_analytics_sources",
+                    "seo_site_analytics_monthly",
+                    "seo_site_export_templates",
+                    "seo_site_report_templates",
+                    "seo_tdk_review_batches",
+                    "seo_site_tdk_review_templates",
+                    "seo_page_ai_tdk_suggestions",
+                }.issubset(inspector.get_table_names())
                 automation_columns = {
                     column["name"]
                     for column in inspector.get_columns("seo_automation_runs")
@@ -476,7 +486,7 @@ def test_postgres_upgrade_from_sem_head_applies_only_pending_seo_branch(monkeypa
     ) = asyncio.run(schema_snapshot())
     get_settings.cache_clear()
 
-    assert after == "0099_geo_review_audit"
+    assert after == "0104_seo_page_ai_tdk"
     assert {
         "ix_seo_distribution_variants_tenant_id",
         "ix_seo_distribution_variants_content_asset_id",
