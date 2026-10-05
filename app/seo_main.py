@@ -94,7 +94,7 @@ async def _check_capture_structure(conn) -> None:
         f"'{status}'" in constraints[0] for status in ("pending", "running", "succeeded", "failed")
     ):
         raise RuntimeError("SEO page capture status constraint mismatch")
-    provenance = dict(await conn.execute(SEO_CAPTURE_PROVENANCE_SQL))
+    provenance = {row[0]: row[1] for row in await conn.execute(SEO_CAPTURE_PROVENANCE_SQL)}
     if set(provenance) != {"ck_seo_page_captures_source", "ck_seo_page_captures_manual_upload"} or not all(
         f"'{source}'" in provenance["ck_seo_page_captures_source"] for source in ("auto", "manual")
     ) or "uploaded_by" not in provenance["ck_seo_page_captures_manual_upload"] or "uploaded_at" not in provenance["ck_seo_page_captures_manual_upload"]:
