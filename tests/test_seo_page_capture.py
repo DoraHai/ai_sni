@@ -777,3 +777,48 @@ def test_request_limit_is_counted_as_its_own_reason(tmp_path):
     assert first.fulfilled is not None and second.aborted
     assert state.warnings["by_reason"] == {"request_limit": 1}
     assert state.warnings["blocked_subresources"] == 1
+
+# Regression: /health/seo must read capture constraints from a real CursorResult.
+# SQLAlchemy CursorResult exposes keys() without __getitem__, so dict(result) fails.
+# Production revision 0104 hit this on 2026-10-05.
+import asyncio as _health_asyncio
+
+from app import seo_main as _health_seo_main
+
+
+class _HealthCursorLikeResult:
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def __iter__(self):
+        return iter(self._rows)
+
+    def keys(self):  # mapping trap, like sqlalchemy CursorResult
+        return ["name", "definition"]
+
+    def all(self):
+        return list(self._rows)
+
+    def scalars(self):
+        return iter([row[0] for row in self._rows])
+
+
+class _HealthCaptureConn:
+    def __init__(self, results):
+        self._results = list(results)
+
+    async def execute(self, *_args, **_kwargs):
+        return self._results.pop(0)
+
+
+def test_capture_structure_accepts_cursor_like_results():
+    columns = [(name, kind, not_null) for name, (kind, not_null) in _health_seo_main.SEO_CAPTURE_COLUMNS.items()]
+    conn = _HealthCaptureConn([
+        _HealthCursorLikeResult(columns),
+        _HealthCursorLikeResult([("CHECK (status IN ('pending', 'running', 'succeeded', 'failed'))",)]),
+        _HealthCursorLikeResult([
+            ("ck_seo_page_captures_source", "CHECK (source IN ('auto', 'manual'))"),
+            ("ck_seo_page_captures_manual_upload", "CHECK (source <> 'manual' OR (uploaded_by IS NOT NULL AND uploaded_at IS NOT NULL))"),
+        ]),
+    ])
+    _health_asyncio.run(_health_seo_main._check_capture_structure(conn))
