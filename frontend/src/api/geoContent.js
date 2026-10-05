@@ -1,5 +1,30 @@
 import client from './client'
 
+export function previewGeoPublicationLinks(tenantId, businessId, file, pasted = '') {
+  const form = new FormData()
+  if (file) form.append('file', file)
+  else form.append('pasted', pasted)
+  return client.post('/api/v1/geo/reports/publication-links/preview', form, { params: { tenant_id: tenantId, business_id: businessId || undefined } })
+}
+export function confirmGeoPublicationLinks(tenantId, businessId, rows) {
+  return client.post('/api/v1/geo/reports/publication-links/confirm', { tenant_id: tenantId, business_id: businessId || null, rows })
+}
+export function fetchGeoMentionTrends(tenantId, params = {}) {
+  return client.get('/api/v1/geo/reports/mention-trends', { params: { tenant_id: tenantId, ...params } })
+}
+export function fetchGeoUrlCitations(tenantId, params = {}) {
+  return client.get('/api/v1/geo/reports/url-citations', { params: { tenant_id: tenantId, ...params } })
+}
+export function fetchGeoReportTemplate(tenantId, projectId) {
+  return client.get('/api/v1/geo/reports/template', { params: { tenant_id: tenantId, project_id: projectId } })
+}
+export function saveGeoReportTemplate(tenantId, projectId, sections) {
+  return client.put('/api/v1/geo/reports/template', { tenant_id: tenantId, project_id: projectId, sections })
+}
+export function downloadGeoReport(tenantId, format, params = {}) {
+  return client.get(`/api/v1/geo/reports/export.${format}`, { params: { tenant_id: tenantId, ...params }, responseType: 'blob', timeout: 120000 })
+}
+
 export function geoContentHealth() {
   return client.get('/api/v1/geo/content-health')
 }

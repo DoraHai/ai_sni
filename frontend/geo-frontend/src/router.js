@@ -30,6 +30,7 @@ const routes = [
       { path: 'demo/tasks', component: () => import('../../src/views/geo/GeoDemoView.vue'), meta: geoMeta('演示内容任务') },
       { path: 'demo/tasks/:taskId', component: () => import('../../src/views/geo/GeoDemoView.vue'), meta: geoMeta('演示任务详情') },
       { path: 'overview', component: () => import('../../src/views/geo/GeoOverviewView.vue'), meta: geoMeta('GEO 概览') },
+      { path: 'report', component: () => import('../../src/views/geo/GeoReportView.vue'), meta: geoMeta('GEO 报告') },
       { path: 'visibility', component: () => import('../../src/views/geo/GeoVisibilityDashView.vue'), meta: geoMeta('AI 可见度') },
       { path: 'visibility/snapshots', component: () => import('../../src/views/geo/GeoVisibilityView.vue'), meta: geoMeta('采集与判断') },
       { path: 'questions', component: () => import('../../src/views/geo/GeoAskManageView.vue'), meta: geoMeta('提问监控') },

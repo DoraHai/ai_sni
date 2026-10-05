@@ -207,6 +207,8 @@ from app.models import (
 from app.security.auth import AuthContext, require_scoped_auth
 
 router = APIRouter(tags=["GEO 内容"], dependencies=[Depends(require_scoped_auth)])
+from app.geo.content.report_routes import router as report_router
+router.include_router(report_router)
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -8447,7 +8449,8 @@ async def _write_publication(
     published_url: str,
     note: str | None,
     publish_mode: str,
-) -> None:
+    published_at: datetime | None = None,
+) -> bool:
     from app.geo.content.attribution import normalize_url_for_match
     await session.refresh(task, with_for_update=True)
     await session.refresh(variant, with_for_update=True)
@@ -8478,7 +8481,7 @@ async def _write_publication(
         GeoPublication.published_url == published_url,
     ).limit(1))
     if existing is not None:
-        return
+        return False
 
     period_id = getattr(task, "period_id", None)
     if period_id is None:
@@ -8495,7 +8498,7 @@ async def _write_publication(
         publish_mode=publish_mode,
         published_url=published_url,
         canonical_url=normalize_url_for_match(published_url),
-        published_at=datetime.utcnow(),
+        published_at=published_at or datetime.utcnow(),
         status="published",
         period_id=period_id,
         note=note,
@@ -8507,6 +8510,7 @@ async def _write_publication(
     variant.status = "published"
     task.status = "published"
     await _sync_task_pipeline(session, task)
+    return True
 
 
 @router.post("/content-tasks/{task_id}/publications")

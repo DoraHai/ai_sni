@@ -287,7 +287,7 @@ onMounted(refresh)
 
 <template>
   <GeoWorkbenchPage title="分发平台" sub="维护发布账号，并按 AI 引用价值配置渠道策略" :loading="loading">
-    <template #actions><button class="gd-btn" type="button" :disabled="verifying" @click="refreshConnectionStatus">{{ verifying ? '校验中…' : '刷新连接状态' }}</button><button class="gd-btn primary" type="button" @click="openCreateChannel">+ 添加分发平台</button></template>
+    <template #actions><a class="gd-btn" href="#/geo/report">批量上传发布链接</a><button class="gd-btn" type="button" :disabled="verifying" @click="refreshConnectionStatus">{{ verifying ? '校验中…' : '刷新连接状态' }}</button><button class="gd-btn primary" type="button" @click="openCreateChannel">+ 添加分发平台</button></template>
     <div class="geo-dash channels-page">
       <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
       <section class="context-card mb"><div><span class="kicker">Shared Accounts · GEO Strategy</span><h2>账号与 SEO 共用，发布策略按 GEO 独立配置</h2><p>同一平台账号无需重复授权；GEO 侧重点是信源权重、内容原创性、事实可核验性和被 AI 摘取的可能性。</p></div><div class="signal-grid"><span><b>{{ connectedCount }}</b> 已接入平台</span><span><b>{{ readyAccountCount }}</b> 已就绪账号</span><span><b>{{ strategyCount }}</b> 已配置策略</span></div></section>

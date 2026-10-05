@@ -287,6 +287,7 @@ onMounted(load)
     :sub="`AI 回答时到底从哪些平台、哪些文章取数引用 · ${obsLabel}`"
     :loading="loading"
   >
+    <div style="margin-bottom: 12px"><a href="#/geo/report">查看发布 URL 精准/宽松引用与各引擎趋势 →</a></div>
     <template #actions>
       <input v-model="domainQuery" class="gd-search" placeholder="搜索信源 / 文章…" />
       <button class="gd-btn" type="button" :disabled="!citeItems.length" @click="exportCsv">数据导出</button>

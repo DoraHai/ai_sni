@@ -150,6 +150,7 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
         or p.startswith("/api/v1/geo/content-health")
         or p.startswith("/api/v1/geo/content-brief-catalog")
         or p.startswith("/api/v1/geo/content-stats")
+        or p.startswith("/api/v1/geo/reports")
         or p.startswith("/api/v1/geo/answer-snapshots")
         or p.startswith("/api/v1/geo/visibility-patrol")
         or p.startswith("/api/v1/geo/tracking-engines")

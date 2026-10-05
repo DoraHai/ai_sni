@@ -9,6 +9,7 @@ export const GEO_WORKBENCH_NAV = [
     children: [
       { label: 'GEO 概览', path: '/geo/overview', key: 'geo.content', icon: '▦' },
       { label: 'AI 可见度', path: '/geo/visibility', key: 'geo.content', icon: '✦' },
+      { label: 'GEO 报告', path: '/geo/report', key: 'geo.content', icon: '▤' },
     ],
   },
   {
