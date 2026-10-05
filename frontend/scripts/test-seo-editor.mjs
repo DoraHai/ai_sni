@@ -3,7 +3,8 @@ import { test, after } from 'node:test'
 import { readFile } from 'node:fs/promises'
 import { JSDOM } from 'jsdom'
 import { parse, compileScript, compileTemplate, compileStyle } from '@vue/compiler-sfc'
-import { sanitizeSeoEditorHtml, seoPlainTextHtml, seoContentWordCount } from '../src/views/seo/seoEditorHtml.js'
+import { sanitizeSeoEditorHtml, seoPlainTextHtml, seoContentWordCount, safeSeoUrl, seoPasteHtml } from '../src/views/seo/seoEditorHtml.js'
+import { createSeoTable, editSeoTable } from '../src/views/seo/seoEditorTable.js'
 import { remediationHandoff, remediationDraftPatch } from '../src/views/seo/seoRemediationDraft.js'
 import { buildSourcePageAssistInstruction, sourcePageRemediationContext } from '../src/views/seo/seoContentRemediationContext.js'
 
@@ -30,7 +31,7 @@ async function mountEditor(draft, status = 'drafting', saveDraft = value => valu
   let row = { id: 10, title: '验收勿发布', content_type: 'guide', keyword_ids: [5], draft, status, version_count: 1, source_page_id: 234, ...options.item }
   const writes = [], errors = []
   const bindings = {
-    computed: Vue.computed, nextTick: Vue.nextTick, onMounted: Vue.onMounted, reactive: Vue.reactive, ref: Vue.ref, sanitizeSeoEditorHtml, seoContentWordCount, buildSourcePageAssistInstruction, sourcePageRemediationContext,
+    computed: Vue.computed, nextTick: Vue.nextTick, onMounted: Vue.onMounted, reactive: Vue.reactive, ref: Vue.ref, sanitizeSeoEditorHtml, seoContentWordCount, safeSeoUrl, seoPasteHtml, createSeoTable, editSeoTable, buildSourcePageAssistInstruction, sourcePageRemediationContext,
     useRoute: () => ({ query: { id: '10', site_id: '1', ...options.query } }), useRouter: () => ({ push() {}, replace() {} }),
     currentTenantId: Vue.ref(1), siteId: Vue.ref(1), session: { user: { name: '测试管理员' } },
     ElMessage: Object.assign(options => {
@@ -394,4 +395,61 @@ test('converting editor HTML for AI keeps line and paragraph boundaries without 
     assert.equal(view.state.draftForAi(), '开头\n段落一\n段落二\n下一行\n[图片：型号图]')
     assert.equal(view.writes.length, 0)
   } finally { view.close() }
+})
+
+
+test('layout sanitizer and paste strip Office markup and unsafe images', () => {
+  const html = sanitizeSeoEditorHtml('<!--office--><span style="color:red" class="MsoNormal">正文</span><table class="seo-table MsoTable"><tbody><tr><td colspan="20" rowspan="21">A</td><th colspan="0">B</th></tr></tbody></table><figure class="seo-figure seo-w-50 bad"><img src="data:image/png;base64,abc" onerror="alert(1)"></figure>', document)
+  assert.ok(html.includes('class="seo-table"'))
+  assert.ok(html.includes('class="seo-figure seo-w-50"'))
+  assert.ok(html.includes('colspan="20"'))
+  assert.doesNotMatch(html, /Mso|style=|<span|comment|rowspan|colspan="0"|data:|onerror/)
+  assert.doesNotMatch(sanitizeSeoEditorHtml('<p colspan="2" class="bad">x</p><td rowspan="1.5">x</td>', document), /colspan|rowspan|class=/)
+  assert.equal(seoPasteHtml('<p class="MsoNormal">Hi<img src="/local.png"><img src="blob:a"><img src="https://example.com/a.png"></p>', '', document), '<p>Hi<img src="https://example.com/a.png"></p>')
+  assert.equal(seoPasteHtml('', '<script>文字</script>\n下一行', document), '<div>&lt;script&gt;文字&lt;/script&gt;<br>下一行</div>')
+  for (const url of ['javascript:alert(1)', 'data:a', 'blob:a', '//evil.com', '/\\evil', 'java\nscript:a', '#image']) assert.equal(safeSeoUrl(url, true), false)
+})
+
+test('table helper inserts and removes rows, columns and tables within bounds', () => {
+  const host = document.createElement('div'), table = createSeoTable(document, 3, 3, true); host.append(table)
+  assert.equal(table.tHead.rows.length, 1); assert.equal(table.rows.length, 3)
+  const cell = table.rows[1].cells[1]
+  editSeoTable(cell, 'rowAbove'); editSeoTable(cell, 'rowBelow'); assert.equal(table.rows.length, 5)
+  editSeoTable(cell, 'columnLeft'); editSeoTable(cell, 'columnRight'); assert.equal(table.rows[0].cells.length, 5)
+  editSeoTable(cell, 'deleteColumn'); assert.equal(table.rows[0].cells.length, 4)
+  editSeoTable(table.rows[1].cells[0], 'deleteRow'); assert.equal(table.rows.length, 4)
+  table.rows[0].cells[0].colSpan = 2
+  assert.throws(() => editSeoTable(table.rows[0].cells[0], 'rowBelow'), /合并/)
+  editSeoTable(table.rows[0].cells[0], 'deleteTable'); assert.equal(host.innerHTML, '')
+  for (const size of [[0,3],[21,3],[3,11],[1.5,3]]) assert.throws(() => createSeoTable(document, ...size))
+  const single = createSeoTable(document, 1, 1); host.append(single)
+  editSeoTable(single.rows[0].cells[0], 'deleteColumn'); assert.equal(host.innerHTML, '')
+})
+
+test('paste and custom DOM edits undo and redo without bypassing locked workflows', async () => {
+  const view = await mountEditor('<p>original</p>')
+  try {
+    view.editor.innerHTML = '<p>changed</p>'; view.state.syncDraft()
+    view.state.editorUndo(); assert.equal(view.editor.innerHTML, '<p>original</p>')
+    view.state.editorUndo(true); assert.equal(view.editor.innerHTML, '<p>changed</p>')
+    view.editor.innerHTML = '<table class="seo-table"><tbody><tr><td>A</td></tr></tbody></table><figure class="seo-figure"><img src="https://example.com/image" alt="图"><figcaption>说明</figcaption></figure>'
+    view.state.syncDraft()
+    view.state.editorSelection({ target: view.editor.querySelector('img') })
+    view.state.imageLayout('seo-w-50'); view.state.imageLayout('seo-align-left')
+    assert.equal(view.editor.querySelectorAll('figure').length, 1)
+    assert.ok(view.editor.querySelector('figure').classList.contains('seo-w-50'))
+    assert.ok(view.editor.querySelector('figure').classList.contains('seo-align-left'))
+    view.state.selectedCell = view.editor.querySelector('td'); view.state.tableAction('rowBelow')
+    assert.equal(view.editor.querySelectorAll('tr').length, 2)
+    view.state.editorUndo(); assert.equal(view.editor.querySelectorAll('tr').length, 1)
+    view.state.editorUndo(true); assert.equal(view.editor.querySelectorAll('tr').length, 2)
+    const beforeComposition = view.editor.innerHTML
+    view.state.editorComposing = true; view.state.editorUndo(); assert.equal(view.editor.innerHTML, beforeComposition)
+  } finally { view.close() }
+  const locked = await mountEditor('<p>locked</p>', 'review')
+  try {
+    locked.state.pasteEditor({ preventDefault() {}, clipboardData: { getData() { throw Error('must not read') } } })
+    locked.state.insertTable(); locked.state.insertImage(); locked.state.editorUndo()
+    assert.equal(locked.editor.innerHTML, '<p>locked</p>')
+  } finally { locked.close() }
 })

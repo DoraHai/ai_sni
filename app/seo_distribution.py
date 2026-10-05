@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 import jwt
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Comment
 
 from app.security.crypto import decrypt, encrypt
 from app.seo_crawler import SeoCrawlError, pin_public_target, pinned_async_client
@@ -328,16 +328,56 @@ def sanitize_article_html(value: str) -> str:
     for tag in list(soup.find_all(True)):
         if tag.name not in allowed_tags:
             tag.unwrap()
-    allowed_attributes = {"href", "src", "data-src", "alt", "title"}
+    allowed_attributes = {"href", "src", "data-src", "alt", "title", "class", "colspan", "rowspan"}
+    allowed_classes = {"seo-table", "seo-figure", "seo-align-left", "seo-align-center", "seo-align-right", "seo-w-25", "seo-w-50", "seo-w-75", "seo-w-100"}
+    for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
+        comment.extract()
     for tag in soup.find_all(True):
+        classes = list(dict.fromkeys(token for token in tag.get("class", []) if token in allowed_classes))
+        if classes:
+            tag["class"] = classes
+        else:
+            tag.attrs.pop("class", None)
+        for attribute in ("colspan", "rowspan"):
+            value = str(tag.get(attribute, ""))
+            if tag.name not in {"th", "td"} or not re.fullmatch(r"[0-9]{1,2}", value) or not 1 <= int(value) <= 20:
+                tag.attrs.pop(attribute, None)
         for attribute in list(tag.attrs):
             if attribute.lower() not in allowed_attributes:
                 del tag.attrs[attribute]
         for attribute in ("href", "src", "data-src"):
             target = str(tag.attrs.get(attribute) or "").strip()
-            if target and urlparse(target).scheme.lower() not in {"", "http", "https"}:
+            if attribute in tag.attrs and (not re.match(r"^(https?://[^\s/]+|/(?![/\\])|#)", target, re.I) or re.search(r"[\x00-\x20\x7f\\]", target) or (attribute != "href" and target.startswith("#"))):
                 del tag.attrs[attribute]
     return str(soup).strip()
+
+
+def export_article_layout(value: str) -> str:
+    """Apply trusted layout CSS only at export; stored HTML never accepts styles."""
+    soup = BeautifulSoup(sanitize_article_html(value), "html.parser")
+    rules = {
+        "seo-table": "border-collapse:collapse;max-width:100%;width:100%;margin:16px 0;clear:both",
+        "seo-figure": "max-width:100%;margin:16px 0",
+        "seo-align-left": "float:left;margin:8px 16px 8px 0",
+        "seo-align-center": "float:none;clear:both;margin:16px auto",
+        "seo-align-right": "float:right;margin:8px 0 8px 16px",
+        "seo-w-25": "width:25%", "seo-w-50": "width:50%",
+        "seo-w-75": "width:75%", "seo-w-100": "width:100%",
+    }
+    for tag in soup.find_all(True):
+        classes = tag.get("class", [])
+        # Match editor rule order rather than the order of stored class tokens.
+        styles = [style for token, style in rules.items() if token in classes]
+        if tag.name in {"th", "td"}:
+            styles.append("border:1px solid #cbd5e1;padding:8px;min-width:70px")
+            if tag.name == "th": styles.append("background:#f1f5f9")
+        if tag.name == "img":
+            styles.append("max-width:100%;height:auto")
+            if tag.find_parent("figure"): styles.append("display:block;width:100%")
+        if tag.name == "figcaption": styles.append("color:#64748b;font-size:12px;text-align:center")
+        if tag.name == "blockquote": styles.append("border-left:3px solid #cbd5e1;padding:8px 16px;background:#f8fafc;margin:16px 0;clear:both")
+        if styles: tag["style"] = ";".join(styles)
+    return str(soup)
 
 
 def _safe_remote_page_url(value: Any) -> str | None:
@@ -524,7 +564,7 @@ async def _rewrite_wechat_images(
     token: str,
     content_html: str,
 ) -> tuple[str, int]:
-    soup = BeautifulSoup(content_html, "html.parser")
+    soup = BeautifulSoup(export_article_layout(content_html), "html.parser")
     images = list(soup.find_all("img"))
     if len(images) > _WECHAT_IMAGE_LIMIT:
         raise SeoDistributionError(f"单篇文章最多自动处理 {_WECHAT_IMAGE_LIMIT} 张正文图片")

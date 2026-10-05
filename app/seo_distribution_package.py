@@ -6,19 +6,20 @@ import json
 import time
 import zipfile
 from bs4 import BeautifulSoup
-from app.seo_distribution import _download_wechat_image, sanitize_article_html, SeoDistributionError
+from app.seo_distribution import _download_wechat_image, export_article_layout, SeoDistributionError
 
 
 async def build_publication_package(title, body, publication_id, source_version):
     if len(body) > 400000:
         raise ValueError("稿件过大，请先缩减正文")
-    soup = BeautifulSoup(sanitize_article_html(body), "html.parser")
+    soup = BeautifulSoup(export_article_layout(body), "html.parser")
     images, records, downloaded = {}, [], {}
     deadline = time.monotonic() + 22
     total_bytes = 0
     for number, image in enumerate(soup.find_all("img"), 1):
         source = str(image.get("data-src") or image.get("src") or "").strip()
-        image.attrs = {"alt": str(image.get("alt") or "")[:1000]}
+        style = image.get("style")
+        image.attrs = {"alt": str(image.get("alt") or "")[:1000], **({"style": style} if style else {})}
         record = {"number":number,"source_url":source,"state":"failed"}
         try:
             if source in downloaded:
