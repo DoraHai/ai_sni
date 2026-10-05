@@ -35,15 +35,70 @@ SEO_REQUIRED_SCHEMA_REVISION = "0099_geo_review_audit"
 # Runtime compatibility supports code-first rollout; it never authorizes the
 # separately reviewed migration operation.
 SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset(
-    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION}
+    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION, "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}
 )
 SEO_GEO_TICKET_REQUIRED_REVISIONS = frozenset(
-    {"0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION}
+    {"0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION, "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}
 )
 SEO_GEO_TICKET_SHAPE = {
     "owner_name": ("character varying(100)", False, None, "", "", "b", None, True),
     "due_date": ("date", False, None, "", "", "b", None, True),
 }
+SEO_CAPTURE_COLUMNS = {
+    "id": ("bigint", True), "tenant_id": ("bigint", True),
+    "site_id": ("bigint", True), "relation_type": ("character varying(24)", True),
+    "relation_id": ("bigint", True), "source_url": ("text", True),
+    "final_url": ("text", False), "http_status": ("integer", False),
+    "redirect_chain": ("jsonb", True), "warnings": ("jsonb", True),
+    "captured_at": ("timestamp with time zone", True),
+    "status": ("character varying(16)", True),
+    "source": ("character varying(16)", True),
+    "uploaded_by": ("bigint", False),
+    "uploaded_at": ("timestamp with time zone", False),
+    "content_type": ("character varying(32)", True),
+    "error_code": ("character varying(40)", False),
+    "viewport_width": ("integer", True), "viewport_height": ("integer", True),
+    "image_width": ("integer", False), "image_height": ("integer", False),
+    "sha256": ("character varying(64)", False),
+    "storage_key": ("character varying(120)", False),
+}
+SEO_CAPTURE_COLUMNS_SQL = text("""
+    SELECT a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod), a.attnotnull
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+    WHERE n.nspname = 'public' AND c.relname = 'seo_page_captures'
+      AND c.relkind = 'r' AND a.attnum > 0 AND NOT a.attisdropped
+""")
+SEO_CAPTURE_STATUS_SQL = text("""
+    SELECT pg_catalog.pg_get_constraintdef(con.oid, true)
+    FROM pg_catalog.pg_constraint con
+    WHERE con.conrelid = to_regclass('public.seo_page_captures')
+      AND con.conname = 'ck_seo_page_captures_status'
+""")
+SEO_CAPTURE_PROVENANCE_SQL = text("""
+    SELECT con.conname, pg_catalog.pg_get_constraintdef(con.oid, true)
+    FROM pg_catalog.pg_constraint con
+    WHERE con.conrelid = to_regclass('public.seo_page_captures')
+      AND con.conname IN ('ck_seo_page_captures_source', 'ck_seo_page_captures_manual_upload')
+""")
+
+
+async def _check_capture_structure(conn) -> None:
+    rows = await conn.execute(SEO_CAPTURE_COLUMNS_SQL)
+    found = {name: (kind, not_null) for name, kind, not_null in rows}
+    if found != SEO_CAPTURE_COLUMNS:
+        raise RuntimeError("SEO page capture table structure mismatch")
+    constraints = list((await conn.execute(SEO_CAPTURE_STATUS_SQL)).scalars())
+    if len(constraints) != 1 or not all(
+        f"'{status}'" in constraints[0] for status in ("pending", "running", "succeeded", "failed")
+    ):
+        raise RuntimeError("SEO page capture status constraint mismatch")
+    provenance = dict(await conn.execute(SEO_CAPTURE_PROVENANCE_SQL))
+    if set(provenance) != {"ck_seo_page_captures_source", "ck_seo_page_captures_manual_upload"} or not all(
+        f"'{source}'" in provenance["ck_seo_page_captures_source"] for source in ("auto", "manual")
+    ) or "uploaded_by" not in provenance["ck_seo_page_captures_manual_upload"] or "uploaded_at" not in provenance["ck_seo_page_captures_manual_upload"]:
+        raise RuntimeError("SEO page capture provenance constraint mismatch")
 SEO_DEMO_BINDING_COLUMNS = {
     "demo_tenant_bindings": {
         "tenant_id": ("bigint", True), "demo_tenant_id": ("bigint", True),
@@ -436,12 +491,14 @@ async def seo_health(response: Response) -> dict:
             await _check_seo_structure(conn)
             if revisions[0] in SEO_GEO_TICKET_REQUIRED_REVISIONS:
                 await _check_geo_ticket_adoption(conn)
-            if revisions[0] in {"0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", "0099_geo_review_audit"}:
+            if revisions[0] in {"0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", "0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}:
                 await _check_demo_binding_structure(
-                    conn, require_current_truncate=revisions[0] in {"0098_demo_binding_no_truncate", "0099_geo_review_audit"}
+                    conn, require_current_truncate=revisions[0] in {"0098_demo_binding_no_truncate", "0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}
                 )
-            if revisions[0] == "0099_geo_review_audit":
+            if revisions[0] in {"0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}:
                 await _check_geo_review_audit(conn)
+            if revisions[0] in {"0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}:
+                await _check_capture_structure(conn)
             schema_status = "ok"
     except Exception as exc:  # noqa: BLE001 - health must report infra failure
         db_status = "error"

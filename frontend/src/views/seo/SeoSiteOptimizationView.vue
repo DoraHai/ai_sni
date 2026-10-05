@@ -2,7 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { auditPendingSeoSitePages, auditSeoSitePage, cleanupSeoNonHtmlSitePages, fetchSeoBrokenLinkReport, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePageDetail, fetchSeoSitePageIssues, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoContentAsset, updateSeoSitePage } from '../../api/seo'
+import { auditPendingSeoSitePages, auditSeoSitePage, cleanupSeoNonHtmlSitePages, fetchSeoBrokenLinkReport, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePageDetail, fetchSeoSitePageIssues, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoContentAsset, updateSeoSitePage, downloadSeoTdkReview, generateSeoAiTdk, fetchSeoAiTdk, reviewSeoAiTdk } from '../../api/seo'
+import { reviewFilename, reviewPageIds } from '../../api/seoTdkReview.js'
+import { aiTdkStatus, aiTdkFields, aiTdkCount, aiTdkResultText } from '../../api/seoAiTdk.js'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { formatSeoCsvTime } from './seoRankTime'
@@ -10,6 +12,7 @@ import { runSeoBatch } from './seoBatchOperations'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
 import SeoSiteDiagnosticsPanel from './SeoSiteDiagnosticsPanel.vue'
 import SeoImageRemediationWorkbench from './SeoImageRemediationWorkbench.vue'
+import SeoPageCapturePanel from './SeoPageCapturePanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -31,6 +34,7 @@ const generating = ref(false)
 const cleaningNonHtml = ref(false)
 const exportingBrokenLinks = ref(false)
 const selectedRows = ref([])
+const reviewDialogOpen = ref(false), reviewFormat = ref('docx'), reviewTriggerCapture = ref(false), reviewExporting = ref(false)
 const page = ref(1)
 const pageSize = ref(50)
 const keywordOptions = ref([])
@@ -46,6 +50,7 @@ const activeIssue = ref(null)
 const detailOpen = ref(false)
 const detailLoading = ref(false)
 const detailResult = ref(null)
+const aiTdk = ref(null), aiGenerating = ref(false), aiResultOpen = ref(false), aiResults = ref([]), aiReviewing = ref(false)
 const editForm = reactive({ page_type: '', target_keyword_id: null, title_suggestion: '', description_suggestion: '', status: 'pending' })
 
 const canEdit = computed(() => !session.isLoggedIn || session.canEdit('seo.site'))
@@ -110,9 +115,57 @@ async function openPageDetail(row) {
   detailOpen.value = true
   detailLoading.value = true
   detailResult.value = null
-  try { detailResult.value = await fetchSeoSitePageDetail({ pageId: row.id, tenantId: currentTenantId.value }) }
+  try {
+    detailResult.value = await fetchSeoSitePageDetail({ pageId: row.id, tenantId: currentTenantId.value })
+    await loadAiTdk(row.id)
+  }
   catch (e) { ElMessage.error(e.message); detailOpen.value = false }
   finally { detailLoading.value = false }
+}
+async function loadAiTdk(pageId) {
+  const response = await fetchSeoAiTdk({ pageId, tenantId: currentTenantId.value, siteId: siteId.value })
+  aiTdk.value = response.latest
+}
+async function generateAiTdk() {
+  const ids = selectedRows.value.map(row => row.id)
+  if (!ids.length || ids.length > 20) return ElMessage.warning('请选择 1 至 20 个页面')
+  try {
+    await ElMessageBox.confirm(`将 ${ids.length} 个页面已保存的抓取内容与站内页面列表发送给 DeepSeek，继续生成 AI TDK 建议？`, 'AI 生成 TDK 建议', { confirmButtonText: '开始生成', cancelButtonText: '取消' })
+  } catch { return }
+  aiGenerating.value = true
+  try {
+    const response = await generateSeoAiTdk({ tenant_id: Number(currentTenantId.value), site_id: Number(siteId.value), page_ids: ids, force: false })
+    aiResults.value = response.items || []; aiResultOpen.value = true
+  } catch (e) { ElMessage.error(e.message) } finally { aiGenerating.value = false }
+}
+async function reviewAiField(field, action) {
+  if (!aiTdk.value) return
+  let finalValue = null
+  if (action === 'edit') {
+    try {
+      const response = await ElMessageBox.prompt(`编辑 ${field.label} 后确认`, '人工确认', { inputValue: aiTdk.value[`${field.key}_final_value`] || aiTdk.value[`${field.key}_ai_value`] || '', inputType: field.key === 'description' ? 'textarea' : 'text' })
+      finalValue = response.value
+    } catch { return }
+  }
+  await submitAiReview({ fields: { [field.key]: { action, final_value: finalValue } } })
+}
+async function reviewAiLink(index, action) {
+  let finalAnchor = null
+  if (action === 'edit') {
+    try {
+      const response = await ElMessageBox.prompt('编辑锚文本后确认', '人工确认', { inputValue: aiTdk.value.internal_link_suggestions[index].final_anchor || aiTdk.value.internal_link_suggestions[index].anchor })
+      finalAnchor = response.value
+    } catch { return }
+  }
+  await submitAiReview({ links: [{ index, action, final_anchor: finalAnchor }] })
+}
+async function submitAiReview(changes) {
+  aiReviewing.value = true
+  try {
+    aiTdk.value = await reviewSeoAiTdk({ pageId: detailResult.value.page.id, suggestionId: aiTdk.value.id,
+      payload: { tenant_id: Number(currentTenantId.value), site_id: Number(siteId.value), ...changes } })
+    ElMessage.success('审核结果已保存')
+  } catch (e) { ElMessage.error(e.message) } finally { aiReviewing.value = false }
 }
 async function loadKeywordOptions() {
   if (!currentTenantId.value) { keywordOptions.value = []; return }
@@ -250,6 +303,25 @@ function exportHandoff() {
   const blob = new Blob(['\ufeff' + [headers,...body].map((line) => line.map(csvCell).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' })
   const anchor = document.createElement('a'); anchor.href = URL.createObjectURL(blob); anchor.download = `SEO站内优化交接-${siteId.value}.csv`; anchor.click(); URL.revokeObjectURL(anchor.href)
 }
+async function exportTdkReview() {
+  const ids = reviewPageIds(selectedRows.value)
+  if (!ids.length) return ElMessage.warning('请先选择页面')
+  if (ids.length > 50) return ElMessage.warning('每批最多导出 50 个页面')
+  reviewExporting.value = true
+  try {
+    const response = await downloadSeoTdkReview({ tenant_id: Number(currentTenantId.value), site_id: Number(siteId.value), page_ids: ids,
+      format: reviewFormat.value, trigger_capture: canEdit.value && reviewTriggerCapture.value })
+    const fallback = `TDK审核稿-${siteId.value}.${reviewFormat.value}`
+    const filename = reviewFilename(response.headers?.['content-disposition'], fallback)
+    const anchor = document.createElement('a')
+    const url = URL.createObjectURL(response.data)
+    anchor.href = url; anchor.download = filename; anchor.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    reviewDialogOpen.value = false
+    ElMessage.success('TDK 审核稿已下载')
+  } catch (e) { ElMessage.error(e.message || '审核稿导出失败') }
+  finally { reviewExporting.value = false }
+}
 async function createContentTask(row) {
   if (row.content_task_id) return router.push({ path: '/seo/content/editor', query: { site_id: siteId.value, id: row.content_task_id, source_page_id: row.id } })
   try {
@@ -318,8 +390,11 @@ onBeforeUnmount(() => { disposed = true; ++sitesGeneration; clearTimeout(timer) 
   <div class="site-page">
     <section class="site-hero">
       <div><span>SEO / ONSITE OPTIMIZATION</span><h1>站内优化</h1><p>管理页面资产、TDK、H1、Canonical 与索引状态。检测结果保存到页面档案，可用于上线前后复核。</p></div>
-      <div class="hero-actions"><el-select v-model="siteId" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id"/></el-select><button v-if="canEdit" :disabled="generating||batchAuditing||cleaningNonHtml||!siteId" :title="`作用范围：${actionScopeLabel}`" @click="generateSuggestions">{{generating?'生成中…':`生成 TDK（${actionScopeLabel}）`}}</button><button :disabled="batchAuditing||cleaningNonHtml||!siteId" class="secondary" :title="`作用范围：${actionScopeLabel}`" @click="exportHandoff">导出交接单（{{ actionScopeLabel }}）</button><button class="secondary" :disabled="exportingBrokenLinks||!siteId" @click="exportBrokenLinks">{{ exportingBrokenLinks ? '导出中…' : '导出 404 修复清单' }}</button><button v-if="canEdit" :disabled="batchAuditing||auditing.size>0||cleaningNonHtml||!siteId" :title="selectedRows.length ? '最多处理已选的前 50 个页面' : '补抓最多 10 个待检测页面'" @click="auditPending">{{batchAuditing?'检测中…':(selectedRows.length?`批量检测（已选 ${selectedRows.length}）`:'补抓待检测页面')}}</button><button v-if="canEdit" class="secondary" :disabled="batchAuditing||cleaningNonHtml||!siteId" @click="cleanupNonHtmlAssets">{{ cleaningNonHtml ? '检查中…' : '清理非网页资源' }}</button><button v-if="canEdit" :disabled="batchAuditing||cleaningNonHtml||!siteId" @click="importOpen = true">＋ 导入页面</button></div>
-    </section>
+      <div class="hero-actions"><el-button @click="router.push('/seo/site/analytics')">数据源与导出设置</el-button><el-select v-model="siteId" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id"/></el-select><button v-if="canEdit" :disabled="generating||batchAuditing||cleaningNonHtml||!siteId" :title="`作用范围：${actionScopeLabel}`" @click="generateSuggestions">{{generating?'生成中…':`生成 TDK（${actionScopeLabel}）`}}</button><button :disabled="batchAuditing||cleaningNonHtml||!siteId" class="secondary" :title="`作用范围：${actionScopeLabel}`" @click="exportHandoff">导出交接单（{{ actionScopeLabel }}）</button><button class="secondary" :disabled="!selectedRows.length || reviewExporting || !siteId" @click="reviewDialogOpen = true">导出TDK审核稿</button><button class="secondary" :disabled="exportingBrokenLinks||!siteId" @click="exportBrokenLinks">{{ exportingBrokenLinks ? '导出中…' : '导出 404 修复清单' }}</button><button v-if="canEdit" :disabled="batchAuditing||auditing.size>0||cleaningNonHtml||!siteId" :title="selectedRows.length ? '最多处理已选的前 50 个页面' : '补抓最多 10 个待检测页面'" @click="auditPending">{{batchAuditing?'检测中…':(selectedRows.length?`批量检测（已选 ${selectedRows.length}）`:'补抓待检测页面')}}</button><button v-if="canEdit" class="secondary" :disabled="batchAuditing||cleaningNonHtml||!siteId" @click="cleanupNonHtmlAssets">{{ cleaningNonHtml ? '检查中…' : '清理非网页资源' }}</button><button v-if="canEdit" :disabled="batchAuditing||cleaningNonHtml||!siteId" @click="importOpen = true">＋ 导入页面</button></div>
+      </section>
+      <div v-if="canEdit && selectedRows.length" style="margin:12px 0"><el-button type="primary" :loading="aiGenerating" :disabled="selectedRows.length > 20" @click="generateAiTdk">AI 生成 TDK 建议（已选 {{ selectedRows.length }} 页）</el-button><small v-if="selectedRows.length > 20">每批最多 20 页</small></div>
+      <el-dialog v-model="aiResultOpen" title="AI 生成结果" width="620px"><pre style="white-space:pre-wrap">{{ aiTdkResultText(aiResults) }}</pre></el-dialog>
+    <el-dialog v-model="reviewDialogOpen" title="导出 TDK 审核稿" width="420px"><p>已选 {{ selectedRows.length }} 个页面，每批最多 50 个。</p><el-alert v-if="selectedRows.length > 50" title="每批最多导出 50 个页面，请减少选择" type="warning" :closable="false" /><el-radio-group v-model="reviewFormat"><el-radio value="docx">Word</el-radio><el-radio value="pdf">PDF</el-radio></el-radio-group><p v-if="canEdit"><el-checkbox v-model="reviewTriggerCapture">无截图的页面提交截图任务</el-checkbox></p><template #footer><el-button @click="reviewDialogOpen = false">取消</el-button><el-button type="primary" :loading="reviewExporting" :disabled="selectedRows.length > 50" @click="exportTdkReview">下载</el-button></template></el-dialog>
     <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon />
     <section class="metrics">
       <article><span>页面资产</span><strong>{{ fmt(stats.total || 0) }}</strong><small>已纳入持续维护</small></article>
@@ -374,6 +449,21 @@ onBeforeUnmount(() => { disposed = true; ++sitesGeneration; clearTimeout(timer) 
             <div><h3>{{ detailResult.page.title || '未读取页面标题' }}</h3><a :href="detailResult.page.url" target="_blank" rel="noopener noreferrer">{{ detailResult.page.url }}</a></div>
             <el-tag :type="statusType(detailResult.page.status)" effect="light">{{ statusLabel(detailResult.page.status) }}</el-tag>
           </section>
+          <SeoPageCapturePanel v-if="detailOpen" :key="detailResult.page.id" :tenant-id="currentTenantId" :site-id="detailResult.page.site_id" :can-edit="canEdit" :page="detailResult.page" />
+          <section class="detail-block"><h4>AI 建议审核</h4><el-empty v-if="!aiTdk" description="暂无 AI 建议" :image-size="48"/><template v-else>
+            <div v-for="field in aiTdkFields" :key="field.key" style="border-bottom:1px solid #ddd;padding:10px 0">
+              <b>{{ field.label }}</b> <el-tag size="small">{{ aiTdkStatus(aiTdk[`${field.key}_status`]) }}</el-tag>
+              <p>当前值：{{ displayValue(detailResult.page[field.current]) }}</p><p>AI 建议：{{ displayValue(aiTdk[`${field.key}_ai_value`]) }}（{{ aiTdkCount(aiTdk[`${field.key}_ai_value`]) }} 字）</p>
+              <p v-if="aiTdk[`${field.key}_final_value`]">确认值：{{ aiTdk[`${field.key}_final_value`] }}</p>
+              <div v-if="canEdit"><el-button size="small" :loading="aiReviewing" @click="reviewAiField(field, 'accept')">采纳</el-button><el-button size="small" :loading="aiReviewing" @click="reviewAiField(field, 'edit')">编辑后确认</el-button><el-button size="small" :loading="aiReviewing" @click="reviewAiField(field, 'reject')">驳回</el-button></div>
+            </div>
+            <p>修改理由：{{ displayValue(aiTdk.reason) }}</p><el-alert v-for="(warning, index) in (aiTdk.warnings || [])" :key="index" :title="warning" type="warning" :closable="false" />
+            <h4>AI 内链建议</h4><p v-if="!aiTdk.internal_link_suggestions?.length">暂无内链建议</p>
+            <div v-for="(link, index) in (aiTdk.internal_link_suggestions || [])" :key="index" style="border-bottom:1px solid #ddd;padding:8px 0">
+              <b>{{ link.target_title || link.target_url }}</b> <el-tag size="small">{{ aiTdkStatus(link.status) }}</el-tag><p>{{ link.target_url }}</p><p>锚文本：{{ link.final_anchor || link.anchor }} · {{ link.reason }}</p>
+              <div v-if="canEdit"><el-button size="small" :loading="aiReviewing" @click="reviewAiLink(index, 'accept')">采纳</el-button><el-button size="small" :loading="aiReviewing" @click="reviewAiLink(index, 'edit')">编辑锚文本</el-button><el-button size="small" :loading="aiReviewing" @click="reviewAiLink(index, 'reject')">驳回</el-button></div>
+            </div>
+          </template></section>
           <section class="detail-metrics">
             <article><span>健康度</span><strong>{{ detailResult.page.audit_score ?? '—' }}</strong></article>
             <article><span>HTTP</span><strong>{{ detailResult.page.http_status ?? detailResult.latest_snapshot?.status_code ?? '—' }}</strong></article>

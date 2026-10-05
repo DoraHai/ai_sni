@@ -121,6 +121,7 @@ const onsiteBindings = { computed:Vue.computed, ref:Vue.ref, reactive:Vue.reacti
   useRoute: () => Vue.reactive({ query:{} }), useRouter: () => ({ push(){} }),
   currentTenantId:globalTenant, siteId:globalSite, session:{ isLoggedIn:true, canEdit:()=>true },
   ElMessage:bindings.ElMessage, SeoSiteDiagnosticsPanel:{ render:()=>null },
+  SeoPageCapturePanel:{ render:()=>null },
   SeoImageRemediationWorkbench:{ render:()=>null }, formatSeoCsvTime:v=>v,
   fetchSeoSites: arg => { const d = deferred(arg); siteRequests.push(d); return d.promise } }
 for (const match of onsiteSource.matchAll(/import \{ ([^}]+) \} from '\.\.\/\.\.\/api\/[^']+'/g)) {

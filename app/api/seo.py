@@ -352,6 +352,16 @@ from app.api.seo_video import router as video_router
 router.include_router(video_router)
 from app.api.seo_qa import router as qa_router
 router.include_router(qa_router)
+from app.api.seo_page_captures import router as page_captures_router
+router.include_router(page_captures_router)
+from app.api.seo_site_analytics import router as site_analytics_router
+router.include_router(site_analytics_router)
+from app.api.seo_monthly_report import router as monthly_report_router
+router.include_router(monthly_report_router)
+from app.api.seo_tdk_review import router as tdk_review_router
+router.include_router(tdk_review_router)
+from app.api.seo_ai_tdk import router as ai_tdk_router
+router.include_router(ai_tdk_router)
 
 ENGINES = {"baidu", "google", "bing", "360", "sogou"}
 PRIORITIES = {"P0", "P1", "P2", "P3"}

@@ -2,6 +2,7 @@ import { createApp } from 'vue'
 import {
   ElAlert,
   ElButton,
+  ElCard,
   ElCheckbox,
   ElCheckboxGroup,
   ElDatePicker,
@@ -15,6 +16,7 @@ import {
   ElOption,
   ElPagination,
   ElProgress,
+  ElRadio,
   ElRadioButton,
   ElRadioGroup,
   ElSegmented,
@@ -42,6 +44,7 @@ installAuthContextRouting(window, AUTH_CONTEXT_EVENT, revalidateSessionRoute)
 const elementComponents = [
   ElAlert,
   ElButton,
+  ElCard,
   ElCheckbox,
   ElCheckboxGroup,
   ElDatePicker,
@@ -55,6 +58,7 @@ const elementComponents = [
   ElOption,
   ElPagination,
   ElProgress,
+  ElRadio,
   ElRadioButton,
   ElRadioGroup,
   ElSegmented,

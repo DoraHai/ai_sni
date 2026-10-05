@@ -4,6 +4,8 @@ import { JSDOM } from 'jsdom'
 import { readFile } from 'node:fs/promises'
 import { fillField, validatePackage, platformHosts, validateResults, sanitizeRichText, publicationUrl } from '../src/views/seo/publisher/core.js'
 import { createPublisherPackage, publisherZip } from '../src/views/seo/seoPublisher.js'
+import { previousBeijingMonth, publicationListFilename } from '../src/api/seoPublicationExport.js'
+import { monthlyReportError } from '../src/api/seoMonthlyReport.js'
 const row = {id:7,platform_code:'baijiahao',connection_name:'品牌A',status:'manual_required',adapted_title:'核验资料',adapted_content:'<p>正文事实</p><script>bad()</script><p>第二段</p>',handoff_url:'https://baijiahao.baidu.com/',source_version:2}
 function dom(html, url='https://baijiahao.baidu.com/editor') {
   const d=new JSDOM(html,{url,pretendToBeVisual:true})
@@ -106,7 +108,9 @@ test('distribution view clears old scope before export and ignores stale loads',
       bindings[alias||original]=Vue[original]||(()=>Promise.resolve({items:[]}))
     }
     return ''
-  }).replace(/import SeoVideoPublishing from '[^']+'/, 'const SeoVideoPublishing = {}').replace(/const (publisherFiles|runnerFiles) = import\.meta\.glob\([^\n]+\)/g,'const $1 = {}')
+  }).replace(/import SeoVideoPublishing from '[^']+'/, 'const SeoVideoPublishing = {}')
+    .replace(/import SeoPageCapturePanel from '[^']+'/, 'const SeoPageCapturePanel = {}')
+    .replace(/const (publisherFiles|runnerFiles) = import\.meta\.glob\([^\n]+\)/g,'const $1 = {}')
   const tenant=Vue.ref(1),site=Vue.ref(10),reads=[]
   const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}}
   Object.assign(bindings,{currentTenantId:tenant,siteId:site,session:Vue.reactive({user:{id:7},isLoggedIn:true,canEdit:()=>true}),
@@ -115,6 +119,7 @@ test('distribution view clears old scope before export and ignores stale loads',
     fetchSeoContentAssets:async()=>({items:[]}),fetchSeoDistributionVariants:async()=>({items:[]}),
     fetchSeoContentPublications:()=>{const d=deferred();reads.push(d);return d.promise},
     ElMessage:{warning(){},success(){},error(){}},ElMessageBox:{},createPublisherPackage,publisherZip,
+    previousBeijingMonth,publicationListFilename,monthlyReportError,
   })
   const component=new Function('b',`const {${Object.keys(bindings).join(',')}}=b;${code};return component`)(bindings)
   component.render=()=>null
@@ -123,6 +128,7 @@ test('distribution view clears old scope before export and ignores stale loads',
   const flush=async()=>{for(let i=0;i<5;i++) await Vue.nextTick()}
   try {
     await flush();assert.equal(reads.length,1)
+    assert.match(state.exportMonth, /^\d{4}-\d{2}$/)
     state.handoffItem={...row};state.completeDialog=true
     tenant.value=2;await flush()
     assert.equal(state.completeDialog,false);assert.equal(state.handoffItem,null)

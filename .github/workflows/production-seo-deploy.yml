@@ -106,6 +106,24 @@ jobs:
           tests/test_demo_tenant_binding_migration.py
           tests/test_demo_binding_no_truncate_migration.py
           tests/test_geo_review_audit_migration.py
+          tests/test_seo_page_capture_migration.py
+          tests/test_seo_page_capture.py
+          tests/test_seo_page_capture_api.py
+          tests/test_seo_capture_upload.py
+          tests/test_seo_publication_export.py
+          tests/test_seo_publication_export_api.py
+          tests/test_seo_site_analytics.py
+          tests/test_seo_site_analytics_api.py
+          tests/test_seo_site_analytics_migration.py
+          tests/test_seo_monthly_report.py
+          tests/test_seo_monthly_report_api.py
+          tests/test_seo_monthly_report_migration.py
+          tests/test_seo_tdk_review.py
+          tests/test_seo_tdk_review_api.py
+          tests/test_seo_tdk_review_migration.py
+          tests/test_seo_ai_tdk.py
+          tests/test_seo_ai_tdk_api.py
+          tests/test_seo_ai_tdk_migration.py
           tests/test_seo_demo_runtime.py
           tests/test_seo_demo_source.py
           tests/test_seo_static_demo.py
@@ -148,14 +166,14 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0099_geo_review_audit (head)'
+          printf '%s\n' "$heads" | grep -F '0104_seo_page_ai_tdk (head)'
 
       - working-directory: frontend
         run: npm ci --no-audit
 
       - name: Rebuild and verify the isolated SEO frontend
         working-directory: frontend
-        run: node --test scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs scripts/test-seo-backlinks.mjs scripts/test-seo-video-workflow.mjs scripts/test-seo-qa.mjs scripts/test-seo-workspace-access.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run build:seo && npm run verify:seo-build
+        run: node --test scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs scripts/test-seo-backlinks.mjs scripts/test-seo-video-workflow.mjs scripts/test-seo-qa.mjs scripts/test-seo-workspace-access.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run test:seo-page-capture && npm run test:seo-publication-export && npm run test:seo-site-analytics && npm run test:seo-monthly-report && npm run test:seo-tdk-review && npm run test:seo-ai-tdk && npm run build:seo && npm run verify:seo-build
 
       - name: Create immutable SEO-only release archive
         env:
@@ -261,3 +279,17 @@ jobs:
           archive_sha256="$(sha256sum "$archive" | cut -d' ' -f1)"
           remote_path="/home/platform-deploy/uploads/seo-${SEO_COMMIT}.tgz"
           ssh -i ~/.ssh/platform-deploy -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "sudo -n /usr/local/sbin/platform-deploy apply seo '$remote_path' '$SEO_COMMIT' '$archive_sha256' DEPLOY_SEO"
+
+      # Optional post-deploy preparation. Restricted sudo may reject bash; that
+      # failure is reported but never changes the already completed release.
+      - name: Install optional SEO page capture runtime
+        if: vars.SEO_PAGE_CAPTURE_RUNTIME == 'install'
+        continue-on-error: true
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh -i ~/.ssh/platform-deploy -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
+            "sudo -n bash -s -- --service-user sem --python /opt/sem-backend/.venv/bin/python" \
+            < scripts/install_seo_page_capture_runtime.sh
