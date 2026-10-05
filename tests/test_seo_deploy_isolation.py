@@ -50,7 +50,7 @@ class _HealthConnection:
                 ("demo_tenant_binding_history", "trg_demo_tenant_binding_history_no_truncate", "before truncate for each statement reject_demo_tenant_binding_history_mutation"),
                 ("demo_tenant_bindings", "trg_demo_tenant_bindings_no_delete", "before delete for each row reject_demo_tenant_binding_delete"),
             ]
-            if self.revisions in (["0098_demo_binding_no_truncate"], ["0099_geo_review_audit"]):
+            if self.revisions in (["0098_demo_binding_no_truncate"], ["0099_geo_review_audit"], ["0100_seo_page_captures"], ["0101_seo_site_analytics"], ["0102_seo_monthly_report_template"], ["0103_seo_tdk_review"], ["0104_seo_page_ai_tdk"]):
                 rows.append(("demo_tenant_bindings", "trg_demo_tenant_bindings_no_truncate", "before truncate for each statement reject_demo_tenant_binding_delete"))
             return rows
         if "pg_get_serial_sequence" in sql:
@@ -62,6 +62,13 @@ class _HealthConnection:
             ]
         if "geo_content_tasks" in sql and "review_audit" in sql:
             return [("jsonb", False, None)]
+        if "seo_page_captures" in sql and "pg_attribute" in sql:
+            return [(name, *shape) for name, shape in seo_main.SEO_CAPTURE_COLUMNS.items()]
+        if "ck_seo_page_captures_manual_upload" in sql:
+            return [("ck_seo_page_captures_source", "CHECK (source IN ('auto', 'manual'))"),
+                    ("ck_seo_page_captures_manual_upload", "CHECK (source <> 'manual' OR (uploaded_by IS NOT NULL AND uploaded_at IS NOT NULL))")]
+        if "ck_seo_page_captures_status" in sql:
+            return _HealthResult(["CHECK (status IN ('pending', 'running', 'succeeded', 'failed'))"])
         if "pg_attribute" in sql:
             return [(table, column, kind or "text") for (table, column), kind in seo_main.SEO_REQUIRED_COLUMNS.items()]
         return _HealthResult(self.revisions if "alembic_version" in sql else [])
@@ -239,6 +246,23 @@ def test_production_workflow_auto_deploys_only_the_exact_production_head() -> No
     assert "production-geo" not in workflow
 
 
+def test_capture_runtime_install_is_opt_in_and_cannot_fail_release() -> None:
+    workflow = _read(".github/workflows/production-seo-deploy.yml")
+    script = _read("scripts/install_seo_page_capture_runtime.sh")
+    assert "if: vars.SEO_PAGE_CAPTURE_RUNTIME == 'install'" in workflow
+    assert "continue-on-error: true" in workflow
+    assert workflow.index("Apply schema-compatible SEO release") < workflow.index("Install optional SEO page capture runtime")
+    assert "< scripts/install_seo_page_capture_runtime.sh" in workflow
+    assert "set -euo pipefail" in script
+    assert "-m playwright install-deps chromium" in script
+    assert 'runuser -u "$service_user" -- env HOME="$service_home" "$python_bin" -m playwright install chromium' in script
+    assert "fonts-noto-cjk" in script
+    assert "--dry-run" in script
+    assert "SEO_PAGE_CAPTURE_ENABLED" in script
+    assert "redirect_chain" in seo_main.SEO_CAPTURE_COLUMNS
+    assert seo_main.SEO_CAPTURE_COLUMNS["warnings"] == ("jsonb", True)
+
+
 def test_shared_ci_defers_production_seo_prs_to_seo_baseline() -> None:
     workflow = _read(".github/workflows/ci.yml")
     assert "branches-ignore:" in workflow
@@ -263,7 +287,7 @@ def test_health_rejects_unknown_empty_or_multiple_revisions(revisions):
     structure.assert_not_called()
 
 
-@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit'])
+@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk'])
 def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
     response = Response()
     with patch.object(seo_main, 'engine', _HealthEngine([revision])):
@@ -272,7 +296,30 @@ def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
     assert result['db'] == 'ok' and result['db_error'] is None
     assert result['schema_revision'] == revision
     assert result['required_schema_revision'] == '0099_geo_review_audit'
-    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit']
+    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk']
+
+
+@pytest.mark.parametrize("revision", ["0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"])
+def test_health_does_not_require_optional_analytics_or_report_tables(revision) -> None:
+    original = _HealthConnection.execute
+    queries = []
+
+    async def execute(self, statement, parameters=None):
+        queries.append(str(statement))
+        return await original(self, statement, parameters)
+
+    response = Response()
+    with patch.object(_HealthConnection, "execute", execute), patch.object(
+        seo_main, "engine", _HealthEngine([revision])
+    ):
+        result = asyncio.run(seo_main.seo_health(response))
+
+    assert response.status_code == 200 and result["schema"] == "ok"
+    assert not any(
+        table in query
+        for query in queries
+        for table in ("seo_site_analytics_sources", "seo_site_analytics_monthly", "seo_site_export_templates", "seo_site_report_templates", "seo_tdk_review_batches", "seo_site_tdk_review_templates")
+    )
 
 
 @pytest.mark.parametrize('failure', ['missing_column', 'wrong_type', 'has_index', 'has_constraint'])
@@ -308,7 +355,7 @@ def test_health_rejects_0095_when_geo_ticket_adoption_shape_is_incomplete(failur
 
 
 @pytest.mark.parametrize('failure', ['missing_table','missing_column','wrong_bigint','wrong_jsonb','catalog_denied'])
-@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit'])
+@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk'])
 def test_health_rejects_incomplete_schema_even_at_allowed_revision(failure, revision):
     async def execute(self, statement, parameters=None):
         if 'geo_action_tickets' in str(statement):
@@ -344,6 +391,36 @@ def test_geo_review_audit_catalog_check_is_exact_and_read_only() -> None:
     assert "a.attname = 'review_audit'" in sql
     assert "c.relkind = 'r'" in sql
     assert not any(word in sql.upper().split() for word in ('INSERT','UPDATE','DELETE','CREATE','ALTER','DROP'))
+
+
+def test_0100_health_rejects_capture_table_drift() -> None:
+    original = _HealthConnection.execute
+    async def execute(self, statement, parameters=None):
+        if "seo_page_captures" in str(statement) and "pg_attribute" in str(statement):
+            return [(name, *shape) for name, shape in seo_main.SEO_CAPTURE_COLUMNS.items() if name != "sha256"]
+        return await original(self, statement, parameters)
+    response = Response()
+    with patch.object(_HealthConnection, "execute", execute), patch.object(
+        seo_main, "engine", _HealthEngine(["0100_seo_page_captures"])
+    ):
+        result = asyncio.run(seo_main.seo_health(response))
+    assert response.status_code == 503
+    assert "SEO page capture table structure mismatch" in result["db_error"]
+
+
+def test_0100_health_rejects_missing_manual_upload_constraint() -> None:
+    original = _HealthConnection.execute
+    async def execute(self, statement, parameters=None):
+        if "ck_seo_page_captures_manual_upload" in str(statement):
+            return [("ck_seo_page_captures_source", "CHECK (source IN ('auto', 'manual'))")]
+        return await original(self, statement, parameters)
+    response = Response()
+    with patch.object(_HealthConnection, "execute", execute), patch.object(
+        seo_main, "engine", _HealthEngine(["0100_seo_page_captures"])
+    ):
+        result = asyncio.run(seo_main.seo_health(response))
+    assert response.status_code == 503
+    assert "SEO page capture provenance constraint mismatch" in result["db_error"]
 
 
 @pytest.mark.parametrize("rows", [[], [("text", False, None)], [("jsonb", True, None)], [("jsonb", False, "'{}'::jsonb")]])
@@ -384,8 +461,8 @@ def test_structure_contract_preserves_smallint_fields():
 
 
 def test_runtime_allowlist_contains_only_exact_reviewed_versions():
-    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit'})
-    assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit'})
+    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk'})
+    assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk'})
     assert (
         seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS - {'0094_seo_qa_batches'}
     ) <= seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS
@@ -419,6 +496,11 @@ def test_pre_0097_compatible_health_does_not_require_future_binding_tables(revis
     ("0097_demo_tenant_bindings", False),
     ("0098_demo_binding_no_truncate", True),
     ("0099_geo_review_audit", True),
+    ("0100_seo_page_captures", True),
+    ("0101_seo_site_analytics", True),
+    ("0102_seo_monthly_report_template", True),
+    ("0103_seo_tdk_review", True),
+    ("0104_seo_page_ai_tdk", True),
 ])
 def test_binding_health_requires_current_truncate_from_0098(revision, required) -> None:
     response = Response()

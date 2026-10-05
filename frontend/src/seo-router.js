@@ -55,6 +55,7 @@ const seoChildren = [
     component: () => import('./views/seo/SeoSiteOptimizationView.vue'),
     meta: { title: '站内优化', workflow: '站内增长', perm: 'seo.site' },
   },
+  { path: 'site/analytics', component: () => import('./views/seo/SeoSiteAnalyticsView.vue'), meta: { title: '数据源与导出设置', workflow: '站内增长', perm: 'seo.site' } },
   { path: 'content', redirect: '/seo/content/articles' },
   {
     path: 'content/articles',

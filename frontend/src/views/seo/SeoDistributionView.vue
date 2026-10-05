@@ -4,6 +4,8 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   downloadSeoPublicationMaterials,
+  downloadSeoPublicationList,
+  downloadSeoMonthlyReport,
   discoverSeoBacklinks,
   adaptSeoDistributionContent,
   completeSeoManualPublication,
@@ -28,11 +30,14 @@ import {
   updateSeoDistributionConnection,
   saveSeoDistributionVariant,
 } from '../../api/seo'
+import { previousBeijingMonth, publicationListFilename } from '../../api/seoPublicationExport.js'
+import { monthlyReportError } from '../../api/seoMonthlyReport.js'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
 import { validateResults } from './publisher/core.js'
 import SeoVideoPublishing from './SeoVideoPublishing.vue'
+import SeoPageCapturePanel from './SeoPageCapturePanel.vue'
 import { createPublisherPackage, publisherZip } from './seoPublisher'
 const publisherFiles = import.meta.glob('./publisher/*', { query: '?raw', import: 'default', eager: true })
 const runnerFiles = import.meta.glob('./publisher-runner/*', { query: '?raw', import: 'default', eager: true })
@@ -43,6 +48,37 @@ const activeTab = ref('channels')
 const query = ref('')
 const channelFilter = ref('all')
 const materialsBusy = ref(false)
+const exportMonth = ref(previousBeijingMonth())
+const exportBusy = ref(false)
+const reportBusy = ref(false)
+async function downloadMonthlyReport() {
+  if (!canViewCapture.value || reportBusy.value || !currentTenantId.value || !siteId.value) return
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(exportMonth.value)) return ElMessage.error('请选择有效月份')
+  const requested = currentResultScope()
+  reportBusy.value = true
+  try {
+    const response = await downloadSeoMonthlyReport({ tenantId: currentTenantId.value, siteId: siteId.value, month: exportMonth.value })
+    if (requested === currentResultScope()) {
+      downloadBlob(response.data, publicationListFilename(response.headers?.['content-disposition'], `SEO月报-${exportMonth.value}.pdf`))
+      ElMessage.success('月报已下载')
+    }
+  } catch (error) { if (requested === currentResultScope()) ElMessage.error(await monthlyReportError(error)) }
+  finally { reportBusy.value = false }
+}
+async function exportPublicationList() {
+  if (!canViewCapture.value || exportBusy.value || !currentTenantId.value || !siteId.value) return
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(exportMonth.value)) return ElMessage.error('请选择有效月份')
+  const requested = currentResultScope()
+  exportBusy.value = true
+  try {
+    const response = await downloadSeoPublicationList({ tenantId: currentTenantId.value, siteId: siteId.value, month: exportMonth.value })
+    if (requested === currentResultScope()) {
+      downloadBlob(response.data, publicationListFilename(response.headers?.['content-disposition'], `发布清单-${exportMonth.value}.xlsx`))
+      ElMessage.success('发布清单已下载')
+    }
+  } catch (e) { if (requested === currentResultScope()) ElMessage.error(`导出失败：${e.message || '请稍后重试'}`) }
+  finally { exportBusy.value = false }
+}
 async function downloadMaterials(item) {
   if (!canEdit.value || materialsBusy.value) return
   const requested = currentResultScope()
@@ -100,6 +136,10 @@ const publications = ref([])
 const variants = ref([])
 const sites = ref([])
 const canEdit = computed(() => !session.isLoggedIn || session.canEdit('seo.content'))
+const canCapture = computed(() => !session.isLoggedIn || session.canEdit('seo.site'))
+const canViewCapture = computed(() => !session.isLoggedIn || session.canView('seo.site'))
+const capturePublication = ref(null)
+const captureDialog = ref(false)
 
 const importInput = ref(null)
 const importDialog = ref(false)
@@ -1048,7 +1088,7 @@ onMounted(loadSites)
 
     <template v-else>
       <section class="table-panel">
-        <header><div><h2>发布成功记录</h2><p>包含人工确认和平台接口返回，均不代表页面正文、外链或搜索收录已核验。核验结果请查看问答跟进或外链模块。</p></div><el-button @click="selectImport">批量登记</el-button></header>
+        <header><div><h2>发布成功记录</h2><p>包含人工确认和平台接口返回，均不代表页面正文、外链或搜索收录已核验。核验结果请查看问答跟进或外链模块。</p></div><div class="task-toolbar"><el-date-picker v-if="canViewCapture" v-model="exportMonth" type="month" value-format="YYYY-MM" placeholder="选择月份" /><el-button v-if="canViewCapture" :disabled="!siteId || exportBusy" @click="exportPublicationList">{{ exportBusy ? '导出中…' : '导出发布清单' }}</el-button><el-button v-if="canViewCapture" :disabled="!siteId || reportBusy" :loading="reportBusy" @click="downloadMonthlyReport">生成月报</el-button><el-button @click="selectImport">批量登记</el-button></div></header>
         <el-table :data="published" empty-text="暂无已发布记录">
           <el-table-column prop="content_title" label="文章" min-width="220" show-overflow-tooltip />
           <el-table-column prop="platform_name" label="平台" width="130" />
@@ -1056,7 +1096,7 @@ onMounted(loadSites)
           <el-table-column prop="page_url" label="发布链接" min-width="260" show-overflow-tooltip><template #default="scope"><a :href="scope.row.page_url" target="_blank" rel="noopener">{{ scope.row.page_url }}</a></template></el-table-column>
           <el-table-column label="发布依据" width="200"><template #default="scope">{{ publicationEvidence(scope.row) }}</template></el-table-column>
           <el-table-column prop="published_at" label="发布/登记时间" width="150"><template #default="scope">{{ scope.row.published_at ? date(scope.row.published_at) : '时间未记录' }}</template></el-table-column>
-          <el-table-column label="操作" width="100"><template #default="scope"><el-button link type="primary" @click="showAttempts(scope.row)">尝试记录</el-button></template></el-table-column>
+          <el-table-column label="操作" width="150"><template #default="scope"><el-button link type="primary" @click="showAttempts(scope.row)">尝试记录</el-button><el-button v-if="canViewCapture" link type="primary" @click="capturePublication = scope.row; captureDialog = true">截图</el-button></template></el-table-column>
         </el-table>
       </section>
     </template>
@@ -1177,6 +1217,10 @@ onMounted(loadSites)
         <el-table-column prop="created_at" label="保存时间" width="145"><template #default="scope">{{ date(scope.row.created_at) }}</template></el-table-column>
       </el-table>
       <template #footer><el-button @click="variantHistoryDialog = false">关闭</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="captureDialog" title="发布记录截图" width="700px" destroy-on-close>
+      <SeoPageCapturePanel v-if="capturePublication" :key="capturePublication.id" :tenant-id="currentTenantId" :site-id="siteId" :can-edit="canCapture" :page="capturePublication" relation-type="publication" />
     </el-dialog>
 
     <el-dialog v-model="attemptsDialog" title="发布尝试记录" width="760px">

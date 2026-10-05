@@ -1,4 +1,62 @@
 import client from './client'
+export const fetchSeoAnalyticsSources = params => client.get('/api/v1/seo/site/analytics-sources', { params })
+export const saveSeoAnalyticsSource = payload => client.put('/api/v1/seo/site/analytics-sources', payload)
+export const deleteSeoAnalyticsSource = (source, params) => client.delete(`/api/v1/seo/site/analytics-sources/${source}`, { params })
+export const testSeoAnalyticsSource = (source, payload) => client.post(`/api/v1/seo/site/analytics-sources/${source}/test`, payload)
+export const exchangeSeoBaiduCode = payload => client.post('/api/v1/seo/site/analytics-sources/baidu_tongji/oauth/exchange', payload)
+export const pullSeoAnalytics = payload => client.post('/api/v1/seo/site/analytics/pull', payload, { timeout: 60000 })
+export const fetchSeoAnalyticsMonthly = params => client.get('/api/v1/seo/site/analytics/monthly', { params })
+export const fetchSeoExportTemplate = params => client.get('/api/v1/seo/site/publications/export-template', { params })
+export const saveSeoExportTemplate = payload => client.put('/api/v1/seo/site/publications/export-template', payload)
+export const resetSeoExportTemplate = params => client.delete('/api/v1/seo/site/publications/export-template', { params })
+export const fetchSeoMonthlyReportTemplate = params => client.get('/api/v1/seo/site/reports/monthly-template', { params })
+export const saveSeoMonthlyReportTemplate = payload => client.put('/api/v1/seo/site/reports/monthly-template', payload)
+export const resetSeoMonthlyReportTemplate = params => client.delete('/api/v1/seo/site/reports/monthly-template', { params })
+export const fetchSeoTdkReviewTemplate = params => client.get('/api/v1/seo/site/tdk-review/template', { params })
+export const saveSeoTdkReviewTemplate = payload => client.put('/api/v1/seo/site/tdk-review/template', payload)
+export const resetSeoTdkReviewTemplate = params => client.delete('/api/v1/seo/site/tdk-review/template', { params })
+export const downloadSeoTdkReview = payload => client.post('/api/v1/seo/site/tdk-review/export', payload, {
+  responseType: 'blob', rawResponse: true, timeout: 120000,
+})
+export const generateSeoAiTdk = payload => client.post('/api/v1/seo/site/pages/ai-tdk/generate', payload, { timeout: 180000 })
+export const fetchSeoAiTdk = ({ pageId, tenantId, siteId }) => client.get(`/api/v1/seo/site/pages/${pageId}/ai-tdk`, { params: { tenant_id: tenantId, site_id: siteId } })
+export const reviewSeoAiTdk = ({ pageId, suggestionId, payload }) => client.post(`/api/v1/seo/site/pages/${pageId}/ai-tdk/${suggestionId}/review`, payload)
+export function downloadSeoMonthlyReport({ tenantId, siteId, month }) {
+  return client.get('/api/v1/seo/site/reports/monthly', {
+    params: { tenant_id: tenantId, site_id: siteId, month }, responseType: 'blob', rawResponse: true, timeout: 120000,
+  })
+}
+import { pageCaptureCreatePayload, pageCaptureListParams, pageCaptureUploadPayload } from './seoPageCaptureParams.js'
+
+export function downloadSeoPublicationList({ tenantId, siteId, month }) {
+  return client.get('/api/v1/seo/site/publications/export', {
+    params: { tenant_id: tenantId, site_id: siteId, month }, responseType: 'blob', rawResponse: true, timeout: 60000,
+  })
+}
+
+export function createSeoPageCapture(target) {
+  return client.post('/api/v1/seo/site/page-captures', pageCaptureCreatePayload(target))
+}
+
+export function uploadSeoPageCapture(target) {
+  return client.post('/api/v1/seo/site/page-captures/upload', pageCaptureUploadPayload(target), { timeout: 60000 })
+}
+
+export function fetchSeoPageCapture({ captureId, tenantId }) {
+  return client.get(`/api/v1/seo/site/page-captures/${captureId}`, { params: { tenant_id: tenantId } })
+}
+
+export function fetchSeoPageCaptures(filters) {
+  return client.get('/api/v1/seo/site/page-captures', {
+    params: pageCaptureListParams(filters),
+  })
+}
+
+export function fetchSeoPageCaptureImage({ captureId, tenantId }) {
+  return client.get(`/api/v1/seo/site/page-captures/${captureId}/image`, {
+    params: { tenant_id: tenantId }, responseType: 'blob',
+  })
+}
 export const seoQaGet = (path, params) => client.get(`/api/v1/seo/qa/${path}`, { params })
 export const seoQaPost = (path, payload) => client.post(`/api/v1/seo/qa/${path}`, payload, { timeout: 35000 })
 export const seoQaPatch = (path, payload) => client.patch(`/api/v1/seo/qa/${path}`, payload)
