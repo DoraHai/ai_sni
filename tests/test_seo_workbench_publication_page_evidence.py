@@ -620,7 +620,7 @@ def test_workbench_readiness_permission_and_missing_freshness_contract(monkeypat
 
 
 def test_service_status_maps_existing_facts_without_triggering_collection(monkeypatch):
-    observed = datetime(2026, 10, 7, 3, 0)
+    observed = datetime.utcnow()
     crawl = SimpleNamespace(
         id=71, tenant_id=7, site_id=9, status='completed', seed_url='https://example.com',
         max_urls=50, discovered_count=4, fetched_count=4, failed_count=0,
@@ -636,6 +636,7 @@ def test_service_status_maps_existing_facts_without_triggering_collection(monkey
     db = SimpleNamespace(
         execute=AsyncMock(side_effect=[
             Rows([(1, observed)]), Rows([(2, observed)]), Rows([(2, observed)]),
+            Rows([(11, observed), (12, observed)]),
             Rows([(3, 3, 1, observed)]), Rows([(2, 2, 0)]),
             Rows([('succeeded', 2, observed, 2)]), Rows([('available', 3, observed)]),
         ]),
@@ -666,4 +667,4 @@ def test_service_status_maps_existing_facts_without_triggering_collection(monkey
     assert result['phases']['SEO-A06']['facts']['gsc_configured'] is True
     assert result['phases']['SEO-A07']['facts']['latest_by_job']['ranking']['status'] == 'completed'
     assert _required('/api/v1/seo/workbench/service-status', 'GET') == ({'seo.content','seo.site'}, False)
-    assert len(db.execute.await_args_list) == 7
+    assert len(db.execute.await_args_list) == 8

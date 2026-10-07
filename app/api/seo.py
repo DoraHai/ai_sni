@@ -7934,6 +7934,19 @@ async def get_workbench_service_status(
         SeoRankSnapshot.site_id == site_id,
         SeoRankSnapshot.subject_type == "own",
     ))).one()
+    keyword_rank_rows = (await session.execute(select(
+        SeoKeywordAsset.id,
+        func.max(SeoRankSnapshot.checked_at),
+    ).outerjoin(SeoRankSnapshot, and_(
+        SeoRankSnapshot.keyword_id == SeoKeywordAsset.id,
+        SeoRankSnapshot.tenant_id == tenant_id,
+        SeoRankSnapshot.site_id == site_id,
+        SeoRankSnapshot.subject_type == "own",
+    )).where(
+        SeoKeywordAsset.tenant_id == tenant_id,
+        SeoKeywordAsset.site_id == site_id,
+        SeoKeywordAsset.status == "active",
+    ).group_by(SeoKeywordAsset.id))).all()
     page_total, page_checked, page_with_issues, page_latest = (await session.execute(select(
         func.count(),
         func.count().filter(SeoSitePage.last_checked_at.is_not(None)),
@@ -8011,6 +8024,19 @@ async def get_workbench_service_status(
         a03_blockers.append("target_keywords_missing")
     if not rank_total:
         a03_blockers.append("ranking_observations_missing")
+    rank_stale_before = datetime.utcnow() - timedelta(
+        hours=seo_rank_freshness_hours(get_settings(), "baidu")
+    )
+    missing_rank_keyword_ids = [int(row[0]) for row in keyword_rank_rows if row[1] is None]
+    stale_rank_keyword_ids = [
+        int(row[0]) for row in keyword_rank_rows
+        if row[1] is not None
+        and (row[1].replace(tzinfo=None) if row[1].tzinfo is not None else row[1]) < rank_stale_before
+    ]
+    if missing_rank_keyword_ids and "ranking_observations_missing" not in a03_blockers:
+        a03_blockers.append("ranking_observations_missing")
+    if stale_rank_keyword_ids:
+        a03_blockers.append("ranking_observations_stale")
     ranking_run = latest_by_job.get("ranking")
     if ranking_run is None:
         a03_blockers.append("ranking_run_missing")
@@ -8051,7 +8077,7 @@ async def get_workbench_service_status(
             "SEO-A03": {
                 "state": _service_phase_state(blockers=a03_blockers, has_data=bool(keyword_total or rank_total)),
                 "blockers": a03_blockers,
-                "facts": {"active_keywords": int(keyword_total or 0), "rank_observations": int(rank_total or 0), "latest_ranking_run": None if ranking_run is None else _automation_run_payload(ranking_run)},
+                "facts": {"active_keywords": int(keyword_total or 0), "rank_observations": int(rank_total or 0), "keywords_without_observation": len(missing_rank_keyword_ids), "keywords_with_stale_observation": len(stale_rank_keyword_ids), "missing_keyword_ids": missing_rank_keyword_ids[:100], "stale_keyword_ids": stale_rank_keyword_ids[:100], "coverage_truncated": len(missing_rank_keyword_ids) > 100 or len(stale_rank_keyword_ids) > 100, "latest_ranking_run": None if ranking_run is None else _automation_run_payload(ranking_run)},
                 "as_of": _iso(rank_latest),
             },
             "SEO-A05": {
