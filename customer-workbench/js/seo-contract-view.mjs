@@ -36,6 +36,7 @@ export function servicePlanView(plan) {
     tenantId:plan.tenant_id,siteId:plan.site_id,revision:plan.revision,status:plan.status,
     optimizationDirections:plan.optimization_directions??[],contentTopics:plan.content_topics??[],serviceNote:plan.service_note??null,
     updatedBy:plan.updated_by??null,updatedAt:plan.updated_at??null,cycles:readCycles(plan),
+    ai:{enabled:plan.content_ai_enabled===true,factIds:plan.content_ai_fact_ids??[],keywordIds:plan.content_ai_keyword_ids??[],authorizedBy:plan.content_ai_authorized_by,authorizedAt:plan.content_ai_authorized_at,policy:plan.content_ai_policy??{}},
     canUpdate,permissionBasis:plan.permission_basis??null,denialReason,
     disabledMessage:canUpdate?null:denialMessages[denialReason]??'服务端尚未提供编辑资格，请重新读取服务计划',
   };

@@ -29,6 +29,7 @@ npm run build
 - `npm run test:ui06`：pretest先构建，再测分页/七组合/错误重读和编译产物原会话/原登录路径。
 - `npm run test:ui08`：pretest先构建，测试四类执行链DOM、处理权限、报告真实下载/hash、周期显式保存、错误和迟到范围变化。
 - `npm run test:ui09`：准确正文来源/版本保护、编辑审核DOM、发布只读与禁止旧入口、冲突/权限/未知结果门禁。
+- `npm run test:ui10`：AI授权和同站点资料/关键词选择、四类独立触发、准确版本人工登记与逐记录资格、未知结果只读核对。
 - `npm run test:demo`：保留的本地演示；puppeteer已改成本目录锁定依赖。
 - `git apply --check customer-workbench/docs/host-entry.patch`：在仓库根核对入口建议补丁，不能视为已应用。
 

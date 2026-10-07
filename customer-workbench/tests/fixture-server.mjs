@@ -1,11 +1,13 @@
 import http from 'node:http';import fs from 'node:fs/promises';import path from 'node:path';import {fileURLToPath} from 'node:url';
 import {executionFixture,handleExecutionFixture} from './execution-fixture.mjs';
+import {initUi10,handleUi10} from './ui10-fixture.mjs';
 import {cycleFields} from '../js/seo-cycle-config.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 export async function startFixtureServer(){
   const state={calls:[],forceError:null,holdNext:null,held:[],planDenied:false,contentTotals:new Map(),modules:['seo'],executions:executionFixture(),executionDenied:false,keywordLevel:'edit',
     contents:new Map([1,2].map(tenant=>[tenant,{id:tenant===1?88:188,tenant_id:tenant,site_id:tenant===1?9:19,title:`契约服务器客户${tenant}稿件`,body:`客户${tenant}的正文事实与产品资料。`,version_count:3,payload_hash:String(tenant).repeat(64),status:'ready',updated_at:'2026-10-07T12:00:00Z'}])),
     confirmations:new Map(),plans:new Map([1,2].map(tenant=>[tenant,{tenant_id:tenant,site_id:tenant===1?9:19,revision:2,status:'active',optimization_directions:['技术 SEO'],content_topics:['选型'],service_note:'接口夹具',updated_by:null,updated_at:null,...cycleFields}]))};
+  initUi10(state);
   const server=http.createServer(async(req,res)=>{
     const url=new URL(req.url,'http://127.0.0.1');
     const send=(status,data)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
@@ -36,13 +38,14 @@ export async function startFixtureServer(){
       if(url.pathname==='/api/v1/auth/tenants'){send(200,{module:'seo',tenants:(advisor?[1,2]:[1]).map(id=>({id,name:`契约客户${id}`}))});return;}
       const tenant=Number(url.searchParams.get('tenant_id')??body?.tenant_id),site=tenant===1?9:19;
       if(![1,2].includes(tenant)||(!advisor&&tenant!==1)){send(403,{detail:'Fixture tenant denied'});return;}
+      if(handleUi10({url,req,res,send,body,state,tenant,site,advisor}))return;
       if(handleExecutionFixture({url,req,res,send,body,state,tenant,site,advisor}))return;
       if(url.pathname==='/api/v1/seo/workbench/sites'){send(200,{tenant_id:tenant,sites:[{id:site,name:`站点${site}`,domain:`fixture-${tenant}.invalid`,status:'active'}],selection_policy:{selectable_statuses:['active'],disabled_statuses:['paused','archived']}});return;}
       const content=state.contents.get(tenant),plan=state.plans.get(tenant);
       const delivery=()=>{
         const latest=state.confirmations.get(tenant)||null,confirmation=latest?.content_version===content.version_count&&latest?.payload_hash===content.payload_hash?latest:null,ready=content.status==='ready'&&!confirmation;
         return {content:{...content},workflow_status:confirmation?.decision==='approve'?'approved_waiting_publication':content.status==='drafting'?'awaiting_content_revision':'awaiting_customer_confirmation',
-          confirmation:{status:confirmation?.decision==='approve'?'approved':confirmation?'rejected':latest?'stale':'pending',latest,requires_exact_version:true,approval_is_publication:false},
+          confirmation:{status:state.confirmationUnavailable?'unavailable':confirmation?.decision==='approve'?'approved':confirmation?'rejected':latest?'stale':'pending',latest,requires_exact_version:true,approval_is_publication:false},
           allowed_actions:{confirm_as_customer:ready&&!advisor,confirm_as_advisor_proxy:ready&&advisor,reject_as_customer:ready&&!advisor,reject_as_advisor_proxy:ready&&advisor,edit_content:advisor&&['planned','drafting'].includes(content.status),submit_review:advisor&&['planned','drafting'].includes(content.status),review:advisor&&content.status==='review',start_publication:advisor&&confirmation?.decision==='approve'&&['ready','published'].includes(content.status)},
           permission_basis:{actor_user_id:userId,active_site_advisor_assignment:advisor},result_basis:{publication_status:'not_loaded',page_check_status:'not_loaded',search_effect_status:'not_attributed_to_single_content'}};
       };
@@ -63,6 +66,7 @@ export async function startFixtureServer(){
       }
       if(url.pathname===`/api/v1/seo/content-assets/${content.id}`&&req.method==='PATCH'){
         if(!advisor){send(403,{detail:'Advisor required'});return;}
+        if(body.version_count==null){send(428,{detail:{code:'content_version_precondition_required'}});return;}
         if(body.version_count!==content.version_count){send(409,{detail:'内容已被其他操作更新，请刷新后重试'});return;}
         if(!['planned','drafting'].includes(content.status)){send(409,{detail:'Protected content'});return;}
         const fields=['title','outline','draft','humanized_content'];const changed=fields.some(k=>body[k]!==undefined&&body[k]!==content[k]);

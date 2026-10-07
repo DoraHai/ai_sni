@@ -20,7 +20,7 @@ test('execution GET is read-only, scoped and server-action gated; keyword permis
 });
 test('content advance uses SEO-08; failed page retry, paused cancellation, and post-write re-read use current capabilities',async()=>{
   const f=await setup();try{
-    await f.client.detail(101);await f.client.act(101,'advance',{publicationId:91});assert(f.server.state.calls.some(c=>c.path.endsWith('/content-workflows/101/advance')&&c.body.publication_id===91));
+    await f.client.detail(101);await f.client.publicationOptions(101);await f.client.act(101,'advance',{publicationId:91});assert(f.server.state.calls.some(c=>c.path.endsWith('/content-workflows/101/advance')&&c.body.publication_id===91));
     await f.client.detail(102);await assert.rejects(f.client.act(102,'retry',{pageId:99}),/ACTION_NOT_ALLOWED/);
     await f.client.detail(102);const changed=await f.client.act(102,'retry',{pageId:10});assert.equal(changed.params.pages['10'].snapshot_id,105);assert.deepEqual(changed.allowed_actions.retry_page_ids,[]);
     f.server.state.plans.get(1).status='paused';await f.client.detail(103);await assert.rejects(f.client.act(103,'advance'),/ACTION_NOT_ALLOWED/);

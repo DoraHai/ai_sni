@@ -2,3 +2,7 @@
 
 .connected-main #content-body{min-height:280px;font-family:monospace}.connected-main #content-title{width:100%;padding:10px;box-sizing:border-box}.connected-main article{overflow-wrap:anywhere}
 .connected-main small{overflow-wrap:anywhere}
+
+.connected-main fieldset{min-width:0;overflow-wrap:anywhere;margin:16px 0;padding:14px;border:1px solid #d9e2eb}.connected-main fieldset input:not([type=checkbox]),.connected-main select{max-width:100%;box-sizing:border-box}.connected-main details label{display:inline}.connected-main section{overflow-wrap:anywhere}
+
+.ai-keyword-options{max-height:360px;overflow:auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:4px 12px}.connected-main [id^="manual-"]:not([type="checkbox"]){display:block;width:100%;padding:8px;border:1px solid #d9e2eb;border-radius:4px}.connected-main #manual-time{max-width:320px}

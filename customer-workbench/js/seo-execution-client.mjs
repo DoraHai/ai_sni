@@ -1,6 +1,6 @@
 // SEO-08/09 f9a22877 projection; never follows arbitrary links or replays writes.
 export function createSeoExecutionClient({transport,getContext}) {
-  const snapshots=new Map();
+  const snapshots=new Map(),publicationChoices=new Map();
   const fail=(code,status)=>{snapshots.clear();const e=Error(code);e.code=code;e.status=status;throw e;};
   const positive=n=>Number.isSafeInteger(n)&&n>0;
   const kinds=['content_delivery','site_diagnosis','ranking_followup','monthly_report'];
@@ -25,21 +25,28 @@ export function createSeoExecutionClient({transport,getContext}) {
   }
   function current(id,action){const row=snapshots.get(id);if(!row)fail('EXECUTION_REQUIRED');same(row.context);const t=row.data;if(action&&(t.allowed_actions[action]!==true||['done','cancelled'].includes(t.status)||(action!=='cancel'&&t.effective_pause)))fail('ACTION_NOT_ALLOWED');return row;}
   return {
-    invalidate(){snapshots.clear();},
+    invalidate(){snapshots.clear();publicationChoices.clear();},
     async list({page=1,pageSize=20}={}){
       if(!positive(page)||page>10000||!positive(pageSize)||pageSize>100)fail('INVALID_PAGINATION');
       const c=context();snapshots.clear();const result=await json(`/api/v1/seo/workbench/executions?${scope(c)}&page=${page}&page_size=${pageSize}`,'GET',c);
       if(result.read_only!==true||result.page!==page||result.page_size!==pageSize||!Number.isSafeInteger(result.total)||result.total<0||!Array.isArray(result.items)||result.items.length>pageSize||!result.cycles)fail('CONTRACT_MISMATCH');
       result.items.forEach(t=>validate(t,c));return result;
     },
-    async detail(id){if(!positive(id))fail('INVALID_TASK_ID');const c=context();snapshots.delete(id);return validate(await json(`${stem(id)}?${scope(c)}`,'GET',c),c,id);},
+    async detail(id){if(!positive(id))fail('INVALID_TASK_ID');const c=context();snapshots.delete(id);publicationChoices.delete(id);return validate(await json(`${stem(id)}?${scope(c)}`,'GET',c),c,id);},
+    async publicationOptions(id){
+      const row=current(id),c=row.context,contentId=row.data.params.content_id;publicationChoices.delete(id);
+      if(row.data.action_type!=='content_delivery'||!positive(contentId))fail('INVALID_CONTENT_ID');
+      const data=await json(`/api/v1/seo/content-distribution/publications?${scope(c)}&content_id=${contentId}`,'GET',c);
+      if(!Array.isArray(data?.items)||data.items.some(v=>!positive(v?.id)||v.tenant_id!==c.tenantId||v.content_id!==contentId||!positive(v.source_version)))fail('CONTRACT_MISMATCH');
+      publicationChoices.set(id,{context:c,items:data.items});return data.items;
+    },
     async act(id,action,input={}){
       const row=current(id,action==='retry'?'advance':action==='explain'?'explain_report':action),c=row.context,t=row.data;
       const body={tenant_id:c.tenantId,site_id:c.siteId};let method='POST',path=t.action_type==='content_delivery'?`/api/v1/seo/workbench/content-workflows/${id}/advance`:`${stem(id)}/advance`;
       if(action==='cancel'){method='DELETE';path=`${stem(id)}?${scope(c)}`;}
       else if(action==='retry'){if(t.action_type!=='site_diagnosis'||!positive(input.pageId)||!t.allowed_actions.retry_page_ids?.includes(input.pageId))fail('ACTION_NOT_ALLOWED');body.retry_page_id=input.pageId;}
       else if(action==='explain'){if(t.action_type!=='monthly_report'||!input.explanation?.trim()||input.explanation.length>4000||!/^[0-9a-f]{64}$/.test(t.params.report?.sha256))fail('INVALID_REPORT_EXPLANATION');body.explanation=input.explanation.trim();body.report_sha256=t.params.report.sha256;}
-      else if(action==='advance'){if(input.publicationId!=null){if(t.action_type!=='content_delivery'||!positive(input.publicationId))fail('INVALID_PUBLICATION_ID');body.publication_id=input.publicationId;}}
+      else if(action==='advance'){if(input.publicationId!=null){const choices=publicationChoices.get(id);if(t.action_type!=='content_delivery'||!positive(input.publicationId)||!choices?.items.some(v=>v.id===input.publicationId))fail('PUBLICATION_SELECTION_REQUIRED');same(choices.context);body.publication_id=input.publicationId;}}
       else fail('ACTION_NOT_ALLOWED');
       snapshots.delete(id);await json(path,method,c,method==='DELETE'?undefined:body);
       // Content advance returns a raw task without fresh allowed_actions. Always re-read.

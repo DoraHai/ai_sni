@@ -14,6 +14,7 @@ npm run test:connected
 npm run test:ui06
 npm run test:ui08
 npm run test:ui09
+npm run test:ui10
 npm run test:demo
 ```
 
@@ -23,8 +24,8 @@ npm run test:demo
 
 ## 范围与交接
 
-- 已接：准确版本草稿轻改、提交审核、显式复核退回、发布记录/尝试只读；SEO列表分页、交付稿、确认/代确认/退回、复核、服务计划与周期、准备状态；四类执行链列表/详情/历史/依据、接续/单页重试/取消/顾问报告说明和冻结HTML下载；身份和客户变化清空，写结果不明只重读。
-- 未接：基础资料、关键词维护、消息、新建/AI内容生产、渠道发布/人工登记写入、原始快照及整改子任务详情、手动新建执行链和SEM/GEO真实接口；页面明确禁用或列明边界，详见[UI-09交接](docs/UI09_CONTENT_OPERATIONS.md)和[UI-08交接](docs/UI08_EXECUTIONS.md)。
+- 已接：独立资格的四类手动触发、默认关闭的AI草稿授权与同站点资料/关键词选择、准确版本人工登记和逐记录回填；准确版本草稿轻改、提交审核、显式复核退回、发布记录/尝试只读；SEO列表分页、交付稿、确认/代确认/退回、复核、服务计划与周期、准备状态；四类执行链列表/详情/历史/依据、接续/单页重试/取消/顾问报告说明和冻结HTML下载；身份和客户变化清空，写结果不明只重读。
+- 未接：基础资料、关键词维护、消息、富文本编辑、单次AI assist和平台真实执行、原始快照及整改子任务详情和SEM/GEO真实接口；页面明确禁用或列明边界，详见[UI-10交接](docs/UI10_EXPLICIT_ACTIONS.md)、[UI-09交接](docs/UI09_CONTENT_OPERATIONS.md)和[UI-08交接](docs/UI08_EXECUTIONS.md)。
 - 确认不是发布，ready不是任务完成，0104确认不可用保持禁用。后端最终判断操作资格。
 
 [构建发布准备](BUILD_RELEASE.md) · [当前交接](HANDOFF.md) · [归档记录](UI_PROGRESS.md) · [宿主入口建议补丁](docs/host-entry.patch)。补丁仅供review，未应用到原组件。

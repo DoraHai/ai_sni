@@ -2,7 +2,7 @@
 // This client is not enabled in the standalone demo and never falls back to mock success.
 import {validateCycles} from './seo-cycle-config.mjs';
 export function createSeoWorkflowClient({transport,getContext} = {}) {
-  const deliveries=new Map(),editors=new Map(),publications=new Map(); let plan=null;
+  const deliveries=new Map(),editors=new Map(),publications=new Map(),facts=new Map(),keywords=new Map(); let plan=null;
   const fail=(code,status,detail)=>{const e=Error(code);e.code=code;e.status=status;e.detail=detail;throw e;};
   const positive=n=>Number.isSafeInteger(n)&&n>0;
   function context() {
@@ -14,14 +14,14 @@ export function createSeoWorkflowClient({transport,getContext} = {}) {
     const n=context();
     if(n.tenantId!==c.tenantId||n.siteId!==c.siteId||n.userId!==c.userId||n.revision!==c.revision){invalidate();fail('CONTEXT_CHANGED');}
   }
-  function invalidate(){deliveries.clear();editors.clear();publications.clear();plan=null;}
+  function invalidate(){deliveries.clear();editors.clear();publications.clear();facts.clear();keywords.clear();plan=null;}
   async function request(path,method,c,body) {
     same(c);
     let response;
     try {response=await transport(path,{method,cache:'no-store',...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});}
     catch(e){invalidate();fail(method==='GET'?'READ_TRANSPORT_FAILED':'WRITE_OUTCOME_UNKNOWN',undefined,{message:e.message});}
     same(c);
-    let data;try{data=await response.json();}catch{invalidate();fail(response.ok?'CONTRACT_MISMATCH':'HTTP_ERROR',response.status);}
+    let data;try{data=await response.json();}catch(e){invalidate();if(e.code==='CONTEXT_CHANGED')throw e;fail(method!=='GET'?'WRITE_OUTCOME_UNKNOWN':response.ok?'CONTRACT_MISMATCH':'HTTP_ERROR',response.status);}
     same(c);
     if(!response.ok){invalidate();fail(data?.detail?.code||(response.status===401?'AUTH_EXPIRED':response.status===403?'PERMISSION_DENIED':'HTTP_ERROR'),response.status,data?.detail);}
     return data;
@@ -80,6 +80,29 @@ export function createSeoWorkflowClient({transport,getContext} = {}) {
       const result=await request(`/api/v1/seo/content-distribution/publications/${publicationId}/attempts?tenant_id=${c.tenantId}&site_id=${c.siteId}`,'GET',c);
       if(!Array.isArray(result?.items))fail('CONTRACT_MISMATCH');return result;
     },
+    async recordPublication(id,{publicationId=null,expectedVersion,expectedHash,platformName,pageUrl,publishedAt,verified}){
+      const row=advisor(id,'start_publication'),c=row.context,v=row.data.content;
+      if(row.data.confirmation.status!=='approved'||!['ready','published'].includes(v.status))fail('CONFIRMATION_REQUIRED');
+      if(expectedVersion!==v.version_count||expectedHash!==v.payload_hash)fail('CONTENT_VERSION_OR_SCOPE_MISMATCH');
+      let url;try{url=new URL(pageUrl);}catch{fail('INVALID_PUBLICATION_INPUT');}
+      if(verified!==true||!['https:','http:'].includes(url.protocol)||url.username||url.password||typeof pageUrl!=='string'||pageUrl.length>2000||!Number.isFinite(Date.parse(publishedAt)))fail('INVALID_PUBLICATION_INPUT');
+      const body={tenant_id:c.tenantId,site_id:c.siteId,source_version:expectedVersion,page_url:pageUrl.trim(),published_at:publishedAt};
+      let path='/api/v1/seo/content-distribution/publications/manual';
+      if(publicationId===null){
+        if(typeof platformName!=='string'||!platformName.trim()||platformName.trim().length>120)fail('INVALID_PUBLICATION_INPUT');
+        Object.assign(body,{content_id:id,payload_hash:expectedHash,platform_name:platformName.trim()});
+      }else{
+        const list=publications.get(id);if(!list)fail('PUBLICATIONS_REQUIRED');same(list.context);
+        const item=list.items.find(x=>x.id===publicationId),req=item?.action_requirements?.complete;
+        path=`/api/v1/seo/content-distribution/publications/${publicationId}/complete`;
+        if(item?.allowed_actions?.complete!==true||!['manual_required','failed','preparing'].includes(item.status))fail('ACTION_NOT_ALLOWED');
+        if(item.source_version!==expectedVersion||req?.source_version!==expectedVersion||req.endpoint!==path||req.method!=='POST'||req.page_url_required!==true||req.meaning!=='record_existing_publication_only')fail('CONTRACT_MISMATCH');
+      }
+      deliveries.delete(id);publications.delete(id);
+      const result=await request(path,'POST',c,body);
+      if(!positive(result?.id)||(publicationId!==null&&result.id!==publicationId)||result.tenant_id!==c.tenantId||result.content_id!==id||result.source_version!==expectedVersion||result.status!=='published'||typeof result.page_url!=='string'||!['queued','existing','not_queued','not_applicable'].includes(result.page_verification?.state)){invalidate();fail('WRITE_OUTCOME_UNKNOWN');}
+      return result;
+    },
     async confirm(id,{decision='approve',actorMode='customer_direct',note=null}={}) {
       if(!['approve','reject'].includes(decision)||!['customer_direct','advisor_proxy'].includes(actorMode))fail('INVALID_DECISION');
       if(decision==='reject'&&(!note||!note.trim()))fail('REJECTION_NOTE_REQUIRED');
@@ -94,20 +117,50 @@ export function createSeoWorkflowClient({transport,getContext} = {}) {
       const result=await request(`/api/v1/seo/content-assets/${id}/review?tenant_id=${c.tenantId}`,'POST',c,{version_count:row.data.content.version_count,decision,note});
       deliveries.delete(id);return result; // Existing endpoint returns content asset, not delivery.
     },
-    async servicePlan(){const c=context();plan=null;return planPayload(await request(`/api/v1/seo/workbench/service-plan?tenant_id=${c.tenantId}&site_id=${c.siteId}`,'GET',c),c);},
-    async saveServicePlan({optimizationDirections,contentTopics=[],serviceNote=null,status='active',cycles}) {
+    async servicePlan(){const c=context();plan=null;facts.clear();keywords.clear();return planPayload(await request(`/api/v1/seo/workbench/service-plan?tenant_id=${c.tenantId}&site_id=${c.siteId}`,'GET',c),c);},
+    async aiFacts(){
+      if(!plan)fail('SERVICE_PLAN_REQUIRED');const c=plan.context;same(c);facts.clear();
+      if(plan.data.content_ai_policy?.can_configure!==true)fail('AI_CONFIGURE_DENIED');
+      const result=await request(`/api/v1/seo/qa/facts?tenant_id=${c.tenantId}&site_id=${c.siteId}`,'GET',c);
+      if(!Array.isArray(result)||result.length>500||result.some(v=>!positive(v?.id)||v.tenant_id!==c.tenantId||v.site_id!==c.siteId||typeof v.current!=='boolean'||typeof v.statement!=='string'||typeof v.source_name!=='string')){invalidate();fail('CONTRACT_MISMATCH');}
+      result.forEach(v=>facts.set(v.id,structuredClone(v)));return result;
+    },
+    async aiKeywords(page=1){
+      if(!plan)fail('SERVICE_PLAN_REQUIRED');const c=plan.context;same(c);if(!positive(page))fail('INVALID_PAGINATION');
+      if(plan.data.content_ai_policy?.can_configure!==true)fail('AI_CONFIGURE_DENIED');
+      const result=await request(`/api/v1/seo/keywords?tenant_id=${c.tenantId}&site_id=${c.siteId}&status=active&page=${page}&page_size=50`,'GET',c);
+      if(!Array.isArray(result?.items)||result.page!==page||result.page_size!==50||!Number.isSafeInteger(result.total)||result.total<0||result.items.some(v=>!positive(v?.id)||v.tenant_id!==c.tenantId||v.site_id!==c.siteId||v.status!=='active'||typeof v.keyword!=='string')){invalidate();fail('CONTRACT_MISMATCH');}
+      result.items.forEach(v=>keywords.set(v.id,structuredClone(v)));return result;
+    },
+    async saveServicePlan({optimizationDirections,contentTopics=[],serviceNote=null,status='active',cycles,ai}) {
       if(!plan)fail('SERVICE_PLAN_REQUIRED');const c=plan.context;same(c);
       if(plan.data.allowed_actions?.update_service_plan!==true)fail('PLAN_UPDATE_NOT_ALLOWED',undefined,plan.data.permission_basis?.update_denial_reason??null);
       if(!Array.isArray(optimizationDirections)||!optimizationDirections.length||optimizationDirections.some(x=>typeof x!=='string'||!x.trim())||!Array.isArray(contentTopics)||contentTopics.some(x=>typeof x!=='string'||!x.trim())||!['active','paused'].includes(status))fail('INVALID_SERVICE_PLAN');
       const expectedRevision=plan.data.revision;
       const cyclePatch=cycles===undefined?{}:validateCycles(cycles);
+      let aiPatch={};
+      if(ai!==undefined){
+        if(typeof ai.enabled!=='boolean')fail('INVALID_AI_CONFIG');
+        if(!ai.enabled){if(plan.data.content_ai_policy?.can_disable!==true)fail('AI_CONFIGURE_DENIED');aiPatch={content_ai_enabled:false};}
+        else{
+          if(plan.data.content_ai_policy?.can_configure!==true)fail('AI_CONFIGURE_DENIED');
+          if(!Array.isArray(ai.factIds)||!Array.isArray(ai.keywordIds)||ai.factIds.length<1||ai.factIds.length>20||ai.keywordIds.length<1||ai.keywordIds.length>5||new Set(ai.factIds).size!==ai.factIds.length||new Set(ai.keywordIds).size!==ai.keywordIds.length)fail('INVALID_AI_SELECTION');
+          const selected=ai.factIds.map(id=>facts.get(id));
+          if(selected.some(v=>!v||v.current!==true||v.status!=='active'||!v.statement.trim()||!v.source_name.trim()||(v.expires_at&&(!Number.isFinite(Date.parse(v.expires_at))||Date.parse(v.expires_at)<=Date.now())))||ai.keywordIds.some(id=>!keywords.get(id)?.keyword.trim()))fail('AI_SELECTION_READ_REQUIRED');
+          // Backend rechecks versioned source snapshots and the exact 50,000-character bound.
+          if(selected.reduce((n,v)=>n+v.statement.length+v.source_name.length+(v.title?.length||0),0)>50000)fail('AI_MATERIAL_TOO_LARGE');
+          aiPatch={content_ai_enabled:true,content_ai_fact_ids:ai.factIds,content_ai_keyword_ids:ai.keywordIds};
+        }
+      }
       const result=await request('/api/v1/seo/workbench/service-plan','PUT',c,{
         tenant_id:c.tenantId,site_id:c.siteId,expected_revision:expectedRevision,
-        optimization_directions:optimizationDirections,content_topics:contentTopics,service_note:serviceNote,status,...cyclePatch,
+        optimization_directions:optimizationDirections,content_topics:contentTopics,service_note:serviceNote,status,...cyclePatch,...aiPatch,
       });
       // A success message requires a validated server revision, never an optimistic local update.
       if(result?.revision!==expectedRevision+1||result.updated_by!==c.userId||typeof result.updated_at!=='string'||!Number.isFinite(Date.parse(result.updated_at))){invalidate();fail('CONTRACT_MISMATCH');}
       if(Object.entries(cyclePatch).some(([key,value])=>result[key]!==value)){invalidate();fail('CONTRACT_MISMATCH');}
+      const invalidAiActor=aiPatch.content_ai_enabled===true&&(result.content_ai_authorized_by!==c.userId||!Number.isFinite(Date.parse(result.content_ai_authorized_at)));
+      if(invalidAiActor||Object.entries(aiPatch).some(([key,value])=>JSON.stringify(result[key])!==JSON.stringify(value))){invalidate();fail('CONTRACT_MISMATCH');}
       const saved=planPayload(result,c);
       plan=null; // PUT has no allowed_actions. Re-read GET before another write.
       return saved;

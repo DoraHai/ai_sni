@@ -34,6 +34,6 @@ test('unknown result and 409/403/503 invalidate editor and never replay writes',
 test('late exact read is discarded on customer switch',async()=>{
   const f=fixture();await f.client.delivery(88);f.setResponse(()=>({ok:true,status:200,json:async()=>{f.context.tenantId=2;return {items:[f.asset],total:1};}}));await assert.rejects(f.client.editor(88),/CONTEXT_CHANGED/);assert(f.calls.every(v=>v.method==='GET'));
 });
-test('publication reads verify ownership and never expose a completion write method',async()=>{
-  const f=fixture();await f.client.delivery(88);f.setResponse(()=>({ok:true,status:200,json:async()=>({items:[{id:91,tenant_id:2,content_id:88,source_version:3}]})}));await assert.rejects(f.client.publications(88),/CONTRACT_MISMATCH/);await assert.rejects(f.client.publicationAttempts(88,91),/PUBLICATIONS_REQUIRED/);assert.equal(f.client.completePublication,undefined);
+test('publication reads verify ownership and reject attempts without a verified record',async()=>{
+  const f=fixture();await f.client.delivery(88);f.setResponse(()=>({ok:true,status:200,json:async()=>({items:[{id:91,tenant_id:2,content_id:88,source_version:3}]})}));await assert.rejects(f.client.publications(88),/CONTRACT_MISMATCH/);await assert.rejects(f.client.publicationAttempts(88,91),/PUBLICATIONS_REQUIRED/);assert(f.calls.every(c=>c.method==='GET'));
 });

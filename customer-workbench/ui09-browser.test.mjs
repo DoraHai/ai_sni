@@ -19,7 +19,7 @@ test('UI09 draft edit, review return, resubmit, proxy confirmation and read-only
     await click(page,'submit-review');assert.equal(content.status,'review');assert.equal(await page.$eval('[data-action="edit-content"]',e=>e.disabled),true);
     await page.type('#decision-note','请补充来源');await click(page,'review-reject');assert.equal(content.status,'drafting');await click(page,'submit-review');await click(page,'review');assert.equal(content.status,'ready');
     await page.click('[data-action="confirm"][data-mode="advisor_proxy"]');await idle(page);assert.equal(f.state.confirmations.get(1).content_version,4);assert.match(await text(page),/顾问代确认/);
-    await click(page,'publications');await click(page,'publication-attempts');assert.match(await text(page),/结果未知，需要人工/);assert.match(await text(page),/与当前稿件版本不同/);assert.match(await text(page),/人工登记回填（资格待接入）/);assert.equal(await page.$$('a[href^="/seo/"]').then(a=>a.length),0);
+    await click(page,'publications');await click(page,'publication-attempts');assert.match(await text(page),/结果未知，需要人工/);assert.match(await text(page),/与当前稿件版本不同/);assert.match(await text(page),/人工登记回填/);assert.equal(await page.$$('a[href^="/seo/"]').then(a=>a.length),0);
     assert(f.state.calls.filter(c=>c.path.includes('content-distribution')).every(c=>c.method==='GET'));assert(f.state.calls.filter(c=>['PATCH','POST'].includes(c.method)).every(c=>c.body.version_count>=3));assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
     await page.setViewport({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   }finally{await browser.close();await f.close();}

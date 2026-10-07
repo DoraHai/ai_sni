@@ -9,11 +9,17 @@ const routes=[
   ['POST',/^\/api\/v1\/seo\/content-assets\/[1-9]\d*\/submit-review$/,['tenant_id'],'content',['version_count','note']],
   ['GET',/^\/api\/v1\/seo\/content-distribution\/publications$/,['tenant_id','site_id','content_id'],'content'],
   ['GET',/^\/api\/v1\/seo\/content-distribution\/publications\/[1-9]\d*\/attempts$/,['tenant_id','site_id'],'content'],
+  ['POST',/^\/api\/v1\/seo\/content-distribution\/publications\/manual$/,[],'content',['tenant_id','site_id','content_id','source_version','payload_hash','platform_name','page_url','published_at']],
+  ['POST',/^\/api\/v1\/seo\/content-distribution\/publications\/[1-9]\d*\/complete$/,[],'content',['tenant_id','site_id','source_version','page_url','published_at']],
+  ['GET',/^\/api\/v1\/seo\/qa\/facts$/,['tenant_id','site_id'],'content'],
+  ['GET',/^\/api\/v1\/seo\/keywords$/,['tenant_id','site_id','status','page','page_size'],'keywords'],
+  ['POST',/^\/api\/v1\/seo\/workbench\/service-plan\/run$/,[],'site',['tenant_id','site_id','expected_revision','request_id']],
+  ['POST',/^\/api\/v1\/seo\/workbench\/service-cycles\/run$/,[],'site',['tenant_id','site_id','kind','expected_revision','request_id']],
   ['GET',/^\/api\/v1\/seo\/workbench\/content-assets\/[1-9]\d*\/delivery$/,['tenant_id','site_id'],'content'],
   ['POST',/^\/api\/v1\/seo\/workbench\/content-assets\/[1-9]\d*\/confirmations$/,['tenant_id'],'content',['version_count','payload_hash','decision','actor_mode','note']],
   ['POST',/^\/api\/v1\/seo\/content-assets\/[1-9]\d*\/review$/,['tenant_id'],'content',['version_count','decision','note']],
   ['GET',/^\/api\/v1\/seo\/workbench\/(service-plan|service-status)$/,['tenant_id','site_id'],'site'],
-  ['PUT',/^\/api\/v1\/seo\/workbench\/service-plan$/,[],'site',['tenant_id','site_id','expected_revision','optimization_directions','content_topics','service_note','status','content_cycle_enabled','content_interval_days','website_cycle_enabled','website_interval_days','website_max_pages','monitoring_cycle_enabled','monitoring_interval_days','report_cycle_enabled']],
+  ['PUT',/^\/api\/v1\/seo\/workbench\/service-plan$/,[],'site',['tenant_id','site_id','expected_revision','optimization_directions','content_topics','service_note','status','content_cycle_enabled','content_interval_days','website_cycle_enabled','website_interval_days','website_max_pages','monitoring_cycle_enabled','monitoring_interval_days','report_cycle_enabled','content_ai_enabled','content_ai_fact_ids','content_ai_keyword_ids']],
   ['GET',/^\/api\/v1\/seo\/workbench\/executions$/,['tenant_id','site_id','page','page_size'],'site'],
   ['GET',/^\/api\/v1\/seo\/workbench\/executions\/[1-9]\d*(?:\/report)?$/,['tenant_id','site_id'],'site'],
   ['POST',/^\/api\/v1\/seo\/workbench\/executions\/[1-9]\d*\/advance$/,[],'site',['tenant_id','site_id','retry_page_id','explanation','report_sha256']],
@@ -59,6 +65,7 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
     if(url.pathname==='/api/v1/auth/tenants'&&url.searchParams.get('module')!=='seo')throw error('QUERY_DENIED');
     if(!preflight&&!authorized)throw error('NOT_CONNECTED');
     if(!preflight&&route[3]==='site'&&!['view','edit'].includes(authorized.user.permissions['seo.site']))throw error('PERMISSION_DENIED',403);
+    if(!preflight&&route[3]==='keywords'&&!['view','edit'].includes(authorized.user.permissions['seo.keywords']))throw error('PERMISSION_DENIED',403);
     if(['GET','DELETE'].includes(method)&&options.body!==undefined)throw error('BODY_DENIED');
     if(!['GET','DELETE'].includes(method)){
       let body;try{body=JSON.parse(options.body);}catch{throw error('BODY_DENIED');}
