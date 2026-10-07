@@ -5484,6 +5484,9 @@ class SeoServicePlanUpdate(BaseModel):
     status: Literal["active", "paused"] = "active"
     content_cycle_enabled: bool | None = None
     content_interval_days: int | None = Field(None, ge=1, le=90)
+    content_ai_enabled: bool | None = None
+    content_ai_fact_ids: list[PositiveInt] | None = Field(None, max_length=20)
+    content_ai_keyword_ids: list[PositiveInt] | None = Field(None, max_length=5)
     website_cycle_enabled: bool | None = None
     website_interval_days: int | None = Field(None, ge=1, le=90)
     website_max_pages: int | None = Field(None, ge=1, le=10)
@@ -5587,6 +5590,8 @@ class DistributionManualPublicationCreate(BaseModel):
     platform_name: str = Field(min_length=1, max_length=120)
     page_url: str = Field(min_length=1, max_length=2000)
     published_at: datetime | None = None
+    source_version: PositiveInt | None = None
+    payload_hash: str | None = Field(None, pattern=r"^[0-9a-f]{64}$")
 
 
 class DistributionManualComplete(BaseModel):
@@ -6134,8 +6139,9 @@ async def _distribution_content(
     site_id: int | None = None,
     *,
     require_operational: bool = True,
+    lock: bool = False,
 ) -> SeoContentAsset:
-    row = await session.get(SeoContentAsset, content_id)
+    row = await session.get(SeoContentAsset, content_id, with_for_update=True, populate_existing=True) if lock else await session.get(SeoContentAsset, content_id)
     if (
         not row
         or row.tenant_id != tenant_id
@@ -6447,7 +6453,7 @@ def _content_payload(
     keyword_ids = row.keyword_ids or ([row.keyword_id] if row.keyword_id else [])
     names = user_names or {}
     history = review_history or []
-    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "source_page_id": row.source_page_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "review_submitted_by": row.review_submitted_by, "review_submitted_by_name": names.get(row.review_submitted_by), "review_submitted_at": _iso(row.review_submitted_at), "review_note": row.review_note, "reviewed_by": row.reviewed_by, "reviewed_by_name": names.get(row.reviewed_by), "reviewed_at": _iso(row.reviewed_at), "review_history_count": len(history) if review_history_count is None else review_history_count, "review_history": [_review_event_payload(event, names) for event in history], "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
+    return {"payload_hash": _content_confirmation_hash(row), "id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "source_page_id": row.source_page_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "review_submitted_by": row.review_submitted_by, "review_submitted_by_name": names.get(row.review_submitted_by), "review_submitted_at": _iso(row.review_submitted_at), "review_note": row.review_note, "reviewed_by": row.reviewed_by, "reviewed_by_name": names.get(row.reviewed_by), "reviewed_at": _iso(row.reviewed_at), "review_history_count": len(history) if review_history_count is None else review_history_count, "review_history": [_review_event_payload(event, names) for event in history], "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
 
 
 def _review_event_payload(
@@ -7073,6 +7079,11 @@ def _service_plan_payload(site: SeoSite) -> dict[str, Any]:
         "revision": int(plan.get("revision") or 0),
         "content_cycle_enabled": plan.get("content_cycle_enabled") is True,
         "content_interval_days": int(plan.get("content_interval_days") or 7),
+        "content_ai_enabled": plan.get("content_ai_enabled") is True,
+        "content_ai_fact_ids": list(plan.get("content_ai_fact_ids") or []),
+        "content_ai_keyword_ids": list(plan.get("content_ai_keyword_ids") or []),
+        "content_ai_authorized_by": plan.get("content_ai_authorized_by"),
+        "content_ai_authorized_at": plan.get("content_ai_authorized_at"),
         "website_cycle_enabled": plan.get("website_cycle_enabled") is True,
         "website_interval_days": int(plan.get("website_interval_days") or 7),
         "website_max_pages": int(plan.get("website_max_pages") or 5),
@@ -7134,6 +7145,17 @@ async def get_seo_service_plan(
         "active_site_advisor_assignment": assignment is not None,
         "update_denial_reason": denial_reason,
     }
+    from app.seo_workflow_capabilities import trigger_capabilities
+    result["trigger_actions"] = await trigger_capabilities(session, ctx, site)
+    result["content_ai_policy"] = {
+        "can_configure": bool(can_update and ctx.can_view("seo.keywords")),
+        "can_disable": can_update,
+        "configure_denial_reason": denial_reason or (None if ctx.can_view("seo.keywords") else "keyword_view_permission_required"),
+        "provider_configured": is_enabled(), "output_status": "drafting",
+        "automatic_review": False, "automatic_confirmation": False, "automatic_publication": False,
+        "attempts_per_workflow": 1, "failure_handling": "advisor_uses_existing_editor_or_assist",
+        "enable_requires": ["assigned_advisor", "content_and_site_edit", "keyword_view", "current_site_material", "active_site_keywords"],
+    }
     return result
 
 
@@ -7176,9 +7198,24 @@ async def update_seo_service_plan(
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     for key in ("website_cycle_enabled", "website_interval_days", "website_max_pages",
-                "monitoring_cycle_enabled", "monitoring_interval_days", "report_cycle_enabled"):
+                "monitoring_cycle_enabled", "monitoring_interval_days", "report_cycle_enabled",
+                "content_ai_enabled", "content_ai_fact_ids", "content_ai_keyword_ids"):
         value = getattr(req, key)
         settings["seo_service_plan"][key] = current[key] if value is None else value
+    new_plan = settings["seo_service_plan"]
+    new_plan["content_ai_authorized_by"] = current["content_ai_authorized_by"]
+    new_plan["content_ai_authorized_at"] = current["content_ai_authorized_at"]
+    if new_plan["content_ai_enabled"]:
+        if not ctx.can_view("seo.keywords"):
+            raise HTTPException(403, "配置自动草稿还需要关键词查看权限")
+        changed_sources = any(new_plan[key] != current[key] for key in ("content_ai_fact_ids", "content_ai_keyword_ids"))
+        if changed_sources and req.content_ai_enabled is not True:
+            raise HTTPException(409, {"code": "ai_draft_explicit_enable_required"})
+        from app.seo_content_drafting import selected_material
+        await selected_material(session, site, new_plan)
+        if req.content_ai_enabled is True:
+            new_plan["content_ai_authorized_by"] = ctx.user_id
+            new_plan["content_ai_authorized_at"] = datetime.now(timezone.utc).isoformat()
     site.site_settings = settings
     await session.commit()
     await session.refresh(site)
@@ -8312,14 +8349,14 @@ async def list_content_publications(
     contents = {
         row.id: row
         for row in await session.scalars(
-            select(SeoContentAsset).where(SeoContentAsset.id.in_(content_ids))
+            select(SeoContentAsset).where(SeoContentAsset.id.in_(content_ids), SeoContentAsset.tenant_id == tenant_id)
         )
     } if content_ids else {}
     connections = {
         row.id: row
         for row in await session.scalars(
             select(SeoDistributionConnection).where(
-                SeoDistributionConnection.id.in_(connection_ids)
+                SeoDistributionConnection.id.in_(connection_ids), SeoDistributionConnection.tenant_id == tenant_id
             )
         )
     } if connection_ids else {}
@@ -8331,10 +8368,40 @@ async def list_content_publications(
         )
         for row in rows
     ]
+    for row, item in zip(rows, items):
+        content = contents.get(row.content_asset_id)
+        reason = await _manual_complete_denial(session, ctx, row, content)
+        item["allowed_actions"] = {"complete": reason is None}
+        item["action_denial_reasons"] = {"complete": reason}
+        item["action_requirements"] = {"complete": {
+            "endpoint": f"/api/v1/seo/content-distribution/publications/{row.id}/complete",
+            "method": "POST", "source_version": row.source_version,
+            "page_url_required": True, "meaning": "record_existing_publication_only",
+        }}
     counts: dict[str, int] = defaultdict(int)
     for row in rows:
         counts[row.status] += 1
     return {"items": items, "total": len(items), "status_counts": dict(counts)}
+
+
+async def _manual_complete_denial(session, ctx, row, content):
+    if not ctx.can_edit("seo.content"):
+        return "content_edit_permission_required"
+    if not content or content.tenant_id != row.tenant_id:
+        return "content_missing_or_out_of_scope"
+    if (content.version_count or 1) != row.source_version:
+        return "content_version_conflict"
+    if row.status not in {"manual_required", "failed", "preparing"}:
+        return "publication_status_not_completable"
+    if content.content_type in {"qa", "faq"}:
+        from app.models.seo_qa import SeoQaAnswer
+        if await session.scalar(select(SeoQaAnswer.id).where(SeoQaAnswer.content_id == content.id)) is not None:
+            return "question_distribution_required"
+    if await _content_confirmation_schema_ready(session):
+        state = _content_confirmation_status(content, await _latest_content_confirmation(session, content))
+        if state != "approved":
+            return "content_confirmation_" + state
+    return None
 
 
 @router.post("/content-distribution/publications/manual")
@@ -8345,10 +8412,17 @@ async def create_manual_publication(
     background_tasks: BackgroundTasks = None,
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
+    if not ctx.can_edit("seo.content"):
+        raise HTTPException(403, {"code": "content_edit_permission_required"})
+    if req.source_version is None or req.payload_hash is None:
+        raise HTTPException(428, {"code": "content_version_precondition_required",
+            "message": "请刷新并核对准确稿件后，携带 source_version 和 payload_hash 登记发布结果"})
     await _seo_site(session, req.tenant_id, req.site_id)
     content = await _distribution_content(
-        session, req.tenant_id, req.content_id, req.site_id
+        session, req.tenant_id, req.content_id, req.site_id, lock=True,
     )
+    if req.source_version != (content.version_count or 1) or req.payload_hash != _content_confirmation_hash(content):
+        raise _content_version_conflict(content)
     _require_content_ready(content)
     await _require_active_content_confirmation(session, content)
     try:
@@ -9212,6 +9286,8 @@ async def complete_manual_publication(
     background_tasks: BackgroundTasks = None,
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
+    if not ctx.can_edit("seo.content"):
+        raise HTTPException(403, {"code": "content_edit_permission_required"})
     await _seo_site(session, req.tenant_id, req.site_id)
     row = await session.get(
         SeoContentPublication, publication_id, with_for_update=True
@@ -9221,7 +9297,7 @@ async def complete_manual_publication(
     content_asset_id = int(row.content_asset_id)
     content = await _distribution_content(
         session, req.tenant_id, content_asset_id, req.site_id,
-        require_operational=False,
+        require_operational=False, lock=True,
     )
     if (content.version_count or 1) != row.source_version:
         raise HTTPException(409, "稿件版本已变化，不能将结果回填到旧版本")
@@ -9806,6 +9882,9 @@ async def update_content_asset(
         raise HTTPException(409, "待审核、待发布或已发布内容不能直接编辑")
     if row.status in protected_statuses and requested_status != row.status:
         raise HTTPException(409, "请通过审核或发布流程变更受控内容状态")
+    if values and expected_version is None and await _content_confirmation_schema_ready(session):
+        raise HTTPException(428, {"code": "content_version_precondition_required",
+            "message": "保存草稿必须携带读取时的 version_count；请刷新稿件后重试"})
     if "draft" in values:
         values["draft"] = _sanitize_content_html(values.get("draft"))
     if "humanized_content" in values:

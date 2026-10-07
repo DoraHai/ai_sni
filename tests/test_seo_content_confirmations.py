@@ -343,6 +343,7 @@ def test_service_plan_read_reports_server_verified_update_capability() -> None:
     )
     assignment = SimpleNamespace(id=3)
     with (
+        patch("app.seo_workflow_capabilities.trigger_capabilities", new=AsyncMock(return_value={})),
         patch("app.api.seo.ensure_module_access", new=AsyncMock()),
         patch("app.api.seo._seo_site", new=AsyncMock(return_value=site)),
         patch("app.api.seo._content_confirmation_schema_ready", new=AsyncMock(return_value=True)),

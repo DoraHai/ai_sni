@@ -429,3 +429,136 @@ retry_page_id 仅用于网站链中实际 failed 的单页，否则409 `page_ret
 | 周期配置及能力注册 | `app/api/seo.py:SeoServicePlanUpdate/_service_plan_payload/update_seo_service_plan`；`app/seo_scheduler.py` |
 
 函数名为稳定定位依据，后续编辑可能移动行号。工作台应对照本地提交实现，不把未部署接口称为生产可用。
+
+### SEO-10：默认关闭的自动草稿与明确手动触发资格
+
+仅本地实现，依赖已审核并另行批准执行的0105结构；本批无新迁移。以下ID均为**隔离测试示例**，不是获准的生产资源。所有GET只读取，不能启动生成、采集或发布。
+
+服务计划 GET/PUT 路径不变。PUT 新增字段，省略时保留原值：
+
+```json
+{
+  "tenant_id": 4,
+  "site_id": 2,
+  "expected_revision": 1,
+  "optimization_directions": ["依据已核对的资料回答选型问题"],
+  "content_topics": ["选型依据"],
+  "content_ai_enabled": true,
+  "content_ai_fact_ids": [30],
+  "content_ai_keyword_ids": [20]
+}
+```
+
+- `content_ai_enabled` 默认false；顾问显式开启才记录服务端 `content_ai_authorized_by/content_ai_authorized_at`。前端不能提交这两个身份字段。运行时必须仍是当前站点active分配、启用账号、正确客户范围，并有内容/网站edit及关键词view权限。
+- 资料复用 `GET /api/v1/seo/qa/facts?tenant_id=&site_id=`，最多20条：同租户同站点、active、未过期、正文和source_name非空，总快照不超过5万字符。source_url可空，适用于人工录入资料；这不代表系统已经替顾问核实资料真伪。关键词最多5个，必须精确归属当前站点且active，不接受site_id=null的租户级关键词。
+- 已开启时更换资料/关键词必须同时显式传 `content_ai_enabled:true`，否则409 `ai_draft_explicit_enable_required`。关闭可单独false；无关键词权限仍可关闭。无资料/过期/不匹配返回409稳定code，配置不落库。
+- 开启适用于当前尚无正文的内容链和后续新链；已有正文、承接页整改稿、已经内审/发布的稿件不自动覆盖。既有每分钟内容调度接入，一条内容链最多领取一次自动生成。
+- 复用 `POST /api/v1/seo/content-ai/assist` 的服务函数、日额度和SeoAiOperation。供应商配置路由不变（DeepSeek模块目前优先DashScope），不另外开放自动生成endpoint。生成内容必须保留所选资料的`[F编号]`，未知引用、无引用、待补充/待核验、无效长度交人工；这些程序检查不替代事实质量审核。
+- 成功只保存 `status=drafting`、稿件版本+1和来源快照，阶段为`awaiting_internal_review`。后续仍用现有编辑、submit-review、review、准确版本确认、分平台发布与页面证据接口；不自动审核、代确认、选渠道或发布。
+- 领取状态先提交，网络调用不持有任务/站点锁。重启只读对应operation的已持久化结果，成功可回收；running继续等待，退款/失败/超时交顾问，不再次向供应商请求。既有assist内部最多一次格式/关键词纠正仍保留，属于同一次日额度操作，不是无限重试。
+- 写回前复核计划revision、明确授权者、账号与分配、资料/关键词快照、稿件hash/版本和任务状态。取消、暂停、禁用、撤权、改稿、改资料后不覆盖稿件。已完成供应商生成但未能采纳的结果仍按既有实际调用计数，不伪称退款；供应商失败走已有退款机制。
+
+服务计划GET新增：
+
+```json
+{
+  "content_ai_policy": {
+    "can_configure": true,
+    "can_disable": true,
+    "configure_denial_reason": null,
+    "provider_configured": false,
+    "output_status": "drafting",
+    "automatic_review": false,
+    "automatic_confirmation": false,
+    "automatic_publication": false,
+    "attempts_per_workflow": 1,
+    "failure_handling": "advisor_uses_existing_editor_or_assist"
+  },
+  "trigger_actions": {
+    "content": {
+      "allowed": true,
+      "reason": null,
+      "method": "POST",
+      "endpoint": "/api/v1/seo/workbench/service-plan/run",
+      "kind": null,
+      "expected_revision": 1,
+      "request_id_format": "uuid",
+      "meaning": "new_execution_only"
+    }
+  }
+}
+```
+
+示例省略未变化字段和其他kind；真实 `trigger_actions` 总是包含 `content/website/monitoring/report` 四项，同时在GET `/workbench/executions`顶层提供。后三项endpoint为`/api/v1/seo/workbench/service-cycles/run`并携带对应kind。请求使用已展示的tenant/site、expected_revision和新UUID；未知响应重试保持同一UUID，不能另造UUID绕过正在执行的链。
+
+触发能力与`allowed_actions.update_service_plan`独立。按写端要求复核0105、实名、双edit、当前站点分配、模块/站点启用、服务计划暂停与revision、同类型已有活动链；内容需选题/方向，监测额外需关键词edit及1–200个启用词。常见reason为`authenticated_user_required`、`active_site_advisor_assignment_required`、`site_or_module_not_operational`、`service_plan_paused`、`service_plan_required`、`content_workflow_already_active`、`service_workflow_already_active`、`keyword_edit_permission_required`、`keyword_inventory_required`、`monitoring_keyword_limit_200`。allowed只表示可新建执行链，不保证资料齐全、采集成功或有异常；网站无既有页面等阻塞仍在执行任务中返回。写端在行锁内再次校验，不能以GET资格作为永久授权。
+
+内容任务 `params.ai_draft` 返回 `status=claimed/succeeded/needs_attention`、`request_id`、`claimed_at`、`authorized_by`、`plan_revision`、`source_version`与输入摘要。成功另外返回`operation_id/generated_by=system/saved_version/fact_snapshots/finished_at`；人工处理时返回稳定`reason/quality_checks`。阶段`ai_draft_in_progress`由系统等待，`ai_draft_needs_attention`由顾问处理。资料过期、额度不足、供应商未配置、结果未知、输入变化均不标成done。没有自动重试按钮，失败任务可通过现有编辑器/assist人工制稿并正常继续。
+
+### UI-09：人工发布证据的准确版本前提与旧入口兼容
+
+`POST /api/v1/seo/content-distribution/publications/manual` 新建人工登记必须携带 `source_version` 和 `payload_hash`，从已展示稿件的`version_count/payload_hash`读取；内容列表新增payload_hash，delivery原有payload_hash也可用。保存前临时重新读最新版本然后静默替换预期值，不符合本约定。
+
+```json
+{
+  "tenant_id": 4,
+  "site_id": 2,
+  "content_id": 101,
+  "source_version": 1,
+  "payload_hash": "替换为读取到的64位小写SHA256",
+  "platform_name": "实际平台名称",
+  "page_url": "https://example.com/已实际发布地址"
+}
+```
+
+哈希示例是占位符不可直接发送。服务端先验证租户/权限/站点，再锁住稿件并刷新，比较版本与hash、审核状态及0105准确确认，随后同事务登记。改稿后409 `content_version_conflict`，确认不满足409 `content_confirmation_required`；缺少任一预期字段428 `content_version_precondition_required`，非法hash422，撤掉内容edit返回403。不会替客户向平台发布。
+
+兼容策略为明确拒绝缺前置条件的旧人工登记调用，0104也不静默绑定服务端最新版本。本仓SEO分发页已携带选择时冻结的版本/hash；旧客户端需要升级，否则428。0104仍沿用原审核门禁，不制造准确确认记录；0105才启用客户/顾问准确确认。发布记录提交后原有页面核验排队副作用保留，GET没有这一副作用。
+
+发布列表每条新增：
+
+```json
+{
+  "allowed_actions": {"complete": true},
+  "action_denial_reasons": {"complete": null},
+  "action_requirements": {
+    "complete": {
+      "endpoint": "/api/v1/seo/content-distribution/publications/91/complete",
+      "method": "POST",
+      "source_version": 1,
+      "page_url_required": true,
+      "meaning": "record_existing_publication_only"
+    }
+  }
+}
+```
+
+complete只针对`manual_required/failed/preparing`、准确当前版本及有效确认；`publishing`不允许。拒绝原因包括`content_edit_permission_required/content_missing_or_out_of_scope/content_version_conflict/publication_status_not_completable/question_distribution_required/content_confirmation_pending/content_confirmation_stale/content_confirmation_rejected`。已published记录的“再次提交同URL”属于写端幂等恢复，不是新的允许动作；UI不展示再次完成按钮。既有complete仍接受老调用省略source_version（以持久化发布记录绑定版本核对当前稿件），工作台必须按投影携带source_version。回填写端也已加稿件行锁，重查准确确认，跨租户和站点仍拒绝。
+
+旧入口专项核查：当前本地 `SeoContentEditorView.vue` 已按content_id/site读取、携带version_count保存且只更新当前编辑的正文分支；不能拿e494旧宿主行为代替本地现状。`PATCH /content-assets/{id}` 从草稿/ready跳到published及受保护稿件写page_url均返回409，0104/0105都如此。0105新加草稿保存的version_count必填前提，省略428，旧版本409；0104仍允许旧草稿调用缺版本，但不能绕过审核/发布流程。未修改SEM前端，也未部署旧宿主兼容入口。
+
+### PostgreSQL 定向运行包（本机未执行）
+
+文件：`tests/test_seo_workflow_postgres.py`。仅接受`postgresql+asyncpg`、host为`127.0.0.1/localhost/::1`、数据库名**严格等于**`seo_workflow_test`且无URL查询参数；另需显式设置`SEO_WORKFLOW_TEST_ALLOW_SCHEMA_CREATE=yes`。不回退应用DATABASE_URL、不加载迁移、不连接生产。每例创建随机schema及最小模型表，最终只清理该随机schema；并非迁移/外键全量验收。
+
+运行条件：已有隔离PostgreSQL、专用空测试库、仅该库CREATE schema权限；现有项目Python环境有pytest/SQLAlchemy/asyncpg及正常应用导入依赖。若需要安装数据库或创建账号/库，由环境负责人另行安排，本批没有安装。完整假配置参考既有测试；下例在**测试进程**设置，不使用生产.env：
+
+```powershell
+$env:SEO_WORKFLOW_TEST_DATABASE_URL='postgresql+asyncpg://<本机测试用户>:<测试密码>@127.0.0.1:55432/seo_workflow_test'
+$env:SEO_WORKFLOW_TEST_ALLOW_SCHEMA_CREATE='yes'
+$env:DATABASE_URL='postgresql+asyncpg://unused:unused@127.0.0.1:1/unused'
+$env:SECRET_KEY='isolated-test-secret-isolated-test'
+$env:ADMIN_API_KEY='isolated-test-key'
+$env:DEEPSEEK_API_KEY=''
+$env:DASHSCOPE_API_KEY=''
+$env:BAIDU_APP_ID='test'
+$env:BAIDU_SECRET_KEY='test'
+$env:BAIDU_DEFAULT_USERNAME='test'
+$env:BAIDU_DEFAULT_UCID='1'
+$env:BAIDU_SELF_ACCESS_TOKEN='test'
+$env:BAIDU_SELF_TOKEN_EXPIRES_AT='2099-01-01T00:00:00Z'
+$env:CRYPTO_MASTER_KEY_B64='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+python -m pytest tests/test_seo_workflow_postgres.py -q
+```
+
+六个数据库用例：相同/不同UUID并发预留、并发周期去重、等待期间顾问撤销、并发AI领取单次额度、并发改稿后人工登记旧版本拒绝。四个地址防护用例无需数据库。本机未找到服务/运行时/测试DSN，六项数据库用例是skipped，不是通过；本批SQLite和假供应商验证不能代替PostgreSQL并发或真实平台验收。

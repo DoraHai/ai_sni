@@ -16,13 +16,14 @@
 | 收尾修复 | `c536d625` | 核验状态语义、顾问分配并发锁及最终审查 |
 | UI-04 契约 | `8ec3dbf0` | 服务计划允许动作、状态口径和0104兼容 |
 | SEO-08 | `9c7aa6f8` | 计划驱动的持久化内容辅助执行链 |
-| SEO-09 | 本批本地提交，见 Git 日志 | 周期诊断整改、排名异常待办、冻结月报与执行链只读投影 |
+| SEO-09 | `f9a22877` | 周期诊断整改、排名异常待办、冻结月报与执行链只读投影 |
+| SEO-10 | 本批本地提交，见 Git 日志 | 顾问显式开启的自动草稿、触发能力、人工登记版本门禁与并发测试包 |
 
 以上均为本地提交。当前没有推送、PR、合并、部署或生产迁移。SEO-01–07 完成的是基础契约和局部接续，不是完整 A01–A07 自动化。以下状态按实际执行链重新标注；不能用事实汇总或单点接口代替周期任务运行。
 
 当前剩余项：
 
-- SEO-08/09 已实现本地辅助执行链；真实 PostgreSQL 并发、工作台前端挂载、生产资源授权和外部平台验收仍未完成。网站诊断有每轮10页上限，排名异常首期为百度桌面全国最多200词，报告为冻结 HTML，不称全域/全渠道自动化。
+- SEO-08/09/10 已实现本地辅助执行链及可选自动草稿；真实 PostgreSQL 并发、工作台前端挂载、生产资源授权和外部平台验收仍未完成。网站诊断有每轮10页上限，排名异常首期为百度桌面全国最多200词，报告为冻结 HTML，不称全域/全渠道自动化。
 - 工作台依据 `SEO_AUTOMATION_API.md` 完成真实接口适配和联调。
 - 单独审核、批准并执行推送、PR、合并、SEO 兼容版部署及 `0105` 数据库迁移。
 - 在获准测试客户/站点上配置顾问分配、服务计划和真实数据源，再做真人与外部平台验收。
@@ -37,7 +38,7 @@
 | SEO-A01 资料与服务计划 | SEO-02/03/07/08/09 | 周期规则本地实现 | 内容、网站、监测、报告周期可显式开启，默认关闭；按站点幂等、暂停、游标恢复 |
 | SEO-A02 网站检查与优化 | SEO-02/04/09 | 有界辅助链本地实现 | 周期单页抓取→快照→整改子任务→人工实施→真实复检接续；每轮最多10页，无全站自动发现 |
 | SEO-A03 关键词与搜索监测 | SEO-02/05/09 | 固定范围辅助链本地实现 | 百度桌面全国缺报/过期/下降待办及新观测核销，最多200词；采集仍复用原调度，其他引擎/设备待扩展 |
-| SEO-A04 内容制作与稿件确认 | SEO-01/08 | 首条辅助链本地实现 | 选题稿件由计划生成，顾问制作和审核，准确版本确认后继续；不自动调用付费 AI |
+| SEO-A04 内容制作与稿件确认 | SEO-01/08/10 | 可选自动草稿辅助链本地实现 | 默认关闭、顾问显式开启、事实/关键词约束及一次自动生成，人工质量审核和准确版本确认后继续；本批只用假供应商测试 |
 | SEO-A05 发布与核验 | SEO-01/02/08 | 首条辅助链本地实现 | 顾问使用既有分发/回填；调度接页面证据，结果不明不重发；自动渠道选择和全渠道交付尚未实现 |
 | SEO-A06 数据与报告 | SEO-02/06/09 | 周期 HTML 辅助链本地实现 | 冻结上月报告、缺数说明、准确哈希顾问解释；无自动统计拉取、PDF生成或主动推送 |
 | SEO-A07 流程运行 | SEO-01/02/07/08/09 | 四类执行链本地实现 | 持久化、幂等、恢复、暂停、取消、异常接管和只读投影；站外通知及生产验证未完成 |
@@ -295,3 +296,36 @@
 本批提交：本地 `feat(seo): connect diagnosis monitoring and report cycles`，准确 SHA 以 Git 日志为准；未推送、PR、合并、部署、生产迁移。工作台应读取本地接口契约再挂载，不能认为生产已可调用。
 
 后续：工作台挂载四类执行链、PostgreSQL并发验证、报告截图/PDF自动化及统一通知通道；内容自动AI制作/自动选渠道和真实业务授权仍是单独缺口。周期网站全站发现、更多搜索引擎/设备的待办亦不在本批已实现范围。
+
+## SEO-10：自动草稿与显式触发能力
+
+开始实现前核对：已有 `POST /content-ai/assist`、DeepSeek 模块的供应商路由、日配额及 SeoAiOperation 持久化领取/结果/退款；已有按客户/站点隔离的 SeoQaFact 资料库。复用这些能力，不新增生成平台或另一套生成 API。供应商模块目前优先使用已配置的 DashScope，再回退 DeepSeek；本批不改变路由、不读取生产凭据。
+
+最小设计：
+
+- 服务计划增加默认关闭的 `content_ai_enabled`、顾问选择的 `content_ai_fact_ids`（最多20）和 `content_ai_keyword_ids`（最多5）；显式开启记录真实授权顾问，旧客户端省略时保留原值。仅使用同站点有效事实及启用关键词，材料无出处/过期/缺失转人工。
+- 现有内容链调度器接入一次自动草稿领取；先持久化任务领取和输入版本，再调用既有 assist。领取后重启只查既有 operation 结果，不盲目再次请求供应商；失败或结果不确定交顾问用既有内容编辑/assist 处理。
+- 写回前复核计划、顾问分配与当前账号权限、资料/关键词、任务和稿件版本；生成成功仅保存 `drafting`，不内审、不准确版本确认、不发布。保留资料引用和真实系统触发来源。
+- 服务计划/执行链 GET 增加独立 `trigger_actions`，分别说明内容、网站、监测、报告的手动触发能力、拒绝原因和请求地址；不能从 `update_service_plan` 推导。写端仍独立核验，读取无采集/生成副作用。
+- 本机 PATH、服务、进程、常见安装目录、5432/55432端口及测试 DSN 名称未发现可用隔离 PostgreSQL。提供仅允许本机专用测试库的并发领取、周期去重和撤销测试；没有实际运行就明确跳过，不以 SQLite 冒充 PostgreSQL 验收。
+
+实际实现与定向审查：
+
+- `app/seo_content_drafting.py`：以上一次领取、现有assist/额度/operation、恢复取回、材料/权限/版本复核及drafting写入；在`app/seo_content_workflow.py`既有调度接入。配置和允许动作见`app/api/seo.py`，资料不另建表。
+- `app/seo_workflow_capabilities.py`与`app/api/seo_service_workflows.py`：四类trigger_actions，读取与写端共用新建阻塞条件；监测额外关键词权限，不从计划编辑能力推导。GET不进行供应商调用。
+- UI-09追加缺口：人工登记新增必需source_version/payload_hash、稿件锁和明确428/409；已有complete增加内容锁与edit复核；发布列表逐条complete允许动作/拒绝原因。SEO原分发页保存选择时的版本/hash并防止切换客户后的误反馈，未改SEM前端。
+- 旧PATCH发布专项：原后端已拒绝跨状态跳published及受保护稿件page_url编辑，不把可疑路径写成已证实绕过。0105缺version的草稿保存确实可接受，已收紧为428；0104保留旧草稿调用，均不能借PATCH直接发布。当前本地编辑器已按content_id/site加载并携带version、分开正文保存，未重复改造。
+- 回归暴露周期抓取同一时钟刻度的竞争：以前只比`last_checked_at > started_at`，同刻人工复检可能被覆盖；改为领取时保存原检查时间、写回比较其是否改变。
+- 不把引用格式检查称为事实真伪验收；AI失败/未知不自动重试，真实生成但未采纳不冒称退款。资料/计划/身份变化、取消或人工改稿后不写回。
+
+测试与环境：
+
+- 首轮4文件：111 passed、3 failed；修正配额夹具（既有额度最小为1）、旧能力投影Mock，并修复上述同刻复检竞争后：115 passed。
+- 扩展曾出现1项旧测试期待未加锁的调用参数，更新为实际lock=True；另外一次误写不存在的assist测试路径，未运行测试且未记通过。
+- 最终15文件定向回归：**482 passed、9 skipped、1 warning**。覆盖自动草稿/四类执行链/确认/人工登记/分发/基础内容编辑/调度/工单权限/页面证据/演示隔离/发布白名单。9跳过=新PostgreSQL并发6例+既有环境3例；warning为既有jieba/pkg_resources。
+- 命令：`python -m pytest tests/test_seo_content_drafting.py tests/test_seo_content_workflow.py tests/test_seo_service_workflows.py tests/test_seo_content_confirmations.py tests/test_seo_publication_workbench_contract.py tests/test_seo_distribution.py tests/test_seo_workflow_postgres.py tests/test_seo_foundation.py tests/test_seo_scheduler.py tests/test_seo_cockpit.py tests/test_seo_cockpit_auth.py tests/test_seo_page_capture_api.py tests/test_seo_release_consistency.py tests/test_seo_workbench_publication_page_evidence.py tests/test_seo_demo_runtime.py -q`。
+- 前端实际SFC手动登记handler测试 **5/5**：选定版本冻结、更换选择、缺hash/版本与客户切换、409不自动重试、旧范围响应不误反馈；`node --test frontend/scripts/test-seo-manual-publication.mjs`。使用本机已有Vue编译器检查脚本和模板成功；未称完整前端DOM/生产联调通过。
+- PostgreSQL运行包和精确环境要求见接口文档；已核查PATH/服务/常见目录/监听端口/测试DSN，没有可用隔离库。没有安装全局服务，没有连接生产数据库；库地址防护的4项测试已实际运行。
+- 提交前逐文件自查范围为本批16个改动文件及直接调用链；12个Python文件语法解析、Vue脚本/模板编译、`git diff --check`和SEO源文件白名单全部通过。重点核对锁内版本条件、撤权/取消后的写回、跨租户过滤、默认关闭和读取无供应商副作用；未称独立审查人批准或生产验收。
+
+本批仅本地代码、测试和提交；准确SHA见Git日志。未推送、PR、合并、部署、执行0105或其他迁移、真实AI调用、真实采集/发布。仍待工作台挂载新触发/AI配置/人工登记字段、隔离PostgreSQL并发验收、完整渲染环境与真实账号试点；PDF自动推送及站外通知缺口保持不变。

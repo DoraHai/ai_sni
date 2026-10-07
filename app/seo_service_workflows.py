@@ -85,6 +85,10 @@ async def reserve_service_workflow(session, site, kind, key, actor_id, *, schedu
     row = await session.scalar(select(SeoTask).where(*filters, SeoTask.params["request_key"].as_string() == key).limit(1))
     if row:
         return row, False
+    from app.seo_workflow_capabilities import new_workflow_blocker
+    blocker = await new_workflow_blocker(session, site, kind)
+    if blocker:
+        raise HTTPException(409, {"code": blocker})
     if service_plan_is_paused(site):
         raise HTTPException(409, {"code": "service_plan_paused"})
     active = await session.scalar(select(SeoTask.id).where(*filters, SeoTask.status.in_(("open", "in_progress"))).limit(1))
@@ -314,7 +318,8 @@ async def execute_diagnosis_page(task_id):
             await session.commit()
             return
         started_at = datetime.now(timezone.utc)
-        pages[key] = {"state": "running", "token": token, "started_at": started_at.isoformat(), "url": url}
+        pages[key] = {"state": "running", "token": token, "started_at": started_at.isoformat(), "url": url,
+                      "previous_checked_at": utc(page.last_checked_at).isoformat() if page.last_checked_at else None}
         task.params = {**task.params, "pages": pages}
         await session.commit()
     try:
@@ -332,7 +337,7 @@ async def execute_diagnosis_page(task_id):
         page = await session.get(SeoSitePage, int(key), with_for_update=True)
         if (not site or site.tenant_id != tenant_id or not page or page.tenant_id != tenant_id
                 or page.site_id != site_id or page.url != url
-                or (page.last_checked_at and utc(page.last_checked_at) > started_at)
+                or (utc(page.last_checked_at).isoformat() if page.last_checked_at else None) != pages[key].get("previous_checked_at")
                 or not await seo_site_is_operational(session, tenant_id, site_id)):
             values = None
         if values is None:

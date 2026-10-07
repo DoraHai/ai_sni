@@ -1,4 +1,4 @@
-"""Durable, assisted content delivery. No AI or publication supplier is called here.
+"""Durable, assisted content delivery. Publication suppliers are never called here.
 
 Reservations serialize on the existing site row; transitions serialize on the
 task row. All new objects and the cycle cursor commit in the same transaction.
@@ -75,6 +75,10 @@ async def reserve_content_workflow(session, site, *, request_key, actor_id, now=
     ).limit(1))
     if existing is not None:
         return existing, False
+    from app.seo_workflow_capabilities import new_workflow_blocker
+    blocker = await new_workflow_blocker(session, site, "content")
+    if blocker:
+        raise HTTPException(409, {"code": blocker})
     plan = plan_for(site)
     if service_plan_is_paused(site):
         raise HTTPException(409, {"code": "service_plan_paused"})
@@ -133,7 +137,13 @@ async def advance_content_workflow(session, site, task, *, now=None, publication
         transition(task, "needs_attention", now, blocker="content_missing_or_out_of_scope")
         return None
     if not (content.humanized_content or content.draft or "").strip():
-        transition(task, "awaiting_draft", now)
+        ai = task.params.get("ai_draft") or {}
+        if ai.get("status") == "claimed":
+            transition(task, "ai_draft_in_progress", now, waiting_for="system")
+        elif ai.get("status") == "needs_attention":
+            transition(task, "ai_draft_needs_attention", now, blocker=ai.get("reason"))
+        else:
+            transition(task, "awaiting_draft", now)
         return None
     if content.status not in {"ready", "published"}:
         transition(task, "awaiting_internal_review", now)
@@ -223,6 +233,7 @@ async def advance_content_workflow(session, site, task, *, now=None, publication
 async def process_site(site_id):
     """Fresh transaction per site, no provider calls while DB locks are held."""
     capture_ids = []
+    draft_ids = []
     async with async_session_factory() as session:
         if not await schema_ready(session):
             return
@@ -244,18 +255,25 @@ async def process_site(site_id):
             capture_id = await advance_content_workflow(session, site, task, now=now)
             if capture_id:
                 capture_ids.append(capture_id)
+            if plan_for(site).get("content_ai_enabled") is True or (task.params.get("ai_draft") or {}).get("status") == "claimed":
+                draft_ids.append(task.id)
         plan = plan_for(site)
         if not active and not service_plan_is_paused(site) and plan.get("content_cycle_enabled") is True:
             cursor = (site.site_settings or {}).get("seo_content_workflow_cursor") or {}
             due = datetime.fromisoformat(cursor["next_due_at"]) if cursor.get("next_due_at") else now
             if now >= utc(due) and plan.get("content_topics") and plan.get("optimization_directions"):
-                await reserve_content_workflow(session, site,
+                task, _ = await reserve_content_workflow(session, site,
                     request_key=f"cycle:{int(cursor.get('sequence') or 0) + 1}",
                     actor_id=advisor.advisor_user_id, now=now, scheduled=True)
+                if plan.get("content_ai_enabled") is True:
+                    draft_ids.append(task.id)
         await session.commit()
     from app.api.seo_page_captures import execute_page_capture
     for capture_id in capture_ids:
         await execute_page_capture(capture_id)
+    from app.seo_content_drafting import execute_content_draft
+    for task_id in draft_ids:
+        await execute_content_draft(task_id)
 
 
 async def run_content_workflows():

@@ -37,6 +37,7 @@ def test_editor_sanitizer_layout_and_source_parity():
 from sqlalchemy.exc import IntegrityError
 
 from app.api.seo import (
+    _content_confirmation_hash,
     DistributionAdaptRequest,
     DistributionManualComplete,
     DistributionManualPublicationCreate,
@@ -1487,7 +1488,7 @@ def test_manual_handoff_completion_is_site_scoped_and_audited() -> None:
 
     attempt = session.add.call_args.args[0]
     content_lookup.assert_awaited_once_with(
-        session, 1, 5, 8, require_operational=False
+        session, 1, 5, 8, require_operational=False, lock=True
     )
     session.get.assert_awaited_once_with(
         SeoContentPublication, 12, with_for_update=True
@@ -1631,6 +1632,8 @@ def test_manual_publication_duplicate_race_returns_conflict_and_rolls_back() -> 
         tenant_id=1,
         site_id=8,
         content_id=5,
+        source_version=2,
+        payload_hash=_content_confirmation_hash(content),
         platform_name="知乎",
         page_url="https://zhuanlan.zhihu.com/p/123",
     )
@@ -1660,6 +1663,8 @@ def test_manual_publication_unrelated_integrity_error_is_not_hidden_as_duplicate
     request = DistributionManualPublicationCreate(
         tenant_id=1, site_id=8, content_id=5, platform_name="知乎",
         page_url="https://zhuanlan.zhihu.com/p/123",
+        source_version=2,
+        payload_hash=_content_confirmation_hash(content),
     )
 
     with (

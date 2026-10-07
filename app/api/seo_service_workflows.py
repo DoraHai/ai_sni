@@ -103,7 +103,9 @@ async def list_executions(tenant_id: PositiveInt, site_id: PositiveInt,
     cycles = {kind: {key: value for key, value in cursor.items()
                      if key in {"sequence", "month", "last_checked_at", "next_due_at", "task_id", "blocker"}}
               for kind, cursor in cursors.items() if kind in KINDS and ctx.can_view(PERMISSIONS[KINDS[kind]])}
+    from app.seo_workflow_capabilities import trigger_capabilities
     return {"items": [projection(task, site, ctx, authorized) for task in tasks], "total": total,
+        "trigger_actions": await trigger_capabilities(session, ctx, site),
         "cycles": cycles, "page": page, "page_size": page_size, "read_only": True, "as_of": datetime.now(timezone.utc).isoformat()}
 
 
