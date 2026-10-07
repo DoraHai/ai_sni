@@ -15,6 +15,7 @@ npm run test:ui06
 npm run test:ui08
 npm run test:ui09
 npm run test:ui10
+npm run test:ui11
 npm run test:demo
 ```
 
@@ -23,6 +24,8 @@ npm run test:demo
 `npm run preview:fixture` 启动127.0.0.1内存API服务器，打开输出的 `/fixture.html`。假身份、假数据仅用于契约联调，不连生产。`connected.html` 无宿主注入时显示断开；`index.html` 是独立演示，不能作为生产入口。
 
 ## 范围与交接
+
+UI-11补充计划、请求和响应模型来源，以及目标对象完成证据与全站效果背景的分别展示；保留旧完成证据。见 [UI-11兼容补丁](docs/UI11_EVIDENCE_DISPLAY.md)。
 
 - 已接：独立资格的四类手动触发、默认关闭的AI草稿授权与同站点资料/关键词选择、准确版本人工登记和逐记录回填；准确版本草稿轻改、提交审核、显式复核退回、发布记录/尝试只读；SEO列表分页、交付稿、确认/代确认/退回、复核、服务计划与周期、准备状态；四类执行链列表/详情/历史/依据、接续/单页重试/取消/顾问报告说明和冻结HTML下载；身份和客户变化清空，写结果不明只重读。
 - 未接：基础资料、关键词维护、消息、富文本编辑、单次AI assist和平台真实执行、原始快照及整改子任务详情和SEM/GEO真实接口；页面明确禁用或列明边界，详见[UI-10交接](docs/UI10_EXPLICIT_ACTIONS.md)、[UI-09交接](docs/UI09_CONTENT_OPERATIONS.md)和[UI-08交接](docs/UI08_EXECUTIONS.md)。
