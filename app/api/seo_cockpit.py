@@ -430,6 +430,9 @@ async def get_task(task_id:int,tenant_id:PositiveInt,site_id:PositiveInt,ctx=Dep
     return payload(await task_record(session,ctx,task_id,tenant_id,site_id))
 
 async def completion(session,row):
+    if row.action_type=='page_remediation':
+        from app.seo_delivery_evidence import page_completion
+        return await page_completion(session,row)
     before=row.baseline.get('value');key=row.baseline['metric_key']
     values=await metric_values(session,row.tenant_id,row.site_id)
     after=values[key]
@@ -445,16 +448,6 @@ async def completion(session,row):
             SeoImageVerification.status=='verified',SeoImageVerification.checked_at>row.created_at).order_by(SeoImageVerification.id.desc()).limit(1))
         if verification is None:raise HTTPException(409,'需要重新抓取确认图片修复')
         proof={'verification_id':verification.id,**verification.evidence}
-    elif row.action_type=='page_remediation':
-        page=await session.get(SeoSitePage,row.params['page_id'])
-        checked_at=page.last_checked_at.replace(tzinfo=timezone.utc) if page and page.last_checked_at and page.last_checked_at.tzinfo is None else (page.last_checked_at if page else None)
-        created_at=row.created_at.replace(tzinfo=timezone.utc) if row.created_at.tzinfo is None else row.created_at
-        if (not page or page.tenant_id!=row.tenant_id or page.site_id!=row.site_id
-                or page.status not in {'healthy','verified'} or page.issue_codes
-                or checked_at is None or checked_at<=created_at):
-            raise HTTPException(409,'需要任务创建后的页面重新检查确认问题已解决')
-        proof={'page_id':page.id,'status':page.status,'checked_at':checked_at.isoformat(),
-               'http_status':page.http_status,'audit_score':page.audit_score,'issue_codes':[]}
     elif row.action_type=='backlink_outreach':
         from app.models.seo import SeoBacklink
         created=row.created_at.astimezone(timezone.utc).replace(tzinfo=None)

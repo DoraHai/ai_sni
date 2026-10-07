@@ -17,13 +17,14 @@
 | UI-04 契约 | `8ec3dbf0` | 服务计划允许动作、状态口径和0104兼容 |
 | SEO-08 | `9c7aa6f8` | 计划驱动的持久化内容辅助执行链 |
 | SEO-09 | `f9a22877` | 周期诊断整改、排名异常待办、冻结月报与执行链只读投影 |
-| SEO-10 | 本批本地提交，见 Git 日志 | 顾问显式开启的自动草稿、触发能力、人工登记版本门禁与并发测试包 |
+| SEO-10 | `c8fa621e` | 顾问显式开启的自动草稿、触发能力、人工登记版本门禁与并发测试包 |
+| SEO-11 | 本批本地提交，见 Git 日志 | 自动草稿锁定 DeepSeek、目标完成证据与站点总量拆分 |
 
 以上均为本地提交。当前没有推送、PR、合并、部署或生产迁移。SEO-01–07 完成的是基础契约和局部接续，不是完整 A01–A07 自动化。以下状态按实际执行链重新标注；不能用事实汇总或单点接口代替周期任务运行。
 
 当前剩余项：
 
-- SEO-08/09/10 已实现本地辅助执行链及可选自动草稿；真实 PostgreSQL 并发、工作台前端挂载、生产资源授权和外部平台验收仍未完成。网站诊断有每轮10页上限，排名异常首期为百度桌面全国最多200词，报告为冻结 HTML，不称全域/全渠道自动化。
+- SEO-08/09/10/11 已实现本地辅助执行链及可选 DeepSeek 自动草稿，目标交付与全站效果分开；真实 PostgreSQL 并发、工作台联合验收、生产资源授权和外部平台验收仍未完成。网站诊断有每轮10页上限，排名异常首期为百度桌面全国最多200词，报告为冻结 HTML，不称全域/全渠道自动化。
 - 工作台依据 `SEO_AUTOMATION_API.md` 完成真实接口适配和联调。
 - 单独审核、批准并执行推送、PR、合并、SEO 兼容版部署及 `0105` 数据库迁移。
 - 在获准测试客户/站点上配置顾问分配、服务计划和真实数据源，再做真人与外部平台验收。
@@ -329,3 +330,26 @@
 - 提交前逐文件自查范围为本批16个改动文件及直接调用链；12个Python文件语法解析、Vue脚本/模板编译、`git diff --check`和SEO源文件白名单全部通过。重点核对锁内版本条件、撤权/取消后的写回、跨租户过滤、默认关闭和读取无供应商副作用；未称独立审查人批准或生产验收。
 
 本批仅本地代码、测试和提交；准确SHA见Git日志。未推送、PR、合并、部署、执行0105或其他迁移、真实AI调用、真实采集/发布。仍待工作台挂载新触发/AI配置/人工登记字段、隔离PostgreSQL并发验收、完整渲染环境与真实账号试点；PDF自动推送及站外通知缺口保持不变。
+
+## SEO-11：DeepSeek 显式路由与目标交付完成
+
+关联 SEO-A02、A04、A05、A07。本批只处理指定的供应商选择和两个任务完成条件，没有扩大为全仓审计。
+
+实现与审查：
+
+- 自动草稿服务计划新增 `content_ai_provider=deepseek` 与 `content_ai_model=deepseek-chat/deepseek-reasoner`，顾问显式选择并冻结到领取/操作摘要。首次生成和一次纠正均显式传入官方DeepSeek地址/key/模型，不再继承DashScope优先路由；只配DashScope、缺DeepSeek或地址无效时转人工，失败不回退其他供应商。
+- 复用原assist/配额/operation，成功保存请求模型和供应商响应的真实model（缺失为null）。缓存结果缺少对应供应商证据或模型明显不符不写稿、不盲目重试。原公共assist请求摘要、默认路由和响应格式保持兼容；共享 `app/ai/deepseek.py` 只增加可选响应元数据出口，未改全局模型或供应商默认值。
+- 确认并以三个失败测试复现原问题：其他文章归档、七日窗口移出导致目标发布无法done；其他页面变差导致目标已修复无法done。两个任务完成条件现按目标/版本/时间的真实交付证据判断，站点总量留在 `effect_context`，持平或下降不阻挡。
+- `page_remediation` 增加同租户/站点/URL最新快照、HTTP2xx、无问题与真实完成run佐证，不能拿人工状态或过滤失败后的旧成功快照完成。同一刻度必须有冻结旧快照ID与更新ID证明先后，旧任务没有ID则要求严格晚于创建。内容仍要求准确版本确认、选定发布记录和发布后自动页面证据；失败/手工capture/错范围/过期确认不能完成。
+- 新对象指标仅写入完成证据；`/metrics/snapshot`、trend_7d、共享任务字段和原站点指标口径不改。历史已完成证据不回填，未完成任务按新证据规则接续；前端不得假设completion_evidence.metric_key固定等于baseline.metric_key。无需新增表或迁移，内容链仍需0105。
+
+验证：
+
+- 修复前三个业务复现测试实际为 **3 failed**；修复后首轮 **125 passed、3 skipped**，扩展十文件 **367 passed、9 skipped**。
+- 新HTTP层使用 `httpx.MockTransport`，实际执行客户端路由代码但不联网；覆盖DeepSeek优先、纠正请求、失败无回退且退款、缺配置、异常地址、响应模型不符/缺失、原公共assist兼容、恢复旧缓存与模型修改显式授权。
+- 最终18文件定向回归 **507 passed、24 skipped、1 warning**。24跳过为工作流PostgreSQL6例、既有工单环境3例、追加的AI operation PostgreSQL15例；不能记为通过。warning为既有jieba/pkg_resources。运行命令：`python -m pytest tests/test_seo_draft_provider.py tests/test_seo_delivery_completion.py tests/test_seo_content_drafting.py tests/test_seo_content_workflow.py tests/test_seo_service_workflows.py tests/test_seo_content_confirmations.py tests/test_seo_publication_workbench_contract.py tests/test_seo_distribution.py tests/test_seo_workflow_postgres.py tests/test_seo_foundation.py tests/test_seo_scheduler.py tests/test_seo_cockpit.py tests/test_seo_cockpit_auth.py tests/test_seo_page_capture_api.py tests/test_seo_release_consistency.py tests/test_seo_workbench_publication_page_evidence.py tests/test_seo_demo_runtime.py tests/test_seo_ai_operations.py -q`。
+- 15个改动文件的源文件白名单检查、13个Python文件AST解析与 `git diff --check` 通过。自查限当前差异和直接调用流程，无独立审核人批准或生产验收结论。本批未改前端，不重复累计SEO-10前端测试。
+- 测试解释器：`D:/SNIPERS国内版/ai_sni/.venv/Scripts/python.exe`；导入桩：`$env:TEMP/seo-test-pydeps`，设置为PYTHONPATH。桩仅用于缺少Pillow/python-docx/openpyxl时的导入，不代表真实渲染测试。普通隔离回归使用假数据库/供应商配置；真实key未读取、供应商未实际调用。
+- 收尾时总控告知已准备本机PG16.15隔离测试库并接手工作流6项和地址防护4项。为固定验收代码，本窗口不再并发编辑测试/执行链，不读取其凭据、不重复执行PG测试；其实际结果后续单独记录，不能把本轮skip改写成pass。
+
+本批仅本地提交，准确SHA见Git日志；未推送、PR、部署、迁移、真实采集或发布。工作台需识别新供应商字段和目标证据结构，隔离PG结果、真实数据试点、完整渲染环境及站外通知/自动PDF推送仍待后续验收或实施。

@@ -211,20 +211,22 @@ async def advance_content_workflow(session, site, task, *, now=None, publication
         return None
     before, after = task.baseline["value"], await published_count(session, site, now)
     if (content.status != "published" or not content.published_at
-            or utc(content.published_at) < utc(task.created_at)
-            or not now - timedelta(days=7) < utc(content.published_at) <= now
-            or utc(selected.published_at) < utc(task.created_at) or after <= before):
-        transition(task, "page_evidence_ready", now, blocker="published_metric_growth_not_verified")
+            or not utc(task.created_at) <= utc(selected.published_at) <= now
+            or utc(capture.captured_at) > now):
+        transition(task, "page_evidence_ready", now, blocker="target_publication_time_not_verified")
         return None
-    task.completion_evidence = {
-        "metric_key": METRIC, "before": before, "after": after, "change_abs": after - before,
-        "as_of": now.isoformat(), "source": {"content_id": content.id, "publication_id": selected.id,
+    from app.seo_delivery_evidence import CONTENT_METRIC, object_evidence
+    task.completion_evidence = object_evidence(CONTENT_METRIC,
+        {"task_id": task.id, "tenant_id": site.tenant_id, "site_id": site.id,
+         "content_id": content.id, "publication_id": selected.id, "source_version": selected.source_version},
+        {"content_id": content.id, "publication_id": selected.id,
         "source_version": selected.source_version, "confirmation_id": confirmation.id,
         "page_url": selected.page_url, "published_at": selected.published_at.isoformat(),
-        "capture_id": capture.id, "captured_at": capture.captured_at.isoformat(), "sha256": capture.sha256},
-        "meaning": "publication_and_page_evidence_only", "seo_effect": "not_evaluated",
-        "snapshot_url": f"/api/v1/seo/metrics/snapshot?tenant_id={site.tenant_id}&site_id={site.id}",
-    }
+        "capture_id": capture.id, "captured_at": capture.captured_at.isoformat(), "sha256": capture.sha256,
+        "meaning": "publication_and_page_evidence_only"},
+        {"metric_key": METRIC, "scope": "site", "before": before, "after": after,
+         "change_abs": after - before if before is not None else None,
+         "snapshot_url": f"/api/v1/seo/metrics/snapshot?tenant_id={site.tenant_id}&site_id={site.id}"}, now)
     task.status = "done"
     transition(task, "completed_with_page_evidence", now, waiting_for=None)
     return None

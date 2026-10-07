@@ -44,7 +44,10 @@ def store(tmp_path, monkeypatch):
     for module in (drafts, flow, ops):
         monkeypatch.setattr(module, "async_session_factory", store.session)
     monkeypatch.setattr(api, "is_enabled", lambda: True)
-    monkeypatch.setattr(api, "get_settings", lambda: SimpleNamespace(seo_ai_max_requests_per_tenant_per_day=5))
+    store.settings = SimpleNamespace(seo_ai_max_requests_per_tenant_per_day=5,
+        deepseek_api_key="isolated-deepseek", deepseek_base_url="https://api.deepseek.com",
+        deepseek_model="deepseek-chat", dashscope_api_key="isolated-dashscope", dashscope_model="qwen-test")
+    monkeypatch.setattr(api, "get_settings", lambda: store.settings)
     store.provider = AsyncMock(return_value=RESULT)
     monkeypatch.setattr(api, "chat_json", store.provider)
     yield store
@@ -194,7 +197,7 @@ def test_quota_does_not_call_supplier(store, monkeypatch):
         async with store.session() as session:
             await charge_seo_usage(session, 4, "ai_requests", 1, 1)
     asyncio.run(consume())
-    monkeypatch.setattr(api, "get_settings", lambda: SimpleNamespace(seo_ai_max_requests_per_tenant_per_day=1))
+    store.settings.seo_ai_max_requests_per_tenant_per_day = 1
     run(store)
     assert store.task().params["ai_draft"]["reason"] == "ai_draft_quota_exceeded"
     store.provider.assert_not_awaited()
@@ -203,9 +206,9 @@ def test_quota_does_not_call_supplier(store, monkeypatch):
 def test_missing_provider_does_not_charge(store, monkeypatch):
     enable(store)
     trigger(store)
-    monkeypatch.setattr(api, "is_enabled", lambda: False)
+    store.settings.deepseek_api_key = ""
     run(store)
-    assert store.task().params["ai_draft"]["reason"] == "ai_draft_provider_unavailable"
+    assert store.task().params["ai_draft"]["reason"] == "ai_draft_deepseek_not_configured"
     store.provider.assert_not_awaited()
     with Session(store.engine) as db:
         assert db.scalar(select(func.count()).select_from(SeoAiOperation)) == 0
@@ -227,7 +230,7 @@ def test_restart_replays_committed_operation_without_second_provider_call(store,
 def test_restart_before_operation_claim_stops_after_timeout(store, monkeypatch):
     enable(store)
     trigger(store)
-    monkeypatch.setattr(api, "assist_seo_content", AsyncMock(side_effect=asyncio.CancelledError()))
+    monkeypatch.setattr(api, "_assist_seo_content", AsyncMock(side_effect=asyncio.CancelledError()))
     with pytest.raises(asyncio.CancelledError): run(store)
     task = store.task()
     ai = {**task.params["ai_draft"], "claimed_at": (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()}

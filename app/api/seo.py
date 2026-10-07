@@ -293,7 +293,12 @@ async def _limited_seo_chat_json(
     charge_usage: bool = True,
     usage_receipt: dict[str, str] | None = None,
     operation: dict | None = None,
+    generation_route: dict | None = None,
+    response_metadata: dict | None = None,
 ) -> dict[str, Any]:
+    route_kwargs = _seo_deepseek_kwargs(generation_route) if generation_route else {}
+    if generation_route:
+        route_kwargs["response_metadata"] = response_metadata
     charged_on: str | None = None
     if charge_usage:
         settings = get_settings()
@@ -315,7 +320,7 @@ async def _limited_seo_chat_json(
         if usage_receipt is not None:
             usage_receipt.update(receipt)
     try:
-        return await chat_json(system, user, timeout=timeout)
+        return await chat_json(system, user, timeout=timeout, **route_kwargs)
     except (Exception, asyncio.CancelledError):
         if charge_usage:
             await _refund_failed_seo_ai_request(session, tenant_id, charged_on=charged_on, operation_id=receipt.get("operation_id"))
@@ -5171,12 +5176,58 @@ def _sanitize_content_html(value: str | None) -> str | None:
     return sanitize_article_html(value)
 
 
+def _seo_draft_route(plan):
+    provider = plan.get("content_ai_provider") or "deepseek"
+    model = plan.get("content_ai_model") or "deepseek-chat"
+    if provider != "deepseek" or model not in {"deepseek-chat", "deepseek-reasoner"}:
+        raise HTTPException(503, {"code": "ai_draft_deepseek_route_invalid"})
+    settings = get_settings()
+    if not str(getattr(settings, "deepseek_api_key", "") or "").strip():
+        raise HTTPException(503, {"code": "ai_draft_deepseek_not_configured"})
+    from urllib.parse import urlsplit
+    base = str(getattr(settings, "deepseek_base_url", "") or "https://api.deepseek.com").rstrip("/")
+    try:
+        parsed = urlsplit(base)
+    except ValueError:
+        raise HTTPException(503, {"code": "ai_draft_deepseek_route_invalid"}) from None
+    if (parsed.scheme != "https" or parsed.netloc not in {"api.deepseek.com", "api.deepseek.com:443"}
+            or parsed.path not in {"", "/v1"} or parsed.query or parsed.fragment):
+        raise HTTPException(503, {"code": "ai_draft_deepseek_route_invalid"})
+    return {"provider": provider, "model": model, "base_url": base}
+
+
+def _seo_deepseek_kwargs(route):
+    current = _seo_draft_route({"content_ai_provider": route["provider"], "content_ai_model": route["model"]})
+    if current != route:
+        raise HTTPException(503, {"code": "ai_draft_deepseek_route_changed"})
+    return {"api_key": get_settings().deepseek_api_key.strip(), "base_url": route["base_url"], "model": route["model"]}
+
+
+def _seo_draft_provider_status(plan):
+    try:
+        _seo_draft_route(plan)
+        return True, None
+    except HTTPException as exc:
+        return False, exc.detail["code"]
+
+
+def _seo_assist_request_payload(req, generation_route=None):
+    payload = req.model_dump(mode="json", exclude={"request_id"})
+    if generation_route:
+        payload["generation_route"] = generation_route
+    return payload
+
+
 @router.post("/content-ai/assist")
 async def assist_seo_content(
     req: SeoContentAssistRequest,
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
+    return await _assist_seo_content(req, session, ctx)
+
+
+async def _assist_seo_content(req, session, ctx, *, generation_route=None):
     ctx.ensure_tenant(req.tenant_id)
     tenant = await _tenant(session, req.tenant_id)
     source_page: SeoSitePage | None = None
@@ -5221,15 +5272,19 @@ async def assist_seo_content(
         raise HTTPException(400, "请先选择目标关键词")
     if req.action == "rewrite" and not (req.draft or req.source_text):
         raise HTTPException(400, "请先输入正文或导入待改写原文")
-    if not is_enabled():
+    if generation_route:
+        _seo_deepseek_kwargs(generation_route)
+    elif not is_enabled():
         raise HTTPException(503, "DeepSeek 尚未配置")
     system, user = _seo_ai_prompt(req, tenant, keywords)
     usage_charged = False
     usage_receipt: dict[str, str] = {}
+    response_metadata: dict = {}
     try:
         raw_result = await _limited_seo_chat_json(
             session, req.tenant_id, system, user, timeout=90.0, usage_receipt=usage_receipt,
-                operation={"request_key": req.request_id, "payload": req.model_dump(mode="json", exclude={"request_id"}),
+                **({"generation_route": generation_route, "response_metadata": response_metadata} if generation_route else {}),
+                operation={"request_key": req.request_id, "payload": _seo_assist_request_payload(req, generation_route),
                            "actor": str(ctx.user_id) if ctx.user_id is not None else "api_key", "kind": "content_assist"}
         )
         usage_charged = True
@@ -5298,6 +5353,7 @@ async def assist_seo_content(
                 correction,
                 timeout=90.0,
                 charge_usage=False,
+                **({"generation_route": generation_route, "response_metadata": response_metadata} if generation_route else {}),
             )
             try:
                 result = _validated_seo_assist_result(req.action, repaired_result)
@@ -5373,6 +5429,9 @@ async def assist_seo_content(
         raise
     allowed = {key: result.get(key) for key in ("title", "outline", "content", "feedback", "suggestions") if result.get(key) is not None}
     response = {"action": req.action, "model": "deepseek-chat", "keyword_coverage": {"selected": [item.keyword for item in keywords], "missing": []}, **allowed}
+    if generation_route:
+        response.update(provider=generation_route["provider"], model=generation_route["model"],
+                        response_model=response_metadata.get("model"), generation_route=generation_route)
 
     if usage_receipt.get("operation_id"):
         return await settle_seo_ai_operation(session, req.tenant_id, usage_receipt["operation_id"], result=response)
@@ -5485,6 +5544,8 @@ class SeoServicePlanUpdate(BaseModel):
     content_cycle_enabled: bool | None = None
     content_interval_days: int | None = Field(None, ge=1, le=90)
     content_ai_enabled: bool | None = None
+    content_ai_provider: Literal["deepseek"] | None = None
+    content_ai_model: Literal["deepseek-chat", "deepseek-reasoner"] | None = None
     content_ai_fact_ids: list[PositiveInt] | None = Field(None, max_length=20)
     content_ai_keyword_ids: list[PositiveInt] | None = Field(None, max_length=5)
     website_cycle_enabled: bool | None = None
@@ -7080,6 +7141,8 @@ def _service_plan_payload(site: SeoSite) -> dict[str, Any]:
         "content_cycle_enabled": plan.get("content_cycle_enabled") is True,
         "content_interval_days": int(plan.get("content_interval_days") or 7),
         "content_ai_enabled": plan.get("content_ai_enabled") is True,
+        "content_ai_provider": plan.get("content_ai_provider") or "deepseek",
+        "content_ai_model": plan.get("content_ai_model") or "deepseek-chat",
         "content_ai_fact_ids": list(plan.get("content_ai_fact_ids") or []),
         "content_ai_keyword_ids": list(plan.get("content_ai_keyword_ids") or []),
         "content_ai_authorized_by": plan.get("content_ai_authorized_by"),
@@ -7147,11 +7210,14 @@ async def get_seo_service_plan(
     }
     from app.seo_workflow_capabilities import trigger_capabilities
     result["trigger_actions"] = await trigger_capabilities(session, ctx, site)
+    provider_configured, provider_unavailable_reason = _seo_draft_provider_status(result)
     result["content_ai_policy"] = {
         "can_configure": bool(can_update and ctx.can_view("seo.keywords")),
         "can_disable": can_update,
         "configure_denial_reason": denial_reason or (None if ctx.can_view("seo.keywords") else "keyword_view_permission_required"),
-        "provider_configured": is_enabled(), "output_status": "drafting",
+        "provider_configured": provider_configured, "provider_unavailable_reason": provider_unavailable_reason,
+        "supported_providers": ["deepseek"], "supported_models": ["deepseek-chat", "deepseek-reasoner"],
+        "provider": "deepseek", "fallback_allowed": False, "output_status": "drafting",
         "automatic_review": False, "automatic_confirmation": False, "automatic_publication": False,
         "attempts_per_workflow": 1, "failure_handling": "advisor_uses_existing_editor_or_assist",
         "enable_requires": ["assigned_advisor", "content_and_site_edit", "keyword_view", "current_site_material", "active_site_keywords"],
@@ -7199,7 +7265,7 @@ async def update_seo_service_plan(
     }
     for key in ("website_cycle_enabled", "website_interval_days", "website_max_pages",
                 "monitoring_cycle_enabled", "monitoring_interval_days", "report_cycle_enabled",
-                "content_ai_enabled", "content_ai_fact_ids", "content_ai_keyword_ids"):
+                "content_ai_enabled", "content_ai_fact_ids", "content_ai_keyword_ids", "content_ai_provider", "content_ai_model"):
         value = getattr(req, key)
         settings["seo_service_plan"][key] = current[key] if value is None else value
     new_plan = settings["seo_service_plan"]
@@ -7208,7 +7274,7 @@ async def update_seo_service_plan(
     if new_plan["content_ai_enabled"]:
         if not ctx.can_view("seo.keywords"):
             raise HTTPException(403, "配置自动草稿还需要关键词查看权限")
-        changed_sources = any(new_plan[key] != current[key] for key in ("content_ai_fact_ids", "content_ai_keyword_ids"))
+        changed_sources = any(new_plan[key] != current[key] for key in ("content_ai_fact_ids", "content_ai_keyword_ids", "content_ai_provider", "content_ai_model"))
         if changed_sources and req.content_ai_enabled is not True:
             raise HTTPException(409, {"code": "ai_draft_explicit_enable_required"})
         from app.seo_content_drafting import selected_material

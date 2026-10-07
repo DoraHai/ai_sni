@@ -403,7 +403,7 @@ def test_failed_capture_needs_explicit_recheck_and_can_resume(store):
     assert store.task().status == "in_progress"
 
 
-@pytest.mark.parametrize("mutation", ["manual", "metric_flat", "foreign_scope", "stale_confirmation"])
+@pytest.mark.parametrize("mutation", ["manual", "foreign_scope", "stale_confirmation"])
 def test_unrelated_or_incomplete_evidence_never_completes_task(store, mutation):
     trigger(store)
     store.draft_ready()
@@ -414,8 +414,6 @@ def test_unrelated_or_incomplete_evidence_never_completes_task(store, mutation):
         capture = db.get(SeoPageCapture, task.params["capture_id"])
         if mutation == "manual":
             capture.source, capture.uploaded_by, capture.uploaded_at = "manual", 7, datetime.now(timezone.utc)
-        elif mutation == "metric_flat":
-            task.baseline = {**task.baseline, "value": 1}
         elif mutation == "foreign_scope":
             capture.tenant_id = 5
         else:

@@ -223,7 +223,7 @@ SEO-08 增加 `content_cycle_enabled`（默认 false）及 `content_interval_day
 
 通用 SEO 任务接口新增 `action_type=page_remediation`，要求 `seo.site:edit`，创建参数必须包含当前站点真实存在的 `page_id`。服务端会固定保存创建时页面状态、问题码和检查时间，不能由请求伪造这些基线字段。
 
-任务完成仍使用 `PATCH /tasks/{task_id}` 的 `status=done`，但必须满足：目标页面在任务创建后重新检查、状态为 `healthy` 或 `verified`、问题码为空，并且站点 `seo.site.healthy_page_count` 相比任务基线真实增加。完成证据返回页面 ID、复检时间、HTTP 状态、审计分数和空问题列表。人工修改网站或把任务手工打勾都不能直接完成任务。
+任务完成仍使用 `PATCH /tasks/{task_id}` 的 `status=done`。SEO-11 起要求目标页面在任务创建后重新检查、状态为 `healthy` 或 `verified`、HTTP 2xx、问题码为空；还必须有相同租户/站点/URL 的最新成功快照及任务创建后完成的抓取记录，快照时间与当前检查时间对应。站点健康页面总数另作效果背景，持平或下降不阻止目标完成。人工修改状态或把任务手工打勾不能代替真实快照。完成证据格式见本文 SEO-11。
 
 指标快照新增：
 
@@ -291,14 +291,14 @@ SEO-08 增加 `content_cycle_enabled`（默认 false）及 `content_interval_day
 | awaiting_page_evidence | 发布事实已存在，复用/排队该地址的自动页面证据；pending 可在重启后派发 |
 | page_evidence_needs_attention | 采集不可用、失败、超时或只有手工截图；使用原有页面采集入口复检，不自动反复请求 |
 | page_evidence_ready | 已有页面证据，但站点近7天发布篇数尚未证明比创建时增加；不能手工打勾为完成 |
-| completed_with_page_evidence | 实际新发布 + 对应地址自动页面证据 + 站点发布指标增长，保存 completion_evidence 后 done |
+| completed_with_page_evidence | 实际目标版本发布 + 对应地址自动页面证据，保存 completion_evidence 后 done；全站总量另列 |
 | paused / needs_attention | 计划暂停 / 内容缺失或失去归属，停止新的接续 |
 
 `waiting_for` 表示处理角色：advisor / customer_or_advisor / system / null，不是个人账号分配。`assignment_advisor_id` 仅是创建时分配依据，后续授权每次重新核对。撤销顾问分配、站点/模块失效会停止调度；任务字段是最近一次持久化评估结果，GET 不隐式刷新或执行。顾问可手动调用 advance 取得当前拒绝原因。
 
 **读取、取消与提醒：**使用既有 `GET /tasks`、`GET /tasks/{id}`，租户和站点隔离不变；列表 `limit` 默认 50、最多 100，按 id 降序，`before_id` 游标分页，无全量总数。GET 不创建、生成、采集或发布。`DELETE /tasks/{id}` 取消未完成链，保留稿件和外部发布事实；PATCH 不允许手工修改此类任务的 status/assignee_role 或伪造 done。每个阶段等待超过两天仅设 `attention_overdue=true`，无站外通知；历史保留最近100次阶段/原因变化，截断时明确标记，日常不重复追加相同状态。
 
-完成证据引用真实 `content_id/publication_id/source_version/confirmation_id/capture_id/page_url/published_at/captured_at/sha256`，并记录 `seo.content.published_7d_count` 的 before/after/change_abs/as_of。它表示一条选定渠道的发布及页面证据交付，**不表示页面全部 SEO 检查通过、已被收录或搜索效果提升**，`seo_effect=not_evaluated`。该指标沿用站点近7天去重篇数口径：如果等待太久或旧文章移出七天窗口导致没有净增长，保留 page_evidence_ready，不捏造增长或变更指标含义。
+完成证据引用真实 `content_id/publication_id/source_version/confirmation_id/capture_id/page_url/published_at/captured_at/sha256`。SEO-11 起使用任务目标交付指标，站点 `seo.content.published_7d_count` 的 before/after/change_abs 单列在 `effect_context`；滚动窗口减少、其他文章归档或长期恢复不阻止已证实的目标交付。它表示一条选定渠道的发布及页面证据交付，**不表示页面全部 SEO 检查通过、已被收录或搜索效果提升**，`seo_effect=not_evaluated`。目标发布必须在任务创建后且不晚于当前时间，自动证据必须在发布后且非未来时间；其余版本、确认、关联与证据条件不变。
 
 本批首条可运行链以顾问制作/渠道操作为正式人工步骤；已配 API 渠道仍由顾问调用既有分发接口。周期网站诊断、自动异常建单、周期报告和主动通知尚未由本链实现，不能据此将 A01–A07 全部标记完成。
 
@@ -453,7 +453,7 @@ retry_page_id 仅用于网站链中实际 failed 的单页，否则409 `page_ret
 - 资料复用 `GET /api/v1/seo/qa/facts?tenant_id=&site_id=`，最多20条：同租户同站点、active、未过期、正文和source_name非空，总快照不超过5万字符。source_url可空，适用于人工录入资料；这不代表系统已经替顾问核实资料真伪。关键词最多5个，必须精确归属当前站点且active，不接受site_id=null的租户级关键词。
 - 已开启时更换资料/关键词必须同时显式传 `content_ai_enabled:true`，否则409 `ai_draft_explicit_enable_required`。关闭可单独false；无关键词权限仍可关闭。无资料/过期/不匹配返回409稳定code，配置不落库。
 - 开启适用于当前尚无正文的内容链和后续新链；已有正文、承接页整改稿、已经内审/发布的稿件不自动覆盖。既有每分钟内容调度接入，一条内容链最多领取一次自动生成。
-- 复用 `POST /api/v1/seo/content-ai/assist` 的服务函数、日额度和SeoAiOperation。供应商配置路由不变（DeepSeek模块目前优先DashScope），不另外开放自动生成endpoint。生成内容必须保留所选资料的`[F编号]`，未知引用、无引用、待补充/待核验、无效长度交人工；这些程序检查不替代事实质量审核。
+- 复用 `POST /api/v1/seo/content-ai/assist` 的服务函数、日额度和SeoAiOperation，不另外开放自动生成endpoint。SEO-11 起自动草稿显式锁定 DeepSeek，见下文；原公共 assist 的默认路由保持原样。生成内容必须保留所选资料的`[F编号]`，未知引用、无引用、待补充/待核验、无效长度交人工；这些程序检查不替代事实质量审核。
 - 成功只保存 `status=drafting`、稿件版本+1和来源快照，阶段为`awaiting_internal_review`。后续仍用现有编辑、submit-review、review、准确版本确认、分平台发布与页面证据接口；不自动审核、代确认、选渠道或发布。
 - 领取状态先提交，网络调用不持有任务/站点锁。重启只读对应operation的已持久化结果，成功可回收；running继续等待，退款/失败/超时交顾问，不再次向供应商请求。既有assist内部最多一次格式/关键词纠正仍保留，属于同一次日额度操作，不是无限重试。
 - 写回前复核计划revision、明确授权者、账号与分配、资料/关键词快照、稿件hash/版本和任务状态。取消、暂停、禁用、撤权、改稿、改资料后不覆盖稿件。已完成供应商生成但未能采纳的结果仍按既有实际调用计数，不伪称退款；供应商失败走已有退款机制。
@@ -494,6 +494,64 @@ retry_page_id 仅用于网站链中实际 failed 的单页，否则409 `page_ret
 触发能力与`allowed_actions.update_service_plan`独立。按写端要求复核0105、实名、双edit、当前站点分配、模块/站点启用、服务计划暂停与revision、同类型已有活动链；内容需选题/方向，监测额外需关键词edit及1–200个启用词。常见reason为`authenticated_user_required`、`active_site_advisor_assignment_required`、`site_or_module_not_operational`、`service_plan_paused`、`service_plan_required`、`content_workflow_already_active`、`service_workflow_already_active`、`keyword_edit_permission_required`、`keyword_inventory_required`、`monitoring_keyword_limit_200`。allowed只表示可新建执行链，不保证资料齐全、采集成功或有异常；网站无既有页面等阻塞仍在执行任务中返回。写端在行锁内再次校验，不能以GET资格作为永久授权。
 
 内容任务 `params.ai_draft` 返回 `status=claimed/succeeded/needs_attention`、`request_id`、`claimed_at`、`authorized_by`、`plan_revision`、`source_version`与输入摘要。成功另外返回`operation_id/generated_by=system/saved_version/fact_snapshots/finished_at`；人工处理时返回稳定`reason/quality_checks`。阶段`ai_draft_in_progress`由系统等待，`ai_draft_needs_attention`由顾问处理。资料过期、额度不足、供应商未配置、结果未知、输入变化均不标成done。没有自动重试按钮，失败任务可通过现有编辑器/assist人工制稿并正常继续。
+
+### SEO-11：自动草稿供应商与目标完成证据
+
+仍为本地实现，不新增迁移或公开生成接口；内容自动链继续依赖0105。服务计划 GET/PUT 新增 `content_ai_provider`（仅 `deepseek`，默认值同此）和 `content_ai_model`（`deepseek-chat | deepseek-reasoner`，默认 `deepseek-chat`）。省略保留原值；自动草稿开启期间修改模型也必须显式携带 `content_ai_enabled:true`，否则409 `ai_draft_explicit_enable_required`。默认模型不读取全局 DashScope 模型配置。
+
+自动草稿及其一次格式纠正都显式传入 DeepSeek key、官方 HTTPS 地址和所选模型。仅允许 `https://api.deepseek.com` 的空路径或 `/v1`（可显式443端口）；其他网关不会被标成已确认的 DeepSeek。缺 DeepSeek 配置、仅有 DashScope 配置或路由无效时，任务转人工且不发请求；供应商失败走既有退款机制，不回退其他供应商。GET `content_ai_policy` 增加 `provider=deepseek`、`supported_providers=[deepseek]`、`supported_models`、`fallback_allowed=false` 和 `provider_unavailable_reason`，读取不调用供应商。开启计划可保存但不等于供应商可用。
+
+任务 `params.ai_draft.generation_route` 冻结非敏感的 `provider/model/base_url` 并参与幂等摘要；成功额外保存 `provider`、请求的 `model` 和响应报告的 `response_model`。后者缺失时为null，不能拿请求模型充当已核实的供应商返回版本。返回其他供应商模型时拒绝采纳；旧缓存结果没有供应商来源证据时转人工，不重新请求生成。主要reason：`ai_draft_deepseek_not_configured`、`ai_draft_deepseek_route_invalid`、`ai_draft_deepseek_route_changed`、`ai_draft_provider_evidence_missing`、`ai_draft_provider_model_mismatch`。不返回或保存key。原公共assist的默认路由、请求摘要与响应格式保持兼容。
+
+`content_delivery` 与 `page_remediation` 的新完成证据采用限定任务对象的观察计数，避免站点总量把正确交付卡住：
+
+| `metric_key` | 统计口径 |
+| --- | --- |
+| `seo.content.target_delivery_verified_count` | 限定本任务内容、准确版本和选定发布记录；任务创建后发布且取得发布后自动页面证据计1，否则0，不表示搜索效果增长。 |
+| `seo.site.target_clean_recheck_count` | 限定本任务目标页面；任务创建后取得与当前页面对应的成功、无问题重新抓取快照计1，否则0，不表示全站健康页面净增长。 |
+
+以下为任务完成证据的结构示例，ID仅作隔离示例：
+
+```json
+{
+  "metric_key": "seo.site.target_clean_recheck_count",
+  "metric_definition": "限定本任务目标页面；任务创建后取得与当前页面对应的成功、无问题重新抓取快照计1，否则计0，不表示全站健康页面净增长。",
+  "unit": "count",
+  "scope": {"task_id": 900, "tenant_id": 4, "site_id": 2, "page_id": 10},
+  "before": 0,
+  "after": 1,
+  "change_abs": 1,
+  "as_of": "2026-10-07T08:00:00+00:00",
+  "completion_basis": "target_object_evidence",
+  "source": {
+    "page_id": 10,
+    "url": "https://example.com/page/10",
+    "status": "healthy",
+    "checked_at": "2026-10-07T07:59:00+00:00",
+    "snapshot_id": 91,
+    "crawl_run_id": 92,
+    "http_status": 200,
+    "audit_score": 100,
+    "issue_codes": [],
+    "source_issue_codes": ["h1_missing"],
+    "meaning": "target_page_rechecked_clean"
+  },
+  "meaning": "target_page_rechecked_clean",
+  "effect_context": {
+    "metric_key": "seo.site.healthy_page_count",
+    "scope": "site",
+    "before": 2,
+    "after": 1,
+    "change_abs": -1,
+    "snapshot_url": "/api/v1/seo/metrics/snapshot?tenant_id=4&site_id=2"
+  },
+  "seo_effect": "not_evaluated"
+}
+```
+
+0→1指任务创建后新证据的获得，不代表未知的历史页面质量从差变好。页面必须核对最新快照（不能筛掉失败后拿旧成功顶替）、当前页面时间及真实完成的抓取run；同一时钟刻度只有任务冻结的旧快照ID和新的更大快照ID可证明先后时才接受。旧任务没有快照基线时严格要求复检时间晚于创建。站点总量移到 `effect_context`，允许持平、下降或旧基线未知；内容证据还在scope注明 `content_id/publication_id/source_version`，source继续含准确确认、自动capture和内容摘要。
+
+兼容要求：不改共享任务最小字段，也不改 `/metrics/snapshot`、`trend_7d` 或既有站点指标定义；上述两个key只在任务对象的完成证据内使用。历史已done的证据原样保留，未完成旧任务按新条件核实，旧baseline仅供效果背景。消费方按 `completion_basis` 和 `scope` 识别对象指标，不能把对象0/1汇总当成站点统计，也不能再固定假设completion_evidence.metric_key等于baseline.metric_key。旧消费方若依赖该假设需先适配；无数据库回填或DDL。其他任务种类的完成条件不在本批修改范围。
 
 ### UI-09：人工发布证据的准确版本前提与旧入口兼容
 

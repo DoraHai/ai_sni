@@ -33,12 +33,19 @@ def test_page_remediation_completion_requires_post_task_clean_recheck():
         baseline={'metric_key':'seo.site.healthy_page_count','value':2,'as_of':now.isoformat()},created_at=now-timedelta(hours=1))
     page=SeoSitePage(id=7,tenant_id=1,site_id=2,url='https://example.com/p',status='healthy',
         issue_codes=[],last_checked_at=now,http_status=200,audit_score=100)
-    session=SimpleNamespace(get=AsyncMock(return_value=page))
+    snapshot=SeoPageSnapshot(id=99,tenant_id=1,site_id=2,crawl_run_id=98,url=page.url,
+        fetched_at=(now+timedelta(hours=8)).replace(tzinfo=None),status_code=200,issue_codes=[])
+    run=SeoCrawlRun(id=98,tenant_id=1,site_id=2,seed_url=page.url,status='completed',
+        started_at=(now-timedelta(minutes=1)).replace(tzinfo=None),completed_at=now.replace(tzinfo=None))
+    async def get(model,ident):return page if model is SeoSitePage else run
+    session=SimpleNamespace(get=get,scalar=AsyncMock(side_effect=[snapshot,3]))
     with patch('app.api.seo_cockpit.metric_values',new=AsyncMock(return_value={'seo.site.healthy_page_count':3})):
         evidence=asyncio.run(completion(session,task))
-    assert evidence['metric_key']=='seo.site.healthy_page_count'
+    assert evidence['metric_key']=='seo.site.target_clean_recheck_count'
+    assert evidence['effect_context']['metric_key']=='seo.site.healthy_page_count'
     assert evidence['change_abs']==1
     assert evidence['source']['page_id']==7 and evidence['source']['issue_codes']==[]
+    assert evidence['source']['snapshot_id']==99
 
     page.issue_codes=['title_missing'];page.status='needs_fix'
     with patch('app.api.seo_cockpit.metric_values',new=AsyncMock(return_value={'seo.site.healthy_page_count':3})),pytest.raises(HTTPException):

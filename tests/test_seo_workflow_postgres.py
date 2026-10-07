@@ -167,7 +167,8 @@ def test_concurrent_draft_workers_call_provider_and_charge_only_once(monkeypatch
         async with database() as sessions:
             for module in (flow, drafts, ops): monkeypatch.setattr(module, "async_session_factory", sessions)
             monkeypatch.setattr(api, "is_enabled", lambda: True)
-            monkeypatch.setattr(api, "get_settings", lambda: SimpleNamespace(seo_ai_max_requests_per_tenant_per_day=5))
+            monkeypatch.setattr(api, "get_settings", lambda: SimpleNamespace(seo_ai_max_requests_per_tenant_per_day=5,
+                deepseek_api_key="isolated", deepseek_base_url="https://api.deepseek.com"))
             async with sessions() as session:
                 site = await session.get(SeoSite, 2)
                 site.site_settings = {"seo_service_plan": {**site.site_settings["seo_service_plan"],

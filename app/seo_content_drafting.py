@@ -175,6 +175,11 @@ async def persist_result(task_id, result=None, error=None):
                 return
             if not isinstance(result, dict) or not operation or operation.status != "succeeded":
                 raise blocked("ai_draft_result_unavailable")
+            if (claim.get("generation_route") is None or result.get("generation_route") != claim["generation_route"]
+                    or result.get("provider") != "deepseek" or result.get("model") != claim["generation_route"]["model"]):
+                raise blocked("ai_draft_provider_evidence_missing")
+            if result.get("response_model") and not result["response_model"].lower().startswith("deepseek"):
+                raise blocked("ai_draft_provider_model_mismatch")
             body = _sanitize_content_html(str(result.get("content") or ""))
             title, outline = str(result.get("title") or "").strip(), str(result.get("outline") or "").strip()
             checks = answer_checks(body, material["facts"])
@@ -192,6 +197,7 @@ async def persist_result(task_id, result=None, error=None):
                 content.review_submitted_by = content.review_submitted_at = None
                 content.reviewed_by = content.reviewed_at = content.review_note = None
                 save_state(task, {**claim, "status": "succeeded", "reason": None,
+                    "provider": result["provider"], "model": result["model"], "response_model": result.get("response_model"),
                     "operation_id": operation.id, "generated_by": "system", "saved_version": content.version_count,
                     "finished_at": datetime.now(timezone.utc).isoformat(), "fact_snapshots": material["facts"],
                     "quality_checks": [], "meaning": "draft_only_not_reviewed_or_confirmed"})
@@ -202,7 +208,7 @@ async def persist_result(task_id, result=None, error=None):
 
 
 async def execute_content_draft(task_id):
-    from app.api.seo import SeoContentAssistRequest, assist_seo_content
+    from app.api.seo import SeoContentAssistRequest, _assist_seo_content, _seo_draft_route, _seo_assist_request_payload
     request = ctx = None
     async with async_session_factory() as session:
         scope = await locked_context(session, task_id)
@@ -221,6 +227,7 @@ async def execute_content_draft(task_id):
                 if content.status not in {"planned", "drafting"} or (content.draft or "").strip() or (content.humanized_content or "").strip() or content.source_page_id:
                     return
                 material = await selected_material(session, site, plan_for(site))
+                generation_route = _seo_draft_route(plan_for(site))
                 request = SeoContentAssistRequest(
                     tenant_id=site.tenant_id, site_id=site.id, action="generate", mode="original",
                     request_id=f"workflow_{task.id}_draft_v1", title=content.title,
@@ -229,7 +236,8 @@ async def execute_content_draft(task_id):
                     instruction="仅依据所选事实资料撰写本选题。每项事实用 [F编号] 标明出处；不能从关键词、标题或客户简介推断产品参数、案例或效果。资料不足时明确写待补充，交顾问处理。输出是待人工审核的草稿。",
                 )
                 claim = {"status": "claimed", "request_id": request.request_id,
-                    "request_hash": request_fingerprint(request.model_dump(mode="json", exclude={"request_id"})),
+                    "request_hash": request_fingerprint(_seo_assist_request_payload(request, generation_route)),
+                    "generation_route": generation_route,
                     "source_hash": source_fingerprint(content), "material_hash": request_fingerprint(material),
                     "plan_revision": plan_for(site)["revision"], "authorized_by": ctx.user_id,
                     "claimed_at": datetime.now(timezone.utc).isoformat(), "trigger": "system",
@@ -260,9 +268,9 @@ async def execute_content_draft(task_id):
     error = None
     try:
         async with async_session_factory() as session:
-            await assist_seo_content(request, session, ctx)
+            await _assist_seo_content(request, session, ctx, generation_route=claim["generation_route"])
     except HTTPException as exc:
-        error = {429: "ai_draft_quota_exceeded", 503: "ai_draft_provider_unavailable"}.get(exc.status_code, "ai_draft_generation_failed")
+        error = (exc.detail.get("code") if isinstance(exc.detail, dict) else None) or {429: "ai_draft_quota_exceeded", 503: "ai_draft_provider_unavailable"}.get(exc.status_code, "ai_draft_generation_failed")
     except asyncio.CancelledError:
         # The durable claim/operation is reconciled on the next run.
         raise

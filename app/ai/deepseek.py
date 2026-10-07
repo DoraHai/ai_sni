@@ -104,6 +104,7 @@ async def chat_json(
     base_url: str | None = None,
     model: str | None = None,
     temperature: float | None = None,
+    response_metadata: dict | None = None,
 ) -> dict:
     """调 OpenAI 兼容 /chat/completions，强制 JSON 输出。失败抛 DeepSeekError。"""
     key, url_base, mdl = _resolve_creds(api_key=api_key, base_url=base_url, model=model)
@@ -131,6 +132,9 @@ async def chat_json(
             resp.raise_for_status()
             data = resp.json()
         content = data["choices"][0]["message"]["content"]
+        if response_metadata is not None:
+            response_metadata.clear()
+            response_metadata["model"] = data.get("model") if isinstance(data.get("model"), str) else None
         return _parse_json_content(content)
     except (httpx.HTTPError, KeyError, ValueError, json.JSONDecodeError) as e:
         snippet = ""
