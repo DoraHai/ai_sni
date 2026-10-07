@@ -170,6 +170,7 @@ SOURCE_ALLOWED_EXACT = {
     "tests/test_seo_delivery_completion.py",
     "tests/test_seo_draft_provider.py",
     "scripts/seo_local_acceptance.py",
+    "scripts/seo_local_ui14_seed.py",
     "scripts/seo_local_auth.py",
     "tests/test_seo_local_acceptance.py",
     "docs/SEO_LOCAL_ACCEPTANCE.md",

@@ -91,6 +91,7 @@ def test_config_ignores_inherited_provider_and_database_secrets(tmp_path, monkey
         assert settings.deepseek_api_key == settings.dashscope_api_key == ""
         assert not settings.seo_scheduler_enabled and not settings.seo_external_actions_enabled
         assert settings.admin_api_key == "" and not settings.admin_api_key_query_enabled
+        assert settings.seo_page_capture_storage_dir == str(tmp_path / "ui14-media")
         assert "must-not-use" not in settings.database_url
     finally:
         config.get_settings = original
@@ -109,6 +110,26 @@ def test_cleanup_plan_does_not_drop_database_schema_extensions_or_cascade():
 
 def test_real_alembic_graph_has_expected_head_without_running_env():
     assert runner.graph() == {"head": runner.HEAD, "parent": runner.BASE, "revisions": 122}
+
+
+def test_ui14_fixture_plan_is_bounded_and_has_confirmation_cases_on_every_page(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "scripts"))
+    import seo_local_ui14_seed as seed
+    plan = seed.plans()
+    assert len(plan["contents"]) == 60
+    assert len(plan["tasks"]) == len(plan["keywords"]) == 45
+    assert "done" not in {item["status"] for item in plan["tasks"]}
+    for offset in (0, 20, 40):
+        assert {"pending", "approved", "rejected", "stale"} <= {
+            item["kind"] for item in plan["contents"][offset:offset + 20]}
+
+
+def test_ui14_tasks_cannot_be_advanced_but_existing_workflow_is_not_blocked():
+    path = "/api/v1/seo/workbench/content-workflows/5/advance"
+    assert runner.fixture_execution_blocked("POST", path, {5, 6})
+    assert not runner.fixture_execution_blocked("GET", path, {5, 6})
+    assert not runner.fixture_execution_blocked("POST", path, {6})
+    assert not runner.fixture_execution_blocked("POST", "/api/v1/seo/workbench/content-workflows/1/advance", {5, 6})
 
 
 @pytest.mark.parametrize("permitted,expired,expected", [(True, False, True), (False, False, False), (True, True, False)])

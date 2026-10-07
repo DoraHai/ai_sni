@@ -107,6 +107,7 @@ def configure(url):
                   admin_api_key_query_enabled=False, jwt_secret=credentials["jwt_secret"],
                   seo_scheduler_enabled=False, seo_rank_scheduler_enabled=False,
                   seo_external_actions_enabled=False, seo_page_capture_enabled=False,
+                  seo_page_capture_storage_dir=str(STATE_DIR / "ui14-media"),
                   seo_demo_mode=False, seo_demo_data_source_enabled=False, chinaz_api_enabled=False)
     # Every Settings field has an explicit value, so inherited environment keys
     # cannot silently configure a provider or redirect the database.
@@ -433,6 +434,11 @@ def allowed_request(method, path):
     return any(re.fullmatch(pattern, path) for pattern in rules.get(method, ()))
 
 
+def fixture_execution_blocked(method, path, task_ids):
+    match = re.fullmatch(r"/api/v1/seo/workbench/content-workflows/([1-9][0-9]*)/advance", path)
+    return method == "POST" and match is not None and int(match.group(1)) in task_ids
+
+
 def build_app():
     from app.seo_main import app, settings
     from app.api.auth import router
@@ -442,6 +448,7 @@ def build_app():
     if settings.seo_scheduler_enabled or settings.seo_external_actions_enabled or settings.admin_api_key:
         raise ValueError("Unsafe local backend settings")
     from seo_local_auth import router as session_catalog
+    fixture_task_ids = {item["id"] for item in read_state().get("ui14_seed", {}).get("tasks", [])}
     app.include_router(session_catalog)  # Before legacy /tenants; real auth/SQL.
     app.include_router(router)
     app.user_middleware = [m for m in app.user_middleware if m.cls is not CORSMiddleware]
@@ -451,7 +458,8 @@ def build_app():
 
     @app.middleware("http")
     async def local_actions(request, call_next):
-        if request.headers.get("x-api-key") or not allowed_request(request.method, request.url.path):
+        if (request.headers.get("x-api-key") or not allowed_request(request.method, request.url.path)
+                or fixture_execution_blocked(request.method, request.url.path, fixture_task_ids)):
             return JSONResponse(status_code=403, content={"code": "local_acceptance_action_disabled",
                 "detail": "仅本机合成数据联调；真实生成、抓取、发布与账号连接均禁用"})
         response = await call_next(request)

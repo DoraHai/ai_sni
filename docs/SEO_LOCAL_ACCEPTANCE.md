@@ -90,3 +90,11 @@ $env:PYTHONPATH="$env:TEMP\seo12-runtime-deps"
 后续空库入口需求另放行关键词POST（前端仅tenant_id/site_id/keyword/priority/landing_page），现共四类维护路径。防护单测38通过，新增关键词6项真实API检查通过；keyword2探针已归档，keyword1不变。仍不开放导入/重命名，不重置原环境。
 
 SEO新增探针资料id=2已停用；原资料1与UI12稿件/发布/任务未改，关键词1的priority/landing_page已恢复原值。用户、assignment及schema未修改。前端可以新建自己的合成资料进行浏览器验收，不需重跑UI12或重置环境。测试记录追加保留，后续由总控安排统一释放。
+
+## UI14 本机追加夹具
+
+显式工具`scripts/seo_local_ui14_seed.py`已经执行一次；批次UI14-20261008，只追加稿件4–63、任务5–49、关键词5–49、新页面2及手工合成截图1/2。40项防护/计划测试和31项真实媒体/分页/确认状态结果检查通过。数据库旧行指纹未变，新增对象及指纹清单在受限目录`ui14-fixtures.json`，API检查在`ui14-readonly-smoke.json`。不要重放，不能把合成审核/截图当真实客户确认或页面证据。
+
+图片PNG位于同受限目录的ui14-media子目录，runner显式使用此目录。capture1成功、capture2失败，稿件4–63均含两张HTML图片，建议从稿件7（ready/pending）只读看稿。runner按生命周期清单阻止新45个任务的advance，原任务1仍保留此前状态。关闭/清理仍由总控安排，必须把本轮媒体文件纳入精确清单，不删除原数据库凭据。
+
+UI14媒体鉴权、来源字段、分页数量和站内沟通最小方案已追加到`SEO_AUTOMATION_API.md`；无新生产路由、无通用URL代理、无人工会话表/迁移。客户顾问沟通尚未接入，不复用私有AI消息。

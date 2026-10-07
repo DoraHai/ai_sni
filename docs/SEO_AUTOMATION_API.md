@@ -657,7 +657,7 @@ python -m pytest tests/test_seo_workflow_postgres.py -q
 
 ### 客户待确认口径和验证范围
 
-客户待办读取 `/workbench/content-assets/{id}/delivery?tenant_id=1` 的`workflow_status`、`confirmation.status`和`allowed_actions`，不要把content.status=ready直接计入客户待确认。ready+approved→approved_waiting_publication；ready+rejected→awaiting_content_revision；ready+pending/stale→awaiting_customer_confirmation；结构未就绪→confirmation_unavailable。按钮还须对应allowed_actions=true。交付内容、各渠道published、页面核验、任务done和搜索效果分别展示。
+客户待办读取 `/workbench/content-assets/{id}/delivery?tenant_id=1&site_id=1` 的`workflow_status`、`confirmation.status`和`allowed_actions`，不要把content.status=ready直接计入客户待确认。tenant_id和site_id均必填，缺site_id返回422。ready+approved→approved_waiting_publication；ready+rejected→awaiting_content_revision；ready+pending/stale→awaiting_customer_confirmation；结构未就绪→confirmation_unavailable。按钮还须对应allowed_actions=true。交付内容、各渠道published、页面核验、任务done和搜索效果分别展示。
 
 本轮在真实本机API用advisor/customer两个账号各读取上表九类入口（含delivery、资料）均200，18次成功GET；两身份对投影外租户均403、错站点均404，另4次拒绝符合预期。仅登录使用POST，没有业务写入。记录在受限本机 `C:/Users/Administrator/.secrets/seo12-local/ui13-readonly-smoke.json`，不含凭证。合成库只有1词/1页/1条发布，无真实排名快照；空历史和未关联页面不构成真实排名/抓取验证。
 
@@ -666,3 +666,46 @@ python -m pytest tests/test_seo_workflow_postgres.py -q
 UI13后续维护定向验证：本机runner放行后，37项离线防护测试通过；真实JWT/API的15次检查通过，包括资料新增/完整编辑、旧version409、客户写入403、外租户403、错误站点写入409（先被operational-site门禁拒绝）、关键词priority/landing_page保存及恢复、导入仍403。首次探针错误预期错站点为404，实际在资料创建前即409；核对现有门禁后修正测试预期，没有改业务权限或重放已成功写入。新增合成资料id=2已retired/current=false；原资料id=1保持，关键词id=1的两个业务字段已恢复原值（维护更新时间正常更新）。证据：`C:/Users/Administrator/.secrets/seo12-local/ui13-maintenance-smoke.json`。这不是UI13浏览器表单验收，前端可另新增合成资料做真实交互测试；无需复用或重新激活SEO探针资料。
 
 新增关键词放行后的增量验证：38项防护测试通过，6项真实API检查通过（顾问五字段新增200、客户/外租户403、同站点重复关键词409、仅新探针归档200、导入仍403）。新探针keyword id=2已archived，原关键词1未改，不占active清单。记录：`C:/Users/Administrator/.secrets/seo12-local/ui13-keyword-create-smoke.json`。未重跑已通过的UI12流程或全量审查。
+
+## UI14 图片与多页夹具交付（2026-10-08）
+
+### 图片接法
+
+稿件不存在独立image列表字段。列表给draft/humanized_content，delivery给`content.body = humanized_content or draft or ""`；正文可能HTML或Markdown。前端按正文顺序保留图片与alt，正文先做安全解析/清洗。不能由source_page_id或page_url推断正文图片附件，截图也不是自动的稿件图片库。
+
+现有鉴权图片能力只覆盖SEO截图：
+
+1. `GET /api/v1/seo/site/page-captures/{id}?tenant_id=1`，真实JWT，需seo.site:view（同时还有路由通用权限检查），校验租户与截图所属站点。元数据包含id/tenant_id/site_id/relation_type/relation_id/source_url/status/error_code/source/content_type/image_width/image_height/sha256/warnings/captured_at/uploaded_by/uploaded_at等，**不返回storage_key，也没有通用代理url参数**。
+2. UI先核对metadata.id/tenant_id/site_id都与当前上下文一致，再使用`GET /api/v1/seo/site/page-captures/{id}/image?tenant_id=1`获取Blob。source_url是被记录页面地址，不是图片下载地址；site_id不是图片路由参数，不应假设服务端使用额外site_id过滤。需前端复核元数据站点；后端校验截图及其站点属于tenant。
+3. 成功Content-Type为image/png/jpeg/webp，Cache-Control=`private, no-store`、X-Content-Type-Options=`nosniff`。非成功截图404/image_not_ready，文件丢失或签名不符404/image_not_found。401须登录，403无权，外租户/不存在按实际权限层拒绝。
+4. host transport携带令牌仅用于上述固定同源相对路径，严格限制正整数ID和当前tenant；拒绝任意主机、`//host`、用户信息、重定向到外域及任意代理参数。HTTPS正文外链只可在不带系统Authorization/Cookie、no-referrer且允许CORS时读取；失败显示原alt与失败说明，不转后端任意URL代理。Blob URL使用结束及时revoke。
+5. 本机CORS允许`http://127.0.0.1:<port>`或localhost端口，允许Authorization；生产CORS未改。本机目录固定在受限`seo12-local/ui14-media`，与生产截图目录隔离。注意旧截图GET在主数据源上会把超时pending/running转failed，是已有状态维护，不启动抓取；不能把它称为绝对无写副作用接口。本轮只有终态夹具，不发生此更新。
+
+真实可验：capture1=成功，capture2=失败，二者tenant/site=1/1、relation_type=site_page、relation_id=2，source=manual，warnings包含synthetic=true、fixture_batch=UI14-20261008、not_publication_evidence=true。图片地址分别`/api/v1/seo/site/page-captures/1/image?tenant_id=1`和`/api/v1/seo/site/page-captures/2/image?tenant_id=1`。64位SHA256及尺寸640×240见本机清单；这是一张带英文合成标记的绘制PNG，不是真实网页截图。稿件4–63正文均依次含这两张HTML img；Markdown解析应由前端夹具另测，不声称本批已提供Markdown正文。
+
+### 多页对象与口径
+
+固定库seo_workflow_test、tenant/site=1/1，标签`UI14-20261008`。只由显式本机脚本 `scripts/seo_local_ui14_seed.py`在一个事务里追加；同批次有回执则不重放，无回执却发现标签则停止。全程自动化/AI/抓取/真实发布关闭，不执行任务；runner按清单拒绝UI14任务的content-workflows/{id}/advance，原task1不在拦截名单。已有六个相关表全部旧行SHA256保持一致，未修改UI12/13对象；没有迁移或身份变更。
+
+| 类型 | 新增ID/数量 | 新增状态预期 |
+| --- | --- | --- |
+| 稿件 | 4–63，共60 | planned8/drafting8/review8/ready29/archived7；ready进一步pending8/approved7/rejected7/stale7。确认记录明确注明seeded，不是客户真实确认 |
+| 任务 | 5–49，共45 | open15/in_progress15/cancelled15，均content_delivery，phase=fixture_not_executed、blocker=synthetic_fixture、完成证据null。只能用于浏览，不执行推进 |
+| 关键词 | 5–49，共45 | active15/paused15/archived15，P0–P3混合；无排名快照，不代表搜索观测 |
+| 页面/图片 | 新页面2；截图1、2 | 页面pending；人工合成图片成功/失败各1，不与publication1关联 |
+
+稿件列表带`q=UI14-20261008&page_size=20`，total=60、3页均20条，排序updated_at desc/id desc；待确认散布在不同页，ready筛选不等于待确认筛选。关键词带同q和`status=`才能看到45条，page_size=25为25/20，排序priority asc/id desc；默认status=active仅15条本批词。执行链`/workbench/executions?tenant_id=1&site_id=1&page_size=20`按id desc，当前全范围total=46、页20/20/6（45本批+原1条）；没有q/status筛选。通用`/tasks`是before_id游标+limit，不是page/page_size，返回数组且无total；勿混用两种分页。
+
+对象清单：`C:/Users/Administrator/.secrets/seo12-local/ui14-fixtures.json`；双身份API记录`ui14-readonly-smoke.json`。40项本机防护/计划测试通过；31项真实API结果检查通过（涉及元数据/图片、未登录/外租户、分页和四种确认状态），未做全套审查或UI浏览器验收。实际GET没有采集或生成，未执行任务。最初delivery探针漏site_id得到422，补齐必填参数后通过，已修正文档短例。
+
+### 站内沟通：现状与最小后续方案（未实现、无新迁移）
+
+当前`PATCH /api/v1/seo/tasks/{id}`支持`{tenant_id,site_id,note}`追加`params.followups[{note,actor,at}]`，最多100条，需任务对应功能edit、任务未done/cancelled；客户view不能回复，无未读/送达/参与人机制。可以作为顾问任务跟进，不能冒充客户—顾问会话。
+
+`assistant_messages`及`/api/v1/assistant/chat/history`是按tenant+user隔离的私有AI对话，chat会调用AI，**不复用、不开放为人工消息**。当前SEO分支未找到跨客户/顾问人工会话表或已读接口，UI应显示“沟通未接入”，不假发送。
+
+建议最小三表（待共享数据库负责人评审与revision分配）：会话`tenant_id/site_id/content_id`严格范围；参与人表记录实名user_id、customer/advisor角色及read_cursor；消息表append-only存text、sender_user_id、created_at、client_request_id（会话内幂等唯一）、可选当前稿件版本引用。复用现有用户/站点/稿件外键，不使用角色名冒充发送人，不把消息视为稿件确认或任务完成证据。
+
+拟议接口（尚不存在）：列当前稿件会话/游标分页消息、追加文本消息、标记本人已读。每次读/写均核对SEO模块、tenant/site/content归属和参与人；客户必须绑定当前租户且在参与列表，顾问必须仍有该站点active assignment及内容权限；撤权后即时拒绝读写，历史消息保留供仍获授权的参与人审计，换顾问需显式加入参与人。服务端生成sender/time，限制长度、纯文本渲染、UUID幂等，不支持HTML/附件/外部通知。
+
+暂不注册或执行生产migration，不沿用别模块候选revision。批准后先本地迁移/租户隔离/撤权/并发重发与分页测试，再接UI；本批只交此方案，不新增通信架构或微信短信能力。
