@@ -624,3 +624,41 @@ python -m pytest tests/test_seo_workflow_postgres.py -q
 2026-10-07总控已在本机专用 PostgreSQL 16.15 固定提交 `67975f32bb1175ba21c9f7dabd6b619b24306860`，实际运行本文件全部 **10 passed、0 skipped**。代码与测试哈希前后稳定，测试schema/用户表前后均为空，未调用真实供应商或生产。验收记录为 `D:/SNIPERS国内版/梳理-2026-10/项目筹备-20261007/SEO_POSTGRES_ACCEPTANCE.md` 及同目录脱敏 `SEO_POSTGRES_ACCEPTANCE_RESULT.json`。
 
 本运行包创建最小模型表并省略外键，证明范围限这六个并发场景和四个连接防护，不代表完整0105迁移、全部外键/约束、压力或真实供应商/线上端到端验收。其他数据库测试及真实渲染依赖仍按各自记录补验；不重复运行已通过这轮，除非相关代码变动或出现新问题。
+
+## UI13 现有列表与维护入口（2026-10-08定向核对）
+
+本节仅给现有接口接线依据，不新增架构或数据库。实际本机后端 `http://127.0.0.1:8031`、应用代码 `f97be780`、数据库0105；后续文档提交不改变运行代码。示例tenant/site=1/1仅为本轮合成资源，不是生产客户授权。请求使用既有真实登录JWT，不在文档传凭证。以下相对路径统一加 `/api/v1/seo`。
+
+### 只读数据页
+
+| 用途 | GET路径与可用参数 | 返回和限制 |
+| --- | --- | --- |
+| 排名关键词 | `/keywords?tenant_id=1&site_id=1&engine=baidu&device=desktop&page=1&page_size=20`；另可q/priority/intent/status，status默认active，空值表示不过滤 | `{items,total,page,page_size,engine,stats}`；page≥1，page_size 1–200。每条含keyword/latest_rank/rank_delta/rank_url/rank_checked_at/rank_source/rank_is_stale/last_observed_rank。无观测或过期不可显示成排名0；列表没有region参数，不能标为固定“全国”的同口径排名比较 |
+| 单词历史 | `/keywords/1?tenant_id=1&engine=baidu&device=desktop&region=全国&days=90` | `{keyword,rank_history,competitor_history,engine,region,optimization_task,diagnoses}`；days 1–366，无分页。仅tenant参数，site由关键词归属决定；须从已限定站点的列表ID下钻，不要假设传site_id会额外过滤 |
+| 页面检查清单 | `/site-pages?tenant_id=1&site_id=1&page=1&page_size=20`；另可page_id/q/status/issue_code | `{items,total,page,page_size,stats}`；page_size 1–200。条目含url/http_status/audit_score/diagnostic/issue_codes/last_error/last_checked_at/indexable/status。indexable只表示允许索引；未检查、抓取失败、发现问题不能合并为“通过” |
+| 单页依据 | `/site-pages/1/detail?tenant_id=1` | `{page,issue_details,internal_links,latest_snapshot,previous_snapshot,comparison,read_only}`；无分页，最多两条快照。site由页面决定，和单词详情相同须从当前站点列表下钻；读取不触发audit |
+| 分页发布与页面依据（数据页首选） | `/workbench/publication-page-evidence?tenant_id=1&site_id=1&page=1&page_size=20`；另可content_id/publication_id | `{items,total,total_pages,page,page_size,read_at,coverage,source,read_only}`；page_size 1–100。每条为`{content,publication,latest_attempt,page_association,page_check}`，发布地址字段为`publication.public_url`。tenant/site必填；无status/平台/日期/主题筛选。投影没有source_version或操作能力，执行前另取发布详情列表及content delivery |
+| 原发布操作列表 | `/content-distribution/publications?tenant_id=1&site_id=1&content_id=2`；另可status | `{items,total,status_counts}`，**无服务端分页**，不要传page后冒充已分页。条目含source_version/page_url/last_error/allowed_actions/action_denial_reasons/action_requirements，用于选定稿件的回填/任务接续 |
+| 发布尝试 | `/content-distribution/publications/1/attempts?tenant_id=1&site_id=1` | `{items}`，无分页/total。为空不等于发布失败；人工直接登记可能没有attempt。投影只给latest_attempt，完整尝试按本接口读取 |
+
+`total`为当前筛选范围记录总数，`items.length`为当前返回量；关键词`stats`主要按同站点active词统计，不跟随q/priority/intent筛选，其中monitored_engines来自当前页词的观测；页面stats按整个站点，不随列表问题/状态筛选。投影coverage.association_counts只统计当前页；页面候选清单最多扫描5000、每条候选摘要最多5，coverage.partial必须提示，不当完整全站统计。排名列表region/device元数据可能来自另一个引擎的最新观测；需要精确范围时使用指定engine/device/region的单词历史。
+
+上述GET只有读取和计算，不启动采集、AI或发布。保留后端输出时间偏移；rank_checked_at、published_at、last_checked_at为UTC，数据库生成created_at/updated_at按既有数据库墙钟序列化，不能删除时区重算。read_at只表示读取时间。未提供日期过滤的入口不要展示已生效的日期筛选。
+
+权限按登录身份的tenant、SEO模块、资源归属及功能权限校验：关键词seo.keywords:view，页面seo.site:view，发布/资料seo.content:view；发布页面投影同时要求seo.content:view和seo.site:view。详情的tenant与实体必须匹配；站点列表应始终显式带site_id。401重新登录；403权限/模块拒绝；404资源不属于范围；400非法枚举；422参数校验失败。不得用403/500的兜底空数组冒充成功无数据。
+
+### 顾问资料和关键词维护复用范围
+
+- `GET /qa/facts?tenant_id=1&site_id=1`返回**数组**，按id倒序最多500条，无分页、q、total或截断标志。字段id/title/statement/source_name/source_url/expires_at/status/version/current。current表示active且未过期，不是独立事实核实。500条上限不能当全量数量。
+- `POST /qa/facts` JSON必填tenant_id/site_id/title/statement/source_name，选填source_url/expires_at/status(active或retired)。`PATCH /qa/facts/{id}`是**完整资料表单+version**，不是任意局部patch；必填tenant_id/site_id/title/statement/source_name/version，省略选填字段会回默认值。应先读原值后提交完整表单；过期时间非空必须带时区；version不符409。无删除接口，停用用retired。
+- `POST /keywords` JSON必填tenant_id/site_id/keyword；选填cluster/intent/monthly_volume/difficulty/priority/landing_page/status/notes。priority=P0–P3，status=active/paused/archived。`PATCH /keywords/{id}?tenant_id=1`支持除keyword本身外这些维护字段，按exclude_unset局部更新；**不能重命名关键词、没有乐观锁version**，不可在UI承诺冲突保护。归档用status=archived；跨站迁移有引用时409。
+- `POST /keywords/import`支持tenant_id/site_id/items，1–500条，items使用KeywordCreate结构；本轮不做批量导入验收。以上写操作分别要求seo.content:edit、seo.keywords:edit。它们是既有模块权限接口，不新增个人负责人/客户确认架构。客户UI应隐藏顾问维护配置，服务端仍按权限拒绝越权写入。
+- **本机验收runner当前写白名单未放行资料/关键词维护**，这类POST/PATCH会403 `local_acceptance_action_disabled`；不要当成生产能力缺失或移除全局防护。若UI13明确需要真实维护写测，再定向增加本机限定路径及测试，不提前执行种子/维护写入。
+
+### 客户待确认口径和验证范围
+
+客户待办读取 `/workbench/content-assets/{id}/delivery?tenant_id=1` 的`workflow_status`、`confirmation.status`和`allowed_actions`，不要把content.status=ready直接计入客户待确认。ready+approved→approved_waiting_publication；ready+rejected→awaiting_content_revision；ready+pending/stale→awaiting_customer_confirmation；结构未就绪→confirmation_unavailable。按钮还须对应allowed_actions=true。交付内容、各渠道published、页面核验、任务done和搜索效果分别展示。
+
+本轮在真实本机API用advisor/customer两个账号各读取上表九类入口（含delivery、资料）均200，18次成功GET；两身份对投影外租户均403、错站点均404，另4次拒绝符合预期。仅登录使用POST，没有业务写入。记录在受限本机 `C:/Users/Administrator/.secrets/seo12-local/ui13-readonly-smoke.json`，不含凭证。合成库只有1词/1页/1条发布，无真实排名快照；空历史和未关联页面不构成真实排名/抓取验证。
+
+本轮未新增运行代码，未做维护写测、多页大数据边界、全组合筛选、真实搜索源或抓取测试；旧有测试存在不等于这些UI13场景本轮已验收。UI12完整状态和500修复/93项回归另见 `SEO_LOCAL_ACCEPTANCE.md`。待前端明确缺失契约后再小范围补齐。
