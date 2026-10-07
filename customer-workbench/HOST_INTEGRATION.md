@@ -7,3 +7,5 @@
 `docs/host-entry.patch` 给现有工作台增加一个基于已选客户/活动站点的同源链接，排除demo，仅为review附件。缺少站点时独立页返回现有工作台选择，不能从URL授予权限。补丁未应用，组件和Vue路由均未修改。
 
 构建/发布要求见BUILD_RELEASE；UI-05/06完整契约和原宿主读取证据见docs/history。后续生产路径、0105、顾问分配与实名验收由总控安排。
+
+UI-12新增仅本机的HTTPS真实后端代理和登录接线宿主页，生产入口不变。它调用真实登录API返回值及原session.setAuth，覆盖原存储bootstrap；不声称原LoginView整页已验收。真实API/PG业务仍等待总控放行，详见 [本机联调准备](docs/UI12_LOCAL_INTEGRATION.md)。

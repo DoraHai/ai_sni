@@ -61,3 +61,7 @@
 ## UI-11：模型来源与目标完成证据显示
 
 2026-10-07。对照SEO 67975f32，仅补计划/请求/响应模型的只读来源标签，以及completion_basis/scope限定的对象完成证据和独立effect_context背景。缺失响应模型不推断，历史完成证据按原字段保留，写入行为不变。详见 [UI11_EVIDENCE_DISPLAY.md](docs/UI11_EVIDENCE_DISPLAY.md)。定向验证4/4（含1项Edge只读页面），未重复全套；本地构建与Git空白检查通过，提交后重建记录由最终交接提供。总控已报告本机PG16.15验证10/10，阻塞解除；不是本聊天复跑或生产验证。未推送或部署。
+
+## UI-12：本机真实联调接线准备
+
+2026-10-07。增加仅loopback的HTTPS代理、原session.setAuth登录宿主页、真实API预检runner与完整角色场景。传输/浏览器接线探针最终2/2，语法与空白检查通过；真实FastAPI/PG业务结果仍未运行，不拿探针或原假业务服务器充当联调。测试登录宿主页不等于原LoginView验证码整页验收。SEO独占准备数据库，等总控环境放行后才运行实际登录/业务操作；本聊天没有写DB、生产、push、合并或部署。详见 [UI12_LOCAL_INTEGRATION.md](docs/UI12_LOCAL_INTEGRATION.md)。

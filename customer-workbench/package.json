@@ -14,7 +14,10 @@
     "test:ui08": "node --test seo-execution-client.test.mjs ui08-browser.test.mjs",
     "test:ui09": "node --test seo-content-operations.test.mjs ui09-browser.test.mjs",
     "test:ui10": "node --test ui10-contract.test.mjs ui10-browser.test.mjs",
-    "test:ui11": "node --test ui11-evidence.test.mjs"
+    "test:ui11": "node --test ui11-evidence.test.mjs",
+    "test:ui12-host": "node --test ui12-local-host.test.mjs",
+    "preview:backend": "node scripts/local-backend-host.mjs",
+    "test:ui12-preflight": "node scripts/ui12-real-preflight.mjs"
   },
   "devDependencies": {
     "esbuild": "0.25.12",

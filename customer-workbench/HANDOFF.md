@@ -1,4 +1,8 @@
-# 当前交接：UI-11 模型来源与完成证据显示
+# 当前交接：UI-12 本机联调准备（真实业务未运行）
+
+本机HTTPS代理、原session.setAuth/bootstrap测试宿主页、真实登录与只读业务预检脚本已准备。传输/浏览器接线探针2/2通过；使用故意失败的传输上游，不代表FastAPI或PG业务通过。原LoginView验证码整页验收仍未覆盖。等待SEO专用schema/合成角色/外部适配就绪和总控明确允许实际API写入，UI未接触DB。范围、配置与完整场景见 [docs/UI12_LOCAL_INTEGRATION.md](docs/UI12_LOCAL_INTEGRATION.md)。总控统一更新PR，UI不推送或部署。
+
+# UI-11 模型来源与完成证据显示
 
 对照 SEO `67975f32bb1175ba21c9f7dabd6b619b24306860`，仅补必要只读字段：计划模型、领取时请求路由、结果供应商和响应报告模型分别展示，缺失不推断；目标完成证据与全站效果背景分开，旧证据按原字段可读。定向验证4/4，详见 [docs/UI11_EVIDENCE_DISPLAY.md](docs/UI11_EVIDENCE_DISPLAY.md)。总控已报告本机PG16.15验证10/10，该环境阻塞解除；这不是本聊天复跑或生产联调。未部署。
 
