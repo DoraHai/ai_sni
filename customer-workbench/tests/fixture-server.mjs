@@ -40,13 +40,14 @@ export async function startFixtureServer(){
       if(url.pathname==='/api/v1/seo/workbench/sites'){send(200,{tenant_id:tenant,sites:[{id:site,name:`站点${site}`,domain:`fixture-${tenant}.invalid`,status:'active'}],selection_policy:{selectable_statuses:['active'],disabled_statuses:['paused','archived']}});return;}
       const content=state.contents.get(tenant),plan=state.plans.get(tenant);
       const delivery=()=>{
-        const confirmation=state.confirmations.get(tenant)||null,ready=content.status==='ready'&&!confirmation;
+        const latest=state.confirmations.get(tenant)||null,confirmation=latest?.content_version===content.version_count&&latest?.payload_hash===content.payload_hash?latest:null,ready=content.status==='ready'&&!confirmation;
         return {content:{...content},workflow_status:confirmation?.decision==='approve'?'approved_waiting_publication':content.status==='drafting'?'awaiting_content_revision':'awaiting_customer_confirmation',
-          confirmation:{status:confirmation?.decision==='approve'?'approved':confirmation?'rejected':'pending',latest:confirmation,requires_exact_version:true,approval_is_publication:false},
-          allowed_actions:{confirm_as_customer:ready&&!advisor,confirm_as_advisor_proxy:ready&&advisor,reject_as_customer:ready&&!advisor,reject_as_advisor_proxy:ready&&advisor,edit_content:advisor,review:false,start_publication:false},
+          confirmation:{status:confirmation?.decision==='approve'?'approved':confirmation?'rejected':latest?'stale':'pending',latest,requires_exact_version:true,approval_is_publication:false},
+          allowed_actions:{confirm_as_customer:ready&&!advisor,confirm_as_advisor_proxy:ready&&advisor,reject_as_customer:ready&&!advisor,reject_as_advisor_proxy:ready&&advisor,edit_content:advisor&&['planned','drafting'].includes(content.status),submit_review:advisor&&['planned','drafting'].includes(content.status),review:advisor&&content.status==='review',start_publication:advisor&&confirmation?.decision==='approve'&&['ready','published'].includes(content.status)},
           permission_basis:{actor_user_id:userId,active_site_advisor_assignment:advisor},result_basis:{publication_status:'not_loaded',page_check_status:'not_loaded',search_effect_status:'not_attributed_to_single_content'}};
       };
       if(url.pathname==='/api/v1/seo/content-assets'){
+        if(url.searchParams.has('content_id')){const items=Number(url.searchParams.get('content_id'))===content.id?[{draft:content.body,humanized_content:null,outline:'',keyword_ids:[21],...content}]:[];send(200,{items,total:items.length,page:1,page_size:50});return;}
         const page=Number(url.searchParams.get('page')),pageSize=Number(url.searchParams.get('page_size')),total=state.contentTotals.get(tenant)??1;
         if(!Number.isSafeInteger(page)||page<1||!Number.isSafeInteger(pageSize)||pageSize<1||pageSize>200){send(422,{detail:'Invalid pagination'});return;}
         const items=Array.from({length:total},(_,index)=>index===0?{...content}:{...content,id:1000+tenant*100+index,title:`客户${tenant}第${index+1}篇稿件`}).slice((page-1)*pageSize,page*pageSize);
@@ -60,6 +61,21 @@ export async function startFixtureServer(){
         state.confirmations.set(tenant,{id:1,content_version:content.version_count,payload_hash:content.payload_hash,decision:body.decision,actor_mode:body.actor_mode,actor_user_id:userId,actor_name:advisor?'顾问接口夹具':'客户接口夹具',actor_role_name:advisor?'顾问':'客户',note:body.note,created_at:'2026-10-07T12:05:00Z'});
         if(body.decision==='reject')content.status='drafting';send(200,delivery());return;
       }
+      if(url.pathname===`/api/v1/seo/content-assets/${content.id}`&&req.method==='PATCH'){
+        if(!advisor){send(403,{detail:'Advisor required'});return;}
+        if(body.version_count!==content.version_count){send(409,{detail:'内容已被其他操作更新，请刷新后重试'});return;}
+        if(!['planned','drafting'].includes(content.status)){send(409,{detail:'Protected content'});return;}
+        const fields=['title','outline','draft','humanized_content'];const changed=fields.some(k=>body[k]!==undefined&&body[k]!==content[k]);
+        for(const k of fields)if(body[k]!==undefined)content[k]=body[k];
+        if(changed){content.version_count++;content.payload_hash=String(content.version_count).padStart(64,'0');}content.body=content.humanized_content||content.draft||'';send(200,{...content});return;
+      }
+      if(url.pathname===`/api/v1/seo/content-assets/${content.id}/submit-review`||url.pathname===`/api/v1/seo/content-assets/${content.id}/review`){
+        if(!advisor){send(403,{detail:'Advisor required'});return;}if(body.version_count!==content.version_count){send(409,{detail:{code:'content_version_conflict'}});return;}
+        if(url.pathname.endsWith('/submit-review')){if(!['planned','drafting'].includes(content.status)||!content.body.trim()||content.keyword_ids?.length===0){send(409,{detail:'Content or keywords required'});return;}content.status='review';}
+        else {if(content.status!=='review'||(body.decision==='reject'&&!body.note?.trim())){send(409,{detail:'Review gate'});return;}content.status=body.decision==='approve'?'ready':'drafting';}send(200,{...content});return;
+      }
+      if(url.pathname==='/api/v1/seo/content-distribution/publications'){send(200,{items:[{id:tenant===1?91:191,tenant_id:tenant,content_id:content.id,source_version:3,publish_mode:'manual',status:'manual_required',platform_name:'人工渠道',page_url:null,published_at:null}],total:1});return;}
+      if(/^\/api\/v1\/seo\/content-distribution\/publications\/\d+\/attempts$/.test(url.pathname)){send(200,{items:[{id:1,action:'publish',status:'failed',response_summary:{outcome:'unknown',requires_manual_review:true},started_at:'2026-10-07T12:00:00Z',completed_at:null}]});return;}
       if(url.pathname==='/api/v1/seo/workbench/service-plan'){
         if(req.method==='GET'){send(200,{...plan,allowed_actions:{update_service_plan:advisor&&!state.planDenied},permission_basis:{actor_user_id:userId,schema_ready:true,active_site_advisor_assignment:advisor&&!state.planDenied,update_denial_reason:advisor&&!state.planDenied?null:'active_site_advisor_assignment_required'}});return;}
         if(req.method==='PUT'){

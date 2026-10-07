@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {createSeoWorkflowClient} from './js/seo-workflow-client.mjs';
 import {contentDeliveryView,serviceStatusView} from './js/seo-contract-view.mjs';
-const fixture=()=>({content:{id:88,tenant_id:1,site_id:9,version_count:3,payload_hash:'a'.repeat(64),status:'ready'},workflow_status:'awaiting_customer_confirmation',confirmation:{status:'pending',latest:null,approval_is_publication:false},allowed_actions:{confirm_as_customer:true,confirm_as_advisor_proxy:true,reject_as_customer:true,reject_as_advisor_proxy:true,review:true},result_basis:{publication_status:'not_loaded'}});
+const fixture=()=>({content:{id:88,tenant_id:1,site_id:9,version_count:3,payload_hash:'a'.repeat(64),status:'ready'},workflow_status:'awaiting_customer_confirmation',confirmation:{status:'pending',latest:null,approval_is_publication:false},allowed_actions:{confirm_as_customer:true,confirm_as_advisor_proxy:true,reject_as_customer:true,reject_as_advisor_proxy:true,review:true},permission_basis:{active_site_advisor_assignment:true},result_basis:{publication_status:'not_loaded'}});
 const ctx=()=>({connected:true,tenantId:1,siteId:9,userId:7,revision:1});
 function setup(handler){const context=ctx(),calls=[];const client=createSeoWorkflowClient({getContext:()=>context,transport:async(path,options)=>{calls.push({path,options,body:options.body&&JSON.parse(options.body)});return handler(path,options);}});return {client,context,calls};}
 const ok=data=>({ok:true,status:200,json:async()=>data});
