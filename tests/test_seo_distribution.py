@@ -1568,6 +1568,31 @@ def test_page_verification_queue_failure_does_not_overwrite_published_fact() -> 
     session.commit.assert_not_awaited()
 
 
+def test_disabled_page_verification_is_reported_as_not_queued() -> None:
+    publication = SeoContentPublication(
+        id=12, tenant_id=1, content_asset_id=5, platform_code="zhihu",
+        platform_name="知乎", publish_mode="assisted", status="published",
+        source_version=2, page_url="https://zhuanlan.zhihu.com/p/123",
+    )
+    content = SeoContentAsset(
+        id=5, tenant_id=1, site_id=8, content_type="article", title="测试文章",
+        status="published", version_count=2,
+    )
+    session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+    with patch(
+        "app.api.seo.reserve_publication_page_capture",
+        new=AsyncMock(return_value=(None, "capture_disabled")),
+    ):
+        result = asyncio.run(_queue_published_page_verification(
+            session, publication, content, BackgroundTasks(),
+        ))
+    assert result == {
+        "state": "not_queued", "capture_id": None, "reason": "capture_disabled",
+    }
+    session.commit.assert_not_awaited()
+    session.rollback.assert_not_awaited()
+
+
 def test_manual_publication_duplicate_race_returns_conflict_and_rolls_back() -> None:
     content = SeoContentAsset(
         id=5,

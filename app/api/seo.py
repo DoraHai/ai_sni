@@ -5688,7 +5688,7 @@ async def _queue_published_page_verification(
     if capture is not None and reason is None and background_tasks is not None:
         background_tasks.add_task(execute_page_capture, int(capture.id))
     return {
-        "state": "queued" if reason is None else "existing",
+        "state": "queued" if reason is None else "existing" if capture is not None else "not_queued",
         "capture_id": None if capture is None else capture.id,
         "reason": reason,
     }
@@ -6582,15 +6582,19 @@ async def _site_advisor_assignment(
     user_id: int | None,
     *,
     schema_ready: bool = False,
+    lock: bool = False,
 ) -> SeoSiteAdvisorAssignment | None:
     if user_id is None or (not schema_ready and not await _content_confirmation_schema_ready(session)):
         return None
-    return await session.scalar(select(SeoSiteAdvisorAssignment).where(
+    statement = select(SeoSiteAdvisorAssignment).where(
         SeoSiteAdvisorAssignment.tenant_id == tenant_id,
         SeoSiteAdvisorAssignment.site_id == site_id,
         SeoSiteAdvisorAssignment.advisor_user_id == user_id,
         SeoSiteAdvisorAssignment.active.is_(True),
-    ))
+    )
+    if lock:
+        statement = statement.with_for_update()
+    return await session.scalar(statement)
 
 
 async def _content_allowed_actions(
@@ -7086,7 +7090,7 @@ async def update_seo_service_plan(
     if not await _content_confirmation_schema_ready(session):
         raise HTTPException(503, "顾问分配能力尚未完成数据库迁移")
     assignment = await _site_advisor_assignment(
-        session, req.tenant_id, req.site_id, ctx.user_id, schema_ready=True,
+        session, req.tenant_id, req.site_id, ctx.user_id, schema_ready=True, lock=True,
     )
     if assignment is None:
         raise HTTPException(403, "只有当前站点已分配的顾问可以维护服务计划")
