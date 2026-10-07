@@ -2,6 +2,7 @@ import http from 'node:http';import fs from 'node:fs/promises';import path from 
 import {executionFixture,handleExecutionFixture} from './execution-fixture.mjs';
 import {initUi10,handleUi10} from './ui10-fixture.mjs';
 import {cycleFields} from '../js/seo-cycle-config.mjs';
+import {handleUi13} from './ui13-fixture.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 export async function startFixtureServer(){
   const state={calls:[],forceError:null,holdNext:null,held:[],planDenied:false,contentTotals:new Map(),modules:['seo'],executions:executionFixture(),executionDenied:false,keywordLevel:'edit',
@@ -38,6 +39,7 @@ export async function startFixtureServer(){
       if(url.pathname==='/api/v1/auth/tenants'){send(200,{module:'seo',tenants:(advisor?[1,2]:[1]).map(id=>({id,name:`契约客户${id}`}))});return;}
       const tenant=Number(url.searchParams.get('tenant_id')??body?.tenant_id),site=tenant===1?9:19;
       if(![1,2].includes(tenant)||(!advisor&&tenant!==1)){send(403,{detail:'Fixture tenant denied'});return;}
+      if(handleUi13({url,req,res,send,body,state,tenant,site,advisor}))return;
       if(handleUi10({url,req,res,send,body,state,tenant,site,advisor}))return;
       if(handleExecutionFixture({url,req,res,send,body,state,tenant,site,advisor}))return;
       if(url.pathname==='/api/v1/seo/workbench/sites'){send(200,{tenant_id:tenant,sites:[{id:site,name:`站点${site}`,domain:`fixture-${tenant}.invalid`,status:'active'}],selection_policy:{selectable_statuses:['active'],disabled_statuses:['paused','archived']}});return;}

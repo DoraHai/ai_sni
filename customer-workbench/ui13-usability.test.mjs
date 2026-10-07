@@ -39,3 +39,12 @@ test('UI13 manual failure recovery requires reread and unchecks verification; 40
     await p.click('#manual-verified');f.state.forceError={path:'/publications/manual',status:403};await p.click('[data-action="manual-save"]');await p.waitForFunction(()=>document.body.textContent.includes('当前身份无权'));assert.equal(await p.$('#input-recovery'),null);assert(!(await p.$eval('body',e=>e.textContent)).includes('fixture.invalid/actual'));
   }finally{await close();}
 });
+test('UI13 advisor can build an empty keyword list and maintain facts; 409 recovers and assignment loss clears',async()=>{
+  const {f,p,close}=await setup();try{
+    f.state.keywords.set(1,[]);await nav(p,'数据');await click(p,'maintenance-open');await set(p,'maint-keyword','新建测试词');await set(p,'maint-landing_page','https://fixture.invalid/target');await click(p,'maintenance-save');assert.equal(f.state.keywords.get(1).length,1);assert.equal(f.state.keywords.get(1)[0].keyword,'新建测试词');
+    await p.click('[data-action="data-kind"][data-kind="facts"]');await idle(p);await click(p,'maintenance-open');await set(p,'maint-title','新资料');await set(p,'maint-statement','可核对的资料');await set(p,'maint-source_name','合成来源');await click(p,'maintenance-save');const fact=f.state.facts.get(1)[0];assert.equal(fact.title,'新资料');
+    await p.click(`[data-action="maintenance-open"][data-id="${fact.id}"]`);await idle(p);await set(p,'maint-statement','冲突后保留的资料');fact.version++;await p.click('[data-action="maintenance-save"]');await p.waitForSelector('#input-recovery');await click(p,'maintenance-reload');await click(p,'restore-input');assert.equal(await p.$eval('#maint-statement',e=>e.value),'冲突后保留的资料');
+    f.state.planDenied=true;const before=f.state.calls.filter(c=>c.method==='PATCH').length;await p.click('[data-action="maintenance-save"]');await p.waitForFunction(()=>document.body.textContent.includes('当前身份未取得'));assert.equal(await p.$('#input-recovery'),null);assert.equal(await p.$('#maint-statement'),null);assert.equal(f.state.calls.filter(c=>c.method==='PATCH').length,before);
+    await p.evaluate(()=>WORKBENCH_TEST_HOST.setIdentity('customer'));await idle(p);await nav(p,'数据');assert.equal(await p.$('[data-action="maintenance-open"]'),null);
+  }finally{await close();}
+});

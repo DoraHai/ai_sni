@@ -3,11 +3,11 @@ import {escapeText as esc} from './customer-display.mjs';
 // Memory belongs to this mounted, authenticated scope. Never persist text or authority.
 export function createInputProtection(root) {
   let edited=new Map(),recovery=null,context='';
-  const fields=()=>[...root.querySelectorAll('#page input[id],#page textarea[id],#page select[id]')].filter(e=>!e.disabled);
+  const fields=()=>[...root.querySelectorAll('#page input[id],#page textarea[id],#page select[id]')].filter(e=>!e.disabled&&!e.closest('.data-filters'));
   const value=e=>({id:e.id,label:e.labels?.[0]?.textContent?.trim()||e.id,value:e.type==='checkbox'?e.checked:e.value,type:e.type});
   const capture=()=>edited.size?{context,fields:fields().map(value)}:null;
   const clear=()=>{edited.clear();recovery=null;};
-  function input(e){if(e.target.closest('#page')&&e.target.id&&!e.target.disabled)edited.set(e.target.id,value(e.target));}
+  function input(e){if(e.target.closest('#page')&&!e.target.closest('.data-filters')&&e.target.id&&!e.target.disabled)edited.set(e.target.id,value(e.target));}
   root.addEventListener('input',input);
   const unload=e=>{if(edited.size||recovery){e.preventDefault();e.returnValue='';}};
   window.addEventListener('beforeunload',unload);

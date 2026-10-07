@@ -24,7 +24,7 @@ function table(payload, title, headers, renderRow, empty, note) {
   const count = payload.items.length;
   const total = Number.isSafeInteger(payload.total) && payload.total >= 0 ? formatMetric(payload.total) : '未提供';
   const page = positiveId(payload.page) ? `第 ${payload.page} 页 · ` : '';
-  return `<section class="data-list"><h3>${title}</h3><p class="data-scope">${page}本页 ${count} 条 · 当前筛选共 ${esc(total)} 条</p>${count ? `<div class="data-table-scroll" tabindex="0" aria-label="${title}明细"><table><thead><tr>${headers.map(h => `<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${payload.items.map(renderRow).join('')}</tbody></table></div>` : `<p>${empty}</p>`}<p class="meaning-note">${note}</p></section>`;
+  return `<section class="data-list"><h3>${title}</h3><p class="data-scope">${page}本页 ${count} 条 · 当前筛选共 ${esc(total)} 条</p>${count ? `<p class="table-scroll-hint">左右滑动查看完整表格与详情入口</p><div class="data-table-scroll" tabindex="0" aria-label="${title}明细"><table><thead><tr>${headers.map(h => `<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${payload.items.map(renderRow).join('')}</tbody></table></div>` : `<p>${empty}</p>`}<p class="meaning-note">${note}</p></section>`;
 }
 
 export function rankingListView(payload) {
@@ -52,7 +52,7 @@ export function pageListView(payload) {
 export function publicationListView(payload) {
   const associations={publication_url_missing:'尚未登记发布地址',no_match:'尚未关联站内页面',page_inventory_incomplete:'页面关联范围不完整',multiple_matches:'有多个候选页面，待顾问核对',exact_unique:'已关联页面'};
   const coverage={not_applicable:'暂无页面检查依据',no_data:'尚无页面检查记录',stale:'检查早于发布，待复查',failed:'页面检查失败',available:'已有页面检查记录'};
-  const note = `发布记录与页面检查分别展示；有检查记录不等于全部检查通过，更不代表搜索效果提升。${payload?.coverage?.partial === true ? '本次页面关联范围不完整，请顾问核对。' : ''}`;
+  const note = `发布记录与页面检查分别展示；有检查记录不等于全部检查通过，更不代表搜索效果提升。${(payload?.coverage?.partial === true || payload?.coverage?.state === 'partial') ? '本次页面关联范围不完整，请顾问核对。' : ''}`;
   return table(payload, '发布与交付记录', ['稿件 / 平台', '发布情况', '页面检查', '发布时间', '操作'], row => {
     const publication=row.publication??{},content=row.content??{},check=row.page_check??{},association=row.page_association??{};
     const associationText=Object.hasOwn(associations,association.association_status)?associations[association.association_status]:'关联状态待核对';
