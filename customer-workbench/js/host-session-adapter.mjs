@@ -9,7 +9,12 @@ const routes=[
   ['POST',/^\/api\/v1\/seo\/workbench\/content-assets\/[1-9]\d*\/confirmations$/,['tenant_id'],'content',['version_count','payload_hash','decision','actor_mode','note']],
   ['POST',/^\/api\/v1\/seo\/content-assets\/[1-9]\d*\/review$/,['tenant_id'],'content',['version_count','decision','note']],
   ['GET',/^\/api\/v1\/seo\/workbench\/(service-plan|service-status)$/,['tenant_id','site_id'],'site'],
-  ['PUT',/^\/api\/v1\/seo\/workbench\/service-plan$/,[],'site',['tenant_id','site_id','expected_revision','optimization_directions','content_topics','service_note','status']],
+  ['PUT',/^\/api\/v1\/seo\/workbench\/service-plan$/,[],'site',['tenant_id','site_id','expected_revision','optimization_directions','content_topics','service_note','status','content_cycle_enabled','content_interval_days','website_cycle_enabled','website_interval_days','website_max_pages','monitoring_cycle_enabled','monitoring_interval_days','report_cycle_enabled']],
+  ['GET',/^\/api\/v1\/seo\/workbench\/executions$/,['tenant_id','site_id','page','page_size'],'site'],
+  ['GET',/^\/api\/v1\/seo\/workbench\/executions\/[1-9]\d*(?:\/report)?$/,['tenant_id','site_id'],'site'],
+  ['POST',/^\/api\/v1\/seo\/workbench\/executions\/[1-9]\d*\/advance$/,[],'site',['tenant_id','site_id','retry_page_id','explanation','report_sha256']],
+  ['POST',/^\/api\/v1\/seo\/workbench\/content-workflows\/[1-9]\d*\/advance$/,[],'site',['tenant_id','site_id','publication_id']],
+  ['DELETE',/^\/api\/v1\/seo\/workbench\/executions\/[1-9]\d*$/,['tenant_id','site_id'],'site'],
 ];
 function error(code,status){const e=Error(code);e.code=code;e.status=status;return e;}
 export function sameOriginLoginUrl(returnPath='/customer-workbench/') {
@@ -50,11 +55,11 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
     if(url.pathname==='/api/v1/auth/tenants'&&url.searchParams.get('module')!=='seo')throw error('QUERY_DENIED');
     if(!preflight&&!authorized)throw error('NOT_CONNECTED');
     if(!preflight&&route[3]==='site'&&!['view','edit'].includes(authorized.user.permissions['seo.site']))throw error('PERMISSION_DENIED',403);
-    if(method==='GET'&&options.body!==undefined)throw error('BODY_DENIED');
-    if(method!=='GET'){
+    if(['GET','DELETE'].includes(method)&&options.body!==undefined)throw error('BODY_DENIED');
+    if(!['GET','DELETE'].includes(method)){
       let body;try{body=JSON.parse(options.body);}catch{throw error('BODY_DENIED');}
       if(!body||Array.isArray(body)||Object.keys(body).some(k=>!route[4].includes(k)))throw error('BODY_DENIED');
-      if(method==='PUT'&&(body.tenant_id!==s.tenantId||body.site_id!==s.siteId))throw error('SCOPE_MISMATCH');
+      if(route[4].includes('site_id')&&(body.tenant_id!==s.tenantId||body.site_id!==s.siteId))throw error('SCOPE_MISMATCH');
     }
     const controller=new AbortController();pending.add(controller);
     try{
@@ -62,7 +67,9 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
       assertCurrent(s,started);
       if(response.status===401){invalidate('expired');logout?.();login();throw error('AUTH_EXPIRED',401);}
       if(response.status===403){invalidate('forbidden');throw error('PERMISSION_DENIED',403);}
-      return {ok:response.ok,status:response.status,async json(){assertCurrent(s,started);const data=await response.json();assertCurrent(s,started);return data;}};
+      return {ok:response.ok,status:response.status,headers:response.headers,
+        async json(){assertCurrent(s,started);const data=await response.json();assertCurrent(s,started);return data;},
+        async arrayBuffer(){assertCurrent(s,started);const data=await response.arrayBuffer();assertCurrent(s,started);return data;}};
     }catch(e){if(!['AUTH_EXPIRED','PERMISSION_DENIED'].includes(e.code))assertCurrent(s,started);throw e;}finally{pending.delete(controller);}
   }
   async function initialize() {

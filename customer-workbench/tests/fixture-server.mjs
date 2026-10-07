@@ -1,9 +1,11 @@
 import http from 'node:http';import fs from 'node:fs/promises';import path from 'node:path';import {fileURLToPath} from 'node:url';
+import {executionFixture,handleExecutionFixture} from './execution-fixture.mjs';
+import {cycleFields} from '../js/seo-cycle-config.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 export async function startFixtureServer(){
-  const state={calls:[],forceError:null,holdNext:null,held:[],planDenied:false,contentTotals:new Map(),modules:['seo'],
+  const state={calls:[],forceError:null,holdNext:null,held:[],planDenied:false,contentTotals:new Map(),modules:['seo'],executions:executionFixture(),executionDenied:false,keywordLevel:'edit',
     contents:new Map([1,2].map(tenant=>[tenant,{id:tenant===1?88:188,tenant_id:tenant,site_id:tenant===1?9:19,title:`契约服务器客户${tenant}稿件`,body:`客户${tenant}的正文事实与产品资料。`,version_count:3,payload_hash:String(tenant).repeat(64),status:'ready',updated_at:'2026-10-07T12:00:00Z'}])),
-    confirmations:new Map(),plans:new Map([1,2].map(tenant=>[tenant,{tenant_id:tenant,site_id:tenant===1?9:19,revision:2,status:'active',optimization_directions:['技术 SEO'],content_topics:['选型'],service_note:'接口夹具',updated_by:null,updated_at:null}]))};
+    confirmations:new Map(),plans:new Map([1,2].map(tenant=>[tenant,{tenant_id:tenant,site_id:tenant===1?9:19,revision:2,status:'active',optimization_directions:['技术 SEO'],content_topics:['选型'],service_note:'接口夹具',updated_by:null,updated_at:null,...cycleFields}]))};
   const server=http.createServer(async(req,res)=>{
     const url=new URL(req.url,'http://127.0.0.1');
     const send=(status,data)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
@@ -28,11 +30,13 @@ export async function startFixtureServer(){
       const auth=req.headers.authorization;const advisor=auth==='Bearer fixture-advisor';
       if(!advisor&&auth!=='Bearer fixture-customer'){send(401,{detail:'Fixture session expired'});return;}
       const userId=advisor?7:12,permissions={'seo.content':advisor?'edit':'view','seo.site':advisor?'edit':'view'};
+      if(state.keywordLevel!=='none')permissions['seo.keywords']=advisor?state.keywordLevel:'view';
       if(url.pathname==='/api/v1/auth/me'){send(200,{user:{id:userId,tenant_id:advisor?null:1,display_name:advisor?'顾问接口夹具':'客户接口夹具',permissions}});return;}
       if(url.pathname==='/api/v1/auth/modules'){send(200,{tenant_id:advisor?null:1,modules:state.modules.map(module_code=>({module_code,available:true,status:'active'}))});return;}
       if(url.pathname==='/api/v1/auth/tenants'){send(200,{module:'seo',tenants:(advisor?[1,2]:[1]).map(id=>({id,name:`契约客户${id}`}))});return;}
       const tenant=Number(url.searchParams.get('tenant_id')??body?.tenant_id),site=tenant===1?9:19;
       if(![1,2].includes(tenant)||(!advisor&&tenant!==1)){send(403,{detail:'Fixture tenant denied'});return;}
+      if(handleExecutionFixture({url,req,res,send,body,state,tenant,site,advisor}))return;
       if(url.pathname==='/api/v1/seo/workbench/sites'){send(200,{tenant_id:tenant,sites:[{id:site,name:`站点${site}`,domain:`fixture-${tenant}.invalid`,status:'active'}],selection_policy:{selectable_statuses:['active'],disabled_statuses:['paused','archived']}});return;}
       const content=state.contents.get(tenant),plan=state.plans.get(tenant);
       const delivery=()=>{
@@ -61,7 +65,7 @@ export async function startFixtureServer(){
         if(req.method==='PUT'){
           if(!advisor||state.planDenied){send(403,{detail:'顾问资格已撤销'});return;}
           if(body.expected_revision!==plan.revision){send(409,{detail:{code:'service_plan_version_conflict',current_revision:plan.revision}});return;}
-          Object.assign(plan,{revision:plan.revision+1,optimization_directions:body.optimization_directions,content_topics:body.content_topics,service_note:body.service_note,status:body.status,updated_by:userId,updated_at:'2026-10-07T12:06:00Z'});send(200,plan);return;
+          Object.assign(plan,{revision:plan.revision+1,optimization_directions:body.optimization_directions,content_topics:body.content_topics,service_note:body.service_note,status:body.status,updated_by:userId,updated_at:'2026-10-07T12:06:00Z'},Object.fromEntries(Object.keys(cycleFields).filter(k=>body[k]!==undefined).map(k=>[k,body[k]])));send(200,plan);return;
         }
       }
       if(url.pathname==='/api/v1/seo/workbench/service-status'){

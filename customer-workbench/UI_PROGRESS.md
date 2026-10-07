@@ -1,4 +1,14 @@
-# UI-07 本地版本归档记录
+# 客户工作台开发进度
+
+## UI-08 / 2026-10-07 / 实际执行链页面
+
+本批沿用已归档工作树及分支，起点00576b57。按SEO本地f9a22877c090b9def66f0391e6fe5c6e2d6c5c7b读取确切API文档，并窄读执行投影、任务payload、周期计划和排名/页面/报告处理源码；不改SEO仓库。
+
+新增execution client/view、cycle config，实际挂载四类执行链到进度列表/详情。展示周期、等待角色、阻塞、历史/截断、任务和事实时间、页面/关键词引用及completion_evidence；与service-status准备状态分开。服务器允许的内容接续、周期接续、失败单页重试、取消、报告顾问说明均挂载；写后重新GET资格。报告按冻结元数据ETag及实际SHA256核验后下载HTML，从不注入DOM，不当PDF或发送。周期开关初始关闭，沿用服务端值，只有显式保存才PUT，展示范围与人工阶段；进入页面只GET。
+
+新增tests/execution-fixture.mjs、seo-execution-client.test.mjs、ui08-browser.test.mjs与npm脚本。本批真实命令：test:contracts 28/28；test:connected 1/1；test:ui08首轮7/7。随后优化报告错误文案及页面/关键词依据展示为可读字段+折叠原始依据，再运行改动相关UI-08测试，最终7/7通过；构建成功。提交SHA以交接回报和Git记录为准。所有API均为本机契约服务，无生产账号/任务/采集。临时截图仅系统TEMP，不入提交。
+
+相关文档README/HANDOFF/BUILD_RELEASE同步，详细接口映射和真正端到端剩余项见docs/UI08_EXECUTIONS.md。手动新建执行链缺前端trigger能力标志未推导资格；原始快照/整改子任务/内容制作与渠道操作尚未挂载。未推送、合并、部署或迁移，不重复模块全仓、生产审计和未改的演示全套。
 
 2026-10-07。总控明确要求从已核验宿主基线归档独立前端到Git，并本地提交，禁止推送/合并/部署。已读取本基线AGENTS.md及HANDOVER的模块/发布边界；按本轮明确指定的e494ea936dbddbd6f0198ec388bdbf030d12a391起点执行，不以历史旧分支替换该基线。
 

@@ -9,7 +9,9 @@
     "pretest:ui06": "npm run build",
     "test:contracts": "node --test seo-readonly-client.test.mjs seo-workflow-client.test.mjs service-plan-controller.test.mjs host-session-adapter.test.mjs",
     "test:connected": "node --test connected-browser.test.mjs",
-    "test:demo": "node verify.cjs"
+    "test:demo": "node verify.cjs",
+    "pretest:ui08": "npm run build",
+    "test:ui08": "node --test seo-execution-client.test.mjs ui08-browser.test.mjs"
   },
   "devDependencies": {
     "esbuild": "0.25.12",

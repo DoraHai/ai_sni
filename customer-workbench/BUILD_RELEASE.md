@@ -27,6 +27,7 @@ npm run build
 - `npm run test:contracts`：只读与workflow契约、计划控制器、宿主范围及登录边界。
 - `npm run test:connected`：UI-05完整DOM链路、401/403/409及身份/范围迟到响应。
 - `npm run test:ui06`：pretest先构建，再测分页/七组合/错误重读和编译产物原会话/原登录路径。
+- `npm run test:ui08`：pretest先构建，测试四类执行链DOM、处理权限、报告真实下载/hash、周期显式保存、错误和迟到范围变化。
 - `npm run test:demo`：保留的本地演示；puppeteer已改成本目录锁定依赖。
 - `git apply --check customer-workbench/docs/host-entry.patch`：在仓库根核对入口建议补丁，不能视为已应用。
 

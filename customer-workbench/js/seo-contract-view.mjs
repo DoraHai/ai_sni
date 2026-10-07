@@ -1,3 +1,4 @@
+import {readCycles} from './seo-cycle-config.mjs';
 // Exact-contract display mapping. Independent of development role switch.
 export function contentDeliveryView(delivery) {
   const content=delivery.content,latest=delivery.confirmation.latest;
@@ -34,7 +35,7 @@ export function servicePlanView(plan) {
   return {
     tenantId:plan.tenant_id,siteId:plan.site_id,revision:plan.revision,status:plan.status,
     optimizationDirections:plan.optimization_directions??[],contentTopics:plan.content_topics??[],serviceNote:plan.service_note??null,
-    updatedBy:plan.updated_by??null,updatedAt:plan.updated_at??null,
+    updatedBy:plan.updated_by??null,updatedAt:plan.updated_at??null,cycles:readCycles(plan),
     canUpdate,permissionBasis:plan.permission_basis??null,denialReason,
     disabledMessage:canUpdate?null:denialMessages[denialReason]??'服务端尚未提供编辑资格，请重新读取服务计划',
   };

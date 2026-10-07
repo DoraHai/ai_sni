@@ -1,5 +1,6 @@
 // UI-04: exact SEO local contract 8ec3dbf0. Host supplies ordinary session transport.
 // This client is not enabled in the standalone demo and never falls back to mock success.
+import {validateCycles} from './seo-cycle-config.mjs';
 export function createSeoWorkflowClient({transport,getContext} = {}) {
   const deliveries=new Map(); let plan=null;
   const fail=(code,status,detail)=>{const e=Error(code);e.code=code;e.status=status;e.detail=detail;throw e;};
@@ -51,17 +52,19 @@ export function createSeoWorkflowClient({transport,getContext} = {}) {
       deliveries.delete(id);return result; // Existing endpoint returns content asset, not delivery.
     },
     async servicePlan(){const c=context();plan=null;return planPayload(await request(`/api/v1/seo/workbench/service-plan?tenant_id=${c.tenantId}&site_id=${c.siteId}`,'GET',c),c);},
-    async saveServicePlan({optimizationDirections,contentTopics=[],serviceNote=null,status='active'}) {
+    async saveServicePlan({optimizationDirections,contentTopics=[],serviceNote=null,status='active',cycles}) {
       if(!plan)fail('SERVICE_PLAN_REQUIRED');const c=plan.context;same(c);
       if(plan.data.allowed_actions?.update_service_plan!==true)fail('PLAN_UPDATE_NOT_ALLOWED',undefined,plan.data.permission_basis?.update_denial_reason??null);
       if(!Array.isArray(optimizationDirections)||!optimizationDirections.length||optimizationDirections.some(x=>typeof x!=='string'||!x.trim())||!Array.isArray(contentTopics)||contentTopics.some(x=>typeof x!=='string'||!x.trim())||!['active','paused'].includes(status))fail('INVALID_SERVICE_PLAN');
       const expectedRevision=plan.data.revision;
+      const cyclePatch=cycles===undefined?{}:validateCycles(cycles);
       const result=await request('/api/v1/seo/workbench/service-plan','PUT',c,{
         tenant_id:c.tenantId,site_id:c.siteId,expected_revision:expectedRevision,
-        optimization_directions:optimizationDirections,content_topics:contentTopics,service_note:serviceNote,status,
+        optimization_directions:optimizationDirections,content_topics:contentTopics,service_note:serviceNote,status,...cyclePatch,
       });
       // A success message requires a validated server revision, never an optimistic local update.
       if(result?.revision!==expectedRevision+1||result.updated_by!==c.userId||typeof result.updated_at!=='string'||!Number.isFinite(Date.parse(result.updated_at))){invalidate();fail('CONTRACT_MISMATCH');}
+      if(Object.entries(cyclePatch).some(([key,value])=>result[key]!==value)){invalidate();fail('CONTRACT_MISMATCH');}
       const saved=planPayload(result,c);
       plan=null; // PUT has no allowed_actions. Re-read GET before another write.
       return saved;

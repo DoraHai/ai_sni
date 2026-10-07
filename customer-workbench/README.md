@@ -12,6 +12,7 @@ npm run build
 npm run test:contracts
 npm run test:connected
 npm run test:ui06
+npm run test:ui08
 npm run test:demo
 ```
 
@@ -21,8 +22,8 @@ npm run test:demo
 
 ## 范围与交接
 
-- 已接：SEO列表分页、交付稿、确认/代确认/退回、复核、服务计划、准备状态及证据引用；身份和客户变化清空，写结果不明只重读。
-- 未接：基础资料、关键词、消息、轻改、发布、完整任务/历史证据页和SEM/GEO真实接口；页面明确禁用或标待接入。
+- 已接：SEO列表分页、交付稿、确认/代确认/退回、复核、服务计划与周期、准备状态；四类执行链列表/详情/历史/依据、接续/单页重试/取消/顾问报告说明和冻结HTML下载；身份和客户变化清空，写结果不明只重读。
+- 未接：基础资料、关键词维护、消息、轻改/渠道发布、原始快照及整改子任务详情、手动新建执行链和SEM/GEO真实接口；页面明确禁用或列明边界，详见[UI-08交接](docs/UI08_EXECUTIONS.md)。
 - 确认不是发布，ready不是任务完成，0104确认不可用保持禁用。后端最终判断操作资格。
 
 [构建发布准备](BUILD_RELEASE.md) · [当前交接](HANDOFF.md) · [归档记录](UI_PROGRESS.md) · [宿主入口建议补丁](docs/host-entry.patch)。补丁仅供review，未应用到原组件。
