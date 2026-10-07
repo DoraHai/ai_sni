@@ -17,7 +17,8 @@
     "test:ui11": "node --test ui11-evidence.test.mjs",
     "test:ui12-host": "node --test ui12-local-host.test.mjs",
     "preview:backend": "node scripts/local-backend-host.mjs",
-    "test:ui12-preflight": "node scripts/ui12-real-preflight.mjs"
+    "test:ui12-preflight": "node scripts/ui12-real-preflight.mjs",
+    "test:ui13": "node --test customer-display.test.mjs seo-data-view.test.mjs seo-data-client.test.mjs ui13-usability.test.mjs"
   },
   "devDependencies": {
     "esbuild": "0.25.12",

@@ -10,11 +10,7 @@ SEM / SEO / GEO 共享客户空间的独立前端，拟定同源入口 `/custome
 npm ci --ignore-scripts --no-audit --no-fund
 npm run build
 npm run test:contracts
-npm run test:connected
-npm run test:ui06
-npm run test:ui08
-npm run test:ui09
-npm run test:ui10
+npm run test:ui13
 npm run test:ui11
 npm run test:ui12-host
 npm run test:demo
@@ -28,10 +24,11 @@ npm run test:demo
 
 UI-11补充计划、请求和响应模型来源，以及目标对象完成证据与全站效果背景的分别展示；保留旧完成证据。见 [UI-11兼容补丁](docs/UI11_EVIDENCE_DISPLAY.md)。
 
-UI-12已运行本机真实API/PG的确认、版本冲突、撤权及合成事实人工登记链；任务因页面采集关闭保持未完成。实际结果和仍未解决的体验问题见 [实际联调记录](docs/UI12_ACTUAL_RESULTS.md)，命令与场景见 [本机联调接线](docs/UI12_LOCAL_INTEGRATION.md)。connected页面仍未达到完整产品体验交付。
+UI-12已运行本机真实API/PG的确认、版本冲突、撤权及合成事实人工登记链；任务因页面采集关闭保持未完成。实际结果和仍未解决的体验问题见 [实际联调记录](docs/UI12_ACTUAL_RESULTS.md)，命令与场景见 [本机联调接线](docs/UI12_LOCAL_INTEGRATION.md)。该记录保留UI12当时的问题。UI13已完成本批可用化，见[UI13验收与边界](docs/UI13_USABILITY_ACCEPTANCE.md)。
 
 - 已接：独立资格的四类手动触发、默认关闭的AI草稿授权与同站点资料/关键词选择、准确版本人工登记和逐记录回填；准确版本草稿轻改、提交审核、显式复核退回、发布记录/尝试只读；SEO列表分页、交付稿、确认/代确认/退回、复核、服务计划与周期、准备状态；四类执行链列表/详情/历史/依据、接续/单页重试/取消/顾问报告说明和冻结HTML下载；身份和客户变化清空，写结果不明只重读。
-- 未接：基础资料、关键词维护、消息、富文本编辑、单次AI assist和平台真实执行、原始快照及整改子任务详情和SEM/GEO真实接口；页面明确禁用或列明边界，详见[UI-10交接](docs/UI10_EXPLICIT_ACTIONS.md)、[UI-09交接](docs/UI09_CONTENT_OPERATIONS.md)和[UI-08交接](docs/UI08_EXECUTIONS.md)。
+- UI13新增：输入保护、独立首页、角色视图、安全正文预览、服务器分页发布交付历史、数据明细及查询、顾问资料新增/编辑和关键词新增/优先级/目标页维护。
+- 未接：消息、富文本编辑、单次AI assist和平台真实执行、原始快照及整改子任务详情和SEM/GEO真实接口；页面列明边界，详见[UI-10交接](docs/UI10_EXPLICIT_ACTIONS.md)、[UI-09交接](docs/UI09_CONTENT_OPERATIONS.md)和[UI-08交接](docs/UI08_EXECUTIONS.md)。
 - 确认不是发布，ready不是任务完成，0104确认不可用保持禁用。后端最终判断操作资格。
 
 [构建发布准备](BUILD_RELEASE.md) · [当前交接](HANDOFF.md) · [归档记录](UI_PROGRESS.md) · [宿主入口建议补丁](docs/host-entry.patch)。补丁仅供review，未应用到原组件。
