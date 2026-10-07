@@ -46,3 +46,13 @@
 | 失败/兼容 | 旧证据、缺response_model、过期版本/撤权、未知写入结果；显式刷新 | 精确路径/status/脱敏字段；不自动重发，不把缺数据当0或完成 | 网络丢响应可在测试代理显式适配，但须记录哪一步模拟，禁止隐式修改真实业务响应 |
 
 每次完整运行记录前端/后端SHA、迁移/schema、合成角色ID、task/content/version/publication/report hash、实际API路径和状态、外部适配名称/次数。由SEO提供PG落库及后台执行证据；UI不抢占数据库或直接写表。不能覆盖的场景标未执行/阻塞，不用旧内存夹具结果补齐。
+
+## 最短业务浏览器脚本（准备完成，尚未实际运行）
+
+`node scripts/ui12-real-scenarios.mjs workflow` 复用上述配置与授权开关，通过工作台按钮依次完成：顾问轻改/提交/审核→客户准确版本确认→另一篇ready稿件顾问代确认→旧登记表与合法退回/改稿形成真实409冲突并核对无新增发布、无重发→第二篇合成发布事实登记→已知任务列表/详情。客户编辑和代确认按钮同时断言禁用。没有手工注入token、直接SQL、管理写入或伪造API响应。
+
+SEO交付额外配置：`external_operations_disabled: true`；`scenarios: {draft_content_id,proxy_content_id,task_ids,revocation_content_id}`；`publication: {synthetic:true,page_url,platform_name,published_local_time}`。draft稿件须在planned/drafting且绑定关键词，proxy稿件须ready未发布，两个ID不同；已知任务需在首个20条进度列表内。发布时间为北京时间datetime-local字符串。外部网络禁用和适配由SEO实际保障，配置声明不是UI独立验网证明。
+
+撤权由SEO在独占库的管理流程安排，随后执行 `node scripts/ui12-real-scenarios.mjs revoked`，使用同顾问账号及另一个ready未发布稿件，核对真实assignment=false及顾问代确认/编辑/登记按钮禁用，除登录外仅GET。该模式只断言撤权后重进页面，不声称已覆盖撤权瞬间旧按钮提交的竞争；后者等待SEO提供同步方式后补充。
+
+报告只落TEMP，列明方法/路径/HTTP状态、角色actor、版本/hash、发布ID、任务阶段和模拟外部边界；不保存账号密码或登录响应。任何失败立即停止当前链，不自动重放已完成业务操作。预备脚本仅做语法/差异检查，不重复已通过依赖或代理探针。总控已授权在SEO主动交付已核验本机URL、合成身份/对象、禁用外部操作和生命周期清单后开始实际API联调；未完成交付前不运行。
