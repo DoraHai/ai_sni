@@ -6,6 +6,7 @@ import pytest
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -24,6 +25,40 @@ from app.models.seo_page_capture import SeoPageCapture
 from app.security.auth import AuthContext
 from app.seo_demo_source import require_seo_auth
 from app.seo_page_capture import CaptureResult
+
+
+def test_reserve_publication_capture_is_transactional_and_reports_disabled(monkeypatch):
+    enabled = SimpleNamespace(
+        seo_page_capture_enabled=True,
+        seo_page_capture_timeout_seconds=30,
+        seo_page_capture_viewport_width=1365,
+        seo_page_capture_viewport_height=768,
+    )
+    monkeypatch.setattr(api, "get_settings", lambda: enabled)
+    monkeypatch.setattr(api, "_expire_stale", AsyncMock())
+    session = SimpleNamespace(
+        scalar=AsyncMock(return_value=None),
+        add=MagicMock(),
+        flush=AsyncMock(),
+    )
+    row, reason = asyncio.run(api.reserve_publication_page_capture(
+        session, tenant_id=4, site_id=2, publication_id=21,
+        page_url="https://zhihu.example/article/21",
+    ))
+    assert reason is None and row.status == "pending" and row.source == "auto"
+    assert row.relation_type == "publication" and row.relation_id == 21
+    session.add.assert_called_once_with(row)
+    session.flush.assert_awaited_once()
+
+    monkeypatch.setattr(api, "get_settings", lambda: SimpleNamespace(seo_page_capture_enabled=False))
+    disabled_session = SimpleNamespace(add=MagicMock(), flush=AsyncMock(), scalar=AsyncMock())
+    row, reason = asyncio.run(api.reserve_publication_page_capture(
+        disabled_session, tenant_id=4, site_id=2, publication_id=21,
+        page_url="https://zhihu.example/article/21",
+    ))
+    assert row is None and reason == "capture_disabled"
+    disabled_session.add.assert_not_called()
+    disabled_session.flush.assert_not_awaited()
 
 
 @compiles(JSONB, "sqlite")

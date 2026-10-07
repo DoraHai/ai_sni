@@ -311,6 +311,58 @@ async def execute_page_capture(capture_id: int) -> None:
         await session.commit()
 
 
+async def reserve_publication_page_capture(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    site_id: int,
+    publication_id: int,
+    page_url: str | None,
+) -> tuple[SeoPageCapture | None, str | None]:
+    """Reserve one automatic publication check in the caller's transaction.
+
+    The caller owns the commit after its publication fact is durable.  A
+    disabled renderer or absent public URL is reported as an explicit gap
+    instead of being treated as a successful page check.
+    """
+    settings = get_settings()
+    if not settings.seo_page_capture_enabled:
+        return None, "capture_disabled"
+    if not page_url:
+        return None, "publication_url_missing"
+    try:
+        _check_url(page_url)
+    except CaptureError:
+        return None, "publication_url_invalid"
+    await _expire_stale(session, tenant_id, site_id)
+    recent = await session.scalar(select(SeoPageCapture).where(
+        SeoPageCapture.tenant_id == tenant_id,
+        SeoPageCapture.site_id == site_id,
+        SeoPageCapture.relation_type == "publication",
+        SeoPageCapture.relation_id == publication_id,
+        SeoPageCapture.captured_at >= datetime.now(timezone.utc) - _COOLDOWN,
+    ).order_by(SeoPageCapture.id.desc()).limit(1))
+    if recent is not None:
+        return recent, "capture_recent"
+    row = SeoPageCapture(
+        tenant_id=tenant_id,
+        site_id=site_id,
+        relation_type="publication",
+        relation_id=publication_id,
+        source_url=page_url,
+        status="pending",
+        source="auto",
+        captured_at=datetime.now(timezone.utc),
+        redirect_chain=[],
+        warnings={},
+        viewport_width=settings.seo_page_capture_viewport_width,
+        viewport_height=settings.seo_page_capture_viewport_height,
+    )
+    session.add(row)
+    await session.flush()
+    return row, None
+
+
 @router.post("/site/page-captures", status_code=202)
 async def create_page_capture(req: CaptureCreate, background_tasks: BackgroundTasks,
                               session: AsyncSession = Depends(get_session),

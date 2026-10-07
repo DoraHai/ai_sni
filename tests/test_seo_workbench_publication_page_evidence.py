@@ -28,6 +28,9 @@ class Rows:
     def all(self):
         return self.values
 
+    def one(self):
+        return self.values[0]
+
 
 def _ctx(*, tenant_id=7, permissions=None):
     return AuthContext(
@@ -614,3 +617,53 @@ def test_workbench_readiness_permission_and_missing_freshness_contract(monkeypat
         asyncio.run(api.get_workbench_readiness(tenant_id=7, site_id=9, session=db, ctx=_ctx(permissions={'seo.content':'view'})))
     assert error.value.status_code == 403
     db.execute.assert_not_awaited(); db.scalar.assert_not_awaited()
+
+
+def test_service_status_maps_existing_facts_without_triggering_collection(monkeypatch):
+    observed = datetime(2026, 10, 7, 3, 0)
+    crawl = SimpleNamespace(
+        id=71, tenant_id=7, site_id=9, status='completed', seed_url='https://example.com',
+        max_urls=50, discovered_count=4, fetched_count=4, failed_count=0,
+        blocked_count=0, issue_count=1, error_summary=None, started_at=observed,
+        completed_at=observed,
+    )
+    ranking = SimpleNamespace(
+        id=72, tenant_id=7, site_id=9, job_type='ranking', trigger_type='scheduled',
+        status='completed', planned_count=2, success_count=2, failed_count=0,
+        skipped_count=0, error_summary=None, requested_by=None, started_at=observed,
+        completed_at=observed,
+    )
+    db = SimpleNamespace(
+        execute=AsyncMock(side_effect=[
+            Rows([(1, observed)]), Rows([(2, observed)]), Rows([(2, observed)]),
+            Rows([(3, 3, 1, observed)]), Rows([(2, 2, 0)]),
+            Rows([('succeeded', 2, observed, 2)]), Rows([('available', 3, observed)]),
+        ]),
+        scalar=AsyncMock(return_value=crawl),
+        scalars=AsyncMock(return_value=[ranking]),
+    )
+    monkeypatch.setattr(api, 'ensure_module_access', AsyncMock())
+    monkeypatch.setattr(api, '_tenant', AsyncMock(return_value=SimpleNamespace(id=7)))
+    monkeypatch.setattr(api, '_seo_site', AsyncMock(return_value=SimpleNamespace(
+        id=9, tenant_id=7, name='Example', domain='https://example.com',
+        canonical_domain='example.com', status='active', updated_at=observed,
+        site_settings={'seo_service_plan': {'optimization_directions': ['技术SEO']},
+                       'google_search_console': {'enabled': True}},
+    )))
+    monkeypatch.setattr(api, 'crawl_site', AsyncMock(side_effect=AssertionError('GET must not crawl')))
+    monkeypatch.setattr(api, 'publish_content', AsyncMock(side_effect=AssertionError('GET must not publish')))
+
+    result = asyncio.run(api.get_workbench_service_status(
+        tenant_id=7, site_id=9, session=db, ctx=_ctx(),
+    ))
+
+    assert result['read_only'] is True
+    assert result['phases']['SEO-A01']['state'] == 'ready'
+    assert result['phases']['SEO-A02']['facts']['pages_with_issues'] == 1
+    assert result['phases']['SEO-A03']['state'] == 'ready'
+    assert result['phases']['SEO-A05']['state'] == 'ready'
+    assert result['phases']['SEO-A05']['facts']['verified_publications'] == 2
+    assert result['phases']['SEO-A06']['facts']['gsc_configured'] is True
+    assert result['phases']['SEO-A07']['facts']['latest_by_job']['ranking']['status'] == 'completed'
+    assert _required('/api/v1/seo/workbench/service-status', 'GET') == ({'seo.content','seo.site'}, False)
+    assert len(db.execute.await_args_list) == 7

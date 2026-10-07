@@ -142,3 +142,44 @@
 迁移源文件：`migrations/versions/20261007_0105_seo_content_confirmations.py`，父版本 `0104_seo_page_ai_tdk`。只新增 `seo_site_advisor_assignments` 与 `seo_content_confirmations`，不改客户现有内容和发布数据。本批未执行迁移、部署或数据回填。
 
 SEO 健康检查兼容 `0104`（代码先发布但新接口不可用）与 `0105`，到达 `0105` 时额外验证两张表的必要列及确认表约束。正式上线必须单独批准迁移，并在启用新前端动作前完成管理员顾问分配。
+
+## SEO-02 服务状态与发布后核验
+
+### 服务阶段只读状态
+
+`GET /workbench/service-status?tenant_id={tenant_id}&site_id={site_id}`
+
+要求同时具备 `seo.content:view` 和 `seo.site:view`，并通过租户、模块和站点范围检查。接口只读取数据库，不启动爬虫、排名采集、AI、发布或报告任务。
+
+响应的 `phases` 包含 `SEO-A01/A02/A03/A05/A06/A07`。每段统一返回：
+
+- `state`: `ready | needs_attention | not_ready | no_data`；
+- `blockers`: 可机读缺项，如 `target_keywords_missing`、`crawl_run_missing`、`publication_checks_incomplete`；
+- `facts`: 现有对象数量、最近运行或状态分布；
+- `as_of`: 对应事实的最近观测时间，没有数据时为 `null`。
+
+`evidence_endpoints` 指向原有明细接口。阶段状态只是已有事实的汇总，不替代稿件确认、发布结果、页面核验或搜索效果证据。
+
+### 发布成功后的页面核验
+
+以下入口在发布事实成功提交后，自动尝试为该发布记录建立 `seo_page_captures` 核验任务：
+
+- `POST /content-distribution/publish`
+- `POST /content-distribution/publications/manual`
+- `POST /content-distribution/publications/{id}/complete`
+- `POST /content-distribution/publications/{id}/sync`
+- `POST /content-distribution/publications/{id}/retry`
+
+响应增加：
+
+```json
+{
+  "page_verification": {
+    "state": "queued",
+    "capture_id": 88,
+    "reason": null
+  }
+}
+```
+
+`state` 可为 `queued | existing | not_queued | not_applicable`。常见 `reason` 包括 `capture_disabled`、`publication_url_missing`、`publication_site_missing`、`capture_recent` 和 `capture_queue_failed`。发布成功、页面核验排队、页面核验成功仍是三个独立事实。核验队列异常只回报缺口，不回滚已经落库的真实发布结果。

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import BackgroundTasks
 
 
 def test_editor_sanitizer_layout_and_source_parity():
@@ -48,6 +49,7 @@ from app.api.seo import (
     _distribution_content,
     _connection_payload,
     _distribution_variant_payload,
+    _queue_published_page_verification,
     _require_content_ready,
     _sanitize_content_html,
     adapt_content_distribution,
@@ -1494,6 +1496,76 @@ def test_manual_handoff_completion_is_site_scoped_and_audited() -> None:
     assert attempt.response_summary == {"page_url_host": "zhuanlan.zhihu.com"}
     assert publication.status == "published"
     assert result["page_url"] == "https://zhuanlan.zhihu.com/p/123"
+
+
+def test_manual_completion_queues_publication_page_verification() -> None:
+    publication = SeoContentPublication(
+        id=12, tenant_id=1, content_asset_id=5, platform_code="zhihu",
+        platform_name="知乎", publish_mode="assisted", status="manual_required",
+        source_version=2,
+    )
+    content = SeoContentAsset(
+        id=5, tenant_id=1, site_id=8, content_type="article", title="测试文章",
+        status="ready", version_count=2,
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=publication)
+    session.scalar = AsyncMock(return_value=None)
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+    session.flush = AsyncMock()
+    tasks = BackgroundTasks()
+    reserve = AsyncMock(return_value=(SimpleNamespace(id=88), None))
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        patch("app.api.seo.reserve_publication_page_capture", new=reserve),
+    ):
+        result = asyncio.run(complete_manual_publication(
+            12,
+            DistributionManualComplete(
+                tenant_id=1, site_id=8, page_url="https://zhuanlan.zhihu.com/p/123",
+            ),
+            session,
+            AuthContext(7, "operator", "运营", 1, {"seo.content": "edit"}),
+            tasks,
+        ))
+
+    reserve.assert_awaited_once_with(
+        session, tenant_id=1, site_id=8, publication_id=12,
+        page_url="https://zhuanlan.zhihu.com/p/123",
+    )
+    assert result["page_verification"] == {
+        "state": "queued", "capture_id": 88, "reason": None,
+    }
+    assert len(tasks.tasks) == 1
+
+
+def test_page_verification_queue_failure_does_not_overwrite_published_fact() -> None:
+    publication = SeoContentPublication(
+        id=12, tenant_id=1, content_asset_id=5, platform_code="zhihu",
+        platform_name="知乎", publish_mode="assisted", status="published",
+        source_version=2, page_url="https://zhuanlan.zhihu.com/p/123",
+    )
+    content = SeoContentAsset(
+        id=5, tenant_id=1, site_id=8, content_type="article", title="测试文章",
+        status="published", version_count=2,
+    )
+    session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+    with patch(
+        "app.api.seo.reserve_publication_page_capture",
+        new=AsyncMock(side_effect=RuntimeError("queue unavailable")),
+    ):
+        result = asyncio.run(_queue_published_page_verification(
+            session, publication, content, BackgroundTasks(),
+        ))
+
+    assert result == {
+        "state": "not_queued", "capture_id": None, "reason": "capture_queue_failed",
+    }
+    assert publication.status == "published"
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
 
 
 def test_manual_publication_duplicate_race_returns_conflict_and_rolls_back() -> None:

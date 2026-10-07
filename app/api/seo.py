@@ -56,6 +56,7 @@ from app.models import (
     SeoRankSnapshot,
     SeoSerpResult,
     SeoSitePage,
+    SeoPageCapture,
     SeoSiteAdvisorAssignment,
     Tenant,
     User,
@@ -357,7 +358,11 @@ from app.api.seo_video import router as video_router
 router.include_router(video_router)
 from app.api.seo_qa import router as qa_router
 router.include_router(qa_router)
-from app.api.seo_page_captures import router as page_captures_router
+from app.api.seo_page_captures import (
+    execute_page_capture,
+    reserve_publication_page_capture,
+    router as page_captures_router,
+)
 router.include_router(page_captures_router)
 from app.api.seo_site_analytics import router as site_analytics_router
 router.include_router(site_analytics_router)
@@ -5627,6 +5632,44 @@ def _publication_payload(
     }
 
 
+async def _queue_published_page_verification(
+    session: AsyncSession,
+    row: SeoContentPublication,
+    content: SeoContentAsset,
+    background_tasks: BackgroundTasks | None,
+) -> dict[str, Any]:
+    """Queue evidence only after the publication fact is durable."""
+    if row.status != "published":
+        return {"state": "not_applicable", "capture_id": None, "reason": "publication_not_published"}
+    if content.site_id is None:
+        return {"state": "not_queued", "capture_id": None, "reason": "publication_site_missing"}
+    try:
+        capture, reason = await reserve_publication_page_capture(
+            session,
+            tenant_id=int(row.tenant_id),
+            site_id=int(content.site_id),
+            publication_id=int(row.id),
+            page_url=row.page_url,
+        )
+        if reason is None:
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001
+        await session.rollback()
+        logger.error(
+            "SEO publication page verification queue failed publication_id=%s error_type=%s",
+            row.id,
+            type(exc).__name__,
+        )
+        return {"state": "not_queued", "capture_id": None, "reason": "capture_queue_failed"}
+    if capture is not None and reason is None and background_tasks is not None:
+        background_tasks.add_task(execute_page_capture, int(capture.id))
+    return {
+        "state": "queued" if reason is None else "existing",
+        "capture_id": None if capture is None else capture.id,
+        "reason": reason,
+    }
+
+
 def _publication_attempt_requires_manual_check(
     attempt: SeoPublishAttempt | None,
 ) -> bool:
@@ -7729,6 +7772,200 @@ async def get_workbench_readiness(
     }
 
 
+def _service_phase_state(*, blockers: list[str], has_data: bool) -> str:
+    if blockers:
+        return "needs_attention" if has_data else "not_ready"
+    return "ready" if has_data else "no_data"
+
+
+@router.get("/workbench/service-status")
+async def get_workbench_service_status(
+    tenant_id: PositiveInt,
+    site_id: PositiveInt,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    """Map stored SEO facts to A01-A07 phases without starting any work."""
+    ctx.ensure_tenant(tenant_id)
+    if not (ctx.can_view("seo.content") and ctx.can_view("seo.site")):
+        raise HTTPException(403, "当前账号需要同时具有 SEO 内容和页面查看权限")
+    await ensure_module_access(session, ctx, tenant_id, "seo")
+    await _tenant(session, tenant_id)
+    site = await _seo_site(session, tenant_id, site_id)
+
+    brand_total, brand_latest = (await session.execute(select(
+        func.count(), func.max(SeoBrandAsset.updated_at),
+    ).where(
+        SeoBrandAsset.tenant_id == tenant_id,
+        SeoBrandAsset.site_id == site_id,
+        SeoBrandAsset.status == "active",
+    ))).one()
+    keyword_total, keyword_latest = (await session.execute(select(
+        func.count(), func.max(SeoKeywordAsset.updated_at),
+    ).where(
+        SeoKeywordAsset.tenant_id == tenant_id,
+        SeoKeywordAsset.site_id == site_id,
+        SeoKeywordAsset.status == "active",
+    ))).one()
+    rank_total, rank_latest = (await session.execute(select(
+        func.count(), func.max(SeoRankSnapshot.checked_at),
+    ).where(
+        SeoRankSnapshot.tenant_id == tenant_id,
+        SeoRankSnapshot.site_id == site_id,
+        SeoRankSnapshot.subject_type == "own",
+    ))).one()
+    page_total, page_checked, page_with_issues, page_latest = (await session.execute(select(
+        func.count(),
+        func.count().filter(SeoSitePage.last_checked_at.is_not(None)),
+        func.count().filter(func.coalesce(func.jsonb_array_length(SeoSitePage.issue_codes), 0) > 0),
+        func.max(SeoSitePage.last_checked_at),
+    ).where(
+        SeoSitePage.tenant_id == tenant_id,
+        SeoSitePage.site_id == site_id,
+    ))).one()
+    publication_total, published_total, missing_url = (await session.execute(select(
+        func.count(),
+        func.count().filter(SeoContentPublication.status == "published"),
+        func.count().filter(and_(
+            SeoContentPublication.status == "published",
+            SeoContentPublication.page_url.is_(None),
+        )),
+    ).join(SeoContentAsset, and_(
+        SeoContentAsset.id == SeoContentPublication.content_asset_id,
+        SeoContentAsset.tenant_id == SeoContentPublication.tenant_id,
+    )).where(
+        SeoContentPublication.tenant_id == tenant_id,
+        SeoContentAsset.site_id == site_id,
+    ))).one()
+    capture_rows = (await session.execute(select(
+        SeoPageCapture.status,
+        func.count(),
+        func.max(SeoPageCapture.captured_at),
+        func.count(func.distinct(SeoPageCapture.relation_id)),
+    ).where(
+        SeoPageCapture.tenant_id == tenant_id,
+        SeoPageCapture.site_id == site_id,
+        SeoPageCapture.relation_type == "publication",
+    ).group_by(SeoPageCapture.status))).all()
+    metric_rows = (await session.execute(select(
+        SeoMetricSnapshot.status, func.count(), func.max(SeoMetricSnapshot.observed_at),
+    ).where(
+        SeoMetricSnapshot.tenant_id == tenant_id,
+        SeoMetricSnapshot.site_id == site_id,
+    ).group_by(SeoMetricSnapshot.status))).all()
+    latest_crawl = await session.scalar(select(SeoCrawlRun).where(
+        SeoCrawlRun.tenant_id == tenant_id,
+        SeoCrawlRun.site_id == site_id,
+    ).order_by(SeoCrawlRun.started_at.desc(), SeoCrawlRun.id.desc()).limit(1))
+    automation_runs = list(await session.scalars(select(SeoAutomationRun).where(
+        SeoAutomationRun.tenant_id == tenant_id,
+        or_(SeoAutomationRun.site_id == site_id, SeoAutomationRun.site_id.is_(None)),
+    ).order_by(SeoAutomationRun.started_at.desc(), SeoAutomationRun.id.desc()).limit(20)))
+    latest_by_job: dict[str, SeoAutomationRun] = {}
+    for run in automation_runs:
+        latest_by_job.setdefault(run.job_type, run)
+
+    settings = site.site_settings if isinstance(site.site_settings, dict) else {}
+    service_plan = settings.get("seo_service_plan")
+    service_plan = service_plan if isinstance(service_plan, dict) else {}
+    directions = service_plan.get("optimization_directions")
+    directions = directions if isinstance(directions, list) else []
+    a01_blockers = []
+    if not brand_total:
+        a01_blockers.append("brand_profile_missing")
+    if not keyword_total:
+        a01_blockers.append("target_keywords_missing")
+    if not directions:
+        a01_blockers.append("optimization_directions_missing")
+    a02_blockers = []
+    if not page_total:
+        a02_blockers.append("page_inventory_missing")
+    elif int(page_checked or 0) < int(page_total or 0):
+        a02_blockers.append("pages_waiting_for_check")
+    if latest_crawl is None:
+        a02_blockers.append("crawl_run_missing")
+    elif latest_crawl.status in {"failed", "partial"}:
+        a02_blockers.append("latest_crawl_incomplete")
+    a03_blockers = []
+    if not keyword_total:
+        a03_blockers.append("target_keywords_missing")
+    if not rank_total:
+        a03_blockers.append("ranking_observations_missing")
+    ranking_run = latest_by_job.get("ranking")
+    if ranking_run is None:
+        a03_blockers.append("ranking_run_missing")
+    elif ranking_run.status in {"failed", "partial"}:
+        a03_blockers.append("latest_ranking_run_incomplete")
+    capture_counts, capture_total, capture_latest = _status_readiness(capture_rows)
+    verified_publication_total = sum(
+        int(row[3] or 0) for row in capture_rows if str(row[0]) == "succeeded"
+    )
+    metric_counts, metric_total, metric_latest = _status_readiness(metric_rows)
+    a05_blockers = []
+    if int(missing_url or 0):
+        a05_blockers.append("published_url_missing")
+    if int(published_total or 0) > verified_publication_total:
+        a05_blockers.append("publication_checks_incomplete")
+    a06_blockers = [] if metric_total else ["metric_observations_missing"]
+    failed_runs = [run for run in automation_runs if run.status in {"failed", "partial"}]
+    a07_blockers = ["automation_run_needs_attention"] if failed_runs else []
+    read_at = datetime.now(timezone.utc)
+
+    return {
+        "tenant_id": tenant_id,
+        "site_id": site_id,
+        "read_at": _iso(read_at),
+        "phases": {
+            "SEO-A01": {
+                "state": _service_phase_state(blockers=a01_blockers, has_data=bool(brand_total or keyword_total or directions)),
+                "blockers": a01_blockers,
+                "facts": {"active_brand_assets": int(brand_total or 0), "active_keywords": int(keyword_total or 0), "optimization_direction_count": len(directions)},
+                "as_of": _database_iso(_workbench_latest([brand_latest, keyword_latest, site.updated_at])),
+            },
+            "SEO-A02": {
+                "state": _service_phase_state(blockers=a02_blockers, has_data=bool(page_total or latest_crawl)),
+                "blockers": a02_blockers,
+                "facts": {"pages": int(page_total or 0), "checked_pages": int(page_checked or 0), "pages_with_issues": int(page_with_issues or 0), "latest_crawl": None if latest_crawl is None else _crawl_run_payload(latest_crawl)},
+                "as_of": _iso(page_latest),
+            },
+            "SEO-A03": {
+                "state": _service_phase_state(blockers=a03_blockers, has_data=bool(keyword_total or rank_total)),
+                "blockers": a03_blockers,
+                "facts": {"active_keywords": int(keyword_total or 0), "rank_observations": int(rank_total or 0), "latest_ranking_run": None if ranking_run is None else _automation_run_payload(ranking_run)},
+                "as_of": _iso(rank_latest),
+            },
+            "SEO-A05": {
+                "state": _service_phase_state(blockers=a05_blockers, has_data=bool(publication_total)),
+                "blockers": a05_blockers,
+                "facts": {"publications": int(publication_total or 0), "published": int(published_total or 0), "published_url_missing": int(missing_url or 0), "publication_capture_total": capture_total, "verified_publications": verified_publication_total, "capture_status_counts": capture_counts},
+                "as_of": _iso(capture_latest),
+            },
+            "SEO-A06": {
+                "state": _service_phase_state(blockers=a06_blockers, has_data=bool(metric_total)),
+                "blockers": a06_blockers,
+                "facts": {"metric_observations": metric_total, "status_counts": metric_counts, "gsc_configured": bool(_gsc_site_config(site).get("enabled"))},
+                "as_of": _iso(metric_latest),
+            },
+            "SEO-A07": {
+                "state": _service_phase_state(blockers=a07_blockers, has_data=bool(automation_runs)),
+                "blockers": a07_blockers,
+                "facts": {"recent_run_count": len(automation_runs), "runs_needing_attention": len(failed_runs), "latest_by_job": {key: _automation_run_payload(value) for key, value in latest_by_job.items()}},
+                "as_of": _iso(_workbench_latest([run.started_at for run in automation_runs])),
+            },
+        },
+        "evidence_endpoints": {
+            "brand_assets": "/api/v1/seo/rank-serp/brand-assets",
+            "keywords": "/api/v1/seo/keywords",
+            "pages": "/api/v1/seo/site-pages",
+            "crawl_runs": "/api/v1/seo/site/crawl-runs",
+            "automation_runs": "/api/v1/seo/automation-runs",
+            "publication_checks": "/api/v1/seo/workbench/publication-page-evidence",
+            "metrics": "/api/v1/seo/overview/metric-snapshots/latest",
+        },
+        "read_only": True,
+    }
+
+
 @router.get("/content-distribution/publications")
 async def list_content_publications(
     tenant_id: int,
@@ -7797,6 +8034,7 @@ async def create_manual_publication(
     req: DistributionManualPublicationCreate,
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_scoped_auth),
+    background_tasks: BackgroundTasks = None,
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
@@ -7855,7 +8093,11 @@ async def create_manual_publication(
             raise HTTPException(409, "该文章的发布链接已经登记，请刷新后核对") from exc
         raise
     await session.refresh(row)
-    return _publication_payload(row, content=content)
+    result = _publication_payload(row, content=content)
+    result["page_verification"] = await _queue_published_page_verification(
+        session, row, content, background_tasks,
+    )
+    return result
 
 
 @router.post("/content-distribution/adapt")
@@ -8446,6 +8688,7 @@ async def publish_content_distribution(
     req: DistributionPublishRequest,
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_scoped_auth),
+    background_tasks: BackgroundTasks = None,
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
@@ -8645,7 +8888,11 @@ async def publish_content_distribution(
     attempt.completed_at = datetime.utcnow()
     await session.commit()
     await session.refresh(row)
-    return _publication_payload(row, content=content, connection=connection)
+    result = _publication_payload(row, content=content, connection=connection)
+    result["page_verification"] = await _queue_published_page_verification(
+        session, row, content, background_tasks,
+    )
+    return result
 
 
 @router.post("/content-distribution/publications/{publication_id}/complete")
@@ -8654,6 +8901,7 @@ async def complete_manual_publication(
     req: DistributionManualComplete,
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_scoped_auth),
+    background_tasks: BackgroundTasks = None,
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
@@ -8673,7 +8921,11 @@ async def complete_manual_publication(
         raise HTTPException(409, "发布任务版本已变化，请重新导出任务并核对结果")
     await _require_active_content_confirmation(session, content)
     if row.status == "published" and row.page_url == req.page_url.strip():
-        return _publication_payload(row, content=content)
+        result = _publication_payload(row, content=content)
+        result["page_verification"] = await _queue_published_page_verification(
+            session, row, content, background_tasks,
+        )
+        return result
     if row.status not in {"manual_required", "failed", "preparing"}:
         raise HTTPException(409, "当前任务状态不能人工完成")
     try:
@@ -8725,7 +8977,11 @@ async def complete_manual_publication(
         if winner is not None:
             raise HTTPException(409, "该文章的发布链接已经登记，请刷新后核对") from exc
         raise
-    return _publication_payload(row, content=content)
+    result = _publication_payload(row, content=content)
+    result["page_verification"] = await _queue_published_page_verification(
+        session, row, content, background_tasks,
+    )
+    return result
 
 
 @router.post("/content-distribution/publications/{publication_id}/sync")
@@ -8735,6 +8991,7 @@ async def sync_content_publication(
     site_id: int | None = None,
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_scoped_auth),
+    background_tasks: BackgroundTasks = None,
 ) -> dict[str, Any]:
     ctx.ensure_tenant(tenant_id)
     await _seo_site(session, tenant_id, site_id)
@@ -8809,7 +9066,11 @@ async def sync_content_publication(
             content.page_url = row.page_url
         await _mark_distribution_variant_published(session, row)
     await session.commit()
-    return _publication_payload(row, content=content, connection=connection)
+    result = _publication_payload(row, content=content, connection=connection)
+    result["page_verification"] = await _queue_published_page_verification(
+        session, row, content, background_tasks,
+    )
+    return result
 
 
 @router.post("/content-distribution/publications/{publication_id}/retry")
@@ -8818,6 +9079,7 @@ async def retry_content_publication(
     req: DistributionRetryRequest,
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_scoped_auth),
+    background_tasks: BackgroundTasks = None,
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
@@ -8970,7 +9232,11 @@ async def retry_content_publication(
     attempt.error = remote.error
     attempt.completed_at = datetime.utcnow()
     await session.commit()
-    return _publication_payload(row, content=content, connection=connection)
+    result = _publication_payload(row, content=content, connection=connection)
+    result["page_verification"] = await _queue_published_page_verification(
+        session, row, content, background_tasks,
+    )
+    return result
 
 
 class DistributionMaterialsRequest(BaseModel):
