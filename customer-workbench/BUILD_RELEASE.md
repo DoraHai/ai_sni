@@ -11,7 +11,7 @@ npm ci --ignore-scripts --no-audit --no-fund
 npm run build
 ```
 
-使用Node 24，Vue精确锁版本3.5.35与同工作树 frontend/package-lock.json 对齐。scripts/build.mjs 固定读取 `../frontend`，不接受个人绝对目录配置。直接import既有 session.js/sessionStorage.js/loginRedirect.js，无独立登录体系或token存储。构建拒绝宿主会话/lock脏改、Vue锁不一致和演示模块入图；本产品源码在提交前可构建但manifest标记sourceTreeClean=false，提交后重建应为true。
+使用Node 24，Vue精确锁版本3.5.42与同工作树 frontend/package-lock.json 对齐；source-map-js两侧锁为1.2.2。2026-10-07按总控明确授权同时更新两侧package/lock安全补丁，使用正常npm解析生成integrity，不修改宿主业务或关闭扫描。scripts/build.mjs 固定读取 `../frontend`，不接受个人绝对目录配置。直接import既有 session.js/sessionStorage.js/loginRedirect.js，无独立登录体系或token存储。构建拒绝宿主会话/lock脏改、Vue锁不一致和演示模块入图；本产品源码在提交前可构建但manifest标记sourceTreeClean=false，提交后重建应为true。
 
 | 产物 | 用途 |
 | --- | --- |
