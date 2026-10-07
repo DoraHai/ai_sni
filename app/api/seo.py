@@ -514,6 +514,15 @@ METRIC_STATUSES = {"available", "not_configured", "pending", "failed", "stale"}
 METRIC_QUALITIES = {"verified", "estimated", "crawled", "imported"}
 
 
+def _publication_time(value: datetime | None) -> datetime:
+    """Store publication instants as naive UTC; legacy naive inputs are UTC."""
+    if value is None:
+        return datetime.utcnow()
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
 def _iso(value: datetime | None) -> str | None:
     """Serialize application-owned timestamps as explicit UTC instants."""
     if value is None:
@@ -8504,7 +8513,7 @@ async def create_manual_publication(
     )
     if existing:
         raise HTTPException(409, "该文章的发布链接已经登记")
-    published_at = req.published_at or datetime.utcnow()
+    published_at = _publication_time(req.published_at)
     row = SeoContentPublication(
         tenant_id=req.tenant_id,
         content_asset_id=req.content_id,
@@ -9394,7 +9403,7 @@ async def complete_manual_publication(
         raise HTTPException(409, "该文章的发布链接已经登记")
     row.page_url = page_url
     row.status = "published"
-    row.published_at = req.published_at or datetime.utcnow()
+    row.published_at = _publication_time(req.published_at)
     row.last_error = None
     content.status = "published"
     content.published_at = content.published_at or row.published_at
@@ -9427,6 +9436,9 @@ async def complete_manual_publication(
         if winner is not None:
             raise HTTPException(409, "该文章的发布链接已经登记，请刷新后核对") from exc
         raise
+    # SQL-expression onupdate expires updated_at even with expire_on_commit=False.
+    # Load it explicitly before the synchronous response serializer reads it.
+    await session.refresh(row)
     result = _publication_payload(row, content=content)
     result["page_verification"] = await _queue_published_page_verification(
         session, row, content, background_tasks,

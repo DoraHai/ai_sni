@@ -59,3 +59,13 @@ $env:PYTHONPATH="$env:TEMP\seo12-runtime-deps"
 全部UI联调完成且允许释放环境后：停止服务和UI写入，运行 `cleanup-plan`。该命令重新核对目标、对象清单及所有权，生成受限目录的cleanup-review.json与cleanup-review.sql，**仅生成、不自动执行**。由SEO复核后在同一专用库执行：先去本轮表之间的外键，再RESTRICT删除本轮表、剩余序列/函数/类型；不DROP DATABASE、不删public、不删扩展，不用CASCADE，不改权限。清单不同或出现非本轮/非测试角色对象则停止。
 
 结束后核对用户对象恢复为空、原扩展/schema/角色保留；删除本轮生成的浏览器配置及合成身份密钥文件仅限上述已核对的本轮目录，原数据库凭据文件保持原样。当前尚未执行清理，数据保留供UI12接续。
+
+## UI12 人工登记故障修复（2026-10-08）
+
+浏览器给 content2 的人工登记提交 `2026-10-08T00:01:00+08:00`，asyncpg 拒绝向无时区字段写入 aware datetime，返回500。只读核对确认这次事务未提交：tenant/site=1/1 下发布、尝试、抓取记录均为0；content1=drafting/v3，content2=ready/v2，content3=ready/v1，三者均无发布地址/时间；content2/v2 的批准仍在。没有重置或重放浏览器业务。
+
+两条人工发布入口统一按 UTC 无时区值存储，响应仍为显式 UTC；上述输入对应 `2026-10-07T16:01:00Z`。未带时区的历史输入继续视为UTC，未传时间继续使用服务器当前UTC。真实PG回归还发现回填提交后 `updated_at` 的异步隐式加载错误，补上显式 refresh，避免提交成功却序列化500。
+
+验证：先在随机隔离schema复现原始asyncpg报错，再运行 `test_seo_workflow_postgres.py`、`test_seo_publication_workbench_contract.py`、`test_seo_distribution.py`，**93 passed、0 skipped**。其中新增10个真实PG时间用例覆盖两个入口的正/负时差、Z、无时区、缺省值；原PG并发与权限门禁一起通过。测试schema已自行清理，public内UI状态保留。
+
+接续只从content2当前版本/哈希读取后登记一次开始；不要从头重跑workflow，不修改content1的v3，不撤销顾问分配。登记成功仅为合成发布事实；外部采集/发布继续禁用，不代表页面核验或真实平台验收通过。顾问撤权仍等待前端完成正常路径后的同步点。

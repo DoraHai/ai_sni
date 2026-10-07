@@ -5,6 +5,7 @@ Only loopback / database seo_workflow_test is accepted. Each test owns one rando
 schema and drops only that schema; never falls back to application DATABASE_URL.
 """
 import asyncio
+from datetime import datetime
 from contextlib import asynccontextmanager
 import os
 from unittest.mock import AsyncMock
@@ -21,7 +22,7 @@ from sqlalchemy.schema import CreateTable
 from app import seo_content_workflow as flow, seo_content_drafting as drafts, seo_ai_operations as ops
 from app.api import seo as api
 from app.models.module_workspace import TenantModule, SeoSite
-from app.models.seo import (SeoContentAsset, SeoContentConfirmation, SeoContentPublication, SeoSiteAdvisorAssignment,
+from app.models.seo import (SeoContentAsset, SeoContentConfirmation, SeoContentPublication, SeoPublishAttempt, SeoSiteAdvisorAssignment,
                             SeoKeywordAsset, SeoAiOperation)
 from app.models.seo_cockpit import SeoTask
 from app.models.seo_page_capture import SeoPageCapture
@@ -72,7 +73,7 @@ async def database():
             await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
             created = True
             models = (Tenant, Role, User, TenantModule, SeoSite, SeoSiteAdvisorAssignment, SeoContentAsset,
-                      SeoContentConfirmation, SeoContentPublication, SeoTask, SeoPageCapture, SeoKeywordAsset, SeoQaFact, SeoAiOperation)
+                      SeoContentConfirmation, SeoContentPublication, SeoPublishAttempt, SeoTask, SeoPageCapture, SeoKeywordAsset, SeoQaFact, SeoAiOperation)
             for model in models:
                 await connection.execute(CreateTable(model.__table__, include_foreign_key_constraints=[]))
             await connection.execute(text("CREATE TABLE alembic_version (version_num TEXT NOT NULL)"))
@@ -124,6 +125,65 @@ def test_concurrent_content_reservations_create_one_task_and_asset(same_key):
             async with sessions() as session:
                 assert await session.scalar(select(func.count()).select_from(SeoTask)) == 1
                 assert await session.scalar(select(func.count()).select_from(SeoContentAsset)) == 1
+    asyncio.run(scenario())
+
+
+@requires_pg
+@pytest.mark.parametrize("mode", ["create", "complete"])
+@pytest.mark.parametrize("timestamp,expected", [
+    ("2026-10-08T00:01:00+08:00", datetime(2026, 10, 7, 16, 1)),
+    ("2026-10-07T12:01:00-04:00", datetime(2026, 10, 7, 16, 1)),
+    ("2026-10-07T16:01:00Z", datetime(2026, 10, 7, 16, 1)),
+    ("2026-10-07T16:01:00", datetime(2026, 10, 7, 16, 1)),
+    (None, None),
+])
+def test_manual_publication_timestamp_round_trip_in_postgres(monkeypatch, mode, timestamp, expected):
+    """Browser offsets must preserve the instant in both naive UTC columns."""
+    async def scenario():
+        async with database() as sessions:
+            await trigger(sessions, uuid4())
+            async with sessions() as session:
+                content = await session.scalar(select(SeoContentAsset))
+                content.status, content.draft = "ready", "Approved timestamp fixture"
+                await session.flush()
+                ident, source_hash = content.id, api._content_confirmation_hash(content)
+                session.add(SeoContentConfirmation(tenant_id=4, site_id=2, content_asset_id=ident,
+                    content_version=1, content_hash=source_hash, decision="approve", actor_mode="advisor_proxy",
+                    actor_user_id=7, actor_role_name="test"))
+                if mode == "complete":
+                    row = SeoContentPublication(tenant_id=4, content_asset_id=ident, platform_code="manual",
+                        platform_name="fixture", publish_mode="manual", status="manual_required", source_version=1)
+                    session.add(row)
+                    await session.flush()
+                    publication_id = row.id
+                await session.commit()
+            queued = AsyncMock(return_value={"state": "not_queued", "reason": "isolated_test"})
+            monkeypatch.setattr(api, "_queue_published_page_verification", queued)
+            before = datetime.utcnow()
+            async with sessions() as session:
+                fields = dict(tenant_id=4, site_id=2, source_version=1,
+                              page_url="https://example.com/article", published_at=timestamp)
+                if mode == "create":
+                    result = await api.create_manual_publication(api.DistributionManualPublicationCreate(
+                        **fields, content_id=ident, payload_hash=source_hash, platform_name="fixture"), session, ADVISOR)
+                else:
+                    result = await api.complete_manual_publication(publication_id,
+                        api.DistributionManualComplete(**fields), session, ADVISOR)
+            after = datetime.utcnow()
+            async with sessions() as session:
+                content = await session.get(SeoContentAsset, ident)
+                publication = await session.scalar(select(SeoContentPublication))
+                assert content.status == publication.status == result["status"] == "published"
+                assert content.published_at == publication.published_at
+                assert publication.published_at.tzinfo is None
+                if expected is not None:
+                    assert publication.published_at == expected
+                else:
+                    assert before <= publication.published_at <= after
+                assert result["published_at"] == api._iso(publication.published_at)
+                assert await session.scalar(select(func.count()).select_from(SeoPublishAttempt)) == (mode == "complete")
+                assert await session.scalar(select(func.count()).select_from(SeoPageCapture)) == 0
+            queued.assert_awaited_once()
     asyncio.run(scenario())
 
 
