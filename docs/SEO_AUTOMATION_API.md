@@ -160,6 +160,27 @@ SEO 健康检查兼容 `0104`（代码先发布但新接口不可用）与 `0105
 
 `evidence_endpoints` 指向原有明细接口。阶段状态只是已有事实的汇总，不替代稿件确认、发布结果、页面核验或搜索效果证据。
 
+### 顾问维护服务计划
+
+- `GET /workbench/service-plan?tenant_id={tenant_id}&site_id={site_id}`
+- `PUT /workbench/service-plan`
+
+读取要求同一站点的 `seo.content:view` 与 `seo.site:view`。写入必须是实名账号，同时有 `seo.content:edit`、`seo.site:edit`，并存在当前租户/站点的 active 顾问分配；全租户权限或角色名称不能代替分配记录。
+
+```json
+{
+  "tenant_id": 1,
+  "site_id": 9,
+  "expected_revision": 2,
+  "optimization_directions": ["技术 SEO", "核心产品内容增长"],
+  "content_topics": ["减速机选型"],
+  "service_note": "首期先补齐产品页和技术资料",
+  "status": "active"
+}
+```
+
+每次成功写入 revision 加一，并由服务端记录真实 `updated_by` 和 `updated_at`。旧 revision 返回 409 `service_plan_version_conflict`，避免两个顾问页面互相覆盖。关键词和品牌资料继续使用现有关键词、品牌资产接口，服务计划不复制它们，也不冒充已经执行的定时任务。
+
 ### 发布成功后的页面核验
 
 以下入口在发布事实成功提交后，自动尝试为该发布记录建立 `seo_page_captures` 核验任务：

@@ -5472,6 +5472,30 @@ class AdvisorAssignmentRequest(BaseModel):
     active: bool = True
 
 
+class SeoServicePlanUpdate(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    expected_revision: int = Field(ge=0)
+    optimization_directions: list[str] = Field(min_length=1, max_length=20)
+    content_topics: list[str] = Field(default_factory=list, max_length=50)
+    service_note: str | None = Field(None, max_length=4000)
+    status: Literal["active", "paused"] = "active"
+
+    @field_validator("optimization_directions", "content_topics")
+    @classmethod
+    def normalize_service_plan_items(cls, value: list[str]) -> list[str]:
+        result: list[str] = []
+        for raw in value:
+            item = " ".join(str(raw).split()).strip()
+            if not item or len(item) > 200:
+                raise ValueError("服务计划条目必须为 1 至 200 个字符")
+            if item not in result:
+                result.append(item)
+        if not result and value:
+            raise ValueError("服务计划不能只有空白条目")
+        return result
+
+
 class DistributionConnectionUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=120)
     base_url: str | None = Field(None, max_length=2000)
@@ -6550,6 +6574,24 @@ async def _advisor_assignment(
     )
 
 
+async def _site_advisor_assignment(
+    session: AsyncSession,
+    tenant_id: int,
+    site_id: int,
+    user_id: int | None,
+    *,
+    schema_ready: bool = False,
+) -> SeoSiteAdvisorAssignment | None:
+    if user_id is None or (not schema_ready and not await _content_confirmation_schema_ready(session)):
+        return None
+    return await session.scalar(select(SeoSiteAdvisorAssignment).where(
+        SeoSiteAdvisorAssignment.tenant_id == tenant_id,
+        SeoSiteAdvisorAssignment.site_id == site_id,
+        SeoSiteAdvisorAssignment.advisor_user_id == user_id,
+        SeoSiteAdvisorAssignment.active.is_(True),
+    ))
+
+
 async def _content_allowed_actions(
     session: AsyncSession,
     row: SeoContentAsset,
@@ -6992,6 +7034,83 @@ async def list_advisor_assignments(
         ],
         "total": len(rows),
     }
+
+
+def _service_plan_payload(site: SeoSite) -> dict[str, Any]:
+    settings = site.site_settings if isinstance(site.site_settings, dict) else {}
+    value = settings.get("seo_service_plan")
+    plan = value if isinstance(value, dict) else {}
+    return {
+        "tenant_id": site.tenant_id,
+        "site_id": site.id,
+        "revision": int(plan.get("revision") or 0),
+        "status": plan.get("status") if plan.get("status") in {"active", "paused"} else "active",
+        "optimization_directions": [str(item) for item in plan.get("optimization_directions", []) if str(item).strip()],
+        "content_topics": [str(item) for item in plan.get("content_topics", []) if str(item).strip()],
+        "service_note": plan.get("service_note") if isinstance(plan.get("service_note"), str) else None,
+        "updated_by": plan.get("updated_by") if isinstance(plan.get("updated_by"), int) else None,
+        "updated_at": plan.get("updated_at") if isinstance(plan.get("updated_at"), str) else None,
+        "missing": [
+            code for code, missing in (
+                ("optimization_directions_missing", not plan.get("optimization_directions")),
+            ) if missing
+        ],
+    }
+
+
+@router.get("/workbench/service-plan")
+async def get_seo_service_plan(
+    tenant_id: PositiveInt,
+    site_id: PositiveInt,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    if not (ctx.can_view("seo.content") and ctx.can_view("seo.site")):
+        raise HTTPException(403, "需要 SEO 内容和网站查看权限")
+    await ensure_module_access(session, ctx, tenant_id, "seo")
+    site = await _seo_site(session, tenant_id, site_id)
+    return _service_plan_payload(site)
+
+
+@router.put("/workbench/service-plan")
+async def update_seo_service_plan(
+    req: SeoServicePlanUpdate,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    if ctx.user_id is None or not ctx.can_edit("seo.content") or not ctx.can_edit("seo.site"):
+        raise HTTPException(403, "服务计划必须由实名且已分配的站点顾问维护")
+    if not await _content_confirmation_schema_ready(session):
+        raise HTTPException(503, "顾问分配能力尚未完成数据库迁移")
+    assignment = await _site_advisor_assignment(
+        session, req.tenant_id, req.site_id, ctx.user_id, schema_ready=True,
+    )
+    if assignment is None:
+        raise HTTPException(403, "只有当前站点已分配的顾问可以维护服务计划")
+    site = await _seo_site_for_update(session, req.tenant_id, req.site_id)
+    current = _service_plan_payload(site)
+    if req.expected_revision != current["revision"]:
+        raise HTTPException(409, detail={
+            "code": "service_plan_version_conflict",
+            "message": "服务计划已被更新，请刷新后重试",
+            "current_revision": current["revision"],
+        })
+    settings = dict(site.site_settings or {})
+    settings["seo_service_plan"] = {
+        "revision": current["revision"] + 1,
+        "status": req.status,
+        "optimization_directions": req.optimization_directions,
+        "content_topics": req.content_topics,
+        "service_note": str(req.service_note or "").strip() or None,
+        "updated_by": ctx.user_id,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    site.site_settings = settings
+    await session.commit()
+    await session.refresh(site)
+    return _service_plan_payload(site)
 
 
 @router.put("/workbench/advisor-assignments")

@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from app.api.seo import (
     ContentConfirmationRequest,
     ContentReviewSubmit,
+    SeoServicePlanUpdate,
     _content_allowed_actions,
     _content_confirmation_hash,
     _content_confirmation_status,
@@ -16,6 +17,7 @@ from app.api.seo import (
     _require_active_content_confirmation,
     create_content_confirmation,
     submit_content_review,
+    update_seo_service_plan,
 )
 from app.models.seo import SeoContentAsset, SeoContentConfirmation, SeoPublishAttempt
 from app.security.auth import AuthContext, _required
@@ -294,6 +296,75 @@ def test_workbench_route_permissions_are_registered_as_read_gate_then_verified_i
     assert _required(
         "/api/v1/seo/workbench/content-assets/88/confirmations", "POST"
     ) == ({"seo.content"}, False)
+    assert _required(
+        "/api/v1/seo/workbench/service-plan", "PUT"
+    ) == ({"seo.content", "seo.site"}, False)
+
+
+def test_assigned_advisor_updates_versioned_service_plan_with_actual_actor() -> None:
+    site = SimpleNamespace(
+        id=9, tenant_id=1,
+        site_settings={"seo_service_plan": {"revision": 2, "optimization_directions": ["旧方向"]}},
+    )
+    session = AsyncMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+    ctx = AuthContext(
+        user_id=7, username="advisor", role_name="顾问", tenant_id=None,
+        permissions={"seo.content": "edit", "seo.site": "edit"},
+    )
+    request = SeoServicePlanUpdate(
+        tenant_id=1, site_id=9, expected_revision=2,
+        optimization_directions=[" 技术 SEO ", "内容增长", "技术 SEO"],
+        content_topics=["减速机选型"], service_note="首期计划", status="active",
+    )
+    with (
+        patch("app.api.seo._content_confirmation_schema_ready", new=AsyncMock(return_value=True)),
+        patch("app.api.seo._site_advisor_assignment", new=AsyncMock(return_value=SimpleNamespace(id=3))),
+        patch("app.api.seo._seo_site_for_update", new=AsyncMock(return_value=site)),
+    ):
+        result = asyncio.run(update_seo_service_plan(request, session, ctx))
+
+    assert result["revision"] == 3
+    assert result["optimization_directions"] == ["技术 SEO", "内容增长"]
+    assert result["updated_by"] == 7
+    assert site.site_settings["seo_service_plan"]["updated_by"] == 7
+    session.commit.assert_awaited_once()
+
+
+def test_service_plan_rejects_unassigned_advisor_and_stale_revision() -> None:
+    ctx = AuthContext(
+        user_id=7, username="advisor", role_name="顾问", tenant_id=None,
+        permissions={"seo.content": "edit", "seo.site": "edit"},
+    )
+    request = SeoServicePlanUpdate(
+        tenant_id=1, site_id=9, expected_revision=1,
+        optimization_directions=["技术 SEO"],
+    )
+    with (
+        patch("app.api.seo._content_confirmation_schema_ready", new=AsyncMock(return_value=True)),
+        patch("app.api.seo._site_advisor_assignment", new=AsyncMock(return_value=None)),
+        pytest.raises(HTTPException) as unassigned,
+    ):
+        asyncio.run(update_seo_service_plan(request, AsyncMock(), ctx))
+    assert unassigned.value.status_code == 403
+
+    site = SimpleNamespace(
+        id=9, tenant_id=1,
+        site_settings={"seo_service_plan": {"revision": 2, "optimization_directions": ["技术 SEO"]}},
+    )
+    session = AsyncMock()
+    with (
+        patch("app.api.seo._content_confirmation_schema_ready", new=AsyncMock(return_value=True)),
+        patch("app.api.seo._site_advisor_assignment", new=AsyncMock(return_value=SimpleNamespace(id=3))),
+        patch("app.api.seo._seo_site_for_update", new=AsyncMock(return_value=site)),
+        pytest.raises(HTTPException) as stale,
+    ):
+        asyncio.run(update_seo_service_plan(request, session, ctx))
+    assert stale.value.status_code == 409
+    assert stale.value.detail["code"] == "service_plan_version_conflict"
+    assert stale.value.detail["current_revision"] == 2
+    session.commit.assert_not_awaited()
 
 
 def test_confirmation_migration_is_linear_and_declares_required_constraints() -> None:

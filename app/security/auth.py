@@ -182,6 +182,7 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
         "/api/v1/seo/workbench/publication-page-evidence",
         "/api/v1/seo/workbench/readiness",
         "/api/v1/seo/workbench/service-status",
+        "/api/v1/seo/workbench/service-plan",
     }:
         return {"seo.content", "seo.site"}, False
     if p.startswith("/api/v1/seo/workbench/content-assets"):
