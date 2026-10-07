@@ -19,8 +19,8 @@ from app.seo_cockpit_metrics import metric_snapshot,metric_values,DEFINITIONS
 from app.seo_image_verification import prepare_image_verification_retry
 
 router=APIRouter()
-TASK_PERMS={'content_review':'seo.content','image_repair':'seo.site','ranking_improvement':'seo.keywords','backlink_outreach':'seo.links'}
-TASK_METRICS={'content_review':'seo.content.published_7d_count','image_repair':'seo.images.verified_repair_count','ranking_improvement':'seo.ranking.top10_keyword_count','backlink_outreach':'seo.backlinks.verified_count'}
+TASK_PERMS={'content_review':'seo.content','image_repair':'seo.site','page_remediation':'seo.site','ranking_improvement':'seo.keywords','backlink_outreach':'seo.links'}
+TASK_METRICS={'content_review':'seo.content.published_7d_count','image_repair':'seo.images.verified_repair_count','page_remediation':'seo.site.healthy_page_count','ranking_improvement':'seo.ranking.top10_keyword_count','backlink_outreach':'seo.backlinks.verified_count'}
 
 QUEUE_STATES=('pending_customer_action','pending_system_check','verified','failed_retry')
 PUBLICATION_DISCOVERY_FAILURES={'unavailable','failed','unreachable','blocked'}
@@ -345,7 +345,7 @@ class TaskCreate(BaseModel):
     tenant_id:PositiveInt
     site_id:PositiveInt
     module:Literal['seo']='seo'
-    action_type:Literal['content_review','image_repair','ranking_improvement','backlink_outreach']
+    action_type:Literal['content_review','image_repair','page_remediation','ranking_improvement','backlink_outreach']
     title:str=Field(min_length=1,max_length=240)
     params:dict=Field(default_factory=dict)
     created_by:str|int|None=None
@@ -388,6 +388,11 @@ async def create_task(req:TaskCreate,ctx=Depends(require_scoped_auth),session=De
     elif req.action_type=='image_repair':
         review=await session.get(SeoImageAltReview,req.params.get('review_id')) if isinstance(req.params.get('review_id'),int) else None
         if not review or review.tenant_id!=req.tenant_id or review.site_id!=req.site_id:raise HTTPException(422,'需要当前网站的 review_id')
+    elif req.action_type=='page_remediation':
+        page=await session.get(SeoSitePage,req.params.get('page_id')) if isinstance(req.params.get('page_id'),int) else None
+        if not page or page.tenant_id!=req.tenant_id or page.site_id!=req.site_id:raise HTTPException(422,'需要当前网站的 page_id')
+        req.params={'page_id':page.id,'source_status':page.status,'source_issue_codes':list(page.issue_codes or []),
+                    'source_checked_at':page.last_checked_at.isoformat() if page.last_checked_at else None}
     elif req.action_type=='backlink_outreach':
         from app.seo_backlink_sources import candidate_url
         from urllib.parse import urlparse
@@ -438,6 +443,16 @@ async def completion(session,row):
             SeoImageVerification.status=='verified',SeoImageVerification.checked_at>row.created_at).order_by(SeoImageVerification.id.desc()).limit(1))
         if verification is None:raise HTTPException(409,'需要重新抓取确认图片修复')
         proof={'verification_id':verification.id,**verification.evidence}
+    elif row.action_type=='page_remediation':
+        page=await session.get(SeoSitePage,row.params['page_id'])
+        checked_at=page.last_checked_at.replace(tzinfo=timezone.utc) if page and page.last_checked_at and page.last_checked_at.tzinfo is None else (page.last_checked_at if page else None)
+        created_at=row.created_at.replace(tzinfo=timezone.utc) if row.created_at.tzinfo is None else row.created_at
+        if (not page or page.tenant_id!=row.tenant_id or page.site_id!=row.site_id
+                or page.status not in {'healthy','verified'} or page.issue_codes
+                or checked_at is None or checked_at<=created_at):
+            raise HTTPException(409,'需要任务创建后的页面重新检查确认问题已解决')
+        proof={'page_id':page.id,'status':page.status,'checked_at':checked_at.isoformat(),
+               'http_status':page.http_status,'audit_score':page.audit_score,'issue_codes':[]}
     elif row.action_type=='backlink_outreach':
         from app.models.seo import SeoBacklink
         created=row.created_at.astimezone(timezone.utc).replace(tzinfo=None)

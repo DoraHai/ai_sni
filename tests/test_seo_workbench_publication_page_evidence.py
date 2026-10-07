@@ -591,7 +591,7 @@ def test_workbench_readiness_summarizes_scoped_records_without_starting_work(mon
     assert result['contracts']['content_assets']['approved_without_publication'] == 1
     assert result['contracts']['publications']['public_url_missing'] == 1
     assert result['contracts']['page_checks']['unchecked_pages'] == 1
-    assert result['contracts']['tasks']['included_action_types'] == ['content_review','image_repair','backlink_outreach']
+    assert result['contracts']['tasks']['included_action_types'] == ['content_review','image_repair','page_remediation','backlink_outreach']
     assert result['contracts']['tasks']['done_with_completion_evidence'] == 1
     assert result['contracts']['tasks']['done_without_completion_evidence'] == 1
     assert {item['code'] for item in result['gaps']} == {

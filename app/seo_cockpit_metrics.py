@@ -1,7 +1,7 @@
 """Read-only metric computation; history is collected by a separate scheduler."""
 from datetime import datetime,timedelta,timezone
 from sqlalchemy import select,func
-from app.models.seo import SeoKeywordAsset,SeoRankSnapshot,SeoContentAsset,SeoMetricSnapshot,SeoBacklink
+from app.models.seo import SeoKeywordAsset,SeoRankSnapshot,SeoContentAsset,SeoMetricSnapshot,SeoBacklink,SeoSitePage
 from app.models.seo_cockpit import SeoImageVerification
 
 DEFINITIONS={
@@ -11,6 +11,7 @@ DEFINITIONS={
  'seo.images.pending_repair_count':('count','当前网站已审核、未被替代且尚未获重新抓取确认的图片方案数量，含待核实、未生效和抓取异常。'),
  'seo.images.repair_completion_rate':('percent','重新抓取确认数量除以当前网站未被替代的已审核图片方案数量×100；无已审核方案返回 null。'),
  'seo.backlinks.verified_count':('count','当前网站处于 active 且最近一次抓取证据状态为 found 的外链记录数量，按来源页面和目标页面去重；索引候选及暂停监控记录不计入。'),
+ 'seo.site.healthy_page_count':('count','当前网站最近一次检查状态为 healthy 或 verified 的页面数量；仅页面重新检查后的持久化结果计数。'),
 }
 
 def trend(current,previous):
@@ -35,7 +36,9 @@ async def metric_values(session,tenant_id,site_id,now=None):
     verified=states.count('verified')
     links=await session.scalar(select(func.count()).select_from(SeoBacklink).where(SeoBacklink.tenant_id==tenant_id,SeoBacklink.site_id==site_id,
         SeoBacklink.status=='active',SeoBacklink.verification['state'].astext=='found'))
-    return dict(zip(DEFINITIONS,[sum(1 for rank in ranks if rank is not None and 1<=rank<=10) if ranks else None,int(count or 0),verified,len(states)-verified,round(100*verified/len(states),4) if states else None,int(links or 0)]))
+    healthy=await session.scalar(select(func.count()).select_from(SeoSitePage).where(
+        SeoSitePage.tenant_id==tenant_id,SeoSitePage.site_id==site_id,SeoSitePage.status.in_(['healthy','verified'])))
+    return dict(zip(DEFINITIONS,[sum(1 for rank in ranks if rank is not None and 1<=rank<=10) if ranks else None,int(count or 0),verified,len(states)-verified,round(100*verified/len(states),4) if states else None,int(links or 0),int(healthy or 0)]))
 
 async def metric_snapshot(session,tenant_id,site_id):
     now=datetime.utcnow()

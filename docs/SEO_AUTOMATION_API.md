@@ -204,3 +204,19 @@ SEO 健康检查兼容 `0104`（代码先发布但新接口不可用）与 `0105
 ```
 
 `state` 可为 `queued | existing | not_queued | not_applicable`。常见 `reason` 包括 `capture_disabled`、`publication_url_missing`、`publication_site_missing`、`capture_recent` 和 `capture_queue_failed`。发布成功、页面核验排队、页面核验成功仍是三个独立事实。核验队列异常只回报缺口，不回滚已经落库的真实发布结果。
+
+### 页面整改与复检任务
+
+通用 SEO 任务接口新增 `action_type=page_remediation`，要求 `seo.site:edit`，创建参数必须包含当前站点真实存在的 `page_id`。服务端会固定保存创建时页面状态、问题码和检查时间，不能由请求伪造这些基线字段。
+
+任务完成仍使用 `PATCH /tasks/{task_id}` 的 `status=done`，但必须满足：目标页面在任务创建后重新检查、状态为 `healthy` 或 `verified`、问题码为空，并且站点 `seo.site.healthy_page_count` 相比任务基线真实增加。完成证据返回页面 ID、复检时间、HTTP 状态、审计分数和空问题列表。人工修改网站或把任务手工打勾都不能直接完成任务。
+
+指标快照新增：
+
+```json
+{
+  "metric_key": "seo.site.healthy_page_count",
+  "unit": "count",
+  "description": "当前网站最近一次检查状态为 healthy 或 verified 的页面数量；仅页面重新检查后的持久化结果计数。"
+}
+```

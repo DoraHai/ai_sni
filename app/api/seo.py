@@ -5713,6 +5713,7 @@ _INVALID_URL_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 WORKBENCH_TASK_PERMISSIONS = {
     "content_review": "seo.content",
     "image_repair": "seo.site",
+    "page_remediation": "seo.site",
     "ranking_improvement": "seo.keywords",
     "backlink_outreach": "seo.links",
 }
