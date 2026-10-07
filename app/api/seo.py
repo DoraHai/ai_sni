@@ -7980,12 +7980,7 @@ async def get_workbench_service_status(
         SeoPageCapture.site_id == site_id,
         SeoPageCapture.relation_type == "publication",
     ).group_by(SeoPageCapture.status))).all()
-    metric_rows = (await session.execute(select(
-        SeoMetricSnapshot.status, func.count(), func.max(SeoMetricSnapshot.observed_at),
-    ).where(
-        SeoMetricSnapshot.tenant_id == tenant_id,
-        SeoMetricSnapshot.site_id == site_id,
-    ).group_by(SeoMetricSnapshot.status))).all()
+    latest_metrics = list((await _latest_site_metrics(session, tenant_id, site_id)).values())
     latest_crawl = await session.scalar(select(SeoCrawlRun).where(
         SeoCrawlRun.tenant_id == tenant_id,
         SeoCrawlRun.site_id == site_id,
@@ -8046,13 +8041,20 @@ async def get_workbench_service_status(
     verified_publication_total = sum(
         int(row[3] or 0) for row in capture_rows if str(row[0]) == "succeeded"
     )
-    metric_counts, metric_total, metric_latest = _status_readiness(metric_rows)
+    metric_counts: dict[str, int] = defaultdict(int)
+    for metric in latest_metrics:
+        metric_counts[metric.status] += 1
+    metric_total = len(latest_metrics)
+    metric_latest = _workbench_latest([metric.observed_at for metric in latest_metrics])
     a05_blockers = []
     if int(missing_url or 0):
         a05_blockers.append("published_url_missing")
     if int(published_total or 0) > verified_publication_total:
         a05_blockers.append("publication_checks_incomplete")
     a06_blockers = [] if metric_total else ["metric_observations_missing"]
+    available_metric_total = int(metric_counts.get("available", 0))
+    if metric_total and available_metric_total < metric_total:
+        a06_blockers.append("latest_metric_observations_incomplete")
     failed_runs = [run for run in automation_runs if run.status in {"failed", "partial"}]
     a07_blockers = ["automation_run_needs_attention"] if failed_runs else []
     read_at = datetime.now(timezone.utc)
@@ -8089,7 +8091,7 @@ async def get_workbench_service_status(
             "SEO-A06": {
                 "state": _service_phase_state(blockers=a06_blockers, has_data=bool(metric_total)),
                 "blockers": a06_blockers,
-                "facts": {"metric_observations": metric_total, "status_counts": metric_counts, "gsc_configured": bool(_gsc_site_config(site).get("enabled"))},
+                "facts": {"latest_metric_series": metric_total, "available_metric_series": available_metric_total, "status_counts": dict(metric_counts), "gsc_configured": bool(_gsc_site_config(site).get("enabled")), "monthly_report_endpoint": "/api/v1/seo/site/reports/monthly"},
                 "as_of": _iso(metric_latest),
             },
             "SEO-A07": {

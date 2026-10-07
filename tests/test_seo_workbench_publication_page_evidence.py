@@ -633,15 +633,19 @@ def test_service_status_maps_existing_facts_without_triggering_collection(monkey
         skipped_count=0, error_summary=None, requested_by=None, started_at=observed,
         completed_at=observed,
     )
+    metrics = [SimpleNamespace(
+        metric_type='seo.content.published_7d_count', dimension='total', source='cockpit_observation',
+        status='available', observed_at=observed,
+    )]
     db = SimpleNamespace(
         execute=AsyncMock(side_effect=[
             Rows([(1, observed)]), Rows([(2, observed)]), Rows([(2, observed)]),
             Rows([(11, observed), (12, observed)]),
             Rows([(3, 3, 1, observed)]), Rows([(2, 2, 0)]),
-            Rows([('succeeded', 2, observed, 2)]), Rows([('available', 3, observed)]),
+            Rows([('succeeded', 2, observed, 2)]),
         ]),
         scalar=AsyncMock(return_value=crawl),
-        scalars=AsyncMock(return_value=[ranking]),
+        scalars=AsyncMock(side_effect=[metrics, [ranking]]),
     )
     monkeypatch.setattr(api, 'ensure_module_access', AsyncMock())
     monkeypatch.setattr(api, '_tenant', AsyncMock(return_value=SimpleNamespace(id=7)))
@@ -667,4 +671,4 @@ def test_service_status_maps_existing_facts_without_triggering_collection(monkey
     assert result['phases']['SEO-A06']['facts']['gsc_configured'] is True
     assert result['phases']['SEO-A07']['facts']['latest_by_job']['ranking']['status'] == 'completed'
     assert _required('/api/v1/seo/workbench/service-status', 'GET') == ({'seo.content','seo.site'}, False)
-    assert len(db.execute.await_args_list) == 8
+    assert len(db.execute.await_args_list) == 7

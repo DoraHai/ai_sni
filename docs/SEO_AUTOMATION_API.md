@@ -162,6 +162,8 @@ SEO 健康检查兼容 `0104`（代码先发布但新接口不可用）与 `0105
 
 排名阶段除总观测数外，还按每个 active 关键词返回 `keywords_without_observation`、`keywords_with_stale_observation` 以及最多 100 个对应关键词 ID。过期阈值复用百度排名采集的新鲜度配置；列表超出上限时 `coverage_truncated=true`。历史上存在过排名数据但当前已过期，不会继续显示为 ready。
 
+数据与报告阶段按 `metric_type + dimension + source` 只取最新一条指标观测，再汇总 `available_metric_series` 和状态分布。最新记录为 `pending/partial/failed/stale/not_configured` 时返回 `latest_metric_observations_incomplete`；旧记录不会覆盖当前状态。响应同时给出只读月报入口，是否能生成报告仍由现有月报接口根据发布、页面核验、统计来源和图片证据逐项说明。
+
 ### 顾问维护服务计划
 
 - `GET /workbench/service-plan?tenant_id={tenant_id}&site_id={site_id}`
