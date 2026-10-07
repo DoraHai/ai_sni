@@ -595,7 +595,7 @@ complete只针对`manual_required/failed/preparing`、准确当前版本及有�
 
 旧入口专项核查：当前本地 `SeoContentEditorView.vue` 已按content_id/site读取、携带version_count保存且只更新当前编辑的正文分支；不能拿e494旧宿主行为代替本地现状。`PATCH /content-assets/{id}` 从草稿/ready跳到published及受保护稿件写page_url均返回409，0104/0105都如此。0105新加草稿保存的version_count必填前提，省略428，旧版本409；0104仍允许旧草稿调用缺版本，但不能绕过审核/发布流程。未修改SEM前端，也未部署旧宿主兼容入口。
 
-### PostgreSQL 定向运行包（本机未执行）
+### PostgreSQL 定向运行包（总控已完成六个并发场景验收）
 
 文件：`tests/test_seo_workflow_postgres.py`。仅接受`postgresql+asyncpg`、host为`127.0.0.1/localhost/::1`、数据库名**严格等于**`seo_workflow_test`且无URL查询参数；另需显式设置`SEO_WORKFLOW_TEST_ALLOW_SCHEMA_CREATE=yes`。不回退应用DATABASE_URL、不加载迁移、不连接生产。每例创建随机schema及最小模型表，最终只清理该随机schema；并非迁移/外键全量验收。
 
@@ -619,4 +619,8 @@ $env:CRYPTO_MASTER_KEY_B64='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 python -m pytest tests/test_seo_workflow_postgres.py -q
 ```
 
-六个数据库用例：相同/不同UUID并发预留、并发周期去重、等待期间顾问撤销、并发AI领取单次额度、并发改稿后人工登记旧版本拒绝。四个地址防护用例无需数据库。本机未找到服务/运行时/测试DSN，六项数据库用例是skipped，不是通过；本批SQLite和假供应商验证不能代替PostgreSQL并发或真实平台验收。
+六个数据库用例：相同/不同UUID并发预留、并发周期去重、等待期间顾问撤销、并发AI领取单次额度、并发改稿后人工登记旧版本拒绝。四个地址防护用例无需数据库。SEO-10/11开发回归时未找到隔离运行环境，六项数据库用例曾为skipped；该历史记录保留。
+
+2026-10-07总控已在本机专用 PostgreSQL 16.15 固定提交 `67975f32bb1175ba21c9f7dabd6b619b24306860`，实际运行本文件全部 **10 passed、0 skipped**。代码与测试哈希前后稳定，测试schema/用户表前后均为空，未调用真实供应商或生产。验收记录为 `D:/SNIPERS国内版/梳理-2026-10/项目筹备-20261007/SEO_POSTGRES_ACCEPTANCE.md` 及同目录脱敏 `SEO_POSTGRES_ACCEPTANCE_RESULT.json`。
+
+本运行包创建最小模型表并省略外键，证明范围限这六个并发场景和四个连接防护，不代表完整0105迁移、全部外键/约束、压力或真实供应商/线上端到端验收。其他数据库测试及真实渲染依赖仍按各自记录补验；不重复运行已通过这轮，除非相关代码变动或出现新问题。
