@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from time import monotonic
 from typing import Any, Literal
 from urllib.parse import quote, urljoin, urlparse, urlsplit, urlunsplit
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from app.seo_backlinks import apply_backlink_evidence, discover_backlinks, fetch_backlink_page
 from app.seo_backlink_sources import parse_backlink_csv, import_candidates, index_status, fetch_index_candidates, backlink_analysis
@@ -5480,6 +5480,8 @@ class SeoServicePlanUpdate(BaseModel):
     content_topics: list[str] = Field(default_factory=list, max_length=50)
     service_note: str | None = Field(None, max_length=4000)
     status: Literal["active", "paused"] = "active"
+    content_cycle_enabled: bool | None = None
+    content_interval_days: int | None = Field(None, ge=1, le=90)
 
     @field_validator("optimization_directions", "content_topics")
     @classmethod
@@ -5667,21 +5669,27 @@ async def _queue_published_page_verification(
         return {"state": "not_applicable", "capture_id": None, "reason": "publication_not_published"}
     if content.site_id is None:
         return {"state": "not_queued", "capture_id": None, "reason": "publication_site_missing"}
+    publication_id = int(row.id)
     try:
         capture, reason = await reserve_publication_page_capture(
             session,
             tenant_id=int(row.tenant_id),
             site_id=int(content.site_id),
-            publication_id=int(row.id),
+            publication_id=publication_id,
             page_url=row.page_url,
         )
         if reason is None:
             await session.commit()
     except Exception as exc:  # noqa: BLE001
-        await session.rollback()
+        try:
+            await session.rollback()
+        except Exception:
+            # The publication fact was committed before this queue transaction.
+            # A disconnected connection must not obscure that durable outcome.
+            logger.warning("SEO capture queue rollback failed publication_id=%s", publication_id)
         logger.error(
             "SEO publication page verification queue failed publication_id=%s error_type=%s",
-            row.id,
+            publication_id,
             type(exc).__name__,
         )
         return {"state": "not_queued", "capture_id": None, "reason": "capture_queue_failed"}
@@ -5711,6 +5719,7 @@ WORKBENCH_PAGE_INVENTORY_SCAN_LIMIT = 5000
 WORKBENCH_ASSOCIATION_CANDIDATE_LIMIT = 5
 _INVALID_URL_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 WORKBENCH_TASK_PERMISSIONS = {
+    "content_delivery": "seo.content",
     "content_review": "seo.content",
     "image_repair": "seo.site",
     "page_remediation": "seo.site",
@@ -7051,6 +7060,8 @@ def _service_plan_payload(site: SeoSite) -> dict[str, Any]:
         "tenant_id": site.tenant_id,
         "site_id": site.id,
         "revision": int(plan.get("revision") or 0),
+        "content_cycle_enabled": plan.get("content_cycle_enabled") is True,
+        "content_interval_days": int(plan.get("content_interval_days") or 7),
         "status": plan.get("status") if plan.get("status") in {"active", "paused"} else "active",
         "optimization_directions": [str(item) for item in plan.get("optimization_directions", []) if str(item).strip()],
         "content_topics": [str(item) for item in plan.get("content_topics", []) if str(item).strip()],
@@ -7137,6 +7148,8 @@ async def update_seo_service_plan(
     settings["seo_service_plan"] = {
         "revision": current["revision"] + 1,
         "status": req.status,
+        "content_cycle_enabled": req.content_cycle_enabled if req.content_cycle_enabled is not None else current["content_cycle_enabled"],
+        "content_interval_days": req.content_interval_days if req.content_interval_days is not None else current["content_interval_days"],
         "optimization_directions": req.optimization_directions,
         "content_topics": req.content_topics,
         "service_note": str(req.service_note or "").strip() or None,
@@ -7147,6 +7160,84 @@ async def update_seo_service_plan(
     await session.commit()
     await session.refresh(site)
     return _service_plan_payload(site)
+
+
+class ContentWorkflowTrigger(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    expected_revision: int = Field(ge=1)
+    request_id: UUID
+
+
+class ContentWorkflowAdvance(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    publication_id: PositiveInt | None = None
+
+
+async def _content_workflow_site(session, ctx, tenant_id, site_id):
+    from app.module_scope import require_seo_site_operational
+    from app.seo_content_workflow import schema_ready
+    ctx.ensure_tenant(tenant_id)
+    if ctx.user_id is None or not (ctx.can_edit("seo.content") and ctx.can_edit("seo.site")):
+        raise HTTPException(403, "需要实名站点顾问和内容、网站编辑权限")
+    await ensure_module_access(session, ctx, tenant_id, "seo")
+    if not await schema_ready(session):
+        raise HTTPException(503, {"code": "content_workflow_schema_unavailable"})
+    assignment = await _site_advisor_assignment(session, tenant_id, site_id, ctx.user_id, schema_ready=True, lock=True)
+    if assignment is None:
+        raise HTTPException(403, "只有当前站点已分配顾问可以操作执行链")
+    site = await _seo_site_for_update(session, tenant_id, site_id)
+    await require_seo_site_operational(session, tenant_id, site_id)
+    return site
+
+
+@router.post("/workbench/service-plan/run")
+async def trigger_content_workflow(
+    req: ContentWorkflowTrigger,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    from app.api.seo_cockpit import payload
+    from app.seo_content_workflow import ACTION, reserve_content_workflow
+    site = await _content_workflow_site(session, ctx, req.tenant_id, req.site_id)
+    key = "request:" + str(req.request_id)
+    existing = await session.scalar(select(SeoTask).where(
+        SeoTask.tenant_id == req.tenant_id, SeoTask.site_id == req.site_id,
+        SeoTask.action_type == ACTION, SeoTask.params["request_key"].as_string() == key,
+    ).limit(1))
+    if existing is not None:
+        return {"created": False, "task": payload(existing)}
+    if _service_plan_payload(site)["revision"] != req.expected_revision:
+        raise HTTPException(409, {"code": "service_plan_version_conflict"})
+    task, created = await reserve_content_workflow(session, site, request_key=key, actor_id=ctx.user_id)
+    await session.commit()
+    await session.refresh(task)
+    return {"created": created, "task": payload(task)}
+
+
+@router.post("/workbench/content-workflows/{task_id}/advance")
+async def advance_content_workflow_task(
+    task_id: int, req: ContentWorkflowAdvance, background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    from app.api.seo_cockpit import payload
+    from app.api.seo_page_captures import execute_page_capture
+    from app.seo_content_workflow import ACTION, advance_content_workflow
+    site = await _content_workflow_site(session, ctx, req.tenant_id, req.site_id)
+    task = await session.get(SeoTask, task_id, with_for_update=True)
+    if not task or task.tenant_id != req.tenant_id or task.site_id != req.site_id or task.action_type != ACTION:
+        raise HTTPException(404, "内容执行链不存在")
+    was_terminal = task.status in {"done", "cancelled"}
+    capture_id = await advance_content_workflow(session, site, task, publication_id=req.publication_id)
+    if not was_terminal and req.publication_id is not None and task.params.get("publication_id") == req.publication_id:
+        task.params = {**task.params, "publication_selected_by": ctx.user_id}
+    await session.commit()
+    await session.refresh(task)
+    if capture_id:
+        background_tasks.add_task(execute_page_capture, capture_id)
+    return payload(task)
 
 
 @router.put("/workbench/advisor-assignments")

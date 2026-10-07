@@ -191,6 +191,8 @@ GET 额外返回服务端计算的 `allowed_actions.update_service_plan` 和 `pe
 
 每次成功写入 revision 加一，并由服务端记录真实 `updated_by` 和 `updated_at`。旧 revision 返回 409 `service_plan_version_conflict`，避免两个顾问页面互相覆盖。关键词和品牌资料继续使用现有关键词、品牌资产接口，服务计划不复制它们，也不冒充已经执行的定时任务。
 
+SEO-08 增加 `content_cycle_enabled`（默认 false）及 `content_interval_days`（1–90，默认 7）。PUT 不提供这两个字段时保留旧值，以兼容既有客户端。已分配顾问开启后，独立 SEO 调度每分钟检查到期情况：每站点最多一条未结束内容执行链，按主题顺序轮换，每次只建一个选题稿件；错过多期不会集中补建。周期从上一次成功创建起算，修改间隔在下一次创建时应用；暂停、修改计划不会清除游标。关闭周期只停止新周期创建，已有执行链仍继续；`status=paused` 才暂停现有执行链接续。
+
 当 `status=paused` 时，不再接受新的手工排名/竞品/外链采集，后台排名、竞品、外链和驾驶舱指标调度在选取站点时也会跳过该站点；已经持久化的发布、审核、任务、证据和历史数据仍可读取，不会被删除。改回 `active` 后后续调度恢复候选资格，但不会补造暂停期间的运行结果。
 
 ### 发布成功后的页面核验
@@ -232,3 +234,70 @@ GET 额外返回服务端计算的 `allowed_actions.update_service_plan` 和 `pe
   "description": "当前网站最近一次检查状态为 healthy 或 verified 的页面数量；仅页面重新检查后的持久化结果计数。"
 }
 ```
+
+### SEO-08：内容服务执行链（本地实现，尚未上线）
+
+复用 `seo_tasks`、`seo_content_assets`、版本确认、分平台发布记录与页面采集对象，无新增数据库迁移。依赖已单独审核的 0105 结构：0104、未知 revision 或多个 revision 时不执行工作。本文所有路径前缀为 `/api/v1/seo`。请求中的 4/2 仅为隔离测试示例，不代表获准生产资源。
+
+**触发：**`POST /workbench/service-plan/run`
+
+```json
+{"tenant_id":4,"site_id":2,"expected_revision":1,"request_id":"906a7aa2-f9a6-4412-8602-80f31ce6a624"}
+```
+
+```json
+{
+  "created":true,
+  "task":{
+    "id":102,"module":"seo","action_type":"content_delivery","title":"内容交付 · 选型",
+    "status":"in_progress","created_by":"7","assignee_role":"seo_advisor",
+    "params":{
+      "content_id":101,"plan_revision":1,"trigger":"advisor","plan_topic":"选型",
+      "request_key":"request:906a7aa2-f9a6-4412-8602-80f31ce6a624",
+      "assignment_advisor_id":7,"triggered_by_user_id":7,
+      "publication_policy":"advisor_uses_existing_distribution",
+      "phase":"awaiting_draft","waiting_for":"advisor","blocker":null,
+      "phase_since":"2026-10-07T08:00:00+00:00","attention_due_at":"2026-10-09T08:00:00+00:00",
+      "attention_overdue":false,"notification_sent":false,
+      "history":[{"phase":"awaiting_draft","blocker":null,"at":"2026-10-07T08:00:00+00:00","actor":"system"}],
+      "history_truncated":false
+    },
+    "completion_evidence":null,"created_at":"2026-10-07T08:00:00Z","updated_at":"2026-10-07T08:00:00Z"
+  }
+}
+```
+
+同一 tenant/site/request_id 的重复请求返回原任务，`created=false`，即使计划已变更或任务已结束也不会新建。新 request_id 与未结束执行链冲突返回 409 `content_workflow_already_active`；计划版本冲突返回 409 `service_plan_version_conflict`；暂停返回 409 `service_plan_paused`；缺选题或优化方向返回 409 `service_plan_content_topics_required`。服务端锁站点，选题稿件、任务和游标原子提交。新稿件是 `planned`，仅有选题及制作要求，不伪装成 AI 已生成正文。
+
+**接续：**`POST /workbench/content-workflows/{task_id}/advance`
+
+```json
+{"tenant_id":4,"site_id":2,"publication_id":91}
+```
+
+`publication_id` 可省略；当前准确版本只有一条发布记录时自动关联，多条时必须由顾问明确选择。错误租户、稿件或版本的记录返回 409 `publication_scope_or_version_mismatch`。响应是与上述 `task` 相同的标准任务对象。自动调度执行同一接续函数，真人完成原有动作后无须再创建新执行链。
+
+这两个 POST 均要求实名账号、内容与网站双 edit 权限、服务端 active 站点顾问分配、有效 SEO 模块及活动站点。仅全租户权限不够。401/403 沿用现有认证；任务不在指定租户/站点返回 404；版本结构不可用返回 503 `content_workflow_schema_unavailable`。客户继续仅操作稿件确认。定时触发记录 `created_by=cockpit`、`trigger=scheduled`、`triggered_by_user_id=null`，不会伪装顾问实际点击。
+
+| params.phase | 依据及下一步 |
+| --- | --- |
+| awaiting_draft | 选题已持久化，顾问通过既有内容编辑/生成入口补齐正文；本批不自动调用付费 AI |
+| awaiting_internal_review | 有正文但未 ready/published，走既有 submit-review/review |
+| awaiting_confirmation | 当前版本无有效 approve，客户确认或顾问代确认；stale/rejected 保留原因 |
+| awaiting_publication | 当前版本已确认，顾问选择渠道，走既有分发预检/发布或人工发布登记 |
+| awaiting_publication_selection | 当前版本多条发布记录，明确选择本条执行链跟进的记录；不表示所有渠道交付完毕 |
+| awaiting_manual_publication | 已有 manual_required/draft_created/preparing 记录，顾问完成真实操作后调用既有 publications/{id}/complete 回填 |
+| publication_needs_check | failed/publishing/未知状态，或缺少地址/时间；顾问核对，执行链不调用重试或重发 |
+| awaiting_page_evidence | 发布事实已存在，复用/排队该地址的自动页面证据；pending 可在重启后派发 |
+| page_evidence_needs_attention | 采集不可用、失败、超时或只有手工截图；使用原有页面采集入口复检，不自动反复请求 |
+| page_evidence_ready | 已有页面证据，但站点近7天发布篇数尚未证明比创建时增加；不能手工打勾为完成 |
+| completed_with_page_evidence | 实际新发布 + 对应地址自动页面证据 + 站点发布指标增长，保存 completion_evidence 后 done |
+| paused / needs_attention | 计划暂停 / 内容缺失或失去归属，停止新的接续 |
+
+`waiting_for` 表示处理角色：advisor / customer_or_advisor / system / null，不是个人账号分配。`assignment_advisor_id` 仅是创建时分配依据，后续授权每次重新核对。撤销顾问分配、站点/模块失效会停止调度；任务字段是最近一次持久化评估结果，GET 不隐式刷新或执行。顾问可手动调用 advance 取得当前拒绝原因。
+
+**读取、取消与提醒：**使用既有 `GET /tasks`、`GET /tasks/{id}`，租户和站点隔离不变；列表 `limit` 默认 50、最多 100，按 id 降序，`before_id` 游标分页，无全量总数。GET 不创建、生成、采集或发布。`DELETE /tasks/{id}` 取消未完成链，保留稿件和外部发布事实；PATCH 不允许手工修改此类任务的 status/assignee_role 或伪造 done。每个阶段等待超过两天仅设 `attention_overdue=true`，无站外通知；历史保留最近100次阶段/原因变化，截断时明确标记，日常不重复追加相同状态。
+
+完成证据引用真实 `content_id/publication_id/source_version/confirmation_id/capture_id/page_url/published_at/captured_at/sha256`，并记录 `seo.content.published_7d_count` 的 before/after/change_abs/as_of。它表示一条选定渠道的发布及页面证据交付，**不表示页面全部 SEO 检查通过、已被收录或搜索效果提升**，`seo_effect=not_evaluated`。该指标沿用站点近7天去重篇数口径：如果等待太久或旧文章移出七天窗口导致没有净增长，保留 page_evidence_ready，不捏造增长或变更指标含义。
+
+本批首条可运行链以顾问制作/渠道操作为正式人工步骤；已配 API 渠道仍由顾问调用既有分发接口。周期网站诊断、自动异常建单、周期报告和主动通知尚未由本链实现，不能据此将 A01–A07 全部标记完成。

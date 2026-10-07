@@ -28,6 +28,7 @@ from app.models.seo import SeoContentAsset, SeoContentPublication, SeoKeywordAss
 from app.models.seo_page_capture import SeoPageCapture
 from app.models.seo_site_analytics import SeoSiteExportTemplate
 from app.module_scope import seo_site_is_operational
+from app.seo_service_plan import service_plan_is_paused
 from app.security.auth import AuthContext
 from app.seo_demo_source import get_seo_session as get_session, require_seo_scoped_auth as require_scoped_auth
 from app.seo_page_capture import CaptureError, PageCaptureService, _check_url, capture_storage_path
@@ -259,10 +260,12 @@ async def _relation(session: AsyncSession, tenant_id: int, site_id: int, url: st
 async def execute_page_capture(capture_id: int) -> None:
     """Use a fresh session after the response, following the SEO crawl-run pattern."""
     async with async_session_factory() as session:
-        row = await session.get(SeoPageCapture, capture_id)
+        row = await session.get(SeoPageCapture, capture_id, with_for_update=True)
         if row is None or row.status != "pending":
             return
         site = await session.get(SeoSite, row.site_id)
+        if site is not None and service_plan_is_paused(site):
+            return
         if (site is None or site.tenant_id != row.tenant_id
                 or not await seo_site_is_operational(session, row.tenant_id, row.site_id)):
             row.status, row.error_code = "failed", "site_inactive"
@@ -340,6 +343,7 @@ async def reserve_publication_page_capture(
         SeoPageCapture.site_id == site_id,
         SeoPageCapture.relation_type == "publication",
         SeoPageCapture.relation_id == publication_id,
+        SeoPageCapture.source_url == page_url,
         SeoPageCapture.captured_at >= datetime.now(timezone.utc) - _COOLDOWN,
     ).order_by(SeoPageCapture.id.desc()).limit(1))
     if recent is not None:

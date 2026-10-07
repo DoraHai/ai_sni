@@ -185,6 +185,8 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
         "/api/v1/seo/workbench/service-plan",
     }:
         return {"seo.content", "seo.site"}, False
+    if p.startswith("/api/v1/seo/workbench/service-plan/") or p.startswith("/api/v1/seo/workbench/content-workflows/"):
+        return {"seo.content", "seo.site"}, True
     if p.startswith("/api/v1/seo/workbench/content-assets"):
         # Customer confirmation is intentionally available to a tenant-bound
         # authenticated viewer; the endpoint validates direct-vs-proxy actor

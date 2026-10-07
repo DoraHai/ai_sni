@@ -105,9 +105,9 @@ class Adapter:
     async def __aexit__(self, *_args):
         self.db.close()
 
-    async def get(self, model, ident):
+    async def get(self, model, ident, **kwargs):
         if model is SeoPageCapture:
-            return self.db.get(model, ident)
+            return self.db.get(model, ident, **kwargs)
         return self.store.objects.get((model, ident))
 
     async def scalar(self, statement):
