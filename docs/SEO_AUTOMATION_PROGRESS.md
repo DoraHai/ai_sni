@@ -365,3 +365,23 @@
 - 证据文件：`D:/SNIPERS国内版/梳理-2026-10/项目筹备-20261007/SEO_POSTGRES_ACCEPTANCE.md` 与同目录 `SEO_POSTGRES_ACCEPTANCE_RESULT.json`；JSON记录exit_code=0、code_stable=true、cleanup_matches_baseline=true及完整脱敏pytest输出。
 
 本次仅更新文档并本地提交；执行链/测试文件保持已验SHA内容不变。后续仅在相关代码变化或有新问题时重跑这轮，不再将这六个场景列为“等待隔离PG”。
+
+## SEO-12 预检：完整迁移不能限定到新建 schema，执行暂未开始
+
+2026-10-07，收到推进本地完整0104→0105迁移及真实API联调准备的安排；写入边界为指定本机测试库、本轮自建schema，遇历史迁移不能schema隔离时先报告原因和最小方案。
+
+实际只读检查：使用项目Python的 `alembic.script.ScriptDirectory.from_config(Config('alembic.ini'))` 和 `walk_revisions(base='base', head='0105_seo_content_confirmations')` 读取真实迁移图，未加载env.py、未连接数据库。唯一head为0105，唯一base为0001_initial，可达122个revision（含6个合并节点）；0105父节点为0104，0094→0095_adopt_geo_ticket→0096_sem_tasks→0097_demo_tenant_bindings→0098_demo_binding_no_truncate→0099→0100→0101→0102→0103→0104连续可达。初始临时AST遍历不支持合并/带类型revision声明，改用上述Alembic实际图读取成功；没有据此误报历史迁移缺失。
+
+已确认的执行阻碍（静态源代码证据，不是声称已执行数据库失败）：
+
+- `migrations/versions/20260909_0095_adopt_geo_ticket.py`：第21行固定_SCHEMA=public，第51/74/97/116行catalog过滤public，第169行锁 `public.geo_action_tickets`，随后对public表增加列。此前0046创建的表若只落新schema，0095仍会找public而拒绝；search_path不能重定向显式限定名。
+- `migrations/versions/20260909_0097_demo_tenant_bindings.py`：第71–73/100–101行外键明确指向public.tenants/users，第85/110行在public建表，第113行起函数和触发器均固定public。
+- `migrations/versions/20260909_0098_demo_binding_no_truncate.py`：第15–16行触发器及函数目标固定public。SQLAlchemy schema_translate_map也不能改写这些原生SQL/catalog字符串；仅增加连接search_path不足以形成隔离。
+- `app/seo_main.py`：第70/76/82/120/141行及demo/GEO结构检查固定public。即使绕过历史迁移拼出自建schema，真实健康检查也不会认定该schema已就绪，不能替换健康检查后称真实后端通过。
+- 0095、0097、0098的downgrade明确拒绝执行。因此清理不能计划成直接downgrade base；应依据运行前后的对象清单仅清除本轮新增对象，并保护schema本身和原有对象。
+
+最小建议：由总控确认把本轮隔离边界改为**既有专用空测试库中的public**（仍严格校验127.0.0.1:55432、指定库和普通测试身份）。不改历史迁移、健康检查或权限逻辑，不新增高权、不DROP DATABASE。执行前只读核对public的CREATE权限和完整对象清单；发现既有用户对象或所需权限不足立即退出。确认边界后，原样Alembic升0104、插入合成基线、记录数据/对象指纹，再原样升0105并验证表、外键、唯一/检查约束和旧数据保持。成功后按已记录清单清理本轮新建表/序列/函数等，不用无范围CASCADE，不删除public schema。不批准public边界时，替代方案是环境负责人另备可使用public的独立临时库；不能在当前授权下偷偷扩大写入范围。
+
+后端接入状态：**尚未启动，无可交付地址、身份文件或已创建的tenant/site**。迁移隔离问题解决并验证通过后再准备仅loopback服务，启动前验证调度关闭、真实key为空和外部网络动作受隔离适配阻断；复用真实登录/租户/RBAC依赖，使用合成客户和顾问，凭据仅存受限本地文件。数据库写入、服务启动/停止和清理由SEO窗口独占负责，前端待接入信息后只通过API操作。报告时段和种子以创建时的合成数据清单为准，未创建前不发虚构ID或宣称联调就绪。
+
+本次没有读取凭据、连接测试库、执行迁移、创建数据库对象或启动进程；数据库前后对象未重新查询，不能引用前一轮空库结果冒充本轮实测。本次仅文档记录和本地提交，不推送、合并或部署。保留SEO-11十项PG并发验收结论，但不能代替本轮完整迁移验证。
