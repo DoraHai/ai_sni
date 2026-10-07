@@ -27,6 +27,7 @@ from app.seo_competitor import CompetitorCollectionError, collect_competitor_con
 from app.seo_crawler import fetch_url
 from app.seo_serp import canonical_url
 from app.seo_usage_limits import refund_seo_usage
+from app.seo_service_plan import automation_site_not_paused_clause
 
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ async def collect_scheduled_competitors() -> dict[str, int]:
                     SeoCompetitor.status == "active",
                     SeoCompetitor.site_id.is_not(None),
                     SeoSite.status == "active",
+                    automation_site_not_paused_clause(),
                     or_(SeoCompetitor.last_checked_at.is_(None), SeoCompetitor.last_checked_at < cutoff),
                 )
                 .order_by(SeoCompetitor.last_checked_at.asc().nullsfirst(), SeoCompetitor.id)
@@ -209,6 +211,7 @@ async def verify_scheduled_backlinks() -> dict[str, int]:
                     SeoBacklink.tenant_id.in_(entitled_tenant_ids),
                     SeoBacklink.status.in_(["active", "lost"]),
                     SeoSite.status == "active",
+                    automation_site_not_paused_clause(),
                     or_(SeoBacklink.last_checked_at.is_(None), SeoBacklink.last_checked_at < cutoff),
                 )
                 .order_by(SeoBacklink.last_checked_at.asc().nullsfirst(), SeoBacklink.id)

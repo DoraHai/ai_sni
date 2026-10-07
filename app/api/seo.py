@@ -8057,6 +8057,8 @@ async def get_workbench_service_status(
         a06_blockers.append("latest_metric_observations_incomplete")
     failed_runs = [run for run in automation_runs if run.status in {"failed", "partial"}]
     a07_blockers = ["automation_run_needs_attention"] if failed_runs else []
+    if service_plan.get("status") == "paused":
+        a07_blockers.append("service_plan_paused")
     read_at = datetime.now(timezone.utc)
 
     return {
@@ -8097,7 +8099,7 @@ async def get_workbench_service_status(
             "SEO-A07": {
                 "state": _service_phase_state(blockers=a07_blockers, has_data=bool(automation_runs)),
                 "blockers": a07_blockers,
-                "facts": {"recent_run_count": len(automation_runs), "runs_needing_attention": len(failed_runs), "latest_by_job": {key: _automation_run_payload(value) for key, value in latest_by_job.items()}},
+                "facts": {"service_plan_status": service_plan.get("status") or "active", "recent_run_count": len(automation_runs), "runs_needing_attention": len(failed_runs), "latest_by_job": {key: _automation_run_payload(value) for key, value in latest_by_job.items()}},
                 "as_of": _iso(_workbench_latest([run.started_at for run in automation_runs])),
             },
         },

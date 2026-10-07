@@ -3,6 +3,7 @@ from datetime import datetime,timedelta,timezone
 from sqlalchemy import select,func
 from app.models.seo import SeoKeywordAsset,SeoRankSnapshot,SeoContentAsset,SeoMetricSnapshot,SeoBacklink,SeoSitePage
 from app.models.seo_cockpit import SeoImageVerification
+from app.seo_service_plan import automation_site_not_paused_clause
 
 DEFINITIONS={
  'seo.ranking.top10_keyword_count':('count','当前网站启用的 P0/P1 核心词，按百度桌面全国自有域名最新七天内观测去重，排名 1–10 的词数；无可用观测返回 null。'),
@@ -60,7 +61,7 @@ async def collect_cockpit_metrics():
     import logging
     async with async_session_factory() as session:
         tenants=[t.id for t in await list_active_module_tenants(session,'seo')]
-        sites=list((await session.execute(select(SeoSite.id,SeoSite.tenant_id).where(SeoSite.tenant_id.in_(tenants),SeoSite.status=='active'))).all())
+        sites=list((await session.execute(select(SeoSite.id,SeoSite.tenant_id).where(SeoSite.tenant_id.in_(tenants),SeoSite.status=='active',automation_site_not_paused_clause()))).all())
     for site_id,tenant_id in sites:
         try:
             async with async_session_factory() as session:

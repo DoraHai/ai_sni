@@ -131,6 +131,21 @@ def test_reservation_rejects_sites_without_targets() -> None:
     session.commit.assert_not_awaited()
 
 
+def test_reservation_rejects_paused_service_plan_before_counting_targets() -> None:
+    session = _reservation_session(_site(site_settings={
+        "seo_service_plan": {"status": "paused", "revision": 3},
+    }))
+    target_count = AsyncMock(return_value=2)
+    with patch("app.seo_manual_automation.manual_target_count", target_count):
+        with pytest.raises(ManualAutomationError) as raised:
+            asyncio.run(reserve_manual_automation_run(
+                session, tenant_id=7, site_id=3, job_type="ranking", requested_by=11,
+            ))
+    assert raised.value.code == "service_plan_paused"
+    target_count.assert_not_awaited()
+    session.commit.assert_not_awaited()
+
+
 @pytest.mark.parametrize("status", ["queued", "running"])
 def test_reservation_rejects_an_active_duplicate(status: str) -> None:
     latest = _run(status=status, started_at=datetime.utcnow() - timedelta(minutes=5))
