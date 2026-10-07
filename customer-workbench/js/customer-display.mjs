@@ -3,7 +3,7 @@ const statuses = {
   content: {
     planned: '待制作', drafting: '修改中', draft: '修改中', review: '顾问审核中',
     ready: '稿件已备好', approved_waiting_publication: '已确认，待发布',
-    awaiting_confirmation: '待确认稿件', awaiting_internal_review: '顾问审核中',
+    awaiting_confirmation: '待确认稿件', awaiting_customer_confirmation: '等待客户确认', awaiting_content_revision: '待顾问修改稿件', awaiting_internal_review: '顾问审核中',
     awaiting_draft: '待顾问制作', confirmation_unavailable: '确认功能暂不可用',
     published: '已发布', archived: '已归档', rejected: '已退回修改',
   },
