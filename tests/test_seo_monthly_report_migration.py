@@ -7,7 +7,7 @@ from alembic.script import ScriptDirectory
 def test_monthly_report_migration_precedes_tdk_review_head():
     root = Path(__file__).parents[1]
     script = ScriptDirectory.from_config(Config(str(root / "alembic.ini")))
-    assert script.get_heads() == ["0104_seo_page_ai_tdk"]
+    assert script.get_heads() == ["0105_seo_content_confirmations"]
     assert script.get_revision("0102_seo_monthly_report_template").down_revision == "0101_seo_site_analytics"
     text = (root / "migrations/versions/20261005_0102_seo_monthly_report_template.py").read_text(encoding="utf-8")
     assert "未在任何环境执行；生产执行前须单独审核" in text

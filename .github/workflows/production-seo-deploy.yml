@@ -166,7 +166,7 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0104_seo_page_ai_tdk (head)'
+          printf '%s\n' "$heads" | grep -F '0105_seo_content_confirmations (head)'
 
       - working-directory: frontend
         run: npm ci --no-audit

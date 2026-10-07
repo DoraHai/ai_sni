@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import inspect
 import json
 import logging
 import re
@@ -27,7 +29,7 @@ from app.seo_ai_operations import (
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field, PositiveInt, field_validator
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,14 +49,17 @@ from app.models import (
     SeoCompetitor,
     SeoCompetitorEvent,
     SeoContentAsset,
+    SeoContentConfirmation,
     SeoContentReviewEvent,
     SeoInternalLink,
     SeoKeywordAsset,
     SeoRankSnapshot,
     SeoSerpResult,
     SeoSitePage,
+    SeoSiteAdvisorAssignment,
     Tenant,
     User,
+    Role,
     GeoChannelVariant,
     GeoContentTask,
     GeoMediaPlacement,
@@ -5432,11 +5437,34 @@ class DistributionConnectionCreate(BaseModel):
 
 class ContentReviewSubmit(BaseModel):
     note: str | None = Field(None, max_length=2000)
+    version_count: PositiveInt | None = Field(
+        None,
+        description="Expected content version. Workbench callers must send it.",
+    )
 
 
 class ContentReviewDecision(BaseModel):
     decision: Literal["approve", "reject"]
     note: str | None = Field(None, max_length=2000)
+    version_count: PositiveInt | None = Field(
+        None,
+        description="Expected content version. Workbench callers must send it.",
+    )
+
+
+class ContentConfirmationRequest(BaseModel):
+    version_count: PositiveInt
+    payload_hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    decision: Literal["approve", "reject"]
+    actor_mode: Literal["customer_direct", "advisor_proxy"]
+    note: str | None = Field(None, max_length=2000)
+
+
+class AdvisorAssignmentRequest(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    advisor_user_id: PositiveInt
+    active: bool = True
 
 
 class DistributionConnectionUpdate(BaseModel):
@@ -5534,6 +5562,7 @@ class DistributionRetryRequest(BaseModel):
     tenant_id: PositiveInt
     site_id: PositiveInt | None = None
     confirm: bool = False
+    manual_check_outcome: Literal["not_published"] | None = None
 
 
 def _connection_payload(row: SeoDistributionConnection) -> dict[str, Any]:
@@ -5596,6 +5625,19 @@ def _publication_payload(
         "created_at": _database_iso(row.created_at),
         "updated_at": _database_iso(row.updated_at),
     }
+
+
+def _publication_attempt_requires_manual_check(
+    attempt: SeoPublishAttempt | None,
+) -> bool:
+    summary = attempt.response_summary if attempt is not None else None
+    return bool(
+        isinstance(summary, dict)
+        and (
+            summary.get("requires_manual_review") is True
+            or summary.get("outcome") == "unknown"
+        )
+    )
 
 
 WORKBENCH_PAGE_INVENTORY_SCAN_LIMIT = 5000
@@ -6360,6 +6402,249 @@ async def _content_review_user_names(
     }
 
 
+def _content_confirmation_hash(row: SeoContentAsset) -> str:
+    """Hash only customer-visible/business-bearing content fields."""
+    payload = {
+        "content_type": row.content_type,
+        "title": row.title or "",
+        "outline": row.outline or "",
+        "draft": row.draft or "",
+        "humanized_content": row.humanized_content or "",
+        "source_text": row.source_text or "",
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _content_version_conflict(row: SeoContentAsset) -> HTTPException:
+    return HTTPException(
+        409,
+        detail={
+            "code": "content_version_conflict",
+            "message": "稿件版本或内容摘要已变化，请刷新后重新操作",
+            "current_version": row.version_count or 1,
+            "current_payload_hash": _content_confirmation_hash(row),
+        },
+    )
+
+
+def _confirmation_payload(
+    row: SeoContentConfirmation | None,
+    actor_name: str | None = None,
+) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {
+        "id": row.id,
+        "content_version": row.content_version,
+        "payload_hash": row.content_hash,
+        "decision": row.decision,
+        "actor_mode": row.actor_mode,
+        "actor_user_id": row.actor_user_id,
+        "actor_name": actor_name,
+        "actor_role_name": row.actor_role_name,
+        "note": row.note,
+        "created_at": _database_iso(row.created_at),
+    }
+
+
+async def _latest_content_confirmation(
+    session: AsyncSession,
+    row: SeoContentAsset,
+) -> SeoContentConfirmation | None:
+    return await session.scalar(
+        select(SeoContentConfirmation)
+        .where(
+            SeoContentConfirmation.tenant_id == row.tenant_id,
+            SeoContentConfirmation.content_asset_id == row.id,
+        )
+        .order_by(SeoContentConfirmation.created_at.desc(), SeoContentConfirmation.id.desc())
+        .limit(1)
+    )
+
+
+def _content_confirmation_status(
+    row: SeoContentAsset,
+    latest: SeoContentConfirmation | None,
+) -> str:
+    if latest is None:
+        return "pending"
+    if (
+        latest.content_version != (row.version_count or 1)
+        or latest.content_hash != _content_confirmation_hash(row)
+    ):
+        return "stale"
+    return "approved" if latest.decision == "approve" else "rejected"
+
+
+async def _content_confirmation_schema_ready(session: AsyncSession) -> bool:
+    """Enable the new gate only after the separately approved 0105 migration."""
+    result = await session.execute(text("SELECT version_num FROM alembic_version"))
+    revision = result.scalar_one_or_none()
+    if inspect.isawaitable(revision):
+        # AsyncMock-based isolated unit tests do not model the Alembic table;
+        # treating it as pre-0105 preserves the real code-first rollout path.
+        revision = await revision
+    return revision == "0105_seo_content_confirmations"
+
+
+async def _advisor_assignment(
+    session: AsyncSession,
+    row: SeoContentAsset,
+    user_id: int | None,
+) -> SeoSiteAdvisorAssignment | None:
+    if user_id is None or row.site_id is None:
+        return None
+    if not await _content_confirmation_schema_ready(session):
+        return None
+    return await session.scalar(
+        select(SeoSiteAdvisorAssignment).where(
+            SeoSiteAdvisorAssignment.tenant_id == row.tenant_id,
+            SeoSiteAdvisorAssignment.site_id == row.site_id,
+            SeoSiteAdvisorAssignment.advisor_user_id == user_id,
+            SeoSiteAdvisorAssignment.active.is_(True),
+        )
+    )
+
+
+async def _content_allowed_actions(
+    session: AsyncSession,
+    row: SeoContentAsset,
+    ctx: AuthContext,
+    confirmation_status: str,
+) -> tuple[dict[str, bool], dict[str, Any]]:
+    assignment = await _advisor_assignment(session, row, ctx.user_id)
+    is_customer_account = bool(
+        ctx.user_id is not None
+        and ctx.tenant_id == row.tenant_id
+        and ctx.can_view("seo.content")
+    )
+    is_assigned_advisor = bool(
+        assignment is not None
+        and ctx.user_id is not None
+        and ctx.can_edit("seo.content")
+    )
+    has_actor = ctx.user_id is not None
+    ready_for_confirmation = row.status == "ready" and confirmation_status != "unavailable"
+    can_edit_content = has_actor and ctx.can_edit("seo.content")
+    return (
+        {
+            "submit_review": can_edit_content and row.status in {"planned", "drafting"},
+            "review": can_edit_content and row.status == "review",
+            "confirm_as_customer": is_customer_account and ready_for_confirmation,
+            "confirm_as_advisor_proxy": is_assigned_advisor and ready_for_confirmation,
+            "reject_as_customer": is_customer_account and ready_for_confirmation,
+            "reject_as_advisor_proxy": is_assigned_advisor and ready_for_confirmation,
+            "edit_content": can_edit_content and row.status in {"planned", "drafting"},
+            "start_publication": can_edit_content
+            and row.status in {"ready", "published"}
+            and confirmation_status == "approved",
+        },
+        {
+            "actor_user_id": ctx.user_id,
+            "tenant_bound_customer_account": is_customer_account,
+            "active_site_advisor_assignment": is_assigned_advisor,
+            "seo_content_permission": (
+                "edit" if ctx.can_edit("seo.content")
+                else "view" if ctx.can_view("seo.content")
+                else "none"
+            ),
+        },
+    )
+
+
+async def _content_delivery_payload(
+    session: AsyncSession,
+    row: SeoContentAsset,
+    ctx: AuthContext,
+    *,
+    latest: SeoContentConfirmation | None = None,
+) -> dict[str, Any]:
+    schema_ready = await _content_confirmation_schema_ready(session)
+    if latest is None and schema_ready:
+        latest = await _latest_content_confirmation(session, row)
+    confirmation_status = (
+        _content_confirmation_status(row, latest) if schema_ready else "unavailable"
+    )
+    actions, permission_basis = await _content_allowed_actions(
+        session, row, ctx, confirmation_status
+    )
+    actor_name = None
+    if latest is not None:
+        actor = await session.get(User, latest.actor_user_id)
+        if actor is not None:
+            actor_name = str(actor.display_name or actor.username)
+    workflow_status = {
+        "planned": "draft",
+        "drafting": "draft",
+        "review": "internal_review",
+        "ready": (
+            "approved_waiting_publication"
+            if confirmation_status == "approved"
+            else "awaiting_content_revision"
+            if confirmation_status == "rejected"
+            else "awaiting_customer_confirmation"
+        ),
+        "published": "published",
+        "archived": "archived",
+    }.get(row.status, row.status)
+    return {
+        "content": {
+            "id": row.id,
+            "tenant_id": row.tenant_id,
+            "site_id": row.site_id,
+            "content_type": row.content_type,
+            "title": row.title,
+            "outline": row.outline,
+            "body": row.humanized_content or row.draft or "",
+            "version_count": row.version_count or 1,
+            "payload_hash": _content_confirmation_hash(row),
+            "status": row.status,
+            "updated_at": _database_iso(row.updated_at),
+        },
+        "workflow_status": workflow_status,
+        "confirmation": {
+            "status": confirmation_status,
+            "latest": _confirmation_payload(latest, actor_name),
+            "requires_exact_version": True,
+            "approval_is_publication": False,
+        },
+        "allowed_actions": actions,
+        "permission_basis": permission_basis,
+        "result_basis": {
+            "internal_review_status": row.status,
+            "customer_confirmation_status": confirmation_status,
+            "publication_status": "not_loaded",
+            "page_check_status": "not_loaded",
+            "search_effect_status": "not_attributed_to_single_content",
+        },
+    }
+
+
+async def _require_active_content_confirmation(
+    session: AsyncSession,
+    row: SeoContentAsset,
+) -> SeoContentConfirmation | None:
+    if not await _content_confirmation_schema_ready(session):
+        # Code-first rollout compatibility: 0104 keeps the existing publication
+        # flow until the separately approved 0105 migration activates the gate.
+        return None
+    latest = await _latest_content_confirmation(session, row)
+    status = _content_confirmation_status(row, latest)
+    if status != "approved" or latest is None:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "content_confirmation_required",
+                "message": "当前准确稿件版本尚未获得客户确认或顾问代确认",
+                "confirmation_status": status,
+                "current_version": row.version_count or 1,
+                "current_payload_hash": _content_confirmation_hash(row),
+            },
+        )
+    return latest
+
+
 async def _content_task_for_source_page(
     session: AsyncSession,
     tenant_id: int,
@@ -6502,6 +6787,229 @@ async def get_content_review_history(
     return {
         "items": [_review_event_payload(event, user_names) for event in events],
         "total": len(events),
+    }
+
+
+@router.get("/workbench/content-assets/{content_id}/delivery")
+async def get_content_delivery(
+    content_id: PositiveInt,
+    tenant_id: PositiveInt,
+    site_id: PositiveInt,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    await _seo_site(session, tenant_id, site_id)
+    row = await session.get(SeoContentAsset, content_id)
+    if not row or row.tenant_id != tenant_id or row.site_id != site_id:
+        raise HTTPException(404, "SEO 内容资产不存在")
+    return await _content_delivery_payload(session, row, ctx)
+
+
+@router.post("/workbench/content-assets/{content_id}/confirmations")
+async def create_content_confirmation(
+    content_id: PositiveInt,
+    tenant_id: PositiveInt,
+    req: ContentConfirmationRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    if not await _content_confirmation_schema_ready(session):
+        raise HTTPException(
+            503,
+            detail={
+                "code": "content_confirmation_schema_unavailable",
+                "message": "稿件确认能力尚未完成数据库迁移",
+            },
+        )
+    row = await session.get(SeoContentAsset, content_id, with_for_update=True)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "SEO 内容资产不存在")
+    if row.site_id is None:
+        raise HTTPException(409, "稿件尚未关联有效站点")
+    await _require_resource_operational_site(session, tenant_id, row.site_id)
+    current_hash = _content_confirmation_hash(row)
+    if req.version_count != (row.version_count or 1) or req.payload_hash != current_hash:
+        raise _content_version_conflict(row)
+    if req.decision == "reject" and not str(req.note or "").strip():
+        raise HTTPException(400, "退回稿件时必须填写修改意见")
+
+    if ctx.user_id is None:
+        raise HTTPException(403, "稿件确认必须由实名登录账号操作")
+    assignment = await _advisor_assignment(session, row, ctx.user_id)
+    if req.actor_mode == "customer_direct":
+        if ctx.tenant_id != tenant_id or not ctx.can_view("seo.content"):
+            raise HTTPException(403, "只有绑定当前客户的实名账号可以直接确认稿件")
+        if assignment is not None:
+            raise HTTPException(403, "当前账号已作为该站点顾问分配，请使用顾问代确认模式")
+    else:
+        if assignment is None or not ctx.can_edit("seo.content"):
+            raise HTTPException(403, "只有当前站点已分配且具备内容编辑权限的顾问可以代确认")
+
+    latest = await _latest_content_confirmation(session, row)
+    note = str(req.note or "").strip() or None
+    if (
+        latest is not None
+        and latest.content_version == req.version_count
+        and latest.content_hash == req.payload_hash
+        and latest.decision == req.decision
+        and latest.actor_mode == req.actor_mode
+        and latest.actor_user_id == ctx.user_id
+        and latest.note == note
+    ):
+        return await _content_delivery_payload(session, row, ctx, latest=latest)
+
+    if row.status != "ready":
+        raise HTTPException(409, "只有内部审核通过且尚未发布的稿件可以确认或退回")
+    confirmation = SeoContentConfirmation(
+        tenant_id=tenant_id,
+        site_id=row.site_id,
+        content_asset_id=row.id,
+        content_version=row.version_count or 1,
+        content_hash=current_hash,
+        decision=req.decision,
+        actor_mode=req.actor_mode,
+        actor_user_id=ctx.user_id,
+        actor_role_name=ctx.role_name,
+        note=note,
+    )
+    session.add(confirmation)
+    if req.decision == "reject":
+        previous_status = row.status
+        row.status = "drafting"
+        session.add(
+            SeoContentReviewEvent(
+                tenant_id=row.tenant_id,
+                site_id=row.site_id,
+                content_asset_id=row.id,
+                action=(
+                    "customer_reject"
+                    if req.actor_mode == "customer_direct"
+                    else "advisor_proxy_reject"
+                ),
+                from_status=previous_status,
+                to_status="drafting",
+                note=note,
+                actor_id=ctx.user_id,
+            )
+        )
+    await session.commit()
+    await session.refresh(confirmation)
+    await session.refresh(row)
+    return await _content_delivery_payload(session, row, ctx, latest=confirmation)
+
+
+@router.get("/workbench/advisor-assignments")
+async def list_advisor_assignments(
+    tenant_id: PositiveInt,
+    site_id: PositiveInt,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    if not await _content_confirmation_schema_ready(session):
+        raise HTTPException(503, "顾问分配能力尚未完成数据库迁移")
+    if not ctx.can_edit("seo.content") or not ctx.can_view("settings.accounts"):
+        raise HTTPException(403, "需要内容编辑及账号管理权限")
+    await _seo_site(session, tenant_id, site_id)
+    rows = list(
+        await session.scalars(
+            select(SeoSiteAdvisorAssignment)
+            .where(
+                SeoSiteAdvisorAssignment.tenant_id == tenant_id,
+                SeoSiteAdvisorAssignment.site_id == site_id,
+            )
+            .order_by(SeoSiteAdvisorAssignment.id.asc())
+        )
+    )
+    users = {
+        user.id: user
+        for user in list(
+            await session.scalars(select(User).where(User.id.in_([row.advisor_user_id for row in rows])))
+        )
+    } if rows else {}
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "tenant_id": row.tenant_id,
+                "site_id": row.site_id,
+                "advisor_user_id": row.advisor_user_id,
+                "advisor_name": (
+                    str(users[row.advisor_user_id].display_name or users[row.advisor_user_id].username)
+                    if row.advisor_user_id in users else None
+                ),
+                "active": row.active,
+                "assigned_by": row.assigned_by,
+                "created_at": _database_iso(row.created_at),
+                "updated_at": _database_iso(row.updated_at),
+            }
+            for row in rows
+        ],
+        "total": len(rows),
+    }
+
+
+@router.put("/workbench/advisor-assignments")
+async def upsert_advisor_assignment(
+    req: AdvisorAssignmentRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    if not await _content_confirmation_schema_ready(session):
+        raise HTTPException(503, "顾问分配能力尚未完成数据库迁移")
+    if (
+        ctx.user_id is None
+        or not ctx.can_edit("seo.content")
+        or not ctx.can_edit("settings.accounts")
+    ):
+        raise HTTPException(403, "顾问分配必须由实名账号管理员操作")
+    await _seo_site(session, req.tenant_id, req.site_id)
+    advisor = await session.get(User, req.advisor_user_id)
+    if advisor is None or not advisor.is_active:
+        raise HTTPException(404, "顾问账号不存在或已停用")
+    if advisor.tenant_id is not None and advisor.tenant_id != req.tenant_id:
+        raise HTTPException(409, "该账号已绑定其他客户，不能分配到当前客户")
+    advisor_role = await session.get(Role, advisor.role_id)
+    advisor_permissions = dict(advisor_role.permissions or {}) if advisor_role else {}
+    if advisor_permissions.get("seo.content") != "edit":
+        raise HTTPException(409, "顾问账号必须由服务端角色授予 seo.content 编辑权限")
+    row = await session.scalar(
+        select(SeoSiteAdvisorAssignment)
+        .where(
+            SeoSiteAdvisorAssignment.tenant_id == req.tenant_id,
+            SeoSiteAdvisorAssignment.site_id == req.site_id,
+            SeoSiteAdvisorAssignment.advisor_user_id == req.advisor_user_id,
+        )
+        .with_for_update()
+    )
+    if row is None:
+        row = SeoSiteAdvisorAssignment(
+            tenant_id=req.tenant_id,
+            site_id=req.site_id,
+            advisor_user_id=req.advisor_user_id,
+            active=req.active,
+            assigned_by=ctx.user_id,
+        )
+        session.add(row)
+    else:
+        row.active = req.active
+        row.assigned_by = ctx.user_id
+        row.updated_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(row)
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "site_id": row.site_id,
+        "advisor_user_id": row.advisor_user_id,
+        "advisor_name": str(advisor.display_name or advisor.username),
+        "active": row.active,
+        "assigned_by": row.assigned_by,
+        "created_at": _database_iso(row.created_at),
+        "updated_at": _database_iso(row.updated_at),
     }
 
 
@@ -7296,6 +7804,7 @@ async def create_manual_publication(
         session, req.tenant_id, req.content_id, req.site_id
     )
     _require_content_ready(content)
+    await _require_active_content_confirmation(session, content)
     try:
         page_url, host = normalize_publication_url(req.page_url)
     except ValueError as exc:
@@ -7810,6 +8319,17 @@ async def preflight_content_distribution(
         )
         for content_id in req.content_ids
     ]
+    confirmation_gate_enabled = await _content_confirmation_schema_ready(session)
+    confirmation_statuses = (
+        {
+            content.id: _content_confirmation_status(
+                content, await _latest_content_confirmation(session, content)
+            )
+            for content in contents
+        }
+        if confirmation_gate_enabled
+        else {content.id: "unavailable" for content in contents}
+    )
     connections = [
         await _distribution_connection(session, req.tenant_id, connection_id)
         for connection_id in req.connection_ids
@@ -7835,6 +8355,8 @@ async def preflight_content_distribution(
             warnings: list[str] = []
             if content.status not in {"ready", "published"}:
                 errors.append("内容主稿尚未审核通过")
+            if confirmation_gate_enabled and confirmation_statuses[content.id] != "approved":
+                errors.append("当前准确稿件版本尚未获得客户确认或顾问代确认")
             if content.content_type == "landing" and content.source_page_id is None:
                 errors.append("落地页内容尚未绑定承接页")
             body = content.humanized_content or content.draft or ""
@@ -7973,6 +8495,7 @@ async def publish_content_distribution(
     requested_version = saved_variant.source_version if saved_variant else req.source_version
     if requested_version is not None and requested_version != source_version:
         raise HTTPException(409, "文章已产生新版本，请重新生成平台专属稿并预检")
+    await _require_active_content_confirmation(session, content)
     customized = bool(saved_variant) or req.adapted_title is not None or req.adapted_content is not None
     variant_title = saved_variant.title if saved_variant else (req.adapted_title or content.title)
     variant_body = saved_variant.content if saved_variant else (
@@ -8144,8 +8667,11 @@ async def complete_manual_publication(
         session, req.tenant_id, content_asset_id, req.site_id,
         require_operational=False,
     )
+    if (content.version_count or 1) != row.source_version:
+        raise HTTPException(409, "稿件版本已变化，不能将结果回填到旧版本")
     if req.source_version is not None and row.source_version != req.source_version:
         raise HTTPException(409, "发布任务版本已变化，请重新导出任务并核对结果")
+    await _require_active_content_confirmation(session, content)
     if row.status == "published" and row.page_url == req.page_url.strip():
         return _publication_payload(row, content=content)
     if row.status not in {"manual_required", "failed", "preparing"}:
@@ -8317,6 +8843,35 @@ async def retry_content_publication(
         raise HTTPException(409, "该任务不支持自动重试，请人工完成发布")
     if (content.version_count or 1) != row.source_version:
         raise HTTPException(409, "文章已产生新版本，请重新预检并创建发布任务")
+    await _require_active_content_confirmation(session, content)
+    attempt_result = await session.execute(
+        select(SeoPublishAttempt)
+        .where(
+            SeoPublishAttempt.tenant_id == req.tenant_id,
+            SeoPublishAttempt.publication_id == row.id,
+        )
+        .order_by(SeoPublishAttempt.started_at.desc(), SeoPublishAttempt.id.desc())
+        .limit(1)
+    )
+    attempt_scalars = attempt_result.scalars()
+    if inspect.isawaitable(attempt_scalars):
+        attempt_scalars = await attempt_scalars
+    latest_attempt = attempt_scalars.first()
+    if inspect.isawaitable(latest_attempt):
+        latest_attempt = await latest_attempt
+    if not isinstance(latest_attempt, SeoPublishAttempt):
+        latest_attempt = None
+    if (
+        _publication_attempt_requires_manual_check(latest_attempt)
+        and req.manual_check_outcome != "not_published"
+    ):
+        raise HTTPException(
+            409,
+            detail={
+                "code": "publication_outcome_unknown",
+                "message": "上次发布结果未知；请先在平台后台确认未发布，再明确提交 not_published",
+            },
+        )
     connection = await _distribution_connection(
         session, req.tenant_id, row.connection_id
     )
@@ -8440,6 +8995,7 @@ async def download_publication_materials(publication_id: int, req: DistributionM
     )
     if req.source_version != row.source_version or (content.version_count or 1) != row.source_version:
         raise HTTPException(409, "稿件版本已变化，请重新生成分发任务")
+    await _require_active_content_confirmation(session, content)
     try:
         data, manifest = await build_publication_package(row.adapted_title or content.title, row.adapted_content or "", row.id, row.source_version)
     except ValueError as exc:
@@ -8504,6 +9060,8 @@ async def submit_content_review(
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
     await _require_resource_operational_site(session, tenant_id, row.site_id)
+    if req.version_count is not None and req.version_count != (row.version_count or 1):
+        raise _content_version_conflict(row)
     if row.status not in {"planned", "drafting"}:
         raise HTTPException(409, "只有草稿可以提交审核")
     keyword_ids = _selected_keyword_ids(row.keyword_ids, row.keyword_id)
@@ -8551,6 +9109,8 @@ async def decide_content_review(
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
     await _require_resource_operational_site(session, tenant_id, row.site_id)
+    if req.version_count is not None and req.version_count != (row.version_count or 1):
+        raise _content_version_conflict(row)
     if row.status != "review":
         raise HTTPException(409, "只有待审核内容可以审核")
     note = (req.note or "").strip()

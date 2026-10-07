@@ -50,7 +50,7 @@ class _HealthConnection:
                 ("demo_tenant_binding_history", "trg_demo_tenant_binding_history_no_truncate", "before truncate for each statement reject_demo_tenant_binding_history_mutation"),
                 ("demo_tenant_bindings", "trg_demo_tenant_bindings_no_delete", "before delete for each row reject_demo_tenant_binding_delete"),
             ]
-            if self.revisions in (["0098_demo_binding_no_truncate"], ["0099_geo_review_audit"], ["0100_seo_page_captures"], ["0101_seo_site_analytics"], ["0102_seo_monthly_report_template"], ["0103_seo_tdk_review"], ["0104_seo_page_ai_tdk"]):
+            if self.revisions in (["0098_demo_binding_no_truncate"], ["0099_geo_review_audit"], ["0100_seo_page_captures"], ["0101_seo_site_analytics"], ["0102_seo_monthly_report_template"], ["0103_seo_tdk_review"], ["0104_seo_page_ai_tdk"], ["0105_seo_content_confirmations"]):
                 rows.append(("demo_tenant_bindings", "trg_demo_tenant_bindings_no_truncate", "before truncate for each statement reject_demo_tenant_binding_delete"))
             return rows
         if "pg_get_serial_sequence" in sql:
@@ -69,6 +69,16 @@ class _HealthConnection:
                     ("ck_seo_page_captures_manual_upload", "CHECK (source <> 'manual' OR (uploaded_by IS NOT NULL AND uploaded_at IS NOT NULL))")]
         if "ck_seo_page_captures_status" in sql:
             return _HealthResult(["CHECK (status IN ('pending', 'running', 'succeeded', 'failed'))"])
+        if parameters and parameters.get("table_name") in seo_main.SEO_CONFIRMATION_TABLE_COLUMNS:
+            return _HealthResult(
+                sorted(seo_main.SEO_CONFIRMATION_TABLE_COLUMNS[parameters["table_name"]])
+            )
+        if parameters and parameters.get("qualified_table") == "public.seo_content_confirmations":
+            return _HealthResult([
+                "ck_seo_content_confirmation_version",
+                "ck_seo_content_confirmation_decision",
+                "ck_seo_content_confirmation_actor_mode",
+            ])
         if "pg_attribute" in sql:
             return [(table, column, kind or "text") for (table, column), kind in seo_main.SEO_REQUIRED_COLUMNS.items()]
         return _HealthResult(self.revisions if "alembic_version" in sql else [])
@@ -287,7 +297,7 @@ def test_health_rejects_unknown_empty_or_multiple_revisions(revisions):
     structure.assert_not_called()
 
 
-@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk'])
+@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations'])
 def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
     response = Response()
     with patch.object(seo_main, 'engine', _HealthEngine([revision])):
@@ -296,10 +306,29 @@ def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
     assert result['db'] == 'ok' and result['db_error'] is None
     assert result['schema_revision'] == revision
     assert result['required_schema_revision'] == '0099_geo_review_audit'
-    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk']
+    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations']
 
 
-@pytest.mark.parametrize("revision", ["0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"])
+def test_0105_health_rejects_missing_content_confirmation_structure() -> None:
+    original = _HealthConnection.execute
+
+    async def execute(self, statement, parameters=None):
+        if parameters and parameters.get("table_name") == "seo_content_confirmations":
+            return _HealthResult(["id", "tenant_id"])
+        return await original(self, statement, parameters)
+
+    response = Response()
+    with patch.object(_HealthConnection, "execute", execute), patch.object(
+        seo_main, "engine", _HealthEngine(["0105_seo_content_confirmations"])
+    ):
+        result = asyncio.run(seo_main.seo_health(response))
+
+    assert response.status_code == 503
+    assert result["schema"] == "error"
+    assert "content confirmation structure mismatch" in result["db_error"]
+
+
+@pytest.mark.parametrize("revision", ["0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations"])
 def test_health_does_not_require_optional_analytics_or_report_tables(revision) -> None:
     original = _HealthConnection.execute
     queries = []
@@ -355,7 +384,7 @@ def test_health_rejects_0095_when_geo_ticket_adoption_shape_is_incomplete(failur
 
 
 @pytest.mark.parametrize('failure', ['missing_table','missing_column','wrong_bigint','wrong_jsonb','catalog_denied'])
-@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk'])
+@pytest.mark.parametrize('revision', ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations'])
 def test_health_rejects_incomplete_schema_even_at_allowed_revision(failure, revision):
     async def execute(self, statement, parameters=None):
         if 'geo_action_tickets' in str(statement):
@@ -461,8 +490,8 @@ def test_structure_contract_preserves_smallint_fields():
 
 
 def test_runtime_allowlist_contains_only_exact_reviewed_versions():
-    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk'})
-    assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk'})
+    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations'})
+    assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations'})
     assert (
         seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS - {'0094_seo_qa_batches'}
     ) <= seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS
@@ -501,6 +530,7 @@ def test_pre_0097_compatible_health_does_not_require_future_binding_tables(revis
     ("0102_seo_monthly_report_template", True),
     ("0103_seo_tdk_review", True),
     ("0104_seo_page_ai_tdk", True),
+    ("0105_seo_content_confirmations", True),
 ])
 def test_binding_health_requires_current_truncate_from_0098(revision, required) -> None:
     response = Response()

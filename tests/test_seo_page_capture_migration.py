@@ -9,7 +9,7 @@ ROOT = Path(__file__).parents[1]
 
 def test_capture_migration_is_single_additive_head():
     script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
-    assert script.get_heads() == ["0104_seo_page_ai_tdk"]
+    assert script.get_heads() == ["0105_seo_content_confirmations"]
     assert script.get_revision("0100_seo_page_captures").down_revision == "0099_geo_review_audit"
     assert script.get_revision("0101_seo_site_analytics").down_revision == "0100_seo_page_captures"
     source = (ROOT / "migrations/versions/20261004_0100_seo_page_captures.py").read_text(encoding="utf-8")

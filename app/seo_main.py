@@ -35,10 +35,10 @@ SEO_REQUIRED_SCHEMA_REVISION = "0099_geo_review_audit"
 # Runtime compatibility supports code-first rollout; it never authorizes the
 # separately reviewed migration operation.
 SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset(
-    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION, "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}
+    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION, "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations"}
 )
 SEO_GEO_TICKET_REQUIRED_REVISIONS = frozenset(
-    {"0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION, "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}
+    {"0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION, "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations"}
 )
 SEO_GEO_TICKET_SHAPE = {
     "owner_name": ("character varying(100)", False, None, "", "", "b", None, True),
@@ -99,6 +99,56 @@ async def _check_capture_structure(conn) -> None:
         f"'{source}'" in provenance["ck_seo_page_captures_source"] for source in ("auto", "manual")
     ) or "uploaded_by" not in provenance["ck_seo_page_captures_manual_upload"] or "uploaded_at" not in provenance["ck_seo_page_captures_manual_upload"]:
         raise RuntimeError("SEO page capture provenance constraint mismatch")
+
+
+SEO_CONFIRMATION_TABLE_COLUMNS = {
+    "seo_site_advisor_assignments": {
+        "id", "tenant_id", "site_id", "advisor_user_id", "active",
+        "assigned_by", "created_at", "updated_at",
+    },
+    "seo_content_confirmations": {
+        "id", "tenant_id", "site_id", "content_asset_id", "content_version",
+        "content_hash", "decision", "actor_mode", "actor_user_id",
+        "actor_role_name", "note", "created_at",
+    },
+}
+SEO_CONFIRMATION_COLUMNS_SQL = text("""
+    SELECT a.attname
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+    WHERE n.nspname = 'public' AND c.relname = :table_name
+      AND c.relkind = 'r' AND a.attnum > 0 AND NOT a.attisdropped
+""")
+SEO_CONFIRMATION_CONSTRAINTS_SQL = text("""
+    SELECT con.conname
+    FROM pg_catalog.pg_constraint con
+    WHERE con.conrelid = to_regclass(:qualified_table)
+""")
+
+
+async def _check_content_confirmation_structure(conn) -> None:
+    for table_name, expected_columns in SEO_CONFIRMATION_TABLE_COLUMNS.items():
+        found = set(
+            (await conn.execute(SEO_CONFIRMATION_COLUMNS_SQL, {"table_name": table_name})).scalars()
+        )
+        if found != expected_columns:
+            raise RuntimeError(f"SEO content confirmation structure mismatch: {table_name}")
+    constraints = set(
+        (
+            await conn.execute(
+                SEO_CONFIRMATION_CONSTRAINTS_SQL,
+                {"qualified_table": "public.seo_content_confirmations"},
+            )
+        ).scalars()
+    )
+    required = {
+        "ck_seo_content_confirmation_version",
+        "ck_seo_content_confirmation_decision",
+        "ck_seo_content_confirmation_actor_mode",
+    }
+    if not required.issubset(constraints):
+        raise RuntimeError("SEO content confirmation constraints mismatch")
 SEO_DEMO_BINDING_COLUMNS = {
     "demo_tenant_bindings": {
         "tenant_id": ("bigint", True), "demo_tenant_id": ("bigint", True),
@@ -491,14 +541,16 @@ async def seo_health(response: Response) -> dict:
             await _check_seo_structure(conn)
             if revisions[0] in SEO_GEO_TICKET_REQUIRED_REVISIONS:
                 await _check_geo_ticket_adoption(conn)
-            if revisions[0] in {"0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", "0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}:
+            if revisions[0] in {"0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", "0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations"}:
                 await _check_demo_binding_structure(
-                    conn, require_current_truncate=revisions[0] in {"0098_demo_binding_no_truncate", "0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}
+                    conn, require_current_truncate=revisions[0] in {"0098_demo_binding_no_truncate", "0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations"}
                 )
-            if revisions[0] in {"0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}:
+            if revisions[0] in {"0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations"}:
                 await _check_geo_review_audit(conn)
-            if revisions[0] in {"0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk"}:
+            if revisions[0] in {"0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations"}:
                 await _check_capture_structure(conn)
+            if revisions[0] == "0105_seo_content_confirmations":
+                await _check_content_confirmation_structure(conn)
             schema_status = "ok"
     except Exception as exc:  # noqa: BLE001 - health must report infra failure
         db_status = "error"

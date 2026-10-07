@@ -63,7 +63,7 @@ def _load_migration():
 
 def test_sem_task_revision_is_the_single_linear_head() -> None:
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == ["0104_seo_page_ai_tdk"]
+    assert script.get_heads() == ["0105_seo_content_confirmations"]
     assert script.get_revision("0096_sem_tasks").down_revision == "0095_adopt_geo_ticket"
     assert [
         step.revision.revision

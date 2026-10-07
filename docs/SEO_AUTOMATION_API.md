@@ -1,0 +1,144 @@
+# SEO 辅助自动化接口契约
+
+## SEO-01 内容审核与稿件确认
+
+所有路径以 `/api/v1/seo` 为前缀。客户和顾问使用同一套内容对象；后端根据登录账号的数据库租户绑定、RBAC 权限和站点顾问分配记录计算可执行动作，不接受前端传入的 `role`、`advisor` 或用户名作为授权依据。
+
+### 读取交付稿及允许动作
+
+`GET /workbench/content-assets/{content_id}/delivery?tenant_id={tenant_id}&site_id={site_id}`
+
+要求 `seo.content:view` 或 `edit`，并继续执行现有租户、站点和模块权限校验。返回：
+
+```json
+{
+  "content": {
+    "id": 88,
+    "tenant_id": 1,
+    "site_id": 9,
+    "content_type": "article",
+    "title": "示例稿件",
+    "outline": "...",
+    "body": "<p>...</p>",
+    "version_count": 3,
+    "payload_hash": "64位sha256",
+    "status": "ready",
+    "updated_at": "2026-10-07T10:00:00Z"
+  },
+  "workflow_status": "awaiting_customer_confirmation",
+  "confirmation": {
+    "status": "pending",
+    "latest": null,
+    "requires_exact_version": true,
+    "approval_is_publication": false
+  },
+  "allowed_actions": {
+    "submit_review": false,
+    "review": false,
+    "confirm_as_customer": true,
+    "confirm_as_advisor_proxy": false,
+    "reject_as_customer": true,
+    "reject_as_advisor_proxy": false,
+    "edit_content": false,
+    "start_publication": false
+  },
+  "permission_basis": {
+    "actor_user_id": 12,
+    "tenant_bound_customer_account": true,
+    "active_site_advisor_assignment": false,
+    "seo_content_permission": "view"
+  },
+  "result_basis": {
+    "internal_review_status": "ready",
+    "customer_confirmation_status": "pending",
+    "publication_status": "not_loaded",
+    "page_check_status": "not_loaded",
+    "search_effect_status": "not_attributed_to_single_content"
+  }
+}
+```
+
+`confirmation.status` 为 `pending | approved | rejected | stale`。`stale` 表示历史确认存在，但不再对应当前 `version_count + payload_hash`。审核通过、稿件确认、发布成功、页面检查与搜索效果分别返回，不能互相代替。
+
+### 客户确认或顾问代确认
+
+`POST /workbench/content-assets/{content_id}/confirmations?tenant_id={tenant_id}`
+
+```json
+{
+  "version_count": 3,
+  "payload_hash": "从 delivery 原样回传的64位sha256",
+  "decision": "approve",
+  "actor_mode": "customer_direct",
+  "note": "同意发布"
+}
+```
+
+- `customer_direct`：必须是实名 JWT 账号，且账号的服务端 `tenant_id` 等于目标客户，并有 `seo.content:view` 或 `edit`。全客户账号不能用此模式冒充客户；已有当前站点顾问分配的账号即使也绑定该客户，仍必须使用 `advisor_proxy`，不能把代确认记成客户亲自确认。
+- `advisor_proxy`：必须是实名 JWT 账号，同时具备数据库角色授予的 `seo.content:edit`，并在 `seo_site_advisor_assignments` 中有目标租户和站点的 active 分配。`tenant_id=None`、角色名称或前端标志都不构成代确认授权。
+- 代确认记录保存真实 `actor_user_id`、当时的服务端 `actor_role_name`、`actor_mode=advisor_proxy`、时间、意见、准确版本与摘要，不记录成客户本人操作。
+- `reject` 必须填写 `note`；稿件退回 `drafting`，修改后版本递增，旧确认自然变为 `stale`。
+- 同一账号对同一准确版本、相同决定和意见的重复请求幂等返回现有结果。
+
+主要错误：
+
+| HTTP | `detail.code`/文本 | 含义 |
+| --- | --- | --- |
+| 400 | 退回稿件时必须填写修改意见 | `reject` 缺意见 |
+| 403 | 稿件确认必须由实名登录账号操作 | API Key 或无用户身份不能确认 |
+| 403 | 只有绑定当前客户的实名账号可以直接确认稿件 | 客户直接确认身份不成立 |
+| 403 | 只有当前站点已分配且具备内容编辑权限的顾问可以代确认 | 缺顾问分配或编辑权限 |
+| 409 | `content_version_conflict` | 版本或摘要变化；响应同时给当前版本和摘要 |
+| 409 | 只有内部审核通过且尚未发布的稿件可以确认或退回 | 内容状态不在 `ready` |
+
+### 精确版本内部审核
+
+现有接口继续使用：
+
+- `POST /content-assets/{content_id}/submit-review?tenant_id=...`
+- `POST /content-assets/{content_id}/review?tenant_id=...`
+
+请求新增可选的 `version_count`。共享工作台必须发送读取时的版本；不一致返回 409 `content_version_conflict`。字段暂时保持可选以兼容已上线 SEO 内页，后续在旧调用方全部升级后才能收紧为必填。
+
+### 顾问分配
+
+- `GET /workbench/advisor-assignments?tenant_id=...&site_id=...`
+- `PUT /workbench/advisor-assignments`
+
+```json
+{
+  "tenant_id": 1,
+  "site_id": 9,
+  "advisor_user_id": 7,
+  "active": true
+}
+```
+
+读取要求 `seo.content:edit` 与 `settings.accounts:view/edit`；写入必须是实名账号且同时具备两项 edit。被分配账号必须存在、启用、未绑定其他客户，并由数据库角色授予 `seo.content:edit`。
+
+### 发布门禁与未知结果
+
+下列现有入口新增准确版本确认门禁：
+
+- `POST /content-distribution/preflight`
+- `POST /content-distribution/publish`
+- `POST /content-distribution/publications/manual`
+- `POST /content-distribution/publications/{id}/complete`
+- `POST /content-distribution/publications/{id}/materials`
+- `POST /content-distribution/publications/{id}/retry`
+
+无有效确认返回 409 `content_confirmation_required`。预检不会整体报错，而是在对应组合的 `errors` 中标出未确认。旧稿件和已有发布记录不会自动补造确认；迁移上线后需要由客户或已分配顾问对准确当前版本进行一次真实确认，之后才能新建、完成人工发布或重试。已提交到外部平台的同步查询不因门禁停止，以便继续核对实际结果。
+
+当最近一次发布尝试为 `outcome=unknown` 或 `requires_manual_review=true` 时，重试请求除原有 `confirm=true` 外还必须提供：
+
+```json
+{"manual_check_outcome": "not_published"}
+```
+
+否则返回 409 `publication_outcome_unknown`，防止未知结果盲重试。
+
+## 数据库与部署依赖
+
+迁移源文件：`migrations/versions/20261007_0105_seo_content_confirmations.py`，父版本 `0104_seo_page_ai_tdk`。只新增 `seo_site_advisor_assignments` 与 `seo_content_confirmations`，不改客户现有内容和发布数据。本批未执行迁移、部署或数据回填。
+
+SEO 健康检查兼容 `0104`（代码先发布但新接口不可用）与 `0105`，到达 `0105` 时额外验证两张表的必要列及确认表约束。正式上线必须单独批准迁移，并在启用新前端动作前完成管理员顾问分配。

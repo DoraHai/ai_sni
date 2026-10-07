@@ -331,6 +331,90 @@ class SeoContentReviewEvent(Base):
     )
 
 
+class SeoSiteAdvisorAssignment(Base):
+    """Server-verifiable advisor assignment for one tenant/site scope."""
+
+    __tablename__ = "seo_site_advisor_assignments"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    site_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("seo_sites.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    advisor_user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    assigned_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "site_id", "advisor_user_id",
+            name="uq_seo_site_advisor_assignment_scope_user",
+        ),
+        Index(
+            "ix_seo_site_advisor_assignment_scope_active",
+            "tenant_id", "site_id", "active",
+        ),
+    )
+
+
+class SeoContentConfirmation(Base):
+    """Append-only, exact-version customer or advisor-proxy confirmation."""
+
+    __tablename__ = "seo_content_confirmations"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    site_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("seo_sites.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    content_asset_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("seo_content_assets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    content_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    actor_mode: Mapped[str] = mapped_column(String(24), nullable=False)
+    actor_user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    actor_role_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("content_version > 0", name="ck_seo_content_confirmation_version"),
+        CheckConstraint(
+            "decision IN ('approve','reject')",
+            name="ck_seo_content_confirmation_decision",
+        ),
+        CheckConstraint(
+            "actor_mode IN ('customer_direct','advisor_proxy')",
+            name="ck_seo_content_confirmation_actor_mode",
+        ),
+        Index(
+            "ix_seo_content_confirmation_asset_latest",
+            "tenant_id", "content_asset_id", "created_at", "id",
+        ),
+        Index(
+            "ix_seo_content_confirmation_exact_version",
+            "content_asset_id", "content_version", "content_hash",
+        ),
+    )
+
+
 class SeoDistributionConnection(Base):
     """Tenant-owned publishing account or assisted distribution destination."""
 
