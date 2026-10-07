@@ -1,0 +1,40 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {createRequire} from 'node:module';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
+import {startFixtureServer} from './tests/fixture-server.mjs';
+const require=createRequire(import.meta.url),puppeteer=require('puppeteer-core');
+const edge=process.env.EDGE_BINARY||['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe','C:/Program Files/Microsoft/Edge/Application/msedge.exe'].find(fs.existsSync);
+async function until(fn){const deadline=Date.now()+7000;while(!fn()){if(Date.now()>deadline)throw Error('Fixture condition timeout');await new Promise(r=>setTimeout(r,10));}}
+test('UI-05 full connected DOM chain uses local contract server and discards changed identity/scope',async()=>{
+  const fixture=await startFixtureServer(),profile=fs.mkdtempSync(path.join(os.tmpdir(),'ui05-edge-'));
+  const browser=await puppeteer.launch({executablePath:edge,headless:true,userDataDir:profile,defaultViewport:{width:1440,height:900},args:['--no-first-run']});
+  try{
+    const page=await browser.newPage(),errors=[],external=[];page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(new URL(r.url()).origin!==fixture.origin)external.push(r.url());});
+    const text=()=>page.$eval('body',e=>e.textContent);
+    const ready=async()=>page.waitForFunction(()=>document.querySelector('[data-action="delivery"]')&&!document.querySelector('[data-action="delivery"]').disabled);
+    const nav=async(name)=>{await page.click(`.navigation [data-action="page"][data-page="${name}"]`);await page.waitForFunction(name=>!document.querySelector(`.navigation [data-action="page"][data-page="${name}"]`)?.disabled,{},name);};
+    await page.goto(fixture.origin+'/connected.html');assert.match(await text(),/未连接宿主身份/);assert.equal(fixture.state.calls.length,0);
+    await page.goto(fixture.origin+'/fixture.html');await ready();assert.equal(await page.evaluate(()=>typeof window.DEV_ADAPTER),'undefined');
+    await page.click('[data-action="delivery"]');await page.waitForSelector('#delivery-body');assert.match(await text(),/客户1的正文/);
+    assert.equal(await page.$eval('[data-action="confirm"][data-mode="advisor_proxy"]',e=>e.disabled),true);
+    await page.click('[data-action="confirm"][data-mode="customer_direct"]');await page.waitForSelector('.confirmed');assert.match(await text(),/客户本人确认/);assert.match(await text(),/not_loaded/);
+    fixture.state.confirmations.clear();fixture.state.contents.get(1).status='ready';
+    await page.evaluate(()=>WORKBENCH_TEST_HOST.setIdentity('advisor'));await ready();await page.click('[data-action="delivery"]');await page.waitForSelector('#delivery-body');
+    assert.equal(await page.$eval('[data-action="confirm"][data-mode="customer_direct"]',e=>e.disabled),true);
+    await page.click('[data-action="confirm"][data-mode="advisor_proxy"]');await page.waitForSelector('.confirmed');assert.match(await text(),/顾问代确认.*顾问接口夹具/s);
+    fixture.state.confirmations.clear();fixture.state.contents.get(1).status='ready';await page.click('[data-action="delivery"]');await page.waitForFunction(()=>!document.querySelector('[data-action="reject"][data-mode="advisor_proxy"]').disabled);
+    await page.type('#decision-note','请复核接口夹具的参数');await page.click('[data-action="reject"][data-mode="advisor_proxy"]');await page.waitForFunction(()=>document.body.textContent.includes('awaiting_content_revision'));assert.equal(fixture.state.confirmations.get(1).decision,'reject');
+    await nav('服务计划');await page.waitForFunction(()=>!document.querySelector('[data-action="save-plan"]').disabled);await page.$eval('#plan-note',e=>e.value='契约页面保存的备注');await page.click('[data-action="save-plan"]');await page.waitForFunction(()=>document.querySelector('#plan-message')?.textContent.includes('已由服务器保存'));assert.equal(fixture.state.plans.get(1).service_note,'契约页面保存的备注');
+    await page.click('[data-action="refresh-plan"]');await page.waitForFunction(()=>!document.querySelector('[data-action="save-plan"]').disabled);fixture.state.plans.get(1).revision++;await page.click('[data-action="save-plan"]');await page.waitForFunction(()=>document.querySelector('#plan-message')?.textContent.includes('版本已变化'));assert(!(await text()).includes('已由服务器保存'));
+    await page.click('[data-action="refresh-plan"]');await page.waitForFunction(()=>!document.querySelector('[data-action="save-plan"]').disabled);fixture.state.planDenied=true;await page.click('[data-action="save-plan"]');await page.waitForFunction(()=>document.body.textContent.includes('当前身份无权'));assert(!(await text()).includes('已由服务器保存'));assert(!(await text()).includes('契约客户1'));
+    await page.click('[data-action="connect"]');await ready();await nav('服务计划');assert.equal(await page.$eval('[data-action="save-plan"]',e=>e.disabled),true);fixture.state.planDenied=false;
+    await nav('数据');assert.match(await text(),/事实就绪/);await page.click('[data-action="level"][data-level="L3"]');assert.match(await text(),/task_ledger/);assert(!(await text()).includes('local-progress'));
+    await nav('首页');fixture.state.holdNext='/delivery';await page.click('[data-action="delivery"]');await until(()=>fixture.state.held.length===1);const releaseTenant=fixture.state.held.shift();
+    await page.evaluate(()=>WORKBENCH_TEST_HOST.selectTenant(2));await ready();releaseTenant();assert.match(await text(),/契约服务器客户2稿件/);assert(!(await text()).includes('客户1的正文'));
+    fixture.state.holdNext='/delivery';await page.click('[data-action="delivery"]');await until(()=>fixture.state.held.length===1);const releaseIdentity=fixture.state.held.shift();await page.evaluate(()=>WORKBENCH_TEST_HOST.setIdentity('customer'));await ready();releaseIdentity();assert.match(await text(),/客户接口夹具/);assert(!(await text()).includes('客户2的正文'));
+    const before=fixture.state.calls.length;await page.evaluate(()=>WORKBENCH_TEST_HOST.setIdentity('none'));await page.waitForFunction(()=>document.body.textContent.includes('尚未登录'));assert.equal(fixture.state.calls.length,before);await page.click('[data-action="login"]');assert.match(await page.evaluate(()=>WORKBENCH_TEST_HOST.lastRedirect),/^\/login\?redirect=%2Ffixture.html/);
+    await page.evaluate(()=>WORKBENCH_TEST_HOST.setIdentity('customer'));await ready();fixture.state.forceError={path:'/content-assets',status:401};await page.click('[data-action="refresh"]');await page.waitForFunction(()=>document.body.textContent.includes('尚未登录'));assert(!(await text()).includes('契约服务器客户1稿件'));
+    await page.evaluate(()=>WORKBENCH_TEST_HOST.setIdentity('advisor'));await ready();fixture.state.forceError={path:'/content-assets',status:403};await page.click('[data-action="refresh"]');await page.waitForFunction(()=>document.body.textContent.includes('当前身份无权'));assert(!(await text()).includes('契约服务器客户1稿件'));
+    await page.click('[data-action="connect"]');await ready();await page.setViewport({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    assert.deepEqual(errors,[]);assert.deepEqual(external,[]);assert(fixture.state.calls.some(c=>c.method==='PUT'));assert(fixture.state.calls.every(c=>!c.path.includes('/publish')));
+    console.log('UI-05 PASS: list/delivery/direct/proxy/reject/plan/status/409/revocation/401/403/no-login/late-scope/late-user/mobile; loopback only');
+  }finally{await browser.close();await fixture.close();fs.rmSync(profile,{recursive:true,force:true});}
+});

@@ -1,0 +1,19 @@
+{
+  "name": "snipers-customer-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test:ui06": "node --test seo-readonly-client.test.mjs host-session-adapter.test.mjs ui06-browser.test.mjs",
+    "preview:fixture": "node tests/fixture-server.mjs",
+    "pretest:ui06": "npm run build",
+    "test:contracts": "node --test seo-readonly-client.test.mjs seo-workflow-client.test.mjs service-plan-controller.test.mjs host-session-adapter.test.mjs",
+    "test:connected": "node --test connected-browser.test.mjs",
+    "test:demo": "node verify.cjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "puppeteer-core": "23.11.1",
+    "vue": "3.5.35"
+  }
+}

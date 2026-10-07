@@ -1,0 +1,7 @@
+node_modules/
+dist/
+checkpoints/
+*.log
+.env
+.env.*
+!.env.example

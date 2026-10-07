@@ -1,0 +1,27 @@
+diff --git a/frontend/src/views/workspace/AcquisitionCockpitView.vue b/frontend/src/views/workspace/AcquisitionCockpitView.vue
+index b4fbc89a..e4a62957 100644
+--- a/frontend/src/views/workspace/AcquisitionCockpitView.vue
++++ b/frontend/src/views/workspace/AcquisitionCockpitView.vue
+@@ -35,6 +35,14 @@ import { appendExplorationPath, compareMetricScope, moveExplorationPath, saveMet
+ import { semImpressionClickFunnel, semTrendVisualization, seoContentDistribution } from './cockpit/visualization-model.mjs'
+ 
+ const router = useRouter()
++const customerWorkbenchHref = computed(() => {
++  const tenantId = session.tenantId, siteId = currentSeoSiteId.value
++  if (demoMode.value || !session.token || !Number.isSafeInteger(tenantId) || tenantId <= 0
++      || !Number.isSafeInteger(siteId) || siteId <= 0
++      || !availableModules.value.some(item => item.module_code === 'seo')
++      || !seoSites.value.some(site => site.id === siteId && site.status === 'active')) return null
++  return '/customer-workbench/?' + new URLSearchParams({ tenant_id: tenantId, site_id: siteId })
++})
+ const shellEl = ref(null)
+ const messagesEl = ref(null)
+ const question = ref('')
+@@ -1071,6 +1079,7 @@ onBeforeUnmount(() => {
+             <option v-for="site in seoSites" :key="site.id" :value="site.id" :disabled="site.status !== 'active'">{{ site.name }} · {{ site.domain }}{{ site.status === 'active' ? '' : '（已停用）' }}</option>
+           </select>
+         </label>
++        <a v-if="customerWorkbenchHref" :href="customerWorkbenchHref">客户工作台</a>
+         <div class="period-control" aria-label="选择数据周期">
+           <span>数据周期</span>
+           <div class="period-shortcuts">
