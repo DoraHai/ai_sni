@@ -69,3 +69,16 @@ $env:PYTHONPATH="$env:TEMP\seo12-runtime-deps"
 验证：先在随机隔离schema复现原始asyncpg报错，再运行 `test_seo_workflow_postgres.py`、`test_seo_publication_workbench_contract.py`、`test_seo_distribution.py`，**93 passed、0 skipped**。其中新增10个真实PG时间用例覆盖两个入口的正/负时差、Z、无时区、缺省值；原PG并发与权限门禁一起通过。测试schema已自行清理，public内UI状态保留。
 
 接续只从content2当前版本/哈希读取后登记一次开始；不要从头重跑workflow，不修改content1的v3，不撤销顾问分配。登记成功仅为合成发布事实；外部采集/发布继续禁用，不代表页面核验或真实平台验收通过。顾问撤权仍等待前端完成正常路径后的同步点。
+
+### 撤权及断点接续验收结果
+
+2026-10-08，前端完成撤权只读验证后，SEO已将本轮 user2、tenant/site=1/1 的唯一assignment恢复为 `active=true`，只读数据库核对通过。撤权报告：`C:/Users/ADMINI~1/AppData/Local/Temp/workbench-ui12-scenarios-ibkVHy/report.json`。现保持恢复态。
+
+随后前端只接续先前失败的登记和任务推进，没有重放改稿/确认。报告 `C:/Users/ADMINI~1/AppData/Local/Temp/workbench-ui12-scenarios-3xK0Hj/report.json` 的实际内容及SEO只读数据库结果一致：
+
+- content2=v2/published；唯一发布记录 **id=1**、source_version=2，地址为合成 `.invalid` 地址。发布时间存储为UTC `2026-10-07 16:01:00`。
+- page_verification=`not_queued`，reason=`capture_disabled`，capture_id=null；抓取记录0条。
+- task1=`in_progress`，phase=**`page_evidence_needs_attention`**，blocker=`capture_disabled`，completion_evidence=null，关联publication_id=1。未被误标为done。
+- 报告 result=passed，browserErrors=[]、externalOrigins=[]，backendCommit=`f97be7800a934c0d19954270e467b79c6318b324`。
+
+协作转述曾写publication_id=2、phase=awaiting_page_evidence；以以上原始报告与数据库值为准。UI业务写入已结束。环境和数据继续保留，释放/清理等待总控安排；未执行真实发布、采集或生产操作。
