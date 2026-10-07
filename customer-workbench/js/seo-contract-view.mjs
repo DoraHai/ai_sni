@@ -6,9 +6,12 @@ export function contentDeliveryView(delivery) {
   return {
     id:content.id,version:content.version_count,hash:content.payload_hash,body:content.body,
     workflowStatus:delivery.workflow_status,confirmationStatus:delivery.confirmation.status,
+    confirmationStatusLabel:({approved:'当前版本已确认',rejected:'已退回，待修改',stale:'对应旧版本，当前版本尚未确认',pending:'待确认',unavailable:'确认状态不可用'})[delivery.confirmation.status]??'确认状态待核对',
     actions:Object.entries(delivery.allowed_actions).filter(([key,allowed])=>allowed===true&&!(unavailable&&/^(confirm_|reject_|start_publication)/.test(key))).map(([key])=>key),
     confirmation:latest?{actorId:latest.actor_user_id,actorName:latest.actor_name||`用户${latest.actor_user_id}`,actorRoleName:latest.actor_role_name,
-      mode:latest.actor_mode,label:latest.actor_mode==='advisor_proxy'?'顾问代确认':'客户本人确认',version:latest.content_version,at:latest.created_at}:null,
+      mode:latest.actor_mode,decision:latest.decision,
+      label:(latest.actor_mode==='advisor_proxy'?'顾问代':'客户本人')+({approve:'确认',reject:'退回'}[latest.decision]??'反馈（决定未提供）'),
+      approvedCurrent:delivery.confirmation.status==='approved'&&latest.decision==='approve',version:latest.content_version,at:latest.created_at}:null,
     resultBasis:delivery.result_basis,
     // Keep publication, capture and effect facts separate; confirmation does not set them.
     approvalIsPublication:false,

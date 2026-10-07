@@ -34,9 +34,19 @@ test('context change and uncertain write never resend automatically',async()=>{
   const t=setup(()=>ok(fixture()));await t.client.delivery(88);t.context.userId=8;await assert.rejects(t.client.confirm(88),/CONTEXT_CHANGED/);assert.equal(t.calls.length,1);
 });
 test('display mapping keeps server allowed actions, actual proxy actor and unavailable schema',()=>{
-  const data=fixture();data.allowed_actions={confirm_as_customer:false,confirm_as_advisor_proxy:true};data.confirmation={...data.confirmation,status:'unavailable',latest:{actor_user_id:77,actor_name:'顾问张某',actor_role_name:'consultant',actor_mode:'advisor_proxy',content_version:2,created_at:'2026-10-07T12:00:00Z'}};
+  const data=fixture();data.allowed_actions={confirm_as_customer:false,confirm_as_advisor_proxy:true};data.confirmation={...data.confirmation,status:'unavailable',latest:{actor_user_id:77,actor_name:'顾问张某',actor_role_name:'consultant',actor_mode:'advisor_proxy',decision:'approve',content_version:2,created_at:'2026-10-07T12:00:00Z'}};
   data.workflow_status='confirmation_unavailable';data.allowed_actions.start_publication=true;
   const view=contentDeliveryView(data);assert.deepEqual(view.actions,[]);assert.equal(view.workflowStatus,'confirmation_unavailable');assert.equal(view.confirmation.actorId,77);assert.equal(view.confirmation.label,'顾问代确认');assert.equal(view.approvalIsPublication,false);assert(view.capabilityMessage);
+});
+
+test('feedback distinguishes rejected history from current approval and does not invent missing decisions',()=>{
+  for(const actor_mode of ['customer_direct','advisor_proxy'])for(const decision of ['approve','reject'])for(const status of ['approved','rejected','stale']){
+    const data=fixture();data.confirmation.status=status;data.confirmation.latest={actor_mode,decision,actor_user_id:7,content_version:status==='stale'?2:3};
+    const view=contentDeliveryView(data);assert.equal(view.confirmation.label,(actor_mode==='advisor_proxy'?'顾问代':'客户本人')+(decision==='approve'?'确认':'退回'));
+    assert.equal(view.confirmation.approvedCurrent,status==='approved'&&decision==='approve');assert.equal(view.confirmation.version,status==='stale'?2:3);
+    if(status==='stale')assert.match(view.confirmationStatusLabel,/旧版本.*尚未确认/);
+  }
+  const missing=fixture();missing.confirmation.latest={actor_mode:'customer_direct',content_version:2};assert.match(contentDeliveryView(missing).confirmation.label,/决定未提供/);assert.equal(contentDeliveryView(missing).confirmation.approvedCurrent,false);
 });
 test('phase view never invents missing workflow owners or history',()=>{const phases=serviceStatusView({phases:{'SEO-A03':{state:'ready',blockers:[],facts:{rank_observations:5},as_of:null}}});assert.equal(phases[0].label,'事实就绪');assert.equal(phases[0].workflowStatus,null);assert.equal(phases[0].history,null);assert.equal(phases[0].completionEvidence,null);});
 test('malformed confirmation response invalidates snapshot',async()=>{
