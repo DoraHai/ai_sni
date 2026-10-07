@@ -425,7 +425,7 @@ def allowed_request(method, path):
                  r"/api/v1/seo/workbench/content-workflows/\d+/advance",
                  r"/api/v1/seo/workbench/service-cycles/run", r"/api/v1/seo/content-distribution/publications/manual",
                  r"/api/v1/seo/content-distribution/publications/\d+/complete",
-                 r"/api/v1/seo/qa/facts"),
+                 r"/api/v1/seo/qa/facts", r"/api/v1/seo/keywords"),
         "PATCH": (r"/api/v1/seo/content-assets/\d+", r"/api/v1/seo/tasks/\d+",
                   r"/api/v1/seo/qa/facts/[1-9][0-9]*", r"/api/v1/seo/keywords/[1-9][0-9]*"),
         "PUT": (r"/api/v1/seo/workbench/service-plan",),

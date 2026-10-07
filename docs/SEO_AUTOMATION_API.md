@@ -653,7 +653,7 @@ python -m pytest tests/test_seo_workflow_postgres.py -q
 - `POST /qa/facts` JSON必填tenant_id/site_id/title/statement/source_name，选填source_url/expires_at/status(active或retired)。`PATCH /qa/facts/{id}`是**完整资料表单+version**，不是任意局部patch；必填tenant_id/site_id/title/statement/source_name/version，省略选填字段会回默认值。应先读原值后提交完整表单；过期时间非空必须带时区；version不符409。无删除接口，停用用retired。
 - `POST /keywords` JSON必填tenant_id/site_id/keyword；选填cluster/intent/monthly_volume/difficulty/priority/landing_page/status/notes。priority=P0–P3，status=active/paused/archived。`PATCH /keywords/{id}?tenant_id=1`支持除keyword本身外这些维护字段，按exclude_unset局部更新；**不能重命名关键词、没有乐观锁version**，不可在UI承诺冲突保护。归档用status=archived；跨站迁移有引用时409。
 - `POST /keywords/import`支持tenant_id/site_id/items，1–500条，items使用KeywordCreate结构；本轮不做批量导入验收。以上写操作分别要求seo.content:edit、seo.keywords:edit。它们是既有模块权限接口，不新增个人负责人/客户确认架构。客户UI应隐藏顾问维护配置，服务端仍按权限拒绝越权写入。
-- UI13明确维护需求后，本机runner已仅新增放行`POST /api/v1/seo/qa/facts`、`PATCH /api/v1/seo/qa/facts/{正整数id}`、`PATCH /api/v1/seo/keywords/{正整数id}`三类路径。查询参数与请求体仍由真实权限/模块/tenant/site/版本校验处理；前端关键词维护仅使用priority和landing_page。关键词新增/导入、资料导入、相邻写接口均未开放，外部请求仍禁止。这是专用本机测试范围，不修改生产配置。
+- UI13明确维护需求后，本机runner已新增放行`POST /api/v1/seo/qa/facts`、`PATCH /api/v1/seo/qa/facts/{正整数id}`、`PATCH /api/v1/seo/keywords/{正整数id}`；后续按空库入口需求补充`POST /api/v1/seo/keywords`，共四类路径。查询参数与请求体仍由真实权限/模块/tenant/site/版本校验处理；前端关键词编辑仅使用priority和landing_page，新增表单仅使用tenant_id/site_id/keyword/priority/landing_page（复用既有API，本机runner按方法/路径放行，不改变API原有字段模型）。关键词/资料导入、相邻写接口均未开放，外部请求仍禁止。这是专用本机测试范围，不修改生产配置。
 
 ### 客户待确认口径和验证范围
 
@@ -664,3 +664,5 @@ python -m pytest tests/test_seo_workflow_postgres.py -q
 本轮未新增运行代码，未做维护写测、多页大数据边界、全组合筛选、真实搜索源或抓取测试；旧有测试存在不等于这些UI13场景本轮已验收。UI12完整状态和500修复/93项回归另见 `SEO_LOCAL_ACCEPTANCE.md`。待前端明确缺失契约后再小范围补齐。
 
 UI13后续维护定向验证：本机runner放行后，37项离线防护测试通过；真实JWT/API的15次检查通过，包括资料新增/完整编辑、旧version409、客户写入403、外租户403、错误站点写入409（先被operational-site门禁拒绝）、关键词priority/landing_page保存及恢复、导入仍403。首次探针错误预期错站点为404，实际在资料创建前即409；核对现有门禁后修正测试预期，没有改业务权限或重放已成功写入。新增合成资料id=2已retired/current=false；原资料id=1保持，关键词id=1的两个业务字段已恢复原值（维护更新时间正常更新）。证据：`C:/Users/Administrator/.secrets/seo12-local/ui13-maintenance-smoke.json`。这不是UI13浏览器表单验收，前端可另新增合成资料做真实交互测试；无需复用或重新激活SEO探针资料。
+
+新增关键词放行后的增量验证：38项防护测试通过，6项真实API检查通过（顾问五字段新增200、客户/外租户403、同站点重复关键词409、仅新探针归档200、导入仍403）。新探针keyword id=2已archived，原关键词1未改，不占active清单。记录：`C:/Users/Administrator/.secrets/seo12-local/ui13-keyword-create-smoke.json`。未重跑已通过的UI12流程或全量审查。

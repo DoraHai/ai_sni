@@ -87,4 +87,6 @@ $env:PYTHONPATH="$env:TEMP\seo12-runtime-deps"
 
 按前端明确需求，runner仅新增资料POST、资料正整数ID PATCH、关键词正整数ID PATCH三类精确路径；鉴权/模块/站点检查继续使用真实接口。关键词前端表单范围为priority/landing_page，无导入、AI、抓取或真实发布。37项防护单测、15项真实API检查已通过，详见`SEO_AUTOMATION_API.md`的UI13节。
 
+后续空库入口需求另放行关键词POST（前端仅tenant_id/site_id/keyword/priority/landing_page），现共四类维护路径。防护单测38通过，新增关键词6项真实API检查通过；keyword2探针已归档，keyword1不变。仍不开放导入/重命名，不重置原环境。
+
 SEO新增探针资料id=2已停用；原资料1与UI12稿件/发布/任务未改，关键词1的priority/landing_page已恢复原值。用户、assignment及schema未修改。前端可以新建自己的合成资料进行浏览器验收，不需重跑UI12或重置环境。测试记录追加保留，后续由总控安排统一释放。

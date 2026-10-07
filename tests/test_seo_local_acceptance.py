@@ -49,6 +49,7 @@ def test_local_business_actions_can_reach_real_auth_dependencies(method, path):
 
 @pytest.mark.parametrize("method,path", [
     ("POST", "/api/v1/seo/qa/facts"),
+    ("POST", "/api/v1/seo/keywords"),
     ("PATCH", "/api/v1/seo/qa/facts/1"),
     ("PATCH", "/api/v1/seo/keywords/1"),
 ])
@@ -57,7 +58,7 @@ def test_ui13_maintenance_reaches_real_auth(method, path):
 
 
 @pytest.mark.parametrize("method,path", [
-    ("POST", "/api/v1/seo/keywords"), ("POST", "/api/v1/seo/keywords/import"),
+    ("POST", "/api/v1/seo/keywords/1"), ("POST", "/api/v1/seo/keywords/import"),
     ("POST", "/api/v1/seo/qa/facts/import"), ("POST", "/api/v1/seo/qa/research/file-preview"),
     ("POST", "/api/v1/seo/qa/facts/1"), ("PATCH", "/api/v1/seo/qa/facts"),
     ("DELETE", "/api/v1/seo/qa/facts/1"), ("PATCH", "/api/v1/seo/keywords/1/writeback"),
