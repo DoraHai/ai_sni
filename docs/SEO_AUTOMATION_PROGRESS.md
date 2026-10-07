@@ -208,3 +208,11 @@
 - 最终事务审查：外部发布事实先持久化，再单独排页面核验；核验排队失败不覆盖真实发布结果。未知发布结果仍禁止盲重试。
 - 最终口径审查：发布成功、页面核验、搜索效果和任务完成保持独立；页面核验按发布记录去重，指标状态只看每个来源最新观测，排名覆盖按启用关键词逐一计算。
 - 最终范围审查：未推送、未建 PR、未部署、未执行 0105 迁移、未读取生产凭据、未运行真实客户采集或发布。
+
+## UI-04 联调契约补充
+
+- 服务计划 GET 新增服务端计算的 `allowed_actions.update_service_plan` 和权限依据；判断复用真实用户、内容/网站双 edit 权限及 active 站点顾问分配。PUT 仍独立重新校验全部条件和 revision。
+- 服务状态新增 `semantics`，明确 phase state 仅是事实就绪度，不是任务完成；补充 content delivery、任务台账和发布尝试等真实证据入口，不补造负责人、时间线或回执。
+- 0104 兼容期 content delivery 明确返回 `confirmation.status=unavailable` 与 `workflow_status=confirmation_unavailable`，确认及开始发布动作均为 false。
+- 定向测试：**36 passed, 1 warning**；Python 编译和 `git diff --check` 通过。
+- 本补充仅为本地代码和契约，未推送、未部署、未迁移。

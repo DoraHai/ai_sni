@@ -663,6 +663,8 @@ def test_service_status_maps_existing_facts_without_triggering_collection(monkey
     ))
 
     assert result['read_only'] is True
+    assert result['semantics']['phase_state'] == 'fact_readiness_only;not_task_completion'
+    assert result['evidence_endpoints']['content_delivery_template'].endswith('/delivery')
     assert result['phases']['SEO-A01']['state'] == 'ready'
     assert result['phases']['SEO-A02']['facts']['pages_with_issues'] == 1
     assert result['phases']['SEO-A03']['state'] == 'ready'

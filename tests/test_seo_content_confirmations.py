@@ -13,9 +13,11 @@ from app.api.seo import (
     _content_allowed_actions,
     _content_confirmation_hash,
     _content_confirmation_status,
+    _content_delivery_payload,
     _publication_attempt_requires_manual_check,
     _require_active_content_confirmation,
     create_content_confirmation,
+    get_seo_service_plan,
     submit_content_review,
     update_seo_service_plan,
 )
@@ -330,6 +332,50 @@ def test_assigned_advisor_updates_versioned_service_plan_with_actual_actor() -> 
     assert result["updated_by"] == 7
     assert site.site_settings["seo_service_plan"]["updated_by"] == 7
     session.commit.assert_awaited_once()
+
+
+def test_service_plan_read_reports_server_verified_update_capability() -> None:
+    site = SimpleNamespace(id=9, tenant_id=1, site_settings={})
+    session = AsyncMock()
+    ctx = AuthContext(
+        user_id=7, username="advisor", role_name="顾问", tenant_id=None,
+        permissions={"seo.content": "edit", "seo.site": "edit"},
+    )
+    assignment = SimpleNamespace(id=3)
+    with (
+        patch("app.api.seo.ensure_module_access", new=AsyncMock()),
+        patch("app.api.seo._seo_site", new=AsyncMock(return_value=site)),
+        patch("app.api.seo._content_confirmation_schema_ready", new=AsyncMock(return_value=True)),
+        patch("app.api.seo._site_advisor_assignment", new=AsyncMock(return_value=assignment)) as lookup,
+    ):
+        result = asyncio.run(get_seo_service_plan(1, 9, session, ctx))
+    assert result["allowed_actions"] == {"update_service_plan": True}
+    assert result["permission_basis"] == {
+        "actor_user_id": 7,
+        "schema_ready": True,
+        "seo_content_permission": "edit",
+        "seo_site_permission": "edit",
+        "active_site_advisor_assignment": True,
+        "update_denial_reason": None,
+    }
+    lookup.assert_awaited_once_with(session, 1, 9, 7, schema_ready=True)
+
+
+def test_pre_migration_delivery_marks_confirmation_unavailable() -> None:
+    row = _content(status="ready")
+    session = AsyncMock()
+    with patch(
+        "app.api.seo._content_confirmation_schema_ready",
+        new=AsyncMock(return_value=False),
+    ):
+        result = asyncio.run(_content_delivery_payload(
+            session, row, _ctx(tenant_id=1),
+        ))
+    assert result["confirmation"]["status"] == "unavailable"
+    assert result["workflow_status"] == "confirmation_unavailable"
+    assert result["allowed_actions"]["confirm_as_customer"] is False
+    assert result["allowed_actions"]["confirm_as_advisor_proxy"] is False
+    assert result["allowed_actions"]["start_publication"] is False
 
 
 def test_service_plan_rejects_unassigned_advisor_and_stale_revision() -> None:

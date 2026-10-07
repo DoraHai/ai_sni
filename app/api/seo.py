@@ -6673,6 +6673,8 @@ async def _content_delivery_payload(
             if confirmation_status == "approved"
             else "awaiting_content_revision"
             if confirmation_status == "rejected"
+            else "confirmation_unavailable"
+            if confirmation_status == "unavailable"
             else "awaiting_customer_confirmation"
         ),
         "published": "published",
@@ -7075,7 +7077,36 @@ async def get_seo_service_plan(
         raise HTTPException(403, "需要 SEO 内容和网站查看权限")
     await ensure_module_access(session, ctx, tenant_id, "seo")
     site = await _seo_site(session, tenant_id, site_id)
-    return _service_plan_payload(site)
+    schema_ready = await _content_confirmation_schema_ready(session)
+    has_actor = ctx.user_id is not None
+    has_edit_permissions = ctx.can_edit("seo.content") and ctx.can_edit("seo.site")
+    assignment = None
+    if schema_ready and has_actor and has_edit_permissions:
+        assignment = await _site_advisor_assignment(
+            session, tenant_id, site_id, ctx.user_id, schema_ready=True,
+        )
+    can_update = bool(schema_ready and has_actor and has_edit_permissions and assignment)
+    if not schema_ready:
+        denial_reason = "advisor_assignment_schema_unavailable"
+    elif not has_actor:
+        denial_reason = "authenticated_user_required"
+    elif not has_edit_permissions:
+        denial_reason = "content_and_site_edit_permissions_required"
+    elif assignment is None:
+        denial_reason = "active_site_advisor_assignment_required"
+    else:
+        denial_reason = None
+    result = _service_plan_payload(site)
+    result["allowed_actions"] = {"update_service_plan": can_update}
+    result["permission_basis"] = {
+        "actor_user_id": ctx.user_id,
+        "schema_ready": schema_ready,
+        "seo_content_permission": "edit" if ctx.can_edit("seo.content") else "view",
+        "seo_site_permission": "edit" if ctx.can_edit("seo.site") else "view",
+        "active_site_advisor_assignment": assignment is not None,
+        "update_denial_reason": denial_reason,
+    }
+    return result
 
 
 @router.put("/workbench/service-plan")
@@ -8108,13 +8139,22 @@ async def get_workbench_service_status(
             },
         },
         "evidence_endpoints": {
+            "content_delivery_template": "/api/v1/seo/workbench/content-assets/{content_id}/delivery",
             "brand_assets": "/api/v1/seo/rank-serp/brand-assets",
             "keywords": "/api/v1/seo/keywords",
             "pages": "/api/v1/seo/site-pages",
             "crawl_runs": "/api/v1/seo/site/crawl-runs",
             "automation_runs": "/api/v1/seo/automation-runs",
+            "task_ledger": "/api/v1/seo/tasks",
+            "publication_attempts_template": "/api/v1/seo/content-distribution/publications/{publication_id}/attempts",
             "publication_checks": "/api/v1/seo/workbench/publication-page-evidence",
             "metrics": "/api/v1/seo/overview/metric-snapshots/latest",
+        },
+        "semantics": {
+            "phase_state": "fact_readiness_only;not_task_completion",
+            "content_confirmation": "use_content_delivery_confirmation_status",
+            "task_completion": "use_task_status_done_with_server_verified_completion_evidence",
+            "unknown_fields": "return_unknown_or_null;never_infer_completion",
         },
         "read_only": True,
     }

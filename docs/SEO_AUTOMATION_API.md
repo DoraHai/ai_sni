@@ -60,6 +60,8 @@
 
 `confirmation.status` 为 `pending | approved | rejected | stale`。`stale` 表示历史确认存在，但不再对应当前 `version_count + payload_hash`。审核通过、稿件确认、发布成功、页面检查与搜索效果分别返回，不能互相代替。
 
+代码先部署而数据库仍为 `0104` 时，交付接口明确返回 `workflow_status=confirmation_unavailable`、`confirmation.status=unavailable`，并将客户确认、顾问代确认和开始发布三个动作全部设为 `false`。`unavailable` 表示 0105 确认结构尚未迁移，不能解释为 pending、已确认或拒绝。兼容期内原有发布后端保持既有行为，但新工作台不得显示可确认或依据该状态启动发布。
+
 ### 客户确认或顾问代确认
 
 `POST /workbench/content-assets/{content_id}/confirmations?tenant_id={tenant_id}`
@@ -164,12 +166,16 @@ SEO 健康检查兼容 `0104`（代码先发布但新接口不可用）与 `0105
 
 数据与报告阶段按 `metric_type + dimension + source` 只取最新一条指标观测，再汇总 `available_metric_series` 和状态分布。最新记录为 `pending/partial/failed/stale/not_configured` 时返回 `latest_metric_observations_incomplete`；旧记录不会覆盖当前状态。响应同时给出只读月报入口，是否能生成报告仍由现有月报接口根据发布、页面核验、统计来源和图片证据逐项说明。
 
+`service-status.phases.*.state` 的 `ready/needs_attention/not_ready/no_data` 仅描述当前持久化事实是否齐备，不是任务状态或完成判定。A04 稿件确认必须读取 content delivery；任务完成必须读取 `task.status=done` 且存在服务端核实的 `completion_evidence`。响应的 `semantics` 和 `evidence_endpoints` 给出这些来源。负责人、时间线、发布回填和回执只有已有真实记录时才引用；缺失字段保持 `null/unknown`，服务端不会为了 UI 显示批量补造流程记录。
+
 ### 顾问维护服务计划
 
 - `GET /workbench/service-plan?tenant_id={tenant_id}&site_id={site_id}`
 - `PUT /workbench/service-plan`
 
 读取要求同一站点的 `seo.content:view` 与 `seo.site:view`。写入必须是实名账号，同时有 `seo.content:edit`、`seo.site:edit`，并存在当前租户/站点的 active 顾问分配；全租户权限或角色名称不能代替分配记录。
+
+GET 额外返回服务端计算的 `allowed_actions.update_service_plan` 和 `permission_basis`。后者包含 `actor_user_id`、`schema_ready`、内容/网站权限等级、`active_site_advisor_assignment` 及 `update_denial_reason`。拒绝原因可为 `advisor_assignment_schema_unavailable`、`authenticated_user_required`、`content_and_site_edit_permissions_required` 或 `active_site_advisor_assignment_required`。这些字段只用于界面解释；PUT 每次仍会重新检查身份、双 edit 权限、0105 结构、active 顾问分配及 revision，前端不能把 GET 结果当作授权凭证。
 
 ```json
 {
