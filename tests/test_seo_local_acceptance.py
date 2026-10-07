@@ -47,6 +47,27 @@ def test_local_business_actions_can_reach_real_auth_dependencies(method, path):
     assert runner.allowed_request(method, path)
 
 
+@pytest.mark.parametrize("method,path", [
+    ("POST", "/api/v1/seo/qa/facts"),
+    ("PATCH", "/api/v1/seo/qa/facts/1"),
+    ("PATCH", "/api/v1/seo/keywords/1"),
+])
+def test_ui13_maintenance_reaches_real_auth(method, path):
+    assert runner.allowed_request(method, path)
+
+
+@pytest.mark.parametrize("method,path", [
+    ("POST", "/api/v1/seo/keywords"), ("POST", "/api/v1/seo/keywords/import"),
+    ("POST", "/api/v1/seo/qa/facts/import"), ("POST", "/api/v1/seo/qa/research/file-preview"),
+    ("POST", "/api/v1/seo/qa/facts/1"), ("PATCH", "/api/v1/seo/qa/facts"),
+    ("DELETE", "/api/v1/seo/qa/facts/1"), ("PATCH", "/api/v1/seo/keywords/1/writeback"),
+    ("PATCH", "/api/v1/seo/qa/facts/0"), ("PATCH", "/api/v1/seo/qa/facts/-1"),
+    ("PATCH", "/api/v1/seo/keywords/1/extra"),
+])
+def test_ui13_does_not_expand_to_import_delete_or_adjacent_actions(method, path):
+    assert not runner.allowed_request(method, path)
+
+
 def test_outbound_guard_only_allows_the_database_not_other_local_services():
     runner.network_audit("socket.connect", (None, ("127.0.0.1", 55432)))
     for address in (("127.0.0.1", 8029), ("8.8.8.8", 443), ("::1", 55432)):

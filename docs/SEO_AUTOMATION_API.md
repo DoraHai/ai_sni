@@ -653,7 +653,7 @@ python -m pytest tests/test_seo_workflow_postgres.py -q
 - `POST /qa/facts` JSON必填tenant_id/site_id/title/statement/source_name，选填source_url/expires_at/status(active或retired)。`PATCH /qa/facts/{id}`是**完整资料表单+version**，不是任意局部patch；必填tenant_id/site_id/title/statement/source_name/version，省略选填字段会回默认值。应先读原值后提交完整表单；过期时间非空必须带时区；version不符409。无删除接口，停用用retired。
 - `POST /keywords` JSON必填tenant_id/site_id/keyword；选填cluster/intent/monthly_volume/difficulty/priority/landing_page/status/notes。priority=P0–P3，status=active/paused/archived。`PATCH /keywords/{id}?tenant_id=1`支持除keyword本身外这些维护字段，按exclude_unset局部更新；**不能重命名关键词、没有乐观锁version**，不可在UI承诺冲突保护。归档用status=archived；跨站迁移有引用时409。
 - `POST /keywords/import`支持tenant_id/site_id/items，1–500条，items使用KeywordCreate结构；本轮不做批量导入验收。以上写操作分别要求seo.content:edit、seo.keywords:edit。它们是既有模块权限接口，不新增个人负责人/客户确认架构。客户UI应隐藏顾问维护配置，服务端仍按权限拒绝越权写入。
-- **本机验收runner当前写白名单未放行资料/关键词维护**，这类POST/PATCH会403 `local_acceptance_action_disabled`；不要当成生产能力缺失或移除全局防护。若UI13明确需要真实维护写测，再定向增加本机限定路径及测试，不提前执行种子/维护写入。
+- UI13明确维护需求后，本机runner已仅新增放行`POST /api/v1/seo/qa/facts`、`PATCH /api/v1/seo/qa/facts/{正整数id}`、`PATCH /api/v1/seo/keywords/{正整数id}`三类路径。查询参数与请求体仍由真实权限/模块/tenant/site/版本校验处理；前端关键词维护仅使用priority和landing_page。关键词新增/导入、资料导入、相邻写接口均未开放，外部请求仍禁止。这是专用本机测试范围，不修改生产配置。
 
 ### 客户待确认口径和验证范围
 
@@ -662,3 +662,5 @@ python -m pytest tests/test_seo_workflow_postgres.py -q
 本轮在真实本机API用advisor/customer两个账号各读取上表九类入口（含delivery、资料）均200，18次成功GET；两身份对投影外租户均403、错站点均404，另4次拒绝符合预期。仅登录使用POST，没有业务写入。记录在受限本机 `C:/Users/Administrator/.secrets/seo12-local/ui13-readonly-smoke.json`，不含凭证。合成库只有1词/1页/1条发布，无真实排名快照；空历史和未关联页面不构成真实排名/抓取验证。
 
 本轮未新增运行代码，未做维护写测、多页大数据边界、全组合筛选、真实搜索源或抓取测试；旧有测试存在不等于这些UI13场景本轮已验收。UI12完整状态和500修复/93项回归另见 `SEO_LOCAL_ACCEPTANCE.md`。待前端明确缺失契约后再小范围补齐。
+
+UI13后续维护定向验证：本机runner放行后，37项离线防护测试通过；真实JWT/API的15次检查通过，包括资料新增/完整编辑、旧version409、客户写入403、外租户403、错误站点写入409（先被operational-site门禁拒绝）、关键词priority/landing_page保存及恢复、导入仍403。首次探针错误预期错站点为404，实际在资料创建前即409；核对现有门禁后修正测试预期，没有改业务权限或重放已成功写入。新增合成资料id=2已retired/current=false；原资料id=1保持，关键词id=1的两个业务字段已恢复原值（维护更新时间正常更新）。证据：`C:/Users/Administrator/.secrets/seo12-local/ui13-maintenance-smoke.json`。这不是UI13浏览器表单验收，前端可另新增合成资料做真实交互测试；无需复用或重新激活SEO探针资料。

@@ -82,3 +82,9 @@ $env:PYTHONPATH="$env:TEMP\seo12-runtime-deps"
 - 报告 result=passed，browserErrors=[]、externalOrigins=[]，backendCommit=`f97be7800a934c0d19954270e467b79c6318b324`。
 
 协作转述曾写publication_id=2、phase=awaiting_page_evidence；以以上原始报告与数据库值为准。UI业务写入已结束。环境和数据继续保留，释放/清理等待总控安排；未执行真实发布、采集或生产操作。
+
+## UI13 最小维护放行
+
+按前端明确需求，runner仅新增资料POST、资料正整数ID PATCH、关键词正整数ID PATCH三类精确路径；鉴权/模块/站点检查继续使用真实接口。关键词前端表单范围为priority/landing_page，无导入、AI、抓取或真实发布。37项防护单测、15项真实API检查已通过，详见`SEO_AUTOMATION_API.md`的UI13节。
+
+SEO新增探针资料id=2已停用；原资料1与UI12稿件/发布/任务未改，关键词1的priority/landing_page已恢复原值。用户、assignment及schema未修改。前端可以新建自己的合成资料进行浏览器验收，不需重跑UI12或重置环境。测试记录追加保留，后续由总控安排统一释放。
