@@ -8,4 +8,4 @@
 
 构建/发布要求见BUILD_RELEASE；UI-05/06完整契约和原宿主读取证据见docs/history。后续生产路径、0105、顾问分配与实名验收由总控安排。
 
-UI-12新增仅本机的HTTPS真实后端代理和登录接线宿主页，生产入口不变。它调用真实登录API返回值及原session.setAuth，覆盖原存储bootstrap；不声称原LoginView整页已验收。真实API/PG业务仍等待总控放行，详见 [本机联调准备](docs/UI12_LOCAL_INTEGRATION.md)。
+UI-12新增仅本机的HTTPS真实后端代理和登录接线宿主页，生产入口不变。它调用真实登录API返回值及原session.setAuth，覆盖原存储bootstrap；不声称原LoginView整页已验收。2026-10-08已完成部分真实API/PG业务联调，含本机真实PG认证目录桥的范围说明，详见 [实际结果](docs/UI12_ACTUAL_RESULTS.md)及[接线命令](docs/UI12_LOCAL_INTEGRATION.md)。

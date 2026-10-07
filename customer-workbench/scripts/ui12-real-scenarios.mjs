@@ -4,9 +4,9 @@ import {startLocalBackendHost} from './local-backend-host.mjs';
 if(process.env.UI12_REAL_API_AUTHORIZED!=='true')throw Error('Coordinator authorization and verified backend handoff required');
 const config=JSON.parse(await fs.readFile(process.env.UI12_CONFIG_FILE,'utf8')),mode=process.argv[2]||'workflow',positive=n=>Number.isSafeInteger(n)&&n>0;
 assert(config.environment_kind==='isolated-local-pg'&&config.database&&config.schema&&config.external_operations_disabled===true,'Verified isolated environment with external operations disabled required');
-assert([config.tenant_id,config.site_id].every(positive),'Synthetic scope required');assert(['workflow','revoked','observe','inspect-inputs','verify-feedback'].includes(mode),'Unknown scenario mode');
+assert([config.tenant_id,config.site_id].every(positive),'Synthetic scope required');assert(['workflow','revoked','observe','inspect-inputs','verify-feedback','publication-tail'].includes(mode),'Unknown scenario mode');
 const seed=config.scenarios??{};
-if(mode==='workflow'){
+if(['workflow','publication-tail'].includes(mode)){
   assert([seed.draft_content_id,seed.proxy_content_id].every(positive)&&seed.draft_content_id!==seed.proxy_content_id,'Separate drafting and ready content seeds required');
   assert(Array.isArray(seed.task_ids)&&seed.task_ids.length>0&&seed.task_ids.every(positive),'Known synthetic task IDs required');
   assert(config.publication?.synthetic===true&&config.publication.page_url&&config.publication.published_local_time,'Explicit simulated publication fact required');
@@ -72,7 +72,19 @@ async function manualForm(page){
 try{
   browser=await puppeteer.launch({executablePath:edge,headless:true,args:[`--ignore-certificate-errors-spki-list=${host.spki}`]});
   const advisor=await login('advisor');
-  if(mode==='verify-feedback'){
+  if(mode==='publication-tail'){
+    const current=await openContent(advisor,seed.proxy_content_id);assert.equal(current.confirmation.status,'approved');assert.equal(current.content.status,'ready');
+    const before=await responseAction(advisor,selector('publications'),'GET','/api/v1/seo/content-distribution/publications');assert.equal(before.items.length,0,'Readback must show no existing publication; do not repeat an uncertain write');
+    await manualForm(advisor);const receipt=await responseAction(advisor,selector('manual-save'),'POST','/api/v1/seo/content-distribution/publications/manual');assert.equal(receipt.status,'published');assert.equal(receipt.source_version,current.content.version_count);assert.equal(receipt.page_verification.state,'not_queued');await capture(advisor,'manual-registration-success-after-backend-fix');
+    report.cases.push({name:'manual_registration_after_confirmed_rollback',contentId:receipt.content_id,publicationId:receipt.id,sourceVersion:receipt.source_version,pageVerification:receipt.page_verification,result:'passed'});
+    const records=await responseAction(advisor,selector('publications'),'GET','/api/v1/seo/content-distribution/publications');assert.deepEqual(records.items.map(v=>v.id),[receipt.id]);
+    for(const taskId of seed.task_ids){
+      await nav(advisor,'进度');const task=await responseAction(advisor,`[data-action="execution-detail"][data-id="${taskId}"]`,'GET',`/api/v1/seo/workbench/executions/${taskId}`);assert.equal(task.params.content_id,receipt.content_id);assert.equal(task.allowed_actions.advance,true);
+      await click(advisor,selector('execution-publications'));await advisor.select('#execution-publication',String(receipt.id));await responseAction(advisor,selector('execution-advance'),'POST',`/api/v1/seo/workbench/content-workflows/${taskId}/advance`);
+      const next=await responseAction(advisor,selector('execution-detail'),'GET',`/api/v1/seo/workbench/executions/${taskId}`);assert.notEqual(next.status,'done');assert(!next.completion_evidence);await capture(advisor,'task-'+taskId+'-awaiting-page-evidence');
+      report.cases.push({name:'advance_after_registration_without_fake_completion',taskId,status:next.status,phase:next.params?.phase,blocker:next.params?.blocker,completionEvidence:next.completion_evidence??null,result:'passed'});
+    }
+  }else if(mode==='verify-feedback'){
     const customer=await login('customer'),data=await openContent(customer,seed.draft_content_id);assert.equal(data.confirmation.status,'stale');assert.equal(data.confirmation.latest.decision,'reject');
     const text=await customer.$eval('#page',e=>e.textContent);assert.match(text,/客户本人退回/);assert.match(text,/对应旧版本，当前版本尚未确认/);assert.equal((await customer.$$('.confirmed')).length,0);await capture(customer,'customer-historical-rejection-corrected');
     await customer.setViewport({width:390,height:844});await capture(customer,'customer-historical-rejection-corrected-mobile');

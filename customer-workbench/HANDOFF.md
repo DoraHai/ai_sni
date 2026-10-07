@@ -1,4 +1,8 @@
-# 当前交接：UI-12 本机联调准备（真实业务未运行）
+# 当前交接：UI-12 实际联调与体验评估
+
+2026-10-08已完成本机真实FastAPI/PG登录、顾问轻改审核、客户确认/顾问代确认、旧登记版本冲突、撤权只读检查和恢复后合成事实人工登记/任务接续。初次登记500由SEO修复，UI从断点继续，没有重放前段。任务因capture_disabled停在页面证据需处理，非完成。历史退回被绿色标为确认的错误已修；未保存输入切页丢失尚未修，connected仍是接线层，不能称完整工作台体验交付。实际结果、失败记录、未测边界及桌面/窄屏截图见 [docs/UI12_ACTUAL_RESULTS.md](docs/UI12_ACTUAL_RESULTS.md)。未推送、合并或部署本轮提交，环境清理由总控/SEO负责。
+
+# UI-12 准备阶段记录
 
 本机HTTPS代理、原session.setAuth/bootstrap测试宿主页、真实登录与只读业务预检脚本已准备。传输/浏览器接线探针2/2通过；使用故意失败的传输上游，不代表FastAPI或PG业务通过。原LoginView验证码整页验收仍未覆盖。等待SEO专用schema/合成角色/外部适配就绪和总控明确允许实际API写入，UI未接触DB。范围、配置与完整场景见 [docs/UI12_LOCAL_INTEGRATION.md](docs/UI12_LOCAL_INTEGRATION.md)。总控统一更新PR，UI不推送或部署。
 

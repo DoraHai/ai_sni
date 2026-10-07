@@ -65,3 +65,7 @@
 ## UI-12：本机真实联调接线准备
 
 2026-10-07。增加仅loopback的HTTPS代理、原session.setAuth登录宿主页、真实API预检runner与完整角色场景。传输/浏览器接线探针最终2/2，语法与空白检查通过；真实FastAPI/PG业务结果仍未运行，不拿探针或原假业务服务器充当联调。测试登录宿主页不等于原LoginView验证码整页验收。SEO独占准备数据库，等总控环境放行后才运行实际登录/业务操作；本聊天没有写DB、生产、push、合并或部署。详见 [UI12_LOCAL_INTEGRATION.md](docs/UI12_LOCAL_INTEGRATION.md)。
+
+## UI-12：实际API联调和产品体验核对
+
+2026-10-08。真实两角色登录/读取、轻改审核/客户确认、顾问代确认、旧登记409及不重发、撤权只读检查均完成；初次正常登记遇500由SEO修复并确认未落库，分配恢复后UI仅断点接续，最终发布记录1/v2及任务page_evidence_needs_attention/capture_disabled成立，未伪完成。历史退回记录误标本地d713962f修复，13项相关检查及实际编译页面只读核验通过。桌面/窄屏/L1-L3截图、业务失败和未测边界、未保存切页丢失未修等体验结论见 [UI12_ACTUAL_RESULTS.md](docs/UI12_ACTUAL_RESULTS.md)。本轮无真实外部AI/采集/发布，无UI直接DB写入，未推送合并部署；assignment已恢复，清理由总控/SEO安排。
