@@ -406,3 +406,5 @@
 首次带断言的前置检查在public CREATE处退出，未执行迁移；随后只读细化权限定位发现USAGE也缺失。当前阻碍已不是范围授权，而是这两项schema权限。没有尝试GRANT、修改schema/数据库属主、角色提权、create_all、stamp或任何DDL。因为未发生写入，没有新增对象需要清理，后端仍未启动。
 
 环境负责人最小修复方案：仅连接上述本机专用测试库，以现有有权身份给测试角色 `GRANT USAGE, CREATE ON SCHEMA public TO seo_workflow_tester;`，不要授予SUPER/CREATEDB/CREATEROLE或其他库权限。此SQL仅为准确缺项说明，**本窗口未执行**。授权完成后仍须重做目标/空库/权限前置核验，再运行真实0104基线及0105升级；迁移通过前无API地址或合成身份可交付。无需重复授权业务范围，不将权限不足转成重新向用户请求整个任务许可。
+
+再次复核（收到“授权生效”通知后）：使用新连接确认目标仍为127.0.0.1:55432/seo_workflow_test，session_user/current_user均为seo_workflow_tester；public USAGE/CREATE仍为false/false，用户对象及函数仍为空。进一步直接读pg_namespace得到 `nspacl={pg_database_owner=UC/pg_database_owner}`，尚无测试账号授权项。首次复核查询因把CREATE当未引用别名产生只读语法错误，修正别名后才取得上述结果；没有将语法错误误报为权限失败。这表示当前指定目标连接仍未观察到授权，需要环境负责人核对授权目标实例/库及事务是否提交；未断言其他数据库发生了什么，未越界尝试其他库。仍未执行DDL、迁移或启动后端，不能按口头通知跳过实际权限门禁。
