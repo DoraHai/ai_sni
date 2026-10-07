@@ -21,10 +21,11 @@ export function createSeoContentReader({transport,getContext}) {
   }
   return {
     invalidate() {verified.clear();},
-    async contents({page=1,pageSize=50}={}) {
+    async contents({page=1,pageSize=50,q='',status=''}={}) {
       if(!Number.isSafeInteger(page)||page<1||!Number.isSafeInteger(pageSize)||pageSize<1||pageSize>200)throw Error('INVALID_PAGINATION');
       const context=scope(); verified.clear();
       const query=new URLSearchParams({tenant_id:String(context.tenantId),site_id:String(context.siteId),page:String(page),page_size:String(pageSize)});
+      if(typeof q!=='string'||q.length>200||typeof status!=='string')throw Error('INVALID_FILTER');if(q.trim())query.set('q',q.trim());if(status)query.set('status',status);
       const data=await read('/api/v1/seo/content-assets?'+query,context);
       if (!data || !Array.isArray(data.items) || !Number.isSafeInteger(data.total) || data.total<0 || data.page!==page || data.page_size!==pageSize || data.items.length>pageSize || data.items.length>data.total) throw Error('CONTRACT_MISMATCH');
       for(const item of data.items) {

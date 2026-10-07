@@ -1,0 +1,15 @@
+import test from 'node:test';import assert from 'node:assert/strict';import puppeteer from 'puppeteer-core';import {startFixtureServer} from './tests/fixture-server.mjs';
+test('UI14 ordered HTML/Markdown images, failures, retry, original view, credential isolation and confirmation warning',async()=>{
+ const f=await startFixtureServer(),b=await puppeteer.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});
+ try{const p=await b.newPage();await p.evaluateOnNewDocument(()=>{const original=window.fetch;window.fetch=(url,options)=>{if(String(url)==='https://public.invalid/image.png'){window.publicImageOptions=options;return Promise.resolve(new Response(Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aJ1kAAAAASUVORK5CYII='),c=>c.charCodeAt(0)),{headers:{'Content-Type':'image/png'}}));}return original(url,options);};});
+ f.state.contents.get(1).body='<p>开头</p><figure><img src="/api/v1/seo/site/page-captures/1/image?tenant_id=1" alt="第一张"><figcaption>图注保留</figcaption></figure><p>![第二张](/api/v1/seo/site/page-captures/2/image?tenant_id=1)</p><img src="https://public.invalid/image.png" alt="公开图"><img src="/api/v1/seo/site/page-captures/3/image?tenant_id=1" alt="异站图">';
+ await p.goto(f.origin+'/fixture.html');await p.waitForSelector('.summary-grid');await p.click('[data-action="delivery"]');await p.waitForFunction(()=>document.querySelectorAll('[data-media-state=loaded]').length===2&&document.querySelectorAll('[data-media-state=failed]').length===2);
+ assert.deepEqual(await p.$$eval('.media-caption',els=>els.map(e=>e.textContent)),['图片 1 · 第一张','图片 2 · 第二张','图片 3 · 公开图','图片 4 · 异站图']);assert.match(await p.$eval('#delivery-body',e=>e.textContent),/图注保留/);
+ const options=await p.evaluate(()=>window.publicImageOptions);assert.equal(options.credentials,'omit');assert.equal(options.referrerPolicy,'no-referrer');assert.equal(options.headers,undefined);assert(!f.state.calls.some(c=>c.path.endsWith('/3/image')));
+ await p.click('[data-media-action=open]');await p.waitForSelector('dialog[open]');await p.keyboard.press('Escape');assert.equal(await p.$('dialog'),null);
+ f.state.imageRetryReady=true;await p.click('[data-media-action=retry][data-index="2"]');await p.waitForFunction(()=>document.querySelectorAll('[data-media-state=loaded]').length===3);
+ let warnings=0;p.on('dialog',d=>{warnings++;void d.dismiss();});await p.click('[data-action=confirm]');assert.equal(warnings,1);assert.equal(f.state.calls.filter(c=>c.method==='POST').length,0);
+ await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await p.click('[data-media-action=open]');assert(await p.$('dialog[open]'));await p.click('[data-media-action=close]');
+ await p.evaluate(()=>WORKBENCH_TEST_HOST.setIdentity('none'));await p.waitForFunction(()=>document.body.textContent.includes('尚未登录'));assert.equal(await p.$('img'),null);
+ }finally{await b.close();await f.close();}
+});

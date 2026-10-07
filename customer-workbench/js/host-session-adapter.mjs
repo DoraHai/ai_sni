@@ -1,10 +1,11 @@
 // UI-05 same-origin host boundary. Reuses an injected ordinary session; never reads/stores credentials.
 const positive=n=>Number.isSafeInteger(n)&&n>0;
 const routes=[
+  ['GET',/^\/api\/v1\/seo\/site\/page-captures\/[1-9]\d*(?:\/image)?$/,['tenant_id'],'site'],
   ['GET',/^\/api\/v1\/auth\/(me|modules)$/,[],'preflight'],
   ['GET',/^\/api\/v1\/auth\/tenants$/,['module'],'preflight'],
   ['GET',/^\/api\/v1\/seo\/workbench\/sites$/,['tenant_id'],'preflight'],
-  ['GET',/^\/api\/v1\/seo\/content-assets$/,['tenant_id','site_id','content_id','page','page_size'],'content'],
+  ['GET',/^\/api\/v1\/seo\/content-assets$/,['tenant_id','site_id','content_id','page','page_size','q','status'],'content'],
   ['PATCH',/^\/api\/v1\/seo\/content-assets\/[1-9]\d*$/,['tenant_id'],'content',['version_count','title','outline','draft','humanized_content']],
   ['POST',/^\/api\/v1\/seo\/content-assets\/[1-9]\d*\/submit-review$/,['tenant_id'],'content',['version_count','note']],
   ['GET',/^\/api\/v1\/seo\/content-distribution\/publications$/,['tenant_id','site_id','content_id'],'content'],
@@ -82,7 +83,7 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
     }
     const controller=new AbortController();pending.add(controller);
     try{
-      const response=await fetchImpl(url.href,{method,body:options.body,headers:{Authorization:`Bearer ${s.token}`,Accept:'application/json',...(method==='GET'?{}:{'Content-Type':'application/json'})},cache:'no-store',credentials:'omit',redirect:'error',signal:controller.signal});
+      const response=await fetchImpl(url.href,{method,body:options.body,headers:{Authorization:`Bearer ${s.token}`,Accept:'application/json',...(method==='GET'?{}:{'Content-Type':'application/json'})},cache:'no-store',credentials:'omit',redirect:'error',signal:options.signal?AbortSignal.any([controller.signal,options.signal]):controller.signal});
       assertCurrent(s,started);
       if(response.status===401){invalidate('expired');logout?.();login();throw error('AUTH_EXPIRED',401);}
       if(response.status===403){invalidate('forbidden');throw error('PERMISSION_DENIED',403);}
