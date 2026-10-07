@@ -13,6 +13,9 @@ DEFINITIONS={
  'seo.images.repair_completion_rate':('percent','重新抓取确认数量除以当前网站未被替代的已审核图片方案数量×100；无已审核方案返回 null。'),
  'seo.backlinks.verified_count':('count','当前网站处于 active 且最近一次抓取证据状态为 found 的外链记录数量，按来源页面和目标页面去重；索引候选及暂停监控记录不计入。'),
  'seo.site.healthy_page_count':('count','当前网站最近一次检查状态为 healthy 或 verified 的页面数量；仅页面重新检查后的持久化结果计数。'),
+ 'seo.site.observation_count':('count','当前网站已保存的页面抓取快照总数，含失败快照；表示检查证据产出，不表示问题已解决。'),
+ 'seo.ranking.observation_count':('count','当前网站自有域名百度桌面全国排名观测总数，未进入排名的有效观测也计数；不代表排名提升。'),
+ 'seo.reports.prepared_count':('count','当前网站周期月报任务中已实际生成并持久化带 SHA256 的 HTML 报告数量，不以任务勾选或客户签收计数。'),
 }
 
 def trend(current,previous):
@@ -39,7 +42,9 @@ async def metric_values(session,tenant_id,site_id,now=None):
         SeoBacklink.status=='active',SeoBacklink.verification['state'].astext=='found'))
     healthy=await session.scalar(select(func.count()).select_from(SeoSitePage).where(
         SeoSitePage.tenant_id==tenant_id,SeoSitePage.site_id==site_id,SeoSitePage.status.in_(['healthy','verified'])))
-    return dict(zip(DEFINITIONS,[sum(1 for rank in ranks if rank is not None and 1<=rank<=10) if ranks else None,int(count or 0),verified,len(states)-verified,round(100*verified/len(states),4) if states else None,int(links or 0),int(healthy or 0)]))
+    from app.seo_service_workflows import evidence_counts
+    evidence=await evidence_counts(session,tenant_id,site_id)
+    return {**dict(zip(DEFINITIONS,[sum(1 for rank in ranks if rank is not None and 1<=rank<=10) if ranks else None,int(count or 0),verified,len(states)-verified,round(100*verified/len(states),4) if states else None,int(links or 0),int(healthy or 0)])),**evidence}
 
 async def metric_snapshot(session,tenant_id,site_id):
     now=datetime.utcnow()

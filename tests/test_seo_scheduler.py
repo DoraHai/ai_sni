@@ -648,7 +648,7 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
             patch("app.seo_scheduler.seo_scheduler.start") as scheduler_start,
         ):
             start_seo_scheduler()
-        self.assertEqual(add_job.call_count, 12)
+        self.assertEqual(add_job.call_count, 13)
         self.assertEqual(
             {call.kwargs["id"] for call in add_job.call_args_list},
             {
@@ -664,6 +664,7 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
                 "collect_seo_cockpit_metrics",
                 "run_seo_qa_batches",
                 "run_seo_content_workflows",
+                "run_seo_service_workflows",
             },
         )
         qa_job = next(call for call in add_job.call_args_list if call.kwargs['id'] == 'verify_scheduled_seo_qa')

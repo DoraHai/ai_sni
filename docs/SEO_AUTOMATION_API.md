@@ -301,3 +301,131 @@ SEO-08 增加 `content_cycle_enabled`（默认 false）及 `content_interval_day
 完成证据引用真实 `content_id/publication_id/source_version/confirmation_id/capture_id/page_url/published_at/captured_at/sha256`，并记录 `seo.content.published_7d_count` 的 before/after/change_abs/as_of。它表示一条选定渠道的发布及页面证据交付，**不表示页面全部 SEO 检查通过、已被收录或搜索效果提升**，`seo_effect=not_evaluated`。该指标沿用站点近7天去重篇数口径：如果等待太久或旧文章移出七天窗口导致没有净增长，保留 page_evidence_ready，不捏造增长或变更指标含义。
 
 本批首条可运行链以顾问制作/渠道操作为正式人工步骤；已配 API 渠道仍由顾问调用既有分发接口。周期网站诊断、自动异常建单、周期报告和主动通知尚未由本链实现，不能据此将 A01–A07 全部标记完成。
+
+### SEO-09：网站、监测、月报周期与工作台执行进度
+
+这是 SEO-08 之后的本地增量，不代表已上线。复用原任务、页面/排名快照、月报生成器及顾问分配，无新增迁移。真实页面采集/平台发布/数据库迁移仍须按获准范围执行。本轮测试只有本地数据库和假供应商。
+
+#### 哪些自动、哪些等人工
+
+| 链 | 程序执行 | 人工阶段及边界 |
+| --- | --- | --- |
+| SEO-08 内容 | 周期建立选题稿件和任务、读取审核/准确版本确认、跟进选定发布记录、排页面证据 | 顾问制作稿件、内审、选择渠道和发布/回填；客户或顾问确认准确版本。不是全自动 AI 生成发布 |
+| 周期网站诊断 | 每轮选取最近检查最旧的最多1–10个已登记页面；每站点逐个抓取，保存既有 run + snapshot；问题生成/复用 page_remediation 子任务；真实复检后接续 | 人工实施网站修改，使用既有单页 audit 复检；失败单页需顾问显式 retry。无页面清单时需补录后取消旧链并重新触发，不自动扩大域名或发现全站 |
+| 排名异常待办 | 根据已存百度桌面全国自有域名观测生成缺报、过期或下降至少5位的具体关键词任务；新同范围观测到来后自动核对并结束 | 排名采集仍由既有定时任务/手工采集接口负责，本链不新增付费排名请求；下降需新观测恢复至异常前排名，删除/停用关键词不算解决 |
+| 月报 | 自动生成上一个已结束北京时间自然月的 HTML 报告并冻结 SHA256、数据行引用、缺数说明；周期不重复生成同月 | 顾问对准确报告哈希填写业务说明后结束，无客户签收要求。统计缺失不会补零或自动拉取；不生成/推送 PDF，不内嵌截图，不冒充单篇点击归因 |
+
+周期均默认关闭。在既有 `PUT /workbench/service-plan` 中可设置：
+
+```json
+{
+  "website_cycle_enabled":true,
+  "website_interval_days":7,
+  "website_max_pages":5,
+  "monitoring_cycle_enabled":true,
+  "monitoring_interval_days":1,
+  "report_cycle_enabled":true
+}
+```
+
+以上是新增字段片段，仍需携带 tenant_id/site_id/expected_revision/optimization_directions 等原契约字段。省略新增字段时保留旧值。网站间隔1–90天，监测1–30天，网站每轮最多10页；开启监测还需 `seo.keywords:edit`。各类型每站点最多一个未结束任务，明确触发也计入周期游标；报告按上一个已结束月去重，错过多期不批量补生成。暂停停止新动作；已开始的请求可保存事实。关闭某周期只停止新任务，不等于取消现有任务。
+
+单页诊断复用每日 crawl_urls 配额，每次只预留1个 URL，遵循原 robots/SSRF 检查并重新验证页面属于站点域名。未开始的 queued 工作可重启接续；running 超过两分钟变为待人工核对，不重复抓取。结果回写前再核对页面归属、URL 和最新检查时间，不能覆盖在此期间产生的较新人工复检。
+
+排名异常每轮最多处理200个 active 关键词；超出时明确 `monitoring_keyword_limit_200`，不把未检查部分当正常。无关键词为 `keyword_inventory_required`，仅阻塞该周期，网站和报告照常推进。无异常时记录 `status=cancelled / phase=no_actionable_issues` 的系统空操作回执，保留 UUID 幂等，不伪造指标增长或 done。
+
+#### 工作台优先使用的只读接口
+
+- `GET /api/v1/seo/workbench/executions?tenant_id=4&site_id=2&page=1&page_size=20`
+- `GET /api/v1/seo/workbench/executions/{task_id}?tenant_id=4&site_id=2`
+- `GET /api/v1/seo/workbench/executions/{task_id}/report?tenant_id=4&site_id=2`
+
+4/2 是隔离测试示例，不代表生产授权资源。必须验证登录身份、客户归属、SEO 模块启用及站点归属，至少有内容/网站双 view。排名链还需关键词 view；无权限的记录不会计入列表 total。`page_size` 1–100、page 1–10000、按 id 倒序；total 是相同权限与站点范围的全量记录数，items.length 是当前页数量。日期/主题筛选暂未提供，不应在工作台假装已经生效。
+
+```json
+{
+  "items":[{
+    "id":103,"module":"seo","action_type":"site_diagnosis","title":"网站周期诊断与整改",
+    "status":"in_progress","created_by":"cockpit","assignee_role":"seo_advisor",
+    "params":{
+      "kind":"website","phase":"awaiting_site_implementation","waiting_for":"advisor",
+      "blocker":"remediation_requires_real_recheck","plan_revision":2,"trigger":"scheduled",
+      "pages":{"10":{"state":"observed","snapshot_id":105,"run_id":104,"error":null}},
+      "child_task_ids":[106],"attention_overdue":false,"notification_sent":false
+    },
+    "completion_evidence":null,
+    "created_at":"2026-10-07T08:00:00Z","updated_at":"2026-10-07T08:01:00Z",
+    "effective_pause":false,"read_only":true,
+    "allowed_actions":{"advance":true,"cancel":true,"retry_page_ids":[],"explain_report":false},
+    "links":{
+      "detail":"/api/v1/seo/workbench/executions/103?tenant_id=4&site_id=2",
+      "advance":"/api/v1/seo/workbench/executions/103/advance",
+      "cancel":"/api/v1/seo/workbench/executions/103","report":null
+    }
+  }],
+  "total":1,"page":1,"page_size":20,"cycles":{},"read_only":true,
+  "as_of":"2026-10-07T08:02:00+00:00"
+}
+```
+
+示例省略 params 中 UUID、历史和内部派发标识。`params.phase` 是最后一次真实推进的阶段，`status` 是标准任务状态；`effective_pause` 单独反映当前计划暂停，不能用请求时间覆盖事实时间。as_of 是本次读取时间，created_at/updated_at 是任务时间；抓取/排名原始证据保留其已有时间格式；报告 month 使用北京时间自然月。
+
+`cycles` 按网站/监测/报告返回 `sequence/month/task_id/last_checked_at/next_due_at/blocker`，在没有新任务时也能解释缺关键词等阻塞。`next_due_at` 是下一次符合周期的时间，不是保证执行时间。角色不是个人负责人，assignment/trigger 身份不是客户签收。没有实际进度比例时工作台应展示阶段/页面数，不编造百分比。
+
+`allowed_actions` 由服务端当前实名身份、双 edit 权限、active 顾问分配、模块/站点状态、0105 结构、具体任务权限和终态计算；暂停时 advance/retry/explain 为 false，仍可取消未完成任务。前端只能展示能力，写接口每次独立复核。任务详情包含现有内容链，`links.advance` 为内容链返回 SEO-08 的 `/content-workflows/{id}/advance`。
+
+报告列表/详情仅返回 `params.report` 元数据（sha256、month、generated_at、publication_ids、analytics_row_ids、missing、pdf_generated=false），不会在列表塞 HTML。report GET 下载已经保存的 HTML，不重新生成；返回私有 no-store、ETag 和 sandbox CSP。顾问说明在 `params.explanation={text,actor_user_id,at}`，与冻结的原始报告分别读取。数据后来更新也不会静默改写已生成报告。
+
+GET **不会启动采集、生成报告、刷新任务、通知或发布**。401 沿用登录失败；403 为客户/权限/模块拒绝；404 为站点或执行链不属于请求范围、或报告尚未生成。空列表是成功无记录，不用零替代缺失的业务指标。
+
+#### 触发、人工接续与取消
+
+`POST /api/v1/seo/workbench/service-cycles/run`：
+
+```json
+{"tenant_id":4,"site_id":2,"kind":"website","expected_revision":2,"request_id":"d3f6a4af-57f9-4352-ab50-05d70cdce053"}
+```
+
+kind 为 website/monitoring/report；返回 `{created,task}`。UUID 在租户/站点/类型内幂等，重放返回原任务。新请求版本冲突409，已有未结束任务409 `service_workflow_already_active`，暂停409；缺关键词/超过200词409并明确原因。新功能结构不可用503。写权限沿用 SEO-08 的实名已分配顾问+内容/网站 edit；监测额外关键词 edit。
+
+`POST /api/v1/seo/workbench/executions/{id}/advance`：
+
+```json
+{"tenant_id":4,"site_id":2,"retry_page_id":10}
+```
+
+retry_page_id 仅用于网站链中实际 failed 的单页，否则409 `page_retry_not_available`。省略可请求按事实推进。报告顾问说明使用：
+
+```json
+{"tenant_id":4,"site_id":2,"explanation":"本月统计尚未接入，不能判断流量变化；发布记录另见报告。","report_sha256":"从已读取报告元数据取得的64位哈希"}
+```
+
+报告缺失或哈希不匹配409 `report_version_conflict`，空白说明422；示例哈希占位符须替换，不能直接作为可发送请求。无需客户再审批说明。`DELETE /workbench/executions/{id}?tenant_id=&site_id=` 取消未完成执行链；已 done 返回409，保留任务、报告、快照和外部发布事实。
+
+#### 完成证据与新增指标
+
+共享 `{metric_key,value,unit,as_of,trend_7d}` 格式不变，trend_7d 仍按已确认对象格式/历史不足null。新增计数在 `/metrics/definitions` 有口径，接口 `/metrics/snapshot` 可读取：
+
+| metric_key | 口径及用途 |
+| --- | --- |
+| seo.site.observation_count | 站点已保存页面快照数，含失败；诊断任务还独立要求选定页面都成功观测且整改子任务有真实复检证据，不能只靠计数完成 |
+| seo.ranking.observation_count | 站点自有域名百度桌面全国观测总数，含有效的未入榜观测；待办还要求每个问题有创建后新鲜观测，下降须恢复 |
+| seo.reports.prepared_count | 实际生成并持久化带SHA256的HTML报告数，不按人工勾选、客户签收或任务done计数 |
+
+报告超过200条当月发布记录时停在 `report_publication_limit_200`，不截断后冒充完整月报。完成统一保留真实 source 引用、before/after/change_abs/as_of；统计缺失、截图未内嵌、单篇点击不可归因仍在报告中明确。完成服务动作不等于 SEO 效果增长。
+
+#### 当前准确源码定位（SEO-09）
+
+| 工作台所需能力 | 源码 |
+| --- | --- |
+| 列表与分页、权限范围 | `app/api/seo_service_workflows.py:list_executions`（93行） |
+| 详情、允许动作、链接、报告HTML排除 | 同文件 `projection`（67行）、`get_execution`（111行） |
+| 冻结报告只读下载 | 同文件 `read_report`（119行） |
+| 触发/推进/取消 | 同文件 `trigger_service_cycle`、`advance_execution`、`cancel_execution` |
+| SEO-08 自动/人工边界 | `app/seo_content_workflow.py:reserve_content_workflow`（69行）、`advance_content_workflow`（120行） |
+| 网站实际派发与快照/整改建单 | `app/seo_service_workflows.py:execute_diagnosis_page` |
+| 排名异常条件与任务接续 | 同文件 `ranking_issues`、`advance_service_workflow` |
+| 月报冻结/缺数说明 | 同文件 `prepare_report`，复用 `app/seo_monthly_report.py:build_report_context/render_report_html` |
+| 周期配置及能力注册 | `app/api/seo.py:SeoServicePlanUpdate/_service_plan_payload/update_seo_service_plan`；`app/seo_scheduler.py` |
+
+函数名为稳定定位依据，后续编辑可能移动行号。工作台应对照本地提交实现，不把未部署接口称为生产可用。

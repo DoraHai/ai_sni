@@ -368,6 +368,8 @@ from app.api.seo_site_analytics import router as site_analytics_router
 router.include_router(site_analytics_router)
 from app.api.seo_monthly_report import router as monthly_report_router
 router.include_router(monthly_report_router)
+from app.api.seo_service_workflows import router as service_workflows_router
+router.include_router(service_workflows_router)
 from app.api.seo_tdk_review import router as tdk_review_router
 router.include_router(tdk_review_router)
 from app.api.seo_ai_tdk import router as ai_tdk_router
@@ -5482,6 +5484,12 @@ class SeoServicePlanUpdate(BaseModel):
     status: Literal["active", "paused"] = "active"
     content_cycle_enabled: bool | None = None
     content_interval_days: int | None = Field(None, ge=1, le=90)
+    website_cycle_enabled: bool | None = None
+    website_interval_days: int | None = Field(None, ge=1, le=90)
+    website_max_pages: int | None = Field(None, ge=1, le=10)
+    monitoring_cycle_enabled: bool | None = None
+    monitoring_interval_days: int | None = Field(None, ge=1, le=30)
+    report_cycle_enabled: bool | None = None
 
     @field_validator("optimization_directions", "content_topics")
     @classmethod
@@ -5719,6 +5727,9 @@ WORKBENCH_PAGE_INVENTORY_SCAN_LIMIT = 5000
 WORKBENCH_ASSOCIATION_CANDIDATE_LIMIT = 5
 _INVALID_URL_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 WORKBENCH_TASK_PERMISSIONS = {
+    "site_diagnosis": "seo.site",
+    "ranking_followup": "seo.keywords",
+    "monthly_report": "seo.site",
     "content_delivery": "seo.content",
     "content_review": "seo.content",
     "image_repair": "seo.site",
@@ -7062,6 +7073,12 @@ def _service_plan_payload(site: SeoSite) -> dict[str, Any]:
         "revision": int(plan.get("revision") or 0),
         "content_cycle_enabled": plan.get("content_cycle_enabled") is True,
         "content_interval_days": int(plan.get("content_interval_days") or 7),
+        "website_cycle_enabled": plan.get("website_cycle_enabled") is True,
+        "website_interval_days": int(plan.get("website_interval_days") or 7),
+        "website_max_pages": int(plan.get("website_max_pages") or 5),
+        "monitoring_cycle_enabled": plan.get("monitoring_cycle_enabled") is True,
+        "monitoring_interval_days": int(plan.get("monitoring_interval_days") or 1),
+        "report_cycle_enabled": plan.get("report_cycle_enabled") is True,
         "status": plan.get("status") if plan.get("status") in {"active", "paused"} else "active",
         "optimization_directions": [str(item) for item in plan.get("optimization_directions", []) if str(item).strip()],
         "content_topics": [str(item) for item in plan.get("content_topics", []) if str(item).strip()],
@@ -7136,6 +7153,8 @@ async def update_seo_service_plan(
     )
     if assignment is None:
         raise HTTPException(403, "只有当前站点已分配的顾问可以维护服务计划")
+    if req.monitoring_cycle_enabled is True and not ctx.can_edit("seo.keywords"):
+        raise HTTPException(403, "启用排名异常周期还需要关键词编辑权限")
     site = await _seo_site_for_update(session, req.tenant_id, req.site_id)
     current = _service_plan_payload(site)
     if req.expected_revision != current["revision"]:
@@ -7156,6 +7175,10 @@ async def update_seo_service_plan(
         "updated_by": ctx.user_id,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    for key in ("website_cycle_enabled", "website_interval_days", "website_max_pages",
+                "monitoring_cycle_enabled", "monitoring_interval_days", "report_cycle_enabled"):
+        value = getattr(req, key)
+        settings["seo_service_plan"][key] = current[key] if value is None else value
     site.site_settings = settings
     await session.commit()
     await session.refresh(site)

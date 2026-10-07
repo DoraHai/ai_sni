@@ -21,6 +21,7 @@ from app.seo_image_verification import prepare_image_verification_retry
 router=APIRouter()
 TASK_PERMS={'content_review':'seo.content','image_repair':'seo.site','page_remediation':'seo.site','ranking_improvement':'seo.keywords','backlink_outreach':'seo.links'}
 TASK_PERMS['content_delivery']='seo.content'
+TASK_PERMS.update(site_diagnosis='seo.site',ranking_followup='seo.keywords',monthly_report='seo.site')
 TASK_METRICS={'content_review':'seo.content.published_7d_count','image_repair':'seo.images.verified_repair_count','page_remediation':'seo.site.healthy_page_count','ranking_improvement':'seo.ranking.top10_keyword_count','backlink_outreach':'seo.backlinks.verified_count'}
 
 QUEUE_STATES=('pending_customer_action','pending_system_check','verified','failed_retry')
@@ -480,8 +481,8 @@ async def completion(session,row):
 @router.patch('/tasks/{task_id}',response_model=TaskContract)
 async def update_task(task_id:int,req:TaskUpdate,ctx=Depends(require_scoped_auth),session=Depends(get_session)):
     row=await task_record(session,ctx,task_id,req.tenant_id,req.site_id,True)
-    if row.action_type=='content_delivery' and (req.status is not None or req.assignee_role is not None):
-        raise HTTPException(409,'内容执行链由系统读取真实证据推进；取消使用 DELETE，不能手工改阶段或负责人')
+    if row.action_type in {'content_delivery','site_diagnosis','ranking_followup','monthly_report'} and (req.status is not None or req.assignee_role is not None):
+        raise HTTPException(409,'服务执行链由系统读取真实证据推进；取消使用 DELETE，不能手工改阶段或负责人')
     if row.status in ('done','cancelled'):raise HTTPException(409,'已结束任务不可修改')
     if req.status=='done':row.completion_evidence=await completion(session,row)
     if req.status:row.status=req.status
