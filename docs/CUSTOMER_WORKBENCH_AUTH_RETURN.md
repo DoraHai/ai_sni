@@ -9,3 +9,5 @@
 验证：10项重定向测试通过，覆盖既有落点、安全地址、有效新范围、模块不可用、重复/缺失/非法ID、外域和额外参数；build:auth和verify:auth-build通过。生产原登录与验证码需在正式上线窗口按最小验收清单执行，当前未部署。
 
 发布使用既有Production Auth deployment和platform-deploy auth，仅合入codex/production-auth后才按现有流程部署。不与工作台静态包混装，不改线上编译文件。上线安排应包含本Auth修复、SEO代码及0105/0106迁移、工作台静态文件和路由。Auth回退到63c67f37会恢复旧cockpit落点，需要在记录中说明这一行为。
+
+CI增量修复：原Auth基线锁文件命中OSV依赖告警，按现有版本范围更新Vue/renderer至3.5.43、source-map-js至1.2.2、brace-expansion至2.1.7、undici至8.11.2（package.json不变）。复用工作台已通过的SFC测试依赖注入方式修复旧test-workbench-evidence-card.cjs加载错误并保留/增加断言，不改SEM业务代码或关闭门禁。更新后10项Auth测试、证据卡挂载测试及Auth构建/契约通过。最终CI结果另行记录。
