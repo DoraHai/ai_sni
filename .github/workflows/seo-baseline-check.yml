@@ -102,6 +102,7 @@ jobs:
           tests/test_seo_content_confirmations.py
           tests/test_seo_local_acceptance.py
           tests/test_seo_messages_postgres.py
+          tests/test_seo_migration_readiness.py
           tests/test_geo_ticket_adoption_migration.py
           tests/test_sem_task_migration.py
           tests/test_demo_tenant_binding_migration.py

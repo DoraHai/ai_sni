@@ -11,6 +11,9 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "docs/SEO_0104_0106_DATABASE_HANDOFF.md",
+    "scripts/seo_confirmation_message_readiness.py",
+    "tests/test_seo_migration_readiness.py",
     "app/api/seo_messages.py",
     "app/models/seo_messages.py",
     "migrations/versions/20261008_0106_seo_content_messages.py",
