@@ -710,7 +710,7 @@ UI13后续维护定向验证：本机runner放行后，37项离线防护测试�
 
 暂不注册或执行生产migration，不沿用别模块候选revision。批准后先本地迁移/租户隔离/撤权/并发重发与分页测试，再接UI；本批只交此方案，不新增通信架构或微信短信能力。
 
-## UI15 人工文本会话契约（本机迁移与后端测试通过，浏览器联调待验收）
+## UI15 人工文本会话契约（本机后端与浏览器分阶段验收完成）
 
 前缀 `P=/api/v1/seo/workbench/content-assets/{content_id}/conversation`。tenant_id/site_id/content_id三者严格定位稿件；使用现有JWT，无AI、外部通知、HTML执行或附件。内部审核、客户确认和发布接口独立不变。
 

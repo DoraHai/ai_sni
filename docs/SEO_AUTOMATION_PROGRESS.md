@@ -442,3 +442,6 @@
 前端原始真实写测试报告 `C:/Users/ADMINI~1/AppData/Local/Temp/workbench-ui15-real-TWZN7H/report.json` 绑定frontend9971b3e60383a87118bd10d02bce67a7cb132d3f/backend9f303781：互发、持久化、同键恢复、显式已读、分页、390布局、跨范围和撤权恢复业务断言完成，但总结果failed，因为脚本把浏览器内置data图片误判成外部请求。保留该原报告，不能改写为pass。前端正在窄修正判定及刷新后滚动位置，并使用已有消息只读复核；没有重放发送或撤权。
 
 本轮仅本地提交与本机测试，未推送、合并、部署或生产迁移；8031隔离后端继续运行9f303781，消息、旧UI12/14数据和凭据留在既有受限目录，尚未清理。首次真实平台发布、生产共享登录、SEM/GEO部署版本对账仍不在本次验收范围。
+
+
+UI15后续收尾：前端完成滚动及请求分类窄修复，最终产品SHA `934a9263af611c86e326083f81d96f694bae7dc8`。只读复核报告 `C:/Users/ADMINI~1/AppData/Local/Temp/workbench-ui15-real-JM4q6e/report.json` 已实际读取核对：result=passed、sourceTreeClean=true、backendCommit=9f303781、contentId64、messageWrites=[]；复核历史分页、原消息刷新持久化、390布局和异站范围清理。除两次登录其余GET，未重发消息或重复撤权。写入业务证据仍引用原TWZN7H的7个已完成case和数据库对账，不把该原始failed总结果改成pass；这是分阶段验收，不声称最终前端SHA又重跑了写业务。9f303781之后的本窗口提交仅测试门禁、操作脚本错误脱敏和文档，app/迁移源码无变化，运行后端保持原验收版本。
