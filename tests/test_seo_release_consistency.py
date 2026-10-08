@@ -186,6 +186,9 @@ def test_seo_workflows_gate_the_sem_task_migration_contract() -> None:
         assert "tests/test_demo_binding_no_truncate_migration.py" in workflow
         assert "tests/test_geo_review_audit_migration.py" in workflow
         assert "0106_seo_content_messages (head)" in workflow
+        assert "tests/test_seo_messages_postgres.py" in workflow
+        assert "tests/test_seo_local_acceptance.py" in workflow
+        assert "tests/test_seo_content_confirmations.py" in workflow
 
 
 def test_seo_frontend_workflows_gate_shared_session_regressions() -> None:

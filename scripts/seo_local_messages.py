@@ -165,4 +165,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["upgrade", "seed"])
     args = parser.parse_args()
-    {"upgrade":upgrade,"seed":seed}[args.command]()
+    try:
+        {"upgrade":upgrade,"seed":seed}[args.command]()
+    except Exception as exc:
+        # Do not expose raw connection/SQL exceptions or secrets in operator logs.
+        print(json.dumps({"status":"stopped", "error_type":type(exc).__name__,
+                          "message":str(exc) if type(exc) in (ValueError, PermissionError)
+                          else "Inspect the local lifecycle receipt; raw database error withheld"}))
+        raise SystemExit(1)
