@@ -31,6 +31,7 @@ const requiredMarkers = [
   '图形验证码',
   'G-Snipers',
   '/workspace/cockpit',
+  '/customer-workbench/',
   '/workspace',
 ]
 

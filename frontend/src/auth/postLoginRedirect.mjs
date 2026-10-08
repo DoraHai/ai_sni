@@ -41,7 +41,25 @@ export function hasAvailableAcquisitionModule(modules) {
 }
 
 export function resolvePostLoginPath({ redirect, currentOrigin, modules }) {
-  // Every login entry point has the same stable landing page. The workspace
-  // shell can still explain missing module access after the cockpit loads.
+  // Only the independent SEO workbench may return to a scoped deep link.
+  // This selects navigation, not access: the destination rechecks user/site scope.
+  const safePath = parseSameOriginRedirect(redirect, currentOrigin)
+  if (safePath && Array.isArray(modules)
+      && modules.some(module => module?.module_code === 'seo' && module?.available === true)) {
+    const target = new URL(safePath, currentOrigin)
+    const keys = [...target.searchParams.keys()]
+    const validId = key => {
+      const value = target.searchParams.get(key) || ''
+      return /^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value))
+    }
+    if (['/customer-workbench', '/customer-workbench/'].includes(target.pathname)
+        && !target.hash && keys.length === 2
+        && target.searchParams.getAll('tenant_id').length === 1
+        && target.searchParams.getAll('site_id').length === 1
+        && validId('tenant_id') && validId('site_id')) {
+      return `/customer-workbench/?${target.searchParams.toString()}`
+    }
+  }
+  // All other entry points keep the established cockpit landing behavior.
   return '/workspace/cockpit'
 }
