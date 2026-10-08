@@ -50,7 +50,7 @@ class _HealthConnection:
                 ("demo_tenant_binding_history", "trg_demo_tenant_binding_history_no_truncate", "before truncate for each statement reject_demo_tenant_binding_history_mutation"),
                 ("demo_tenant_bindings", "trg_demo_tenant_bindings_no_delete", "before delete for each row reject_demo_tenant_binding_delete"),
             ]
-            if self.revisions in (["0098_demo_binding_no_truncate"], ["0099_geo_review_audit"], ["0100_seo_page_captures"], ["0101_seo_site_analytics"], ["0102_seo_monthly_report_template"], ["0103_seo_tdk_review"], ["0104_seo_page_ai_tdk"], ["0105_seo_content_confirmations"]):
+            if self.revisions in (["0098_demo_binding_no_truncate"], ["0099_geo_review_audit"], ["0100_seo_page_captures"], ["0101_seo_site_analytics"], ["0102_seo_monthly_report_template"], ["0103_seo_tdk_review"], ["0104_seo_page_ai_tdk"], ["0105_seo_content_confirmations"], ["0106_seo_content_messages"]):
                 rows.append(("demo_tenant_bindings", "trg_demo_tenant_bindings_no_truncate", "before truncate for each statement reject_demo_tenant_binding_delete"))
             return rows
         if "pg_get_serial_sequence" in sql:
@@ -306,7 +306,7 @@ def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
     assert result['db'] == 'ok' and result['db_error'] is None
     assert result['schema_revision'] == revision
     assert result['required_schema_revision'] == '0099_geo_review_audit'
-    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations']
+    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations', '0106_seo_content_messages']
 
 
 def test_0105_health_rejects_missing_content_confirmation_structure() -> None:
@@ -490,8 +490,8 @@ def test_structure_contract_preserves_smallint_fields():
 
 
 def test_runtime_allowlist_contains_only_exact_reviewed_versions():
-    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations'})
-    assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations'})
+    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations', '0106_seo_content_messages'})
+    assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations', '0106_seo_content_messages'})
     assert (
         seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS - {'0094_seo_qa_batches'}
     ) <= seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS
@@ -594,3 +594,20 @@ def test_0097_health_rejects_control_plane_definition_drift(failure) -> None:
     assert response.status_code == 503
     assert result["schema"] == "error"
     assert "control-plane objects" in result["db_error"]
+
+
+@pytest.mark.parametrize("revision", ["0105_seo_content_confirmations", "0106_seo_content_messages"])
+@pytest.mark.parametrize("structure_ok", [True, False])
+def test_message_health_gate_preserves_0105_and_requires_0106_structure(revision, structure_ok):
+    from unittest.mock import AsyncMock
+    checker = AsyncMock(side_effect=None if structure_ok else RuntimeError("SEO message columns mismatch"))
+    response = Response()
+    with patch.object(seo_main, "engine", _HealthEngine([revision])), patch.object(seo_main, "_check_content_message_structure", checker):
+        result = asyncio.run(seo_main.seo_health(response))
+    if revision == "0105_seo_content_confirmations":
+        checker.assert_not_awaited()
+        assert response.status_code == 200
+    else:
+        checker.assert_awaited_once()
+        assert response.status_code == (200 if structure_ok else 503)
+    assert result["schema"] == ("error" if revision.startswith("0106") and not structure_ok else "ok")

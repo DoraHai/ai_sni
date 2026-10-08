@@ -35,7 +35,8 @@ def plan_for(site):
 
 
 async def schema_ready(session):
-    return list((await session.execute(text("SELECT version_num FROM alembic_version"))).scalars()) == [SCHEMA]
+    revisions = list((await session.execute(text("SELECT version_num FROM alembic_version"))).scalars())
+    return len(revisions) == 1 and revisions[0] in {SCHEMA, "0106_seo_content_messages"}
 
 
 async def published_count(session, site, now):

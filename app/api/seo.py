@@ -118,6 +118,7 @@ from app.seo_crawler import crawl_site, is_html_page_url
 from app.seo_site_diagnostics import assessed_condition, assessment_state, diagnostic_payload
 from app.api.seo_site_diagnostics import router as site_diagnostics_router
 from app.api.seo_remediation import router as remediation_router
+from app.api.seo_messages import router as messages_router
 from app.seo_competitor import (
     COMPETITOR_MANUAL_COOLDOWN_SECONDS,
     COMPETITOR_MAX_PAGES_PER_RUN,
@@ -355,6 +356,7 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 router.include_router(site_diagnostics_router)
 router.include_router(remediation_router)
+router.include_router(messages_router)
 from app.api.seo_cockpit import router as cockpit_router
 router.include_router(cockpit_router)
 from app.api.seo_backlink_workflow import router as backlink_workflow_router
@@ -6649,7 +6651,7 @@ async def _content_confirmation_schema_ready(session: AsyncSession) -> bool:
         # AsyncMock-based isolated unit tests do not model the Alembic table;
         # treating it as pre-0105 preserves the real code-first rollout path.
         revision = await revision
-    return revision == "0105_seo_content_confirmations"
+    return revision in {"0105_seo_content_confirmations", "0106_seo_content_messages"}
 
 
 async def _advisor_assignment(

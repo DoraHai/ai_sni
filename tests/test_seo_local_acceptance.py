@@ -109,7 +109,16 @@ def test_cleanup_plan_does_not_drop_database_schema_extensions_or_cascade():
 
 
 def test_real_alembic_graph_has_expected_head_without_running_env():
-    assert runner.graph() == {"head": runner.HEAD, "parent": runner.BASE, "revisions": 122}
+    assert runner.graph() == {"head": runner.MESSAGE_HEAD, "parent": runner.HEAD, "revisions": 123}
+
+
+@pytest.mark.parametrize("method,suffix,allowed", [
+    ("POST", "messages", True), ("POST", "read", True),
+    ("DELETE", "messages", False), ("PATCH", "messages/1", False),
+    ("POST", "messages/1", False), ("POST", "publish", False),
+])
+def test_ui15_write_allowlist_is_narrow(method, suffix, allowed):
+    assert runner.allowed_request(method, "/api/v1/seo/workbench/content-assets/64/conversation/" + suffix) is allowed
 
 
 def test_ui14_fixture_plan_is_bounded_and_has_confirmation_cases_on_every_page(monkeypatch):

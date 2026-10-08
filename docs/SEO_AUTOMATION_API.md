@@ -709,3 +709,22 @@ UI13后续维护定向验证：本机runner放行后，37项离线防护测试�
 拟议接口（尚不存在）：列当前稿件会话/游标分页消息、追加文本消息、标记本人已读。每次读/写均核对SEO模块、tenant/site/content归属和参与人；客户必须绑定当前租户且在参与列表，顾问必须仍有该站点active assignment及内容权限；撤权后即时拒绝读写，历史消息保留供仍获授权的参与人审计，换顾问需显式加入参与人。服务端生成sender/time，限制长度、纯文本渲染、UUID幂等，不支持HTML/附件/外部通知。
 
 暂不注册或执行生产migration，不沿用别模块候选revision。批准后先本地迁移/租户隔离/撤权/并发重发与分页测试，再接UI；本批只交此方案，不新增通信架构或微信短信能力。
+
+## UI15 人工文本会话契约（本机迁移与后端测试通过，浏览器联调待验收）
+
+前缀 `P=/api/v1/seo/workbench/content-assets/{content_id}/conversation`。tenant_id/site_id/content_id三者严格定位稿件；使用现有JWT，无AI、外部通知、HTML执行或附件。内部审核、客户确认和发布接口独立不变。
+
+| 请求 | 参数/体 | 返回 |
+| --- | --- | --- |
+| GET P | query tenant_id、site_id | `{scope:{tenant_id,site_id,content_id},conversation_id:null或整数,actor:{id,name,kind},allowed_actions:{read:true,send:true,mark_read:true},read_state:{last_read_message_id:0或整数,latest_message_id:null或整数,unread_count:整数},semantics:"human_messages_only"}`；无会话也200，不创建任何行 |
+| GET P/messages | query tenant_id、site_id、limit=20(1–100)、before_id可选正整数 | `{conversation_id,items:[message],has_more,next_before_id:null或最小返回id,read_state}`；初始取最新limit条，当前页按id升序显示；before_id向旧历史翻页，严格id<before_id。GET不标已读 |
+| POST P/messages | JSON `{tenant_id,site_id,request_id:UUID,body:1–4000字符非空文本}` | HTTP200 `{message,replayed:false或true}`；同会话同sender同request_id同文本返回原消息；换文本复用键409/message_request_conflict。不接受客户端sender/time |
+| POST P/read | JSON `{tenant_id,site_id,last_read_message_id:正整数}` | `{conversation_id,read_state}`；只能推进本人游标到当前会话已有消息，单调不回退，不能使用其他会话/未来ID。发送不自动标已读 |
+
+message固定字段：`{id,conversation_id,body,sender:{id,name,kind:"customer"或"advisor"},created_at:"UTC ISO Z"}`。sender姓名来自服务端当前真实用户显示名/用户名快照。unread_count只计本人游标之后的他人消息，消息ID全局单调但可有空隙；所有时间由服务端生成。面板展开实际呈现后，用户显式标记已读才调用read；失败保留同request_id和输入，修改文本应生成新UUID；切租户/站点/稿件、登出或403清理敏感内容。
+
+首期参与资格：实名账号有seo.content查看权限；具有`seo.content:edit`或任何历史顾问分配记录的身份一律进入顾问门禁，必须同时有content edit及该站点active advisor assignment，作为advisor；其余账号必须绑定当前tenant，作为customer。顾问降级为view仍拒绝，不能退化成customer。这使测试customer(user1)可回复、advisor(user2)撤权后不可退化成customer绕过拒绝；未分配编辑身份、API Key、跨客户、停用用户均拒绝。角色名称不作为授权依据。participant表仅记录发送身份参与及个人已读游标，不是静态ACL；具备动态资格的新成员可读会话，但GET不创建参与记录。已有参与记录不会绕过实时权限复核。站点停用/模块不可用时沿现有门禁拒绝写入。
+
+错误为HTTPException detail对象：`{code,message}`（外围既有鉴权可能仍返回字符串detail）。401未登录；403 conversation_forbidden或既有权限拒绝；404 conversation_content_not_found / conversation_cursor_not_found；409 message_request_conflict；422字段/长度/UUID；503 conversation_schema_unavailable（尚未0106）。403时不渲染旧消息，不把失败空列表显示为会话正常。无会话时latest_message_id=null、last_read_message_id=0、unread_count=0。
+
+拟定唯一迁移 `0106_seo_content_messages`，down_revision=`0105_seo_content_confirmations`。已检查本机迁移目录、全部本地Git引用历史和相邻worktrees未发现0106；不代表生产已批准。只在固定本机seo_workflow_test执行，保留旧数据；新会话、参与游标和消息三表，消息只追加，按会话串行分配/提交避免分页遗漏，幂等唯一键兜底。生产迁移/部署仍须单独安排。

@@ -11,6 +11,11 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "app/api/seo_messages.py",
+    "app/models/seo_messages.py",
+    "migrations/versions/20261008_0106_seo_content_messages.py",
+    "scripts/seo_local_messages.py",
+    "tests/test_seo_messages_postgres.py",
     "app/seo_qa_batches.py",
     "migrations/versions/20260906_0094_seo_qa_batches.py",
     "migrations/versions/20260909_0095_adopt_geo_ticket.py",

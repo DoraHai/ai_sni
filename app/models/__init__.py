@@ -107,6 +107,8 @@ from app.models.seo_site_analytics import SeoSiteAnalyticsSource, SeoSiteAnalyti
 from app.models.seo_monthly_report import SeoSiteReportTemplate
 from app.models.seo_tdk_review import SeoTdkReviewBatch, SeoSiteTdkReviewTemplate
 
+from .seo_messages import SeoContentConversation, SeoConversationParticipant, SeoContentMessage
+
 __all__ = [
     "Suggestion",
     "SUGGESTION_TYPE_LABELS",

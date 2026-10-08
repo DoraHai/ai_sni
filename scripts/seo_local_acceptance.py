@@ -29,6 +29,7 @@ CREDENTIAL_FILE = Path.home() / ".secrets" / "seo_workflow_test.env"
 IDENTITY = ("127.0.0.1", 55432, "seo_workflow_test", "seo_workflow_tester")
 BASE = "0104_seo_page_ai_tdk"
 HEAD = "0105_seo_content_confirmations"
+MESSAGE_HEAD = "0106_seo_content_messages"
 PORT = 8031
 
 
@@ -175,9 +176,10 @@ def graph():
     cfg = Config(str(ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(ROOT / "migrations"))
     scripts = ScriptDirectory.from_config(cfg)
-    if scripts.get_heads() != [HEAD] or scripts.get_revision(HEAD).down_revision != BASE:
+    if (scripts.get_heads() != [MESSAGE_HEAD] or scripts.get_revision(HEAD).down_revision != BASE
+            or scripts.get_revision(MESSAGE_HEAD).down_revision != HEAD):
         raise ValueError("Unexpected migration graph")
-    return {"head": HEAD, "parent": BASE, "revisions": len(list(scripts.walk_revisions(base="base", head=HEAD)))}
+    return {"head": MESSAGE_HEAD, "parent": HEAD, "revisions": len(list(scripts.walk_revisions(base="base", head=MESSAGE_HEAD)))}
 
 
 def upgrade(target):
@@ -426,7 +428,8 @@ def allowed_request(method, path):
                  r"/api/v1/seo/workbench/content-workflows/\d+/advance",
                  r"/api/v1/seo/workbench/service-cycles/run", r"/api/v1/seo/content-distribution/publications/manual",
                  r"/api/v1/seo/content-distribution/publications/\d+/complete",
-                 r"/api/v1/seo/qa/facts", r"/api/v1/seo/keywords"),
+                 r"/api/v1/seo/qa/facts", r"/api/v1/seo/keywords",
+                 r"/api/v1/seo/workbench/content-assets/[1-9][0-9]*/conversation/(messages|read)"),
         "PATCH": (r"/api/v1/seo/content-assets/\d+", r"/api/v1/seo/tasks/\d+",
                   r"/api/v1/seo/qa/facts/[1-9][0-9]*", r"/api/v1/seo/keywords/[1-9][0-9]*"),
         "PUT": (r"/api/v1/seo/workbench/service-plan",),
@@ -486,7 +489,7 @@ def serve():
         from app.seo_main import seo_health
         from fastapi import Response
         health = await seo_health(Response())
-        if health["schema"] != "ok" or health["schema_revision"] != HEAD:
+        if health["schema"] != "ok" or health["schema_revision"] != state.get("runtime_revision", HEAD):
             raise ValueError("Actual SEO health check failed; backend not started")
         print(json.dumps({"starting_on": f"http://127.0.0.1:{PORT}", "schema": "public", "seed": state["seed"],
                           "identities_file": str(STATE_DIR / "identities.json"), "stop": "Ctrl+C"}, ensure_ascii=False))

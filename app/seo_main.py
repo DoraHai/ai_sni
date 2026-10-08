@@ -35,10 +35,10 @@ SEO_REQUIRED_SCHEMA_REVISION = "0099_geo_review_audit"
 # Runtime compatibility supports code-first rollout; it never authorizes the
 # separately reviewed migration operation.
 SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset(
-    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION, "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations"}
+    {"0094_seo_qa_batches", "0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION, "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations", "0106_seo_content_messages"}
 )
 SEO_GEO_TICKET_REQUIRED_REVISIONS = frozenset(
-    {"0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION, "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations"}
+    {"0095_adopt_geo_ticket", "0096_sem_tasks", "0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", SEO_REQUIRED_SCHEMA_REVISION, "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations", "0106_seo_content_messages"}
 )
 SEO_GEO_TICKET_SHAPE = {
     "owner_name": ("character varying(100)", False, None, "", "", "b", None, True),
@@ -149,6 +149,46 @@ async def _check_content_confirmation_structure(conn) -> None:
     }
     if not required.issubset(constraints):
         raise RuntimeError("SEO content confirmation constraints mismatch")
+async def _check_content_message_structure(conn, schema="public") -> None:
+    from app.models.seo_messages import SeoContentConversation, SeoConversationParticipant, SeoContentMessage
+    from sqlalchemy import inspect as sa_inspect
+
+    def inspect_structure(sync_conn):
+        inspector = sa_inspect(sync_conn)
+        for model in (SeoContentConversation, SeoConversationParticipant, SeoContentMessage):
+            table = model.__table__
+            columns = {item["name"]: item for item in inspector.get_columns(table.name, schema=schema)}
+            if set(columns) != set(table.columns.keys()):
+                raise RuntimeError("SEO message columns mismatch: " + table.name)
+            for column in table.columns:
+                found = columns[column.name]
+                if (found["nullable"] != column.nullable
+                        or found["type"].compile(dialect=sync_conn.dialect) != column.type.compile(dialect=sync_conn.dialect)):
+                    raise RuntimeError("SEO message column shape mismatch: " + table.name + "." + column.name)
+            uniques = {tuple(item["column_names"]) for item in inspector.get_unique_constraints(table.name, schema=schema)}
+            expected_uniques = {tuple(c.name for c in item.columns) for item in table.constraints if item.__class__.__name__ == "UniqueConstraint"}
+            if not expected_uniques.issubset(uniques):
+                raise RuntimeError("SEO message uniqueness mismatch: " + table.name)
+            if inspector.get_pk_constraint(table.name, schema=schema)["constrained_columns"] != [c.name for c in table.primary_key]:
+                raise RuntimeError("SEO message primary key mismatch: " + table.name)
+            check_names = {item["name"] for item in inspector.get_check_constraints(table.name, schema=schema)}
+            if not {item.name for item in table.constraints if item.__class__.__name__ == "CheckConstraint"}.issubset(check_names):
+                raise RuntimeError("SEO message check constraints mismatch: " + table.name)
+            fks = inspector.get_foreign_keys(table.name, schema=schema)
+            expected_fks = {(tuple(c.parent.name for c in item.elements), tuple(c.column.name for c in item.elements),
+                             next(iter(item.elements)).column.table.name) for item in table.foreign_key_constraints}
+            actual_fks = {(tuple(item["constrained_columns"]), tuple(item["referred_columns"]), item["referred_table"])
+                          for item in fks if item.get("options", {}).get("ondelete") == "RESTRICT"}
+            if actual_fks != expected_fks:
+                raise RuntimeError("SEO message foreign key mismatch: " + table.name)
+    await conn.run_sync(inspect_structure)
+    triggers = list((await conn.execute(text("""SELECT tgname FROM pg_trigger
+        WHERE tgrelid=to_regclass(:table_name) AND NOT tgisinternal AND tgenabled='O'"""),
+        {"table_name": '"' + schema.replace('"', '""') + '".seo_content_messages'})).scalars())
+    if set(triggers) != {"trg_seo_messages_append_only", "trg_seo_messages_no_truncate"}:
+        raise RuntimeError("SEO message append-only triggers mismatch")
+
+
 SEO_DEMO_BINDING_COLUMNS = {
     "demo_tenant_bindings": {
         "tenant_id": ("bigint", True), "demo_tenant_id": ("bigint", True),
@@ -541,16 +581,18 @@ async def seo_health(response: Response) -> dict:
             await _check_seo_structure(conn)
             if revisions[0] in SEO_GEO_TICKET_REQUIRED_REVISIONS:
                 await _check_geo_ticket_adoption(conn)
-            if revisions[0] in {"0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", "0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations"}:
+            if revisions[0] in {"0097_demo_tenant_bindings", "0098_demo_binding_no_truncate", "0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations", "0106_seo_content_messages"}:
                 await _check_demo_binding_structure(
-                    conn, require_current_truncate=revisions[0] in {"0098_demo_binding_no_truncate", "0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations"}
+                    conn, require_current_truncate=revisions[0] in {"0098_demo_binding_no_truncate", "0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations", "0106_seo_content_messages"}
                 )
-            if revisions[0] in {"0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations"}:
+            if revisions[0] in {"0099_geo_review_audit", "0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations", "0106_seo_content_messages"}:
                 await _check_geo_review_audit(conn)
-            if revisions[0] in {"0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations"}:
+            if revisions[0] in {"0100_seo_page_captures", "0101_seo_site_analytics", "0102_seo_monthly_report_template", "0103_seo_tdk_review", "0104_seo_page_ai_tdk", "0105_seo_content_confirmations", "0106_seo_content_messages"}:
                 await _check_capture_structure(conn)
-            if revisions[0] == "0105_seo_content_confirmations":
+            if revisions[0] in {"0105_seo_content_confirmations", "0106_seo_content_messages"}:
                 await _check_content_confirmation_structure(conn)
+            if revisions[0] == "0106_seo_content_messages":
+                await _check_content_message_structure(conn)
             schema_status = "ok"
     except Exception as exc:  # noqa: BLE001 - health must report infra failure
         db_status = "error"
