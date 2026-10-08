@@ -6,7 +6,8 @@ location = /customer-workbench {
     return 308 /customer-workbench/$is_args$args;
 }
 location = /customer-workbench/ {
-    alias /opt/customer-workbench/current/index.html;
+    root /opt/customer-workbench/current;
+        try_files /index.html =404;
     default_type text/html;
     add_header Cache-Control "no-store" always;
     add_header X-Content-Type-Options "nosniff" always;
