@@ -111,6 +111,9 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("frontend/package-lock.json")
     assert source_path_allowed("app/api/customer_modules.py")
     assert source_path_allowed("app/security/auth.py")  # Explicit tenant-coercion security backport.
+    assert source_path_allowed("migrations/versions/20261007_0105_seo_content_confirmations.py")
+    assert source_path_allowed("tests/test_seo_content_confirmations.py")
+    assert source_path_allowed("docs/SEO_AUTOMATION_API.md")
     assert not source_path_allowed("app/api/geo.py")
     assert not source_path_allowed("app/baidu/writeback.py")
     assert not source_path_allowed("app/api/auth.py")
@@ -182,7 +185,10 @@ def test_seo_workflows_gate_the_sem_task_migration_contract() -> None:
         assert "tests/test_demo_tenant_binding_migration.py" in workflow
         assert "tests/test_demo_binding_no_truncate_migration.py" in workflow
         assert "tests/test_geo_review_audit_migration.py" in workflow
-        assert "0104_seo_page_ai_tdk (head)" in workflow
+        assert "0106_seo_content_messages (head)" in workflow
+        assert "tests/test_seo_messages_postgres.py" in workflow
+        assert "tests/test_seo_local_acceptance.py" in workflow
+        assert "tests/test_seo_content_confirmations.py" in workflow
 
 
 def test_seo_frontend_workflows_gate_shared_session_regressions() -> None:
@@ -451,7 +457,7 @@ def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
 
 def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     root = Path(__file__).parents[1]
-    expected = "0104_seo_page_ai_tdk (head)"
+    expected = "0106_seo_content_messages (head)"
     baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
     production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
     assert expected in baseline

@@ -101,6 +101,11 @@ jobs:
           tests/test_seo_manual_automation.py
           tests/test_seo_competitors.py
           tests/test_seo_deploy_isolation.py
+          tests/test_seo_content_confirmations.py
+          tests/test_seo_local_acceptance.py
+          tests/test_seo_messages_postgres.py
+          tests/test_seo_migration_readiness.py
+          tests/test_alembic_session_timeouts.py
           tests/test_geo_ticket_adoption_migration.py
           tests/test_sem_task_migration.py
           tests/test_demo_tenant_binding_migration.py
@@ -166,7 +171,7 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0104_seo_page_ai_tdk (head)'
+          printf '%s\n' "$heads" | grep -F '0106_seo_content_messages (head)'
 
       - working-directory: frontend
         run: npm ci --no-audit

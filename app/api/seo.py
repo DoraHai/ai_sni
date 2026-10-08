@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import inspect
 import json
 import logging
 import re
@@ -11,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from time import monotonic
 from typing import Any, Literal
 from urllib.parse import quote, urljoin, urlparse, urlsplit, urlunsplit
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from app.seo_backlinks import apply_backlink_evidence, discover_backlinks, fetch_backlink_page
 from app.seo_backlink_sources import parse_backlink_csv, import_candidates, index_status, fetch_index_candidates, backlink_analysis
@@ -27,7 +29,7 @@ from app.seo_ai_operations import (
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field, PositiveInt, field_validator
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,14 +49,18 @@ from app.models import (
     SeoCompetitor,
     SeoCompetitorEvent,
     SeoContentAsset,
+    SeoContentConfirmation,
     SeoContentReviewEvent,
     SeoInternalLink,
     SeoKeywordAsset,
     SeoRankSnapshot,
     SeoSerpResult,
     SeoSitePage,
+    SeoPageCapture,
+    SeoSiteAdvisorAssignment,
     Tenant,
     User,
+    Role,
     GeoChannelVariant,
     GeoContentTask,
     GeoMediaPlacement,
@@ -112,6 +118,7 @@ from app.seo_crawler import crawl_site, is_html_page_url
 from app.seo_site_diagnostics import assessed_condition, assessment_state, diagnostic_payload
 from app.api.seo_site_diagnostics import router as site_diagnostics_router
 from app.api.seo_remediation import router as remediation_router
+from app.api.seo_messages import router as messages_router
 from app.seo_competitor import (
     COMPETITOR_MANUAL_COOLDOWN_SECONDS,
     COMPETITOR_MAX_PAGES_PER_RUN,
@@ -287,7 +294,12 @@ async def _limited_seo_chat_json(
     charge_usage: bool = True,
     usage_receipt: dict[str, str] | None = None,
     operation: dict | None = None,
+    generation_route: dict | None = None,
+    response_metadata: dict | None = None,
 ) -> dict[str, Any]:
+    route_kwargs = _seo_deepseek_kwargs(generation_route) if generation_route else {}
+    if generation_route:
+        route_kwargs["response_metadata"] = response_metadata
     charged_on: str | None = None
     if charge_usage:
         settings = get_settings()
@@ -309,7 +321,7 @@ async def _limited_seo_chat_json(
         if usage_receipt is not None:
             usage_receipt.update(receipt)
     try:
-        return await chat_json(system, user, timeout=timeout)
+        return await chat_json(system, user, timeout=timeout, **route_kwargs)
     except (Exception, asyncio.CancelledError):
         if charge_usage:
             await _refund_failed_seo_ai_request(session, tenant_id, charged_on=charged_on, operation_id=receipt.get("operation_id"))
@@ -344,6 +356,7 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 router.include_router(site_diagnostics_router)
 router.include_router(remediation_router)
+router.include_router(messages_router)
 from app.api.seo_cockpit import router as cockpit_router
 router.include_router(cockpit_router)
 from app.api.seo_backlink_workflow import router as backlink_workflow_router
@@ -352,12 +365,18 @@ from app.api.seo_video import router as video_router
 router.include_router(video_router)
 from app.api.seo_qa import router as qa_router
 router.include_router(qa_router)
-from app.api.seo_page_captures import router as page_captures_router
+from app.api.seo_page_captures import (
+    execute_page_capture,
+    reserve_publication_page_capture,
+    router as page_captures_router,
+)
 router.include_router(page_captures_router)
 from app.api.seo_site_analytics import router as site_analytics_router
 router.include_router(site_analytics_router)
 from app.api.seo_monthly_report import router as monthly_report_router
 router.include_router(monthly_report_router)
+from app.api.seo_service_workflows import router as service_workflows_router
+router.include_router(service_workflows_router)
 from app.api.seo_tdk_review import router as tdk_review_router
 router.include_router(tdk_review_router)
 from app.api.seo_ai_tdk import router as ai_tdk_router
@@ -495,6 +514,15 @@ BRAND_ASSET_TYPES = {"official_domain", "content_url", "platform_account"}
 OWNERSHIP_TYPES = {"official_site", "brand_content", "ai_suspected", "unrelated", "unresolved"}
 METRIC_STATUSES = {"available", "not_configured", "pending", "failed", "stale"}
 METRIC_QUALITIES = {"verified", "estimated", "crawled", "imported"}
+
+
+def _publication_time(value: datetime | None) -> datetime:
+    """Store publication instants as naive UTC; legacy naive inputs are UTC."""
+    if value is None:
+        return datetime.utcnow()
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -5159,12 +5187,58 @@ def _sanitize_content_html(value: str | None) -> str | None:
     return sanitize_article_html(value)
 
 
+def _seo_draft_route(plan):
+    provider = plan.get("content_ai_provider") or "deepseek"
+    model = plan.get("content_ai_model") or "deepseek-chat"
+    if provider != "deepseek" or model not in {"deepseek-chat", "deepseek-reasoner"}:
+        raise HTTPException(503, {"code": "ai_draft_deepseek_route_invalid"})
+    settings = get_settings()
+    if not str(getattr(settings, "deepseek_api_key", "") or "").strip():
+        raise HTTPException(503, {"code": "ai_draft_deepseek_not_configured"})
+    from urllib.parse import urlsplit
+    base = str(getattr(settings, "deepseek_base_url", "") or "https://api.deepseek.com").rstrip("/")
+    try:
+        parsed = urlsplit(base)
+    except ValueError:
+        raise HTTPException(503, {"code": "ai_draft_deepseek_route_invalid"}) from None
+    if (parsed.scheme != "https" or parsed.netloc not in {"api.deepseek.com", "api.deepseek.com:443"}
+            or parsed.path not in {"", "/v1"} or parsed.query or parsed.fragment):
+        raise HTTPException(503, {"code": "ai_draft_deepseek_route_invalid"})
+    return {"provider": provider, "model": model, "base_url": base}
+
+
+def _seo_deepseek_kwargs(route):
+    current = _seo_draft_route({"content_ai_provider": route["provider"], "content_ai_model": route["model"]})
+    if current != route:
+        raise HTTPException(503, {"code": "ai_draft_deepseek_route_changed"})
+    return {"api_key": get_settings().deepseek_api_key.strip(), "base_url": route["base_url"], "model": route["model"]}
+
+
+def _seo_draft_provider_status(plan):
+    try:
+        _seo_draft_route(plan)
+        return True, None
+    except HTTPException as exc:
+        return False, exc.detail["code"]
+
+
+def _seo_assist_request_payload(req, generation_route=None):
+    payload = req.model_dump(mode="json", exclude={"request_id"})
+    if generation_route:
+        payload["generation_route"] = generation_route
+    return payload
+
+
 @router.post("/content-ai/assist")
 async def assist_seo_content(
     req: SeoContentAssistRequest,
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
+    return await _assist_seo_content(req, session, ctx)
+
+
+async def _assist_seo_content(req, session, ctx, *, generation_route=None):
     ctx.ensure_tenant(req.tenant_id)
     tenant = await _tenant(session, req.tenant_id)
     source_page: SeoSitePage | None = None
@@ -5209,15 +5283,19 @@ async def assist_seo_content(
         raise HTTPException(400, "请先选择目标关键词")
     if req.action == "rewrite" and not (req.draft or req.source_text):
         raise HTTPException(400, "请先输入正文或导入待改写原文")
-    if not is_enabled():
+    if generation_route:
+        _seo_deepseek_kwargs(generation_route)
+    elif not is_enabled():
         raise HTTPException(503, "DeepSeek 尚未配置")
     system, user = _seo_ai_prompt(req, tenant, keywords)
     usage_charged = False
     usage_receipt: dict[str, str] = {}
+    response_metadata: dict = {}
     try:
         raw_result = await _limited_seo_chat_json(
             session, req.tenant_id, system, user, timeout=90.0, usage_receipt=usage_receipt,
-                operation={"request_key": req.request_id, "payload": req.model_dump(mode="json", exclude={"request_id"}),
+                **({"generation_route": generation_route, "response_metadata": response_metadata} if generation_route else {}),
+                operation={"request_key": req.request_id, "payload": _seo_assist_request_payload(req, generation_route),
                            "actor": str(ctx.user_id) if ctx.user_id is not None else "api_key", "kind": "content_assist"}
         )
         usage_charged = True
@@ -5286,6 +5364,7 @@ async def assist_seo_content(
                 correction,
                 timeout=90.0,
                 charge_usage=False,
+                **({"generation_route": generation_route, "response_metadata": response_metadata} if generation_route else {}),
             )
             try:
                 result = _validated_seo_assist_result(req.action, repaired_result)
@@ -5361,6 +5440,9 @@ async def assist_seo_content(
         raise
     allowed = {key: result.get(key) for key in ("title", "outline", "content", "feedback", "suggestions") if result.get(key) is not None}
     response = {"action": req.action, "model": "deepseek-chat", "keyword_coverage": {"selected": [item.keyword for item in keywords], "missing": []}, **allowed}
+    if generation_route:
+        response.update(provider=generation_route["provider"], model=generation_route["model"],
+                        response_model=response_metadata.get("model"), generation_route=generation_route)
 
     if usage_receipt.get("operation_id"):
         return await settle_seo_ai_operation(session, req.tenant_id, usage_receipt["operation_id"], result=response)
@@ -5432,11 +5514,71 @@ class DistributionConnectionCreate(BaseModel):
 
 class ContentReviewSubmit(BaseModel):
     note: str | None = Field(None, max_length=2000)
+    version_count: PositiveInt | None = Field(
+        None,
+        description="Expected content version. Workbench callers must send it.",
+    )
 
 
 class ContentReviewDecision(BaseModel):
     decision: Literal["approve", "reject"]
     note: str | None = Field(None, max_length=2000)
+    version_count: PositiveInt | None = Field(
+        None,
+        description="Expected content version. Workbench callers must send it.",
+    )
+
+
+class ContentConfirmationRequest(BaseModel):
+    version_count: PositiveInt
+    payload_hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    decision: Literal["approve", "reject"]
+    actor_mode: Literal["customer_direct", "advisor_proxy"]
+    note: str | None = Field(None, max_length=2000)
+
+
+class AdvisorAssignmentRequest(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    advisor_user_id: PositiveInt
+    active: bool = True
+
+
+class SeoServicePlanUpdate(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    expected_revision: int = Field(ge=0)
+    optimization_directions: list[str] = Field(min_length=1, max_length=20)
+    content_topics: list[str] = Field(default_factory=list, max_length=50)
+    service_note: str | None = Field(None, max_length=4000)
+    status: Literal["active", "paused"] = "active"
+    content_cycle_enabled: bool | None = None
+    content_interval_days: int | None = Field(None, ge=1, le=90)
+    content_ai_enabled: bool | None = None
+    content_ai_provider: Literal["deepseek"] | None = None
+    content_ai_model: Literal["deepseek-chat", "deepseek-reasoner"] | None = None
+    content_ai_fact_ids: list[PositiveInt] | None = Field(None, max_length=20)
+    content_ai_keyword_ids: list[PositiveInt] | None = Field(None, max_length=5)
+    website_cycle_enabled: bool | None = None
+    website_interval_days: int | None = Field(None, ge=1, le=90)
+    website_max_pages: int | None = Field(None, ge=1, le=10)
+    monitoring_cycle_enabled: bool | None = None
+    monitoring_interval_days: int | None = Field(None, ge=1, le=30)
+    report_cycle_enabled: bool | None = None
+
+    @field_validator("optimization_directions", "content_topics")
+    @classmethod
+    def normalize_service_plan_items(cls, value: list[str]) -> list[str]:
+        result: list[str] = []
+        for raw in value:
+            item = " ".join(str(raw).split()).strip()
+            if not item or len(item) > 200:
+                raise ValueError("服务计划条目必须为 1 至 200 个字符")
+            if item not in result:
+                result.append(item)
+        if not result and value:
+            raise ValueError("服务计划不能只有空白条目")
+        return result
 
 
 class DistributionConnectionUpdate(BaseModel):
@@ -5520,6 +5662,8 @@ class DistributionManualPublicationCreate(BaseModel):
     platform_name: str = Field(min_length=1, max_length=120)
     page_url: str = Field(min_length=1, max_length=2000)
     published_at: datetime | None = None
+    source_version: PositiveInt | None = None
+    payload_hash: str | None = Field(None, pattern=r"^[0-9a-f]{64}$")
 
 
 class DistributionManualComplete(BaseModel):
@@ -5534,6 +5678,7 @@ class DistributionRetryRequest(BaseModel):
     tenant_id: PositiveInt
     site_id: PositiveInt | None = None
     confirm: bool = False
+    manual_check_outcome: Literal["not_published"] | None = None
 
 
 def _connection_payload(row: SeoDistributionConnection) -> dict[str, Any]:
@@ -5598,12 +5743,74 @@ def _publication_payload(
     }
 
 
+async def _queue_published_page_verification(
+    session: AsyncSession,
+    row: SeoContentPublication,
+    content: SeoContentAsset,
+    background_tasks: BackgroundTasks | None,
+) -> dict[str, Any]:
+    """Queue evidence only after the publication fact is durable."""
+    if row.status != "published":
+        return {"state": "not_applicable", "capture_id": None, "reason": "publication_not_published"}
+    if content.site_id is None:
+        return {"state": "not_queued", "capture_id": None, "reason": "publication_site_missing"}
+    publication_id = int(row.id)
+    try:
+        capture, reason = await reserve_publication_page_capture(
+            session,
+            tenant_id=int(row.tenant_id),
+            site_id=int(content.site_id),
+            publication_id=publication_id,
+            page_url=row.page_url,
+        )
+        if reason is None:
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001
+        try:
+            await session.rollback()
+        except Exception:
+            # The publication fact was committed before this queue transaction.
+            # A disconnected connection must not obscure that durable outcome.
+            logger.warning("SEO capture queue rollback failed publication_id=%s", publication_id)
+        logger.error(
+            "SEO publication page verification queue failed publication_id=%s error_type=%s",
+            publication_id,
+            type(exc).__name__,
+        )
+        return {"state": "not_queued", "capture_id": None, "reason": "capture_queue_failed"}
+    if capture is not None and reason is None and background_tasks is not None:
+        background_tasks.add_task(execute_page_capture, int(capture.id))
+    return {
+        "state": "queued" if reason is None else "existing" if capture is not None else "not_queued",
+        "capture_id": None if capture is None else capture.id,
+        "reason": reason,
+    }
+
+
+def _publication_attempt_requires_manual_check(
+    attempt: SeoPublishAttempt | None,
+) -> bool:
+    summary = attempt.response_summary if attempt is not None else None
+    return bool(
+        isinstance(summary, dict)
+        and (
+            summary.get("requires_manual_review") is True
+            or summary.get("outcome") == "unknown"
+        )
+    )
+
+
 WORKBENCH_PAGE_INVENTORY_SCAN_LIMIT = 5000
 WORKBENCH_ASSOCIATION_CANDIDATE_LIMIT = 5
 _INVALID_URL_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 WORKBENCH_TASK_PERMISSIONS = {
+    "site_diagnosis": "seo.site",
+    "ranking_followup": "seo.keywords",
+    "monthly_report": "seo.site",
+    "content_delivery": "seo.content",
     "content_review": "seo.content",
     "image_repair": "seo.site",
+    "page_remediation": "seo.site",
     "ranking_improvement": "seo.keywords",
     "backlink_outreach": "seo.links",
 }
@@ -6004,8 +6211,9 @@ async def _distribution_content(
     site_id: int | None = None,
     *,
     require_operational: bool = True,
+    lock: bool = False,
 ) -> SeoContentAsset:
-    row = await session.get(SeoContentAsset, content_id)
+    row = await session.get(SeoContentAsset, content_id, with_for_update=True, populate_existing=True) if lock else await session.get(SeoContentAsset, content_id)
     if (
         not row
         or row.tenant_id != tenant_id
@@ -6317,7 +6525,7 @@ def _content_payload(
     keyword_ids = row.keyword_ids or ([row.keyword_id] if row.keyword_id else [])
     names = user_names or {}
     history = review_history or []
-    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "source_page_id": row.source_page_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "review_submitted_by": row.review_submitted_by, "review_submitted_by_name": names.get(row.review_submitted_by), "review_submitted_at": _iso(row.review_submitted_at), "review_note": row.review_note, "reviewed_by": row.reviewed_by, "reviewed_by_name": names.get(row.reviewed_by), "reviewed_at": _iso(row.reviewed_at), "review_history_count": len(history) if review_history_count is None else review_history_count, "review_history": [_review_event_payload(event, names) for event in history], "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
+    return {"payload_hash": _content_confirmation_hash(row), "id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "source_page_id": row.source_page_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "review_submitted_by": row.review_submitted_by, "review_submitted_by_name": names.get(row.review_submitted_by), "review_submitted_at": _iso(row.review_submitted_at), "review_note": row.review_note, "reviewed_by": row.reviewed_by, "reviewed_by_name": names.get(row.reviewed_by), "reviewed_at": _iso(row.reviewed_at), "review_history_count": len(history) if review_history_count is None else review_history_count, "review_history": [_review_event_payload(event, names) for event in history], "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
 
 
 def _review_event_payload(
@@ -6358,6 +6566,273 @@ async def _content_review_user_names(
         int(user_id): str(display_name or username)
         for user_id, display_name, username in result.all()
     }
+
+
+def _content_confirmation_hash(row: SeoContentAsset) -> str:
+    """Hash only customer-visible/business-bearing content fields."""
+    payload = {
+        "content_type": row.content_type,
+        "title": row.title or "",
+        "outline": row.outline or "",
+        "draft": row.draft or "",
+        "humanized_content": row.humanized_content or "",
+        "source_text": row.source_text or "",
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _content_version_conflict(row: SeoContentAsset) -> HTTPException:
+    return HTTPException(
+        409,
+        detail={
+            "code": "content_version_conflict",
+            "message": "稿件版本或内容摘要已变化，请刷新后重新操作",
+            "current_version": row.version_count or 1,
+            "current_payload_hash": _content_confirmation_hash(row),
+        },
+    )
+
+
+def _confirmation_payload(
+    row: SeoContentConfirmation | None,
+    actor_name: str | None = None,
+) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {
+        "id": row.id,
+        "content_version": row.content_version,
+        "payload_hash": row.content_hash,
+        "decision": row.decision,
+        "actor_mode": row.actor_mode,
+        "actor_user_id": row.actor_user_id,
+        "actor_name": actor_name,
+        "actor_role_name": row.actor_role_name,
+        "note": row.note,
+        "created_at": _database_iso(row.created_at),
+    }
+
+
+async def _latest_content_confirmation(
+    session: AsyncSession,
+    row: SeoContentAsset,
+) -> SeoContentConfirmation | None:
+    return await session.scalar(
+        select(SeoContentConfirmation)
+        .where(
+            SeoContentConfirmation.tenant_id == row.tenant_id,
+            SeoContentConfirmation.content_asset_id == row.id,
+        )
+        .order_by(SeoContentConfirmation.created_at.desc(), SeoContentConfirmation.id.desc())
+        .limit(1)
+    )
+
+
+def _content_confirmation_status(
+    row: SeoContentAsset,
+    latest: SeoContentConfirmation | None,
+) -> str:
+    if latest is None:
+        return "pending"
+    if (
+        latest.content_version != (row.version_count or 1)
+        or latest.content_hash != _content_confirmation_hash(row)
+    ):
+        return "stale"
+    return "approved" if latest.decision == "approve" else "rejected"
+
+
+async def _content_confirmation_schema_ready(session: AsyncSession) -> bool:
+    """Enable the new gate only after the separately approved 0105 migration."""
+    result = await session.execute(text("SELECT version_num FROM alembic_version"))
+    revision = result.scalar_one_or_none()
+    if inspect.isawaitable(revision):
+        # AsyncMock-based isolated unit tests do not model the Alembic table;
+        # treating it as pre-0105 preserves the real code-first rollout path.
+        revision = await revision
+    return revision in {"0105_seo_content_confirmations", "0106_seo_content_messages"}
+
+
+async def _advisor_assignment(
+    session: AsyncSession,
+    row: SeoContentAsset,
+    user_id: int | None,
+) -> SeoSiteAdvisorAssignment | None:
+    if user_id is None or row.site_id is None:
+        return None
+    if not await _content_confirmation_schema_ready(session):
+        return None
+    return await session.scalar(
+        select(SeoSiteAdvisorAssignment).where(
+            SeoSiteAdvisorAssignment.tenant_id == row.tenant_id,
+            SeoSiteAdvisorAssignment.site_id == row.site_id,
+            SeoSiteAdvisorAssignment.advisor_user_id == user_id,
+            SeoSiteAdvisorAssignment.active.is_(True),
+        )
+    )
+
+
+async def _site_advisor_assignment(
+    session: AsyncSession,
+    tenant_id: int,
+    site_id: int,
+    user_id: int | None,
+    *,
+    schema_ready: bool = False,
+    lock: bool = False,
+) -> SeoSiteAdvisorAssignment | None:
+    if user_id is None or (not schema_ready and not await _content_confirmation_schema_ready(session)):
+        return None
+    statement = select(SeoSiteAdvisorAssignment).where(
+        SeoSiteAdvisorAssignment.tenant_id == tenant_id,
+        SeoSiteAdvisorAssignment.site_id == site_id,
+        SeoSiteAdvisorAssignment.advisor_user_id == user_id,
+        SeoSiteAdvisorAssignment.active.is_(True),
+    )
+    if lock:
+        statement = statement.with_for_update()
+    return await session.scalar(statement)
+
+
+async def _content_allowed_actions(
+    session: AsyncSession,
+    row: SeoContentAsset,
+    ctx: AuthContext,
+    confirmation_status: str,
+) -> tuple[dict[str, bool], dict[str, Any]]:
+    assignment = await _advisor_assignment(session, row, ctx.user_id)
+    is_customer_account = bool(
+        ctx.user_id is not None
+        and ctx.tenant_id == row.tenant_id
+        and ctx.can_view("seo.content")
+    )
+    is_assigned_advisor = bool(
+        assignment is not None
+        and ctx.user_id is not None
+        and ctx.can_edit("seo.content")
+    )
+    has_actor = ctx.user_id is not None
+    ready_for_confirmation = row.status == "ready" and confirmation_status != "unavailable"
+    can_edit_content = has_actor and ctx.can_edit("seo.content")
+    return (
+        {
+            "submit_review": can_edit_content and row.status in {"planned", "drafting"},
+            "review": can_edit_content and row.status == "review",
+            "confirm_as_customer": is_customer_account and ready_for_confirmation,
+            "confirm_as_advisor_proxy": is_assigned_advisor and ready_for_confirmation,
+            "reject_as_customer": is_customer_account and ready_for_confirmation,
+            "reject_as_advisor_proxy": is_assigned_advisor and ready_for_confirmation,
+            "edit_content": can_edit_content and row.status in {"planned", "drafting"},
+            "start_publication": can_edit_content
+            and row.status in {"ready", "published"}
+            and confirmation_status == "approved",
+        },
+        {
+            "actor_user_id": ctx.user_id,
+            "tenant_bound_customer_account": is_customer_account,
+            "active_site_advisor_assignment": is_assigned_advisor,
+            "seo_content_permission": (
+                "edit" if ctx.can_edit("seo.content")
+                else "view" if ctx.can_view("seo.content")
+                else "none"
+            ),
+        },
+    )
+
+
+async def _content_delivery_payload(
+    session: AsyncSession,
+    row: SeoContentAsset,
+    ctx: AuthContext,
+    *,
+    latest: SeoContentConfirmation | None = None,
+) -> dict[str, Any]:
+    schema_ready = await _content_confirmation_schema_ready(session)
+    if latest is None and schema_ready:
+        latest = await _latest_content_confirmation(session, row)
+    confirmation_status = (
+        _content_confirmation_status(row, latest) if schema_ready else "unavailable"
+    )
+    actions, permission_basis = await _content_allowed_actions(
+        session, row, ctx, confirmation_status
+    )
+    actor_name = None
+    if latest is not None:
+        actor = await session.get(User, latest.actor_user_id)
+        if actor is not None:
+            actor_name = str(actor.display_name or actor.username)
+    workflow_status = {
+        "planned": "draft",
+        "drafting": "draft",
+        "review": "internal_review",
+        "ready": (
+            "approved_waiting_publication"
+            if confirmation_status == "approved"
+            else "awaiting_content_revision"
+            if confirmation_status == "rejected"
+            else "confirmation_unavailable"
+            if confirmation_status == "unavailable"
+            else "awaiting_customer_confirmation"
+        ),
+        "published": "published",
+        "archived": "archived",
+    }.get(row.status, row.status)
+    return {
+        "content": {
+            "id": row.id,
+            "tenant_id": row.tenant_id,
+            "site_id": row.site_id,
+            "content_type": row.content_type,
+            "title": row.title,
+            "outline": row.outline,
+            "body": row.humanized_content or row.draft or "",
+            "version_count": row.version_count or 1,
+            "payload_hash": _content_confirmation_hash(row),
+            "status": row.status,
+            "updated_at": _database_iso(row.updated_at),
+        },
+        "workflow_status": workflow_status,
+        "confirmation": {
+            "status": confirmation_status,
+            "latest": _confirmation_payload(latest, actor_name),
+            "requires_exact_version": True,
+            "approval_is_publication": False,
+        },
+        "allowed_actions": actions,
+        "permission_basis": permission_basis,
+        "result_basis": {
+            "internal_review_status": row.status,
+            "customer_confirmation_status": confirmation_status,
+            "publication_status": "not_loaded",
+            "page_check_status": "not_loaded",
+            "search_effect_status": "not_attributed_to_single_content",
+        },
+    }
+
+
+async def _require_active_content_confirmation(
+    session: AsyncSession,
+    row: SeoContentAsset,
+) -> SeoContentConfirmation | None:
+    if not await _content_confirmation_schema_ready(session):
+        # Code-first rollout compatibility: 0104 keeps the existing publication
+        # flow until the separately approved 0105 migration activates the gate.
+        return None
+    latest = await _latest_content_confirmation(session, row)
+    status = _content_confirmation_status(row, latest)
+    if status != "approved" or latest is None:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "content_confirmation_required",
+                "message": "当前准确稿件版本尚未获得客户确认或顾问代确认",
+                "confirmation_status": status,
+                "current_version": row.version_count or 1,
+                "current_payload_hash": _content_confirmation_hash(row),
+            },
+        )
+    return latest
 
 
 async def _content_task_for_source_page(
@@ -6502,6 +6977,465 @@ async def get_content_review_history(
     return {
         "items": [_review_event_payload(event, user_names) for event in events],
         "total": len(events),
+    }
+
+
+@router.get("/workbench/content-assets/{content_id}/delivery")
+async def get_content_delivery(
+    content_id: PositiveInt,
+    tenant_id: PositiveInt,
+    site_id: PositiveInt,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    await _seo_site(session, tenant_id, site_id)
+    row = await session.get(SeoContentAsset, content_id)
+    if not row or row.tenant_id != tenant_id or row.site_id != site_id:
+        raise HTTPException(404, "SEO 内容资产不存在")
+    return await _content_delivery_payload(session, row, ctx)
+
+
+@router.post("/workbench/content-assets/{content_id}/confirmations")
+async def create_content_confirmation(
+    content_id: PositiveInt,
+    tenant_id: PositiveInt,
+    req: ContentConfirmationRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    if not await _content_confirmation_schema_ready(session):
+        raise HTTPException(
+            503,
+            detail={
+                "code": "content_confirmation_schema_unavailable",
+                "message": "稿件确认能力尚未完成数据库迁移",
+            },
+        )
+    row = await session.get(SeoContentAsset, content_id, with_for_update=True)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "SEO 内容资产不存在")
+    if row.site_id is None:
+        raise HTTPException(409, "稿件尚未关联有效站点")
+    await _require_resource_operational_site(session, tenant_id, row.site_id)
+    current_hash = _content_confirmation_hash(row)
+    if req.version_count != (row.version_count or 1) or req.payload_hash != current_hash:
+        raise _content_version_conflict(row)
+    if req.decision == "reject" and not str(req.note or "").strip():
+        raise HTTPException(400, "退回稿件时必须填写修改意见")
+
+    if ctx.user_id is None:
+        raise HTTPException(403, "稿件确认必须由实名登录账号操作")
+    assignment = await _advisor_assignment(session, row, ctx.user_id)
+    if req.actor_mode == "customer_direct":
+        if ctx.tenant_id != tenant_id or not ctx.can_view("seo.content"):
+            raise HTTPException(403, "只有绑定当前客户的实名账号可以直接确认稿件")
+        if assignment is not None:
+            raise HTTPException(403, "当前账号已作为该站点顾问分配，请使用顾问代确认模式")
+    else:
+        if assignment is None or not ctx.can_edit("seo.content"):
+            raise HTTPException(403, "只有当前站点已分配且具备内容编辑权限的顾问可以代确认")
+
+    latest = await _latest_content_confirmation(session, row)
+    note = str(req.note or "").strip() or None
+    if (
+        latest is not None
+        and latest.content_version == req.version_count
+        and latest.content_hash == req.payload_hash
+        and latest.decision == req.decision
+        and latest.actor_mode == req.actor_mode
+        and latest.actor_user_id == ctx.user_id
+        and latest.note == note
+    ):
+        return await _content_delivery_payload(session, row, ctx, latest=latest)
+
+    if row.status != "ready":
+        raise HTTPException(409, "只有内部审核通过且尚未发布的稿件可以确认或退回")
+    confirmation = SeoContentConfirmation(
+        tenant_id=tenant_id,
+        site_id=row.site_id,
+        content_asset_id=row.id,
+        content_version=row.version_count or 1,
+        content_hash=current_hash,
+        decision=req.decision,
+        actor_mode=req.actor_mode,
+        actor_user_id=ctx.user_id,
+        actor_role_name=ctx.role_name,
+        note=note,
+    )
+    session.add(confirmation)
+    if req.decision == "reject":
+        previous_status = row.status
+        row.status = "drafting"
+        session.add(
+            SeoContentReviewEvent(
+                tenant_id=row.tenant_id,
+                site_id=row.site_id,
+                content_asset_id=row.id,
+                action=(
+                    "customer_reject"
+                    if req.actor_mode == "customer_direct"
+                    else "advisor_proxy_reject"
+                ),
+                from_status=previous_status,
+                to_status="drafting",
+                note=note,
+                actor_id=ctx.user_id,
+            )
+        )
+    await session.commit()
+    await session.refresh(confirmation)
+    await session.refresh(row)
+    return await _content_delivery_payload(session, row, ctx, latest=confirmation)
+
+
+@router.get("/workbench/advisor-assignments")
+async def list_advisor_assignments(
+    tenant_id: PositiveInt,
+    site_id: PositiveInt,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    if not await _content_confirmation_schema_ready(session):
+        raise HTTPException(503, "顾问分配能力尚未完成数据库迁移")
+    if not ctx.can_edit("seo.content") or not ctx.can_view("settings.accounts"):
+        raise HTTPException(403, "需要内容编辑及账号管理权限")
+    await _seo_site(session, tenant_id, site_id)
+    rows = list(
+        await session.scalars(
+            select(SeoSiteAdvisorAssignment)
+            .where(
+                SeoSiteAdvisorAssignment.tenant_id == tenant_id,
+                SeoSiteAdvisorAssignment.site_id == site_id,
+            )
+            .order_by(SeoSiteAdvisorAssignment.id.asc())
+        )
+    )
+    users = {
+        user.id: user
+        for user in list(
+            await session.scalars(select(User).where(User.id.in_([row.advisor_user_id for row in rows])))
+        )
+    } if rows else {}
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "tenant_id": row.tenant_id,
+                "site_id": row.site_id,
+                "advisor_user_id": row.advisor_user_id,
+                "advisor_name": (
+                    str(users[row.advisor_user_id].display_name or users[row.advisor_user_id].username)
+                    if row.advisor_user_id in users else None
+                ),
+                "active": row.active,
+                "assigned_by": row.assigned_by,
+                "created_at": _database_iso(row.created_at),
+                "updated_at": _database_iso(row.updated_at),
+            }
+            for row in rows
+        ],
+        "total": len(rows),
+    }
+
+
+def _service_plan_payload(site: SeoSite) -> dict[str, Any]:
+    settings = site.site_settings if isinstance(site.site_settings, dict) else {}
+    value = settings.get("seo_service_plan")
+    plan = value if isinstance(value, dict) else {}
+    return {
+        "tenant_id": site.tenant_id,
+        "site_id": site.id,
+        "revision": int(plan.get("revision") or 0),
+        "content_cycle_enabled": plan.get("content_cycle_enabled") is True,
+        "content_interval_days": int(plan.get("content_interval_days") or 7),
+        "content_ai_enabled": plan.get("content_ai_enabled") is True,
+        "content_ai_provider": plan.get("content_ai_provider") or "deepseek",
+        "content_ai_model": plan.get("content_ai_model") or "deepseek-chat",
+        "content_ai_fact_ids": list(plan.get("content_ai_fact_ids") or []),
+        "content_ai_keyword_ids": list(plan.get("content_ai_keyword_ids") or []),
+        "content_ai_authorized_by": plan.get("content_ai_authorized_by"),
+        "content_ai_authorized_at": plan.get("content_ai_authorized_at"),
+        "website_cycle_enabled": plan.get("website_cycle_enabled") is True,
+        "website_interval_days": int(plan.get("website_interval_days") or 7),
+        "website_max_pages": int(plan.get("website_max_pages") or 5),
+        "monitoring_cycle_enabled": plan.get("monitoring_cycle_enabled") is True,
+        "monitoring_interval_days": int(plan.get("monitoring_interval_days") or 1),
+        "report_cycle_enabled": plan.get("report_cycle_enabled") is True,
+        "status": plan.get("status") if plan.get("status") in {"active", "paused"} else "active",
+        "optimization_directions": [str(item) for item in plan.get("optimization_directions", []) if str(item).strip()],
+        "content_topics": [str(item) for item in plan.get("content_topics", []) if str(item).strip()],
+        "service_note": plan.get("service_note") if isinstance(plan.get("service_note"), str) else None,
+        "updated_by": plan.get("updated_by") if isinstance(plan.get("updated_by"), int) else None,
+        "updated_at": plan.get("updated_at") if isinstance(plan.get("updated_at"), str) else None,
+        "missing": [
+            code for code, missing in (
+                ("optimization_directions_missing", not plan.get("optimization_directions")),
+            ) if missing
+        ],
+    }
+
+
+@router.get("/workbench/service-plan")
+async def get_seo_service_plan(
+    tenant_id: PositiveInt,
+    site_id: PositiveInt,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    if not (ctx.can_view("seo.content") and ctx.can_view("seo.site")):
+        raise HTTPException(403, "需要 SEO 内容和网站查看权限")
+    await ensure_module_access(session, ctx, tenant_id, "seo")
+    site = await _seo_site(session, tenant_id, site_id)
+    schema_ready = await _content_confirmation_schema_ready(session)
+    has_actor = ctx.user_id is not None
+    has_edit_permissions = ctx.can_edit("seo.content") and ctx.can_edit("seo.site")
+    assignment = None
+    if schema_ready and has_actor and has_edit_permissions:
+        assignment = await _site_advisor_assignment(
+            session, tenant_id, site_id, ctx.user_id, schema_ready=True,
+        )
+    can_update = bool(schema_ready and has_actor and has_edit_permissions and assignment)
+    if not schema_ready:
+        denial_reason = "advisor_assignment_schema_unavailable"
+    elif not has_actor:
+        denial_reason = "authenticated_user_required"
+    elif not has_edit_permissions:
+        denial_reason = "content_and_site_edit_permissions_required"
+    elif assignment is None:
+        denial_reason = "active_site_advisor_assignment_required"
+    else:
+        denial_reason = None
+    result = _service_plan_payload(site)
+    result["allowed_actions"] = {"update_service_plan": can_update}
+    result["permission_basis"] = {
+        "actor_user_id": ctx.user_id,
+        "schema_ready": schema_ready,
+        "seo_content_permission": "edit" if ctx.can_edit("seo.content") else "view",
+        "seo_site_permission": "edit" if ctx.can_edit("seo.site") else "view",
+        "active_site_advisor_assignment": assignment is not None,
+        "update_denial_reason": denial_reason,
+    }
+    from app.seo_workflow_capabilities import trigger_capabilities
+    result["trigger_actions"] = await trigger_capabilities(session, ctx, site)
+    provider_configured, provider_unavailable_reason = _seo_draft_provider_status(result)
+    result["content_ai_policy"] = {
+        "can_configure": bool(can_update and ctx.can_view("seo.keywords")),
+        "can_disable": can_update,
+        "configure_denial_reason": denial_reason or (None if ctx.can_view("seo.keywords") else "keyword_view_permission_required"),
+        "provider_configured": provider_configured, "provider_unavailable_reason": provider_unavailable_reason,
+        "supported_providers": ["deepseek"], "supported_models": ["deepseek-chat", "deepseek-reasoner"],
+        "provider": "deepseek", "fallback_allowed": False, "output_status": "drafting",
+        "automatic_review": False, "automatic_confirmation": False, "automatic_publication": False,
+        "attempts_per_workflow": 1, "failure_handling": "advisor_uses_existing_editor_or_assist",
+        "enable_requires": ["assigned_advisor", "content_and_site_edit", "keyword_view", "current_site_material", "active_site_keywords"],
+    }
+    return result
+
+
+@router.put("/workbench/service-plan")
+async def update_seo_service_plan(
+    req: SeoServicePlanUpdate,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    if ctx.user_id is None or not ctx.can_edit("seo.content") or not ctx.can_edit("seo.site"):
+        raise HTTPException(403, "服务计划必须由实名且已分配的站点顾问维护")
+    if not await _content_confirmation_schema_ready(session):
+        raise HTTPException(503, "顾问分配能力尚未完成数据库迁移")
+    assignment = await _site_advisor_assignment(
+        session, req.tenant_id, req.site_id, ctx.user_id, schema_ready=True, lock=True,
+    )
+    if assignment is None:
+        raise HTTPException(403, "只有当前站点已分配的顾问可以维护服务计划")
+    if req.monitoring_cycle_enabled is True and not ctx.can_edit("seo.keywords"):
+        raise HTTPException(403, "启用排名异常周期还需要关键词编辑权限")
+    site = await _seo_site_for_update(session, req.tenant_id, req.site_id)
+    current = _service_plan_payload(site)
+    if req.expected_revision != current["revision"]:
+        raise HTTPException(409, detail={
+            "code": "service_plan_version_conflict",
+            "message": "服务计划已被更新，请刷新后重试",
+            "current_revision": current["revision"],
+        })
+    settings = dict(site.site_settings or {})
+    settings["seo_service_plan"] = {
+        "revision": current["revision"] + 1,
+        "status": req.status,
+        "content_cycle_enabled": req.content_cycle_enabled if req.content_cycle_enabled is not None else current["content_cycle_enabled"],
+        "content_interval_days": req.content_interval_days if req.content_interval_days is not None else current["content_interval_days"],
+        "optimization_directions": req.optimization_directions,
+        "content_topics": req.content_topics,
+        "service_note": str(req.service_note or "").strip() or None,
+        "updated_by": ctx.user_id,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    for key in ("website_cycle_enabled", "website_interval_days", "website_max_pages",
+                "monitoring_cycle_enabled", "monitoring_interval_days", "report_cycle_enabled",
+                "content_ai_enabled", "content_ai_fact_ids", "content_ai_keyword_ids", "content_ai_provider", "content_ai_model"):
+        value = getattr(req, key)
+        settings["seo_service_plan"][key] = current[key] if value is None else value
+    new_plan = settings["seo_service_plan"]
+    new_plan["content_ai_authorized_by"] = current["content_ai_authorized_by"]
+    new_plan["content_ai_authorized_at"] = current["content_ai_authorized_at"]
+    if new_plan["content_ai_enabled"]:
+        if not ctx.can_view("seo.keywords"):
+            raise HTTPException(403, "配置自动草稿还需要关键词查看权限")
+        changed_sources = any(new_plan[key] != current[key] for key in ("content_ai_fact_ids", "content_ai_keyword_ids", "content_ai_provider", "content_ai_model"))
+        if changed_sources and req.content_ai_enabled is not True:
+            raise HTTPException(409, {"code": "ai_draft_explicit_enable_required"})
+        from app.seo_content_drafting import selected_material
+        await selected_material(session, site, new_plan)
+        if req.content_ai_enabled is True:
+            new_plan["content_ai_authorized_by"] = ctx.user_id
+            new_plan["content_ai_authorized_at"] = datetime.now(timezone.utc).isoformat()
+    site.site_settings = settings
+    await session.commit()
+    await session.refresh(site)
+    return _service_plan_payload(site)
+
+
+class ContentWorkflowTrigger(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    expected_revision: int = Field(ge=1)
+    request_id: UUID
+
+
+class ContentWorkflowAdvance(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    publication_id: PositiveInt | None = None
+
+
+async def _content_workflow_site(session, ctx, tenant_id, site_id):
+    from app.module_scope import require_seo_site_operational
+    from app.seo_content_workflow import schema_ready
+    ctx.ensure_tenant(tenant_id)
+    if ctx.user_id is None or not (ctx.can_edit("seo.content") and ctx.can_edit("seo.site")):
+        raise HTTPException(403, "需要实名站点顾问和内容、网站编辑权限")
+    await ensure_module_access(session, ctx, tenant_id, "seo")
+    if not await schema_ready(session):
+        raise HTTPException(503, {"code": "content_workflow_schema_unavailable"})
+    assignment = await _site_advisor_assignment(session, tenant_id, site_id, ctx.user_id, schema_ready=True, lock=True)
+    if assignment is None:
+        raise HTTPException(403, "只有当前站点已分配顾问可以操作执行链")
+    site = await _seo_site_for_update(session, tenant_id, site_id)
+    await require_seo_site_operational(session, tenant_id, site_id)
+    return site
+
+
+@router.post("/workbench/service-plan/run")
+async def trigger_content_workflow(
+    req: ContentWorkflowTrigger,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    from app.api.seo_cockpit import payload
+    from app.seo_content_workflow import ACTION, reserve_content_workflow
+    site = await _content_workflow_site(session, ctx, req.tenant_id, req.site_id)
+    key = "request:" + str(req.request_id)
+    existing = await session.scalar(select(SeoTask).where(
+        SeoTask.tenant_id == req.tenant_id, SeoTask.site_id == req.site_id,
+        SeoTask.action_type == ACTION, SeoTask.params["request_key"].as_string() == key,
+    ).limit(1))
+    if existing is not None:
+        return {"created": False, "task": payload(existing)}
+    if _service_plan_payload(site)["revision"] != req.expected_revision:
+        raise HTTPException(409, {"code": "service_plan_version_conflict"})
+    task, created = await reserve_content_workflow(session, site, request_key=key, actor_id=ctx.user_id)
+    await session.commit()
+    await session.refresh(task)
+    return {"created": created, "task": payload(task)}
+
+
+@router.post("/workbench/content-workflows/{task_id}/advance")
+async def advance_content_workflow_task(
+    task_id: int, req: ContentWorkflowAdvance, background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    from app.api.seo_cockpit import payload
+    from app.api.seo_page_captures import execute_page_capture
+    from app.seo_content_workflow import ACTION, advance_content_workflow
+    site = await _content_workflow_site(session, ctx, req.tenant_id, req.site_id)
+    task = await session.get(SeoTask, task_id, with_for_update=True)
+    if not task or task.tenant_id != req.tenant_id or task.site_id != req.site_id or task.action_type != ACTION:
+        raise HTTPException(404, "内容执行链不存在")
+    was_terminal = task.status in {"done", "cancelled"}
+    capture_id = await advance_content_workflow(session, site, task, publication_id=req.publication_id)
+    if not was_terminal and req.publication_id is not None and task.params.get("publication_id") == req.publication_id:
+        task.params = {**task.params, "publication_selected_by": ctx.user_id}
+    await session.commit()
+    await session.refresh(task)
+    if capture_id:
+        background_tasks.add_task(execute_page_capture, capture_id)
+    return payload(task)
+
+
+@router.put("/workbench/advisor-assignments")
+async def upsert_advisor_assignment(
+    req: AdvisorAssignmentRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    if not await _content_confirmation_schema_ready(session):
+        raise HTTPException(503, "顾问分配能力尚未完成数据库迁移")
+    if (
+        ctx.user_id is None
+        or not ctx.can_edit("seo.content")
+        or not ctx.can_edit("settings.accounts")
+    ):
+        raise HTTPException(403, "顾问分配必须由实名账号管理员操作")
+    await _seo_site(session, req.tenant_id, req.site_id)
+    advisor = await session.get(User, req.advisor_user_id)
+    if advisor is None or not advisor.is_active:
+        raise HTTPException(404, "顾问账号不存在或已停用")
+    if advisor.tenant_id is not None and advisor.tenant_id != req.tenant_id:
+        raise HTTPException(409, "该账号已绑定其他客户，不能分配到当前客户")
+    advisor_role = await session.get(Role, advisor.role_id)
+    advisor_permissions = dict(advisor_role.permissions or {}) if advisor_role else {}
+    if advisor_permissions.get("seo.content") != "edit":
+        raise HTTPException(409, "顾问账号必须由服务端角色授予 seo.content 编辑权限")
+    row = await session.scalar(
+        select(SeoSiteAdvisorAssignment)
+        .where(
+            SeoSiteAdvisorAssignment.tenant_id == req.tenant_id,
+            SeoSiteAdvisorAssignment.site_id == req.site_id,
+            SeoSiteAdvisorAssignment.advisor_user_id == req.advisor_user_id,
+        )
+        .with_for_update()
+    )
+    if row is None:
+        row = SeoSiteAdvisorAssignment(
+            tenant_id=req.tenant_id,
+            site_id=req.site_id,
+            advisor_user_id=req.advisor_user_id,
+            active=req.active,
+            assigned_by=ctx.user_id,
+        )
+        session.add(row)
+    else:
+        row.active = req.active
+        row.assigned_by = ctx.user_id
+        row.updated_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(row)
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "site_id": row.site_id,
+        "advisor_user_id": row.advisor_user_id,
+        "advisor_name": str(advisor.display_name or advisor.username),
+        "active": row.active,
+        "assigned_by": row.assigned_by,
+        "created_at": _database_iso(row.created_at),
+        "updated_at": _database_iso(row.updated_at),
     }
 
 
@@ -7221,6 +8155,239 @@ async def get_workbench_readiness(
     }
 
 
+def _service_phase_state(*, blockers: list[str], has_data: bool) -> str:
+    if blockers:
+        return "needs_attention" if has_data else "not_ready"
+    return "ready" if has_data else "no_data"
+
+
+@router.get("/workbench/service-status")
+async def get_workbench_service_status(
+    tenant_id: PositiveInt,
+    site_id: PositiveInt,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    """Map stored SEO facts to A01-A07 phases without starting any work."""
+    ctx.ensure_tenant(tenant_id)
+    if not (ctx.can_view("seo.content") and ctx.can_view("seo.site")):
+        raise HTTPException(403, "当前账号需要同时具有 SEO 内容和页面查看权限")
+    await ensure_module_access(session, ctx, tenant_id, "seo")
+    await _tenant(session, tenant_id)
+    site = await _seo_site(session, tenant_id, site_id)
+
+    brand_total, brand_latest = (await session.execute(select(
+        func.count(), func.max(SeoBrandAsset.updated_at),
+    ).where(
+        SeoBrandAsset.tenant_id == tenant_id,
+        SeoBrandAsset.site_id == site_id,
+        SeoBrandAsset.status == "active",
+    ))).one()
+    keyword_total, keyword_latest = (await session.execute(select(
+        func.count(), func.max(SeoKeywordAsset.updated_at),
+    ).where(
+        SeoKeywordAsset.tenant_id == tenant_id,
+        SeoKeywordAsset.site_id == site_id,
+        SeoKeywordAsset.status == "active",
+    ))).one()
+    rank_total, rank_latest = (await session.execute(select(
+        func.count(), func.max(SeoRankSnapshot.checked_at),
+    ).where(
+        SeoRankSnapshot.tenant_id == tenant_id,
+        SeoRankSnapshot.site_id == site_id,
+        SeoRankSnapshot.subject_type == "own",
+    ))).one()
+    keyword_rank_rows = (await session.execute(select(
+        SeoKeywordAsset.id,
+        func.max(SeoRankSnapshot.checked_at),
+    ).outerjoin(SeoRankSnapshot, and_(
+        SeoRankSnapshot.keyword_id == SeoKeywordAsset.id,
+        SeoRankSnapshot.tenant_id == tenant_id,
+        SeoRankSnapshot.site_id == site_id,
+        SeoRankSnapshot.subject_type == "own",
+    )).where(
+        SeoKeywordAsset.tenant_id == tenant_id,
+        SeoKeywordAsset.site_id == site_id,
+        SeoKeywordAsset.status == "active",
+    ).group_by(SeoKeywordAsset.id))).all()
+    page_total, page_checked, page_with_issues, page_latest = (await session.execute(select(
+        func.count(),
+        func.count().filter(SeoSitePage.last_checked_at.is_not(None)),
+        func.count().filter(func.coalesce(func.jsonb_array_length(SeoSitePage.issue_codes), 0) > 0),
+        func.max(SeoSitePage.last_checked_at),
+    ).where(
+        SeoSitePage.tenant_id == tenant_id,
+        SeoSitePage.site_id == site_id,
+    ))).one()
+    publication_total, published_total, missing_url = (await session.execute(select(
+        func.count(),
+        func.count().filter(SeoContentPublication.status == "published"),
+        func.count().filter(and_(
+            SeoContentPublication.status == "published",
+            SeoContentPublication.page_url.is_(None),
+        )),
+    ).join(SeoContentAsset, and_(
+        SeoContentAsset.id == SeoContentPublication.content_asset_id,
+        SeoContentAsset.tenant_id == SeoContentPublication.tenant_id,
+    )).where(
+        SeoContentPublication.tenant_id == tenant_id,
+        SeoContentAsset.site_id == site_id,
+    ))).one()
+    capture_rows = (await session.execute(select(
+        SeoPageCapture.status,
+        func.count(),
+        func.max(SeoPageCapture.captured_at),
+        func.count(func.distinct(SeoPageCapture.relation_id)),
+    ).where(
+        SeoPageCapture.tenant_id == tenant_id,
+        SeoPageCapture.site_id == site_id,
+        SeoPageCapture.relation_type == "publication",
+    ).group_by(SeoPageCapture.status))).all()
+    latest_metrics = list((await _latest_site_metrics(session, tenant_id, site_id)).values())
+    latest_crawl = await session.scalar(select(SeoCrawlRun).where(
+        SeoCrawlRun.tenant_id == tenant_id,
+        SeoCrawlRun.site_id == site_id,
+    ).order_by(SeoCrawlRun.started_at.desc(), SeoCrawlRun.id.desc()).limit(1))
+    automation_runs = list(await session.scalars(select(SeoAutomationRun).where(
+        SeoAutomationRun.tenant_id == tenant_id,
+        or_(SeoAutomationRun.site_id == site_id, SeoAutomationRun.site_id.is_(None)),
+    ).order_by(SeoAutomationRun.started_at.desc(), SeoAutomationRun.id.desc()).limit(20)))
+    latest_by_job: dict[str, SeoAutomationRun] = {}
+    for run in automation_runs:
+        latest_by_job.setdefault(run.job_type, run)
+
+    settings = site.site_settings if isinstance(site.site_settings, dict) else {}
+    service_plan = settings.get("seo_service_plan")
+    service_plan = service_plan if isinstance(service_plan, dict) else {}
+    directions = service_plan.get("optimization_directions")
+    directions = directions if isinstance(directions, list) else []
+    a01_blockers = []
+    if not brand_total:
+        a01_blockers.append("brand_profile_missing")
+    if not keyword_total:
+        a01_blockers.append("target_keywords_missing")
+    if not directions:
+        a01_blockers.append("optimization_directions_missing")
+    a02_blockers = []
+    if not page_total:
+        a02_blockers.append("page_inventory_missing")
+    elif int(page_checked or 0) < int(page_total or 0):
+        a02_blockers.append("pages_waiting_for_check")
+    if latest_crawl is None:
+        a02_blockers.append("crawl_run_missing")
+    elif latest_crawl.status in {"failed", "partial"}:
+        a02_blockers.append("latest_crawl_incomplete")
+    a03_blockers = []
+    if not keyword_total:
+        a03_blockers.append("target_keywords_missing")
+    if not rank_total:
+        a03_blockers.append("ranking_observations_missing")
+    rank_stale_before = datetime.utcnow() - timedelta(
+        hours=seo_rank_freshness_hours(get_settings(), "baidu")
+    )
+    missing_rank_keyword_ids = [int(row[0]) for row in keyword_rank_rows if row[1] is None]
+    stale_rank_keyword_ids = [
+        int(row[0]) for row in keyword_rank_rows
+        if row[1] is not None
+        and (row[1].replace(tzinfo=None) if row[1].tzinfo is not None else row[1]) < rank_stale_before
+    ]
+    if missing_rank_keyword_ids and "ranking_observations_missing" not in a03_blockers:
+        a03_blockers.append("ranking_observations_missing")
+    if stale_rank_keyword_ids:
+        a03_blockers.append("ranking_observations_stale")
+    ranking_run = latest_by_job.get("ranking")
+    if ranking_run is None:
+        a03_blockers.append("ranking_run_missing")
+    elif ranking_run.status in {"failed", "partial"}:
+        a03_blockers.append("latest_ranking_run_incomplete")
+    capture_counts, capture_total, capture_latest = _status_readiness(capture_rows)
+    verified_publication_total = sum(
+        int(row[3] or 0) for row in capture_rows if str(row[0]) == "succeeded"
+    )
+    metric_counts: dict[str, int] = defaultdict(int)
+    for metric in latest_metrics:
+        metric_counts[metric.status] += 1
+    metric_total = len(latest_metrics)
+    metric_latest = _workbench_latest([metric.observed_at for metric in latest_metrics])
+    a05_blockers = []
+    if int(missing_url or 0):
+        a05_blockers.append("published_url_missing")
+    if int(published_total or 0) > verified_publication_total:
+        a05_blockers.append("publication_checks_incomplete")
+    a06_blockers = [] if metric_total else ["metric_observations_missing"]
+    available_metric_total = int(metric_counts.get("available", 0))
+    if metric_total and available_metric_total < metric_total:
+        a06_blockers.append("latest_metric_observations_incomplete")
+    failed_runs = [run for run in automation_runs if run.status in {"failed", "partial"}]
+    a07_blockers = ["automation_run_needs_attention"] if failed_runs else []
+    if service_plan.get("status") == "paused":
+        a07_blockers.append("service_plan_paused")
+    read_at = datetime.now(timezone.utc)
+
+    return {
+        "tenant_id": tenant_id,
+        "site_id": site_id,
+        "read_at": _iso(read_at),
+        "phases": {
+            "SEO-A01": {
+                "state": _service_phase_state(blockers=a01_blockers, has_data=bool(brand_total or keyword_total or directions)),
+                "blockers": a01_blockers,
+                "facts": {"active_brand_assets": int(brand_total or 0), "active_keywords": int(keyword_total or 0), "optimization_direction_count": len(directions)},
+                "as_of": _database_iso(_workbench_latest([brand_latest, keyword_latest, site.updated_at])),
+            },
+            "SEO-A02": {
+                "state": _service_phase_state(blockers=a02_blockers, has_data=bool(page_total or latest_crawl)),
+                "blockers": a02_blockers,
+                "facts": {"pages": int(page_total or 0), "checked_pages": int(page_checked or 0), "pages_with_issues": int(page_with_issues or 0), "latest_crawl": None if latest_crawl is None else _crawl_run_payload(latest_crawl)},
+                "as_of": _iso(page_latest),
+            },
+            "SEO-A03": {
+                "state": _service_phase_state(blockers=a03_blockers, has_data=bool(keyword_total or rank_total)),
+                "blockers": a03_blockers,
+                "facts": {"active_keywords": int(keyword_total or 0), "rank_observations": int(rank_total or 0), "keywords_without_observation": len(missing_rank_keyword_ids), "keywords_with_stale_observation": len(stale_rank_keyword_ids), "missing_keyword_ids": missing_rank_keyword_ids[:100], "stale_keyword_ids": stale_rank_keyword_ids[:100], "coverage_truncated": len(missing_rank_keyword_ids) > 100 or len(stale_rank_keyword_ids) > 100, "latest_ranking_run": None if ranking_run is None else _automation_run_payload(ranking_run)},
+                "as_of": _iso(rank_latest),
+            },
+            "SEO-A05": {
+                "state": _service_phase_state(blockers=a05_blockers, has_data=bool(publication_total)),
+                "blockers": a05_blockers,
+                "facts": {"publications": int(publication_total or 0), "published": int(published_total or 0), "published_url_missing": int(missing_url or 0), "publication_capture_total": capture_total, "verified_publications": verified_publication_total, "capture_status_counts": capture_counts},
+                "as_of": _iso(capture_latest),
+            },
+            "SEO-A06": {
+                "state": _service_phase_state(blockers=a06_blockers, has_data=bool(metric_total)),
+                "blockers": a06_blockers,
+                "facts": {"latest_metric_series": metric_total, "available_metric_series": available_metric_total, "status_counts": dict(metric_counts), "gsc_configured": bool(_gsc_site_config(site).get("enabled")), "monthly_report_endpoint": "/api/v1/seo/site/reports/monthly"},
+                "as_of": _iso(metric_latest),
+            },
+            "SEO-A07": {
+                "state": _service_phase_state(blockers=a07_blockers, has_data=bool(automation_runs)),
+                "blockers": a07_blockers,
+                "facts": {"service_plan_status": service_plan.get("status") or "active", "recent_run_count": len(automation_runs), "runs_needing_attention": len(failed_runs), "latest_by_job": {key: _automation_run_payload(value) for key, value in latest_by_job.items()}},
+                "as_of": _iso(_workbench_latest([run.started_at for run in automation_runs])),
+            },
+        },
+        "evidence_endpoints": {
+            "content_delivery_template": "/api/v1/seo/workbench/content-assets/{content_id}/delivery",
+            "brand_assets": "/api/v1/seo/rank-serp/brand-assets",
+            "keywords": "/api/v1/seo/keywords",
+            "pages": "/api/v1/seo/site-pages",
+            "crawl_runs": "/api/v1/seo/site/crawl-runs",
+            "automation_runs": "/api/v1/seo/automation-runs",
+            "task_ledger": "/api/v1/seo/tasks",
+            "publication_attempts_template": "/api/v1/seo/content-distribution/publications/{publication_id}/attempts",
+            "publication_checks": "/api/v1/seo/workbench/publication-page-evidence",
+            "metrics": "/api/v1/seo/overview/metric-snapshots/latest",
+        },
+        "semantics": {
+            "phase_state": "fact_readiness_only;not_task_completion",
+            "content_confirmation": "use_content_delivery_confirmation_status",
+            "task_completion": "use_task_status_done_with_server_verified_completion_evidence",
+            "unknown_fields": "return_unknown_or_null;never_infer_completion",
+        },
+        "read_only": True,
+    }
+
+
 @router.get("/content-distribution/publications")
 async def list_content_publications(
     tenant_id: int,
@@ -7259,14 +8426,14 @@ async def list_content_publications(
     contents = {
         row.id: row
         for row in await session.scalars(
-            select(SeoContentAsset).where(SeoContentAsset.id.in_(content_ids))
+            select(SeoContentAsset).where(SeoContentAsset.id.in_(content_ids), SeoContentAsset.tenant_id == tenant_id)
         )
     } if content_ids else {}
     connections = {
         row.id: row
         for row in await session.scalars(
             select(SeoDistributionConnection).where(
-                SeoDistributionConnection.id.in_(connection_ids)
+                SeoDistributionConnection.id.in_(connection_ids), SeoDistributionConnection.tenant_id == tenant_id
             )
         )
     } if connection_ids else {}
@@ -7278,10 +8445,40 @@ async def list_content_publications(
         )
         for row in rows
     ]
+    for row, item in zip(rows, items):
+        content = contents.get(row.content_asset_id)
+        reason = await _manual_complete_denial(session, ctx, row, content)
+        item["allowed_actions"] = {"complete": reason is None}
+        item["action_denial_reasons"] = {"complete": reason}
+        item["action_requirements"] = {"complete": {
+            "endpoint": f"/api/v1/seo/content-distribution/publications/{row.id}/complete",
+            "method": "POST", "source_version": row.source_version,
+            "page_url_required": True, "meaning": "record_existing_publication_only",
+        }}
     counts: dict[str, int] = defaultdict(int)
     for row in rows:
         counts[row.status] += 1
     return {"items": items, "total": len(items), "status_counts": dict(counts)}
+
+
+async def _manual_complete_denial(session, ctx, row, content):
+    if not ctx.can_edit("seo.content"):
+        return "content_edit_permission_required"
+    if not content or content.tenant_id != row.tenant_id:
+        return "content_missing_or_out_of_scope"
+    if (content.version_count or 1) != row.source_version:
+        return "content_version_conflict"
+    if row.status not in {"manual_required", "failed", "preparing"}:
+        return "publication_status_not_completable"
+    if content.content_type in {"qa", "faq"}:
+        from app.models.seo_qa import SeoQaAnswer
+        if await session.scalar(select(SeoQaAnswer.id).where(SeoQaAnswer.content_id == content.id)) is not None:
+            return "question_distribution_required"
+    if await _content_confirmation_schema_ready(session):
+        state = _content_confirmation_status(content, await _latest_content_confirmation(session, content))
+        if state != "approved":
+            return "content_confirmation_" + state
+    return None
 
 
 @router.post("/content-distribution/publications/manual")
@@ -7289,13 +8486,22 @@ async def create_manual_publication(
     req: DistributionManualPublicationCreate,
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_scoped_auth),
+    background_tasks: BackgroundTasks = None,
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
+    if not ctx.can_edit("seo.content"):
+        raise HTTPException(403, {"code": "content_edit_permission_required"})
+    if req.source_version is None or req.payload_hash is None:
+        raise HTTPException(428, {"code": "content_version_precondition_required",
+            "message": "请刷新并核对准确稿件后，携带 source_version 和 payload_hash 登记发布结果"})
     await _seo_site(session, req.tenant_id, req.site_id)
     content = await _distribution_content(
-        session, req.tenant_id, req.content_id, req.site_id
+        session, req.tenant_id, req.content_id, req.site_id, lock=True,
     )
+    if req.source_version != (content.version_count or 1) or req.payload_hash != _content_confirmation_hash(content):
+        raise _content_version_conflict(content)
     _require_content_ready(content)
+    await _require_active_content_confirmation(session, content)
     try:
         page_url, host = normalize_publication_url(req.page_url)
     except ValueError as exc:
@@ -7309,7 +8515,7 @@ async def create_manual_publication(
     )
     if existing:
         raise HTTPException(409, "该文章的发布链接已经登记")
-    published_at = req.published_at or datetime.utcnow()
+    published_at = _publication_time(req.published_at)
     row = SeoContentPublication(
         tenant_id=req.tenant_id,
         content_asset_id=req.content_id,
@@ -7346,7 +8552,11 @@ async def create_manual_publication(
             raise HTTPException(409, "该文章的发布链接已经登记，请刷新后核对") from exc
         raise
     await session.refresh(row)
-    return _publication_payload(row, content=content)
+    result = _publication_payload(row, content=content)
+    result["page_verification"] = await _queue_published_page_verification(
+        session, row, content, background_tasks,
+    )
+    return result
 
 
 @router.post("/content-distribution/adapt")
@@ -7810,6 +9020,17 @@ async def preflight_content_distribution(
         )
         for content_id in req.content_ids
     ]
+    confirmation_gate_enabled = await _content_confirmation_schema_ready(session)
+    confirmation_statuses = (
+        {
+            content.id: _content_confirmation_status(
+                content, await _latest_content_confirmation(session, content)
+            )
+            for content in contents
+        }
+        if confirmation_gate_enabled
+        else {content.id: "unavailable" for content in contents}
+    )
     connections = [
         await _distribution_connection(session, req.tenant_id, connection_id)
         for connection_id in req.connection_ids
@@ -7835,6 +9056,8 @@ async def preflight_content_distribution(
             warnings: list[str] = []
             if content.status not in {"ready", "published"}:
                 errors.append("内容主稿尚未审核通过")
+            if confirmation_gate_enabled and confirmation_statuses[content.id] != "approved":
+                errors.append("当前准确稿件版本尚未获得客户确认或顾问代确认")
             if content.content_type == "landing" and content.source_page_id is None:
                 errors.append("落地页内容尚未绑定承接页")
             body = content.humanized_content or content.draft or ""
@@ -7924,6 +9147,7 @@ async def publish_content_distribution(
     req: DistributionPublishRequest,
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_scoped_auth),
+    background_tasks: BackgroundTasks = None,
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
@@ -7973,6 +9197,7 @@ async def publish_content_distribution(
     requested_version = saved_variant.source_version if saved_variant else req.source_version
     if requested_version is not None and requested_version != source_version:
         raise HTTPException(409, "文章已产生新版本，请重新生成平台专属稿并预检")
+    await _require_active_content_confirmation(session, content)
     customized = bool(saved_variant) or req.adapted_title is not None or req.adapted_content is not None
     variant_title = saved_variant.title if saved_variant else (req.adapted_title or content.title)
     variant_body = saved_variant.content if saved_variant else (
@@ -8122,7 +9347,11 @@ async def publish_content_distribution(
     attempt.completed_at = datetime.utcnow()
     await session.commit()
     await session.refresh(row)
-    return _publication_payload(row, content=content, connection=connection)
+    result = _publication_payload(row, content=content, connection=connection)
+    result["page_verification"] = await _queue_published_page_verification(
+        session, row, content, background_tasks,
+    )
+    return result
 
 
 @router.post("/content-distribution/publications/{publication_id}/complete")
@@ -8131,8 +9360,11 @@ async def complete_manual_publication(
     req: DistributionManualComplete,
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_scoped_auth),
+    background_tasks: BackgroundTasks = None,
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
+    if not ctx.can_edit("seo.content"):
+        raise HTTPException(403, {"code": "content_edit_permission_required"})
     await _seo_site(session, req.tenant_id, req.site_id)
     row = await session.get(
         SeoContentPublication, publication_id, with_for_update=True
@@ -8142,12 +9374,19 @@ async def complete_manual_publication(
     content_asset_id = int(row.content_asset_id)
     content = await _distribution_content(
         session, req.tenant_id, content_asset_id, req.site_id,
-        require_operational=False,
+        require_operational=False, lock=True,
     )
+    if (content.version_count or 1) != row.source_version:
+        raise HTTPException(409, "稿件版本已变化，不能将结果回填到旧版本")
     if req.source_version is not None and row.source_version != req.source_version:
         raise HTTPException(409, "发布任务版本已变化，请重新导出任务并核对结果")
+    await _require_active_content_confirmation(session, content)
     if row.status == "published" and row.page_url == req.page_url.strip():
-        return _publication_payload(row, content=content)
+        result = _publication_payload(row, content=content)
+        result["page_verification"] = await _queue_published_page_verification(
+            session, row, content, background_tasks,
+        )
+        return result
     if row.status not in {"manual_required", "failed", "preparing"}:
         raise HTTPException(409, "当前任务状态不能人工完成")
     try:
@@ -8166,7 +9405,7 @@ async def complete_manual_publication(
         raise HTTPException(409, "该文章的发布链接已经登记")
     row.page_url = page_url
     row.status = "published"
-    row.published_at = req.published_at or datetime.utcnow()
+    row.published_at = _publication_time(req.published_at)
     row.last_error = None
     content.status = "published"
     content.published_at = content.published_at or row.published_at
@@ -8199,7 +9438,14 @@ async def complete_manual_publication(
         if winner is not None:
             raise HTTPException(409, "该文章的发布链接已经登记，请刷新后核对") from exc
         raise
-    return _publication_payload(row, content=content)
+    # SQL-expression onupdate expires updated_at even with expire_on_commit=False.
+    # Load it explicitly before the synchronous response serializer reads it.
+    await session.refresh(row)
+    result = _publication_payload(row, content=content)
+    result["page_verification"] = await _queue_published_page_verification(
+        session, row, content, background_tasks,
+    )
+    return result
 
 
 @router.post("/content-distribution/publications/{publication_id}/sync")
@@ -8209,6 +9455,7 @@ async def sync_content_publication(
     site_id: int | None = None,
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_scoped_auth),
+    background_tasks: BackgroundTasks = None,
 ) -> dict[str, Any]:
     ctx.ensure_tenant(tenant_id)
     await _seo_site(session, tenant_id, site_id)
@@ -8283,7 +9530,11 @@ async def sync_content_publication(
             content.page_url = row.page_url
         await _mark_distribution_variant_published(session, row)
     await session.commit()
-    return _publication_payload(row, content=content, connection=connection)
+    result = _publication_payload(row, content=content, connection=connection)
+    result["page_verification"] = await _queue_published_page_verification(
+        session, row, content, background_tasks,
+    )
+    return result
 
 
 @router.post("/content-distribution/publications/{publication_id}/retry")
@@ -8292,6 +9543,7 @@ async def retry_content_publication(
     req: DistributionRetryRequest,
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_scoped_auth),
+    background_tasks: BackgroundTasks = None,
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
@@ -8317,6 +9569,35 @@ async def retry_content_publication(
         raise HTTPException(409, "该任务不支持自动重试，请人工完成发布")
     if (content.version_count or 1) != row.source_version:
         raise HTTPException(409, "文章已产生新版本，请重新预检并创建发布任务")
+    await _require_active_content_confirmation(session, content)
+    attempt_result = await session.execute(
+        select(SeoPublishAttempt)
+        .where(
+            SeoPublishAttempt.tenant_id == req.tenant_id,
+            SeoPublishAttempt.publication_id == row.id,
+        )
+        .order_by(SeoPublishAttempt.started_at.desc(), SeoPublishAttempt.id.desc())
+        .limit(1)
+    )
+    attempt_scalars = attempt_result.scalars()
+    if inspect.isawaitable(attempt_scalars):
+        attempt_scalars = await attempt_scalars
+    latest_attempt = attempt_scalars.first()
+    if inspect.isawaitable(latest_attempt):
+        latest_attempt = await latest_attempt
+    if not isinstance(latest_attempt, SeoPublishAttempt):
+        latest_attempt = None
+    if (
+        _publication_attempt_requires_manual_check(latest_attempt)
+        and req.manual_check_outcome != "not_published"
+    ):
+        raise HTTPException(
+            409,
+            detail={
+                "code": "publication_outcome_unknown",
+                "message": "上次发布结果未知；请先在平台后台确认未发布，再明确提交 not_published",
+            },
+        )
     connection = await _distribution_connection(
         session, req.tenant_id, row.connection_id
     )
@@ -8415,7 +9696,11 @@ async def retry_content_publication(
     attempt.error = remote.error
     attempt.completed_at = datetime.utcnow()
     await session.commit()
-    return _publication_payload(row, content=content, connection=connection)
+    result = _publication_payload(row, content=content, connection=connection)
+    result["page_verification"] = await _queue_published_page_verification(
+        session, row, content, background_tasks,
+    )
+    return result
 
 
 class DistributionMaterialsRequest(BaseModel):
@@ -8440,6 +9725,7 @@ async def download_publication_materials(publication_id: int, req: DistributionM
     )
     if req.source_version != row.source_version or (content.version_count or 1) != row.source_version:
         raise HTTPException(409, "稿件版本已变化，请重新生成分发任务")
+    await _require_active_content_confirmation(session, content)
     try:
         data, manifest = await build_publication_package(row.adapted_title or content.title, row.adapted_content or "", row.id, row.source_version)
     except ValueError as exc:
@@ -8504,6 +9790,8 @@ async def submit_content_review(
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
     await _require_resource_operational_site(session, tenant_id, row.site_id)
+    if req.version_count is not None and req.version_count != (row.version_count or 1):
+        raise _content_version_conflict(row)
     if row.status not in {"planned", "drafting"}:
         raise HTTPException(409, "只有草稿可以提交审核")
     keyword_ids = _selected_keyword_ids(row.keyword_ids, row.keyword_id)
@@ -8551,6 +9839,8 @@ async def decide_content_review(
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
     await _require_resource_operational_site(session, tenant_id, row.site_id)
+    if req.version_count is not None and req.version_count != (row.version_count or 1):
+        raise _content_version_conflict(row)
     if row.status != "review":
         raise HTTPException(409, "只有待审核内容可以审核")
     note = (req.note or "").strip()
@@ -8672,6 +9962,9 @@ async def update_content_asset(
         raise HTTPException(409, "待审核、待发布或已发布内容不能直接编辑")
     if row.status in protected_statuses and requested_status != row.status:
         raise HTTPException(409, "请通过审核或发布流程变更受控内容状态")
+    if values and expected_version is None and await _content_confirmation_schema_ready(session):
+        raise HTTPException(428, {"code": "content_version_precondition_required",
+            "message": "保存草稿必须携带读取时的 version_count；请刷新稿件后重试"})
     if "draft" in values:
         values["draft"] = _sanitize_content_html(values.get("draft"))
     if "humanized_content" in values:

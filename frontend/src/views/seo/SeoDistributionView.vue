@@ -159,7 +159,7 @@ const editingConnection = computed(() => connections.value.find(item => item.id 
 
 const manualDialog = ref(false)
 const manualSaving = ref(false)
-const manualForm = reactive({ content_id: null, platform_name: '', page_url: '' })
+const manualForm = reactive({ content_id: null, platform_name: '', page_url: '', source_version: null, payload_hash: null, scope: '' })
 
 const batchDialog = ref(false)
 const batchStep = ref(0)
@@ -445,27 +445,41 @@ async function toggleConnection(connection, enabled) {
 
 function openManual(item = null) {
   Object.assign(manualForm, { content_id: item?.id || null, platform_name: '', page_url: '' })
+  selectManualContent(manualForm.content_id)
   manualDialog.value = true
+}
+
+function selectManualContent(contentId) {
+  const content = contents.value.find(item => item.id === contentId)
+  Object.assign(manualForm, { source_version: content?.version_count || null,
+    payload_hash: content?.payload_hash || null, scope: currentResultScope() })
 }
 
 async function saveManual() {
   if (!manualForm.content_id) return ElMessage.warning('请选择内容资产')
   if (!manualForm.platform_name.trim()) return ElMessage.warning('请填写发布平台')
   if (!manualForm.page_url.trim()) return ElMessage.warning('请填写发布链接')
+  if (manualForm.scope !== currentResultScope() || !manualForm.source_version || !manualForm.payload_hash) {
+    return ElMessage.warning('客户、站点或稿件版本信息已变化，请刷新后重新选择稿件')
+  }
+  const requested = manualForm.scope
   manualSaving.value = true
   try {
     await createSeoManualPublication({
       tenant_id: currentTenantId.value,
       site_id: siteId.value,
       content_id: manualForm.content_id,
+      source_version: manualForm.source_version,
+      payload_hash: manualForm.payload_hash,
       platform_name: manualForm.platform_name.trim(),
       page_url: manualForm.page_url.trim(),
     })
+    if (requested !== currentResultScope()) return
     manualDialog.value = false
     ElMessage.success('发布记录已登记')
     await load()
   } catch (e) {
-    ElMessage.error(e.message)
+    if (requested === currentResultScope()) ElMessage.error(e.message)
   } finally {
     manualSaving.value = false
   }
@@ -1236,7 +1250,7 @@ onMounted(loadSites)
     </el-dialog>
 
     <el-dialog v-model="manualDialog" title="登记已发布链接" width="620px">
-      <el-form label-position="top"><el-form-item label="内容资产" required><el-select v-model="manualForm.content_id" filterable><el-option v-for="item in contents" :key="item.id" :label="item.title" :value="item.id" /></el-select></el-form-item><el-form-item label="发布平台" required><el-input v-model="manualForm.platform_name" placeholder="例如：知乎、百家号、行业媒体" /></el-form-item><el-form-item label="发布链接" required><el-input v-model="manualForm.page_url" placeholder="https://example.com/article" /></el-form-item></el-form>
+      <el-form label-position="top"><el-form-item label="内容资产" required><el-select v-model="manualForm.content_id" filterable @change="selectManualContent"><el-option v-for="item in contents" :key="item.id" :label="item.title" :value="item.id" /></el-select></el-form-item><el-form-item label="发布平台" required><el-input v-model="manualForm.platform_name" placeholder="例如：知乎、百家号、行业媒体" /></el-form-item><el-form-item label="发布链接" required><el-input v-model="manualForm.page_url" placeholder="https://example.com/article" /></el-form-item></el-form>
       <template #footer><el-button @click="manualDialog = false">取消</el-button><el-button type="primary" :loading="manualSaving" @click="saveManual">保存发布记录</el-button></template>
     </el-dialog>
 

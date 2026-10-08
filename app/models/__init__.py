@@ -91,12 +91,14 @@ from app.models.seo import (
     SeoCompetitor,
     SeoCompetitorEvent,
     SeoContentAsset,
+    SeoContentConfirmation,
     SeoContentReviewEvent,
     SeoInternalLink,
     SeoImageAltReview,
     SeoKeywordAsset,
     SeoRankSnapshot,
     SeoSerpResult,
+    SeoSiteAdvisorAssignment,
     SeoSitePage,
 )
 from app.models.module_workspace import GeoProject, SeoSite, TenantModule
@@ -104,6 +106,8 @@ from app.models.seo_page_capture import SeoPageCapture
 from app.models.seo_site_analytics import SeoSiteAnalyticsSource, SeoSiteAnalyticsMonthly, SeoSiteExportTemplate
 from app.models.seo_monthly_report import SeoSiteReportTemplate
 from app.models.seo_tdk_review import SeoTdkReviewBatch, SeoSiteTdkReviewTemplate
+
+from .seo_messages import SeoContentConversation, SeoConversationParticipant, SeoContentMessage
 
 __all__ = [
     "Suggestion",
@@ -200,7 +204,9 @@ __all__ = [
     "SeoSite",
     "GeoProject",
     "SeoContentAsset",
+    "SeoContentConfirmation",
     "SeoContentReviewEvent",
+    "SeoSiteAdvisorAssignment",
     "SeoInternalLink",
     "SeoImageAltReview",
     "SeoBacklink",

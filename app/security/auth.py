@@ -181,8 +181,22 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     if p in {
         "/api/v1/seo/workbench/publication-page-evidence",
         "/api/v1/seo/workbench/readiness",
+        "/api/v1/seo/workbench/service-status",
+        "/api/v1/seo/workbench/service-plan",
     }:
         return {"seo.content", "seo.site"}, False
+    if p.startswith("/api/v1/seo/workbench/executions") or p.startswith("/api/v1/seo/workbench/service-cycles"):
+        return {"seo.content", "seo.site"}, edit
+    if p.startswith("/api/v1/seo/workbench/service-plan/") or p.startswith("/api/v1/seo/workbench/content-workflows/"):
+        return {"seo.content", "seo.site"}, True
+    if p.startswith("/api/v1/seo/workbench/content-assets"):
+        # Customer confirmation is intentionally available to a tenant-bound
+        # authenticated viewer; the endpoint validates direct-vs-proxy actor
+        # evidence and exact content version server-side.
+        return {"seo.content"}, False
+    if p.startswith("/api/v1/seo/workbench/advisor-assignments"):
+        # The endpoint enforces seo.content + settings.accounts as an AND rule.
+        return {"seo.content", "settings.accounts"}, False
     if p.startswith("/api/v1/seo/overview") or p.startswith("/api/v1/seo/traffic"):
         return {"seo.dashboard"}, edit
     if p.startswith("/api/v1/seo/alerts"):

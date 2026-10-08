@@ -23,6 +23,7 @@ from app.models.seo import (
 )
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_automation_runs import finish_automation_run, mark_automation_run_running
+from app.seo_service_plan import service_plan_is_paused
 from app.seo_competitor import (
     COMPETITOR_MANUAL_COOLDOWN_SECONDS,
     CompetitorCollectionError,
@@ -122,6 +123,8 @@ async def reserve_manual_automation_run(
         raise ManualAutomationError("site_not_found", "SEO 网站不存在", 404)
     if site.status != "active":
         raise ManualAutomationError("site_inactive", "SEO 网站已停用，不能运行采集")
+    if service_plan_is_paused(site):
+        raise ManualAutomationError("service_plan_paused", "SEO 服务计划已暂停，不能启动新的采集")
     planned = await manual_target_count(session, tenant_id, site_id, job_type)
     if planned == 0:
         raise ManualAutomationError(

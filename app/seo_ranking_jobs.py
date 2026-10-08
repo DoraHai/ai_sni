@@ -17,6 +17,7 @@ from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_automation_runs import finish_automation_run, start_automation_run
 from app.seo_rank_limits import SEO_RANK_COLLECTION_LOCK_PATH
 from app.seo_serp import chinaz_rank_status, dataforseo_status
+from app.seo_service_plan import automation_site_not_paused_clause
 
 logger = logging.getLogger(__name__)
 
@@ -420,6 +421,7 @@ async def collect_daily_seo_rankings() -> None:
                         SeoKeywordAsset.status == "active",
                         SeoKeywordAsset.site_id.is_not(None),
                         SeoSite.status == "active",
+                        automation_site_not_paused_clause(),
                     )
                     .distinct()
                     .order_by(SeoKeywordAsset.tenant_id)
@@ -447,6 +449,7 @@ async def collect_daily_seo_rankings() -> None:
                             SeoKeywordAsset.status == "active",
                             SeoKeywordAsset.site_id.is_not(None),
                             SeoSite.status == "active",
+                            automation_site_not_paused_clause(),
                         )
                         .order_by(SeoKeywordAsset.priority, SeoKeywordAsset.id)
                         .limit(max_keywords + 1)

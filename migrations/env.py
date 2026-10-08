@@ -1,14 +1,16 @@
 import asyncio
+import os
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import pool
-from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Connection, make_url
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.config import get_settings
 from app.database import Base
 from app import models  # noqa: F401  确保所有模型被注册到 Base.metadata
+from migrations.session_timeouts import session_timeouts, verify_session_timeouts
 
 config = context.config
 
@@ -26,6 +28,8 @@ target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
+    if session_timeouts(os.environ) is not None:
+        raise ValueError("Session timeout overrides require an online asyncpg connection; offline SQL cannot verify them")
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -37,21 +41,35 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection: Connection) -> None:
+def do_run_migrations(connection: Connection, timeouts=None) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
+        if timeouts is not None:
+            # Keep this SELECT inside Alembic's transaction. Checking before
+            # configure/begin would autobegin an unowned transaction and could
+            # leave successful DDL rolled back when the connection closes.
+            verify_session_timeouts(connection, timeouts)
         context.run_migrations()
 
 
 async def run_async_migrations() -> None:
+    timeouts = session_timeouts(os.environ)
+    options = {}
+    if timeouts is not None:
+        if make_url(config.get_main_option("sqlalchemy.url")).drivername != "postgresql+asyncpg":
+            raise ValueError("Session timeout overrides require postgresql+asyncpg")
+        options["connect_args"] = {"server_settings": timeouts}
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        **options,
     )
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-    await connectable.dispose()
+    try:
+        async with connectable.connect() as connection:
+            await connection.run_sync(do_run_migrations, timeouts)
+    finally:
+        await connectable.dispose()
 
 
 def run_migrations_online() -> None:
