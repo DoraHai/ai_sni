@@ -47,9 +47,10 @@ def test_candidate_is_reviewed_base_plus_independent_customer_locations():
     assert "location = /customer-workbench/" in added
     assert "location ^~ /customer-workbench/" in added
     assert "return 404;" in added
-    assert "alias /opt/customer-workbench/current/index.html;" in added
+    assert "root /opt/customer-workbench/current;" in added
+    assert "try_files /index.html =404;" in added
     assert hashlib.sha256(base.encode()).hexdigest() == "d710448c24f61e14c0e69a5c2636987781b09042a3a72cd7a11605d316ad12f3"
-    assert hashlib.sha256(candidate.encode()).hexdigest() == "75f1c9a94be1c8d836b0bb8a988d0f76395a9a80f7659b634c079f0ca035ba35"
+    assert hashlib.sha256(candidate.encode()).hexdigest() == "58dc20c7db8ed994e937e50f327fdf2ba0501e48e00583ef4b6156c02922a546"
 
 
 def test_platform_serves_sem_index_and_preserves_legacy_admin_redirect():

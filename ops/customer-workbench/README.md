@@ -67,3 +67,6 @@ node ops/customer-workbench/package-release.mjs <完整40位提交SHA>
 
 本机Windows会跳过Linux发布状态机测试；以PR上的Linux测试结果作为该部分依据，不能把跳过计为通过。生产验证码和最终入口验收仍待上线窗口，不用反复重跑隔离业务写入。
 2026-10-08 11:07 Asia/Shanghai只读现场复核：SEM后端4d9c54f834296e155706748685e436859daf34d5，SEO后端d59d1a2c44ab，GEO后端2aa079cbbeb7，三服务db:ok；SEO实际schema_revision=0104_seo_page_ai_tdk。0105、0106均未上线，迁移计划必须包含两段，不能按已0105假设执行。
+
+## 首次路由激活修复（2026-10-08）
+首次显式路由发布在工作台首页返回500，发布器自动恢复原Nginx。线上错误为index.htmlindex.html：尾斜杠精确location使用文件alias会进入Nginx index模块重复拼接。修复为root配合try_files /index.html =404，保留JS/CSS及未知路径规则。增加隔离真实Nginx HTTP用例覆盖首页、查询参数、308、两个资源及404，CI安装Nginx运行；不把Windows跳过计为通过。发布配置新哈希58dc20c7db8ed994e937e50f327fdf2ba0501e48e00583ef4b6156c02922a546。

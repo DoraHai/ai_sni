@@ -23,7 +23,7 @@ expected_index="${PLATFORM_SEM_INDEX:-/opt/sem-frontend/current/index.html}"
 authoritative_repo='https://github.com/DoraHai/ai_sni.git'
 authoritative_ref='refs/heads/codex/production-sem'
 reviewed_base_sha256='d710448c24f61e14c0e69a5c2636987781b09042a3a72cd7a11605d316ad12f3'
-reviewed_candidate_sha256='75f1c9a94be1c8d836b0bb8a988d0f76395a9a80f7659b634c079f0ca035ba35'
+reviewed_candidate_sha256='58dc20c7db8ed994e937e50f327fdf2ba0501e48e00583ef4b6156c02922a546'
 
 [[ "$confirmation" == 'DEPLOY_PLATFORM_ROUTES' ]] || fail 'confirmation must be DEPLOY_PLATFORM_ROUTES'
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail 'commit must be a full lowercase SHA'
