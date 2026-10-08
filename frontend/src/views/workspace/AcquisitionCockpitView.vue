@@ -33,8 +33,17 @@ import { evidenceBoundaryCount, isCurrentCommandContext, normalizeModuleSelectio
 import { buildPanoramaSummary } from './cockpit/panorama-summary.mjs'
 import { appendExplorationPath, compareMetricScope, moveExplorationPath, saveMetricScope } from './cockpit/exploration-state.mjs'
 import { semImpressionClickFunnel, semTrendVisualization, seoContentDistribution } from './cockpit/visualization-model.mjs'
+import { customerWorkbenchHref as buildCustomerWorkbenchHref, probeCustomerWorkbench } from './cockpit/customer-entry.mjs'
 
 const router = useRouter()
+const customerWorkbenchReady = ref(false)
+const customerEntryAbort = new AbortController()
+let customerEntryTimer
+const customerWorkbenchHref = computed(() => buildCustomerWorkbenchHref({
+  ready: customerWorkbenchReady.value, token: session.token, demo: demoMode.value,
+  tenantId: session.tenantId, siteId: currentSeoSiteId.value,
+  modules: availableModules.value, sites: seoSites.value,
+}))
 const shellEl = ref(null)
 const messagesEl = ref(null)
 const question = ref('')
@@ -1027,6 +1036,11 @@ watch(() => availableModules.value.map(item => item.module_code).join(','), (cod
   activeModule.value = normalizeModuleSelection(activeModule.value, codes ? codes.split(',') : [])
 })
 onMounted(() => {
+  customerEntryTimer = setTimeout(() => customerEntryAbort.abort(), 5000)
+  probeCustomerWorkbench({signal:customerEntryAbort.signal}).then(ready => {
+    clearTimeout(customerEntryTimer)
+    if (!customerEntryAbort.signal.aborted) customerWorkbenchReady.value = ready
+  })
   activeSection.value = 'dashboard'
   document.addEventListener('fullscreenchange', syncFullscreen)
   document.addEventListener('keydown', onKeydown)
@@ -1034,6 +1048,8 @@ onMounted(() => {
   prepare()
 })
 onBeforeUnmount(() => {
+  clearTimeout(customerEntryTimer)
+  customerEntryAbort.abort()
   document.removeEventListener('fullscreenchange', syncFullscreen)
   document.removeEventListener('keydown', onKeydown)
   ++loadGeneration; ++prepareGeneration; workbenchSession?.dispose(); viewState.dispose()
@@ -1071,6 +1087,7 @@ onBeforeUnmount(() => {
             <option v-for="site in seoSites" :key="site.id" :value="site.id" :disabled="site.status !== 'active'">{{ site.name }} · {{ site.domain }}{{ site.status === 'active' ? '' : '（已停用）' }}</option>
           </select>
         </label>
+        <a v-if="customerWorkbenchHref" class="customer-workbench-link" :href="customerWorkbenchHref">客户工作台 ↗</a>
         <div class="period-control" aria-label="选择数据周期">
           <span>数据周期</span>
           <div class="period-shortcuts">
@@ -1195,6 +1212,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.customer-workbench-link{display:inline-flex;align-items:center;min-height:36px;padding:8px 12px;border:1px solid #43887f;border-radius:8px;background:#0d2f36;color:#cafff7;text-decoration:none;font-size:12px;white-space:nowrap}.customer-workbench-link:focus-visible{outline:2px solid #78e7de;outline-offset:2px}
 .dashboard-group{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;margin:8px 0 0;padding:12px 0;border-bottom:1px solid #294154;font-size:15px}.dashboard-group small{color:#86a0b5;font-size:11px;font-weight:400}.event-feed{min-height:0!important}.event-list{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
 .exploration-path{display:flex;align-items:center;gap:6px;margin:-4px 0 12px;padding:8px 10px;border:1px solid #203b50;border-radius:11px;background:#091827}.exploration-path button{width:28px;height:28px;border:1px solid #315168;border-radius:7px;background:#102638;color:#b8d2df;cursor:pointer}.exploration-path button:disabled{opacity:.3;cursor:not-allowed}.exploration-path span{display:grid;gap:2px;min-width:0;margin-left:4px}.exploration-path small{color:#648095;font-size:8px}.exploration-path b{overflow:hidden;color:#bcd0de;font-size:9px;text-overflow:ellipsis;white-space:nowrap}.scope-tools{display:grid;gap:8px;margin:0 0 12px;padding:11px;border:1px solid #28465a;border-radius:11px;background:#0b1d2c}.scope-tools>div{display:grid;grid-template-columns:1fr 1fr;gap:7px}.scope-tools button{padding:8px;border:1px solid #356776;border-radius:8px;background:#10323a;color:#aef7ed;font-size:9px;cursor:pointer}.scope-tools p{margin:0;color:#7892a6;font-size:9px;line-height:1.5}.comparison-ready{display:grid!important;grid-template-columns:repeat(3,1fr);gap:6px}.comparison-ready span{display:grid;gap:3px}.comparison-ready b{color:#e4f4fb;font-size:12px}
 .command-drawer{overflow-y:auto}

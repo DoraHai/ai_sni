@@ -36,3 +36,22 @@ node ops/customer-workbench/package-release.mjs <完整40位提交SHA>
 - 失败时撤入口/回退静态 current，后端按兼容方案回退；不删除确认与审计记录，不自动降迁移。
 
 当前隔离环境验证不能替代以上生产入口验收；此文档也不声称消息沟通已经上线。
+
+## UI15入口接线与构建（2026-10-08）
+
+宿主 `frontend/src/views/workspace/AcquisitionCockpitView.vue` 已接入客户工作台链接：需要当前登录、非演示、SEO可用、明确的有效tenant/site与active网站；地址只携带这两个范围参数，目标应用仍独立鉴权。加载时无凭据GET探测同域新页面，5秒超时；只有收到新工作台HTML才显示入口，旧SEM壳或404不展示死链。上线后旧页面需刷新以重新探测。
+
+`.github/workflows/customer-workbench.yml` 在PR和生产分支变更上生成精确SHA的独立产物并校验身份/范围/制包契约；工作流只有contents:read，无部署账号或生产操作。原SEM构建/发布继续管理宿主链接，本工作台没有混入SEM构建包。
+
+服务器负责人先运行本目录 `server-readiness.sh`（bash；只读；不读.env），或逐条回传以下输出：
+
+```bash
+sudo /usr/local/sbin/platform-deploy status
+sudo sha256sum /usr/local/sbin/platform-deploy /etc/platform-deploy/modules/platform /etc/nginx/conf.d/gsnipers.conf
+sudo nginx -t
+readlink /opt/sem-frontend/current
+readlink /opt/auth-frontend/current
+readlink /opt/customer-workbench/current
+```
+
+最后一个路径不存在时记录尚未创建，不自行创建。当前仓库的platform模块只接受platform-routes包，不能把工作台静态包直接传给它。待实际模块版本确认后，在既有受限发布机制内增加对应静态包支持并审核；不借用root手动拷文件替代。此前的Nginx片段仍为候选，没有生产激活。

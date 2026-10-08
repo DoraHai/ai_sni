@@ -1,0 +1,60 @@
+name: Customer workbench artifact
+
+on:
+  pull_request:
+    branches: [codex/production-sem]
+    paths:
+      - 'customer-workbench/**'
+      - 'ops/customer-workbench/**'
+      - 'frontend/src/store/session*'
+      - 'frontend/src/auth/loginRedirect.js'
+      - 'frontend/src/views/workspace/cockpit/customer-entry*'
+      - 'frontend/package-lock.json'
+      - '.github/workflows/customer-workbench.yml'
+  push:
+    branches: [codex/production-sem]
+    paths:
+      - 'customer-workbench/**'
+      - 'ops/customer-workbench/**'
+      - 'frontend/src/store/session*'
+      - 'frontend/src/auth/loginRedirect.js'
+      - 'frontend/src/views/workspace/cockpit/customer-entry*'
+      - 'frontend/package-lock.json'
+      - '.github/workflows/customer-workbench.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: customer-workbench-artifact-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RELEASE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: customer-workbench/package-lock.json
+      - run: npm ci --prefix customer-workbench
+      - name: Verify identity, scope and release packaging
+        run: |
+          npm --prefix customer-workbench run test:contracts
+          node --test frontend/src/views/workspace/cockpit/customer-entry.test.mjs ops/customer-workbench/package-release.test.mjs
+      - name: Build the exact clean source
+        run: node ops/customer-workbench/package-release.mjs "$RELEASE_SHA" "$RUNNER_TEMP/customer-workbench-release"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: customer-workbench-${{ env.RELEASE_SHA }}
+          path: ${{ runner.temp }}/customer-workbench-release/
+          if-no-files-found: error
+          retention-days: 7
+      # Artifact only: no deployment credentials, production mutation or migration.
