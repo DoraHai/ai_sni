@@ -2,7 +2,7 @@
 
 状态：供数据库负责人审批、执行；本文件及脚本不是执行授权。功能冻结，不重跑已完成业务写测试。复用正式 Alembic 迁移和现有健康检查，不使用本机种子、`create_all`、`stamp`、修补版建表 SQL 或新的迁移执行器。
 
-**给统筹/DBA的简版：** 总控先部署兼容代码并确认维护窗口；DBA在备份恢复证明和独立迁移审批齐全后，逐段执行现有 `alembic upgrade 0105_seo_content_confirmations`、`alembic upgrade 0106_seo_content_messages`，每段授予第3节列出的新对象最小权限并跑第4节对应只读核验，第一段不过就停。新账号还须保留经审的现有登录/读取及行锁权限，不能只授新表权限。回传备份恢复证明、两段命令退出码、只读日志中的revision/对象/权限/行数及三服务健康结果；不带凭据或客户正文。无需发送文章、消息或开启AI/采集来验收建表。以下保留具体执行和失败处置规则。
+**给统筹/DBA的简版：** 总控先部署兼容代码并确认维护窗口；DBA在备份恢复证明和独立迁移审批齐全后，逐段执行第4节带两个ALEMBIC会话超时变量的现有0105、0106命令，每段授予第3节列出的新对象最小权限并跑第4节对应只读核验，第一段不过就停。新账号还须保留经审的现有登录/读取及行锁权限，不能只授新表权限。回传备份恢复证明、两段命令退出码、只读日志中的revision/对象/权限/行数及三服务健康结果；不带凭据或客户正文。无需发送文章、消息或开启AI/采集来验收建表。以下保留具体执行和失败处置规则。
 
 2026-10-08 总控回传的只读生产核验：SEO current=`20261005T051003Z-d59d1a2c44ab`，健康 db/schema=ok、revision=`0104_seo_page_ai_tdk`；SEM RELEASE_COMMIT=`4d9c54f834296e155706748685e436859daf34d5`；GEO current=`20261005T051317Z-2aa079cbbeb7`；三个服务 db=ok。这是总控回传证据，本窗口未重复连接服务器。执行窗口仍须重新核对，0105/0106尚未获准生产执行。
 
@@ -65,7 +65,7 @@ ix_seo_message_conversation_id
 
 ## 3. 账号与最小增量授权
 
-DBA先指定两个不同的既有/经批准新建账号名称；这里不创建账号、不包含密码。迁移账号拥有本轮对象，具备数据库CONNECT、public USAGE/CREATE、四个父表REFERENCES、版本表SELECT/UPDATE；不需要SUPERUSER/CREATEDB/CREATEROLE/BYPASSRLS/REPLICATION。完整备份另用已批准备份身份，不为本轮DDL授予全库读取。
+DBA先指定两个不同的既有/经批准新建账号名称；这里不创建账号、不包含密码。迁移账号拥有本轮对象，具备数据库CONNECT、public USAGE/CREATE、四个父表REFERENCES、版本表SELECT/UPDATE；不需要SUPERUSER/CREATEDB/CREATEROLE/BYPASSRLS/REPLICATION。完整备份使用已批准身份，不为本轮DDL授予全库读取。本次总控已允许既有sem_runtime执行备份，以临时实例实际恢复成功及完整性证据为准；不要求新建备份账号或扩权。
 
 运行账号不得拥有新表、继承迁移对象所有者、获得public CREATE或管理角色。以下是**本批增量权限**，不是把空白账号接入整个SEO应用的完整角色方案；原登录、RBAC、租户模块、页面/任务等既有能力由总控保留经审核的权限，不执行全schema GRANT ALL/REVOKE ALL。
 
@@ -99,14 +99,26 @@ python scripts/seo_confirmation_message_readiness.py --revision 0106_seo_content
 DBA使用已配置的受控连接服务，以**迁移账号**执行；连接服务名是需替换的非敏感示例，不在命令行拼接URL/密码，不启用shell xtrace：
 
 ```sh
-psql -X -w 'service=seo_migration_checked' -v ON_ERROR_STOP=1 -f "$EVIDENCE_DIR/pre-0104.sql" > "$EVIDENCE_DIR/pre-0104.log"
+psql -X -w 'service=seo_migration_checked' -v ON_ERROR_STOP=1 -c "SET lock_timeout = '5s'; SET statement_timeout = '300s';" -f "$EVIDENCE_DIR/pre-0104.sql" > "$EVIDENCE_DIR/pre-0104.log"
 ```
 
 迁后相同方式分别执行post-0105.sql和post-0106.sql。SQL使用REPEATABLE READ READ ONLY、15秒检查超时、3秒锁超时，失败停止且不修改数据；连接关闭回滚未结束的只读事务。缺失对象、版本行数量错误、错误owner/类型/默认值/主键/唯一键/外键/索引/触发器/函数或权限均拒绝；缺表导致SQL直接报错也按未通过处理。CHECK验证名称/数量/validated并输出完整表达式，**DBA仍须逐项比对6条CHECK表达式与源码**，不能仅凭同名约束判定含义正确。
 
 脚本还返回本轮新表行数、新计划开关计数、本批在途任务分组及父表锁信息，不输出客户正文、消息正文、SQL查询文本或密钥。这些是需要人工签核的业务/锁等待前提；`readiness_ok=true`不代表开关获授权或锁永远空闲。
 
-迁移使用asyncpg，**不能依赖libpq的PGOPTIONS给Alembic设置会话参数**。执行前DBA保证Alembic连接身份/数据库的有效search_path仅public，继承有效lock_timeout为1–10000ms、statement_timeout为1–300000ms（建议5秒/120秒）；脚本在覆盖自身检查超时前检查原会话设置。若原值0/路径不符，停止，由DBA另行审核限定到迁移角色/数据库的设置，不能由工具私自ALTER ROLE。psql服务与Alembic必须指向同一DB/角色且没有各自覆盖search_path/超时；现场核验由DBA负责。脚本退出成功不是对另一套连接配置的证明。
+迁移使用asyncpg，**psql的SET和libpq的PGOPTIONS不会传递到另一个Alembic连接**。本次sem_app角色默认lock/statement timeout均0，无需改角色：psql通过上面的`-c SET ...`在该次检查连接设为5秒/300秒（迁后两次psql也必须分别带同一`-c`）；检查文件随后只把自身只读事务调整为3秒/15秒，并已先保存/检查外层会话值。`public`路径仍须由DBA核实。
+
+Alembic复用现有`migrations/env.py`，新增**只对本次进程生效**的两个环境变量。DBA须使用总控锁定的最终源码SHA（包含env.py及session_timeouts.py），不能仍用d38a46c3的旧入口或只复制env.py。DBA已配置本次迁移身份sem_app后，从固定发布目录依次运行；命令不携带凭据，不改角色或生产配置：
+
+```sh
+ALEMBIC_LOCK_TIMEOUT_MS=5000 ALEMBIC_STATEMENT_TIMEOUT_MS=300000 /opt/sem-backend/.venv/bin/python -m alembic upgrade 0105_seo_content_confirmations
+# 核验/授权0105通过后才继续；不能跳过中间停点。
+ALEMBIC_LOCK_TIMEOUT_MS=5000 ALEMBIC_STATEMENT_TIMEOUT_MS=300000 /opt/sem-backend/.venv/bin/python -m alembic upgrade 0106_seo_content_messages
+```
+
+两个变量必须同时提供，分别允许整数1–10000ms、1–300000ms；0、单位字符串、小数、缺一项、空值和超范围均拒绝。均未提供时保持既有Alembic默认行为，**本轮DBA命令必须显式带上**。显式超时只支持postgresql+asyncpg在线模式，不能在`--sql`离线模式冒充有效连接核验。
+
+入口将两值经`connect_args.server_settings`传给实际迁移连接，在Alembic事务内、`context.run_migrations()`之前查询pg_settings，要求两项有效值/单位与请求完全一致；记录非敏感日志`Migration session verified: lock_timeout_ms=5000 statement_timeout_ms=300000`。失败不进入迁移DDL并释放连接。psql和Alembic日志分别留档；psql通过不能代替这条Alembic实际会话日志。新设置不改变search_path、账号或数据库；仍须核对sem_app/public/目标DB。
 
 工具自动检查目标对象在当前版本的存在/缺失。版本已为0105且有正式执行记录时，应跳过pre-0104，先执行post-0105；不能把0104期望强行套用已完成的第一段。
 
@@ -116,9 +128,9 @@ psql -X -w 'service=seo_migration_checked' -v ON_ERROR_STOP=1 -f "$EVIDENCE_DIR/
 2. 总控按已批准维护安排停止SEO业务写入、调度和后台进程，并协调共享数据库其他模块写入/备份一致性；迁移中不能让新代码在0105落地瞬间启动在途任务。暂停/恢复服务是总控操作，不在只读工具内执行。
 3. DBA验证目标DB、迁移/运行角色、public路径、超时和父表锁；执行pre-0104，检查所有未来对象不存在、无未批准开关/任务或顾问初始化计划。任何不一致停止。不要终止不明会话来抢锁。
 4. 使用既有备份流程做共享库一致性备份，保留角色/ACL、schema、数据和版本行；记录时间、备份位置、校验和、WAL/PITR可恢复点和保留期。若使用pg_dump，使用独立受控备份连接和`--format=custom --file=新路径`；用pg_restore --list核对可读，再按既有流程在隔离目标做恢复可用性检查。只有dump退出0/文件非空不等于恢复已验证。未完成恢复证明停止执行。
-5. 在已审核发布包、已由DBA注入迁移身份的环境，用**现有**入口执行：`python -m alembic upgrade 0105_seo_content_confirmations`。本文件不提供/读取DATABASE_URL；DBA必须确认配置确实使用迁移账号，不能沿用应用账号猜测执行。
+5. 在已审核发布包、已由DBA注入迁移身份的环境，用**现有**入口执行第4节携带两个ALEMBIC超时变量的0105命令；确认实际会话5000/300000ms日志。本文件不提供/读取DATABASE_URL；DBA必须确认配置确实使用迁移账号，不能沿用应用账号猜测执行。
 6. 第一段成功后由DBA执行已批准的0105精确授权，再跑post-0105，保存退出码/日志。新两表应0行；确认版本恰好0105，0106未来对象仍不存在。审核所有CHECK/FK输出。第一段核验不通过时停止，不能继续第二段。
-7. 执行 `python -m alembic upgrade 0106_seo_content_messages`。再执行0106已批准精确授权，跑post-0106。新三表应0行，既有0105数据保持；核对三个对象集合及角色权限、函数和两条触发器。**不发送测试消息、不生成顾问分配、不补客户确认或人工发布记录**来让检查变绿。
+7. 执行第4节同样携带两个ALEMBIC超时变量的0106命令，重新确认该次连接5000/300000ms日志。再执行0106已批准精确授权，跑post-0106。新三表应0行，既有0105数据保持；核对三个对象集合及角色权限、函数和两条触发器。**不发送测试消息、不生成顾问分配、不补客户确认或人工发布记录**来让检查变绿。
 8. 总控恢复兼容SEO的受控只读访问（新自动化仍须按下一节关闭/未授权），核对实际运行SHA、SEO schema=ok/0106和必要结构、SEM/GEO db健康，以及已有获准客户/站点的只读接口。健康检查只证明对应检查通过，SEM/GEO的db=ok不能代替其业务兼容性签核。
 9. 对账备份版本、迁后版本、对象/权限、空表行数、既有数据监控及维护窗口写入记录。数据库负责人和总控签字后结束窗口。逐客户顾问分配、确认、自动草稿、采集/发布开通是后续独立授权，不属于建表验收。
 
