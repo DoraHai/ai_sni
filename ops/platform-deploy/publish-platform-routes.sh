@@ -6,6 +6,12 @@ fail() { printf 'platform-route-publish: %s\n' "$*" >&2; exit 65; }
 archive="${1:-}"
 release_sha="${2:-}"
 archive_sha256="${3:-}"
+kind="${4:-platform-routes}"
+case "$kind" in
+  platform-routes) confirmation='DEPLOY_PLATFORM_ROUTES' ;;
+  customer-workbench) confirmation='DEPLOY_CUSTOMER_WORKBENCH' ;;
+  *) fail 'unsupported platform artifact kind' ;;
+esac
 branch_ref='refs/heads/codex/production-sem'
 deploy_host="${DEPLOY_HOST:-}"
 deploy_port="${DEPLOY_PORT:-}"
@@ -35,7 +41,7 @@ require_current_head() {
 }
 
 ssh_options=(-i ~/.ssh/platform-deploy -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
-remote="/home/platform-deploy/uploads/platform-routes-${release_sha}.tgz"
+remote="/home/platform-deploy/uploads/${kind}-${release_sha}.tgz"
 remote_part="${remote}.part-${run_id}-${run_attempt}"
 
 # A queued newer push cancels this run. This authoritative check also prevents
@@ -48,4 +54,4 @@ scp "${ssh_options[@]}" -P "$deploy_port" "$archive" "$deploy_user@$deploy_host:
 # deploy lock; runner-supplied values are never accepted as authorization.
 require_current_head || fail 'branch head changed after upload; refusing activation'
 ssh "${ssh_options[@]}" -p "$deploy_port" "$deploy_user@$deploy_host" \
-  "sudo -n /usr/local/sbin/platform-deploy apply platform '$remote_part' '$release_sha' '$archive_sha256' DEPLOY_PLATFORM_ROUTES"
+  "sudo -n /usr/local/sbin/platform-deploy apply platform '$remote_part' '$release_sha' '$archive_sha256' '$confirmation'"

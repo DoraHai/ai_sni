@@ -1,0 +1,33 @@
+# Reviewed candidate fragment only; NOT installed or included by this change.
+# Place inside the existing HTTPS server after the actual server configuration is reviewed.
+# Release directory: /opt/customer-workbench/current -> releases/<exact-commit>
+# Keep existing /api/v1/ and /login routing unchanged.
+location = /customer-workbench {
+    return 308 /customer-workbench/$is_args$args;
+}
+location = /customer-workbench/ {
+    alias /opt/customer-workbench/current/index.html;
+    default_type text/html;
+    add_header Cache-Control "no-store" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+}
+location = /customer-workbench/app.js {
+    alias /opt/customer-workbench/current/app.js;
+    default_type application/javascript;
+    add_header Cache-Control "no-store" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+}
+location = /customer-workbench/app.css {
+    alias /opt/customer-workbench/current/app.css;
+    default_type text/css;
+    add_header Cache-Control "no-store" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+}
+location ^~ /customer-workbench/ {
+    return 404;
+}

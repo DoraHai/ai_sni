@@ -36,17 +36,20 @@ def block(config: str, declaration: str) -> str:
     raise AssertionError(f"unterminated Nginx block: {declaration}")
 
 
-def test_candidate_is_exact_reviewed_base_plus_one_narrow_spa_location():
+def test_candidate_is_reviewed_base_plus_independent_customer_locations():
     base = read("tests/fixtures/gsnipers-platform-routes-reviewed-base.conf")
     candidate = read("deploy/gsnipers-platform-routes.conf")
-    marker = "    # Only declared business routes enter the SEM SPA."
-    added = candidate[len(base[: base.index(marker)]) : candidate.index(marker)]
-    assert candidate == base.replace(marker, added + marker, 1)
-    assert "location ~ ^/platform(/|$)" in added
-    assert "location = /admin/internal" not in added
-    assert added.count("location ") == 1
-    assert hashlib.sha256(base.encode()).hexdigest() == "3fd57506ca30704d5201d15ac9ab2408bda951f1b8fd0c4118c47d7023506fc1"
-    assert hashlib.sha256(candidate.encode()).hexdigest() == "d710448c24f61e14c0e69a5c2636987781b09042a3a72cd7a11605d316ad12f3"
+    start = candidate.index("    # Independent customer workbench;")
+    end = candidate.index("    # The SEM HTML shell", start)
+    added = candidate[start:end]
+    assert candidate[:start] + candidate[end:] == base
+    assert added.count("location ") == 5
+    assert "location = /customer-workbench/" in added
+    assert "location ^~ /customer-workbench/" in added
+    assert "return 404;" in added
+    assert "alias /opt/customer-workbench/current/index.html;" in added
+    assert hashlib.sha256(base.encode()).hexdigest() == "d710448c24f61e14c0e69a5c2636987781b09042a3a72cd7a11605d316ad12f3"
+    assert hashlib.sha256(candidate.encode()).hexdigest() == "75f1c9a94be1c8d836b0bb8a988d0f76395a9a80f7659b634c079f0ca035ba35"
 
 
 def test_platform_serves_sem_index_and_preserves_legacy_admin_redirect():
@@ -163,6 +166,10 @@ def _release_fixture(tmp_path: Path, fail_at: str = "", curl_mode: str = "fail")
     target.write_bytes(base)
     expected_index = tmp_path / "index.html"
     expected_index.write_text("reviewed SEM index", encoding="utf-8")
+    customer_root = tmp_path / "customer"
+    customer_root.mkdir()
+    for name in ("index.html", "app.js", "app.css"):
+        (customer_root / name).write_text("reviewed customer " + name, encoding="utf-8")
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     calls = tmp_path / "calls"
@@ -221,6 +228,10 @@ done
 if [[ "$url" == */admin/internal ]]; then
   printf 'HTTP/2 308\\r\\nLocation: https://gsnipers.snipers.com.cn/settings/accounts\\r\\n\\r\\n' > "$headers"
   printf '308'
+elif [[ "$url" == */customer-workbench/* ]]; then
+  name="${url##*/}"
+  [[ -n "$name" ]] || name=index.html
+  cp "$PLATFORM_CUSTOMER_WORKBENCH_ROOT/$name" "$output"
 elif [[ -n "$output" ]]; then
   cp "$PLATFORM_SEM_INDEX" "$output"
 fi
@@ -244,6 +255,7 @@ fi
             "PLATFORM_NGINX_GROUP": grp.getgrgid(os.getgid()).gr_name,
             "PLATFORM_DEPLOY_TMP_ROOT": str(tmp_path),
             "PLATFORM_SEM_INDEX": str(expected_index),
+            "PLATFORM_CUSTOMER_WORKBENCH_ROOT": str(customer_root),
             "PLATFORM_TEST_CALLS": str(calls),
             "PLATFORM_TEST_STATE": str(state),
             "PLATFORM_TEST_FAIL": fail_at,
@@ -423,7 +435,7 @@ def test_release_waits_for_new_nginx_worker_after_transient_404(tmp_path: Path):
     assert result.returncode == 0, result.stderr
     assert target.read_bytes() == (ROOT / "deploy/gsnipers-platform-routes.conf").read_bytes()
     recorded = calls.read_text(encoding="utf-8")
-    assert recorded.count("curl ") == 13
+    assert recorded.count("curl ") == 16  # Existing routes plus three customer assets.
     assert recorded.count("sleep 1") == 1
 
 
