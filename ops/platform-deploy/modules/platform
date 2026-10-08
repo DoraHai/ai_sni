@@ -7,6 +7,9 @@ archive="${1:-}"
 commit="${2:-}"
 archive_sha256="${3:-}"
 confirmation="${4:-}"
+if [[ "$confirmation" == 'DEPLOY_CUSTOMER_WORKBENCH' ]]; then
+  exec python3 /etc/platform-deploy/customer-workbench.py "$@"
+fi
 upload_root="${PLATFORM_DEPLOY_UPLOAD_ROOT:-/home/platform-deploy/uploads}"
 target="${PLATFORM_NGINX_TARGET:-/etc/nginx/conf.d/gsnipers.conf}"
 backup_parent="${PLATFORM_NGINX_BACKUP_ROOT:-/var/backups/platform-deploy}"
@@ -19,8 +22,8 @@ temporary_root="${PLATFORM_DEPLOY_TMP_ROOT:-/tmp}"
 expected_index="${PLATFORM_SEM_INDEX:-/opt/sem-frontend/current/index.html}"
 authoritative_repo='https://github.com/DoraHai/ai_sni.git'
 authoritative_ref='refs/heads/codex/production-sem'
-reviewed_base_sha256='3fd57506ca30704d5201d15ac9ab2408bda951f1b8fd0c4118c47d7023506fc1'
-reviewed_candidate_sha256='d710448c24f61e14c0e69a5c2636987781b09042a3a72cd7a11605d316ad12f3'
+reviewed_base_sha256='d710448c24f61e14c0e69a5c2636987781b09042a3a72cd7a11605d316ad12f3'
+reviewed_candidate_sha256='75f1c9a94be1c8d836b0bb8a988d0f76395a9a80f7659b634c079f0ca035ba35'
 
 [[ "$confirmation" == 'DEPLOY_PLATFORM_ROUTES' ]] || fail 'confirmation must be DEPLOY_PLATFORM_ROUTES'
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail 'commit must be a full lowercase SHA'
@@ -206,6 +209,14 @@ case "$admin_location" in
 esac
 curl -fsS --retry 5 "$public_origin/health" >/dev/null || fail 'health smoke failed'
 
+for name in index.html app.js app.css; do
+  suffix="$name"
+  [[ "$name" != index.html ]] || suffix=''
+  expected_customer="${PLATFORM_CUSTOMER_WORKBENCH_ROOT:-/opt/customer-workbench/current}/$name"
+  [[ -s "$expected_customer" ]] || fail "customer workbench file missing: $name"
+  curl -fsS --retry 5 --retry-delay 1 -H 'Cache-Control: no-cache' "$public_origin/customer-workbench/$suffix" -o "$smoke_body" || fail 'customer workbench smoke failed'
+  cmp -s "$expected_customer" "$smoke_body" || fail 'customer workbench returned wrong static file'
+done
 committed=true
 if [[ "$already_current" == true ]]; then
   printf 'module=platform-routes\ncommit=%s\nstatus=already-current\nactive_sha256=%s\nmigration=not-run\nfrontend=not-included\nbackend=not-included\n' \

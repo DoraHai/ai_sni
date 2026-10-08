@@ -1,6 +1,6 @@
 # 独立客户工作台发布准备
 
-2026-10-08。本目录仅提供本地制包工具和 Nginx 候选片段，没有上传、迁移、切换或重载动作。当前开发仍在草稿 PR #592；SEO 后端在 #593。生产合并和部署另需确认。
+2026-10-08。本目录提供本地制包工具、受限静态发布处理器和 Nginx 候选片段。本轮仅实现、测试，未执行上传、迁移、线上切换或重载。当前开发仍在草稿 PR #592；SEO 后端在 #593。生产合并和部署另需确认。
 
 ## 制包
 
@@ -24,7 +24,7 @@ node ops/customer-workbench/package-release.mjs <完整40位提交SHA>
 
 1. 当前生效的站点配置、include 布局与受限发布模块版本；将候选路径正式纳入已有 Git 跟踪和发布校验。
 2. 静态制包的完整 SHA、哈希、只读文件权限及 previous 回退目录；首次安装没有 previous 时保留原入口。
-3. SEO 后端版本、0105正式迁移计划及备份、新表运行账号权限、顾问与客户的分配配置。此制包工具不执行数据库操作。
+3. SEO 后端版本、0105/0106正式迁移计划及备份、新表运行账号权限、顾问与客户的分配配置。此制包工具不执行数据库操作。
 4. 用户确认合并/部署顺序后，先让静态地址可访问，再启用宿主入口；避免先出现失效链接。生产分支推送可能触发自动部署，准备阶段不推生产分支。
 
 ## 上线后必要验收
@@ -43,15 +43,26 @@ node ops/customer-workbench/package-release.mjs <完整40位提交SHA>
 
 `.github/workflows/customer-workbench.yml` 在PR和生产分支变更上生成精确SHA的独立产物并校验身份/范围/制包契约；工作流只有contents:read，无部署账号或生产操作。原SEM构建/发布继续管理宿主链接，本工作台没有混入SEM构建包。
 
-服务器负责人先运行本目录 `server-readiness.sh`（bash；只读；不读.env），或逐条回传以下输出：
+## 已取得的服务器基线
 
-```bash
-sudo /usr/local/sbin/platform-deploy status
-sudo sha256sum /usr/local/sbin/platform-deploy /etc/platform-deploy/modules/platform /etc/nginx/conf.d/gsnipers.conf
-sudo nginx -t
-readlink /opt/sem-frontend/current
-readlink /opt/auth-frontend/current
-readlink /opt/customer-workbench/current
-```
+2026-10-08总控已通过既有SSH连接完成只读核对，用户无需转发清单。platform已启用，nginx -t通过；SEM current=e494ea936dbd，Auth current=63c67f379cc8；customer-workbench/current尚不存在。现网Nginx SHA256=d710448c24f61e14c0e69a5c2636987781b09042a3a72cd7a11605d316ad12f3，dispatcher SHA256=0330e2c14f2ff7074df140e02d56136aa2a5248ebce296d9c35007437c09937a。未修改服务器。
 
-最后一个路径不存在时记录尚未创建，不自行创建。当前仓库的platform模块只接受platform-routes包，不能把工作台静态包直接传给它。待实际模块版本确认后，在既有受限发布机制内增加对应静态包支持并审核；不借用root手动拷文件替代。此前的Nginx片段仍为候选，没有生产激活。
+## 既有发布入口扩展（待批准实施）
+
+`ops/platform-deploy/install-platform-routes.sh --enable` 增量安装现有platform模块及root所有的customer-workbench.py，先校验dispatcher版本并备份。安装不改Nginx、不激活页面、不迁移数据库。
+
+静态包继续经已有 `publish-platform-routes.sh` 上传与 `platform-deploy apply platform` 边界，新增第四参数 `customer-workbench`；原三参数调用仍发布routes。只接受当前production-sem完整SHA、固定目录及四文件包，校验清单/逐文件哈希并锁定发布，原子切换current；失败恢复旧current，首次失败移除新current。没有新域名、第二套登录或生产数据库访问。
+
+批准后的顺序：
+
+1. 确认SEO代码与0105/0106迁移兼容、备份与新表权限；数据库操作仍由单独批准的计划执行。
+2. 合并精确版本并等待现有CI；安装本次受限模块扩展。
+3. 从干净的production-sem精确SHA制包，通过既有publisher第四参数customer-workbench部署。初次路由未启用时返回staged-awaiting-route，仅表示文件已准备。
+4. 手动触发 `Production SEM platform routes` 工作流（production-sem）。路线配置新增五个精确静态location；成功需原SEM路由和三个新静态文件逐字节核对通过。失败恢复原Nginx配置。该工作流push只验证/制包，生产激活仅workflow_dispatch，避免文件未就绪时自动改路由。
+5. 生产登录及普通客户/已分配顾问范围验收后，宿主刷新将显示已探测可用的新入口。
+
+静态文件已有路由时，后续静态发布也核对线上三个文件，失败回退；不改变Nginx或其他服务。服务器生产head在上传前后和受限入口再次核验，不发布草稿分支包。临时上传包可能保留供人工按发布记录清理，不自动删除审计记录。
+
+回退：首发路由失败自动恢复原配置，静态文件可保留为未公开产物；静态更新失败自动恢复previous。若需人工回退，由发布负责人按记录恢复指定已核验静态链接或配置备份，不拼接旧新文件。后端仅回退到兼容现有schema的版本，不能把旧版0104健康检查会拒绝0106说成安全回退。
+
+本机Windows会跳过Linux发布状态机测试；以PR上的Linux测试结果作为该部分依据，不能把跳过计为通过。生产验证码和最终入口验收仍待上线窗口，不用反复重跑隔离业务写入。
