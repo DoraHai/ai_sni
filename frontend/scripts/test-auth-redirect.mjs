@@ -88,3 +88,42 @@ test('no available acquisition module or a failed module lookup still lands on t
     modules: undefined,
   }), '/workspace/cockpit')
 })
+
+test('explicit customer workbench scope returns after SEO login', () => {
+  for (const redirect of [
+    '/customer-workbench/?tenant_id=17&site_id=3',
+    `${ORIGIN}/customer-workbench?tenant_id=17&site_id=3`,
+  ]) {
+    assert.equal(resolvePostLoginPath({redirect, currentOrigin: ORIGIN,
+      modules: [{module_code: 'seo', available: true}]}),
+    '/customer-workbench/?tenant_id=17&site_id=3')
+  }
+})
+
+test('workbench return requires available SEO without changing normal login defaults', () => {
+  for (const modules of [undefined, [], [{module_code: 'seo', available: false}],
+    [{module_code: 'seo', available: 'true'}], [{module_code: 'sem', available: true}]]) {
+    assert.equal(resolvePostLoginPath({redirect: '/customer-workbench/?tenant_id=17&site_id=3',
+      currentOrigin: ORIGIN, modules}), '/workspace/cockpit')
+  }
+})
+
+test('workbench return rejects forged destinations and ambiguous or unsafe scope', () => {
+  for (const redirect of [
+    'https://evil.example/customer-workbench/?tenant_id=17&site_id=3',
+    '/customer-workbench/?tenant_id=17',
+    '/customer-workbench/?tenant_id=17&site_id=3&site_id=4',
+    '/customer-workbench/?tenant_id=17&tenant_id=18&site_id=3',
+    '/customer-workbench/?tenant_id=17&site_id=3&redirect=https://evil.example',
+    '/customer-workbench/?tenant_id=0&site_id=3',
+    '/customer-workbench/?tenant_id=1e2&site_id=3',
+    '/customer-workbench/?tenant_id=9007199254740992&site_id=3',
+    '/customer-workbench/?tenant_id=17&site_id=%255c',
+    '/customer-workbench/?tenant_id=17&site_id=3#other',
+    '/customer-workbench/other?tenant_id=17&site_id=3',
+    '/login?tenant_id=17&site_id=3',
+  ]) {
+    assert.equal(resolvePostLoginPath({redirect, currentOrigin: ORIGIN,
+      modules: [{module_code: 'seo', available: true}]}), '/workspace/cockpit', redirect)
+  }
+})
