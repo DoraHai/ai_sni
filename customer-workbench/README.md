@@ -12,6 +12,7 @@ npm run build
 npm run test:contracts
 npm run test:ui13
 npm run test:ui14
+npm run test:ui15
 npm run test:ui11
 npm run test:ui12-host
 npm run test:demo
@@ -30,7 +31,8 @@ UI-12已运行本机真实API/PG的确认、版本冲突、撤权及合成事实
 - 已接：独立资格的四类手动触发、默认关闭的AI草稿授权与同站点资料/关键词选择、准确版本人工登记和逐记录回填；准确版本草稿轻改、提交审核、显式复核退回、发布记录/尝试只读；SEO列表分页、交付稿、确认/代确认/退回、复核、服务计划与周期、准备状态；四类执行链列表/详情/历史/依据、接续/单页重试/取消/顾问报告说明和冻结HTML下载；身份和客户变化清空，写结果不明只重读。
 - UI13新增：输入保护、独立首页、角色视图、安全正文预览、服务器分页发布交付历史、数据明细及查询、顾问资料新增/编辑和关键词新增/优先级/目标页维护。
 - UI14新增：正文图片、原尺寸查看/关闭/重试、未完整查看提醒、内容搜索/筛选及详情返回位置；大量隔离数据验收与客户/顾问沟通接口缺口见 [UI14验收](docs/UI14_READING_ACCEPTANCE.md)。
-- 未接：消息、富文本编辑、单次AI assist和平台真实执行、原始快照及整改子任务详情和SEM/GEO真实接口；页面列明边界，详见[UI-10交接](docs/UI10_EXPLICIT_ACTIONS.md)、[UI-09交接](docs/UI09_CONTENT_OPERATIONS.md)和[UI-08交接](docs/UI08_EXECUTIONS.md)。
+- UI15新增：当前稿件的人工文本沟通、服务端实名/时间、分页/未读、显式已读及幂等发送恢复；需要SEO0106消息契约。验收证据与边界见 [UI15验收](docs/UI15_CONVERSATION_ACCEPTANCE.md)。
+- 未接：富文本编辑、单次AI assist和平台真实执行、原始快照及整改子任务详情和SEM/GEO真实接口；页面列明边界，详见[UI-10交接](docs/UI10_EXPLICIT_ACTIONS.md)、[UI-09交接](docs/UI09_CONTENT_OPERATIONS.md)和[UI-08交接](docs/UI08_EXECUTIONS.md)。
 - 确认不是发布，ready不是任务完成，0104确认不可用保持禁用。后端最终判断操作资格。
 
 [构建发布准备](BUILD_RELEASE.md) · [当前交接](HANDOFF.md) · [归档记录](UI_PROGRESS.md) · [宿主入口建议补丁](docs/host-entry.patch)。补丁仅供review，未应用到原组件。

@@ -7,7 +7,7 @@
     "test:ui06": "node --test seo-readonly-client.test.mjs host-session-adapter.test.mjs ui06-browser.test.mjs",
     "preview:fixture": "node tests/fixture-server.mjs",
     "pretest:ui06": "npm run build",
-    "test:contracts": "node --test seo-readonly-client.test.mjs seo-workflow-client.test.mjs service-plan-controller.test.mjs host-session-adapter.test.mjs",
+    "test:contracts": "node --test seo-readonly-client.test.mjs seo-workflow-client.test.mjs service-plan-controller.test.mjs host-session-adapter.test.mjs conversation-client.test.mjs",
     "test:connected": "node --test connected-browser.test.mjs",
     "test:demo": "node verify.cjs",
     "pretest:ui08": "npm run build",
@@ -19,7 +19,9 @@
     "preview:backend": "node scripts/local-backend-host.mjs",
     "test:ui12-preflight": "node scripts/ui12-real-preflight.mjs",
     "test:ui13": "node --test customer-display.test.mjs seo-data-view.test.mjs seo-data-client.test.mjs ui13-usability.test.mjs",
-    "test:ui14": "node --test seo-readonly-client.test.mjs host-session-adapter.test.mjs ui14-media.test.mjs"
+    "test:ui14": "node --test seo-readonly-client.test.mjs host-session-adapter.test.mjs ui14-media.test.mjs",
+    "pretest:ui15": "npm run build",
+    "test:ui15": "node --test conversation-client.test.mjs ui15-messages.test.mjs ui15-entry.test.mjs"
   },
   "devDependencies": {
     "esbuild": "0.25.12",

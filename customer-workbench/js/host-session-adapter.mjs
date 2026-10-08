@@ -1,6 +1,10 @@
 // UI-05 same-origin host boundary. Reuses an injected ordinary session; never reads/stores credentials.
 const positive=n=>Number.isSafeInteger(n)&&n>0;
 const routes=[
+  ['GET',/^\/api\/v1\/seo\/workbench\/content-assets\/[1-9]\d*\/conversation$/,['tenant_id','site_id'],'content'],
+  ['GET',/^\/api\/v1\/seo\/workbench\/content-assets\/[1-9]\d*\/conversation\/messages$/,['tenant_id','site_id','limit','before_id'],'content'],
+  ['POST',/^\/api\/v1\/seo\/workbench\/content-assets\/[1-9]\d*\/conversation\/messages$/,[],'content',['tenant_id','site_id','request_id','body']],
+  ['POST',/^\/api\/v1\/seo\/workbench\/content-assets\/[1-9]\d*\/conversation\/read$/,[],'content',['tenant_id','site_id','last_read_message_id']],
   ['GET',/^\/api\/v1\/seo\/site\/page-captures\/[1-9]\d*(?:\/image)?$/,['tenant_id'],'site'],
   ['GET',/^\/api\/v1\/auth\/(me|modules)$/,[],'preflight'],
   ['GET',/^\/api\/v1\/auth\/tenants$/,['module'],'preflight'],

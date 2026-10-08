@@ -3,6 +3,7 @@ import {executionFixture,handleExecutionFixture} from './execution-fixture.mjs';
 import {initUi10,handleUi10} from './ui10-fixture.mjs';
 import {cycleFields} from '../js/seo-cycle-config.mjs';
 import {handleUi13} from './ui13-fixture.mjs';
+import {handleUi15} from './ui15-fixture.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 export async function startFixtureServer(){
   const state={calls:[],forceError:null,holdNext:null,held:[],planDenied:false,contentTotals:new Map(),modules:['seo'],executions:executionFixture(),executionDenied:false,keywordLevel:'edit',
@@ -39,6 +40,7 @@ export async function startFixtureServer(){
       if(url.pathname==='/api/v1/auth/tenants'){send(200,{module:'seo',tenants:(advisor?[1,2]:[1]).map(id=>({id,name:`契约客户${id}`}))});return;}
       const tenant=Number(url.searchParams.get('tenant_id')??body?.tenant_id),site=tenant===1?9:19;
       if(![1,2].includes(tenant)||(!advisor&&tenant!==1)){send(403,{detail:'Fixture tenant denied'});return;}
+      if(handleUi15({url,req,res,send,body,state,tenant,site,advisor}))return;
       const capture=url.pathname.match(/^\/api\/v1\/seo\/site\/page-captures\/(\d+)(\/image)?$/);
       if(capture){const id=Number(capture[1]);if(!capture[2]){send(200,{id,tenant_id:tenant,site_id:id===3?site+1:site,status:'succeeded'});return;}if(id===2&&!state.imageRetryReady){send(404,{detail:'Fixture image missing'});return;}res.writeHead(200,{'Content-Type':'image/png'});res.end(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aJ1kAAAAASUVORK5CYII=','base64'));return;}
       if(handleUi13({url,req,res,send,body,state,tenant,site,advisor}))return;

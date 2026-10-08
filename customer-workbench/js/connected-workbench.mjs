@@ -11,6 +11,8 @@ import {cycleForm} from './seo-cycle-config.mjs';
 import {statusLabel,formatTime} from './customer-display.mjs';
 import {contentPreview} from './content-preview.mjs';
 import {createContentMedia} from './content-media.mjs';
+import {createConversationClient} from './conversation-client.mjs';
+import {createConversationPanel} from './conversation-panel.mjs';
 import {createInputProtection} from './input-protection.mjs';
 import {createSeoDataClient} from './seo-data-client.mjs';
 import {homeView} from './home-view.mjs';
@@ -28,6 +30,7 @@ export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='in
   root.classList.add('customer-connected');
   const protection=createInputProtection(root);
   const media=createContentMedia({root,host});
+  const conversation=createConversationPanel({root,host,client:createConversationClient({host})});
   const client=createSeoWorkflowClient({transport:host.transport,getContext:host.getContext});
   const triggerClient=createSeoTriggerClient({transport:host.transport,getContext:host.getContext});
   const reader=createSeoContentReader({transport:host.transport,getContext:host.getContext});
@@ -35,7 +38,7 @@ export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='in
   const canMaintain=kind=>controller.getState().view?.canUpdate===true&&controller.getState().view?.permissionBasis?.active_site_advisor_assignment===true&&identity?.user.permissions[kind==='keywords'?'seo.keywords':'seo.content']==='edit';
   const dataClient=createSeoDataClient({transport:host.transport,getContext:host.getContext,canMaintain});
   let maintenance=null,maintenanceTarget=null,hadAdvisorAssignment=false;
-  function observeAssignment(basis){if(typeof basis?.active_site_advisor_assignment!=='boolean')return;const current=basis.active_site_advisor_assignment;if(hadAdvisorAssignment&&!current){protection.clear();editor=null;manualDraft=null;maintenance=null;planDraft=null;aiDraft=null;}hadAdvisorAssignment=current;}
+  function observeAssignment(basis){if(typeof basis?.active_site_advisor_assignment!=='boolean')return;const current=basis.active_site_advisor_assignment;if(hadAdvisorAssignment&&!current){conversation.clear();protection.clear();editor=null;manualDraft=null;maintenance=null;planDraft=null;aiDraft=null;}hadAdvisorAssignment=current;}
   let contentQuery='',contentStatus='',returnTo=null;const listPositions=new Map(),dataPages=new Map();
   let home=null,dataKind='keywords',dataPayload=null,dataPage=1,dataFilters={engine:'baidu',device:'desktop',status:'active'},dataDetail=null;
   const executionClient=createSeoExecutionClient({transport:host.transport,getContext:host.getContext});
@@ -44,11 +47,11 @@ export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='in
   let aiDraft=null,aiMaterial=null,planDraft=null,triggerActions=null;
   let executionPublications=null;
   let executions=null,execution=null,executionPage=1,selectedTaskId=null;
-  const clear=()=>{media.clear();protection.clear();contentQuery='';contentStatus='';returnTo=null;listPositions.clear();dataPages.clear();maintenance=null;maintenanceTarget=null;hadAdvisorAssignment=false;home=null;dataPayload=null;dataDetail=null;dataPage=1;dataKind='keywords';dataFilters={engine:'baidu',device:'desktop',status:'active'};dataClient.invalidate();aiDraft=null;aiMaterial=null;planDraft=null;triggerActions=null;triggerClient.invalidate();manualDraft=null;publicationReceipt=null;editor=null;publicationRecords=null;publicationAttempts=null;client.invalidate();identity=null;contents=null;delivery=null;status=null;listPage=1;selectedContentId=null;controller.invalidate();reader.invalidate();executionClient.invalidate();executionPublications=null;executions=null;execution=null;executionPage=1;selectedTaskId=null;};
-  function render(){protection.setContext(JSON.stringify([page,page==='稿件'?selectedContentId:page==='执行详情'?selectedTaskId:null,manualDraft?manualDraft.publicationId??'new':null,page==='顾问维护'?maintenanceTarget:null]));renderContent();protection.render();media.render(page==='稿件'&&delivery?JSON.stringify([identity?.tenant.id,identity?.site.id,delivery.content.id,delivery.content.version_count,delivery.content.payload_hash]):null);}
+  const clear=()=>{conversation.clear();media.clear();protection.clear();contentQuery='';contentStatus='';returnTo=null;listPositions.clear();dataPages.clear();maintenance=null;maintenanceTarget=null;hadAdvisorAssignment=false;home=null;dataPayload=null;dataDetail=null;dataPage=1;dataKind='keywords';dataFilters={engine:'baidu',device:'desktop',status:'active'};dataClient.invalidate();aiDraft=null;aiMaterial=null;planDraft=null;triggerActions=null;triggerClient.invalidate();manualDraft=null;publicationReceipt=null;editor=null;publicationRecords=null;publicationAttempts=null;client.invalidate();identity=null;contents=null;delivery=null;status=null;listPage=1;selectedContentId=null;controller.invalidate();reader.invalidate();executionClient.invalidate();executionPublications=null;executions=null;execution=null;executionPage=1;selectedTaskId=null;};
+  function render(){protection.setContext(JSON.stringify([page,page==='稿件'?selectedContentId:page==='执行详情'?selectedTaskId:null,manualDraft?manualDraft.publicationId??'new':null,page==='顾问维护'?maintenanceTarget:null]));renderContent();protection.render();media.render(page==='稿件'&&delivery?JSON.stringify([identity?.tenant.id,identity?.site.id,delivery.content.id,delivery.content.version_count,delivery.content.payload_hash]):null);conversation.render(page==='稿件'&&delivery?{contentId:delivery.content.id,title:delivery.content.title}:null);}
   function renderContent(){
     const connection=host.getState();
-    root.innerHTML=`<div class="connected-notice">${esc(environmentLabel)}</div><header><b>G-SNIPERS</b><span>客户工作台</span><small id="identity">${identity?`${esc(identity.user.display_name||identity.user.username||identity.user.id)} · ${esc(identity.tenant.name||identity.tenant.id)} / ${esc(identity.site.name)}`:'尚未取得授权身份'}</small>${demoHref?`<a href="${esc(demoHref)}">独立演示模式</a>`:''}</header><div class="workspace"><main class="connected-main"><div id="connected-message" class="connected-status" role="status">${esc(message)}</div><div id="connected-content"></div></main><details class="chat compact-chat"><summary>客户与顾问对话</summary><p>消息功能尚未接入。后续可在这里沟通稿件与服务事项。</p></details></div>`;
+    root.innerHTML=`<div class="connected-notice">${esc(environmentLabel)}</div><header><b>G-SNIPERS</b><span>客户工作台</span><small id="identity">${identity?`${esc(identity.user.display_name||identity.user.username||identity.user.id)} · ${esc(identity.tenant.name||identity.tenant.id)} / ${esc(identity.site.name)}`:'尚未取得授权身份'}</small>${demoHref?`<a href="${esc(demoHref)}">独立演示模式</a>`:''}</header><div class="workspace"><main class="connected-main"><div id="connected-message" class="connected-status" role="status">${esc(message)}</div><div id="connected-content"></div></main><aside id="conversation-panel" aria-label="客户与顾问对话"></aside></div>`;
     const main=root.querySelector('#connected-content');
     const modules=document.createElement('div');modules.className='module-navigation';modules.setAttribute('aria-label','服务模块');modules.innerHTML=['sem','seo','geo'].map(code=>{const item=connection.modules?.find(m=>m.module_code===code);const label=!connection.modulesChecked?'待核验':!item?.available?'未开通':code!=='seo'?'已开通 · 待接入':identity?'可使用':'待完成范围核验';return btn(`${code.toUpperCase()} · ${label}`,'page',`data-page="首页" data-module="${code}" ${code==='seo'&&identity&&!busy?'':'disabled'}`);}).join('');main.before(modules);
     if(!identity){
@@ -120,6 +123,7 @@ if(editor){const field={'content-title':'title','content-outline':'outline','con
   root.addEventListener('click',async event=>{
     const el=event.target.closest('[data-action]');if(!el||el.disabled)return;const a=el.dataset.action;
     if(a==='login'){host.login();return;}if(a==='connect'){await connect();return;}if(busy)return;
+    if(['page','return-list','delivery'].includes(a)&&!conversation.leave())return;
     if(a==='restore-input'){protection.restore();return;}if(a==='discard-input'){protection.discardRecovery();render();return;}
     if(['page','delivery','refresh','refresh-plan','execution-detail','execution-refresh','execution-page','list-page','manual-cancel','maintenance-open','maintenance-reload','return-list'].includes(a)&&!protection.leave(['refresh','refresh-plan','maintenance-reload'].includes(a)||(a==='delivery'&&Number(el.dataset.id)===selectedContentId)||(a==='execution-detail'&&Number(el.dataset.id)===selectedTaskId)))return;
     if(a==='return-list'){const target=returnTo;await navigate(target);const position=listPositions.get(target);if(position){requestAnimationFrame(()=>{window.scrollTo(0,position.y);const b=[...root.querySelectorAll('[data-action]')].find(e=>e.dataset.action===position.action&&e.dataset.id===position.id);b?.focus({preventScroll:true});});}return;}
@@ -185,5 +189,5 @@ if(editor){const field={'content-title':'title','content-outline':'outline','con
     }
   });
   void connect();
-  return {reconnect:connect,dispose(){epoch++;unsubscribe();clear();protection.dispose();media.dispose();host.dispose();root.replaceChildren();}};
+  return {reconnect:connect,dispose(){epoch++;unsubscribe();clear();protection.dispose();media.dispose();conversation.dispose();host.dispose();root.replaceChildren();}};
 }
