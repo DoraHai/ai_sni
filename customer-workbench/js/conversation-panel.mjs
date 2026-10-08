@@ -3,7 +3,7 @@ import {conversationView} from './conversation-view.mjs';
 // Text and retry keys belong only to this authenticated, mounted content scope.
 export function createConversationPanel({root,host,client}){
   let generation=0,key=null,state=fresh(),scrollIntent='latest',savedScroll=0,historyHeight=0;
-  function fresh(){return {context:null,open:false,busy:false,draft:'',pending:null,error:'',notice:'',items:[],unread:0,hasMore:false,before:null,canSend:false};}
+  function fresh(){return {context:null,open:true,busy:false,draft:'',pending:null,error:'',notice:'',items:[],unread:0,hasMore:false,before:null,canSend:false};}
   function clear(){generation++;key=null;state=fresh();scrollIntent='latest';savedScroll=0;client.clear();paint();}
   function position(){const list=root.querySelector('.conversation-messages');if(!state.open||!list)return;list.scrollTop=scrollIntent==='latest'?list.scrollHeight:scrollIntent==='older'?Math.max(0,list.scrollHeight-historyHeight)+savedScroll:savedScroll;savedScroll=list.scrollTop;scrollIntent='keep';}
   function paint(){const target=root.querySelector('#conversation-panel');if(target){const previous=target.querySelector('.conversation-messages');if(previous&&state.open&&scrollIntent==='keep')savedScroll=previous.scrollTop;target.innerHTML=conversationView(state);position();}}
