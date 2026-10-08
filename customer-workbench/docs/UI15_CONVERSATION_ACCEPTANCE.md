@@ -24,7 +24,7 @@
 
 ## 真实隔离环境执行
 
-后端0106和UI15专用合成稿件交接就绪后，运行 `scripts/ui15-real-messages.mjs`。该脚本只允许登录及指定稿件消息/已读写入，不允许确认、发布、AI、采集或旧UI12/14写流程。凭据只从系统TEMP的既有配置加载，不入库。
+后端0106和UI15专用合成稿件已就绪并完成下述实际流程，使用 `scripts/ui15-real-messages.mjs`。该脚本只允许登录及指定稿件消息/已读写入，不允许确认、发布、AI、采集或旧UI12/14写流程。凭据只从系统TEMP的既有配置加载，不入库。
 
 ```powershell
 $env:UI12_CONFIG_FILE='<SEO交接的绝对配置路径>'
@@ -36,6 +36,18 @@ npm run build
 node scripts/ui15-real-messages.mjs
 ```
 
-计划新增3条合成消息：客户意见、顾问回复、客户幂等恢复；最后一条在服务器返回后故意丢弃成功响应，再用相同UUID重试。两身份刷新读取，客户reload验证持久化，历史预置超过20条以免为分页大量写测。脚本输出TEMP报告与桌面/手机截图。
+实际新增3条合成消息：客户意见、顾问回复、客户幂等恢复；最后一条在服务器返回后故意丢弃成功响应，再用相同UUID重试。两身份刷新读取，客户reload验证持久化，历史预置25条以免为分页大量写测。脚本输出TEMP报告与桌面/手机截图。
 
-撤权握手由SEO维护隔离库：脚本保留顾问未发送文字，写出revocation-ready.json；SEO撤销assignment后写revoked.json；浏览器验证403清空并写revocation-tested.json；SEO恢复assignment并写restored.json，最后重连读成功。前端不直接操作DB。真实结果和准确构建SHA在完成后的交接回报中记录；本节执行说明本身不代表真实环境已经通过。
+撤权握手由SEO维护隔离库：脚本保留顾问未发送文字，写出revocation-ready.json；SEO撤销assignment后写revoked.json；浏览器验证403清空并写revocation-tested.json；SEO恢复assignment并写restored.json，最后重连读成功。前端不直接操作DB。
+
+## 实际证据与最终只读复核
+
+首次真实流程：前端 `9971b3e60383a87118bd10d02bce67a7cb132d3f`、产品源码干净；后端运行 `9f3037812d1efbe951c1b8056f0adc1346f64805`，实际健康检查 schema=ok/0106。tenant/site=1/1、content_id=64。原报告保留于系统TEMP `workbench-ui15-real-TWZN7H/report.json`。
+
+该报告7个业务断言完成：历史分页且不自动已读；两身份互发；丢成功响应后同键唯一恢复；显式已读；刷新持久化和390布局；切到不属于当前客户的site2清空旧消息/文字；撤权403清空及恢复重连。**原报告总体仍为failed**，原因是末尾网络审计把Edge密码框的两个内置 `data:image/svg+xml` 图标误归为外部请求；不是外部HTTP请求，也不是业务流程失败。原失败记录不覆盖、不改成passed。
+
+随后修正脚本网络分类，data/blob本地资源不算外部网络，仍阻止并记录不同源HTTP(S)请求。截图还发现刷新后消息窗口停在历史顶部，窄修复为首次展开/显式刷新最新/成功发送定位到最新；加载更早消息按新增高度保留原阅读锚点，普通重渲染保持用户滚动位置。没有后台轮询或自动跳离旧消息。
+
+SEO只读对账收据：`C:/Users/Administrator/.secrets/seo12-local/ui15-database-reconciliation.json`，该文件仅脱敏结果。确认25+3=28条、id26/27/28、sender/request_id全唯一，客户游标28/顾问0；顾问分配已恢复；稿件仍drafting/v1且发布/审核时间为null；102张原业务表及旧稿件前后指纹一致。
+
+最终修复后仅运行只读复核：设置 `UI15_READ_ONLY=true`、`UI15_EXPECTED_TEXT='UI15 browser 2026-10-08T02:08:41.602Z 幂等恢复'`，其余scope同上。该模式禁止消息和已读POST，不重放发送或撤权，检查历史、原消息持久读取、最新消息定位、手机布局和切范围。最终准确SHA、只读报告及截图路径见交接回报。
