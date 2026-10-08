@@ -24,6 +24,8 @@ npm run test:demo
 
 ## 范围与交接
 
+UI15功能冻结后的正式上线检查见 [普通客户/顾问一次性最小验收](docs/PRODUCTION_MINIMAL_ACCEPTANCE.md)。清单只列待指定范围和一次执行步骤，不表示生产验收已完成。
+
 UI-11补充计划、请求和响应模型来源，以及目标对象完成证据与全站效果背景的分别展示；保留旧完成证据。见 [UI-11兼容补丁](docs/UI11_EVIDENCE_DISPLAY.md)。
 
 UI-12已运行本机真实API/PG的确认、版本冲突、撤权及合成事实人工登记链；任务因页面采集关闭保持未完成。实际结果和仍未解决的体验问题见 [实际联调记录](docs/UI12_ACTUAL_RESULTS.md)，命令与场景见 [本机联调接线](docs/UI12_LOCAL_INTEGRATION.md)。该记录保留UI12当时的问题。UI13已完成本批可用化，见[UI13验收与边界](docs/UI13_USABILITY_ACCEPTANCE.md)。
