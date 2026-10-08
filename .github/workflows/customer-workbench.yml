@@ -22,6 +22,12 @@ on:
       - 'frontend/package-lock.json'
       - '.github/workflows/customer-workbench.yml'
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Apply the approved production static release (routes remain separate)'
+        type: boolean
+        default: false
+        required: true
 
 permissions:
   contents: read
@@ -57,4 +63,46 @@ jobs:
           path: ${{ runner.temp }}/customer-workbench-release/
           if-no-files-found: error
           retention-days: 7
-      # Artifact only: no deployment credentials, production mutation or migration.
+      # PRs and pushes only build artifacts. Deployment requires explicit dispatch.
+
+  deploy:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy == true && github.ref == 'refs/heads/codex/production-sem'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Require the current production commit
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git ls-remote origin refs/heads/codex/production-sem | cut -f1)" = "${{ github.sha }}"
+      - uses: actions/download-artifact@v4
+        with:
+          name: customer-workbench-${{ github.sha }}
+          path: ${{ runner.temp }}/customer-workbench-release
+      - name: Configure restricted platform deployment identity
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/platform-deploy
+          chmod 600 ~/.ssh/platform-deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Apply only the static package through the existing dispatcher
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          mapfile -t packages < <(find "$RUNNER_TEMP/customer-workbench-release" -type f -name 'customer-workbench-${{ github.sha }}.tgz')
+          test "${#packages[@]}" -eq 1
+          archive="${packages[0]}"
+          (cd "$(dirname "$archive")" && sha256sum -c SHA256SUMS)
+          digest="$(sha256sum "$archive" | cut -d' ' -f1)"
+          bash ops/platform-deploy/publish-platform-routes.sh "$archive" "${{ github.sha }}" "$digest" customer-workbench
+      # Does not migrate databases, restart SEO/SEM/GEO, or activate Nginx routes.

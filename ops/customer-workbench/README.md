@@ -41,7 +41,7 @@ node ops/customer-workbench/package-release.mjs <完整40位提交SHA>
 
 宿主 `frontend/src/views/workspace/AcquisitionCockpitView.vue` 已接入客户工作台链接：需要当前登录、非演示、SEO可用、明确的有效tenant/site与active网站；地址只携带这两个范围参数，目标应用仍独立鉴权。加载时无凭据GET探测同域新页面，5秒超时；只有收到新工作台HTML才显示入口，旧SEM壳或404不展示死链。上线后旧页面需刷新以重新探测。
 
-`.github/workflows/customer-workbench.yml` 在PR和生产分支变更上生成精确SHA的独立产物并校验身份/范围/制包契约；工作流只有contents:read，无部署账号或生产操作。原SEM构建/发布继续管理宿主链接，本工作台没有混入SEM构建包。
+`.github/workflows/customer-workbench.yml` 在PR和生产分支变更上生成精确SHA的独立产物并校验身份/范围/制包契约；PR/push只构建，权限为contents:read；显式workflow_dispatch且deploy=true、生产分支时，另一个受production环境限制的job才使用既有受限部署身份。默认deploy=false。原SEM构建/发布继续管理宿主链接，本工作台没有混入SEM构建包。
 
 ## 已取得的服务器基线
 
@@ -57,7 +57,7 @@ node ops/customer-workbench/package-release.mjs <完整40位提交SHA>
 
 1. 确认SEO代码与0105/0106迁移兼容、备份与新表权限；数据库操作仍由单独批准的计划执行。
 2. 合并精确版本并等待现有CI；安装本次受限模块扩展。
-3. 从干净的production-sem精确SHA制包，通过既有publisher第四参数customer-workbench部署。初次路由未启用时返回staged-awaiting-route，仅表示文件已准备。
+3. 在批准的production-sem精确SHA上手动触发Customer workbench artifact，deploy=true。工作流先干净构建/检查，再通过既有publisher第四参数customer-workbench上传与激活静态包；默认或PR/push不会部署。初次路由未启用时返回staged-awaiting-route，仅表示文件已准备。
 4. 手动触发 `Production SEM platform routes` 工作流（production-sem）。路线配置新增五个精确静态location；成功需原SEM路由和三个新静态文件逐字节核对通过。失败恢复原Nginx配置。该工作流push只验证/制包，生产激活仅workflow_dispatch，避免文件未就绪时自动改路由。
 5. 生产登录及普通客户/已分配顾问范围验收后，宿主刷新将显示已探测可用的新入口。
 
@@ -66,3 +66,4 @@ node ops/customer-workbench/package-release.mjs <完整40位提交SHA>
 回退：首发路由失败自动恢复原配置，静态文件可保留为未公开产物；静态更新失败自动恢复previous。若需人工回退，由发布负责人按记录恢复指定已核验静态链接或配置备份，不拼接旧新文件。后端仅回退到兼容现有schema的版本，不能把旧版0104健康检查会拒绝0106说成安全回退。
 
 本机Windows会跳过Linux发布状态机测试；以PR上的Linux测试结果作为该部分依据，不能把跳过计为通过。生产验证码和最终入口验收仍待上线窗口，不用反复重跑隔离业务写入。
+2026-10-08 11:07 Asia/Shanghai只读现场复核：SEM后端4d9c54f834296e155706748685e436859daf34d5，SEO后端d59d1a2c44ab，GEO后端2aa079cbbeb7，三服务db:ok；SEO实际schema_revision=0104_seo_page_ai_tdk。0105、0106均未上线，迁移计划必须包含两段，不能按已0105假设执行。
