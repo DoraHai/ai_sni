@@ -22,6 +22,8 @@
 
 原LoginView验证码整页、生产账号与部署不属于这些本机夹具结果。
 
+2026-10-08补充生产依赖：总控确认101服务器Auth current `63c67f379cc8907dc67965501fe64ef7ba340d69` 的公开编译落点 `U3({redirect,currentOrigin,modules})` 固定返回 `/workspace/cockpit`。上面的本地登录redirect通过不能证明旧生产Auth可回到新工作台。Auth兼容由总控处理，修复实际生效后按 [上线最小验收](PRODUCTION_MINIMAL_ACCEPTANCE.md) 核对真实返回范围；此补充未运行新测试。
+
 ## 真实隔离环境执行
 
 后端0106和UI15专用合成稿件已就绪并完成下述实际流程，使用 `scripts/ui15-real-messages.mjs`。该脚本只允许登录及指定稿件消息/已读写入，不允许确认、发布、AI、采集或旧UI12/14写流程。凭据只从系统TEMP的既有配置加载，不入库。
