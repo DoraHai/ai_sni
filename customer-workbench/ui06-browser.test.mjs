@@ -43,10 +43,10 @@ test('UI-06 pagination, read retries, no write replay, scope reset and three-mod
   }finally{await browser.close();await fixture.close();}
 });
 
-test('UI-06 built artifact uses canonical session storage and existing same-origin login helper',async()=>{
+test('UI-06 built artifact uses canonical session storage and dedicated same-origin login',async()=>{
   const manifest=JSON.parse(fs.readFileSync(new URL('./dist/customer-workbench/release-manifest.json',import.meta.url),'utf8'));
   for(const [name,meta] of Object.entries(manifest.files))assert.equal(createHash('sha256').update(fs.readFileSync(new URL('./dist/customer-workbench/'+name,import.meta.url))).digest('hex'),meta.sha256);
-  assert.deepEqual(Object.keys(manifest.canonicalSources).sort(),['src/auth/loginRedirect.js','src/store/session.js','src/store/sessionStorage.js']);
+  assert.deepEqual(Object.keys(manifest.canonicalSources).sort(),['src/store/session.js','src/store/sessionStorage.js']);
   const fixture=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true,args:['--no-first-run']});
   try{
     const page=await browser.newPage(),external=[],errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -59,17 +59,16 @@ test('UI-06 built artifact uses canonical session storage and existing same-orig
       try {const response=await fetch(fixture.origin+url.pathname+url.search,{method:request.method(),headers:request.headers(),body:request.postData()});await request.respond({status:response.status,contentType:response.headers.get('content-type'),body:Buffer.from(await response.arrayBuffer())});}catch {await request.abort();}
     });
     const entry=origin+'/customer-workbench/?tenant_id=1&site_id=9';
-    await page.goto(entry);await page.waitForFunction(()=>document.body.textContent.includes('尚未登录'));assert.equal(fixture.state.calls.length,0);
-    await Promise.all([page.waitForNavigation(),page.click('[data-action="login"]')]);
-    assert.equal(new URL(page.url()).origin,origin);assert.equal(new URL(page.url()).pathname,'/login');assert.equal(new URL(page.url()).searchParams.get('redirect'),'/customer-workbench/?tenant_id=1&site_id=9');
+    await page.goto(entry);await page.waitForSelector('#entry-login');assert.equal(fixture.state.calls.length,0);
+    assert.equal(new URL(page.url()).origin,origin);assert.equal(new URL(page.url()).pathname,'/customer-workbench/');
     // Seed only the existing session envelope, with fixture identities. No new credential store.
     await page.evaluate(()=>sessionStorage.setItem('sem_auth_v1',JSON.stringify({version:1,token:'fixture-customer',user:{id:12,tenant_id:1,display_name:'夹具用户',permissions:{'seo.content':'view','seo.site':'view'}}})));
     await page.goto(entry);await waitReady(page);assert.match(await text(page),/契约服务器客户1稿件/);
     assert.equal(await page.evaluate(()=>typeof DEV_ADAPTER),'undefined');assert(!(await text(page)).includes('独立演示模式'));
     assert.deepEqual(await page.evaluate(()=>Object.keys(sessionStorage).sort()),['sem_auth_v1','sem_tenant_id']);assert.deepEqual(await page.evaluate(()=>Object.keys(localStorage)),[]);
-    await page.goto(origin+'/customer-workbench/');await page.waitForFunction(()=>document.body.textContent.includes('请在宿主选择'));assert.equal(await page.$eval('a[href="/workspace/cockpit"]',e=>e.textContent),'返回现有工作台');
-    await page.goto(entry);await waitReady(page);fixture.state.forceError={path:'/content-assets',status:401};await Promise.all([page.waitForNavigation(),page.click('[data-action="refresh"]')]);
-    assert.equal(new URL(page.url()).pathname,'/login');assert.equal(new URL(page.url()).searchParams.get('redirect'),'/customer-workbench/?tenant_id=1&site_id=9');assert.equal(await page.evaluate(()=>sessionStorage.getItem('sem_auth_v1')),null);
+    await page.goto(origin+'/customer-workbench/');await waitReady(page);assert.equal(new URL(page.url()).searchParams.get('site_id'),'9');assert(!await page.$('a[href="/workspace/cockpit"]'));
+    await page.goto(entry);await waitReady(page);fixture.state.forceError={path:'/content-assets',status:401};await Promise.all([page.waitForNavigation(),page.click('.navigation [data-page="内容"]')]);
+    assert.equal(new URL(page.url()).pathname,'/customer-workbench/');assert.equal(new URL(page.url()).searchParams.get('login'),'1');assert.equal(new URL(page.url()).searchParams.get('site_id'),'9');assert.equal(await page.evaluate(()=>sessionStorage.getItem('sem_auth_v1')),null);
     assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
   }finally{await browser.close();await fixture.close();}
 });

@@ -7,7 +7,7 @@ import {execFileSync} from 'node:child_process';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const hostRoot=await fs.realpath(path.resolve(root,'../frontend')),output=path.join(root,'dist','customer-workbench');
-const sources=['src/store/session.js','src/store/sessionStorage.js','src/auth/loginRedirect.js'];
+const sources=['src/store/session.js','src/store/sessionStorage.js'];
 const sha=data=>createHash('sha256').update(data).digest('hex');
 const upstreamCommit=execFileSync('git',['-C',hostRoot,'rev-parse','HEAD'],{encoding:'utf8'}).trim();
 const sourceTreeClean=!execFileSync('git',['-C',root,'status','--porcelain','--','.'],{encoding:'utf8'}).trim();
@@ -24,7 +24,7 @@ const built=await build({
   absWorkingDir:root,entryPoints:['js/production-entry.mjs'],bundle:true,write:false,
   outdir:output,format:'esm',platform:'browser',target:['es2022'],minify:true,
   sourcemap:false,metafile:true,legalComments:'eof',
-  alias:{'@existing-host/session':path.join(hostRoot,sources[0]),'@existing-host/login-redirect':path.join(hostRoot,sources[2]),vue:path.join(root,'node_modules/vue/dist/vue.runtime.esm-bundler.js')},
+  alias:{'@existing-host/session':path.join(hostRoot,sources[0]),vue:path.join(root,'node_modules/vue/dist/vue.runtime.esm-bundler.js')},
   define:{'import.meta.env.DEV':'false','import.meta.env.VITE_AUTH_ORIGIN':'""','process.env.NODE_ENV':'"production"','__VUE_OPTIONS_API__':'false','__VUE_PROD_DEVTOOLS__':'false','__VUE_PROD_HYDRATION_MISMATCH_DETAILS__':'false'},
 });
 const inputs=Object.keys(built.metafile.inputs);
