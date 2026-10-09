@@ -210,6 +210,13 @@ def test_cached_legacy_answer_is_redacted_before_delivery(setup):
     assert 'test@example.com' not in result['answer'] and not s.requests
 
 
+def test_redaction_expansion_still_respects_response_contract(setup,monkeypatch):
+    s=setup
+    monkeypatch.setattr(seo_api,'chat_json',AsyncMock(return_value={'scope':'business','answer':'a@b.cn '*800,'sources':[]}))
+    result=asyncio.run(api.chat(s.req,s.session,s.c))
+    assert len(result['answer'])<=6000 and 'a@b.cn' not in result['answer'] and result['redacted']
+
+
 def test_real_refresh_checks_new_tenant_binding_and_revoked_permissions(monkeypatch):
     c=ctx();req=request()
     session=SimpleNamespace(rollback=AsyncMock(),expire_all=lambda:None,get=AsyncMock(return_value=SimpleNamespace(is_active=True)))

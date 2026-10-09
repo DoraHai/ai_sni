@@ -178,7 +178,7 @@ async def chat(req: ChatRequest, session=Depends(get_seo_session), ctx=Depends(r
         sources = list(dict.fromkeys(s for s in sources if isinstance(s, str) and s in facts)) if isinstance(sources, list) else []
         if decision == 'out_of_scope':
             answer, sources = OUT_OF_SCOPE, []
-        safe_answer = redact_text(answer.strip())
+        safe_answer = redact_text(answer.strip())[:6000]
         result = {'answer': safe_answer, 'sources': sources, 'tenant_id': req.tenant_id, 'site_id': req.site_id,
             'request_id': str(req.request_id), 'provider': 'deepseek', 'model': route['model'],
             'response_model': metadata.get('model'), 'read_at': read_at, 'advisory_only': True,
