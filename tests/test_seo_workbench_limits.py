@@ -65,6 +65,56 @@ def test_tenant_concurrency_cap_and_independent_customer():
     asyncio.run(scenario())
 
 
+def test_concurrent_same_request_key_charges_once_and_replays_at_frequency_limit():
+    async def scenario():
+        async with database() as (sessions,_):
+            key=str(uuid4())
+            async def start():
+                async with sessions() as session:
+                    try:return await claim(session,key=key)
+                    except HTTPException as exc:assert exc.detail['code']=='operation_running'
+            receipts=[r for r in await asyncio.gather(*(start() for _ in range(20))) if r]
+            assert len(receipts)==1
+            async with sessions() as session:
+                await settle_seo_ai_operation(session,1,receipts[0]['operation_id'],result={'answer':'唯一回答'})
+            for _ in range(4):
+                async with sessions() as session:
+                    receipt=await claim(session)
+                    await settle_seo_ai_operation(session,1,receipt['operation_id'],result={'answer':'完成'})
+            async with sessions() as session:
+                with pytest.raises(HTTPException) as exc:await claim(session)
+                assert exc.value.detail['code']=='assistant_rate_limited'
+            async with sessions() as session:
+                with pytest.raises(SeoAiReplay) as replay:await claim(session,key=key)
+                assert replay.value.result=={'answer':'唯一回答'}
+            assert (await usage(sessions))[WORKBENCH_CHAT_RESOURCE]==5
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('committed',[False,True])
+def test_uncertain_claim_commit_is_recoverable_without_double_charge(committed):
+    async def scenario():
+        from unittest.mock import patch
+        async with database() as (sessions,_):
+            key=str(uuid4())
+            async with sessions() as session:
+                original=session.commit
+                async def fail():
+                    if committed:await original()
+                    raise RuntimeError('lost acknowledgement')
+                with patch.object(session,'commit',fail):
+                    with pytest.raises(RuntimeError):await claim(session,key=key)
+            counters=await usage(sessions)
+            assert counters.get(WORKBENCH_CHAT_RESOURCE,0)==int(committed)
+            async with sessions() as session:
+                if committed:
+                    with pytest.raises(HTTPException) as exc:await claim(session,key=key)
+                    assert exc.value.detail['code']=='operation_running'
+                else:await claim(session,key=key)
+            assert (await usage(sessions))[WORKBENCH_CHAT_RESOURCE]==1
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize('limited_by,code',[('user','assistant_user_daily_limit'),('tenant','assistant_tenant_daily_limit')])
 def test_separate_daily_limits_recovery_and_original_seo_budget(limited_by,code):
     async def scenario():
