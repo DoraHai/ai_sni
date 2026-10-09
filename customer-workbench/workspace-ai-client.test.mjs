@@ -15,3 +15,8 @@ test('AI retry retains exact payload and rejects mismatched scope, identity and 
  result=null;const old=client.send(pending);ctx={...ctx,siteId:19};resolve({ok:true,status:200,json:async()=>({})});await assert.rejects(old,/CONTEXT_CHANGED/);
  await assert.rejects(client.send(pending),/CONTEXT_CHANGED/);
 });
+test('AI throttling exposes safe retry duration and distinct server policy code',async()=>{
+ const host={getContext:()=>({connected:true,tenantId:1,siteId:9,userId:12,revision:1}),transport:async()=>new Response(JSON.stringify({detail:{code:'assistant_rate_limited',message:'untrusted server text'}}),{status:429,headers:{'Retry-After':'24'}})};
+ const client=createWorkspaceAiClient({host,newId:()=> 'synthetic-id'});
+ await assert.rejects(client.send(client.prepare('问题',[])),e=>e.code==='assistant_rate_limited'&&e.status===429&&e.retryAfter===24&&!e.message.includes('untrusted'));
+});

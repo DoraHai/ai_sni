@@ -23,6 +23,12 @@ test('workspace AI: followup, selected article, escaped response, same request r
   assert.deepEqual(calls().at(-1).body,failed);assert.equal(f.state.aiResults.size,4);
   f.state.forceError={path:'/assistant/chat',status:503};await p.type('#workspace-question','服务失败保留问题');await p.click('[data-assistant-action=ask]');await p.waitForFunction(()=>document.querySelector('.assistant-feedback')?.textContent.includes('暂时不可用'));
   assert.equal(await p.$eval('#workspace-question',e=>e.value),'服务失败保留问题');assert.equal(await p.$$('.assistant-ai-answer').then(a=>a.length),4);
+  for(const [code,status,expected] of [['assistant_rate_limited',429,'提问较频繁'],['assistant_user_busy',429,'上一条问题仍在回答'],['assistant_workspace_busy',429,'正在处理其他问题'],['assistant_user_daily_limit',429,'账号 AI 对话额度'],['assistant_tenant_daily_limit',429,'客户 AI 对话额度'],['assistant_request_out_of_scope',422,'其他客户资料']]){
+   f.state.forceError={path:'/assistant/chat',status,detail:{code,message:'不可信错误内容'}};
+   await p.click('[data-assistant-action=ask]');await p.waitForFunction(text=>document.querySelector('.assistant-feedback')?.textContent.includes(text),{},expected);
+   assert.equal(await p.$eval('#workspace-question',e=>e.value),'服务失败保留问题');assert.equal(await p.$('[data-assistant-action=retry-ai]'),null);
+   assert.equal(await p.$eval('.assistant-feedback',e=>e.textContent.includes('不可信')),false);
+  }
   await p.setViewport({width:390,height:844});await p.click('[data-assistant-action=fullscreen]');assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   assert(await p.$eval('.assistant-composer',e=>e.getBoundingClientRect().bottom<=innerHeight-6),'Fullscreen keeps composer visible');
   await p.screenshot({path:path.join(tmpdir(),'workbench-ui19-ai-fullscreen.png'),fullPage:true});await p.click('[data-assistant-action=fullscreen]');
@@ -33,6 +39,9 @@ test('workspace AI: followup, selected article, escaped response, same request r
   while(!f.state.held.length)await new Promise(r=>setTimeout(r,20));
   await p.evaluate(()=>WORKBENCH_TEST_HOST.selectTenant(2));f.state.held.shift()();await idle(p);
   assert.equal(await p.$$('.assistant-ai-answer').then(a=>a.length),0);assert.equal(await p.$eval('#workspace-question',e=>e.value),'');
+  f.state.forceError={path:'/assistant/chat',status:403,detail:{code:'assistant_customer_binding_required'}};await p.type('#workspace-question','未绑定账号门禁');await p.click('[data-assistant-action=ask]');await p.waitForFunction(()=>document.querySelector('#connected-message')?.textContent.includes('核对账号绑定'));
+  assert.equal(await p.$('.assistant-ai-answer'),null);assert.equal(await p.$eval('#workspace-question',e=>e.value),'');
+  await p.evaluate(()=>WORKBENCH_TEST_HOST.setIdentity('customer'));await idle(p);
   f.state.forceError={path:'/assistant/chat',status:403};await p.type('#workspace-question','撤权清空');await p.click('[data-assistant-action=ask]');await p.waitForFunction(()=>document.querySelector('#connected-content')?.textContent.includes('无权'));
   assert.equal(await p.$$('.assistant-ai-answer').then(a=>a.length),0);assert.equal(await p.$eval('#workspace-question',e=>e.value),'');
   assert.equal(f.state.calls.filter(c=>c.method!=='GET'&&!c.path.endsWith('/assistant/chat')).length,0);
