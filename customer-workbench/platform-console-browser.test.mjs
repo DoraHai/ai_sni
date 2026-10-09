@@ -44,7 +44,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     const signIn=async()=>{await p.waitForSelector('#pc-login');await p.type('[name=username]','platform-admin');await p.type('[name=password]','fixture-password');await p.click('#pc-login button');};
     const body=()=>p.evaluate(()=>document.body.textContent);
     await p.goto(origin+'/customer-workbench/?console=platform');await signIn();await p.waitForSelector('.pc-kpis');
-    assert.equal(await p.title(),'超级管理员工作台 · G-SNIPERS');assert(!await p.$('.chat'));assert(!await p.$('.composer'));assert.match(await body(),/平台实际费用待接入/);
+    assert.equal(await p.title(),'超级管理员工作台 · G-SNIPERS');assert(!await p.$('.chat'));assert(!await p.$('.composer'));assert.match(await body(),/本月 API 估算待接入/);
     await p.screenshot({path:path.join(os.tmpdir(),'platform-admin-overview-20261010.png'),fullPage:true});
     const pages={customers:'客户与服务',accounts:'账号管理',apis:'API 调用情况',costs:'平台成本',tasks:'SEO 执行任务',security:'数据与权限',inventory:'系统盘点'};
     for(const [tab,label] of Object.entries(pages)){
