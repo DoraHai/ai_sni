@@ -724,16 +724,19 @@ async def execute_patrol_run(
                         from app.geo.retest import validate_plan_model
                         validate_plan_model(contract_plan, prompt.id, engine, llm)
                     cell_brand, cell_names = _brand_for_prompt(prompt)
-                    draft = await run_probe_draft(
-                        question=prompt.question,
-                        brand=cell_brand,
-                        brand_names=cell_names,
-                        engine=engine,
-                        llm=llm,
-                        chat_json=chat_json,
-                        sample_mode=sample_mode,
-                        fallback_reason=fallback_reason,
-                    )
+                    from app.api_metering import background_scope
+                    with background_scope(tenant_id=row.tenant_id, user_id=getattr(row, "created_by", None), module="geo",
+                                          operation="geo_patrol", job_ref=f"geo_patrol:{row.id}"):
+                        draft = await run_probe_draft(
+                            question=prompt.question,
+                            brand=cell_brand,
+                            brand_names=cell_names,
+                            engine=engine,
+                            llm=llm,
+                            chat_json=chat_json,
+                            sample_mode=sample_mode,
+                            fallback_reason=fallback_reason,
+                        )
                     # A provider response arriving after revocation is not a
                     # valid customer sample and must never be persisted.
                     await ensure_geo_entitlement(session, row.tenant_id)

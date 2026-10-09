@@ -11,6 +11,7 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from app.api_metering import MeteringScopeMiddleware
 from app.config import get_settings
 from app.database import engine
 from app.http_errors import register_infra_handlers
@@ -99,6 +100,7 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Growth Sniper GEO API", version="0.1.0", lifespan=_lifespan)
+app.add_middleware(MeteringScopeMiddleware, module="geo")
 register_infra_handlers(app)
 app.add_middleware(
     CORSMiddleware,

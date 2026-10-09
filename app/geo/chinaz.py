@@ -14,6 +14,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.api_metering import metered_request
+
 from app.config import get_settings
 from app.geo.audit import normalize_url
 
@@ -144,8 +146,8 @@ async def _request_json(
     timeout: float,
     extra_params: dict[str, Any] | None = None,
 ) -> Any:
-    response = await client.get(
-        endpoint,
+    response = await metered_request(
+        client, "get", endpoint, api_key=key, provider="chinaz", operation="chinaz.query",
         params={
             "domain": domain,
             "APIKey": key,
