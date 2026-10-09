@@ -572,14 +572,17 @@ async def _run_owned_job(job_id: int, *, tenant_id: int, connection=None) -> dic
                 }
             try:
                 await ensure_geo_entitlement(session, tenant_id)
-                if job_kind == KIND_GENERATE:
-                    result = await _execute_generate(session, row)
-                elif job_kind == KIND_PUSH_BATCH:
-                    result = await _execute_push_batch(session, row)
-                elif job_kind == KIND_VARIANTS:
-                    result = await _execute_variants(session, row)
-                else:
-                    raise ValueError(f"未知作业类型: {job_kind}")
+                from app.api_metering import background_scope
+                with background_scope(tenant_id=row.tenant_id, user_id=getattr(row, "created_by", None), module="geo",
+                                      operation=row.kind, job_ref=f"geo_job:{row.id}"):
+                    if job_kind == KIND_GENERATE:
+                        result = await _execute_generate(session, row)
+                    elif job_kind == KIND_PUSH_BATCH:
+                        result = await _execute_push_batch(session, row)
+                    elif job_kind == KIND_VARIANTS:
+                        result = await _execute_variants(session, row)
+                    else:
+                        raise ValueError(f"未知作业类型: {job_kind}")
                 await mark_job(session, job_id, status="succeeded", result_meta=result)
                 return {"status": "succeeded", "error": None, "result_meta": result}
             except Exception as exc:  # noqa: BLE001
