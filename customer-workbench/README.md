@@ -1,6 +1,6 @@
 # 客户工作台
 
-SEM / SEO / GEO 共享客户空间的独立前端，拟定同源入口 `/customer-workbench/`。当前连接模式实际接入 SEO 契约；SEM/GEO 显示开通状态及待接入，不伪造业务结果。尚未部署。
+SEM / SEO / GEO 共享客户空间的独立前端，同源入口 `/customer-workbench/`。当前实际接入 SEO 契约；SEM/GEO 显示开通状态及待接入，不伪造业务结果。原版已于 2026-10-08 发布；2026-10-09 的 UI16/UI17 首页与独立登录修正尚未部署。
 
 ## 构建与测试
 
@@ -13,12 +13,13 @@ npm run test:contracts
 npm run test:ui13
 npm run test:ui14
 npm run test:ui15
+npm run test:ui17
 npm run test:ui11
 npm run test:ui12-host
 npm run test:demo
 ```
 
-构建固定读取同一工作树 `../frontend/src/store/session.js`、`sessionStorage.js`、`../frontend/src/auth/loginRedirect.js`；不需个人路径或宿主环境变量，不建立新会话存储。产物在 `dist/customer-workbench/`，不会构建或修改原管理后台。
+构建固定读取同一工作树 `../frontend/src/store/session.js`、`sessionStorage.js`；独立登录表单继续调用 `/api/v1/auth/login`，使用原会话存储与后端权限，不建立新账号体系。不再导入旧 `/login` 跳转 helper。产物在 `dist/customer-workbench/`，不会构建或修改原管理后台。直接打开根入口即可登录、选择服务器授权的客户/网站，无需填写范围参数或先打开驾驶舱。详细边界见 [独立入口](docs/UI17_INDEPENDENT_ENTRY.md)。
 
 `npm run preview:fixture` 启动127.0.0.1内存API服务器，打开输出的 `/fixture.html`。假身份、假数据仅用于契约联调，不连生产。`connected.html` 无宿主注入时显示断开；`index.html` 是独立演示，不能作为生产入口。
 

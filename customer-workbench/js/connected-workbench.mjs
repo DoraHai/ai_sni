@@ -16,6 +16,7 @@ import {createConversationPanel} from './conversation-panel.mjs';
 import {createInputProtection} from './input-protection.mjs';
 import {createSeoDataClient} from './seo-data-client.mjs';
 import {homeView} from './home-view.mjs';
+import {createWorkspaceAssistant} from './workspace-assistant.mjs';
 import {maintenanceView,expirationLocal} from './maintenance-view.mjs';
 import {dataWorkspaceView,dataDetailView,preparationView} from './data-workspace-view.mjs';
 
@@ -26,7 +27,7 @@ const executionErrors={report_version_conflict:'报告版本已变化，请重�
 const workflowErrors={INVALID_MAINTENANCE_INPUT:'请填写必填资料，检查链接和到期时间格式',WRITE_FAILED:'保存未完成，请重新读取核对；输入已保留，不自动重发',INVALID_AI_SELECTION:'请选择1–20条已读资料和1–5个本站关键词',AI_SELECTION_READ_REQUIRED:'资料或关键词尚未读取、已过期或不在本站，请重新读取并选择',AI_CONFIGURE_DENIED:'当前无权配置AI草稿；请重新读取资格',AI_MATERIAL_TOO_LARGE:'所选资料超过总量限制，请减少资料',INVALID_PUBLICATION_INPUT:'请填写真实平台、公开链接和北京时间，并勾选已人工核实',TRIGGER_OUTCOME_UNRESOLVED:'上次触发结果未知，请读取执行进度核对，不重发',content_version_precondition_required:'缺少准确版本前提，请重新读取稿件',PUBLICATION_SELECTION_REQUIRED:'请先读取并选择本任务的发布记录'};
 const failure=e=>workflowErrors[e.code]||executionErrors[e.code]||({INVALID_CONTENT:'请填写1–300字的标题，检查正文与提纲',CONTENT_VERSION_OR_SCOPE_MISMATCH:'稿件版本或范围已变化，请重新读取核对',ADVISOR_REQUIRED:'当前身份未取得该站点顾问资格',CONTENT_PROTECTED:'稿件受保护，请先按明确退回流程处理'}[e.code])||(e.code==='content_version_conflict'?'稿件版本已变化，请重新读取后确认':e.code==='service_plan_version_conflict'?'服务计划已被更新，请重新读取':e.code==='REJECTION_NOTE_REQUIRED'?'退回必须填写意见':e.code==='WRITE_OUTCOME_UNKNOWN'?'写入结果未知，请重新读取核对，不自动重试':e.status===409?'内容状态或版本已变化，请重新读取核对':e.status===503?'服务能力尚未启用':e.status===403?'权限或顾问资格已变化，请重新读取':e.code==='CONFIRMATION_UNAVAILABLE'?'确认能力未启用':e.code==='MODULE_UNAVAILABLE'?'当前未开通SEO；SEM/GEO连接能力待接入':(e.code||e.message)==='READ_FAILED'?'读取失败，请重试当前页面':`请求未完成：${e.code||e.message}`);
 
-export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='index.html'}) {
+export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='index.html',selectSpace=null,logout=null}) {
   root.classList.add('customer-connected');
   const protection=createInputProtection(root);
   const media=createContentMedia({root,host});
@@ -41,26 +42,28 @@ export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='in
   function observeAssignment(basis){if(typeof basis?.active_site_advisor_assignment!=='boolean')return;const current=basis.active_site_advisor_assignment;if(hadAdvisorAssignment&&!current){conversation.clear();protection.clear();editor=null;manualDraft=null;maintenance=null;planDraft=null;aiDraft=null;}hadAdvisorAssignment=current;}
   let contentQuery='',contentStatus='',returnTo=null;const listPositions=new Map(),dataPages=new Map();
   let home=null,dataKind='keywords',dataPayload=null,dataPage=1,dataFilters={engine:'baidu',device:'desktop',status:'active'},dataDetail=null;
+  const assistant=createWorkspaceAssistant(root,()=>home);
   const executionClient=createSeoExecutionClient({transport:host.transport,getContext:host.getContext});
   let identity=null,page='首页',contents=null,delivery=null,status=null,busy=false,message='',epoch=0,level='L1',listPage=1,selectedContentId=null;
   let editor=null,publicationRecords=null,publicationAttempts=null,manualDraft=null,publicationReceipt=null;
   let aiDraft=null,aiMaterial=null,planDraft=null,triggerActions=null;
   let executionPublications=null;
   let executions=null,execution=null,executionPage=1,selectedTaskId=null;
-  const clear=()=>{conversation.clear();media.clear();protection.clear();contentQuery='';contentStatus='';returnTo=null;listPositions.clear();dataPages.clear();maintenance=null;maintenanceTarget=null;hadAdvisorAssignment=false;home=null;dataPayload=null;dataDetail=null;dataPage=1;dataKind='keywords';dataFilters={engine:'baidu',device:'desktop',status:'active'};dataClient.invalidate();aiDraft=null;aiMaterial=null;planDraft=null;triggerActions=null;triggerClient.invalidate();manualDraft=null;publicationReceipt=null;editor=null;publicationRecords=null;publicationAttempts=null;client.invalidate();identity=null;contents=null;delivery=null;status=null;listPage=1;selectedContentId=null;controller.invalidate();reader.invalidate();executionClient.invalidate();executionPublications=null;executions=null;execution=null;executionPage=1;selectedTaskId=null;};
-  function render(){protection.setContext(JSON.stringify([page,page==='稿件'?selectedContentId:page==='执行详情'?selectedTaskId:null,manualDraft?manualDraft.publicationId??'new':null,page==='顾问维护'?maintenanceTarget:null]));renderContent();protection.render();media.render(page==='稿件'&&delivery?JSON.stringify([identity?.tenant.id,identity?.site.id,delivery.content.id,delivery.content.version_count,delivery.content.payload_hash]):null);conversation.render(page==='稿件'&&delivery?{contentId:delivery.content.id,title:delivery.content.title}:null);}
+  const clear=()=>{assistant.clear();conversation.clear();media.clear();protection.clear();contentQuery='';contentStatus='';returnTo=null;listPositions.clear();dataPages.clear();maintenance=null;maintenanceTarget=null;hadAdvisorAssignment=false;home=null;dataPayload=null;dataDetail=null;dataPage=1;dataKind='keywords';dataFilters={engine:'baidu',device:'desktop',status:'active'};dataClient.invalidate();aiDraft=null;aiMaterial=null;planDraft=null;triggerActions=null;triggerClient.invalidate();manualDraft=null;publicationReceipt=null;editor=null;publicationRecords=null;publicationAttempts=null;client.invalidate();identity=null;contents=null;delivery=null;status=null;listPage=1;selectedContentId=null;controller.invalidate();reader.invalidate();executionClient.invalidate();executionPublications=null;executions=null;execution=null;executionPage=1;selectedTaskId=null;};
+  function render(){protection.setContext(JSON.stringify([page,page==='稿件'?selectedContentId:page==='执行详情'?selectedTaskId:null,manualDraft?manualDraft.publicationId??'new':null,page==='顾问维护'?maintenanceTarget:null]));renderContent();assistant.render(page);protection.render();media.render(page==='稿件'&&delivery?JSON.stringify([identity?.tenant.id,identity?.site.id,delivery.content.id,delivery.content.version_count,delivery.content.payload_hash]):null);conversation.render(page==='稿件'&&delivery?{contentId:delivery.content.id,title:delivery.content.title}:null);}
   function renderContent(){
     const connection=host.getState();
-    root.innerHTML=`<div class="connected-notice">${esc(environmentLabel)}</div><header><b>G-SNIPERS</b><span>客户工作台</span><small id="identity">${identity?`${esc(identity.user.display_name||identity.user.username||identity.user.id)} · ${esc(identity.tenant.name||identity.tenant.id)} / ${esc(identity.site.name)}`:'尚未取得授权身份'}</small>${demoHref?`<a href="${esc(demoHref)}">独立演示模式</a>`:''}</header><div class="workspace"><main class="connected-main"><div id="connected-message" class="connected-status" role="status">${esc(message)}</div><div id="connected-content"></div></main><aside id="conversation-panel" aria-label="客户与顾问对话"></aside></div>`;
+    root.innerHTML=`<div class="connected-notice">${esc(environmentLabel)}</div><header><b>G-SNIPERS</b><span>客户工作台</span><small id="identity">${identity?`${esc(identity.user.display_name||identity.user.username||identity.user.id)} · ${esc(identity.tenant.name||identity.tenant.id)} / ${esc(identity.site.name)}`:'尚未取得授权身份'}</small>${selectSpace?btn('选择工作空间','select-space'):''}${logout?btn('退出登录','logout'):''}${demoHref?`<a href="${esc(demoHref)}">独立演示模式</a>`:''}</header><div class="workspace"><main class="connected-main"><div id="connected-message" class="connected-status" role="status">${esc(message)}</div><div id="connected-content"></div></main><aside class="workbench-dialogue" aria-label="对话与顾问"><section id="workspace-assistant"></section><section id="conversation-panel" aria-label="客户与顾问对话"></section></aside></div>`;
     const main=root.querySelector('#connected-content');
     const modules=document.createElement('div');modules.className='module-navigation';modules.setAttribute('aria-label','服务模块');modules.innerHTML=['sem','seo','geo'].map(code=>{const item=connection.modules?.find(m=>m.module_code===code);const label=!connection.modulesChecked?'待核验':!item?.available?'未开通':code!=='seo'?'已开通 · 待接入':identity?'可使用':'待完成范围核验';return btn(`${code.toUpperCase()} · ${label}`,'page',`data-page="首页" data-module="${code}" ${code==='seo'&&identity&&!busy?'':'disabled'}`);}).join('');main.before(modules);
     if(!identity){
-      const labels={disconnected:'未连接宿主身份',unauthenticated:'尚未登录，请使用现有登录入口',forbidden:'当前身份无权进入此客户空间',scope_required:'请在宿主选择获授权客户与站点',connecting:'正在核验身份、模块和客户范围',connection_error:'连接未完成，请重试',module_pending:'已开通模块尚未接入此入口'};
-      main.innerHTML=`<section class="connected-state"><h2>${labels[connection.phase]||'未连接'}</h2><p>请从现有工作台进入已选择的客户与站点。</p><a href="/workspace/cockpit">返回现有工作台</a>${btn('前往现有登录','login')}${btn('重新连接','connect',busy?'disabled':'')}</section>`;return;
+      const labels={disconnected:'未连接宿主身份',unauthenticated:'尚未登录，请登录客户工作台',forbidden:'当前身份无权进入此客户空间',scope_required:'请选择有权限的客户与网站',connecting:'正在核验身份、模块和客户范围',connection_error:'连接未完成，请重试',module_pending:'已开通模块尚未接入此入口'};
+      main.innerHTML=`<section class="connected-state"><h2>${labels[connection.phase]||'未连接'}</h2><p>你可以在客户工作台重新选择工作空间或登录账号。</p><a href="/customer-workbench/">选择工作空间</a>${btn('登录客户工作台','login')}${btn('重新连接','connect',busy?'disabled':'')}</section>`;return;
     }
     const siteRead=['view','edit'].includes(identity.user.permissions['seo.site']);
     main.innerHTML=`<div class="navigation">${['首页','内容','SEO工作','进度','数据','服务计划','交付记录'].map(n=>btn(n,'page',`data-page="${n}" ${busy||(!siteRead&&['SEO工作','进度','数据','服务计划'].includes(n))?'disabled':''}`)).join('')}</div><section id="page" class="page-card"></section>`;
     const panel=root.querySelector('#page');
+    panel.classList.toggle('home-page',page==='首页');
     if(page==='首页'){panel.innerHTML=homeView(home);if(busy)panel.querySelectorAll('button').forEach(b=>b.disabled=true);
     }else if(page==='内容'){
       panel.innerHTML=`<h2>${page==='首页'?'当前客户 · 稿件与待办':'内容'}</h2><p>客户确认稿件，顾问可以代确认；发布状态另按实际记录展示。</p><div class="data-filters"><label>查找标题或关联关键词<input id="content-query" maxlength="200" value="${esc(contentQuery)}"></label><label>稿件状态<select id="content-status">${[['','全部'],['planned','待制作'],['drafting','修改中'],['review','审核中'],['ready','已备好'],['published','已发布']].map(([v,label])=>`<option value="${v}" ${v===contentStatus?'selected':''}>${label}</option>`).join('')}</select></label>${btn('查询稿件','content-search',busy?'disabled':'')}</div>${contents?`<small id="pagination-summary">第${listPage}页${listPage>Math.max(1,Math.ceil(contents.total/50))?'（列表已变化，请返回前页）':` / 共${Math.max(1,Math.ceil(contents.total/50))}页`} · 本页${contents.items.length}篇 / 共${contents.total}篇 · 每页50篇</small>${contents.items.map(item=>`<div class="task-item"><div class="task-content"><b>${esc(item.title||`稿件${item.id}`)}</b><p>v${esc(item.version_count)} · ${esc(statusLabel(item.status))}</p></div>${btn('查看准确交付稿','delivery',`data-id="${item.id}" ${busy?'disabled':''}`)}</div>`).join('')||'<p>当前授权范围没有稿件。</p>'}`:`<p>第${listPage}页尚未读取，请重试。</p>`}<div class="pagination">${btn('上一页','list-page',`data-number="${listPage-1}" ${busy||listPage<=1?'disabled':''}`)}${btn('下一页','list-page',`data-number="${listPage+1}" ${busy||!contents||listPage*50>=contents.total?'disabled':''}`)}${btn('刷新本页','refresh',busy?'disabled':'')}</div><p>${btn('查看资料与关键词','page','data-page="数据"')}</p>`;
@@ -98,8 +101,21 @@ export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='in
   async function readHome(current){
     const rows=await reader.contents({page:1,pageSize:8});
     const results=await Promise.allSettled(rows.items.map(v=>client.delivery(v.id)));
-    const tasks=['view','edit'].includes(identity?.user.permissions['seo.site'])?await executionClient.list({page:1,pageSize:5}):null;
-    if(current())home={contents:rows,deliveries:results.filter(r=>r.status==='fulfilled').map(r=>r.value),failed:results.filter(r=>r.status==='rejected').length,executions:tasks};
+    if(!current())return;
+    const siteRead=['view','edit'].includes(identity?.user.permissions['seo.site']);
+    const keywordRead=['view','edit'].includes(identity?.user.permissions['seo.keywords']);
+    const requests=[
+      ['executions','服务进度',siteRead,()=>executionClient.list({page:1,pageSize:5})],
+      ['service','服务汇总',siteRead,()=>client.serviceStatus()],
+      ['keywords','关键词',keywordRead,()=>dataClient.list('keywords',{filters:{engine:'baidu',device:'desktop',status:'active'}})],
+      ['pages','网站页面',siteRead,()=>dataClient.list('pages')],
+      ['publications','发布记录',true,()=>dataClient.list('publications')],
+    ];
+    const snapshots=await Promise.allSettled(requests.map(([, ,allowed,read])=>allowed?read():Promise.resolve(null)));
+    if(!current())return;
+    const summary={readFailures:[],readAt:new Date().toISOString()};
+    snapshots.forEach((result,i)=>{const [key,label,allowed]=requests[i];summary[key]=result.status==='fulfilled'?result.value:null;if(result.status==='rejected')summary.readFailures.push(label+'读取失败');else if(!allowed)summary.readFailures.push(label+'无查看权限');});
+    home={contents:rows,deliveries:results.filter(r=>r.status==='fulfilled').map(r=>r.value),failed:results.filter(r=>r.status==='rejected').length,...summary};
   }
   async function readData(current){dataPayload=null;dataDetail=null;const kind=page==='交付记录'?'publications':dataKind;dataPages.set(kind,dataPage);const value=await dataClient.list(kind,{page:dataPage,filters:kind==='publications'||kind==='facts'?{}:dataFilters});if(['view','edit'].includes(identity?.user.permissions['seo.site']))await controller.load();if(!current())return;observeAssignment(controller.getState().view?.permissionBasis);if(current())dataPayload=value;}
   async function readMaintenance(current){const {kind,id}=maintenanceTarget;await controller.load();observeAssignment(controller.getState().view?.permissionBasis);if(!canMaintain(kind)){protection.clear();throw Object.assign(Error('ADVISOR_REQUIRED'),{code:'ADVISOR_REQUIRED'});}await dataClient.list(kind,{page:dataPage,filters:kind==='facts'?{}:dataFilters});const value=id?dataClient.selected(kind,id):kind==='keywords'?{keyword:'',priority:'P2',landing_page:''}:{title:'',statement:'',source_name:'',source_url:'',expires_at:'',status:'active'};if(kind==='facts'){value.expires_local=expirationLocal(value.expires_at);value._initialExpiresLocal=value.expires_local;}if(current())maintenance=value;}
@@ -122,13 +138,19 @@ export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='in
 if(editor){const field={'content-title':'title','content-outline':'outline','content-body':'body'}[event.target.id];if(field)editor[field]=event.target.value;}});
   root.addEventListener('click',async event=>{
     const el=event.target.closest('[data-action]');if(!el||el.disabled)return;const a=el.dataset.action;
-    if(a==='login'){host.login();return;}if(a==='connect'){await connect();return;}if(busy)return;
-    if(['page','return-list','delivery'].includes(a)&&!conversation.leave())return;
+    if(a==='select-space'||a==='logout'){if(!conversation.leave()||!protection.leave())return;conversation.clear();assistant.clear();if(a==='logout')logout?.();else selectSpace?.();return;}if(a==='login'){host.login();return;}if(a==='connect'){await connect();return;}if(busy)return;
+    if(['page','home-data','return-list','delivery'].includes(a)&&!conversation.leave())return;
     if(a==='restore-input'){protection.restore();return;}if(a==='discard-input'){protection.discardRecovery();render();return;}
-    if(['page','delivery','refresh','refresh-plan','execution-detail','execution-refresh','execution-page','list-page','manual-cancel','maintenance-open','maintenance-reload','return-list'].includes(a)&&!protection.leave(['refresh','refresh-plan','maintenance-reload'].includes(a)||(a==='delivery'&&Number(el.dataset.id)===selectedContentId)||(a==='execution-detail'&&Number(el.dataset.id)===selectedTaskId)))return;
+    if(['page','home-data','delivery','refresh','refresh-plan','execution-detail','execution-refresh','execution-page','list-page','manual-cancel','maintenance-open','maintenance-reload','return-list'].includes(a)&&!protection.leave(['refresh','refresh-plan','maintenance-reload'].includes(a)||(a==='delivery'&&Number(el.dataset.id)===selectedContentId)||(a==='execution-detail'&&Number(el.dataset.id)===selectedTaskId)))return;
     if(a==='return-list'){const target=returnTo;await navigate(target);const position=listPositions.get(target);if(position){requestAnimationFrame(()=>{window.scrollTo(0,position.y);const b=[...root.querySelectorAll('[data-action]')].find(e=>e.dataset.action===position.action&&e.dataset.id===position.id);b?.focus({preventScroll:true});});}return;}
     if(['delivery','execution-detail','data-keyword-detail','data-page-detail','data-publication-detail'].includes(a)&&['首页','内容','进度','数据','交付记录'].includes(page)){returnTo=page;listPositions.set(page,{y:window.scrollY,action:a,id:el.dataset.id});window.scrollTo(0,0);}
     if(a==='content-search'){contentQuery=root.querySelector('#content-query').value.trim();contentStatus=root.querySelector('#content-status').value;listPage=1;await navigate('内容');return;}
+    if(a==='home-data'){
+      const target=el.dataset.page;if(!['首页','内容','进度','数据','交付记录'].includes(target))return;
+      if(!['view','edit'].includes(identity?.user.permissions['seo.site'])&&['进度','数据'].includes(target)){message='当前身份无权查看这项数据';render();return;}
+      if(target==='数据'){dataKind=['keywords','pages','facts'].includes(el.dataset.kind)?el.dataset.kind:'keywords';dataFilters=dataKind==='keywords'?{engine:'baidu',device:'desktop',status:'active'}:{};dataPage=1;dataPages.set(dataKind,1);}
+      editor=null;manualDraft=null;await navigate(target);root.querySelector('#page')?.scrollIntoView({block:'start',behavior:'smooth'});return;
+    }
     if(a==='page'){editor=null;manualDraft=null;await navigate(el.dataset.page);return;}
     if(a==='maintenance-open'){maintenanceTarget={kind:dataKind,id:el.dataset.id?Number(el.dataset.id):null};maintenance=null;page='顾问维护';await run(readMaintenance);return;}
     if(a==='maintenance-reload'){maintenance=null;await run(readMaintenance);return;}
@@ -189,5 +211,5 @@ if(editor){const field={'content-title':'title','content-outline':'outline','con
     }
   });
   void connect();
-  return {reconnect:connect,dispose(){epoch++;unsubscribe();clear();protection.dispose();media.dispose();conversation.dispose();host.dispose();root.replaceChildren();}};
+  return {reconnect:connect,dispose(){epoch++;unsubscribe();clear();protection.dispose();media.dispose();conversation.dispose();assistant.dispose();host.dispose();root.replaceChildren();}};
 }

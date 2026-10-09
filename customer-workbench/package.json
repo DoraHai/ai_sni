@@ -21,7 +21,9 @@
     "test:ui13": "node --test customer-display.test.mjs seo-data-view.test.mjs seo-data-client.test.mjs ui13-usability.test.mjs",
     "test:ui14": "node --test seo-readonly-client.test.mjs host-session-adapter.test.mjs ui14-media.test.mjs",
     "pretest:ui15": "npm run build",
-    "test:ui15": "node --test conversation-client.test.mjs ui15-messages.test.mjs ui15-entry.test.mjs"
+    "test:ui15": "node --test conversation-client.test.mjs ui15-messages.test.mjs ui15-entry.test.mjs",
+    "pretest:ui17": "npm run build",
+    "test:ui17": "node --test ui17-entry.test.mjs ui15-entry.test.mjs host-session-adapter.test.mjs"
   },
   "devDependencies": {
     "esbuild": "0.25.12",
