@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.api_metering import MeteringScopeMiddleware
+from app.api_controls import register_runtime
 from app.config import get_settings
 from app.database import engine
 from app.http_errors import register_infra_handlers
@@ -59,6 +60,7 @@ async def _lifespan(_app: FastAPI):
         # recover or start any job, patrol, scheduler, or follow-up worker.
         yield
         return
+    await register_runtime('geo')
     try:
         from app.geo.content.async_jobs import recover_jobs_on_startup
 
