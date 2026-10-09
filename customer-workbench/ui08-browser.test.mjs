@@ -19,7 +19,11 @@ test('SEO service automation buttons work in the mounted workbench without impli
     await page.click('[data-action="execution-notification-read"]');await page.waitForFunction(()=>!document.querySelector('[data-action="execution-notification-read"]'));assert.equal(row.task.status,'in_progress');
     await detail(page,104);await page.click('[data-action="execution-retry_analytics"]');await page.waitForFunction(()=>document.body.textContent.includes('等待统计数据'));
     await page.click('[data-action="execution-incomplete_report"]');await page.waitForSelector('[data-action="execution-report"]');assert.equal(row.task.params.analytics_incomplete_ack.actor_user_id,7);
-    await nav(page,'服务计划');await page.click('[data-cycle="analytics_cycle_enabled"]');await page.click('[data-action="save-plan"]');await page.waitForFunction(()=>document.querySelector('#plan-message')?.textContent.includes('已由服务器保存'));assert.equal(fixture.state.plans.get(1).analytics_cycle_enabled,true);
+    await nav(page,'服务计划');await page.click('[data-cycle="analytics_cycle_enabled"]');await page.click('[data-cycle="website_incremental_enabled"]');await page.click('[data-action="save-plan"]');await page.waitForFunction(()=>document.querySelector('#plan-message')?.textContent.includes('已由服务器保存'));assert.equal(fixture.state.plans.get(1).analytics_cycle_enabled,true);assert.equal(fixture.state.plans.get(1).website_incremental_enabled,true);
+    const scan=fixture.state.executions.get(102).task.params;
+    scan.incremental={state:'complete',inventory:{added_page_ids:[10],inventory_count:3,inventory_limit_reached:false},selected_count:1,more_sitemaps_pending:true};
+    scan.pages['10'].change='changed';scan.pages['10'].previous_snapshot_id=99;
+    await nav(page,'进度');await detail(page,102);assert.match(await body(page),/站点地图仍有待发现页面/);assert.match(await body(page),/页面有变化/);assert.match(await body(page),/这里只证明诊断完成/);
     assert.deepEqual(errors,[]);
   }finally{await browser.close();await fixture.close();}
 });
