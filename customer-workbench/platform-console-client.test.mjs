@@ -41,3 +41,30 @@ test('expiry clears the canonical session and permission denial invalidates auth
     if(status===401)assert.equal(s.token,'');
   }
 });
+
+test('configuration writes have fresh permission preflight and one fixed authenticated route',async()=>{
+  const s=session(admin),calls=[];let permitted=true;
+  const client=createPlatformConsoleClient({session:s,fetchImpl:async(path,o)=>{
+    calls.push({path,o});return response(path.endsWith('/me')?{user:permitted?admin:{...admin,tenant_id:1}}:path.endsWith('/controls')?{revision:1}:snapshot);
+  }});
+  await client.initialize();
+  const data={request_id:'id',kind:'provider',key:'provider:test',expected_revision:0,value:{enabled:false}};
+  assert.equal((await client.change(data)).revision,1);
+  assert.deepEqual(calls.slice(-2).map(c=>[c.path,c.o.method]),[['/api/v1/auth/me','GET'],['/api/v1/admin/console/controls','POST']]);
+  const write=calls.at(-1).o;assert.equal(write.credentials,'omit');assert.equal(write.headers.Authorization,'Bearer test-token');
+  assert.deepEqual(JSON.parse(write.body),data);
+  permitted=false;const before=calls.length;
+  await assert.rejects(client.change(data),{code:'CONSOLE_FORBIDDEN'});
+  assert.equal(calls.length,before+1);assert.equal(client.getIdentity(),null);
+});
+
+test('identity changes during write preflight cancel the write',async()=>{
+  const s=session(admin);let change=false,writes=0;
+  const client=createPlatformConsoleClient({session:s,fetchImpl:async(path,o)=>{
+    if(o.method==='POST')writes++;
+    if(change&&path.endsWith('/me'))s.token='new-token';
+    return response(path.endsWith('/me')?{user:admin}:snapshot);
+  }});
+  await client.initialize();change=true;
+  await assert.rejects(client.change({}),{code:'CONSOLE_STALE'});assert.equal(writes,0);
+});
