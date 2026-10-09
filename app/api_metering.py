@@ -28,6 +28,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.database import async_session_factory
+from app import api_controls
 
 logger = logging.getLogger(__name__)
 
@@ -231,8 +232,12 @@ async def metered_request(client, method: str, url: str, *, api_key=None,
                           operation=None, **kwargs):
     """Wrap only known provider clients, preserving their existing transport."""
     if not enabled():
+        if api_controls.enabled():
+            raise MeteringUnavailable('API 管理必须与费用计量同时启用')
         return await getattr(client, method)(url, **kwargs)
     context = scope.get()
+    if context.module == 'unknown':
+        context = replace(context, module=api_controls.SERVICE_MODULE)
     if tenant_id is not None:
         context = replace(context, tenant_id=int(tenant_id))
     quote = quote_rate(url, model or endpoint_name(url))
@@ -244,7 +249,10 @@ async def metered_request(client, method: str, url: str, *, api_key=None,
                   credential_ref=credential_ref(api_key), model=safe_code(model, 120),
                   endpoint=endpoint_name(url), pricing_version=quote['version'] if quote else None,
                   rate_quote=json.dumps(quote) if quote else None)
-    await _write('''INSERT INTO api_usage_events
+    if api_controls.enabled():
+        quote, kwargs = await api_controls.admit(params, url, api_key, quote, kwargs)
+    else:
+        await _write('''INSERT INTO api_usage_events
         (id,tenant_id,user_id,origin,module,operation,job_ref,provider,credential_ref,
          model,endpoint,state,pricing_version,rate_quote)
         VALUES (CAST(:id AS uuid),:tenant_id,:user_id,:origin,:module,:operation,:job_ref,

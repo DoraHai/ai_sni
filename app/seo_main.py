@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from app.api.customer_modules import seo_sites_router
 from app.api.seo import router as seo_router
 from app.api_metering import MeteringScopeMiddleware
+from app.api_controls import register_runtime
 from app.config import get_settings
 from app.database import engine
 from app.http_errors import register_infra_handlers
@@ -468,6 +469,8 @@ async def _check_demo_binding_structure(conn, *, require_current_truncate: bool 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    if str(settings.app_env).lower() not in {'demo', 'test'}:
+        await register_runtime('seo')
     scheduler_started = seo_scheduler_may_start(settings)
     if scheduler_started:
         start_seo_scheduler()
