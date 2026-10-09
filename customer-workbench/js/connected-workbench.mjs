@@ -17,6 +17,7 @@ import {createInputProtection} from './input-protection.mjs';
 import {createSeoDataClient} from './seo-data-client.mjs';
 import {homeView} from './home-view.mjs';
 import {createWorkspaceAssistant} from './workspace-assistant.mjs';
+import {createWorkspaceAiClient} from './workspace-ai-client.mjs';
 import {maintenanceView,expirationLocal} from './maintenance-view.mjs';
 import {dataWorkspaceView,dataDetailView,preparationView} from './data-workspace-view.mjs';
 
@@ -42,7 +43,7 @@ export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='in
   function observeAssignment(basis){if(typeof basis?.active_site_advisor_assignment!=='boolean')return;const current=basis.active_site_advisor_assignment;if(hadAdvisorAssignment&&!current){conversation.clear();protection.clear();editor=null;manualDraft=null;maintenance=null;planDraft=null;aiDraft=null;}hadAdvisorAssignment=current;}
   let contentQuery='',contentStatus='',returnTo=null;const listPositions=new Map(),dataPages=new Map();
   let home=null,dataKind='keywords',dataPayload=null,dataPage=1,dataFilters={engine:'baidu',device:'desktop',status:'active'},dataDetail=null;
-  const assistant=createWorkspaceAssistant(root,()=>home);
+  const assistant=createWorkspaceAssistant(root,()=>home,{aiClient:createWorkspaceAiClient({host}),getContentId:()=>page==='稿件'?selectedContentId:null});
   const executionClient=createSeoExecutionClient({transport:host.transport,getContext:host.getContext});
   let identity=null,page='首页',contents=null,delivery=null,status=null,busy=false,message='',epoch=0,level='L1',listPage=1,selectedContentId=null;
   let editor=null,publicationRecords=null,publicationAttempts=null,manualDraft=null,publicationReceipt=null;

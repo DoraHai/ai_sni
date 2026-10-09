@@ -25,6 +25,7 @@ test('R12 home: real scoped reads, persistent dialogue, drilldown, missing data,
    if(value)void r.respond({status:200,contentType:'application/json',body:JSON.stringify(value)});else void r.continue();
   });
   await p.goto(f.origin+'/fixture.html');await idle(p);await p.waitForSelector('.home-kpis');
+  await p.click('[data-assistant-action=mode-guide]');
   assert.equal(await p.$$('.home-metric').then(a=>a.length),6);
   assert.equal(await p.$eval('.workspace',e=>getComputedStyle(e).display),'grid');
   const positions=await p.evaluate(()=>({main:document.querySelector('.connected-main').getBoundingClientRect().right,chat:document.querySelector('.workbench-dialogue').getBoundingClientRect().left}));
