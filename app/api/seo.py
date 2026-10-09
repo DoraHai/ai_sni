@@ -5597,6 +5597,7 @@ class SeoServicePlanUpdate(BaseModel):
     content_ai_fact_ids: list[PositiveInt] | None = Field(None, max_length=20)
     content_ai_keyword_ids: list[PositiveInt] | None = Field(None, max_length=5)
     website_cycle_enabled: bool | None = None
+    website_incremental_enabled: bool | None = None
     website_interval_days: int | None = Field(None, ge=1, le=90)
     website_max_pages: int | None = Field(None, ge=1, le=10)
     monitoring_cycle_enabled: bool | None = None
@@ -7197,6 +7198,7 @@ def _service_plan_payload(site: SeoSite) -> dict[str, Any]:
         "content_ai_authorized_by": plan.get("content_ai_authorized_by"),
         "content_ai_authorized_at": plan.get("content_ai_authorized_at"),
         "website_cycle_enabled": plan.get("website_cycle_enabled") is True,
+        "website_incremental_enabled": plan.get("website_incremental_enabled") is True,
         "website_interval_days": int(plan.get("website_interval_days") or 7),
         "website_max_pages": int(plan.get("website_max_pages") or 5),
         "monitoring_cycle_enabled": plan.get("monitoring_cycle_enabled") is True,
@@ -7313,7 +7315,7 @@ async def update_seo_service_plan(
         "updated_by": ctx.user_id,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    for key in ("website_cycle_enabled", "website_interval_days", "website_max_pages",
+    for key in ("website_cycle_enabled", "website_incremental_enabled", "website_interval_days", "website_max_pages",
                 "monitoring_cycle_enabled", "monitoring_interval_days", "report_cycle_enabled", "analytics_cycle_enabled",
                 "content_ai_enabled", "content_ai_fact_ids", "content_ai_keyword_ids", "content_ai_provider", "content_ai_model"):
         value = getattr(req, key)

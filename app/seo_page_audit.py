@@ -1,4 +1,4 @@
-"""Single-page SEO observations; never discover or enqueue other pages."""
+"""Single-page observations; optional links are registered only by the caller."""
 
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -13,13 +13,17 @@ from app.seo_crawler import (
 SINGLE_PAGE_TIMEOUT = 40
 
 
-async def collect_page_snapshot(url, *, fetcher=None):
+async def collect_page_snapshot(url, *, fetcher=None, include_links=False, allowed_hosts=None):
     """Read robots and exactly one page (including safe HTTP redirects).
 
     No sitemap, link traversal, image requests, AI, or publishing. Failed
     observations are persisted too, so stale success is never shown as current.
     """
     fetcher = fetcher or fetch_url
+    if allowed_hosts is not None:
+        original_fetcher = fetcher
+        async def fetcher(target, **kwargs):
+            return await original_fetcher(target, allowed_hosts=allowed_hosts, **kwargs)
     try:
         target = normalize_crawl_url(url, preserve_path=True)
     except (SeoCrawlError, ValueError):
@@ -30,7 +34,10 @@ async def collect_page_snapshot(url, *, fetcher=None):
         async with asyncio.timeout(SINGLE_PAGE_TIMEOUT):
             robots_url = urljoin(target, '/robots.txt')
             robots = await fetcher(robots_url, allow_text=True)
-            if robots.status_code == 200 and not robots.error_type:
+            strict_readable = (allowed_hosts is None or (
+                (robots.content_type or '').lower().startswith('text/plain')
+                and not robots.body.lstrip('\ufeff \t\r\n').startswith('<')))
+            if robots.status_code == 200 and not robots.error_type and strict_readable:
                 # A successfully read empty file has no disallow rules; this
                 # differs from a timeout/non-text/error response with no body.
                 parser = RobotFileParser()
@@ -51,15 +58,16 @@ async def collect_page_snapshot(url, *, fetcher=None):
     except TimeoutError:
         result = FetchResult(target, target, None, [], None, '', None, None, {},
                              'timeout', '单页检测超时')
-    return _snapshot(result, url, allowed)
+    return _snapshot(result, url, allowed, include_links=include_links)
 
 
-def _snapshot(result, original_url, allowed):
+def _snapshot(result, original_url, allowed, *, include_links=False):
     values = analyze_html(result, robots_allowed=allowed is not False)
     values['robots_allowed'] = allowed
     # Both main and production parsers can return auxiliary link data. It is
     # deliberately not enqueued or inserted into the link-monitoring tables.
-    values.pop('internal_links', None)
+    if not include_links:
+        values.pop('internal_links', None)
     values.pop('internal_link_details', None)
     values.update(url=original_url, discovery_source='single_page', click_depth=0)
     if result.status_code is None or not 200 <= result.status_code < 300:

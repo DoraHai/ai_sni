@@ -228,6 +228,7 @@ async def fetch_url(
     client: httpx.AsyncClient | None = None,
     allow_text: bool = False,
     allow_xml: bool = False,
+    allowed_hosts: frozenset[str] | None = None,
 ) -> FetchResult:
     requested = normalize_crawl_url(url, preserve_path=True)
     current = requested
@@ -249,6 +250,9 @@ async def fetch_url(
             parsed_current = urlparse(current)
             hostname = (parsed_current.hostname or "").lower().rstrip(".")
             port = parsed_current.port or (443 if parsed_current.scheme == "https" else 80)
+            if allowed_hosts is not None and (hostname not in allowed_hosts or port not in {80, 443}):
+                return FetchResult(requested, current, None, redirects, None, "", None, None, {},
+                                   "site_scope_redirect", "目标或跳转地址超出授权网站范围")
             async with pin_public_target(current):
                 async with http_client.stream("GET", current) as response:
                     if response.status_code in {301, 302, 303, 307, 308}:
@@ -497,14 +501,18 @@ def analyze_html(result: FetchResult, *, robots_allowed: bool = True) -> dict[st
     }
 
 
-def sitemap_urls(xml_text: str) -> tuple[list[str], list[str]]:
+def sitemap_urls(xml_text: str, *, strict: bool = False) -> tuple[list[str], list[str]]:
     try:
         root = ElementTree.fromstring(xml_text)
     except ElementTree.ParseError:
+        if strict:
+            raise SeoCrawlError("Invalid sitemap XML")
         return [], []
     page_urls: list[str] = []
     child_sitemaps: list[str] = []
     root_name = root.tag.rsplit("}", 1)[-1].lower()
+    if strict and root_name not in {"urlset", "sitemapindex"}:
+        raise SeoCrawlError("Invalid sitemap root")
     for node in root.iter():
         if node.tag.rsplit("}", 1)[-1].lower() != "loc" or not (node.text or "").strip():
             continue
