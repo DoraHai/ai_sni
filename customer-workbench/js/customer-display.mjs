@@ -32,12 +32,15 @@ const statuses = {
     completed_with_page_evidence: '发布与页面核验已完成', diagnosis_queued: '等待网站检查',
     awaiting_site_implementation: '待修改网站并复查', awaiting_ranking_observations: '等待新的排名数据',
     report_queued: '等待准备报告', awaiting_advisor_explanation: '待顾问补充说明',
+    awaiting_analytics_collection: '等待统计取数',
     report_needs_attention: '报告需要处理', completed_with_evidence: '已完成并留存依据',
     no_actionable_issues: '本次未发现需处理的问题', needs_attention: '需要顾问处理', paused: '已暂停',
   },
 };
 
 const reasons = {
+  analytics_collection_pending: '统计数据正在准备',
+  analytics_source_requires_advisor: '统计授权或取数异常，需要顾问处理',
   brand_profile_missing: '客户基础资料待完善', pages_waiting_for_check: '还有页面等待检查',
   crawl_run_missing: '尚无网站检查记录', ranking_observations_missing: '尚未取得排名数据',
   ranking_run_missing: '尚无排名检查记录', metric_observations_missing: '尚未取得统计数据',

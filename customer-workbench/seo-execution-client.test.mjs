@@ -56,3 +56,18 @@ test('cycle settings default off, changes are explicit and bounded; server respo
     const call=f.server.state.calls.find(c=>c.method==='PUT');assert.equal(call.body.expected_revision,2);assert.equal(call.body.website_cycle_enabled,true);assert.equal(call.body.monitoring_cycle_enabled,undefined);
   }finally{await f.close();}
 });
+
+test('analytics recovery and incomplete report require current server actions; reading a notice never completes a task',async()=>{
+  const f=await setup();try{
+    const row=f.server.state.executions.get(104),eventId='4c47a31b-a3aa-49f8-a846-2b2472b22184';
+    row.task.params.report=null;row.task.params.month='2026-09';row.task.params.blocker='analytics_source_requires_advisor';row.task.retrySources=['ga4'];
+    row.task.notifications=[{id:eventId,task_id:104,title:row.task.title,phase:'report_needs_attention',waiting_for:'advisor',read:false}];
+    await f.client.list();await f.client.readNotification(104,eventId);assert.equal(row.task.notifications[0].read,true);assert.equal(row.task.status,'in_progress');
+    await assert.rejects(f.client.readNotification(104,eventId),/EXECUTION_REQUIRED/);
+    await f.client.detail(104);await assert.rejects(f.client.act(104,'retry_analytics',{source:'baidu_tongji'}),/ACTION_NOT_ALLOWED/);
+    await f.client.detail(104);await f.client.act(104,'retry_analytics',{source:'ga4'});assert.equal(row.task.params.phase,'awaiting_analytics_collection');
+    await f.client.act(104,'incomplete_report');assert.equal(row.task.params.analytics_incomplete_ack.actor_user_id,7);assert(row.task.params.report.missing.includes('site_analytics_missing'));
+    await assert.rejects(f.client.act(104,'incomplete_report'),/ACTION_NOT_ALLOWED/);
+    for(const body of [{tenant_id:2,site_id:19,task_id:104,event_id:eventId},{tenant_id:1,site_id:9,task_id:104,event_id:eventId,actor_id:7}])await assert.rejects(f.host.transport('/api/v1/seo/workbench/notifications/read',{method:'POST',body:JSON.stringify(body)}),/SCOPE_MISMATCH|BODY_DENIED/);
+  }finally{await f.close();}
+});

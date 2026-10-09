@@ -82,8 +82,20 @@ jobs:
   sem-frontend-build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      sem_changed: ${{ steps.release_scope.outputs.sem_changed }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed SEM frontend build inputs
+        id: release_scope
+        if: github.event_name == 'push' && github.ref == 'refs/heads/codex/production-sem'
+        env:
+          PUSH_BASE: ${{ github.event.before }}
+          PUSH_HEAD: ${{ github.sha }}
+        run: python scripts/sem_frontend_release_scope.py "$PUSH_BASE" "$PUSH_HEAD" >> "$GITHUB_OUTPUT"
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -133,7 +145,7 @@ jobs:
   # unmerged state; every deploy traces back to a commit on this branch.
   deploy-sem:
     name: Deploy SEM frontend only
-    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/production-sem'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/production-sem' && needs.sem-frontend-build.outputs.sem_changed == 'true'
     needs: [pytest, sem-frontend-build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
