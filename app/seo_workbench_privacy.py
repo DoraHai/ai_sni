@@ -2,13 +2,15 @@
 import re
 
 REDACTED = '[敏感信息已隐藏]'
+CREDENTIAL_LABEL = r'(?:[\w-]*(?:api[_-]?key|(?:access[_-]?|refresh[_-]?)?token|secret(?:[_-]?key)?|password|passwd|sessionid)|密码|口令|密钥|令牌)'
 RULES = (
-    re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----'),
+    re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)'),
     re.compile(r'(?i)\b(?:postgres(?:ql)?(?:\+asyncpg)?|mysql|redis)://[^\s/]+:[^\s/@]+@'),
     re.compile(r'(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}'),
     re.compile(r'\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b'),
     re.compile(r'\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{12,}\b'),
-    re.compile(r'''(?ix)(?:["']?)(?:[\w-]*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret[_-]?key|password|passwd)|密码|口令|密钥|令牌)(?:["']?)\s*[:=：]\s*["']?[^\s,，;；"'<>]+["']?'''),
+    re.compile(r'''["']?''' + CREDENTIAL_LABEL + r'''["']?\s*[:=：]\s*(["'])(?:(?!\1)[^\r\n])*\1''', re.I),
+    re.compile(r'''["']?''' + CREDENTIAL_LABEL + r'''["']?\s*[:=：]\s*[^\s,，;；"'<>]+''', re.I),
     re.compile(r'(?<![\w.+-])[\w.+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?![\w.-])'),
     re.compile(r'(?<!\d)(?:\+?86[ -]?)?1[3-9](?:[ -]?\d){9}(?!\d)'),
     re.compile(r'(?<!\d)\d{6}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx](?!\d)'),

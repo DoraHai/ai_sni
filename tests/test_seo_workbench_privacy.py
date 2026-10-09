@@ -9,6 +9,8 @@ from app.seo_workbench_privacy import redact, redact_text, REDACTED
     'postgresql+asyncpg://user:synthetic-pass@localhost/database',
     'test@example.com', '+86 138 0013 8000', '11010519491231002X',
     '4111 1111 1111 1111', '-----BEGIN PRIVATE KEY-----\nsynthetic\n-----END PRIVATE KEY-----',
+    '-----BEGIN PRIVATE KEY-----\ntruncated-synthetic-secret',
+    'JWT_SECRET=synthetic-token-secret', 'token=synthetic-session-token', 'password="synthetic password with spaces"',
 ])
 def test_redacts_supported_sensitive_patterns(text):
     assert REDACTED in redact_text(text) and text not in redact_text(text)
