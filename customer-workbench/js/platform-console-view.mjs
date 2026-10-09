@@ -36,7 +36,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   const summary=()=>[
     ['客户',source('tenants').total,'平台客户总数'],['使用账号',source('users').total,'客户与内部账号'],
     ['SEO 网站',source('seo_sites').total,'已登记站点'],['GEO 项目',source('geo_projects').total,'已登记项目'],
-    ['24 小时调用',snapshot.calls.total,'仅统计已记录接口'],['平台实际费用',snapshot.costs.actual_amount,'费用计量待接入'],
+    ['24 小时调用',snapshot.api_costs?.calls_24h??snapshot.calls.total,'仅统计已记录接口'],['本月 API 估算',snapshot.api_costs?.estimated_amount??snapshot.costs.actual_amount,'已记录调用的估算费用'],
   ].map(([name,n,note])=>`<div class="pc-kpi"><small>${name}</small><strong>${value(n)}</strong><span>${note}</span></div>`).join('');
   function sourceNote(name){const s=source(name);return s.state!=='available'?'此数据源尚未接入，不能据此判断数量为零。':s.truncated?`显示最近 ${s.rows.length} 条，共 ${value(s.total)} 条。完整管理请进入对应页面。`:'';}
   function moduleRows(){
@@ -75,6 +75,25 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
       card('GEO 采样引擎',table(['客户','引擎','采样方式','模型','状态'],source('geo_tracking_engines').rows.map(e=>[esc(tenant(e.tenant_id)),esc(e.display_name||e.engine_key),e.sample_mode==='openai_compat'?'真实接口配置':e.sample_mode==='mock_persona'?'模拟采样':esc(e.sample_mode||'未提供'),esc(e.model||'未提供'),status(e.enabled?'active':'disabled')])),'采样方式来自已有配置，不表示接口已通过实时测试。运行密钥由服务器管理。');
   }
   function costs(){
+    const api=snapshot.api_costs;
+    if(api&&['recording','ready'].includes(api.state)){
+      const money=n=>n==null?'待定价':`¥${Number(n).toLocaleString('zh-CN',{minimumFractionDigits:4,maximumFractionDigits:8})}`;
+      const blank={calls:0,input_tokens:0,output_tokens:0,known_amount:'0',estimated_amount:'0',unpriced:0};
+      const cells=r=>[value(r.calls),`${value(r.input_tokens)} / ${value(r.output_tokens)}`,money(r.estimated_amount),value(r.unpriced)];
+      const userRows=source('users').rows.filter(u=>matches(u.username+' '+(u.display_name||''))).map(u=>{
+        const r=api.user_totals.find(r=>r.user_id===u.id)||blank;
+        return [esc(u.display_name||u.username),esc(tenant(u.tenant_id)),status(u.is_active?'active':'disabled'),...cells(r)];
+      });
+      const customerRows=source('tenants').rows.filter(t=>matches(t.name)).map(t=>[esc(t.name),...cells(api.tenant_totals.find(r=>r.tenant_id===t.id)||blank)]);
+      const system=api.user_totals.find(r=>r.user_id==null)||blank;
+      return card('本月 API 费用',`<div class="pc-metrics"><div><small>已定价小计</small><b>${money(api.known_amount)}</b></div><div><small>本月估算合计</small><b>${money(api.estimated_amount)}</b></div><div><small>已记录请求</small><b>${value(api.calls)}</b></div></div><p class="pc-lead">${esc(api.note)}</p><p class="pc-note">${esc(api.period)} · ${api.state==='recording'?'计量已启用':'计量等待启用'} · 未定价请求 ${value(api.unpriced)} · 等待完成 ${value(api.pending)}</p>`)+
+        card('全部账号的 API 用量与费用',`${search('搜索客户或账号')}${table(['账号','所属客户','状态','请求数','输入 / 输出 Token','估算费用','未定价请求'],userRows)}`,`覆盖清单内全部 ${value(source('users').total)} 个登录账号，包括停用和当月无调用账号。无登录账号的自动任务另行汇总。${sourceNote('users')}`)+
+        card('无登录账号的任务与运维调用',table(['归属','请求数','输入 / 输出 Token','估算费用','未定价请求'],[['系统任务 / 运维调用',...cells(system)]]),'客户归属取服务端已授权范围；无法确认客户的请求保留在“未归属”汇总。')+
+        card('全部客户的 API 用量与费用',table(['客户','请求数','输入 / 输出 Token','估算费用','未定价请求'],customerRows),'客户汇总和账号汇总是同一批调用的不同视角，不能相加。')+
+        card('未归属客户的调用',table(['归属','请求数','输入 / 输出 Token','估算费用','未定价请求'],[['未归属客户',...cells(api.unattributed)]]))+
+        card('服务商与模型',table(['模块','服务商','模型 / 接口','请求数','输入 / 输出 Token','估算费用','未定价请求'],api.provider_totals.map(r=>[esc(r.module.toUpperCase()),esc(r.provider),esc(r.model||'按次接口'),...cells(r)])))+
+        card('最近真实调用',table(['时间','客户','账号 / 任务','模块','模型 / 接口','状态','费用'],api.recent.map(r=>[esc(time(r.started_at)),esc(r.tenant_id==null?'未归属':tenant(r.tenant_id)),esc(source('users').rows.find(u=>u.id===r.user_id)?.username||r.job_ref||'系统'),esc(r.module),esc(r.model||r.operation),status(r.state),money(r.estimated_amount)])),'每次真实请求分别记录；本地规则、模拟采样和缓存命中不产生新的外部调用记录。');
+    }
     const rows=snapshot.costs.usage.filter(r=>matches(tenant(r.tenant_id)));
     return card('平台成本',`<div class="pc-metrics"><div><small>实际费用</small><b>待接入</b></div><div><small>估算费用</small><b>待接入</b></div><div><small>费用预算</small><b>待统一</b></div></div><p class="pc-lead">${esc(snapshot.costs.note)}</p><p class="pc-note">客户广告投放预算与平台 API 成本分别管理。</p>`)+
       card('今日已记录用量',`${search('搜索客户')}${table(['客户','AI 请求','工作台对话请求','抓取 URL'],rows.map(r=>[esc(tenant(r.tenant_id)),value(r.ai_requests),value(r.chat_requests),value(r.crawl_urls)]))}`,`北京时间 ${snapshot.costs.date} · 此表仅覆盖已有 SEO 配额计数；工作台对话可能同时计入 AI 请求，两列不能相加。`)+
