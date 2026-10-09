@@ -57,7 +57,7 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
   const snapshot=()=>getSession?.()??null;
   const key=s=>JSON.stringify(s?[s.token,s.userId,s.tenantId,s.siteId,s.revision]:null);
   function invalidate(reason='context_changed') {
-    generation++;authorized=null;moduleCatalog=[];modulesChecked=false;phase=reason==='forbidden'?'forbidden':reason==='expired'?'unauthenticated':'disconnected';
+    generation++;authorized=null;moduleCatalog=[];modulesChecked=false;phase=['forbidden','customer_binding_required'].includes(reason)?'forbidden':reason==='expired'?'unauthenticated':'disconnected';
     for(const c of pending)c.abort();pending.clear();
     for(const listener of listeners)listener({reason,phase});
   }
@@ -91,7 +91,7 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
       const response=await fetchImpl(url.href,{method,body:options.body,headers:{Authorization:`Bearer ${s.token}`,Accept:'application/json',...(method==='GET'?{}:{'Content-Type':'application/json'})},cache:'no-store',credentials:'omit',redirect:'error',signal:options.signal?AbortSignal.any([controller.signal,options.signal]):controller.signal});
       assertCurrent(s,started);
       if(response.status===401){invalidate('expired');logout?.();login();throw error('AUTH_EXPIRED',401);}
-      if(response.status===403){invalidate('forbidden');throw error('PERMISSION_DENIED',403);}
+      if(response.status===403){let reason='forbidden';if(url.pathname==='/api/v1/seo/workbench/assistant/chat'){try{const data=await response.json();if(data?.detail?.code==='assistant_customer_binding_required')reason='customer_binding_required';}catch{}assertCurrent(s,started);}invalidate(reason);throw error('PERMISSION_DENIED',403);}
       return {ok:response.ok,status:response.status,headers:response.headers,
         async json(){assertCurrent(s,started);const data=await response.json();assertCurrent(s,started);return data;},
         async arrayBuffer(){assertCurrent(s,started);const data=await response.arrayBuffer();assertCurrent(s,started);return data;}};

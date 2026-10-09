@@ -14,7 +14,8 @@ export function createWorkspaceAssistant(root,getHome,{aiClient=null,getContentI
    aiHistory.push({question:pending.body.message,answer:result.answer,sources:result.sources});aiHistory=aiHistory.slice(-8);pending=null;draft='';feedback='';recoverable=false;
   }catch(e){if(stamp!==generation||e.code==='CONTEXT_CHANGED')return;
    recoverable=!e.status||e.code==='operation_running';
-   feedback=e.status===429?'今日 AI 调用额度已用完，请稍后再试。':e.status===403?'当前身份没有此对话权限，请重新核对工作空间。':e.status===401?'登录已失效，请重新登录。':e.status===503?'AI 暂时不可用，问题已保留。':e.code==='operation_refunded'?'上次请求已结束且额度已退还，可重新提问。':recoverable?'回答结果尚未取得。可取回同一次请求，不会重复调用 AI。':'AI 未完成回答，问题已保留。';
+   const limitMessages={assistant_rate_limited:`提问较频繁，请${e.retryAfter?`等待 ${e.retryAfter} 秒`:'稍等片刻'}再发送，问题已保留。`,assistant_user_busy:'上一条问题仍在回答，请稍后再提问。',assistant_workspace_busy:'当前客户的 AI 正在处理其他问题，请稍后再试。',assistant_user_daily_limit:'今天的账号 AI 对话额度已用完，明天恢复，问题已保留。',assistant_tenant_daily_limit:'今天的客户 AI 对话额度已用完，明天恢复，问题已保留。',assistant_request_out_of_scope:'此对话支持当前客户的网站、SEO、推广策略和稿件；其他客户资料和系统内部信息不在可访问范围。'};
+   feedback=limitMessages[e.code]||(e.code==='assistant_customer_binding_required'?'当前账号尚未绑定客户，请联系管理员核对账号绑定。':e.status===429?'AI 对话暂时受限，请稍后再试，问题已保留。':e.status===403?'当前身份没有此对话权限，请重新核对工作空间。':e.status===401?'登录已失效，请重新登录。':e.status===503?'AI 暂时不可用，问题已保留。':e.code==='operation_refunded'?'上次请求已结束且额度已退还，可重新提问。':recoverable?'回答结果尚未取得。可取回同一次请求，不会重复调用 AI。':'AI 未完成回答，问题已保留。');
    if(!recoverable)pending=null;
   }finally{if(stamp===generation){sending=false;paint();}}
  }
@@ -52,7 +53,7 @@ export function createWorkspaceAssistant(root,getHome,{aiClient=null,getContentI
    target.querySelector('.assistant-heading small').textContent=mode==='ai'?'AI 对话 · 当前客户与网站':'规则数据导览 · 非 AI 回复';
    const expanded=target.querySelector('.assistant-expanded');expanded.insertAdjacentHTML('afterbegin',`<div class="assistant-modes"><button data-assistant-action="mode-ai" aria-pressed="${mode==='ai'}">AI 对话</button><button data-assistant-action="mode-guide" aria-pressed="${mode==='guide'}">数据导览</button></div>`);
    if(mode==='ai'){
-    list.innerHTML=`<div class="bubble"><small>AI 对话</small>可以连续提问 SEO、当前网站的稿件和进度。问题及相关数据会发送给 DeepSeek；回答是建议，确认和发布请在业务页面处理。当前窗口保留对话，切换工作空间或退出时清空。</div>${aiMessages()}${sending?`<div class="bubble user">${esc(pending?.body.message||draft)}</div>`:''}`;
+    list.innerHTML=`<div class="bubble"><small>AI 对话</small>可以连续提问当前客户的网站、SEO、推广策略和稿件。只读取当前客户、当前网站且你有权查看的数据；问题及相关数据过滤常见敏感信息后发送给 DeepSeek。回答是建议，确认和发布请在业务页面处理。当前窗口保留对话，切换工作空间或退出时清空。</div>${aiMessages()}${sending?`<div class="bubble user">${esc(pending?.body.message||draft)}</div>`:''}`;
     const composer=target.querySelector('.assistant-composer');composer.querySelector('[data-assistant-action=ask]').textContent=sending?'正在回答…':'发送给 AI';
     composer.querySelector('[data-assistant-action=ask]').disabled=sending||!!pending||!draft.trim();
     composer.querySelector('textarea').disabled=sending||!!pending;
