@@ -35,6 +35,17 @@ def is_db_unavailable(exc: BaseException) -> bool:
 
 
 def register_infra_handlers(app: FastAPI) -> None:
+    from app.api_controls import ControlDenied
+    from app.api_metering import MeteringUnavailable
+
+    @app.exception_handler(ControlDenied)
+    async def _policy_denied(request: Request, exc: ControlDenied):
+        return JSONResponse(status_code=429, content={'detail': str(exc)}, headers={'Cache-Control': 'no-store'})
+
+    @app.exception_handler(MeteringUnavailable)
+    async def _metering_down(request: Request, exc: MeteringUnavailable):
+        return JSONResponse(status_code=503, content={'detail': str(exc)}, headers={'Cache-Control': 'no-store'})
+
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception):
         if is_db_unavailable(exc):

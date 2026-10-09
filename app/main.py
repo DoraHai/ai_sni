@@ -57,6 +57,7 @@ from app.baidu.sync import (
 )
 from app.classification import reclassify_keywords
 from app.api_metering import MeteringScopeMiddleware
+from app.api_controls import register_runtime
 from app.config import get_settings
 from app.database import async_session_factory, engine, get_session
 from app.http_errors import register_infra_handlers
@@ -79,6 +80,7 @@ logger = logging.getLogger("sem-backend")
 async def lifespan(_app: FastAPI):
     """生产配置先自检，再启动调度器；退出时保证释放调度资源。"""
     enforce_production_secrets(settings, hard_fail=True)
+    await register_runtime('sem')
     logger.info(
         "SEM 后端启动：env=%s base_url=%s default_user=%s",
         settings.app_env,

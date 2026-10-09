@@ -63,6 +63,22 @@ def test_projection_excludes_credentials_and_business_payloads():
     assert console.machine_code("provider_timeout") == "provider_timeout"
 
 
+def test_control_writes_use_same_admin_boundary_and_never_echo_secrets(monkeypatch):
+    monkeypatch.setenv('API_CONTROLS_ENABLED','true')
+    app = FastAPI()
+    app.include_router(console.router)
+    payload = {'key':'PRIVATE-SECRET','value':{'key':'PRIVATE-SECRET'}}
+    with TestClient(app) as client:
+        assert client.post('/api/v1/admin/console/controls',json=payload).status_code==401
+        app.dependency_overrides[require_auth]=lambda:context(tenant=1)
+        assert client.post('/api/v1/admin/console/controls',json=payload).status_code==403
+        app.dependency_overrides[require_auth]=lambda:context()
+        response=client.post('/api/v1/admin/console/controls',json=payload)
+        assert response.status_code==422 and 'PRIVATE-SECRET' not in response.text
+        response=client.post('/api/v1/admin/console/controls',content='PRIVATE-SECRET'*1000)
+        assert response.status_code==422 and 'PRIVATE-SECRET' not in response.text
+
+
 def test_missing_optional_tables_are_unknown_not_zero():
     result = asyncio.run(console.read_table(None, {}, "seo_ai_operations"))
     assert result == {"state": "unavailable", "total": None, "rows": [], "truncated": False}
