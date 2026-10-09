@@ -11,6 +11,8 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "app/seo_incremental_crawl.py",
+    "tests/test_seo_incremental_crawl.py",
     "migrations/env.py",
     "migrations/session_timeouts.py",
     "tests/test_alembic_session_timeouts.py",

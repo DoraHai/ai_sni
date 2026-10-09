@@ -70,6 +70,8 @@ def projection(task, site, ctx, authorized, *, read_only=True):
     from app.api.seo_cockpit import payload
     result = payload(task)
     params = {**task.params}
+    if params.get("incremental"):
+        params["incremental"] = {k: v for k, v in params["incremental"].items() if k != "token"}
     from app.seo_notifications import visible_events
     result["notifications"] = visible_events(task, ctx, site, authorized)
     params.pop("notification_outbox", None)

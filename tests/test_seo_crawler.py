@@ -368,6 +368,26 @@ def test_fetch_url_revalidates_a_private_redirect(monkeypatch) -> None:
     assert result.error_type == "blocked_address"
 
 
+@pytest.mark.parametrize("target", ["https://foreign.test/private", "https://example.com:8080/private"])
+def test_scoped_fetch_never_connects_to_an_out_of_scope_redirect(monkeypatch, target):
+    requests, checked = [], []
+    class RedirectTransport(PinnedAsyncHTTPTransport):
+        async def handle_async_request(self, request):
+            requests.append(str(request.url))
+            return httpx.Response(302, headers={"Location": target}, request=request)
+    async def validate(url):
+        checked.append(url)
+        return "93.184.216.34"
+    monkeypatch.setattr("app.seo_crawler._ensure_public_host", validate)
+    async def exercise():
+        async with httpx.AsyncClient(transport=RedirectTransport(), follow_redirects=False) as client:
+            return await fetch_url("https://example.com/", client=client,
+                                   allowed_hosts=frozenset({"example.com", "www.example.com"}))
+    result = asyncio.run(exercise())
+    assert requests == checked == ["https://example.com/"]
+    assert result.error_type == "site_scope_redirect"
+
+
 def test_pinned_backend_connects_only_to_the_validated_ip() -> None:
     class RecordingBackend:
         def __init__(self) -> None:

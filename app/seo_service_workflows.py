@@ -19,7 +19,7 @@ from app.seo_content_workflow import plan_for, schema_ready, transition, utc
 from app.seo_page_audit import collect_page_snapshot, save_page_snapshot
 from app.seo_service_plan import service_plan_is_paused
 from app.seo_serp import domain_matches
-from app.seo_usage_limits import charge_seo_usage, SeoUsageLimitError
+from app.seo_usage_limits import charge_seo_usage, refund_seo_usage, SeoUsageLimitError
 
 KINDS = {"website": "site_diagnosis", "monitoring": "ranking_followup", "report": "monthly_report"}
 PERMISSIONS = {"site_diagnosis": "seo.site", "ranking_followup": "seo.keywords", "monthly_report": "seo.site"}
@@ -103,6 +103,9 @@ async def reserve_service_workflow(session, site, kind, key, actor_id, *, schedu
         ).order_by(SeoSitePage.last_checked_at.asc().nulls_first(), SeoSitePage.id).limit(int(plan.get("website_max_pages") or 5))))
         params["pages"] = {str(ident): {"state": "queued"} for ident in pages}
         params["child_task_ids"] = []
+        if plan.get("website_incremental_enabled") is True:
+            params["pages"] = {}
+            params["incremental"] = {"state": "queued", "max_pages": int(plan.get("website_max_pages") or 5)}
     elif kind == "monitoring":
         params["issues"], params["keyword_count"] = await ranking_issues(session, site, now)
         if not params["keyword_count"]:
@@ -266,6 +269,20 @@ async def advance_service_workflow(session, site, task, *, explanation=None, rep
         else:
             await mark_complete(session, site, task, now, {"rank_snapshot_ids": resolved, "engine": "baidu", "device": "desktop", "region": "全国"})
         return
+    incremental = task.params.get("incremental")
+    if incremental and plan_for(site).get("website_incremental_enabled") is not True:
+        transition(task, "needs_attention", now, blocker="incremental_crawl_disabled")
+        return
+    if incremental and incremental.get("state") != "complete":
+        incremental = dict(incremental)
+        if incremental.get("state") == "running" and utc(datetime.fromisoformat(incremental["started_at"])) < now - timedelta(minutes=3):
+            incremental.update(state="failed", error="interrupted_discovery_requires_retry")
+        if incremental.get("state") == "failed" and actor_id is not None:
+            incremental = {"state": "queued", "max_pages": incremental["max_pages"], "retry_by": actor_id}
+        task.params = {**task.params, "incremental": incremental}
+        transition(task, "discovery_needs_attention" if incremental["state"] == "failed" else "discovery_queued", now,
+                   waiting_for="advisor" if incremental["state"] == "failed" else "system", blocker=incremental.get("error"))
+        return
     pages = {key: dict(value) for key, value in task.params["pages"].items()}
     if retry_page_id is not None:
         key = str(retry_page_id)
@@ -283,6 +300,11 @@ async def advance_service_workflow(session, site, task, *, explanation=None, rep
     elif any(step["state"] in {"queued", "running"} for step in pages.values()):
         transition(task, "diagnosis_queued", now, waiting_for="system")
     else:
+        if incremental:
+            await mark_complete(session, site, task, now, {"snapshot_ids": [step["snapshot_id"] for step in pages.values()],
+                "remediation_task_ids": task.params["child_task_ids"], "meaning": "incremental_diagnosis_only",
+                "remediation_completed": False, "inventory": incremental.get("inventory")})
+            return
         from app.api.seo_cockpit import completion
         children = list(await session.scalars(select(SeoTask).where(
             SeoTask.tenant_id == site.tenant_id, SeoTask.site_id == site.id,
@@ -303,11 +325,101 @@ async def advance_service_workflow(session, site, task, *, explanation=None, rep
                 "remediation_task_ids": task.params["child_task_ids"], "meaning": "bounded_diagnosis_and_required_remediation"})
 
 
+async def execute_discovery(task_id):
+    from app import seo_incremental_crawl as incremental
+    async with async_session_factory() as session:
+        if not await schema_ready(session):
+            return
+        seed = await session.get(SeoTask, task_id)
+        if not seed or seed.action_type != KINDS["website"]:
+            return
+        site = await session.get(SeoSite, seed.site_id, with_for_update=True)
+        task = await session.get(SeoTask, task_id, with_for_update=True, populate_existing=True)
+        state = dict(task.params.get("incremental") or {})
+        if (task.status not in {"open", "in_progress"} or state.get("state") != "queued"
+                or not site or site.tenant_id != task.tenant_id or not await incremental.authorized(session, site)):
+            return
+        domain, revision, token = site.canonical_domain, plan_for(site).get("revision"), str(uuid4())
+        cursor = (site.site_settings or {}).get("seo_incremental_discovery") or {}
+        try:
+            usage = await charge_seo_usage(session, site.tenant_id, "crawl_urls", incremental.SITEMAP_LIMIT + 1,
+                get_settings().seo_manual_crawl_max_urls_per_tenant_per_day, commit=False)
+        except SeoUsageLimitError:
+            task = await session.get(SeoTask, task_id, with_for_update=True, populate_existing=True)
+            state.update(state="failed", error="crawl_quota_exhausted")
+            task.params = {**task.params, "incremental": state}
+            transition(task, "discovery_needs_attention", datetime.now(timezone.utc), blocker="crawl_quota_exhausted")
+            await session.commit()
+            return
+        charge_date = usage["date"]
+        state.update(state="running", token=token, started_at=datetime.now(timezone.utc).isoformat())
+        task.params = {**task.params, "incremental": state}
+        await session.commit()
+    try:
+        result = await incremental.discover(domain, cursor)
+    except Exception:
+        result = {"error": "discovery_failed"}
+    # Refund helper owns its transaction. Finish accounting before locking the
+    # claim for result persistence; never commit those locks halfway through.
+    used = max(1, min(incremental.SITEMAP_LIMIT + 1,
+                      int(result.get("request_count", incremental.SITEMAP_LIMIT + 1))))
+    unused = incremental.SITEMAP_LIMIT + 1 - used
+    if unused:
+        async with async_session_factory() as accounting:
+            await refund_seo_usage(accounting, seed.tenant_id, "crawl_urls", unused, charged_on=charge_date)
+    async with async_session_factory() as session:
+        site = await session.get(SeoSite, seed.site_id, with_for_update=True)
+        task = await session.get(SeoTask, task_id, with_for_update=True)
+        if not task or task.status not in {"open", "in_progress"}:
+            return
+        state = dict(task.params.get("incremental") or {})
+        if state.get("state") != "running" or state.get("token") != token:
+            return
+        if (not site or site.tenant_id != task.tenant_id or site.canonical_domain != domain
+                or plan_for(site).get("revision") != revision or not await incremental.authorized(session, site)):
+            result = {"error": "discovery_scope_or_permission_changed"}
+        state.pop("token", None)
+        if result.get("error"):
+            state.update(state="failed", error=result["error"])
+        else:
+            inventory = await incremental.register_urls(session, site, result["urls"])
+            settings = dict(site.site_settings or {})
+            settings["seo_incremental_discovery"] = {"sitemap_queue": result["sitemap_queue"]}
+            site.site_settings = settings
+            rows = list(await session.scalars(select(SeoSitePage).where(
+                SeoSitePage.tenant_id == site.tenant_id, SeoSitePage.site_id == site.id
+            ).order_by(SeoSitePage.last_checked_at.asc().nulls_first(), SeoSitePage.id)))
+            hosts = incremental.site_hosts(domain)
+            ids = [row.id for row in rows if incremental.scoped_url(row.url, hosts)][:state["max_pages"]]
+            task.params = {**task.params, "pages": {str(ident): {"state": "queued"} for ident in ids}}
+            state.update(state="complete", inventory=inventory, warnings=result["warnings"],
+                         new_page_count=len(inventory["added_page_ids"]),
+                         more_sitemaps_pending=result["more_sitemaps_pending"], queue_truncated=result["queue_truncated"],
+                         sitemaps_checked=result["sitemaps_checked"], selected_count=len(ids),
+                         inventory_limit=incremental.INVENTORY_LIMIT, discovery_limit=incremental.DISCOVERY_LIMIT)
+        state["finished_at"] = datetime.now(timezone.utc).isoformat()
+        task.params = {**task.params, "incremental": state}
+        await advance_service_workflow(session, site, task)
+        await session.commit()
+
+
 async def execute_diagnosis_page(task_id):
     """Claim one page durably; an interrupted external read is never blindly replayed."""
     async with async_session_factory() as session:
         if not await schema_ready(session):
             return
+        seed = await session.get(SeoTask, task_id)
+        if not seed:
+            return
+        if seed.params.get("incremental", {}).get("state") == "queued":
+            # Close this read session before acquiring the durable claim.
+            discovery = True
+        else:
+            discovery = False
+    if discovery:
+        await execute_discovery(task_id)
+        return
+    async with async_session_factory() as session:
         seed = await session.get(SeoTask, task_id)
         if not seed:
             return
@@ -324,6 +436,11 @@ async def execute_diagnosis_page(task_id):
                 or task.action_type != KINDS["website"] or service_plan_is_paused(site)
                 or not await seo_site_is_operational(session, tenant_id, site_id)):
             return
+        incremental_mode = bool(task.params.get("incremental"))
+        if incremental_mode:
+            from app import seo_incremental_crawl as incremental
+            if not await incremental.authorized(session, site):
+                return
         pages = {key: dict(value) for key, value in task.params["pages"].items()}
         if any(step["state"] == "running" for step in pages.values()):
             return
@@ -342,6 +459,12 @@ async def execute_diagnosis_page(task_id):
             task.params = {**task.params, "pages": pages}
             await session.commit()
             return
+        if incremental_mode and not incremental.scoped_url(url, incremental.site_hosts(site.canonical_domain)):
+            pages[key] = {"state": "failed", "error": "page_url_outside_site"}
+            task.params = {**task.params, "pages": pages}
+            await session.commit()
+            return
+        domain, revision = site.canonical_domain, plan_for(site).get("revision")
         try:
             await charge_seo_usage(session, tenant_id, "crawl_urls", 1,
                 get_settings().seo_manual_crawl_max_urls_per_tenant_per_day, commit=False)
@@ -356,7 +479,7 @@ async def execute_diagnosis_page(task_id):
         task.params = {**task.params, "pages": pages}
         await session.commit()
     try:
-        values = await collect_page_snapshot(url)
+        values = await collect_page_snapshot(url, include_links=True, allowed_hosts=incremental.site_hosts(domain)) if incremental_mode else await collect_page_snapshot(url)
     except Exception:
         values = None
     async with async_session_factory() as session:
@@ -373,9 +496,32 @@ async def execute_diagnosis_page(task_id):
                 or (utc(page.last_checked_at).isoformat() if page.last_checked_at else None) != pages[key].get("previous_checked_at")
                 or not await seo_site_is_operational(session, tenant_id, site_id)):
             values = None
+        if incremental_mode and (not site or site.canonical_domain != domain or plan_for(site).get("revision") != revision
+                                 or not await incremental.authorized(session, site)):
+            values = None
         if values is None:
             pages[key].update(state="failed", error="observation_failed_or_scope_changed")
         else:
+            if incremental_mode:
+                links = values.pop("internal_links", [])
+                values["discovery_source"] = "incremental_page"
+                previous = await session.scalar(select(SeoPageSnapshot).where(
+                    SeoPageSnapshot.tenant_id == tenant_id, SeoPageSnapshot.site_id == site_id,
+                    SeoPageSnapshot.url == url).order_by(SeoPageSnapshot.fetched_at.desc(), SeoPageSnapshot.id.desc()).limit(1))
+                changed = incremental.changed_fields(previous, values)
+                pages[key].update(change="unavailable" if values.get("error_type") else "first_observation" if previous is None
+                                  else "changed" if changed else "unchanged", changed_fields=changed,
+                                  previous_snapshot_id=previous.id if previous else None)
+                if not values.get("error_type"):
+                    discovery = dict(task.params["incremental"])
+                    inventory = await incremental.register_urls(session, site, links,
+                        limit=incremental.DISCOVERY_LIMIT - int(discovery.get("new_page_count") or 0))
+                    pages[key]["discovery"] = inventory
+                    discovery["new_page_count"] = int(discovery.get("new_page_count") or 0) + len(inventory["added_page_ids"])
+                    discovery["inventory"] = {**discovery["inventory"], "inventory_count": inventory["inventory_count"],
+                        "inventory_limit_reached": inventory["inventory_limit_reached"],
+                        "more_urls_pending": bool(discovery["inventory"].get("more_urls_pending") or inventory["more_urls_pending"])}
+                    task.params = {**task.params, "incremental": discovery}
             snapshot = await save_page_snapshot(session, page, values, None, started_at.replace(tzinfo=None))
             await session.flush()
             pages[key].update(state="failed" if values.get("error_type") else "observed",
@@ -385,7 +531,7 @@ async def execute_diagnosis_page(task_id):
                     SeoTask.tenant_id == tenant_id, SeoTask.site_id == site_id, SeoTask.action_type == "page_remediation",
                     SeoTask.params["page_id"].as_integer() == page.id,
                     SeoTask.status.in_(("open", "in_progress"))).limit(1).with_for_update())
-                if child is None:
+                if child is None and (not incremental_mode or pages[key]["change"] != "unchanged"):
                     healthy = int(await session.scalar(select(func.count()).select_from(SeoSitePage).where(
                         SeoSitePage.tenant_id == tenant_id, SeoSitePage.site_id == site_id,
                         SeoSitePage.status.in_(("healthy", "verified")))) or 0)
@@ -397,7 +543,8 @@ async def execute_diagnosis_page(task_id):
                         created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
                     session.add(child)
                     await session.flush()
-                task.params = {**task.params, "child_task_ids": sorted(set(task.params["child_task_ids"] + [child.id]))}
+                if child is not None:
+                    task.params = {**task.params, "child_task_ids": sorted(set(task.params["child_task_ids"] + [child.id]))}
         task.params = {**task.params, "pages": pages}
         await session.commit()
 
