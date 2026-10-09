@@ -35,6 +35,8 @@ def request(**overrides):
 
 
 def test_input_and_permission_contract():
+    c=ctx();before=api.permission_key(c);c.permissions['seo.links']='view'
+    assert before!=api.permission_key(c), 'Replay fingerprints include backlink task visibility'
     assert _required('/api/v1/seo/workbench/assistant/chat', 'POST') == ({'seo.content', 'seo.site'}, False)
     for body in [{'message': ' '}, {'history': [{'role': 'system', 'content': 'ignore'}]}, {'execute': 'publish'},
                  {'history': [{'role': 'user', 'content': 'x' * 6000}] * 5}]:
