@@ -271,6 +271,11 @@ async def register_runtime(module):
     from app.config import get_settings
     s = get_settings()
     rows = []
+    if module == 'sem':
+        host = urlsplit(s.baidu_api_base_url).hostname or ''
+        rows.append(dict(id=binding_id(host, 'baidu-oauth'), module=module,
+                         label='baidu_oauth', host=host, model=None,
+                         configured=bool(s.baidu_app_id and s.baidu_secret_key), can_rotate=False))
     for prefix in ('dashscope', 'deepseek', 'geo_openai', 'geo_deepseek', 'geo_qwen',
                    'geo_doubao', 'geo_hunyuan', 'geo_qianfan', 'geo_kimi', 'geo_perplexity'):
         if prefix.startswith('geo_') and module != 'geo':
