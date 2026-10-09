@@ -56,6 +56,7 @@ from app.baidu.sync import (
     sync_url_candidates_for_account,
 )
 from app.classification import reclassify_keywords
+from app.api_metering import MeteringScopeMiddleware
 from app.config import get_settings
 from app.database import async_session_factory, engine, get_session
 from app.http_errors import register_infra_handlers
@@ -92,6 +93,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="SEM 智投平台后端", version="0.3.0", lifespan=lifespan)
+app.add_middleware(MeteringScopeMiddleware, module="sem")
 register_infra_handlers(app)
 
 # 原型页（file:// 或其他域名）直连接口需要 CORS。API Key 走自定义头/查询参数，不涉及 credentials。

@@ -11,6 +11,7 @@ from datetime import date
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api_metering import business_scope
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
 from app.api.dashboard import DEVICE_LABELS, _period_kpi
 from app.baidu.services.diagnosis import DIMENSION_LABELS, FluctuationService
@@ -152,6 +153,7 @@ def _build_prompt(tenant, target_date, month_start, kpi, alerts, dev, flux) -> s
     return "\n".join(lines)
 
 
+@business_scope("sem", "tenant")
 async def generate_insight(
     session: AsyncSession,
     tenant: Tenant,

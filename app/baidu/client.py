@@ -22,6 +22,8 @@ from typing import Any
 
 import httpx
 
+from app.api_metering import metered_request
+
 from app.config import get_settings, resolve_baidu_write_dry_run
 
 logger = logging.getLogger(__name__)
@@ -191,8 +193,9 @@ class BaiduAPIClient:
                 )
 
         async with httpx.AsyncClient(timeout=self._timeout) as http:
-            resp = await http.post(
-                url,
+            resp = await metered_request(
+                http, "post", url, provider="baidu_marketing", api_key=self._access_token,
+                tenant_id=self._tenant_id, operation=f"{service}/{method}",
                 json=payload,
                 headers={"Content-Type": "application/json;charset=utf-8"},
             )
