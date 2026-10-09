@@ -31,6 +31,7 @@ function leavePlatform() {
       </div>
       <div class="platform-actions">
         <span>{{ session.user?.display_name || session.user?.username }}</span>
+        <a v-if="!session.user?.tenant_id && session.canEdit('settings.customers') && session.canEdit('settings.accounts')" href="/customer-workbench/?console=platform">超级管理员工作台</a>
         <el-button @click="leavePlatform">返回工作台</el-button>
       </div>
     </header>
