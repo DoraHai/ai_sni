@@ -11,6 +11,9 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "app/api_metering.py",
+    "app/geo/ai_client.py",
+    "app/geo/chinaz.py",
     "app/seo_incremental_crawl.py",
     "tests/test_seo_incremental_crawl.py",
     "migrations/env.py",

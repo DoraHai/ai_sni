@@ -9,6 +9,7 @@ import re
 
 import httpx
 
+from app.api_metering import metered_request
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -92,7 +93,8 @@ async def chat_json(
     }
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, json=payload, headers=headers)
+            resp = await metered_request(client, "post", url, api_key=key, model=mdl,
+                                          operation="chat.completions", json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
         content = data["choices"][0]["message"]["content"]
@@ -134,7 +136,8 @@ async def chat_messages(
     for _attempt in range(2):
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(url, json=payload, headers=headers)
+                resp = await metered_request(client, "post", url, api_key=key, model=mdl,
+                                          operation="chat.completions", json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
             content = data["choices"][0]["message"]["content"]
