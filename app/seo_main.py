@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from app.api.customer_modules import seo_sites_router
 from app.api.seo import router as seo_router
+from app.api_metering import MeteringScopeMiddleware
 from app.config import get_settings
 from app.database import engine
 from app.http_errors import register_infra_handlers
@@ -478,6 +479,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Growth Sniper SEO API", version="0.1.0", lifespan=lifespan)
+app.add_middleware(MeteringScopeMiddleware, module="seo")
 
 
 @app.middleware("http")

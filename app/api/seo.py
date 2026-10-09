@@ -33,6 +33,7 @@ from sqlalchemy import and_, delete, func, or_, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api_metering import business_scope
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
 from app.database import async_session_factory
 from app.seo_demo_source import (
@@ -2212,6 +2213,7 @@ def _preferred_provider_error(
     )
 
 
+@business_scope("seo")
 async def collect_rank_serp_for_tenant(
     *,
     session: AsyncSession,
