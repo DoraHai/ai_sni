@@ -145,7 +145,6 @@ def test_sem_lifespan_only_starts_sem_scheduler():
     source = Path("app/main.py").read_text(encoding="utf-8")
     node = next(n for n in ast.parse(source).body if isinstance(n, ast.AsyncFunctionDef) and n.name == "lifespan")
     start, stop, guard = Mock(), Mock(), Mock()
-    from unittest.mock import AsyncMock
     register = AsyncMock()
     namespace = dict(asynccontextmanager=asynccontextmanager, FastAPI=object,
                      enforce_production_secrets=guard, start_scheduler=start, shutdown_scheduler=stop,

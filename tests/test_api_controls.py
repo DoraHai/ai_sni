@@ -93,11 +93,13 @@ def test_native_budget_races_prices_rotation_and_audit(monkeypatch):
                 async with db.begin() as c:
                     await c.execute(text('''INSERT INTO api_control_bindings(id,module,label,host,model,configured,can_rotate)
                         VALUES(:id,'seo','dashscope','dashscope.aliyuncs.com','deepseek-v4-flash',true,true)'''),{'id':ident})
-                monkeypatch.setattr(controls,'encrypt',lambda v:'encrypted:' + v)
-                monkeypatch.setattr(controls,'decrypt',lambda v:v.removeprefix('encrypted:'))
                 rid = str(uuid4())
                 result = await change('credential',ident,{'key':'new-private-secret'},rid=rid)
                 assert result['value'] == {'overridden':True,'revision':1}
+                async with db.connect() as c:
+                    ciphertext=await c.scalar(text('SELECT ciphertext FROM api_control_credentials WHERE id=:id'), {'id':ident})
+                    assert 'new-private-secret' not in ciphertext
+                    assert controls.decrypt(ciphertext)=='new-private-secret'
                 assert (await change('credential',ident,{'key':'new-private-secret'},rid=rid))['replayed']
                 with pytest.raises(controls.ControlConflict): await change('credential',ident,{'key':'different-secret'},rid=rid)
                 await call(2,20)
@@ -105,7 +107,7 @@ def test_native_budget_races_prices_rotation_and_audit(monkeypatch):
                 snapshot = None
                 async with factory() as s: snapshot = await controls.read_controls(s)
                 serialized = json.dumps(snapshot,default=str)
-                assert 'new-private-secret' not in serialized and 'encrypted:' not in serialized
+                assert 'new-private-secret' not in serialized and ciphertext not in serialized
                 # Frozen price affects future attempts only, with atomic audit.
                 await change('rate','rate:dashscope.aliyuncs.com:deepseek-v4-flash',
                              {'unit':'tokens','input':'3','output':'4','cached':'0.5','max_input':100000,'source':'test contract'})
