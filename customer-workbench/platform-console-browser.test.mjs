@@ -35,6 +35,18 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
       if(u.origin!==origin){external.push(u.href);return r.abort();}
       if(u.pathname.startsWith('/api/')){
         requests.push({path:u.pathname,method:r.method()});
+        if(u.pathname.endsWith('/controls')){
+          const payload=JSON.parse(r.postData());
+          assert.equal(r.headers().authorization,'Bearer fixture-admin');
+          assert.equal(payload.expected_revision,0);
+          const c=snapshot.controls;
+          if(payload.kind==='credential'){
+            assert.equal(payload.value.key,'fixture-private-replacement');
+            c.credentials.push({id:payload.key,revision:1,overridden:true});
+          }else c.settings.push({key:payload.key,kind:payload.kind,revision:1,value:payload.value});
+          c.audit.push({id:payload.request_id,actor_id:7,resource:payload.key,action:payload.kind+'.update',before_value:null,after_value:payload.kind==='credential'?{overridden:true,revision:1}:payload.value,created_at:'2026-10-10T01:00:00Z'});
+          return r.respond({status:200,contentType:'application/json',body:JSON.stringify({revision:1})});
+        }
         const body=u.pathname.endsWith('/login')?{token:'fixture-admin',user:serverUser}:u.pathname.endsWith('/me')?{user:serverUser}:snapshot;
         if(u.pathname.endsWith('/snapshot')&&held)await held;
         return r.respond({status:u.pathname.endsWith('/snapshot')?status:200,contentType:'application/json',body:JSON.stringify(body)}).catch(()=>{});
@@ -64,6 +76,28 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     await p.click('[data-pc=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('本月 API 费用'));
     assert.match(await body(),/全部 8 个登录账号/);assert.match(await body(),/no-calls-0/);assert.match(await body(),/已停用/);
     assert.match(await body(),/¥0.006/);assert.match(await body(),/待定价/);assert.match(await body(),/系统任务/);
+    snapshot.controls={state:'enabled',settings:[],budgets:[],audit:[],credentials:[],default_rates:[{host:'dashscope.aliyuncs.com',model:'deepseek-v4-flash',input:'1',output:'2',max_input:1000000,source:'approved price'}],
+      bindings:[{id:'a'.repeat(64),module:'seo',label:'dashscope',host:'dashscope.aliyuncs.com',model:'deepseek-v4-flash',configured:true,can_rotate:true}]};
+    snapshot.api_costs.recent=[{id:'meter-request',tenant_id:1,model:'deepseek-v4-flash',endpoint:'dashscope.aliyuncs.com/v1',state:'succeeded',latency_ms:33,started_at:'2026-10-10T00:00:00Z'}];
+    await p.click('[data-pc=refresh]');await p.waitForSelector('.pc-kpis');
+    await p.click('.pc-sidebar [data-pc-page=apis]');assert.match(await body(),/meter-request/);assert.doesNotMatch(await body(),/request-1/);
+    await p.click('.pc-sidebar [data-pc-page=controls]');await p.waitForSelector('.pc-control-form');
+    await p.select('[data-control-kind=budget] [name=target]','user:8');
+    await p.type('[data-control-kind=budget] [name=daily_calls]','10');
+    await p.click('[data-control-kind=budget] button');await p.waitForFunction(()=>document.querySelector('.pc-save-notice')?.textContent.includes('已保存'));
+    assert.equal(snapshot.controls.settings.find(r=>r.key==='budget:user:8').value.daily_calls,10);
+    await p.select('[data-control-kind=provider] [name=enabled]','false');
+    await p.click('[data-control-kind=provider] button');await p.waitForFunction(()=>document.querySelector('[data-control-kind=provider] [name=revision]')?.value==='1');
+    await p.type('[data-control-kind=rate] [name=model]','deepseek-v4-flash');
+    await p.$eval('[data-control-kind=rate] [name=model]',e=>e.dispatchEvent(new Event('change',{bubbles:true})));
+    assert.equal(await p.$eval('[data-control-kind=rate] [name=input]',e=>e.value),'1');
+    await p.click('[data-control-kind=rate] button');await p.waitForFunction(()=>document.querySelector('[data-control-kind=rate] [name=model]')?.value===''&&document.querySelector('.pc-save-notice')?.textContent.includes('已保存'));
+    await p.type('[data-control-kind=credential] [name=secret]','fixture-private-replacement');
+    await p.click('[data-control-kind=credential] button');await p.waitForFunction(()=>document.querySelector('[data-control-kind=credential] [name=revision]')?.value==='1');
+    assert.equal(await p.$eval('[name=secret]',e=>e.value),'');
+    assert.doesNotMatch(await body(),/fixture-private-replacement/);
+    await p.screenshot({path:path.join(os.tmpdir(),'api-controls-console-20261010.png'),fullPage:true});
+    await p.click('.pc-sidebar [data-pc-page=security]');assert.match(await body(),/预算设置/);assert.match(await body(),/密钥设置/);assert.doesNotMatch(await body(),/fixture-private-replacement/);
     await p.screenshot({path:path.join(os.tmpdir(),'api-metering-console-20261010.png'),fullPage:true});
     await p.click('.pc-sidebar [data-pc-page=overview]');await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     await p.screenshot({path:path.join(os.tmpdir(),'platform-admin-mobile-20261010.png'),fullPage:true});await p.setViewport({width:1440,height:1000});
@@ -79,7 +113,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     await new Promise(r=>setTimeout(r,50));assert(!await p.$('.pc-kpis'));assert.equal(await p.evaluate(()=>sessionStorage.getItem('sem_auth_v1')),null);
     await signIn();await p.waitForSelector('.pc-kpis');status=401;await p.click('[data-pc=refresh]');await p.waitForSelector('#pc-login');assert(!await p.$('.pc-kpis'));
     assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
-    assert(requests.every(r=>['/api/v1/auth/login','/api/v1/auth/me','/api/v1/admin/console/snapshot'].includes(r.path)));
-    assert(requests.filter(r=>r.method!=='GET').every(r=>r.path==='/api/v1/auth/login'));
+    assert(requests.every(r=>['/api/v1/auth/login','/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/admin/console/controls'].includes(r.path)));
+    assert(requests.filter(r=>r.method!=='GET').every(r=>['/api/v1/auth/login','/api/v1/admin/console/controls'].includes(r.path)));
   }finally{await browser.close();await f.close();}
 });
