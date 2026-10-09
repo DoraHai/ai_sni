@@ -131,13 +131,29 @@ async def check_publication(session, tenant_id, task_id, publication_id, *, sche
             if exc.status_code != 409:
                 raise
             state = 'mismatch'
-    fresh = outcome(old, state, now, **proof)
+    fresh = outcome(old, state, now, checked_url=pub.published_url, **proof)
     if scheduled:
         await ensure_geo_entitlement(session, tenant_id)
     store_state(variant, pub, fresh)
     await follow_up(session, content, pub, fresh)
     await session.commit()
     return fresh
+
+
+def report_check(variant, pub, latest_article_id):
+    """Project actual page observations without inferring citation accuracy."""
+    state = state_for(variant, pub)
+    current = (state.get('expected_fingerprint') == fingerprint(variant)
+               and variant.article_version_id == latest_article_id
+               and state.get('checked_url') == pub.published_url)
+    verified = bool(current and state.get('state') == 'healthy'
+                    and state.get('observed_sha256') and state.get('expected_sha256'))
+    return {'state': state.get('state', 'pending') if current else 'unverified',
+            'verified': verified, 'checked_at': state.get('checked_at'),
+            'article_id': variant.article_version_id, 'observed_url': state.get('observed_url'),
+            'expected_sha256': state.get('expected_sha256') if verified else None,
+            'observed_sha256': state.get('observed_sha256') if verified else None,
+            'citation_accuracy': 'not_evaluated'}
 
 
 async def list_monitor(session, tenant_id, task_id):

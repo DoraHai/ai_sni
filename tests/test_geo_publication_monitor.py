@@ -53,6 +53,26 @@ def test_repeat_click_uses_recent_result():
     fetch.assert_not_awaited()
 
 
+@pytest.mark.parametrize('change', ['none', 'url', 'article', 'body', 'no_proof'])
+def test_report_source_verification_requires_current_url_version_and_actual_body_proof(change):
+    from app.geo.publication_monitor import report_check, fingerprint
+    v, pub, _, _ = fixture()
+    state = {**initial_state(v), 'state': 'healthy', 'checked_url': pub.published_url,
+             'checked_at': '2026-10-09T00:00:00Z', 'observed_url': pub.published_url,
+             'expected_sha256': 'a'*64, 'observed_sha256': 'b'*64}
+    if change == 'no_proof':
+        state.pop('observed_sha256')
+    store_state(v, pub, state)
+    latest = v.article_version_id
+    if change == 'url': pub.published_url += '/edited'
+    if change == 'article': latest += 1
+    if change == 'body': v.body_markdown += 'edit'
+    result = report_check(v, pub, latest)
+    assert result['verified'] is (change == 'none')
+    assert result['citation_accuracy'] == 'not_evaluated'
+    assert result['observed_sha256'] == ('b'*64 if change == 'none' else None)
+
+
 def test_failure_does_not_retimestamp_stale_matching_proof():
     state=outcome({'observed_sha256':'old','expected_sha256':'old','history':[{}]*40},'unreachable',datetime(2026,9,6))
     assert 'observed_sha256' not in state and len(state['history'])==30

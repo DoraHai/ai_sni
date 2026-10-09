@@ -4,12 +4,12 @@ import { saveGeoTicketExecution, fetchGeoExecutionPlan, prepareGeoTicketContent 
 import { executionDraft, snapshotIds, recommendedSamples } from '../utils/geoTicketExecution'
 import { geoSnapshotLink } from '../utils/geoRoutes'
 
-const props = defineProps({ tenantId: [Number, String], ticket: { type: Object, required: true }, disabled: Boolean })
+const props = defineProps({ tenantId: [Number, String], projectId: [Number, String], ticket: { type: Object, required: true }, disabled: Boolean })
 const emit = defineEmits(['saved', 'busy'])
 const draft = ref({}), saving = ref(false), error = ref('')
 const plan = ref(null), planLoading = ref(false), planError = ref(''), promptChoice = ref('')
 let generation = 0, planRequest = 0
-watch([() => props.tenantId, () => props.ticket.id], () => {
+watch([() => props.tenantId, () => props.ticket.id, () => props.projectId], () => {
   generation++; planRequest++; draft.value = executionDraft(props.ticket); error.value = ''; saving.value = false
   plan.value = null; planError.value = ''; planLoading.value = false; promptChoice.value = ''
 }, { immediate: true, flush: 'sync' })
@@ -21,7 +21,7 @@ async function loadPlan() {
   const current = generation, request = ++planRequest
   planLoading.value = true; planError.value = ''
   try {
-    const result = await fetchGeoExecutionPlan(props.tenantId, props.ticket.id, draft.value.taskId)
+    const result = await fetchGeoExecutionPlan(props.tenantId, props.ticket.id, draft.value.taskId, props.projectId)
     if (current !== generation || request !== planRequest) return
     plan.value = result
     if (!draft.value.taskId && result.selected_task_id) draft.value.taskId = result.selected_task_id
@@ -48,7 +48,7 @@ async function prepare() {
   const current = generation
   saving.value = true; error.value = ''
   try {
-    const result = await prepareGeoTicketContent(props.tenantId, props.ticket.id, plan.value.prompt_id || Number(promptChoice.value))
+    const result = await prepareGeoTicketContent(props.tenantId, props.ticket.id, plan.value.prompt_id || Number(promptChoice.value), props.projectId)
     if (current !== generation) return
     draft.value = executionDraft(result.ticket)
     emit('saved', result.ticket)
@@ -68,7 +68,7 @@ async function save() {
       content_task_id: taskId, before_snapshot_ids: snapshotIds(draft.value.before),
       expected_article_id: plan.value.article_id ?? null,
       after_snapshot_ids: snapshotIds(draft.value.after), change_note: draft.value.note.trim(),
-    })
+    }, props.projectId)
     if (current !== generation) return
     draft.value = executionDraft(saved)
     emit('saved', saved)

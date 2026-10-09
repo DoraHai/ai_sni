@@ -33,6 +33,11 @@ const preview = ref([])
 const importBusy = ref(false)
 const params = computed(() => reportParams({ from: period.value?.[0], to: period.value?.[1], projectId: projectId.value, businessId: businessId.value, granularity: granularity.value, provenance: source.value }))
 const validCount = computed(() => preview.value.filter(row => row.status === '有效').length)
+const scopedBusinesses = computed(() => {
+  if (!projectId.value) return businesses.value
+  const ids = projects.value.find(p => p.id === projectId.value)?.business_scope?.business_ids || []
+  return businesses.value.filter(b => ids.includes(b.id))
+})
 let revision = 0
 let templateRevision = 0
 
@@ -103,14 +108,14 @@ async function download(format) {
 async function previewImport() {
   importBusy.value = true
   try {
-    preview.value = (await previewGeoPublicationLinks(tenantId.value, businessId.value, file.value, pasted.value)).items || []
+    preview.value = (await previewGeoPublicationLinks(tenantId.value, businessId.value, file.value, pasted.value, projectId.value)).items || []
   } catch (e) { ElMessage.error(e.message || '预检失败') }
   finally { importBusy.value = false }
 }
 async function confirmImport() {
   importBusy.value = true
   try {
-    const result = await confirmGeoPublicationLinks(tenantId.value, businessId.value, preview.value)
+    const result = await confirmGeoPublicationLinks(tenantId.value, businessId.value, preview.value, projectId.value)
     preview.value = result.items || []
     ElMessage.success(`成功导入 ${result.applied_count} 条`)
     await loadData()
@@ -119,7 +124,7 @@ async function confirmImport() {
 }
 watch(tenantId, async () => { ++revision; ++templateRevision; trends.value = []; citations.value = []; sections.value = []; preview.value = []; projectId.value = ''; businessId.value = ''; await loadChoices(); await loadData() })
 watch([period, businessId, granularity, source], loadData, { deep: true })
-watch(projectId, () => { loadTemplate(); loadData() })
+watch(projectId, () => { businessId.value = ''; preview.value = []; trends.value = []; citations.value = []; loadTemplate(); loadData() })
 onMounted(async () => { await loadChoices(); await loadData() })
 </script>
 
@@ -129,21 +134,21 @@ onMounted(async () => { await loadChoices(); await loadData() })
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
       <div class="report-controls">
         <el-select v-model="projectId" placeholder="全部项目" clearable style="width:180px"><el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" /></el-select>
-        <el-select v-model="businessId" placeholder="全部业务" clearable style="width:180px"><el-option v-for="b in businesses" :key="b.id" :label="b.name" :value="b.id" /></el-select>
+        <el-select v-model="businessId" placeholder="全部业务" clearable style="width:180px"><el-option v-for="b in scopedBusinesses" :key="b.id" :label="b.name" :value="b.id" /></el-select>
         <el-date-picker v-model="period" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" />
         <el-button @click="download('xlsx')">导出 Excel</el-button>
         <el-button type="primary" @click="download('pdf')">生成 GEO 报告 (PDF)</el-button>
         <el-button @click="importOpen = true">批量上传发布链接</el-button>
       </div>
-      <el-alert type="info" :closable="false" title="项目选择用于报告名称与模板；问题和任务数据按客户或所选业务筛选。真实引擎采样是默认主指标，人工、模拟与未知样本单独查看。" />
+      <el-alert type="info" :closable="false" title="选择项目后，仅统计明确绑定到该项目的业务、问题和发布记录。未绑定业务的项目显示无数据。真实、人工、模拟与未知样本分别查看。" />
       <section class="report-card"><h2>各 AI 引擎提及率</h2>
         <div class="report-controls"><el-radio-group v-model="granularity"><el-radio-button value="day">按天</el-radio-button><el-radio-button value="week">按周</el-radio-button><el-radio-button value="month">按月</el-radio-button></el-radio-group>
           <el-select v-model="source" style="width:160px"><el-option v-for="(label, key) in SOURCE_LABELS" :key="key" :label="label" :value="key" /></el-select></div>
         <el-table :data="trends" border max-height="420" empty-text="无数据"><el-table-column prop="engine" label="AI 引擎" /><el-table-column prop="bucket" label="周期" /><el-table-column prop="mentions" label="提及数" /><el-table-column prop="samples" label="样本数" /><el-table-column label="提及率"><template #default="{ row }">{{ rateLabel(row) }}</template></el-table-column></el-table>
       </section>
       <section class="report-card"><h2>已发布 URL 引用追踪</h2><p>精准匹配为规范化 URL 一致；宽松匹配需人工核对。同域名不会计为精准引用。</p>
-        <el-table :data="citations" border empty-text="无发布链接"><el-table-column type="expand"><template #default="{ row }"><el-table :data="row.matches" size="small" empty-text="无数据"><el-table-column prop="sample_id" label="样本 ID" /><el-table-column prop="engine" label="引擎" /><el-table-column prop="date" label="日期" /><el-table-column prop="matched_url" label="命中来源 URL" /><el-table-column label="匹配"><template #default="{ row: m }">{{ m.kind === 'exact' ? '精准' : '宽松' }}</template></el-table-column></el-table></template></el-table-column>
-          <el-table-column prop="published_url" label="发布 URL" min-width="300" show-overflow-tooltip /><el-table-column prop="channel" label="渠道" /><el-table-column prop="exact_count" label="精准" /><el-table-column prop="loose_count" label="宽松" /></el-table>
+        <p>引用次数按回答中的URL匹配计数。来源页正文核验保留实际检查时间，不表示AI引用内容已审核准确。</p><el-table :data="citations" border empty-text="无发布链接"><el-table-column type="expand"><template #default="{ row }"><el-table :data="row.matches" size="small" empty-text="无数据"><el-table-column prop="sample_id" label="样本 ID" /><el-table-column prop="engine" label="引擎" /><el-table-column prop="date" label="日期" /><el-table-column prop="matched_url" label="命中来源 URL" /><el-table-column label="匹配"><template #default="{ row: m }">{{ m.kind === 'exact' ? '精准' : '宽松' }}</template></el-table-column></el-table></template></el-table-column>
+          <el-table-column prop="published_url" label="发布 URL" min-width="300" show-overflow-tooltip /><el-table-column prop="channel" label="渠道" /><el-table-column prop="exact_count" label="精准" /><el-table-column prop="loose_count" label="宽松" /><el-table-column label="来源页正文核验" min-width="180"><template #default="{ row }">{{ row.source_verification?.verified ? '已核验登记正文' : '待核验或有异常' }}<small v-if="row.source_verification?.checked_at"> · {{ row.source_verification.checked_at }}</small></template></el-table-column></el-table>
       </section>
       <section class="report-card"><h2>报告模板</h2><p v-if="!projectId">选择项目后可调整章节。</p><template v-else><div v-for="(item, index) in sections" :key="item.key" class="section-row"><el-checkbox v-model="item.visible">显示</el-checkbox><el-input v-model="item.title" maxlength="60" /><el-button size="small" :disabled="index === 0" @click="move(index, -1)">上移</el-button><el-button size="small" :disabled="index === sections.length - 1" @click="move(index, 1)">下移</el-button></div><el-button type="primary" @click="saveTemplate()">保存模板</el-button><el-button @click="saveTemplate(true)">恢复默认</el-button></template></section>
     </div>

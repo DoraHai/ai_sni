@@ -62,7 +62,7 @@ def build_xlsx(data: dict, *, sample_label: str = "") -> bytes:
     snaps = data["snapshots"]
     pubs = data["publications"]
     start, end = data["start"], data["end"]
-    cites_by_kind = {kind: citation_rows(pubs, snaps, start, end, kind) for kind in ("real", "manual", "simulated", "unknown")}
+    cites_by_kind = {kind: citation_rows(pubs, snaps, start, end, kind, data.get("publication_checks")) for kind in ("real", "manual", "simulated", "unknown")}
     match_map = {}
     for kind, rows in cites_by_kind.items():
         for pub in rows:
@@ -177,7 +177,7 @@ def build_report_html(data: dict, *, template: list[dict] | None = None, sample_
     unknown = sum(provenance(s) == "unknown" for s in snaps)
     mentioned = sum(bool(s.mentions_brand) for s in real)
     rate = f"{mentioned / len(real):.1%}" if real else "无数据"
-    citations = citation_rows(pubs, snaps, start, end)
+    citations = citation_rows(pubs, snaps, start, end, publication_checks=data.get("publication_checks"))
     matrix = []
     for prompt in prompts.values():
         for engine in sorted({s.engine for s in snaps} | set(data.get("engines") or [])):
@@ -187,7 +187,7 @@ def build_report_html(data: dict, *, template: list[dict] | None = None, sample_
     blocks = {
         "overview": f"<p>真实样本 {len(real)} · 提及 {mentioned} · 提及率 {rate} · 问题 {len(prompts)} · 发布链接 {len(pubs)}</p>",
         "trends": _engine_trends(snaps, prompts, start, end, data.get("engines")),
-        "citations": _table(["发布 URL", "精准匹配", "宽松匹配", "命中样本"], [(r["published_url"], r["exact_count"], r["loose_count"], ", ".join(str(m["sample_id"]) for m in r["matches"]) or "无数据") for r in citations]),
+        "citations": "<p>URL匹配表示回答中出现链接；来源页核验表示登记正文与实际页面匹配，不证明AI引用内容准确。核验时间可能晚于观察期。</p>" + _table(["发布 URL", "精准匹配", "宽松匹配", "命中样本", "来源页正文核验"], [(r["published_url"], r["exact_count"], r["loose_count"], ", ".join(str(m["sample_id"]) for m in r["matches"]) or "无数据", "已核验" if r["source_verification"]["verified"] else "待核验") for r in citations]),
         "publications": _table(["渠道", "发布 URL", "发布时刻（北京）"], [(p.channel, p.published_url, local_time(p.published_at).strftime("%Y-%m-%d %H:%M") if p.published_at else "无数据") for p in pubs]),
         "provenance": f"<p>主指标仅统计真实引擎采样。人工录入 {manual} 条、模拟/演示 {simulated} 条、来源未知 {unknown} 条分别保留，不并入主指标。无样本显示无数据。</p>",
         "appendix": _table(["问题", "引擎", "提及数", "样本数", "提及率"], matrix[:100]) + ("<p>问题 × 引擎矩阵仅显示前 100 行；完整记录见 Excel。</p>" if len(matrix) > 100 else ""),

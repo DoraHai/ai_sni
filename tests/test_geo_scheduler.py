@@ -32,6 +32,7 @@ def test_geo_scheduler_keeps_patrol_and_metrics_jobs_isolated():
         assert geo_scheduler.start_geo_scheduler()
     ids = [call.kwargs["id"] for call in scheduler.add_job.call_args_list]
     assert ids == [
+        "geo_project_workflows",
         "geo_visibility_patrols",
         "geo_daily_metrics_nightly",
     ]

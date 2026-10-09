@@ -129,21 +129,21 @@ export function patchGeoActionTicket(tenantId, ticketId, body) {
   })
 }
 
-export function saveGeoTicketExecution(tenantId, ticketId, body) {
+export function saveGeoTicketExecution(tenantId, ticketId, body, projectId = null) {
   return client.post(`/api/v1/geo/action-tickets/${ticketId}/execution`, body, {
-    params: { tenant_id: tenantId },
+    params: { tenant_id: tenantId, project_id: projectId || undefined },
   })
 }
 
-export function fetchGeoExecutionPlan(tenantId, ticketId, taskId) {
+export function fetchGeoExecutionPlan(tenantId, ticketId, taskId, projectId = null) {
   return client.get(`/api/v1/geo/action-tickets/${ticketId}/execution-plan`, {
-    params: { tenant_id: tenantId, content_task_id: taskId || undefined },
+    params: { tenant_id: tenantId, content_task_id: taskId || undefined, project_id: projectId || undefined },
   })
 }
 
-export function prepareGeoTicketContent(tenantId, ticketId, promptId) {
+export function prepareGeoTicketContent(tenantId, ticketId, promptId, projectId = null) {
   return client.post(`/api/v1/geo/action-tickets/${ticketId}/prepare-content`, { prompt_id: promptId || null }, {
-    params: { tenant_id: tenantId },
+    params: { tenant_id: tenantId, project_id: projectId || undefined },
   })
 }
 
