@@ -41,16 +41,26 @@ export function createSeoExecutionClient({transport,getContext}) {
       publicationChoices.set(id,{context:c,items:data.items});return data.items;
     },
     async act(id,action,input={}){
-      const row=current(id,action==='retry'?'advance':action==='explain'?'explain_report':action),c=row.context,t=row.data;
+      const row=current(id,['retry','retry_analytics'].includes(action)?'advance':action==='incomplete_report'?'prepare_incomplete_report':action==='explain'?'explain_report':action),c=row.context,t=row.data;
       const body={tenant_id:c.tenantId,site_id:c.siteId};let method='POST',path=t.action_type==='content_delivery'?`/api/v1/seo/workbench/content-workflows/${id}/advance`:`${stem(id)}/advance`;
       if(action==='cancel'){method='DELETE';path=`${stem(id)}?${scope(c)}`;}
       else if(action==='retry'){if(t.action_type!=='site_diagnosis'||!positive(input.pageId)||!t.allowed_actions.retry_page_ids?.includes(input.pageId))fail('ACTION_NOT_ALLOWED');body.retry_page_id=input.pageId;}
+      else if(action==='retry_analytics'){if(t.action_type!=='monthly_report'||t.params.report||!['baidu_tongji','ga4'].includes(input.source)||!t.allowed_actions.retry_analytics_sources?.includes(input.source))fail('ACTION_NOT_ALLOWED');body.retry_analytics_source=input.source;}
+      else if(action==='incomplete_report'){if(t.action_type!=='monthly_report'||t.params.report)fail('ACTION_NOT_ALLOWED');body.allow_incomplete_analytics=true;}
       else if(action==='explain'){if(t.action_type!=='monthly_report'||!input.explanation?.trim()||input.explanation.length>4000||!/^[0-9a-f]{64}$/.test(t.params.report?.sha256))fail('INVALID_REPORT_EXPLANATION');body.explanation=input.explanation.trim();body.report_sha256=t.params.report.sha256;}
       else if(action==='advance'){if(input.publicationId!=null){const choices=publicationChoices.get(id);if(t.action_type!=='content_delivery'||!positive(input.publicationId)||!choices?.items.some(v=>v.id===input.publicationId))fail('PUBLICATION_SELECTION_REQUIRED');same(choices.context);body.publication_id=input.publicationId;}}
       else fail('ACTION_NOT_ALLOWED');
       snapshots.delete(id);await json(path,method,c,method==='DELETE'?undefined:body);
       // Content advance returns a raw task without fresh allowed_actions. Always re-read.
       same(c);return this.detail(id);
+    },
+    async readNotification(taskId,eventId){
+      const row=current(taskId),c=row.context;
+      if(typeof eventId!=='string'||!/^[0-9a-f-]{36}$/.test(eventId)||!row.data.notifications?.some(e=>e.id===eventId&&e.task_id===taskId))fail('NOTIFICATION_REQUIRED');
+      snapshots.delete(taskId);
+      const result=await json('/api/v1/seo/workbench/notifications/read','POST',c,{tenant_id:c.tenantId,site_id:c.siteId,task_id:taskId,event_id:eventId});
+      if(result.event_id!==eventId||result.read!==true)fail('CONTRACT_MISMATCH');
+      return result;
     },
     async report(id){
       const row=current(id),c=row.context,meta=row.data.params.report;

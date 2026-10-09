@@ -14,9 +14,14 @@ export function executionFixture(){
 }
 export function handleExecutionFixture({url,req,res,send,body,state,tenant,site,advisor}){
   const base='/api/v1/seo/workbench/executions',match=url.pathname.match(/^\/api\/v1\/seo\/workbench\/(executions|content-workflows)\/(\d+)(?:\/(report|advance))?$/);
+  if(url.pathname==='/api/v1/seo/workbench/notifications/read'){
+    const row=state.executions.get(body.task_id),event=row?.task.notifications?.find(e=>e.id===body.event_id);
+    if(!row||row.tenant!==tenant||!event){send(409,{detail:'Notification changed'});return true;}
+    event.read=true;send(200,{event_id:event.id,read:true});return true;
+  }
   if(url.pathname!==base&&!match)return false;
   const plan=state.plans.get(tenant),paused=plan.status==='paused',authorized=advisor&&!state.executionDenied;
-  const project=row=>{const t=structuredClone(row.task),active=!['done','cancelled'].includes(t.status),may=authorized&&active,stem=`${base}/${t.id}`;return {...t,effective_pause:paused,read_only:true,allowed_actions:{advance:may&&!paused,cancel:may,retry_page_ids:may&&!paused?Object.entries(t.params.pages??{}).filter(([,v])=>v.state==='failed').map(([id])=>Number(id)):[],explain_report:may&&!paused&&!!t.params.report},links:{detail:`${stem}?tenant_id=${tenant}&site_id=${site}`,advance:t.action_type==='content_delivery'?`/api/v1/seo/workbench/content-workflows/${t.id}/advance`:`${stem}/advance`,cancel:stem,report:t.params.report?`${stem}/report?tenant_id=${tenant}&site_id=${site}`:null}};};
+  const project=row=>{const t=structuredClone(row.task),active=!['done','cancelled'].includes(t.status),may=authorized&&active,stem=`${base}/${t.id}`;return {...t,effective_pause:paused,read_only:true,allowed_actions:{advance:may&&!paused,cancel:may,retry_page_ids:may&&!paused?Object.entries(t.params.pages??{}).filter(([,v])=>v.state==='failed').map(([id])=>Number(id)):[],explain_report:may&&!paused&&!!t.params.report,retry_analytics_sources:may&&!paused&&!t.params.report?(t.retrySources??[]):[],prepare_incomplete_report:may&&!paused&&t.params.blocker==='analytics_source_requires_advisor'&&!t.params.report},links:{detail:`${stem}?tenant_id=${tenant}&site_id=${site}`,advance:t.action_type==='content_delivery'?`/api/v1/seo/workbench/content-workflows/${t.id}/advance`:`${stem}/advance`,cancel:stem,report:t.params.report?`${stem}/report?tenant_id=${tenant}&site_id=${site}`:null}};};
   if(url.pathname===base){const page=Number(url.searchParams.get('page')),size=Number(url.searchParams.get('page_size'));const rows=[...state.executions.values()].filter(row=>row.tenant===tenant&&(state.keywordLevel!=='none'||row.task.action_type!=='ranking_followup')).sort((a,b)=>b.task.id-a.task.id);send(200,{items:rows.slice((page-1)*size,page*size).map(project),total:rows.length,page,page_size:size,cycles:{website:{sequence:1,task_id:tenant*100+2,last_checked_at:'2026-10-07T08:00:00Z',next_due_at:'2026-10-14T08:00:00Z',blocker:null},monitoring:{blocker:'keyword_inventory_required'},report:{month:'2026-09',task_id:tenant*100+4}},read_only:true,as_of:'2026-10-07T08:02:00Z'});return true;}
   const row=state.executions.get(Number(match[2]));if(!row||row.tenant!==tenant){send(404,{detail:'Execution not found'});return true;}
   if(match[3]==='report'){
@@ -31,6 +36,11 @@ export function handleExecutionFixture({url,req,res,send,body,state,tenant,site,
   if(body?.explanation){
     if(body.report_sha256!==row.task.params.report?.sha256){send(409,{detail:{code:'report_version_conflict'}});return true;}
     row.task.params.explanation={text:body.explanation,actor_user_id:7,at:'2026-10-07T09:00:00Z'};row.task.status='done';row.task.params.phase='completed_with_evidence';row.task.completion_evidence={metric_key:'seo.reports.prepared_count',before:0,after:1,change_abs:1,as_of:'2026-10-07T09:00:00Z',source:{sha256:body.report_sha256},seo_effect:'not_evaluated'};
+  }else if(body?.retry_analytics_source){
+    row.task.retrySources=[];row.task.params.phase='awaiting_analytics_collection';
+  }else if(body?.allow_incomplete_analytics){
+    row.task.params.analytics_incomplete_ack={actor_user_id:7};row.task.params.phase='awaiting_advisor_explanation';
+    row.task.params.report={format:'html',month:'2026-09',sha256:createHash('sha256').update(row.html).digest('hex'),pdf_generated:false,missing:['site_analytics_missing']};
   }else if(body?.retry_page_id){
     const p=row.task.params.pages?.[body.retry_page_id];if(p?.state!=='failed'){send(409,{detail:{code:'page_retry_not_available'}});return true;}p.state='observed';p.snapshot_id=105;p.run_id=104;
   }else if(row.task.action_type==='content_delivery'){row.task.params.phase='awaiting_publication';row.task.params.publication_id=body?.publication_id??null;}
