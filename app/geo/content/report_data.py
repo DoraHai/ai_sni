@@ -113,7 +113,7 @@ def trend_rows(snapshots, prompts, start: date, end: date, granularity: str, sam
             for engine in sorted(engines) for bucket in buckets]
 
 
-def citation_rows(publications, snapshots, start: date, end: date, sample_kind: str = "real") -> list[dict]:
+def citation_rows(publications, snapshots, start: date, end: date, sample_kind: str = "real", publication_checks=None) -> list[dict]:
     result = []
     for pub in publications:
         matches = []
@@ -128,5 +128,7 @@ def citation_rows(publications, snapshots, start: date, end: date, sample_kind: 
         result.append({"publication_id": pub.id, "task_id": pub.task_id, "channel": pub.channel,
                        "published_url": pub.published_url, "published_at": pub.published_at.isoformat() if pub.published_at else None,
                        "exact_count": sum(m["kind"] == "exact" for m in matches),
-                       "loose_count": sum(m["kind"] == "loose" for m in matches), "matches": matches})
+                       "loose_count": sum(m["kind"] == "loose" for m in matches), "matches": matches,
+                       "source_verification": (publication_checks or {}).get(pub.id, {
+                           "state": "unverified", "verified": False, "citation_accuracy": "not_evaluated"})})
     return result

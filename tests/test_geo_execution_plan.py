@@ -43,6 +43,16 @@ def test_execution_steps_require_current_content_evidence():
     assert all(s['done'] for s in steps) and next_step == 'acceptance'
 
 
+def test_project_confirmation_cannot_be_bypassed_at_acceptance():
+    from app.geo.execution_plan import acceptance_blockers
+    steps = [dict(id=key, title=key, done=True) for key in
+        ['baseline', 'content', 'materials', 'article', 'publication', 'retest', 'comparison']]
+    steps.append(dict(id='review', title='确认当前内容版本', done=False))
+    assert acceptance_blockers({'steps': steps}) == ['确认当前内容版本']
+    steps[-1]['done'] = True
+    assert acceptance_blockers({'steps': steps}) == []
+
+
 def prepare_fixture(existing=None):
     row = ticket()
     prompt = NS(id=2, tenant_id=7, question='如何选型？', is_brand_probe=False)

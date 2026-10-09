@@ -10,6 +10,8 @@ def acceptance_blockers(plan):
     """Fail closed if any execution prerequisite is missing from the plan."""
     required = {'baseline', 'content', 'materials', 'article', 'publication', 'retest', 'comparison'}
     steps = {step['id']: step for step in plan.get('steps', [])}
+    if 'review' in steps:
+        required.add('review')
     if required - steps.keys():
         return ['执行进度不完整，请刷新后重试']
     return [steps[key]['title'] for key in sorted(required) if not steps[key].get('done')]

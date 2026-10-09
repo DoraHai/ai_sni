@@ -45,7 +45,7 @@ def test_frozen_evidence_does_not_change_when_source_is_edited():
 
 def run_route(*, status='doing', expected_article='omitted', task_tenant=7, prompt_id=2, requested_before=None, requested_after=None, snapshots=None, article_at=None, note='补充了适用条件'):
     row = GeoActionTicket(id=10, tenant_id=7, advice_code='workqueue:v1:prompt-2', status=status, title='修改内容')
-    task = NS(id=100, tenant_id=task_tenant, prompt_id=prompt_id)
+    task = NS(id=100, tenant_id=task_tenant, prompt_id=prompt_id, business_id=None)
     prompt = NS(id=prompt_id, tenant_id=7, is_brand_probe=False, question='如何选型？')
     session = NS(commit=AsyncMock(), refresh=AsyncMock(),
                  scalars=AsyncMock(return_value=snapshots if snapshots is not None else [snap(1), snap(3)]),

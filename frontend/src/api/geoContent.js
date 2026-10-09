@@ -1,13 +1,13 @@
 import client from './client'
 
-export function previewGeoPublicationLinks(tenantId, businessId, file, pasted = '') {
+export function previewGeoPublicationLinks(tenantId, businessId, file, pasted = '', projectId = null) {
   const form = new FormData()
   if (file) form.append('file', file)
   else form.append('pasted', pasted)
-  return client.post('/api/v1/geo/reports/publication-links/preview', form, { params: { tenant_id: tenantId, business_id: businessId || undefined } })
+  return client.post('/api/v1/geo/reports/publication-links/preview', form, { params: { tenant_id: tenantId, business_id: businessId || undefined, project_id: projectId || undefined } })
 }
-export function confirmGeoPublicationLinks(tenantId, businessId, rows) {
-  return client.post('/api/v1/geo/reports/publication-links/confirm', { tenant_id: tenantId, business_id: businessId || null, rows })
+export function confirmGeoPublicationLinks(tenantId, businessId, rows, projectId = null) {
+  return client.post('/api/v1/geo/reports/publication-links/confirm', { tenant_id: tenantId, business_id: businessId || null, project_id: projectId || null, rows })
 }
 export function fetchGeoMentionTrends(tenantId, params = {}) {
   return client.get('/api/v1/geo/reports/mention-trends', { params: { tenant_id: tenantId, ...params } })

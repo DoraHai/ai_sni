@@ -278,6 +278,9 @@ def start_geo_scheduler() -> bool:
         return False
     try:
         _telemetry.attach(scheduler)
+        from app.geo.project_workflows import run_project_workflows
+        scheduler.add_job(run_project_workflows, CronTrigger(minute="*"), id="geo_project_workflows",
+                          replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=60)
         scheduler.add_job(
             run_geo_visibility_patrols,
             CronTrigger(minute=5),

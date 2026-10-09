@@ -115,33 +115,56 @@ class TicketPrepareContent(BaseModel):
 async def get_ticket_execution_plan(
     ticket_id: int, tenant_id: int = Query(...), content_task_id: int | None = Query(None, gt=0),
     ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session),
+    project_id: int | None = None,
 ) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    row = await _ticket_for_tenant(session, ticket_id, tenant_id)
+    return await build_ticket_execution_plan(session, row, tenant_id, content_task_id, project_id)
+
+
+async def build_ticket_execution_plan(session, row, tenant_id, content_task_id=None, project_id=None):
     from app.models import GeoContentTask, GeoPrompt, GeoAnswerSnapshot, GeoArticleVersion, GeoPublication, GeoChannelVariant
     from app.geo.execution_plan import ticket_prompt_id, candidates, sample_gaps, execution_steps
     from app.geo.content.brief import brief_ready
     from app.geo.content.routes import _task_facts, _fact_dicts
     from app.geo.content.evidence import prepare_facts_for_generation
 
-    ctx.ensure_tenant(tenant_id)
-    row = await _ticket_for_tenant(session, ticket_id, tenant_id)
     if not (row.advice_code or '').startswith('workqueue:v1:'):
         raise HTTPException(400, '仅执行待办支持执行计划')
     fixed_prompt = ticket_prompt_id(row)
+    stored_project = ((row.progress or {}).get('project_workflow') or {}).get('project_id')
+    if stored_project and project_id and stored_project != project_id:
+        raise HTTPException(404, '待办不属于当前项目')
+    project_id = stored_project or project_id
+    scope_prompt_ids, business_ids = None, None
+    if project_id is not None:
+        from app.geo.project_scope import project_scope, prompt_ids_for_businesses
+        _, business_ids = await project_scope(session, tenant_id, project_id)
+        scope_prompt_ids = await prompt_ids_for_businesses(session, tenant_id, business_ids)
+        if fixed_prompt and fixed_prompt not in scope_prompt_ids:
+            raise HTTPException(404, '执行待办不属于当前项目')
     tasks_query = select(GeoContentTask).join(GeoPrompt, GeoPrompt.id == GeoContentTask.prompt_id).where(
         GeoContentTask.tenant_id == tenant_id, GeoPrompt.tenant_id == tenant_id,
         GeoPrompt.is_brand_probe.is_(False), GeoContentTask.status.notin_(['archived', 'cancelled']))
     if fixed_prompt:
         tasks_query = tasks_query.where(GeoContentTask.prompt_id == fixed_prompt)
+    if scope_prompt_ids is not None:
+        tasks_query = tasks_query.where(GeoContentTask.prompt_id.in_(scope_prompt_ids),
+            GeoContentTask.business_id.in_(business_ids) | GeoContentTask.business_id.is_(None))
     tasks = list(await session.scalars(tasks_query.order_by(GeoContentTask.id.desc()).limit(100)))
     task_id = content_task_id or row.content_task_id
     task = await session.get(GeoContentTask, task_id) if task_id else (tasks[0] if fixed_prompt and tasks else None)
     if task and (task.tenant_id != tenant_id or (fixed_prompt and task.prompt_id != fixed_prompt)):
         raise HTTPException(404, '内容任务不存在或不属于同一问题')
+    if task and scope_prompt_ids is not None and (task.prompt_id not in scope_prompt_ids or
+            (task.business_id is not None and task.business_id not in business_ids)):
+        raise HTTPException(404, '内容任务不属于当前项目')
     if task_id and task is None:
         raise HTTPException(404, '内容任务不存在')
     prompt_id = task.prompt_id if task else fixed_prompt
     prompts = list(await session.scalars(select(GeoPrompt).where(
         GeoPrompt.tenant_id == tenant_id, GeoPrompt.is_brand_probe.is_(False), GeoPrompt.status == 'active',
+        *([GeoPrompt.id.in_(scope_prompt_ids)] if scope_prompt_ids is not None else []),
     ).order_by(GeoPrompt.id.desc()).limit(200)))
     prompt = await session.get(GeoPrompt, prompt_id) if prompt_id else None
     if prompt_id and prompt is None:
@@ -166,8 +189,15 @@ async def get_ticket_execution_plan(
         GeoChannelVariant.article_version_id == article.id,
     ).order_by(GeoPublication.id.desc()).limit(20))) if task and article else []
     facts = await _task_facts(session, task.id) if task else []
+    if business_ids is not None:
+        facts = [f for f in facts if f.tenant_id == tenant_id and f.business_id in business_ids]
     eligible_facts, _ = prepare_facts_for_generation(_fact_dicts(facts), min_eligible=3)
     steps, next_step = execution_steps(row, task, article, len(eligible_facts), brief_ready(task.brief) if task else False, pubs)
+    if project_id is not None and task and article and task.review_status != 'approved':
+        review = dict(id='review', title='确认当前内容版本', done=False, instruction='由客户确认或具备权限的顾问明确代确认当前版本。')
+        steps.insert(4, review)
+        if next_step in {'publication', 'retest', 'comparison', 'acceptance'}:
+            next_step = 'review'
     return dict(prompt_id=prompt_id, question=prompt.question if prompt else None,
                 prompts=[dict(id=p.id, question=p.question) for p in prompts],
                 tasks=[dict(id=t.id, title=t.title, status=t.status) for t in tasks],
@@ -180,6 +210,7 @@ async def get_ticket_execution_plan(
 async def prepare_ticket_content(
     ticket_id: int, req: TicketPrepareContent, tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session),
+    project_id: int | None = None,
 ) -> dict:
     from app.models import GeoContentTask, GeoPrompt, GeoAnswerSnapshot, GeoArticleVersion
     from app.geo.execution_plan import ticket_prompt_id
@@ -199,6 +230,8 @@ async def prepare_ticket_content(
     prompt_id = fixed or req.prompt_id
     if not prompt_id:
         raise HTTPException(400, '请先选择要执行的目标问题')
+    from app.geo.project_workflows import ensure_ticket_project
+    await ensure_ticket_project(session, row, tenant_id, prompt_id, project_id)
     prompt = await session.scalar(select(GeoPrompt).where(GeoPrompt.id == prompt_id, GeoPrompt.tenant_id == tenant_id).with_for_update())
     if prompt is None or prompt.is_brand_probe:
         raise HTTPException(404, '非品牌点名问题不存在')
@@ -251,6 +284,7 @@ async def prepare_ticket_content(
 async def save_ticket_execution(
     ticket_id: int, req: TicketExecution, tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session),
+    project_id: int | None = None,
 ) -> dict:
     from app.models import GeoContentTask, GeoAnswerSnapshot, GeoArticleVersion, GeoPrompt
     from app.geo.work_execution import freeze_samples, compare_samples, utc_naive
@@ -264,6 +298,8 @@ async def save_ticket_execution(
     task = await session.get(GeoContentTask, req.content_task_id)
     if task is None or task.tenant_id != tenant_id:
         raise HTTPException(404, '内容任务不存在')
+    from app.geo.project_workflows import ensure_ticket_project
+    await ensure_ticket_project(session, row, tenant_id, task.prompt_id, project_id, business_id=task.business_id)
     if row.advice_code.startswith('workqueue:v1:prompt-') and row.advice_code != f'workqueue:v1:prompt-{task.prompt_id}':
         raise HTTPException(400, '内容任务必须对应待办的同一问题')
     prompt = await session.get(GeoPrompt, task.prompt_id)
@@ -305,10 +341,13 @@ async def save_ticket_execution(
     row.content_task_id = task.id
     row.baseline_snapshot = dict(workflow='content_retest_v1', prompt_id=task.prompt_id,
                                  question=prompt.question, samples=before)
+    project_workflow = (row.progress or {}).get('project_workflow')
     row.progress = dict(workflow='content_retest_v1', prompt_id=task.prompt_id,
                         article_id=article.id if article else None, version_no=article.version_no if article else None,
                         change_note=note, samples=after, comparison=compare_samples(before, after),
                         recorded_at=datetime.utcnow().isoformat() + 'Z')
+    if project_workflow:
+        row.progress = {**row.progress, 'project_workflow': project_workflow}
     row.evidence = append_evidence(row.evidence, check='workflow.execution', result='recorded',
                                    note=f'关联内容任务 #{task.id}；修改前 {len(before)} 条，复测 {len(after)} 条。{note}')
     await session.commit()
@@ -943,6 +982,13 @@ async def patch_action_ticket(
     row = await _work_ticket_for_update(session, ticket_id, tenant_id)
     if (row.advice_code or '').startswith('cockpit:v1:'):
         raise HTTPException(409, '统一任务请使用 integration/tasks 接口核验真实指标')
+    if (row.advice_code or '').startswith('workqueue:v1:') and ((row.progress or {}).get('project_workflow') or {}).get('project_id'):
+        from app.geo.project_workflows import ensure_ticket_project
+        from app.geo.execution_plan import ticket_prompt_id
+        from app.models import GeoContentTask
+        linked = await session.get(GeoContentTask, row.content_task_id) if row.content_task_id else None
+        await ensure_ticket_project(session, row, tenant_id, ticket_prompt_id(row),
+                                    business_id=linked.business_id if linked else None)
     data = req.model_dump(exclude_unset=True)
     if (row.advice_code or '').startswith('monitor:v1:'):
         if set(data) - {'owner_name', 'due_date', 'status', 'operation_note'} or ('status' in data and data['status'] not in {'todo', 'doing', 'blocked'}):

@@ -2,7 +2,9 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
-import { createGeoProject, fetchGeoProjects, updateGeoProject } from '../../api/geoProjects'
+import GeoProjectExecution from '../../components/GeoProjectExecution.vue'
+import { createGeoProject, fetchGeoProjects, updateGeoProject, updateGeoBusinessScope } from '../../api/geoProjects'
+import { listGeoBusinesses } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
 const { tenantId, session } = useGeoTenant()
@@ -11,6 +13,11 @@ const saving = ref(false)
 const dialogOpen = ref(false)
 const editing = ref(null)
 const projects = ref([])
+const businesses = ref([])
+const scopeOpen = ref(false)
+const scopeProject = ref(null)
+const scopeIds = ref([])
+const executionProject = ref(null)
 const form = reactive({
   name: '',
   brand_name: '',
@@ -26,8 +33,11 @@ async function load() {
   }
   loading.value = true
   try {
-    const data = await fetchGeoProjects(tenantId.value)
+    const targetTenant = tenantId.value
+    const [data, options] = await Promise.all([fetchGeoProjects(targetTenant), listGeoBusinesses(targetTenant)])
+    if (targetTenant !== tenantId.value) return
     projects.value = data.projects || []
+    businesses.value = options.items || []
   } catch (error) {
     ElMessage.error(error.message || '项目加载失败')
   } finally {
@@ -76,14 +86,37 @@ async function save() {
   }
 }
 
-watch(tenantId, load)
+function openScope(project) {
+  scopeProject.value = project
+  scopeIds.value = [...(project.business_scope?.business_ids || [])]
+  scopeOpen.value = true
+}
+
+function otherOwner(businessId) {
+  return projects.value.find(p => p.id !== scopeProject.value?.id && p.business_scope?.business_ids?.includes(businessId))
+}
+
+async function saveScope() {
+  saving.value = true
+  try {
+    await updateGeoBusinessScope(scopeProject.value.id, tenantId.value, {
+      business_ids: scopeIds.value, expected_revision: scopeProject.value.business_scope?.revision || 0,
+    })
+    scopeOpen.value = false
+    ElMessage.success('项目业务归属已保存')
+    await load()
+  } catch (error) { ElMessage.error(error.message || '归属保存失败') }
+  finally { saving.value = false }
+}
+
+watch(tenantId, () => { dialogOpen.value = false; scopeOpen.value = false; executionProject.value = null; projects.value = []; businesses.value = []; load() })
 onMounted(load)
 </script>
 
 <template>
   <GeoWorkbenchPage
     title="项目管理"
-    sub="维护每个客户的品牌与网站项目，后续 GEO 数据按客户和项目归属。"
+    sub="明确关联项目业务，报告和执行进度使用同一数据范围。"
     :show-period="false"
     :loading="loading"
   >
@@ -104,13 +137,28 @@ onMounted(load)
         <el-table-column prop="brand_name" label="品牌" min-width="140" />
         <el-table-column prop="canonical_domain" label="主域名" min-width="220" />
         <el-table-column prop="status" label="状态" width="100" />
-        <el-table-column v-if="session.canEdit('geo.assets')" label="操作" width="90">
+        <el-table-column label="业务归属" min-width="160"><template #default="{ row }">{{ row.business_scope?.business_ids?.length ? `已关联 ${row.business_scope.business_ids.length} 个业务` : '待关联业务' }}</template></el-table-column>
+        <el-table-column v-if="session.canView('geo.content')" label="执行进度" width="130"><template #default="{ row }"><el-button link type="primary" @click="executionProject = row">计划与待办</el-button></template></el-table-column>
+        <el-table-column v-if="session.canEdit('geo.assets')" label="操作" width="180">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEditor(row)">编辑</el-button>
+            <el-button link type="primary" @click="openScope(row)">关联业务</el-button>
           </template>
         </el-table-column>
       </el-table>
     </div>
+
+    <el-drawer :model-value="!!executionProject" :title="`计划与执行 · ${executionProject?.name || ''}`" size="75%" destroy-on-close @close="executionProject = null">
+      <GeoProjectExecution v-if="executionProject" :project-id="executionProject.id" :tenant-id="tenantId" />
+    </el-drawer>
+
+    <el-dialog v-model="scopeOpen" :title="`关联业务 · ${scopeProject?.name || ''}`" width="560px">
+      <p>每个业务归属一个项目。未关联的历史数据保留待归属；解除关联不会删除数据。</p>
+      <el-select v-model="scopeIds" multiple style="width:100%" placeholder="选择当前项目业务">
+        <el-option v-for="b in businesses" :key="b.id" :value="b.id" :disabled="!!otherOwner(b.id)" :label="otherOwner(b.id) ? `${b.name}（归属 ${otherOwner(b.id).name}）` : b.name" />
+      </el-select>
+      <template #footer><el-button @click="scopeOpen = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveScope">保存归属</el-button></template>
+    </el-dialog>
 
     <el-dialog v-model="dialogOpen" :title="editing ? '编辑项目' : '新建项目'" width="560px">
       <el-form label-width="90px">
