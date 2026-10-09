@@ -5602,6 +5602,7 @@ class SeoServicePlanUpdate(BaseModel):
     monitoring_cycle_enabled: bool | None = None
     monitoring_interval_days: int | None = Field(None, ge=1, le=30)
     report_cycle_enabled: bool | None = None
+    analytics_cycle_enabled: bool | None = None
 
     @field_validator("optimization_directions", "content_topics")
     @classmethod
@@ -7201,6 +7202,7 @@ def _service_plan_payload(site: SeoSite) -> dict[str, Any]:
         "monitoring_cycle_enabled": plan.get("monitoring_cycle_enabled") is True,
         "monitoring_interval_days": int(plan.get("monitoring_interval_days") or 1),
         "report_cycle_enabled": plan.get("report_cycle_enabled") is True,
+        "analytics_cycle_enabled": plan.get("analytics_cycle_enabled") is True,
         "status": plan.get("status") if plan.get("status") in {"active", "paused"} else "active",
         "optimization_directions": [str(item) for item in plan.get("optimization_directions", []) if str(item).strip()],
         "content_topics": [str(item) for item in plan.get("content_topics", []) if str(item).strip()],
@@ -7312,7 +7314,7 @@ async def update_seo_service_plan(
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     for key in ("website_cycle_enabled", "website_interval_days", "website_max_pages",
-                "monitoring_cycle_enabled", "monitoring_interval_days", "report_cycle_enabled",
+                "monitoring_cycle_enabled", "monitoring_interval_days", "report_cycle_enabled", "analytics_cycle_enabled",
                 "content_ai_enabled", "content_ai_fact_ids", "content_ai_keyword_ids", "content_ai_provider", "content_ai_model"):
         value = getattr(req, key)
         settings["seo_service_plan"][key] = current[key] if value is None else value

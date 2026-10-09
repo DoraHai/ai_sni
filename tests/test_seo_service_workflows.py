@@ -89,6 +89,54 @@ def add_rank(store, ident, rank, when=None, **values):
         db.commit()
 
 
+def test_station_notification_is_durable_deduplicated_and_read_is_user_scoped(store):
+    from app.seo_notifications import visible_events
+    from app.seo_content_workflow import transition
+    ident = create(store, "report")["task"]["id"]
+    customer = AuthContext(8, "customer", "test", 4, {"seo.content": "view", "seo.site": "view"})
+    with Session(store.engine) as db:
+        row = db.get(SeoTask, ident)
+        transition(row, "awaiting_confirmation", datetime.now(timezone.utc), waiting_for="customer_or_advisor")
+        db.commit()
+        site = db.get(SeoSite, 2)
+        event = visible_events(row, customer, site, False)[0]
+        original = event["id"]
+        transition(row, "awaiting_confirmation", datetime.now(timezone.utc), waiting_for="customer_or_advisor")
+        db.commit()
+        assert visible_events(row, customer, site, False)[0]["id"] == original
+    async def read():
+        async with store.session() as session:
+            return await api.read_notification(api.NotificationRead(tenant_id=4, site_id=2, task_id=ident,
+                event_id=original), session, customer)
+    assert asyncio.run(read())["read"] is True
+    assert asyncio.run(read())["read"] is True
+    with Session(store.engine) as db:
+        row = db.get(SeoTask, ident)
+        site = db.get(SeoSite, 2)
+        assert visible_events(row, customer, site, False)[0]["read"] is True
+        assert visible_events(row, ADVISOR, site, True)[0]["read"] is False
+        transition(row, "awaiting_publication", datetime.now(timezone.utc))
+        db.commit()
+        assert visible_events(row, customer, site, False) == []
+    with pytest.raises(HTTPException) as stale:
+        asyncio.run(read())
+    assert stale.value.status_code == 409
+
+
+def test_notifications_reject_cross_customer_and_only_show_assigned_advisor(store):
+    create(store, "report")
+    foreign = AuthContext(8, "foreign", "test", 99, {"seo.content": "view", "seo.site": "view"})
+    async def read(ctx):
+        async with store.session() as session:
+            return await api.list_notifications(4, 2, session, ctx)
+    with pytest.raises(HTTPException) as denied:
+        asyncio.run(read(foreign))
+    assert denied.value.status_code == 403
+    assert asyncio.run(read(ADVISOR))["items"]
+    unassigned = AuthContext(88, "unassigned", "test", None, ADVISOR.permissions)
+    assert asyncio.run(read(unassigned))["items"] == []
+
+
 def test_diagnosis_claim_restart_and_completion_create_real_snapshots(store):
     add_page(store)
     ident = create(store, "website")["task"]["id"]

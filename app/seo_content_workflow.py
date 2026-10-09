@@ -58,6 +58,8 @@ def transition(task, phase, now, *, waiting_for="advisor", blocker=None):
         params["history"] = history[-100:]
         params["history_truncated"] = bool(params.get("history_truncated") or len(history) > 100)
         params["phase_since"] = now.isoformat()
+        from app.seo_notifications import record_transition
+        record_transition(params, phase, waiting_for, now)
     # Internal reminder only; no message was sent to a customer or advisor.
     since = datetime.fromisoformat(params.get("phase_since") or now.isoformat())
     params["attention_due_at"] = (since + timedelta(days=2)).isoformat() if waiting_for else None
