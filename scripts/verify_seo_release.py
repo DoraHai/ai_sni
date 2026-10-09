@@ -22,6 +22,7 @@ SOURCE_ALLOWED_EXACT = {
     "app/seo_workbench_limits.py",
     "app/seo_workbench_privacy.py",
     "tests/test_seo_workbench_assistant.py",
+    "tests/test_seo_workbench_auth_postgres.py",
     "tests/test_seo_workbench_limits.py",
     "tests/test_seo_workbench_privacy.py",
     "docs/SEO_WORKBENCH_ASSISTANT.md",
