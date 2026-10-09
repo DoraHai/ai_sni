@@ -65,7 +65,8 @@ export function createWorkspaceAssistant(root,getHome,{aiClient=null,getContentI
   target.insertAdjacentHTML('afterbegin','<div class="assistant-resizer" role="separator" aria-label="调整对话宽度，左右方向键调整" aria-orientation="vertical" aria-valuemin="320" aria-valuemax="720" tabindex="0"></div>');
   const heading=target.querySelector('.assistant-heading');
   heading.insertAdjacentHTML('beforeend',`<button data-assistant-action="fullscreen" aria-pressed="${fullscreen}">${fullscreen?'恢复窗口':'全屏对话'}</button>`);
-  layout();resizeInput();
+  layout();resizeInput();if(list)list.scrollTop=list.scrollHeight;
+  target.querySelectorAll('[data-assistant-action^="mode-"]').forEach(b=>b.disabled=sending||!!pending);
  }
  function ask(q){if(mode==='ai'&&aiClient){void askAi(q);return;}if(!q.trim())return;history.push({question:q.slice(0,1000),...reply(q)});history=history.slice(-8);draft='';collapsed=false;paint();}
  function click(e){const p=e.target.closest('[data-assistant-prompt]');if(p&&!p.disabled){ask(p.dataset.assistantPrompt);return;}const b=e.target.closest('[data-assistant-action]');if(!b||b.disabled)return;const action=b.dataset.assistantAction;if(action.startsWith('mode-')){mode=action==='mode-ai'?'ai':'guide';paint();}else if(action==='retry-ai'){void askAi(pending.body.message,{retry:true});}else if(action==='abandon-ai'){pending=null;recoverable=false;feedback='已放弃取回；服务器可能已完成本次回答。';paint();}else if(action==='fullscreen'){fullscreen=!fullscreen;collapsed=false;paint();root.querySelector('[data-assistant-action=fullscreen]')?.focus();}else if(action==='collapse'){collapsed=!collapsed;paint();}else ask(draft);}

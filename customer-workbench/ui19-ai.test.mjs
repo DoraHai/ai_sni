@@ -23,7 +23,10 @@ test('workspace AI: followup, selected article, escaped response, same request r
   assert.deepEqual(calls().at(-1).body,failed);assert.equal(f.state.aiResults.size,4);
   f.state.forceError={path:'/assistant/chat',status:503};await p.type('#workspace-question','服务失败保留问题');await p.click('[data-assistant-action=ask]');await p.waitForFunction(()=>document.querySelector('.assistant-feedback')?.textContent.includes('暂时不可用'));
   assert.equal(await p.$eval('#workspace-question',e=>e.value),'服务失败保留问题');assert.equal(await p.$$('.assistant-ai-answer').then(a=>a.length),4);
-  await p.setViewport({width:390,height:844});await p.click('[data-assistant-action=fullscreen]');assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await p.click('[data-assistant-action=fullscreen]');
+  await p.setViewport({width:390,height:844});await p.click('[data-assistant-action=fullscreen]');assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  assert(await p.$eval('.assistant-composer',e=>e.getBoundingClientRect().bottom<=innerHeight-6),'Fullscreen keeps composer visible');
+  await p.screenshot({path:path.join(tmpdir(),'workbench-ui19-ai-fullscreen.png'),fullPage:true});await p.click('[data-assistant-action=fullscreen]');
+  assert(await p.$eval('.assistant-messages',e=>Math.abs(e.scrollHeight-e.clientHeight-e.scrollTop)<3),'Restoring shows latest answer');
   await p.screenshot({path:path.join(tmpdir(),'workbench-ui19-ai-mobile.png'),fullPage:true});
   await p.evaluate(()=>WORKBENCH_TEST_HOST.setIdentity('advisor'));await idle(p);assert.equal(await p.$eval('#workspace-question',e=>e.value),'');assert.equal(await p.$$('.assistant-ai-answer').then(a=>a.length),0);
   f.state.holdNext='/assistant/chat';await p.type('#workspace-question','旧客户回答必须丢弃');await p.click('[data-assistant-action=ask]');await p.waitForFunction(()=>document.querySelector('.assistant-feedback')?.textContent.includes('正在回答'));

@@ -79,13 +79,13 @@
 .customer-connected .assistant-modes{display:flex;gap:8px;padding:8px 16px;border-bottom:1px solid #e5ebef}.customer-connected .assistant-modes [aria-pressed=true]{background:#e9f1f5;color:#365d76}.customer-connected .assistant-ai-answer{white-space:pre-wrap;overflow-wrap:anywhere}.customer-connected .assistant-feedback{font-size:12px;color:#536d7d;margin:6px 0}
 .customer-connected .assistant-resizer:hover,.customer-connected .assistant-resizer:focus-visible{background:#dfeaf0;outline:2px solid #789aaa}
 .customer-connected .workbench-dialogue.assistant-fullscreen{position:fixed;inset:12px;top:12px;z-index:1000;max-height:none;overflow:auto;box-shadow:0 0 0 20px #edf2f5}
-.customer-connected .assistant-fullscreen #workspace-assistant{max-height:none;min-height:calc(100dvh - 26px);display:flex;flex-direction:column}
-.customer-connected .assistant-fullscreen .assistant-expanded{flex:1;display:flex;flex-direction:column}
+.customer-connected .assistant-fullscreen #workspace-assistant{max-height:none;height:calc(100dvh - 26px);min-height:0;display:flex;flex-direction:column}
+.customer-connected .assistant-fullscreen .assistant-expanded{flex:1;min-height:0;display:flex;flex-direction:column}
 .customer-connected .assistant-fullscreen .assistant-expanded[hidden]{display:none}
-.customer-connected .assistant-fullscreen .assistant-messages{flex:1;max-height:none}
+.customer-connected .assistant-fullscreen .assistant-messages{flex:1;min-height:0;max-height:none}
 .customer-connected .assistant-fullscreen .assistant-resizer{display:none}
 @media(max-width:1100px) and (min-width:801px){.customer-connected .workspace{grid-template-columns:minmax(0,1fr) clamp(320px,var(--assistant-width,380px),55%)}}
-@media(max-width:800px){.customer-connected .workspace{grid-template-columns:minmax(0,1fr)}.customer-connected .assistant-resizer{display:none}.customer-connected #workspace-assistant{max-height:none}.customer-connected .workbench-dialogue.assistant-fullscreen{inset:6px}.customer-connected .assistant-fullscreen #workspace-assistant{min-height:calc(100dvh - 14px)}}
+@media(max-width:800px){.customer-connected .workspace{grid-template-columns:minmax(0,1fr)}.customer-connected .assistant-resizer{display:none}.customer-connected #workspace-assistant{max-height:none}.customer-connected .workbench-dialogue.assistant-fullscreen{inset:6px}.customer-connected .assistant-fullscreen #workspace-assistant{height:calc(100dvh - 14px)}}
 
 @media(min-width:1200px){.customer-connected .summary-grid.home-kpis{grid-template-columns:repeat(6,minmax(0,1fr))}.customer-connected .home-metric{padding:12px}.customer-connected .home-metric strong{font-size:26px}}
 .customer-connected .home-page>.home-block{margin:16px 0}.customer-connected .home-summary{padding:14px 18px}.customer-connected .home-summary .point{margin:7px 0}.customer-connected .home-block .home-keywords>div{padding:7px 0}
