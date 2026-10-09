@@ -38,7 +38,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     ['客户',source('tenants').total,'平台客户总数'],['使用账号',source('users').total,'客户与内部账号'],
     ['SEO 网站',source('seo_sites').total,'已登记站点'],['GEO 项目',source('geo_projects').total,'已登记项目'],
     ['24 小时调用',snapshot.api_costs?.calls_24h??snapshot.calls.total,'仅统计已记录接口'],['本月 API 估算',snapshot.api_costs?.estimated_amount??snapshot.costs.actual_amount,'已记录调用的估算费用'],
-  ].map(([name,n,note])=>`<div class="pc-kpi"><small>${name}</small><strong>${value(n)}</strong><span>${note}</span></div>`).join('');
+  ].map(([name,n,note])=>`<div class="pc-kpi"><small>${name}</small><strong>${name==='本月 API 估算'&&snapshot.api_costs?(n==null?'待定价':'¥'+Number(n).toLocaleString('zh-CN',{minimumFractionDigits:4,maximumFractionDigits:12})):value(n)}</strong><span>${note}</span></div>`).join('');
   function sourceNote(name){const s=source(name);return s.state!=='available'?'此数据源尚未接入，不能据此判断数量为零。':s.truncated?`显示最近 ${s.rows.length} 条，共 ${value(s.total)} 条。完整管理请进入对应页面。`:'';}
   function moduleRows(){
     return ['sem','seo','geo'].map(code=>{
@@ -78,7 +78,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   function costs(){
     const api=snapshot.api_costs;
     if(api&&['recording','ready'].includes(api.state)){
-      const money=n=>n==null?'待定价':`¥${Number(n).toLocaleString('zh-CN',{minimumFractionDigits:4,maximumFractionDigits:8})}`;
+      const money=n=>n==null?'待定价':`¥${Number(n).toLocaleString('zh-CN',{minimumFractionDigits:4,maximumFractionDigits:12})}`;
       const blank={calls:0,input_tokens:0,output_tokens:0,known_amount:'0',estimated_amount:'0',unpriced:0};
       const cells=r=>[value(r.calls),`${value(r.input_tokens)} / ${value(r.output_tokens)}`,money(r.estimated_amount),value(r.unpriced)];
       const userRows=source('users').rows.filter(u=>matches(u.username+' '+(u.display_name||''))).map(u=>{
@@ -116,7 +116,10 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
         esc(r.resource),esc(JSON.stringify(r.before_value)),esc(JSON.stringify(r.after_value))])), '显示最近 50 条记录。密钥变更仅显示来源与版本，不记录密钥内容。');
   }
   function controls(){return renderControlPanel({snapshot,esc,card,table,tenant});}
-  function inventoryView(){return card('系统盘点',table(['能力','当前接入','已有基础','后续开发'],inventory.map(([n,s,d,next])=>[`<b>${n}</b>`,status(s),esc(d),esc(next)])),'盘点以当前源码、接口和本页实际接入范围为依据。已接入、部分接入与待接入分别标注。');}
+  function inventoryView(){return card('系统盘点',table(['能力','当前接入','已有基础','后续开发'],inventory.map(([n,s,d,next])=>{
+    const pending=snapshot.controls?.state!=='enabled'&&['成本与预算','配置与密钥','操作审计'].includes(n);
+    return [`<b>${n}</b>`,status(pending?'管理待启用':s),esc(d),esc(pending?'管理模块代码已就绪，等待数据库审核启用。':next)];
+  })),'盘点以当前源码、接口和本页实际接入范围为依据。已接入、部分接入与待接入分别标注。');}
   function search(placeholder){return `<label class="pc-search"><span>筛选</span><input id="pc-search" type="search" value="${esc(query)}" placeholder="${placeholder}" maxlength="100"></label>`;}
   function render(){
     if(disposed||!snapshot)return;
