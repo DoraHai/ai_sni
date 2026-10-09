@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 from decimal import Decimal
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -27,6 +28,9 @@ def test_budget_and_price_validation_rejects_unknown_and_invalid_fields():
     with pytest.raises(controls.ControlDenied): controls.reservation(None, {})
     with pytest.raises(controls.ControlDenied): controls.reservation(quote, {'json':{'messages':[], 'stream':True}})
     with pytest.raises(controls.ControlDenied): controls.replace_credential({}, 'old', 'new')
+    day,month=controls.period_starts(datetime(2026,10,31,16,0,tzinfo=timezone.utc))
+    assert day.isoformat()=='2026-11-01T00:00:00+08:00'
+    assert day==month
 
 
 def test_native_budget_races_prices_rotation_and_audit(monkeypatch):
