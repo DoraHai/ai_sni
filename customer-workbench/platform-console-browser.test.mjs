@@ -53,6 +53,18 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     await p.click('.pc-sidebar [data-pc-page=customers]');assert(!await p.$('.pc-table-wrap img'));
     await p.type('#pc-search','制造');assert.match(await body(),/测试客户 A/);assert.doesNotMatch(await p.$eval('.pc-content',e=>e.textContent),/客户 <img/);
     await p.click('.pc-sidebar [data-pc-page=costs]');assert.match(await body(),/不能相加/);assert.doesNotMatch(await body(),/¥0|￥0/);
+    // Forward metering includes inactive and zero-activity accounts, and keeps
+    // an unknown total separate from its known subtotal.
+    snapshot.sources.users.rows.push(...Array.from({length:6},(_,i)=>({id:20+i,username:'no-calls-'+i,tenant_id:1,role_id:2,is_active:i!==0})));
+    snapshot.sources.users.total=8;
+    snapshot.api_costs={state:'recording',period:'2026-10',note:'本月真实外部请求的 API 原价估算',calls:3,pending:0,unpriced:1,known_amount:'0.006',estimated_amount:null,
+      user_totals:[{user_id:8,calls:2,input_tokens:1000,output_tokens:500,known_amount:'0.006',estimated_amount:'0.006',unpriced:0},{user_id:null,calls:1,input_tokens:0,output_tokens:0,known_amount:'0',estimated_amount:null,unpriced:1}],
+      tenant_totals:[{tenant_id:1,calls:3,input_tokens:1000,output_tokens:500,known_amount:'0.006',estimated_amount:null,unpriced:1}],
+      provider_totals:[],unattributed:{calls:0,input_tokens:0,output_tokens:0,known_amount:'0',estimated_amount:'0',unpriced:0},recent:[]};
+    await p.click('[data-pc=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('本月 API 费用'));
+    assert.match(await body(),/全部 8 个登录账号/);assert.match(await body(),/no-calls-0/);assert.match(await body(),/已停用/);
+    assert.match(await body(),/¥0.006/);assert.match(await body(),/待定价/);assert.match(await body(),/系统任务/);
+    await p.screenshot({path:path.join(os.tmpdir(),'api-metering-console-20261010.png'),fullPage:true});
     await p.click('.pc-sidebar [data-pc-page=overview]');await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     await p.screenshot({path:path.join(os.tmpdir(),'platform-admin-mobile-20261010.png'),fullPage:true});await p.setViewport({width:1440,height:1000});
     // Live permission changes clear the old snapshot before a new preflight.
