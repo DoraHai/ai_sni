@@ -276,6 +276,11 @@ async def register_runtime(module):
         rows.append(dict(id=binding_id(host, 'baidu-oauth'), module=module,
                          label='baidu_oauth', host=host, model=None,
                          configured=bool(s.baidu_app_id and s.baidu_secret_key), can_rotate=False))
+    if module == 'seo' and hasattr(s, 'seo_dataforseo_base_url'):
+        host = urlsplit(s.seo_dataforseo_base_url).hostname or ''
+        rows.append(dict(id=binding_id(host, 'dataforseo-basic'), module=module,
+                         label='dataforseo', host=host, model=None,
+                         configured=bool(s.seo_dataforseo_login and s.seo_dataforseo_password), can_rotate=False))
     for prefix in ('dashscope', 'deepseek', 'geo_openai', 'geo_deepseek', 'geo_qwen',
                    'geo_doubao', 'geo_hunyuan', 'geo_qianfan', 'geo_kimi', 'geo_perplexity'):
         if prefix.startswith('geo_') and module != 'geo':

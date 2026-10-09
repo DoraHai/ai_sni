@@ -69,6 +69,9 @@ def test_native_budget_races_prices_rotation_and_audit(monkeypatch):
                 await c.execute(text('INSERT INTO users VALUES(10),(20)'))
             monkeypatch.setattr(meter, 'async_session_factory', factory)
             monkeypatch.setattr(controls, 'async_session_factory', factory)
+            await controls.register_runtime('sem')
+            async with db.connect() as c:
+                assert (await c.execute(text("SELECT can_rotate FROM api_control_bindings WHERE label='baidu_oauth'"))).scalar_one() is False
             async def change(kind,key,value,rev=0,rid=None):
                 async with factory() as session:
                     return await controls.mutate(session,actor_id=10,request_id=rid or str(uuid4()),kind=kind,key=key,expected_revision=rev,value=value)
