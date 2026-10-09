@@ -116,6 +116,9 @@ jobs:
           tests/test_seo_publication_export.py
           tests/test_seo_publication_export_api.py
           tests/test_seo_site_analytics.py
+          tests/test_seo_analytics_cycles.py
+          tests/test_seo_content_workflow.py
+          tests/test_seo_service_workflows.py
           tests/test_seo_site_analytics_api.py
           tests/test_seo_site_analytics_migration.py
           tests/test_seo_monthly_report.py
@@ -235,4 +238,4 @@ jobs:
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
           printf '%s\n' "$heads" | grep -F '0106_seo_content_messages (head)'
-          python -m pytest -q tests/test_geo_ticket_adoption_migration.py tests/test_sem_task_migration.py tests/test_demo_tenant_binding_migration.py tests/test_demo_binding_no_truncate_migration.py tests/test_geo_review_audit_migration.py tests/test_seo_migration_merge.py tests/test_seo_qa.py tests/test_seo_video_platforms.py tests/test_seo_backlink_workflow.py tests/test_seo_cockpit.py tests/test_seo_cockpit_auth.py tests/test_seo_usage_limits.py tests/test_seo_ai_operations.py tests/test_seo_workbench_limits.py tests/test_seo_workbench_auth_postgres.py tests/test_seo_task_center.py tests/test_seo_site_onboarding_contract.py
+          python -m pytest -q tests/test_geo_ticket_adoption_migration.py tests/test_sem_task_migration.py tests/test_demo_tenant_binding_migration.py tests/test_demo_binding_no_truncate_migration.py tests/test_geo_review_audit_migration.py tests/test_seo_migration_merge.py tests/test_seo_qa.py tests/test_seo_video_platforms.py tests/test_seo_backlink_workflow.py tests/test_seo_cockpit.py tests/test_seo_cockpit_auth.py tests/test_seo_usage_limits.py tests/test_seo_ai_operations.py tests/test_seo_workbench_limits.py tests/test_seo_workbench_auth_postgres.py tests/test_seo_task_center.py tests/test_seo_site_onboarding_contract.py tests/test_seo_analytics_cycles.py

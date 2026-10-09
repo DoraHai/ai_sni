@@ -168,6 +168,28 @@ async def prepare_report(session, site, task, now):
     source_names = list(await session.scalars(select(SeoSiteAnalyticsSource.source).where(
         SeoSiteAnalyticsSource.tenant_id == site.tenant_id, SeoSiteAnalyticsSource.site_id == site.id,
         SeoSiteAnalyticsSource.enabled.is_(True))))
+    from app.seo_analytics_cycles import cycle_enabled, public_cycles
+    attempts = [c for c in public_cycles(site) if c.get("month") == month]
+    if cycle_enabled(site):
+        by_source = {row.source: row for row in monthly}
+        states = {c["source"]: c["state"] for c in attempts}
+        for cursor in public_cycles(site):
+            if cursor.get("state") == "authorization_required" and cursor["source"] not in states:
+                states[cursor["source"]] = "authorization_required"
+        pending = [name for name in source_names if
+            (name not in by_source or (by_source[name].raw_meta or {}).get("partial")
+             or by_source[name].status == "failed")
+            and states.get(name) not in {"complete", "authorization_required", "needs_attention"}]
+        attention = [name for name in source_names if states.get(name) in {"authorization_required", "needs_attention"}]
+        ack = task.params.get("analytics_incomplete_ack") or {}
+        accepted = (ack.get("plan_revision") == plan_for(site).get("revision")
+                    and ack.get("month") == month and set(attention) <= set(ack.get("sources") or []))
+        if attention and not accepted:
+            transition(task, "report_needs_attention", now, blocker="analytics_source_requires_advisor")
+            return
+        if pending:
+            transition(task, "awaiting_analytics_collection", now, blocker="analytics_collection_pending")
+            return
     rows = [{"platform": p.platform_name, "title": c.title, "keywords": "", "page_url": p.page_url,
              "published_at": p.published_at, "capture_status": "本报告未附截图，请查发布页面证据",
              "image_key": None, "captured_at": None, "notes": "发布不代表收录或效果提升", "capture_kind": None}
@@ -179,6 +201,7 @@ async def prepare_report(session, site, task, now):
     report = {"format": "html", "month": month, "generated_at": now.isoformat(), "html": html,
         "sha256": hashlib.sha256(html.encode()).hexdigest(), "publication_ids": [p.id for p, _ in pairs],
         "analytics_row_ids": [row.id for row in monthly], "scope": "site_month",
+        "analytics_collection": attempts,
         "missing": ["article_click_attribution_unavailable", "screenshot_appendix_not_embedded"] +
                    (["site_analytics_missing"] if not monthly else []),
         "pdf_generated": False, "notification_sent": False}
@@ -187,7 +210,8 @@ async def prepare_report(session, site, task, now):
     transition(task, "awaiting_advisor_explanation", now)
 
 
-async def advance_service_workflow(session, site, task, *, explanation=None, report_sha256=None, actor_id=None, retry_page_id=None):
+async def advance_service_workflow(session, site, task, *, explanation=None, report_sha256=None, actor_id=None, retry_page_id=None,
+                                   allow_incomplete_analytics=False):
     now = datetime.now(timezone.utc)
     if task.status in {"done", "cancelled"}:
         return
@@ -196,6 +220,15 @@ async def advance_service_workflow(session, site, task, *, explanation=None, rep
         return
     kind = task.params["kind"]
     if kind == "report":
+        if allow_incomplete_analytics:
+            if actor_id is None or task.params.get("report") or task.params.get("blocker") != "analytics_source_requires_advisor":
+                raise HTTPException(409, "缺项说明仅可由顾问在冻结报告前记录")
+            from app.seo_analytics_cycles import public_cycles
+            sources = sorted({c['source'] for c in public_cycles(site)
+                if c.get('state') in {'authorization_required', 'needs_attention'}
+                and (c.get('month') == task.params['month'] or c.get('state') == 'authorization_required')})
+            task.params = {**task.params, "analytics_incomplete_ack": {"actor_user_id": actor_id, "at": now.isoformat(),
+                "sources": sources, "month": task.params['month'], "plan_revision": plan_for(site).get('revision')}}
         if explanation and (not task.params.get("report") or task.params["report"]["sha256"] != report_sha256):
             raise HTTPException(409, {"code": "report_version_conflict"})
         if not task.params.get("report"):
@@ -427,6 +460,8 @@ async def run_service_workflows():
             return
         for site_id in ids:
             try:
+                from app.seo_analytics_cycles import collect_site_analytics
+                await collect_site_analytics(site_id, session_factory=async_session_factory)
                 await process_service_site(site_id)
             except Exception:
                 logger.exception("SEO service cycle failed site_id=%s", site_id)
