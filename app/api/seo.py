@@ -357,6 +357,8 @@ logger = logging.getLogger(__name__)
 router.include_router(site_diagnostics_router)
 router.include_router(remediation_router)
 router.include_router(messages_router)
+from app.api.seo_workbench_assistant import router as workbench_assistant_router
+router.include_router(workbench_assistant_router)
 from app.api.seo_cockpit import router as cockpit_router
 router.include_router(cockpit_router)
 from app.api.seo_backlink_workflow import router as backlink_workflow_router
