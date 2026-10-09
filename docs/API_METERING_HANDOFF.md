@@ -14,6 +14,8 @@ SQL 使用事务、3 秒锁等待和 15 秒执行超时；已在独立 PostgreSQ
 台账不存储 API Key、令牌、提示词、对话、响应正文或完整含查询参数的 URL。
 
 审核通过后：在生产数据库执行一次此 SQL，依次发布三个独立后端和工作台，
+由现有对象所有者执行 `scripts/api_metering_permissions.sql`，只授予运行角色本台账 SELECT/INSERT/UPDATE，
+显式撤销默认权限可能带来的 DELETE/TRUNCATE；不授予运行角色建表能力。
 并在 SEM、SEO、GEO 服务环境设置 `API_METERING_ENABLED=true`；保持现有其他配置。
 这一步必须遵守仓库 AGENTS.md“数据库迁移已经过人工审核”的要求。
 上线核验只读取台账与健康状态，不为测试额外发起付费模型请求。
