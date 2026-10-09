@@ -204,10 +204,11 @@ def test_missing_scope_decision_is_rejected_and_refunded(setup,monkeypatch):
     assert exc.value.status_code==503;s.refund.assert_awaited_once();s.settle.assert_not_awaited()
 
 
-def test_cached_legacy_answer_is_redacted_before_delivery(setup):
-    s=setup;s.claim.side_effect=SeoAiReplay({'answer':'邮箱 test@example.com','tenant_id':1,'site_id':9})
+@pytest.mark.parametrize('answer',['邮箱 test@example.com','a@b.cn '*800])
+def test_cached_legacy_answer_is_redacted_before_delivery(setup,answer):
+    s=setup;s.claim.side_effect=SeoAiReplay({'answer':answer,'tenant_id':1,'site_id':9})
     result=asyncio.run(api.chat(s.req,s.session,s.c))
-    assert 'test@example.com' not in result['answer'] and not s.requests
+    assert 'test@example.com' not in result['answer'] and 'a@b.cn' not in result['answer'] and len(result['answer'])<=6000 and not s.requests
 
 
 def test_redaction_expansion_still_respects_response_contract(setup,monkeypatch):

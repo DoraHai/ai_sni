@@ -187,7 +187,7 @@ async def chat(req: ChatRequest, session=Depends(get_seo_session), ctx=Depends(r
         return await settle_seo_ai_operation(session, req.tenant_id, receipt['operation_id'], result=result)
     except SeoAiReplay as replay:
         await refresh_context(session, ctx, req)
-        return {**replay.result, 'answer': redact_text(replay.result['answer'])}
+        return {**replay.result, 'answer': redact_text(replay.result['answer'])[:6000]}
     except (Exception, asyncio.CancelledError) as exc:
         if receipt.get('operation_id'):
             try:
