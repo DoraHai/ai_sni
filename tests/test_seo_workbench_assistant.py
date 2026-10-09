@@ -6,11 +6,13 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 # Explicitly synthetic credentials, before application settings are constructed.
-os.environ.update(DATABASE_URL='postgresql+asyncpg://test:test@localhost/test',
+test_defaults = dict(DATABASE_URL='postgresql+asyncpg://test:test@localhost/test',
     BAIDU_APP_ID='test', BAIDU_SECRET_KEY='1234567890abcdef', BAIDU_DEFAULT_USERNAME='test',
     BAIDU_DEFAULT_UCID='1', BAIDU_SELF_ACCESS_TOKEN='test', BAIDU_SELF_TOKEN_EXPIRES_AT='2099-01-01T00:00:00Z',
     CRYPTO_MASTER_KEY_B64='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=', ADMIN_API_KEY='test',
     DEEPSEEK_API_KEY='', DASHSCOPE_API_KEY='')
+for name, value in test_defaults.items():
+    os.environ.setdefault(name, value)
 
 import httpx
 import pytest

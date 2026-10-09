@@ -139,6 +139,7 @@ async def chat(req: ChatRequest, session=Depends(get_seo_session), ctx=Depends(r
     route = _seo_draft_route({'content_ai_provider': 'deepseek', 'content_ai_model': settings.deepseek_model or 'deepseek-chat'})
     payload = {**req.model_dump(mode='json', exclude={'request_id'}), 'permissions': permission_key(ctx), 'generation_route': route}
     facts = await evidence(session, ctx, req)
+    read_at = datetime.now(timezone.utc).isoformat()
     receipt, metadata = {}, {}
     try:
         raw = await _limited_seo_chat_json(session, req.tenant_id, SYSTEM,
@@ -152,7 +153,7 @@ async def chat(req: ChatRequest, session=Depends(get_seo_session), ctx=Depends(r
         sources = list(dict.fromkeys(s for s in sources if isinstance(s, str) and s in facts)) if isinstance(sources, list) else []
         result = {'answer': answer.strip(), 'sources': sources, 'tenant_id': req.tenant_id, 'site_id': req.site_id,
             'request_id': str(req.request_id), 'provider': 'deepseek', 'model': route['model'],
-            'response_model': metadata.get('model'), 'read_at': datetime.now(timezone.utc).isoformat(), 'advisory_only': True}
+            'response_model': metadata.get('model'), 'read_at': read_at, 'advisory_only': True}
         await refresh_context(session, ctx, req)
         return await settle_seo_ai_operation(session, req.tenant_id, receipt['operation_id'], result=result)
     except SeoAiReplay as replay:
