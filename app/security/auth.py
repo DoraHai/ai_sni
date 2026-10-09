@@ -18,6 +18,7 @@ from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBea
 from passlib.context import CryptContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api_metering import bind_identity, bind_tenant
 from app.config import get_settings
 from app.database import get_session
 from app.module_scope import ensure_module_access
@@ -116,6 +117,7 @@ class AuthContext:
         """绑定了单客户的账号只能访问该客户的数据。"""
         if self.tenant_id is not None and self.tenant_id != tenant_id:
             raise HTTPException(403, "无权访问该客户的数据")
+        bind_tenant(tenant_id)
 
 
 # ===== 请求路径 → 菜单键 + 是否写 的映射（后端真鉴权） =====
@@ -283,13 +285,13 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
 async def _build_context(user: User, session: AsyncSession) -> AuthContext:
     role = await session.get(Role, user.role_id)
     perms = dict(role.permissions or {}) if role else {}
-    return AuthContext(
+    return bind_identity(AuthContext(
         user_id=user.id,
         username=user.username,
         role_name=role.name if role else "?",
         tenant_id=user.tenant_id,
         permissions=perms,
-    )
+    ))
 
 
 async def require_auth(
@@ -318,21 +320,21 @@ async def require_auth(
         # 未绑租户 = 运维超管（curl / 冒烟）。绑了租户则降为该客户运营，不再绕过 RBAC。
         bound = getattr(settings, "admin_api_key_tenant_id", None)
         if bound is not None:
-            return AuthContext(
+            return bind_identity(AuthContext(
                 user_id=None,
                 username="api-key",
                 role_name="租户运维密钥",
                 tenant_id=int(bound),
                 permissions=dict(OPERATOR_PERMS),
                 is_superadmin=False,
-            )
-        return AuthContext(
+            ))
+        return bind_identity(AuthContext(
             user_id=None,
             username="api-key",
             role_name="超级管理员",
             tenant_id=None,
             is_superadmin=True,
-        )
+        ))
 
     raise HTTPException(401, "未登录。请先登录，或通过 X-API-Key 提供管理密钥。")
 

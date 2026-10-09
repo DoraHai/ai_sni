@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api_metering import business_scope
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
 from app.ai.effect_verification import effect_window, window_info, select_review_page, review_note
 from app.models import (
@@ -333,6 +334,7 @@ def _build_prompt(item: dict) -> str:
     ])
 
 
+@business_scope("sem", "tenant")
 async def generate_verdict(session: AsyncSession, tenant: Tenant, item: dict, force: bool = False) -> dict | None:
     """对一条调价生成 AI 研判，缓存在 adjustment_reviews。未配 key 返回 None。"""
     if item.get("effect", {}).get("sample", {}).get("state") != "ready":

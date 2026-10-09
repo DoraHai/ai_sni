@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_factory
 from app.security.auth import AuthContext, require_auth
+from app.api_cost_summary import read_api_costs
 
 
 async def require_console_admin(ctx: AuthContext = Depends(require_auth)) -> AuthContext:
@@ -168,6 +169,7 @@ async def build_snapshot(session: AsyncSession) -> dict:
     return {
         "schema": 1, "generated_at": now.isoformat(), "mode": "read_only_inventory",
         "sources": sources, "calls": calls, "alerts": alerts[:100],
+        "api_costs": await read_api_costs(session),
         "costs": {"state": "metering_incomplete", "date": today, "currency": "CNY",
                   "actual_amount": None, "estimated_amount": None,
                   "usage": await read_usage(session, catalog, today),
