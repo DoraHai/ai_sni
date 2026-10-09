@@ -16,7 +16,8 @@ from sqlalchemy import select, update, null
 from app.database import async_session_factory
 from app.models.module_workspace import TenantModule
 from app.models.seo import SeoAiOperation
-from app.seo_usage_limits import charge_seo_usage, SEO_USAGE_KEY
+from app.seo_usage_limits import (charge_seo_usage, SEO_USAGE_KEY, WORKBENCH_CHAT_KIND,
+                                 WORKBENCH_CHAT_RESOURCE, workbench_user_resource)
 
 logger = logging.getLogger(__name__)
 LEASE = timedelta(minutes=15)
@@ -55,7 +56,9 @@ def _refund(module, row):
     settings = dict(module.module_settings or {})
     usage = dict(settings.get(SEO_USAGE_KEY) or {})
     if usage.get("date") == row.charged_on:
-        usage["ai_requests"] = max(0, int(usage.get("ai_requests") or 0) - 1)
+        resources = (WORKBENCH_CHAT_RESOURCE, workbench_user_resource(row.actor)) if row.kind == WORKBENCH_CHAT_KIND else ("ai_requests",)
+        for resource in resources:
+            usage[resource] = max(0, int(usage.get(resource) or 0) - 1)
         settings[SEO_USAGE_KEY] = usage
         module.module_settings = settings
     row.status = "refunded"
