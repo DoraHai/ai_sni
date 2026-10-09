@@ -190,9 +190,9 @@ async def build_snapshot(session: AsyncSession) -> dict:
                   "note": "已有部分调用次数与抓取配额；尚未统一记录 token、单价、金额及账单。"},
         "coverage": {"api": "调用与费用共用真实外部请求台账，覆盖已接入计量的服务商。",
                      "tasks": "显示各模块最近任务，完整处理沿用模块工作区。",
-                     "credentials": "可管理已登记接口开关、单价及密钥轮换。密钥加密保存且不回显；百度 OAuth 沿用原授权流程。",
+                     "credentials": "可管理已登记接口开关、单价及密钥轮换。密钥加密保存且不回显；百度 OAuth 沿用原授权流程。" if controls['state']=='enabled' else "API 管理设置等待审核启用，现有密钥继续由服务器管理。",
                      "backup": "备份状态与恢复演练记录尚未接入此页面。",
-                     "audit": "预算、接口开关、单价及密钥变更均记录管理员、时间、版本与变更前后状态。"},
+                     "audit": "预算、接口开关、单价及密钥变更均记录管理员、时间、版本与变更前后状态。" if controls['state']=='enabled' else "管理操作审计等待启用，账号最近登录仍可查看。"},
     }
 
 
