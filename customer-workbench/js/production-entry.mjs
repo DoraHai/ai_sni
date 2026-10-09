@@ -4,10 +4,14 @@ import {watch} from 'vue';
 import {existingSessionBridge,createHostSessionAdapter} from './host-session-adapter.mjs';
 import {mountConnectedWorkbench} from './connected-workbench.mjs';
 import {entryScope,mountWorkbenchEntry,workbenchPath,workbenchLoginPath} from './workbench-entry.mjs';
+import {mountPlatformConsole} from './platform-console-view.mjs';
 
 const scope=entryScope(location.search),{tenantId,siteId}=scope;
 let mounted;
-if(!session.token||scope.invalid||scope.login||!tenantId||!siteId){
+const consoleValues=new URLSearchParams(location.search).getAll('console');
+if(consoleValues.length===1&&consoleValues[0]==='platform'){
+  mounted=mountPlatformConsole({root:document.querySelector('#app'),session});
+}else if(!session.token||scope.invalid||scope.login||!tenantId||!siteId){
   mounted=mountWorkbenchEntry({root:document.querySelector('#app'),session});
 }else{
 // URL values select a candidate scope only. The adapter verifies server ownership.
