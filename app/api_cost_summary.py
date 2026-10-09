@@ -24,6 +24,12 @@ async def read_api_costs(session):
     result['all_time_count'] = int(await session.scalar(text('SELECT count(*) FROM api_usage_events')))
     result['started_at'] = await session.scalar(text('SELECT min(started_at) FROM api_usage_events'))
     result['calls_24h'] = int(await session.scalar(text("SELECT count(*) FROM api_usage_events WHERE started_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'")))
+    summary = (await session.execute(text("""SELECT count(*) AS total,
+        count(*) FILTER (WHERE state IN ('error','unknown')) AS failed,avg(latency_ms) AS average_latency_ms
+        FROM api_usage_events WHERE started_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'"""))).mappings().one()
+    result['calls_24h_summary'] = {'state': 'available', 'period': 'last_24_hours', 'coverage': 'metered_providers',
+        'total': int(summary['total']), 'failed': int(summary['failed']),
+        'average_latency_ms': round(float(summary['average_latency_ms']),1) if summary['average_latency_ms'] is not None else None}
     # Missing usage, pending attempts and missing rates stay visible. The known
     # subtotal may be zero; the full estimate is unknown if any call is unpriced.
     metrics = '''count(*) AS calls,
@@ -51,6 +57,6 @@ async def read_api_costs(session):
         WHERE started_at >= :start AND tenant_id IS NULL'''),params)).mappings().one())
     result['recent'] = [dict(row) for row in (await session.execute(text('''SELECT id,tenant_id,user_id,origin,module,operation,job_ref,
         provider,model,endpoint,state,status_code,latency_ms,prompt_tokens,cached_tokens,completion_tokens,
-        estimated_amount,currency,pricing_version,started_at FROM api_usage_events ORDER BY started_at DESC,id DESC LIMIT 50'''))).mappings()]
+        estimated_amount,currency,pricing_version,provider_request_id,started_at FROM api_usage_events ORDER BY started_at DESC,id DESC LIMIT 50'''))).mappings()]
     result['note'] = '按北京时间统计本月真实外部请求；金额为已记录用量的 API 原价估算，实际扣款以服务商账单为准。'
     return result

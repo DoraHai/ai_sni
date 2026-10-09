@@ -2,7 +2,8 @@
 
 Optional SEO/GEO tables are inspected through fixed projections, so independently
 deployed modules do not require importing their models or exposing JSON secrets.
-This API does not execute jobs, call providers, change configuration or migrate DBs.
+The snapshot remains read-only. A separate guarded route edits only API policies
+with atomic audit; neither route executes jobs, calls providers or migrates DBs.
 """
 from __future__ import annotations
 
@@ -12,13 +13,15 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Request
+from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_factory
 from app.security.auth import AuthContext, require_auth
 from app.api_cost_summary import read_api_costs
+from app.api_controls import read_controls, mutate, enabled as controls_enabled, ControlConflict
 
 
 async def require_console_admin(ctx: AuthContext = Depends(require_auth)) -> AuthContext:
@@ -148,6 +151,17 @@ async def build_snapshot(session: AsyncSession) -> dict:
                      average_latency_ms=round(float(row["average_latency_ms"]), 1)
                      if row["average_latency_ms"] is not None else None)
     alerts = []
+    api_costs = await read_api_costs(session)
+    if api_costs['state'] in {'recording', 'ready'}:
+        calls = api_costs['calls_24h_summary']
+    controls = await read_controls(session)
+    for budget in controls['budgets']:
+        if budget['status'] != 'normal':
+            target = budget['target']
+            alerts.append({'kind': 'api_budget', 'severity': 'warning',
+                           'tenant_id': int(target.split(':')[1]) if target.startswith('tenant:') else None,
+                           'message': f"API 预算 {target}：" + {'warning': '接近上限', 'blocked': '已达到上限，新请求暂停',
+                                                               'unknown': '存在未知费用，金额预算暂停新请求'}[budget['status']]})
     for row in sources["baidu_oauth_grants"]["rows"]:
         expiry = row["expires_at"]
         if row["status"] == "active" and expiry and expiry <= now:
@@ -169,16 +183,16 @@ async def build_snapshot(session: AsyncSession) -> dict:
     return {
         "schema": 1, "generated_at": now.isoformat(), "mode": "read_only_inventory",
         "sources": sources, "calls": calls, "alerts": alerts[:100],
-        "api_costs": await read_api_costs(session),
+        "api_costs": api_costs, "controls": controls,
         "costs": {"state": "metering_incomplete", "date": today, "currency": "CNY",
                   "actual_amount": None, "estimated_amount": None,
                   "usage": await read_usage(session, catalog, today),
                   "note": "已有部分调用次数与抓取配额；尚未统一记录 token、单价、金额及账单。"},
-        "coverage": {"api": "已有审计记录，尚未覆盖所有服务商调用。",
+        "coverage": {"api": "调用与费用共用真实外部请求台账，覆盖已接入计量的服务商。",
                      "tasks": "显示各模块最近任务，完整处理沿用模块工作区。",
-                     "credentials": "密钥由各服务在服务器端管理，此页面不读取或返回密钥。",
+                     "credentials": "可管理已登记接口开关、单价及密钥轮换。密钥加密保存且不回显；百度 OAuth 沿用原授权流程。" if controls['state']=='enabled' else "API 管理设置等待审核启用，现有密钥继续由服务器管理。",
                      "backup": "备份状态与恢复演练记录尚未接入此页面。",
-                     "audit": "账号最近登录可查看，统一操作审计尚未接入。"},
+                     "audit": "预算、接口开关、单价及密钥变更均记录管理员、时间、版本与变更前后状态。" if controls['state']=='enabled' else "管理操作审计等待启用，账号最近登录仍可查看。"},
     }
 
 
@@ -195,3 +209,40 @@ async def console_snapshot(response: Response) -> dict:
                 return await build_snapshot(session)
     except TimeoutError:
         raise HTTPException(503, "平台盘点读取超时，请稍后重试") from None
+
+
+@router.post('/controls')
+async def console_control(request: Request, response: Response,
+                          ctx: AuthContext = Depends(require_console_admin)):
+    response.headers['Cache-Control'] = 'no-store, private'
+    response.headers['Vary'] = 'Authorization'
+    if not controls_enabled():
+        raise HTTPException(503, 'API 管理配置等待启用')
+    # Manual parsing avoids validation responses echoing password/key inputs.
+    try:
+        size = request.headers.get('content-length')
+        if size and int(size) > 8192:
+            raise ValueError
+        raw = b''
+        async for chunk in request.stream():
+            raw += chunk
+            if len(raw) > 8192:
+                raise ValueError
+        import json
+        data = json.loads(raw)
+        if not isinstance(data, dict) or set(data) != {'request_id', 'kind', 'key', 'expected_revision', 'value'}:
+            raise ValueError
+        data['request_id'] = str(UUID(data['request_id']))
+        if data['kind'] not in {'budget', 'provider', 'rate', 'credential'} or not isinstance(data['key'], str):
+            raise ValueError
+    except (ValueError, TypeError, KeyError):
+        raise HTTPException(422, '管理请求格式无效') from None
+    try:
+        async with asyncio.timeout(8), async_session_factory() as session:
+            return await mutate(session, actor_id=ctx.user_id, **data)
+    except ControlConflict as exc:
+        raise HTTPException(409, str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    except Exception:
+        raise HTTPException(503, '管理配置未保存，请刷新核对后重试') from None

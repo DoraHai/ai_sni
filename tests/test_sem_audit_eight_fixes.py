@@ -145,10 +145,11 @@ def test_sem_lifespan_only_starts_sem_scheduler():
     source = Path("app/main.py").read_text(encoding="utf-8")
     node = next(n for n in ast.parse(source).body if isinstance(n, ast.AsyncFunctionDef) and n.name == "lifespan")
     start, stop, guard = Mock(), Mock(), Mock()
+    register = AsyncMock()
     namespace = dict(asynccontextmanager=asynccontextmanager, FastAPI=object,
                      enforce_production_secrets=guard, start_scheduler=start, shutdown_scheduler=stop,
                      settings=SimpleNamespace(app_env="test", app_base_url="https://example.invalid", baidu_default_username="dummy"),
-                     logger=Mock())
+                     logger=Mock(), register_runtime=register)
     # Execute the actual lifecycle function, not a copied implementation.
     assert "app.geo" not in ast.unparse(node)
     exec(compile(ast.Module(body=[node], type_ignores=[]), "lifespan", "exec"), namespace)
@@ -156,6 +157,7 @@ def test_sem_lifespan_only_starts_sem_scheduler():
     async def run():
         async with namespace["lifespan"](None):
             start.assert_called_once()
+            register.assert_awaited_once_with('sem')
             stop.assert_not_called()
     asyncio.run(run())
     guard.assert_called_once_with(namespace["settings"], hard_fail=True)
