@@ -49,10 +49,10 @@ test('scope changes discard held details; unexpected links and uncertain writes 
 });
 test('cycle settings default off, changes are explicit and bounded; server response must preserve submitted settings',async()=>{
   const f=await setup();try{
-    const plans=createSeoWorkflowClient({transport:f.host.transport,getContext:f.host.getContext});const first=await plans.servicePlan();assert.equal(first.website_cycle_enabled,false);assert.equal(f.server.state.calls.filter(c=>c.method==='PUT').length,0);
+    const plans=createSeoWorkflowClient({transport:f.host.transport,getContext:f.host.getContext});const first=await plans.servicePlan();assert.equal(first.website_cycle_enabled,false);assert.equal(first.website_incremental_enabled,false);assert.equal(f.server.state.calls.filter(c=>c.method==='PUT').length,0);
     const input={optimizationDirections:['SEO'],contentTopics:['选型'],status:'active'};
     await assert.rejects(plans.saveServicePlan({...input,cycles:{website_max_pages:11}}),/INVALID_CYCLE_CONFIG/);
-    await plans.servicePlan();const saved=await plans.saveServicePlan({...input,cycles:{website_cycle_enabled:true,website_interval_days:7,website_max_pages:3,report_cycle_enabled:false}});assert.equal(saved.website_max_pages,3);assert.equal(saved.monitoring_cycle_enabled,false);
+    await plans.servicePlan();const saved=await plans.saveServicePlan({...input,cycles:{website_cycle_enabled:true,website_incremental_enabled:true,website_interval_days:7,website_max_pages:3,report_cycle_enabled:false}});assert.equal(saved.website_max_pages,3);assert.equal(saved.website_incremental_enabled,true);assert.equal(saved.monitoring_cycle_enabled,false);
     const call=f.server.state.calls.find(c=>c.method==='PUT');assert.equal(call.body.expected_revision,2);assert.equal(call.body.website_cycle_enabled,true);assert.equal(call.body.monitoring_cycle_enabled,undefined);
   }finally{await f.close();}
 });

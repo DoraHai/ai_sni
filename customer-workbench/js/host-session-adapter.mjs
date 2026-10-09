@@ -33,7 +33,7 @@ const routes=[
   ['POST',/^\/api\/v1\/seo\/workbench\/content-assets\/[1-9]\d*\/confirmations$/,['tenant_id'],'content',['version_count','payload_hash','decision','actor_mode','note']],
   ['POST',/^\/api\/v1\/seo\/content-assets\/[1-9]\d*\/review$/,['tenant_id'],'content',['version_count','decision','note']],
   ['GET',/^\/api\/v1\/seo\/workbench\/(service-plan|service-status)$/,['tenant_id','site_id'],'site'],
-  ['PUT',/^\/api\/v1\/seo\/workbench\/service-plan$/,[],'site',['tenant_id','site_id','expected_revision','optimization_directions','content_topics','service_note','status','content_cycle_enabled','content_interval_days','website_cycle_enabled','website_interval_days','website_max_pages','monitoring_cycle_enabled','monitoring_interval_days','report_cycle_enabled','analytics_cycle_enabled','content_ai_enabled','content_ai_fact_ids','content_ai_keyword_ids']],
+  ['PUT',/^\/api\/v1\/seo\/workbench\/service-plan$/,[],'site',['tenant_id','site_id','expected_revision','optimization_directions','content_topics','service_note','status','content_cycle_enabled','content_interval_days','website_cycle_enabled','website_incremental_enabled','website_interval_days','website_max_pages','monitoring_cycle_enabled','monitoring_interval_days','report_cycle_enabled','analytics_cycle_enabled','content_ai_enabled','content_ai_fact_ids','content_ai_keyword_ids']],
   ['GET',/^\/api\/v1\/seo\/workbench\/notifications$/,['tenant_id','site_id'],'site'],
   ['POST',/^\/api\/v1\/seo\/workbench\/notifications\/read$/,[],'site',['tenant_id','site_id','task_id','event_id']],
   ['GET',/^\/api\/v1\/seo\/workbench\/executions$/,['tenant_id','site_id','page','page_size'],'site'],

@@ -30,6 +30,8 @@ const statuses = {
     publication_needs_check: '发布结果需要核对', awaiting_page_evidence: '等待检查发布页面',
     page_evidence_needs_attention: '发布页面需要核对', page_evidence_ready: '页面依据已备齐，效果待核对',
     completed_with_page_evidence: '发布与页面核验已完成', diagnosis_queued: '等待网站检查',
+    discovery_queued: '正在发现网站页面', discovery_needs_attention: '页面发现需要顾问处理',
+    diagnosis_needs_attention: '页面检查需要顾问处理',
     awaiting_site_implementation: '待修改网站并复查', awaiting_ranking_observations: '等待新的排名数据',
     report_queued: '等待准备报告', awaiting_advisor_explanation: '待顾问补充说明',
     awaiting_analytics_collection: '等待统计取数',
@@ -39,6 +41,16 @@ const statuses = {
 };
 
 const reasons = {
+  incremental_crawl_disabled: '增量检查已关闭，需顾问开启或取消当前任务',
+  crawl_quota_exhausted: '今日抓取额度已用完，需要顾问稍后重试',
+  robots_unavailable: '无法核实网站抓取规则，需顾问接续',
+  discovery_failed: '页面发现失败，需顾问接续',
+  discovery_scope_or_permission_changed: '网站范围、计划或权限改变，已放弃发现结果',
+  interrupted_discovery_requires_retry: '页面发现中断，需要顾问明确接续',
+  site_scope_redirect: '页面跳转超出授权网站范围',
+  sitemap_invalid: '站点地图格式异常，页面发现可能不完整',
+  sitemap_unavailable: '部分站点地图暂时无法读取',
+  sitemap_robots_blocked: '网站抓取规则禁止读取部分站点地图',
   analytics_collection_pending: '统计数据正在准备',
   analytics_source_requires_advisor: '统计授权或取数异常，需要顾问处理',
   brand_profile_missing: '客户基础资料待完善', pages_waiting_for_check: '还有页面等待检查',
