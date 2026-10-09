@@ -76,6 +76,7 @@
 .customer-connected #workspace-question{height:96px;min-height:96px;max-height:200px;resize:none;overflow:auto}
 .customer-connected .assistant-resizer{position:absolute;left:-10px;top:12px;bottom:12px;width:16px;cursor:col-resize;touch-action:none;border-radius:6px;z-index:2}
 .customer-connected .assistant-resizer:after{content:'';position:absolute;left:7px;top:35%;height:48px;width:3px;border-radius:3px;background:#a6b8c5}
+.customer-connected .assistant-modes{display:flex;gap:8px;padding:8px 16px;border-bottom:1px solid #e5ebef}.customer-connected .assistant-modes [aria-pressed=true]{background:#e9f1f5;color:#365d76}.customer-connected .assistant-ai-answer{white-space:pre-wrap;overflow-wrap:anywhere}.customer-connected .assistant-feedback{font-size:12px;color:#536d7d;margin:6px 0}
 .customer-connected .assistant-resizer:hover,.customer-connected .assistant-resizer:focus-visible{background:#dfeaf0;outline:2px solid #789aaa}
 .customer-connected .workbench-dialogue.assistant-fullscreen{position:fixed;inset:12px;top:12px;z-index:1000;max-height:none;overflow:auto;box-shadow:0 0 0 20px #edf2f5}
 .customer-connected .assistant-fullscreen #workspace-assistant{max-height:none;min-height:calc(100dvh - 26px);display:flex;flex-direction:column}

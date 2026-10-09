@@ -1,7 +1,23 @@
 import {escapeText as esc} from './customer-display.mjs';
-// Local read-only guidance. Never sends text or impersonates a model.
-export function createWorkspaceAssistant(root,getHome){
+// Local guidance and explicit server-backed advisory chat never execute business actions.
+export function createWorkspaceAssistant(root,getHome,{aiClient=null,getContentId=()=>null}={}){
  let draft='',history=[],collapsed=false,context='首页',fullscreen=false,width=null,drag=null;
+ let mode=aiClient?'ai':'guide',aiHistory=[],pending=null,sending=false,feedback='',recoverable=false,generation=0;
+ const sourceLinks={content:['稿件','内容'],selected_content:['当前稿件','内容'],tasks:['任务进度','进度'],pages:['网站页面','数据','pages'],keywords:['关键词','数据','keywords']};
+ function aiMessages(){return aiHistory.map(m=>`<div class="bubble user">${esc(m.question)}</div><div class="bubble"><small>DeepSeek AI · 建议，未经业务执行</small><div class="assistant-ai-answer">${esc(m.answer)}</div>${m.sources.map(s=>{const [label,page,kind]=sourceLinks[s];return `<button data-action="home-data" data-page="${page}" ${kind?`data-kind="${kind}"`:''}>查看${label} ↗</button>`;}).join('')}</div>`).join('');}
+ async function askAi(q,{retry=false}={}){
+  if(sending||!q.trim()||(!retry&&pending))return;const stamp=generation;
+  try{
+   if(!retry){let turns=aiHistory.slice(-6).flatMap(m=>[{role:'user',content:m.question},{role:'assistant',content:m.answer}]);while(turns.reduce((n,t)=>n+t.content.length,0)>24000)turns.splice(0,2);pending=aiClient.prepare(q.trim().slice(0,1000),turns,getContentId());}
+   sending=true;feedback='AI 正在回答…';collapsed=false;paint();
+   const result=await aiClient.send(pending);if(stamp!==generation)return;
+   aiHistory.push({question:pending.body.message,answer:result.answer,sources:result.sources});aiHistory=aiHistory.slice(-8);pending=null;draft='';feedback='';recoverable=false;
+  }catch(e){if(stamp!==generation||e.code==='CONTEXT_CHANGED')return;
+   recoverable=!e.status||e.code==='operation_running';
+   feedback=e.status===429?'今日 AI 调用额度已用完，请稍后再试。':e.status===403?'当前身份没有此对话权限，请重新核对工作空间。':e.status===401?'登录已失效，请重新登录。':e.status===503?'AI 暂时不可用，问题已保留。':e.code==='operation_refunded'?'上次请求已结束且额度已退还，可重新提问。':recoverable?'回答结果尚未取得。可取回同一次请求，不会重复调用 AI。':'AI 未完成回答，问题已保留。';
+   if(!recoverable)pending=null;
+  }finally{if(stamp===generation){sending=false;paint();}}
+ }
  function resizeInput(){const t=root.querySelector('#workspace-question');if(t){t.style.height='auto';t.style.height=Math.min(200,Math.max(96,t.scrollHeight))+'px';}}
  function layout(){
   const panel=root.querySelector('.workbench-dialogue'),workspace=root.querySelector('.workspace');
@@ -32,15 +48,29 @@ export function createWorkspaceAssistant(root,getHome){
   const target=root.querySelector('#workspace-assistant');if(!target)return;
   target.innerHTML=`<div class="assistant-heading"><div><b>获客推广 AI 智能体</b><small>AI 待接通 · 数据导览可用</small></div><button data-assistant-action="collapse" aria-expanded="${!collapsed}">${collapsed?'展开对话':'收起对话'}</button></div><div class="assistant-expanded" ${collapsed?'hidden':''}><p class="assistant-context">正在查看 · ${esc(context)}</p><div class="assistant-messages" aria-live="polite"><div class="bubble"><small>工作台导览 · 非 AI 回复</small>这里保留你的对话空间。可查看本期工作、定位数据，或打开稿件与顾问沟通。</div>${history.map(m=>`<div class="bubble user">${esc(m.question)}</div><div class="bubble"><small>工作台导览 · 根据已读数据</small>${esc(m.text)}<p><button data-action="home-data" data-page="${m.page}" ${m.kind?`data-kind="${m.kind}"`:''}>查看相关数据 ↗</button></p></div>`).join('')}</div><div class="assistant-composer"><div class="assistant-prompts">${prompts.map(p=>`<button data-assistant-prompt="${esc(p)}">${p}</button>`).join('')}</div><label for="workspace-question">问当前工作</label><textarea id="workspace-question" maxlength="1000" placeholder="例如：现在哪些稿件需要我确认？">${esc(draft)}</textarea><button data-assistant-action="ask" ${draft.trim()?'':'disabled'}>查看相关数据</button><small>当前仅在本页解读，不发送消息、不执行业务操作。</small></div></div>`;
   const list=target.querySelector('.assistant-messages');if(list)list.scrollTop=list.scrollHeight;
+  if(aiClient){
+   target.querySelector('.assistant-heading small').textContent=mode==='ai'?'AI 对话 · 当前客户与网站':'规则数据导览 · 非 AI 回复';
+   const expanded=target.querySelector('.assistant-expanded');expanded.insertAdjacentHTML('afterbegin',`<div class="assistant-modes"><button data-assistant-action="mode-ai" aria-pressed="${mode==='ai'}">AI 对话</button><button data-assistant-action="mode-guide" aria-pressed="${mode==='guide'}">数据导览</button></div>`);
+   if(mode==='ai'){
+    list.innerHTML=`<div class="bubble"><small>AI 对话</small>可以连续提问 SEO、当前网站的稿件和进度。问题及相关数据会发送给 DeepSeek；回答是建议，确认和发布请在业务页面处理。当前窗口保留对话，切换工作空间或退出时清空。</div>${aiMessages()}${sending?`<div class="bubble user">${esc(pending?.body.message||draft)}</div>`:''}`;
+    const composer=target.querySelector('.assistant-composer');composer.querySelector('[data-assistant-action=ask]').textContent=sending?'正在回答…':'发送给 AI';
+    composer.querySelector('[data-assistant-action=ask]').disabled=sending||!!pending||!draft.trim();
+    composer.querySelector('textarea').disabled=sending||!!pending;
+    composer.querySelector('small').textContent='AI 仅提供解释和建议，不自动操作业务。';
+    composer.insertAdjacentHTML('beforeend',`<p class="assistant-feedback" role="status">${esc(feedback)}</p>${pending&&!sending?'<button data-assistant-action="retry-ai">取回本次回答</button><button data-assistant-action="abandon-ai">放弃本次请求</button>':''}`);
+    target.querySelectorAll('[data-assistant-prompt]').forEach(b=>b.disabled=sending||!!pending);
+    list.scrollTop=list.scrollHeight;
+   }
+  }
   target.insertAdjacentHTML('afterbegin','<div class="assistant-resizer" role="separator" aria-label="调整对话宽度，左右方向键调整" aria-orientation="vertical" aria-valuemin="320" aria-valuemax="720" tabindex="0"></div>');
   const heading=target.querySelector('.assistant-heading');
   heading.insertAdjacentHTML('beforeend',`<button data-assistant-action="fullscreen" aria-pressed="${fullscreen}">${fullscreen?'恢复窗口':'全屏对话'}</button>`);
   layout();resizeInput();
  }
- function ask(q){if(!q.trim())return;history.push({question:q.slice(0,1000),...reply(q)});history=history.slice(-8);draft='';collapsed=false;paint();}
- function click(e){const p=e.target.closest('[data-assistant-prompt]');if(p){ask(p.dataset.assistantPrompt);return;}const b=e.target.closest('[data-assistant-action]');if(!b||b.disabled)return;if(b.dataset.assistantAction==='fullscreen'){fullscreen=!fullscreen;collapsed=false;paint();root.querySelector('[data-assistant-action=fullscreen]')?.focus();}else if(b.dataset.assistantAction==='collapse'){collapsed=!collapsed;paint();}else ask(draft);}
- function input(e){if(e.target.id!=='workspace-question')return;draft=e.target.value;resizeInput();const b=root.querySelector('[data-assistant-action=ask]');if(b)b.disabled=!draft.trim();}
+ function ask(q){if(mode==='ai'&&aiClient){void askAi(q);return;}if(!q.trim())return;history.push({question:q.slice(0,1000),...reply(q)});history=history.slice(-8);draft='';collapsed=false;paint();}
+ function click(e){const p=e.target.closest('[data-assistant-prompt]');if(p&&!p.disabled){ask(p.dataset.assistantPrompt);return;}const b=e.target.closest('[data-assistant-action]');if(!b||b.disabled)return;const action=b.dataset.assistantAction;if(action.startsWith('mode-')){mode=action==='mode-ai'?'ai':'guide';paint();}else if(action==='retry-ai'){void askAi(pending.body.message,{retry:true});}else if(action==='abandon-ai'){pending=null;recoverable=false;feedback='已放弃取回；服务器可能已完成本次回答。';paint();}else if(action==='fullscreen'){fullscreen=!fullscreen;collapsed=false;paint();root.querySelector('[data-assistant-action=fullscreen]')?.focus();}else if(action==='collapse'){collapsed=!collapsed;paint();}else ask(draft);}
+ function input(e){if(e.target.id!=='workspace-question')return;draft=e.target.value;resizeInput();const b=root.querySelector('[data-assistant-action=ask]');if(b)b.disabled=!draft.trim()||(mode==='ai'&&(sending||!!pending));}
  root.addEventListener('click',click);root.addEventListener('input',input);
  root.addEventListener('pointerdown',pointer);root.addEventListener('pointermove',move);root.addEventListener('pointerup',stopDrag);root.addEventListener('pointercancel',stopDrag);root.addEventListener('keydown',key);window.addEventListener('resize',layout);
- return {render(page){stopDrag();context=page;paint();},clear(){stopDrag();draft='';history=[];context='首页';fullscreen=false;paint();},dispose(){stopDrag();root.removeEventListener('click',click);root.removeEventListener('input',input);root.removeEventListener('pointerdown',pointer);root.removeEventListener('pointermove',move);root.removeEventListener('pointerup',stopDrag);root.removeEventListener('pointercancel',stopDrag);root.removeEventListener('keydown',key);window.removeEventListener('resize',layout);draft='';history=[];}};
+ return {render(page){stopDrag();context=page;paint();},clear(){generation++;aiClient?.clear();aiHistory=[];pending=null;sending=false;feedback='';stopDrag();draft='';history=[];context='首页';fullscreen=false;paint();},dispose(){generation++;aiClient?.clear();stopDrag();root.removeEventListener('click',click);root.removeEventListener('input',input);root.removeEventListener('pointerdown',pointer);root.removeEventListener('pointermove',move);root.removeEventListener('pointerup',stopDrag);root.removeEventListener('pointercancel',stopDrag);root.removeEventListener('keydown',key);window.removeEventListener('resize',layout);draft='';history=[];aiHistory=[];pending=null;}};
 }
