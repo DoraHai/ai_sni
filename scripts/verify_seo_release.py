@@ -315,6 +315,8 @@ SOURCE_ALLOWED_EXACT = {
     "tests/test_seo_monitoring_jobs.py",
     "tests/test_seo_usage_limits.py",
     "tests/test_seo_site_association.py",
+    "tests/test_seo_keyword_delete.py",
+    "frontend/scripts/test-seo-keyword-delete.mjs",
     "tests/test_seo_site_page_detail.py",
     "tests/test_seo_workbench_site_scope.py",
     "tests/test_seo_site_onboarding_contract.py",

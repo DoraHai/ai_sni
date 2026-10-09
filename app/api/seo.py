@@ -1664,6 +1664,41 @@ async def update_seo_keyword(
     return _keyword_payload(row)
 
 
+@router.delete("/keywords/{keyword_id}")
+async def delete_seo_keyword(
+    keyword_id: int,
+    tenant_id: int,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    if not ctx.can_edit("seo.keywords"):
+        raise HTTPException(403, "无权删除 SEO 关键词")
+    row = await _keyword_for_update(session, keyword_id, tenant_id)
+    await _require_resource_operational_site(session, tenant_id, row.site_id)
+    try:
+        # JSON references have no FK: lock and clean them in the same transaction.
+        assets = (await session.scalars(
+            select(SeoContentAsset)
+            .where(
+                SeoContentAsset.tenant_id == tenant_id,
+                SeoContentAsset.keyword_ids.contains([keyword_id]),
+            )
+            .order_by(SeoContentAsset.id)
+            .with_for_update()
+        )).all()
+        for asset in assets:
+            asset.keyword_ids = [value for value in asset.keyword_ids if value != keyword_id]
+        await session.flush()
+        # Existing FKs cascade rank/SERP rows and detach pages/content; retain articles.
+        await session.delete(row)
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(409, "关键词仍有关联数据，删除未完成，请刷新后重试") from exc
+    return {"deleted": True, "keyword_id": keyword_id}
+
+
 @router.post("/rank-snapshots")
 async def create_rank_snapshot(
     req: RankSnapshotCreate,
