@@ -179,6 +179,7 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     if p.startswith("/api/v1/geo"):
         return {"geo.diagnosis"}, False
     if p in {
+        "/api/v1/seo/workbench/assistant/chat",
         "/api/v1/seo/workbench/publication-page-evidence",
         "/api/v1/seo/workbench/readiness",
         "/api/v1/seo/workbench/service-status",
