@@ -40,8 +40,8 @@ def binding_id(host, reference):
     return hashlib.sha256((host + '\0' + (reference or '')).encode()).hexdigest()
 
 
-def period_starts():
-    local = datetime.now(timezone.utc).astimezone(ZoneInfo('Asia/Shanghai'))
+def period_starts(anchor=None):
+    local = (anchor or datetime.now(timezone.utc)).astimezone(ZoneInfo('Asia/Shanghai'))
     day = local.replace(hour=0, minute=0, second=0, microsecond=0)
     return day, day.replace(day=1)
 
@@ -114,7 +114,11 @@ async def usage(session, target):
     # Identifiers are selected from this fixed list, never interpolated input.
     column = 'tenant_id' if target.startswith('tenant:') else 'user_id' if target.startswith('user:') else None
     tid = int(target.split(':')[1]) if column else None
-    day, month = period_starts()
+    # Match INSERT's transaction timestamp even if waiting for the admission
+    # lock crosses local midnight/month end. The host clock cannot move a hold
+    # into a different budget period from the one used to authorize it.
+    anchor = await session.scalar(text('SELECT CURRENT_TIMESTAMP'))
+    day, month = period_starts(anchor)
     where = f'AND {column}=:target' if column else ''
     row = (await session.execute(text(f'''SELECT count(*) AS monthly_calls,
         count(*) FILTER (WHERE started_at >= :day) AS daily_calls,
@@ -267,6 +271,16 @@ async def register_runtime(module):
     from app.config import get_settings
     s = get_settings()
     rows = []
+    if module == 'sem':
+        host = urlsplit(s.baidu_api_base_url).hostname or ''
+        rows.append(dict(id=binding_id(host, 'baidu-oauth'), module=module,
+                         label='baidu_oauth', host=host, model=None,
+                         configured=bool(s.baidu_app_id and s.baidu_secret_key), can_rotate=False))
+    if module == 'seo' and hasattr(s, 'seo_dataforseo_base_url'):
+        host = urlsplit(s.seo_dataforseo_base_url).hostname or ''
+        rows.append(dict(id=binding_id(host, 'dataforseo-basic'), module=module,
+                         label='dataforseo', host=host, model=None,
+                         configured=bool(s.seo_dataforseo_login and s.seo_dataforseo_password), can_rotate=False))
     for prefix in ('dashscope', 'deepseek', 'geo_openai', 'geo_deepseek', 'geo_qwen',
                    'geo_doubao', 'geo_hunyuan', 'geo_qianfan', 'geo_kimi', 'geo_perplexity'):
         if prefix.startswith('geo_') and module != 'geo':
