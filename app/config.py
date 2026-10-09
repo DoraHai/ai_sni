@@ -159,6 +159,10 @@ class Settings(BaseSettings):
     seo_manual_automation_cooldown_seconds: int = 3600
     seo_manual_crawl_max_urls_per_tenant_per_day: int = 500
     seo_ai_max_requests_per_tenant_per_day: int = 100
+    seo_workbench_chat_requests_per_tenant_per_day: int = Field(100, ge=1, le=10000)
+    seo_workbench_chat_requests_per_user_per_day: int = Field(30, ge=1, le=1000)
+    seo_workbench_chat_requests_per_user_per_minute: int = Field(5, ge=1, le=60)
+    seo_workbench_chat_concurrent_per_tenant: int = Field(3, ge=1, le=20)
     seo_competitor_scheduler_max_per_run: int = 50
     seo_backlink_scheduler_max_per_run: int = 200
     # 单页检测证据保留：旧记录分批清理，人工图片审核引用永不自动删除。

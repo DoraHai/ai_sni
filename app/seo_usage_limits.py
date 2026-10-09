@@ -13,6 +13,12 @@ from app.models.module_workspace import TenantModule
 
 SEO_USAGE_KEY = "seo_daily_usage"
 SEO_USAGE_TIMEZONE = ZoneInfo("Asia/Shanghai")
+WORKBENCH_CHAT_KIND = "workbench_chat_limited"
+WORKBENCH_CHAT_RESOURCE = "workbench_chat_requests"
+
+
+def workbench_user_resource(actor):
+    return f"workbench_chat_user_{actor}"
 
 
 class SeoUsageLimitError(RuntimeError):
