@@ -5,6 +5,7 @@ import {existsSync} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {startFixtureServer} from './tests/fixture-server.mjs';
+import {platformAlertArchive} from './js/platform-alert-archive.mjs';
 const edge=process.env.EDGE_BINARY||['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe','C:/Program Files/Microsoft/Edge/Application/msedge.exe'].find(existsSync);
 const admin={id:7,username:'platform-admin',display_name:'平台管理员',tenant_id:null,permissions:{'settings.accounts':'edit','settings.customers':'edit'}};
 const source=rows=>({state:'available',total:rows.length,rows,truncated:false});
@@ -106,6 +107,26 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     await p.click('[data-pc=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('本月 API 费用'));
     assert.match(await body(),/全部 8 个登录账号/);assert.match(await body(),/no-calls-0/);assert.match(await body(),/已停用/);
     assert.match(await body(),/¥0.006/);assert.match(await body(),/待定价/);assert.match(await body(),/系统任务/);
+    // A cleared reminder stays gone on refresh while the source accounting and
+    // failed job records remain available. A new incident must reappear.
+    const previousAlerts=snapshot.alerts,previousTime=snapshot.generated_at;
+    snapshot.generated_at='2026-10-10T08:00:00Z';
+    snapshot.controls={state:'schema_pending'};
+    snapshot.alerts=platformAlertArchive.items.map(([id,signal],i)=>({id,signal,tenant_id:1,
+      message:'历史测试告警 '+i,severity:'error',handling:{status:'open'}}));
+    await p.click('[data-pc=refresh]');
+    await p.waitForFunction(()=>document.querySelector('.pc-right .pc-tag')?.textContent==='0');
+    assert.doesNotMatch(await p.$eval('.pc-right',e=>e.textContent),/历史测试告警|尚未定价|尚未启用/);
+    assert.match(await p.$eval('.pc-content',e=>e.textContent),/¥0.006|待定价/);
+    assert.equal(snapshot.sources.geo_async_jobs.rows[0].status,'failed');
+    await p.click('.pc-sidebar [data-pc-page=alerts]');
+    assert.equal(await p.$('#pc-alert-operation'),null);
+    snapshot.alerts[0]={...snapshot.alerts[0],signal:'new-failure-after-clear',message:'清空后新发生的异常'};
+    await p.click('[data-pc=refresh]');
+    await p.waitForFunction(()=>document.querySelector('.pc-right .pc-tag')?.textContent==='1');
+    assert.match(await p.$eval('.pc-right',e=>e.textContent),/清空后新发生的异常/);
+    assert.match(await p.$eval('.pc-content',e=>e.textContent),/清空后新发生的异常/);
+    snapshot.alerts=previousAlerts;snapshot.generated_at=previousTime;
     snapshot.controls={state:'enabled',settings:[],budgets:[],audit:[],credentials:[],default_rates:[{host:'dashscope.aliyuncs.com',model:'deepseek-v4-flash',input:'1',output:'2',max_input:1000000,source:'approved price'}],
       connections:[{id:'seo.deepseek',module:'seo',label:'DeepSeek 官方',registered:true,supported:true,source:'server',revision:0,
         parameters:{enabled:true,model:'deepseek-chat',base_url:'https://api.deepseek.com/v1'},secret_status:{api_key:false},
