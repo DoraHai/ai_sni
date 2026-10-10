@@ -2,15 +2,18 @@
 import asyncio
 from contextlib import asynccontextmanager
 import json
+from pathlib import Path
 from uuid import uuid4
 import os
+import httpx
 import pytest
 from fastapi import HTTPException
 from starlette.responses import Response
 from sqlalchemy import select, func, text, update
 from sqlalchemy.exc import DBAPIError
 from test_geo_project_scope_postgres import database
-from app.geo import onsite_routes as api, onsite_jobs
+from app import api_controls, api_metering
+from app.geo import ai_client, onsite_routes as api, onsite_jobs
 from app.geo.content import async_jobs
 from app.geo.project_workflows import save_plan
 from app.models import GeoActionTicket, GeoAsyncJob, GeoFact, GeoProject
@@ -143,6 +146,146 @@ async def _add_nonpublic_fact(db, *, fact_id=81):
         meta={"verification": {"verified_at": "2026-10-09T00:00:00Z",
               "excerpt": "内部核验摘录", "excerpt_locator": "正文第1段"}}))
     await db.commit()
+
+
+async def _install_api_accounting(sessions):
+    engine = sessions.kw["bind"]
+    root = Path(__file__).parents[1]
+    async with engine.connect() as connection:
+        raw = (await connection.get_raw_connection()).driver_connection
+        await raw.execute((root / "scripts/api_metering_schema.sql").read_text())
+        await raw.execute((root / "scripts/api_controls_schema.sql").read_text())
+        await raw.execute("""ALTER TABLE api_usage_events
+            ADD COLUMN review_version integer NOT NULL DEFAULT 0,
+            ADD COLUMN verified_amount numeric(24,12),
+            ADD COLUMN verified_currency varchar(3),
+            ADD COLUMN reviewed_at timestamptz""")
+
+
+@pytest.mark.parametrize(
+    "verified_amount,budget_cap,expected_code",
+    [("5", "4", "api_budget_exhausted"),
+     (None, "100", "api_charge_unresolved")],
+)
+def test_real_onsite_executor_honors_reviewed_cost_before_provider(
+        monkeypatch, verified_amount, budget_cap, expected_code):
+    """Exercise GEO executor -> chat client -> metering -> native admission."""
+    provider_calls = 0
+    original_client = httpx.AsyncClient
+
+    async def credentials(_session, _tenant_id):
+        return {
+            "api_key": "fixture-key",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "deepseek-v4-flash",
+        }
+
+    async def provider(_request):
+        nonlocal provider_calls
+        provider_calls += 1
+        proposal = _ai_result([
+            {"id": "structured_content", "kind": "structured_content"},
+            {"id": "knowledge", "kind": "knowledge"},
+            {"id": "faq", "kind": "faq"},
+        ])
+        return httpx.Response(200, json={
+            "id": "fixture-request",
+            "choices": [{"message": {"content": json.dumps(proposal)}}],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "prompt_tokens_details": {"cached_tokens": 0},
+            },
+        })
+
+    def client_factory(*_args, **kwargs):
+        return original_client(
+            timeout=kwargs.get("timeout"), transport=httpx.MockTransport(provider)
+        )
+
+    monkeypatch.setenv("API_METERING_ENABLED", "true")
+    monkeypatch.setenv("API_CONTROLS_ENABLED", "true")
+    monkeypatch.delenv("API_METERING_RATES_JSON", raising=False)
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(ai_client.httpx, "AsyncClient", client_factory)
+
+    async def run():
+        async with database() as sessions:
+            await _install_api_accounting(sessions)
+            monkeypatch.setattr(api_metering, "async_session_factory", sessions)
+            monkeypatch.setattr(api_controls, "async_session_factory", sessions)
+            await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
+                await api_controls.mutate(
+                    db, actor_id=7, request_id=str(uuid4()), kind="budget",
+                    key="budget:global", expected_revision=0,
+                    value={
+                        "daily_calls": None, "monthly_calls": None,
+                        "daily_cny": None, "monthly_cny": "100",
+                        "max_concurrent": None, "warning_percent": 80,
+                    },
+                )
+            async with sessions() as db:
+                task = await api.create(api.Create(
+                    tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员",
+                ), db, ADVISOR)
+            first_request = api.AiProposal(
+                tenant_id=1, project_id=10, expected_revision=1,
+                request_id=uuid4(), mode="initial",
+            )
+            async with sessions() as db:
+                queued = await _ai_proposal(task["id"], first_request, db, ADVISOR)
+            completed = await run_owned(sessions, queued["request_run"]["job_id"])
+            assert completed["result_meta"]["public_state"] == "ready"
+            assert provider_calls == 1
+
+            async with sessions() as db:
+                event = (await db.execute(text(
+                    "SELECT id,state,module,operation FROM api_usage_events"
+                ))).one()
+                assert event.state == "succeeded"
+                assert event.module == "geo" and event.operation == "chat.completions"
+                await db.execute(text("""UPDATE api_usage_events SET
+                    review_version=1,verified_amount=:amount,
+                    verified_currency=:currency,reviewed_at=CURRENT_TIMESTAMP
+                    WHERE id=:id"""), {
+                        "id": event.id,
+                        "amount": verified_amount,
+                        "currency": "CNY" if verified_amount is not None else None,
+                    })
+                await db.commit()
+                await api_controls.mutate(
+                    db, actor_id=7, request_id=str(uuid4()), kind="budget",
+                    key="budget:global", expected_revision=1,
+                    value={
+                        "daily_calls": None, "monthly_calls": None,
+                        "daily_cny": None, "monthly_cny": budget_cap,
+                        "max_concurrent": 1, "warning_percent": 80,
+                    },
+                )
+                spent = await api_controls.usage(db, "global")
+                assert spent["active_calls"] == 0
+                if verified_amount is None:
+                    assert spent["unresolved_calls"] == 1
+                else:
+                    assert spent["monthly_cny"] == "5.000000000000"
+
+            second_request = api.AiProposal(
+                tenant_id=1, project_id=10, expected_revision=2,
+                request_id=uuid4(), mode="revise",
+            )
+            async with sessions() as db:
+                queued = await _ai_proposal(task["id"], second_request, db, ADVISOR)
+            denied = await run_owned(sessions, queued["request_run"]["job_id"])
+            assert denied["result_meta"]["public_state"] == "failed"
+            assert denied["result_meta"]["error_category"] == "admission_denied"
+            assert denied["result_meta"]["error_code"] == expected_code
+            assert provider_calls == 1
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("protocol", [None, "legacy-v0"])

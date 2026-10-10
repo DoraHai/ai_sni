@@ -6,11 +6,13 @@ on:
       - 'app/api_connection_config.py'
       - 'app/api_controls.py'
       - 'app/api_metering.py'
+      - 'app/api_usage_review_basis.py'
       - 'app/config.py'
       - 'app/geo/**'
       - 'scripts/api_*schema.sql'
       - 'tests/test_api_connection_config.py'
       - 'tests/test_platform_call_guards.py'
+      - 'tests/test_api_usage_review_basis.py'
       - '.github/workflows/platform-config-check.yml'
   push:
     branches: [codex/production-geo]
@@ -54,3 +56,4 @@ jobs:
           python -m pytest -q
           tests/test_api_connection_config.py
           tests/test_platform_call_guards.py
+          tests/test_api_usage_review_basis.py
