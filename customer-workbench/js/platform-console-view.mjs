@@ -1,3 +1,4 @@
+import {renderBalances} from './platform-balances-view.mjs';
 import {renderAiGovernance} from './platform-ai-governance-view.mjs';
 import {escapeText as esc} from './customer-display.mjs';
 import {createPlatformConsoleClient,platformConsolePath,isPlatformAdmin} from './platform-console-client.mjs';
@@ -7,7 +8,7 @@ import {renderUsagePanel,renderAlertsPanel,renderSuppliersPanel,renderBackupPane
 import {platformNotifications} from './platform-alert-archive.mjs';
 
 const tabs=[['overview','平台总览'],['customers','客户与服务'],['accounts','账号与权限'],['apis','API 与调用'],
-  ['ai-governance','AI 自动化治理'],['costs','成本与用量'],['controls','API 与预算管理'],['config','系统配置'],['alerts','告警与处理'],['tasks','任务与调度'],['security','安全与运维'],['inventory','系统盘点']];
+  ['ai-governance','AI 自动化治理'],['balances','实时余额与预警'],['costs','成本与用量'],['controls','API 与预算管理'],['config','系统配置'],['alerts','告警与处理'],['tasks','任务与调度'],['security','安全与运维'],['inventory','系统盘点']];
 const value=n=>n==null?'待接入':Number(n).toLocaleString('zh-CN');
 const time=s=>s?new Date(s).toLocaleString('zh-CN',{hour12:false}):'暂无记录';
 const providerLabel=p=>({chinaz:'站长之家',dataforseo:'DataForSEO',dashscope:'阿里云百炼',deepseek:'DeepSeek',baidu:'百度推广'}[p]||p||'未提供');
@@ -37,6 +38,8 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   const today=()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai'}).format(new Date());
   const blankHistory=()=>({filters:{from:today().slice(0,7)+'-01',to:today()},data:null,cursors:[],busy:false,error:''});
   let history=blankHistory(),governance=null,governanceError='';
+  const blankBalances=()=>({data:null,error:'',busy:false,after_id:0,cursors:[]});
+  let balanceState=blankBalances();
   const client=createPlatformConsoleClient({session,fetchImpl,onExpired:()=>login('登录已失效，请重新登录。'),
     refreshUser(user){ownChange=true;try{session.refreshUser(user);}finally{ownChange=false;}}});
   const source=name=>snapshot?.sources[name]||{state:'unavailable',total:null,rows:[],truncated:false};
@@ -140,13 +143,28 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   function render(){
     if(disposed||!snapshot)return;
     const alerts=platformNotifications(snapshot,value);
-    root.innerHTML=`<header class="pc-header"><a class="pc-brand" href="${platformConsolePath}">G-SNIPERS</a><span class="pc-header-label">超级管理员工作台</span><span class="pc-admin-badge">平台管理</span><div class="pc-header-actions"><span>${esc(identity.display_name||identity.username)}</span><a href="/customer-workbench/">客户工作台</a><button data-pc="logout">退出</button></div></header><div class="pc-layout"><aside class="pc-sidebar"><small>全局管理</small><nav aria-label="超级管理员导航">${tabs.map(([id,label])=>`<button data-pc-page="${id}" ${page===id?'aria-current="page" class="active"':''}>${label}</button>`).join('')}</nav><div class="pc-sidebar-foot"><b>统一管理入口</b><p>客户、账号和服务记录集中查看。</p></div></aside><main class="pc-main"><div class="pc-title"><div><small>平台管理 / ${tabs.find(t=>t[0]===page)[1]}</small><h1>${tabs.find(t=>t[0]===page)[1]}</h1></div><button data-pc="refresh" ${busy?'disabled':''}>${busy?'正在读取…':'刷新数据'}</button></div><p class="pc-updated" role="status">最近读取 ${esc(time(snapshot.generated_at))} · 数据来自现有系统</p><p class="pc-save-notice" role="status">${esc(notice)}</p><div class="pc-kpis">${summary()}</div><div class="pc-content">${({overview,customers,accounts,apis,'ai-governance':()=>renderAiGovernance({data:governance,error:governanceError,card,table}),costs,controls,config,alerts:alertsPage,tasks,security,inventory:inventoryView})[page]()}</div></main><aside class="pc-right"><section class="pc-card"><div class="pc-section-head"><h2>告警与待处理</h2><span class="pc-tag">${alerts.length}</span></div><p class="pc-note">来自已有记录的提醒</p>${alerts.length?alerts.map(a=>`<div class="pc-alert"><span class="pc-alert-dot ${a.severity==='error'?'error':''}"></span><div><b>${esc(tenant(a.tenant_id))}</b><p>${esc(a.message)}</p></div></div>`).join(''):empty('暂无已记录告警')}<p class="pc-note">告警覆盖随数据源接入逐步完善。</p></section><section class="pc-card pc-help"><h2>管理入口</h2>${link('客户与模块','/platform/customers')}${link('账号与角色','/platform/accounts')}<button data-pc-page="inventory">查看系统盘点 →</button></section></aside></div>`;
+    for(const r of balanceState.data?.rows||[]){if(r.state==='available'&&r.warning==='low')alerts.push({tenant_id:r.tenant_id,severity:'warning',message:r.name+' 余额低于预警阈值，请核对充值安排（查询时间 '+time(r.queried_at)+'）。'});}
+    root.innerHTML=`<header class="pc-header"><a class="pc-brand" href="${platformConsolePath}">G-SNIPERS</a><span class="pc-header-label">超级管理员工作台</span><span class="pc-admin-badge">平台管理</span><div class="pc-header-actions"><span>${esc(identity.display_name||identity.username)}</span><a href="/customer-workbench/">客户工作台</a><button data-pc="logout">退出</button></div></header><div class="pc-layout"><aside class="pc-sidebar"><small>全局管理</small><nav aria-label="超级管理员导航">${tabs.map(([id,label])=>`<button data-pc-page="${id}" ${page===id?'aria-current="page" class="active"':''}>${label}</button>`).join('')}</nav><div class="pc-sidebar-foot"><b>统一管理入口</b><p>客户、账号和服务记录集中查看。</p></div></aside><main class="pc-main"><div class="pc-title"><div><small>平台管理 / ${tabs.find(t=>t[0]===page)[1]}</small><h1>${tabs.find(t=>t[0]===page)[1]}</h1></div><button data-pc="refresh" ${busy?'disabled':''}>${busy?'正在读取…':'刷新数据'}</button></div><p class="pc-updated" role="status">最近读取 ${esc(time(snapshot.generated_at))} · 数据来自现有系统</p><p class="pc-save-notice" role="status">${esc(notice)}</p><div class="pc-kpis">${summary()}</div><div class="pc-content">${({overview,customers,accounts,apis,'ai-governance':()=>renderAiGovernance({data:governance,error:governanceError,card,table}),balances:()=>renderBalances({state:balanceState,card,table,time}),costs,controls,config,alerts:alertsPage,tasks,security,inventory:inventoryView})[page]()}</div></main><aside class="pc-right"><section class="pc-card"><div class="pc-section-head"><h2>告警与待处理</h2><span class="pc-tag">${alerts.length}</span></div><p class="pc-note">来自已有记录的提醒</p>${alerts.length?alerts.map(a=>`<div class="pc-alert"><span class="pc-alert-dot ${a.severity==='error'?'error':''}"></span><div><b>${esc(tenant(a.tenant_id))}</b><p>${esc(a.message)}</p></div></div>`).join(''):empty('暂无已记录告警')}<p class="pc-note">告警覆盖随数据源接入逐步完善。</p></section><section class="pc-card pc-help"><h2>管理入口</h2>${link('客户与模块','/platform/customers')}${link('账号与角色','/platform/accounts')}<button data-pc-page="inventory">查看系统盘点 →</button></section></aside></div>`;
     root.querySelectorAll(".pc-control-form").forEach(form=>form.dataset.controlKind==='connection'?hydrateConnectionForm(form,snapshot):hydrateControlForm(form,snapshot));
   }
   function gate(title,note){root.innerHTML=`<header class="pc-header"><a class="pc-brand" href="${platformConsolePath}">G-SNIPERS</a><span>超级管理员工作台</span></header><main class="pc-gate"><section class="pc-card"><small>平台管理</small><h1>${esc(title)}</h1><p role="status">${esc(note)}</p><div class="pc-shortcuts"><button data-pc="refresh">重新读取</button><button data-pc="logout">切换账号</button><a href="/customer-workbench/">返回客户工作台</a></div></section></main>`;}
   function login(note=''){
-    snapshot=null;identity=null;history=blankHistory();
+    snapshot=null;identity=null;history=blankHistory();balanceState=blankBalances();
     root.innerHTML=`<header class="pc-header"><a class="pc-brand" href="${platformConsolePath}">G-SNIPERS</a><span>超级管理员工作台</span></header><main class="pc-gate"><section class="pc-card"><small>平台管理</small><h1>登录超级管理员工作台</h1><p>使用现有的全局管理员账号。</p><form id="pc-login"><label>账号<input name="username" autocomplete="username" minlength="2" maxlength="50" required></label><label>密码<input name="password" type="password" autocomplete="current-password" maxlength="100" required></label><label class="pc-remember"><input name="remember" type="checkbox">记住登录状态</label><p role="status">${esc(note)}</p><button class="primary" type="submit">登录并进入</button></form><a href="/customer-workbench/">返回客户工作台</a></section></main>`;
+  }
+  async function queryBalances(refresh=false,after_id=balanceState.after_id){
+    if(disposed||!snapshot||balanceState.busy)return;
+    const started=revision,current=balanceState;
+    current.busy=true;current.error='';current.data=null;render();
+    try{
+      const data=await client.balances({refresh,after_id});
+      if(disposed||started!==revision||balanceState!==current)return;
+      current.data=data;current.after_id=after_id;if(after_id&&!current.cursors.includes(after_id))current.cursors.push(after_id);if(!after_id)current.cursors=[];
+    }catch(e){
+      if(disposed||started!==revision||e.code==='CONSOLE_STALE'||balanceState!==current)return;
+      if(e.status===401||e.status===403){snapshot=null;identity=null;balanceState=blankBalances();gate('无法查询平台余额','登录或管理员权限已变化，请重新登录。');return;}
+      current.error=e.status===404?'余额查询接口未部署，余额未知。':'本次余额查询未完成，余额未知。请稍后重试。';
+    }finally{if(!disposed&&started===revision&&balanceState===current){current.busy=false;if(page==='balances')render();}}
   }
   async function queryUsage(cursor=null,direction='first'){
     if(!snapshot||history.busy)return;
@@ -182,21 +200,21 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     }finally{if(!disposed&&started===revision){history.busy=false;render();}}
   }
   async function load(){
-    if(disposed)return;revision++;const started=revision;snapshot=null;identity=null;busy=true;query='';history=blankHistory();governance=null;governanceError='';
+    if(disposed)return;revision++;const started=revision;snapshot=null;identity=null;busy=true;query='';history=blankHistory();governance=null;governanceError='';balanceState=blankBalances();
     if(!session.token){busy=false;login();return;}
     gate('正在读取平台数据','正在核对账号权限…');
     try{
       const result=await client.initialize();
       if(disposed||started!==revision)return;
-      identity=result.user;snapshot=result.data;busy=false;render();
+      identity=result.user;snapshot=result.data;busy=false;render();if(page==='balances')void queryBalances();
       try{
         const data=await client.governance();
         if(disposed||started!==revision)return;
-        governance=data;render();
+        governance=data;if(page!=='balances')render();
       }catch(e){
         if(disposed||started!==revision||e.code==='CONSOLE_STALE')return;
         if(e.status===401||e.status===403){snapshot=null;identity=null;governance=null;gate('无法读取 AI 治理数据','登录或管理员权限已变化，请重新登录。');return;}
-        governanceError=e.status===404?'AI 治理接口未部署，运行状态未接入。':'AI 治理数据未读取，运行结果未知。请刷新后核对。';render();
+        governanceError=e.status===404?'AI 治理接口未部署，运行状态未接入。':'AI 治理数据未读取，运行结果未知。请刷新后核对。';if(page!=='balances')render();
       }
     }catch(e){
       if(disposed||started!==revision||e.code==='CONSOLE_STALE')return;busy=false;
@@ -266,11 +284,14 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     finally{loginController=null;}
   }
   function click(event){const b=event.target.closest('[data-pc],[data-pc-page],[data-pc-connection]');if(!b||b.disabled)return;
+    if(b.dataset.pc==='balance-refresh')void queryBalances(true);
+    if(b.dataset.pc==='balance-next'&&balanceState.data?.next_after_id)void queryBalances(false,balanceState.data.next_after_id);
+    if(b.dataset.pc==='balance-first')void queryBalances(false,0);
     if(b.dataset.pc==='usage-next'&&history.data?.next_cursor&&!history.busy)void queryUsage(history.data.next_cursor,'next');
     if(b.dataset.pc==='usage-prev'&&history.cursors.length&&!history.busy)void queryUsage(history.cursors.at(-1),'prev');
     if(b.dataset.pc==='usage-export'&&!history.busy)void downloadUsage();
     if(b.dataset.pcConnection){connectionId=b.dataset.pcConnection;page='config';render();return;}
-    if(b.dataset.pcPage&&tabs.some(t=>t[0]===b.dataset.pcPage)){page=b.dataset.pcPage;query='';render();}
+    if(b.dataset.pcPage&&tabs.some(t=>t[0]===b.dataset.pcPage)){page=b.dataset.pcPage;query='';render();if(page==='balances')void queryBalances();}
     if(b.dataset.pc==='refresh')void load();
     if(b.dataset.pc==='logout'){notice='';revision++;client.invalidate();loginController?.abort();ownChange=true;try{session.logout();}finally{ownChange=false;}login('已退出。');}
   }
@@ -290,6 +311,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   }
   function changed(){if(disposed||ownChange)return;notice='';revision++;client.invalidate();loginController?.abort();snapshot=null;identity=null;if(!session.token)login('账号已退出。');else void load();}
   root.addEventListener('click',click);root.addEventListener('submit',submit);root.addEventListener('input',input);root.addEventListener('change',change);browser.addEventListener('sem:auth-context-changed',changed);
+  const balanceTimer=browser.setInterval(()=>{if(page==='balances'&&snapshot&&browser.document.visibilityState==='visible')void queryBalances();},300000);
   void load();
-  return {dispose(){disposed=true;revision++;client.invalidate();loginController?.abort();browser.removeEventListener('sem:auth-context-changed',changed);root.removeEventListener('click',click);root.removeEventListener('submit',submit);root.removeEventListener('input',input);root.removeEventListener('change',change);root.classList.remove('platform-console');root.replaceChildren();}};
+  return {dispose(){browser.clearInterval(balanceTimer);disposed=true;revision++;client.invalidate();loginController?.abort();browser.removeEventListener('sem:auth-context-changed',changed);root.removeEventListener('click',click);root.removeEventListener('submit',submit);root.removeEventListener('input',input);root.removeEventListener('change',change);root.classList.remove('platform-console');root.replaceChildren();}};
 }

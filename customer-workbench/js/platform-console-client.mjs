@@ -1,3 +1,4 @@
+import {balanceRoute} from './platform-balances-view.mjs';
 import {governanceRoute} from './platform-ai-governance-view.mjs';
 // Separate global-console transport. Customer host allowlists remain unchanged.
 export const platformConsolePath='/customer-workbench/?console=platform';
@@ -23,7 +24,7 @@ export function createPlatformConsoleClient({session,fetchImpl=fetch,onExpired=(
   async function read(path,preflight=false,body=null,download=false){
     const url=new URL(path,'https://console.invalid');
     const permitted=url.origin==='https://console.invalid'&&(body===null?
-      routes.has(path)||[usageRoute,usageRoute+'/export'].includes(url.pathname):[writeRoute,operationRoute].includes(path));
+      routes.has(path)||[usageRoute,usageRoute+'/export',balanceRoute].includes(url.pathname):[writeRoute,operationRoute].includes(path));
     if(!permitted||(!preflight&&!identity))throw fail('CONSOLE_NOT_AUTHORIZED',403);
     if(!session.token)throw fail('CONSOLE_LOGIN_REQUIRED',401);
     const started=epoch,key=fingerprint(),controller=new AbortController();pending.add(controller);
@@ -58,6 +59,12 @@ export function createPlatformConsoleClient({session,fetchImpl=fetch,onExpired=(
       const {user}=await read('/api/v1/auth/me',true);
       if(user?.id!==identity.id||!isPlatformAdmin(user)){invalidate();throw fail('CONSOLE_FORBIDDEN',403);}
       return read(writeRoute,false,data);
+    },
+    async balances({refresh=false,after_id=0}={}){
+      if(typeof refresh!=='boolean'||!Number.isSafeInteger(after_id)||after_id<0)throw fail('CONSOLE_INVALID_QUERY');
+      const data=await read(balanceRoute+'?'+new URLSearchParams({refresh:String(refresh),after_id:String(after_id)}));
+      if(data?.schema!==1||data.state!=='available'||!Array.isArray(data.rows)||data.rows.some(r=>!r||typeof r.id!=='string'||!Array.isArray(r.balances)))throw fail('CONSOLE_INVALID_BALANCES');
+      return data;
     },
     async governance(){
       const data=await read(governanceRoute);
