@@ -11,6 +11,7 @@ import logging
 from fastapi import HTTPException
 from sqlalchemy import select
 
+from app.api_connection_config import managed_runtime
 from app.database import async_session_factory
 from app.models.module_workspace import SeoSite
 from app.models.role import Role
@@ -207,6 +208,7 @@ async def persist_result(task_id, result=None, error=None):
         await session.commit()
 
 
+@managed_runtime('seo')
 async def execute_content_draft(task_id):
     from app.api.seo import SeoContentAssistRequest, _assist_seo_content, _seo_draft_route, _seo_assist_request_payload
     request = ctx = None

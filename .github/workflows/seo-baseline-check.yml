@@ -281,7 +281,7 @@ jobs:
           PYTHONPATH: .
           TZ: UTC
         run: |
-          python -m pytest -q tests/test_seo_review_guards_postgres.py --junitxml="$RUNNER_TEMP/seo-review-guards.xml"
+          python -m pytest -q tests/test_seo_review_guards_postgres.py tests/test_api_connection_config.py --junitxml="$RUNNER_TEMP/seo-review-guards.xml"
           python - <<'PY'
           import os
           from pathlib import Path

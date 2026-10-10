@@ -10,6 +10,7 @@ import re
 import httpx
 
 from app.api_metering import metered_request
+from app.api_connection_config import managed_runtime
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ def is_enabled() -> bool:
     return bool(s.deepseek_api_key or getattr(s, "dashscope_api_key", ""))
 
 
+@managed_runtime('seo')
 async def chat_json(
     system: str,
     user: str,
@@ -103,6 +105,7 @@ async def chat_json(
         raise DeepSeekError(f"AI 调用/解析失败: {e}") from e
 
 
+@managed_runtime('seo')
 async def chat_messages(
     messages: list[dict],
     json_mode: bool = False,
