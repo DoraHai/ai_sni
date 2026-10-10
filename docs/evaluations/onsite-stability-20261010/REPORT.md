@@ -1,6 +1,6 @@
 # SEO / GEO 站内 AI 稳定化复测 · 2026-10-10
 
-GEO 的旧模型别名 deepseek-v4-flash 在当前百炼凭证的模型目录中不存在，导致 HTTP 404 model_not_found。已只修改 GEO 独立运行配置为同凭证已验证的 deepseek-v4-flash-0731，并完成真实 JSON 探针与健康验证。
+GEO 的旧模型别名 deepseek-v4-flash 在当前百炼凭证的模型目录中不存在，导致 HTTP 404 model_not_found。已只修改 GEO 独立运行配置为同凭证已验证的 deepseek-v4-flash-0731，并完成真实 JSON 探针与健康验证。最终 GEO 站内方案主接口已切换到已有 DeepSeek 官方连接；其他 GEO AI 保留原配置。
 
 ## 实际开发与复测
 
@@ -44,12 +44,16 @@ SEO 10 个场景包含两次普通生成、错误旧稿修订、缺资料、提�
 
 ## 台账与费用
 
-本报告全部批次合成场景共 79 次真实模型请求，HTTP 200 共 71 次、结果未知共 7 次。已知输入 95,487 Token（缓存 38,270），已知输出 50,418 Token。未知请求的 Token 不补成零；所有当前请求缺匹配报价，仍显示待计价，不能把费用视为零。另有配置探针与模型目录读取，单独计量，不混入样例评分。
+本报告全部批次合成场景共 79 次真实模型请求，HTTP 200 共 71 次、结果未知共 7 次。已知输入 95,487 Token（缓存 38,270），已知输出 50,418 Token。未知请求的 Token 不补成零；所有当前请求缺匹配报价，仍显示待计价，不能把费用视为零。另有配置探针与模型目录读取，单独计量，不混入样例评分。发布后另做 1 次真实运行配置验收，合格、2.78 秒；包含它共 80 次请求，仍全部待计价。
 
 ## 固定版本与发布验收
 
 - SEO 候选：44866e1f7de85358a194479e3e24c6fd8dbf886e；PR #640 已合并为 ca6a34c28da342327526539579898bfa3baedd87，正式发布 run38061585114 success；线上只读队列检查匿名401、授权200、绑定客户跨范围403。
-- GEO 最终候选：97d228b4dfeae72a979e0afe3f999aa56f439a38；PR #641。发布结果待最终补入。
+- GEO 最终候选：97d228b4dfeae72a979e0afe3f999aa56f439a38；PR #641 已合并为 5dff478d562b4eebe52c2617a5309c0f6746118b，正式发布 [run38064514541](https://github.com/DoraHai/ai_sni/actions/runs/38064514541) success。发布前原生 PostgreSQL 全量 1362 passed、0 skipped（另 2 subtests passed）；本地开发检查 1298 passed、64 skipped，未把本地缺失环境的跳过计为通过。
+
+- GEO 运行配置于北京时间 23:42:45 启用 GEO_ONSITE_AI_PROVIDER=deepseek / GEO_ONSITE_AI_MODEL=deepseek-chat。只更新独立 GEO 环境、只重启 GEO，共享环境和 SEM/SEO 进程不变，备份保留在服务器。
+- 未给模型参数或候选代码覆盖的发布后真实请求确认 api.deepseek.com / deepseek-chat，实际源码与运行发布 SHA 一致，正文与服务端引用校验通过。
+- 线上只读队列：匿名401、实名授权200、绑定客户越界403；当前队列0条，实际客户完整任务按钮链路未写入测试任务，变更与并发由原生 PostgreSQL 测试覆盖。公网 /geo-health 为200/db=ok，GEO页面200。
 
 同一轮另行完成超管余额两个独立发布单元：backend PR #642/c2ce9c17/run38062043399、UI PR #643/05d66b0a/run38062115775。余额覆盖追加 PR #644/#645 已分别正式发布：backend 4fe201ece3e95b89472d54d40eeb8b8779d58a15/run38064238234、UI 4920eba27ba09e6d6c13377c86f0fc17c4cdf439/run38064243068 均 success。生产清单 41 项（SEM3/SEO18/GEO20）不等于已配置账户，38 项独立配置待核对；未启用管理表。生产只读查询显示 DeepSeek 余额成功并触及预警阈值；7 个有效百度账号中 6 个成功、1 个未知；阿里云账务查询凭据缺失，不用百炼模型 Key 替代。此项不混入 SEO/GEO 评分。
 

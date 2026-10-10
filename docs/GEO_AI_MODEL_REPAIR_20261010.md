@@ -28,7 +28,7 @@ GEO 窗口负责来源 ID、可见正文、Schema/llms 代码装配及供应商�
 - 执行时间：2026-10-10 14:50:54 UTC（北京时间 22:50:54）。配置变更前的计划提交为 b5a6db99。
 - GEO 独立配置已原子更新为 deepseek-v4-flash-0731；原配置受限备份保存在服务器本地。共享环境逐字节一致，SEO/SEM 进程未被重启。
 - GEO 健康接口 HTTP 200、db=ok。重新读取运行进程环境确认新模型已生效，并用生效配置真实调用得到精确 JSON {"ok":true}。
-- 本次只修复运行配置，应用发布代码仍为 d648b0c8a8df176c0b3b4fc08142b7b6dd670127。稳定性代码开发、质量评测与发布另行记录。
+- 22:50这一阶段只修复运行配置，当时应用发布代码为 d648b0c8a8df176c0b3b4fc08142b7b6dd670127。稳定性代码开发、质量评测与发布另行记录。
 
 ## 站内提案专用模型启用计划
 
@@ -49,3 +49,13 @@ GEO 窗口负责来源 ID、可见正文、Schema/llms 代码装配及供应商�
 当前决定将站内方案主接口改为已有平台 DeepSeek 官方连接，并在付费前确定性拦截没有获准事实的请求。新配置启用计划取代上节的千问启用计划：仅 GEO 独立环境添加 `GEO_ONSITE_AI_PROVIDER=deepseek` 和 `GEO_ONSITE_AI_MODEL=deepseek-chat`。复用 GEO 进程已加载的现有平台 DeepSeek 配置，不复制其他服务的密钥文件，不读取客户历史密钥。全局百炼型号修复仍保留，其他 GEO 功能不切换。
 
 发布前必须复测新代码生产选择函数与预检函数，并通过真实 PostgreSQL 范围/配额测试及全部正式 CI。配置变更继续采用上节的原子更新、服务器受限备份、GEO 单独重启和失败恢复范围；不会自动把失败请求切到另一供应商。
+
+## 最终正式发布与运行验收
+
+- GEO PR #641 精确候选 `97d228b4dfeae72a979e0afe3f999aa56f439a38` 合并为 `5dff478d562b4eebe52c2617a5309c0f6746118b`，正式 Production GEO deployment run38064514541 success。
+- 正式发布前原生 PostgreSQL 全量 1362 passed、0 skipped（另2 subtests passed）。最后候选11个工作流场景通过，其中10次真实官方请求合格、1次无事实免费预检。范围、来源、旧稿、恶意指令与新行业真值逐项核对。
+- `GEO_ONSITE_AI_PROVIDER=deepseek` 和 `GEO_ONSITE_AI_MODEL=deepseek-chat` 已于 2026-10-10 15:42:45 UTC（北京时间23:42:45）启用；只修改 GEO 独立环境。全局百炼模型仍为已修复版本，其他 GEO 功能保留原路径。
+- 服务器受限备份 `/opt/geo-service/.env.onsite-model-backup-20261010T154237Z`。原子变更后共享环境逐字节不变，SEM/SEO进程不变，只重启GEO，健康HTTP200/db=ok。
+- 发布后不覆盖候选代码或模型参数，沿用服务生效环境做1次真实合成提案：正式release/source SHA一致，实际api.deepseek.com / deepseek-chat，正文校验合格、2.78秒；没有客户任务写入。
+- 线上只读权限检查：匿名401、实名授权200、绑定客户越界403。公网健康与GEO页面HTTP200。当前实名顾问队列0条，客户任务变更和并发由原生PostgreSQL验证，不宣称对真实客户任务做了发布或验收。
+- [完整测试报告](evaluations/onsite-stability-20261010/REPORT.md) 保留全部失败批次与发布验收原始结果。有限样本成绩不代表长期可靠性、排名/引用效果或官网自动实施能力。
