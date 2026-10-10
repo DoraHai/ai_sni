@@ -126,6 +126,8 @@ def test_native_attempts_survive_business_failure_and_block_on_ledger_failure(mo
                     assert Decimal(summary['known_amount'])==Decimal('.006')
                     assert len(summary['user_totals'])==3
                     assert summary['actual_amount'] is None
+                    assert len(summary['provider_totals'])==4
+                    assert {r['endpoint'].rsplit('/',1)[-1] for r in summary['provider_totals']}=={'ok','error','missing','timeout'}
                 # The schema is taken away to simulate accounting outage.
                 async with db.begin() as c: await c.execute(text('DROP TABLE api_usage_events'))
                 with pytest.raises(meter.MeteringUnavailable): await paid(1,10)

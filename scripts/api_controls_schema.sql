@@ -7,7 +7,7 @@ ALTER TABLE api_usage_events ADD COLUMN reserved_amount numeric(24,12)
     CHECK (reserved_amount >= 0);
 CREATE TABLE api_control_settings (
     key varchar(260) PRIMARY KEY,
-    kind varchar(16) NOT NULL CHECK (kind IN ('budget','provider','rate')),
+    kind varchar(16) NOT NULL CHECK (kind IN ('budget','provider','rate','connection')),
     value jsonb NOT NULL CHECK (jsonb_typeof(value) = 'object'),
     revision integer NOT NULL CHECK (revision > 0),
     updated_by bigint NOT NULL,
@@ -18,6 +18,7 @@ CREATE TABLE api_control_bindings (
     label varchar(100) NOT NULL, host varchar(200) NOT NULL,
     model varchar(200), configured boolean NOT NULL,
     can_rotate boolean NOT NULL,
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(metadata) = 'object'),
     seen_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (module, label)
 );

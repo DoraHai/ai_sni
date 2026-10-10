@@ -27,6 +27,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api_connection_config import managed_runtime
 from app.config import get_settings
 from app.database import async_session_factory
 from app.models import BaiduAccount, BaiduOAuthGrant, BaiduOAuthState, Tenant, TenantModule
@@ -522,6 +523,7 @@ async def persist_authorization(
     return grant, linked, linked_tenants
 
 
+@managed_runtime('sem')
 async def refresh_grant(
     session: AsyncSession, grant: BaiduOAuthGrant
 ) -> bool:
@@ -574,6 +576,7 @@ async def refresh_grant(
     return True
 
 
+@managed_runtime('sem')
 async def refresh_expiring_oauth_grants(session: AsyncSession) -> dict[str, int]:
     now = datetime.utcnow()
     grants = (
