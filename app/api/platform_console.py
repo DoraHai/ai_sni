@@ -132,6 +132,7 @@ async def read_usage(session: AsyncSession, catalog: dict, today: str) -> list[d
 
 
 async def build_snapshot(session: AsyncSession) -> dict:
+    from app.platform_usage_review import status as review_status
     catalog = await table_catalog(session)
     now = datetime.now(timezone.utc)
     today = now.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
@@ -224,7 +225,7 @@ async def build_snapshot(session: AsyncSession) -> dict:
         "schema": 1, "generated_at": now.isoformat(), "mode": "read_only_inventory",
         "sources": sources, "calls": calls, "alerts": alerts,
         "operations": {"state": handling_state, "provider_health": health, "call_monitor": monitor, "suppliers": suppliers, "backup": backup},
-        "api_costs": api_costs, "controls": controls,
+        "api_costs": api_costs, "controls": controls, "usage_reviews": await review_status(session),
         "costs": {"state": "metering_incomplete", "date": today, "currency": "CNY",
                   "actual_amount": None, "estimated_amount": None,
                   "usage": await read_usage(session, catalog, today),
@@ -238,7 +239,7 @@ async def build_snapshot(session: AsyncSession) -> dict:
 
 
 @router.get("/snapshot")
-async def console_snapshot(response: Response) -> dict:
+async def console_snapshot(response: Response, request: Request = None) -> dict:
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Vary"] = "Authorization"
     # Separate bounded read-only transaction; auth dependency has its own session.
@@ -247,7 +248,11 @@ async def console_snapshot(response: Response) -> dict:
             async with _read_slots, async_session_factory() as session:
                 await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
                 await session.execute(text("SET LOCAL statement_timeout = '3000ms'"))
-                return await build_snapshot(session)
+                result = await build_snapshot(session)
+            from app.platform_worker_health import read_workers
+            result['operations']['call_monitor']['workers'] = await read_workers(
+                request.headers.get('authorization') if request is not None else None)
+            return result
     except TimeoutError:
         raise HTTPException(503, "平台盘点读取超时，请稍后重试") from None
 
@@ -322,6 +327,55 @@ async def console_usage_export(request: Request):
     return Response(result, media_type='text/csv; charset=utf-8', headers={
         'Cache-Control': 'no-store, private', 'Vary': 'Authorization',
         'Content-Disposition': 'attachment; filename="api-usage.csv"', 'X-Content-Type-Options': 'nosniff'})
+
+
+@router.get('/usage/{event_id}/review')
+async def console_usage_review_read(event_id: UUID, response: Response):
+    from app.platform_usage_review import read_review
+    response.headers['Cache-Control'] = 'no-store, private'
+    response.headers['Vary'] = 'Authorization'
+    try:
+        async with asyncio.timeout(8), _read_slots, async_session_factory() as session:
+            await session.execute(text('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY'))
+            await session.execute(text("SET LOCAL statement_timeout='3000ms'"))
+            result = await read_review(session,event_id)
+            if result['state']=='available' and result['row'] is None:
+                raise HTTPException(404,'调用记录不存在',headers={'Cache-Control':'no-store, private','Vary':'Authorization'})
+            return result
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503,'核实记录暂时无法读取',headers={'Cache-Control':'no-store, private','Vary':'Authorization'}) from None
+
+
+@router.post('/usage/review')
+async def console_usage_review(request: Request, response: Response, ctx: AuthContext = Depends(require_console_admin)):
+    from app.platform_usage_review import enabled_review, mutate_review
+    response.headers['Cache-Control'] = 'no-store, private'
+    response.headers['Vary'] = 'Authorization'
+    if not enabled_review():
+        raise HTTPException(503,'调用核实等待数据库审核与三服务准入口径对齐',headers={'Cache-Control':'no-store, private','Vary':'Authorization'})
+    try:
+        import json
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw)>16384:
+                raise ValueError
+        data = json.loads(raw)
+    except Exception:
+        raise HTTPException(422,'核实请求格式无效',headers={'Cache-Control':'no-store, private','Vary':'Authorization'}) from None
+    try:
+        async with asyncio.timeout(8), async_session_factory() as session:
+            return await mutate_review(session,ctx.user_id,data)
+    except ControlConflict as exc:
+        raise HTTPException(409,str(exc),headers={'Cache-Control':'no-store, private','Vary':'Authorization'}) from None
+    except (ValueError,KeyError,TypeError):
+        raise HTTPException(422,'核实证据、金额或记录字段无效，请重新核对',headers={'Cache-Control':'no-store, private','Vary':'Authorization'}) from None
+    except Exception:
+        # A timeout does not prove rollback. Stable UUID makes a later explicit
+        # read/replay safe; the UI must not retry a changed payload automatically.
+        raise HTTPException(503,'核实结果未能确认，请重新读取台账核对后再操作',headers={'Cache-Control':'no-store, private','Vary':'Authorization'}) from None
 
 
 @router.post('/operations')

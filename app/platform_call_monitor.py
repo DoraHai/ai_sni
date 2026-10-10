@@ -16,17 +16,19 @@ async def read_call_monitor(session):
     }
     if not await session.scalar(text("SELECT to_regclass(current_schema() || '.api_usage_events') IS NOT NULL")):
         return result
+    from app.api_usage_review_basis import accounted_amount
+    amount = await accounted_amount(session)
     result['state'] = 'recording' if enabled() else 'ready'
-    rows = (await session.execute(text('''SELECT module,provider,grouping(module) AS aggregate,
+    rows = (await session.execute(text(f'''SELECT module,provider,grouping(module) AS aggregate,
         count(*) FILTER (WHERE started_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours') AS calls,
         count(*) FILTER (WHERE started_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours' AND state='succeeded') AS succeeded,
         count(*) FILTER (WHERE started_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours' AND state='error') AS errors,
         count(*) FILTER (WHERE started_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours' AND state='unknown') AS unknown,
-        count(*) FILTER (WHERE started_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours' AND estimated_amount IS NULL) AS unpriced,
+        count(*) FILTER (WHERE started_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours' AND {amount} IS NULL) AS unpriced,
         count(*) FILTER (WHERE started_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours' AND pricing_version IS NULL) AS missing_rate,
         count(*) FILTER (WHERE state='requested') AS pending,
         count(*) FILTER (WHERE state='requested' AND started_at < CURRENT_TIMESTAMP - (:stale * INTERVAL '1 second')) AS stale_pending,
-        count(*) FILTER (WHERE state <> 'requested' AND estimated_amount IS NULL) AS unresolved_charges,
+        count(*) FILTER (WHERE state <> 'requested' AND {amount} IS NULL) AS unresolved_charges,
         min(started_at) FILTER (WHERE state='requested') AS oldest_pending_at,
         max(started_at) FILTER (WHERE started_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours' AND state IN ('error','unknown')) AS last_failure,
         max(started_at) AS last_attempt_at,
@@ -34,7 +36,7 @@ async def read_call_monitor(session):
         percentile_disc(0.95) WITHIN GROUP (ORDER BY latency_ms)
             FILTER (WHERE started_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours') AS p95_latency_ms
         FROM api_usage_events WHERE started_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'
-            OR state='requested' OR estimated_amount IS NULL
+            OR state='requested' OR {amount} IS NULL
         GROUP BY GROUPING SETS ((module,provider),()) ORDER BY aggregate,module,provider'''),
         {'stale': STALE_SECONDS})).mappings()
     for row in rows:
@@ -69,6 +71,6 @@ def monitor_alerts(monitor, identity):
                 source + ':unknown', str(row['last_failure'])))
         if row['missing_rate']:
             alerts.append(identity({'kind': 'api_unpriced', 'severity': 'warning', 'tenant_id': None,
-                'message': f"{label} 近 24 小时有 {row['missing_rate']} 次调用未匹配价格，费用保持未知"},
+                'message': f"{label} 近 24 小时有 {row['missing_rate']} 次调用未匹配估算价格，新请求金额预算可能受限；人工核实费用单独展示"},
                 source + ':rate', [row['missing_rate'], str(row['last_attempt_at'])]))
     return alerts
