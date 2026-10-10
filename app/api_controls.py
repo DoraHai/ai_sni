@@ -347,6 +347,8 @@ async def register_runtime(module):
 
 async def schema_ready(session):
     """Check the complete reviewed structure without reading configuration."""
+    from app.api_usage_review_basis import accounted_amount
+    await accounted_amount(session)
     return bool(await session.scalar(text("""SELECT
         to_regclass(current_schema() || '.api_control_settings') IS NOT NULL AND
         to_regclass(current_schema() || '.api_control_bindings') IS NOT NULL AND
