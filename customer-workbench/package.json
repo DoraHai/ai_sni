@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test:advisor": "npm run build && node --test advisor-client.test.mjs advisor-browser.test.mjs",
     "build": "node scripts/build.mjs",
     "test:ui06": "node --test seo-readonly-client.test.mjs host-session-adapter.test.mjs ui06-browser.test.mjs",
     "preview:fixture": "node tests/fixture-server.mjs",
