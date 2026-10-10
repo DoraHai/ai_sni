@@ -132,7 +132,7 @@ jobs:
           for module, minimum in [('test_platform_call_guards', 37),
                                   ('test_platform_call_integration', 11),
                                   ('test_platform_call_monitor', 2)]:
-              selected = [case for case in cases if case.get('classname') == module]
+              selected = [case for case in cases if case.get('classname', '').rsplit('.', 1)[-1] == module]
               skipped = sum(case.find('skipped') is not None for case in selected)
               failed = sum(case.find('failure') is not None or case.find('error') is not None for case in selected)
               print(f'{module}: executed={len(selected)}, skipped={skipped}, failures={failed}')
