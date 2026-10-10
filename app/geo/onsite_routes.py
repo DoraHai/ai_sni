@@ -4,13 +4,14 @@ import hashlib
 import ipaddress
 import json
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, case, func, or_, select
 
 from app import onsite_workflow as work
 from app.database import get_session
@@ -22,12 +23,13 @@ from app.geo.tenant_scope import ensure_geo_entitlement
 from app.geo.audit import safe_fetch, GeoAuditError
 from app.geo.content.ai_settings import resolve_llm_credentials
 from app.geo.content import async_jobs
-from app.geo import onsite_ai
+from app.geo import onsite_ai, onsite_jobs
 
 router = APIRouter()
 PREFIX = "onsite:v1:"
 MAX_PUBLIC_FACTS = 30
 MAX_PRIORITY_QUESTIONS = 50
+ONSITE_PROTOCOL = "durable-v1"
 _PUBLIC_RUN_STATES = frozenset({
     "queued", "running", "ready", "failed", "unknown", "stale", "cancelled",
 })
@@ -357,8 +359,20 @@ async def _request_job(session, *, tenant_id: int, task_id: int, request_id: str
 @router.post("/workbench/onsite-tasks/{task_id}/ai-proposal", status_code=202)
 async def ai_proposal(task_id: PositiveInt, req: AiProposal,
                       session=Depends(get_session), ctx=Depends(require_scoped_auth),
-                      background_tasks: BackgroundTasks = None, response: Response = None):
+                      background_tasks: BackgroundTasks = None, response: Response = None,
+                      protocol: Annotated[
+                          str | None, Header(alias="X-Snipers-Onsite-Protocol")
+                      ] = None):
     """Durably enqueue one proposal request and return without waiting for AI."""
+    if protocol != ONSITE_PROTOCOL:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "工作台版本过旧，请刷新页面后重试",
+                "code": "onsite_client_upgrade_required",
+            },
+            headers={"Cache-Control": "no-store"},
+        )
     if ctx.user_id is None:
         raise HTTPException(403, "异步 AI 方案必须由实名顾问发起")
     project = await scope(session, ctx, req.tenant_id, req.project_id, True)
@@ -422,6 +436,63 @@ async def ai_proposal(task_id: PositiveInt, req: AiProposal,
         background_tasks.add_task(async_jobs.run_job_in_background, job.id, job.tenant_id)
     return await _task_with_request(session, row, project, True, job,
                                     actor_user_id=ctx.user_id)
+
+
+@router.get("/workbench/onsite-ai/health")
+async def onsite_ai_health(
+    response: Response,
+    session=Depends(get_session),
+    ctx=Depends(require_scoped_auth),
+):
+    """Read-only process evidence and aggregate queue state for global operations."""
+    if not ctx.is_superadmin or ctx.tenant_id is not None:
+        raise HTTPException(403, "仅全局超级管理员可查看站内 AI 健康状态")
+    unknown = and_(
+        GeoAsyncJob.status == "failed",
+        GeoAsyncJob.result_meta["public_state"].as_string() == "unknown",
+    )
+    queue = (await session.execute(select(
+        func.count().filter(GeoAsyncJob.status == "pending").label("queued"),
+        func.count().filter(GeoAsyncJob.status == "running").label("running"),
+        func.count().filter(unknown).label("unknown"),
+        func.min(case((GeoAsyncJob.status == "pending", GeoAsyncJob.created_at))).label(
+            "oldest_queued_at"
+        ),
+        func.min(case((GeoAsyncJob.status == "running", GeoAsyncJob.started_at))).label(
+            "oldest_running_at"
+        ),
+    ).where(GeoAsyncJob.kind == async_jobs.KIND_ONSITE_PROPOSAL))).one()
+    worker = onsite_jobs.pending_worker_status()
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "schema": 1,
+        "module": "geo",
+        "observed_at": onsite_ai.now_iso(),
+        "worker": {
+            "scope": "this_process",
+            "enabled": bool(worker.get("enabled")),
+            "state": worker.get("state") if worker.get("state") in {
+                "active", "degraded", "stopped", "disabled", "unverified",
+            } else "unverified",
+            "verified": bool(worker.get("verified")),
+            "evidence": worker.get("evidence") if worker.get("evidence") in {
+                "tick", "error", "stopped", "disabled", "none",
+            } else "none",
+            "last_tick_at": worker.get("last_tick_at"),
+            "last_attempted": int(worker.get("last_attempted") or 0),
+            "last_completed": int(worker.get("last_completed") or 0),
+            "last_error": worker.get("last_error"),
+        },
+        "queue": {
+            "queued": int(queue.queued or 0),
+            "running": int(queue.running or 0),
+            "unknown": int(queue.unknown or 0),
+            "oldest_queued_at": queue.oldest_queued_at.isoformat()
+            if queue.oldest_queued_at else None,
+            "oldest_running_at": queue.oldest_running_at.isoformat()
+            if queue.oldest_running_at else None,
+        },
+    }
 
 
 @router.get("/workbench/onsite-tasks/{task_id}/ai-requests/{request_id}")

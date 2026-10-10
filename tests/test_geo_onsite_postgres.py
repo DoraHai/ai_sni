@@ -6,6 +6,7 @@ from uuid import uuid4
 import os
 import pytest
 from fastapi import HTTPException
+from starlette.responses import Response
 from sqlalchemy import select, func, text, update
 from sqlalchemy.exc import DBAPIError
 from test_geo_project_scope_postgres import database
@@ -23,6 +24,14 @@ pytestmark = pytest.mark.skipif(not os.getenv("GEO_TEST_POSTGRES_URL"), reason="
 ADVISOR = AuthContext(7, "advisor", "advisor", None, {"geo.assets":"edit", "geo.content":"edit"})
 CUSTOMER = AuthContext(12, "customer", "customer", 1, {"geo.assets":"view", "geo.content":"view"})
 OTHER_ADVISOR = AuthContext(8, "advisor2", "advisor", None, {"geo.assets":"edit", "geo.content":"edit"})
+SUPERADMIN = AuthContext(None, "ops", "superadmin", None, {}, is_superadmin=True)
+
+
+async def _ai_proposal(task_id, request, session, context, **kwargs):
+    return await api.ai_proposal(
+        task_id, request, session, context,
+        protocol=api.ONSITE_PROTOCOL, **kwargs,
+    )
 
 
 async def run_owned(sessions, job_id, tenant_id=1):
@@ -136,6 +145,107 @@ async def _add_nonpublic_fact(db, *, fact_id=81):
     await db.commit()
 
 
+@pytest.mark.parametrize("protocol", [None, "legacy-v0"])
+def test_ai_proposal_requires_durable_protocol_before_writes_or_quota(
+        monkeypatch, protocol):
+    credential_reads = provider_calls = 0
+
+    async def credentials(*_args, **_kwargs):
+        nonlocal credential_reads
+        credential_reads += 1
+        return {"api_key": "must-not-be-read"}
+
+    async def provider(*_args, **_kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        return {}
+
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "chat_json", provider)
+
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                task = await api.create(api.Create(
+                    tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员",
+                ), db, ADVISOR)
+            async with sessions() as db:
+                project = await db.get(GeoProject, 10)
+                settings_before = json.loads(json.dumps(project.project_settings or {}))
+                jobs_before = await db.scalar(select(func.count()).select_from(GeoAsyncJob))
+                rejected = await api.ai_proposal(
+                    task["id"], api.AiProposal(
+                        tenant_id=1, project_id=10, expected_revision=1,
+                        request_id=uuid4(), mode="initial",
+                    ), db, ADVISOR, protocol=protocol,
+                )
+                assert rejected.status_code == 409
+                assert rejected.headers["cache-control"] == "no-store"
+                assert json.loads(rejected.body) == {
+                    "detail": "工作台版本过旧，请刷新页面后重试",
+                    "code": "onsite_client_upgrade_required",
+                }
+            async with sessions() as db:
+                project = await db.get(GeoProject, 10)
+                stored = await db.get(GeoActionTicket, task["id"])
+                assert (project.project_settings or {}) == settings_before
+                assert await db.scalar(select(func.count()).select_from(GeoAsyncJob)) == jobs_before
+                assert "ai_run" not in stored.progress["onsite"]
+        assert credential_reads == 0
+        assert provider_calls == 0
+
+    asyncio.run(run())
+
+
+def test_onsite_health_is_global_admin_read_only_real_queue_aggregate(monkeypatch):
+    monkeypatch.setattr(onsite_jobs, "pending_worker_status", lambda: {
+        "enabled": True, "state": "unverified", "verified": False,
+        "evidence": "none", "last_tick_at": None,
+        "last_attempted": 0, "last_completed": 0, "last_error": None,
+    })
+
+    async def run():
+        async with database() as sessions:
+            async with sessions() as db:
+                db.add_all([
+                    GeoAsyncJob(tenant_id=1, kind=async_jobs.KIND_ONSITE_PROPOSAL,
+                                status="pending", ref_type="onsite_task", ref_id=1),
+                    GeoAsyncJob(tenant_id=1, kind=async_jobs.KIND_ONSITE_PROPOSAL,
+                                status="running", ref_type="onsite_task", ref_id=2,
+                                started_at=api.datetime(2026, 10, 10, 1, 2, 3)),
+                    GeoAsyncJob(tenant_id=1, kind=async_jobs.KIND_ONSITE_PROPOSAL,
+                                status="failed", ref_type="onsite_task", ref_id=3,
+                                result_meta={"public_state": "unknown", "prompt": "secret"}),
+                    GeoAsyncJob(tenant_id=1, kind=async_jobs.KIND_GENERATE,
+                                status="pending", ref_type="content_task", ref_id=4),
+                ])
+                await db.commit()
+            async with sessions() as db:
+                response = Response()
+                result = await api.onsite_ai_health(response, db, SUPERADMIN)
+                assert response.headers["cache-control"] == "no-store"
+                assert result["schema"] == 1 and result["module"] == "geo"
+                assert result["worker"] == {
+                    "scope": "this_process", "enabled": True,
+                    "state": "unverified", "verified": False, "evidence": "none",
+                    "last_tick_at": None, "last_attempted": 0,
+                    "last_completed": 0, "last_error": None,
+                }
+                assert result["queue"]["queued"] == 1
+                assert result["queue"]["running"] == 1
+                assert result["queue"]["unknown"] == 1
+                assert result["queue"]["oldest_queued_at"]
+                assert result["queue"]["oldest_running_at"] == "2026-10-10T01:02:03"
+                assert "secret" not in str(result)
+                with pytest.raises(HTTPException) as denied:
+                    await api.onsite_ai_health(Response(), db, ADVISOR)
+                assert denied.value.status_code == 403
+
+    asyncio.run(run())
+
+
 def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(monkeypatch):
     calls = []
     advisor_locks = []
@@ -179,7 +289,7 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
             req = api.AiProposal(tenant_id=1, project_id=10,
                 expected_revision=row["workflow"]["revision"], request_id=rid, mode="initial")
             async with sessions() as db:
-                result = await api.ai_proposal(row["id"], req, db, ADVISOR)
+                result = await _ai_proposal(row["id"], req, db, ADVISOR)
             assert result["request_run"]["state"] == "queued"
             assert result["workflow"]["phase"] == "draft"
             job_id = result["request_run"]["job_id"]
@@ -200,7 +310,7 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
             assert result["capabilities"]["website_execution"]["enabled"] is False
             assert not any(key in result["workflow"] for key in ("approval", "implementation", "recheck", "acceptance"))
             async with sessions() as db:
-                same = await api.ai_proposal(row["id"], req, db, ADVISOR)
+                same = await _ai_proposal(row["id"], req, db, ADVISOR)
             assert same["workflow"]["ai_run"]["state"] == "ready"
             assert len(calls) == 1
             sent_facts = json.loads(calls[0][1])["approved_public_facts"]
@@ -252,7 +362,7 @@ def test_ai_proposal_rejects_full_history_before_quota_or_provider_call(monkeypa
                 expected_revision=1, request_id=uuid4(), mode="initial")
             async with sessions() as db:
                 with pytest.raises(HTTPException) as error:
-                    await api.ai_proposal(row["id"], request, db, ADVISOR)
+                    await _ai_proposal(row["id"], request, db, ADVISOR)
                 assert error.value.status_code == 409
             async with sessions() as db:
                 project = await db.get(GeoProject, 10)
@@ -289,7 +399,7 @@ def test_invalid_onsite_model_is_rejected_before_quota_or_provider_call(monkeypa
                 expected_revision=1, request_id=uuid4(), mode="initial")
             async with sessions() as db:
                 with pytest.raises(HTTPException) as error:
-                    await api.ai_proposal(row["id"], request, db, ADVISOR)
+                    await _ai_proposal(row["id"], request, db, ADVISOR)
                 assert error.value.status_code == 409
             async with sessions() as db:
                 project = await db.get(GeoProject, 10)
@@ -331,7 +441,7 @@ def test_missing_facts_stop_before_nonce_quota_or_official_provider_call(monkeyp
                 expected_revision=1, request_id=uuid4(), mode="initial")
             async with sessions() as db:
                 with pytest.raises(HTTPException) as error:
-                    await api.ai_proposal(row["id"], request, db, ADVISOR)
+                    await _ai_proposal(row["id"], request, db, ADVISOR)
                 assert error.value.status_code == 409
                 assert "已核验且获准公开使用" in str(error.value.detail)
             async with sessions() as db:
@@ -372,7 +482,7 @@ def test_same_nonce_concurrency_creates_one_durable_job_and_queued_cancel_is_fre
                                  request_id=rid, mode="initial")
             async def enqueue():
                 async with sessions() as db:
-                    return await api.ai_proposal(row["id"], req, db, ADVISOR)
+                    return await _ai_proposal(row["id"], req, db, ADVISOR)
             results = await asyncio.gather(*(enqueue() for _ in range(5)))
             assert {item["request_run"]["job_id"] for item in results} == {
                 results[0]["request_run"]["job_id"]}
@@ -439,7 +549,7 @@ def test_running_cancel_discards_late_result_without_second_provider_call(monkey
             req = api.AiProposal(tenant_id=1, project_id=10, expected_revision=1,
                                  request_id=rid, mode="initial")
             async with sessions() as db:
-                queued = await api.ai_proposal(row["id"], req, db, ADVISOR)
+                queued = await _ai_proposal(row["id"], req, db, ADVISOR)
             worker = asyncio.create_task(run_owned(sessions, queued["request_run"]["job_id"]))
             await asyncio.wait_for(entered.wait(), 5)
             async with sessions() as db:
@@ -483,7 +593,7 @@ def test_pending_consumer_finishes_lost_http_callback_and_two_ticks_call_once(mo
                     request_id=uuid4(), work_type="startup", owner_name="维护人员"), db, ADVISOR)
             rid = uuid4()
             async with sessions() as db:
-                queued = await api.ai_proposal(row["id"], api.AiProposal(
+                queued = await _ai_proposal(row["id"], api.AiProposal(
                     tenant_id=1, project_id=10, expected_revision=1,
                     request_id=rid, mode="initial"), db, ADVISOR)
             assert queued["request_run"]["state"] == "queued"
@@ -529,7 +639,7 @@ def test_interrupted_running_request_becomes_unknown_and_is_never_requeued(monke
                     request_id=uuid4(), work_type="startup", owner_name="维护人员"), db, ADVISOR)
             rid = uuid4()
             async with sessions() as db:
-                queued = await api.ai_proposal(row["id"], api.AiProposal(
+                queued = await _ai_proposal(row["id"], api.AiProposal(
                     tenant_id=1, project_id=10, expected_revision=1,
                     request_id=rid, mode="initial"), db, ADVISOR)
                 job = await db.get(GeoAsyncJob, queued["request_run"]["job_id"])
@@ -582,7 +692,7 @@ def test_provider_route_change_after_enqueue_stops_before_paid_call(monkeypatch)
                     request_id=uuid4(), work_type="startup", owner_name="维护人员"), db, ADVISOR)
             rid = uuid4()
             async with sessions() as db:
-                queued = await api.ai_proposal(row["id"], api.AiProposal(
+                queued = await _ai_proposal(row["id"], api.AiProposal(
                     tenant_id=1, project_id=10, expected_revision=1,
                     request_id=rid, mode="initial"), db, ADVISOR)
                 job = await db.get(GeoAsyncJob, queued["request_run"]["job_id"])
@@ -651,7 +761,7 @@ def test_ai_proposal_late_result_cannot_overwrite_changed_fact_scope(monkeypatch
             req = api.AiProposal(tenant_id=1, project_id=10,
                 expected_revision=row["workflow"]["revision"], request_id=uuid4(), mode="initial")
             async with sessions() as db:
-                queued = await api.ai_proposal(row["id"], req, db, ADVISOR)
+                queued = await _ai_proposal(row["id"], req, db, ADVISOR)
             result = await run_owned(sessions, queued["request_run"]["job_id"])
             assert result["result_meta"]["public_state"] == "stale"
             async with sessions() as db:
@@ -688,7 +798,7 @@ def test_ai_proposal_late_result_cannot_overwrite_after_role_permission_revoked(
             req = api.AiProposal(tenant_id=1, project_id=10,
                 expected_revision=row["workflow"]["revision"], request_id=uuid4(), mode="initial")
             async with sessions() as db:
-                queued = await api.ai_proposal(row["id"], req, db, ADVISOR)
+                queued = await _ai_proposal(row["id"], req, db, ADVISOR)
             result = await run_owned(sessions, queued["request_run"]["job_id"])
             assert result["result_meta"]["public_state"] == "stale"
             async with sessions() as db:
@@ -728,11 +838,11 @@ def test_ai_error_is_classified_and_same_nonce_never_calls_again(
             req = api.AiProposal(tenant_id=1, project_id=10,
                 expected_revision=1, request_id=uuid4(), mode="initial")
             async with sessions() as db:
-                queued = await api.ai_proposal(row["id"], req, db, ADVISOR)
+                queued = await _ai_proposal(row["id"], req, db, ADVISOR)
             result = await run_owned(sessions, queued["request_run"]["job_id"])
             assert result["result_meta"]["public_state"] == expected_state
             async with sessions() as db:
-                retry = await api.ai_proposal(row["id"], req, db, ADVISOR)
+                retry = await _ai_proposal(row["id"], req, db, ADVISOR)
                 assert retry["workflow"]["ai_run"]["state"] == expected_state
                 assert "sensitive" not in retry["workflow"]["ai_run"]["error"]
                 assert retry["workflow"]["ai_run"]["error_category"] == category
@@ -776,7 +886,7 @@ def test_ai_admission_denial_is_definitive_failed_and_not_unknown(monkeypatch):
                 request_id=request_id, mode="initial",
             )
             async with sessions() as db:
-                queued = await api.ai_proposal(row["id"], request, db, ADVISOR)
+                queued = await _ai_proposal(row["id"], request, db, ADVISOR)
             result = await run_owned(sessions, queued["request_run"]["job_id"])
             assert result["result_meta"]["public_state"] == "failed"
             async with sessions() as db:
@@ -826,7 +936,7 @@ def test_ai_metering_failure_uses_explicit_provider_attempt_marker(
                 ), db, ADVISOR)
             request_id = uuid4()
             async with sessions() as db:
-                queued = await api.ai_proposal(row["id"], api.AiProposal(
+                queued = await _ai_proposal(row["id"], api.AiProposal(
                     tenant_id=1, project_id=10, expected_revision=1,
                     request_id=request_id, mode="initial",
                 ), db, ADVISOR)

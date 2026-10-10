@@ -4,6 +4,8 @@
 
 `POST /api/v1/geo/workbench/onsite-tasks/{task_id}/ai-proposal`
 
+- 必须携带 `X-Snipers-Onsite-Protocol: durable-v1`。缺失或其他值在入队、额度预留和供应商调用前返回
+  HTTP `409` 与 `code=onsite_client_upgrade_required`，客户端应刷新工作台。
 - 新请求持久化成功后返回 HTTP `202`。
 - 响应保留现有 public task 顶层结构，并增加 `request_run`。
 - 相同 `request_id` 与相同参数是幂等请求；已终止时返回 HTTP `200`。
@@ -38,3 +40,14 @@
 `POST /api/v1/geo/workbench/onsite-tasks/{task_id}/ai-requests/{request_id}/cancel?tenant_id={tenant_id}&project_id={project_id}`
 
 只有当前有效项目顾问且是请求发起人才能取消。排队任务立即取消；运行中任务记录取消请求，供应商返回后丢弃结果。
+
+## 健康与队列
+
+`GET /api/v1/geo/workbench/onsite-ai/health`
+
+仅全局超级管理员可读，返回 `schema=1`、`module=geo`、`observed_at`、`worker`和 `queue`。
+
+- `worker.scope=this_process`。只有本进程真实成功 tick 才是 `active/verified`；启动但尚无 tick 是
+  `unverified`，不代表整个服务健康。
+- `queue` 是 `geo_async_jobs` 中站内 AI 作业的单次只读聚合：`queued`、`running`、`unknown`
+  数量以及最早排队/运行时间。该接口不恢复任务、不调用供应商，也不返回客户正文、prompt 或密钥。
