@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "tests/fixtures/seo_onsite_ai_observed.json",
     "app/api/seo_onsite_ai.py",
     "app/seo_onsite_ai.py",
     "tests/test_seo_onsite_ai.py",
