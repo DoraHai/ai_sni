@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 import httpx
 from app.api_metering import MeterScope, scope, metered_request
+from app.api_connection_config import managed_runtime
 from app.config import get_settings
 from app.seo_backlinks import belongs_to_site
 from app.seo_serp import canonical_url
@@ -148,6 +149,7 @@ def classify_index_response(body):
     return 'succeeded' if isinstance(records, list) and len(records) <= 100 else 'unknown'
 
 
+@managed_runtime('seo')
 async def fetch_index_candidates(domain):
     if not index_status()["configured"]:
         raise ValueError("外链索引服务未启用或未配置凭据")

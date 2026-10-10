@@ -266,6 +266,7 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://seo_workflow_tester:ci-review-only@127.0.0.1:55432/seo_workflow_test
           SEO_USAGE_TEST_DATABASE_URL: postgresql+asyncpg://seo_workflow_tester:ci-review-only@127.0.0.1:55432/seo_workflow_test
+          PLATFORM_CONSOLE_TEST_DATABASE_URL: postgresql+asyncpg://seo_workflow_tester:ci-review-only@127.0.0.1:55432/seo_workflow_test
           BAIDU_APP_ID: ci-dummy
           BAIDU_SECRET_KEY: 1234567890abcdef
           BAIDU_DEFAULT_USERNAME: ci-dummy
@@ -281,7 +282,7 @@ jobs:
           PYTHONPATH: .
           TZ: UTC
         run: |
-          python -m pytest -q tests/test_seo_review_guards_postgres.py --junitxml="$RUNNER_TEMP/seo-review-guards.xml"
+          python -m pytest -q tests/test_seo_review_guards_postgres.py tests/test_api_connection_config.py --junitxml="$RUNNER_TEMP/seo-review-guards.xml"
           python - <<'PY'
           import os
           from pathlib import Path

@@ -251,5 +251,14 @@ class Settings(BaseSettings):
 
 
 @lru_cache
-def get_settings() -> Settings:
+def get_server_settings() -> Settings:
     return Settings()
+
+
+def get_settings() -> Settings:
+    from app.api_connection_config import current_settings
+    return current_settings.get() or get_server_settings()
+
+
+get_settings.cache_clear = get_server_settings.cache_clear
+get_settings.cache_info = get_server_settings.cache_info

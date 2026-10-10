@@ -17,6 +17,7 @@ import httpx
 
 from app.api_metering import metered_request
 
+from app.api_connection_config import managed_runtime
 from app.config import get_settings
 
 
@@ -329,6 +330,7 @@ def parse_top50_response(payload: Any) -> dict[str, Any]:
     }
 
 
+@managed_runtime('seo')
 async def fetch_baidu_top50(
     keyword: str,
     device: str,
@@ -441,6 +443,7 @@ async def fetch_baidu_top50(
         return result
 
 
+@managed_runtime('seo')
 async def fetch_baidu_top50_batch(
     requests: list[tuple[str, str]],
 ) -> list[tuple[dict[str, Any] | None, SerpProviderError | None]]:
@@ -677,6 +680,7 @@ def chinaz_rank_status() -> dict[str, dict[str, Any]]:
     return result
 
 
+@managed_runtime('seo')
 async def fetch_chinaz_domestic_rank_batch(
     engine: str,
     domain: str,
@@ -871,6 +875,7 @@ def parse_dataforseo_response(payload: Any) -> dict[str, Any]:
     }
 
 
+@managed_runtime('seo')
 async def fetch_dataforseo_serp(
     engine: str,
     keyword: str,
@@ -993,6 +998,7 @@ async def fetch_dataforseo_serp(
     raise AssertionError("unreachable")
 
 
+@managed_runtime('seo')
 async def fetch_dataforseo_serp_batch(
     engine: str,
     requests: list[tuple[str, str]],

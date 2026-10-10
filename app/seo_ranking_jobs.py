@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, select
 
+from app.api_connection_config import managed_runtime
 from app.config import get_settings, parse_seo_rank_engine_intervals
 from app.database import async_session_factory
 from app.models.seo import SeoKeywordAsset, SeoMetricSnapshot, SeoRankSnapshot
@@ -319,6 +320,7 @@ def _local_day_start_utc(now: datetime | None = None) -> datetime:
     return local_start.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+@managed_runtime('seo')
 async def collect_daily_seo_rankings() -> None:
     """Collect due desktop/mobile rankings within configured per-engine cadence."""
     settings = get_settings()
