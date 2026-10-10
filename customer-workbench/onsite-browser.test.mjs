@@ -41,7 +41,7 @@ for(const module of ['seo','geo']){
      if(url.pathname.endsWith('/ai-proposal')){
       assert.match(body.request_id,/^[a-f0-9-]{36}$/);assert.equal(body.mode,row.workflow.phase==='draft'?'initial':'revise');
       row.workflow.ai_run={request_id:body.request_id,state:'queued'};
-      row.allowed_actions=['cancel'];row.capabilities.ai_planning.can_generate=false;return respond(row,202);
+      row.allowed_actions=module==='geo'?[]:['cancel'];row.capabilities.ai_planning.can_generate=false;return respond(row,202);
      }
      if(body.action==='save_proposal'){row.workflow.items=body.items;row.workflow.phase='review';}
      const phases={approve:'implementation',implement:'recheck',recheck:'acceptance',accept:'done'};
