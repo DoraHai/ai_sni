@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.geo import onsite_jobs
+from app.geo import onsite_jobs, onsite_routes
 
 
 class _Session:
@@ -67,3 +67,32 @@ def test_supervisor_keeps_failed_tick_degraded_until_success_and_stops_on_cancel
         assert onsite_jobs.pending_worker_status()["state"] == "stopped"
 
     asyncio.run(check())
+
+
+def test_public_request_run_allows_only_fixed_diagnostics_and_states():
+    job = SimpleNamespace(
+        id=9, ref_id=14, status="failed", created_at=None, started_at=None,
+        finished_at=None, request_meta={"request_id": "request-1"},
+        result_meta={
+            "public_state": "secret-upstream-state", "message": "safe public message",
+            "error_category": "secret-upstream-category",
+            "error_code": "sk-secret-shaped-provider-code", "http_status": True,
+        },
+    )
+    unsafe = onsite_routes._request_run(job)
+    assert unsafe["state"] == "failed"
+    assert unsafe["error_category"] is None
+    assert unsafe["error_code"] is None
+    assert unsafe["http_status"] is None
+    assert "secret-shaped" not in str(unsafe)
+
+    job.result_meta = {
+        "public_state": "failed", "message": "safe public message",
+        "error_category": "admission_denied",
+        "error_code": "api_concurrency_limit", "http_status": 429,
+    }
+    safe = onsite_routes._request_run(job)
+    assert safe["state"] == "failed"
+    assert safe["error_category"] == "admission_denied"
+    assert safe["error_code"] == "api_concurrency_limit"
+    assert safe["http_status"] == 429

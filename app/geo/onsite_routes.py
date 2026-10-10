@@ -28,6 +28,20 @@ router = APIRouter()
 PREFIX = "onsite:v1:"
 MAX_PUBLIC_FACTS = 30
 MAX_PRIORITY_QUESTIONS = 50
+_PUBLIC_RUN_STATES = frozenset({
+    "queued", "running", "ready", "failed", "unknown", "stale", "cancelled",
+})
+_PUBLIC_ERROR_CATEGORIES = frozenset({
+    "pre_execution", "admission_denied", "admission_unavailable",
+    "metering_finalize_unknown", "authentication", "rate_limit",
+    "invalid_request", "provider_unavailable", "model_not_found", "timeout",
+    "network", "invalid_response", "unknown", "result_validation",
+    "save_unknown", "interrupted", "queue_timeout",
+})
+_PUBLIC_ERROR_CODES = frozenset({
+    "api_concurrency_limit", "api_budget_exhausted", "api_charge_unresolved",
+    "api_provider_disabled", "api_budget_quote_unavailable", "model_not_found",
+})
 
 class Create(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -296,17 +310,23 @@ def _request_run(job: GeoAsyncJob, value: dict | None = None, *, can_cancel: boo
     run = dict((value or {}).get("ai_run") or {})
     current = run.get("request_id") == meta.get("request_id") and int(run.get("job_id") or 0) == int(job.id)
     terminal = job.status in {"succeeded", "failed", "cancelled"}
-    state = result.get("public_state") if terminal else (run.get("state") if current else None)
+    raw_state = result.get("public_state") if terminal else (run.get("state") if current else None)
     error = result.get("message") if terminal else (run.get("error") if current else None)
     diagnostics = result if terminal else (run if current else {})
-    state = state or {"pending":"queued", "running":"running", "succeeded":"ready",
-                      "cancelled":"cancelled", "failed":"failed"}.get(job.status, "failed")
+    state = raw_state if raw_state in _PUBLIC_RUN_STATES else {
+        "pending":"queued", "running":"running", "succeeded":"ready",
+        "cancelled":"cancelled", "failed":"failed",
+    }.get(job.status, "failed")
+    category = diagnostics.get("error_category")
+    code = diagnostics.get("error_code")
+    status = diagnostics.get("http_status")
     return {"request_id": str(meta.get("request_id") or ""), "job_id": int(job.id),
         "state": state, "cancel_requested": bool(meta.get("cancel_requested")),
         "can_cancel": bool(can_cancel and state in {"queued", "running"}), "error": error,
-        "error_category": diagnostics.get("error_category"),
-        "error_code": diagnostics.get("error_code"),
-        "http_status": diagnostics.get("http_status"),
+        "error_category": category if category in _PUBLIC_ERROR_CATEGORIES else None,
+        "error_code": code if code in _PUBLIC_ERROR_CODES else None,
+        "http_status": status if isinstance(status, int) and not isinstance(status, bool)
+        and 100 <= status <= 599 else None,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
