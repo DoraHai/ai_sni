@@ -25,7 +25,9 @@ SERVICE_MODULE = 'unknown'
 
 
 class ControlDenied(RuntimeError):
-    pass
+    def __init__(self, message, *, code=None, target=None):
+        super().__init__(message)
+        self.code, self.target = code, target
 
 
 class ControlConflict(RuntimeError):
@@ -72,7 +74,7 @@ def validate_value(kind, value):
         return value
     if kind == 'budget':
         allowed = {'daily_calls', 'monthly_calls', 'daily_cny', 'monthly_cny', 'warning_percent'}
-        if set(value) != allowed:
+        if not allowed <= set(value) or set(value) - allowed - {'max_concurrent'}:
             raise ValueError('预算字段不完整')
         result = {}
         for name in allowed:
@@ -87,6 +89,10 @@ def validate_value(kind, value):
                 if number is not None and (type(number) is not int or not 0 <= number <= 10**9):
                     raise ValueError('请求上限必须是非负整数')
                 result[name] = number
+        cap = value.get('max_concurrent')
+        if cap is not None and (type(cap) is not int or not 0 <= cap <= 10000):
+            raise ValueError('并发上限必须是 0 至 10000 的整数')
+        result['max_concurrent'] = cap
         return result
     if kind == 'rate':
         unit = value.get('unit')
@@ -112,8 +118,9 @@ def validate_value(kind, value):
 
 async def usage(session, target):
     # Identifiers are selected from this fixed list, never interpolated input.
-    column = 'tenant_id' if target.startswith('tenant:') else 'user_id' if target.startswith('user:') else None
-    tid = int(target.split(':')[1]) if column else None
+    provider_scope = target.startswith('provider:')
+    column = 'tenant_id' if target.startswith('tenant:') else 'user_id' if target.startswith('user:') else "split_part(endpoint,'/',1)" if provider_scope else None
+    tid = target[9:] if provider_scope else int(target.split(':')[1]) if column else None
     # Match INSERT's transaction timestamp even if waiting for the admission
     # lock crosses local midnight/month end. The host clock cannot move a hold
     # into a different budget period from the one used to authorize it.
@@ -124,20 +131,33 @@ async def usage(session, target):
         count(*) FILTER (WHERE started_at >= :day) AS daily_calls,
         coalesce(sum(coalesce(estimated_amount,reserved_amount)),0) AS monthly_cny,
         coalesce(sum(coalesce(estimated_amount,reserved_amount)) FILTER (WHERE started_at >= :day),0) AS daily_cny,
-        count(*) FILTER (WHERE estimated_amount IS NULL AND reserved_amount IS NULL) AS monthly_unknown,
-        count(*) FILTER (WHERE started_at >= :day AND estimated_amount IS NULL AND reserved_amount IS NULL) AS daily_unknown
+        count(*) FILTER (WHERE estimated_amount IS NULL AND (state <> 'requested' OR reserved_amount IS NULL)) AS monthly_unknown,
+        count(*) FILTER (WHERE started_at >= :day AND estimated_amount IS NULL AND (state <> 'requested' OR reserved_amount IS NULL)) AS daily_unknown
         FROM api_usage_events WHERE started_at >= :month {where}'''),
         {'day': day, 'month': month, 'target': tid})).mappings().one()
-    return {k: str(v) if isinstance(v, Decimal) else int(v) for k, v in row.items()}
+    result = {k: str(v) if isinstance(v, Decimal) else int(v) for k, v in row.items()}
+    # A calendar reset must not release an interrupted attempt or erase an
+    # unresolved charge. No timeout or worker PID is proof of a free request.
+    outstanding = (await session.execute(text(f'''SELECT
+        count(*) FILTER (WHERE state='requested') AS active_calls,
+        count(*) FILTER (WHERE estimated_amount IS NULL AND
+            (state <> 'requested' OR reserved_amount IS NULL OR started_at < :month)) AS unresolved_calls
+        FROM api_usage_events WHERE (state='requested' OR estimated_amount IS NULL) {where}'''),
+        {'month': month, 'target': tid})).mappings().one()
+    result.update({k: int(v) for k, v in outstanding.items()})
+    return result
 
 
 def budget_status(policy, spent):
+    cap = policy.get('max_concurrent')
+    if cap is not None and spent.get('active_calls', 0) >= cap:
+        return 'blocked'
     state = 'normal'
     for field in ('daily_calls', 'monthly_calls', 'daily_cny', 'monthly_cny'):
         cap = policy.get(field)
         if cap is None:
             continue
-        unknown = field.endswith('cny') and spent[field.split('_')[0] + '_unknown']
+        unknown = field.endswith('cny') and (spent[field.split('_')[0] + '_unknown'] or spent.get('unresolved_calls', 0))
         if unknown:
             return 'unknown'
         used = Decimal(str(spent[field]))
@@ -209,9 +229,9 @@ async def admit(params, url, api_key, quote, kwargs):
             settings = {r['key']: r['value'] for r in (await session.execute(text(
                 'SELECT key,value FROM api_control_settings'))).mappings()}
             if settings.get('provider:' + host, {}).get('enabled') is False:
-                raise ControlDenied('该服务商 API 已被超级管理员停用')
+                raise ControlDenied('该服务商 API 已被超级管理员停用', code='api_provider_disabled', target='provider:' + host)
             quote = settings.get('rate:' + host + ':' + model, quote)
-            selected = ['global']
+            selected = ['global', 'provider:' + host]
             if params['tenant_id'] is not None:
                 selected.append('tenant:' + str(params['tenant_id']))
             if params['user_id'] is not None:
@@ -220,18 +240,27 @@ async def admit(params, url, api_key, quote, kwargs):
             monetary = any(any(p.get(f) is not None for f in ('daily_cny', 'monthly_cny')) for _, p in policies)
             hold = None
             if monetary:
-                hold, kwargs = reservation(quote, kwargs)
+                try:
+                    hold, kwargs = reservation(quote, kwargs)
+                except ControlDenied as exc:
+                    raise ControlDenied(str(exc), code='api_budget_quote_unavailable',
+                        target=','.join(t for t, p in policies if any(p.get(f) is not None for f in ('daily_cny', 'monthly_cny')))) from None
             for target, policy in policies:
                 spent = await usage(session, target)
+                cap = policy.get('max_concurrent')
+                if cap is not None and spent['active_calls'] >= cap:
+                    raise ControlDenied(f'API 并发上限已达到（{target}），请等待当前请求完成；长期未结束的调用需由超管核查台账',
+                                        code='api_concurrency_limit', target=target)
                 for field in ('daily_calls', 'monthly_calls', 'daily_cny', 'monthly_cny'):
                     cap = policy.get(field)
                     if cap is None:
                         continue
-                    if field.endswith('_cny') and spent[field.split('_')[0] + '_unknown']:
-                        raise ControlDenied('已有无法确定费用的调用，金额预算暂停新请求')
+                    if field.endswith('_cny') and (spent[field.split('_')[0] + '_unknown'] or spent['unresolved_calls']):
+                        raise ControlDenied(f'已有无法确定费用的调用（{target}），金额预算暂停新请求，需由超管核对供应商账单',
+                                            code='api_charge_unresolved', target=target)
                     increment = hold if field.endswith('_cny') else 1
                     if Decimal(str(spent[field])) + increment > Decimal(str(cap)):
-                        raise ControlDenied('API 预算额度不足，新请求已暂停')
+                        raise ControlDenied(f'API 预算额度不足（{target}），新请求已暂停', code='api_budget_exhausted', target=target)
             reference = credential_ref(api_key)
             replacement = await session.scalar(text('SELECT ciphertext FROM api_control_credentials WHERE id=:id'),
                                                {'id': binding_id(host, reference)}) if api_key else None
@@ -313,9 +342,15 @@ async def register_runtime(module):
 
 
 async def read_controls(session):
-    present = await session.scalar(text("SELECT to_regclass(current_schema() || '.api_control_settings') IS NOT NULL"))
+    present = await session.scalar(text("""SELECT
+        to_regclass(current_schema() || '.api_control_settings') IS NOT NULL AND
+        to_regclass(current_schema() || '.api_control_bindings') IS NOT NULL AND
+        to_regclass(current_schema() || '.api_control_credentials') IS NOT NULL AND
+        to_regclass(current_schema() || '.api_control_audit') IS NOT NULL AND
+        EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
+            AND table_name='api_usage_events' AND column_name='reserved_amount')"""))
     from app.api_connection_config import public_connections
-    result = {'state': 'schema_pending', 'settings': [], 'bindings': [], 'credentials': [], 'audit': [], 'budgets': [], 'connections':public_connections([],[]), 'module_status': []}
+    result = {'state': 'schema_pending', 'capabilities': ['budget_concurrency_v1', 'provider_budget_v1'], 'settings': [], 'bindings': [], 'credentials': [], 'audit': [], 'budgets': [], 'connections':public_connections([],[]), 'module_status': []}
     if not present:
         return result
     result['state'] = 'enabled' if enabled() else 'ready'
@@ -364,11 +399,17 @@ async def mutate(session, *, actor_id, request_id, kind, key, expected_revision,
     else:
         value = validate_value(kind, value)
         if kind == 'budget':
-            match = re.fullmatch(r'budget:(global|tenant:[1-9][0-9]*|user:[1-9][0-9]*)', key)
+            match = re.fullmatch(r'budget:(global|tenant:[1-9][0-9]*|user:[1-9][0-9]*|provider:[a-z0-9.-]{1,200})', key)
             if not match:
                 raise ValueError('预算范围无效')
             target = match[1]
-            if target != 'global':
+            if target.startswith('provider:'):
+                from app.api_metering import DEFAULT_RATES
+                host = target[9:]
+                known = await session.scalar(text('SELECT EXISTS(SELECT 1 FROM api_control_bindings WHERE host=:host)'), {'host': host})
+                if not known and host not in {r['host'] for r in DEFAULT_RATES}:
+                    raise ValueError('此服务商未在系统配置中登记')
+            elif target != 'global':
                 table = 'tenants' if target.startswith('tenant:') else 'users'
                 if not await session.scalar(text(f'SELECT EXISTS(SELECT 1 FROM {table} WHERE id=:id)'), {'id': int(target.split(':')[1])}):
                     raise ValueError('客户或账号不存在')
