@@ -152,7 +152,8 @@ def test_optional_response_format_is_generated_from_the_strict_validator_contrac
     assert item_schema["properties"]["id"]["enum"] == [
         "structured_content", "knowledge", "faq"]
     fact_ids = item_schema["properties"]["fact_ids"]
-    assert fact_ids["items"]["enum"] == [8] and fact_ids["uniqueItems"] is True
+    assert fact_ids["items"]["enum"] == [8]
+    assert "uniqueItems" not in fact_ids
     assert schema["properties"]["items"]["minItems"] == 3
     assert schema["properties"]["items"]["maxItems"] == 3
 

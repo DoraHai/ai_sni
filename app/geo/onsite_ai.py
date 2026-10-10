@@ -80,7 +80,6 @@ def provider_response_format(snapshot: dict[str, Any]) -> dict[str, Any]:
     if visible_ids:
         item_schema["properties"]["id"] = {"type": "string", "enum": visible_ids}
     fact_array = item_schema["properties"]["fact_ids"]
-    fact_array["uniqueItems"] = True
     if fact_ids:
         fact_array["items"] = {"type": "integer", "enum": fact_ids}
     else:
