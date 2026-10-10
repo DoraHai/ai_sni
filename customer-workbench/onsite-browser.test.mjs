@@ -67,6 +67,17 @@ for(const module of ['seo','geo']){
    }
    assert.deepEqual(writes.map(w=>w.mode?'ai-proposal':w.action),['ai-proposal','save_proposal','ai-proposal','approve','implement','recheck','accept']);
    assert.equal(await p.$('[data-action=onsite-accept]'),null);
+   if(module==='seo'){
+    await p.waitForFunction(()=>!document.querySelector('.navigation [data-page="首页"]').disabled);
+    await p.click('.navigation [data-page="首页"]');
+   }else{
+    await p.waitForFunction(()=>!document.querySelector('[data-action=onsite-latest]').disabled);
+    await p.click('[data-action=onsite-latest]');
+   }
+   try{await p.waitForSelector('.customer-onsite-summary .customer-onsite-task',{timeout:10000});}
+   catch(e){throw Error('Summary failed: '+await p.$eval('body',el=>el.textContent.slice(0,4500)),{cause:e});}
+   assert.match(await p.$eval('.customer-onsite-task',el=>el.textContent),/已通过人工验收/);
+   assert.match(await p.$eval('.customer-onsite-task a',el=>el.getAttribute('href')),/onsite_task_id=77/);
    await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
    assert.deepEqual(errors,[]);
   }finally{await browser.close();await f.close();}

@@ -2,13 +2,16 @@ import {createAdvisorClient} from './advisor-client.mjs';
 import {escapeText as esc} from './customer-display.mjs';
 import {workbenchPath,geoWorkbenchPath} from './workbench-entry.mjs';
 const phases={draft:'待制定方案',review:'待人工审核',implementation:'待网站实施',recheck:'待页面复检',acceptance:'待人工验收',done:'已验收',cancelled:'已取消'};
+const nextActions={save_proposal:'顾问完善并提交当前方案',approve:'人工核实事实并审核当前方案',implement:'网站维护人员实施已审核方案',recheck:'发起真实页面复检',accept:'人工核对质量并最终验收'};
+const nextLabel=t=>nextActions[t.next_action]||t.next_action||(['done','cancelled'].includes(t.workflow.phase)?'任务已结束，核对后续效果与安排':'接口未提供，请进入任务核对');
+const blockerLabel=t=>typeof t.blocker==='string'?t.blocker:t.blocker?.message||'接口未提供阻塞说明';
 export function advisorTaskPath(row){
   return (row.module==='geo'?geoWorkbenchPath(row.tenant_id,row.scope_id):workbenchPath(row.tenant_id,row.scope_id))+'&'+new URLSearchParams({onsite_task_id:row.id});
 }
 export function advisorPageView(module,page){
   return Object.entries(phases).map(([phase,label])=>{
     const rows=page.items.filter(t=>t.workflow.phase===phase);if(!rows.length)return '';
-    return `<section class="advisor-group"><h3>${label} · 本页 ${rows.length} 项</h3>${rows.map(t=>`<article class="advisor-task"><h4>${esc(t.title||'站内任务')} #${t.id}</h4><p>${module.toUpperCase()} · ${esc(t.tenant_name||'客户 #'+t.tenant_id)} / ${esc(t.scope_name||(module==='geo'?'项目 #':'网站 #')+t.scope_id)}</p><p>月份：${esc(t.workflow.month||'不适用')} · 实施负责人：${esc(t.workflow.owner_name||'尚未指定')} · 服务端版本 v${t.workflow.revision}</p><p>下一步人工动作：${esc(t.next_action||'接口未提供，请进入任务核对')}</p><p>阻塞原因：${esc(t.blocker||'接口未提供阻塞说明')}</p>${phase==='review'?'<strong>方案待人工审核，请核实事实与适用范围。</strong>':''}${t.workflow.ai_proposal?`<p>AI 提案已提供，需人工核实：${esc(t.workflow.ai_proposal.summary||'进入原任务查看提案依据')}</p><p>需补充资料：${esc(Array.isArray(t.workflow.ai_proposal.missing_information)?t.workflow.ai_proposal.missing_information.join('；'):t.workflow.ai_proposal.missing_information||'接口未提供')}</p>`:''}<p><a href="${esc(advisorTaskPath(t))}">进入原模块方案与验收</a></p></article>`).join('')}</section>`;
+    return `<section class="advisor-group"><h3>${label} · 本页 ${rows.length} 项</h3>${rows.map(t=>`<article class="advisor-task"><h4>${esc(t.title||'站内任务')} #${t.id}</h4><p>${module.toUpperCase()} · ${esc(t.tenant_name||'客户 #'+t.tenant_id)} / ${esc(t.scope_name||(module==='geo'?'项目 #':'网站 #')+t.scope_id)}</p><p>月份：${esc(t.workflow.month||'不适用')} · 实施负责人：${esc(t.workflow.owner_name||'尚未指定')} · 服务端版本 v${t.workflow.revision}</p><p>下一步人工动作：${esc(nextLabel(t))}</p><p>阻塞原因：${esc(blockerLabel(t))}</p>${phase==='review'?'<strong>方案待人工审核，请核实事实与适用范围。</strong>':''}${t.workflow.ai_proposal?`<p>AI 提案已提供，需人工核实：${esc(t.workflow.ai_proposal.summary||'进入原任务查看提案依据')}</p><p>需补充资料：${esc(Array.isArray(t.workflow.ai_proposal.missing_information)?t.workflow.ai_proposal.missing_information.join('；'):t.workflow.ai_proposal.missing_information||'接口未提供')}</p>`:''}<p><a href="${esc(advisorTaskPath(t))}">进入原模块方案与验收</a></p></article>`).join('')}</section>`;
   }).join('')||'<p>当前页没有获分配的站内任务。</p>';
 }
 export function mountAdvisorWorkbench({root,session,subscribeSession,fetchImpl=fetch,browser=window}){

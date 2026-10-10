@@ -12,7 +12,7 @@ export function onsiteTaskStatus(task){
 export const onsiteProposalMode=task=>task?.workflow?.phase==='draft'?'initial':'revise';
 function aiProposalView(w){
   const p=w.ai_proposal;if(!p)return '';
-  const refs=values=>(Array.isArray(values)?values:[]).map(v=>typeof v==='string'||typeof v==='number'?String(v):v?.label||v?.id||'已授权资料').join('、');
+  const refs=values=>(Array.isArray(values)?values:[]).map(v=>typeof v==='string'||typeof v==='number'?String(v):v?.label||v?.title||v?.source_id||v?.id||'已授权资料').join('、');
   return `<details><summary>AI 提案理由与待补资料</summary>${Number.isInteger(p.proposal_revision)?`<p>提案来源方案 v${p.proposal_revision} · 当前任务 v${w.revision}，请按当前方案核对依据。</p>`:''}${p.summary?`<p>${esc(p.summary)}</p>`:''}${(Array.isArray(p.items)?p.items:[]).map(i=>`<p>清单 ${esc(i.id)}：${esc(i.reason||'请顾问核对依据')}${i.source_refs?.length?` · 来源：${esc(refs(i.source_refs))}`:''}${i.missing_information?.length?` · 待补：${esc(refs(i.missing_information))}`:''}</p>`).join('')}${p.missing_information?.length?`<p>本轮待补资料：${esc(refs(p.missing_information))}</p>`:''}</details>`;
 }
 const button=(text,action,disabled=false,extra='')=>`<button data-action="onsite-${action}" ${disabled?'disabled':''} ${extra}>${esc(text)}</button>`;

@@ -67,6 +67,12 @@ jobs:
         env:
           EDGE_BINARY: /usr/bin/google-chrome
         run: npm --prefix customer-workbench run test:onsite
+      - name: Verify advisor console and login return paths
+        env:
+          EDGE_BINARY: /usr/bin/google-chrome
+        run: |
+          npm --prefix customer-workbench run test:advisor
+          node --test customer-workbench/ui17-entry.test.mjs customer-workbench/ui15-entry.test.mjs
       - name: Build the exact clean source
         run: node ops/customer-workbench/package-release.mjs "$RELEASE_SHA" "$RUNNER_TEMP/customer-workbench-release"
       - uses: actions/upload-artifact@v4
