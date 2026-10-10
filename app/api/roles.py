@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_session
 from app.models import Role, User
 from app.permissions import MENUS, normalize_permissions
-from app.security.auth import require_admin
+from app.security.auth import AuthContext, require_admin
+from app.platform_operations import audit_business
 
 router = APIRouter(
     prefix="/api/v1/roles",
@@ -20,6 +21,10 @@ router = APIRouter(
 )
 
 ADMIN_ROLE = "管理员"
+
+
+def _audit_state(role):
+    return {key: getattr(role, key) for key in ('id', 'name', 'description', 'permissions', 'is_system')}
 
 
 def _payload(r: Role, user_counts: dict[int, int]) -> dict:
@@ -55,7 +60,8 @@ class RoleRequest(BaseModel):
 
 
 @router.post("")
-async def create_role(req: RoleRequest, session: AsyncSession = Depends(get_session)) -> dict:
+async def create_role(req: RoleRequest, session: AsyncSession = Depends(get_session),
+                      ctx: AuthContext = Depends(require_admin)) -> dict:
     name = req.name.strip()
     if await session.scalar(select(Role).where(Role.name == name)):
         raise HTTPException(409, "角色名已存在")
@@ -66,6 +72,8 @@ async def create_role(req: RoleRequest, session: AsyncSession = Depends(get_sess
         is_system=False,
     )
     session.add(role)
+    await session.flush()
+    await audit_business(session, ctx, 'role:' + str(role.id), 'role.create', None, _audit_state(role))
     await session.commit()
     await session.refresh(role)
     return {"status": "ok", "id": role.id}
@@ -79,11 +87,13 @@ class UpdateRoleRequest(BaseModel):
 
 @router.patch("/{role_id}")
 async def update_role(
-    role_id: int, req: UpdateRoleRequest, session: AsyncSession = Depends(get_session)
+    role_id: int, req: UpdateRoleRequest, session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_admin),
 ) -> dict:
-    role = await session.get(Role, role_id)
+    role = await session.get(Role, role_id, with_for_update=True)
     if role is None:
         raise HTTPException(404, "角色不存在")
+    before = _audit_state(role)
     if req.name is not None and req.name.strip() != role.name:
         if role.is_system:
             raise HTTPException(400, "内置角色不可改名")
@@ -98,13 +108,15 @@ async def update_role(
         if role.name == ADMIN_ROLE and perms.get("settings.accounts") != "edit":
             raise HTTPException(400, "「管理员」角色必须保留账号与权限的编辑权")
         role.permissions = perms
+    await audit_business(session, ctx, 'role:' + str(role.id), 'role.update', before, _audit_state(role))
     await session.commit()
     return {"status": "ok"}
 
 
 @router.delete("/{role_id}")
-async def delete_role(role_id: int, session: AsyncSession = Depends(get_session)) -> dict:
-    role = await session.get(Role, role_id)
+async def delete_role(role_id: int, session: AsyncSession = Depends(get_session),
+                      ctx: AuthContext = Depends(require_admin)) -> dict:
+    role = await session.get(Role, role_id, with_for_update=True)
     if role is None:
         raise HTTPException(404, "角色不存在")
     if role.is_system:
@@ -114,6 +126,7 @@ async def delete_role(role_id: int, session: AsyncSession = Depends(get_session)
     )
     if n:
         raise HTTPException(400, f"该角色下还有 {n} 个账号，请先改派后再删除")
+    await audit_business(session, ctx, 'role:' + str(role.id), 'role.delete', _audit_state(role), {'deleted': True})
     await session.delete(role)
     await session.commit()
     return {"status": "ok"}
