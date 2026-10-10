@@ -154,7 +154,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     assert.match(await p.$eval('.pc-right',e=>e.textContent),/清空后新发生的异常/);
     assert.match(await p.$eval('.pc-content',e=>e.textContent),/清空后新发生的异常/);
     snapshot.alerts=previousAlerts;snapshot.generated_at=previousTime;
-    snapshot.controls={state:'enabled',settings:[],budgets:[],audit:[],credentials:[],default_rates:[{host:'dashscope.aliyuncs.com',model:'deepseek-v4-flash',input:'1',output:'2',max_input:1000000,source:'approved price'}],
+    snapshot.controls={state:'enabled',capabilities:['budget_concurrency_v1','provider_budget_v1'],settings:[],budgets:[],audit:[],credentials:[],default_rates:[{host:'dashscope.aliyuncs.com',model:'deepseek-v4-flash',input:'1',output:'2',max_input:1000000,source:'approved price'}],
       connections:[{id:'seo.deepseek',module:'seo',label:'DeepSeek 官方',registered:true,supported:true,source:'server',revision:0,
         parameters:{enabled:true,model:'deepseek-chat',base_url:'https://api.deepseek.com/v1'},secret_status:{api_key:false},
         fields:[{name:'enabled',type:'boolean',label:'平台默认配置启用'},{name:'model',type:'model',label:'默认模型'},{name:'base_url',type:'url',label:'接口地址'}],
@@ -165,7 +165,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     await p.click('.pc-sidebar [data-pc-page=apis]');assert.match(await body(),/meter-request/);assert.doesNotMatch(await body(),/request-1/);assert.match(await body(),/站长之家/);assert.match(await body(),/keyword_360mobile/);assert.match(await body(),/308/);
     await p.select('#pc-usage-query [name=tenant_id]','1');await p.click('#pc-usage-query button');
     await p.waitForFunction(()=>document.body.textContent.includes('history-first'));
-    assert.equal(usageQueries[0].tenant_id,'1');assert.match(await body(),/未定价 1 条/);
+    assert.equal(usageQueries[0].tenant_id,'1');assert.match(await body(),/费用未知 1 条/);
     await p.click('[data-pc=usage-next]');await p.waitForFunction(()=>document.body.textContent.includes('history-second'));
     assert.equal(usageQueries[1].cursor,'fixture-next-page');assert.match(await body(),/第 2 页/);
     await p.click('[data-pc=usage-prev]');await p.waitForFunction(()=>document.body.textContent.includes('history-first'));
@@ -175,6 +175,8 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     assert.equal(exports,1);
     snapshot.operations={state:'enabled',provider_health:[{module:'seo',provider:'chinaz',calls:10,failed:3,last_failure:'2026-10-10T01:00:00Z'}],suppliers:[],
       backup:{state:'available',note:'数据库备份与恢复验证分别记录。',records:[{completed_at:'2026-10-10T01:00:00Z',state:'succeeded',archive_verified:true,restore_verified:false}]}};
+    snapshot.operations.call_monitor={state:'recording',summary:{calls:10,success_percent:66.7,average_latency_ms:25,p95_latency_ms:40,pending:1,stale_pending:1,unknown:1,unpriced:3,missing_rate:2,unresolved_charges:2,oldest_pending_at:'2026-09-10T01:00:00Z'},
+      providers:[{module:'seo',provider:'chinaz',calls:10,success_percent:null,average_latency_ms:25,p95_latency_ms:40,errors:2,unknown:1,pending:1,stale_pending:1,unpriced:3,missing_rate:2,oldest_pending_at:'2026-09-10T01:00:00Z'}],workers:{state:'not_connected',note:'供应商调用记录不能证明调度器存活，待命也不表示故障。'}};
     snapshot.alerts=[{id:'a'.repeat(64),signal:'b'.repeat(64),tenant_id:1,message:'测试接口异常',severity:'error',handling:{status:'open',revision:0}}];
     await p.click('[data-pc=refresh]');await p.waitForSelector('.pc-kpis');
     await p.click('.pc-sidebar [data-pc-page=alerts]');await p.click('#pc-alert-operation button');
@@ -183,12 +185,16 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     await p.select('#pc-alert-operation [name=action]','resolve');await p.type('#pc-alert-operation [name=note]','已检查上游服务，等待下一次调用确认');
     await p.click('#pc-alert-operation button');await p.waitForFunction(()=>document.querySelector('.pc-content')?.textContent.includes('已标记处理'));
     assert.equal(operationWrites[1].expected_revision,1);
+    assert.equal(snapshot.operations.call_monitor.summary.pending,1);
+    assert.match(await body(),/调用运行监控/);assert.match(await body(),/66.7%/);assert.match(await body(),/暂无确定结果/);
+    assert.match(await body(),/后台任务心跳/);assert.match(await body(),/待命也不表示故障/);assert.match(await body(),/标记告警已处理不会/);
     await p.type('#pc-supplier-operation [name=remaining_calls]','0');await p.type('#pc-supplier-operation [name=warning_calls]','10');
     await p.click('#pc-supplier-operation button');await p.waitForFunction(()=>document.querySelector('.pc-save-notice')?.textContent.includes('已保存')&&document.querySelector('#pc-supplier-operation [name=remaining_calls]')?.value==='0');
     await p.waitForFunction(()=>document.querySelector('#pc-supplier-operation')?.closest('.pc-card').querySelector('tbody tr')?.textContent.includes('dashscope.aliyuncs.com'));
     assert.equal(operationWrites[2].value.balance,null);assert.equal(operationWrites[2].value.remaining_calls,0);
     await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await p.setViewport({width:1440,height:1000});
     await p.screenshot({path:path.join(os.tmpdir(),'platform-alert-operations-20261010.png'),fullPage:true});
+    await p.screenshot({path:path.join(os.tmpdir(),'platform-call-monitor-20261011.png'),fullPage:true});
     await p.click('.pc-sidebar [data-pc-page=config]');await p.waitForSelector('[data-control-kind=connection]');
     const connection='[data-control-kind=connection]';
     assert.equal(await p.$eval(connection+' button',e=>e.disabled),false);
@@ -215,8 +221,16 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     await p.click('.pc-sidebar [data-pc-page=controls]');await p.waitForSelector('.pc-control-form');
     await p.select('[data-control-kind=budget] [name=target]','user:8');
     await p.type('[data-control-kind=budget] [name=daily_calls]','10');
+    await p.type('[data-control-kind=budget] [name=max_concurrent]','2');
     await p.click('[data-control-kind=budget] button');await p.waitForFunction(()=>document.querySelector('.pc-save-notice')?.textContent.includes('已保存'));
     assert.equal(snapshot.controls.settings.find(r=>r.key==='budget:user:8').value.daily_calls,10);
+    assert.equal(snapshot.controls.settings.find(r=>r.key==='budget:user:8').value.max_concurrent,2);
+    await p.select('[data-control-kind=budget] [name=target]','provider:dashscope.aliyuncs.com');
+    await p.type('[data-control-kind=budget] [name=max_concurrent]','0');
+    const providerBudgetSaved=p.waitForResponse(r=>r.url().endsWith('/controls')&&r.request().postData()?.includes('budget:provider:dashscope.aliyuncs.com'));
+    await p.click('[data-control-kind=budget] button');await providerBudgetSaved;
+    await p.waitForFunction(()=>document.querySelector('.pc-save-notice')?.textContent.includes('已保存'));
+    assert.equal(snapshot.controls.settings.find(r=>r.key==='budget:provider:dashscope.aliyuncs.com').value.max_concurrent,0);
     await p.select('[data-control-kind=provider] [name=enabled]','false');
     await p.click('[data-control-kind=provider] button');await p.waitForFunction(()=>document.querySelector('[data-control-kind=provider] [name=revision]')?.value==='1');
     await p.type('[data-control-kind=rate] [name=model]','deepseek-v4-flash');
@@ -248,4 +262,69 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     assert(requests.every(r=>['/api/v1/auth/login','/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/admin/console/controls','/api/v1/admin/console/usage','/api/v1/admin/console/usage/export','/api/v1/admin/console/operations','/api/v1/platform/ai-governance','/api/v1/admin/console/balances'].includes(r.path)));
     assert(requests.filter(r=>r.method!=='GET').every(r=>['/api/v1/auth/login','/api/v1/admin/console/controls','/api/v1/admin/console/operations'].includes(r.path)));
   }finally{await browser.close();await f.close();}
+});
+
+test('built console safely reviews one exact call and blocks repeating an uncertain submission',async()=>{
+ const f=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true});
+ const origin='https://workbench.test',errors=[],writes=[];
+ const ledger={id:'12345678-1234-1234-1234-123456789abc',tenant_id:1,user_id:8,module:'seo',provider:'deepseek',endpoint:'api.deepseek.com/chat/completions',
+  state:'unknown',started_at:'2026-10-11T00:00:00Z',estimated_amount:null,review_version:0,verified_amount:null,verified_currency:null,reviewed_at:null};
+ const snap={...structuredClone(snapshot),usage_reviews:{schema:1,state:'enabled',capabilities:['usage_review_v1']}};
+ snap.operations={call_monitor:{state:'recording',summary:null,providers:[],workers:{state:'available',rows:[{
+  module:'seo',transport_state:'available',module_observed_at:'2026-10-11T00:00:10Z',
+  worker:{state:'active',verified:true,last_tick_at:'2026-10-11T00:00:00Z',evidence:{kind:'local_tick',scope:'this_process'}},
+  queue:{state:'available',queued:0,running:0,unknown:1}}]}}};
+ let lose=false,serverUser=admin;
+ try{
+  const p=await browser.newPage();await p.setViewport({width:1440,height:1000});p.on('pageerror',e=>errors.push(e.message));
+  await p.setRequestInterception(true);
+  p.on('request',async r=>{
+   const u=new URL(r.url());if(u.protocol==='data:')return r.continue();if(u.origin!==origin)return r.abort();
+   if(u.pathname.startsWith('/api/')){
+    let data,status=200;
+    if(u.pathname.endsWith('/login'))data={token:'fixture-admin',user:serverUser};
+    else if(u.pathname.endsWith('/me'))data={user:serverUser};
+    else if(u.pathname.endsWith('/snapshot'))data=snap;
+    else if(u.pathname.endsWith('/ai-governance')){status=404;data={};}
+    else if(u.pathname.endsWith('/usage/review')){
+     const payload=JSON.parse(r.postData());writes.push(payload);
+     assert.equal(r.headers().authorization,'Bearer fixture-admin');assert.equal(payload.event_id,ledger.id);
+     assert.equal(payload.expected_version,ledger.review_version);assert.equal(payload.expected_state,ledger.state);
+     if(lose)return r.abort();
+     ledger.state=payload.terminal_state;ledger.review_version++;ledger.reviewed_at='2026-10-11T00:05:00Z';
+     ledger.verified_amount=payload.verified_amount;ledger.verified_currency=payload.currency;
+     ledger.reviewed_provider_request_id=payload.provider_request_id;
+     data={schema:1,state:'available',replayed:false,row:ledger};
+    }else if(/^\/api\/v1\/admin\/console\/usage\/[0-9a-f-]+\/review$/.test(u.pathname))data={schema:1,state:'available',row:{...ledger,can_review:true}};
+    else if(u.pathname.endsWith('/usage'))data={state:'available',rows:[ledger],total:1,unpriced:1,known_amount:'0',as_of:'2026-10-11T00:06:00Z',next_cursor:null};
+    else{status=404;data={};}
+    return r.respond({status,contentType:'application/json',body:JSON.stringify(data)});
+   }
+   const response=await fetch(f.origin+u.pathname+u.search);
+   return r.respond({status:response.status,contentType:response.headers.get('content-type'),body:Buffer.from(await response.arrayBuffer())});
+  });
+  await p.goto(origin+'/customer-workbench/?console=platform');await p.waitForSelector('#pc-login');
+  await p.type('[name=username]','platform-admin');await p.type('[name=password]','fixture-password');await p.click('#pc-login button');await p.waitForSelector('.pc-kpis');
+  await p.click('.pc-sidebar [data-pc-page=tasks]');await p.waitForFunction(()=>document.body.textContent.includes('采样时当前进程有心跳'));
+  await p.click('.pc-sidebar [data-pc-page=apis]');await p.click('#pc-usage-query button');await p.waitForSelector('#pc-usage-review');
+  assert.equal(await p.$eval('#pc-usage-review',form=>form.reportValidity()),false);assert.equal(writes.length,0);
+  const fill=amount=>p.$eval('#pc-usage-review',(form,amount)=>{
+   for(const [name,value] of Object.entries({terminal_state:'error',provider_request_id:'vendor-123',verified_amount:amount,
+    source:amount?'provider_billing_record':'provider_request_record',reference:'case-123',sha256:'a'.repeat(64),summary:'人工核验供应商终态及账务证据。',observed_at:'2026-10-11T08:05'}))form.elements[name].value=value;
+   form.elements.terminal_confirmed.checked=true;
+  },amount);
+  await fill('');await p.click('#pc-usage-review button');
+  await p.waitForFunction(()=>document.body.textContent.includes('终态已核实，费用仍未知'));
+  assert.equal(writes.length,1);assert.equal(writes[0].verified_amount,null);assert.equal(writes[0].currency,null);
+  await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await p.setViewport({width:1440,height:1000});
+  await p.screenshot({path:path.join(os.tmpdir(),'platform-usage-review-20261011.png'),fullPage:true});
+  lose=true;await fill('12.34');await p.click('#pc-usage-review button');
+  await p.waitForFunction(()=>document.body.textContent.includes('核实提交结果尚未确认'));
+  assert.equal(writes.length,2);assert.equal(await p.$eval('#pc-usage-review button',button=>button.disabled),true);
+  await p.$eval('#pc-usage-review',form=>form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
+  await new Promise(r=>setTimeout(r,50));assert.equal(writes.length,2);
+  serverUser={...admin,tenant_id:1};await p.evaluate(()=>window.dispatchEvent(new Event('sem:auth-context-changed')));
+  await p.waitForFunction(()=>document.body.textContent.includes('此账号无法进入'));assert.equal(await p.$('#pc-usage-review'),null);
+  assert.deepEqual(errors,[]);
+ }finally{await browser.close();await f.close();}
 });

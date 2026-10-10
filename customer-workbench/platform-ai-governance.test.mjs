@@ -32,3 +32,13 @@ test('real backend provider hosts and ledger observation windows retain their me
  const html=render({schema:1,state:'available',modules:[{module:'seo',provider:'dashscope.aliyuncs.com',model:'deepseek-v3',configured:null,metering:{state:'observed'},calls:{failed:0,unknown:1,source:'api_usage_events',window:{kind:'last_24_hours',start:'2026-10-09',end:'2026-10-10'}},limits:[]}]});
  assert.match(html,/阿里云百炼/);assert.match(html,/已观测到调用计量/);assert.match(html,/API 调用台账/);assert.match(html,/近24小时/);
 });
+
+test('shared configuration does not present independent service protection as enabled',()=>{
+  const html=render({schema:1,state:'available',modules:[
+    {module:'sem',controls:{schema:'ready',state:'enabled'},limits:[{kind:'concurrency',state:'enabled',value:2}]},
+    {module:'seo',controls:{schema:'ready',state:'runtime_unverified'},limits:[{kind:'concurrency',state:'runtime_unverified',value:999}]},
+    {module:'geo',controls:{schema:'schema_pending',state:'schema_pending'}}]});
+  assert.match(html,/调用保护生效范围/);assert.match(html,/SEM\|管理表就绪\|已生效/);
+  assert.match(html,/SEO\|管理表就绪\|独立服务生效状态待核对/);
+  assert.match(html,/并发上限/);assert.doesNotMatch(html,/999/);
+});

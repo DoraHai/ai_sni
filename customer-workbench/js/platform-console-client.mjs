@@ -1,5 +1,6 @@
 import {balanceRoute} from './platform-balances-view.mjs';
 import {governanceRoute} from './platform-ai-governance-view.mjs';
+import {usageReviewRoute} from './platform-usage-review.mjs';
 // Separate global-console transport. Customer host allowlists remain unchanged.
 export const platformConsolePath='/customer-workbench/?console=platform';
 export const isPlatformAdmin=user=>Number.isSafeInteger(user?.id)&&user.id>0&&user.tenant_id===null&&
@@ -18,13 +19,14 @@ function usagePath(filters={},exporting=false){
 
 export function createPlatformConsoleClient({session,fetchImpl=fetch,onExpired=()=>{},refreshUser=user=>session.refreshUser(user)}){
   let epoch=0,identity=null;
-  const pending=new Set();
+  const pending=new Set(),reviewRequests=new Map();
   const fingerprint=()=>JSON.stringify([session.token,session.user?.id,session.user?.tenant_id,session.authRevision]);
-  function invalidate(){epoch++;identity=null;for(const c of pending)c.abort();pending.clear();}
+  function invalidate(){epoch++;identity=null;for(const c of pending)c.abort();pending.clear();reviewRequests.clear();}
   async function read(path,preflight=false,body=null,download=false){
     const url=new URL(path,'https://console.invalid');
     const permitted=url.origin==='https://console.invalid'&&(body===null?
-      routes.has(path)||[usageRoute,usageRoute+'/export',balanceRoute].includes(url.pathname):[writeRoute,operationRoute].includes(path));
+      routes.has(path)||[usageRoute,usageRoute+'/export',balanceRoute].includes(url.pathname)||
+      path===url.pathname&&/^\/api\/v1\/admin\/console\/usage\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\/review$/.test(path):[writeRoute,operationRoute,usageReviewRoute].includes(path));
     if(!permitted||(!preflight&&!identity))throw fail('CONSOLE_NOT_AUTHORIZED',403);
     if(!session.token)throw fail('CONSOLE_LOGIN_REQUIRED',401);
     const started=epoch,key=fingerprint(),controller=new AbortController();pending.add(controller);
@@ -73,6 +75,34 @@ export function createPlatformConsoleClient({session,fetchImpl=fetch,onExpired=(
       return data;
     },
     async usage(filters){return read(usagePath(filters));},
+    async readUsageReview(eventId){
+      if(!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(eventId||''))throw fail('CONSOLE_INVALID_REVIEW');
+      const result=await read(usageRoute+'/'+eventId+'/review');
+      if(result?.schema!==1||result.state!=='available'||result.row?.id!==eventId||!Number.isSafeInteger(result.row.review_version))throw fail('CONSOLE_INVALID_REVIEW');
+      return result.row;
+    },
+    async reviewUsage(data){
+      if(!identity)throw fail('CONSOLE_NOT_AUTHORIZED',403);
+      if(![data?.request_id,data?.event_id].every(id=>/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id||'')))throw fail('CONSOLE_INVALID_REVIEW');
+      const payload=structuredClone(data),key=JSON.stringify([fingerprint(),payload]);
+      if(reviewRequests.has(key))return reviewRequests.get(key);
+      const promise=(async()=>{
+        const {user}=await read('/api/v1/auth/me',true);
+        if(user?.id!==identity?.id||!isPlatformAdmin(user)){invalidate();throw fail('CONSOLE_FORBIDDEN',403);}
+        const current=await read(usageRoute+'/'+payload.event_id+'/review');
+        if(current?.schema!==1||current.state!=='available'||current.row?.id!==payload.event_id||current.row.can_review!==true||
+          current.row.review_version!==payload.expected_version||current.row.state!==payload.expected_state)throw fail('CONSOLE_REVIEW_CONFLICT',409);
+        if(current.row.review_version>0&&current.row.reviewed_provider_request_id!==payload.provider_request_id)throw fail('CONSOLE_REVIEW_CONFLICT',409);
+        let result;
+        try{result=await read(usageReviewRoute,false,payload);}
+        catch(e){if(e.status||['CONSOLE_STALE','CONSOLE_FORBIDDEN','CONSOLE_EXPIRED'].includes(e.code))throw e;throw fail('CONSOLE_REVIEW_OUTCOME_UNKNOWN');}
+        if(result?.schema!==1||result.state!=='available'||result.row?.id!==payload.event_id||
+          !Number.isSafeInteger(result.row.review_version)||result.row.review_version<=payload.expected_version)
+          throw fail('CONSOLE_REVIEW_OUTCOME_UNKNOWN');
+        return result;
+      })();
+      reviewRequests.set(key,promise);return promise;
+    },
     async exportUsage(filters){
       if(!identity)throw fail('CONSOLE_NOT_AUTHORIZED',403);
       const {user}=await read('/api/v1/auth/me',true);

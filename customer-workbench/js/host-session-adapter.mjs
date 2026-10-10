@@ -2,6 +2,7 @@
 const positive=n=>Number.isSafeInteger(n)&&n>0;
 const routes=[
   ['GET',/^\/api\/v1\/seo\/workbench\/onsite-tasks$/,['tenant_id','site_id','before_id'],'site'],
+  ['GET',/^\/api\/v1\/seo\/workbench\/onsite-tasks\/[1-9]\d*\/ai-requests\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/,['tenant_id','site_id'],'site'],
   ['POST',/^\/api\/v1\/seo\/workbench\/onsite-tasks$/,[],'site',['tenant_id','site_id','request_id','work_type','month','keyword_ids','page_ids','owner_name']],
   ['POST',/^\/api\/v1\/seo\/workbench\/onsite-tasks\/[1-9]\d*\/actions$/,[],'site',['tenant_id','site_id','action','expected_revision','items','note','owner_name']],
   ['POST',/^\/api\/v1\/seo\/workbench\/onsite-tasks\/[1-9]\d*\/ai-proposal$/,[],'site',['tenant_id','site_id','expected_revision','request_id','mode']],
@@ -97,7 +98,8 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
     }
     const controller=new AbortController();pending.add(controller);
     try{
-      const response=await fetchImpl(url.href,{method,body:options.body,headers:{Authorization:`Bearer ${s.token}`,Accept:'application/json',...(method==='GET'?{}:{'Content-Type':'application/json'})},cache:'no-store',credentials:'omit',redirect:'error',signal:options.signal?AbortSignal.any([controller.signal,options.signal]):controller.signal});
+      const onsiteAi=method==='POST'&&/^\/api\/v1\/seo\/workbench\/onsite-tasks\/[1-9]\d*\/ai-proposal$/.test(url.pathname);
+      const response=await fetchImpl(url.href,{method,body:options.body,headers:{Authorization:`Bearer ${s.token}`,Accept:'application/json',...(method==='GET'?{}:{'Content-Type':'application/json'}),...(onsiteAi?{'X-Snipers-Onsite-Protocol':'durable-v1'}:{})},cache:'no-store',credentials:'omit',redirect:'error',signal:options.signal?AbortSignal.any([controller.signal,options.signal]):controller.signal});
       assertCurrent(s,started);
       if(response.status===401){invalidate('expired');logout?.();login();throw error('AUTH_EXPIRED',401);}
       if(response.status===403){let reason='forbidden';if(url.pathname==='/api/v1/seo/workbench/assistant/chat'){try{const data=await response.json();if(data?.detail?.code==='assistant_customer_binding_required')reason='customer_binding_required';}catch{}assertCurrent(s,started);}invalidate(reason);throw error('PERMISSION_DENIED',403);}

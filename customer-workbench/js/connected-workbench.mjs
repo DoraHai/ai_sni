@@ -1,4 +1,6 @@
 import {createOnsiteClient,onsiteTaskId} from './onsite-client.mjs';
+import {createOnsiteAiPoller} from './onsite-ai-poller.mjs';
+
 import {onsiteView,onsiteCreateInput,onsiteActionInput,onsiteProposalMode} from './onsite-view.mjs';
 import {createSeoWorkflowClient} from './seo-workflow-client.mjs';
 import {createSeoContentReader} from './seo-readonly-client.mjs';
@@ -29,7 +31,7 @@ const btn=(label,action,attrs='')=>`<button data-action="${action}" ${attrs}>${l
 const names={'SEO-A01':'资料与服务计划','SEO-A02':'网站检查','SEO-A03':'关键词与搜索','SEO-A04':'内容','SEO-A05':'发布核验','SEO-A06':'数据报告','SEO-A07':'异常与运行'};
 const executionErrors={report_version_conflict:'报告版本已变化，请重新读取后填写说明',REPORT_VERSION_MISMATCH:'报告文件与已读取哈希不一致，请重新读取核对',INVALID_REPORT_EXPLANATION:'请填写1–4000字的顾问说明',EXECUTION_REQUIRED:'操作资格已失效，请重新读取任务',INVALID_CYCLE_CONFIG:'周期范围不符合限制，请检查间隔与页面数量'};
 const workflowErrors={INVALID_MAINTENANCE_INPUT:'请填写必填资料，检查链接和到期时间格式',WRITE_FAILED:'保存未完成，请重新读取核对；输入已保留，不自动重发',INVALID_AI_SELECTION:'请选择1–20条已读资料和1–5个本站关键词',AI_SELECTION_READ_REQUIRED:'资料或关键词尚未读取、已过期或不在本站，请重新读取并选择',AI_CONFIGURE_DENIED:'当前无权配置AI草稿；请重新读取资格',AI_MATERIAL_TOO_LARGE:'所选资料超过总量限制，请减少资料',INVALID_PUBLICATION_INPUT:'请填写真实平台、公开链接和北京时间，并勾选已人工核实',TRIGGER_OUTCOME_UNRESOLVED:'上次触发结果未知，请读取执行进度核对，不重发',content_version_precondition_required:'缺少准确版本前提，请重新读取稿件',PUBLICATION_SELECTION_REQUIRED:'请先读取并选择本任务的发布记录'};
-const failure=e=>({DELETE_FAILED:'删除未完成，请重新读取关键词列表核对后再操作',DELETE_OUTCOME_UNKNOWN:'删除结果未知，请重新读取关键词列表核对；系统不会自动重试'}[e.code])||workflowErrors[e.code]||executionErrors[e.code]||({INVALID_CONTENT:'请填写1–300字的标题，检查正文与提纲',CONTENT_VERSION_OR_SCOPE_MISMATCH:'稿件版本或范围已变化，请重新读取核对',ADVISOR_REQUIRED:'当前身份未取得该站点顾问资格',CONTENT_PROTECTED:'稿件受保护，请先按明确退回流程处理'}[e.code])||(e.code==='content_version_conflict'?'稿件版本已变化，请重新读取后确认':e.code==='service_plan_version_conflict'?'服务计划已被更新，请重新读取':e.code==='REJECTION_NOTE_REQUIRED'?'退回必须填写意见':e.code==='WRITE_OUTCOME_UNKNOWN'?'写入结果未知，请重新读取核对，不自动重试':e.status===409?'内容状态或版本已变化，请重新读取核对':e.status===503?'服务能力尚未启用':e.status===403?'权限或顾问资格已变化，请重新读取':e.code==='CONFIRMATION_UNAVAILABLE'?'确认能力未启用':e.code==='MODULE_UNAVAILABLE'?'当前未开通SEO；SEM/GEO连接能力待接入':(e.code||e.message)==='READ_FAILED'?'读取失败，请重试当前页面':`请求未完成：${e.code||e.message}`);
+const failure=e=>({onsite_client_upgrade_required:'工作台版本已更新，请刷新页面后再生成方案',DELETE_FAILED:'删除未完成，请重新读取关键词列表核对后再操作',DELETE_OUTCOME_UNKNOWN:'删除结果未知，请重新读取关键词列表核对；系统不会自动重试'}[e.code])||workflowErrors[e.code]||executionErrors[e.code]||({INVALID_CONTENT:'请填写1–300字的标题，检查正文与提纲',CONTENT_VERSION_OR_SCOPE_MISMATCH:'稿件版本或范围已变化，请重新读取核对',ADVISOR_REQUIRED:'当前身份未取得该站点顾问资格',CONTENT_PROTECTED:'稿件受保护，请先按明确退回流程处理'}[e.code])||(e.code==='content_version_conflict'?'稿件版本已变化，请重新读取后确认':e.code==='service_plan_version_conflict'?'服务计划已被更新，请重新读取':e.code==='REJECTION_NOTE_REQUIRED'?'退回必须填写意见':e.code==='WRITE_OUTCOME_UNKNOWN'?'写入结果未知，请重新读取核对，不自动重试':e.status===409?'内容状态或版本已变化，请重新读取核对':e.status===503?'服务能力尚未启用':e.status===403?'权限或顾问资格已变化，请重新读取':e.code==='CONFIRMATION_UNAVAILABLE'?'确认能力未启用':e.code==='MODULE_UNAVAILABLE'?'当前未开通SEO；SEM/GEO连接能力待接入':(e.code||e.message)==='READ_FAILED'?'读取失败，请重试当前页面':`请求未完成：${e.code||e.message}`);
 
 export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='index.html',selectSpace=null,logout=null,initialOnsiteTaskId=null}) {
   root.classList.add('customer-connected');
@@ -55,8 +57,14 @@ export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='in
   let aiDraft=null,aiMaterial=null,planDraft=null,triggerActions=null;
   let executionPublications=null;
   let executions=null,execution=null,executionPage=1,selectedTaskId=null;
+  const onsitePoller=createOnsiteAiPoller({getTask:()=>page==='站内优化'?onsiteSelected:null,getContext:host.getContext,
+    canRead:()=>!busy&&!!identity&&!protection.capture()&&!root.querySelector('#input-recovery')&&document.visibilityState!=='hidden',
+    read:(taskId,requestId)=>onsiteClient.readAi(taskId,requestId),
+    apply:row=>{onsiteClient.adopt(row);onsiteSelected=row;if(onsiteData)onsiteData={...onsiteData,items:onsiteData.items.map(t=>t.id===row.id?row:t)};render();},
+    onError:()=>{message='自动更新已暂停，请刷新任务核对。系统不会重发 AI 请求。';render();}});
+
   const clear=()=>{onsiteClient.invalidate();onsiteData=null;onsiteSelected=null;onsiteBefore=null;assistant.clear();conversation.clear();media.clear();protection.clear();contentQuery='';contentStatus='';returnTo=null;listPositions.clear();dataPages.clear();maintenance=null;maintenanceTarget=null;hadAdvisorAssignment=false;home=null;dataPayload=null;dataDetail=null;dataPage=1;dataKind='keywords';dataFilters={engine:'baidu',device:'desktop',status:'active'};dataClient.invalidate();aiDraft=null;aiMaterial=null;planDraft=null;triggerActions=null;triggerClient.invalidate();manualDraft=null;publicationReceipt=null;editor=null;publicationRecords=null;publicationAttempts=null;client.invalidate();identity=null;contents=null;delivery=null;status=null;listPage=1;selectedContentId=null;controller.invalidate();reader.invalidate();executionClient.invalidate();executionPublications=null;executions=null;execution=null;executionPage=1;selectedTaskId=null;};
-  function render(){protection.setContext(JSON.stringify([page,page==='稿件'?selectedContentId:page==='执行详情'?selectedTaskId:page==='站内优化'?onsiteSelected?.id:null,manualDraft?manualDraft.publicationId??'new':null,page==='顾问维护'?maintenanceTarget:null]));renderContent();assistant.render(page);protection.render();media.render(page==='稿件'&&delivery?JSON.stringify([identity?.tenant.id,identity?.site.id,delivery.content.id,delivery.content.version_count,delivery.content.payload_hash]):null);conversation.render(page==='稿件'&&delivery?{contentId:delivery.content.id,title:delivery.content.title}:null);}
+  function render(){protection.setContext(JSON.stringify([page,page==='稿件'?selectedContentId:page==='执行详情'?selectedTaskId:page==='站内优化'?onsiteSelected?.id:null,manualDraft?manualDraft.publicationId??'new':null,page==='顾问维护'?maintenanceTarget:null]));renderContent();assistant.render(page);protection.render();media.render(page==='稿件'&&delivery?JSON.stringify([identity?.tenant.id,identity?.site.id,delivery.content.id,delivery.content.version_count,delivery.content.payload_hash]):null);conversation.render(page==='稿件'&&delivery?{contentId:delivery.content.id,title:delivery.content.title}:null);onsitePoller.sync();}
   function renderContent(){
     const connection=host.getState();
     root.innerHTML=`<div class="connected-notice">${esc(environmentLabel)}</div><header><b>G-SNIPERS</b><span>客户工作台</span><small id="identity">${identity?`${esc(identity.user.display_name||identity.user.username||identity.user.id)} · ${esc(identity.tenant.name||identity.tenant.id)} / ${esc(identity.site.name)}`:'尚未取得授权身份'}</small>${selectSpace?btn('选择工作空间','select-space'):''}${logout?btn('退出登录','logout'):''}${demoHref?`<a href="${esc(demoHref)}">独立演示模式</a>`:''}</header><div class="workspace"><main class="connected-main"><div id="connected-message" class="connected-status" role="status">${esc(message)}</div><div id="connected-content"></div></main><aside class="workbench-dialogue" aria-label="对话与顾问"><section id="workspace-assistant"></section><section id="conversation-panel" aria-label="客户与顾问对话"></section></aside></div>`;
@@ -253,5 +261,5 @@ if(editor){const field={'content-title':'title','content-outline':'outline','con
     }
   });
   void connect();
-  return {reconnect:connect,dispose(){epoch++;unsubscribe();clear();protection.dispose();media.dispose();conversation.dispose();assistant.dispose();host.dispose();root.replaceChildren();}};
+  return {reconnect:connect,dispose(){onsitePoller.dispose();epoch++;unsubscribe();clear();protection.dispose();media.dispose();conversation.dispose();assistant.dispose();host.dispose();root.replaceChildren();}};
 }

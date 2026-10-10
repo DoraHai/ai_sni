@@ -75,9 +75,21 @@ for(const module of ['seo','geo']){
    else{
     for(const extra of [{tenant_id:2},{target_url:'https://foreign.test'},{api_key:'injected'},{project_id:30,site_id:30}])
      await assert.rejects(()=>host.transport(path,{method:'POST',body:JSON.stringify({...body,...extra})}),/SCOPE_MISMATCH|BODY_DENIED/);
-    await host.transport(path,{method:'POST',body:JSON.stringify(body)});
+    await host.transport(path,{method:'POST',body:JSON.stringify(body),headers:{Authorization:'Bearer injected','X-Snipers-Onsite-Protocol':'legacy'}});
+    assert.equal(calls.at(-1).opt.headers['X-Snipers-Onsite-Protocol'],'durable-v1');
+    assert.equal(calls.at(-1).opt.headers.Authorization,'Bearer fixture');
+    assert(calls.slice(0,4).every(call=>!('X-Snipers-Onsite-Protocol' in call.opt.headers)));
    }
-   assert.equal(calls.length,role==='edit'?5:4);host.dispose();
+   assert.equal(calls.length,role==='edit'?5:4);
+   const query=`tenant_id=1&${module==='seo'?'site_id=9':'project_id=10'}`;
+   const readPath=`/api/v1/${module}/workbench/onsite-tasks/20/ai-requests/${body.request_id}`;
+   const count=calls.length;
+   for(const denied of [readPath+'?'+query.replace('tenant_id=1','tenant_id=2'),readPath+'?'+query+'&before_id=20',
+     readPath.replace(body.request_id,'not-a-uuid')+'?'+query,readPath+'?'+query+'&api_key=injected'])
+    await assert.rejects(()=>host.transport(denied),/SCOPE_MISMATCH|QUERY_DENIED|ROUTE_DENIED/);
+   assert.equal(calls.length,count);
+   await host.transport(readPath+'?'+query);assert.equal(calls.length,count+1);
+   assert(!('X-Snipers-Onsite-Protocol' in calls.at(-1).opt.headers));host.dispose();
   }
  });
 }

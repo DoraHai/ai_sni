@@ -6,7 +6,7 @@ const edge=process.env.EDGE_BINARY||'C:/Program Files (x86)/Microsoft/Edge/Appli
 for(const module of ['seo','geo']){
  test(module+' onsite workbench safely drafts AI proposals, opens exact task links and completes human steps',async()=>{
   const f=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true,args:['--no-sandbox']});
-  const origin='https://onsite.test',errors=[],writes=[];
+  const origin='https://onsite.test',errors=[],writes=[];let aiReads=0;
   const kind=module==='seo'?'title':'structured_content';
   let row={id:77,module,tenant_id:1,scope_id:module==='seo'?9:10,title:'站内任务',
    workflow:{module,revision:1,phase:'draft',items:[{id:'a',kind,target_url:'https://example.com/p',expected:'审核文字',instruction:'核对事实'}],month:'2026-10',work_type:'monthly',domain:'example.com',owner_name:'维护人员',advisor_user_id:7,source:{},history:[]},
@@ -18,19 +18,30 @@ for(const module of ['seo','geo']){
    await p.evaluateOnNewDocument(permissions=>{sessionStorage.setItem('sem_auth_v1',JSON.stringify({version:1,token:'fixture-advisor',user:{id:7,tenant_id:null,display_name:'顾问',permissions}}));},permissions);
    p.on('request',async req=>{
     const url=new URL(req.url());if(url.protocol==='data:')return req.continue();if(url.origin!==origin)return req.abort();
-    const respond=data=>req.respond({status:200,contentType:'application/json',body:JSON.stringify(data)});
+    const respond=(data,status=200)=>req.respond({status,contentType:'application/json',body:JSON.stringify(data)});
     if(url.pathname==='/api/v1/auth/me')return respond({user:{id:7,tenant_id:null,display_name:'顾问',permissions}});
     if(url.pathname==='/api/v1/auth/modules')return respond({tenant_id:null,modules:[{module_code:'seo',available:true},{module_code:'geo',available:true}]});
     if(url.pathname==='/api/v1/geo/tenants')return respond({tenants:[{id:1,name:'客户1'}]});
     if(url.pathname==='/api/v1/geo/projects')return respond({projects:[{id:10,tenant_id:1,name:'项目1',status:'active'}]});
     if(url.pathname.startsWith('/api/v1/'+module+'/workbench/onsite-tasks')){
-     if(req.method()==='GET')return respond({module,tenant_id:1,scope_id:row.scope_id,can_create:true,items:[row],next_before_id:null});
+     if(req.method()==='GET'){
+      if(url.pathname.includes('/ai-requests/')){
+       assert.equal(url.pathname.split('/').at(-1),row.workflow.ai_run.request_id);
+       row.workflow.ai_run.state=++aiReads%2?'running':'ready';
+       if(row.workflow.ai_run.state==='ready'){
+        row.workflow.phase='review';row.workflow.revision++;
+        row.workflow.ai_proposal={summary:'<script>throw new Error("unsafe")</script>',items:[{id:'a',reason:'已授权页面与资料',source_refs:['事实 #2']}]};
+        row.allowed_actions=['save_proposal','cancel','approve'];row.capabilities.ai_planning.can_generate=true;
+       }
+       return respond({...row,request_run:row.workflow.ai_run});
+      }
+      return respond({module,tenant_id:1,scope_id:row.scope_id,can_create:true,items:[row],next_before_id:null});
+     }
      const body=JSON.parse(req.postData());writes.push(body);assert.equal(body.expected_revision,row.workflow.revision);
      if(url.pathname.endsWith('/ai-proposal')){
       assert.match(body.request_id,/^[a-f0-9-]{36}$/);assert.equal(body.mode,row.workflow.phase==='draft'?'initial':'revise');
-      row.workflow.ai_run={request_id:body.request_id,state:'ready'};row.workflow.phase='review';
-      row.workflow.ai_proposal={summary:'<script>throw new Error("unsafe")</script>',items:[{id:'a',reason:'已授权页面与资料',source_refs:['事实 #2']}]};
-      row.workflow.revision++;row.allowed_actions=['save_proposal','cancel','approve'];return respond(row);
+      row.workflow.ai_run={request_id:body.request_id,state:'queued'};
+      row.allowed_actions=module==='geo'?[]:['cancel'];row.capabilities.ai_planning.can_generate=false;return respond(row,202);
      }
      if(body.action==='save_proposal'){row.workflow.items=body.items;row.workflow.phase='review';}
      const phases={approve:'implementation',implement:'recheck',recheck:'acceptance',accept:'done'};
@@ -49,7 +60,12 @@ for(const module of ['seo','geo']){
    await p.type('#onsite-expected-a','未保存改动');await p.click('[data-action=onsite-ai-proposal]');
    await p.waitForFunction(()=>document.body.textContent.includes('未保存修改'));assert.equal(writes.length,0);
    await p.$eval('#onsite-expected-a',e=>{e.value='审核文字';e.dispatchEvent(new Event('input',{bubbles:true}));});
-   await p.click('[data-action=onsite-ai-proposal]');await p.waitForSelector('[data-action=onsite-approve]');
+   await p.click('[data-action=onsite-ai-proposal]');
+   await p.waitForFunction(()=>document.body.textContent.includes('AI 方案已排队'));
+   assert.equal(await p.$('[data-action=onsite-ai-proposal]'),null);
+   assert.equal(await p.$('[data-action=onsite-approve]'),null);
+   await p.reload();await p.waitForSelector('[data-action=onsite-approve]');
+   assert.equal(writes.length,1);assert.equal(aiReads,2);
    await ready(2);
    assert.equal(await p.$('.onsite-detail script'),null);assert.equal(writes.length,1);
    await p.click('[data-action=onsite-save_proposal]');
