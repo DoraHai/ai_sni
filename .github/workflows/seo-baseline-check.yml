@@ -50,7 +50,20 @@ jobs:
               BAIDU_SELF_ACCESS_TOKEN='test', BAIDU_SELF_TOKEN_EXPIRES_AT='2099-01-01T00:00:00Z',
               CRYPTO_MASTER_KEY_B64='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
               ADMIN_API_KEY='test-admin-key', JWT_SECRET='test-jwt-secret')
-          raise SystemExit(pytest.main(['-q', 'tests/test_seo_onsite_postgres.py']))
+          from app.config import Settings, get_settings
+          Settings.model_config['env_file'] = None
+          get_settings.cache_clear()
+          os.environ.update(API_CONTROLS_ENABLED='false', API_METERING_ENABLED='false',
+              DASHSCOPE_API_KEY='', DEEPSEEK_API_KEY='')
+          import xml.etree.ElementTree as ET
+          report = os.path.join(os.environ['RUNNER_TEMP'], 'seo-onsite-postgres.xml')
+          result = pytest.main(['-q', 'tests/test_seo_onsite_postgres.py',
+              'tests/test_seo_onsite_ai_postgres.py', '--junitxml=' + report])
+          if result:
+              raise SystemExit(result)
+          xml = ET.parse(report)
+          assert len(xml.findall('.//testcase')) >= 20, 'Missing onsite PostgreSQL coverage'
+          assert not xml.findall('.//skipped'), 'Onsite PostgreSQL tests must run, not skip'
           PY
 
   dependency-audit:
