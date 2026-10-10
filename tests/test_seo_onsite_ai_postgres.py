@@ -460,3 +460,71 @@ def test_nonsecret_provider_metadata_and_quota_are_committed_before_call(monkeyp
                 assert "provider_metadata" not in json.dumps(result)
                 assert "dummy-not-real" not in json.dumps(result)
     asyncio.run(run())
+
+
+def test_conflicting_real_output_is_saved_as_blocked_draft_and_cannot_be_approved(monkeypatch):
+    async def run():
+        async with fixture() as (sessions,task):
+            async with sessions() as db:
+                fact=await db.get(SeoQaFact,30)
+                fact.statement="AQ-20 测量范围为 0 至 20 ppm。"
+                fact.source_url="https://example.com/p"
+                db.add(SeoQaFact(id=31,tenant_id=4,site_id=2,title="另一份同日检测仪说明",
+                    statement="同型号 AQ-20 另一份资料写 0 至 50 ppm，与 0 至 20 ppm 资料冲突，未核实有效版本。",
+                    source_name="合成公开资料",source_url="https://example.com/p",status="active",version=1))
+                await db.commit()
+            calls=[]
+            async def output(system,user,**kwargs):
+                calls.append(1)
+                facts=json.loads(user)
+                assert facts["schema_version"]==2 and facts["bound_pages"][0]["id"]==10
+                raw=answer(facts)
+                for item in raw["items"]:
+                    if item["kind"]=="title":
+                        item.update(expected="AQ-20 测量范围 0 至 20 ppm",missing_information=["测量范围冲突待确认"])
+                    elif item["kind"]=="description":
+                        item.update(expected="",reason="量程存在冲突",missing_information=[])
+                    elif item["kind"]=="internal_link":
+                        item["expected"]='<a href="https://example.com/p">选型</a>'
+                    item.pop("kind"); item.pop("target_url")
+                return {**raw,"schema_version":2}
+            monkeypatch.setattr(ai.deepseek,"chat_json",output)
+            req=request(task)
+            async with sessions() as db:
+                result=await api.ai_proposal(task["id"],req,db,ADVISOR)
+                assert result["workflow"]["phase"]=="review"
+                assert result["workflow"]["ai_run"]["state"]=="ready"
+                descriptions=result["workflow"]["ai_proposal"]["items"]
+                for item,reason in zip(result["workflow"]["items"],descriptions):
+                    if item["kind"] in {"title","description","internal_link"}:
+                        assert not item["expected"] and reason["missing_information"]
+                    if item["kind"]=="description":
+                        assert any("0 至 50 ppm" in m and "0 至 20 ppm" in m for m in reason["missing_information"])
+                assert result["capabilities"]["website_execution"]["enabled"] is False
+            async with sessions() as db:
+                with pytest.raises(HTTPException) as exc:
+                    await onsite.act(task["id"],onsite.Update(tenant_id=4,site_id=2,expected_revision=2,
+                        action="approve",note="缺项不得审批"),db,ADVISOR)
+                assert exc.value.status_code==422
+            async with sessions() as db:
+                assert (await api.ai_proposal(task["id"],req,db,ADVISOR))["replayed"]
+            assert len(calls)==1
+    asyncio.run(run())
+
+
+def test_url_with_missing_information_cannot_launder_foreign_destination(monkeypatch):
+    async def run():
+        async with fixture() as (sessions,task):
+            async def output(system,user,**kwargs):
+                raw=answer(json.loads(user))
+                item=next(i for i in raw["items"] if i["kind"]=="internal_link")
+                item.update(expected='<a href="https://foreign.example/collect">帮助</a>',missing_information=["尚待确认"])
+                return raw
+            monkeypatch.setattr(ai.deepseek,"chat_json",output)
+            async with sessions() as db:
+                result=await api.ai_proposal(task["id"],request(task),db,ADVISOR)
+                assert result["workflow"]["ai_run"]["state"]=="unknown"
+                assert result["workflow"]["items"]==task["workflow"]["items"]
+                assert result["workflow"]["revision"]==1
+                assert "foreign.example" not in json.dumps(result)
+    asyncio.run(run())

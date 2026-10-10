@@ -75,6 +75,15 @@
 
 ## 供应商与错误
 
+### 2026-10-10 稳定性修订（模型输出协议 v2）
+
+- 本轮基线为 `d6297f3b7b7af643fe402058aa2c3cb87d4ad247`。外部 API 请求、站内工作流 schema、权限与配额不变；仅模型输入/输出增加 `schema_version=2`，无版本的旧输出仍兼容。
+- 服务器按原 item id 装配固定 kind/target_url；模型重复提供时必须完全一致。输入包含 `bound_pages` 的 id/url/ref。内链和 canonical 可提供 `destination_page_id`，服务器只从实际绑定页装配目标 URL 与页面出处，不推测事实出处。
+- 内链来源固定为当前项 target_url，expected 只允许目标页裸 URL，不能自链。HTML、Markdown 或方向说明不会被提取为地址，而是保留为待确认缺项；外部或改写地址仍拒绝。中文标点、句末标点仅在说明文本的 URL 校验中识别，不用于修正 expected 地址。
+- 非空 expected 同时带 missing_information 时，保留所有阻碍并清空 expected。空预期未说明原因时补充“尚未给出可核验内容”；有效资料明确标注冲突时，受影响标题/描述列明真实来源及冲突摘录，不选一个数字当结论。此检测只识别显式冲突标记，不是通用事实一致性引擎；文案仍须人工核实。
+- 缺项结果可以保存为待审草案，`ai_run.state=ready` 只表示草案处理成功。存在空 expected 的方案不能审批，不能视作已完成内容或已修改网站。敏感输出、伪造出处、外部地址先校验再处理缺项，不允许借留空绕过拒绝。
+- 回归保存 18 份既有真实供应商输出，含正常资料、缺项及检测仪量程冲突，离线执行且不再次调用供应商。另以真实本地 PostgreSQL 验证保存、审批拒绝、nonce 重放及异常输出不覆盖原方案。离线通过不代表新提示词的在线生成成功率，需另行批准真实模型评测。
+
 复用现有 `app.ai.deepseek.chat_json`：沿用百炼优先、DeepSeek 后备的配置选择，单次请求不做失败回退，不创建密钥、不换供应商。仅接受现有官方 HTTPS 入口。计量 context 绑定 tenant/user/module=seo/feature；`job_ref=site:{site_id}:onsite_ai_proposal:{task_id}:{request_id}`，底层供应商 operation 仍为既有 `chat.completions`。不修改 metering/controls schema 或开关，不向普通客户/顾问返回供应商成本、密钥或原始错误。
 
 - 401/403：身份、权限、分配不符；404：任务/站点范围不符。
