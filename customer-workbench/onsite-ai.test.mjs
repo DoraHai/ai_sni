@@ -77,7 +77,15 @@ for(const module of ['seo','geo']){
      await assert.rejects(()=>host.transport(path,{method:'POST',body:JSON.stringify({...body,...extra})}),/SCOPE_MISMATCH|BODY_DENIED/);
     await host.transport(path,{method:'POST',body:JSON.stringify(body)});
    }
-   assert.equal(calls.length,role==='edit'?5:4);host.dispose();
+   assert.equal(calls.length,role==='edit'?5:4);
+   const query=`tenant_id=1&${module==='seo'?'site_id=9':'project_id=10'}`;
+   const readPath=`/api/v1/${module}/workbench/onsite-tasks/20/ai-requests/${body.request_id}`;
+   const count=calls.length;
+   for(const denied of [readPath+'?'+query.replace('tenant_id=1','tenant_id=2'),readPath+'?'+query+'&before_id=20',
+     readPath.replace(body.request_id,'not-a-uuid')+'?'+query,readPath+'?'+query+'&api_key=injected'])
+    await assert.rejects(()=>host.transport(denied),/SCOPE_MISMATCH|QUERY_DENIED|ROUTE_DENIED/);
+   assert.equal(calls.length,count);
+   await host.transport(readPath+'?'+query);assert.equal(calls.length,count+1);host.dispose();
   }
  });
 }

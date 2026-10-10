@@ -1,4 +1,6 @@
 import {createOnsiteClient,onsiteTaskId} from './onsite-client.mjs';
+import {createOnsiteAiPoller} from './onsite-ai-poller.mjs';
+
 import {onsiteView,onsiteCreateInput,onsiteActionInput,onsiteProposalMode} from './onsite-view.mjs';
 import {createSeoWorkflowClient} from './seo-workflow-client.mjs';
 import {createSeoContentReader} from './seo-readonly-client.mjs';
@@ -55,8 +57,14 @@ export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='in
   let aiDraft=null,aiMaterial=null,planDraft=null,triggerActions=null;
   let executionPublications=null;
   let executions=null,execution=null,executionPage=1,selectedTaskId=null;
+  const onsitePoller=createOnsiteAiPoller({getTask:()=>page==='站内优化'?onsiteSelected:null,getContext:host.getContext,
+    canRead:()=>!busy&&!!identity&&!protection.capture()&&!root.querySelector('#input-recovery')&&document.visibilityState!=='hidden',
+    read:(taskId,requestId)=>onsiteClient.readAi(taskId,requestId),
+    apply:row=>{onsiteClient.adopt(row);onsiteSelected=row;if(onsiteData)onsiteData={...onsiteData,items:onsiteData.items.map(t=>t.id===row.id?row:t)};render();},
+    onError:()=>{message='自动更新已暂停，请刷新任务核对。系统不会重发 AI 请求。';render();}});
+
   const clear=()=>{onsiteClient.invalidate();onsiteData=null;onsiteSelected=null;onsiteBefore=null;assistant.clear();conversation.clear();media.clear();protection.clear();contentQuery='';contentStatus='';returnTo=null;listPositions.clear();dataPages.clear();maintenance=null;maintenanceTarget=null;hadAdvisorAssignment=false;home=null;dataPayload=null;dataDetail=null;dataPage=1;dataKind='keywords';dataFilters={engine:'baidu',device:'desktop',status:'active'};dataClient.invalidate();aiDraft=null;aiMaterial=null;planDraft=null;triggerActions=null;triggerClient.invalidate();manualDraft=null;publicationReceipt=null;editor=null;publicationRecords=null;publicationAttempts=null;client.invalidate();identity=null;contents=null;delivery=null;status=null;listPage=1;selectedContentId=null;controller.invalidate();reader.invalidate();executionClient.invalidate();executionPublications=null;executions=null;execution=null;executionPage=1;selectedTaskId=null;};
-  function render(){protection.setContext(JSON.stringify([page,page==='稿件'?selectedContentId:page==='执行详情'?selectedTaskId:page==='站内优化'?onsiteSelected?.id:null,manualDraft?manualDraft.publicationId??'new':null,page==='顾问维护'?maintenanceTarget:null]));renderContent();assistant.render(page);protection.render();media.render(page==='稿件'&&delivery?JSON.stringify([identity?.tenant.id,identity?.site.id,delivery.content.id,delivery.content.version_count,delivery.content.payload_hash]):null);conversation.render(page==='稿件'&&delivery?{contentId:delivery.content.id,title:delivery.content.title}:null);}
+  function render(){protection.setContext(JSON.stringify([page,page==='稿件'?selectedContentId:page==='执行详情'?selectedTaskId:page==='站内优化'?onsiteSelected?.id:null,manualDraft?manualDraft.publicationId??'new':null,page==='顾问维护'?maintenanceTarget:null]));renderContent();assistant.render(page);protection.render();media.render(page==='稿件'&&delivery?JSON.stringify([identity?.tenant.id,identity?.site.id,delivery.content.id,delivery.content.version_count,delivery.content.payload_hash]):null);conversation.render(page==='稿件'&&delivery?{contentId:delivery.content.id,title:delivery.content.title}:null);onsitePoller.sync();}
   function renderContent(){
     const connection=host.getState();
     root.innerHTML=`<div class="connected-notice">${esc(environmentLabel)}</div><header><b>G-SNIPERS</b><span>客户工作台</span><small id="identity">${identity?`${esc(identity.user.display_name||identity.user.username||identity.user.id)} · ${esc(identity.tenant.name||identity.tenant.id)} / ${esc(identity.site.name)}`:'尚未取得授权身份'}</small>${selectSpace?btn('选择工作空间','select-space'):''}${logout?btn('退出登录','logout'):''}${demoHref?`<a href="${esc(demoHref)}">独立演示模式</a>`:''}</header><div class="workspace"><main class="connected-main"><div id="connected-message" class="connected-status" role="status">${esc(message)}</div><div id="connected-content"></div></main><aside class="workbench-dialogue" aria-label="对话与顾问"><section id="workspace-assistant"></section><section id="conversation-panel" aria-label="客户与顾问对话"></section></aside></div>`;
@@ -253,5 +261,5 @@ if(editor){const field={'content-title':'title','content-outline':'outline','con
     }
   });
   void connect();
-  return {reconnect:connect,dispose(){epoch++;unsubscribe();clear();protection.dispose();media.dispose();conversation.dispose();assistant.dispose();host.dispose();root.replaceChildren();}};
+  return {reconnect:connect,dispose(){onsitePoller.dispose();epoch++;unsubscribe();clear();protection.dispose();media.dispose();conversation.dispose();assistant.dispose();host.dispose();root.replaceChildren();}};
 }
