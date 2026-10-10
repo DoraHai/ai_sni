@@ -117,7 +117,9 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
     advisor_locks = []
     original_advisor_available = api.advisor_available
     async def credentials(session, tenant_id):
-        return {"api_key": "test", "base_url": "https://provider.invalid/v1", "model": "test-model"}
+        return {"api_key": "test",
+                "base_url": "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+                "model": "deepseek-v4-flash-0731"}
     async def provider(system, user, **kwargs):
         calls.append((system, user, kwargs))
         import json
@@ -154,6 +156,8 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
                 same = await api.ai_proposal(row["id"], req, db, ADVISOR)
             assert same["workflow"]["ai_run"]["state"] == "ready"
             assert len(calls) == 1
+            assert calls[0][2]["enable_thinking"] is False
+            assert calls[0][2]["max_tokens"] == 8192
             assert "API" not in str(result["workflow"]["ai_proposal"])
             assert True in advisor_locks
             manual_items = [api.work.Item.model_validate(item) for item in same["workflow"]["items"]]

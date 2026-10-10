@@ -29,6 +29,10 @@ MAX_PROMPT_CHARS = 240_000
 MAX_PROVIDER_RESULT_CHARS = 100_000
 MAX_SOURCE_REFS_PER_ITEM = 20
 MAX_REQUEST_IDS = 500
+DASHSCOPE_HYBRID_DEEPSEEK_MODELS = frozenset({
+    "deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-flash-0731",
+    "deepseek-v4-pro-0813",
+})
 
 
 class ProviderDraftItem(BaseModel):
@@ -75,6 +79,17 @@ def request_hash(*, task_id: int, tenant_id: int, project_id: int,
         "mode": mode,
         "actor_user_id": actor_user_id,
     })
+
+
+def generation_options(credentials: dict[str, str], snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Use non-thinking mode only for documented DashScope hybrid DeepSeek-v4 models."""
+    host = (urlsplit(credentials.get("base_url") or "").hostname or "").lower()
+    model = (credentials.get("model") or "").lower()
+    if not host.endswith(".aliyuncs.com") or model not in DASHSCOPE_HYBRID_DEEPSEEK_MODELS:
+        return {}
+    count = sum(1 for item in snapshot.get("items", []) if item.get("kind") in DRAFT_ITEM_KINDS)
+    count = max(1, min(count, 30))
+    return {"enable_thinking": False, "max_tokens": min(32768, max(8192, 2048 + 2048 * count))}
 
 
 def reserve_daily(settings: dict | None, request_id: str, *, request_digest: str | None = None,
@@ -184,7 +199,11 @@ def prompt_text(snapshot: dict[str, Any], mode: str) -> tuple[str, str]:
 blocking_missing_information 表示会使正文不可靠的缺失或冲突；只要非空，该项 expected 必须为空。
 optional_information 仅表示可改善内容但不阻止当前正文的信息。没有 approved_public_facts 时三项 expected 都必须为空。
 严格返回版本 2 JSON：schema_version=2、summary、items、missing_information。
-items 必须恰好对应输入中的全部可见内容清单项，每项只含 id、expected、reason、fact_ids、blocking_missing_information、optional_information。"""
+items 必须恰好对应输入中的全部可见内容清单项，每项只含 id、expected、reason、fact_ids、blocking_missing_information、optional_information。
+类型不可变：schema_version 是整数 2；expected、reason、summary 是字符串；fact_ids 是整数数组；
+blocking_missing_information、optional_information、missing_information 都是字符串数组，没有内容时必须写 []，不能写空字符串或普通字符串。
+格式示例：
+{"schema_version":2,"summary":"","items":[{"id":"输入中的原始ID","expected":"","reason":"缺少公开事实，正文留空","fact_ids":[],"blocking_missing_information":["缺少获准公开事实"],"optional_information":[]}],"missing_information":["缺少获准公开事实"]}"""
     public_facts = [{key: fact.get(key) for key in (
         "fact_id", "title", "statement", "source_name", "updated_at", "expires_at"
     )} for fact in snapshot["facts"]]

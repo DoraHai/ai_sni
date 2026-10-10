@@ -324,6 +324,7 @@ async def ai_proposal(task_id: PositiveInt, req: AiProposal, session=Depends(get
         raise HTTPException(409, "平台 AI 供应商尚未配置")
     snapshot = await _proposal_snapshot(session, project, row)
     system_prompt, user_prompt = onsite_ai.prompt_text(snapshot, req.mode)
+    generation_options = onsite_ai.generation_options(credentials, snapshot)
     project.project_settings = onsite_ai.reserve_daily(
         project.project_settings, request_id, request_digest=digest)
     started = onsite_ai.now_iso()
@@ -347,7 +348,7 @@ async def ai_proposal(task_id: PositiveInt, req: AiProposal, session=Depends(get
                               job_ref=f"geo-onsite-ai:{task_id}:{request_id}"):
             result = await chat_json(system_prompt, user_prompt, timeout=45.0,
                 api_key=credentials["api_key"], base_url=credentials["base_url"],
-                model=credentials["model"])
+                model=credentials["model"], **generation_options)
     except DeepSeekError as exc:
         uncertain = exc.category in {"timeout", "network", "unknown"}
         state = "unknown" if uncertain else "failed"

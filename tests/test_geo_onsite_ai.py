@@ -89,6 +89,23 @@ def test_capabilities_never_claim_website_execution():
     }
 
 
+def test_generation_options_only_target_documented_dashscope_hybrid_models():
+    snapshot = {"items": items()}
+    dashscope = {"base_url": "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+                 "model": "deepseek-v4-flash-0731"}
+    assert onsite_ai.generation_options(dashscope, snapshot) == {
+        "enable_thinking": False, "max_tokens": 8192}
+    assert onsite_ai.generation_options(
+        {**dashscope, "model": "deepseek-v3"}, snapshot) == {}
+    assert onsite_ai.generation_options(
+        {**dashscope, "base_url": "https://api.deepseek.com/v1"}, snapshot) == {}
+
+    many = {"items": [
+        {"kind": "faq", "id": f"faq-{index}"} for index in range(30)
+    ]}
+    assert onsite_ai.generation_options(dashscope, many)["max_tokens"] == 32768
+
+
 def test_fact_public_use_requires_explicit_human_authorization():
     assert not onsite_ai.public_use_authorized({"public_use": {"allowed": True}})
     assert not onsite_ai.public_use_authorized({"public_use": {
@@ -167,6 +184,9 @@ def test_prompt_marks_all_inputs_untrusted_and_has_a_hard_size_limit():
     assert "https://source.example/fact" not in user
     assert '"fact_id": 8' in user
     assert '"kind": "schema"' not in user
+    assert '"fact_ids":[]' in system
+    assert '"blocking_missing_information":[' in system
+    assert "没有内容时必须写 []" in system
     snapshot["questions"] = [{"question": "x" * onsite_ai.MAX_PROMPT_CHARS}]
     with pytest.raises(HTTPException) as error:
         onsite_ai.prompt_text(snapshot, "initial")
@@ -195,6 +215,22 @@ def test_provider_result_rejects_scope_and_disclosure_failures(mutation, message
     with pytest.raises(HTTPException) as error:
         onsite_ai.validate_provider_result(payload, current_items=items(), facts=facts(), domain="example.com")
     assert message in str(error.value.detail)
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda payload: payload.__setitem__("missing_information", "缺少资料"),
+    lambda payload: payload["items"][0].__setitem__("blocking_missing_information", "缺少资料"),
+    lambda payload: payload["items"][0].__setitem__("optional_information", ""),
+    lambda payload: payload["items"][0].__setitem__("fact_ids", ["8"]),
+    lambda payload: payload.__setitem__("schema_version", "2"),
+])
+def test_real_provider_shape_drift_is_rejected_instead_of_coerced(mutate):
+    payload = result()
+    mutate(payload)
+    with pytest.raises(HTTPException) as error:
+        onsite_ai.validate_provider_result(
+            payload, current_items=items(), facts=facts(), domain="example.com")
+    assert "版本 2 契约" in str(error.value.detail)
 
 
 def test_old_running_attempt_is_projected_stale_without_retrying():

@@ -1,6 +1,6 @@
 import httpx
 
-from app.geo.ai_client import _provider_http_error
+from app.geo.ai_client import _chat_json_payload, _provider_http_error
 
 
 def response_error(status: int, body):
@@ -26,3 +26,13 @@ def test_provider_http_categories_do_not_collapse_to_unknown():
         error = _provider_http_error(response_error(status, {"error": {"type": "provider_error"}}))
         assert error.category == category
         assert error.status_code == status
+
+
+def test_optional_generation_fields_are_absent_by_default_and_bounded_when_requested():
+    default = _chat_json_payload("system", "user", "other-model")
+    assert "enable_thinking" not in default
+    assert "max_tokens" not in default
+    onsite = _chat_json_payload("system", "user", "deepseek-v4-flash-0731",
+                                enable_thinking=False, max_tokens=8192)
+    assert onsite["enable_thinking"] is False
+    assert onsite["max_tokens"] == 8192
