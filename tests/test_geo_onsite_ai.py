@@ -189,6 +189,14 @@ def test_prompt_marks_all_inputs_untrusted_and_has_a_hard_size_limit():
     assert "没有内容时必须写 []" in system
     assert "禁止完整照抄任一较长事实句" in system
     assert "数字、单位、型号和否定条件" in system
+    # Real r2 outputs inferred every phrase below from 40 L / 500 mm / 24 V / hard-floor facts.
+    for unsupported_inference in (
+        "中小/中等面积", "水泥地", "混凝土", "环氧地坪", "无需外接电源",
+        "无插座区域", "效率", "续航", "动力", "认证", "应改用防爆型号",
+    ):
+        assert unsupported_inference in system
+    assert "通用选型知识不能转写成该产品的事实" in system
+    assert "knowledge 只整理 approved_public_facts" in system
     snapshot["questions"] = [{"question": "x" * onsite_ai.MAX_PROMPT_CHARS}]
     with pytest.raises(HTTPException) as error:
         onsite_ai.prompt_text(snapshot, "initial")
