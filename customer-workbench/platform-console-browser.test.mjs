@@ -30,7 +30,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
   let balanceStatus=200,balanceReads=0,balanceRefreshes=0,balanceHeld=null;
   let serverUser=admin,status=200,held=null,governanceStatus=404,governanceData={schema:1,state:"schema_pending"};const connectionWrites=[],usageQueries=[],operationWrites=[];let exports=0;
   try{
-    const p=await browser.newPage();await p.setViewport({width:1440,height:1000});
+    const p=await browser.newPage();await p.evaluateOnNewDocument(()=>{const original=window.setInterval;window.setInterval=(fn,ms,...args)=>{if(ms===300000)window.__balancePoll=fn;return original(fn,ms,...args);};});await p.setViewport({width:1440,height:1000});
     p.on('pageerror',e=>errors.push(e.message));await p.setRequestInterception(true);
     p.on('request',async r=>{
       const u=new URL(r.url());if(u.protocol==='data:')return r.continue();
@@ -110,14 +110,17 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     governanceStatus=403;await p.click('[data-pc=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('无法读取 AI 治理'));assert(!await p.$('.pc-kpis'));assert.doesNotMatch(await body(),/qwen/);
     governanceStatus=404;await p.click('[data-pc=refresh]');await p.waitForSelector('.pc-kpis');
     await p.click('.pc-sidebar [data-pc-page=balances]');await p.waitForFunction(()=>document.querySelector('.pc-content')?.textContent.includes('CNY 0'));
-    assert(balanceReads>0);assert.match(await body(),/余额不足预警/);assert.doesNotMatch(await body(),/never-balance-secret/);
+    assert(balanceReads>0);
+    const beforeAutomatic=balanceReads;await p.evaluate(()=>window.__balancePoll());await p.waitForFunction(()=>document.querySelector('[data-pc=balance-refresh]')?.disabled===false);assert(balanceReads>beforeAutomatic);
+    const beforeHidden=balanceReads;await p.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});window.__balancePoll();delete document.visibilityState;});assert.equal(balanceReads,beforeHidden);
+    assert.match(await body(),/余额不足预警/);assert.doesNotMatch(await body(),/never-balance-secret/);
     await p.click('[data-pc=balance-refresh]');await p.waitForFunction(()=>document.querySelector('[data-pc=balance-refresh]')?.disabled===false);assert.equal(balanceRefreshes,1);
     await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await p.setViewport({width:1440,height:1000});
     await p.screenshot({path:path.join(os.tmpdir(),'platform-live-balances-20261010.png'),fullPage:true});
     balanceStatus=404;await p.click('[data-pc=balance-refresh]');await p.waitForFunction(()=>document.body.textContent.includes('余额查询接口未部署'));assert.doesNotMatch(await p.$eval('.pc-content',e=>e.textContent),/CNY 0/);
     balanceStatus=403;await p.click('[data-pc=balance-refresh]');await p.waitForFunction(()=>document.body.textContent.includes('无法查询平台余额'));assert(!await p.$('.pc-kpis'));
     balanceStatus=200;await p.click('[data-pc=refresh]');await p.waitForSelector('.pc-kpis');await p.waitForFunction(()=>document.querySelector('.pc-content')?.textContent.includes('CNY 0'));
-    await p.click('.pc-sidebar [data-pc-page=customers]');assert(!await p.$('.pc-table-wrap img'));
+    await p.click('.pc-sidebar [data-pc-page=customers]');const beforeOtherPage=balanceReads;await p.evaluate(()=>window.__balancePoll());assert.equal(balanceReads,beforeOtherPage);assert(!await p.$('.pc-table-wrap img'));
     await p.type('#pc-search','制造');assert.match(await body(),/测试客户 A/);assert.doesNotMatch(await p.$eval('.pc-content',e=>e.textContent),/客户 <img/);
     await p.click('.pc-sidebar [data-pc-page=costs]');assert.match(await body(),/不能相加/);assert.doesNotMatch(await body(),/¥0|￥0/);
     // Forward metering includes inactive and zero-activity accounts, and keeps
