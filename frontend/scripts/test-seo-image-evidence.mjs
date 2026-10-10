@@ -2,11 +2,12 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import * as Vue from 'vue'
+import { imageReviewPrecondition, requireImageVersion } from '../src/utils/seoImageReview.js'
 
 const source = await readFile(new URL('../src/views/seo/SeoImageEvidenceDialog.vue', import.meta.url), 'utf8')
 const code = compileScript(parse(source).descriptor, { id: 'images-test', genDefaultAs: 'component' }).content.replace(/^import .* from .*$/gm, '')
 const requests = [], remediationRequests = [], historyRequests = [], copyRequests = [], previewRequests = [], reuseRequests = [], messages = []
-const bindings = { computed: Vue.computed, ref: Vue.ref, watch: Vue.watch, onBeforeUnmount: Vue.onBeforeUnmount,
+const bindings = { imageReviewPrecondition, requireImageVersion, computed: Vue.computed, ref: Vue.ref, watch: Vue.watch, onBeforeUnmount: Vue.onBeforeUnmount,
   fetchSeoImageEvidence: args => new Promise((resolve, reject) => requests.push({ args, resolve, reject })),
   fetchSeoImageRemediation: args => new Promise((resolve, reject) => remediationRequests.push({ args, resolve, reject })),
   fetchSeoImageRemediationHistory: args => new Promise((resolve, reject) => historyRequests.push({ args, resolve, reject })),
@@ -33,9 +34,9 @@ assert.deepEqual(previewRequests[0].args, { tenantId: 1, siteId: 1, pageId: 234 
 props.tenantId = 2; props.siteId = 2
 await flush()
 requests.at(-1).resolve({ snapshot_id: 12, evidence: { items: [{ position: 1, alt_state: 'empty' }, { position: 2, alt_state: 'missing' }] } })
-remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [{ id: 7, position: 2, decision: 'informative', alt_suggestion: '产品图', note: '由 AI 根据已存档文本线索生成，未读取图片像素，必须人工核对', review_status: 'draft' }] })
-historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [{ snapshot_id: 12, approved_count: 0, candidate_count: 2 }, { snapshot_id: 11, approved_count: 1, candidate_count: 1 }] })
-previewRequests.at(-1).resolve({ target_snapshot_id: 12, eligible_count: 1, source_page_count: 1 })
+remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [{ id: 7, position: 2, version: 'a'.repeat(64), decision: 'informative', alt_suggestion: '产品图', note: '由 AI 根据已存档文本线索生成，未读取图片像素，必须人工核对', review_status: 'draft' }] })
+historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [{ snapshot_id: 12, approved_count: 0, candidate_count: 2 }, { snapshot_id: 11, approved_version: 'c'.repeat(64), approved_count: 1, candidate_count: 1 }] })
+previewRequests.at(-1).resolve({ target_snapshot_id: 12, reuse_version: 'b'.repeat(64), eligible_count: 1, source_page_count: 1 })
 await flush()
 requests[0].resolve({ snapshot_id: 11, evidence: { items: [{ secret: 'previous tenant' }] } })
 remediationRequests[0].resolve({ snapshot_id: 11, items: [] })
@@ -68,14 +69,14 @@ assert.equal(state().reviewFilter, 'all')
 assert.equal(state().filter, 'all')
 requests.at(-1).resolve({ snapshot_id: 11, evidence: { items: [{ position: 2, alt_state: 'missing' }] } })
 remediationRequests.at(-1).resolve({ snapshot_id: 11, items: [] })
-historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [{ snapshot_id: 12, approved_count: 0, candidate_count: 2 }, { snapshot_id: 11, approved_count: 1, candidate_count: 1 }] })
-previewRequests.at(-1).resolve({ target_snapshot_id: 12, eligible_count: 0, source_page_count: 0 })
+historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [{ snapshot_id: 12, approved_count: 0, candidate_count: 2 }, { snapshot_id: 11, approved_version: 'c'.repeat(64), approved_count: 1, candidate_count: 1 }] })
+previewRequests.at(-1).resolve({ target_snapshot_id: 12, reuse_version: 'b'.repeat(64), eligible_count: 0, source_page_count: 0 })
 await flush()
 state().changeSnapshot(12)
 requests.at(-1).resolve({ snapshot_id: 12, evidence: { items: [{ position: 1, alt_state: 'empty' }, { position: 2, alt_state: 'missing' }] } })
-remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [{ id: 7, position: 2, decision: 'informative', alt_suggestion: '产品图', note: '由 AI 根据已存档文本线索生成，未读取图片像素，必须人工核对', review_status: 'draft' }] })
-historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [{ snapshot_id: 12, approved_count: 0, candidate_count: 2 }, { snapshot_id: 11, approved_count: 1, candidate_count: 1 }] })
-previewRequests.at(-1).resolve({ target_snapshot_id: 12, eligible_count: 1, source_page_count: 1 })
+remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [{ id: 7, position: 2, version: 'a'.repeat(64), decision: 'informative', alt_suggestion: '产品图', note: '由 AI 根据已存档文本线索生成，未读取图片像素，必须人工核对', review_status: 'draft' }] })
+historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [{ snapshot_id: 12, approved_count: 0, candidate_count: 2 }, { snapshot_id: 11, approved_version: 'c'.repeat(64), approved_count: 1, candidate_count: 1 }] })
+previewRequests.at(-1).resolve({ target_snapshot_id: 12, reuse_version: 'b'.repeat(64), eligible_count: 1, source_page_count: 1 })
 await flush()
 state().filter = 'missing'
 assert.deepEqual(state().items, [{ position: 2, alt_state: 'missing' }])
@@ -125,19 +126,19 @@ URL.revokeObjectURL = originalRevokeObjectURL
 globalThis.setTimeout = originalSetTimeout
 const reused = state().reuseAcrossPages()
 await flush()
-assert.deepEqual(reuseRequests[0], { tenant_id: 2, site_id: 2, page_id: 234, expected_snapshot_id: 12 })
+assert.deepEqual(reuseRequests[0], { tenant_id: 2, site_id: 2, page_id: 234, expected_snapshot_id: 12, expected_reuse_version: 'b'.repeat(64) })
 requests.at(-1).resolve({ snapshot_id: 12, evidence: { items: [{ position: 1, alt_state: 'empty' }, { position: 2, alt_state: 'missing' }] } })
-remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [{ id: 7, position: 2, decision: 'informative', alt_suggestion: '产品图', review_status: 'draft' }] })
-historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [{ snapshot_id: 12, approved_count: 0, candidate_count: 2 }, { snapshot_id: 11, approved_count: 1, candidate_count: 1 }] })
-previewRequests.at(-1).resolve({ target_snapshot_id: 12, eligible_count: 0, source_page_count: 0 })
+remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [{ id: 7, position: 2, version: 'a'.repeat(64), decision: 'informative', alt_suggestion: '产品图', review_status: 'draft' }] })
+historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [{ snapshot_id: 12, approved_count: 0, candidate_count: 2 }, { snapshot_id: 11, approved_version: 'c'.repeat(64), approved_count: 1, candidate_count: 1 }] })
+previewRequests.at(-1).resolve({ target_snapshot_id: 12, reuse_version: 'b'.repeat(64), eligible_count: 0, source_page_count: 0 })
 await reused
 const copied = state().copyPrevious()
 await flush()
-assert.deepEqual(copyRequests[0], { tenant_id: 2, site_id: 2, page_id: 234, expected_snapshot_id: 12, source_snapshot_id: 11 })
+assert.deepEqual(copyRequests[0], { tenant_id: 2, site_id: 2, page_id: 234, expected_snapshot_id: 12, source_snapshot_id: 11, expected_source_version: 'c'.repeat(64) })
 requests.at(-1).resolve({ snapshot_id: 12, evidence: { items: [{ position: 1, alt_state: 'empty' }, { position: 2, alt_state: 'missing' }] } })
-remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [{ id: 8, position: 2, decision: 'informative', alt_suggestion: '产品图', review_status: 'draft' }] })
-historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [{ snapshot_id: 12, approved_count: 0, candidate_count: 2 }, { snapshot_id: 11, approved_count: 1, candidate_count: 1 }] })
-previewRequests.at(-1).resolve({ target_snapshot_id: 12, eligible_count: 0, source_page_count: 0 })
+remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [{ id: 8, position: 2, version: 'd'.repeat(64), decision: 'informative', alt_suggestion: '产品图', review_status: 'draft' }] })
+historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [{ snapshot_id: 12, approved_count: 0, candidate_count: 2 }, { snapshot_id: 11, approved_version: 'c'.repeat(64), approved_count: 1, candidate_count: 1 }] })
+previewRequests.at(-1).resolve({ target_snapshot_id: 12, reuse_version: 'b'.repeat(64), eligible_count: 0, source_page_count: 0 })
 await copied
 assert.equal(state().drafts[2].id, 8)
 state().filter = 'whitespace'
@@ -154,14 +155,14 @@ assert.equal(state().data, null)
 requests.at(-1).reject(new Error('offline'))
 remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [] })
 historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [] })
-previewRequests.at(-1).resolve({ target_snapshot_id: 12, eligible_count: 0, source_page_count: 0 })
+previewRequests.at(-1).resolve({ target_snapshot_id: 12, reuse_version: 'b'.repeat(64), eligible_count: 0, source_page_count: 0 })
 await reload
 assert.equal(state().error, 'offline')
 const retry = state().load()
 requests.at(-1).resolve({ snapshot_id: 12, evidence: null, legacy_candidate_count: 26 })
 remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [] })
 historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [] })
-previewRequests.at(-1).resolve({ target_snapshot_id: 12, eligible_count: 0, source_page_count: 0 })
+previewRequests.at(-1).resolve({ target_snapshot_id: 12, reuse_version: 'b'.repeat(64), eligible_count: 0, source_page_count: 0 })
 await retry
 assert.equal(state().evidence, null)
 assert.equal(state().data.legacy_candidate_count, 26)
@@ -171,7 +172,7 @@ await flush()
 requests.at(-1).resolve({ snapshot_id: 12, evidence: { items: [{ secret: 'closed dialog' }] } })
 remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [] })
 historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [] })
-previewRequests.at(-1).resolve({ target_snapshot_id: 12, eligible_count: 0, source_page_count: 0 })
+previewRequests.at(-1).resolve({ target_snapshot_id: 12, reuse_version: 'b'.repeat(64), eligible_count: 0, source_page_count: 0 })
 await pending
 assert.equal(state().data, null)
 props.visible = true
@@ -180,7 +181,7 @@ app.unmount()
 requests.at(-1).resolve({ snapshot_id: 12, evidence: { items: [] } })
 remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [] })
 historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [] })
-previewRequests.at(-1).resolve({ target_snapshot_id: 12, eligible_count: 0, source_page_count: 0 })
+previewRequests.at(-1).resolve({ target_snapshot_id: 12, reuse_version: 'b'.repeat(64), eligible_count: 0, source_page_count: 0 })
 await flush()
 assert(!source.includes('v-html'))
 assert(!/<img\b|:src=|:href=/.test(source), 'no untrusted resource loading or navigation')
@@ -220,15 +221,16 @@ assert.deepEqual(workbenchCalls[0], ['/api/v1/seo/site-pages/image-remediation-w
 const aiDraftApiCode = apiSource.match(/export function generateSeoImageAltDrafts[\s\S]*?\n}/)[0].replace('export ', '')
 const aiDraftCalls = []
 const generateDrafts = new Function('client', `${aiDraftApiCode}; return generateSeoImageAltDrafts`)({ post: (...args) => aiDraftCalls.push(args) })
-const aiPayload = { tenant_id: 1, site_id: 2, items: [{ page_id: 3, expected_snapshot_id: 4, position: 5, expected_review_id: null }] }
+const aiPayload = { tenant_id: 1, site_id: 2, items: [{ page_id: 3, expected_snapshot_id: 4, position: 5, expected_review_id: null, expected_review_version: null }] }
 generateDrafts(aiPayload)
 assert.deepEqual(aiDraftCalls[0], ['/api/v1/seo/site-pages/image-remediation/ai-drafts', aiPayload, { timeout: 60000 }])
-for (const marker of ["row.review_status === 'unreviewed'", "row.decision === 'undecided'", '.slice(0, 20)', 'expected_review_id: null', 'loading || approving || !aiEligible.length', 'loading || generating || !eligible.length', 'skipped_changed', 'skipped_ineligible', 'tenantId !== props.tenantId || siteId !== props.siteId']) assert(workbenchSource.includes(marker))
+for (const marker of ["row.review_status === 'unreviewed'", "row.decision === 'undecided'", '.slice(0, 20)', 'imageReviewPrecondition(row.review)', 'loading || approving || !aiEligible.length', 'loading || generating || !eligible.length', 'skipped_changed', 'skipped_ineligible', 'tenantId !== props.tenantId || siteId !== props.siteId']) assert(workbenchSource.includes(marker))
 
 const workbenchCode = compileScript(parse(workbenchSource).descriptor, { id: 'workbench-test', genDefaultAs: 'component' }).content.replace(/^import .* from .*$/gm, '')
 const workbenchRequests = [], generatedPayloads = [], workbenchMessages = []
 let workbenchConfirm = async () => true
 const workbenchBindings = {
+  imageReviewPrecondition,
   computed: Vue.computed, ref: Vue.ref, reactive: Vue.reactive, watch: Vue.watch,
   onBeforeUnmount: Vue.onBeforeUnmount, SeoImageEvidenceDialog: { render: () => null },
   fetchSeoImageRemediationWorkbench: args => new Promise((resolve, reject) => workbenchRequests.push({ args, resolve, reject })),
