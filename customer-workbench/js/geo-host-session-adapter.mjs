@@ -17,9 +17,10 @@ export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscrib
     const list=url.pathname==='/api/v1/geo/workbench/onsite-tasks';
     const act=/^\/api\/v1\/geo\/workbench\/onsite-tasks\/[1-9]\d*\/actions$/.test(url.pathname);
     const ai=/^\/api\/v1\/geo\/workbench\/onsite-tasks\/[1-9]\d*\/ai-proposal$/.test(url.pathname);
-    const allowed=preflight?method==='GET'&&readRoutes.has(url.pathname):identity&&((list&&['GET','POST'].includes(method))||((act||ai)&&method==='POST'));
+    const aiRead=/^\/api\/v1\/geo\/workbench\/onsite-tasks\/[1-9]\d*\/ai-requests\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(url.pathname);
+    const allowed=preflight?method==='GET'&&readRoutes.has(url.pathname):identity&&((list&&['GET','POST'].includes(method))||(aiRead&&method==='GET')||((act||ai)&&method==='POST'));
     if(!allowed)fail('ROUTE_DENIED');
-    const keys=preflight?(url.pathname.endsWith('/projects')?['tenant_id']:[]):method==='GET'?['tenant_id','project_id','before_id']:[];
+    const keys=preflight?(url.pathname.endsWith('/projects')?['tenant_id']:[]):method==='GET'?['tenant_id','project_id',...(list?['before_id']:[])]:[];
     for(const name of url.searchParams.keys())if(!keys.includes(name)||url.searchParams.getAll(name).length!==1)fail('QUERY_DENIED');
     if(keys.includes('tenant_id')&&url.searchParams.get('tenant_id')!==String(s.tenantId))fail('SCOPE_MISMATCH');
     if(keys.includes('project_id')&&url.searchParams.get('project_id')!==String(s.projectId))fail('SCOPE_MISMATCH');

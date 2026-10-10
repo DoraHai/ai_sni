@@ -4,16 +4,18 @@ export function renderControlPanel({snapshot,esc,card,table,tenant}){
   if(c?.state!=='enabled')return card('API 与预算管理','<p>管理功能等待启用。现有调用与费用统计继续可查看。</p>');
   const users=snapshot.sources.users.rows,tenants=snapshot.sources.tenants.rows;
   const hosts=[...new Set([...c.bindings.map(b=>b.host),...(c.default_rates||[]).map(r=>r.host)].filter(Boolean))].sort();
+  const concurrency=c.capabilities?.includes('budget_concurrency_v1'),providerBudgets=c.capabilities?.includes('provider_budget_v1');
   const option=(value,label)=>`<option value="${esc(value)}">${esc(label)}</option>`;
   const field=(name,label,type='number',extra='')=>`<label>${label}<input name="${name}" type="${type}" ${extra}></label>`;
   const choices=(name,label,items)=>`<label>${label}<select name="${name}">${items}</select></label>`;
   const form=(kind,body)=>`<form class="pc-control-form" data-control-kind="${kind}"><input name="revision" type="hidden" value="0">${body}<button type="submit">保存${{budget:'预算',provider:'接口开关',rate:'单价',credential:'密钥设置'}[kind]}</button><p class="pc-note" data-control-version></p></form>`;
-  const budgetForm=form('budget',choices('target','预算范围',option('global','全平台')+tenants.map(t=>option('tenant:'+t.id,'客户 · '+t.name)).join('')+users.map(u=>option('user:'+u.id,'账号 · '+u.username+(u.is_active?'':'（已停用）'))).join(''))+
+  const budgetForm=form('budget',choices('target','预算范围',option('global','全平台')+tenants.map(t=>option('tenant:'+t.id,'客户 · '+t.name)).join('')+users.map(u=>option('user:'+u.id,'账号 · '+u.username+(u.is_active?'':'（已停用）'))).join('')+(providerBudgets?hosts.map(h=>option('provider:'+h,'服务商 · '+h)).join(''):''))+
     field('daily_calls','每日请求上限','number','min="0" step="1"')+field('monthly_calls','每月请求上限','number','min="0" step="1"')+
-    field('daily_cny','每日估算费用上限（元）','number','min="0" step="any"')+field('monthly_cny','每月估算费用上限（元）','number','min="0" step="any"')+field('warning_percent','提醒阈值（%）','number','min="1" max="100" step="1" required'));
+    field('daily_cny','每日估算费用上限（元）','number','min="0" step="any"')+field('monthly_cny','每月估算费用上限（元）','number','min="0" step="any"')+(concurrency?field('max_concurrent','同时进行的调用上限','number','min="0" max="10000" step="1"'):'')+field('warning_percent','提醒阈值（%）','number','min="1" max="100" step="1" required'));
   const rows=c.budgets.map(b=>[esc(b.target==='global'?'全平台':b.target.startsWith('tenant:')?tenant(Number(b.target.slice(7))):users.find(u=>u.id===Number(b.target.slice(5)))?.username||b.target),
     esc(b.usage.daily_calls+' / '+(b.value.daily_calls??'无限制')),esc(b.usage.monthly_calls+' / '+(b.value.monthly_calls??'无限制')),
     esc('¥'+b.usage.daily_cny+' / '+(b.value.daily_cny??'无限制')),esc('¥'+b.usage.monthly_cny+' / '+(b.value.monthly_cny??'无限制')),
+    ...(concurrency?[esc((b.usage.active_calls??'未知')+' / '+(b.value.max_concurrent??'无限制')),esc(b.usage.unresolved_calls??'未知')]:[]),
     esc({normal:'正常',warning:'接近上限',blocked:'已达上限',unknown:'未知费用，金额预算暂停'}[b.status])]);
   const providerForm=form('provider',choices('host','服务商',hosts.map(h=>option(h,h)).join(''))+choices('enabled','接口状态',option('true','启用')+option('false','停用')));
   const rateForm=form('rate',choices('host','服务商',hosts.map(h=>option(h,h)).join(''))+
@@ -34,9 +36,9 @@ export function renderControlPanel({snapshot,esc,card,table,tenant}){
   const prices=new Map((c.default_rates||[]).map(r=>['rate:'+r.host+':'+r.model,{...r,unit:r.unit||'tokens',version:r.version||'官方已审核'}]));
   for(const row of c.settings.filter(r=>r.kind==='rate'))prices.set(row.key,row.value);
   const priceRows=[...prices].map(([key,p])=>[esc(key.slice(5)),esc(p.unit==='request'?'每次请求':'每百万 Token'),
-    esc(p.unit==='request'?p.per_request:p.input+' / '+p.output+' / '+(p.cached??'未设置')),esc(p.version),esc(p.source)]);
-  return card('预算设置',budgetForm,'空白表示不限制，0 表示零额度。平台、客户、账号预算同时生效；北京时间每日及每月重置。金额预算按保守费用预留，并发请求共享额度；实际费用以服务商账单为准。')+
-    card('当前预算与占用',table(['范围','每日请求 / 上限','每月请求 / 上限','每日占用 / 上限','每月占用 / 上限','状态'],rows),'金额占用包括未完成请求的预留额度。未知单价或未知费用会暂停设有金额上限的范围。')+
+    esc(p.unit==='request'?p.per_request:p.input+' / '+p.output+' / '+(p.cached??'未设置')),esc(p.version)+(p.pricing_basis==='peak_ceiling'?'<small class="pc-cell-note">高峰单价 · 保守上限</small>':''),esc(p.source)]);
+  return card('预算设置',budgetForm,'空白表示不限制，0 表示零额度。平台、客户、账号及服务商的限制共同检查；仅作用于已部署并启用准入保护的调用路径。日/月额度按北京时间重置；并发占用与未核清费用不会随日期重置。')+
+    card('当前预算与占用',table(['范围','每日请求 / 上限','每月请求 / 上限','每日占用 / 上限','每月占用 / 上限',...(concurrency?['并发占用 / 上限','费用待核查']:[]),'状态'],rows),'金额占用包括预留额度。并发占用包含未结束及结果未知的调用，不表示这些调用都仍在执行；未确认供应商终态前保留占用。已结束但费用未知的调用仍会暂停金额预算。请在 API 调用明细中核查，告警标记已处理不会释放占用。')+
     card('接口与密钥登记',table(['模块','配置项','服务商','模型','配置状态','接口状态','密钥来源'],bindings),'配置状态由各服务登记，不表示已通过付费连通测试。百度推广 OAuth 沿用原授权流程。')+
     card('服务商开关',providerForm,'停用会拦截该服务商之后的新请求；已经发出的请求继续完成。')+
     card('当前单价',table(['服务商 / 模型或接口','单位','单价：输入 / 输出 / 缓存','版本','依据'],priceRows),'已审核的默认价格与管理员设置使用同一精确匹配规则。未登记价格的接口费用保持未知。')+
@@ -52,7 +54,7 @@ export function hydrateControlForm(form,snapshot,loadValues=true){
   f.revision.value=row?.revision??0;
   form.querySelector('[data-control-version]').textContent='当前配置版本：'+f.revision.value;
   if(loadValues){
-    const defaults=kind==='budget'?{daily_calls:'',monthly_calls:'',daily_cny:'',monthly_cny:'',warning_percent:80}:
+    const defaults=kind==='budget'?{daily_calls:'',monthly_calls:'',daily_cny:'',monthly_cny:'',max_concurrent:'',warning_percent:80}:
       kind==='provider'?{enabled:true}:kind==='rate'?{unit:'tokens',input:'',output:'',cached:'',max_input:1000000,per_request:'',source:''}:{};
     const rate=kind==='rate'?(c.default_rates||[]).find(r=>r.host===f.host.value&&r.model===f.model.value):null;
     const data={...defaults,...rate,...row?.value};
@@ -75,6 +77,7 @@ export function controlPayload(form){
     key='budget:'+f.target.value;value={};
     for(const name of ['daily_calls','monthly_calls','daily_cny','monthly_cny'])value[name]=f[name].value===''?null:name.endsWith('calls')?Number(f[name].value):f[name].value;
     value.warning_percent=Number(f.warning_percent.value);
+    if(f.max_concurrent)value.max_concurrent=f.max_concurrent.value===''?null:Number(f.max_concurrent.value);
   }else if(kind==='provider'){
     key='provider:'+f.host.value;value={enabled:f.enabled.value==='true'};
   }else if(kind==='rate'){

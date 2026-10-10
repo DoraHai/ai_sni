@@ -21,14 +21,27 @@ export function createOnsiteClient({transport,getContext,module='seo'}) {
     same(c);let data;try{data=await response.json();}catch{fail(method==='GET'?'CONTRACT_MISMATCH':'WRITE_OUTCOME_UNKNOWN');}
     same(c);if(!response.ok)fail(typeof data.detail==='string'?data.detail:data.detail?.message||data.detail?.code||'REQUEST_FAILED',response.status);return data;
   }
-  function validate(row,c){
+  function validate(row,c,remember=true){
     if(!Number.isSafeInteger(row?.id)||row.id<=0||row.module!==module||row.tenant_id!==c.tenantId||row.scope_id!==id(c)||
       row.workflow?.module!==module||!Number.isInteger(row.workflow.revision)||row.workflow.revision<1||
       !Array.isArray(row.workflow.items)||!Array.isArray(row.allowed_actions))fail('CONTRACT_MISMATCH');
-    rows.set(row.id,{context:stamp(c),row:structuredClone(row)});return row;
+    if(remember)rows.set(row.id,{context:stamp(c),row:structuredClone(row)});return row;
   }
   return {
     invalidate(){rows.clear();latest=null;aiRequests.clear();},
+    adopt(row){return validate(row,ctx());},
+    async readAi(taskId,requestId){
+      const c=ctx();
+      if(!Number.isSafeInteger(taskId)||taskId<=0||! /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(requestId))fail('INVALID_AI_REQUEST');
+      const data=await request(base+'/'+taskId+'/ai-requests/'+requestId+'?'+new URLSearchParams(scope(c)),'GET',c);
+      validate(data,c,false);
+      if(data.id!==taskId||data.request_run?.request_id!==requestId||
+        !['queued','running','ready','failed','unknown','stale','cancelled'].includes(data.request_run.state))fail('CONTRACT_MISMATCH');
+      if(data.workflow.ai_run?.request_id!==requestId)fail('AI_REQUEST_SUPERSEDED');
+      if(!['queued','running','ready','failed','unknown','stale','cancelled'].includes(data.workflow.ai_run.state)||
+        data.workflow.revision<(rows.get(taskId)?.row.workflow.revision||1))fail('CONTRACT_MISMATCH');
+      return data;
+    },
     async list(beforeId=null){const c=ctx(),p=new URLSearchParams(scope(c));if(beforeId)p.set('before_id',beforeId);
       const data=await request(base+'?'+p,'GET',c);
       if(data.module!==module||data.tenant_id!==c.tenantId||data.scope_id!==id(c)||!Array.isArray(data.items)||typeof data.can_create!=='boolean')fail('CONTRACT_MISMATCH');
@@ -44,7 +57,7 @@ export function createOnsiteClient({transport,getContext,module='seo'}) {
       if(!['initial','revise'].includes(mode))fail('AI_MODE_DENIED');
       if(!stored||stored.context!==stamp(c)||!stored.row.allowed_actions.includes('save_proposal')||
         stored.row.capabilities?.ai_planning?.enabled!==true||stored.row.capabilities.ai_planning.can_generate!==true||
-        ['running','unknown'].includes(stored.row.workflow.ai_run?.state))
+        ['queued','running','unknown'].includes(stored.row.workflow.ai_run?.state))
         fail('AI_PLANNING_UNAVAILABLE');
       const key=JSON.stringify([stamp(c),taskId,stored.row.workflow.revision,mode]);
       if(aiRequests.has(key))return aiRequests.get(key);
@@ -53,7 +66,7 @@ export function createOnsiteClient({transport,getContext,module='seo'}) {
         const data=await request(base+'/'+taskId+'/ai-proposal','POST',c,
           {...scope(c),expected_revision:stored.row.workflow.revision,request_id:requestId,mode});
         if(data?.id!==taskId||data.workflow?.ai_run?.request_id!==requestId||
-          !['running','ready','failed','unknown','stale'].includes(data.workflow.ai_run.state))fail('WRITE_OUTCOME_UNKNOWN');
+          !['queued','running','ready','failed','unknown','stale','cancelled'].includes(data.workflow.ai_run.state))fail('WRITE_OUTCOME_UNKNOWN');
         return validate(data,c);
       })();
       aiRequests.set(key,pending);

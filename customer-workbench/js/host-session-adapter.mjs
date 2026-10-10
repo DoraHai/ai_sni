@@ -2,6 +2,7 @@
 const positive=n=>Number.isSafeInteger(n)&&n>0;
 const routes=[
   ['GET',/^\/api\/v1\/seo\/workbench\/onsite-tasks$/,['tenant_id','site_id','before_id'],'site'],
+  ['GET',/^\/api\/v1\/seo\/workbench\/onsite-tasks\/[1-9]\d*\/ai-requests\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/,['tenant_id','site_id'],'site'],
   ['POST',/^\/api\/v1\/seo\/workbench\/onsite-tasks$/,[],'site',['tenant_id','site_id','request_id','work_type','month','keyword_ids','page_ids','owner_name']],
   ['POST',/^\/api\/v1\/seo\/workbench\/onsite-tasks\/[1-9]\d*\/actions$/,[],'site',['tenant_id','site_id','action','expected_revision','items','note','owner_name']],
   ['POST',/^\/api\/v1\/seo\/workbench\/onsite-tasks\/[1-9]\d*\/ai-proposal$/,[],'site',['tenant_id','site_id','expected_revision','request_id','mode']],
