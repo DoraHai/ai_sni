@@ -139,10 +139,10 @@ async def usage(session, target):
     # A calendar reset must not release an interrupted attempt or erase an
     # unresolved charge. No timeout or worker PID is proof of a free request.
     outstanding = (await session.execute(text(f'''SELECT
-        count(*) FILTER (WHERE state='requested') AS active_calls,
+        count(*) FILTER (WHERE state IN ('requested','unknown')) AS active_calls,
         count(*) FILTER (WHERE estimated_amount IS NULL AND
             (state <> 'requested' OR reserved_amount IS NULL OR started_at < :month)) AS unresolved_calls
-        FROM api_usage_events WHERE (state='requested' OR estimated_amount IS NULL) {where}'''),
+        FROM api_usage_events WHERE (state IN ('requested','unknown') OR estimated_amount IS NULL) {where}'''),
         {'month': month, 'target': tid})).mappings().one()
     result.update({k: int(v) for k, v in outstanding.items()})
     return result
@@ -249,7 +249,7 @@ async def admit(params, url, api_key, quote, kwargs):
                 spent = await usage(session, target)
                 cap = policy.get('max_concurrent')
                 if cap is not None and spent['active_calls'] >= cap:
-                    raise ControlDenied(f'API 并发上限已达到（{target}），请等待当前请求完成；长期未结束的调用需由超管核查台账',
+                    raise ControlDenied(f'API 并发上限已达到（{target}），请等待当前请求完成；未结束或结果未知的调用需由超管核查台账',
                                         code='api_concurrency_limit', target=target)
                 for field in ('daily_calls', 'monthly_calls', 'daily_cny', 'monthly_cny'):
                     cap = policy.get(field)
