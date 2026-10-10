@@ -1,5 +1,5 @@
 import {createOnsiteClient,onsiteTaskId} from './onsite-client.mjs';
-import {onsiteView,onsiteCreateInput,onsiteActionInput} from './onsite-view.mjs';
+import {onsiteView,onsiteCreateInput,onsiteActionInput,onsiteProposalMode} from './onsite-view.mjs';
 import {createInputProtection} from './input-protection.mjs';
 import {escapeText as esc} from './customer-display.mjs';
 export function mountGeoWorkbench({root,host,logout}){
@@ -34,7 +34,7 @@ export function mountGeoWorkbench({root,host,logout}){
     if(action==='select'){selected=data?.items.find(t=>t.id===Number(el.dataset.id))||null;render();return;}
     if(['refresh','next','latest'].includes(action)){if(action==='next')before=Number(el.dataset.before);if(action==='latest')before=null;await run(async current=>{const result=await client.list(before);if(current()){data=result;selected=null;}});return;}
     let input;try{input=action==='create'?onsiteCreateInput(root,'geo'):onsiteActionInput(root,selected,action);}catch(e){message=e.message;render();return;}
-    await run(async current=>{const result=action==='create'?await client.create(input):action==='ai-proposal'?await client.propose(selected.id,selected.workflow.recheck?.passed===false?'revise':'initial'):await client.act(selected.id,action,input);if(current()){selected=result;protection.saved();if(action==='create')before=null;const list=await client.list(before);if(current()){data=list;selected=list.items.find(t=>t.id===result.id)||null;}}});
+    await run(async current=>{const result=action==='create'?await client.create(input):action==='ai-proposal'?await client.propose(selected.id,onsiteProposalMode(selected)):await client.act(selected.id,action,input);if(current()){selected=result;protection.saved();if(action==='create')before=null;const list=await client.list(before);if(current()){data=list;selected=list.items.find(t=>t.id===result.id)||null;}}});
   }
   root.addEventListener('click',click);void connect();
   return {dispose(){epoch++;unsubscribe();client.invalidate();protection.dispose();host.dispose();root.removeEventListener('click',click);root.replaceChildren();}};

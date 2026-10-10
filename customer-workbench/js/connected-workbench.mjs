@@ -1,5 +1,5 @@
 import {createOnsiteClient,onsiteTaskId} from './onsite-client.mjs';
-import {onsiteView,onsiteCreateInput,onsiteActionInput} from './onsite-view.mjs';
+import {onsiteView,onsiteCreateInput,onsiteActionInput,onsiteProposalMode} from './onsite-view.mjs';
 import {createSeoWorkflowClient} from './seo-workflow-client.mjs';
 import {createSeoContentReader} from './seo-readonly-client.mjs';
 import {createServicePlanController} from './service-plan-controller.mjs';
@@ -196,7 +196,7 @@ if(editor){const field={'content-title':'title','content-outline':'outline','con
       if(action==='select'){onsiteSelected=onsiteData?.items.find(t=>t.id===Number(el.dataset.id))||null;render();return;}
       if(['refresh','next','latest'].includes(action)){if(action==='next')onsiteBefore=Number(el.dataset.before);if(action==='latest')onsiteBefore=null;await navigate('站内优化');return;}
       let input;try{input=action==='create'?onsiteCreateInput(root):onsiteActionInput(root,onsiteSelected,action);}catch(e){message=e.message;render();return;}
-      await run(async current=>{const data=action==='create'?await onsiteClient.create(input):action==='ai-proposal'?await onsiteClient.propose(onsiteSelected.id,onsiteSelected.workflow.recheck?.passed===false?'revise':'initial'):await onsiteClient.act(onsiteSelected.id,action,input);if(current()){onsiteSelected=data;protection.saved();if(action==='create')onsiteBefore=null;const list=await onsiteClient.list(onsiteBefore);if(current()){onsiteData=list;onsiteSelected=list.items.find(t=>t.id===data.id)||null;}}});return;
+      await run(async current=>{const data=action==='create'?await onsiteClient.create(input):action==='ai-proposal'?await onsiteClient.propose(onsiteSelected.id,onsiteProposalMode(onsiteSelected)):await onsiteClient.act(onsiteSelected.id,action,input);if(current()){onsiteSelected=data;protection.saved();if(action==='create')onsiteBefore=null;const list=await onsiteClient.list(onsiteBefore);if(current()){onsiteData=list;onsiteSelected=list.items.find(t=>t.id===data.id)||null;}}});return;
     }
     if(a==='execution-detail'){executionPublications=null;const id=Number(el.dataset.id);selectedTaskId=id;page='执行详情';execution=null;await run(async current=>{const data=await executionClient.detail(id);if(current())execution=data;});return;}
     if(a==='execution-publications'){executionPublications=null;await run(async current=>{const items=await executionClient.publicationOptions(selectedTaskId);if(current())executionPublications=items;});return;}

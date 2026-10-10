@@ -26,7 +26,7 @@ for(const module of ['seo','geo']){
      if(req.method()==='GET')return respond({module,tenant_id:1,scope_id:row.scope_id,can_create:true,items:[row],next_before_id:null});
      const body=JSON.parse(req.postData());writes.push(body);assert.equal(body.expected_revision,row.workflow.revision);
      if(url.pathname.endsWith('/ai-proposal')){
-      assert.match(body.request_id,/^[a-f0-9-]{36}$/);assert.equal(body.mode,'initial');
+      assert.match(body.request_id,/^[a-f0-9-]{36}$/);assert.equal(body.mode,row.workflow.phase==='draft'?'initial':'revise');
       row.workflow.ai_run={request_id:body.request_id,state:'ready'};row.workflow.phase='review';
       row.workflow.ai_proposal={summary:'<script>throw new Error("unsafe")</script>',items:[{id:'a',reason:'已授权页面与资料',source_refs:['事实 #2']}]};
       row.workflow.revision++;row.allowed_actions=['save_proposal','cancel','approve'];return respond(row);
@@ -51,9 +51,12 @@ for(const module of ['seo','geo']){
    assert.equal(await p.$('.onsite-detail script'),null);assert.equal(writes.length,1);
    await p.click('[data-action=onsite-save_proposal]');
    await p.waitForSelector('[data-action=onsite-approve]');
+   await p.click('[data-action=onsite-ai-proposal]');
+   await p.waitForFunction(()=>!document.querySelector('[data-action=onsite-ai-proposal]').disabled);
+   assert.equal(writes.at(-1).mode,'revise');
    await p.type('#onsite-expected-a','未保存改动');await p.type('#onsite-note','审核依据');
    await p.click('[data-action=onsite-approve]');await p.waitForFunction(()=>document.body.textContent.includes('未保存修改'));
-   assert.equal(writes.length,2);
+   assert.equal(writes.length,3);
    await p.$eval('#onsite-expected-a',e=>{e.value='审核文字';e.dispatchEvent(new Event('input',{bubbles:true}));});
    for(const action of ['approve','implement','recheck','accept']){
     await p.$eval('#onsite-note',e=>{e.value='人工核对事实及实施依据';e.dispatchEvent(new Event('input',{bubbles:true}));});
@@ -62,7 +65,7 @@ for(const module of ['seo','geo']){
     if(next)await p.waitForSelector('[data-action=onsite-'+next+']');
     else await p.waitForFunction(()=>document.body.textContent.includes('人工验收：'));
    }
-   assert.deepEqual(writes.map(w=>w.mode?'ai-proposal':w.action),['ai-proposal','save_proposal','approve','implement','recheck','accept']);
+   assert.deepEqual(writes.map(w=>w.mode?'ai-proposal':w.action),['ai-proposal','save_proposal','ai-proposal','approve','implement','recheck','accept']);
    assert.equal(await p.$('[data-action=onsite-accept]'),null);
    await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
    assert.deepEqual(errors,[]);

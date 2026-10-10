@@ -19,7 +19,7 @@ export function createOnsiteClient({transport,getContext,module='seo'}) {
     let response;try{response=await transport(path,{method,...(body?{body:JSON.stringify(body)}:{})});}
     catch(e){if(['AUTH_EXPIRED','PERMISSION_DENIED','CONTEXT_CHANGED'].includes(e.code))throw e;fail(method==='GET'?'READ_FAILED':'WRITE_OUTCOME_UNKNOWN');}
     same(c);let data;try{data=await response.json();}catch{fail(method==='GET'?'CONTRACT_MISMATCH':'WRITE_OUTCOME_UNKNOWN');}
-    same(c);if(!response.ok)fail(typeof data.detail==='string'?data.detail:data.detail?.code||'REQUEST_FAILED',response.status);return data;
+    same(c);if(!response.ok)fail(typeof data.detail==='string'?data.detail:data.detail?.message||data.detail?.code||'REQUEST_FAILED',response.status);return data;
   }
   function validate(row,c){
     if(!Number.isSafeInteger(row?.id)||row.id<=0||row.module!==module||row.tenant_id!==c.tenantId||row.scope_id!==id(c)||
