@@ -1,15 +1,20 @@
 """Live advisor queue and idempotent, manually requested onsite AI proposals."""
+import asyncio
 import hashlib
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Literal
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app import onsite_workflow as work, seo_onsite_ai as ai
+from app import seo_onsite_ai_health as health
+from app.database import get_session as get_primary_session
 from app.api import seo_onsite as onsite
 from app.api_controls import ControlDenied
 from app.api_metering import MeteringUnavailable
@@ -19,13 +24,41 @@ from app.models.seo import SeoSiteAdvisorAssignment
 from app.models.seo_cockpit import SeoTask
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.security.auth import AuthContext
+from app.security.auth import AuthContext, require_auth
 from app.seo_service_plan import service_plan_is_paused
 from app.config import get_settings
 from app.seo_demo_runtime import seo_scheduler_may_start
 from app.seo_demo_source import get_seo_session, require_seo_scoped_auth
 
 router = APIRouter()
+
+
+async def require_health_admin(ctx=Depends(require_auth)):
+    # Match the named, global console identity, not a role label or API key.
+    if ctx.user_id is None or ctx.tenant_id is not None or not all(
+            ctx.can_edit(key) for key in ("settings.accounts", "settings.customers")):
+        raise HTTPException(403, "仅全局超级管理员可以访问", headers={"Cache-Control": "no-store"})
+    return ctx
+
+
+@router.get("/workbench/onsite-ai/health")
+async def onsite_ai_health(ctx=Depends(require_health_admin), session=Depends(get_primary_session)):
+    try:
+        async with asyncio.timeout(2):
+            queue = await health.queue_status(session)
+    except SQLAlchemyError as exc:
+        if getattr(getattr(exc, "orig", None), "sqlstate", None) in {"42P01", "42703"}:
+            # Missing reviewed structure is unknown, not an empty healthy queue.
+            queue = health.unavailable_queue()
+        else:
+            return JSONResponse(status_code=503, headers={"Cache-Control": "no-store"},
+                content={"detail": "站内 AI 队列暂无法核实", "code": "onsite_ai_health_unavailable"})
+    except TimeoutError:
+        return JSONResponse(status_code=503, headers={"Cache-Control": "no-store"},
+            content={"detail": "站内 AI 队列暂无法核实", "code": "onsite_ai_health_unavailable"})
+    return JSONResponse(headers={"Cache-Control": "no-store"}, content={
+        "schema": 1, "module": "seo", "observed_at": datetime.now(timezone.utc).isoformat(),
+        "worker": health.worker_status(), "queue": queue})
 
 
 class Request(BaseModel):
@@ -233,7 +266,11 @@ def execution_enabled(site):
 
 @router.post("/workbench/onsite-tasks/{task_id}/ai-proposal", status_code=202)
 async def ai_proposal(task_id: PositiveInt, req: Request,
-                      session=Depends(get_seo_session), ctx=Depends(require_seo_scoped_auth)):
+                      session=Depends(get_seo_session), ctx=Depends(require_seo_scoped_auth),
+                      onsite_protocol: list[str] | None = Header(None, alias="X-Snipers-Onsite-Protocol")):
+    if onsite_protocol != ["durable-v1"]:
+        return JSONResponse(status_code=409, headers={"Cache-Control": "no-store"}, content={
+            "detail": "工作台版本过旧，请刷新页面后重试", "code": "onsite_client_upgrade_required"})
     ctx.ensure_tenant(req.tenant_id)
     # Serialize the nonce across every task/site in this tenant, without a new
     # table or an unbounded site JSON index. The lock ends with the admission

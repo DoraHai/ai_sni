@@ -60,12 +60,17 @@ jobs:
           report = os.path.join(os.environ['RUNNER_TEMP'], 'seo-onsite-postgres.xml')
           result = pytest.main(['-q', 'tests/test_seo_onsite_postgres.py',
               'tests/test_seo_onsite_ai_postgres.py', 'tests/test_platform_call_guards.py',
+              'tests/test_seo_onsite_ai_health.py', 'tests/test_seo_onsite_ai_health_postgres.py',
               '-k', 'not native_reviewed_permission_scripts_keep_audit_append_only', '--junitxml=' + report])
           if result:
               raise SystemExit(result)
           xml = ET.parse(report)
           assert len(xml.findall('.//testcase')) >= 20, 'Missing onsite PostgreSQL coverage'
           assert not xml.findall('.//skipped'), 'Onsite PostgreSQL tests must run, not skip'
+          for module, minimum in [('test_seo_onsite_ai_health', 18), ('test_seo_onsite_ai_health_postgres', 7)]:
+              cases = [case for case in xml.findall('.//testcase')
+                  if case.get('classname', '').rsplit('.', 1)[-1] == module]
+              assert len(cases) >= minimum, 'Missing protocol/health coverage: ' + module
           PY
 
   dependency-audit:

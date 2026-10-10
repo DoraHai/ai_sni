@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app import onsite_workflow as work, seo_onsite_ai as ai
+from app.seo_onsite_ai_health import record_tick
 from app.api import seo_onsite as onsite, seo_onsite_ai as api
 from app.config import get_settings
 from app.database import async_session_factory
@@ -149,6 +150,18 @@ async def run_onsite_ai_jobs(*, sessions=None):
     settings = get_settings()
     if not seo_scheduler_may_start(settings) or not settings.seo_external_actions_enabled:
         return
+    stats = {"attempted": 0, "completed": 0}
+    try:
+        await _run_batch(sessions=sessions, stats=stats)
+    except Exception:
+        record_tick(stats["attempted"], stats["completed"], failed=True)
+        raise
+    else:
+        record_tick(stats["attempted"], stats["completed"],
+                    failed=stats["completed"] != stats["attempted"])
+
+
+async def _run_batch(*, sessions, stats):
     sessions = sessions or async_session_factory
     async with sessions() as session:
         candidates = list((await session.execute(select(SeoTask.id, SeoTask.tenant_id, SeoTask.site_id,
@@ -161,8 +174,10 @@ async def run_onsite_ai_jobs(*, sessions=None):
     semaphore = asyncio.Semaphore(2)
     async def one(candidate):
         async with semaphore:
+            stats["attempted"] += 1
             try:
                 await execute_request(*candidate, sessions=sessions)
+                stats["completed"] += 1
             except Exception as exc:
                 logger.warning("[SEO][onsite-ai] task=%s failure_type=%s", candidate[0], type(exc).__name__)
     await asyncio.gather(*(one(candidate) for candidate in candidates))

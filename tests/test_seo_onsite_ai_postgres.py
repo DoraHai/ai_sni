@@ -56,9 +56,13 @@ def request(task, **updates):
                               request_id=uuid4(), mode="initial") | updates))
 
 
+async def enqueue(*args, **kwargs):
+    return await api.ai_proposal(*args, **kwargs, onsite_protocol=["durable-v1"])
+
+
 async def complete(sessions, task_id, req, db, ctx):
     """Exercise production enqueue + independent worker + polling transactions."""
-    queued = await api.ai_proposal(task_id, req, db, ctx)
+    queued = await enqueue(task_id, req, db, ctx)
     if queued["replayed"]:
         return queued
     state = await jobs.execute_request(task_id, req.tenant_id, req.site_id, str(req.request_id), sessions=sessions)
@@ -336,7 +340,7 @@ def test_site_quota_serializes_different_tasks_before_provider(supplier):
                 await db.commit()
             async def call(ident):
                 async with sessions() as db:
-                    try: return await api.ai_proposal(ident,request(task),db,ADVISOR)
+                    try: return await enqueue(ident,request(task),db,ADVISOR)
                     except HTTPException as exc: return exc.status_code
             results=await asyncio.gather(call(task["id"]),call(100))
             assert sum(isinstance(r,dict) for r in results)==1 and 429 in results
@@ -373,7 +377,7 @@ def test_http_contract_limits_extra_fields_and_get_no_side_effects(supplier):
                 async with sessions() as db: yield db
             app.dependency_overrides[api.get_seo_session]=db_dep
             app.dependency_overrides[api.require_seo_scoped_auth]=lambda: ADVISOR
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url="http://test") as client:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url="http://test", headers={"X-Snipers-Onsite-Protocol": "durable-v1"}) as client:
                 assert (await client.get("/api/v1/seo/workbench/advisor-tasks?limit=51")).status_code==422
                 r=await client.get("/api/v1/seo/workbench/advisor-tasks?limit=1&tenant_id=4")
                 assert r.status_code==200 and r.json()["items"][0]["id"]==task["id"]
@@ -434,7 +438,7 @@ def test_one_nonce_across_tasks_is_one_charge_even_under_concurrency(supplier):
             req=request(task)
             async def call(ident):
                 async with sessions() as db:
-                    try: return await api.ai_proposal(ident,req,db,ADVISOR)
+                    try: return await enqueue(ident,req,db,ADVISOR)
                     except HTTPException as exc: return exc.detail["code"]
             results=await asyncio.gather(call(task["id"]),call(100))
             assert sum(isinstance(r,dict) for r in results)==1
@@ -566,7 +570,7 @@ def test_queued_submission_survives_request_session_and_concurrent_delivery(supp
             req = request(task)
             async def submit():
                 async with sessions() as db:
-                    return await api.ai_proposal(task["id"], req, db, ADVISOR)
+                    return await enqueue(task["id"], req, db, ADVISOR)
             results = await asyncio.gather(*(submit() for _ in range(5)))
             assert sum(not r["replayed"] for r in results) == 1
             assert all(r["request_run"]["state"] == "queued" for r in results)
@@ -591,7 +595,7 @@ def test_multiple_workers_claim_one_durable_nonce_only_once(monkeypatch, supplie
         async with fixture() as (sessions, task):
             req = request(task)
             async with sessions() as db:
-                await api.ai_proposal(task["id"], req, db, ADVISOR)
+                await enqueue(task["id"], req, db, ADVISOR)
             entered, release = asyncio.Event(), asyncio.Event()
             original = ai.deepseek.chat_json
             async def slow(*args, **kwargs):
@@ -616,7 +620,7 @@ def test_queue_revalidates_before_any_provider_call(change, supplier):
         async with fixture() as (sessions, task):
             req = request(task)
             async with sessions() as db:
-                await api.ai_proposal(task["id"], req, db, ADVISOR)
+                await enqueue(task["id"], req, db, ADVISOR)
             async with sessions() as db:
                 if change == "assignment": (await db.get(SeoSiteAdvisorAssignment, 3)).active = False
                 elif change == "user": (await db.get(User, 7)).is_active = False
@@ -658,7 +662,7 @@ def test_process_loss_after_dispatch_is_unknown_after_restart_and_get_is_readonl
                 raise WorkerLost()
             monkeypatch.setattr(ai.deepseek, "chat_json", lost)
             async with sessions() as db:
-                await api.ai_proposal(task["id"], req, db, ADVISOR)
+                await enqueue(task["id"], req, db, ADVISOR)
             with pytest.raises(WorkerLost):
                 await jobs.execute_request(task["id"], 4, 2, str(req.request_id), sessions=sessions)
             async with sessions() as db:
@@ -676,7 +680,7 @@ def test_process_loss_after_dispatch_is_unknown_after_restart_and_get_is_readonl
             await jobs.run_onsite_ai_jobs(sessions=sessions)
             await jobs.run_onsite_ai_jobs(sessions=sessions)
             async with sessions() as db:
-                result = await api.ai_proposal(task["id"], req, db, ADVISOR)
+                result = await enqueue(task["id"], req, db, ADVISOR)
                 assert result["replayed"] and result["request_run"]["state"] == "unknown"
                 assert result["workflow"]["revision"] == 1 and len(calls) == 1
                 assert "claim_id" not in json.dumps(result)
@@ -695,7 +699,7 @@ def test_worker_coroutine_cancellation_is_durable_unknown_without_retry(monkeypa
                 await asyncio.Event().wait()
             monkeypatch.setattr(ai.deepseek, "chat_json", slow)
             async with sessions() as db:
-                await api.ai_proposal(task["id"], req, db, ADVISOR)
+                await enqueue(task["id"], req, db, ADVISOR)
             operation = asyncio.create_task(jobs.execute_request(task["id"], 4, 2, str(req.request_id), sessions=sessions))
             await asyncio.wait_for(entered.wait(), 3)
             operation.cancel()
@@ -713,7 +717,7 @@ def test_cancel_request_fences_late_output_and_preserves_original_plan(monkeypat
         async with fixture() as (sessions, task):
             req = request(task)
             async with sessions() as db:
-                await api.ai_proposal(task["id"], req, db, ADVISOR)
+                await enqueue(task["id"], req, db, ADVISOR)
             entered, release = asyncio.Event(), asyncio.Event()
             original = ai.deepseek.chat_json
             async def slow(*args, **kwargs):
@@ -751,7 +755,7 @@ def test_old_request_poll_does_not_replace_current_run_and_scope_is_enforced(sup
                 ready = await complete(sessions, task["id"], req, db, ADVISOR)
             newer = request(ready, mode="revise")
             async with sessions() as db:
-                await api.ai_proposal(task["id"], newer, db, ADVISOR)
+                await enqueue(task["id"], newer, db, ADVISOR)
             async with sessions() as db:
                 old = await api.proposal_status(task["id"], req.request_id, 4, 2, db, ADVISOR)
                 assert old["request_run"]["state"] == "ready"
@@ -759,7 +763,7 @@ def test_old_request_poll_does_not_replace_current_run_and_scope_is_enforced(sup
                 assert old["workflow"]["ai_run"]["state"] == "queued"
                 assert not db.dirty
                 with pytest.raises(HTTPException) as exc:
-                    await api.ai_proposal(task["id"], req, db, ADVISOR)
+                    await enqueue(task["id"], req, db, ADVISOR)
                 assert exc.value.detail["code"] == "onsite_ai_request_superseded"
             for tenant, site, key in ((99,2,req.request_id), (4,99,req.request_id), (4,2,uuid4())):
                 async with sessions() as db:
@@ -781,7 +785,7 @@ def test_result_commit_failure_leaves_running_for_reconciliation_not_retry(monke
         async with fixture() as (sessions, task):
             req = request(task)
             async with sessions() as db:
-                await api.ai_proposal(task["id"], req, db, ADVISOR)
+                await enqueue(task["id"], req, db, ADVISOR)
             @asynccontextmanager
             async def broken_sessions():
                 async with sessions() as db:
@@ -813,7 +817,7 @@ def test_queued_expiry_or_provider_change_never_uses_another_model(monkeypatch, 
         async with fixture() as (sessions, task):
             req = request(task)
             async with sessions() as db:
-                await api.ai_proposal(task["id"], req, db, ADVISOR)
+                await enqueue(task["id"], req, db, ADVISOR)
             if change == "expired":
                 async with sessions() as db:
                     row = await db.get(SeoTask, task["id"])
@@ -840,7 +844,7 @@ def test_disabled_worker_does_not_accept_new_requests_or_invoke_provider(monkeyp
             monkeypatch.setattr(jobs, "get_settings", lambda: SimpleNamespace(**settings))
             async with sessions() as db:
                 with pytest.raises(HTTPException) as exc:
-                    await api.ai_proposal(task["id"], request(task), db, ADVISOR)
+                    await enqueue(task["id"], request(task), db, ADVISOR)
                 assert exc.value.status_code == 503
                 assert "onsite_ai_requests" not in (await db.get(SeoTask, task["id"])).params
                 assert not supplier
@@ -865,7 +869,7 @@ def test_customer_readonly_http_polling_scope_and_keyword_source_projection(monk
                 await db.commit()
             req = request(task)
             async with sessions() as db:
-                await api.ai_proposal(task["id"], req, db, ADVISOR)
+                await enqueue(task["id"], req, db, ADVISOR)
             app = FastAPI()
             app.include_router(api.router, prefix="/api/v1/seo")
             app.include_router(onsite.router, prefix="/api/v1/seo")
@@ -874,7 +878,7 @@ def test_customer_readonly_http_polling_scope_and_keyword_source_projection(monk
             app.dependency_overrides[api.get_seo_session] = db_dep
             app.dependency_overrides[api.require_seo_scoped_auth] = lambda: customer
             stem = f"/api/v1/seo/workbench/onsite-tasks/{task['id']}/ai-requests/{req.request_id}"
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers={"X-Snipers-Onsite-Protocol": "durable-v1"}) as client:
                 async with sessions() as db:
                     before = deepcopy((await db.get(SeoTask, task["id"])).params)
                 response = await client.get(stem, params={"tenant_id": 4, "site_id": 2})
@@ -921,7 +925,7 @@ def test_busy_site_is_skipped_then_claimed_on_next_durable_scan(supplier):
         async with fixture() as (sessions, task):
             req = request(task)
             async with sessions() as db:
-                await api.ai_proposal(task["id"], req, db, ADVISOR)
+                await enqueue(task["id"], req, db, ADVISOR)
             async with sessions() as holding:
                 await holding.get(SeoSite, 2, with_for_update=True)
                 state = await asyncio.wait_for(jobs.execute_request(task["id"], 4, 2, str(req.request_id), sessions=sessions), 3)
@@ -993,7 +997,7 @@ def test_background_ai_real_metering_admission_and_legacy_modes(monkeypatch, mod
                     assert (await controls.read_controls(db))['state'] == 'schema_pending'
             req = request(task)
             async with sessions() as db:
-                await api.ai_proposal(task['id'], req, db, ADVISOR)
+                await enqueue(task['id'], req, db, ADVISOR)
             state = await jobs.execute_request(task['id'], 4, 2, str(req.request_id), sessions=sessions)
             permitted = mode in {'enabled', 'controls_off', 'all_off'}
             assert state == ('ready' if permitted else 'failed')
@@ -1039,7 +1043,7 @@ def test_seo_background_guard_observes_other_module_in_shared_ledger(monkeypatch
                     await db.commit()
             req = request(task)
             async with sessions() as db:
-                await api.ai_proposal(task['id'], req, db, ADVISOR)
+                await enqueue(task['id'], req, db, ADVISOR)
             assert await jobs.execute_request(task['id'],4,2,str(req.request_id),sessions=sessions) == 'failed'
             assert not sent
             async with sessions() as db:
@@ -1063,18 +1067,18 @@ def test_background_timeout_keeps_unknown_charge_across_period_and_never_retries
                     expected_revision=0, value={'daily_calls':None,'monthly_calls':None,'daily_cny':None,
                         'monthly_cny':'100','warning_percent':80,'max_concurrent':None})
             req = request(task)
-            async with sessions() as db: await api.ai_proposal(task['id'],req,db,ADVISOR)
+            async with sessions() as db: await enqueue(task['id'],req,db,ADVISOR)
             assert await jobs.execute_request(task['id'],4,2,str(req.request_id),sessions=sessions) == 'unknown'
             async with sessions() as db:
                 event = (await db.execute(text('SELECT state,estimated_amount,reserved_amount FROM api_usage_events'))).one()
                 assert event.state == 'unknown' and event.estimated_amount is None and event.reserved_amount > 0
                 await db.execute(text("UPDATE api_usage_events SET started_at=CURRENT_TIMESTAMP - INTERVAL '40 days'"))
                 await db.commit()
-                assert (await api.ai_proposal(task['id'],req,db,ADVISOR))['replayed']
+                assert (await enqueue(task['id'],req,db,ADVISOR))['replayed']
             await jobs.run_onsite_ai_jobs(sessions=sessions)
             assert len(sent) == 1
             req2 = request(task)
-            async with sessions() as db: await api.ai_proposal(task['id'],req2,db,ADVISOR)
+            async with sessions() as db: await enqueue(task['id'],req2,db,ADVISOR)
             assert await jobs.execute_request(task['id'],4,2,str(req2.request_id),sessions=sessions) == 'failed'
             assert len(sent) == 1
             async with sessions() as db:
@@ -1098,14 +1102,14 @@ def test_background_unknown_keeps_concurrency_without_money_policy(monkeypatch, 
                     expected_revision=0, value={'daily_calls':None,'monthly_calls':None,'daily_cny':None,
                         'monthly_cny':None,'warning_percent':80,'max_concurrent':1})
             req = request(task)
-            async with sessions() as db: await api.ai_proposal(task['id'],req,db,ADVISOR)
+            async with sessions() as db: await enqueue(task['id'],req,db,ADVISOR)
             assert await jobs.execute_request(task['id'],4,2,str(req.request_id),sessions=sessions) == 'unknown'
             async with sessions() as db:
                 await db.execute(text("UPDATE api_usage_events SET started_at=CURRENT_TIMESTAMP - INTERVAL '40 days'"))
                 await db.commit()
                 assert (await controls.usage(db,target))['active_calls'] == 1
             req2 = request(task)
-            async with sessions() as db: await api.ai_proposal(task['id'],req2,db,ADVISOR)
+            async with sessions() as db: await enqueue(task['id'],req2,db,ADVISOR)
             assert await jobs.execute_request(task['id'],4,2,str(req2.request_id),sessions=sessions) == 'failed'
             assert len(sent) == 1
     asyncio.run(run())
@@ -1133,7 +1137,7 @@ def test_post_provider_metering_commit_failure_is_unknown_not_free_failure(monke
                 return await original(sql, params)
             monkeypatch.setattr(meter, '_write', failed_write)
             req = request(task)
-            async with sessions() as db: await api.ai_proposal(task['id'],req,db,ADVISOR)
+            async with sessions() as db: await enqueue(task['id'],req,db,ADVISOR)
             state = await jobs.execute_request(task['id'],4,2,str(req.request_id),sessions=sessions)
             async with sessions() as db:
                 assert await db.scalar(text('SELECT state FROM api_usage_events')) == 'requested'

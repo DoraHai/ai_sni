@@ -17,6 +17,11 @@
 
 `POST /api/v1/seo/workbench/onsite-tasks/123/ai-proposal`
 
+必须带 `X-Snipers-Onsite-Protocol: durable-v1`。缺失、空值、重复或其它值返回 HTTP 409、
+`{"detail":"工作台版本过旧，请刷新页面后重试","code":"onsite_client_upgrade_required"}`，
+`Cache-Control: no-store`。在入队、配额预留或供应商请求前拒绝；已有认证与模块权益依赖仍可能只读验证身份及授权。
+仅此 POST 需要协议头，GET 轮询和取消契约不变。先发新版前端，再发异步后端；旧标签页安全拒绝并提示刷新。
+
 ```json
 {
   "tenant_id": 4,
@@ -144,6 +149,42 @@ Content-Type: application/json
 
 - 异常阶段补丁来源 `eed858cf07a224d0a5ed6b0d20465ffa882ca260`，SEO 提交 `eb3bc813`。failed_state 沿 __cause__ 链优先识别 MeteringUnavailable.provider_attempted=True，归为 unknown；调用前计量拒绝或 ControlDenied 归为 failed。HTTP200、HTTP400、ReadTimeout 后终态写失败的模块 PostgreSQL 回归均确认仅发 1 次、ledger 保留 requested、不自动重试。共享测试另外用真实 PostgreSQL 触发器覆盖初始及终态提交失败。
 
-最终限定回归：199 passed / 1 skipped / 0 failed；唯一跳过为不在 SEO 源包内的 SEM 运行账号权限脚本。原生 CI 明确运行 onsite PostgreSQL + shared guards，排除该权限脚本项，其余要求零跳过。
+共享保护集成当时的限定回归：199 passed / 1 skipped / 0 failed；唯一跳过为不在 SEO 源包内的 SEM 运行账号权限脚本。原生 CI 明确运行 onsite PostgreSQL + shared guards，排除该权限脚本项，其余要求零跳过。
 
 这只是 Draft 集成候选，不合并、不部署，不以代码已集成代表统一保护已上线。生产启用仍须单独审核结构、权限与开关；金额报价仅为配置口径的估算/预留，unknown 费用须人工核对。
+
+## 全局超管只读执行器与队列契约（2026-10-11）
+
+`GET /api/v1/seo/workbench/onsite-ai/health`，没有租户/站点筛选参数。
+使用与超管工作台一致的实名全局身份：user_id 非空、tenant_id 为空，且
+`settings.accounts` 和 `settings.customers` 均可编辑；仅 API Key、客户绑定账号或角色名称相似不够。
+读取主数据库，不走演示库；不返回客户 ID、正文、提示词、URL、凭证、原始异常。
+
+与 GEO 共用字段：
+
+```json
+{
+  "schema": 1, "module": "seo", "observed_at": "2026-10-11T00:00:00+00:00",
+  "worker": {
+    "scope": "this_process", "enabled": true, "state": "unverified", "verified": false,
+    "evidence": null, "last_tick_at": null,
+    "last_attempted": 0, "last_completed": 0, "last_error_code": null
+  },
+  "queue": {
+    "state": "available", "queued": 0, "running": 0, "unknown": 0,
+    "oldest_queued_at": null, "oldest_running_at": null
+  }
+}
+```
+
+- `observed_at` 仅为接口采样时间，绝不是心跳。所有时间为 UTC ISO 8601 或 null。
+- `worker.scope` 固定 `this_process`，没有跨进程/跨主机心跳存储；非调度锁拥有进程无法判断 owner 是否存活，返回 unverified。不能把任何进程的 200/active 当成全服务健康。
+- `enabled` 仅反映本进程调度/演示/外部动作策略允许执行，不能证明 worker 活着。
+- `state` 为 active/degraded/stopped/unverified/not_connected。只有本进程调度器已启动、真实完成轮次且证据未过期才 active+verified；轮次错误 degraded+verified（验证的是执行证据，非成功）；已观察的停机 stopped；策略不允许 stopped 且 enabled=false；本模块不输出 not_connected（由聚合端用于未接入）；无证据或证据过期 unverified。
+- `last_tick_at` 由真实执行轮次结束时记录（含错误轮次），接口读取绝不改写。`last_attempted` 为该轮候选执行数，`last_completed` 为该轮正常返回的候选数（不是提案成功数）。错误只返回固定安全代码。轮次超过 120 秒未结束的证据视为过期；此阈值只用于监控，不恢复或重新调用。
+- `evidence` 固定为 {"kind":"local_tick","scope":"this_process"} 或 null；`verified` 只代表当前进程存在可信且新鲜的执行轮次，不代表轮次成功。`last_error_code` 仅 worker_batch_failed 或 null；active 必须无轮次错误。
+- `queue` 单次 SELECT 聚合 SEO onsite_optimization、onsite.schema=1 的 `onsite_ai_requests` 全部请求记录，不限当前 ai_run；因此历史 unknown 在创建后续请求后仍计入。不是工单数，不是全模块 AI 调用数，也不是资金台账未结算数。
+- `oldest_*` 从各状态真实 queued_at/started_at 取最小值；无该状态或旧记录没有时间时 null，不用 updated_at/采样时间猜测。缺少表/列时返回 queue.state=schema_pending 且数量/时间均为 null；数据库不可用、2 秒超时或时间数据非法时 HTTP 503、code=onsite_ai_health_unavailable，不返回伪造的零队列。
+- 成功、队列读取失败和本接口权限拒绝响应 `Cache-Control: no-store`；未登录仍沿用认证层 401。非全局超管 403。不领取、恢复、重试任务，不启动调度器、不调用供应商、不写库。
+
+本轮协议与健康收尾回归：385 passed / 1 skipped / 0 failed（15 个文件）；唯一跳过仍为缺少 SEM 运行账号权限 SQL。新增 25 项协议与健康检查均实际通过，包括完整 SEO 路由 + 真实 JWT + 当前角色撤权、隔离 PostgreSQL 的只读事务聚合、缺表不伪造零、非法历史时间拒绝、缺协议头零业务 SQL/零写入/零配额/零供应商。原生 CI 纳入两份新增测试且要求零跳过，并检查各文件实际执行数量。所有供应商均模拟，本轮没有真实付费请求或生产变更。业务流程实现与缺口见 `SEO_WORKFLOW_IMPLEMENTATION_AUDIT.md`。

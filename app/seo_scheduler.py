@@ -14,6 +14,7 @@ from app.seo_cockpit_metrics import collect_cockpit_metrics
 from app.seo_content_workflow import run_content_workflows
 from app.seo_service_workflows import run_service_workflows
 from app.seo_onsite_ai_jobs import run_onsite_ai_jobs
+from app.seo_onsite_ai_health import worker_started, worker_stopped
 
 from app.config import get_settings
 from app.process_lock import acquire_file_lock, release_file_lock
@@ -43,6 +44,7 @@ def _acquire_scheduler_lock() -> bool:
 
 def _release_scheduler_lock() -> None:
     global _lock_fh
+    worker_stopped()
     release_file_lock(_lock_fh)
     _lock_fh = None
 
@@ -136,6 +138,7 @@ def _start_seo_scheduler() -> None:
     seo_scheduler.add_job(run_service_workflows, IntervalTrigger(minutes=1), id='run_seo_service_workflows', replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=60)
     seo_scheduler.add_job(run_onsite_ai_jobs, IntervalTrigger(seconds=10), id='run_seo_onsite_ai_jobs', replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=60)
     seo_scheduler.start()
+    worker_started()
     logger.info("[scheduler][SEO] 独立调度器已启动")
 
 
