@@ -135,6 +135,13 @@ def test_provider_result_requires_public_sources_for_any_body_and_no_fact_stays_
             unsafe, current_items=items(), facts=facts(), domain="example.com")
     assert "URL" in str(error.value.detail)
 
+    protocol_relative = result()
+    protocol_relative["items"][0]["reason"] = "来源见 //evil.example/private"
+    with pytest.raises(HTTPException) as error:
+        onsite_ai.validate_provider_result(
+            protocol_relative, current_items=items(), facts=facts(), domain="example.com")
+    assert "URL" in str(error.value.detail)
+
 
 def test_provider_result_rejects_duplicate_ids_and_oversized_or_wrong_list_fields():
     duplicate = result()
@@ -213,6 +220,18 @@ def test_conflicting_instrument_facts_blank_all_generated_delivery(title, first,
         payload, current_items=items(), facts=conflict_facts, domain="example.com")
     assert all(item["expected"] == "" for item in output)
     assert any("冲突" in reason for reason in explanation["missing_information"])
+
+
+@pytest.mark.parametrize("statement", [
+    "两份资料没有冲突，参数一致。", "已核验为无冲突。", "不存在冲突或矛盾。",
+    "两份说明一致无矛盾。", "The sources have no conflict and no contradiction.",
+])
+def test_explicit_conflict_negations_do_not_blank_valid_content(statement):
+    safe_facts = [{**facts()[0], "statement": statement}]
+    output, explanation = onsite_ai.validate_provider_result(
+        result(), current_items=items(), facts=safe_facts, domain="example.com")
+    assert next(item for item in output if item["id"] == "structured_content")["expected"]
+    assert not any("明确冲突" in reason for reason in explanation["missing_information"])
 
 
 def test_multiple_visible_pages_keep_ids_targets_and_build_each_schema_from_same_page():

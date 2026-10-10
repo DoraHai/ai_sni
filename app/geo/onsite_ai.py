@@ -231,7 +231,7 @@ def _reject_private_text(value: str, facts: list[dict[str, Any]]) -> None:
 
 
 def _reject_model_urls(value: str) -> None:
-    if re.search(r"https?://[^\s<>\]\)\"']+", value, re.I):
+    if re.search(r"(?:(?:https?:)?//)[^\s<>\]\)\"']+", value, re.I):
         raise HTTPException(422, "AI 输出不得自行提供 URL，地址必须由服务端装配")
 
 
@@ -393,8 +393,15 @@ def validate_provider_result(payload: Any, *, current_items: list[dict[str, Any]
 
 def _fact_conflicts(selected: list[dict[str, Any]]) -> list[str]:
     """Conservatively blank a proposal when the approved snapshot conflicts."""
-    if any(re.search(r"冲突|矛盾|不一致|\bconflict(?:ing)?\b", str(f.get("statement") or ""), re.I)
-           for f in selected):
+    def explicitly_conflicts(statement: str) -> bool:
+        without_negation = re.sub(
+            r"没有冲突(?:或矛盾)?|无冲突(?:或矛盾)?|不存在冲突(?:或矛盾)?|"
+            r"不存在矛盾|没有矛盾|无矛盾|一致无矛盾|"
+            r"no conflicts?|not conflicting|no contradictions?", "", statement, flags=re.I)
+        return bool(re.search(r"冲突|矛盾|不一致|\bconflict(?:ing)?\b|\bcontradiction\b",
+                              without_negation, re.I))
+
+    if any(explicitly_conflicts(str(f.get("statement") or "")) for f in selected):
         return ["所选事实资料存在明确冲突，需要人工核验后再生成"]
     grouped: dict[str, list[str]] = {}
     for fact in selected:
