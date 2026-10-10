@@ -380,6 +380,8 @@ from app.api.seo_monthly_report import router as monthly_report_router
 router.include_router(monthly_report_router)
 from app.api.seo_service_workflows import router as service_workflows_router
 router.include_router(service_workflows_router)
+from app.api.seo_onsite import router as onsite_router
+router.include_router(onsite_router)
 from app.api.seo_tdk_review import router as tdk_review_router
 router.include_router(tdk_review_router)
 from app.api.seo_ai_tdk import router as ai_tdk_router
