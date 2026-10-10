@@ -40,19 +40,31 @@ class ProviderDraftItem(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
     id: str = Field(pattern=r"^[a-z0-9_-]{1,60}$")
-    expected: str = Field(default="", max_length=12000)
+    expected: str = Field(max_length=12000)
     reason: str = Field(min_length=1, max_length=2000)
-    fact_ids: list[int] = Field(default_factory=list, max_length=MAX_SOURCE_REFS_PER_ITEM)
-    blocking_missing_information: list[str] = Field(default_factory=list, max_length=20)
-    optional_information: list[str] = Field(default_factory=list, max_length=20)
+    fact_ids: list[int] = Field(max_length=MAX_SOURCE_REFS_PER_ITEM)
+    blocking_missing_information: list[str] = Field(max_length=20)
+    optional_information: list[str] = Field(max_length=20)
 
 
 class ProviderProposalV2(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
     schema_version: Literal[2]
-    summary: str = Field(default="", max_length=2000)
+    summary: str = Field(max_length=2000)
     items: list[ProviderDraftItem] = Field(max_length=30)
-    missing_information: list[str] = Field(default_factory=list, max_length=50)
+    missing_information: list[str] = Field(max_length=50)
+
+
+def provider_response_format() -> dict[str, Any]:
+    """Build the optional strict response format from the validator's exact contract."""
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "geo_onsite_proposal_v2",
+            "strict": True,
+            "schema": ProviderProposalV2.model_json_schema(),
+        },
+    }
 
 
 def now_iso() -> str:

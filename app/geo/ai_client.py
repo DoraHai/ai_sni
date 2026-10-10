@@ -99,14 +99,16 @@ def is_enabled() -> bool:
 
 def _chat_json_payload(system: str, user: str, model: str, *,
                        enable_thinking: bool | None = None,
-                       max_tokens: int | None = None) -> dict:
+                       max_tokens: int | None = None,
+                       response_format: dict | None = None) -> dict:
     payload = {
         "model": model,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "response_format": {"type": "json_object"},
+        "response_format": (response_format if response_format is not None
+                            else {"type": "json_object"}),
         "temperature": 0.3,
         "stream": False,
     }
@@ -128,12 +130,13 @@ async def chat_json(
     model: str | None = None,
     enable_thinking: bool | None = None,
     max_tokens: int | None = None,
+    response_format: dict | None = None,
 ) -> dict:
     """调 OpenAI 兼容 /chat/completions，强制 JSON 输出。失败抛 DeepSeekError。"""
     key, url_base, mdl = _resolve_creds(api_key=api_key, base_url=base_url, model=model)
     url = url_base + "/chat/completions"
     payload = _chat_json_payload(system, user, mdl, enable_thinking=enable_thinking,
-                                 max_tokens=max_tokens)
+                                 max_tokens=max_tokens, response_format=response_format)
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",

@@ -106,6 +106,21 @@ def test_generation_options_only_target_documented_dashscope_hybrid_models():
     assert onsite_ai.generation_options(dashscope, many)["max_tokens"] == 32768
 
 
+def test_optional_response_format_is_generated_from_the_strict_validator_contract():
+    response_format = onsite_ai.provider_response_format()
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    schema = response_format["json_schema"]["schema"]
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {"schema_version", "summary", "items", "missing_information"}
+    item_schema = schema["$defs"]["ProviderDraftItem"]
+    assert item_schema["additionalProperties"] is False
+    assert set(item_schema["required"]) == {
+        "id", "expected", "reason", "fact_ids",
+        "blocking_missing_information", "optional_information",
+    }
+
+
 def test_fact_public_use_requires_explicit_human_authorization():
     assert not onsite_ai.public_use_authorized({"public_use": {"allowed": True}})
     assert not onsite_ai.public_use_authorized({"public_use": {

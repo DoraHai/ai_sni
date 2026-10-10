@@ -158,6 +158,7 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
             assert len(calls) == 1
             assert calls[0][2]["enable_thinking"] is False
             assert calls[0][2]["max_tokens"] == 8192
+            assert "response_format" not in calls[0][2]
             assert "API" not in str(result["workflow"]["ai_proposal"])
             assert True in advisor_locks
             manual_items = [api.work.Item.model_validate(item) for item in same["workflow"]["items"]]

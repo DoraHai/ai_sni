@@ -36,3 +36,7 @@ def test_optional_generation_fields_are_absent_by_default_and_bounded_when_reque
                                 enable_thinking=False, max_tokens=8192)
     assert onsite["enable_thinking"] is False
     assert onsite["max_tokens"] == 8192
+    strict = {"type": "json_schema", "json_schema": {"name": "test", "schema": {}}}
+    custom = _chat_json_payload("system", "user", "supported-model",
+                                response_format=strict)
+    assert custom["response_format"] == strict
