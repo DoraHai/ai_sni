@@ -4,7 +4,7 @@ import {escapeText as esc} from './customer-display.mjs';
 import {createPlatformConsoleClient,platformConsolePath,isPlatformAdmin} from './platform-console-client.mjs';
 import {renderControlPanel,hydrateControlForm,controlPayload} from './platform-control-panel.mjs';
 import {renderSystemConfig,hydrateConnectionForm,setConnectionMode,connectionPayload} from './platform-system-config.mjs';
-import {renderUsagePanel,renderAlertsPanel,renderSuppliersPanel,renderBackupPanel} from './platform-ops-panel.mjs';
+import {renderUsagePanel,renderAlertsPanel,renderSuppliersPanel,renderBackupPanel,renderCallMonitor} from './platform-ops-panel.mjs';
 import {platformNotifications} from './platform-alert-archive.mjs';
 
 const tabs=[['overview','平台总览'],['customers','客户与服务'],['accounts','账号与权限'],['apis','API 与调用'],
@@ -117,7 +117,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     return ['sem_tasks','seo_tasks','geo_async_jobs','geo_action_tickets'].map(name=>{
       const title={sem_tasks:'SEM 工作任务',seo_tasks:'SEO 执行任务',geo_async_jobs:'GEO 异步任务',geo_action_tickets:'GEO 处理工单'}[name];
       return card(title,table(['客户','任务','状态','更新时间'],source(name).rows.map(t=>[esc(tenant(t.tenant_id)),esc(t.title||({generate_article:'生成稿件',push_batch:'批量推送',create_variants:'生成渠道版本'}[t.kind]||t.kind||'未提供')),status(t.status),esc(time(t.updated_at||t.created_at))])),sourceNote(name));
-    }).join('')+card('执行与恢复',`<p>任务处理沿用各模块工作区，进入对应客户范围后查看执行依据。</p><div class="pc-shortcuts">${link('打开运营工作台','/workspace')}${link('打开客户工作台','/customer-workbench/')}</div>`,'此页面读取已有任务状态，不会自动触发、重试或发布任务。');
+    }).join('')+renderCallMonitor({snapshot,esc,card,table,time})+card('执行与恢复',`<p>任务处理沿用各模块工作区，进入对应客户范围后查看执行依据。</p><div class="pc-shortcuts">${link('打开运营工作台','/workspace')}${link('打开客户工作台','/customer-workbench/')}</div>`,'此页面读取已有任务状态，不会自动触发、重试或发布任务。');
   }
   function security(){
     return card('数据与权限',`<div class="pc-gap-grid"><div><b>全局超管</b><p>当前账号：${esc(identity.display_name||identity.username)}。入口由服务端校验双重管理权限。</p></div><div><b>客户隔离</b><p>客户账号仍绑定自己的客户范围，业务操作继续校验站点、项目与权限。</p></div><div><b>密钥管理</b><p>${esc(snapshot.coverage.credentials)}</p></div></div>`)+
