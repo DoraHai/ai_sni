@@ -58,5 +58,5 @@ async def read_api_costs(session):
     result['recent'] = [dict(row) for row in (await session.execute(text('''SELECT id,tenant_id,user_id,origin,module,operation,job_ref,
         provider,model,endpoint,state,status_code,latency_ms,prompt_tokens,cached_tokens,completion_tokens,
         estimated_amount,currency,pricing_version,provider_request_id,started_at FROM api_usage_events ORDER BY started_at DESC,id DESC LIMIT 50'''))).mappings()]
-    result['note'] = '按北京时间统计本月真实外部请求；金额为已记录用量的 API 原价估算，实际扣款以服务商账单为准。'
+    result['note'] = '按北京时间统计本月真实外部请求；金额为已记录用量的估算。DeepSeek 官方默认价使用明确标注的高峰单价上限，实际扣款与时段折扣以服务商账单为准。'
     return result

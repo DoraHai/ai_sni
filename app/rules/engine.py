@@ -9,6 +9,7 @@ from sqlalchemy.orm import aliased
 
 from app.models import Alert, Tenant
 from app.database import async_session_factory
+from app.api_metering import business_scope
 from app.module_scope import list_active_module_tenants
 from app.rules.ai_anomaly import AIAnomalyRule
 from app.rules.base import Rule
@@ -166,6 +167,7 @@ async def _upsert_entity_alerts(session: AsyncSession, records: list[dict]) -> N
     await session.execute(stmt)
 
 
+@business_scope('sem', 'tenant')
 async def run_rules_for_tenant(
     session: AsyncSession, tenant: Tenant, target_date: date
 ) -> int:

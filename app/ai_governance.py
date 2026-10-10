@@ -30,7 +30,7 @@ def _amount(value) -> str:
 def _safe_budget(value) -> dict | None:
     if not isinstance(value, dict):
         return None
-    fields = ("daily_calls", "monthly_calls", "daily_cny", "monthly_cny", "warning_ratio")
+    fields = ("daily_calls", "monthly_calls", "daily_cny", "monthly_cny", "warning_percent", "max_concurrent")
     return {field: value.get(field) for field in fields if field in value}
 
 
@@ -184,11 +184,16 @@ async def _control_state(session) -> dict:
     settings_ready = await _table_exists(session, "api_control_settings")
     bindings_ready = await _table_exists(session, "api_control_bindings")
     audit_ready = await _table_exists(session, "api_control_audit")
+    credentials_ready = await _table_exists(session, "api_control_credentials")
+    reservation_ready = bool(await session.scalar(text("""SELECT EXISTS(
+        SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
+            AND table_name='api_usage_events' AND column_name='reserved_amount')""")))
+    schema_ready = settings_ready and bindings_ready and audit_ready and credentials_ready and reservation_ready
     enabled = api_controls.enabled()
     result = {
-        "schema": "ready" if settings_ready and bindings_ready and audit_ready else "schema_pending",
-        "enabled": bool(enabled and settings_ready and bindings_ready and audit_ready),
-        "editing": "enabled" if enabled and settings_ready and bindings_ready and audit_ready else "disabled",
+        "schema": "ready" if schema_ready else "schema_pending",
+        "enabled": bool(enabled and schema_ready),
+        "editing": "enabled" if enabled and schema_ready else "disabled",
         "source": "api_control_settings",
         "global_budget": None,
         "provider_policies": {},
@@ -258,11 +263,11 @@ def _limits(module: str, controls: dict, hosts: set[str]) -> list[dict]:
         })
     else:
         values = budget["value"] or {}
-        for field in ("daily_calls", "monthly_calls", "daily_cny", "monthly_cny"):
+        for field in ("daily_calls", "monthly_calls", "daily_cny", "monthly_cny", "max_concurrent"):
             if values.get(field) is None:
                 continue
             limits.append({
-                "kind": "calls" if field.endswith("calls") else "budget",
+                "kind": "concurrency" if field == 'max_concurrent' else "calls" if field.endswith("calls") else "budget",
                 "key": "global." + field, "scope": "global", "state": "enabled",
                 "value": values[field], "source": "api_control_settings",
             })
@@ -288,6 +293,12 @@ def _limits(module: str, controls: dict, hosts: set[str]) -> list[dict]:
             "kind": "scope", "key": "provider:" + host, "scope": host,
             "state": state, "value": value, "source": "api_control_settings",
         })
+    # The SEM process flag and shared settings do not prove that a separately
+    # deployed SEO/GEO worker implements and enables the same admission code.
+    if module != 'sem' and controls['schema'] == 'ready':
+        for limit in limits:
+            if limit['source'] == 'api_control_settings':
+                limit['state'] = 'runtime_unverified'
     return limits
 
 
@@ -363,6 +374,12 @@ async def read_ai_governance(session, *, now: datetime | None = None, settings=N
                 "runtime_enabled": api_metering.enabled() if module == "sem" else None,
             },
             "limits": _limits(module, controls, hosts),
+            "controls": {
+                "schema": controls['schema'],
+                "runtime_enabled": controls['enabled'] if module == 'sem' else None,
+                "state": 'schema_pending' if controls['schema'] == 'schema_pending'
+                    else ('enabled' if controls['enabled'] else 'disabled') if module == 'sem' else 'runtime_unverified',
+            },
             "calls": calls,
         })
 

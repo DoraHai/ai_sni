@@ -178,30 +178,23 @@ async def chat_messages(
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
-    # 调用/解析失败自动重试一次（DeepSeek 偶发返回截断的非法 JSON，重试即好）
-    last_err: Exception | None = None
-    for _attempt in range(2):
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await metered_request(client, "post", url, api_key=key, model=mdl,
-                                          operation="chat.completions", json=payload, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
-            content = data["choices"][0]["message"]["content"]
-            if json_mode:
-                try:
-                    return _parse_json_content(content)
-                except json.JSONDecodeError:
-                    if content and content.strip():
-                        return {
-                            "reply": content.strip(),
-                            "suggestions": [],
-                            "actions": [],
-                            "memories": [],
-                        }
-                    raise
-            return content
-        except (httpx.HTTPError, KeyError, ValueError, json.JSONDecodeError) as e:
-            last_err = e
-            logger.warning("DeepSeek 调用/解析失败（第 %d 次）：%s", _attempt + 1, e)
-            raise DeepSeekError(f"AI 调用/解析失败（重试后仍失败）: {last_err}")
+    # A lost response or parse error is not proof that the provider did not
+    # charge. One invocation sends one attempt; durable recovery is separate.
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await metered_request(client, "post", url, api_key=key, model=mdl,
+                                      operation="chat.completions", json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        if json_mode:
+            try:
+                return _parse_json_content(content)
+            except json.JSONDecodeError:
+                if content and content.strip():
+                    return {"reply": content.strip(), "suggestions": [], "actions": [], "memories": []}
+                raise
+        return content
+    except (httpx.HTTPError, KeyError, ValueError, json.JSONDecodeError):
+        logger.warning("DeepSeek 调用或解析失败；未自动重试")
+        raise DeepSeekError("AI 调用或解析失败；付费结果请核查调用台账，未自动重试") from None
