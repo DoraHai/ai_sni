@@ -70,6 +70,11 @@ async def scope(session, ctx, tenant_id, project_id, write=False):
     return project
 
 def _next_action(value: dict) -> str:
+    stored_run = value.get("ai_run") if isinstance(value.get("ai_run"), dict) else None
+    if stored_run and stored_run.get("state") == "queued":
+        return "AI 方案已入队，可等待或由发起顾问取消"
+    if stored_run and stored_run.get("state") == "running":
+        return "AI 方案执行中，可等待或由发起顾问请求取消"
     run = onsite_ai.projected_ai_run(value)
     if run and run.get("state") in {"failed", "unknown", "stale"}:
         return "人工核对 AI 调用状态后决定是否重新生成"
@@ -94,20 +99,31 @@ def _blocker(value: dict, project: GeoProject) -> str | None:
 
 def public(row, project, can_write, *, provider_ready=False, provider_reason=None, tenant_name=None):
     value = dict(row.progress["onsite"])
-    projected = onsite_ai.projected_ai_run(value)
+    stored_run = value.get("ai_run") if isinstance(value.get("ai_run"), dict) else {}
+    active_ai = stored_run.get("state") in {"queued", "running"}
+    # Durable jobs are reconciled by the background owner/recovery path.  Do
+    # not invent a read-time stale state that disagrees with request_run.
+    projected = dict(stored_run) if stored_run.get("job_id") else onsite_ai.projected_ai_run(value)
     if projected:
         projected.pop("request_hash", None)
         value["ai_run"] = projected
     proposal = onsite_ai.public_ai_proposal(value.get("ai_proposal"))
     if proposal is not None:
         value["ai_proposal"] = proposal
+    allowed_actions = (["cancel_ai_request"] if can_write else []) if active_ai else work.allowed_actions(value, can_write)
+    capabilities = onsite_ai.capabilities(provider_ready=provider_ready, can_write=can_write,
+                                            phase=value["phase"], reason=provider_reason)
+    if active_ai:
+        capabilities["ai_planning"] = {
+            **capabilities["ai_planning"], "can_generate": False,
+            "reason": "AI 方案正在排队或执行",
+        }
     return dict(id=row.id, module="geo", tenant_id=row.tenant_id, scope_id=project.id,
-        title=row.title, workflow=value, allowed_actions=work.allowed_actions(value, can_write),
+        title=row.title, workflow=value, allowed_actions=allowed_actions,
         completion_evidence=dict(acceptance=value.get("acceptance"), recheck=value.get("recheck")) if value["phase"] == "done" else None,
         scope_name=project.name, tenant_name=tenant_name,
         next_action=_next_action(value), blocker=_blocker(value, project),
-        capabilities=onsite_ai.capabilities(provider_ready=provider_ready, can_write=can_write,
-                                            phase=value["phase"], reason=provider_reason))
+        capabilities=capabilities)
 
 
 async def _provider_status(session, tenant_id: int) -> tuple[bool, str | None]:
@@ -358,6 +374,10 @@ async def ai_proposal(task_id: PositiveInt, req: AiProposal,
             "task_id":int(task_id), "project_id":int(req.project_id), "actor_user_id":int(ctx.user_id),
             "expected_revision":int(req.expected_revision), "mode":req.mode,
             "source_hash":snapshot["source_hash"], "execution_protocol":async_jobs.JOB_EXECUTION_PROTOCOL})
+    job.request_meta = {
+        **job.request_meta,
+        "provider_route": onsite_ai.planning_route(credentials),
+    }
     session.add(job)
     await session.flush()
     value["ai_run"] = {"request_id":request_id, "request_hash":digest, "job_id":int(job.id),

@@ -167,6 +167,8 @@ async def execute_onsite_proposal(
         )
         if not credentials.get("api_key"):
             raise HTTPException(409, "平台 AI 供应商尚未配置")
+        if onsite_ai.planning_route(credentials) != meta.get("provider_route"):
+            raise HTTPException(409, "AI 供应商或模型路由已变化，本次请求在计费前停止")
         system_prompt, user_prompt = onsite_ai.prompt_text(snapshot, meta["mode"])
         generation_options = onsite_ai.generation_options(credentials, snapshot)
         job = await session.get(

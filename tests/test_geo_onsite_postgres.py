@@ -377,12 +377,26 @@ def test_same_nonce_concurrency_creates_one_durable_job_and_queued_cancel_is_fre
             assert {item["request_run"]["job_id"] for item in results} == {
                 results[0]["request_run"]["job_id"]}
             assert all(item["request_run"]["state"] == "queued" for item in results)
+            assert results[0]["allowed_actions"] == ["cancel_ai_request"]
+            assert results[0]["capabilities"]["ai_planning"]["can_generate"] is False
             async with sessions() as db:
                 assert await db.scalar(select(func.count()).select_from(GeoAsyncJob)) == 1
-                with pytest.raises(HTTPException) as error:
-                    await api.act(row["id"], api.Update(tenant_id=1, project_id=10,
-                        action="approve", expected_revision=1, note="不应越过排队任务"), db, ADVISOR)
-                assert error.value.status_code == 409
+                blocked = [
+                    api.Update(tenant_id=1, project_id=10, action="approve",
+                               expected_revision=1, note="不应越过排队任务"),
+                    api.Update(tenant_id=1, project_id=10, action="save_proposal",
+                               expected_revision=1,
+                               items=[api.work.Item.model_validate(item)
+                                      for item in row["workflow"]["items"]]),
+                ]
+                for action in blocked:
+                    with pytest.raises(HTTPException) as error:
+                        await api.act(row["id"], action, db, ADVISOR)
+                    assert error.value.status_code == 409
+            async with sessions() as db:
+                customer_read = await api.get_ai_request(row["id"], rid, 1, 10, db, CUSTOMER)
+                assert customer_read["request_run"]["state"] == "queued"
+                assert customer_read["allowed_actions"] == []
             async with sessions() as db:
                 cancelled = await api.cancel_ai_request(row["id"], rid, 1, 10, db, ADVISOR)
                 assert cancelled["request_run"]["state"] == "cancelled"
@@ -491,6 +505,52 @@ def test_interrupted_running_request_becomes_unknown_and_is_never_requeued(monke
                 assert job.status == "failed"
             assert calls == 0
     from datetime import datetime
+    asyncio.run(run())
+
+
+def test_provider_route_change_after_enqueue_stops_before_paid_call(monkeypatch):
+    calls = 0
+    route = {"base_url": "https://api.deepseek.com"}
+    async def credentials(session, tenant_id):
+        return {"api_key": "ignored", "base_url": "https://ignored.invalid/v1",
+                "model": "ignored", "provider": "ignored"}
+    async def provider(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return {}
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "chat_json", provider)
+    monkeypatch.setattr(api.onsite_ai, "get_settings", lambda: SimpleNamespace(
+        geo_onsite_ai_provider="deepseek", geo_onsite_ai_model="deepseek-chat",
+        deepseek_api_key="official-platform-key", deepseek_base_url=route["base_url"]))
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
+                row = await api.create(api.Create(tenant_id=1, project_id=10,
+                    request_id=uuid4(), work_type="startup", owner_name="维护人员"), db, ADVISOR)
+            rid = uuid4()
+            async with sessions() as db:
+                queued = await api.ai_proposal(row["id"], api.AiProposal(
+                    tenant_id=1, project_id=10, expected_revision=1,
+                    request_id=rid, mode="initial"), db, ADVISOR)
+                job = await db.get(GeoAsyncJob, queued["request_run"]["job_id"])
+                stored = job.request_meta["provider_route"]
+                assert stored["host"] == "api.deepseek.com"
+                assert stored["model"] == "deepseek-chat"
+                assert "api_key" not in stored
+            route["base_url"] = "https://api.deepseek.com/v1"
+            result = await run_owned(sessions, queued["request_run"]["job_id"])
+            assert result["result_meta"]["public_state"] == "stale"
+            async with sessions() as db:
+                polled = await api.get_ai_request(row["id"], rid, 1, 10, db, ADVISOR)
+                assert polled["request_run"]["state"] == "stale"
+                assert "路由已变化" in polled["request_run"]["error"]
+                assert polled["workflow"]["ai_run"]["request_id"] == str(rid)
+                assert polled["request_run"]["request_id"] == str(rid)
+            assert calls == 0
     asyncio.run(run())
 
 
