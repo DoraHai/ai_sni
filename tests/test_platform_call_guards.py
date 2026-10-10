@@ -163,7 +163,7 @@ def test_native_concurrency_shared_across_pools_and_all_scopes(monkeypatch, targ
 
 def test_native_unknown_charge_keeps_hold_and_blocks_budget_after_calendar_reset(monkeypatch):
     async def scenario(factory, other):
-        await change(factory, 'global', budget(monthly_cny='100', max_concurrent=1))
+        await change(factory, 'global', budget(monthly_cny='100'))
         sent = []
         async def timeout(request):
             sent.append(request)
@@ -183,9 +183,72 @@ def test_native_unknown_charge_keeps_hold_and_blocks_budget_after_calendar_reset
                 usage = await controls.usage(s, 'global')
                 assert usage['monthly_calls'] == 0 and usage['unresolved_calls'] == 1
                 assert controls.budget_status(budget(monthly_cny='100'), usage) == 'unknown'
-            with pytest.raises(controls.ControlDenied, match='无法确定费用'):
+            with pytest.raises(controls.ControlDenied, match='无法确定费用') as denied:
                 await call()
+            assert denied.value.code == 'api_charge_unresolved'
             assert len(sent) == 1
+    native(monkeypatch, scenario)
+
+
+@pytest.mark.parametrize('target', ['global', 'tenant:1', 'user:10', 'provider:dashscope.aliyuncs.com'])
+def test_native_unknown_result_retains_concurrency_without_money_policy(monkeypatch, target):
+    async def scenario(factory, other):
+        await change(factory, target, budget(max_concurrent=1))
+        sent = []
+        async def provider(request):
+            sent.append(request)
+            if len(sent) == 1:
+                raise httpx.ReadTimeout('fixture timeout', request=request)
+            return httpx.Response(200, json={})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as client:
+            async def call(tid=1, uid=10, host='dashscope.aliyuncs.com', module='sem'):
+                with meter.background_scope(tenant_id=tid, user_id=uid, module=module, operation='test'):
+                    return await meter.metered_request(client, 'post', 'https://' + host + '/v1/chat/completions',
+                        provider='different-business-alias', json={'messages': []})
+            with pytest.raises(httpx.ReadTimeout):
+                await call()
+            monkeypatch.setattr(controls, 'async_session_factory', other)
+            for old in (False, True):
+                async with other() as s:
+                    if old:
+                        await s.execute(text("UPDATE api_usage_events SET started_at=CURRENT_TIMESTAMP - INTERVAL '40 days'"))
+                        await s.commit()
+                    spent = await controls.usage(s, target)
+                    assert spent['active_calls'] == 1
+                    assert controls.budget_status(budget(max_concurrent=1), spent) == 'blocked'
+                    assert await s.scalar(text('SELECT state FROM api_usage_events')) == 'unknown'
+                    assert await s.scalar(text('SELECT reserved_amount FROM api_usage_events')) is None
+                with pytest.raises(controls.ControlDenied) as denied:
+                    await call(module='geo')
+                assert denied.value.code == 'api_concurrency_limit' and denied.value.target == target
+                assert len(sent) == 1
+            if target != 'global':
+                await call(tid=2 if target.startswith('tenant:') else 1,
+                    uid=20 if target.startswith('user:') else 10,
+                    host='other.example' if target.startswith('provider:') else 'dashscope.aliyuncs.com', module='seo')
+                assert len(sent) == 2
+    native(monkeypatch, scenario)
+
+
+@pytest.mark.parametrize('target', ['global', 'tenant:1', 'user:10', 'provider:dashscope.aliyuncs.com'])
+def test_native_definite_http_failure_ends_concurrency_without_money_policy(monkeypatch, target):
+    async def scenario(factory, other):
+        await change(factory, target, budget(max_concurrent=1))
+        sent = []
+        async def provider(request):
+            sent.append(request)
+            return httpx.Response(400 if len(sent) == 1 else 200, json={'error': 'fixture'})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as client:
+            async def call(module):
+                with meter.background_scope(tenant_id=1, user_id=10, module=module, operation='test'):
+                    return await meter.metered_request(client, 'post', 'https://dashscope.aliyuncs.com/v1/chat/completions', json={})
+            assert (await call('sem')).status_code == 400
+            monkeypatch.setattr(controls, 'async_session_factory', other)
+            async with other() as s:
+                assert await s.scalar(text('SELECT state FROM api_usage_events')) == 'error'
+                assert (await controls.usage(s, target))['active_calls'] == 0
+            assert (await call('seo')).status_code == 200
+            assert len(sent) == 2
     native(monkeypatch, scenario)
 
 
