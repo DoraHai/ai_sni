@@ -184,7 +184,7 @@ def test_prompt_marks_all_inputs_untrusted_and_has_a_hard_size_limit():
     assert "https://source.example/fact" not in user
     assert '"fact_id": 8' in user
     assert '"kind": "schema"' not in user
-    assert '"fact_ids":[]' in system
+    assert '"fact_ids":[1]' in system
     assert '"blocking_missing_information":[' in system
     assert "没有内容时必须写 []" in system
     assert "禁止完整照抄任一较长事实句" in system
@@ -197,10 +197,26 @@ def test_prompt_marks_all_inputs_untrusted_and_has_a_hard_size_limit():
         assert unsupported_inference in system
     assert "通用选型知识不能转写成该产品的事实" in system
     assert "knowledge 只整理 approved_public_facts" in system
+    assert "previous_expected_untrusted 是等待修订的旧草稿，不是事实来源" in system
+    assert "只有 approved_public_facts 内部彼此冲突" in system
+    assert "只放入 optional_information" in system
     snapshot["questions"] = [{"question": "x" * onsite_ai.MAX_PROMPT_CHARS}]
     with pytest.raises(HTTPException) as error:
         onsite_ai.prompt_text(snapshot, "initial")
     assert error.value.status_code == 413
+
+
+def test_revise_labels_old_expected_as_untrusted_and_does_not_present_it_as_evidence():
+    current = items()
+    current[0]["expected"] = "HC-50 清水箱 60 升，适用于所有环境。"
+    snapshot = {"project": {}, "questions": [], "facts": facts(), "items": current}
+    system, user = onsite_ai.prompt_text(snapshot, "revise")
+    decoded = json.loads(user)
+    old = next(item for item in decoded["current_items"] if item["id"] == "structured_content")
+    assert "expected" not in old
+    assert old["previous_expected_untrusted"] == "HC-50 清水箱 60 升，适用于所有环境。"
+    assert "按当前 approved_public_facts 纠正旧稿" in system
+    assert "不得笼统声称“缺少公开事实”" in system
 
 
 @pytest.mark.parametrize("mutation, message", [
