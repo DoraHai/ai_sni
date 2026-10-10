@@ -53,6 +53,8 @@ node ops/customer-workbench/package-release.mjs <完整40位提交SHA>
 
 静态包继续经已有 `publish-platform-routes.sh` 上传与 `platform-deploy apply platform` 边界，新增第四参数 `customer-workbench`；原三参数调用仍发布routes。只接受当前production-sem完整SHA、固定目录及四文件包，校验清单/逐文件哈希并锁定发布，原子切换current；失败恢复旧current，首次失败移除新current。没有新域名、第二套登录或生产数据库访问。
 
+生产版本核对优先读取 GitHub 官方分支 API，禁用缓存并使用每次独立查询；API 不可达时回退 Git 协议。已经观察到的版本不一致、重定向或格式错误直接拒绝，不回退掩盖错误。暂存前与切换前各实时核对一次，保留原有回滚机制。
+
 批准后的顺序：
 
 1. 确认SEO代码与0105/0106迁移兼容、备份与新表权限；数据库操作仍由单独批准的计划执行。
