@@ -349,6 +349,7 @@ _PROTECTED_FACT_META_KEYS = {
     "verified_by",
     "source_excerpt",
     "excerpt_locator",
+    "public_use",
 }
 
 
@@ -6701,6 +6702,16 @@ async def verify_fact(
     meta["verified_by"] = ctx.user_id
     meta["source_excerpt"] = excerpt[:160]
     meta["excerpt_locator"] = req.excerpt_locator.strip()
+    if req.public_use_allowed:
+        if not ctx.user_id:
+            raise HTTPException(403, "授权事实用于公开内容需要实名用户")
+        meta["public_use"] = {
+            "allowed": True,
+            "authorized_at": now,
+            "authorized_by": ctx.user_id,
+        }
+    else:
+        meta.pop("public_use", None)
     if translation:
         meta["verified_translations"] = [
             {

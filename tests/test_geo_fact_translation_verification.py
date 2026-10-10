@@ -77,6 +77,42 @@ def test_verify_fact_records_translation_bound_to_exact_source_and_reviewer():
     assert result["meta"]["verified_translations"] == [record]
 
 
+def test_verify_fact_can_record_explicit_public_use_authorization():
+    row = fact()
+    req = FactVerifyRequest(
+        excerpt=SOURCE,
+        excerpt_locator="product page specification",
+        public_use_allowed=True,
+    )
+
+    async def exercise():
+        with patch("app.geo.content.routes._get_fact", AsyncMock(return_value=row)):
+            await verify_fact(3, req, 7, context(), session())
+
+    asyncio.run(exercise())
+    assert row.meta["public_use"]["allowed"] is True
+    assert row.meta["public_use"]["authorized_by"] == 42
+    assert row.meta["public_use"]["authorized_at"]
+
+
+def test_api_key_cannot_authorize_fact_for_public_use():
+    row = fact()
+    req = FactVerifyRequest(
+        excerpt=SOURCE,
+        excerpt_locator="product page specification",
+        public_use_allowed=True,
+    )
+
+    async def exercise():
+        api_key_context = NS(user_id=None, ensure_tenant=lambda tenant_id: None)
+        with patch("app.geo.content.routes._get_fact", AsyncMock(return_value=row)):
+            await verify_fact(3, req, 7, api_key_context, session())
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(exercise())
+    assert error.value.status_code == 403
+
+
 def test_verify_fact_rejects_same_language_as_translation():
     row = fact()
     req = FactVerifyRequest(
@@ -179,6 +215,8 @@ def test_patch_cannot_inject_verification_or_translation_metadata():
             "classification": "updated",
             "verified_by": 999,
             "verified_translations": [{"text": "伪造译文"}],
+            "public_use": {"allowed": True, "authorized_by": 999,
+                           "authorized_at": "2026-10-10T00:00:00Z"},
         }
     )
 
@@ -196,6 +234,8 @@ def test_changing_statement_invalidates_fact_and_translation_verification():
             "classification": "manual",
             "verification": {"verified_at": "2026-09-07T00:00:00"},
             "verified_translations": [{"text": TRANSLATION}],
+            "public_use": {"allowed": True, "authorized_by": 4,
+                           "authorized_at": "2026-09-07T00:00:00Z"},
         }
     )
     req = FactUpdate(statement="The MAXXDRIVE XT industrial gear unit has an axial fan.")
