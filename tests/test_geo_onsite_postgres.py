@@ -88,14 +88,13 @@ def _ai_result(items):
         "structured_content": "示例品牌提供经过公开资料核验的工业产品。",
         "knowledge": "示例品牌工业产品知识与适用范围。",
         "faq": "示例品牌产品有哪些公开能力？请参考公开产品资料。",
-        "schema": '{"@context":"https://schema.org","@type":"Product","name":"示例品牌工业产品"}',
-        "llms": "# 示例品牌公开资料\n- [产品知识](https://p10.example/knowledge)",
     }
-    return {"summary": "基于已核验公开资料起草", "missing_information": ["缺少具体规格"],
+    return {"schema_version": 2, "summary": "基于已核验公开资料起草",
+            "missing_information": ["缺少具体规格"],
             "items": [{"id": item["id"], "expected": values[item["id"]],
-                       "rationale": "使用获准公开来源", "missing_information": [],
-                       "source_refs": [{"fact_id": 80, "url": "https://public.example/fact"}]}
-                      for item in items]}
+                       "reason": "使用获准公开来源", "fact_ids": [80],
+                       "blocking_missing_information": [], "optional_information": []}
+                      for item in items if item["kind"] in {"structured_content", "knowledge", "faq"}]}
 
 
 async def _add_public_fact(db, *, fact_id=80, title="公开产品资料", expired=False):
@@ -297,7 +296,11 @@ def test_ai_proposal_late_result_cannot_overwrite_after_role_permission_revoked(
     asyncio.run(run())
 
 
-def test_ai_unknown_result_is_recorded_and_same_nonce_never_calls_again(monkeypatch):
+@pytest.mark.parametrize("category, expected_state", [
+    ("unknown", "unknown"), ("model_not_found", "failed"),
+])
+def test_ai_error_is_classified_and_same_nonce_never_calls_again(
+        monkeypatch, category, expected_state):
     calls = 0
     async def credentials(session, tenant_id):
         return {"api_key": "test", "base_url": "https://provider.invalid/v1", "model": "test-model"}
@@ -305,7 +308,9 @@ def test_ai_unknown_result_is_recorded_and_same_nonce_never_calls_again(monkeypa
         nonlocal calls
         calls += 1
         from app.geo.ai_client import DeepSeekError
-        raise DeepSeekError("sensitive provider failure")
+        raise DeepSeekError("sensitive provider failure", category=category,
+                            status_code=404 if category == "model_not_found" else None,
+                            code=category if category == "model_not_found" else None)
     monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
     monkeypatch.setattr(api, "chat_json", provider)
     async def run():
@@ -322,8 +327,11 @@ def test_ai_unknown_result_is_recorded_and_same_nonce_never_calls_again(monkeypa
                 assert error.value.status_code == 424
             async with sessions() as db:
                 retry = await api.ai_proposal(row["id"], req, db, ADVISOR)
-                assert retry["workflow"]["ai_run"]["state"] == "unknown"
+                assert retry["workflow"]["ai_run"]["state"] == expected_state
                 assert "sensitive" not in retry["workflow"]["ai_run"]["error"]
+                assert retry["workflow"]["ai_run"]["error_category"] == category
+                if category == "model_not_found":
+                    assert retry["workflow"]["ai_run"]["http_status"] == 404
             assert calls == 1
     asyncio.run(run())
 

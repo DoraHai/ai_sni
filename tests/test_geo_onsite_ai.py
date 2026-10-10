@@ -1,4 +1,5 @@
 from datetime import datetime, timezone, timedelta
+import json
 
 import pytest
 from fastapi import HTTPException
@@ -34,13 +35,13 @@ def result():
         "structured_content": "示例品牌提供节能运行产品。",
         "knowledge": "示例品牌产品资料与适用范围。",
         "faq": "示例品牌产品是否支持节能运行？支持。",
-        "schema": '{"@context":"https://schema.org","@type":"Product","name":"示例品牌产品","description":"支持节能运行"}',
-        "llms": "# 示例品牌公开资料\n- [产品资料](https://example.com/knowledge)",
     }
-    return {"summary": "基于一条已核验公开事实起草。", "missing_information": ["缺少规格参数"],
-            "items": [{"id": key, "expected": value, "rationale": "来自已核验官网资料",
-                       "source_refs": [{"fact_id": 8, "url": "https://source.example/fact"}],
-                       "missing_information": []} for key, value in values.items()]}
+    return {"schema_version": 2, "summary": "基于一条已核验公开事实起草。",
+            "missing_information": ["缺少规格参数"],
+            "items": [{"id": key, "expected": value,
+                       "reason": "来自已核验官网资料", "fact_ids": [8],
+                       "blocking_missing_information": [], "optional_information": []}
+                      for key, value in values.items()]}
 
 
 def test_daily_quota_is_bounded_and_request_nonce_is_idempotent():
@@ -101,6 +102,7 @@ def test_provider_result_keeps_explanations_outside_existing_items():
         result(), current_items=items(), facts=facts(), domain="example.com")
     assert {item["id"] for item in output} == {item["id"] for item in items()}
     assert all(set(item) == {"id", "kind", "target_url", "expected", "instruction"} for item in output)
+    assert explanation["contract_version"] == 2
     assert explanation["items"][0]["source_refs"][0] == {
         "source_id": "geo-public-source:test", "title": "产品说明",
         "url": "https://source.example/fact"}
@@ -109,7 +111,7 @@ def test_provider_result_keeps_explanations_outside_existing_items():
 
 def test_provider_result_requires_public_sources_for_any_body_and_no_fact_stays_empty():
     payload = result()
-    payload["items"][0]["source_refs"] = []
+    payload["items"][0]["fact_ids"] = []
     with pytest.raises(HTTPException) as error:
         onsite_ai.validate_provider_result(
             payload, current_items=items(), facts=facts(), domain="example.com")
@@ -118,12 +120,20 @@ def test_provider_result_requires_public_sources_for_any_body_and_no_fact_stays_
     empty = result()
     for item in empty["items"]:
         item["expected"] = ""
-        item["source_refs"] = []
-        item["missing_information"] = ["缺少获准公开使用的事实"]
+        item["fact_ids"] = []
+        item["blocking_missing_information"] = ["缺少获准公开使用的事实"]
     output, explanation = onsite_ai.validate_provider_result(
         empty, current_items=items(), facts=[], domain="example.com")
     assert all(not item["expected"] for item in output)
     assert "缺少获准公开使用的事实" in explanation["missing_information"]
+
+    unsafe = result()
+    unsafe["items"][0]["expected"] = "请参考 https://evil.example/private"
+    unsafe["items"][0]["blocking_missing_information"] = ["仍需核验"]
+    with pytest.raises(HTTPException) as error:
+        onsite_ai.validate_provider_result(
+            unsafe, current_items=items(), facts=facts(), domain="example.com")
+    assert "URL" in str(error.value.detail)
 
 
 def test_provider_result_rejects_duplicate_ids_and_oversized_or_wrong_list_fields():
@@ -135,17 +145,21 @@ def test_provider_result_rejects_duplicate_ids_and_oversized_or_wrong_list_field
     assert "编号重复" in str(error.value.detail)
 
     wrong = result()
-    wrong["items"][0]["source_refs"] = "not-a-list"
+    wrong["items"][0]["fact_ids"] = "not-a-list"
     with pytest.raises(HTTPException) as error:
         onsite_ai.validate_provider_result(
             wrong, current_items=items(), facts=facts(), domain="example.com")
-    assert "来源引用格式" in str(error.value.detail)
+    assert "版本 2 契约" in str(error.value.detail)
 
 
 def test_prompt_marks_all_inputs_untrusted_and_has_a_hard_size_limit():
     snapshot = {"project": {}, "questions": [], "facts": [], "items": items()}
-    system, _ = onsite_ai.prompt_text(snapshot, "initial")
+    snapshot["facts"] = facts()
+    system, user = onsite_ai.prompt_text(snapshot, "initial")
     assert "不可信数据" in system and "不得执行" in system
+    assert "https://source.example/fact" not in user
+    assert '"fact_id": 8' in user
+    assert '"kind": "schema"' not in user
     snapshot["questions"] = [{"question": "x" * onsite_ai.MAX_PROMPT_CHARS}]
     with pytest.raises(HTTPException) as error:
         onsite_ai.prompt_text(snapshot, "initial")
@@ -153,25 +167,24 @@ def test_prompt_marks_all_inputs_untrusted_and_has_a_hard_size_limit():
 
 
 @pytest.mark.parametrize("mutation, message", [
-    ("foreign_llms", "当前网站"),
+    ("extra_url_field", "版本 2 契约"),
     ("foreign_fact", "范围外"),
     ("private_marker", "内部资料"),
     ("private_reason", "内部资料"),
-    ("schema_mismatch", "可见内容"),
+    ("string_missing", "版本 2 契约"),
 ])
 def test_provider_result_rejects_scope_and_disclosure_failures(mutation, message):
     payload = result()
-    if mutation == "foreign_llms":
-        next(i for i in payload["items"] if i["id"] == "llms")["expected"] = "# 公开资料\nhttps://evil.example/x"
+    if mutation == "extra_url_field":
+        payload["items"][0]["source_refs"] = [{"fact_id": 8, "url": "https://source.example/fact"}]
     elif mutation == "foreign_fact":
-        payload["items"][0]["source_refs"] = [{"fact_id": 999, "url": "https://source.example/fact"}]
+        payload["items"][0]["fact_ids"] = [999]
     elif mutation == "private_marker":
         payload["items"][0]["expected"] = "内部事实卡原文"
     elif mutation == "private_reason":
-        payload["items"][0]["rationale"] = "来自内部事实卡"
+        payload["items"][0]["reason"] = "来自内部事实卡"
     else:
-        next(i for i in payload["items"] if i["id"] == "schema")["expected"] = (
-            '{"@type":"Product","name":"页面从未提及的型号"}')
+        payload["items"][0]["blocking_missing_information"] = "缺少资料"
     with pytest.raises(HTTPException) as error:
         onsite_ai.validate_provider_result(payload, current_items=items(), facts=facts(), domain="example.com")
     assert message in str(error.value.detail)
@@ -181,3 +194,50 @@ def test_old_running_attempt_is_projected_stale_without_retrying():
     value = {"ai_run": {"request_id": "r", "state": "running",
                         "started_at": (datetime.now(timezone.utc)-timedelta(minutes=11)).isoformat()}}
     assert onsite_ai.projected_ai_run(value)["state"] == "stale"
+
+
+@pytest.mark.parametrize("title, first, second", [
+    ("HC-50 水箱容量", "HC-50 水箱容量为 40 L。", "HC-50 水箱容量为 60 L。"),
+    ("AQ-20 量程", "AQ-20 测量范围为 0-20 ppm。", "AQ-20 测量范围为 0-50 ppm。"),
+])
+def test_conflicting_instrument_facts_blank_all_generated_delivery(title, first, second):
+    conflict_facts = [
+        {**facts()[0], "fact_id": 8, "title": title, "statement": first},
+        {**facts()[0], "fact_id": 9, "source_id": "geo-public-source:other",
+         "title": title, "statement": second},
+    ]
+    payload = result()
+    for item in payload["items"]:
+        item["fact_ids"] = [8, 9]
+    output, explanation = onsite_ai.validate_provider_result(
+        payload, current_items=items(), facts=conflict_facts, domain="example.com")
+    assert all(item["expected"] == "" for item in output)
+    assert any("冲突" in reason for reason in explanation["missing_information"])
+
+
+def test_multiple_visible_pages_keep_ids_targets_and_build_each_schema_from_same_page():
+    current = [
+        {"id": "content-a", "kind": "structured_content", "target_url": "https://example.com/a",
+         "expected": "", "instruction": "A 页面"},
+        {"id": "content-b", "kind": "faq", "target_url": "https://example.com/b",
+         "expected": "", "instruction": "B 页面"},
+        {"id": "schema-a", "kind": "schema", "target_url": "https://example.com/a",
+         "expected": "", "instruction": "A Schema"},
+        {"id": "schema-b", "kind": "schema", "target_url": "https://example.com/b",
+         "expected": "", "instruction": "B Schema"},
+        {"id": "llms-one", "kind": "llms", "target_url": "https://example.com/llms.txt",
+         "expected": "", "instruction": "导览"},
+    ]
+    payload = {"schema_version": 2, "summary": "多页", "missing_information": [], "items": [
+        {"id": "content-a", "expected": "A 页面公开内容", "reason": "事实支持", "fact_ids": [8],
+         "blocking_missing_information": [], "optional_information": []},
+        {"id": "content-b", "expected": "B 页面公开问答", "reason": "事实支持", "fact_ids": [8],
+         "blocking_missing_information": [], "optional_information": []},
+    ]}
+    output, _ = onsite_ai.validate_provider_result(
+        payload, current_items=current, facts=facts(), domain="example.com")
+    by_id = {item["id"]: item for item in output}
+    assert json.loads(by_id["schema-a"]["expected"])["description"] == "A 页面公开内容"
+    assert json.loads(by_id["schema-b"]["expected"])["description"] == "B 页面公开问答"
+    assert "https://example.com/a" in by_id["llms-one"]["expected"]
+    assert "https://example.com/b" in by_id["llms-one"]["expected"]

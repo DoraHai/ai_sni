@@ -265,7 +265,7 @@ async def _proposal_snapshot(session, project: GeoProject, row: GeoActionTicket)
 
 
 async def _finish_run(session, task_id: int, request_id: str, *, state: str,
-                      error: str | None = None) -> None:
+                      error: str | None = None, metadata: dict | None = None) -> None:
     row = await session.get(GeoActionTicket, task_id, with_for_update=True, populate_existing=True)
     if row is None:
         await session.rollback()
@@ -280,6 +280,8 @@ async def _finish_run(session, task_id: int, request_id: str, *, state: str,
         run["error"] = error[:500]
     else:
         run.pop("error", None)
+    if metadata:
+        run.update({key: value for key, value in metadata.items() if value is not None})
     value["ai_run"] = run
     row.progress = {**(row.progress or {}), "onsite": value}
     row.updated_at = datetime.utcnow()
@@ -346,10 +348,16 @@ async def ai_proposal(task_id: PositiveInt, req: AiProposal, session=Depends(get
             result = await chat_json(system_prompt, user_prompt, timeout=45.0,
                 api_key=credentials["api_key"], base_url=credentials["base_url"],
                 model=credentials["model"])
-    except DeepSeekError:
-        await _finish_run(session, task_id, request_id, state="unknown",
-                          error="AI 供应商结果未知，系统未自动重试；请核对调用记录后决定下一步")
-        raise HTTPException(424, "AI 供应商结果未知，未自动重试") from None
+    except DeepSeekError as exc:
+        uncertain = exc.category in {"timeout", "network", "unknown"}
+        state = "unknown" if uncertain else "failed"
+        detail = ("AI 供应商结果未知，系统未自动重试；请核对调用记录后决定下一步"
+                  if uncertain else "AI 供应商请求失败，系统未自动重试；请检查供应商与模型配置")
+        await _finish_run(session, task_id, request_id, state=state, error=detail,
+                          metadata={"error_category": exc.category,
+                                    "error_code": exc.code,
+                                    "http_status": exc.status_code})
+        raise HTTPException(424, detail) from None
     except Exception:
         await _finish_run(session, task_id, request_id, state="unknown",
                           error="AI 调用未能确认结果，系统未自动重试")
