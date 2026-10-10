@@ -1,5 +1,24 @@
 import {visiblePlatformAlerts} from './platform-alert-archive.mjs';
 
+export function renderCallMonitor({snapshot,esc,card,table,time}){
+  const monitor=snapshot.operations?.call_monitor;
+  if(!monitor||monitor.state==='schema_pending')return card('调用监控','<p>调用监控待接入，无法据此判断调用数量为零。</p>')+
+    ((snapshot.operations?.provider_health||[]).length?card('服务商近期运行（原有统计）',table(['模块','服务商','24 小时调用','异常','最后异常'],snapshot.operations.provider_health.map(r=>[
+      esc(r.module?.toUpperCase()),esc(r.provider),esc(r.calls),esc(r.failed),esc(time(r.last_failure))])),'扩展监控尚未提供，保留已有供应商调用统计。'):'')+
+    card('后台任务心跳','<p>待接入</p>','后台任务心跳与队列契约待接入；供应商调用记录不能证明调度器存活，待命也不表示故障。');
+  const display=n=>n==null?'未知':esc(n),rate=n=>n==null?'暂无确定结果':esc(n)+'%',ms=n=>n==null?'未知':esc(n)+' ms';
+  const s=monitor.summary;
+  const metrics=s?table(['24 小时调用','已知结果成功率','平均 / P95 耗时','未结束（全部）','超 10 分钟未结束','结果未知（24h）','费用未知（24h）','未匹配价格（24h）'],[[
+    display(s.calls),rate(s.success_percent),ms(s.average_latency_ms)+' / '+ms(s.p95_latency_ms),display(s.pending),display(s.stale_pending),display(s.unknown),display(s.unpriced),display(s.missing_rate)]]):'<p>监控汇总未知。</p>';
+  return card('调用运行监控',metrics+`<p class="pc-note">${monitor.state==='recording'?'当前服务计量已启用':'当前服务计量尚未启用，显示已有记录'} · 最早未结束 ${esc(time(s?.oldest_pending_at))} · 历史费用待核查 ${display(s?.unresolved_charges)} 次</p><button data-pc-page="apis">打开调用台账核查</button>`,
+    '仅覆盖已记录的供应商尝试。已知结果成功率只计算成功与明确失败的供应商结果，未知与未结束另列；不代表整体成功率或业务结果已验收。未结束与超时占用包含历史记录，其余指标为近 24 小时；费用未知与未匹配价格可能重叠，不能相加。')+
+    card('服务商近期运行',table(['模块','服务商','24 小时调用','已知结果成功率','平均 / P95 耗时','明确失败 / 结果未知','未结束 / 超 10 分钟','费用未知 / 未匹配价格','最早未结束'],(monitor.providers||[]).map(r=>[
+      esc(r.module?.toUpperCase()),esc(r.provider),display(r.calls),rate(r.success_percent),ms(r.average_latency_ms)+' / '+ms(r.p95_latency_ms),
+      display(r.errors)+' / '+display(r.unknown),display(r.pending)+' / '+display(r.stale_pending),display(r.unpriced)+' / '+display(r.missing_rate),esc(time(r.oldest_pending_at))])),
+      '从已计量的真实调用读取，不额外发起付费探测。超时或缺价保持未知；标记告警已处理不会重试请求、结算费用或释放占用。')+
+    card('后台任务心跳',`<p>${monitor.workers?.state==='not_connected'?'待接入':'心跳契约待核对'}</p>`,monitor.workers?.note||'后台任务心跳待接入。');
+}
+
 export function renderUsagePanel({snapshot,history,esc,card,table,tenant,time,providerLabel}){
   const option=(v,label,selected)=>`<option value="${esc(v)}" ${String(v)===String(selected)?'selected':''}>${esc(label)}</option>`;
   const select=(name,label,options)=>`<label>${label}<select name="${name}">${option('','全部',history.filters[name])}${options.map(([v,l])=>option(v,l,history.filters[name])).join('')}</select></label>`;
@@ -36,10 +55,8 @@ export function renderAlertsPanel({snapshot,selected,esc,card,table,tenant,time,
   const form=current?`<form id="pc-alert-operation" class="pc-ops-form"><label>选择告警<select name="alert_id">${alerts.filter(a=>a.id).map(a=>`<option value="${esc(a.id)}" ${a===current?'selected':''}>${esc(a.message)}</option>`).join('')}</select></label>
     <label>操作<select name="action"><option value="claim">认领</option><option value="resolve">标记已处理</option><option value="reopen">重新打开</option></select></label>
     <label class="pc-ops-wide">处理说明<textarea name="note" maxlength="500" placeholder="记录处理结果；不要填写密钥或密码"></textarea></label><button ${enabled?'':'disabled'}>保存处理记录</button></form>`:'';
-  return card('告警与处理',content+form,enabled?'标记已处理仅记录处理结果；相同来源出现新异常时重新提醒。':'告警仍可查看，处理记录等待数据库审核启用。')+
-    card('服务商近期运行',table(['模块','服务商','24 小时调用','异常','最后异常'],(snapshot.operations?.provider_health||[]).map(r=>[
-      esc(r.module?.toUpperCase()),esc(r.provider),r.calls,r.failed,esc(time(r.last_failure))])),
-      '来自真实调用结果；24 小时异常至少 3 次且占比达到 20% 时提醒。不额外发起付费探测。外部通知渠道待接入。');
+  return card('告警与处理',content+form,enabled?'标记已处理仅记录处理结果；相同来源出现新异常时重新提醒。不会重试或释放调用占用。':'告警仍可查看，处理记录等待数据库审核启用。')+
+    renderCallMonitor({snapshot,esc,card,table,time});
 }
 
 export function renderSuppliersPanel({snapshot,selected,esc,card,table,time}){
