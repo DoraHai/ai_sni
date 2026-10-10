@@ -39,6 +39,7 @@ jobs:
       - name: Run owned PostgreSQL schemas, without suppliers or production credentials
         env:
           SEO_WORKFLOW_TEST_DATABASE_URL: postgresql+asyncpg://seo_workflow_tester:onsite_ci_test@127.0.0.1:5432/seo_workflow_test
+          PLATFORM_CONSOLE_TEST_DATABASE_URL: postgresql+asyncpg://seo_workflow_tester:onsite_ci_test@127.0.0.1:5432/seo_workflow_test
           SEO_WORKFLOW_TEST_ALLOW_SCHEMA_CREATE: 'yes'
         run: |
           python - <<'PY'
@@ -58,7 +59,8 @@ jobs:
           import xml.etree.ElementTree as ET
           report = os.path.join(os.environ['RUNNER_TEMP'], 'seo-onsite-postgres.xml')
           result = pytest.main(['-q', 'tests/test_seo_onsite_postgres.py',
-              'tests/test_seo_onsite_ai_postgres.py', '--junitxml=' + report])
+              'tests/test_seo_onsite_ai_postgres.py', 'tests/test_platform_call_guards.py',
+              '-k', 'not native_reviewed_permission_scripts_keep_audit_append_only', '--junitxml=' + report])
           if result:
               raise SystemExit(result)
           xml = ET.parse(report)

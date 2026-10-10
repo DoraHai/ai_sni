@@ -29,6 +29,8 @@ from app.models.user import User
 from app.models.role import Role
 from app.security.auth import AuthContext
 
+REAL_CHAT_JSON = ai.deepseek.chat_json
+
 pytestmark = pytest.mark.skipif(not os.getenv("SEO_WORKFLOW_TEST_DATABASE_URL"), reason="requires isolated PostgreSQL")
 
 
@@ -928,4 +930,147 @@ def test_busy_site_is_skipped_then_claimed_on_next_durable_scan(supplier):
             async with sessions() as db:
                 assert (await api.proposal_status(task["id"], req.request_id, 4, 2, db, ADVISOR))["request_run"]["state"] == "ready"
             assert len(supplier) == 1
+    asyncio.run(run())
+
+
+async def install_guard_tables(sessions, *, controls_schema=True):
+    from pathlib import Path
+    async with sessions() as db:
+        connection = (await (await db.connection()).get_raw_connection()).driver_connection
+        root = Path(__file__).parents[1]
+        await connection.execute((root / 'scripts/api_metering_schema.sql').read_text(encoding='utf-8'))
+        if controls_schema:
+            await connection.execute((root / 'scripts/api_controls_schema.sql').read_text(encoding='utf-8'))
+        await db.commit()
+
+
+def real_metered_supplier(monkeypatch, sessions, provider):
+    from app import api_metering as meter, api_controls as controls
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(ai.deepseek, 'chat_json', REAL_CHAT_JSON)
+    monkeypatch.setattr(ai.deepseek, '_resolve_creds', lambda **kwargs: ('synthetic-only', 'https://api.deepseek.com/v1', 'deepseek-v4-flash'))
+    monkeypatch.setattr(ai.deepseek.httpx, 'AsyncClient', lambda **kwargs: original_client(transport=httpx.MockTransport(provider), **kwargs))
+    monkeypatch.setattr(meter, 'async_session_factory', sessions)
+    monkeypatch.setattr(controls, 'async_session_factory', sessions)
+    monkeypatch.setenv('API_METERING_ENABLED', 'true')
+    monkeypatch.setenv('API_CONTROLS_ENABLED', 'true')
+    monkeypatch.delenv('API_METERING_RATES_JSON', raising=False)
+    return meter, controls
+
+
+def guard_response(request):
+    payload = json.loads(request.content)
+    facts = json.loads(payload['messages'][1]['content'])
+    return httpx.Response(200, json={'id': 'synthetic-response', 'model': 'deepseek-v4-flash',
+        'choices': [{'message': {'content': json.dumps(answer(facts))}}],
+        'usage': {'prompt_tokens': 100, 'completion_tokens': 10, 'prompt_tokens_details': {'cached_tokens': 0}}})
+
+
+@pytest.mark.parametrize('mode', ['enabled', 'controls_off', 'all_off', 'schema_pending', 'partial_credentials', 'metering_off'])
+def test_background_ai_real_metering_admission_and_legacy_modes(monkeypatch, mode):
+    from sqlalchemy import text
+    async def run():
+        async with fixture() as (sessions, task):
+            sent = []
+            async def provider(request):
+                sent.append(request)
+                return guard_response(request)
+            meter, controls = real_metered_supplier(monkeypatch, sessions, provider)
+            if mode not in {'schema_pending', 'all_off', 'metering_off'}:
+                await install_guard_tables(sessions, controls_schema=mode != 'controls_off')
+            if mode in {'controls_off', 'all_off'}:
+                monkeypatch.setenv('API_CONTROLS_ENABLED', 'false')
+            if mode in {'all_off', 'metering_off'}:
+                monkeypatch.setenv('API_METERING_ENABLED', 'false')
+            if mode == 'partial_credentials':
+                async with sessions() as db:
+                    await db.execute(text('DROP TABLE api_control_credentials'))
+                    await db.commit()
+                    assert (await controls.read_controls(db))['state'] == 'schema_pending'
+            req = request(task)
+            async with sessions() as db:
+                await api.ai_proposal(task['id'], req, db, ADVISOR)
+            state = await jobs.execute_request(task['id'], 4, 2, str(req.request_id), sessions=sessions)
+            permitted = mode in {'enabled', 'controls_off', 'all_off'}
+            assert state == ('ready' if permitted else 'failed')
+            assert len(sent) == int(permitted)
+            async with sessions() as db:
+                result = await api.proposal_status(task['id'], req.request_id, 4, 2, db, ADVISOR)
+                assert 'synthetic-only' not in json.dumps(result)
+                if mode in {'enabled', 'controls_off'}:
+                    row = (await db.execute(text('SELECT * FROM api_usage_events'))).mappings().one()
+                    assert (row['tenant_id'], row['user_id'], row['module']) == (4, 7, 'seo')
+                    assert row['state'] == 'succeeded' and row['estimated_amount'] > 0
+                    assert row['job_ref'] == f"site:2:onsite_ai_proposal:{task['id']}:{req.request_id}"
+                    assert row['operation'] == 'chat.completions'
+                    assert 'synthetic-only' not in str(dict(row))
+            await jobs.run_onsite_ai_jobs(sessions=sessions)
+            assert len(sent) == int(permitted)
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('target', ['tenant:4', 'user:7', 'provider:api.deepseek.com'])
+@pytest.mark.parametrize('cap', [0, 1])
+def test_seo_background_guard_observes_other_module_in_shared_ledger(monkeypatch, target, cap):
+    from sqlalchemy import text
+    async def run():
+        async with fixture() as (sessions, task):
+            sent = []
+            async def provider(request):
+                sent.append(request)
+                return guard_response(request)
+            meter, controls = real_metered_supplier(monkeypatch, sessions, provider)
+            await install_guard_tables(sessions)
+            async with sessions() as db:
+                await controls.mutate(db, actor_id=7, request_id=str(uuid4()), kind='budget', key='budget:'+target,
+                    expected_revision=0, value={'daily_calls':None, 'monthly_calls':None, 'daily_cny':None,
+                        'monthly_cny':None, 'warning_percent':80, 'max_concurrent':cap})
+                if cap:
+                    # Another service's already-committed dispatch occupies the same budget.
+                    await db.execute(text("""INSERT INTO api_usage_events(id,tenant_id,user_id,origin,module,operation,
+                        provider,endpoint,state) VALUES(CAST(:id AS uuid),4,7,'interactive','geo','chat.completions',
+                        'display-alias','api.deepseek.com/v1/chat/completions','requested')"""), {'id':str(uuid4())})
+                    await db.commit()
+            req = request(task)
+            async with sessions() as db:
+                await api.ai_proposal(task['id'], req, db, ADVISOR)
+            assert await jobs.execute_request(task['id'],4,2,str(req.request_id),sessions=sessions) == 'failed'
+            assert not sent
+            async with sessions() as db:
+                assert await db.scalar(text('SELECT count(*) FROM api_usage_events')) == cap
+                assert (await db.get(SeoTask,task['id'])).params['onsite']['revision'] == 1
+    asyncio.run(run())
+
+
+def test_background_timeout_keeps_unknown_charge_across_period_and_never_retries(monkeypatch):
+    from sqlalchemy import text
+    async def run():
+        async with fixture() as (sessions, task):
+            sent = []
+            async def provider(request):
+                sent.append(request)
+                raise httpx.ReadTimeout('synthetic timeout', request=request)
+            meter, controls = real_metered_supplier(monkeypatch, sessions, provider)
+            await install_guard_tables(sessions)
+            async with sessions() as db:
+                await controls.mutate(db, actor_id=7, request_id=str(uuid4()), kind='budget', key='budget:tenant:4',
+                    expected_revision=0, value={'daily_calls':None,'monthly_calls':None,'daily_cny':None,
+                        'monthly_cny':'100','warning_percent':80,'max_concurrent':None})
+            req = request(task)
+            async with sessions() as db: await api.ai_proposal(task['id'],req,db,ADVISOR)
+            assert await jobs.execute_request(task['id'],4,2,str(req.request_id),sessions=sessions) == 'unknown'
+            async with sessions() as db:
+                event = (await db.execute(text('SELECT state,estimated_amount,reserved_amount FROM api_usage_events'))).one()
+                assert event.state == 'unknown' and event.estimated_amount is None and event.reserved_amount > 0
+                await db.execute(text("UPDATE api_usage_events SET started_at=CURRENT_TIMESTAMP - INTERVAL '40 days'"))
+                await db.commit()
+                assert (await api.ai_proposal(task['id'],req,db,ADVISOR))['replayed']
+            await jobs.run_onsite_ai_jobs(sessions=sessions)
+            assert len(sent) == 1
+            req2 = request(task)
+            async with sessions() as db: await api.ai_proposal(task['id'],req2,db,ADVISOR)
+            assert await jobs.execute_request(task['id'],4,2,str(req2.request_id),sessions=sessions) == 'failed'
+            assert len(sent) == 1
+            async with sessions() as db:
+                assert (await controls.usage(db,'tenant:4'))['unresolved_calls'] == 1
     asyncio.run(run())
