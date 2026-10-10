@@ -22,6 +22,7 @@ router=APIRouter()
 TASK_PERMS={'content_review':'seo.content','image_repair':'seo.site','page_remediation':'seo.site','ranking_improvement':'seo.keywords','backlink_outreach':'seo.links'}
 TASK_PERMS['content_delivery']='seo.content'
 TASK_PERMS.update(site_diagnosis='seo.site',ranking_followup='seo.keywords',monthly_report='seo.site')
+TASK_PERMS['onsite_optimization']='seo.site'
 TASK_METRICS={'content_review':'seo.content.published_7d_count','image_repair':'seo.images.verified_repair_count','page_remediation':'seo.site.healthy_page_count','ranking_improvement':'seo.ranking.top10_keyword_count','backlink_outreach':'seo.backlinks.verified_count'}
 
 QUEUE_STATES=('pending_customer_action','pending_system_check','verified','failed_retry')
@@ -474,6 +475,7 @@ async def completion(session,row):
 @router.patch('/tasks/{task_id}',response_model=TaskContract)
 async def update_task(task_id:int,req:TaskUpdate,ctx=Depends(require_scoped_auth),session=Depends(get_session)):
     row=await task_record(session,ctx,task_id,req.tenant_id,req.site_id,True)
+    if row.action_type=='onsite_optimization':raise HTTPException(409,'站内任务请使用版本化方案与验收接口')
     if row.action_type in {'content_delivery','site_diagnosis','ranking_followup','monthly_report'} and (req.status is not None or req.assignee_role is not None):
         raise HTTPException(409,'服务执行链由系统读取真实证据推进；取消使用 DELETE，不能手工改阶段或负责人')
     if row.status in ('done','cancelled'):raise HTTPException(409,'已结束任务不可修改')
@@ -493,6 +495,7 @@ async def update_task(task_id:int,req:TaskUpdate,ctx=Depends(require_scoped_auth
 @router.delete('/tasks/{task_id}',response_model=TaskContract)
 async def cancel_task(task_id:int,tenant_id:PositiveInt,site_id:PositiveInt,ctx=Depends(require_scoped_auth),session=Depends(get_session)):
     row=await task_record(session,ctx,task_id,tenant_id,site_id,True)
+    if row.action_type=='onsite_optimization':raise HTTPException(409,'站内任务请使用版本化取消接口，保留处理说明')
     if row.status=='done':raise HTTPException(409,'保留已完成任务及证据，不允许删除')
     row.status='cancelled';row.updated_at=datetime.now(timezone.utc)
     await session.commit();await session.refresh(row)
