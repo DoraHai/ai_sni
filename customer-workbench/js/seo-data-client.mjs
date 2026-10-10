@@ -1,4 +1,4 @@
-// Scoped GET-only data readers. Detail IDs must come from the latest authorized list.
+// Scoped data access. Detail and maintenance IDs must come from the latest authorized list.
 export function createSeoDataClient({transport,getContext,canMaintain=()=>false}) {
   let lists=new Map();
   const fail=code=>{lists.clear();throw Object.assign(Error(code),{code});};
@@ -28,6 +28,18 @@ export function createSeoDataClient({transport,getContext,canMaintain=()=>false}
       if(row?.id!==id||row.tenant_id!==list.c.tenantId||row.site_id!==list.c.siteId)fail('SCOPE_MISMATCH');return data;
     },
     selected(kind,id){const list=lists.get(kind);if(!list)fail('SELECTION_REQUIRED');same(list.c);const row=list.items.find(v=>v.id===id);if(!row)fail('SELECTION_REQUIRED');return structuredClone(row);},
+    async removeKeyword(id){
+      if(!canMaintain('keywords'))fail('ADVISOR_REQUIRED');
+      this.selected('keywords',id);const c=context();lists.clear();
+      const query=new URLSearchParams({tenant_id:c.tenantId,site_id:c.siteId});
+      let r;try{r=await transport(`/api/v1/seo/keywords/${id}?${query}`,{method:'DELETE'});}catch(e){if(['AUTH_EXPIRED','PERMISSION_DENIED','CONTEXT_CHANGED'].includes(e.code))throw e;fail('DELETE_OUTCOME_UNKNOWN');}
+      same(c);
+      if(r.status>=500||r.status===408)fail('DELETE_OUTCOME_UNKNOWN');
+      if(!r.ok)throw Object.assign(Error('DELETE_FAILED'),{code:'DELETE_FAILED',status:r.status});
+      let value;try{value=await r.json();}catch(e){if(['AUTH_EXPIRED','PERMISSION_DENIED','CONTEXT_CHANGED'].includes(e.code))throw e;fail('DELETE_OUTCOME_UNKNOWN');}same(c);
+      if(value?.deleted!==true||value.keyword_id!==id)fail('DELETE_OUTCOME_UNKNOWN');
+      return value;
+    },
     async save(kind,input){
       if(!['facts','keywords'].includes(kind)||!canMaintain(kind))fail('ADVISOR_REQUIRED');
       const c=context();let body,method,path;

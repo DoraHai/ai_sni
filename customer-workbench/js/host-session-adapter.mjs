@@ -21,6 +21,7 @@ const routes=[
   ['POST',/^\/api\/v1\/seo\/qa\/facts$/,[],'content',['tenant_id','site_id','title','statement','source_name','source_url','expires_at','status']],
   ['PATCH',/^\/api\/v1\/seo\/qa\/facts\/[1-9]\d*$/,[],'content',['tenant_id','site_id','title','statement','source_name','source_url','expires_at','status','version']],
   ['PATCH',/^\/api\/v1\/seo\/keywords\/[1-9]\d*$/,['tenant_id'],'keywords',['priority','landing_page']],
+  ['DELETE',/^\/api\/v1\/seo\/keywords\/[1-9]\d*$/,['tenant_id','site_id'],'keywords'],
   ['POST',/^\/api\/v1\/seo\/keywords$/,[],'keywords',['tenant_id','site_id','keyword','priority','landing_page']],
   ['GET',/^\/api\/v1\/seo\/keywords$/,['tenant_id','site_id','status','page','page_size','q','engine','device'],'keywords'],
   ['GET',/^\/api\/v1\/seo\/keywords\/[1-9]\d*$/,['tenant_id','engine','device','region','days'],'keywords'],
@@ -82,6 +83,7 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
     if(!preflight&&!authorized)throw error('NOT_CONNECTED');
     if(!preflight&&route[3]==='site'&&!['view','edit'].includes(authorized.user.permissions['seo.site']))throw error('PERMISSION_DENIED',403);
     if(!preflight&&route[3]==='keywords'&&!['view','edit'].includes(authorized.user.permissions['seo.keywords']))throw error('PERMISSION_DENIED',403);
+    if(!preflight&&route[3]==='keywords'&&method==='DELETE'&&authorized.user.permissions['seo.keywords']!=='edit')throw error('PERMISSION_DENIED',403);
     if(['GET','DELETE'].includes(method)&&options.body!==undefined)throw error('BODY_DENIED');
     if(!['GET','DELETE'].includes(method)){
       let body;try{body=JSON.parse(options.body);}catch{throw error('BODY_DENIED');}
