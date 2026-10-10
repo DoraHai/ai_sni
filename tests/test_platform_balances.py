@@ -171,3 +171,71 @@ def test_timeout_does_not_reuse_last_success():
         row=await b.query_cached('timeout-fixture',timeout,True)
         assert row['state']=='timeout' and row['balances']==[] and 'private' not in str(row)
     asyncio.run(run())
+
+
+def test_native_postgres_auth_pagination_and_read_only_without_controls(monkeypatch):
+    import os
+    from uuid import uuid4
+    from sqlalchemy import text
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import NullPool
+    raw=os.getenv('PLATFORM_CONSOLE_TEST_DATABASE_URL')
+    if not raw:pytest.skip('Explicit isolated local PostgreSQL URL required')
+    url=make_url(raw)
+    assert url.host in ('127.0.0.1','localhost') and 'test' in url.database.lower()
+    schema='balance_test_'+uuid4().hex
+    setup=create_async_engine(raw,poolclass=NullPool)
+    scoped=create_async_engine(raw,poolclass=NullPool,connect_args={'server_settings':{'search_path':schema}})
+    reads=[]
+    class ReadOnlySession(AsyncSession):
+        async def execute(self,stmt,*args,**kwargs):
+            if str(stmt).lstrip().startswith('SELECT'):
+                assert (await super().execute(text('SHOW transaction_read_only'))).scalar()=='on'
+                reads.append(1)
+            return await super().execute(stmt,*args,**kwargs)
+    async def prepare():
+        async with setup.begin() as c:await c.execute(text(f'CREATE SCHEMA "{schema}"'))
+        async with scoped.begin() as c:
+            await c.execute(text('CREATE TABLE tenants(id bigint primary key,name text)'))
+            await c.execute(text("INSERT INTO tenants VALUES(1,'client-one'),(2,'client-two')"))
+            await c.execute(text('CREATE TABLE baidu_accounts(id int primary key,tenant_id bigint,baidu_username text,access_token_encrypted text,status text)'))
+            for i in range(1,25):await c.execute(text('INSERT INTO baidu_accounts VALUES(:id,:tenant,:name,:token,:status)'),{'id':i,'tenant':1 if i%2 else 2,'name':'account-'+str(i),'token':'PRIVATE-FIXTURE-'+str(i),'status':'disabled' if i in (3,7) else 'active'})
+            assert await c.scalar(text("SELECT to_regclass(current_schema()||'.api_control_settings')")) is None
+    async def cleanup():
+        async with scoped.connect() as c:
+            assert await c.scalar(text("SELECT count(*) FROM baidu_accounts"))==24
+            assert await c.scalar(text("SELECT to_regclass(current_schema()||'.api_control_settings')")) is None
+        await scoped.dispose()
+        async with setup.begin() as c:await c.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        await setup.dispose()
+    asyncio.run(prepare())
+    monkeypatch.setattr(api,'async_session_factory',async_sessionmaker(scoped,class_=ReadOnlySession,expire_on_commit=False))
+    monkeypatch.setattr(api,'get_settings',settings);monkeypatch.setenv('API_CONTROLS_ENABLED','false')
+    async def query(key,fn,refresh):return b.result('available',balances=[{'currency':'CNY','available':'200'}])
+    monkeypatch.setattr(b,'query_cached',query)
+    app=FastAPI();app.include_router(platform_console.router)
+    try:
+        with TestClient(app) as c:
+            assert c.get('/api/v1/admin/console/balances?provider=baidu').status_code==401
+            app.dependency_overrides[require_auth]=lambda:AuthContext(8,'bound','client',1,{'settings.accounts':'edit','settings.customers':'edit'})
+            assert c.get('/api/v1/admin/console/balances?provider=baidu').status_code==403
+            assert not reads
+            app.dependency_overrides[require_auth]=lambda:AuthContext(7,'admin','admin',None,{'settings.accounts':'edit','settings.customers':'edit'})
+            seen=[];after=0
+            while True:
+                response=c.get('/api/v1/admin/console/balances',params={'provider':'baidu','after_id':after})
+                assert response.status_code==200
+                data=response.json();assert 'PRIVATE-FIXTURE' not in response.text
+                assert len(data['rows'])<=10
+                seen.extend(r['account_id'] for r in data['rows'])
+                assert all(r['tenant_name']==('client-one' if r['account_id']%2 else 'client-two') for r in data['rows'])
+                after=data['next_after_id']
+                if after is None:break
+            assert seen==[i for i in range(1,25) if i not in (3,7)]
+            assert c.get('/api/v1/admin/console/balances?provider=baidu&account_id=3').status_code==404
+            selected=c.get('/api/v1/admin/console/balances?provider=baidu&account_id=22').json()
+            assert [r['account_id'] for r in selected['rows']]==[22]
+            assert c.get('/api/v1/admin/console/balances?provider=baidu&after_id=100').json()['rows']==[]
+        assert reads
+    finally:asyncio.run(cleanup())
