@@ -742,6 +742,58 @@ def test_ai_error_is_classified_and_same_nonce_never_calls_again(
     asyncio.run(run())
 
 
+def test_ai_admission_denial_is_definitive_failed_and_not_unknown(monkeypatch):
+    attempts = 0
+
+    async def credentials(session, tenant_id):
+        return {"api_key": "test", "base_url": "https://provider.invalid/v1",
+                "model": "test-model"}
+
+    async def denied_before_provider(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        from app.api_controls import ControlDenied
+        raise ControlDenied("controlled policy detail", code="api_concurrency_limit",
+                            target="tenant:1")
+
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "chat_json", denied_before_provider)
+
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
+            async with sessions() as db:
+                row = await api.create(api.Create(
+                    tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员",
+                ), db, ADVISOR)
+            request_id = uuid4()
+            request = api.AiProposal(
+                tenant_id=1, project_id=10, expected_revision=1,
+                request_id=request_id, mode="initial",
+            )
+            async with sessions() as db:
+                queued = await api.ai_proposal(row["id"], request, db, ADVISOR)
+            result = await run_owned(sessions, queued["request_run"]["job_id"])
+            assert result["result_meta"]["public_state"] == "failed"
+            async with sessions() as db:
+                polled = await api.get_ai_request(
+                    row["id"], request_id, 1, 10, db, ADVISOR,
+                )
+            run = polled["request_run"]
+            assert run["state"] == "failed"
+            assert run["error_category"] == "admission_denied"
+            assert run["error_code"] == "api_concurrency_limit"
+            assert run["error"] == "AI 请求未通过平台调用门禁，供应商未被调用"
+            assert "controlled policy detail" not in str(run)
+            assert attempts == 1
+
+    asyncio.run(run())
+
+
 def test_advisor_list_filters_assignment_before_pagination(monkeypatch):
     async def credentials(session, tenant_id):
         return None

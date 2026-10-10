@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import onsite_workflow as work
+from app.api_controls import ControlDenied
 from app.api_metering import background_scope
 from app.geo import onsite_ai
 from app.geo.ai_client import DeepSeekError, chat_json
@@ -294,6 +295,15 @@ async def execute_onsite_proposal(
                 model=credentials["model"],
                 **generation_options,
             )
+    except ControlDenied as exc:
+        return await _terminal(
+            session,
+            job,
+            "failed",
+            "AI 请求未通过平台调用门禁，供应商未被调用",
+            error_category="admission_denied",
+            error_code=exc.code,
+        )
     except DeepSeekError as exc:
         uncertain = exc.category in {"timeout", "network", "unknown"}
         state = "unknown" if uncertain else "failed"

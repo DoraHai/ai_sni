@@ -1,8 +1,10 @@
 import asyncio
+from contextlib import asynccontextmanager
 
 import httpx
+import pytest
 
-from app import api_metering
+from app import api_controls, api_metering
 from app.geo import ai_client
 from app.geo.ai_client import _chat_json_payload, _provider_http_error
 
@@ -79,3 +81,48 @@ def test_geo_client_uses_shared_metering_with_onsite_background_identity(monkeyp
         tenant_id=3, user_id=7, origin="job", module="geo",
         operation="onsite.ai_proposal", job_ref="geo-onsite-ai:11:request",
     )
+
+
+def test_geo_client_admission_denial_never_reaches_provider(monkeypatch):
+    sends = 0
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, _url, **_kwargs):
+            nonlocal sends
+            sends += 1
+            return httpx.Response(200, json={})
+
+    async def denied(*_args, **_kwargs):
+        raise api_controls.ControlDenied(
+            "controlled policy message", code="api_concurrency_limit", target="tenant:3",
+        )
+
+    @asynccontextmanager
+    async def runtime(_module):
+        yield
+
+    monkeypatch.setenv("API_METERING_ENABLED", "true")
+    monkeypatch.setenv("API_CONTROLS_ENABLED", "true")
+    monkeypatch.setattr(ai_client.httpx, "AsyncClient", lambda **_kwargs: Client())
+    monkeypatch.setattr(api_controls, "admit", denied)
+    monkeypatch.setattr("app.api_connection_config.runtime_scope", runtime)
+
+    async def run():
+        with api_metering.background_scope(
+            tenant_id=3, user_id=7, module="geo", operation="onsite.ai_proposal",
+        ):
+            await ai_client.chat_json(
+                "system", "user", api_key="safe-test-key",
+                base_url="https://provider.test/v1", model="model-test",
+            )
+
+    with pytest.raises(api_controls.ControlDenied) as error:
+        asyncio.run(run())
+    assert error.value.code == "api_concurrency_limit"
+    assert sends == 0
