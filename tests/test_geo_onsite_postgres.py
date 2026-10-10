@@ -164,6 +164,7 @@ def test_ai_proposal_requires_durable_protocol_before_writes_or_quota(
     monkeypatch.setattr(onsite_jobs, "chat_json", provider)
 
     async def run():
+        nonlocal credential_reads
         async with database() as sessions:
             await configured(sessions)
             async with sessions() as db:
@@ -171,6 +172,9 @@ def test_ai_proposal_requires_durable_protocol_before_writes_or_quota(
                     tenant_id=1, project_id=10, request_id=uuid4(),
                     work_type="startup", owner_name="维护人员",
                 ), db, ADVISOR)
+            # Task serialization advertises AI capability and may inspect whether
+            # credentials exist. Measure only the rejected proposal endpoint.
+            credential_reads = 0
             async with sessions() as db:
                 project = await db.get(GeoProject, 10)
                 settings_before = json.loads(json.dumps(project.project_settings or {}))
