@@ -187,6 +187,8 @@ def test_prompt_marks_all_inputs_untrusted_and_has_a_hard_size_limit():
     assert '"fact_ids":[]' in system
     assert '"blocking_missing_information":[' in system
     assert "没有内容时必须写 []" in system
+    assert "禁止完整照抄任一较长事实句" in system
+    assert "数字、单位、型号和否定条件" in system
     snapshot["questions"] = [{"question": "x" * onsite_ai.MAX_PROMPT_CHARS}]
     with pytest.raises(HTTPException) as error:
         onsite_ai.prompt_text(snapshot, "initial")
@@ -231,6 +233,28 @@ def test_real_provider_shape_drift_is_rejected_instead_of_coerced(mutate):
         onsite_ai.validate_provider_result(
             payload, current_items=items(), facts=facts(), domain="example.com")
     assert "版本 2 契约" in str(error.value.detail)
+
+
+@pytest.mark.parametrize("field", [
+    "expected", "reason", "blocking_missing_information", "optional_information",
+    "missing_information", "summary",
+])
+def test_long_fact_sentence_cannot_be_copied_into_any_provider_text_field(field):
+    statement = "HC-50 清水箱容量为 40 升，刷盘宽度为 500 毫米，并且不适用于易燃易爆环境。"
+    approved = [{**facts()[0], "statement": statement}]
+    payload = result()
+    if field in {"expected", "reason"}:
+        payload["items"][0][field] = statement
+    elif field in {"blocking_missing_information", "optional_information"}:
+        payload["items"][0][field] = [statement]
+    elif field == "missing_information":
+        payload[field] = [statement]
+    else:
+        payload[field] = statement
+    with pytest.raises(HTTPException) as error:
+        onsite_ai.validate_provider_result(
+            payload, current_items=items(), facts=approved, domain="example.com")
+    assert "逐字复述" in str(error.value.detail)
 
 
 def test_old_running_attempt_is_projected_stale_without_retrying():
