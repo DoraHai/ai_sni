@@ -192,7 +192,7 @@ jobs:
         run: npm ci --no-audit
       - name: Build isolated SEO frontend
         working-directory: frontend
-        run: npm run test:session-storage && node --test scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs scripts/test-seo-backlinks.mjs scripts/test-seo-video-workflow.mjs scripts/test-seo-qa.mjs scripts/test-seo-workspace-access.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run test:seo-editor && npm run test:seo-page-capture && npm run test:seo-publication-export && npm run test:seo-site-analytics && npm run test:seo-monthly-report && npm run test:seo-tdk-review && npm run test:seo-ai-tdk && node --test scripts/test-seo-keyword-delete.mjs && npm run build:seo
+        run: npm run test:session-storage && node --test scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs scripts/test-seo-backlinks.mjs scripts/test-seo-video-workflow.mjs scripts/test-seo-qa.mjs scripts/test-seo-workspace-access.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run test:seo-editor && npm run test:seo-page-capture && npm run test:seo-publication-export && npm run test:seo-site-analytics && npm run test:seo-monthly-report && npm run test:seo-tdk-review && npm run test:seo-ai-tdk && node --test scripts/test-seo-keyword-delete.mjs scripts/test-seo-image-review.mjs && npm run build:seo
       - name: Verify isolated SEO frontend
         working-directory: frontend
         run: npm run verify:seo-build
@@ -210,6 +210,7 @@ jobs:
           POSTGRES_DB: test
         ports:
           - 5432:5432
+          - 55432:5432
         options: >-
           --health-cmd "pg_isready -U test -d test"
           --health-interval 5s
@@ -240,3 +241,54 @@ jobs:
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
           printf '%s\n' "$heads" | grep -F '0106_seo_content_messages (head)'
           python -m pytest -q tests/test_geo_ticket_adoption_migration.py tests/test_sem_task_migration.py tests/test_demo_tenant_binding_migration.py tests/test_demo_binding_no_truncate_migration.py tests/test_geo_review_audit_migration.py tests/test_seo_migration_merge.py tests/test_seo_qa.py tests/test_seo_video_platforms.py tests/test_seo_backlink_workflow.py tests/test_seo_cockpit.py tests/test_seo_cockpit_auth.py tests/test_seo_usage_limits.py tests/test_seo_ai_operations.py tests/test_seo_workbench_limits.py tests/test_seo_workbench_auth_postgres.py tests/test_seo_task_center.py tests/test_seo_site_onboarding_contract.py tests/test_seo_analytics_cycles.py tests/test_seo_incremental_crawl.py
+
+      # Reuse the disposable service, but never run review guards as its superuser.
+      # Match the test's fixed localhost/database/role guard without weakening it.
+      - name: Prepare isolated review-guard database and ordinary role
+        run: |
+          python - <<'PY'
+          import asyncio
+          import asyncpg
+          async def prepare():
+              conn = await asyncpg.connect(host="127.0.0.1", port=55432,
+                  database="test", user="test", password="test")
+              try:
+                  assert await conn.fetchval("SELECT current_database()") == "test"
+                  assert await conn.fetchval("SELECT current_user") == "test"
+                  await conn.execute("CREATE ROLE seo_workflow_tester LOGIN PASSWORD 'ci-review-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION")
+                  await conn.execute("CREATE DATABASE seo_workflow_test OWNER seo_workflow_tester")
+              finally:
+                  await conn.close()
+          asyncio.run(prepare())
+          PY
+
+      - name: Require native PostgreSQL review guards without skips
+        env:
+          DATABASE_URL: postgresql+asyncpg://seo_workflow_tester:ci-review-only@127.0.0.1:55432/seo_workflow_test
+          SEO_USAGE_TEST_DATABASE_URL: postgresql+asyncpg://seo_workflow_tester:ci-review-only@127.0.0.1:55432/seo_workflow_test
+          BAIDU_APP_ID: ci-dummy
+          BAIDU_SECRET_KEY: 1234567890abcdef
+          BAIDU_DEFAULT_USERNAME: ci-dummy
+          BAIDU_DEFAULT_UCID: "1"
+          BAIDU_SELF_ACCESS_TOKEN: ci-dummy
+          BAIDU_SELF_TOKEN_EXPIRES_AT: "2099-01-01T00:00:00+00:00"
+          CRYPTO_MASTER_KEY_B64: j/QGqbWO8IVw9cCVeAq+u/alTyjLsSQXjROH9uW/3tA=
+          ADMIN_API_KEY: ci-admin-key
+          API_METERING_ENABLED: "false"
+          API_CONTROLS_ENABLED: "false"
+          DEEPSEEK_API_KEY: ""
+          DASHSCOPE_API_KEY: ""
+          PYTHONPATH: .
+          TZ: UTC
+        run: |
+          python -m pytest -q tests/test_seo_review_guards_postgres.py --junitxml="$RUNNER_TEMP/seo-review-guards.xml"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          report = ET.parse(Path(os.environ["RUNNER_TEMP"]) / "seo-review-guards.xml")
+          cases = report.findall(".//testcase")
+          assert len(cases) >= 6, "Missing native PostgreSQL review-guard coverage"
+          assert not report.findall(".//skipped"), "Native PostgreSQL guards must execute, not skip"
+          assert not report.findall(".//failure") and not report.findall(".//error"), "Native PostgreSQL guards failed"
+          PY
