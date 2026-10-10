@@ -226,6 +226,8 @@ async def admit(params, url, api_key, quote, kwargs):
     try:
         async with asyncio.timeout(6), async_session_factory() as session:
             await lock(session)
+            if not await schema_ready(session):
+                raise MeteringUnavailable('API 管理结构尚未完整安装，请联系超级管理员')
             settings = {r['key']: r['value'] for r in (await session.execute(text(
                 'SELECT key,value FROM api_control_settings'))).mappings()}
             if settings.get('provider:' + host, {}).get('enabled') is False:
@@ -341,14 +343,19 @@ async def register_runtime(module):
         await session.commit()
 
 
-async def read_controls(session):
-    present = await session.scalar(text("""SELECT
+async def schema_ready(session):
+    """Check the complete reviewed structure without reading configuration."""
+    return bool(await session.scalar(text("""SELECT
         to_regclass(current_schema() || '.api_control_settings') IS NOT NULL AND
         to_regclass(current_schema() || '.api_control_bindings') IS NOT NULL AND
         to_regclass(current_schema() || '.api_control_credentials') IS NOT NULL AND
         to_regclass(current_schema() || '.api_control_audit') IS NOT NULL AND
         EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
-            AND table_name='api_usage_events' AND column_name='reserved_amount')"""))
+            AND table_name='api_usage_events' AND column_name='reserved_amount')""")))
+
+
+async def read_controls(session):
+    present = await schema_ready(session)
     from app.api_connection_config import public_connections
     result = {'state': 'schema_pending', 'capabilities': ['budget_concurrency_v1', 'provider_budget_v1'], 'settings': [], 'bindings': [], 'credentials': [], 'audit': [], 'budgets': [], 'connections':public_connections([],[]), 'module_status': []}
     if not present:
