@@ -131,8 +131,9 @@ def test_real_worker_round_records_idle_tick_or_safe_failure(monkeypatch, failed
     asyncio.run(run())
 
 
-def test_health_database_failure_is_503_not_empty_queue(monkeypatch):
-    monkeypatch.setattr(health, "queue_status", AsyncMock(side_effect=SQLAlchemyError("secret database URL")))
+@pytest.mark.parametrize("error", [SQLAlchemyError, ConnectionRefusedError, TimeoutError])
+def test_health_database_failure_is_503_not_empty_queue(monkeypatch, error):
+    monkeypatch.setattr(health, "queue_status", AsyncMock(side_effect=error("secret database URL")))
     response = asyncio.run(api.onsite_ai_health(ADMIN, object()))
     assert response.status_code == 503 and response.headers["cache-control"] == "no-store"
     assert b'onsite_ai_health_unavailable' in response.body

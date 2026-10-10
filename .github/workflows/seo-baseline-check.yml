@@ -67,7 +67,7 @@ jobs:
           xml = ET.parse(report)
           assert len(xml.findall('.//testcase')) >= 20, 'Missing onsite PostgreSQL coverage'
           assert not xml.findall('.//skipped'), 'Onsite PostgreSQL tests must run, not skip'
-          for module, minimum in [('test_seo_onsite_ai_health', 18), ('test_seo_onsite_ai_health_postgres', 7)]:
+          for module, minimum in [('test_seo_onsite_ai_health', 20), ('test_seo_onsite_ai_health_postgres', 7)]:
               cases = [case for case in xml.findall('.//testcase')
                   if case.get('classname', '').rsplit('.', 1)[-1] == module]
               assert len(cases) >= minimum, 'Missing protocol/health coverage: ' + module

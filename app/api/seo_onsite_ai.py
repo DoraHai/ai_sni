@@ -53,7 +53,7 @@ async def onsite_ai_health(ctx=Depends(require_health_admin), session=Depends(ge
         else:
             return JSONResponse(status_code=503, headers={"Cache-Control": "no-store"},
                 content={"detail": "站内 AI 队列暂无法核实", "code": "onsite_ai_health_unavailable"})
-    except TimeoutError:
+    except (TimeoutError, OSError):
         return JSONResponse(status_code=503, headers={"Cache-Control": "no-store"},
             content={"detail": "站内 AI 队列暂无法核实", "code": "onsite_ai_health_unavailable"})
     return JSONResponse(headers={"Cache-Control": "no-store"}, content={
