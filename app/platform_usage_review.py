@@ -96,11 +96,12 @@ def validate(data):
     return result
 
 
-def public_row(raw):
+def public_row(raw,reviewed_provider_request_id=None):
     from app.api.platform_console import safe_endpoint
     row = dict(raw)
     row['id'] = str(row['id'])
     row['endpoint'] = safe_endpoint(row['endpoint'])
+    row['reviewed_provider_request_id'] = reviewed_provider_request_id
     for key in ('verified_amount','estimated_amount'):
         row[key] = None if row[key] is None else format(row[key],'f')
     for key in ('started_at','reviewed_at'):
@@ -111,13 +112,29 @@ def public_row(raw):
     return row
 
 
+async def frozen_provider_id(session,raw):
+    if raw['review_version']==0:
+        return None
+    latest = (await session.execute(text('''SELECT review_version,evidence FROM api_usage_review_audit
+        WHERE event_id=CAST(:event AS uuid) ORDER BY review_version DESC LIMIT 1'''),
+        {'event':str(raw['id'])})).mappings().one_or_none()
+    if not latest or latest['review_version']!=raw['review_version'] or not isinstance(latest['evidence'],dict):
+        raise ControlConflict('历史核实证据版本不完整，须先审查记录，不能继续补费用')
+    value=latest['evidence'].get('provider_request_id')
+    try:
+        return safe_text(value,100)
+    except ValueError:
+        raise ControlConflict('历史核实证据缺少供应商请求标识，不能重新绑定调用') from None
+
+
 async def read_review(session,event_id):
     readiness = await status(session)
     if readiness['state']=='schema_pending':
         return {'schema':1,'state':'schema_pending','row':None}
     row = (await session.execute(text(f'SELECT {FIELDS} FROM api_usage_events WHERE id=CAST(:id AS uuid)'),
                                  {'id':str(UUID(str(event_id)))})).mappings().one_or_none()
-    return {'schema':1,'state':'available','row':public_row(row) if row else None}
+    frozen = await frozen_provider_id(session,row) if row else None
+    return {'schema':1,'state':'available','row':public_row(row,frozen) if row else None}
 
 
 async def mutate_review(session,actor_id,data):
@@ -138,6 +155,9 @@ async def mutate_review(session,actor_id,data):
         raise ControlConflict('调用记录不存在，请重新读取台账')
     if raw['review_version']!=data['expected_version'] or raw['state']!=data['expected_state']:
         raise ControlConflict('调用状态或核实版本已变化，请重新读取并核对证据')
+    frozen = await frozen_provider_id(session,raw)
+    if frozen is not None and frozen!=data['provider_request_id']:
+        raise ValueError('供应商请求标识与已冻结的人工核实证据不一致')
     if raw['state'] in {'succeeded','error'} and raw['state']!=data['terminal_state']:
         raise ValueError('已有确定终态不能被改成另一终态')
     if raw['review_version']>0 and raw['verified_amount'] is not None:
@@ -152,12 +172,12 @@ async def mutate_review(session,actor_id,data):
     observed = datetime.fromisoformat(data['evidence']['observed_at'])
     if observed < raw['started_at'] or (observed-datetime.now(timezone.utc)).total_seconds()>60:
         raise ValueError('证据时间与调用不一致')
-    before = public_row(raw)
+    before = public_row(raw,frozen)
     updated = (await session.execute(text(f'''UPDATE api_usage_events SET state=:state,
         review_version=review_version+1,verified_amount=CAST(:amount AS numeric),verified_currency=:currency,
         reviewed_at=CURRENT_TIMESTAMP WHERE id=CAST(:id AS uuid) RETURNING {FIELDS}'''),
         {'state':data['terminal_state'],'amount':data['verified_amount'],'currency':data['currency'],'id':data['event_id']})).mappings().one()
-    after = public_row(updated)
+    after = public_row(updated,data['provider_request_id'])
     evidence = {**data['evidence'],'provider_request_id':data['provider_request_id']}
     await session.execute(text('''INSERT INTO api_usage_review_audit
         (request_id,event_id,actor_id,request_hash,review_version,evidence,before_value,after_value)

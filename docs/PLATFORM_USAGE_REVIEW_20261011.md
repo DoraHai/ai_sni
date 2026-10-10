@@ -17,7 +17,8 @@
 - 两条接口均要求现有命名全局超管边界；业务租户与运维 API key 均不成为核实身份。
   成功与核实错误响应 private/no-store/Vary: Authorization；请求流最多16KiB，事务最长8秒。
 - row 固定字段：id,state,endpoint,provider_request_id,started_at,estimated_amount,currency,
-  review_version,verified_amount,verified_currency,reviewed_at,can_review。
+  review_version,verified_amount,verified_currency,reviewed_at,reviewed_provider_request_id,can_review。
+  reviewed_provider_request_id是人工证据冻结ID；provider_request_id仍是原始自动捕获ID，二者不混用。
   无结构时 history/recent 补 review_version=0、其余核实字段null，兼容旧台账。
 
 POST 精确字段如下；amount=null 表示费用未知，currency 必须相应为null。
@@ -50,6 +51,8 @@ state/version 来源于重新读取的精确row，不允许表单自行改写。
 请求记录只能证明终态，费用必须有账单或客服证明，支持CNY非负decimal字符串最多12位小数，
 最高10亿元。零费用还须明确 zero_charge_confirmed=true；费用未知不能勾选零扣款。
 provider_host须与台账endpoint的host一致；已有provider_request_id时必须精确匹配。
+review_version>0时还必须匹配该event最新且同版本审计冻结的evidence.provider_request_id。
+原始自动ID为null也不能在补费用时改绑；缺审计、缺冻结ID或审计版本不一致均拒绝操作，精确读取也失败。
 证据时间须为UTC、不早于调用开始、不晚于服务器当前时间60秒。
 reference不包含控制字符，HTTPS索引不得包含userinfo/query/fragment，不访问该索引。
 不在证据摘要、索引中放登录密钥、提示词或客户业务数据。
@@ -175,8 +178,10 @@ SEM没有该队列/heartbeat来源，固定not_connected/null，不制造cron/sc
 
 新增：tests/test_api_usage_review_basis.py（8），tests/test_platform_usage_review.py（21），
 tests/test_platform_worker_health.py（15）。同一CI inventory必须执行并无skip/error，含原37/11/2套件。
-本机实际18个CI同清单文件合计197 passed、0 skipped；新增44项包含在该总数内。
+首次本机实际18个CI同清单文件合计197 passed、0 skipped；首次新增44项包含在该总数内。
 随后响应分块/深层JSON异常隔离修改单独复验15项健康测试通过。
+集成复核再增加4项：自动ID为空时人工A终态后B补费用失败且台账/审计不变、同A成功，
+审计缺失/冻结ID缺失/版本损坏均拒绝；核实套件现25项全部通过，CI强制最低25项。
 覆盖四准入范围、终态/金额分离、跨期未知不释放、部分DDL零发送、同UUID重放与冲突、
 两管理者版本竞争、真实metering迟到回写、审计故障整事务回滚、runtime只追加审计与台账无DELETE、
 私有HTTP完整读写、证据关联/来源/零费用、健康旧心跳/redirect/大响应/超时/身份及错误隔离。
@@ -184,3 +189,12 @@ tests/test_platform_worker_health.py（15）。同一CI inventory必须执行并
 现用deepseek-chat与DashScope -0731的可信精确价格仍待核对；不猜价、不改模型、不发探针。
 百炼账户余额接入不解决模型计费别名，也不是百炼独立消费明细。
 生产保护、DDL与核实仍待对应发布/审批验收，测试通过不替代这些条件。
+
+## 生产只读通信前提核对
+
+2026-10-11从三个服务稳定MainPID环境内部比较：显式JWT_SECRET存在且有效签名键相同，
+实际/proc/PID/cwd来源JWT_ALG均HS256，密钥选择helper与decode契约一致；
+内部生成不输出的短时测试签名可被三配置验证。仅返回布尔，没有打印密钥/token/DSN/摘要。
+这证明签名设置互认，不替代新健康接口上的实际命名账号权限验收，也不以crypto-key相同代替JWT证据。
+SEO 127.0.0.1:8020和GEO 127.0.0.1:8010实际监听；新health路径均404，未上线/未验收。
+未修改环境、重启服务、创建文件或执行生产SQL；脚本经SSH stdin只读执行。

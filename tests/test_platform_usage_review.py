@@ -270,3 +270,56 @@ def test_native_authenticated_http_contract_private_reads_and_conflicts(monkeypa
             result=await client.get('/api/v1/admin/console/usage/'+event+'/review')
             assert result.json()['row']['can_review'] is False and result.json()['row']['review_version']==1
     native(monkeypatch,scenario)
+
+
+def test_native_null_original_provider_id_stays_bound_across_terminal_and_fee_reviews(monkeypatch):
+    async def scenario(factory,other):
+        await install(factory,monkeypatch);event=await insert(factory)
+        async with factory() as s:
+            await s.execute(text('UPDATE api_usage_events SET provider_request_id=NULL'));await s.commit()
+            first=payload(event);first['provider_request_id']='provider-A'
+            await review.mutate_review(s,10,first)
+        async with other() as s:
+            second=payload(event,state='error',version=1,amount='1.25');second['provider_request_id']='provider-B'
+            before=dict((await s.execute(text('SELECT * FROM api_usage_events'))).mappings().one())
+            audit_before=list((await s.execute(text('SELECT * FROM api_usage_review_audit'))).mappings())
+            with pytest.raises(ValueError,match='已冻结'):
+                await review.mutate_review(s,10,second)
+            await s.rollback()
+            assert dict((await s.execute(text('SELECT * FROM api_usage_events'))).mappings().one())==before
+            assert list((await s.execute(text('SELECT * FROM api_usage_review_audit'))).mappings())==audit_before
+            result=await review.read_review(s,event)
+            assert result['row']['provider_request_id'] is None
+            assert result['row']['reviewed_provider_request_id']=='provider-A'
+            second['provider_request_id']='provider-A'
+            result=await review.mutate_review(s,10,second)
+            assert result['row']['review_version']==2 and Decimal(result['row']['verified_amount'])==Decimal('1.25')
+            assert result['row']['provider_request_id'] is None
+            assert (await review.read_review(s,event))['row']['reviewed_provider_request_id']=='provider-A'
+    native(monkeypatch,scenario)
+
+
+@pytest.mark.parametrize('damage',['missing','missing_id','wrong_version'])
+def test_native_missing_or_inconsistent_frozen_audit_refuses_fee_review(monkeypatch,damage):
+    async def scenario(factory,other):
+        await install(factory,monkeypatch);event=await insert(factory)
+        async with factory() as s:
+            await s.execute(text('UPDATE api_usage_events SET provider_request_id=NULL'));await s.commit()
+            first=payload(event);first['provider_request_id']='provider-A'
+            await review.mutate_review(s,10,first)
+            # Deliberate owner corruption in this isolated schema only. The
+            # runtime ACL prohibits these audit UPDATE/DELETE operations.
+            if damage=='missing':await s.execute(text('DELETE FROM api_usage_review_audit'))
+            if damage=='missing_id':await s.execute(text("UPDATE api_usage_review_audit SET evidence=evidence-'provider_request_id'"))
+            if damage=='wrong_version':await s.execute(text('UPDATE api_usage_review_audit SET review_version=2'))
+            await s.commit()
+        async with other() as s:
+            before=dict((await s.execute(text('SELECT * FROM api_usage_events'))).mappings().one())
+            count=await s.scalar(text('SELECT count(*) FROM api_usage_review_audit'))
+            second=payload(event,state='error',version=1,amount='0');second['provider_request_id']='provider-A'
+            with pytest.raises(controls.ControlConflict):await review.mutate_review(s,10,second)
+            await s.rollback()
+            assert dict((await s.execute(text('SELECT * FROM api_usage_events'))).mappings().one())==before
+            assert await s.scalar(text('SELECT count(*) FROM api_usage_review_audit'))==count
+            with pytest.raises(controls.ControlConflict):await review.read_review(s,event)
+    native(monkeypatch,scenario)
