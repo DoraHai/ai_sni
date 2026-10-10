@@ -218,7 +218,8 @@ async def _ensure_public_host(url: str) -> list[str]:
 
 
 async def safe_fetch(
-    url: str, *, allow_text: bool = False, allow_xml: bool = False
+    url: str, *, allow_text: bool = False, allow_xml: bool = False,
+    allowed_hosts: frozenset[str] | None = None
 ) -> PageDocument:
     """逐跳校验重定向目标，阻止 SSRF，并限制响应类型和体积。"""
     current = normalize_url(url)
@@ -234,6 +235,10 @@ async def safe_fetch(
     ) as client:
         for _ in range(MAX_REDIRECTS + 1):
             current = normalize_url(current)
+            target = urlparse(current)
+            if allowed_hosts is not None and ((target.hostname or '').lower().rstrip('.') not in allowed_hosts
+                    or target.port not in {None, 80, 443}):
+                raise GeoAuditError('目标或跳转地址超出授权网站范围')
             addresses = await _ensure_public_host(current)
             original = httpx.URL(current)
             pinned = original.copy_with(host=addresses[0])
