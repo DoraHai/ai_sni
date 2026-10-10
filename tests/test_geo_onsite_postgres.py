@@ -4,17 +4,21 @@ from uuid import uuid4
 import os
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text, update
+from sqlalchemy.exc import DBAPIError
 from test_geo_project_scope_postgres import database
 from app.geo import onsite_routes as api
 from app.geo.project_workflows import save_plan
-from app.models import GeoActionTicket
+from app.models import GeoActionTicket, GeoFact, GeoProject
 from app.security.auth import AuthContext
+from app.models.user import User
+from app.models.role import Role
 from types import SimpleNamespace
 
 pytestmark = pytest.mark.skipif(not os.getenv("GEO_TEST_POSTGRES_URL"), reason="requires dedicated PostgreSQL")
 ADVISOR = AuthContext(7, "advisor", "advisor", None, {"geo.assets":"edit", "geo.content":"edit"})
 CUSTOMER = AuthContext(12, "customer", "customer", 1, {"geo.assets":"view", "geo.content":"view"})
+OTHER_ADVISOR = AuthContext(8, "advisor2", "advisor", None, {"geo.assets":"edit", "geo.content":"edit"})
 
 async def configured(sessions):
     async with sessions() as db:
@@ -76,5 +80,282 @@ def test_website_only_geo_delivery_has_no_article_or_ai_effect_gate_and_rejects_
             assert row["workflow"]["phase"]=="acceptance"
             row=await act(row,"accept",note="人工核对页面事实与质量")
             assert row["workflow"]["phase"]=="done" and row["completion_evidence"]["recheck"]["passed"]
+    asyncio.run(run())
+
+
+def _ai_result(items):
+    values = {
+        "structured_content": "示例品牌提供经过公开资料核验的工业产品。",
+        "knowledge": "示例品牌工业产品知识与适用范围。",
+        "faq": "示例品牌产品有哪些公开能力？请参考公开产品资料。",
+        "schema": '{"@context":"https://schema.org","@type":"Product","name":"示例品牌工业产品"}',
+        "llms": "# 示例品牌公开资料\n- [产品知识](https://p10.example/knowledge)",
+    }
+    return {"summary": "基于已核验公开资料起草", "missing_information": ["缺少具体规格"],
+            "items": [{"id": item["id"], "expected": values[item["id"]],
+                       "rationale": "使用获准公开来源", "missing_information": [],
+                       "source_refs": [{"fact_id": 80, "url": "https://public.example/fact"}]}
+                      for item in items]}
+
+
+async def _add_public_fact(db, *, fact_id=80, title="公开产品资料", expired=False):
+    from datetime import date, timedelta
+    db.add(GeoFact(id=fact_id, tenant_id=1, business_id=None, title=title,
+        statement="该公开资料说明示例品牌工业产品具备经过验证的节能运行能力。",
+        fact_type="product", source_name="客户官网",
+        source_url="https://public.example/fact",
+        expires_at=date.today()-timedelta(days=1) if expired else None,
+        trust_level="verified", status="active",
+        meta={"verification": {"verified_at": "2026-10-09T00:00:00Z",
+              "excerpt": "公开产品说明", "excerpt_locator": "正文第1段"},
+              "public_use": {"allowed": True, "authorized_by": 7,
+                             "authorized_at": "2026-10-09T00:00:00Z"}}))
+    await db.commit()
+
+
+def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(monkeypatch):
+    calls = []
+    advisor_locks = []
+    original_advisor_available = api.advisor_available
+    async def credentials(session, tenant_id):
+        return {"api_key": "test", "base_url": "https://provider.invalid/v1", "model": "test-model"}
+    async def provider(system, user, **kwargs):
+        calls.append((system, user, kwargs))
+        import json
+        current = json.loads(user)["current_items"]
+        return _ai_result(current)
+    async def tracked_advisor_available(session, tenant_id, user_id, **kwargs):
+        advisor_locks.append(bool(kwargs.get("lock")))
+        return await original_advisor_available(session, tenant_id, user_id, **kwargs)
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(api, "chat_json", provider)
+    monkeypatch.setattr(api, "advisor_available", tracked_advisor_available)
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
+            async with sessions() as db:
+                row = await api.create(api.Create(tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员"), db, ADVISOR)
+            rid = uuid4()
+            req = api.AiProposal(tenant_id=1, project_id=10,
+                expected_revision=row["workflow"]["revision"], request_id=rid, mode="initial")
+            async with sessions() as db:
+                result = await api.ai_proposal(row["id"], req, db, ADVISOR)
+            assert result["workflow"]["phase"] == "review"
+            assert result["workflow"]["ai_run"]["request_id"] == str(rid)
+            assert result["workflow"]["ai_run"]["state"] == "ready"
+            assert result["workflow"]["ai_proposal"]["proposal_revision"] == result["workflow"]["revision"]
+            assert result["workflow"]["ai_proposal"]["items"][0]["source_refs"][0]["source_id"].startswith("geo-public-source:")
+            assert "fact_id" not in result["workflow"]["ai_proposal"]["items"][0]["source_refs"][0]
+            assert result["capabilities"]["website_execution"]["enabled"] is False
+            assert not any(key in result["workflow"] for key in ("approval", "implementation", "recheck", "acceptance"))
+            async with sessions() as db:
+                same = await api.ai_proposal(row["id"], req, db, ADVISOR)
+            assert same["workflow"]["ai_run"]["state"] == "ready"
+            assert len(calls) == 1
+            assert "API" not in str(result["workflow"]["ai_proposal"])
+            assert True in advisor_locks
+            manual_items = [api.work.Item.model_validate(item) for item in same["workflow"]["items"]]
+            async with sessions() as db:
+                manual = await api.act(row["id"], api.Update(
+                    tenant_id=1, project_id=10, action="save_proposal",
+                    expected_revision=same["workflow"]["revision"], items=manual_items,
+                    note="人工调整当前版本"), db, ADVISOR)
+            assert "ai_proposal" not in manual["workflow"]
+    asyncio.run(run())
+
+
+def test_ai_proposal_rejects_full_history_before_quota_or_provider_call(monkeypatch):
+    calls = 0
+    async def credentials(session, tenant_id):
+        return {"api_key": "test", "base_url": "https://provider.invalid/v1", "model": "test-model"}
+    async def provider(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return {}
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(api, "chat_json", provider)
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                row = await api.create(api.Create(tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员"), db, ADVISOR)
+            async with sessions() as db:
+                stored = await db.get(GeoActionTicket, row["id"], with_for_update=True)
+                onsite = dict(stored.progress["onsite"])
+                onsite["history"] = [dict(action="save_proposal", actor=7, at=str(index))
+                                     for index in range(100)]
+                stored.progress = {**stored.progress, "onsite": onsite}
+                await db.commit()
+            request = api.AiProposal(tenant_id=1, project_id=10,
+                expected_revision=1, request_id=uuid4(), mode="initial")
+            async with sessions() as db:
+                with pytest.raises(HTTPException) as error:
+                    await api.ai_proposal(row["id"], request, db, ADVISOR)
+                assert error.value.status_code == 409
+            async with sessions() as db:
+                project = await db.get(GeoProject, 10)
+                assert "onsite_ai_quota" not in (project.project_settings or {})
+            assert calls == 0
+    asyncio.run(run())
+
+
+def test_final_advisor_read_lock_blocks_permission_change_until_commit():
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as checking:
+                project = await checking.get(GeoProject, 10, with_for_update=True)
+                assert await api.can_operate(checking, ADVISOR, project, lock_advisor=True)
+                async with sessions() as revoking:
+                    await revoking.execute(text("SET LOCAL lock_timeout = '100ms'"))
+                    with pytest.raises(DBAPIError):
+                        await revoking.execute(update(Role).where(Role.id == 5).values(
+                            permissions={"geo.assets": "view", "geo.content": "view"}))
+                    await revoking.rollback()
+                await checking.commit()
+            async with sessions() as revoking:
+                role = await revoking.get(Role, 5, with_for_update=True)
+                role.permissions = {"geo.assets": "view", "geo.content": "view"}
+                await revoking.commit()
+    asyncio.run(run())
+
+
+def test_ai_proposal_late_result_cannot_overwrite_changed_fact_scope(monkeypatch):
+    async def credentials(session, tenant_id):
+        return {"api_key": "test", "base_url": "https://provider.invalid/v1", "model": "test-model"}
+    sessions_ref = None
+    async def provider(system, user, **kwargs):
+        import json
+        async with sessions_ref() as other:
+            fact = await other.get(GeoFact, 80)
+            fact.statement = "人工在 AI 调用期间更新了已核验事实。"
+            await other.commit()
+        return _ai_result(json.loads(user)["current_items"])
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(api, "chat_json", provider)
+    async def run():
+        nonlocal sessions_ref
+        async with database() as sessions:
+            sessions_ref = sessions
+            await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
+            async with sessions() as db:
+                row = await api.create(api.Create(tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员"), db, ADVISOR)
+            req = api.AiProposal(tenant_id=1, project_id=10,
+                expected_revision=row["workflow"]["revision"], request_id=uuid4(), mode="initial")
+            async with sessions() as db:
+                with pytest.raises(HTTPException) as error:
+                    await api.ai_proposal(row["id"], req, db, ADVISOR)
+                assert error.value.status_code == 409
+            async with sessions() as db:
+                stored = await db.get(GeoActionTicket, row["id"])
+                assert stored.progress["onsite"]["revision"] == 1
+                assert stored.progress["onsite"]["ai_run"]["state"] == "stale"
+    asyncio.run(run())
+
+
+def test_ai_proposal_late_result_cannot_overwrite_after_role_permission_revoked(monkeypatch):
+    async def credentials(session, tenant_id):
+        return {"api_key": "test", "base_url": "https://provider.invalid/v1", "model": "test-model"}
+    sessions_ref = None
+    async def provider(system, user, **kwargs):
+        import json
+        async with sessions_ref() as other:
+            role = await other.get(Role, 5)
+            role.permissions = {"geo.assets": "view", "geo.content": "view"}
+            await other.commit()
+        return _ai_result(json.loads(user)["current_items"])
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(api, "chat_json", provider)
+    async def run():
+        nonlocal sessions_ref
+        async with database() as sessions:
+            sessions_ref = sessions
+            await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
+            async with sessions() as db:
+                row = await api.create(api.Create(tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员"), db, ADVISOR)
+            req = api.AiProposal(tenant_id=1, project_id=10,
+                expected_revision=row["workflow"]["revision"], request_id=uuid4(), mode="initial")
+            async with sessions() as db:
+                with pytest.raises(HTTPException) as error:
+                    await api.ai_proposal(row["id"], req, db, ADVISOR)
+                assert error.value.status_code == 409
+            async with sessions() as db:
+                stored = await db.get(GeoActionTicket, row["id"])
+                assert stored.progress["onsite"]["revision"] == 1
+                assert stored.progress["onsite"]["ai_run"]["state"] == "stale"
+                assert "ai_proposal" not in stored.progress["onsite"]
+    asyncio.run(run())
+
+
+def test_ai_unknown_result_is_recorded_and_same_nonce_never_calls_again(monkeypatch):
+    calls = 0
+    async def credentials(session, tenant_id):
+        return {"api_key": "test", "base_url": "https://provider.invalid/v1", "model": "test-model"}
+    async def provider(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        from app.geo.ai_client import DeepSeekError
+        raise DeepSeekError("sensitive provider failure")
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(api, "chat_json", provider)
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                row = await api.create(api.Create(tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员"), db, ADVISOR)
+            req = api.AiProposal(tenant_id=1, project_id=10,
+                expected_revision=1, request_id=uuid4(), mode="initial")
+            async with sessions() as db:
+                with pytest.raises(HTTPException) as error:
+                    await api.ai_proposal(row["id"], req, db, ADVISOR)
+                assert error.value.status_code == 424
+            async with sessions() as db:
+                retry = await api.ai_proposal(row["id"], req, db, ADVISOR)
+                assert retry["workflow"]["ai_run"]["state"] == "unknown"
+                assert "sensitive" not in retry["workflow"]["ai_run"]["error"]
+            assert calls == 1
+    asyncio.run(run())
+
+
+def test_advisor_list_filters_assignment_before_pagination(monkeypatch):
+    async def credentials(session, tenant_id):
+        return None
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                db.add(Role(id=6, name="other advisor", permissions={"geo.assets":"edit", "geo.content":"edit"}))
+                db.add(User(id=8, username="other advisor", role_id=6, password_hash="unused", is_active=True))
+                await db.commit()
+            async with sessions() as db:
+                await save_plan(db, 1, 11, dict(enabled=False, status="active", prompt_ids=[],
+                    interval_days=7, advisor_user_id=8), 0, 8)
+                await db.commit()
+            async with sessions() as db:
+                own = await api.create(api.Create(tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="顾问一"), db, ADVISOR)
+            async with sessions() as db:
+                foreign = await api.create(api.Create(tenant_id=1, project_id=11, request_id=uuid4(),
+                    work_type="startup", owner_name="顾问二"), db, OTHER_ADVISOR)
+            async with sessions() as db:
+                result = await api.advisor_tasks(None, None, 50, db, ADVISOR)
+            assert result["schema"] == 1 and result["module"] == "geo"
+            assert [item["id"] for item in result["items"]] == [own["id"]]
+            assert foreign["id"] not in {item["id"] for item in result["items"]}
+            item = result["items"][0]
+            assert item["scope_name"] == "project 10" and item["tenant_name"] == "scope fixture"
+            assert item["capabilities"]["ai_planning"]["enabled"] is False
     asyncio.run(run())
 

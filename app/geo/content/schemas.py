@@ -159,6 +159,7 @@ class FactVerifyRequest(BaseModel):
     expected_source_statement: str | None = Field(None, min_length=8, max_length=220)
     expected_source_name: str | None = Field(None, min_length=1, max_length=200)
     expected_source_url: str | None = Field(None, min_length=1, max_length=800)
+    public_use_allowed: bool = False
 
 
 class SourceOpportunityTaskCreate(BaseModel):

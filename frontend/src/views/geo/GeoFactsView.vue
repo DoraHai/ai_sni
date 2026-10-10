@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   createGeoFact,
@@ -13,6 +13,8 @@ import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
+import { session } from '../../store/session'
+import { CUSTOMER_ROLE } from '../../constants/roles.js'
 
 const prototypeSurface = getGeoPrototypePageSurface()
 const { tenantId } = useGeoTenant()
@@ -26,7 +28,16 @@ const importingCsv = ref(false)
 const csvInput = ref(null)
 const verifyingId = ref(null)
 const verifyOpen = ref(false)
-const verifyForm = ref({ fact: null, excerpt: '', excerpt_locator: '事实库陈述', verified_translation: '' })
+const verifyForm = ref({
+  fact: null,
+  excerpt: '',
+  excerpt_locator: '事实库陈述',
+  verified_translation: '',
+  public_use_allowed: false,
+})
+const canAuthorizePublicUse = computed(() => (
+  session.canEdit('geo.content') && session.user?.role_label !== CUSTOMER_ROLE
+))
 
 function emptyForm() {
   return {
@@ -118,6 +129,10 @@ function currentVerifiedTranslation(row) {
   return String(rows.find((item) => item?.status === 'verified' && item?.source_statement === source)?.text || '')
 }
 
+function hasPublicUseAuthorization(row) {
+  return row?.meta?.public_use?.allowed === true
+}
+
 function openVerify(row) {
   const statement = String(row.statement || '').trim()
   if (statement.length < 8 || !row.source_url) {
@@ -129,6 +144,9 @@ function openVerify(row) {
     excerpt: statement.slice(0, 400),
     excerpt_locator: row.verification?.excerpt_locator || '事实库陈述',
     verified_translation: currentVerifiedTranslation(row),
+    // Public use is a separate human decision on every verification. Never
+    // inherit an earlier authorization into a new submit action.
+    public_use_allowed: false,
   }
   verifyOpen.value = true
 }
@@ -149,6 +167,7 @@ async function submitVerify() {
       expected_source_statement: String(row.statement || '').trim(),
       expected_source_name: String(row.source_name || '').trim(),
       expected_source_url: String(row.source_url || '').trim(),
+      public_use_allowed: verifyForm.value.public_use_allowed === true,
     })
     ElMessage.success(`已核验 #${row.id}`)
     verifyOpen.value = false
@@ -309,7 +328,8 @@ onMounted(load)
               </el-table-column>
               <el-table-column label="可信度" width="110">
                 <template #default="{ row }">
-                  {{ TRUST_LABELS[row.trust_level] || row.trust_level || '—' }}
+                  <div>{{ TRUST_LABELS[row.trust_level] || row.trust_level || '—' }}</div>
+                  <div v-if="hasPublicUseAuthorization(row)" class="sub">公开内容：已授权</div>
                 </template>
               </el-table-column>
               <el-table-column label="过期日" width="110">
@@ -460,6 +480,12 @@ onMounted(load)
             :rows="4"
             placeholder="完整保留主体、数字、范围、否定和限定条件"
           />
+        </el-form-item>
+        <el-form-item v-if="canAuthorizePublicUse" label="公开内容授权">
+          <el-checkbox v-model="verifyForm.public_use_allowed">
+            允许该已核验事实用于官网公开内容
+          </el-checkbox>
+          <div class="sub">默认关闭；每次重新核验都需要再次明确选择。</div>
         </el-form-item>
       </el-form>
       <template #footer>

@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
+from app.permissions import CUSTOMER_ROLE
 from app.geo.read_routes import read_session as geo_read_session
 from app.geo.tenant_scope import ensure_geo_entitlement, require_geo_read_entitlement
 from app.geo.content.export_view import export_revision, export_view
@@ -349,6 +350,7 @@ _PROTECTED_FACT_META_KEYS = {
     "verified_by",
     "source_excerpt",
     "excerpt_locator",
+    "public_use",
 }
 
 
@@ -6633,6 +6635,10 @@ async def verify_fact(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
+    if req.public_use_allowed and (
+            not ctx.user_id or ctx.role_name == CUSTOMER_ROLE
+            or not ctx.can_edit("geo.content")):
+        raise HTTPException(403, "授权事实用于公开内容需要实名 GEO 内容编辑权限")
     row = await _get_fact(session, fact_id, tenant_id)
     # Serialize fact edits and verification. The complete source snapshot is
     # checked only after the lock has refreshed this row to its current value.
@@ -6701,6 +6707,14 @@ async def verify_fact(
     meta["verified_by"] = ctx.user_id
     meta["source_excerpt"] = excerpt[:160]
     meta["excerpt_locator"] = req.excerpt_locator.strip()
+    if req.public_use_allowed:
+        meta["public_use"] = {
+            "allowed": True,
+            "authorized_at": now,
+            "authorized_by": ctx.user_id,
+        }
+    else:
+        meta.pop("public_use", None)
     if translation:
         meta["verified_translations"] = [
             {
