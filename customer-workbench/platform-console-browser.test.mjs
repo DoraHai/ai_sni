@@ -26,7 +26,7 @@ const snapshot={schema:1,mode:'read_only_inventory',generated_at:'2026-10-09T16:
 test('built superadmin console uses real-shaped data, all tabs and strict identity boundaries',async()=>{
   const f=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true});
   const origin='https://workbench.test',requests=[],errors=[],external=[];
-  let serverUser=admin,status=200,held=null;
+  let serverUser=admin,status=200,held=null;const connectionWrites=[];
   try{
     const p=await browser.newPage();await p.setViewport({width:1440,height:1000});
     p.on('pageerror',e=>errors.push(e.message));await p.setRequestInterception(true);
@@ -38,9 +38,19 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
         if(u.pathname.endsWith('/controls')){
           const payload=JSON.parse(r.postData());
           assert.equal(r.headers().authorization,'Bearer fixture-admin');
-          assert.equal(payload.expected_revision,0);
+          if(payload.kind!=='connection')assert.equal(payload.expected_revision,0);
           const c=snapshot.controls;
-          if(payload.kind==='credential'){
+          if(payload.kind==='connection'){
+            connectionWrites.push(structuredClone(payload));
+            const row=c.connections.find(row=>'connection:'+row.id===payload.key);
+            assert.equal(payload.expected_revision,row.revision);
+            row.revision++;
+            const visible=Object.fromEntries(Object.entries(payload.value.secrets).map(([k,v])=>[k,Boolean(v)]));
+            if(payload.value.restore){row.parameters.model='deepseek-chat';row.secret_status.api_key=false;row.source='server';}
+            else {Object.assign(row.parameters,payload.value.parameters);Object.assign(row.secret_status,visible);row.source='managed';}
+            c.audit.push({id:payload.request_id,actor_id:7,resource:payload.key,action:'connection.update',after_value:{parameters:row.parameters,secrets:row.secret_status},created_at:'2026-10-10T01:00:00Z'});
+            return r.respond({status:200,contentType:'application/json',body:JSON.stringify({revision:row.revision})});
+          }else if(payload.kind==='credential'){
             assert.equal(payload.value.key,'fixture-private-replacement');
             c.credentials.push({id:payload.key,revision:1,overridden:true});
           }else c.settings.push({key:payload.key,kind:payload.kind,revision:1,value:payload.value});
@@ -72,15 +82,42 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     snapshot.api_costs={state:'recording',period:'2026-10',note:'本月真实外部请求的 API 原价估算',calls:3,pending:0,unpriced:1,known_amount:'0.006',estimated_amount:null,
       user_totals:[{user_id:8,calls:2,input_tokens:1000,output_tokens:500,known_amount:'0.006',estimated_amount:'0.006',unpriced:0},{user_id:null,calls:1,input_tokens:0,output_tokens:0,known_amount:'0',estimated_amount:null,unpriced:1}],
       tenant_totals:[{tenant_id:1,calls:3,input_tokens:1000,output_tokens:500,known_amount:'0.006',estimated_amount:null,unpriced:1}],
-      provider_totals:[],unattributed:{calls:0,input_tokens:0,output_tokens:0,known_amount:'0',estimated_amount:'0',unpriced:0},recent:[]};
+      provider_totals:[{module:'seo',provider:'chinaz',endpoint:'openapi.chinaz.net/v1/keyword_360mobile',calls:308,known_amount:'0',unpriced:308}],unattributed:{calls:0,input_tokens:0,output_tokens:0,known_amount:'0',estimated_amount:'0',unpriced:0},recent:[]};
     await p.click('[data-pc=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('本月 API 费用'));
     assert.match(await body(),/全部 8 个登录账号/);assert.match(await body(),/no-calls-0/);assert.match(await body(),/已停用/);
     assert.match(await body(),/¥0.006/);assert.match(await body(),/待定价/);assert.match(await body(),/系统任务/);
     snapshot.controls={state:'enabled',settings:[],budgets:[],audit:[],credentials:[],default_rates:[{host:'dashscope.aliyuncs.com',model:'deepseek-v4-flash',input:'1',output:'2',max_input:1000000,source:'approved price'}],
+      connections:[{id:'seo.deepseek',module:'seo',label:'DeepSeek 官方',registered:true,supported:true,source:'server',revision:0,
+        parameters:{enabled:true,model:'deepseek-chat',base_url:'https://api.deepseek.com/v1'},secret_status:{api_key:false},
+        fields:[{name:'enabled',type:'boolean',label:'平台默认配置启用'},{name:'model',type:'model',label:'默认模型'},{name:'base_url',type:'url',label:'接口地址'}],
+        secret_fields:[{name:'api_key',label:'API Key'}]}],
       bindings:[{id:'a'.repeat(64),module:'seo',label:'dashscope',host:'dashscope.aliyuncs.com',model:'deepseek-v4-flash',configured:true,can_rotate:true}]};
     snapshot.api_costs.recent=[{id:'meter-request',tenant_id:1,model:'deepseek-v4-flash',endpoint:'dashscope.aliyuncs.com/v1',state:'succeeded',latency_ms:33,started_at:'2026-10-10T00:00:00Z'}];
     await p.click('[data-pc=refresh]');await p.waitForSelector('.pc-kpis');
-    await p.click('.pc-sidebar [data-pc-page=apis]');assert.match(await body(),/meter-request/);assert.doesNotMatch(await body(),/request-1/);
+    await p.click('.pc-sidebar [data-pc-page=apis]');assert.match(await body(),/meter-request/);assert.doesNotMatch(await body(),/request-1/);assert.match(await body(),/站长之家/);assert.match(await body(),/keyword_360mobile/);assert.match(await body(),/308/);
+    await p.click('.pc-sidebar [data-pc-page=config]');await p.waitForSelector('[data-control-kind=connection]');
+    const connection='[data-control-kind=connection]';
+    assert.equal(await p.$eval(connection+' button',e=>e.disabled),false);
+    await p.type('[data-connection-secret=api_key]','first-platform-private-key');
+    await p.click(connection+' button');await p.waitForFunction(()=>document.querySelector('[data-control-kind=connection] [name=revision]')?.value==='1');
+    assert.equal(connectionWrites[0].value.secrets.api_key,'first-platform-private-key');
+    assert.equal(await p.$eval('[data-connection-secret=api_key]',e=>e.value),'');
+    assert.doesNotMatch(await body(),/first-platform-private-key/);
+    await p.click(connection+' button');await p.waitForFunction(()=>document.querySelector('[data-control-kind=connection] [name=revision]')?.value==='2');
+    assert.deepEqual(connectionWrites[1].value.secrets,{});
+    await p.type('[data-connection-secret=api_key]','should-clear-on-restore');
+    await p.select('[name=connection_mode]','restore');
+    assert.equal(await p.$eval('[data-connection-secret=api_key]',e=>e.value),'');
+    await p.click(connection+' button');await p.waitForFunction(()=>document.querySelector('[data-control-kind=connection] [name=revision]')?.value==='3');
+    assert.deepEqual(connectionWrites[2].value,{parameters:{},secrets:{},restore:true});
+    await p.screenshot({path:path.join(os.tmpdir(),'platform-system-config-20261010.png'),fullPage:true});
+    await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await p.setViewport({width:1440,height:1000});
+    snapshot.controls.state='ready';await p.click('[data-pc=refresh]');await p.waitForSelector(connection);
+    assert.equal(await p.$eval(connection+' button',e=>e.disabled),true);
+    snapshot.controls.state='enabled';await p.click('[data-pc=refresh]');await p.waitForSelector(connection);
+    await p.type('[data-connection-secret=api_key]','revoked-private-input');serverUser={...admin,tenant_id:1};await p.click(connection+' button');
+    await p.waitForFunction(()=>document.body.textContent.includes('无法保存管理配置'));assert.equal(connectionWrites.length,3);assert.doesNotMatch(await body(),/revoked-private-input/);
+    serverUser=admin;await p.click('[data-pc=refresh]');await p.waitForSelector('.pc-kpis');
     await p.click('.pc-sidebar [data-pc-page=controls]');await p.waitForSelector('.pc-control-form');
     await p.select('[data-control-kind=budget] [name=target]','user:8');
     await p.type('[data-control-kind=budget] [name=daily_calls]','10');

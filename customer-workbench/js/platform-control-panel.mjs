@@ -3,7 +3,7 @@ export function renderControlPanel({snapshot,esc,card,table,tenant}){
   const c=snapshot.controls;
   if(c?.state!=='enabled')return card('API 与预算管理','<p>管理功能等待启用。现有调用与费用统计继续可查看。</p>');
   const users=snapshot.sources.users.rows,tenants=snapshot.sources.tenants.rows;
-  const hosts=[...new Set([...c.bindings.map(b=>b.host),...(c.default_rates||[]).map(r=>r.host)])].sort();
+  const hosts=[...new Set([...c.bindings.map(b=>b.host),...(c.default_rates||[]).map(r=>r.host)].filter(Boolean))].sort();
   const option=(value,label)=>`<option value="${esc(value)}">${esc(label)}</option>`;
   const field=(name,label,type='number',extra='')=>`<label>${label}<input name="${name}" type="${type}" ${extra}></label>`;
   const choices=(name,label,items)=>`<label>${label}<select name="${name}">${items}</select></label>`;
@@ -18,7 +18,7 @@ export function renderControlPanel({snapshot,esc,card,table,tenant}){
   const providerForm=form('provider',choices('host','服务商',hosts.map(h=>option(h,h)).join(''))+choices('enabled','接口状态',option('true','启用')+option('false','停用')));
   const rateForm=form('rate',choices('host','服务商',hosts.map(h=>option(h,h)).join(''))+
     field('model','精确模型名 / 按次接口','text','maxlength="200" required list="pc-rate-models"')+
-    `<datalist id="pc-rate-models">${[...new Set([...c.bindings.map(b=>b.model),...(c.default_rates||[]).map(r=>r.model),...(snapshot.api_costs?.recent||[]).map(r=>r.model||r.endpoint)].filter(Boolean))].map(m=>option(m,m)).join('')}</datalist>`+
+    `<datalist id="pc-rate-models">${[...new Set([...c.bindings.map(b=>b.model),...(c.default_rates||[]).map(r=>r.model),...(snapshot.api_costs?.recent||[]).map(r=>r.model||r.endpoint),...(snapshot.api_costs?.provider_totals||[]).map(r=>r.model||r.endpoint)].filter(Boolean))].map(m=>option(m,m)).join('')}</datalist>`+
     choices('unit','计价方式',option('tokens','每百万 Token')+option('request','每次请求'))+
     field('input','输入单价（元 / 百万）','number','min="0" step="any" data-price-unit="tokens"')+
     field('output','输出单价（元 / 百万）','number','min="0" step="any" data-price-unit="tokens"')+
