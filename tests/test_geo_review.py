@@ -60,6 +60,7 @@ def _ready_input(**kwargs) -> RuleInput:
 class ReviewFsmTests(unittest.TestCase):
     def test_submit_and_approve(self):
         task = SimpleNamespace(
+            tenant_id=7,
             review_status=REVIEW_NONE,
             review_note=None,
             reviewed_by=None,
@@ -67,25 +68,59 @@ class ReviewFsmTests(unittest.TestCase):
         )
         ok, _ = can_submit_review(has_article=True, review_status=task.review_status)
         self.assertTrue(ok)
-        apply_submit(task, note="请审")
+        apply_submit(task, note="请审", submitter_id=9, submitter_role="编辑", tenant_id=7, article_id=23)
         self.assertEqual(task.review_status, REVIEW_PENDING)
-        apply_decision(task, decision="approved", note="ok", reviewer_id=9)
+        apply_decision(task, decision="approved", note="ok", reviewer_id=9,
+                       reviewer_role="编辑", tenant_id=7, article_id=23)
         self.assertEqual(task.review_status, REVIEW_APPROVED)
         self.assertEqual(task.reviewed_by, 9)
         payload = review_payload(task)
         self.assertTrue(payload["review_approved"])
         assert_review_approved(task)
+        with self.assertRaises(ValueError):
+            assert_review_approved(task, article_id=24)
+
+    def test_malformed_legacy_submission_cannot_be_approved(self):
+        task = SimpleNamespace(
+            tenant_id=7,
+            review_status=REVIEW_PENDING,
+            review_audit={
+                "schema_version": "geo.review.audit.v1",
+                "events": [{
+                    "event": "submitted",
+                    "actor_user_id": 9,
+                    "actor_role": "",
+                    "tenant_id": 7,
+                    "article_id": 23,
+                    "occurred_at": "2026-09-13T01:00:00Z",
+                }],
+            },
+        )
+        with self.assertRaises(ValueError):
+            apply_decision(
+                task,
+                decision="approved",
+                note=None,
+                reviewer_id=9,
+                reviewer_role="editor",
+                tenant_id=7,
+                article_id=23,
+            )
+        self.assertEqual(task.review_status, REVIEW_PENDING)
 
     def test_reject_then_resubmit(self):
         task = SimpleNamespace(
-            review_status=REVIEW_PENDING,
+            tenant_id=7,
+            review_status=REVIEW_NONE,
             review_note=None,
             reviewed_by=None,
             reviewed_at=None,
         )
-        apply_decision(task, decision="rejected", note="缺来源", reviewer_id=1)
+        apply_submit(task, submitter_id=1, submitter_role="编辑", tenant_id=7, article_id=23)
+        apply_decision(task, decision="rejected", note="缺来源", reviewer_id=1,
+                       reviewer_role="编辑", tenant_id=7, article_id=23)
         self.assertEqual(task.review_status, REVIEW_REJECTED)
-        apply_submit(task)
+        apply_submit(task, submitter_id=1, submitter_role="编辑", tenant_id=7, article_id=23)
         self.assertEqual(task.review_status, REVIEW_PENDING)
 
     def test_invalidate_after_edit(self):
@@ -104,7 +139,11 @@ class ReviewFsmTests(unittest.TestCase):
         task = SimpleNamespace(review_status=REVIEW_PENDING)
         with self.assertRaises(PublishGateError):
             assert_can_publish(_ready_input(), task=task)
-        task.review_status = REVIEW_APPROVED
+        task.review_status = REVIEW_NONE
+        task.tenant_id = 7
+        apply_submit(task, submitter_id=9, submitter_role="编辑", tenant_id=7, article_id=23)
+        apply_decision(task, decision="approved", note=None, reviewer_id=9,
+                       reviewer_role="编辑", tenant_id=7, article_id=23)
         checks = assert_can_publish(_ready_input(), task=task)
         self.assertTrue(any(c.passed for c in checks))
 
