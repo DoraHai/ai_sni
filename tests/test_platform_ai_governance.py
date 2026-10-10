@@ -101,6 +101,9 @@ class FakeSession:
 
 def settings(**changes):
     values = {
+        "dashscope_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "dashscope_model": "qwen3.8-max",
+        "dashscope_api_key": "",
         "deepseek_base_url": "https://api.deepseek.com/v1",
         "deepseek_model": "deepseek-chat",
         "deepseek_api_key": "SECRET-DO-NOT-RETURN",
@@ -137,6 +140,29 @@ def test_missing_controls_schema_does_not_hide_real_metering(monkeypatch):
     assert "SECRET-DO-NOT-RETURN" not in str(result)
 
 
+def test_sem_runtime_configuration_matches_ai_client_provider_priority():
+    dash = governance._runtime_sem_configuration(settings(
+        dashscope_api_key="DASH-SECRET", deepseek_api_key="DEEP-SECRET",
+    ))
+    assert dash == {
+        "state": "available", "source": "sem_runtime",
+        "provider": "dashscope.aliyuncs.com", "model": "qwen3.8-max",
+        "configured": True,
+    }
+    deep = governance._runtime_sem_configuration(settings(
+        dashscope_api_key="", deepseek_api_key="DEEP-SECRET",
+    ))
+    assert deep["provider"] == "api.deepseek.com"
+    assert deep["model"] == "deepseek-chat"
+    assert deep["configured"] is True
+    missing = governance._runtime_sem_configuration(settings(
+        dashscope_api_key="", deepseek_api_key="",
+    ))
+    assert missing["provider"] is None
+    assert missing["model"] is None
+    assert missing["configured"] is False
+
+
 def test_missing_metering_schema_returns_null_not_invented_zero(monkeypatch):
     monkeypatch.setattr(governance.api_metering, "enabled", lambda: False)
     monkeypatch.setattr(governance.api_controls, "enabled", lambda: False)
@@ -149,6 +175,22 @@ def test_missing_metering_schema_returns_null_not_invented_zero(monkeypatch):
         assert module["calls"]["total"] is None
         assert module["calls"]["failed"] is None
         assert module["calls"]["unknown"] is None
+
+
+def test_present_metering_schema_with_no_module_events_returns_real_zero(monkeypatch):
+    monkeypatch.setattr(governance.api_metering, "enabled", lambda: True)
+    monkeypatch.setattr(governance.api_controls, "enabled", lambda: False)
+    result = asyncio.run(governance.read_ai_governance(
+        FakeSession(metering=True),
+        now=datetime(2026, 10, 10, tzinfo=timezone.utc), settings=settings(),
+    ))
+    sem = next(item for item in result["modules"] if item["module"] == "sem")
+    assert sem["calls"]["state"] == "available"
+    assert sem["calls"]["total"] == 0
+    assert sem["calls"]["failed"] == 0
+    assert sem["calls"]["unknown"] == 0
+    assert sem["calls"]["known_amount"] == "0"
+    assert sem["calls"]["estimated_amount"] == "0"
 
 
 def test_non_ai_provider_binding_is_not_reported_as_ai_configuration():
@@ -185,21 +227,30 @@ def test_governance_path_is_not_wrapped_in_business_runtime_config(monkeypatch):
     from app.api_metering import MeteringScopeMiddleware
     from app import api_connection_config
 
+    calls = []
+
     @asynccontextmanager
-    async def forbidden(_module):
-        raise AssertionError("governance read must not load editable runtime settings")
+    async def tracked(module):
+        calls.append(module)
         yield
 
-    monkeypatch.setattr(api_connection_config, "runtime_scope", forbidden)
+    monkeypatch.setattr(api_connection_config, "runtime_scope", tracked)
     inner = FastAPI()
 
     @inner.get("/api/v1/platform/probe")
     async def probe():
         return {"ok": True}
 
+    @inner.get("/api/v1/platform/ai-governance")
+    async def governance_probe():
+        return {"ok": True}
+
     app = MeteringScopeMiddleware(inner, module="sem")
     with TestClient(app) as client:
+        assert client.get("/api/v1/platform/ai-governance").json() == {"ok": True}
+        assert calls == []
         assert client.get("/api/v1/platform/probe").json() == {"ok": True}
+        assert calls == ["sem"]
 
 
 def test_route_rejects_anonymous_and_tenant_users_before_database_access():

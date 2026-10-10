@@ -36,16 +36,29 @@ def _safe_budget(value) -> dict | None:
 
 def _runtime_sem_configuration(settings=None) -> dict:
     settings = settings or get_server_settings()
+    dash_key = str(getattr(settings, "dashscope_api_key", "") or "").strip()
+    deep_key = str(getattr(settings, "deepseek_api_key", "") or "").strip()
+    if dash_key:
+        base_url = getattr(settings, "dashscope_base_url", "")
+        model = getattr(settings, "dashscope_model", "") or "deepseek-v3"
+    elif deep_key:
+        base_url = getattr(settings, "deepseek_base_url", "")
+        model = getattr(settings, "deepseek_model", "") or "deepseek-chat"
+    else:
+        return {
+            "state": "available", "source": "sem_runtime",
+            "provider": None, "model": None, "configured": False,
+        }
     try:
-        provider = urlsplit(str(settings.deepseek_base_url)).hostname or "deepseek"
-    except (AttributeError, ValueError):
-        provider = "deepseek"
+        provider = urlsplit(str(base_url)).hostname or None
+    except ValueError:
+        provider = None
     return {
         "state": "available",
         "source": "sem_runtime",
         "provider": provider,
-        "model": str(getattr(settings, "deepseek_model", "") or "") or None,
-        "configured": bool(str(getattr(settings, "deepseek_api_key", "") or "").strip()),
+        "model": str(model) or None,
+        "configured": True,
     }
 
 
@@ -66,22 +79,23 @@ def _is_ai_binding(row: dict) -> bool:
 
 
 def _empty_calls(window: dict, state: str) -> dict:
+    available = state == "available"
     return {
         "state": state,
         "source": "api_usage_events",
         "window": window,
-        "total": None,
-        "failed": None,
-        "unknown": None,
-        "pending": None,
-        "unpriced": None,
-        "known_amount": None,
-        "estimated_amount": None,
+        "total": 0 if available else None,
+        "failed": 0 if available else None,
+        "unknown": 0 if available else None,
+        "pending": 0 if available else None,
+        "unpriced": 0 if available else None,
+        "known_amount": "0" if available else None,
+        "estimated_amount": "0" if available else None,
         "currency": "CNY",
         "attribution": {
-            "tenant_attributed": None,
-            "user_attributed": None,
-            "scope_attributed": None,
+            "tenant_attributed": 0 if available else None,
+            "user_attributed": 0 if available else None,
+            "scope_attributed": 0 if available else None,
         },
         "features": [],
         "observed_providers": [],

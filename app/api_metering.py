@@ -111,9 +111,11 @@ class MeteringScopeMiddleware:
         try:
             from app.api_connection_config import runtime_scope
             path=asgi_scope.get('path','')
-            if path.startswith('/api/') and not path.startswith(
-                ('/api/v1/auth/', '/api/v1/admin/console/', '/api/v1/platform/')
-            ):
+            skip_runtime = (
+                path.startswith(('/api/v1/auth/', '/api/v1/admin/console/'))
+                or path == '/api/v1/platform/ai-governance'
+            )
+            if path.startswith('/api/') and not skip_runtime:
                 from app.api_controls import ControlDenied
                 from starlette.responses import JSONResponse
                 try:

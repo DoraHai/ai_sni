@@ -38,7 +38,8 @@ AI 内容、不创建任务、不修改控制配置。
 固定返回 `sem`、`seo`、`geo` 三项，每项包含：
 
 - `provider/model/configured`：脱敏配置状态。SEM 可读取当前进程配置，但只返回是否配置；不返回 Key、
-  URL 认证信息或凭据指纹。SEO/GEO 是独立进程，只有其通过现有 control binding 登记后才显示配置，
+  URL 认证信息或凭据指纹。SEM 与实际 AI 客户端保持相同优先级：百炼已配置时选百炼，否则选
+  DeepSeek；两者都未配置时 provider/model 为 null。SEO/GEO 是独立进程，只有其通过现有 control binding 登记后才显示配置，
   否则 `configured=null`、`configuration.state=unavailable`。
 - `metering`：计量表状态及当前 SEM 进程的计量开关。SEO/GEO 的进程开关无法从本进程证明，返回
   `runtime_enabled=null`；近 24 小时有真实记录时为 `observed`。
