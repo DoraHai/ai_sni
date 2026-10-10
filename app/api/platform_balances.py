@@ -10,6 +10,7 @@ from app.api_connection_config import runtime_scope
 from app.database import async_session_factory
 from app.models import BaiduAccount, Tenant
 from app import platform_balances as balances
+from app.platform_balance_coverage import load_coverage, query_managed
 
 router = APIRouter()
 
@@ -28,6 +29,7 @@ async def read_balances(response: Response, provider: Literal['deepseek', 'aliyu
             settings = get_settings()
     except Exception:
         raise HTTPException(503, '平台余额凭据暂时无法读取，请稍后重试') from None
+    coverage, managed = await load_coverage(settings, async_session_factory) if provider is None else (None, [])
     accounts = []
     accounts_available = True
     if provider in (None, 'baidu'):
@@ -55,6 +57,29 @@ async def read_balances(response: Response, provider: Literal['deepseek', 'aliyu
     if provider in (None, 'aliyun'):
         identities.append({'id': 'aliyun', 'provider': 'aliyun', 'name': '阿里云账户（含百炼）', 'tenant_id': None, 'source': 'provider_api'})
         jobs.append(balances.query_cached('aliyun:'+settings.aliyun_balance_access_key_id+':'+settings.aliyun_balance_access_key_secret+':'+settings.aliyun_balance_security_token, lambda: balances.aliyun(settings), refresh))
+    managed_refs = {}
+    # Reused credentials are one query result; different credentials do not
+    # prove different supplier billing accounts. No total money is computed.
+    if provider is None:
+        import hashlib
+        for item in managed:
+            key = item['code'] + ':' + str(item['base_url']) + ':' + '\0'.join(item['secrets'].values())
+            if item['code'] in {'deepseek', 'geo_deepseek'}:
+                key = 'deepseek:' + str(item['base_url']) + ':' + item['secrets']['api_key']
+            fingerprint = hashlib.sha256(key.encode()).hexdigest()
+            if item['code'] in {'deepseek', 'geo_deepseek'} and item['base_url'] == settings.deepseek_base_url and item['secrets']['api_key'] == settings.deepseek_api_key:
+                row_id = 'deepseek'
+            elif fingerprint in managed_refs:
+                row_id = managed_refs[fingerprint]
+            else:
+                row_id = 'connection:' + item['id']
+                identities.append({'id': row_id, 'provider': item['code'], 'name': item['name'],
+                    'module': item['module'], 'tenant_id': None, 'source': 'managed_provider_api'})
+                jobs.append(balances.query_cached(key, lambda i=item: query_managed(i), refresh))
+            managed_refs[fingerprint] = row_id
+            for row in coverage['rows']:
+                if row['connection_id'] == item['id']:
+                    row['balance_row_id'] = row_id
     for account in accounts[:10]:
         identities.append({'id': 'baidu:'+str(account['id']), 'provider': 'baidu', 'account_id': account['id'],
                            'tenant_id': account['tenant_id'], 'name': account['username'], 'tenant_name': account['tenant_name'], 'source': 'provider_api'})
@@ -66,5 +91,6 @@ async def read_balances(response: Response, provider: Literal['deepseek', 'aliyu
     rows = [balances.with_warnings(row, settings) for row in rows]
     return {'schema': 1, 'state': 'available', 'generated_at': datetime.now(timezone.utc).isoformat(),
             'rows': [{**identity, **row} for identity, row in zip(identities, rows)],
+            'coverage': coverage,
             'next_after_id': next_after_id, 'cache_seconds': balances.CACHE_SECONDS,
             'refresh_cooldown_seconds': balances.COOLDOWN_SECONDS}
