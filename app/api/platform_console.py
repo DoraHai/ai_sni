@@ -346,3 +346,7 @@ async def console_operation(request: Request, response: Response, ctx: AuthConte
         raise HTTPException(422, '操作字段无效，请检查处理说明、额度或有效期') from None
     except Exception:
         raise HTTPException(503, '管理操作未保存，请刷新核对后重试') from None
+
+
+from app.api.platform_balances import router as balance_router
+router.include_router(balance_router)
