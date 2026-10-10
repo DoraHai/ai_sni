@@ -1,16 +1,18 @@
 import {escapeText as esc} from './customer-display.mjs';
 export const governanceRoute='/api/v1/platform/ai-governance';
-const states={available:'已接入',enabled:'已生效',disabled:'未启用',schema_pending:'等待数据库人工审核启用',recording:'计量中',configured:'已配置',unavailable:'未接入',unknown:'未知',reserved:'预留未接入'};
+const states={available:'已接入',enabled:'已生效',disabled:'未启用',schema_pending:'等待数据库人工审核启用',recording:'计量中',observed:'已观测到调用计量',schema_ready:'计量表就绪，运行开关未启用',available_no_recent_events:'台账可用，近期无调用',configured:'已配置',unavailable:'未接入',unknown:'未知',reserved:'预留未接入'};
 const state=s=>states[s]||'未知';
 const count=n=>Number.isSafeInteger(n)&&n>=0?String(n):'未知';
+const provider=value=>({dashscope:'阿里云百炼','dashscope.aliyuncs.com':'阿里云百炼',deepseek:'DeepSeek','api.deepseek.com':'DeepSeek'}[value]||(typeof value==='string'&&value?value:'未提供'));
+const windowLabel=value=>({day:'当天',today:'当天','24h':'近24小时',last_24_hours:'近24小时',month:'本月',unavailable:'未接入'}[typeof value==='object'?value?.kind:value]||'未提供统计窗口');
 export function renderAiGovernance({data,error='',card,table}){
   const ready=data?.schema===1&&['available','schema_pending'].includes(data?.state)&&Array.isArray(data.modules);
   const note=error||(data?.state==='schema_pending'?states.schema_pending+'；已接入的只读配置与计量仍可查看，治理编辑保持禁用。':!ready?'治理接口未接入或响应不完整；不能据此判断配置、限制已生效。':'来自服务端运行配置与调用台账；配置状态不代表供应商实时连通。');
   const rows=['sem','seo','geo'].map(module=>{
     const r=ready?data.modules.find(r=>r.module===module):null;
-    return [module.toUpperCase(),r?esc(({dashscope:'阿里云百炼',deepseek:'DeepSeek'}[r.provider]||'未提供')):'未接入',
+    return [module.toUpperCase(),r?esc(provider(r.provider)):'未接入',
       r?esc(typeof r.model==='string'?r.model:'未提供'):'未接入',r?.configured===true?'已配置':r?.configured===false?'未配置':'未知',
-      state(r?.metering?.state),count(r?.calls?.failed),count(r?.calls?.unknown),esc(({api_metering:'API 调用台账',api_usage_ledger:'API 调用台账',module_ledger:'模块运行台账',unavailable:'未接入'}[r?.calls?.source]||'未提供来源')),esc(({day:'当天',today:'当天','24h':'近24小时',month:'本月',unavailable:'未接入'}[r?.calls?.window]||'未提供统计窗口'))];
+      state(r?.metering?.state),count(r?.calls?.failed),count(r?.calls?.unknown),esc(({api_metering:'API 调用台账',api_usage_ledger:'API 调用台账',api_usage_events:'API 调用台账',module_ledger:'模块运行台账',unavailable:'未接入'}[r?.calls?.source]||'未提供来源')),esc(windowLabel(r?.calls?.window))];
   });
   const limits=ready?data.modules.flatMap(r=>(Array.isArray(r.limits)?r.limits:[]).map(l=>[
     esc(String(r.module).toUpperCase()),esc(({scope:'范围隔离',budget:'预算',calls:'调用上限',revision:'版本检查',deduplication:'任务去重'}[l.kind]||'未识别限制')),state(l.state),

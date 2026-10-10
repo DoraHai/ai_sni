@@ -28,3 +28,7 @@ test('only allowlisted presentation fields render; unknown counts and unapproved
   const pending=render({...data,state:'schema_pending'});assert.match(pending,/等待数据库人工审核/);assert.match(pending,/qwen/);assert.match(pending,/计量中/);assert.match(pending,/0\|未知/);assert.match(pending,/治理编辑保持禁用/);assert.doesNotMatch(pending,/fixture-secret|100/);assert.match(pending,/<button disabled>/);
   assert.match(render(null,'AI 治理接口未部署，运行状态未接入。'),/接口未部署/);
 });
+test('real backend provider hosts and ledger observation windows retain their meaning',()=>{
+ const html=render({schema:1,state:'available',modules:[{module:'seo',provider:'dashscope.aliyuncs.com',model:'deepseek-v3',configured:null,metering:{state:'observed'},calls:{failed:0,unknown:1,source:'api_usage_events',window:{kind:'last_24_hours',start:'2026-10-09',end:'2026-10-10'}},limits:[]}]});
+ assert.match(html,/阿里云百炼/);assert.match(html,/已观测到调用计量/);assert.match(html,/API 调用台账/);assert.match(html,/近24小时/);
+});
