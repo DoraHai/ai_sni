@@ -334,10 +334,12 @@ def test_site_quota_serializes_different_tasks_before_provider(supplier):
                 await db.commit()
             async def call(ident):
                 async with sessions() as db:
-                    try: return await complete(sessions, ident,request(task),db,ADVISOR)
+                    try: return await api.ai_proposal(ident,request(task),db,ADVISOR)
                     except HTTPException as exc: return exc.status_code
             results=await asyncio.gather(call(task["id"]),call(100))
             assert sum(isinstance(r,dict) for r in results)==1 and 429 in results
+            assert not supplier
+            await jobs.run_onsite_ai_jobs(sessions=sessions)
             assert len(supplier)==1
     asyncio.run(run())
 
@@ -430,10 +432,12 @@ def test_one_nonce_across_tasks_is_one_charge_even_under_concurrency(supplier):
             req=request(task)
             async def call(ident):
                 async with sessions() as db:
-                    try: return await complete(sessions, ident,req,db,ADVISOR)
+                    try: return await api.ai_proposal(ident,req,db,ADVISOR)
                     except HTTPException as exc: return exc.detail["code"]
             results=await asyncio.gather(call(task["id"]),call(100))
             assert sum(isinstance(r,dict) for r in results)==1
+            assert not supplier
+            await jobs.run_onsite_ai_jobs(sessions=sessions)
             assert "onsite_ai_request_conflict" in results and len(supplier)==1
             async with sessions() as db:
                 assert (await db.get(SeoSite,2)).site_settings["onsite_ai_quota"]["count"]==1
@@ -763,9 +767,10 @@ def test_old_request_poll_does_not_replace_current_run_and_scope_is_enforced(sup
                 (await db.get(SeoSiteAdvisorAssignment,3)).active = False
                 await db.commit()
             async with sessions() as db:
-                with pytest.raises(HTTPException) as exc:
-                    await api.proposal_status(task["id"], req.request_id, 4, 2, db, ADVISOR)
-                assert exc.value.status_code == 403 and "items" not in str(exc.value.detail)
+                # Loss of edit assignment still allows the role's scoped reads.
+                readonly = await api.proposal_status(task["id"], req.request_id, 4, 2, db, ADVISOR)
+                assert readonly["allowed_actions"] == []
+                assert readonly["links"]["cancel"] is None
     asyncio.run(run())
 
 
@@ -839,4 +844,88 @@ def test_disabled_worker_does_not_accept_new_requests_or_invoke_provider(monkeyp
                 assert not supplier
             await jobs.run_onsite_ai_jobs(sessions=sessions)
             assert not supplier
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("keyword_view", [False, True])
+def test_customer_readonly_http_polling_scope_and_keyword_source_projection(monkeypatch, supplier, keyword_view):
+    from fastapi import FastAPI
+    async def run():
+        async with fixture() as (sessions, task):
+            permissions = {"seo.site": "view", "seo.content": "view"}
+            if keyword_view:
+                permissions["seo.keywords"] = "view"
+            customer = AuthContext(8, "customer", "customer", 4, permissions)
+            async with sessions() as db:
+                db.add_all([Role(id=6, name="customer", permissions=permissions),
+                            User(id=8, username="customer", role_id=6, tenant_id=4,
+                                 password_hash="unused", is_active=True)])
+                await db.commit()
+            req = request(task)
+            async with sessions() as db:
+                await api.ai_proposal(task["id"], req, db, ADVISOR)
+            app = FastAPI()
+            app.include_router(api.router, prefix="/api/v1/seo")
+            app.include_router(onsite.router, prefix="/api/v1/seo")
+            async def db_dep():
+                async with sessions() as db: yield db
+            app.dependency_overrides[api.get_seo_session] = db_dep
+            app.dependency_overrides[api.require_seo_scoped_auth] = lambda: customer
+            stem = f"/api/v1/seo/workbench/onsite-tasks/{task['id']}/ai-requests/{req.request_id}"
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                async with sessions() as db:
+                    before = deepcopy((await db.get(SeoTask, task["id"])).params)
+                response = await client.get(stem, params={"tenant_id": 4, "site_id": 2})
+                assert response.status_code == 200
+                result = response.json()
+                assert result["request_run"]["state"] == "queued" and result["workflow"]["ai_run"]["request_id"] == str(req.request_id)
+                assert result["allowed_actions"] == [] and result["links"]["cancel"] is None
+                assert not result["capabilities"]["ai_planning"]["can_generate"]
+                assert bool(result["workflow"]["source"]["keywords"]) == keyword_view
+                listing = await client.get("/api/v1/seo/workbench/onsite-tasks", params={"tenant_id": 4, "site_id": 2})
+                assert listing.status_code == 200
+                assert bool(listing.json()["items"][0]["workflow"]["source"]["keywords"]) == keyword_view
+                assert (await client.get(stem, params={"tenant_id": 99, "site_id": 2})).status_code == 403
+                assert (await client.get(stem, params={"tenant_id": 4, "site_id": 99})).status_code == 404
+                assert (await client.post(stem+"/cancel", json={"tenant_id": 4, "site_id": 2})).status_code == 403
+                assert (await client.post(f"/api/v1/seo/workbench/onsite-tasks/{task['id']}/ai-proposal", json=req.model_dump(mode="json"))).status_code == 403
+                async with sessions() as db:
+                    assert before == (await db.get(SeoTask, task["id"])).params
+                assert not supplier
+                original = ai.deepseek.chat_json
+                async def with_keyword_refs(*args, **kwargs):
+                    raw = await original(*args, **kwargs)
+                    for item in raw["items"]:
+                        item["source_refs"].append("keyword:20")
+                    return raw
+                monkeypatch.setattr(ai.deepseek, "chat_json", with_keyword_refs)
+                await jobs.run_onsite_ai_jobs(sessions=sessions)
+                ready = await client.get(stem, params={"tenant_id": 4, "site_id": 2})
+                assert ready.status_code == 200 and ready.json()["request_run"]["state"] == "ready"
+                assert ready.json()["allowed_actions"] == []
+                if not keyword_view:
+                    assert "keyword:20" not in ready.text and "keyword-20" not in ready.text
+                    assert all(i["kind"] not in {"keyword", "meta_keywords"} for i in ready.json()["workflow"]["items"])
+                async with sessions() as db:
+                    stored = (await db.get(SeoTask, task["id"])).params
+                    assert stored["onsite"]["source"]["keywords"]
+                    assert any("keyword:20" in i["source_refs"] for i in stored["onsite"]["ai_proposal"]["items"])
+                assert len(supplier) == 1
+    asyncio.run(run())
+
+
+def test_busy_site_is_skipped_then_claimed_on_next_durable_scan(supplier):
+    async def run():
+        async with fixture() as (sessions, task):
+            req = request(task)
+            async with sessions() as db:
+                await api.ai_proposal(task["id"], req, db, ADVISOR)
+            async with sessions() as holding:
+                await holding.get(SeoSite, 2, with_for_update=True)
+                state = await asyncio.wait_for(jobs.execute_request(task["id"], 4, 2, str(req.request_id), sessions=sessions), 3)
+                assert state is None and not supplier
+            await jobs.run_onsite_ai_jobs(sessions=sessions)
+            async with sessions() as db:
+                assert (await api.proposal_status(task["id"], req.request_id, 4, 2, db, ADVISOR))["request_run"]["state"] == "ready"
+            assert len(supplier) == 1
     asyncio.run(run())

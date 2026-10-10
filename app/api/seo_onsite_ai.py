@@ -69,7 +69,7 @@ def advisor_query(user_id):
 
 
 def summary(row, site, tenant_name, can_ai=True):
-    result = onsite.public(row, True, site.site_settings, can_ai)
+    result = onsite.public(row, True, site.site_settings, can_ai, can_keywords=can_ai)
     w = result["workflow"]
     next_action = {"draft": "save_proposal", "review": "approve", "implementation": "implement",
                    "recheck": "recheck", "acceptance": "accept"}.get(w["phase"])
@@ -150,13 +150,14 @@ def save_run(row, run):
     row.updated_at = ai.now()
 
 
-def run_response(row, site, run, *, replayed=False):
+def run_response(row, site, run, *, can_write, can_keywords, replayed=False):
     stem = f"/api/v1/seo/workbench/onsite-tasks/{row.id}/ai-requests/{run['request_id']}"
     active = run["state"] in {"queued", "running"}
-    return {**onsite.public(row, True, site.site_settings), "replayed": replayed,
+    return {**onsite.public(row, can_write, site.site_settings, can_write and can_keywords,
+                          can_keywords=can_keywords), "replayed": replayed,
             "request_run": public_run(run), "poll_after_seconds": 3 if active else None,
             "links": {"status": f"{stem}?tenant_id={row.tenant_id}&site_id={row.site_id}",
-                      "cancel": f"{stem}/cancel" if active else None}}
+                      "cancel": f"{stem}/cancel" if active and can_write and can_keywords else None}}
 
 
 class RunScope(BaseModel):
@@ -170,22 +171,24 @@ async def proposal_status(task_id: PositiveInt, request_id: UUID, tenant_id: Pos
                           site_id: PositiveInt, session=Depends(get_seo_session),
                           ctx=Depends(require_seo_scoped_auth)):
     req = RunScope(tenant_id=tenant_id, site_id=site_id)
-    site = await session.get(SeoSite, site_id, populate_existing=True)
-    await authorized(session, ctx, req, site, lock=False)
+    ctx.ensure_tenant(tenant_id)
+    fresh = ctx if ctx.user_id is None and ctx.is_superadmin else await fresh_context(session, ctx)
+    site = await onsite.scope(session, fresh, tenant_id, site_id)
     row = await session.get(SeoTask, task_id, populate_existing=True)
     task_matches(row, req)
     run = (row.params.get("onsite_ai_requests") or {}).get(str(request_id))
     if not run:
         raise ai.problem(404, "onsite_ai_request_not_found", "当前任务不存在该生成请求")
     # Pure read: even an expired running lease is reconciled only by the worker.
-    return run_response(row, site, run)
+    return run_response(row, site, run, can_write=await onsite.can_operate(session, fresh, site),
+                        can_keywords=fresh.can_view("seo.keywords"))
 
 
 @router.post("/workbench/onsite-tasks/{task_id}/ai-requests/{request_id}/cancel")
 async def cancel_proposal(task_id: PositiveInt, request_id: UUID, req: RunScope,
                           session=Depends(get_seo_session), ctx=Depends(require_seo_scoped_auth)):
     site = await session.get(SeoSite, req.site_id, with_for_update=True, populate_existing=True)
-    await authorized(session, ctx, req, site)
+    fresh = await authorized(session, ctx, req, site)
     row = await session.get(SeoTask, task_id, with_for_update=True, populate_existing=True)
     task_matches(row, req)
     run = (row.params.get("onsite_ai_requests") or {}).get(str(request_id))
@@ -200,7 +203,7 @@ async def cancel_proposal(task_id: PositiveInt, request_id: UUID, req: RunScope,
                          "message": "已停止采用结果；供应商可能已调用，请人工核对" if running else "已取消排队，未调用供应商"}}
         save_run(row, run)
         await session.commit()
-    return run_response(row, site, run)
+    return run_response(row, site, run, can_write=True, can_keywords=fresh.can_view("seo.keywords"))
 
 
 def failed_state(exc):
@@ -252,7 +255,7 @@ async def ai_proposal(task_id: PositiveInt, req: Request,
             raise ai.problem(409, "onsite_ai_request_superseded", "该请求已有后续方案，原请求不会再次调用")
         if prior["request_hash"] != request_hash:
             raise ai.problem(409, "onsite_ai_request_conflict", "请求编号已用于不同参数或操作人")
-        return run_response(row, site, prior, replayed=True)
+        return run_response(row, site, prior, can_write=True, can_keywords=fresh.can_view("seo.keywords"), replayed=True)
     execution_enabled(site)
     if w["revision"] != req.expected_revision:
         raise ai.problem(409, "onsite_ai_revision_changed", "任务版本已变化，请重新读取核对")
@@ -277,4 +280,4 @@ async def ai_proposal(task_id: PositiveInt, req: Request,
     row.params = {**row.params, "onsite": {**row.params["onsite"], "ai_run": {"request_id": key}}}
     save_run(row, claim)
     await session.commit()  # Durable nonce/quota BEFORE provider; release all row locks.
-    return run_response(row, site, claim, replayed=False)
+    return run_response(row, site, claim, can_write=True, can_keywords=fresh.can_view("seo.keywords"), replayed=False)

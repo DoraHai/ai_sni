@@ -77,7 +77,7 @@
 GET /api/v1/seo/workbench/onsite-tasks/123/ai-requests/9d4d4214-ce30-4b89-a6d8-cbfa51186ec8?tenant_id=4&site_id=2
 ```
 
-- GET 返回现有 public task 顶层结构及指定请求的 `request_run`；`workflow.ai_run` 始终代表当前请求。查询历史请求不会替换它。每次读取重新核对实名、客户/网站范围、当前顾问分配、模块授权与权限；越权 403、范围/请求不存在 404，不泄露任务。
+- GET 返回现有 public task 顶层结构及指定请求的 `request_run`；`workflow.ai_run` 始终代表当前请求。查询历史请求不会替换它。GET 沿用站内任务列表的只读门禁：核对当前有效身份、客户/网站范围、网站与内容查看权限和模块授权，不要求顾问编辑分配。真实 can_operate 决定写动作，客户 view 角色可以轮询但没有写动作或取消链接；提交和取消仍要求有效顾问编辑资格及关键词查看权限。没有 seo.keywords 查看权限时隐藏 source.keywords、关键词/Meta Keywords 项及对应来源引用（列表同步处理），不修改存储原稿。越权 403、范围/请求不存在 404，不泄露任务。
 - 前端每 3 秒查询 `links.status`；`queued/running` 返回 `poll_after_seconds=3`；终态返回 null 并停止轮询。读接口不领取、不恢复、不调用模型、不更新记录。网络中断后使用同一个 request_id 查询；需要确认入队结果时重放同一 POST，不生成新 nonce。
 - 只有返回的 `request_run.request_id` 与界面等待的请求及 `workflow.ai_run.request_id` 都一致时，前端才可采用该请求完成的提案。被后续请求替代时应刷新当前任务，不能把旧响应覆盖到新方案。
 - 公开状态：`queued` 已持久化待领取；`running` 已提交调用意图，可能已付费；`ready` 提案已保存待人审；`failed` 调用未获准或供应商明确拒绝；`unknown` 中断/超时/输出不合规或运行中取消，需人工核实；`stale` 权限、服务、任务或事实变化，结果未采用；`cancelled` 领取前取消，未调用供应商。除 queued/running 外均为终态，不自动付费重试。

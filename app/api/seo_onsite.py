@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import json
+from copy import deepcopy
 from typing import Literal
 from uuid import UUID
 from datetime import datetime, timezone
@@ -44,17 +45,30 @@ async def scope(session, ctx, tenant_id, site_id, write=False):
             raise HTTPException(403, "需要当前网站有效顾问分配及网站、内容编辑权限")
     return site
 
-def public(row, can_write, site_settings=None, can_ai=None):
+def public(row, can_write, site_settings=None, can_ai=None, *, can_keywords=True):
     from app.seo_onsite_ai import capabilities
     value = row.params["onsite"]
     actions = work.allowed_actions(value, can_write)
     if value.get("ai_run", {}).get("state") in {"queued", "running"}:
         actions = [action for action in actions if action == "cancel"]
-    return dict(id=row.id, module="seo", tenant_id=row.tenant_id, scope_id=row.site_id, title=row.title,
+    result = dict(id=row.id, module="seo", tenant_id=row.tenant_id, scope_id=row.site_id, title=row.title,
                 workflow=value, allowed_actions=actions,
                 completion_evidence=row.completion_evidence,
-                capabilities=capabilities(value, can_write if can_ai is None else can_ai, site_settings,
+                capabilities=capabilities(value, (can_write if can_ai is None else can_ai) and can_keywords, site_settings,
                                           len(row.params.get("onsite_ai_requests") or {})))
+    if not can_keywords:
+        hidden_ids = {i["id"] for i in value["items"] if i["kind"] in {"keyword", "meta_keywords"}}
+        def redact_sources(node):
+            if isinstance(node, list):
+                return [redact_sources(item) for item in node if not isinstance(item, dict)
+                        or item.get("id") not in hidden_ids and item.get("kind") not in {"keyword", "meta_keywords"}]
+            if isinstance(node, dict):
+                return {key: ([] if key == "keywords" else
+                              [ref for ref in item if not ref.startswith("keyword:")] if key == "source_refs" else
+                              redact_sources(item)) for key, item in node.items()}
+            return node
+        result = redact_sources(deepcopy(result))
+    return result
 
 async def sources_current(session, row):
     source = row.params["onsite"]["source"]
@@ -78,7 +92,8 @@ async def list_tasks(tenant_id: PositiveInt, site_id: PositiveInt, before_id: Po
     rows = list(await session.scalars(query.order_by(SeoTask.id.desc()).limit(21)))
     can_write = await can_operate(session, ctx, site)
     return dict(module="seo", tenant_id=tenant_id, scope_id=site_id, can_create=can_write,
-                items=[public(r, can_write, site.site_settings, can_write and ctx.can_view("seo.keywords")) for r in rows[:20]],
+                items=[public(r, can_write, site.site_settings, can_write and ctx.can_view("seo.keywords"),
+                              can_keywords=ctx.can_view("seo.keywords")) for r in rows[:20]],
                 next_before_id=rows[19].id if len(rows) > 20 else None)
 
 @router.post("/workbench/onsite-tasks")
@@ -92,7 +107,7 @@ async def create(req: Create, session=Depends(get_session), ctx=Depends(require_
     if existing:
         if existing.params.get("request_hash") != request_hash:
             raise HTTPException(409, "请求编号已用于不同任务参数")
-        return public(existing, True, site.site_settings, ctx.can_view("seo.keywords"))
+        return public(existing, True, site.site_settings, ctx.can_view("seo.keywords"), can_keywords=ctx.can_view("seo.keywords"))
     kw_query = select(SeoKeywordAsset).where(SeoKeywordAsset.tenant_id == req.tenant_id,
         SeoKeywordAsset.site_id == req.site_id, SeoKeywordAsset.status == "active")
     if req.keyword_ids:
@@ -146,7 +161,7 @@ async def create(req: Create, session=Depends(get_session), ctx=Depends(require_
     session.add(row)
     await session.commit()
     await session.refresh(row)
-    return public(row, True, site.site_settings, ctx.can_view("seo.keywords"))
+    return public(row, True, site.site_settings, ctx.can_view("seo.keywords"), can_keywords=ctx.can_view("seo.keywords"))
 
 @router.post("/workbench/onsite-tasks/{task_id}/actions")
 async def act(task_id: PositiveInt, req: Update, session=Depends(get_session), ctx=Depends(require_scoped_auth)):
@@ -189,5 +204,5 @@ async def act(task_id: PositiveInt, req: Update, session=Depends(get_session), c
     row.updated_at = datetime.now(timezone.utc)
     await session.commit()
     await session.refresh(row)
-    return public(row, True, site.site_settings, ctx.can_view("seo.keywords"))
+    return public(row, True, site.site_settings, ctx.can_view("seo.keywords"), can_keywords=ctx.can_view("seo.keywords"))
 
