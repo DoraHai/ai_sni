@@ -6,15 +6,19 @@ export function entryScope(search){
   const p=new URLSearchParams(search),present=p.has('tenant_id')||p.has('site_id');
   const id=name=>p.getAll(name).length===1&&/^[1-9]\d*$/.test(p.get(name)||'')&&positive(Number(p.get(name)))?Number(p.get(name)):null;
   const tenantId=id('tenant_id'),siteId=id('site_id');
+  if(p.get('module')==='geo'){const projectId=id('project_id');return {tenantId,siteId:null,projectId,module:'geo',invalid:p.getAll('module').length!==1||p.has('site_id')||((p.has('tenant_id')||p.has('project_id'))&&!(tenantId&&projectId)),login:p.get('login')==='1'};}
   return {tenantId,siteId,invalid:present&&!(tenantId&&siteId),login:p.get('login')==='1'};
 }
 export const workbenchPath=(tenantId,siteId)=>base+(positive(tenantId)&&positive(siteId)?'?'+new URLSearchParams({tenant_id:tenantId,site_id:siteId}):'');
+export const geoWorkbenchPath=(tenantId,projectId)=>base+'?'+new URLSearchParams({module:'geo',...(positive(tenantId)&&positive(projectId)?{tenant_id:tenantId,project_id:projectId}:{})});
 export const workbenchLoginPath=(tenantId,siteId)=>workbenchPath(tenantId,siteId)+(positive(tenantId)&&positive(siteId)?'&':'?')+'login=1';
 
 // Dedicated customer entry, using the existing auth API and canonical session store.
 // No business writes, credential persistence, fallback tenant, or authority from URL.
 export function mountWorkbenchEntry({root,session,search=location.search,fetchImpl=fetch,navigate=path=>location.assign(path)}){
   const scope=entryScope(search);
+  let module=scope.module||'seo',availableModules=[];
+  const selectedPath=()=>module==='geo'?geoWorkbenchPath(scope.tenantId,scope.projectId):workbenchPath(scope.tenantId,scope.siteId);
   let generation=0,disposed=false,ownSessionChange=false,tenants=[],sites=[],tenantId=null,siteId=null,controllers=new Set();
   const frame=body=>{root.innerHTML=`<header class="entry-header"><b>G-SNIPERS</b><span>客户工作台</span></header><main class="entry-layout"><section class="entry-intro"><small>你的推广工作，在这里继续</small><h1>看进展，确认稿件，<br>与顾问一起推进。</h1><p>使用已有账号登录，无需先进入运营模块。</p></section><section class="entry-card">${body}</section></main>`;};
   const invalidate=()=>{generation++;for(const c of controllers)c.abort();controllers.clear();};
@@ -35,20 +39,20 @@ export function mountWorkbenchEntry({root,session,search=location.search,fetchIm
   }
   function errorView(text){frame(`<h2>暂时无法进入</h2><p role="status">${esc(text)}</p><button data-entry="retry">重新读取</button> <button data-entry="logout">退出当前账号</button>`);}
   function selector(note=''){
-    frame(`<small>${esc(session.user?.display_name||session.user?.username||'已登录')}</small><h2>选择工作空间</h2><p>仅显示当前账号获准查看的客户与网站。</p><p role="status">${esc(note)}</p><label for="entry-tenant">客户</label><select id="entry-tenant"><option value="">请选择客户</option>${tenants.map(t=>`<option value="${t.id}" ${tenantId===t.id?'selected':''}>${esc(t.name||'客户 '+t.id)}</option>`).join('')}</select><label for="entry-site">网站</label><select id="entry-site" ${sites.length?'':'disabled'}><option value="">请选择网站</option>${sites.map(s=>`<option value="${s.id}" ${siteId===s.id?'selected':''}>${esc(s.name||s.domain||'网站 '+s.id)}</option>`).join('')}</select><button data-entry="enter" class="entry-primary" ${siteId?'':'disabled'}>进入工作台</button><div class="entry-footer"><button data-entry="retry">刷新可用空间</button><button data-entry="logout">退出账号</button></div><small>当前入口已接入 SEO 服务；SEM、GEO 的接入状态与模块开通分别显示。</small>`);
+    frame(`<small>${esc(session.user?.display_name||session.user?.username||'已登录')}</small><h2>选择工作空间</h2><div>${availableModules.map(m=>`<button data-entry="module" data-module="${m}" ${m===module?'disabled':''}>${m.toUpperCase()}</button>`).join('')}</div><p>仅显示当前账号获准查看的客户与网站或项目。</p><p role="status">${esc(note)}</p><label for="entry-tenant">客户</label><select id="entry-tenant"><option value="">请选择客户</option>${tenants.map(t=>`<option value="${t.id}" ${tenantId===t.id?'selected':''}>${esc(t.name||'客户 '+t.id)}</option>`).join('')}</select><label for="entry-site">${module==='geo'?'GEO 项目':'网站'}</label><select id="entry-site" ${sites.length?'':'disabled'}><option value="">请选择网站</option>${sites.map(s=>`<option value="${s.id}" ${siteId===s.id?'selected':''}>${esc(s.name||s.domain||'网站 '+s.id)}</option>`).join('')}</select><button data-entry="enter" class="entry-primary" ${siteId?'':'disabled'}>进入工作台</button><div class="entry-footer"><button data-entry="retry">刷新可用空间</button><button data-entry="logout">退出账号</button></div><small>SEO 服务与 GEO 官网建设已接入。模块开通与顾问操作资格分别核验。</small>`);
   }
   async function loadSites(id,auto=false){
     invalidate();const g=generation;tenantId=id;siteId=null;sites=[];selector('正在读取网站…');
     try{
-      const data=await read('/api/v1/seo/workbench/sites?tenant_id='+id,g);
-      if(data.tenant_id!==id||!Array.isArray(data.sites)||!data.selection_policy?.selectable_statuses?.includes('active'))throw Error('网站范围未通过核验。');
-      sites=data.sites.filter(s=>positive(s.id)&&s.status==='active'&&(s.tenant_id==null||s.tenant_id===id));
+      const data=await read((module==='geo'?'/api/v1/geo/projects?tenant_id=':'/api/v1/seo/workbench/sites?tenant_id=')+id,g);
+      if(module==='geo'?(!Array.isArray(data.projects)||data.projects.some(p=>p.tenant_id!==id)):(data.tenant_id!==id||!Array.isArray(data.sites)||!data.selection_policy?.selectable_statuses?.includes('active')))throw Error('网站范围未通过核验。');
+      sites=(module==='geo'?data.projects:data.sites).filter(s=>positive(s.id)&&s.status==='active'&&(s.tenant_id==null||s.tenant_id===id));
       if(sites.length===1)siteId=sites[0].id;
       selector(sites.length?'':'此客户暂时没有可用网站，请顾问在模块中完成网站配置。');
       if(auto&&siteId)enter();
     }catch(e){if(current(g)&&e.message!=='STALE')selector(e.message);}
   }
-  function enter(){if(!tenants.some(t=>t.id===tenantId)||!sites.some(s=>s.id===siteId))return;setSession(()=>session.setTenant(tenantId));navigate(workbenchPath(tenantId,siteId));}
+  function enter(){if(!tenants.some(t=>t.id===tenantId)||!sites.some(s=>s.id===siteId))return;setSession(()=>session.setTenant(tenantId));navigate(module==='geo'?geoWorkbenchPath(tenantId,siteId):workbenchPath(tenantId,siteId));}
   async function spaces(){
     invalidate();const g=generation;tenants=[];sites=[];tenantId=null;siteId=null;
     frame('<h2>正在打开工作台</h2><p role="status">核对账号与可用工作空间…</p>');
@@ -57,10 +61,12 @@ export function mountWorkbenchEntry({root,session,search=location.search,fetchIm
       if(!positive(user?.id)||user.id!==session.user?.id||!user.permissions)throw Error('账号身份未通过核验，请退出后重新登录。');
       setSession(()=>session.refreshUser(user));
       const modules=await read('/api/v1/auth/modules',g);
-      if(modules.tenant_id!==user.tenant_id||!Array.isArray(modules.modules)||!modules.modules.some(m=>m.module_code==='seo'&&m.available===true))throw Error('当前账号没有可用的 SEO 服务；其他模块尚未接入此客户工作台。');
-      if(!['view','edit'].includes(user.permissions['seo.content']))throw Error('当前账号没有稿件查看权限，请联系顾问或管理员。');
-      const data=await read('/api/v1/auth/tenants?module=seo',g);
-      if(data.module!=='seo'||!Array.isArray(data.tenants))throw Error('客户清单未通过核验。');
+      if(modules.tenant_id!==user.tenant_id||!Array.isArray(modules.modules))throw Error('模块开通状态未通过核验。');
+      availableModules=modules.modules.filter(m=>m.available===true&&(['seo','geo'].includes(m.module_code))).map(m=>m.module_code).filter(m=>m==='seo'?['view','edit'].includes(user.permissions['seo.content']):['geo.assets','geo.content'].every(k=>['view','edit'].includes(user.permissions[k])));
+      if(!availableModules.length)throw Error('当前账号没有可用的 SEO 或 GEO 工作空间。');
+      if(!availableModules.includes(module)){if(scope.module)throw Error('当前账号没有此模块权限。');module=availableModules[0];}
+      const data=await read(module==='geo'?'/api/v1/geo/tenants':'/api/v1/auth/tenants?module=seo',g);
+      if((module==='seo'&&data.module!=='seo')||!Array.isArray(data.tenants))throw Error('客户清单未通过核验。');
       tenants=data.tenants.filter(t=>positive(t.id)&&(user.tenant_id==null||t.id===user.tenant_id));
       selector(tenants.length?'':'尚未分配可用客户，请联系顾问或管理员。');
       if(tenants.length===1)await loadSites(tenants[0].id,true);
@@ -89,7 +95,7 @@ export function mountWorkbenchEntry({root,session,search=location.search,fetchIm
       const data=await r.json();if(!current(g))return;
       if(typeof data.token!=='string'||!data.token||/\s/.test(data.token)||!positive(data.user?.id)||!data.user.permissions)throw Error('登录返回不完整，请联系管理员。');
       setSession(()=>session.setAuth(data.token,data.user,remember));form.elements.password.value='';
-      navigate(workbenchPath(scope.tenantId,scope.siteId));
+      navigate(selectedPath());
     }catch(e){if(current(g)){status(e.name==='TimeoutError'?'登录超时，请重试。':e.message==='Failed to fetch'?'网络连接失败，请稍后重试。':e.message);form.elements.password.value='';refreshCaptcha();}}
     finally{controllers.delete(c);if(current(g))button.disabled=false;}
   }
@@ -98,8 +104,9 @@ export function mountWorkbenchEntry({root,session,search=location.search,fetchIm
     const a=button.dataset.entry;
     if(a==='captcha')refreshCaptcha();
     if(a==='retry')void spaces();
+    if(a==='module'&&availableModules.includes(button.dataset.module)){module=button.dataset.module;void spaces();}
     if(a==='logout'){invalidate();setSession(()=>session.logout());login('已退出。');}
-    if(a==='continue')navigate(workbenchPath(scope.tenantId,scope.siteId));
+    if(a==='continue')navigate(selectedPath());
     if(a==='enter')enter();
     if(a==='choose')navigate(base);
   }

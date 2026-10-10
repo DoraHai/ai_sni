@@ -1,6 +1,9 @@
 // UI-05 same-origin host boundary. Reuses an injected ordinary session; never reads/stores credentials.
 const positive=n=>Number.isSafeInteger(n)&&n>0;
 const routes=[
+  ['GET',/^\/api\/v1\/seo\/workbench\/onsite-tasks$/,['tenant_id','site_id','before_id'],'site'],
+  ['POST',/^\/api\/v1\/seo\/workbench\/onsite-tasks$/,[],'site',['tenant_id','site_id','request_id','work_type','month','keyword_ids','page_ids','owner_name']],
+  ['POST',/^\/api\/v1\/seo\/workbench\/onsite-tasks\/[1-9]\d*\/actions$/,[],'site',['tenant_id','site_id','action','expected_revision','items','note','owner_name']],
   ['POST',/^\/api\/v1\/seo\/workbench\/assistant\/chat$/,[],'content',['tenant_id','site_id','request_id','message','history','content_id']],
   ['GET',/^\/api\/v1\/seo\/workbench\/content-assets\/[1-9]\d*\/conversation$/,['tenant_id','site_id'],'content'],
   ['GET',/^\/api\/v1\/seo\/workbench\/content-assets\/[1-9]\d*\/conversation\/messages$/,['tenant_id','site_id','limit','before_id'],'content'],

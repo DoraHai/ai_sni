@@ -63,6 +63,10 @@ jobs:
         env:
           EDGE_BINARY: /usr/bin/google-chrome
         run: npm --prefix customer-workbench run test:keyword-delete
+      - name: Verify onsite customer and advisor workflows in a browser
+        env:
+          EDGE_BINARY: /usr/bin/google-chrome
+        run: npm --prefix customer-workbench run test:onsite
       - name: Build the exact clean source
         run: node ops/customer-workbench/package-release.mjs "$RELEASE_SHA" "$RUNNER_TEMP/customer-workbench-release"
       - uses: actions/upload-artifact@v4
