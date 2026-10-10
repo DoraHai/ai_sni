@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+
+from app.api_connection_config import managed_runtime
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
@@ -464,6 +466,7 @@ def patrol_run_payload(row: GeoVisibilityPatrolRun) -> dict[str, Any]:
     }
 
 
+@managed_runtime('geo')
 async def execute_patrol_run(
     session: AsyncSession,
     run_id: int,

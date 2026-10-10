@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+
+from app.api_connection_config import managed_runtime
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any
@@ -628,6 +630,7 @@ async def _run_owned_job(job_id: int, *, tenant_id: int, connection=None) -> dic
         }
 
 
+@managed_runtime('geo')
 async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str, Any]:
     from app.geo.content.ai_settings import resolve_llm_credentials
     from app.geo.content.brief import brief_ready, normalize_brief
@@ -765,6 +768,7 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
     }
 
 
+@managed_runtime('geo')
 async def _execute_variants(session: AsyncSession, job: GeoAsyncJob) -> dict[str, Any]:
     from app.geo.tenant_scope import ensure_geo_background_execution_allowed
     ensure_geo_background_execution_allowed(job.tenant_id)

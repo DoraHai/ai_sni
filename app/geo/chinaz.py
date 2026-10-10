@@ -16,6 +16,7 @@ import httpx
 
 from app.api_metering import metered_request
 
+from app.api_connection_config import managed_runtime
 from app.config import get_settings
 from app.geo.audit import normalize_url
 
@@ -342,6 +343,7 @@ def _parse_whois_response(payload: Any, domain: str) -> dict[str, Any]:
     return metric
 
 
+@managed_runtime('geo')
 async def fetch_baidu_index_count(
     url: str,
     *,
@@ -440,14 +442,17 @@ async def _fetch_keywords(
     return result
 
 
+@managed_runtime('geo')
 async def fetch_baidu_pc_keywords(url: str, **kwargs: Any) -> dict[str, Any]:
     return await _fetch_keywords(url, mobile=False, **kwargs)
 
 
+@managed_runtime('geo')
 async def fetch_baidu_mobile_keywords(url: str, **kwargs: Any) -> dict[str, Any]:
     return await _fetch_keywords(url, mobile=True, **kwargs)
 
 
+@managed_runtime('geo')
 async def fetch_comprehensive_weight(
     url: str,
     *,
@@ -494,6 +499,7 @@ async def fetch_comprehensive_weight(
     return result
 
 
+@managed_runtime('geo')
 async def fetch_whois(
     url: str,
     *,
@@ -541,6 +547,7 @@ async def fetch_whois(
     return result
 
 
+@managed_runtime('geo')
 async def fetch_chinaz_seo_metrics(url: str) -> dict[str, dict[str, Any]]:
     """一次诊断并发获取五项指标；每项独立降级，任一失败不阻断主诊断。"""
     if not get_settings().chinaz_api_enabled:
