@@ -45,7 +45,7 @@ def result(state, note='', balances=None):
             'queried_at': datetime.now(timezone.utc).isoformat(), 'cached': False}
 
 
-async def json_request(method, url, **kwargs):
+async def json_request(method, url, *, max_bytes=65536, **kwargs):
     async with httpx.AsyncClient(timeout=5, follow_redirects=False, trust_env=False) as client:
         async with client.stream(method, url, **kwargs) as response:
             if response.status_code in (401, 403):
@@ -57,7 +57,7 @@ async def json_request(method, url, **kwargs):
             raw = bytearray()
             async for part in response.aiter_bytes():
                 raw.extend(part)
-                if len(raw) > 65536:
+                if len(raw) > max_bytes:
                     raise ValueError('oversized response')
             import json
             data = json.loads(raw)
@@ -134,6 +134,52 @@ async def baidu(account):
     if not isinstance(info, dict):
         raise ValueError('invalid balance')
     return result('available', '百度推广账户实时查询。', [{'currency': 'CNY', 'available': amount(info.get('balance'))}])
+
+
+def official_base(base_url, hostname):
+    try:
+        base = urlsplit(base_url)
+        return (base.scheme == 'https' and base.hostname == hostname and base.port in (None, 443)
+                and not base.username and not base.password and not base.query and not base.fragment
+                and base.path.rstrip('/') in ('', '/v1', '/v3'))
+    except (TypeError, ValueError):
+        return False
+
+
+async def kimi(base_url, key):
+    # https://platform.moonshot.cn/docs/api/balance
+    if not official_base(base_url, 'api.moonshot.cn'):
+        return result('unsupported', '当前 Kimi 接入点未确认是官方账户，余额未知。')
+    data, error = await json_request('GET', 'https://api.moonshot.cn/v1/users/me/balance',
+                                    headers={'Authorization': 'Bearer ' + key, 'Accept': 'application/json'})
+    if error:
+        return result(error, 'Kimi 余额查询失败，请核对授权或稍后重试。')
+    if data.get('status') is not True or type(data.get('code')) is not int or data['code'] != 0:
+        return result('error', 'Kimi 未返回成功的余额结果，余额未知。')
+    info = data.get('data')
+    if not isinstance(info, dict):
+        raise ValueError('invalid balance')
+    return result('available', 'Kimi 官方账户可用余额（含现金与代金券）。',
+                  [{'currency': 'CNY', 'available': amount(info.get('available_balance')),
+                    'cash': optional_amount(info.get('cash_balance')), 'grant': optional_amount(info.get('voucher_balance'))}])
+
+
+async def dataforseo(base_url, login, password):
+    # https://docs.dataforseo.com/v3/appendix/user_data/ (free account read).
+    if not official_base(base_url, 'api.dataforseo.com'):
+        return result('unsupported', '当前 DataForSEO 接入点未确认是官方账户，余额未知。')
+    data, error = await json_request('GET', 'https://api.dataforseo.com/v3/appendix/user_data',
+                                    auth=httpx.BasicAuth(login, password), max_bytes=524288)
+    if error:
+        return result(error, 'DataForSEO 余额查询失败，请核对授权或稍后重试。')
+    tasks = data.get('tasks')
+    if data.get('status_code') != 20000 or not isinstance(tasks, list) or len(tasks) != 1 or tasks[0].get('status_code') != 20000:
+        return result('error', 'DataForSEO 未返回成功的余额结果，余额未知。')
+    rows = tasks[0].get('result')
+    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0].get('money'), dict):
+        raise ValueError('invalid balance')
+    return result('available', 'DataForSEO 官方账户剩余金额；账户信息查询不调用付费数据接口。',
+                  [{'currency': 'USD', 'available': amount(rows[0]['money'].get('balance'))}])
 
 
 async def query_cached(cache_key, factory, refresh=False):
