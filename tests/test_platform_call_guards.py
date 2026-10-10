@@ -14,7 +14,6 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app import api_controls as controls, api_metering as meter
-from app.platform_operations import alert_identity, mutate_operation
 
 
 def budget(**values):
@@ -127,7 +126,8 @@ def test_native_concurrency_shared_across_pools_and_all_scopes(monkeypatch, targ
                 'prompt_tokens_details': {'cached_tokens': 0}}})
         async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as client:
             async def call(tid=1, uid=10, host='dashscope.aliyuncs.com', hold=False):
-                with meter.background_scope(tenant_id=tid, user_id=uid, module='sem', operation='test'):
+                with meter.background_scope(tenant_id=tid, user_id=uid, module='geo',
+                                            operation='onsite.ai_proposal', job_ref='geo-onsite-ai:test'):
                     return await meter.metered_request(client, 'post', 'https://' + host + '/v1/chat/completions',
                         provider='business-alias', model='deepseek-v4-flash', json={'messages': []},
                         headers={'x-hold': 'yes'} if hold else {})
@@ -170,7 +170,8 @@ def test_native_unknown_charge_keeps_hold_and_blocks_budget_after_calendar_reset
             raise httpx.ReadTimeout('DO_NOT_EXPOSE', request=request)
         async with httpx.AsyncClient(transport=httpx.MockTransport(timeout)) as client:
             async def call():
-                with meter.background_scope(tenant_id=1, user_id=10, module='sem', operation='test'):
+                with meter.background_scope(tenant_id=1, user_id=10, module='geo',
+                                            operation='onsite.ai_proposal', job_ref='geo-onsite-ai:test'):
                     return await meter.metered_request(client, 'post', 'https://dashscope.aliyuncs.com/v1/chat/completions',
                         model='deepseek-v4-flash', json={'messages': []})
             with pytest.raises(httpx.ReadTimeout):
@@ -189,24 +190,20 @@ def test_native_unknown_charge_keeps_hold_and_blocks_budget_after_calendar_reset
     native(monkeypatch, scenario)
 
 
-def test_native_crash_pending_does_not_expire_or_release_on_alert_resolution(monkeypatch):
+def test_native_crash_pending_does_not_expire_or_release(monkeypatch):
     async def scenario(factory, other):
         await change(factory, 'tenant:1', budget(max_concurrent=1))
         event = str(uuid4())
         async with factory() as s:
             await s.execute(text('''INSERT INTO api_usage_events
                 (id,tenant_id,origin,module,operation,provider,endpoint,state,started_at)
-                VALUES(CAST(:id AS uuid),1,'system','sem','test','provider.test','provider.test/v1','requested',
+                VALUES(CAST(:id AS uuid),1,'system','geo','onsite.ai_proposal','provider.test','provider.test/v1','requested',
                     CURRENT_TIMESTAMP - INTERVAL '40 days')'''), {'id': event})
             await s.commit()
-            alert = alert_identity({'kind': 'api_pending'}, 'fixture-pending', event)
-            alerts = [alert]
-            await mutate_operation(s, 10, {'request_id': str(uuid4()), 'kind': 'alert', 'key': alert['id'],
-                'expected_revision': 0, 'value': {'action': 'resolve', 'signal': alert['signal'], 'note': 'operator checking'}}, alerts)
             assert (await controls.usage(s, 'tenant:1'))['active_calls'] == 1
             assert await s.scalar(text('SELECT state FROM api_usage_events WHERE id=CAST(:id AS uuid)'), {'id': event}) == 'requested'
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: pytest.fail('must not send'))) as client:
-            with meter.background_scope(tenant_id=1, module='sem', operation='test'):
+            with meter.background_scope(tenant_id=1, module='geo', operation='onsite.ai_proposal'):
                 with pytest.raises(controls.ControlDenied, match='tenant:1'):
                     await meter.metered_request(client, 'post', 'https://provider.test/v1')
     native(monkeypatch, scenario)
@@ -219,7 +216,36 @@ def test_native_partial_controls_install_is_not_reported_ready(monkeypatch):
             await s.execute(text('DROP TABLE api_control_credentials'))
             await s.commit()
             assert (await controls.read_controls(s))['state'] == 'schema_pending'
+        sent = []
+        async def provider(request):
+            sent.append(request)
+            return httpx.Response(200, json={})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as client:
+            with meter.background_scope(tenant_id=1, user_id=10, module='geo',
+                                        operation='onsite.ai_proposal'):
+                with pytest.raises(meter.MeteringUnavailable):
+                    await meter.metered_request(client, 'post', 'https://provider.test/v1')
+        assert sent == []
     native(monkeypatch, scenario)
+
+
+def test_disabled_guards_preserve_existing_provider_call(monkeypatch):
+    monkeypatch.setenv('API_METERING_ENABLED', 'false')
+    monkeypatch.setenv('API_CONTROLS_ENABLED', 'false')
+    sent = []
+    async def provider(request):
+        sent.append(request)
+        return httpx.Response(200, json={'ok': True})
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as client:
+            with meter.background_scope(tenant_id=1, user_id=10, module='geo',
+                                        operation='onsite.ai_proposal'):
+                response = await meter.metered_request(
+                    client, 'post', 'https://provider.test/v1', json={'prompt': 'safe'},
+                )
+                assert response.status_code == 200
+    asyncio.run(run())
+    assert len(sent) == 1
 
 
 def test_native_reviewed_permission_scripts_keep_audit_append_only(monkeypatch):

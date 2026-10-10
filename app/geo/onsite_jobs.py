@@ -38,6 +38,10 @@ _worker_status: dict[str, Any] = {
 }
 
 
+class PendingBatchError(RuntimeError):
+    """One or more queued jobs failed before returning a worker result."""
+
+
 def pending_worker_status() -> dict[str, Any]:
     return dict(_worker_status)
 
@@ -67,6 +71,12 @@ async def run_pending_batch(*, session_factory=None, runner=None,
         *(execute(int(row.id), int(row.tenant_id)) for row in rows),
         return_exceptions=True,
     )
+    failures = [outcome for outcome in outcomes if isinstance(outcome, Exception)]
+    if failures:
+        kinds = ",".join(sorted({type(failure).__name__ for failure in failures}))
+        raise PendingBatchError(
+            f"{len(failures)} queued job runner(s) failed ({kinds})"
+        )
     completed = sum(
         1 for outcome in outcomes
         if isinstance(outcome, dict) and outcome.get("status") not in {"conflict", "blocked"}
@@ -84,21 +94,22 @@ async def supervise_pending_jobs() -> None:
         return
     while True:
         try:
-            result = await run_pending_batch()
-            _worker_status.update(
-                state="active", last_tick_at=onsite_ai.now_iso(),
-                last_attempted=result["attempted"], last_completed=result["completed"],
-                last_error=None,
-            )
+            try:
+                result = await run_pending_batch()
+                _worker_status.update(
+                    state="active", last_tick_at=onsite_ai.now_iso(),
+                    last_attempted=result["attempted"], last_completed=result["completed"],
+                    last_error=None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                _worker_status.update(
+                    state="degraded", last_tick_at=onsite_ai.now_iso(),
+                    last_error=type(exc).__name__,
+                )
+            await asyncio.sleep(PENDING_TICK_SECONDS)
         except asyncio.CancelledError:
             _worker_status["state"] = "stopped"
             raise
-        except Exception as exc:  # noqa: BLE001
-            _worker_status.update(
-                state="degraded", last_tick_at=onsite_ai.now_iso(),
-                last_error=type(exc).__name__,
-            )
-        await asyncio.sleep(PENDING_TICK_SECONDS)
 
 
 def _meta(job: GeoAsyncJob) -> dict[str, Any]:
