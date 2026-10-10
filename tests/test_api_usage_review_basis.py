@@ -1,8 +1,9 @@
 """Minimal shared contract used by all three admission services."""
 from uuid import uuid4
+import httpx
 import pytest
 from sqlalchemy import text
-from app import api_controls as controls
+from app import api_controls as controls,api_metering as meter
 from tests.test_platform_call_guards import native, budget
 
 
@@ -59,4 +60,11 @@ def test_native_partial_review_schema_fails_closed(monkeypatch,missing):
             await s.commit()
             with pytest.raises(RuntimeError,match='Incomplete'):
                 await controls.usage(s,'global')
+        sent=[]
+        async def provider(request):
+            sent.append(request);return httpx.Response(200,json={})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as client:
+            with pytest.raises(meter.MeteringUnavailable):
+                await meter.metered_request(client,'post','https://dashscope.aliyuncs.com/v1/chat/completions',json={'messages':[]})
+        assert sent==[]
     native(monkeypatch,scenario)
