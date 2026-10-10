@@ -11,6 +11,8 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "app/api_usage_review_basis.py",
+    "tests/test_api_usage_review_basis.py",
     "app/seo_onsite_ai_health.py",
     "tests/test_seo_onsite_ai_health.py",
     "tests/test_seo_onsite_ai_health_postgres.py",

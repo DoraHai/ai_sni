@@ -1146,3 +1146,97 @@ def test_post_provider_metering_commit_failure_is_unknown_not_free_failure(monke
             await jobs.run_onsite_ai_jobs(sessions=sessions)
             assert len(sent) == 1
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('target', ['global', 'tenant:4', 'user:7', 'provider:api.deepseek.com'])
+@pytest.mark.parametrize('review', ['amount', 'terminal_only', 'terminal_only_old'])
+def test_real_seo_worker_honors_other_module_reviewed_amount_and_terminal_only(monkeypatch, target, review):
+    from decimal import Decimal
+    from sqlalchemy import text
+    from tests.test_api_usage_review_basis import install_basis
+    async def run():
+        async with fixture() as (sessions, task):
+            sent = []
+            async def provider(request):
+                sent.append(request)
+                return guard_response(request)
+            meter, controls = real_metered_supplier(monkeypatch, sessions, provider)
+            await install_guard_tables(sessions)
+            await install_basis(sessions)
+            policy = {'daily_calls': None, 'monthly_calls': None, 'daily_cny': None,
+                      'monthly_cny': '4' if review == 'amount' else '100',
+                      'warning_percent': 80, 'max_concurrent': 1}
+            event_id = str(uuid4())
+            async with sessions() as db:
+                await controls.mutate(db, actor_id=7, request_id=str(uuid4()), kind='budget',
+                    key='budget:'+target, expected_revision=0, value=policy)
+                # Fixture is an already-committed GEO review, not an invocation of a review API.
+                await db.execute(text('''INSERT INTO api_usage_events
+                    (id,tenant_id,user_id,origin,module,operation,provider,endpoint,state,
+                     estimated_amount,currency,reserved_amount,review_version,verified_amount,verified_currency,reviewed_at)
+                    VALUES(CAST(:id AS uuid),4,7,'background','geo','fixture','alias',
+                        'api.deepseek.com/v1/chat/completions','error',0,'CNY',9,1,:amount,:currency,CURRENT_TIMESTAMP)'''),
+                    {'id': event_id, 'amount': Decimal('5') if review == 'amount' else None,
+                     'currency': 'CNY' if review == 'amount' else None})
+                if review == 'terminal_only_old':
+                    await db.execute(text("UPDATE api_usage_events SET started_at=CURRENT_TIMESTAMP-INTERVAL '40 days'"))
+                await db.commit()
+                spent = await controls.usage(db, target)
+                assert spent['active_calls'] == 0
+                assert spent['unresolved_calls'] == (0 if review == 'amount' else 1)
+                assert Decimal(spent['monthly_cny']) == (5 if review == 'amount' else 0)
+            req = request(task)
+            async with sessions() as db:
+                await enqueue(task['id'], req, db, ADVISOR)
+            assert await jobs.execute_request(task['id'], 4, 2, str(req.request_id), sessions=sessions) == 'failed'
+            assert not sent
+            async with sessions() as db:
+                assert await db.scalar(text('SELECT count(*) FROM api_usage_events')) == 1
+                assert (await db.get(SeoTask, task['id'])).params['onsite']['revision'] == 1
+                # Raising the money cap allows verified fees; removing only the money
+                # policy proves terminal-only rows no longer occupy concurrency slots.
+                await controls.mutate(db, actor_id=7, request_id=str(uuid4()), kind='budget',
+                    key='budget:'+target, expected_revision=1,
+                    value={**policy, 'monthly_cny': '100' if review == 'amount' else None})
+            req = request(task)
+            async with sessions() as db:
+                await enqueue(task['id'], req, db, ADVISOR)
+            assert await jobs.execute_request(task['id'], 4, 2, str(req.request_id), sessions=sessions) == 'ready'
+            assert len(sent) == 1
+            async with sessions() as db:
+                source = (await db.execute(text('SELECT module,estimated_amount,review_version FROM api_usage_events WHERE id=CAST(:id AS uuid)'),
+                    {'id': event_id})).one()
+                assert tuple(source) == ('geo', 0, 1)  # admission never edits the other module's review
+                assert (await controls.usage(db, target))['unresolved_calls'] == (0 if review == 'amount' else 1)
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('missing', ['review_version', 'verified_amount', 'verified_currency', 'reviewed_at'])
+@pytest.mark.parametrize('with_budget', [False, True])
+def test_real_seo_worker_rejects_partial_review_schema_before_ledger_or_http(monkeypatch, missing, with_budget):
+    from sqlalchemy import text
+    from tests.test_api_usage_review_basis import install_basis
+    async def run():
+        async with fixture() as (sessions, task):
+            sent = []
+            async def provider(request):
+                sent.append(request)
+                return guard_response(request)
+            meter, controls = real_metered_supplier(monkeypatch, sessions, provider)
+            await install_guard_tables(sessions)
+            await install_basis(sessions)
+            async with sessions() as db:
+                if with_budget:
+                    await controls.mutate(db, actor_id=7, request_id=str(uuid4()), kind='budget', key='budget:global',
+                        expected_revision=0, value={'daily_calls': None, 'monthly_calls': None, 'daily_cny': None,
+                            'monthly_cny': '100', 'warning_percent': 80, 'max_concurrent': 1})
+                await db.execute(text('ALTER TABLE api_usage_events DROP COLUMN ' + missing))
+                await db.commit()
+            req = request(task)
+            async with sessions() as db:
+                await enqueue(task['id'], req, db, ADVISOR)
+            assert await jobs.execute_request(task['id'], 4, 2, str(req.request_id), sessions=sessions) == 'failed'
+            assert not sent
+            async with sessions() as db:
+                assert await db.scalar(text('SELECT count(*) FROM api_usage_events')) == 0
+    asyncio.run(run())
