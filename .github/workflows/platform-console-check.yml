@@ -2,7 +2,7 @@ name: Platform console backend checks
 
 on:
   pull_request:
-    branches: [codex/production-sem-backend]
+    branches: [codex/production-sem-backend, codex/platform-call-guards-backend-20261011]
     paths:
       - 'app/api/platform_console.py'
       - 'app/api/platform_ai_governance.py'
@@ -11,6 +11,15 @@ on:
       - 'app/platform_operations.py'
       - 'app/platform_call_monitor.py'
       - 'app/platform_worker_health.py'
+      - 'app/api/platform_balances.py'
+      - 'app/platform_balances.py'
+      - 'app/platform_cloud_balances.py'
+      - 'app/platform_balance_coverage.py'
+      - 'app/platform_billing_observations.py'
+      - 'config/platform_billing_observations.json'
+      - 'tests/test_platform_balances.py'
+      - 'tests/test_platform_balance_coverage.py'
+      - 'tests/test_platform_cloud_balances.py'
       - 'app/platform_usage_review.py'
       - 'app/api_usage_review_basis.py'
       - 'tests/test_platform_worker_health.py'
@@ -59,6 +68,15 @@ on:
       - 'app/platform_operations.py'
       - 'app/platform_call_monitor.py'
       - 'app/platform_worker_health.py'
+      - 'app/api/platform_balances.py'
+      - 'app/platform_balances.py'
+      - 'app/platform_cloud_balances.py'
+      - 'app/platform_balance_coverage.py'
+      - 'app/platform_billing_observations.py'
+      - 'config/platform_billing_observations.json'
+      - 'tests/test_platform_balances.py'
+      - 'tests/test_platform_balance_coverage.py'
+      - 'tests/test_platform_cloud_balances.py'
       - 'app/platform_usage_review.py'
       - 'app/api_usage_review_basis.py'
       - 'tests/test_platform_worker_health.py'
@@ -141,6 +159,7 @@ jobs:
           tests/test_writeback_guardrail_contract.py
           tests/test_platform_call_guards.py tests/test_platform_call_integration.py tests/test_platform_call_monitor.py
           tests/test_api_usage_review_basis.py tests/test_platform_usage_review.py tests/test_platform_worker_health.py
+          tests/test_platform_balances.py tests/test_platform_balance_coverage.py tests/test_platform_cloud_balances.py
       - name: Confirm new admission suites ran without skipped database fixtures
         run: |
           python - <<'PY'
@@ -151,7 +170,10 @@ jobs:
                                   ('test_platform_call_monitor', 2),
                                   ('test_api_usage_review_basis', 8),
                                   ('test_platform_usage_review', 25),
-                                  ('test_platform_worker_health', 27)]:
+                                  ('test_platform_worker_health', 27),
+                                  ('test_platform_balances', 18),
+                                  ('test_platform_balance_coverage', 14),
+                                  ('test_platform_cloud_balances', 22)]:
               selected = [case for case in cases if case.get('classname', '').rsplit('.', 1)[-1] == module]
               skipped = sum(case.find('skipped') is not None for case in selected)
               failed = sum(case.find('failure') is not None or case.find('error') is not None for case in selected)

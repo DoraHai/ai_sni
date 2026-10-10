@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "verified_on": "2026-10-11",
+  "source": "owner_console_verification",
+  "reported_balances": [
+    {"provider": "aliyun", "name": "阿里云账户（含百炼）", "currency": "CNY", "amount": "27.34", "basis": "可用额度"},
+    {"provider": "volcengine", "name": "火山引擎账户（含豆包）", "currency": "CNY", "amount": "9.35", "basis": "可用余额"},
+    {"provider": "qianfan", "name": "百度智能云账户（含千帆）", "currency": "CNY", "amount": "25.00", "basis": "现金账户余额"},
+    {"provider": "tencent", "name": "腾讯云账户（含混元）", "currency": "CNY", "amount": "20.00", "basis": "旧凭据查询结果；专用子用户余额权限待补"}
+  ],
+  "services": [{"id": "tencent_wsa", "name": "腾讯云联网搜索 WSA", "state": "not_opened", "note": "用户核验未找到开通记录或资源包；不作为已接入服务余额故障。"}],
+  "package_account": {"provider": "chinaz", "name": "站长之家", "account_id": "chinaz_9633949", "currency": "CNY", "balance": "0", "note": "后台人工核验；暂无已确认可用的官方余量查询接口，刷新不会更新此核验数据。"},
+  "packages": [
+    {"id": "baidu_pc_ranking", "name": "BD_PC排名", "total": 40000, "used": 3123, "remaining": 36877, "expires_on": "2027-09-02", "enabled": true},
+    {"id": "360_mobile_keywords", "name": "360移动网站关键词", "total": 2500, "used": 85, "remaining": 2415, "expires_on": "2027-09-02", "enabled": true},
+    {"id": "sogou_mobile_keywords", "name": "搜狗移动网站关键词", "total": 2500, "used": 59, "remaining": 2441, "expires_on": "2027-09-02", "enabled": true},
+    {"id": "sogou_pc_keywords", "name": "搜狗PC网站关键词", "total": 2500, "used": 0, "remaining": 2500, "expires_on": "2027-09-02", "enabled": true},
+    {"id": "baidu_mobile_top50", "name": "BD移动前50名信息", "total": 250, "used": 3, "remaining": 247, "expires_on": "2027-09-02", "enabled": true},
+    {"id": "baidu_pc_top50", "name": "BD_PC前50名信息", "total": 250, "used": 3, "remaining": 247, "expires_on": "2027-09-02", "enabled": true},
+    {"id": "bid_domains", "name": "竞价推广域名", "total": 10, "used": 1, "remaining": 9, "expires_on": "2027-09-01", "enabled": true},
+    {"id": "360_pc_ranking", "name": "360PC排名", "total": 250, "used": 250, "remaining": 0, "expires_on": "2027-09-02", "enabled": false},
+    {"id": "baidu_mobile_ranking", "name": "BD移动排名", "total": 1000, "used": 1000, "remaining": 0, "expires_on": "2027-09-02", "enabled": false}
+  ]
+}
