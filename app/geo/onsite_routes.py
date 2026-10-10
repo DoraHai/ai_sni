@@ -112,14 +112,12 @@ def public(row, project, can_write, *, provider_ready=False, provider_reason=Non
 
 
 async def _provider_status(session, tenant_id: int) -> tuple[bool, str | None]:
-    credentials = await resolve_llm_credentials(session, tenant_id)
-    if not credentials:
-        return False, None
+    credentials = await resolve_llm_credentials(session, tenant_id) or {}
     try:
-        onsite_ai.select_planning_credentials(credentials)
+        selected = onsite_ai.select_planning_credentials(credentials)
     except HTTPException as exc:
         return False, str(exc.detail)
-    return True, None
+    return (True, None) if selected.get("api_key") else (False, None)
 
 
 async def _public(session, row, project, can_write):
@@ -331,11 +329,12 @@ async def ai_proposal(task_id: PositiveInt, req: AiProposal, session=Depends(get
     projected = onsite_ai.projected_ai_run(value)
     if projected and projected.get("state") == "running":
         raise HTTPException(409, "当前任务已有 AI 方案正在生成")
-    credentials = await resolve_llm_credentials(session, req.tenant_id)
-    if not credentials:
+    credentials = onsite_ai.select_planning_credentials(
+        await resolve_llm_credentials(session, req.tenant_id) or {})
+    if not credentials.get("api_key"):
         raise HTTPException(409, "平台 AI 供应商尚未配置")
-    credentials = onsite_ai.select_planning_credentials(credentials)
     snapshot = await _proposal_snapshot(session, project, row)
+    onsite_ai.planning_preflight(snapshot)
     system_prompt, user_prompt = onsite_ai.prompt_text(snapshot, req.mode)
     generation_options = onsite_ai.generation_options(credentials, snapshot)
     project.project_settings = onsite_ai.reserve_daily(

@@ -186,6 +186,47 @@ def test_empty_fact_schema_forbids_fact_ids_and_planning_model_is_explicit(monke
     assert onsite_ai.select_planning_credentials(credentials)["model"] == "deepseek-v4-flash-0731"
 
 
+def test_official_planning_provider_uses_only_server_configuration(monkeypatch):
+    incoming = {"api_key": "old-tenant-or-dashscope-key",
+                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "model": "deepseek-v4-flash-0731", "provider": "dashscope"}
+    monkeypatch.setattr(onsite_ai, "get_settings", lambda: SimpleNamespace(
+        geo_onsite_ai_provider="deepseek", geo_onsite_ai_model="",
+        deepseek_api_key="platform-official-key",
+        deepseek_base_url="https://api.deepseek.com"))
+    selected = onsite_ai.select_planning_credentials(incoming)
+    assert selected == {"api_key": "platform-official-key",
+                        "base_url": "https://api.deepseek.com",
+                        "model": "deepseek-chat", "provider": "deepseek",
+                        "source": "env_deepseek_onsite"}
+    assert onsite_ai.generation_options(selected, {"items": items(), "facts": facts()}) == {
+        "max_tokens": 8192}
+
+    for invalid in (
+        {"deepseek_api_key": "", "deepseek_base_url": "https://api.deepseek.com",
+         "geo_onsite_ai_model": "deepseek-chat"},
+        {"deepseek_api_key": "key", "deepseek_base_url": "http://api.deepseek.com",
+         "geo_onsite_ai_model": "deepseek-chat"},
+        {"deepseek_api_key": "key", "deepseek_base_url": "https://proxy.example/v1",
+         "geo_onsite_ai_model": "deepseek-chat"},
+        {"deepseek_api_key": "key", "deepseek_base_url": "https://api.deepseek.com",
+         "geo_onsite_ai_model": "deepseek-reasoner"},
+    ):
+        monkeypatch.setattr(onsite_ai, "get_settings", lambda invalid=invalid: SimpleNamespace(
+            geo_onsite_ai_provider="deepseek", **invalid))
+        with pytest.raises(HTTPException) as error:
+            onsite_ai.select_planning_credentials(incoming)
+        assert error.value.status_code == 409
+
+
+def test_planning_preflight_requires_public_facts_without_changing_supported_snapshots():
+    with pytest.raises(HTTPException) as error:
+        onsite_ai.planning_preflight({"facts": []})
+    assert error.value.status_code == 409
+    assert "已核验且获准公开使用" in str(error.value.detail)
+    assert onsite_ai.planning_preflight({"facts": facts()}) is None
+
+
 def test_fact_public_use_requires_explicit_human_authorization():
     assert not onsite_ai.public_use_authorized({"public_use": {"allowed": True}})
     assert not onsite_ai.public_use_authorized({"public_use": {

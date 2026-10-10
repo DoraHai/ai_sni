@@ -132,7 +132,9 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
     monkeypatch.setattr(api, "chat_json", provider)
     monkeypatch.setattr(api, "advisor_available", tracked_advisor_available)
     monkeypatch.setattr(api.onsite_ai, "get_settings", lambda: SimpleNamespace(
-        geo_onsite_ai_model="qwen3.7-flash-2026-07-15"))
+        geo_onsite_ai_provider="deepseek", geo_onsite_ai_model="deepseek-chat",
+        deepseek_api_key="official-platform-key",
+        deepseek_base_url="https://api.deepseek.com"))
     async def run():
         async with database() as sessions:
             await configured(sessions)
@@ -162,14 +164,12 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
                 same = await api.ai_proposal(row["id"], req, db, ADVISOR)
             assert same["workflow"]["ai_run"]["state"] == "ready"
             assert len(calls) == 1
-            assert calls[0][2]["enable_thinking"] is False
+            assert calls[0][2]["api_key"] == "official-platform-key"
+            assert calls[0][2]["base_url"] == "https://api.deepseek.com"
+            assert calls[0][2]["model"] == "deepseek-chat"
             assert calls[0][2]["max_tokens"] == 8192
-            assert calls[0][2]["model"] == "qwen3.7-flash-2026-07-15"
-            response_format = calls[0][2]["response_format"]
-            assert response_format["type"] == "json_schema"
-            schema = response_format["json_schema"]["schema"]
-            assert schema["properties"]["items"]["minItems"] == 3
-            assert schema["$defs"]["ProviderDraftItem"]["properties"]["fact_ids"]["items"]["enum"] == [80]
+            assert all(key not in calls[0][2] for key in (
+                "enable_thinking", "reasoning_effort", "response_format"))
             assert "API" not in str(result["workflow"]["ai_proposal"])
             assert True in advisor_locks
             manual_items = [api.work.Item.model_validate(item) for item in same["workflow"]["items"]]
@@ -231,7 +231,9 @@ def test_invalid_onsite_model_is_rejected_before_quota_or_provider_call(monkeypa
     monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
     monkeypatch.setattr(api, "chat_json", provider)
     monkeypatch.setattr(api.onsite_ai, "get_settings", lambda: SimpleNamespace(
-        geo_onsite_ai_model="unverified-model"))
+        geo_onsite_ai_provider="deepseek", geo_onsite_ai_model="deepseek-chat",
+        deepseek_api_key="official-platform-key",
+        deepseek_base_url="https://proxy.invalid/v1"))
     async def run():
         async with database() as sessions:
             await configured(sessions)
@@ -253,6 +255,46 @@ def test_invalid_onsite_model_is_rejected_before_quota_or_provider_call(monkeypa
                 capability = projected["capabilities"]["ai_planning"]
                 assert capability["can_generate"] is False
                 assert "配置无效" in capability["reason"]
+            assert calls == 0
+    asyncio.run(run())
+
+
+def test_missing_facts_stop_before_nonce_quota_or_official_provider_call(monkeypatch):
+    calls = 0
+    async def credentials(session, tenant_id):
+        return {"api_key": "shared-default", "base_url":
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "model": "deepseek-v4-flash-0731", "provider": "dashscope"}
+    async def provider(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return {}
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(api, "chat_json", provider)
+    monkeypatch.setattr(api.onsite_ai, "get_settings", lambda: SimpleNamespace(
+        geo_onsite_ai_provider="deepseek", geo_onsite_ai_model="deepseek-chat",
+        deepseek_api_key="official-platform-key",
+        deepseek_base_url="https://api.deepseek.com"))
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                row = await api.create(api.Create(
+                    tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员"), db, ADVISOR)
+            request = api.AiProposal(tenant_id=1, project_id=10,
+                expected_revision=1, request_id=uuid4(), mode="initial")
+            async with sessions() as db:
+                with pytest.raises(HTTPException) as error:
+                    await api.ai_proposal(row["id"], request, db, ADVISOR)
+                assert error.value.status_code == 409
+                assert "已核验且获准公开使用" in str(error.value.detail)
+            async with sessions() as db:
+                project = await db.get(GeoProject, 10)
+                assert "onsite_ai_quota" not in (project.project_settings or {})
+                assert "onsite_ai_requests" not in (project.project_settings or {})
+                stored = await db.get(GeoActionTicket, row["id"])
+                assert "ai_run" not in stored.progress["onsite"]
             assert calls == 0
     asyncio.run(run())
 
@@ -371,6 +413,8 @@ def test_ai_error_is_classified_and_same_nonce_never_calls_again(
     async def run():
         async with database() as sessions:
             await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
             async with sessions() as db:
                 row = await api.create(api.Create(tenant_id=1, project_id=10, request_id=uuid4(),
                     work_type="startup", owner_name="维护人员"), db, ADVISOR)

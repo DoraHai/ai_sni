@@ -124,15 +124,17 @@ def request_hash(*, task_id: int, tenant_id: int, project_id: int,
 
 
 def generation_options(credentials: dict[str, str], snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Use non-thinking mode only for documented DashScope hybrid DeepSeek-v4 models."""
+    """Return only provider/model options verified for the onsite proposal path."""
     host = (urlsplit(credentials.get("base_url") or "").hostname or "").lower()
     model = (credentials.get("model") or "").lower()
-    if not host.endswith(".aliyuncs.com"):
-        return {}
     count = sum(1 for item in snapshot.get("items", []) if item.get("kind") in DRAFT_ITEM_KINDS)
     count = max(1, min(count, 30))
-    options = {"enable_thinking": False,
-               "max_tokens": min(32768, max(8192, 2048 + 2048 * count))}
+    max_tokens = min(32768, max(8192, 2048 + 2048 * count))
+    if host == "api.deepseek.com" and model == "deepseek-chat":
+        return {"max_tokens": max_tokens}
+    if not host.endswith(".aliyuncs.com"):
+        return {}
+    options = {"enable_thinking": False, "max_tokens": max_tokens}
     if model in STRICT_ONSITE_MODELS:
         options["response_format"] = provider_response_format(snapshot)
         return options
@@ -141,15 +143,41 @@ def generation_options(credentials: dict[str, str], snapshot: dict[str, Any]) ->
 
 def select_planning_credentials(credentials: dict[str, str]) -> dict[str, str]:
     """Apply the optional onsite-only model after validating its provider route."""
-    configured = (getattr(get_settings(), "geo_onsite_ai_model", "") or "").strip().lower()
-    if not configured:
+    settings = get_settings()
+    provider = (getattr(settings, "geo_onsite_ai_provider", "") or "").strip().lower()
+    configured = (getattr(settings, "geo_onsite_ai_model", "") or "").strip().lower()
+    if not provider and not configured:
         return dict(credentials)
+    if provider == "deepseek":
+        model = configured or "deepseek-chat"
+        api_key = (getattr(settings, "deepseek_api_key", "") or "").strip()
+        base_url = (getattr(settings, "deepseek_base_url", "") or "").strip().rstrip("/")
+        try:
+            parsed = urlsplit(base_url)
+            port = parsed.port
+        except ValueError:
+            parsed, port = urlsplit(""), None
+        if (not api_key or model != "deepseek-chat" or parsed.scheme != "https"
+                or (parsed.hostname or "").lower() != "api.deepseek.com"
+                or parsed.username or parsed.password or parsed.query or parsed.fragment
+                or port not in {None, 443} or parsed.path not in {"", "/v1"}):
+            raise HTTPException(409, "GEO 站内 DeepSeek 官方配置无效；仅支持 api.deepseek.com 与已验证的 deepseek-chat")
+        return {"api_key": api_key, "base_url": base_url, "model": model,
+                "provider": "deepseek", "source": "env_deepseek_onsite"}
+    if provider not in {"", "dashscope"}:
+        raise HTTPException(409, "GEO 站内专用供应商配置无效")
     host = (urlsplit(credentials.get("base_url") or "").hostname or "").lower()
     if (configured not in STRICT_ONSITE_MODELS
             or credentials.get("provider") != "dashscope"
             or not host.endswith(".aliyuncs.com")):
         raise HTTPException(409, "GEO 站内专用模型配置无效或不属于已验证的百炼结构化输出路由")
     return {**credentials, "model": configured}
+
+
+def planning_preflight(snapshot: dict[str, Any]) -> None:
+    """Reject non-actionable paid planning before nonce/quota reservation."""
+    if not snapshot.get("facts"):
+        raise HTTPException(409, "请先补充已核验且获准公开使用的事实资料，再生成 GEO 站内方案")
 
 
 def reserve_daily(settings: dict | None, request_id: str, *, request_digest: str | None = None,
