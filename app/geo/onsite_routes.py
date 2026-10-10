@@ -93,29 +93,40 @@ def _blocker(value: dict, project: GeoProject) -> str | None:
     return settings.get("geo_workflow_blocker")
 
 
-def public(row, project, can_write, *, provider_ready=False, tenant_name=None):
+def public(row, project, can_write, *, provider_ready=False, provider_reason=None, tenant_name=None):
     value = dict(row.progress["onsite"])
     projected = onsite_ai.projected_ai_run(value)
     if projected:
         projected.pop("request_hash", None)
         value["ai_run"] = projected
+    proposal = onsite_ai.public_ai_proposal(value.get("ai_proposal"))
+    if proposal is not None:
+        value["ai_proposal"] = proposal
     return dict(id=row.id, module="geo", tenant_id=row.tenant_id, scope_id=project.id,
         title=row.title, workflow=value, allowed_actions=work.allowed_actions(value, can_write),
         completion_evidence=dict(acceptance=value.get("acceptance"), recheck=value.get("recheck")) if value["phase"] == "done" else None,
         scope_name=project.name, tenant_name=tenant_name,
         next_action=_next_action(value), blocker=_blocker(value, project),
         capabilities=onsite_ai.capabilities(provider_ready=provider_ready, can_write=can_write,
-                                            phase=value["phase"]))
+                                            phase=value["phase"], reason=provider_reason))
 
 
-async def _provider_ready(session, tenant_id: int) -> bool:
-    return bool(await resolve_llm_credentials(session, tenant_id))
+async def _provider_status(session, tenant_id: int) -> tuple[bool, str | None]:
+    credentials = await resolve_llm_credentials(session, tenant_id)
+    if not credentials:
+        return False, None
+    try:
+        onsite_ai.select_planning_credentials(credentials)
+    except HTTPException as exc:
+        return False, str(exc.detail)
+    return True, None
 
 
 async def _public(session, row, project, can_write):
     tenant = await session.get(Tenant, row.tenant_id)
+    provider_ready, provider_reason = await _provider_status(session, row.tenant_id)
     return public(row, project, can_write,
-                  provider_ready=await _provider_ready(session, row.tenant_id),
+                  provider_ready=provider_ready, provider_reason=provider_reason,
                   tenant_name=tenant.name if tenant else None)
 
 @router.get("/workbench/onsite-tasks")
@@ -130,9 +141,10 @@ async def list_tasks(tenant_id: PositiveInt, project_id: PositiveInt, before_id:
     rows = list(await session.scalars(query.order_by(GeoActionTicket.id.desc()).limit(21)))
     permitted = await can_operate(session, ctx, project)
     tenant = await session.get(Tenant, tenant_id)
-    provider_ready = await _provider_ready(session, tenant_id)
+    provider_ready, provider_reason = await _provider_status(session, tenant_id)
     return dict(module="geo", tenant_id=tenant_id, scope_id=project_id, can_create=permitted,
         items=[public(r, project, permitted, provider_ready=provider_ready,
+                      provider_reason=provider_reason,
                       tenant_name=tenant.name if tenant else None) for r in rows[:20]],
         next_before_id=rows[19].id if len(rows) > 20 else None)
 
@@ -178,19 +190,19 @@ async def advisor_tasks(tenant_id: PositiveInt | None = None, before_id: Positiv
         stmt = stmt.where(GeoActionTicket.id < before_id)
     rows = list(await session.scalars(stmt.order_by(GeoActionTicket.id.desc()).limit(limit + 1)))
     items = []
-    tenant_cache: dict[int, tuple[str | None, bool]] = {}
+    tenant_cache: dict[int, tuple[str | None, bool, str | None]] = {}
     for row in rows[:limit]:
         project = projects.get(int(row.progress["onsite"]["project_id"]))
         if project is None or row.tenant_id != project.tenant_id:
             continue
         if row.tenant_id not in tenant_cache:
             tenant = await session.get(Tenant, row.tenant_id)
+            provider_ready, provider_reason = await _provider_status(session, row.tenant_id)
             tenant_cache[row.tenant_id] = (
-                tenant.name if tenant else None,
-                await _provider_ready(session, row.tenant_id),
-            )
-        tenant_name, provider_ready = tenant_cache[row.tenant_id]
+                tenant.name if tenant else None, provider_ready, provider_reason)
+        tenant_name, provider_ready, provider_reason = tenant_cache[row.tenant_id]
         items.append(public(row, project, True, provider_ready=provider_ready,
+                            provider_reason=provider_reason,
                             tenant_name=tenant_name))
     return {"schema": 1, "module": "geo", "items": items,
             "next_before_id": rows[limit - 1].id if len(rows) > limit else None}

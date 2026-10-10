@@ -150,8 +150,12 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
             assert result["workflow"]["ai_run"]["request_id"] == str(rid)
             assert result["workflow"]["ai_run"]["state"] == "ready"
             assert result["workflow"]["ai_proposal"]["proposal_revision"] == result["workflow"]["revision"]
-            assert result["workflow"]["ai_proposal"]["items"][0]["source_refs"][0]["source_id"].startswith("geo-public-source:")
-            assert "fact_id" not in result["workflow"]["ai_proposal"]["items"][0]["source_refs"][0]
+            public_item = result["workflow"]["ai_proposal"]["items"][0]
+            assert public_item["id"] == public_item["item_id"]
+            assert public_item["missing_information"] == public_item["blocking_missing_information"]
+            assert "optional_information" in public_item
+            assert public_item["source_refs"][0]["source_id"].startswith("geo-public-source:")
+            assert "fact_id" not in public_item["source_refs"][0]
             assert result["capabilities"]["website_execution"]["enabled"] is False
             assert not any(key in result["workflow"] for key in ("approval", "implementation", "recheck", "acceptance"))
             async with sessions() as db:
@@ -244,6 +248,11 @@ def test_invalid_onsite_model_is_rejected_before_quota_or_provider_call(monkeypa
             async with sessions() as db:
                 project = await db.get(GeoProject, 10)
                 assert "onsite_ai_quota" not in (project.project_settings or {})
+                stored = await db.get(GeoActionTicket, row["id"])
+                projected = await api._public(db, stored, project, True)
+                capability = projected["capabilities"]["ai_planning"]
+                assert capability["can_generate"] is False
+                assert "配置无效" in capability["reason"]
             assert calls == 0
     asyncio.run(run())
 

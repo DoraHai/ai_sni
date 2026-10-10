@@ -186,7 +186,7 @@ def capabilities(*, provider_ready: bool, can_write: bool, phase: str,
                  reason: str | None = None) -> dict[str, Any]:
     can_generate = bool(provider_ready and can_write and phase not in {"done", "cancelled"})
     if not provider_ready:
-        message = "平台 AI 供应商尚未配置"
+        message = reason or "平台 AI 供应商尚未配置"
     elif not can_write:
         message = reason or "需要当前项目有效顾问分配及编辑权限"
     elif phase in {"done", "cancelled"}:
@@ -206,6 +206,27 @@ def capabilities(*, provider_ready: bool, can_write: bool, phase: str,
             "reason": "官网自动修改暂未接入，按批准方案人工实施",
         },
     }
+
+
+def public_ai_proposal(value: Any) -> dict[str, Any] | None:
+    """Add read aliases for old and V2 explanations without mutating storage."""
+    if not isinstance(value, dict):
+        return None
+    result = dict(value)
+    projected_items = []
+    for raw in value.get("items", []):
+        if not isinstance(raw, dict):
+            projected_items.append(raw)
+            continue
+        item = dict(raw)
+        if "id" not in item and item.get("item_id") is not None:
+            item["id"] = item["item_id"]
+        if "missing_information" not in item:
+            blocking = item.get("blocking_missing_information")
+            item["missing_information"] = list(blocking) if isinstance(blocking, list) else []
+        projected_items.append(item)
+    result["items"] = projected_items
+    return result
 
 
 def projected_ai_run(value: dict) -> dict | None:

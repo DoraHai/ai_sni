@@ -88,6 +88,30 @@ def test_capabilities_never_claim_website_execution():
         "enabled": False, "status": "reserved",
         "reason": "官网自动修改暂未接入，按批准方案人工实施",
     }
+    invalid = onsite_ai.capabilities(
+        provider_ready=False, can_write=True, phase="draft", reason="站内专用模型配置无效")
+    assert invalid["ai_planning"]["can_generate"] is False
+    assert invalid["ai_planning"]["reason"] == "站内专用模型配置无效"
+
+
+def test_public_ai_proposal_normalizes_old_and_v2_items_without_mutating_storage():
+    stored_v2 = {"contract_version": 2, "items": [{
+        "item_id": "faq", "reason": "需补充",
+        "source_refs": [], "blocking_missing_information": ["缺少安全范围"],
+        "optional_information": ["价格可后补"],
+    }]}
+    projected_v2 = onsite_ai.public_ai_proposal(stored_v2)
+    assert projected_v2["items"][0]["id"] == "faq"
+    assert projected_v2["items"][0]["missing_information"] == ["缺少安全范围"]
+    assert projected_v2["items"][0]["optional_information"] == ["价格可后补"]
+    assert "id" not in stored_v2["items"][0]
+    assert "missing_information" not in stored_v2["items"][0]
+
+    stored_old = {"items": [{"id": "knowledge", "rationale": "旧说明",
+                              "missing_information": ["旧阻断"],
+                              "optional_information": ["旧可选"]}]}
+    projected_old = onsite_ai.public_ai_proposal(stored_old)
+    assert projected_old["items"][0] == stored_old["items"][0]
 
 
 def test_generation_options_only_target_documented_dashscope_hybrid_models():
