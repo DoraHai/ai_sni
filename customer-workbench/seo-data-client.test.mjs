@@ -3,6 +3,24 @@ import {createSeoDataClient} from './js/seo-data-client.mjs';import {homeView} f
 const context={connected:true,tenantId:1,siteId:9,userId:7,revision:1};
 function setup(){let current={...context},reply,permission=true;const calls=[];const client=createSeoDataClient({getContext:()=>current,canMaintain:()=>permission,transport:async(path,options)=>{calls.push({path,...options});const value=typeof reply==='function'?await reply():reply;return {ok:typeof value?.status!=='number',status:typeof value?.status==='number'?value.status:200,json:async()=>value?.data??value};}});return {client,calls,set:v=>reply=v,scope:v=>current={...current,...v},deny:()=>permission=false};}
 const row={id:2,tenant_id:1,site_id:9,keyword:'example',priority:'P2',landing_page:null};const list=(items=[row],page=1,total=1)=>({items,page,page_size:20,total});
+test('keyword deletion requires the latest owned selection and advisor permission, binds the site, and consumes selection once',async()=>{
+  const s=setup();await assert.rejects(s.client.removeKeyword(2),/SELECTION_REQUIRED/);assert.equal(s.calls.length,0);
+  s.set(list());await s.client.list('keywords');await assert.rejects(s.client.removeKeyword(99),/SELECTION_REQUIRED/);
+  s.set(list());await s.client.list('keywords');s.set({deleted:true,keyword_id:2});
+  const first=s.client.removeKeyword(2);await assert.rejects(s.client.removeKeyword(2),/SELECTION_REQUIRED/);await first;
+  const call=s.calls.find(c=>c.method==='DELETE');assert.equal(call.path,'/api/v1/seo/keywords/2?tenant_id=1&site_id=9');assert.equal(call.body,undefined);
+  await assert.rejects(s.client.removeKeyword(2),/SELECTION_REQUIRED/);assert.equal(s.calls.filter(c=>c.method==='DELETE').length,1);
+  s.set(list());await s.client.list('keywords');s.deny();await assert.rejects(s.client.removeKeyword(2),/ADVISOR_REQUIRED/);
+});
+test('keyword deletion fails closed across context changes and uncertain outcomes without automatic resends',async()=>{
+  for(const result of [{deleted:true,keyword_id:99},{deleted:false,keyword_id:2},null,{status:500},()=>{throw Error('network lost');}]){
+    const s=setup();s.set(list());await s.client.list('keywords');s.set(result);
+    await assert.rejects(s.client.removeKeyword(2),/DELETE_OUTCOME_UNKNOWN/);
+    await assert.rejects(s.client.removeKeyword(2),/SELECTION_REQUIRED/);assert.equal(s.calls.filter(c=>c.method==='DELETE').length,1);
+  }
+  const s=setup();s.set(list());await s.client.list('keywords');s.scope({siteId:19});await assert.rejects(s.client.removeKeyword(2),/CONTEXT_CHANGED/);assert.equal(s.calls.filter(c=>c.method==='DELETE').length,0);
+  s.scope({siteId:9});s.set(list());await s.client.list('keywords');s.set({status:409});await assert.rejects(s.client.removeKeyword(2),e=>e.code==='DELETE_FAILED'&&e.status===409);
+});
 test('data reader sends only real supported filters, preserves scoped paging, and requires list ownership for details',async()=>{
   const s=setup();s.set(list());await s.client.list('keywords',{filters:{q:'a b',engine:'baidu',device:'mobile',status:'active'}});const url=new URL(s.calls[0].path,'https://local.invalid');assert.equal(url.searchParams.get('q'),'a b');assert.equal(url.searchParams.get('site_id'),'9');await assert.rejects(s.client.detail('keywords',99),/SELECTION_REQUIRED/);
   s.set(list());await s.client.list('keywords');s.set({keyword:row,rank_history:[]});await s.client.detail('keywords',2);assert.match(s.calls.at(-1).path,/region=%E5%85%A8%E5%9B%BD/);

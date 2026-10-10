@@ -59,6 +59,10 @@ jobs:
         env:
           EDGE_BINARY: /usr/bin/google-chrome
         run: npm --prefix customer-workbench run test:platform-console
+      - name: Verify scoped keyword deletion in a browser
+        env:
+          EDGE_BINARY: /usr/bin/google-chrome
+        run: npm --prefix customer-workbench run test:keyword-delete
       - name: Build the exact clean source
         run: node ops/customer-workbench/package-release.mjs "$RELEASE_SHA" "$RUNNER_TEMP/customer-workbench-release"
       - uses: actions/upload-artifact@v4

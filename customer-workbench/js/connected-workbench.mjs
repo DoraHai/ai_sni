@@ -26,7 +26,7 @@ const btn=(label,action,attrs='')=>`<button data-action="${action}" ${attrs}>${l
 const names={'SEO-A01':'资料与服务计划','SEO-A02':'网站检查','SEO-A03':'关键词与搜索','SEO-A04':'内容','SEO-A05':'发布核验','SEO-A06':'数据报告','SEO-A07':'异常与运行'};
 const executionErrors={report_version_conflict:'报告版本已变化，请重新读取后填写说明',REPORT_VERSION_MISMATCH:'报告文件与已读取哈希不一致，请重新读取核对',INVALID_REPORT_EXPLANATION:'请填写1–4000字的顾问说明',EXECUTION_REQUIRED:'操作资格已失效，请重新读取任务',INVALID_CYCLE_CONFIG:'周期范围不符合限制，请检查间隔与页面数量'};
 const workflowErrors={INVALID_MAINTENANCE_INPUT:'请填写必填资料，检查链接和到期时间格式',WRITE_FAILED:'保存未完成，请重新读取核对；输入已保留，不自动重发',INVALID_AI_SELECTION:'请选择1–20条已读资料和1–5个本站关键词',AI_SELECTION_READ_REQUIRED:'资料或关键词尚未读取、已过期或不在本站，请重新读取并选择',AI_CONFIGURE_DENIED:'当前无权配置AI草稿；请重新读取资格',AI_MATERIAL_TOO_LARGE:'所选资料超过总量限制，请减少资料',INVALID_PUBLICATION_INPUT:'请填写真实平台、公开链接和北京时间，并勾选已人工核实',TRIGGER_OUTCOME_UNRESOLVED:'上次触发结果未知，请读取执行进度核对，不重发',content_version_precondition_required:'缺少准确版本前提，请重新读取稿件',PUBLICATION_SELECTION_REQUIRED:'请先读取并选择本任务的发布记录'};
-const failure=e=>workflowErrors[e.code]||executionErrors[e.code]||({INVALID_CONTENT:'请填写1–300字的标题，检查正文与提纲',CONTENT_VERSION_OR_SCOPE_MISMATCH:'稿件版本或范围已变化，请重新读取核对',ADVISOR_REQUIRED:'当前身份未取得该站点顾问资格',CONTENT_PROTECTED:'稿件受保护，请先按明确退回流程处理'}[e.code])||(e.code==='content_version_conflict'?'稿件版本已变化，请重新读取后确认':e.code==='service_plan_version_conflict'?'服务计划已被更新，请重新读取':e.code==='REJECTION_NOTE_REQUIRED'?'退回必须填写意见':e.code==='WRITE_OUTCOME_UNKNOWN'?'写入结果未知，请重新读取核对，不自动重试':e.status===409?'内容状态或版本已变化，请重新读取核对':e.status===503?'服务能力尚未启用':e.status===403?'权限或顾问资格已变化，请重新读取':e.code==='CONFIRMATION_UNAVAILABLE'?'确认能力未启用':e.code==='MODULE_UNAVAILABLE'?'当前未开通SEO；SEM/GEO连接能力待接入':(e.code||e.message)==='READ_FAILED'?'读取失败，请重试当前页面':`请求未完成：${e.code||e.message}`);
+const failure=e=>({DELETE_FAILED:'删除未完成，请重新读取关键词列表核对后再操作',DELETE_OUTCOME_UNKNOWN:'删除结果未知，请重新读取关键词列表核对；系统不会自动重试'}[e.code])||workflowErrors[e.code]||executionErrors[e.code]||({INVALID_CONTENT:'请填写1–300字的标题，检查正文与提纲',CONTENT_VERSION_OR_SCOPE_MISMATCH:'稿件版本或范围已变化，请重新读取核对',ADVISOR_REQUIRED:'当前身份未取得该站点顾问资格',CONTENT_PROTECTED:'稿件受保护，请先按明确退回流程处理'}[e.code])||(e.code==='content_version_conflict'?'稿件版本已变化，请重新读取后确认':e.code==='service_plan_version_conflict'?'服务计划已被更新，请重新读取':e.code==='REJECTION_NOTE_REQUIRED'?'退回必须填写意见':e.code==='WRITE_OUTCOME_UNKNOWN'?'写入结果未知，请重新读取核对，不自动重试':e.status===409?'内容状态或版本已变化，请重新读取核对':e.status===503?'服务能力尚未启用':e.status===403?'权限或顾问资格已变化，请重新读取':e.code==='CONFIRMATION_UNAVAILABLE'?'确认能力未启用':e.code==='MODULE_UNAVAILABLE'?'当前未开通SEO；SEM/GEO连接能力待接入':(e.code||e.message)==='READ_FAILED'?'读取失败，请重试当前页面':`请求未完成：${e.code||e.message}`);
 
 export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='index.html',selectSpace=null,logout=null}) {
   root.classList.add('customer-connected');
@@ -155,6 +155,23 @@ if(editor){const field={'content-title':'title','content-outline':'outline','con
     if(a==='page'){editor=null;manualDraft=null;await navigate(el.dataset.page);return;}
     if(a==='maintenance-open'){maintenanceTarget={kind:dataKind,id:el.dataset.id?Number(el.dataset.id):null};maintenance=null;page='顾问维护';await run(readMaintenance);return;}
     if(a==='maintenance-reload'){maintenance=null;await run(readMaintenance);return;}
+    if(a==='keyword-delete'){
+      const id=Number(el.dataset.id),scope={...host.getContext()};
+      if(dataKind!=='keywords'||!canMaintain('keywords'))return;
+      let row;try{row=dataClient.selected('keywords',id);}catch{return;}
+      if(!window.confirm(`确定删除关键词“${row.keyword}”？删除后将停止监控，并删除该词的排名历史和搜索结果；文章与网站页面会保留，仅解除关键词关联。此操作不可恢复。`))return;
+      if(['tenantId','siteId','userId','revision'].some(k=>scope[k]!==host.getContext()?.[k]))return;
+      await run(async current=>{
+        await controller.load();if(!current())return;
+        observeAssignment(controller.getState().view?.permissionBasis);
+        if(!canMaintain('keywords'))throw Object.assign(Error('ADVISOR_REQUIRED'),{code:'ADVISOR_REQUIRED'});
+        await dataClient.removeKeyword(id);if(!current())return;
+        client.invalidate();home=null;aiMaterial=null;aiDraft=null;planDraft=null;protection.saved();
+        await readData(current);if(!current())return;
+        const lastPage=Math.max(1,Math.ceil(dataPayload.total/20));
+        if(dataPage>lastPage){dataPage=lastPage;await readData(current);}
+      });return;
+    }
     if(a==='maintenance-save'){const input=structuredClone(maintenance),kind=maintenanceTarget.kind;if(kind==='facts'&&input.expires_local!==input._initialExpiresLocal)input.expires_at=input.expires_local?input.expires_local+'+08:00':null;await run(async current=>{await controller.load();observeAssignment(controller.getState().view?.permissionBasis);if(!canMaintain(kind))throw Object.assign(Error('ADVISOR_REQUIRED'),{code:'ADVISOR_REQUIRED'});await dataClient.save(kind,input);if(!current())return;protection.saved();maintenance=null;page='数据';await readData(current);});return;}
     if(a==='data-kind'){dataPages.set(dataKind,dataPage);dataPayload=null;dataKind=el.dataset.kind;dataFilters=dataKind==='keywords'?{engine:'baidu',device:'desktop',status:'active'}:{};dataPage=1;dataPages.set(dataKind,1);await run(readData);return;}
     if(a==='data-search'){dataFilters={q:root.querySelector('#data-q').value.trim(),status:root.querySelector('#data-status').value,...(dataKind==='keywords'?{engine:root.querySelector('#data-engine').value,device:root.querySelector('#data-device').value}:{})};dataPage=1;await run(readData);return;}

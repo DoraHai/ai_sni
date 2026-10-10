@@ -1,6 +1,18 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {createHostSessionAdapter,sameOriginLoginUrl,existingSessionBridge} from './js/host-session-adapter.mjs';
 import {startFixtureServer} from './tests/fixture-server.mjs';
+test('keyword deletion requires edit permission and both exact tenant and site scope, with no body',async()=>{
+  const server=await startFixtureServer();server.state.keywordLevel='view';
+  const host=createHostSessionAdapter({origin:server.origin,allowLocalHttp:true,getSession:()=>({token:'fixture-advisor',userId:7,tenantId:1,siteId:9,revision:1})});
+  const path='/api/v1/seo/keywords/1001?tenant_id=1&site_id=9';
+  try{
+    await host.initialize();await assert.rejects(host.transport(path,{method:'DELETE'}),/PERMISSION_DENIED/);
+    server.state.keywordLevel='edit';await host.initialize();
+    for(const url of ['/api/v1/seo/keywords/1001?tenant_id=1','/api/v1/seo/keywords/1001?tenant_id=2&site_id=9','/api/v1/seo/keywords/1001?tenant_id=1&site_id=19'])await assert.rejects(host.transport(url,{method:'DELETE'}),/SCOPE_MISMATCH/);
+    await assert.rejects(host.transport(path,{method:'DELETE',body:'{}'}),/BODY_DENIED/);
+    assert.equal(server.state.calls.filter(c=>c.method==='DELETE').length,0);
+  }finally{host.dispose();await server.close();}
+});
 test('caller abort reaches an authorized media fetch and its response body',async()=>{
   const server=await startFixtureServer();let signal;
   const host=createHostSessionAdapter({origin:server.origin,allowLocalHttp:true,getSession:()=>({token:'fixture-advisor',userId:7,tenantId:1,siteId:9,revision:1}),fetchImpl:async(url,options)=>{if(String(url).includes('/page-captures/')){signal=options.signal;return {ok:true,status:200,headers:new Headers(),arrayBuffer:()=>new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true}))};}return fetch(url,options);}});
