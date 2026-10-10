@@ -13,6 +13,7 @@ for(const module of ['seo','geo']){
    capabilities:{ai_planning:{enabled:true,can_generate:true}},allowed_actions:['save_proposal','cancel'],completion_evidence:null};
   try{
    const p=await browser.newPage();p.on('pageerror',e=>errors.push(e.message));await p.setRequestInterception(true);
+   const ready=revision=>p.waitForFunction(revision=>document.querySelector('.onsite-detail h3')?.textContent.includes('v'+revision)&&document.querySelector('[data-action=onsite-refresh]')?.disabled===false,{},revision);
    const permissions={'seo.site':'edit','seo.content':'edit','seo.keywords':'edit','geo.assets':'edit','geo.content':'edit'};
    await p.evaluateOnNewDocument(permissions=>{sessionStorage.setItem('sem_auth_v1',JSON.stringify({version:1,token:'fixture-advisor',user:{id:7,tenant_id:null,display_name:'顾问',permissions}}));},permissions);
    p.on('request',async req=>{
@@ -44,15 +45,18 @@ for(const module of ['seo','geo']){
    });
    await p.goto(origin+'/customer-workbench/?'+(module==='seo'?'tenant_id=1&site_id=9':'module=geo&tenant_id=1&project_id=10')+'&onsite_task_id=77');
    await p.waitForSelector('#onsite-expected-a');
+   await ready(1);
    await p.type('#onsite-expected-a','未保存改动');await p.click('[data-action=onsite-ai-proposal]');
    await p.waitForFunction(()=>document.body.textContent.includes('未保存修改'));assert.equal(writes.length,0);
    await p.$eval('#onsite-expected-a',e=>{e.value='审核文字';e.dispatchEvent(new Event('input',{bubbles:true}));});
    await p.click('[data-action=onsite-ai-proposal]');await p.waitForSelector('[data-action=onsite-approve]');
+   await ready(2);
    assert.equal(await p.$('.onsite-detail script'),null);assert.equal(writes.length,1);
    await p.click('[data-action=onsite-save_proposal]');
    await p.waitForSelector('[data-action=onsite-approve]');
+   await ready(3);
    await p.click('[data-action=onsite-ai-proposal]');
-   await p.waitForFunction(()=>!document.querySelector('[data-action=onsite-ai-proposal]').disabled);
+   await ready(4);
    assert.equal(writes.at(-1).mode,'revise');
    await p.type('#onsite-expected-a','未保存改动');await p.type('#onsite-note','审核依据');
    await p.click('[data-action=onsite-approve]');await p.waitForFunction(()=>document.body.textContent.includes('未保存修改'));
@@ -64,6 +68,7 @@ for(const module of ['seo','geo']){
     const next={approve:'implement',implement:'recheck',recheck:'accept',accept:null}[action];
     if(next)await p.waitForSelector('[data-action=onsite-'+next+']');
     else await p.waitForFunction(()=>document.body.textContent.includes('人工验收：'));
+    await ready({approve:5,implement:6,recheck:7,accept:8}[action]);
    }
    assert.deepEqual(writes.map(w=>w.mode?'ai-proposal':w.action),['ai-proposal','save_proposal','ai-proposal','approve','implement','recheck','accept']);
    assert.equal(await p.$('[data-action=onsite-accept]'),null);
