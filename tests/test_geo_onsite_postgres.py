@@ -1,5 +1,6 @@
 """Owned PostgreSQL proves project isolation, revisions and duplicate-request locking."""
 import asyncio
+from contextlib import asynccontextmanager
 import json
 from uuid import uuid4
 import os
@@ -8,18 +9,29 @@ from fastapi import HTTPException
 from sqlalchemy import select, func, text, update
 from sqlalchemy.exc import DBAPIError
 from test_geo_project_scope_postgres import database
-from app.geo import onsite_routes as api
+from app.geo import onsite_routes as api, onsite_jobs
+from app.geo.content import async_jobs
 from app.geo.project_workflows import save_plan
-from app.models import GeoActionTicket, GeoFact, GeoProject
+from app.models import GeoActionTicket, GeoAsyncJob, GeoFact, GeoProject
 from app.security.auth import AuthContext
 from app.models.user import User
 from app.models.role import Role
 from types import SimpleNamespace
+from unittest.mock import patch
 
 pytestmark = pytest.mark.skipif(not os.getenv("GEO_TEST_POSTGRES_URL"), reason="requires dedicated PostgreSQL")
 ADVISOR = AuthContext(7, "advisor", "advisor", None, {"geo.assets":"edit", "geo.content":"edit"})
 CUSTOMER = AuthContext(12, "customer", "customer", 1, {"geo.assets":"view", "geo.content":"view"})
 OTHER_ADVISOR = AuthContext(8, "advisor2", "advisor", None, {"geo.assets":"edit", "geo.content":"edit"})
+
+
+async def run_owned(sessions, job_id, tenant_id=1):
+    @asynccontextmanager
+    async def factory(*, bind=None):
+        async with sessions() as db:
+            yield db
+    with patch("app.database.async_session_factory", factory):
+        return await async_jobs._run_owned_job(job_id, tenant_id=tenant_id)
 
 async def configured(sessions):
     async with sessions() as db:
@@ -141,7 +153,8 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
         advisor_locks.append(bool(kwargs.get("lock")))
         return await original_advisor_available(session, tenant_id, user_id, **kwargs)
     monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
-    monkeypatch.setattr(api, "chat_json", provider)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "chat_json", provider)
     monkeypatch.setattr(api, "advisor_available", tracked_advisor_available)
     monkeypatch.setattr(api.onsite_ai, "get_settings", lambda: SimpleNamespace(
         geo_onsite_ai_provider="deepseek", geo_onsite_ai_model="deepseek-chat",
@@ -167,6 +180,13 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
                 expected_revision=row["workflow"]["revision"], request_id=rid, mode="initial")
             async with sessions() as db:
                 result = await api.ai_proposal(row["id"], req, db, ADVISOR)
+            assert result["request_run"]["state"] == "queued"
+            assert result["workflow"]["phase"] == "draft"
+            job_id = result["request_run"]["job_id"]
+            completed = await run_owned(sessions, job_id)
+            assert completed["result_meta"]["public_state"] == "ready"
+            async with sessions() as db:
+                result = await api.get_ai_request(row["id"], rid, 1, 10, db, ADVISOR)
             assert result["workflow"]["phase"] == "review"
             assert result["workflow"]["ai_run"]["request_id"] == str(rid)
             assert result["workflow"]["ai_run"]["state"] == "ready"
@@ -213,7 +233,8 @@ def test_ai_proposal_rejects_full_history_before_quota_or_provider_call(monkeypa
         calls += 1
         return {}
     monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
-    monkeypatch.setattr(api, "chat_json", provider)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "chat_json", provider)
     async def run():
         async with database() as sessions:
             await configured(sessions)
@@ -251,7 +272,8 @@ def test_invalid_onsite_model_is_rejected_before_quota_or_provider_call(monkeypa
         calls += 1
         return {}
     monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
-    monkeypatch.setattr(api, "chat_json", provider)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "chat_json", provider)
     monkeypatch.setattr(api.onsite_ai, "get_settings", lambda: SimpleNamespace(
         geo_onsite_ai_provider="deepseek", geo_onsite_ai_model="deepseek-chat",
         deepseek_api_key="official-platform-key",
@@ -292,7 +314,8 @@ def test_missing_facts_stop_before_nonce_quota_or_official_provider_call(monkeyp
         calls += 1
         return {}
     monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
-    monkeypatch.setattr(api, "chat_json", provider)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "chat_json", provider)
     monkeypatch.setattr(api.onsite_ai, "get_settings", lambda: SimpleNamespace(
         geo_onsite_ai_provider="deepseek", geo_onsite_ai_model="deepseek-chat",
         deepseek_api_key="official-platform-key",
@@ -318,6 +341,156 @@ def test_missing_facts_stop_before_nonce_quota_or_official_provider_call(monkeyp
                 stored = await db.get(GeoActionTicket, row["id"])
                 assert "ai_run" not in stored.progress["onsite"]
             assert calls == 0
+    asyncio.run(run())
+
+
+def test_same_nonce_concurrency_creates_one_durable_job_and_queued_cancel_is_free(monkeypatch):
+    calls = 0
+    async def credentials(session, tenant_id):
+        return {"api_key": "ignored", "base_url": "https://ignored.invalid/v1",
+                "model": "ignored", "provider": "ignored"}
+    async def provider(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return {}
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "chat_json", provider)
+    monkeypatch.setattr(api.onsite_ai, "get_settings", lambda: SimpleNamespace(
+        geo_onsite_ai_provider="deepseek", geo_onsite_ai_model="deepseek-chat",
+        deepseek_api_key="official-platform-key",
+        deepseek_base_url="https://api.deepseek.com"))
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
+                row = await api.create(api.Create(tenant_id=1, project_id=10,
+                    request_id=uuid4(), work_type="startup", owner_name="维护人员"), db, ADVISOR)
+            rid = uuid4()
+            req = api.AiProposal(tenant_id=1, project_id=10, expected_revision=1,
+                                 request_id=rid, mode="initial")
+            async def enqueue():
+                async with sessions() as db:
+                    return await api.ai_proposal(row["id"], req, db, ADVISOR)
+            results = await asyncio.gather(*(enqueue() for _ in range(5)))
+            assert {item["request_run"]["job_id"] for item in results} == {
+                results[0]["request_run"]["job_id"]}
+            assert all(item["request_run"]["state"] == "queued" for item in results)
+            async with sessions() as db:
+                assert await db.scalar(select(func.count()).select_from(GeoAsyncJob)) == 1
+                with pytest.raises(HTTPException) as error:
+                    await api.act(row["id"], api.Update(tenant_id=1, project_id=10,
+                        action="approve", expected_revision=1, note="不应越过排队任务"), db, ADVISOR)
+                assert error.value.status_code == 409
+            async with sessions() as db:
+                cancelled = await api.cancel_ai_request(row["id"], rid, 1, 10, db, ADVISOR)
+                assert cancelled["request_run"]["state"] == "cancelled"
+            outcome = await run_owned(sessions, results[0]["request_run"]["job_id"])
+            assert outcome["status"] == "conflict"
+            assert calls == 0
+    asyncio.run(run())
+
+
+def test_running_cancel_discards_late_result_without_second_provider_call(monkeypatch):
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+    async def credentials(session, tenant_id):
+        return {"api_key": "ignored", "base_url": "https://ignored.invalid/v1",
+                "model": "ignored", "provider": "ignored"}
+    async def provider(system, user, **kwargs):
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await release.wait()
+        return _ai_result(json.loads(user)["current_items"])
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "chat_json", provider)
+    monkeypatch.setattr(api.onsite_ai, "get_settings", lambda: SimpleNamespace(
+        geo_onsite_ai_provider="deepseek", geo_onsite_ai_model="deepseek-chat",
+        deepseek_api_key="official-platform-key",
+        deepseek_base_url="https://api.deepseek.com"))
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
+                row = await api.create(api.Create(tenant_id=1, project_id=10,
+                    request_id=uuid4(), work_type="startup", owner_name="维护人员"), db, ADVISOR)
+            rid = uuid4()
+            req = api.AiProposal(tenant_id=1, project_id=10, expected_revision=1,
+                                 request_id=rid, mode="initial")
+            async with sessions() as db:
+                queued = await api.ai_proposal(row["id"], req, db, ADVISOR)
+            worker = asyncio.create_task(run_owned(sessions, queued["request_run"]["job_id"]))
+            await asyncio.wait_for(entered.wait(), 5)
+            async with sessions() as db:
+                cancelling = await api.cancel_ai_request(row["id"], rid, 1, 10, db, ADVISOR)
+                assert cancelling["request_run"]["cancel_requested"] is True
+            release.set()
+            result = await asyncio.wait_for(worker, 10)
+            assert result["status"] == "cancelled"
+            async with sessions() as db:
+                polled = await api.get_ai_request(row["id"], rid, 1, 10, db, ADVISOR)
+                assert polled["request_run"]["state"] == "cancelled"
+                assert polled["workflow"]["revision"] == 1
+                assert "ai_proposal" not in polled["workflow"]
+            assert calls == 1
+    asyncio.run(run())
+
+
+def test_interrupted_running_request_becomes_unknown_and_is_never_requeued(monkeypatch):
+    calls = 0
+    async def credentials(session, tenant_id):
+        return {"api_key": "ignored", "base_url": "https://ignored.invalid/v1",
+                "model": "ignored", "provider": "ignored"}
+    async def provider(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return {}
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "chat_json", provider)
+    monkeypatch.setattr(api.onsite_ai, "get_settings", lambda: SimpleNamespace(
+        geo_onsite_ai_provider="deepseek", geo_onsite_ai_model="deepseek-chat",
+        deepseek_api_key="official-platform-key",
+        deepseek_base_url="https://api.deepseek.com"))
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
+                row = await api.create(api.Create(tenant_id=1, project_id=10,
+                    request_id=uuid4(), work_type="startup", owner_name="维护人员"), db, ADVISOR)
+            rid = uuid4()
+            async with sessions() as db:
+                queued = await api.ai_proposal(row["id"], api.AiProposal(
+                    tenant_id=1, project_id=10, expected_revision=1,
+                    request_id=rid, mode="initial"), db, ADVISOR)
+                job = await db.get(GeoAsyncJob, queued["request_run"]["job_id"])
+                job.status = "running"
+                job.started_at = datetime.utcnow()
+                meta = dict(job.request_meta); meta["provider_started_at"] = onsite_jobs.onsite_ai.now_iso()
+                job.request_meta = meta
+                task = await db.get(GeoActionTicket, row["id"])
+                value = dict(task.progress["onsite"]); run = dict(value["ai_run"])
+                run.update(state="running", started_at=onsite_jobs.onsite_ai.now_iso())
+                value["ai_run"] = run; task.progress = {**task.progress, "onsite":value}
+                await db.commit()
+            async with sessions() as db:
+                job = await db.get(GeoAsyncJob, queued["request_run"]["job_id"])
+                state = await onsite_jobs.recover_interrupted_job(db, job)
+                assert state == "unknown"
+            async with sessions() as db:
+                polled = await api.get_ai_request(row["id"], rid, 1, 10, db, ADVISOR)
+                assert polled["request_run"]["state"] == "unknown"
+                assert "不会自动重试" in polled["request_run"]["error"]
+                job = await db.get(GeoAsyncJob, queued["request_run"]["job_id"])
+                assert job.status == "failed"
+            assert calls == 0
+    from datetime import datetime
     asyncio.run(run())
 
 
@@ -354,7 +527,8 @@ def test_ai_proposal_late_result_cannot_overwrite_changed_fact_scope(monkeypatch
             await other.commit()
         return _ai_result(json.loads(user)["current_items"])
     monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
-    monkeypatch.setattr(api, "chat_json", provider)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "chat_json", provider)
     async def run():
         nonlocal sessions_ref
         async with database() as sessions:
@@ -368,9 +542,9 @@ def test_ai_proposal_late_result_cannot_overwrite_changed_fact_scope(monkeypatch
             req = api.AiProposal(tenant_id=1, project_id=10,
                 expected_revision=row["workflow"]["revision"], request_id=uuid4(), mode="initial")
             async with sessions() as db:
-                with pytest.raises(HTTPException) as error:
-                    await api.ai_proposal(row["id"], req, db, ADVISOR)
-                assert error.value.status_code == 409
+                queued = await api.ai_proposal(row["id"], req, db, ADVISOR)
+            result = await run_owned(sessions, queued["request_run"]["job_id"])
+            assert result["result_meta"]["public_state"] == "stale"
             async with sessions() as db:
                 stored = await db.get(GeoActionTicket, row["id"])
                 assert stored.progress["onsite"]["revision"] == 1
@@ -390,7 +564,8 @@ def test_ai_proposal_late_result_cannot_overwrite_after_role_permission_revoked(
             await other.commit()
         return _ai_result(json.loads(user)["current_items"])
     monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
-    monkeypatch.setattr(api, "chat_json", provider)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "chat_json", provider)
     async def run():
         nonlocal sessions_ref
         async with database() as sessions:
@@ -404,9 +579,9 @@ def test_ai_proposal_late_result_cannot_overwrite_after_role_permission_revoked(
             req = api.AiProposal(tenant_id=1, project_id=10,
                 expected_revision=row["workflow"]["revision"], request_id=uuid4(), mode="initial")
             async with sessions() as db:
-                with pytest.raises(HTTPException) as error:
-                    await api.ai_proposal(row["id"], req, db, ADVISOR)
-                assert error.value.status_code == 409
+                queued = await api.ai_proposal(row["id"], req, db, ADVISOR)
+            result = await run_owned(sessions, queued["request_run"]["job_id"])
+            assert result["result_meta"]["public_state"] == "stale"
             async with sessions() as db:
                 stored = await db.get(GeoActionTicket, row["id"])
                 assert stored.progress["onsite"]["revision"] == 1
@@ -431,7 +606,8 @@ def test_ai_error_is_classified_and_same_nonce_never_calls_again(
                             status_code=404 if category == "model_not_found" else None,
                             code=category if category == "model_not_found" else None)
     monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
-    monkeypatch.setattr(api, "chat_json", provider)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "chat_json", provider)
     async def run():
         async with database() as sessions:
             await configured(sessions)
@@ -443,9 +619,9 @@ def test_ai_error_is_classified_and_same_nonce_never_calls_again(
             req = api.AiProposal(tenant_id=1, project_id=10,
                 expected_revision=1, request_id=uuid4(), mode="initial")
             async with sessions() as db:
-                with pytest.raises(HTTPException) as error:
-                    await api.ai_proposal(row["id"], req, db, ADVISOR)
-                assert error.value.status_code == 424
+                queued = await api.ai_proposal(row["id"], req, db, ADVISOR)
+            result = await run_owned(sessions, queued["request_run"]["job_id"])
+            assert result["result_meta"]["public_state"] == expected_state
             async with sessions() as db:
                 retry = await api.ai_proposal(row["id"], req, db, ADVISOR)
                 assert retry["workflow"]["ai_run"]["state"] == expected_state
@@ -461,6 +637,7 @@ def test_advisor_list_filters_assignment_before_pagination(monkeypatch):
     async def credentials(session, tenant_id):
         return None
     monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
     async def run():
         async with database() as sessions:
             await configured(sessions)
@@ -487,4 +664,3 @@ def test_advisor_list_filters_assignment_before_pagination(monkeypatch):
             assert item["scope_name"] == "project 10" and item["tenant_name"] == "scope fixture"
             assert item["capabilities"]["ai_planning"]["enabled"] is False
     asyncio.run(run())
-

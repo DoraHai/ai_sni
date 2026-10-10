@@ -1,0 +1,35 @@
+# GEO 站内 AI 方案异步契约
+
+## 提交
+
+`POST /api/v1/geo/workbench/onsite-tasks/{task_id}/ai-proposal`
+
+- 新请求持久化成功后返回 HTTP `202`。
+- 响应保留现有 public task 顶层结构，并增加 `request_run`。
+- 相同 `request_id` 与相同参数是幂等请求；已终止时返回 HTTP `200`。
+- 同一任务已有 `queued`/`running` 请求时，新 nonce 返回 HTTP `409`。
+- 无可公开使用事实等预检失败在入队前返回 HTTP `409`，不会计费。
+
+## 轮询
+
+`GET /api/v1/geo/workbench/onsite-tasks/{task_id}/ai-requests/{request_id}?tenant_id={tenant_id}&project_id={project_id}`
+
+该 GET 是纯查询：不初始化配置、不修改超时状态、不重试、不调用模型。前端可每 3 秒轮询，在终态停止。
+
+`request_run.state` 取值：
+
+- `queued`：已持久化，尚未执行。
+- `running`：执行器已领取，可能已发起计费请求。
+- `ready`：严格校验通过且方案已保存，仍需人工审核。
+- `failed`：已确认失败，不自动重试。
+- `unknown`：计费请求或保存结果无法确认，必须人工核对，系统不自动重试。
+- `stale`：权限、项目范围、任务版本或公开资料版本已变化，结果未写入。
+- `cancelled`：已取消；已发出的请求如返回，其迟到结果不会写入。
+
+`request_run` 只返回请求 ID、作业 ID、状态、取消标志、受控错误文案、时间和轮询路径；不返回 prompt、凭证或供应商原始错误。
+
+## 取消
+
+`POST /api/v1/geo/workbench/onsite-tasks/{task_id}/ai-requests/{request_id}/cancel?tenant_id={tenant_id}&project_id={project_id}`
+
+只有当前有效项目顾问且是请求发起人才能取消。排队任务立即取消；运行中任务记录取消请求，供应商返回后丢弃结果。
