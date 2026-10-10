@@ -305,6 +305,13 @@ class Settings(BaseSettings):
     dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     dashscope_model: str = "deepseek-v3"
 
+    # Read-only cloud billing credentials; no model API key substitution.
+    aliyun_balance_access_key_id: str = Field(default="", repr=False)
+    aliyun_balance_access_key_secret: str = Field(default="", repr=False)
+    aliyun_balance_security_token: str = Field(default="", repr=False)
+    platform_balance_warning_cny: float = Field(default=100, ge=0, le=10**12, allow_inf_nan=False)
+    platform_balance_warning_usd: float = Field(default=10, ge=0, le=10**12, allow_inf_nan=False)
+
     # GEO 母稿质量门禁（P2/P3）：默认关闭，仅 warn 不挡发布
     geo_score_gate: bool = False
     geo_score_threshold: int = 60
