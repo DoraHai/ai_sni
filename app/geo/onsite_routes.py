@@ -298,11 +298,15 @@ def _request_run(job: GeoAsyncJob, value: dict | None = None, *, can_cancel: boo
     terminal = job.status in {"succeeded", "failed", "cancelled"}
     state = result.get("public_state") if terminal else (run.get("state") if current else None)
     error = result.get("message") if terminal else (run.get("error") if current else None)
+    diagnostics = result if terminal else (run if current else {})
     state = state or {"pending":"queued", "running":"running", "succeeded":"ready",
                       "cancelled":"cancelled", "failed":"failed"}.get(job.status, "failed")
     return {"request_id": str(meta.get("request_id") or ""), "job_id": int(job.id),
         "state": state, "cancel_requested": bool(meta.get("cancel_requested")),
         "can_cancel": bool(can_cancel and state in {"queued", "running"}), "error": error,
+        "error_category": diagnostics.get("error_category"),
+        "error_code": diagnostics.get("error_code"),
+        "http_status": diagnostics.get("http_status"),
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,

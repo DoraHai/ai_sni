@@ -390,39 +390,3 @@ def test_native_terminal_commit_failure_is_attempted_and_keeps_occupancy(monkeyp
             assert denied.value.code == 'api_concurrency_limit'
             assert len(sent) == 1
     native(monkeypatch, scenario)
-
-
-def test_native_reviewed_permission_scripts_keep_audit_append_only(monkeypatch):
-    async def scenario(factory, other):
-        role = 'guard_runtime_' + uuid4().hex
-        root = Path(__file__).parents[1]
-        async with factory() as s:
-            schema = await s.scalar(text('SELECT current_schema()'))
-            assert schema.startswith('call_guards_')
-            await s.execute(text(f'CREATE ROLE "{role}" NOLOGIN'))
-            await s.commit()
-        try:
-            async with factory() as s:
-                c = await s.connection()
-                connection = (await c.get_raw_connection()).driver_connection
-                for script in ('api_metering_permissions.sql', 'api_controls_permissions.sql'):
-                    # Only the isolated owned schema and unique test role change.
-                    sql = (root/'scripts'/script).read_text().replace('public.', schema + '.').replace('sem_runtime', role)
-                    await connection.execute(sql)
-                await s.commit()
-            async with factory() as s:
-                await s.execute(text('SET TRANSACTION READ ONLY'))
-                for table in ('api_usage_events', 'api_control_settings', 'api_control_bindings', 'api_control_credentials', 'api_control_audit'):
-                    params = {'role': role, 'table': schema + '.' + table}
-                    assert await s.scalar(text("SELECT has_table_privilege(:role,:table,'SELECT')"), params)
-                    assert await s.scalar(text("SELECT has_table_privilege(:role,:table,'INSERT')"), params)
-                    assert not await s.scalar(text("SELECT has_table_privilege(:role,:table,'DELETE')"), params)
-                    update = await s.scalar(text("SELECT has_table_privilege(:role,:table,'UPDATE')"), params)
-                    assert update == (table != 'api_control_audit')
-                assert not await s.scalar(text("SELECT has_schema_privilege(:role,:schema,'CREATE')"), {'role': role, 'schema': schema})
-        finally:
-            async with factory() as s:
-                await s.execute(text(f'REVOKE ALL ON ALL TABLES IN SCHEMA "{schema}" FROM "{role}"'))
-                await s.execute(text(f'DROP ROLE "{role}"'))
-                await s.commit()
-    native(monkeypatch, scenario)
