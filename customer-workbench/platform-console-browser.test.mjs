@@ -27,6 +27,7 @@ const snapshot={schema:1,mode:'read_only_inventory',generated_at:'2026-10-09T16:
 test('built superadmin console uses real-shaped data, all tabs and strict identity boundaries',async()=>{
   const f=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true});
   const origin='https://workbench.test',requests=[],errors=[],external=[];
+  let balanceStatus=200,balanceReads=0,balanceRefreshes=0,balanceHeld=null;
   let serverUser=admin,status=200,held=null,governanceStatus=404,governanceData={schema:1,state:"schema_pending"};const connectionWrites=[],usageQueries=[],operationWrites=[];let exports=0;
   try{
     const p=await browser.newPage();await p.setViewport({width:1440,height:1000});
@@ -36,6 +37,10 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
       if(u.origin!==origin){external.push(u.href);return r.abort();}
       if(u.pathname.startsWith('/api/')){
         requests.push({path:u.pathname,method:r.method()});
+        if(u.pathname==='/api/v1/admin/console/balances'){
+          balanceReads++;if(u.searchParams.get('refresh')==='true')balanceRefreshes++;if(balanceHeld)await balanceHeld;
+          return r.respond({status:balanceStatus,contentType:'application/json',body:JSON.stringify({schema:1,state:'available',rows:[{id:'deepseek',provider:'deepseek',name:'DeepSeek 官方账户',tenant_id:null,state:'available',balances:[{currency:'CNY',available:'0',cash:'0',warning_threshold:'100'}],warning:'low',queried_at:'2026-10-10T12:00:00Z',api_key:'never-balance-secret'},{id:'aliyun',provider:'aliyun',name:'阿里云账户',tenant_id:null,state:'not_configured',note:'需配置费用查询只读授权',balances:[],warning:'unknown',queried_at:'2026-10-10T12:00:00Z'}]})});
+        }
         if(u.pathname==='/api/v1/platform/ai-governance')return r.respond({status:governanceStatus,contentType:'application/json',body:JSON.stringify(governanceData)});
         if(u.pathname.endsWith('/usage/export')){
           exports++;assert.equal(r.headers().authorization,'Bearer fixture-admin');
@@ -104,6 +109,14 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     await p.screenshot({path:path.join(os.tmpdir(),'platform-ai-governance-20261010.png'),fullPage:true});
     governanceStatus=403;await p.click('[data-pc=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('无法读取 AI 治理'));assert(!await p.$('.pc-kpis'));assert.doesNotMatch(await body(),/qwen/);
     governanceStatus=404;await p.click('[data-pc=refresh]');await p.waitForSelector('.pc-kpis');
+    await p.click('.pc-sidebar [data-pc-page=balances]');await p.waitForFunction(()=>document.querySelector('.pc-content')?.textContent.includes('CNY 0'));
+    assert(balanceReads>0);assert.match(await body(),/余额不足预警/);assert.doesNotMatch(await body(),/never-balance-secret/);
+    await p.click('[data-pc=balance-refresh]');await p.waitForFunction(()=>document.querySelector('[data-pc=balance-refresh]')?.disabled===false);assert.equal(balanceRefreshes,1);
+    await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await p.setViewport({width:1440,height:1000});
+    await p.screenshot({path:path.join(os.tmpdir(),'platform-live-balances-20261010.png'),fullPage:true});
+    balanceStatus=404;await p.click('[data-pc=balance-refresh]');await p.waitForFunction(()=>document.body.textContent.includes('余额查询接口未部署'));assert.doesNotMatch(await p.$eval('.pc-content',e=>e.textContent),/CNY 0/);
+    balanceStatus=403;await p.click('[data-pc=balance-refresh]');await p.waitForFunction(()=>document.body.textContent.includes('无法查询平台余额'));assert(!await p.$('.pc-kpis'));
+    balanceStatus=200;await p.click('[data-pc=refresh]');await p.waitForSelector('.pc-kpis');await p.waitForFunction(()=>document.querySelector('.pc-content')?.textContent.includes('CNY 0'));
     await p.click('.pc-sidebar [data-pc-page=customers]');assert(!await p.$('.pc-table-wrap img'));
     await p.type('#pc-search','制造');assert.match(await body(),/测试客户 A/);assert.doesNotMatch(await p.$eval('.pc-content',e=>e.textContent),/客户 <img/);
     await p.click('.pc-sidebar [data-pc-page=costs]');assert.match(await body(),/不能相加/);assert.doesNotMatch(await body(),/¥0|￥0/);
@@ -229,7 +242,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     await new Promise(r=>setTimeout(r,50));assert(!await p.$('.pc-kpis'));assert.equal(await p.evaluate(()=>sessionStorage.getItem('sem_auth_v1')),null);
     await signIn();await p.waitForSelector('.pc-kpis');status=401;await p.click('[data-pc=refresh]');await p.waitForSelector('#pc-login');assert(!await p.$('.pc-kpis'));
     assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
-    assert(requests.every(r=>['/api/v1/auth/login','/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/admin/console/controls','/api/v1/admin/console/usage','/api/v1/admin/console/usage/export','/api/v1/admin/console/operations','/api/v1/platform/ai-governance'].includes(r.path)));
+    assert(requests.every(r=>['/api/v1/auth/login','/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/admin/console/controls','/api/v1/admin/console/usage','/api/v1/admin/console/usage/export','/api/v1/admin/console/operations','/api/v1/platform/ai-governance','/api/v1/admin/console/balances'].includes(r.path)));
     assert(requests.filter(r=>r.method!=='GET').every(r=>['/api/v1/auth/login','/api/v1/admin/console/controls','/api/v1/admin/console/operations'].includes(r.path)));
   }finally{await browser.close();await f.close();}
 });
