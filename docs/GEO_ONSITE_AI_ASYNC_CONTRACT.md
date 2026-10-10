@@ -26,7 +26,9 @@
 - `stale`：权限、项目范围、任务版本或公开资料版本已变化，结果未写入。
 - `cancelled`：已取消；已发出的请求如返回，其迟到结果不会写入。
 
-`request_run` 只返回请求 ID、作业 ID、状态、取消标志、受控错误文案、时间和轮询路径；不返回 prompt、凭证或供应商原始错误。
+`request_run` 只返回请求 ID、作业 ID、状态、取消标志、`can_cancel`、受控错误文案、时间和轮询路径；不返回 prompt、凭证或供应商原始错误。`can_cancel` 仅对仍在排队或执行、当前顾问仍有效且与原发起人一致的请求为 `true`。
+
+`queued`/`running` 期间 public task 的 `allowed_actions` 为空列表。取消能力不混入旧 `/actions` 枚举，前端应使用 `request_run.can_cancel` 和下方的独立取消接口。
 
 ## 取消
 

@@ -110,7 +110,7 @@ def public(row, project, can_write, *, provider_ready=False, provider_reason=Non
     proposal = onsite_ai.public_ai_proposal(value.get("ai_proposal"))
     if proposal is not None:
         value["ai_proposal"] = proposal
-    allowed_actions = (["cancel_ai_request"] if can_write else []) if active_ai else work.allowed_actions(value, can_write)
+    allowed_actions = [] if active_ai else work.allowed_actions(value, can_write)
     capabilities = onsite_ai.capabilities(provider_ready=provider_ready, can_write=can_write,
                                             phase=value["phase"], reason=provider_reason)
     if active_ai:
@@ -290,7 +290,7 @@ async def _proposal_snapshot(session, project: GeoProject, row: GeoActionTicket)
     return payload
 
 
-def _request_run(job: GeoAsyncJob, value: dict | None = None) -> dict[str, Any]:
+def _request_run(job: GeoAsyncJob, value: dict | None = None, *, can_cancel: bool = False) -> dict[str, Any]:
     meta = job.request_meta if isinstance(job.request_meta, dict) else {}
     result = job.result_meta if isinstance(job.result_meta, dict) else {}
     run = dict((value or {}).get("ai_run") or {})
@@ -301,16 +301,21 @@ def _request_run(job: GeoAsyncJob, value: dict | None = None) -> dict[str, Any]:
     state = state or {"pending":"queued", "running":"running", "succeeded":"ready",
                       "cancelled":"cancelled", "failed":"failed"}.get(job.status, "failed")
     return {"request_id": str(meta.get("request_id") or ""), "job_id": int(job.id),
-        "state": state, "cancel_requested": bool(meta.get("cancel_requested")), "error": error,
+        "state": state, "cancel_requested": bool(meta.get("cancel_requested")),
+        "can_cancel": bool(can_cancel and state in {"queued", "running"}), "error": error,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
         "poll_url": f"/api/v1/geo/workbench/onsite-tasks/{job.ref_id}/ai-requests/{meta.get('request_id')}"}
 
 
-async def _task_with_request(session, row, project, can_write, job):
+async def _task_with_request(session, row, project, can_write, job, *, actor_user_id=None):
     payload = await _public(session, row, project, can_write)
-    payload["request_run"] = _request_run(job, row.progress["onsite"])
+    payload["request_run"] = _request_run(
+        job, row.progress["onsite"],
+        can_cancel=bool(can_write and actor_user_id is not None
+                        and int(job.created_by or 0) == int(actor_user_id)),
+    )
     return payload
 
 
@@ -351,7 +356,8 @@ async def ai_proposal(task_id: PositiveInt, req: AiProposal,
             raise HTTPException(409, "历史 AI 请求缺少持久化作业记录，请人工核对")
         if response is not None and _request_run(job, value)["state"] not in {"queued", "running"}:
             response.status_code = 200
-        return await _task_with_request(session, row, project, True, job)
+        return await _task_with_request(session, row, project, True, job,
+                                        actor_user_id=ctx.user_id)
     if existing and existing.get("state") in {"queued", "running"}:
         raise HTTPException(409, "当前任务已有 AI 方案排队或执行中")
     if value["revision"] != req.expected_revision:
@@ -390,7 +396,8 @@ async def ai_proposal(task_id: PositiveInt, req: AiProposal,
     await session.refresh(job); await session.refresh(row)
     if background_tasks is not None:
         background_tasks.add_task(async_jobs.run_job_in_background, job.id, job.tenant_id)
-    return await _task_with_request(session, row, project, True, job)
+    return await _task_with_request(session, row, project, True, job,
+                                    actor_user_id=ctx.user_id)
 
 
 @router.get("/workbench/onsite-tasks/{task_id}/ai-requests/{request_id}")
@@ -407,7 +414,9 @@ async def get_ai_request(task_id: PositiveInt, request_id: UUID, tenant_id: Posi
                              request_id=str(request_id))
     if job is None:
         raise HTTPException(404, "AI 请求不存在")
-    return await _task_with_request(session, row, project, await can_operate(session, ctx, project), job)
+    permitted = await can_operate(session, ctx, project)
+    return await _task_with_request(session, row, project, permitted, job,
+                                    actor_user_id=ctx.user_id)
 
 
 @router.post("/workbench/onsite-tasks/{task_id}/ai-requests/{request_id}/cancel")
@@ -433,7 +442,8 @@ async def cancel_ai_request(task_id: PositiveInt, request_id: UUID, tenant_id: P
         run.update(state="cancelled", error="请求已取消", finished_at=onsite_ai.now_iso())
         value["ai_run"] = run; row.progress = {**(row.progress or {}), "onsite":value}
         row.updated_at = datetime.utcnow(); await session.commit(); await session.refresh(row)
-    return await _task_with_request(session, row, project, True, job)
+    return await _task_with_request(session, row, project, True, job,
+                                    actor_user_id=ctx.user_id)
 
 
 @router.post("/workbench/onsite-tasks")

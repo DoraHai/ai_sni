@@ -377,7 +377,8 @@ def test_same_nonce_concurrency_creates_one_durable_job_and_queued_cancel_is_fre
             assert {item["request_run"]["job_id"] for item in results} == {
                 results[0]["request_run"]["job_id"]}
             assert all(item["request_run"]["state"] == "queued" for item in results)
-            assert results[0]["allowed_actions"] == ["cancel_ai_request"]
+            assert results[0]["allowed_actions"] == []
+            assert results[0]["request_run"]["can_cancel"] is True
             assert results[0]["capabilities"]["ai_planning"]["can_generate"] is False
             async with sessions() as db:
                 assert await db.scalar(select(func.count()).select_from(GeoAsyncJob)) == 1
@@ -396,6 +397,7 @@ def test_same_nonce_concurrency_creates_one_durable_job_and_queued_cancel_is_fre
             async with sessions() as db:
                 customer_read = await api.get_ai_request(row["id"], rid, 1, 10, db, CUSTOMER)
                 assert customer_read["request_run"]["state"] == "queued"
+                assert customer_read["request_run"]["can_cancel"] is False
                 assert customer_read["allowed_actions"] == []
             async with sessions() as db:
                 cancelled = await api.cancel_ai_request(row["id"], rid, 1, 10, db, ADVISOR)
