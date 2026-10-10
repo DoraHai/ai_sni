@@ -266,6 +266,7 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://seo_workflow_tester:ci-review-only@127.0.0.1:55432/seo_workflow_test
           SEO_USAGE_TEST_DATABASE_URL: postgresql+asyncpg://seo_workflow_tester:ci-review-only@127.0.0.1:55432/seo_workflow_test
+          PLATFORM_CONSOLE_TEST_DATABASE_URL: postgresql+asyncpg://seo_workflow_tester:ci-review-only@127.0.0.1:55432/seo_workflow_test
           BAIDU_APP_ID: ci-dummy
           BAIDU_SECRET_KEY: 1234567890abcdef
           BAIDU_DEFAULT_USERNAME: ci-dummy
