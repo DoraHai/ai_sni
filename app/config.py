@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     geo_allow_self_review: bool = False
     geo_report_browser_executable_path: str = ""
     geo_report_browser_channel: str = ""
+    # Optional dedicated model for GEO onsite proposals. Empty keeps the shared
+    # GEO provider model; only explicitly validated structured-output models are accepted.
+    geo_onsite_ai_provider: str = ""
+    geo_onsite_ai_model: str = ""
 
     # GEO isolated demo runtime. Normal environments keep existing behavior.
     # APP_ENV=demo additionally requires every switch to be explicitly present

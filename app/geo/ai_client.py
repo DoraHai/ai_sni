@@ -17,7 +17,38 @@ logger = logging.getLogger(__name__)
 
 
 class DeepSeekError(Exception):
-    pass
+    def __init__(self, message: str, *, category: str = "unknown",
+                 status_code: int | None = None, code: str | None = None):
+        super().__init__(message)
+        self.category = category
+        self.status_code = status_code
+        self.code = code
+
+
+def _provider_http_error(exc: httpx.HTTPStatusError) -> DeepSeekError:
+    status = exc.response.status_code
+    code = None
+    try:
+        body = exc.response.json()
+        error = body.get("error") if isinstance(body, dict) else None
+        if isinstance(error, dict):
+            raw = error.get("code") or error.get("type")
+            code = str(raw)[:100] if raw else None
+    except (ValueError, TypeError):
+        pass
+    normalized = (code or "").lower()
+    if status == 404 and "model" in normalized:
+        category = "model_not_found"
+    elif status in {401, 403}:
+        category = "authentication"
+    elif status == 429:
+        category = "rate_limit"
+    elif 400 <= status < 500:
+        category = "invalid_request"
+    else:
+        category = "provider_unavailable"
+    return DeepSeekError("AI 供应商请求失败", category=category,
+                         status_code=status, code=code)
 
 
 def _parse_json_content(content: str) -> dict:
@@ -66,6 +97,28 @@ def is_enabled() -> bool:
     return bool(s.deepseek_api_key or getattr(s, "dashscope_api_key", ""))
 
 
+def _chat_json_payload(system: str, user: str, model: str, *,
+                       enable_thinking: bool | None = None,
+                       max_tokens: int | None = None,
+                       response_format: dict | None = None) -> dict:
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "response_format": (response_format if response_format is not None
+                            else {"type": "json_object"}),
+        "temperature": 0.3,
+        "stream": False,
+    }
+    if enable_thinking is not None:
+        payload["enable_thinking"] = enable_thinking
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    return payload
+
+
 @managed_runtime('geo')
 async def chat_json(
     system: str,
@@ -75,20 +128,15 @@ async def chat_json(
     api_key: str | None = None,
     base_url: str | None = None,
     model: str | None = None,
+    enable_thinking: bool | None = None,
+    max_tokens: int | None = None,
+    response_format: dict | None = None,
 ) -> dict:
     """调 OpenAI 兼容 /chat/completions，强制 JSON 输出。失败抛 DeepSeekError。"""
     key, url_base, mdl = _resolve_creds(api_key=api_key, base_url=base_url, model=model)
     url = url_base + "/chat/completions"
-    payload = {
-        "model": mdl,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "response_format": {"type": "json_object"},
-        "temperature": 0.3,  # 判断要稳定，不要发散
-        "stream": False,
-    }
+    payload = _chat_json_payload(system, user, mdl, enable_thinking=enable_thinking,
+                                 max_tokens=max_tokens, response_format=response_format)
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
@@ -101,8 +149,14 @@ async def chat_json(
             data = resp.json()
         content = data["choices"][0]["message"]["content"]
         return _parse_json_content(content)
-    except (httpx.HTTPError, KeyError, ValueError, json.JSONDecodeError) as e:
-        raise DeepSeekError(f"AI 调用/解析失败: {e}") from e
+    except httpx.HTTPStatusError as exc:
+        raise _provider_http_error(exc) from exc
+    except httpx.TimeoutException as exc:
+        raise DeepSeekError("AI 供应商请求超时", category="timeout") from exc
+    except httpx.RequestError as exc:
+        raise DeepSeekError("AI 供应商连接失败", category="network") from exc
+    except (KeyError, ValueError, json.JSONDecodeError) as exc:
+        raise DeepSeekError("AI 供应商返回结构无效", category="invalid_response") from exc
 
 
 @managed_runtime('geo')

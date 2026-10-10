@@ -1,5 +1,6 @@
 """Owned PostgreSQL proves project isolation, revisions and duplicate-request locking."""
 import asyncio
+import json
 from uuid import uuid4
 import os
 import pytest
@@ -88,14 +89,13 @@ def _ai_result(items):
         "structured_content": "示例品牌提供经过公开资料核验的工业产品。",
         "knowledge": "示例品牌工业产品知识与适用范围。",
         "faq": "示例品牌产品有哪些公开能力？请参考公开产品资料。",
-        "schema": '{"@context":"https://schema.org","@type":"Product","name":"示例品牌工业产品"}',
-        "llms": "# 示例品牌公开资料\n- [产品知识](https://p10.example/knowledge)",
     }
-    return {"summary": "基于已核验公开资料起草", "missing_information": ["缺少具体规格"],
+    return {"schema_version": 2, "summary": "基于已核验公开资料起草",
+            "missing_information": ["缺少具体规格"],
             "items": [{"id": item["id"], "expected": values[item["id"]],
-                       "rationale": "使用获准公开来源", "missing_information": [],
-                       "source_refs": [{"fact_id": 80, "url": "https://public.example/fact"}]}
-                      for item in items]}
+                       "reason": "使用获准公开来源", "fact_ids": [80],
+                       "blocking_missing_information": [], "optional_information": []}
+                      for item in items if item["kind"] in {"structured_content", "knowledge", "faq"}]}
 
 
 async def _add_public_fact(db, *, fact_id=80, title="公开产品资料", expired=False):
@@ -113,12 +113,25 @@ async def _add_public_fact(db, *, fact_id=80, title="公开产品资料", expire
     await db.commit()
 
 
+async def _add_nonpublic_fact(db, *, fact_id=81):
+    db.add(GeoFact(id=fact_id, tenant_id=1, business_id=None, title="内部核验资料",
+        statement="这条事实没有明确公开使用授权，不能进入站内模型快照。",
+        fact_type="product", source_name="内部资料",
+        source_url="https://private.example/fact", expires_at=None,
+        trust_level="verified", status="active",
+        meta={"verification": {"verified_at": "2026-10-09T00:00:00Z",
+              "excerpt": "内部核验摘录", "excerpt_locator": "正文第1段"}}))
+    await db.commit()
+
+
 def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(monkeypatch):
     calls = []
     advisor_locks = []
     original_advisor_available = api.advisor_available
     async def credentials(session, tenant_id):
-        return {"api_key": "test", "base_url": "https://provider.invalid/v1", "model": "test-model"}
+        return {"api_key": "test",
+                "base_url": "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+                "model": "deepseek-v4-flash-0731", "provider": "dashscope"}
     async def provider(system, user, **kwargs):
         calls.append((system, user, kwargs))
         import json
@@ -130,14 +143,25 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
     monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
     monkeypatch.setattr(api, "chat_json", provider)
     monkeypatch.setattr(api, "advisor_available", tracked_advisor_available)
+    monkeypatch.setattr(api.onsite_ai, "get_settings", lambda: SimpleNamespace(
+        geo_onsite_ai_provider="deepseek", geo_onsite_ai_model="deepseek-chat",
+        deepseek_api_key="official-platform-key",
+        deepseek_base_url="https://api.deepseek.com"))
     async def run():
         async with database() as sessions:
             await configured(sessions)
             async with sessions() as db:
                 await _add_public_fact(db)
+                await _add_nonpublic_fact(db)
             async with sessions() as db:
                 row = await api.create(api.Create(tenant_id=1, project_id=10, request_id=uuid4(),
                     work_type="startup", owner_name="维护人员"), db, ADVISOR)
+            async with sessions() as db:
+                stored = await db.get(GeoActionTicket, row["id"])
+                project = await db.get(GeoProject, 10)
+                snapshot = await api._proposal_snapshot(db, project, stored)
+                assert [fact["fact_id"] for fact in snapshot["facts"]] == [80]
+                assert snapshot["facts"][0]["statement_publicly_authorized"] is True
             rid = uuid4()
             req = api.AiProposal(tenant_id=1, project_id=10,
                 expected_revision=row["workflow"]["revision"], request_id=rid, mode="initial")
@@ -147,14 +171,27 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
             assert result["workflow"]["ai_run"]["request_id"] == str(rid)
             assert result["workflow"]["ai_run"]["state"] == "ready"
             assert result["workflow"]["ai_proposal"]["proposal_revision"] == result["workflow"]["revision"]
-            assert result["workflow"]["ai_proposal"]["items"][0]["source_refs"][0]["source_id"].startswith("geo-public-source:")
-            assert "fact_id" not in result["workflow"]["ai_proposal"]["items"][0]["source_refs"][0]
+            public_item = result["workflow"]["ai_proposal"]["items"][0]
+            assert public_item["id"] == public_item["item_id"]
+            assert public_item["missing_information"] == public_item["blocking_missing_information"]
+            assert "optional_information" in public_item
+            assert public_item["source_refs"][0]["source_id"].startswith("geo-public-source:")
+            assert "fact_id" not in public_item["source_refs"][0]
             assert result["capabilities"]["website_execution"]["enabled"] is False
             assert not any(key in result["workflow"] for key in ("approval", "implementation", "recheck", "acceptance"))
             async with sessions() as db:
                 same = await api.ai_proposal(row["id"], req, db, ADVISOR)
             assert same["workflow"]["ai_run"]["state"] == "ready"
             assert len(calls) == 1
+            sent_facts = json.loads(calls[0][1])["approved_public_facts"]
+            assert [fact["fact_id"] for fact in sent_facts] == [80]
+            assert all("statement_publicly_authorized" not in fact for fact in sent_facts)
+            assert calls[0][2]["api_key"] == "official-platform-key"
+            assert calls[0][2]["base_url"] == "https://api.deepseek.com"
+            assert calls[0][2]["model"] == "deepseek-chat"
+            assert calls[0][2]["max_tokens"] == 8192
+            assert all(key not in calls[0][2] for key in (
+                "enable_thinking", "reasoning_effort", "response_format"))
             assert "API" not in str(result["workflow"]["ai_proposal"])
             assert True in advisor_locks
             manual_items = [api.work.Item.model_validate(item) for item in same["workflow"]["items"]]
@@ -199,6 +236,87 @@ def test_ai_proposal_rejects_full_history_before_quota_or_provider_call(monkeypa
             async with sessions() as db:
                 project = await db.get(GeoProject, 10)
                 assert "onsite_ai_quota" not in (project.project_settings or {})
+            assert calls == 0
+    asyncio.run(run())
+
+
+def test_invalid_onsite_model_is_rejected_before_quota_or_provider_call(monkeypatch):
+    calls = 0
+    async def credentials(session, tenant_id):
+        return {"api_key": "test",
+                "base_url": "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+                "model": "deepseek-v4-flash-0731", "provider": "dashscope"}
+    async def provider(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return {}
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(api, "chat_json", provider)
+    monkeypatch.setattr(api.onsite_ai, "get_settings", lambda: SimpleNamespace(
+        geo_onsite_ai_provider="deepseek", geo_onsite_ai_model="deepseek-chat",
+        deepseek_api_key="official-platform-key",
+        deepseek_base_url="https://proxy.invalid/v1"))
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                row = await api.create(api.Create(
+                    tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员"), db, ADVISOR)
+            request = api.AiProposal(tenant_id=1, project_id=10,
+                expected_revision=1, request_id=uuid4(), mode="initial")
+            async with sessions() as db:
+                with pytest.raises(HTTPException) as error:
+                    await api.ai_proposal(row["id"], request, db, ADVISOR)
+                assert error.value.status_code == 409
+            async with sessions() as db:
+                project = await db.get(GeoProject, 10)
+                assert "onsite_ai_quota" not in (project.project_settings or {})
+                stored = await db.get(GeoActionTicket, row["id"])
+                projected = await api._public(db, stored, project, True)
+                capability = projected["capabilities"]["ai_planning"]
+                assert capability["can_generate"] is False
+                assert "配置无效" in capability["reason"]
+            assert calls == 0
+    asyncio.run(run())
+
+
+def test_missing_facts_stop_before_nonce_quota_or_official_provider_call(monkeypatch):
+    calls = 0
+    async def credentials(session, tenant_id):
+        return {"api_key": "shared-default", "base_url":
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "model": "deepseek-v4-flash-0731", "provider": "dashscope"}
+    async def provider(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return {}
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(api, "chat_json", provider)
+    monkeypatch.setattr(api.onsite_ai, "get_settings", lambda: SimpleNamespace(
+        geo_onsite_ai_provider="deepseek", geo_onsite_ai_model="deepseek-chat",
+        deepseek_api_key="official-platform-key",
+        deepseek_base_url="https://api.deepseek.com"))
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                row = await api.create(api.Create(
+                    tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员"), db, ADVISOR)
+            request = api.AiProposal(tenant_id=1, project_id=10,
+                expected_revision=1, request_id=uuid4(), mode="initial")
+            async with sessions() as db:
+                with pytest.raises(HTTPException) as error:
+                    await api.ai_proposal(row["id"], request, db, ADVISOR)
+                assert error.value.status_code == 409
+                assert "已核验且获准公开使用" in str(error.value.detail)
+            async with sessions() as db:
+                project = await db.get(GeoProject, 10)
+                assert "onsite_ai_quota" not in (project.project_settings or {})
+                assert "onsite_ai_requests" not in (project.project_settings or {})
+                stored = await db.get(GeoActionTicket, row["id"])
+                assert "ai_run" not in stored.progress["onsite"]
             assert calls == 0
     asyncio.run(run())
 
@@ -297,7 +415,11 @@ def test_ai_proposal_late_result_cannot_overwrite_after_role_permission_revoked(
     asyncio.run(run())
 
 
-def test_ai_unknown_result_is_recorded_and_same_nonce_never_calls_again(monkeypatch):
+@pytest.mark.parametrize("category, expected_state", [
+    ("unknown", "unknown"), ("model_not_found", "failed"),
+])
+def test_ai_error_is_classified_and_same_nonce_never_calls_again(
+        monkeypatch, category, expected_state):
     calls = 0
     async def credentials(session, tenant_id):
         return {"api_key": "test", "base_url": "https://provider.invalid/v1", "model": "test-model"}
@@ -305,12 +427,16 @@ def test_ai_unknown_result_is_recorded_and_same_nonce_never_calls_again(monkeypa
         nonlocal calls
         calls += 1
         from app.geo.ai_client import DeepSeekError
-        raise DeepSeekError("sensitive provider failure")
+        raise DeepSeekError("sensitive provider failure", category=category,
+                            status_code=404 if category == "model_not_found" else None,
+                            code=category if category == "model_not_found" else None)
     monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
     monkeypatch.setattr(api, "chat_json", provider)
     async def run():
         async with database() as sessions:
             await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
             async with sessions() as db:
                 row = await api.create(api.Create(tenant_id=1, project_id=10, request_id=uuid4(),
                     work_type="startup", owner_name="维护人员"), db, ADVISOR)
@@ -322,8 +448,11 @@ def test_ai_unknown_result_is_recorded_and_same_nonce_never_calls_again(monkeypa
                 assert error.value.status_code == 424
             async with sessions() as db:
                 retry = await api.ai_proposal(row["id"], req, db, ADVISOR)
-                assert retry["workflow"]["ai_run"]["state"] == "unknown"
+                assert retry["workflow"]["ai_run"]["state"] == expected_state
                 assert "sensitive" not in retry["workflow"]["ai_run"]["error"]
+                assert retry["workflow"]["ai_run"]["error_category"] == category
+                if category == "model_not_found":
+                    assert retry["workflow"]["ai_run"]["http_status"] == 404
             assert calls == 1
     asyncio.run(run())
 
