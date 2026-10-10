@@ -88,8 +88,8 @@ def capabilities(w, can_write, site_settings=None, request_count=0):
         reason = "需要当前网站有效顾问权限"
     elif w["phase"] in {"done", "cancelled"}:
         reason = "任务已结束"
-    elif run.get("state") == "running":
-        reason = "方案正在生成；结果不明时请先核对原请求"
+    elif run.get("state") in {"queued", "running"}:
+        reason = "方案正在排队或生成；结果不明时请先核对原请求"
     elif used >= DAILY_LIMIT:
         reason = "本站今日 AI 方案次数已达上限"
     elif len(w.get("history", [])) >= 100 or request_count >= REQUEST_LIMIT:

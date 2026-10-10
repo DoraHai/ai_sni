@@ -47,8 +47,11 @@ async def scope(session, ctx, tenant_id, site_id, write=False):
 def public(row, can_write, site_settings=None, can_ai=None):
     from app.seo_onsite_ai import capabilities
     value = row.params["onsite"]
+    actions = work.allowed_actions(value, can_write)
+    if value.get("ai_run", {}).get("state") in {"queued", "running"}:
+        actions = [action for action in actions if action == "cancel"]
     return dict(id=row.id, module="seo", tenant_id=row.tenant_id, scope_id=row.site_id, title=row.title,
-                workflow=value, allowed_actions=work.allowed_actions(value, can_write),
+                workflow=value, allowed_actions=actions,
                 completion_evidence=row.completion_evidence,
                 capabilities=capabilities(value, can_write if can_ai is None else can_ai, site_settings,
                                           len(row.params.get("onsite_ai_requests") or {})))
@@ -151,6 +154,8 @@ async def act(task_id: PositiveInt, req: Update, session=Depends(get_session), c
     row = await session.get(SeoTask, task_id, with_for_update=True, populate_existing=True)
     if not row or row.tenant_id != req.tenant_id or row.site_id != req.site_id or row.action_type != ACTION_TYPE:
         raise HTTPException(404, "当前网站的站内任务不存在")
+    if req.action != "cancel" and row.params["onsite"].get("ai_run", {}).get("state") in {"queued", "running"}:
+        raise HTTPException(409, {"code": "onsite_ai_busy", "message": "AI 方案正在排队或生成，请等待或先取消请求"})
     if req.action != "cancel":
         await sources_current(session, row)
     value = work.prepare_change(row.params["onsite"], req, "seo", site.canonical_domain, ctx.user_id)
@@ -170,6 +175,13 @@ async def act(task_id: PositiveInt, req: Update, session=Depends(get_session), c
                 raise HTTPException(424, "页面读取超时")
         value = await work.recheck(value, fetch)
     row.params = {**row.params, "onsite": value}
+    active = value.get("ai_run") or {}
+    if req.action == "cancel" and active.get("state") in {"queued", "running"}:
+        from app.api.seo_onsite_ai import save_run
+        run = row.params["onsite_ai_requests"][active["request_id"]]
+        save_run(row, {**run, "state": "cancelled" if run["state"] == "queued" else "unknown",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "error": {"code": "onsite_ai_task_cancelled", "message": "任务已取消，生成结果不再采用；已开始的调用需人工核对"}})
     row.status = {"done":"done", "cancelled":"cancelled"}.get(value["phase"], "in_progress")
     if value["phase"] == "done":
         row.completion_evidence = dict(acceptance=value["acceptance"], recheck=value["recheck"],

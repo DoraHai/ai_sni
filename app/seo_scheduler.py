@@ -13,6 +13,7 @@ from app.seo_image_verification import verify_pending_images
 from app.seo_cockpit_metrics import collect_cockpit_metrics
 from app.seo_content_workflow import run_content_workflows
 from app.seo_service_workflows import run_service_workflows
+from app.seo_onsite_ai_jobs import run_onsite_ai_jobs
 
 from app.config import get_settings
 from app.process_lock import acquire_file_lock, release_file_lock
@@ -133,6 +134,7 @@ def _start_seo_scheduler() -> None:
     seo_scheduler.add_job(run_qa_batches,IntervalTrigger(seconds=10),id='run_seo_qa_batches',replace_existing=True,max_instances=1,coalesce=True,misfire_grace_time=60)
     seo_scheduler.add_job(run_content_workflows, IntervalTrigger(minutes=1), id='run_seo_content_workflows', replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=60)
     seo_scheduler.add_job(run_service_workflows, IntervalTrigger(minutes=1), id='run_seo_service_workflows', replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=60)
+    seo_scheduler.add_job(run_onsite_ai_jobs, IntervalTrigger(seconds=10), id='run_seo_onsite_ai_jobs', replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=60)
     seo_scheduler.start()
     logger.info("[scheduler][SEO] 独立调度器已启动")
 
