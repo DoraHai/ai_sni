@@ -39,7 +39,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
         requests.push({path:u.pathname,method:r.method()});
         if(u.pathname==='/api/v1/admin/console/balances'){
           balanceReads++;if(u.searchParams.get('refresh')==='true')balanceRefreshes++;if(balanceHeld)await balanceHeld;
-          return r.respond({status:balanceStatus,contentType:'application/json',body:JSON.stringify({schema:1,state:'available',rows:[{id:'deepseek',provider:'deepseek',name:'DeepSeek 官方账户',tenant_id:null,state:'available',balances:[{currency:'CNY',available:'0',cash:'0',warning_threshold:'100'}],warning:'low',queried_at:'2026-10-10T12:00:00Z',api_key:'never-balance-secret'},{id:'aliyun',provider:'aliyun',name:'阿里云账户',tenant_id:null,state:'not_configured',note:'需配置费用查询只读授权',balances:[],warning:'unknown',queried_at:'2026-10-10T12:00:00Z'}]})});
+          return r.respond({status:balanceStatus,contentType:'application/json',body:JSON.stringify({schema:1,state:'available',coverage:{state:'schema_pending',rows:[{id:'seo.chinaz',module:'seo',name:'站长之家 / 百度收录',configured:null,capability:'package',note:'套餐查询接口尚待确认'},{id:'geo.geo_kimi',module:'geo',name:'Kimi',configured:null,capability:'direct'},{id:'geo.geo_qwen',module:'geo',name:'通义千问',configured:null,capability:'billing_authorization'}]},rows:[{id:'deepseek',provider:'deepseek',name:'DeepSeek 官方账户',tenant_id:null,state:'available',balances:[{currency:'CNY',available:'0',cash:'0',warning_threshold:'100'}],warning:'low',queried_at:'2026-10-10T12:00:00Z',api_key:'never-balance-secret'},{id:'aliyun',provider:'aliyun',name:'阿里云账户',tenant_id:null,state:'not_configured',note:'需配置费用查询只读授权',balances:[],warning:'unknown',queried_at:'2026-10-10T12:00:00Z'}]})});
         }
         if(u.pathname==='/api/v1/platform/ai-governance')return r.respond({status:governanceStatus,contentType:'application/json',body:JSON.stringify(governanceData)});
         if(u.pathname.endsWith('/usage/export')){
@@ -110,7 +110,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     governanceStatus=403;await p.click('[data-pc=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('无法读取 AI 治理'));assert(!await p.$('.pc-kpis'));assert.doesNotMatch(await body(),/qwen/);
     governanceStatus=404;await p.click('[data-pc=refresh]');await p.waitForSelector('.pc-kpis');
     await p.click('.pc-sidebar [data-pc-page=balances]');await p.waitForFunction(()=>document.querySelector('.pc-content')?.textContent.includes('CNY 0'));
-    assert(balanceReads>0);
+    assert(balanceReads>0);assert.match(await p.$eval('.pc-content',e=>e.textContent),/API 接入与余额覆盖/);assert.match(await body(),/站长之家 \/ 百度收录/);assert.match(await body(),/Kimi/);assert.match(await body(),/配置待核对/);
     const beforeAutomatic=balanceReads;await p.evaluate(()=>window.__balancePoll());await p.waitForFunction(()=>document.querySelector('[data-pc=balance-refresh]')?.disabled===false);assert(balanceReads>beforeAutomatic);
     const beforeHidden=balanceReads;await p.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});window.__balancePoll();delete document.visibilityState;});assert.equal(balanceReads,beforeHidden);
     assert.match(await body(),/余额不足预警/);assert.doesNotMatch(await body(),/never-balance-secret/);
