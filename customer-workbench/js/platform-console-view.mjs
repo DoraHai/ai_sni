@@ -2,9 +2,10 @@ import {escapeText as esc} from './customer-display.mjs';
 import {createPlatformConsoleClient,platformConsolePath,isPlatformAdmin} from './platform-console-client.mjs';
 import {renderControlPanel,hydrateControlForm,controlPayload} from './platform-control-panel.mjs';
 import {renderSystemConfig,hydrateConnectionForm,setConnectionMode,connectionPayload} from './platform-system-config.mjs';
+import {renderUsagePanel,renderAlertsPanel,renderSuppliersPanel,renderBackupPanel} from './platform-ops-panel.mjs';
 
 const tabs=[['overview','平台总览'],['customers','客户与服务'],['accounts','账号与权限'],['apis','API 与调用'],
-  ['costs','成本与用量'],['controls','API 与预算管理'],['config','系统配置'],['tasks','任务与调度'],['security','安全与运维'],['inventory','系统盘点']];
+  ['costs','成本与用量'],['controls','API 与预算管理'],['config','系统配置'],['alerts','告警与处理'],['tasks','任务与调度'],['security','安全与运维'],['inventory','系统盘点']];
 const value=n=>n==null?'待接入':Number(n).toLocaleString('zh-CN');
 const time=s=>s?new Date(s).toLocaleString('zh-CN',{hour12:false}):'暂无记录';
 const providerLabel=p=>({chinaz:'站长之家',dataforseo:'DataForSEO',dashscope:'阿里云百炼',deepseek:'DeepSeek',baidu:'百度推广'}[p]||p||'未提供');
@@ -18,19 +19,22 @@ const table=(headers,rows)=>rows.length?`<div class="pc-table-wrap"><table><thea
 const inventory=[
   ['客户与服务','已接入','客户、SEM/SEO/GEO 开通状态、服务到期时间、站点与项目。','客户与模块已有管理入口。'],
   ['账号与权限','已接入','实名账号、客户绑定、角色与权限、启停状态、最近登录。','维护沿用现有账号与角色页面。'],
-  ['API 调用','已接入','调用与费用共用外部请求台账，含模型、Token、耗时和状态。','逐步补齐尚未接入计量的外部服务。'],
+  ['API 调用','已接入','完整台账筛选、分页和 CSV 导出；模型、Token、耗时和状态。','逐步补齐尚未接入计量的外部服务。'],
   ['成本与预算','已接入','客户与全部账号费用归集、单价版本、日/月预算及超限暂停。','服务商实际账单与估算费用对账。'],
   ['任务与调度','部分接入','查看 SEM/SEO 工单、GEO 异步任务和工单。','全局调度控制与统一恢复操作待接入。'],
-  ['告警与通知','部分接入','汇总授权过期、服务到期、已有接口异常和失败任务。','外部告警发送与处理闭环待接入。'],
+  ['告警与通知','部分接入','异常统计、告警认领、处理说明、再次异常提醒及人工额度登记。','处理记录等待管理启用；外部告警发送待接入。'],
   ['配置与密钥','已接入','服务商开关、单价及已配置密钥在线轮换，密钥加密保存。','百度 OAuth 沿用原授权流程，增加服务商连通监测。'],
-  ['操作审计','部分接入','预算、单价、接口开关及密钥设置记录操作者与变更版本。','继续接入账号、权限与业务操作审计。'],
-  ['备份与恢复','待接入','生产已有发布回滚机制。','备份覆盖、最近成功时间与恢复演练记录待接入。'],
+  ['操作审计','部分接入','接口配置、告警处理、账号创建启停、角色权限与密码重置均有审计。','等待管理启用；继续接入其他业务操作。'],
+  ['备份与恢复','部分接入','读取实际数据库备份结果，区分归档校验与恢复验证。','定时备份与完整恢复演练继续完善。'],
 ];
 
 export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=window}){
   root.classList.add('platform-console');browser.document.title='超级管理员工作台 · G-SNIPERS';
   let page='overview',snapshot=null,identity=null,busy=false,disposed=false,ownChange=false,query='',revision=0;
-  let loginController=null,notice='',saving=false,connectionId=null;
+  let loginController=null,notice='',saving=false,connectionId=null,alertId=null,supplierHost=null;
+  const today=()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai'}).format(new Date());
+  const blankHistory=()=>({filters:{from:today().slice(0,7)+'-01',to:today()},data:null,cursors:[],busy:false,error:''});
+  let history=blankHistory();
   const client=createPlatformConsoleClient({session,fetchImpl,onExpired:()=>login('登录已失效，请重新登录。'),
     refreshUser(user){ownChange=true;try{session.refreshUser(user);}finally{ownChange=false;}}});
   const source=name=>snapshot?.sources[name]||{state:'unavailable',total:null,rows:[],truncated:false};
@@ -76,6 +80,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     return card('API 调用情况',`<div class="pc-metrics"><div><small>近 24 小时已记录</small><b>${value(snapshot.calls.total)}</b></div><div><small>异常记录</small><b>${value(snapshot.calls.failed)}</b></div><div><small>平均耗时</small><b>${snapshot.calls.average_latency_ms==null?'暂无记录':value(snapshot.calls.average_latency_ms)+' ms'}</b></div></div><p class="pc-note">${esc(snapshot.coverage.api)}</p>`)+
       card('本月服务商与具体接口',table(['模块','服务商','模型 / 接口','请求数','未定价请求'],(snapshot.api_costs?.provider_totals||[]).map(r=>[esc(r.module.toUpperCase()),esc(providerLabel(r.provider)),esc(r.model||r.endpoint||'按次接口'),value(r.calls),value(r.unpriced)])),'覆盖本月已计量调用；按具体接口分别统计。站长之家在此显示，不受最近 50 条明细限制。')+
       card('最近调用',`${search('搜索服务商、接口或客户')}${table(['时间','客户','服务商','接口 / 模型','结果','耗时','请求编号'],calls.map(r=>[esc(time(r.started_at)),esc(tenant(r.tenant_id)),esc(providerLabel(r.provider)),esc(r.model||r.endpoint||'未记录'),status(r.state),r.latency_ms==null?'未记录':value(r.latency_ms)+' ms',esc(r.provider_request_id||r.id||'未记录')]))}`,'与成本页使用同一调用台账，显示最近 50 次真实外部请求。')+
+      renderUsagePanel({snapshot,history,esc,card,table,tenant,time,providerLabel})+
       card('GEO 采样引擎',table(['客户','引擎','采样方式','模型','状态'],source('geo_tracking_engines').rows.map(e=>[esc(tenant(e.tenant_id)),esc(e.display_name||e.engine_key),e.sample_mode==='openai_compat'?'真实接口配置':e.sample_mode==='mock_persona'?'模拟采样':esc(e.sample_mode||'未提供'),esc(e.model||'未提供'),status(e.enabled?'active':'disabled')])),'采样方式来自已有配置，不表示接口已通过实时测试。运行密钥由服务器管理。');
   }
   function costs(){
@@ -113,13 +118,18 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     return card('数据与权限',`<div class="pc-gap-grid"><div><b>全局超管</b><p>当前账号：${esc(identity.display_name||identity.username)}。入口由服务端校验双重管理权限。</p></div><div><b>客户隔离</b><p>客户账号仍绑定自己的客户范围，业务操作继续校验站点、项目与权限。</p></div><div><b>密钥管理</b><p>${esc(snapshot.coverage.credentials)}</p></div></div>`)+
       card('授权状态',table(['客户','服务','状态','到期时间'],source('baidu_oauth_grants').rows.map(r=>[esc(tenant(r.tenant_id)),'百度推广',status(r.expires_at&&new Date(r.expires_at)<new Date()?'expired':r.status),esc(time(r.expires_at))])),sourceNote('baidu_oauth_grants'))+
       card('运维接入情况',`<div class="pc-gap-grid"><div><b>备份与恢复</b><p>${esc(snapshot.coverage.backup)}</p></div><div><b>操作审计</b><p>${esc(snapshot.coverage.audit)}</p></div><div><b>配置版本</b><p>管理配置带版本检查，密钥可恢复服务器原配置；历史请求保留当时单价。</p></div></div>`)+
+      renderBackupPanel({snapshot,esc,card,table,time})+
       card('最近管理操作',table(['时间','管理员','操作','范围','变更前','变更后'],(snapshot.controls?.audit||[]).map(r=>[
         esc(time(r.created_at)),esc(source('users').rows.find(u=>u.id===r.actor_id)?.username||'账号 '+r.actor_id),
-        esc({'budget.update':'预算设置','provider.update':'接口开关','rate.update':'单价修改','credential.update':'密钥设置','connection.update':'接口配置'}[r.action]||r.action),
+        esc({'budget.update':'预算设置','provider.update':'接口开关','rate.update':'单价修改','credential.update':'密钥设置','connection.update':'接口配置',
+          'user.create':'创建账号','user.update':'修改账号与范围','user.password':'重置密码','role.create':'创建角色','role.update':'修改角色权限','role.delete':'删除角色',
+          'alert.claim':'认领告警','alert.resolve':'标记告警处理','alert.reopen':'重新打开告警','supplier.update':'登记服务商额度'}[r.action]||r.action),
         esc(r.resource),esc(JSON.stringify(r.before_value)),esc(JSON.stringify(r.after_value))])), '显示最近 50 条记录。密钥变更仅显示来源与版本，不记录密钥内容。');
   }
   function controls(){return renderControlPanel({snapshot,esc,card,table,tenant});}
   function config(){return renderSystemConfig({snapshot,esc,card,table,selected:connectionId});}
+  function alertsPage(){return renderAlertsPanel({snapshot,selected:alertId,esc,card,table,tenant,time,users:source('users').rows})+
+    renderSuppliersPanel({snapshot,selected:supplierHost,esc,card,table,time});}
   function inventoryView(){return card('系统盘点',table(['能力','当前接入','已有基础','后续开发'],inventory.map(([n,s,d,next])=>{
     const pending=snapshot.controls?.state!=='enabled'&&['成本与预算','配置与密钥','操作审计'].includes(n);
     return [`<b>${n}</b>`,status(pending?'管理待启用':s),esc(d),esc(pending?'管理模块代码已就绪，等待数据库审核启用。':next)];
@@ -127,19 +137,52 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   function search(placeholder){return `<label class="pc-search"><span>筛选</span><input id="pc-search" type="search" value="${esc(query)}" placeholder="${placeholder}" maxlength="100"></label>`;}
   function render(){
     if(disposed||!snapshot)return;
-    const alerts=[...(snapshot.alerts||[])];
+    const alerts=[...(snapshot.alerts||[])].filter(a=>a.handling?.status!=='resolved');
     if(snapshot.api_costs?.unpriced>0)alerts.unshift({tenant_id:null,severity:'warning',message:`本月 ${value(snapshot.api_costs.unpriced)} 次调用尚未定价，请按接口维护单价。`});
     if(snapshot.controls?.state!=='enabled')alerts.push({tenant_id:null,severity:'warning',message:'接口配置与预算管理尚未启用，调用计量继续运行。'});
-    root.innerHTML=`<header class="pc-header"><a class="pc-brand" href="${platformConsolePath}">G-SNIPERS</a><span class="pc-header-label">超级管理员工作台</span><span class="pc-admin-badge">平台管理</span><div class="pc-header-actions"><span>${esc(identity.display_name||identity.username)}</span><a href="/customer-workbench/">客户工作台</a><button data-pc="logout">退出</button></div></header><div class="pc-layout"><aside class="pc-sidebar"><small>全局管理</small><nav aria-label="超级管理员导航">${tabs.map(([id,label])=>`<button data-pc-page="${id}" ${page===id?'aria-current="page" class="active"':''}>${label}</button>`).join('')}</nav><div class="pc-sidebar-foot"><b>统一管理入口</b><p>客户、账号和服务记录集中查看。</p></div></aside><main class="pc-main"><div class="pc-title"><div><small>平台管理 / ${tabs.find(t=>t[0]===page)[1]}</small><h1>${tabs.find(t=>t[0]===page)[1]}</h1></div><button data-pc="refresh" ${busy?'disabled':''}>${busy?'正在读取…':'刷新数据'}</button></div><p class="pc-updated" role="status">最近读取 ${esc(time(snapshot.generated_at))} · 数据来自现有系统</p><p class="pc-save-notice" role="status">${esc(notice)}</p><div class="pc-kpis">${summary()}</div><div class="pc-content">${({overview,customers,accounts,apis,costs,controls,config,tasks,security,inventory:inventoryView})[page]()}</div></main><aside class="pc-right"><section class="pc-card"><div class="pc-section-head"><h2>告警与待处理</h2><span class="pc-tag">${alerts.length}</span></div><p class="pc-note">来自已有记录的提醒</p>${alerts.length?alerts.map(a=>`<div class="pc-alert"><span class="pc-alert-dot ${a.severity==='error'?'error':''}"></span><div><b>${esc(tenant(a.tenant_id))}</b><p>${esc(a.message)}</p></div></div>`).join(''):empty('暂无已记录告警')}<p class="pc-note">告警覆盖随数据源接入逐步完善。</p></section><section class="pc-card pc-help"><h2>管理入口</h2>${link('客户与模块','/platform/customers')}${link('账号与角色','/platform/accounts')}<button data-pc-page="inventory">查看系统盘点 →</button></section></aside></div>`;
+    root.innerHTML=`<header class="pc-header"><a class="pc-brand" href="${platformConsolePath}">G-SNIPERS</a><span class="pc-header-label">超级管理员工作台</span><span class="pc-admin-badge">平台管理</span><div class="pc-header-actions"><span>${esc(identity.display_name||identity.username)}</span><a href="/customer-workbench/">客户工作台</a><button data-pc="logout">退出</button></div></header><div class="pc-layout"><aside class="pc-sidebar"><small>全局管理</small><nav aria-label="超级管理员导航">${tabs.map(([id,label])=>`<button data-pc-page="${id}" ${page===id?'aria-current="page" class="active"':''}>${label}</button>`).join('')}</nav><div class="pc-sidebar-foot"><b>统一管理入口</b><p>客户、账号和服务记录集中查看。</p></div></aside><main class="pc-main"><div class="pc-title"><div><small>平台管理 / ${tabs.find(t=>t[0]===page)[1]}</small><h1>${tabs.find(t=>t[0]===page)[1]}</h1></div><button data-pc="refresh" ${busy?'disabled':''}>${busy?'正在读取…':'刷新数据'}</button></div><p class="pc-updated" role="status">最近读取 ${esc(time(snapshot.generated_at))} · 数据来自现有系统</p><p class="pc-save-notice" role="status">${esc(notice)}</p><div class="pc-kpis">${summary()}</div><div class="pc-content">${({overview,customers,accounts,apis,costs,controls,config,alerts:alertsPage,tasks,security,inventory:inventoryView})[page]()}</div></main><aside class="pc-right"><section class="pc-card"><div class="pc-section-head"><h2>告警与待处理</h2><span class="pc-tag">${alerts.length}</span></div><p class="pc-note">来自已有记录的提醒</p>${alerts.length?alerts.map(a=>`<div class="pc-alert"><span class="pc-alert-dot ${a.severity==='error'?'error':''}"></span><div><b>${esc(tenant(a.tenant_id))}</b><p>${esc(a.message)}</p></div></div>`).join(''):empty('暂无已记录告警')}<p class="pc-note">告警覆盖随数据源接入逐步完善。</p></section><section class="pc-card pc-help"><h2>管理入口</h2>${link('客户与模块','/platform/customers')}${link('账号与角色','/platform/accounts')}<button data-pc-page="inventory">查看系统盘点 →</button></section></aside></div>`;
     root.querySelectorAll(".pc-control-form").forEach(form=>form.dataset.controlKind==='connection'?hydrateConnectionForm(form,snapshot):hydrateControlForm(form,snapshot));
   }
   function gate(title,note){root.innerHTML=`<header class="pc-header"><a class="pc-brand" href="${platformConsolePath}">G-SNIPERS</a><span>超级管理员工作台</span></header><main class="pc-gate"><section class="pc-card"><small>平台管理</small><h1>${esc(title)}</h1><p role="status">${esc(note)}</p><div class="pc-shortcuts"><button data-pc="refresh">重新读取</button><button data-pc="logout">切换账号</button><a href="/customer-workbench/">返回客户工作台</a></div></section></main>`;}
   function login(note=''){
-    snapshot=null;identity=null;
+    snapshot=null;identity=null;history=blankHistory();
     root.innerHTML=`<header class="pc-header"><a class="pc-brand" href="${platformConsolePath}">G-SNIPERS</a><span>超级管理员工作台</span></header><main class="pc-gate"><section class="pc-card"><small>平台管理</small><h1>登录超级管理员工作台</h1><p>使用现有的全局管理员账号。</p><form id="pc-login"><label>账号<input name="username" autocomplete="username" minlength="2" maxlength="50" required></label><label>密码<input name="password" type="password" autocomplete="current-password" maxlength="100" required></label><label class="pc-remember"><input name="remember" type="checkbox">记住登录状态</label><p role="status">${esc(note)}</p><button class="primary" type="submit">登录并进入</button></form><a href="/customer-workbench/">返回客户工作台</a></section></main>`;
   }
+  async function queryUsage(cursor=null,direction='first'){
+    if(!snapshot||history.busy)return;
+    const started=revision,oldCursor=history.cursor||null;
+    history.busy=true;history.error='';history.data=null;render();
+    try{
+      const data=await client.usage({...history.filters,...(cursor?{cursor}:{})});
+      if(disposed||started!==revision)return;
+      if(data?.state!=='available'&&data?.state!=='schema_pending')throw Error('invalid-history');
+      if(direction==='next')history.cursors.push(oldCursor);
+      if(direction==='prev')history.cursors.pop();
+      history.cursor=cursor;history.data=data;
+    }catch(e){
+      if(disposed||started!==revision||e.code==='CONSOLE_STALE')return;
+      if(e.status===403||e.status===401){snapshot=null;identity=null;history=blankHistory();gate('无法读取调用明细','登录或管理员权限已变化，请重新登录。');return;}
+      history.error='明细未读取，请检查日期和筛选条件后重试。';
+    }finally{if(!disposed&&started===revision){history.busy=false;render();}}
+  }
+  async function downloadUsage(){
+    if(!snapshot||history.busy)return;
+    const form=root.querySelector('#pc-usage-query');if(!form?.reportValidity())return;
+    const filters=Object.fromEntries(new FormData(form)),started=revision;
+    history.filters=filters;history.data=null;history.cursors=[];history.busy=true;history.error='';render();
+    try{
+      const blob=await client.exportUsage(filters);if(disposed||started!==revision)return;
+      const url=browser.URL.createObjectURL(blob),a=browser.document.createElement('a');
+      try{a.href=url;a.download='api-usage-'+filters.from+'-'+filters.to+'.csv';a.click();notice='已导出筛选范围内的调用明细。';}
+      finally{browser.setTimeout(()=>browser.URL.revokeObjectURL(url),1000);}
+    }catch(e){
+      if(disposed||started!==revision||e.code==='CONSOLE_STALE')return;
+      if(e.status===403||e.status===401){snapshot=null;identity=null;history=blankHistory();gate('无法导出调用明细','登录或管理员权限已变化，请重新登录。');return;}
+      history.error=e.status===422?'导出未完成，请缩小日期或筛选范围；每次最多 50000 条。':'导出未完成，请稍后重试。';
+    }finally{if(!disposed&&started===revision){history.busy=false;render();}}
+  }
   async function load(){
-    if(disposed)return;revision++;const started=revision;snapshot=null;identity=null;busy=true;query='';
+    if(disposed)return;revision++;const started=revision;snapshot=null;identity=null;busy=true;query='';history=blankHistory();
     if(!session.token){busy=false;login();return;}
     gate('正在读取平台数据','正在核对账号权限…');
     try{
@@ -153,6 +196,37 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     }
   }
   async function submit(event){
+    if(event.target.id==='pc-usage-query'){
+      event.preventDefault();if(history.busy)return;
+      history.filters=Object.fromEntries(new FormData(event.target));history.cursors=[];
+      await queryUsage();return;
+    }
+    if(['pc-alert-operation','pc-supplier-operation'].includes(event.target.id)){
+      event.preventDefault();if(saving||snapshot?.operations?.state!=='enabled')return;
+      const form=event.target,fields=Object.fromEntries(new FormData(form)),started=revision;
+      let payload;
+      if(form.id==='pc-alert-operation'){
+        const alert=snapshot.alerts.find(a=>a.id===fields.alert_id);if(!alert)return;
+        payload={kind:'alert',key:alert.id,expected_revision:alert.handling?.revision||0,
+          value:{action:fields.action,note:fields.note,signal:alert.signal}};
+      }else{
+        const row=snapshot.operations.suppliers.find(r=>r.host===fields.host)||{};
+        const count=name=>fields[name]===''?null:Number(fields[name]);
+        payload={kind:'supplier',key:fields.host,expected_revision:row.revision||0,
+          value:{currency:fields.currency,balance:fields.balance||null,warning_balance:fields.warning_balance||null,
+            remaining_calls:count('remaining_calls'),warning_calls:count('warning_calls'),expires_on:fields.expires_on||null}};
+      }
+      payload.request_id=browser.crypto.randomUUID();saving=true;form.querySelector('button').disabled=true;
+      try{
+        await client.operation(payload);if(disposed||started!==revision)return;
+        notice='已保存处理记录并记录审计。';await load();
+      }catch(e){
+        if(disposed||started!==revision||e.code==='CONSOLE_STALE')return;
+        notice=e.status===409?'记录已有新变化，请刷新后重新处理。':e.status===422?'字段未通过检查，标记已处理需要填写说明；额度必须为非负数。':'操作未保存，请刷新核对后重试。';
+        if(e.status===403){snapshot=null;identity=null;history=blankHistory();gate('无法保存管理记录','管理员权限已变化，请重新登录。');}else render();
+      }finally{saving=false;}
+      return;
+    }
     if(event.target.matches('.pc-control-form')){
       event.preventDefault();if(saving)return;const form=event.target,started=revision;
       if(form.querySelector('button').disabled)return;
@@ -183,13 +257,19 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     finally{loginController=null;}
   }
   function click(event){const b=event.target.closest('[data-pc],[data-pc-page],[data-pc-connection]');if(!b||b.disabled)return;
+    if(b.dataset.pc==='usage-next'&&history.data?.next_cursor&&!history.busy)void queryUsage(history.data.next_cursor,'next');
+    if(b.dataset.pc==='usage-prev'&&history.cursors.length&&!history.busy)void queryUsage(history.cursors.at(-1),'prev');
+    if(b.dataset.pc==='usage-export'&&!history.busy)void downloadUsage();
     if(b.dataset.pcConnection){connectionId=b.dataset.pcConnection;page='config';render();return;}
     if(b.dataset.pcPage&&tabs.some(t=>t[0]===b.dataset.pcPage)){page=b.dataset.pcPage;query='';render();}
     if(b.dataset.pc==='refresh')void load();
     if(b.dataset.pc==='logout'){notice='';revision++;client.invalidate();loginController?.abort();ownChange=true;try{session.logout();}finally{ownChange=false;}login('已退出。');}
   }
   function input(event){if(event.target.id==='pc-search'){query=event.target.value;const position=event.target.selectionStart;render();const field=root.querySelector('#pc-search');field?.focus();field?.setSelectionRange?.(position,position);}}
-  function change(event){const form=event.target.closest('.pc-control-form');if(!form||!snapshot)return;
+  function change(event){
+    if(event.target.matches('#pc-alert-operation [name=alert_id]')){alertId=event.target.value;render();return;}
+    if(event.target.matches('#pc-supplier-operation [name=host]')){supplierHost=event.target.value;render();return;}
+    const form=event.target.closest('.pc-control-form');if(!form||!snapshot)return;
     const field=event.target.name;
     if(form.dataset.controlKind==='connection'){
       if(field==='connection_id'){connectionId=event.target.value;render();}

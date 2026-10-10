@@ -6,3 +6,5 @@
 .platform-console [data-connection-fields] label:has([data-connection-clear]){flex-direction:row;align-items:center;align-self:end;padding-bottom:10px}
 .platform-console [data-connection-fields] input[type=checkbox]{width:auto;padding:0}
 @media(max-width:700px){.platform-console [data-connection-fields]{grid-template-columns:1fr}}
+
+.platform-console .pc-ops-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}.platform-console .pc-ops-form label{display:flex;flex-direction:column;gap:6px;font-size:12px;min-width:0}.platform-console .pc-ops-form input,.platform-console .pc-ops-form select,.platform-console .pc-ops-form textarea{width:100%;min-width:0;box-sizing:border-box;padding:9px;border:1px solid #d5dee6;border-radius:5px}.platform-console .pc-ops-wide,.platform-console .pc-ops-actions{grid-column:1/-1}.platform-console .pc-ops-actions{display:flex;align-items:center;flex-wrap:wrap;gap:12px}.platform-console .pc-ops-form textarea{min-height:80px;resize:vertical}@media(max-width:700px){.platform-console .pc-ops-form{grid-template-columns:1fr}}
