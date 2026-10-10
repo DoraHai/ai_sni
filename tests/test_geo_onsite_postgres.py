@@ -1,5 +1,6 @@
 """Owned PostgreSQL proves project isolation, revisions and duplicate-request locking."""
 import asyncio
+import json
 from uuid import uuid4
 import os
 import pytest
@@ -112,6 +113,17 @@ async def _add_public_fact(db, *, fact_id=80, title="公开产品资料", expire
     await db.commit()
 
 
+async def _add_nonpublic_fact(db, *, fact_id=81):
+    db.add(GeoFact(id=fact_id, tenant_id=1, business_id=None, title="内部核验资料",
+        statement="这条事实没有明确公开使用授权，不能进入站内模型快照。",
+        fact_type="product", source_name="内部资料",
+        source_url="https://private.example/fact", expires_at=None,
+        trust_level="verified", status="active",
+        meta={"verification": {"verified_at": "2026-10-09T00:00:00Z",
+              "excerpt": "内部核验摘录", "excerpt_locator": "正文第1段"}}))
+    await db.commit()
+
+
 def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(monkeypatch):
     calls = []
     advisor_locks = []
@@ -140,9 +152,16 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
             await configured(sessions)
             async with sessions() as db:
                 await _add_public_fact(db)
+                await _add_nonpublic_fact(db)
             async with sessions() as db:
                 row = await api.create(api.Create(tenant_id=1, project_id=10, request_id=uuid4(),
                     work_type="startup", owner_name="维护人员"), db, ADVISOR)
+            async with sessions() as db:
+                stored = await db.get(GeoActionTicket, row["id"])
+                project = await db.get(GeoProject, 10)
+                snapshot = await api._proposal_snapshot(db, project, stored)
+                assert [fact["fact_id"] for fact in snapshot["facts"]] == [80]
+                assert snapshot["facts"][0]["statement_publicly_authorized"] is True
             rid = uuid4()
             req = api.AiProposal(tenant_id=1, project_id=10,
                 expected_revision=row["workflow"]["revision"], request_id=rid, mode="initial")
@@ -164,6 +183,9 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
                 same = await api.ai_proposal(row["id"], req, db, ADVISOR)
             assert same["workflow"]["ai_run"]["state"] == "ready"
             assert len(calls) == 1
+            sent_facts = json.loads(calls[0][1])["approved_public_facts"]
+            assert [fact["fact_id"] for fact in sent_facts] == [80]
+            assert all("statement_publicly_authorized" not in fact for fact in sent_facts)
             assert calls[0][2]["api_key"] == "official-platform-key"
             assert calls[0][2]["base_url"] == "https://api.deepseek.com"
             assert calls[0][2]["model"] == "deepseek-chat"

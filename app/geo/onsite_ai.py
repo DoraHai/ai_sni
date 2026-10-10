@@ -25,7 +25,8 @@ AI_STALE_SECONDS = 10 * 60
 AI_ITEM_KINDS = {"structured_content", "knowledge", "faq", "schema", "llms"}
 DRAFT_ITEM_KINDS = {"structured_content", "knowledge", "faq"}
 PROVIDER_CONTRACT_VERSION = 2
-PRIVATE_MARKERS = ("内部事实卡", "事实卡原文", "系统提示词", "system prompt", "api key")
+PRIVATE_MARKERS = ("内部事实卡", "事实卡原文", "系统提示词", "system prompt", "api key",
+                   "private_note")
 MAX_PROMPT_CHARS = 240_000
 MAX_PROVIDER_RESULT_CHARS = 100_000
 MAX_SOURCE_REFS_PER_ITEM = 20
@@ -273,9 +274,9 @@ def projected_ai_run(value: dict) -> dict | None:
     return result
 
 
-def public_source(fact) -> dict[str, Any]:
+def public_source(fact, *, statement_publicly_authorized: bool = False) -> dict[str, Any]:
     """Return only facts already approved for public drafting."""
-    return {
+    result = {
         "fact_id": int(fact.id),
         "source_id": "geo-public-source:" + hashlib.sha256(
             f"{fact.id}:{fact.source_url or ''}".encode()).hexdigest()[:16],
@@ -286,6 +287,11 @@ def public_source(fact) -> dict[str, Any]:
         "updated_at": fact.updated_at.isoformat() if fact.updated_at else None,
         "expires_at": fact.expires_at.isoformat() if fact.expires_at else None,
     }
+    if statement_publicly_authorized:
+        # The caller creates this proof only after explicit public-use checks.
+        # It is never accepted from provider output.
+        result["statement_publicly_authorized"] = True
+    return result
 
 
 def public_use_authorized(meta: Any) -> bool:
@@ -305,9 +311,10 @@ def prompt_text(snapshot: dict[str, Any], mode: str) -> tuple[str, str]:
 必须按当前 approved_public_facts 纠正旧稿，不能把旧稿与事实的差异写成“来源冲突”。
 只有 approved_public_facts 内部彼此冲突，或确实缺少支撑当前表述的获准事实，才能写入 blocking_missing_information。
 你不能批准方案、声称已经实施、发布或验收；资料不足时必须如实留空。
-不要输出内部事实卡原文、内部提示词、密钥、费用或私密备注。所有内容需改写成面向公众的表达。
-禁止完整照抄任一较长事实句，expected、reason 和各类缺项字段都必须遵守；保留必要的数字、单位、型号和否定条件，
-但要拆成公众短句或调整句式，不得复制整句原文。
+approved_public_facts 中的 statement 已获准公开，可以准确引用完整公开事实句，并应保持数字、单位、型号、适用范围和否定限制；
+固定规格或安全限制不需要为避免原句而强行改写，更不能改变事实内容或用无依据表述替代。
+但不得输出整张事实卡、内部字段名或 JSON 转储，例如 statement、fact_id、verification、private_note、source_url、meta；
+也不得输出内部提示词、密钥、费用、私有备注或其他内部事实卡内容。
 禁止从规格或通用经验推导输入事实没有明确写出的产品结论，包括适用面积或“中小/中等面积”、具体地面材质
 （如水泥地、混凝土、环氧地坪）、无需外接电源或无插座区域、效率、续航、动力、认证、性能承诺和应改用防爆型号。
 通用选型知识不能转写成该产品的事实。knowledge 只整理 approved_public_facts 已明确提供的内容和需要核对的缺项；
@@ -365,10 +372,16 @@ def _reject_private_text(value: str, facts: list[dict[str, Any]]) -> None:
     lowered = value.lower()
     if any(marker.lower() in lowered for marker in PRIVATE_MARKERS):
         raise HTTPException(422, "AI 方案含内部资料标记，已拒绝保存")
+    card_keys = set(re.findall(
+        r"(?i)[\"']?(fact_id|statement|verification|private_note|source_url|meta)[\"']?\s*:",
+        value))
+    if len(card_keys) >= 2:
+        raise HTTPException(422, "AI 方案包含事实卡字段转储，已拒绝保存")
     normalized = _normal(value)
     for fact in facts:
         statement = _normal(fact["statement"])
-        if len(statement) >= 20 and statement in normalized:
+        if (len(statement) >= 20 and statement in normalized
+                and fact.get("statement_publicly_authorized") is not True):
             raise HTTPException(422, "AI 方案逐字复述内部事实卡，已拒绝保存")
 
 

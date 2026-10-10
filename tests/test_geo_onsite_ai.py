@@ -235,6 +235,16 @@ def test_fact_public_use_requires_explicit_human_authorization():
         "allowed": True, "authorized_by": 7, "authorized_at": "2026-10-10T01:00:00Z"}})
 
 
+def test_public_statement_proof_is_added_only_by_explicit_service_call():
+    row = SimpleNamespace(id=8, source_url="https://source.example/fact",
+                          title="公开资料", statement="公开事实", source_name="官网",
+                          updated_at=None, expires_at=None)
+    legacy = onsite_ai.public_source(row)
+    authorized = onsite_ai.public_source(row, statement_publicly_authorized=True)
+    assert "statement_publicly_authorized" not in legacy
+    assert authorized["statement_publicly_authorized"] is True
+
+
 def test_provider_result_keeps_explanations_outside_existing_items():
     output, explanation = onsite_ai.validate_provider_result(
         result(), current_items=items(), facts=facts(), domain="example.com")
@@ -310,8 +320,10 @@ def test_prompt_marks_all_inputs_untrusted_and_has_a_hard_size_limit():
     assert "不能默认第一个事实" in system
     assert '"blocking_missing_information":[' in system
     assert "没有内容时必须写 []" in system
-    assert "禁止完整照抄任一较长事实句" in system
-    assert "数字、单位、型号和否定条件" in system
+    assert "可以准确引用完整公开事实句" in system
+    assert "数字、单位、型号、适用范围和否定限制" in system
+    assert "不得输出整张事实卡" in system
+    assert "private_note" in system
     # Real r2 outputs inferred every phrase below from 40 L / 500 mm / 24 V / hard-floor facts.
     for unsupported_inference in (
         "中小/中等面积", "水泥地", "混凝土", "环氧地坪", "无需外接电源",
@@ -433,6 +445,55 @@ def test_long_fact_sentence_cannot_be_copied_into_any_provider_text_field(field)
         onsite_ai.validate_provider_result(
             payload, current_items=items(), facts=approved, domain="example.com")
     assert "逐字复述" in str(error.value.detail)
+
+
+@pytest.mark.parametrize("statement", [
+    "HC-50 型工业洗地机使用 24 伏电池，适用场景包括厂房和仓库的硬质地面清洁。",
+    "AQ-20 仅适用于常温室内空气检测，不适用于易燃易爆环境，也不用于医疗诊断。",
+])
+def test_server_authorized_public_statement_may_be_quoted_accurately(statement):
+    approved = [{**facts()[0], "statement": statement,
+                 "statement_publicly_authorized": True}]
+    payload = result()
+    payload["items"][0]["expected"] = statement
+    payload["items"][0]["reason"] = statement
+    payload["items"][0]["fact_ids"] = [8]
+    output, _ = onsite_ai.validate_provider_result(
+        payload, current_items=items(), facts=approved, domain="example.com")
+    assert output[0]["expected"] == statement
+
+
+def test_public_statement_proof_cannot_be_forged_and_fact_card_dump_stays_blocked():
+    statement = "AQ-20 仅适用于常温室内空气检测，不适用于易燃易爆环境，也不用于医疗诊断。"
+    approved = [{**facts()[0], "statement": statement,
+                 "statement_publicly_authorized": True}]
+    forged = result()
+    forged["items"][0]["statement_publicly_authorized"] = True
+    with pytest.raises(HTTPException) as error:
+        onsite_ai.validate_provider_result(
+            forged, current_items=items(), facts=facts(), domain="example.com")
+    assert "版本 2 契约" in str(error.value.detail)
+
+    dumped = result()
+    dumped["items"][0]["expected"] = json.dumps({
+        "fact_id": 8, "statement": statement,
+        "verification": {"verified_at": "2026-10-10"}}, ensure_ascii=False)
+    with pytest.raises(HTTPException) as error:
+        onsite_ai.validate_provider_result(
+            dumped, current_items=items(), facts=approved, domain="example.com")
+    assert "事实卡字段转储" in str(error.value.detail)
+
+    private_note = result()
+    private_note["items"][0]["reason"] = "private_note: do not disclose"
+    with pytest.raises(HTTPException) as error:
+        onsite_ai.validate_provider_result(
+            private_note, current_items=items(), facts=approved, domain="example.com")
+    assert "内部资料标记" in str(error.value.detail)
+
+    legitimate_id = result()
+    legitimate_id["items"][0]["reason"] = "由 fact_id 编号 8 支持"
+    onsite_ai.validate_provider_result(
+        legitimate_id, current_items=items(), facts=approved, domain="example.com")
 
 
 def test_old_running_attempt_is_projected_stale_without_retrying():

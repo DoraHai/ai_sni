@@ -252,7 +252,8 @@ async def _proposal_snapshot(session, project: GeoProject, row: GeoActionTicket)
         GeoFact.status == "active",
         or_(GeoFact.business_id.is_(None), GeoFact.business_id.in_(business_ids or [-1])),
     ).order_by(GeoFact.id)))
-    approved_facts = [onsite_ai.public_source(fact) for fact in facts if _verified_fact(fact)]
+    approved_facts = [onsite_ai.public_source(fact, statement_publicly_authorized=True)
+                      for fact in facts if _verified_fact(fact)]
     if len(approved_facts) > MAX_PUBLIC_FACTS:
         raise HTTPException(409, f"当前项目获准公开事实超过 {MAX_PUBLIC_FACTS} 条，请缩小事实范围")
     workflow = row.progress["onsite"]
