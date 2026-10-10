@@ -309,6 +309,19 @@ class Settings(BaseSettings):
     aliyun_balance_access_key_id: str = Field(default="", repr=False)
     aliyun_balance_access_key_secret: str = Field(default="", repr=False)
     aliyun_balance_security_token: str = Field(default="", repr=False)
+    volcengine_balance_access_key_id: str = Field(default="", repr=False)
+    volcengine_balance_access_key_secret: str = Field(default="", repr=False)
+    volcengine_balance_account_id: str = ""
+    tencent_balance_secret_id: str = Field(default="", repr=False)
+    tencent_balance_secret_key: str = Field(default="", repr=False)
+    tencent_balance_account_uin: str = ""
+    qianfan_balance_access_key_id: str = Field(default="", repr=False)
+    qianfan_balance_access_key_secret: str = Field(default="", repr=False)
+    kimi_balance_api_key: str = Field(default="", repr=False)
+    dataforseo_balance_login: str = Field(default="", repr=False)
+    dataforseo_balance_password: str = Field(default="", repr=False)
+    # Backend-controlled local JSON, never a browser-supplied path or URL.
+    platform_billing_observations_path: str = ""
     platform_balance_warning_cny: float = Field(default=100, ge=0, le=10**12, allow_inf_nan=False)
     platform_balance_warning_usd: float = Field(default=10, ge=0, le=10**12, allow_inf_nan=False)
 

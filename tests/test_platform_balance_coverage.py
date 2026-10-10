@@ -163,6 +163,6 @@ def test_route_deduplicates_same_managed_credentials_without_exposing_them(monke
     monkeypatch.setattr(b,'query_cached',query)
     monkeypatch.setenv('API_CONTROLS_ENABLED','false')
     data=asyncio.run(api.read_balances(Response(),provider=None,account_id=None,after_id=0))
-    assert len(calls)==2
+    assert len(calls)==7  # Two original accounts plus three clouds, Kimi and DataForSEO.
     assert [r['balance_row_id'] for r in data['coverage']['rows'] if r['id'] in {'geo.geo_deepseek','seo.deepseek'}]==['deepseek','deepseek']
     assert 'PRIVATE' not in str(data)
