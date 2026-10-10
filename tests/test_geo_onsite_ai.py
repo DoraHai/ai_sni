@@ -1,5 +1,6 @@
 from datetime import datetime, timezone, timedelta
 import json
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -104,10 +105,15 @@ def test_generation_options_only_target_documented_dashscope_hybrid_models():
         {"kind": "faq", "id": f"faq-{index}"} for index in range(30)
     ]}
     assert onsite_ai.generation_options(dashscope, many)["max_tokens"] == 32768
+    structured = {**dashscope, "model": "qwen3.7-flash-2026-07-15"}
+    options = onsite_ai.generation_options(structured, snapshot)
+    assert options["enable_thinking"] is False and options["max_tokens"] == 8192
+    assert options["response_format"]["type"] == "json_schema"
 
 
 def test_optional_response_format_is_generated_from_the_strict_validator_contract():
-    response_format = onsite_ai.provider_response_format()
+    snapshot = {"items": items(), "facts": facts()}
+    response_format = onsite_ai.provider_response_format(snapshot)
     assert response_format["type"] == "json_schema"
     assert response_format["json_schema"]["strict"] is True
     schema = response_format["json_schema"]["schema"]
@@ -119,6 +125,40 @@ def test_optional_response_format_is_generated_from_the_strict_validator_contrac
         "id", "expected", "reason", "fact_ids",
         "blocking_missing_information", "optional_information",
     }
+    assert item_schema["properties"]["id"]["enum"] == [
+        "structured_content", "knowledge", "faq"]
+    fact_ids = item_schema["properties"]["fact_ids"]
+    assert fact_ids["items"]["enum"] == [8] and fact_ids["uniqueItems"] is True
+    assert schema["properties"]["items"]["minItems"] == 3
+    assert schema["properties"]["items"]["maxItems"] == 3
+
+
+def test_empty_fact_schema_forbids_fact_ids_and_planning_model_is_explicit(monkeypatch):
+    empty = onsite_ai.provider_response_format({"items": items(), "facts": []})
+    fact_ids = empty["json_schema"]["schema"]["$defs"]["ProviderDraftItem"]["properties"]["fact_ids"]
+    assert fact_ids["maxItems"] == 0
+
+    credentials = {"api_key": "secret", "base_url":
+        "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        "model": "deepseek-v4-flash-0731", "provider": "dashscope"}
+    monkeypatch.setattr(onsite_ai, "get_settings", lambda: SimpleNamespace(
+        geo_onsite_ai_model="qwen3.7-flash-2026-07-15"))
+    selected = onsite_ai.select_planning_credentials(credentials)
+    assert selected["model"] == "qwen3.7-flash-2026-07-15"
+    assert selected["api_key"] == "secret" and credentials["model"] == "deepseek-v4-flash-0731"
+    with pytest.raises(HTTPException):
+        onsite_ai.select_planning_credentials({
+            **credentials, "provider": "deepseek", "base_url": "https://api.deepseek.com/v1"})
+
+    monkeypatch.setattr(onsite_ai, "get_settings", lambda: SimpleNamespace(
+        geo_onsite_ai_model="unsupported-model"))
+    with pytest.raises(HTTPException) as error:
+        onsite_ai.select_planning_credentials(credentials)
+    assert error.value.status_code == 409
+
+    monkeypatch.setattr(onsite_ai, "get_settings", lambda: SimpleNamespace(
+        geo_onsite_ai_model=""))
+    assert onsite_ai.select_planning_credentials(credentials)["model"] == "deepseek-v4-flash-0731"
 
 
 def test_fact_public_use_requires_explicit_human_authorization():

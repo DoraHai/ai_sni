@@ -322,6 +322,7 @@ async def ai_proposal(task_id: PositiveInt, req: AiProposal, session=Depends(get
     credentials = await resolve_llm_credentials(session, req.tenant_id)
     if not credentials:
         raise HTTPException(409, "平台 AI 供应商尚未配置")
+    credentials = onsite_ai.select_planning_credentials(credentials)
     snapshot = await _proposal_snapshot(session, project, row)
     system_prompt, user_prompt = onsite_ai.prompt_text(snapshot, req.mode)
     generation_options = onsite_ai.generation_options(credentials, snapshot)

@@ -119,7 +119,7 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
     async def credentials(session, tenant_id):
         return {"api_key": "test",
                 "base_url": "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-                "model": "deepseek-v4-flash-0731"}
+                "model": "deepseek-v4-flash-0731", "provider": "dashscope"}
     async def provider(system, user, **kwargs):
         calls.append((system, user, kwargs))
         import json
@@ -131,6 +131,8 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
     monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
     monkeypatch.setattr(api, "chat_json", provider)
     monkeypatch.setattr(api, "advisor_available", tracked_advisor_available)
+    monkeypatch.setattr(api.onsite_ai, "get_settings", lambda: SimpleNamespace(
+        geo_onsite_ai_model="qwen3.7-flash-2026-07-15"))
     async def run():
         async with database() as sessions:
             await configured(sessions)
@@ -158,7 +160,12 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
             assert len(calls) == 1
             assert calls[0][2]["enable_thinking"] is False
             assert calls[0][2]["max_tokens"] == 8192
-            assert "response_format" not in calls[0][2]
+            assert calls[0][2]["model"] == "qwen3.7-flash-2026-07-15"
+            response_format = calls[0][2]["response_format"]
+            assert response_format["type"] == "json_schema"
+            schema = response_format["json_schema"]["schema"]
+            assert schema["properties"]["items"]["minItems"] == 3
+            assert schema["$defs"]["ProviderDraftItem"]["properties"]["fact_ids"]["items"]["enum"] == [80]
             assert "API" not in str(result["workflow"]["ai_proposal"])
             assert True in advisor_locks
             manual_items = [api.work.Item.model_validate(item) for item in same["workflow"]["items"]]
@@ -194,6 +201,40 @@ def test_ai_proposal_rejects_full_history_before_quota_or_provider_call(monkeypa
                                      for index in range(100)]
                 stored.progress = {**stored.progress, "onsite": onsite}
                 await db.commit()
+            request = api.AiProposal(tenant_id=1, project_id=10,
+                expected_revision=1, request_id=uuid4(), mode="initial")
+            async with sessions() as db:
+                with pytest.raises(HTTPException) as error:
+                    await api.ai_proposal(row["id"], request, db, ADVISOR)
+                assert error.value.status_code == 409
+            async with sessions() as db:
+                project = await db.get(GeoProject, 10)
+                assert "onsite_ai_quota" not in (project.project_settings or {})
+            assert calls == 0
+    asyncio.run(run())
+
+
+def test_invalid_onsite_model_is_rejected_before_quota_or_provider_call(monkeypatch):
+    calls = 0
+    async def credentials(session, tenant_id):
+        return {"api_key": "test",
+                "base_url": "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+                "model": "deepseek-v4-flash-0731", "provider": "dashscope"}
+    async def provider(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return {}
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(api, "chat_json", provider)
+    monkeypatch.setattr(api.onsite_ai, "get_settings", lambda: SimpleNamespace(
+        geo_onsite_ai_model="unverified-model"))
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                row = await api.create(api.Create(
+                    tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员"), db, ADVISOR)
             request = api.AiProposal(tenant_id=1, project_id=10,
                 expected_revision=1, request_id=uuid4(), mode="initial")
             async with sessions() as db:

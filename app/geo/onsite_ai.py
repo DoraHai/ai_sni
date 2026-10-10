@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app import onsite_workflow as work
+from app.config import get_settings
 
 
 DAILY_LIMIT = 10
@@ -33,6 +34,7 @@ DASHSCOPE_HYBRID_DEEPSEEK_MODELS = frozenset({
     "deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-flash-0731",
     "deepseek-v4-pro-0813",
 })
+STRICT_ONSITE_MODELS = frozenset({"qwen3.7-flash-2026-07-15"})
 
 
 class ProviderDraftItem(BaseModel):
@@ -55,14 +57,43 @@ class ProviderProposalV2(BaseModel):
     missing_information: list[str] = Field(max_length=50)
 
 
-def provider_response_format() -> dict[str, Any]:
+def _normalize_strict_schema(node: Any) -> None:
+    if isinstance(node, dict):
+        if node.get("type") == "object" and isinstance(node.get("properties"), dict):
+            node["additionalProperties"] = False
+            node["required"] = list(node["properties"])
+        for value in node.values():
+            _normalize_strict_schema(value)
+    elif isinstance(node, list):
+        for value in node:
+            _normalize_strict_schema(value)
+
+
+def provider_response_format(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Build the optional strict response format from the validator's exact contract."""
+    schema = ProviderProposalV2.model_json_schema()
+    _normalize_strict_schema(schema)
+    visible_ids = [str(item["id"]) for item in snapshot.get("items", [])
+                   if item.get("kind") in DRAFT_ITEM_KINDS]
+    fact_ids = [int(fact["fact_id"]) for fact in snapshot.get("facts", [])]
+    item_schema = schema["$defs"]["ProviderDraftItem"]
+    if visible_ids:
+        item_schema["properties"]["id"] = {"type": "string", "enum": visible_ids}
+    fact_array = item_schema["properties"]["fact_ids"]
+    fact_array["uniqueItems"] = True
+    if fact_ids:
+        fact_array["items"] = {"type": "integer", "enum": fact_ids}
+    else:
+        fact_array["items"] = {"type": "integer"}
+        fact_array["maxItems"] = 0
+    schema["properties"]["items"]["minItems"] = len(visible_ids)
+    schema["properties"]["items"]["maxItems"] = len(visible_ids)
     return {
         "type": "json_schema",
         "json_schema": {
             "name": "geo_onsite_proposal_v2",
             "strict": True,
-            "schema": ProviderProposalV2.model_json_schema(),
+            "schema": schema,
         },
     }
 
@@ -97,11 +128,29 @@ def generation_options(credentials: dict[str, str], snapshot: dict[str, Any]) ->
     """Use non-thinking mode only for documented DashScope hybrid DeepSeek-v4 models."""
     host = (urlsplit(credentials.get("base_url") or "").hostname or "").lower()
     model = (credentials.get("model") or "").lower()
-    if not host.endswith(".aliyuncs.com") or model not in DASHSCOPE_HYBRID_DEEPSEEK_MODELS:
+    if not host.endswith(".aliyuncs.com"):
         return {}
     count = sum(1 for item in snapshot.get("items", []) if item.get("kind") in DRAFT_ITEM_KINDS)
     count = max(1, min(count, 30))
-    return {"enable_thinking": False, "max_tokens": min(32768, max(8192, 2048 + 2048 * count))}
+    options = {"enable_thinking": False,
+               "max_tokens": min(32768, max(8192, 2048 + 2048 * count))}
+    if model in STRICT_ONSITE_MODELS:
+        options["response_format"] = provider_response_format(snapshot)
+        return options
+    return options if model in DASHSCOPE_HYBRID_DEEPSEEK_MODELS else {}
+
+
+def select_planning_credentials(credentials: dict[str, str]) -> dict[str, str]:
+    """Apply the optional onsite-only model after validating its provider route."""
+    configured = (getattr(get_settings(), "geo_onsite_ai_model", "") or "").strip().lower()
+    if not configured:
+        return dict(credentials)
+    host = (urlsplit(credentials.get("base_url") or "").hostname or "").lower()
+    if (configured not in STRICT_ONSITE_MODELS
+            or credentials.get("provider") != "dashscope"
+            or not host.endswith(".aliyuncs.com")):
+        raise HTTPException(409, "GEO 站内专用模型配置无效或不属于已验证的百炼结构化输出路由")
+    return {**credentials, "model": configured}
 
 
 def reserve_daily(settings: dict | None, request_id: str, *, request_digest: str | None = None,
