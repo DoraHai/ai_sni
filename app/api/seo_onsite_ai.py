@@ -207,11 +207,18 @@ async def cancel_proposal(task_id: PositiveInt, request_id: UUID, req: RunScope,
 
 
 def failed_state(exc):
+    chain, seen = [], set()
     cause = exc
-    while cause.__cause__ is not None:
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        chain.append(cause)
         cause = cause.__cause__
-    if (isinstance(exc, (ControlDenied, MeteringUnavailable)) or isinstance(cause, httpx.HTTPStatusError)
-            or isinstance(exc, HTTPException) and exc.status_code == 503):
+    # A provider attempt followed by failed accounting wins over any wrapped
+    # HTTP/configuration error. Never infer billing phase from exception text.
+    if any(isinstance(item, MeteringUnavailable) and item.provider_attempted for item in chain):
+        return "unknown", {"code": "onsite_ai_result_unknown", "message": "供应商已尝试调用，但费用台账未完成核实；原请求不会自动重试"}
+    if any(isinstance(item, (ControlDenied, MeteringUnavailable, httpx.HTTPStatusError))
+           or isinstance(item, HTTPException) and item.status_code == 503 for item in chain):
         return "failed", {"code": "onsite_ai_provider_failed", "message": "调用未获准或供应商拒绝，请核对后再操作"}
     return "unknown", {"code": "onsite_ai_result_unknown", "message": "调用结果不明或返回无法核实；原请求不会自动重试"}
 

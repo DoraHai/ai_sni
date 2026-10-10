@@ -11,6 +11,8 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "docs/API_METERING_FAILURE_PHASE_REVIEW.md",
+    "docs/API_UNKNOWN_CONCURRENCY_PATCH.md",
     "tests/test_platform_call_guards.py",
     "app/seo_onsite_ai_jobs.py",
     "tests/fixtures/seo_onsite_ai_observed.json",

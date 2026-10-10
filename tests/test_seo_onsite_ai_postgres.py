@@ -966,7 +966,8 @@ def guard_response(request):
         'usage': {'prompt_tokens': 100, 'completion_tokens': 10, 'prompt_tokens_details': {'cached_tokens': 0}}})
 
 
-@pytest.mark.parametrize('mode', ['enabled', 'controls_off', 'all_off', 'schema_pending', 'partial_credentials', 'metering_off'])
+@pytest.mark.parametrize('mode', ['enabled', 'controls_off', 'all_off', 'schema_pending', 'partial_credentials',
+    'partial_audit', 'partial_bindings', 'partial_settings', 'partial_reserved', 'metering_off'])
 def test_background_ai_real_metering_admission_and_legacy_modes(monkeypatch, mode):
     from sqlalchemy import text
     async def run():
@@ -982,9 +983,12 @@ def test_background_ai_real_metering_admission_and_legacy_modes(monkeypatch, mod
                 monkeypatch.setenv('API_CONTROLS_ENABLED', 'false')
             if mode in {'all_off', 'metering_off'}:
                 monkeypatch.setenv('API_METERING_ENABLED', 'false')
-            if mode == 'partial_credentials':
+            if mode.startswith('partial_'):
                 async with sessions() as db:
-                    await db.execute(text('DROP TABLE api_control_credentials'))
+                    if mode == 'partial_reserved':
+                        await db.execute(text('ALTER TABLE api_usage_events DROP COLUMN reserved_amount'))
+                    else:
+                        await db.execute(text('DROP TABLE api_control_' + mode.split('_')[1]))
                     await db.commit()
                     assert (await controls.read_controls(db))['state'] == 'schema_pending'
             req = request(task)
@@ -995,6 +999,8 @@ def test_background_ai_real_metering_admission_and_legacy_modes(monkeypatch, mod
             assert state == ('ready' if permitted else 'failed')
             assert len(sent) == int(permitted)
             async with sessions() as db:
+                if mode.startswith('partial_'):
+                    assert await db.scalar(text('SELECT count(*) FROM api_usage_events')) == 0
                 result = await api.proposal_status(task['id'], req.request_id, 4, 2, db, ADVISOR)
                 assert 'synthetic-only' not in json.dumps(result)
                 if mode in {'enabled', 'controls_off'}:
@@ -1073,4 +1079,66 @@ def test_background_timeout_keeps_unknown_charge_across_period_and_never_retries
             assert len(sent) == 1
             async with sessions() as db:
                 assert (await controls.usage(db,'tenant:4'))['unresolved_calls'] == 1
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('target', ['global', 'tenant:4', 'user:7', 'provider:api.deepseek.com'])
+def test_background_unknown_keeps_concurrency_without_money_policy(monkeypatch, target):
+    from sqlalchemy import text
+    async def run():
+        async with fixture() as (sessions, task):
+            sent = []
+            async def provider(request):
+                sent.append(request)
+                raise httpx.ReadTimeout('synthetic timeout', request=request)
+            meter, controls = real_metered_supplier(monkeypatch, sessions, provider)
+            await install_guard_tables(sessions)
+            async with sessions() as db:
+                await controls.mutate(db, actor_id=7, request_id=str(uuid4()), kind='budget', key='budget:'+target,
+                    expected_revision=0, value={'daily_calls':None,'monthly_calls':None,'daily_cny':None,
+                        'monthly_cny':None,'warning_percent':80,'max_concurrent':1})
+            req = request(task)
+            async with sessions() as db: await api.ai_proposal(task['id'],req,db,ADVISOR)
+            assert await jobs.execute_request(task['id'],4,2,str(req.request_id),sessions=sessions) == 'unknown'
+            async with sessions() as db:
+                await db.execute(text("UPDATE api_usage_events SET started_at=CURRENT_TIMESTAMP - INTERVAL '40 days'"))
+                await db.commit()
+                assert (await controls.usage(db,target))['active_calls'] == 1
+            req2 = request(task)
+            async with sessions() as db: await api.ai_proposal(task['id'],req2,db,ADVISOR)
+            assert await jobs.execute_request(task['id'],4,2,str(req2.request_id),sessions=sessions) == 'failed'
+            assert len(sent) == 1
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('provider_result', ['success', 'http_error', 'timeout'])
+def test_post_provider_metering_commit_failure_is_unknown_not_free_failure(monkeypatch, provider_result):
+    from sqlalchemy import text
+    async def run():
+        async with fixture() as (sessions, task):
+            sent = []
+            async def provider(request):
+                sent.append(request)
+                if provider_result == 'timeout':
+                    raise httpx.ReadTimeout('synthetic timeout', request=request)
+                if provider_result == 'http_error':
+                    return httpx.Response(400, json={'error':'synthetic refusal'})
+                return guard_response(request)
+            meter, controls = real_metered_supplier(monkeypatch, sessions, provider)
+            await install_guard_tables(sessions)
+            original = meter._write
+            async def failed_write(sql, params):
+                if sql.startswith('UPDATE api_usage_events'):
+                    raise meter.MeteringUnavailable('synthetic settlement failure')
+                return await original(sql, params)
+            monkeypatch.setattr(meter, '_write', failed_write)
+            req = request(task)
+            async with sessions() as db: await api.ai_proposal(task['id'],req,db,ADVISOR)
+            state = await jobs.execute_request(task['id'],4,2,str(req.request_id),sessions=sessions)
+            async with sessions() as db:
+                assert await db.scalar(text('SELECT state FROM api_usage_events')) == 'requested'
+                assert len(sent) == 1
+            assert state == 'unknown'
+            await jobs.run_onsite_ai_jobs(sessions=sessions)
+            assert len(sent) == 1
     asyncio.run(run())

@@ -133,13 +133,17 @@ Content-Type: application/json
 
 后台队列专项验证包含并发入队/领取、请求连接断开、领取后进程丢失模拟、协程取消、结果提交失败、重新扫描恢复、取消与迟到输出、入队后和调用中的权限/资料变更、只读轮询、历史请求隔离、运行期开关、排队过期及路由变化。本地数据库均为临时独立 schema，供应商全部替身；没有真实付费调用或生产变更。
 
-## 共享调用保护集成候选（2026-10-11，尚未最终验收）
+## 共享调用保护集成候选（2026-10-11）
 
 - 独立共享来源 `3347b111d65d2f3e07211fcb0d1a0c00de4b70c2`，SEO cherry-pick 为 `de26b28e`，只取 api_controls/api_metering/deepseek 与对应测试四个文件。无冲突；保留 SEO 的 classify_response 和 response_metadata 扩展，没有导入整个 SEM 后端。
 - SEO PostgreSQL 集成测试执行真实 `jobs.execute_request → ai.generate → deepseek.chat_json → metered_request → controls.admit` 路径，只在 HTTP 传输处替换供应商；验证 tenant=4/user=7/module=seo/job_ref 与金额台账、其他模块占用同客户/用户/供应商范围、0 暂停、金额未知跨月阻断、超时与同 nonce 不重发。
 - 管理开关关闭但计量开启仍记录费用；两者关闭兼容原行为，不声称有统一保护。管理开启但计量关闭、无计量表或缺凭据表时拒绝调用。没有变更生产开关；真实启用需要另审共享 SQL 和运行账号权限。
-- 待共享补丁 1：只有 max_concurrent、没有金额预算时，unknown 当前未计入 active_calls，可能释放未核实调用的并发占用。总控已交共享负责人修复；SEO 不并行改写该资金语义。金额 unknown 的模块测试单独设置 max_concurrent=null，以免被并发限制掩盖。
-- 待共享补丁 2（隔离库实证）：分别 DROP api_control_audit 或 api_control_bindings 后，read_controls 返回 schema_pending，但 admit 仍允许出站；两例后台状态均 ready，模拟 HTTP 各 1 次。管理状态检查的完整性条件没有覆盖实际准入路径，不能宣称半安装拒绝已验收。需共享负责人给出完整性保护补丁后再取入、补拒绝回归。
+- unknown 占用补丁来源 `f49cd5af04313cd66fb12b65e99288f351651c86`，SEO 提交 `20cb0716`：只有 max_concurrent、没有金额预算时，unknown 也保留全历史占用。模块四范围超时/跨月阻断已通过；金额 unknown 单独设置 max_concurrent=null，避免被并发限制掩盖。
+- 完整结构补丁来源 `6fc9b74a524ed1052a3ce5e0527495d9414d394f`，SEO 提交 `c67c08e5`：准入事务检查四表与 reserved_amount。修复前删除审计/绑定表各发生 1 次模拟调用；修复后逐表/列删除的 SEO 后台测试均拒绝、无 requested 插入、无出站。
 - 共享测试里的 SEM 告警管理模块和运行账号权限脚本不在该四文件源包中：SEO 不引入这些依赖。持久化 requested 占用仍执行；SEM 告警“标记处理”对占用的影响由 SEM 验证。权限脚本测试在本地明确跳过 1 项，SEO 原生 CI 明确排除同一项，其余共享与模块测试要求零跳过。
 
-这只是 Draft 集成候选：上述两处准入问题未收口前，不合并、不部署，不以代码已集成代表统一保护已上线。
+- 异常阶段补丁来源 `eed858cf07a224d0a5ed6b0d20465ffa882ca260`，SEO 提交 `eb3bc813`。failed_state 沿 __cause__ 链优先识别 MeteringUnavailable.provider_attempted=True，归为 unknown；调用前计量拒绝或 ControlDenied 归为 failed。HTTP200、HTTP400、ReadTimeout 后终态写失败的模块 PostgreSQL 回归均确认仅发 1 次、ledger 保留 requested、不自动重试。共享测试另外用真实 PostgreSQL 触发器覆盖初始及终态提交失败。
+
+最终限定回归：199 passed / 1 skipped / 0 failed；唯一跳过为不在 SEO 源包内的 SEM 运行账号权限脚本。原生 CI 明确运行 onsite PostgreSQL + shared guards，排除该权限脚本项，其余要求零跳过。
+
+这只是 Draft 集成候选，不合并、不部署，不以代码已集成代表统一保护已上线。生产启用仍须单独审核结构、权限与开关；金额报价仅为配置口径的估算/预留，unknown 费用须人工核对。
