@@ -10,12 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_session
 from app.models import Role, Tenant, User
 from app.security.auth import AuthContext, hash_password, require_admin
+from app.platform_operations import audit_business
 
 router = APIRouter(
     prefix="/api/v1/users",
     tags=["账号管理"],
     dependencies=[Depends(require_admin)],
 )
+
+
+def _audit_state(user):
+    return {key: getattr(user, key) for key in ('id', 'username', 'display_name', 'role_id', 'tenant_id', 'is_active')}
 
 
 def _payload(u: User, role_names: dict[int, str], tenant_names: dict[int, str]) -> dict:
@@ -64,7 +69,8 @@ class CreateUserRequest(BaseModel):
 
 @router.post("")
 async def create_user(
-    req: CreateUserRequest, session: AsyncSession = Depends(get_session)
+    req: CreateUserRequest, session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_admin),
 ) -> dict:
     await _check_role(session, req.role_id)
     await _check_tenant(session, req.tenant_id)
@@ -78,6 +84,8 @@ async def create_user(
         tenant_id=req.tenant_id,
     )
     session.add(user)
+    await session.flush()
+    await audit_business(session, ctx, 'user:' + str(user.id), 'user.create', None, _audit_state(user))
     await session.commit()
     await session.refresh(user)
     return {"status": "ok", "id": user.id}
@@ -99,11 +107,12 @@ async def update_user(
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_admin),
 ) -> dict:
-    user = await session.get(User, user_id)
+    user = await session.get(User, user_id, with_for_update=True)
     if user is None:
         raise HTTPException(404, "用户不存在")
     if req.is_active is False and user.id == ctx.user_id:
         raise HTTPException(400, "不能停用自己的账号")
+    before = _audit_state(user)
     if req.role_id is not None:
         await _check_role(session, req.role_id)
         user.role_id = req.role_id
@@ -118,6 +127,10 @@ async def update_user(
         user.is_active = req.is_active
     if req.new_password:
         user.password_hash = hash_password(req.new_password)
+    after = _audit_state(user)
+    if req.new_password:
+        after['password_changed'] = True
+    await audit_business(session, ctx, 'user:' + str(user.id), 'user.update', before, after)
     await session.commit()
     return {"status": "ok"}
 
@@ -131,11 +144,13 @@ async def reset_user_password(
     user_id: int,
     req: ResetPasswordRequest,
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_admin),
 ) -> dict:
     """Admin-only password reset; existing sessions retain their normal expiry."""
     user = await session.scalar(select(User).where(User.id == user_id).with_for_update())
     if user is None:
         raise HTTPException(404, "用户不存在")
     user.password_hash = hash_password(req.new_password)
+    await audit_business(session, ctx, 'user:' + str(user.id), 'user.password', None, {'password_changed': True})
     await session.commit()
     return {"status": "ok"}
