@@ -2,7 +2,7 @@ name: Customer workbench artifact
 
 on:
   pull_request:
-    branches: [codex/production-sem]
+    branches: [codex/production-sem, codex/enterprise-onsite-async-ui-20261011]
     paths:
       - 'customer-workbench/**'
       - 'ops/customer-workbench/**'
