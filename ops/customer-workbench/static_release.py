@@ -12,6 +12,9 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from urllib.error import URLError
+from urllib.request import Request, urlopen
+from uuid import uuid4
 
 FILES = {"index.html", "app.js", "app.css", "release-manifest.json"}
 ROOT = Path('/opt/customer-workbench')
@@ -26,6 +29,29 @@ def sha(data):
 def require(ok, message):
     if not ok:
         raise ValueError(message)
+
+
+def authorize_head(commit):
+    # Both transports read the same Git reference. Never fall back after an
+    # observed mismatch; an unavailable source cannot authorize activation.
+    url = 'https://api.github.com/repos/DoraHai/ai_sni/branches/codex%2Fproduction-sem?release_check=' + uuid4().hex
+    request = Request(url, headers={'Accept': 'application/vnd.github+json',
+                                   'User-Agent': 'gsnipers-static-release', 'Cache-Control': 'no-cache'})
+    try:
+        with urlopen(request, timeout=15) as response:
+            require(response.status == 200 and response.geturl() == url, 'unexpected branch source')
+            body = response.read(65537)
+            require(len(body) <= 65536, 'oversized branch source')
+            branch = json.loads(body)
+            require(isinstance(branch, dict) and branch.get('name') == 'codex/production-sem', 'wrong branch source')
+            observed = branch.get('commit', {}).get('sha')
+            require(isinstance(observed, str) and re.fullmatch(r'[0-9a-f]{40}', observed), 'invalid branch head')
+    except (URLError, TimeoutError, OSError):
+        output = subprocess.check_output(['git', 'ls-remote', '--refs',
+            'https://github.com/DoraHai/ai_sni.git', 'refs/heads/codex/production-sem'], text=True, timeout=20).strip()
+        require(output == commit + '\trefs/heads/codex/production-sem', 'stale production head')
+        return
+    require(observed == commit, 'stale production head')
 
 
 def payload(archive, commit):
@@ -139,9 +165,7 @@ def main(args):
         # Parse a root-held byte snapshot, never a mutable uploader-controlled path.
         files = payload(io.BytesIO(data), commit)
         def authorize():
-            output = subprocess.check_output(['git', 'ls-remote', '--refs',
-                'https://github.com/DoraHai/ai_sni.git', 'refs/heads/codex/production-sem'], text=True, timeout=40).strip()
-            require(output == commit + '\trefs/heads/codex/production-sem', 'stale production head')
+            authorize_head(commit)
         authorize()
         config = Path('/etc/nginx/conf.d/gsnipers.conf').read_text()
         public = 'alias /opt/customer-workbench/current/index.html;' in config
