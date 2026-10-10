@@ -408,6 +408,8 @@ async def _ticket_for_tenant(
 
 async def _work_ticket_for_update(session: AsyncSession, ticket_id: int, tenant_id: int) -> GeoActionTicket:
     row = await _ticket_for_tenant(session, ticket_id, tenant_id)
+    if (row.advice_code or '').startswith('onsite:v1:'):
+        raise HTTPException(409, '站内任务请使用当前项目的版本化方案与验收接口')
     if (row.advice_code or '').startswith(('monitor:v1:', 'review:v1:')):
         await session.refresh(row, with_for_update=True)
         return row
@@ -923,6 +925,8 @@ async def create_action_ticket(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
+    if (req.advice_code or '').startswith('onsite:v1:'):
+        raise HTTPException(400, '站内任务请通过项目站内任务入口创建')
     if (req.advice_code or "").startswith(("monitor:v1:", "review:v1:")):
         raise HTTPException(400, "系统监测工单不可手工创建")
     if (req.advice_code or "").startswith("cockpit:v1:"):
@@ -1096,6 +1100,8 @@ async def verify_one_ticket(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     ticket = await _ticket_for_tenant(session, ticket_id, tenant_id)
+    if (ticket.advice_code or '').startswith('onsite:v1:'):
+        raise HTTPException(409, '站内任务请使用版本化复检与人工验收接口')
     if (ticket.advice_code or '').startswith('cockpit:v1:'):
         raise HTTPException(409, '统一任务请使用 integration/tasks 接口核验真实指标')
     if (ticket.advice_code or '').startswith('monitor:v1:'):
@@ -1167,3 +1173,5 @@ router.include_router(read_router)
 
 from app.geo.question_read_routes import router as question_read_router
 router.include_router(question_read_router)
+from app.geo.onsite_routes import router as onsite_router
+router.include_router(onsite_router)

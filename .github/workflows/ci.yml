@@ -6,6 +6,46 @@ on:
   pull_request:
 
 jobs:
+  onsite-postgres:
+    name: Verify GEO onsite task isolation and concurrency
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: geo_ci
+          POSTGRES_PASSWORD: onsite_ci_test
+          POSTGRES_DB: geo_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U geo_ci -d geo_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run owned PostgreSQL schemas, without suppliers or production credentials
+        env:
+          GEO_TEST_POSTGRES_URL: postgresql+asyncpg://geo_ci:onsite_ci_test@127.0.0.1:5432/geo_ci
+          SEO_WORKFLOW_TEST_ALLOW_SCHEMA_CREATE: 'yes'
+        run: |
+          python - <<'PY'
+          import os
+          import pytest
+          os.environ.update(DATABASE_URL='postgresql+asyncpg://test:test@127.0.0.1:1/test',
+              APP_ENV='test', BAIDU_APP_ID='test', BAIDU_SECRET_KEY='test',
+              BAIDU_DEFAULT_USERNAME='test', BAIDU_DEFAULT_UCID='0',
+              BAIDU_SELF_ACCESS_TOKEN='test', BAIDU_SELF_TOKEN_EXPIRES_AT='2099-01-01T00:00:00Z',
+              CRYPTO_MASTER_KEY_B64='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+              ADMIN_API_KEY='test-admin-key', JWT_SECRET='test-jwt-secret')
+          raise SystemExit(pytest.main(['-q', 'tests/test_geo_onsite_postgres.py']))
+          PY
+
   pytest:
     runs-on: ubuntu-latest
     timeout-minutes: 20
