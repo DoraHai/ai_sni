@@ -1,5 +1,5 @@
-import {createOnsiteClient} from './onsite-client.mjs';
-import {onsiteView,onsiteCreateInput,onsiteActionInput} from './onsite-view.mjs';
+import {createOnsiteClient,onsiteTaskId} from './onsite-client.mjs';
+import {onsiteView,onsiteCreateInput,onsiteActionInput,onsiteProposalMode} from './onsite-view.mjs';
 import {createSeoWorkflowClient} from './seo-workflow-client.mjs';
 import {createSeoContentReader} from './seo-readonly-client.mjs';
 import {createServicePlanController} from './service-plan-controller.mjs';
@@ -18,6 +18,7 @@ import {createConversationPanel} from './conversation-panel.mjs';
 import {createInputProtection} from './input-protection.mjs';
 import {createSeoDataClient} from './seo-data-client.mjs';
 import {homeView} from './home-view.mjs';
+import {customerOnsiteSummary} from './customer-onsite-summary.mjs';
 import {createWorkspaceAssistant} from './workspace-assistant.mjs';
 import {createWorkspaceAiClient} from './workspace-ai-client.mjs';
 import {maintenanceView,expirationLocal} from './maintenance-view.mjs';
@@ -30,7 +31,7 @@ const executionErrors={report_version_conflict:'报告版本已变化，请重�
 const workflowErrors={INVALID_MAINTENANCE_INPUT:'请填写必填资料，检查链接和到期时间格式',WRITE_FAILED:'保存未完成，请重新读取核对；输入已保留，不自动重发',INVALID_AI_SELECTION:'请选择1–20条已读资料和1–5个本站关键词',AI_SELECTION_READ_REQUIRED:'资料或关键词尚未读取、已过期或不在本站，请重新读取并选择',AI_CONFIGURE_DENIED:'当前无权配置AI草稿；请重新读取资格',AI_MATERIAL_TOO_LARGE:'所选资料超过总量限制，请减少资料',INVALID_PUBLICATION_INPUT:'请填写真实平台、公开链接和北京时间，并勾选已人工核实',TRIGGER_OUTCOME_UNRESOLVED:'上次触发结果未知，请读取执行进度核对，不重发',content_version_precondition_required:'缺少准确版本前提，请重新读取稿件',PUBLICATION_SELECTION_REQUIRED:'请先读取并选择本任务的发布记录'};
 const failure=e=>({DELETE_FAILED:'删除未完成，请重新读取关键词列表核对后再操作',DELETE_OUTCOME_UNKNOWN:'删除结果未知，请重新读取关键词列表核对；系统不会自动重试'}[e.code])||workflowErrors[e.code]||executionErrors[e.code]||({INVALID_CONTENT:'请填写1–300字的标题，检查正文与提纲',CONTENT_VERSION_OR_SCOPE_MISMATCH:'稿件版本或范围已变化，请重新读取核对',ADVISOR_REQUIRED:'当前身份未取得该站点顾问资格',CONTENT_PROTECTED:'稿件受保护，请先按明确退回流程处理'}[e.code])||(e.code==='content_version_conflict'?'稿件版本已变化，请重新读取后确认':e.code==='service_plan_version_conflict'?'服务计划已被更新，请重新读取':e.code==='REJECTION_NOTE_REQUIRED'?'退回必须填写意见':e.code==='WRITE_OUTCOME_UNKNOWN'?'写入结果未知，请重新读取核对，不自动重试':e.status===409?'内容状态或版本已变化，请重新读取核对':e.status===503?'服务能力尚未启用':e.status===403?'权限或顾问资格已变化，请重新读取':e.code==='CONFIRMATION_UNAVAILABLE'?'确认能力未启用':e.code==='MODULE_UNAVAILABLE'?'当前未开通SEO；SEM/GEO连接能力待接入':(e.code||e.message)==='READ_FAILED'?'读取失败，请重试当前页面':`请求未完成：${e.code||e.message}`);
 
-export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='index.html',selectSpace=null,logout=null}) {
+export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='index.html',selectSpace=null,logout=null,initialOnsiteTaskId=null}) {
   root.classList.add('customer-connected');
   const protection=createInputProtection(root);
   const media=createContentMedia({root,host});
@@ -69,7 +70,7 @@ export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='in
     main.innerHTML=`<div class="navigation">${['首页','内容','SEO工作','进度','站内优化','数据','服务计划','交付记录'].map(n=>btn(n,'page',`data-page="${n}" ${busy||(!siteRead&&['SEO工作','进度','站内优化','数据','服务计划'].includes(n))?'disabled':''}`)).join('')}</div><section id="page" class="page-card"></section>`;
     const panel=root.querySelector('#page');
     panel.classList.toggle('home-page',page==='首页');
-    if(page==='首页'){panel.innerHTML=homeView(home);if(busy)panel.querySelectorAll('button').forEach(b=>b.disabled=true);
+    if(page==='首页'){panel.innerHTML=homeView(home)+customerOnsiteSummary(home?.onsite);if(busy)panel.querySelectorAll('button').forEach(b=>b.disabled=true);
     }else if(page==='站内优化'){panel.innerHTML=onsiteView(onsiteData,onsiteSelected,busy);
     }else if(page==='内容'){
       panel.innerHTML=`<h2>${page==='首页'?'当前客户 · 稿件与待办':'内容'}</h2><p>客户确认稿件，顾问可以代确认；发布状态另按实际记录展示。</p><div class="data-filters"><label>查找标题或关联关键词<input id="content-query" maxlength="200" value="${esc(contentQuery)}"></label><label>稿件状态<select id="content-status">${[['','全部'],['planned','待制作'],['drafting','修改中'],['review','审核中'],['ready','已备好'],['published','已发布']].map(([v,label])=>`<option value="${v}" ${v===contentStatus?'selected':''}>${label}</option>`).join('')}</select></label>${btn('查询稿件','content-search',busy?'disabled':'')}</div>${contents?`<small id="pagination-summary">第${listPage}页${listPage>Math.max(1,Math.ceil(contents.total/50))?'（列表已变化，请返回前页）':` / 共${Math.max(1,Math.ceil(contents.total/50))}页`} · 本页${contents.items.length}篇 / 共${contents.total}篇 · 每页50篇</small>${contents.items.map(item=>`<div class="task-item"><div class="task-content"><b>${esc(item.title||`稿件${item.id}`)}</b><p>v${esc(item.version_count)} · ${esc(statusLabel(item.status))}</p></div>${btn('查看准确交付稿','delivery',`data-id="${item.id}" ${busy?'disabled':''}`)}</div>`).join('')||'<p>当前授权范围没有稿件。</p>'}`:`<p>第${listPage}页尚未读取，请重试。</p>`}<div class="pagination">${btn('上一页','list-page',`data-number="${listPage-1}" ${busy||listPage<=1?'disabled':''}`)}${btn('下一页','list-page',`data-number="${listPage+1}" ${busy||!contents||listPage*50>=contents.total?'disabled':''}`)}${btn('刷新本页','refresh',busy?'disabled':'')}</div><p>${btn('查看资料与关键词','page','data-page="数据"')}</p>`;
@@ -115,19 +116,28 @@ export function mountConnectedWorkbench({root,host,environmentLabel,demoHref='in
       ['service','服务汇总',siteRead,()=>client.serviceStatus()],
       ['keywords','关键词',keywordRead,()=>dataClient.list('keywords',{filters:{engine:'baidu',device:'desktop',status:'active'}})],
       ['pages','网站页面',siteRead,()=>dataClient.list('pages')],
+      ['onsite','站内计划',siteRead,()=>onsiteClient.list()],
       ['publications','发布记录',true,()=>dataClient.list('publications')],
     ];
     const snapshots=await Promise.allSettled(requests.map(([, ,allowed,read])=>allowed?read():Promise.resolve(null)));
     if(!current())return;
     const summary={readFailures:[],readAt:new Date().toISOString()};
     snapshots.forEach((result,i)=>{const [key,label,allowed]=requests[i];summary[key]=result.status==='fulfilled'?result.value:null;if(result.status==='rejected')summary.readFailures.push(label+'读取失败');else if(!allowed)summary.readFailures.push(label+'无查看权限');});
+    if(snapshots[requests.findIndex(r=>r[0]==='onsite')].status==='rejected')summary.onsite={error:true};
     home={contents:rows,deliveries:results.filter(r=>r.status==='fulfilled').map(r=>r.value),failed:results.filter(r=>r.status==='rejected').length,...summary};
   }
   async function readData(current){dataPayload=null;dataDetail=null;const kind=page==='交付记录'?'publications':dataKind;dataPages.set(kind,dataPage);const value=await dataClient.list(kind,{page:dataPage,filters:kind==='publications'||kind==='facts'?{}:dataFilters});if(['view','edit'].includes(identity?.user.permissions['seo.site']))await controller.load();if(!current())return;observeAssignment(controller.getState().view?.permissionBasis);if(current())dataPayload=value;}
   async function readMaintenance(current){const {kind,id}=maintenanceTarget;await controller.load();observeAssignment(controller.getState().view?.permissionBasis);if(!canMaintain(kind)){protection.clear();throw Object.assign(Error('ADVISOR_REQUIRED'),{code:'ADVISOR_REQUIRED'});}await dataClient.list(kind,{page:dataPage,filters:kind==='facts'?{}:dataFilters});const value=id?dataClient.selected(kind,id):kind==='keywords'?{keyword:'',priority:'P2',landing_page:''}:{title:'',statement:'',source_name:'',source_url:'',expires_at:'',status:'active'};if(kind==='facts'){value.expires_local=expirationLocal(value.expires_at);value._initialExpiresLocal=value.expires_local;}if(current())maintenance=value;}
 
   async function run(action){const inputSnapshot=protection.capture();const stamp=++epoch;busy=true;message='正在读取或等待服务器结果…';render();try{await action(()=>stamp===epoch);if(stamp===epoch)message='';}catch(e){if(stamp===epoch){message=failure(e);if(e.code==='ADVISOR_REQUIRED')protection.clear();else protection.recover(inputSnapshot);maintenance=null;dataPayload=null;dataDetail=null;dataClient.invalidate();onsiteSelected=null;onsiteData=null;onsiteClient.invalidate();manualDraft=null;publicationReceipt=null;triggerActions=null;triggerClient.invalidate();aiDraft=null;aiMaterial=null;planDraft=null;delivery=null;editor=null;publicationRecords=null;publicationAttempts=null;if(controller.getState().phase==='error')client.invalidate();else controller.invalidate();execution=null;executionClient.invalidate();}}finally{if(stamp===epoch){busy=false;render();}}}
-  async function connect(){const stamp=++epoch;clear();busy=true;message='正在核验现有会话…';render();try{const result=await host.initialize();if(stamp!==epoch)return;identity=result.identity??null;page='首页';if(identity){await readHome(()=>stamp===epoch);}if(stamp===epoch)message='';}catch(e){if(stamp===epoch){clear();message=failure(e);}}finally{if(stamp===epoch){busy=false;render();}}}
+  async function connect(){const stamp=++epoch;clear();busy=true;message='正在核验现有会话…';render();try{
+    const result=await host.initialize();if(stamp!==epoch)return;identity=result.identity??null;page='首页';
+    const focus=initialOnsiteTaskId??onsiteTaskId(globalThis.location?.search||'');
+    if(identity&&focus){page='站内优化';onsiteBefore=focus+1;const data=await onsiteClient.list(onsiteBefore);
+      if(stamp!==epoch)return;onsiteData=data;onsiteSelected=data.items.find(t=>t.id===focus)||null;
+      if(!onsiteSelected)throw Error('所选任务不可用，请顾问核对当前客户与网站。');
+    }else if(identity){await readHome(()=>stamp===epoch);}if(stamp===epoch)message='';
+  }catch(e){if(stamp===epoch){clear();message=failure(e);}}finally{if(stamp===epoch){busy=false;render();}}}
   async function navigate(next){const previous=page;if(['数据','交付记录'].includes(page))dataPages.set(page==='数据'?dataKind:'publications',dataPage);page=next;if(['数据','交付记录'].includes(next))dataPage=dataPages.get(next==='数据'?dataKind:'publications')||1;if(['数据','交付记录'].includes(next))dataPayload=null;if(next==='进度')executions=null;if(next==='站内优化'){onsiteData=null;onsiteSelected=null;}if(next==='服务计划'){aiDraft=null;aiMaterial=null;planDraft=null;triggerActions=null;}if(next==='首页')home=null;if(next==='内容')contents=null;if(next==='SEO工作')status=null;await run(async current=>{if(next==='首页'){await readHome(current);}else if(next==='站内优化'){const data=await onsiteClient.list(onsiteBefore);if(current())onsiteData=data;}else if(next==='内容'){const data=await reader.contents({page:listPage,q:contentQuery,status:contentStatus});if(current())contents=data;}else if(next==='进度'){const data=await executionClient.list({page:executionPage});if(current()){executions=data;triggerClient.reconcile(data.items);}}else if(next==='服务计划'){await controller.load();observeAssignment(controller.getState().view?.permissionBasis);if(controller.getState().view?.canUpdate){const actions=await triggerClient.load(controller.getState().view?.revision);if(current())triggerActions=actions;}}else if(next==='SEO工作'){const data=await client.serviceStatus();if(current())status=data;}else if(['数据','交付记录'].includes(next)){await readData(current);}});}
 
   const unsubscribe=host.subscribe(({reason})=>{epoch++;busy=false;clear();message=reason==='customer_binding_required'?'当前账号尚未绑定客户，已清空当前数据；请联系管理员核对账号绑定':reason==='forbidden'?'权限已失效，已清空当前客户数据':reason==='expired'?'登录已过期，已清空数据':'身份或客户范围已变化，旧数据已清除';render();if(reason==='context_changed')queueMicrotask(connect);});
@@ -189,7 +199,7 @@ if(editor){const field={'content-title':'title','content-outline':'outline','con
       if(action==='select'){onsiteSelected=onsiteData?.items.find(t=>t.id===Number(el.dataset.id))||null;render();return;}
       if(['refresh','next','latest'].includes(action)){if(action==='next')onsiteBefore=Number(el.dataset.before);if(action==='latest')onsiteBefore=null;await navigate('站内优化');return;}
       let input;try{input=action==='create'?onsiteCreateInput(root):onsiteActionInput(root,onsiteSelected,action);}catch(e){message=e.message;render();return;}
-      await run(async current=>{const data=action==='create'?await onsiteClient.create(input):await onsiteClient.act(onsiteSelected.id,action,input);if(current()){onsiteSelected=data;protection.saved();if(action==='create')onsiteBefore=null;const list=await onsiteClient.list(onsiteBefore);if(current()){onsiteData=list;onsiteSelected=list.items.find(t=>t.id===data.id)||null;}}});return;
+      await run(async current=>{const data=action==='create'?await onsiteClient.create(input):action==='ai-proposal'?await onsiteClient.propose(onsiteSelected.id,onsiteProposalMode(onsiteSelected)):await onsiteClient.act(onsiteSelected.id,action,input);if(current()){onsiteSelected=data;protection.saved();if(action==='create')onsiteBefore=null;const list=await onsiteClient.list(onsiteBefore);if(current()){onsiteData=list;onsiteSelected=list.items.find(t=>t.id===data.id)||null;}}});return;
     }
     if(a==='execution-detail'){executionPublications=null;const id=Number(el.dataset.id);selectedTaskId=id;page='执行详情';execution=null;await run(async current=>{const data=await executionClient.detail(id);if(current())execution=data;});return;}
     if(a==='execution-publications'){executionPublications=null;await run(async current=>{const items=await executionClient.publicationOptions(selectedTaskId);if(current())executionPublications=items;});return;}

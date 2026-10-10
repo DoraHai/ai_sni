@@ -27,7 +27,7 @@ const snapshot={schema:1,mode:'read_only_inventory',generated_at:'2026-10-09T16:
 test('built superadmin console uses real-shaped data, all tabs and strict identity boundaries',async()=>{
   const f=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true});
   const origin='https://workbench.test',requests=[],errors=[],external=[];
-  let serverUser=admin,status=200,held=null;const connectionWrites=[],usageQueries=[],operationWrites=[];let exports=0;
+  let serverUser=admin,status=200,held=null,governanceStatus=404,governanceData={schema:1,state:"schema_pending"};const connectionWrites=[],usageQueries=[],operationWrites=[];let exports=0;
   try{
     const p=await browser.newPage();await p.setViewport({width:1440,height:1000});
     p.on('pageerror',e=>errors.push(e.message));await p.setRequestInterception(true);
@@ -36,6 +36,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
       if(u.origin!==origin){external.push(u.href);return r.abort();}
       if(u.pathname.startsWith('/api/')){
         requests.push({path:u.pathname,method:r.method()});
+        if(u.pathname==='/api/v1/platform/ai-governance')return r.respond({status:governanceStatus,contentType:'application/json',body:JSON.stringify(governanceData)});
         if(u.pathname.endsWith('/usage/export')){
           exports++;assert.equal(r.headers().authorization,'Bearer fixture-admin');
           return r.respond({status:200,contentType:'text/csv',body:'\ufeffid,estimated_amount\ncomplete-history,\n'});
@@ -89,10 +90,20 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     await p.goto(origin+'/customer-workbench/?console=platform');await signIn();await p.waitForSelector('.pc-kpis');
     assert.equal(await p.title(),'超级管理员工作台 · G-SNIPERS');assert(!await p.$('.chat'));assert(!await p.$('.composer'));assert.match(await body(),/本月 API 估算待接入/);
     await p.screenshot({path:path.join(os.tmpdir(),'platform-admin-overview-20261010.png'),fullPage:true});
-    const pages={customers:'客户与服务',accounts:'账号管理',apis:'API 调用情况',costs:'平台成本',tasks:'SEO 执行任务',security:'数据与权限',inventory:'系统盘点'};
+    const pages={'ai-governance':'AI 自动化治理',customers:'客户与服务',accounts:'账号管理',apis:'API 调用情况',costs:'平台成本',tasks:'SEO 执行任务',security:'数据与权限',inventory:'系统盘点'};
     for(const [tab,label] of Object.entries(pages)){
       await p.click(`.pc-sidebar [data-pc-page=${tab}]`);assert.match(await body(),new RegExp(label));
     }
+    await p.click('.pc-sidebar [data-pc-page=ai-governance]');await p.waitForFunction(()=>document.body.textContent.includes('治理接口未部署'));
+    assert.match(await body(),/reserved.*disabled/);assert(!await p.$('.pc-content form'));
+    governanceStatus=200;await p.click('[data-pc=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('等待数据库人工审核'));
+    assert.equal(await p.$eval('.pc-content button',e=>e.disabled),true);
+    governanceData={schema:1,state:'available',modules:[{module:'seo',provider:'dashscope',model:'qwen',configured:true,metering:{state:'recording'},calls:{failed:2,unknown:null},limits:[{kind:'revision',state:'enabled',value:true}]}],api_key:'never-render-secret'};
+    await p.click('[data-pc=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('qwen'));assert.doesNotMatch(await body(),/never-render-secret/);
+    await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await p.setViewport({width:1440,height:1000});
+    await p.screenshot({path:path.join(os.tmpdir(),'platform-ai-governance-20261010.png'),fullPage:true});
+    governanceStatus=403;await p.click('[data-pc=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('无法读取 AI 治理'));assert(!await p.$('.pc-kpis'));assert.doesNotMatch(await body(),/qwen/);
+    governanceStatus=404;await p.click('[data-pc=refresh]');await p.waitForSelector('.pc-kpis');
     await p.click('.pc-sidebar [data-pc-page=customers]');assert(!await p.$('.pc-table-wrap img'));
     await p.type('#pc-search','制造');assert.match(await body(),/测试客户 A/);assert.doesNotMatch(await p.$eval('.pc-content',e=>e.textContent),/客户 <img/);
     await p.click('.pc-sidebar [data-pc-page=costs]');assert.match(await body(),/不能相加/);assert.doesNotMatch(await body(),/¥0|￥0/);
@@ -218,7 +229,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     await new Promise(r=>setTimeout(r,50));assert(!await p.$('.pc-kpis'));assert.equal(await p.evaluate(()=>sessionStorage.getItem('sem_auth_v1')),null);
     await signIn();await p.waitForSelector('.pc-kpis');status=401;await p.click('[data-pc=refresh]');await p.waitForSelector('#pc-login');assert(!await p.$('.pc-kpis'));
     assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
-    assert(requests.every(r=>['/api/v1/auth/login','/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/admin/console/controls','/api/v1/admin/console/usage','/api/v1/admin/console/usage/export','/api/v1/admin/console/operations'].includes(r.path)));
+    assert(requests.every(r=>['/api/v1/auth/login','/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/admin/console/controls','/api/v1/admin/console/usage','/api/v1/admin/console/usage/export','/api/v1/admin/console/operations','/api/v1/platform/ai-governance'].includes(r.path)));
     assert(requests.filter(r=>r.method!=='GET').every(r=>['/api/v1/auth/login','/api/v1/admin/console/controls','/api/v1/admin/console/operations'].includes(r.path)));
   }finally{await browser.close();await f.close();}
 });

@@ -32,14 +32,14 @@ if(inputs.some(p=>/(?:^|\/)(?:fixture[^/]*|adapter\.js|workbench\.js)$/.test(p))
 for(const name of sources)if(!inputs.some(p=>path.resolve(root,p)===path.join(hostRoot,name)))throw Error('Missing canonical source: '+name);
 for(const name of sources)if(sha(await fs.readFile(path.join(hostRoot,name)))!==sourceHashes[name])throw Error('Canonical source changed during build.');
 const js=built.outputFiles.find(f=>f.path.endsWith('.js')).contents;
-const css=await Promise.all(['r12-base.css','workbench.css','connected.css','platform-console.css'].map(name=>fs.readFile(path.join(root,'css',name))));
+const css=await Promise.all(['r12-base.css','workbench.css','connected.css','platform-console.css','advisor-workbench.css'].map(name=>fs.readFile(path.join(root,'css',name))));
 const files=new Map([
   ['app.js',js],['app.css',Buffer.concat(css.map(data=>Buffer.concat([data,Buffer.from('\n')])))] ,
   ['index.html',Buffer.from('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>客户工作台</title><link rel="stylesheet" href="./app.css"></head><body><div id="app"></div><script type="module" src="./app.js"></script></body></html>')],
 ]);
 const localSources={};
 for(const input of inputs){const full=path.resolve(root,input);if(full.startsWith(root+path.sep)&&!full.includes(path.sep+'node_modules'+path.sep))localSources[path.relative(root,full).replaceAll('\\','/')]=sha(await fs.readFile(full));}
-for(const name of ['scripts/build.mjs','css/r12-base.css','css/workbench.css','css/connected.css','css/platform-console.css'])localSources[name]=sha(await fs.readFile(path.join(root,name)));
+for(const name of ['scripts/build.mjs','css/r12-base.css','css/workbench.css','css/connected.css','css/platform-console.css','css/advisor-workbench.css'])localSources[name]=sha(await fs.readFile(path.join(root,name)));
 const manifest={schema:1,base:'/customer-workbench/',upstreamCommit,sourceTreeClean,canonicalSources:sourceHashes,localSources,hostLockSha256:sha(await fs.readFile(path.join(hostRoot,'package-lock.json'))),independentLockSha256:sha(await fs.readFile(path.join(root,'package-lock.json'))),vueVersion,files:Object.fromEntries([...files].map(([name,data])=>[name,{sha256:sha(data),bytes:data.length}]))};
 files.set('release-manifest.json',Buffer.from(JSON.stringify(manifest,null,2)+'\n'));
 for(const name of await fs.readdir(output))if(!files.has(name))throw Error('Unexpected output file; inspect manually: '+name);

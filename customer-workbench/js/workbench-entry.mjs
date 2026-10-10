@@ -1,4 +1,6 @@
 import {escapeText as esc} from './customer-display.mjs';
+import {advisorModuleEligible} from './advisor-client.mjs';
+import {onsiteTaskFromSearch} from './advisor-task-link.mjs';
 
 const base='/customer-workbench/';
 const positive=value=>Number.isSafeInteger(value)&&value>0;
@@ -6,8 +8,9 @@ export function entryScope(search){
   const p=new URLSearchParams(search),present=p.has('tenant_id')||p.has('site_id');
   const id=name=>p.getAll(name).length===1&&/^[1-9]\d*$/.test(p.get(name)||'')&&positive(Number(p.get(name)))?Number(p.get(name)):null;
   const tenantId=id('tenant_id'),siteId=id('site_id');
-  if(p.get('module')==='geo'){const projectId=id('project_id');return {tenantId,siteId:null,projectId,module:'geo',invalid:p.getAll('module').length!==1||p.has('site_id')||((p.has('tenant_id')||p.has('project_id'))&&!(tenantId&&projectId)),login:p.get('login')==='1'};}
-  return {tenantId,siteId,invalid:present&&!(tenantId&&siteId),login:p.get('login')==='1'};
+  const onsiteTaskId=onsiteTaskFromSearch(search),taskInvalid=p.has('onsite_task_id')&&(!onsiteTaskId||!tenantId||!(p.get('module')==='geo'?id('project_id'):siteId));
+  if(p.get('module')==='geo'){const projectId=id('project_id');return {tenantId,siteId:null,projectId,onsiteTaskId,module:'geo',invalid:taskInvalid||p.getAll('module').length!==1||p.has('site_id')||((p.has('tenant_id')||p.has('project_id'))&&!(tenantId&&projectId)),login:p.get('login')==='1'};}
+  return {tenantId,siteId,onsiteTaskId,invalid:taskInvalid||p.has('project_id')||(p.has('module')&&(p.getAll('module').length!==1||p.get('module')!=='seo'))||(present&&!(tenantId&&siteId)),login:p.get('login')==='1'};
 }
 export const workbenchPath=(tenantId,siteId)=>base+(positive(tenantId)&&positive(siteId)?'?'+new URLSearchParams({tenant_id:tenantId,site_id:siteId}):'');
 export const geoWorkbenchPath=(tenantId,projectId)=>base+'?'+new URLSearchParams({module:'geo',...(positive(tenantId)&&positive(projectId)?{tenant_id:tenantId,project_id:projectId}:{})});
@@ -17,8 +20,9 @@ export const workbenchLoginPath=(tenantId,siteId)=>workbenchPath(tenantId,siteId
 // No business writes, credential persistence, fallback tenant, or authority from URL.
 export function mountWorkbenchEntry({root,session,search=location.search,fetchImpl=fetch,navigate=path=>location.assign(path)}){
   const scope=entryScope(search);
+  const params=new URLSearchParams(search),advisor=params.getAll('console').length===1&&params.get('console')==='advisor';
   let module=scope.module||'seo',availableModules=[];
-  const selectedPath=()=>module==='geo'?geoWorkbenchPath(scope.tenantId,scope.projectId):workbenchPath(scope.tenantId,scope.siteId);
+  const selectedPath=()=>{const path=advisor?base+'?console=advisor':module==='geo'?geoWorkbenchPath(scope.tenantId,scope.projectId):workbenchPath(scope.tenantId,scope.siteId);return path+(!advisor&&scope.onsiteTaskId?'&onsite_task_id='+scope.onsiteTaskId:'');};
   let generation=0,disposed=false,ownSessionChange=false,tenants=[],sites=[],tenantId=null,siteId=null,controllers=new Set();
   const frame=body=>{root.innerHTML=`<header class="entry-header"><b>G-SNIPERS</b><span>客户工作台</span></header><main class="entry-layout"><section class="entry-intro"><small>你的推广工作，在这里继续</small><h1>看进展，确认稿件，<br>与顾问一起推进。</h1><p>使用已有账号登录，无需先进入运营模块。</p></section><section class="entry-card">${body}</section></main>`;};
   const invalidate=()=>{generation++;for(const c of controllers)c.abort();controllers.clear();};
@@ -39,7 +43,7 @@ export function mountWorkbenchEntry({root,session,search=location.search,fetchIm
   }
   function errorView(text){frame(`<h2>暂时无法进入</h2><p role="status">${esc(text)}</p><button data-entry="retry">重新读取</button> <button data-entry="logout">退出当前账号</button>`);}
   function selector(note=''){
-    frame(`<small>${esc(session.user?.display_name||session.user?.username||'已登录')}</small><h2>选择工作空间</h2><div>${availableModules.map(m=>`<button data-entry="module" data-module="${m}" ${m===module?'disabled':''}>${m.toUpperCase()}</button>`).join('')}</div><p>仅显示当前账号获准查看的客户与网站或项目。</p><p role="status">${esc(note)}</p><label for="entry-tenant">客户</label><select id="entry-tenant"><option value="">请选择客户</option>${tenants.map(t=>`<option value="${t.id}" ${tenantId===t.id?'selected':''}>${esc(t.name||'客户 '+t.id)}</option>`).join('')}</select><label for="entry-site">${module==='geo'?'GEO 项目':'网站'}</label><select id="entry-site" ${sites.length?'':'disabled'}><option value="">请选择网站</option>${sites.map(s=>`<option value="${s.id}" ${siteId===s.id?'selected':''}>${esc(s.name||s.domain||'网站 '+s.id)}</option>`).join('')}</select><button data-entry="enter" class="entry-primary" ${siteId?'':'disabled'}>进入工作台</button><div class="entry-footer"><button data-entry="retry">刷新可用空间</button><button data-entry="logout">退出账号</button></div><small>SEO 服务与 GEO 官网建设已接入。模块开通与顾问操作资格分别核验。</small>`);
+    frame(`<small>${esc(session.user?.display_name||session.user?.username||'已登录')}</small><h2>选择工作空间</h2>${availableModules.some(m=>advisorModuleEligible(session.user,m))?'<p><a href="/customer-workbench/?console=advisor">顾问工作台 · 我的站内任务</a></p>':''}<div>${availableModules.map(m=>`<button data-entry="module" data-module="${m}" ${m===module?'disabled':''}>${m.toUpperCase()}</button>`).join('')}</div><p>仅显示当前账号获准查看的客户与网站或项目。</p><p role="status">${esc(note)}</p><label for="entry-tenant">客户</label><select id="entry-tenant"><option value="">请选择客户</option>${tenants.map(t=>`<option value="${t.id}" ${tenantId===t.id?'selected':''}>${esc(t.name||'客户 '+t.id)}</option>`).join('')}</select><label for="entry-site">${module==='geo'?'GEO 项目':'网站'}</label><select id="entry-site" ${sites.length?'':'disabled'}><option value="">请选择网站</option>${sites.map(s=>`<option value="${s.id}" ${siteId===s.id?'selected':''}>${esc(s.name||s.domain||'网站 '+s.id)}</option>`).join('')}</select><button data-entry="enter" class="entry-primary" ${siteId?'':'disabled'}>进入工作台</button><div class="entry-footer"><button data-entry="retry">刷新可用空间</button><button data-entry="logout">退出账号</button></div><small>SEO 服务与 GEO 官网建设已接入。模块开通与顾问操作资格分别核验。</small>`);
   }
   async function loadSites(id,auto=false){
     invalidate();const g=generation;tenantId=id;siteId=null;sites=[];selector('正在读取网站…');
