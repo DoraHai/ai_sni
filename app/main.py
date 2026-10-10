@@ -42,6 +42,7 @@ from app.baidu import BaiduAPIError
 from app.api.sem_metrics import router as sem_metrics_router
 from app.api.sem_tasks import router as sem_tasks_router
 from app.api.platform_console import router as platform_console_router
+from app.api.platform_ai_governance import router as platform_ai_governance_router
 from app.baidu.sync import (
     sync_operation_records_for_account,
     sync_adgroups_for_account,
@@ -114,6 +115,7 @@ app.include_router(expansion_router)
 app.include_router(negatives_router)
 app.include_router(auth_router)
 app.include_router(platform_console_router)
+app.include_router(platform_ai_governance_router)
 app.include_router(users_router)
 app.include_router(roles_router)
 app.include_router(suggestions_router)
