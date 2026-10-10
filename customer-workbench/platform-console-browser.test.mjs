@@ -26,7 +26,7 @@ const snapshot={schema:1,mode:'read_only_inventory',generated_at:'2026-10-09T16:
 test('built superadmin console uses real-shaped data, all tabs and strict identity boundaries',async()=>{
   const f=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true});
   const origin='https://workbench.test',requests=[],errors=[],external=[];
-  let serverUser=admin,status=200,held=null;const connectionWrites=[];
+  let serverUser=admin,status=200,held=null;const connectionWrites=[],usageQueries=[],operationWrites=[];let exports=0;
   try{
     const p=await browser.newPage();await p.setViewport({width:1440,height:1000});
     p.on('pageerror',e=>errors.push(e.message));await p.setRequestInterception(true);
@@ -35,6 +35,26 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
       if(u.origin!==origin){external.push(u.href);return r.abort();}
       if(u.pathname.startsWith('/api/')){
         requests.push({path:u.pathname,method:r.method()});
+        if(u.pathname.endsWith('/usage/export')){
+          exports++;assert.equal(r.headers().authorization,'Bearer fixture-admin');
+          return r.respond({status:200,contentType:'text/csv',body:'\ufeffid,estimated_amount\ncomplete-history,\n'});
+        }
+        if(u.pathname.endsWith('/usage')){
+          usageQueries.push(Object.fromEntries(u.searchParams));
+          const next=u.searchParams.has('cursor');
+          return r.respond({status:200,contentType:'application/json',body:JSON.stringify({state:'available',total:2,unpriced:1,known_amount:'0.01',estimated_amount:null,
+            as_of:'2026-10-10T01:00:00Z',next_cursor:next?null:'fixture-next-page',rows:[{id:next?'history-second':'history-first',tenant_id:1,user_id:8,module:'seo',provider:'chinaz',
+              model:null,endpoint:'openapi.chinaz.net/v1/index',state:'succeeded',started_at:'2026-10-10T01:00:00Z',estimated_amount:next?'0.01':null,currency:'CNY'}]})});
+        }
+        if(u.pathname.endsWith('/operations')){
+          const data=JSON.parse(r.postData());operationWrites.push(data);
+          if(data.kind==='alert'){
+            const alert=snapshot.alerts.find(a=>a.id===data.key);
+            assert.equal(data.expected_revision,alert.handling.revision);alert.handling.revision++;
+            alert.handling.status=data.value.action==='resolve'?'resolved':'in_progress';alert.handling.owner_id=7;alert.handling.note=data.value.note;
+          }else snapshot.operations.suppliers=[{host:data.key,...data.value,revision:1,source:'manual',updated_at:'2026-10-10T01:00:00Z'}];
+          return r.respond({status:200,contentType:'application/json',body:JSON.stringify({revision:1})});
+        }
         if(u.pathname.endsWith('/controls')){
           const payload=JSON.parse(r.postData());
           assert.equal(r.headers().authorization,'Bearer fixture-admin');
@@ -95,6 +115,32 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     snapshot.api_costs.recent=[{id:'meter-request',tenant_id:1,model:'deepseek-v4-flash',endpoint:'dashscope.aliyuncs.com/v1',state:'succeeded',latency_ms:33,started_at:'2026-10-10T00:00:00Z'}];
     await p.click('[data-pc=refresh]');await p.waitForSelector('.pc-kpis');
     await p.click('.pc-sidebar [data-pc-page=apis]');assert.match(await body(),/meter-request/);assert.doesNotMatch(await body(),/request-1/);assert.match(await body(),/站长之家/);assert.match(await body(),/keyword_360mobile/);assert.match(await body(),/308/);
+    await p.select('#pc-usage-query [name=tenant_id]','1');await p.click('#pc-usage-query button');
+    await p.waitForFunction(()=>document.body.textContent.includes('history-first'));
+    assert.equal(usageQueries[0].tenant_id,'1');assert.match(await body(),/未定价 1 条/);
+    await p.click('[data-pc=usage-next]');await p.waitForFunction(()=>document.body.textContent.includes('history-second'));
+    assert.equal(usageQueries[1].cursor,'fixture-next-page');assert.match(await body(),/第 2 页/);
+    await p.click('[data-pc=usage-prev]');await p.waitForFunction(()=>document.body.textContent.includes('history-first'));
+    assert(!('cursor' in usageQueries[2]));assert.match(await body(),/第 1 页/);
+    await p.screenshot({path:path.join(os.tmpdir(),'platform-usage-history-20261010.png'),fullPage:true});
+    await p.click('[data-pc=usage-export]');await p.waitForFunction(()=>document.querySelector('.pc-save-notice')?.textContent.includes('已导出'));
+    assert.equal(exports,1);
+    snapshot.operations={state:'enabled',provider_health:[{module:'seo',provider:'chinaz',calls:10,failed:3,last_failure:'2026-10-10T01:00:00Z'}],suppliers:[],
+      backup:{state:'available',note:'数据库备份与恢复验证分别记录。',records:[{completed_at:'2026-10-10T01:00:00Z',state:'succeeded',archive_verified:true,restore_verified:false}]}};
+    snapshot.alerts=[{id:'a'.repeat(64),signal:'b'.repeat(64),tenant_id:1,message:'测试接口异常',severity:'error',handling:{status:'open',revision:0}}];
+    await p.click('[data-pc=refresh]');await p.waitForSelector('.pc-kpis');
+    await p.click('.pc-sidebar [data-pc-page=alerts]');await p.click('#pc-alert-operation button');
+    await p.waitForFunction(()=>document.querySelector('.pc-content')?.textContent.includes('处理中'));
+    assert.equal(operationWrites[0].value.action,'claim');
+    await p.select('#pc-alert-operation [name=action]','resolve');await p.type('#pc-alert-operation [name=note]','已检查上游服务，等待下一次调用确认');
+    await p.click('#pc-alert-operation button');await p.waitForFunction(()=>document.querySelector('.pc-content')?.textContent.includes('已标记处理'));
+    assert.equal(operationWrites[1].expected_revision,1);
+    await p.type('#pc-supplier-operation [name=remaining_calls]','0');await p.type('#pc-supplier-operation [name=warning_calls]','10');
+    await p.click('#pc-supplier-operation button');await p.waitForFunction(()=>document.querySelector('.pc-save-notice')?.textContent.includes('已保存')&&document.querySelector('#pc-supplier-operation [name=remaining_calls]')?.value==='0');
+    await p.waitForFunction(()=>document.querySelector('#pc-supplier-operation')?.closest('.pc-card').querySelector('tbody tr')?.textContent.includes('dashscope.aliyuncs.com'));
+    assert.equal(operationWrites[2].value.balance,null);assert.equal(operationWrites[2].value.remaining_calls,0);
+    await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await p.setViewport({width:1440,height:1000});
+    await p.screenshot({path:path.join(os.tmpdir(),'platform-alert-operations-20261010.png'),fullPage:true});
     await p.click('.pc-sidebar [data-pc-page=config]');await p.waitForSelector('[data-control-kind=connection]');
     const connection='[data-control-kind=connection]';
     assert.equal(await p.$eval(connection+' button',e=>e.disabled),false);
@@ -135,6 +181,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     assert.doesNotMatch(await body(),/fixture-private-replacement/);
     await p.screenshot({path:path.join(os.tmpdir(),'api-controls-console-20261010.png'),fullPage:true});
     await p.click('.pc-sidebar [data-pc-page=security]');assert.match(await body(),/预算设置/);assert.match(await body(),/密钥设置/);assert.doesNotMatch(await body(),/fixture-private-replacement/);
+    assert.match(await body(),/待恢复演练/);assert.match(await body(),/已通过/);
     await p.screenshot({path:path.join(os.tmpdir(),'api-metering-console-20261010.png'),fullPage:true});
     await p.click('.pc-sidebar [data-pc-page=overview]');await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     await p.screenshot({path:path.join(os.tmpdir(),'platform-admin-mobile-20261010.png'),fullPage:true});await p.setViewport({width:1440,height:1000});
@@ -150,7 +197,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     await new Promise(r=>setTimeout(r,50));assert(!await p.$('.pc-kpis'));assert.equal(await p.evaluate(()=>sessionStorage.getItem('sem_auth_v1')),null);
     await signIn();await p.waitForSelector('.pc-kpis');status=401;await p.click('[data-pc=refresh]');await p.waitForSelector('#pc-login');assert(!await p.$('.pc-kpis'));
     assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
-    assert(requests.every(r=>['/api/v1/auth/login','/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/admin/console/controls'].includes(r.path)));
-    assert(requests.filter(r=>r.method!=='GET').every(r=>['/api/v1/auth/login','/api/v1/admin/console/controls'].includes(r.path)));
+    assert(requests.every(r=>['/api/v1/auth/login','/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/admin/console/controls','/api/v1/admin/console/usage','/api/v1/admin/console/usage/export','/api/v1/admin/console/operations'].includes(r.path)));
+    assert(requests.filter(r=>r.method!=='GET').every(r=>['/api/v1/auth/login','/api/v1/admin/console/controls','/api/v1/admin/console/operations'].includes(r.path)));
   }finally{await browser.close();await f.close();}
 });

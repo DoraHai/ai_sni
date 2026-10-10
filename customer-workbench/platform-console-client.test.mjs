@@ -68,3 +68,39 @@ test('identity changes during write preflight cancel the write',async()=>{
   await client.initialize();change=true;
   await assert.rejects(client.change({}),{code:'CONSOLE_STALE'});assert.equal(writes,0);
 });
+
+test('history filters stay on fixed routes and CSV export checks current permission',async()=>{
+  const s=session(admin),calls=[];let permitted=true;
+  const client=createPlatformConsoleClient({session:s,fetchImpl:async(path,o)=>{
+    calls.push({path,o});
+    if(path.endsWith('/me'))return response({user:permitted?admin:{...admin,tenant_id:1}});
+    if(path.includes('/usage/export'))return new Response('\ufeffid,estimated_amount\nfixture,\n',{headers:{'Content-Type':'text/csv; charset=utf-8'}});
+    if(path.includes('/usage?'))return response({state:'available',rows:[],total:0});
+    return response(snapshot);
+  }});
+  await client.initialize();
+  assert.equal((await client.usage({tenant_id:1,endpoint:'provider.test/v1?name=value'})).total,0);
+  const query=calls.at(-1).path;assert.equal(new URL(query,'https://test').searchParams.get('endpoint'),'provider.test/v1?name=value');
+  assert.equal(new URL(query,'https://test').pathname,'/api/v1/admin/console/usage');
+  await assert.rejects(client.usage({url:'https://outside.test'}),{code:'CONSOLE_INVALID_QUERY'});
+  const csv=await client.exportUsage({from:'2026-10-01',to:'2026-10-10'});
+  assert.match(await csv.text(),/fixture,/);
+  assert.deepEqual(calls.slice(-2).map(c=>c.path.split('?')[0]),['/api/v1/auth/me','/api/v1/admin/console/usage/export']);
+  permitted=false;const before=calls.length;
+  await assert.rejects(client.exportUsage({}),{code:'CONSOLE_FORBIDDEN'});assert.equal(calls.length,before+1);
+});
+
+test('incident and supplier writes require fresh identity and discard stale downloads',async()=>{
+  const s=session(admin);let permitted=true,hold=false,release;const writes=[];
+  const client=createPlatformConsoleClient({session:s,fetchImpl:async(path,o)=>{
+    if(path.endsWith('/me'))return response({user:permitted?admin:{...admin,tenant_id:1}});
+    if(path.endsWith('/operations')){writes.push(JSON.parse(o.body));return response({revision:1});}
+    if(path.includes('/usage/export'))return {ok:true,status:200,headers:new Headers({'Content-Type':'text/csv'}),blob:()=>new Promise(r=>release=r)};
+    return response(snapshot);
+  }});
+  await client.initialize();await client.operation({kind:'alert',key:'fixture'});assert.equal(writes.length,1);
+  const download=client.exportUsage({});while(!release)await new Promise(r=>setTimeout(r,1));
+  client.invalidate();release(new Blob(['private-history']));await assert.rejects(download,{code:'CONSOLE_STALE'});
+  await client.initialize();permitted=false;
+  await assert.rejects(client.operation({kind:'supplier'}),{code:'CONSOLE_FORBIDDEN'});assert.equal(writes.length,1);
+});
