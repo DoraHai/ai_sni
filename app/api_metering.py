@@ -94,7 +94,8 @@ def business_scope(module: str, tenant_arg: str = 'tenant_id'):
                 return await func(*args, **kwargs)
             finally:
                 scope.reset(token)
-        return run
+        from app.api_connection_config import managed_runtime
+        return managed_runtime(module)(run)
     return decorate
 
 
@@ -108,7 +109,20 @@ class MeteringScopeMiddleware:
             return await self.app(asgi_scope, receive, send)
         token = scope.set(MeterScope(module=self.module))
         try:
-            await self.app(asgi_scope, receive, send)
+            from app.api_connection_config import runtime_scope
+            path=asgi_scope.get('path','')
+            if path.startswith('/api/') and not path.startswith(('/api/v1/auth/','/api/v1/admin/console/')):
+                from app.api_controls import ControlDenied
+                from starlette.responses import JSONResponse
+                try:
+                    async with runtime_scope(self.module):
+                        await self.app(asgi_scope, receive, send)
+                except ControlDenied:
+                    await JSONResponse(status_code=503,
+                        content={'detail': '平台接口配置暂时无法读取，请联系超级管理员'},
+                        headers={'Cache-Control': 'no-store'})(asgi_scope, receive, send)
+            else:
+                await self.app(asgi_scope, receive, send)
         finally:
             scope.reset(token)
 

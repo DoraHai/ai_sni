@@ -51,8 +51,8 @@ async def read_api_costs(session):
     for key, group in (('tenant_totals','tenant_id'), ('user_totals','user_id')):
         rows = (await session.execute(text(f'SELECT {group}, {metrics} FROM api_usage_events WHERE started_at >= :start GROUP BY {group} ORDER BY {group} NULLS LAST'), params)).mappings()
         result[key] = [normalize(row) for row in rows]
-    result['provider_totals'] = [normalize(row) for row in (await session.execute(text(f'''SELECT module,provider,model,{metrics}
-        FROM api_usage_events WHERE started_at >= :start GROUP BY module,provider,model ORDER BY module,provider,model'''),params)).mappings()]
+    result['provider_totals'] = [normalize(row) for row in (await session.execute(text(f'''SELECT module,provider,model,endpoint,{metrics}
+        FROM api_usage_events WHERE started_at >= :start GROUP BY module,provider,model,endpoint ORDER BY module,provider,model,endpoint'''),params)).mappings()]
     result['unattributed'] = normalize((await session.execute(text(f'''SELECT {metrics} FROM api_usage_events
         WHERE started_at >= :start AND tenant_id IS NULL'''),params)).mappings().one())
     result['recent'] = [dict(row) for row in (await session.execute(text('''SELECT id,tenant_id,user_id,origin,module,operation,job_ref,

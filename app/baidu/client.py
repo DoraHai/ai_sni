@@ -25,6 +25,7 @@ import httpx
 from app.api_metering import metered_request
 
 from app.config import get_settings, resolve_baidu_write_dry_run
+from app.api_connection_config import managed_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,7 @@ class BaiduAPIClient:
         self._live_write_authorized_scopes = live_write_authorized_scopes
         self._base_url = get_settings().baidu_api_base_url.rstrip("/")
 
+    @managed_runtime('sem')
     async def call(
         self,
         service: str,
@@ -131,7 +133,8 @@ class BaiduAPIClient:
         is_write: bool = False,
         write_scope: str | None = None,
     ) -> dict[str, Any]:
-        url = f"{self._base_url}/json/sms/service/{service}/{method}"
+        base_url = get_settings().baidu_api_base_url.rstrip('/')
+        url = f"{base_url}/json/sms/service/{service}/{method}"
         payload = {
             "header": {
                 "userName": self._username,
