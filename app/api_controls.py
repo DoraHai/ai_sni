@@ -117,6 +117,8 @@ def validate_value(kind, value):
 
 
 async def usage(session, target):
+    from app.api_usage_review_basis import accounted_amount
+    amount = await accounted_amount(session)
     # Identifiers are selected from this fixed list, never interpolated input.
     provider_scope = target.startswith('provider:')
     column = 'tenant_id' if target.startswith('tenant:') else 'user_id' if target.startswith('user:') else "split_part(endpoint,'/',1)" if provider_scope else None
@@ -129,10 +131,10 @@ async def usage(session, target):
     where = f'AND {column}=:target' if column else ''
     row = (await session.execute(text(f'''SELECT count(*) AS monthly_calls,
         count(*) FILTER (WHERE started_at >= :day) AS daily_calls,
-        coalesce(sum(coalesce(estimated_amount,reserved_amount)),0) AS monthly_cny,
-        coalesce(sum(coalesce(estimated_amount,reserved_amount)) FILTER (WHERE started_at >= :day),0) AS daily_cny,
-        count(*) FILTER (WHERE estimated_amount IS NULL AND (state <> 'requested' OR reserved_amount IS NULL)) AS monthly_unknown,
-        count(*) FILTER (WHERE started_at >= :day AND estimated_amount IS NULL AND (state <> 'requested' OR reserved_amount IS NULL)) AS daily_unknown
+        coalesce(sum(coalesce({amount},CASE WHEN state='requested' THEN reserved_amount END)),0) AS monthly_cny,
+        coalesce(sum(coalesce({amount},CASE WHEN state='requested' THEN reserved_amount END)) FILTER (WHERE started_at >= :day),0) AS daily_cny,
+        count(*) FILTER (WHERE {amount} IS NULL AND (state <> 'requested' OR reserved_amount IS NULL)) AS monthly_unknown,
+        count(*) FILTER (WHERE started_at >= :day AND {amount} IS NULL AND (state <> 'requested' OR reserved_amount IS NULL)) AS daily_unknown
         FROM api_usage_events WHERE started_at >= :month {where}'''),
         {'day': day, 'month': month, 'target': tid})).mappings().one()
     result = {k: str(v) if isinstance(v, Decimal) else int(v) for k, v in row.items()}
@@ -140,9 +142,9 @@ async def usage(session, target):
     # unresolved charge. No timeout or worker PID is proof of a free request.
     outstanding = (await session.execute(text(f'''SELECT
         count(*) FILTER (WHERE state IN ('requested','unknown')) AS active_calls,
-        count(*) FILTER (WHERE estimated_amount IS NULL AND
+        count(*) FILTER (WHERE {amount} IS NULL AND
             (state <> 'requested' OR reserved_amount IS NULL OR started_at < :month)) AS unresolved_calls
-        FROM api_usage_events WHERE (state IN ('requested','unknown') OR estimated_amount IS NULL) {where}'''),
+        FROM api_usage_events WHERE (state IN ('requested','unknown') OR {amount} IS NULL) {where}'''),
         {'month': month, 'target': tid})).mappings().one()
     result.update({k: int(v) for k, v in outstanding.items()})
     return result
