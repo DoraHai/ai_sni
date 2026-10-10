@@ -309,6 +309,37 @@ def test_disabled_guards_preserve_existing_provider_call(monkeypatch):
                 assert response.status_code == 200
     asyncio.run(run())
     assert len(sent) == 1
+@pytest.mark.parametrize('missing', ['api_control_settings', 'api_control_bindings',
+    'api_control_credentials', 'api_control_audit', 'reserved_amount'])
+def test_native_incomplete_controls_deny_before_attempt_or_provider(monkeypatch, missing):
+    async def scenario(factory, other):
+        async with factory() as s:
+            statement = 'ALTER TABLE api_usage_events DROP COLUMN reserved_amount' if missing == 'reserved_amount' else 'DROP TABLE ' + missing
+            await s.execute(text(statement))
+            await s.commit()
+            assert not await controls.schema_ready(s)
+            assert (await controls.read_controls(s))['state'] == 'schema_pending'
+        monkeypatch.setattr(controls, 'async_session_factory', other)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: pytest.fail('must not send'))) as client:
+            with meter.background_scope(tenant_id=1, module='geo', operation='onsite.ai_proposal'):
+                with pytest.raises(meter.MeteringUnavailable):
+                    await meter.metered_request(client, 'post', 'https://provider.test/v1')
+        async with factory() as s:
+            assert await s.scalar(text('SELECT count(*) FROM api_usage_events')) == 0
+    native(monkeypatch, scenario)
+
+
+def test_native_metering_only_needs_no_control_schema(monkeypatch):
+    async def scenario(factory, other):
+        async with factory() as s:
+            assert not await controls.schema_ready(s)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))) as client:
+            with meter.background_scope(tenant_id=1, module='geo', operation='onsite.ai_proposal'):
+                assert (await meter.metered_request(client, 'post', 'https://provider.test/v1')).status_code == 200
+        async with factory() as s:
+            assert await s.scalar(text('SELECT count(*) FROM api_usage_events')) == 1
+            assert await s.scalar(text('SELECT state FROM api_usage_events')) == 'succeeded'
+    native(monkeypatch, scenario, schema_controls=False)
 
 
 def test_native_reviewed_permission_scripts_keep_audit_append_only(monkeypatch):
