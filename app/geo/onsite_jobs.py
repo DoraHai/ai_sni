@@ -347,7 +347,7 @@ async def recover_interrupted_job(session: AsyncSession, job: GeoAsyncJob) -> st
     state = "cancelled" if meta.get("cancel_requested") else "unknown"
     job.status = "cancelled" if state == "cancelled" else "failed"
     job.error = (
-        "已取消" if state == "cancelled" else "服务中断，AI 供应商结果未知，禁止自动重试"
+        "已取消" if state == "cancelled" else "服务中断，AI 供应商结果未知，系统不会自动重试"
     )
     job.result_meta = {
         "public_state": state, "error_category": "interrupted", "message": job.error
