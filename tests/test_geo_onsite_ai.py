@@ -227,6 +227,22 @@ def test_planning_preflight_requires_public_facts_without_changing_supported_sna
     assert onsite_ai.planning_preflight({"facts": facts()}) is None
 
 
+def test_planning_route_freezes_model_path_without_credentials():
+    route = onsite_ai.planning_route({
+        "api_key": "must-not-persist",
+        "provider": "deepseek",
+        "base_url": "https://api.deepseek.com/v1/",
+        "model": "deepseek-chat",
+        "source": "env_deepseek_onsite",
+    })
+    assert route == {
+        "provider": "deepseek", "base_url": "https://api.deepseek.com/v1",
+        "host": "api.deepseek.com", "model": "deepseek-chat",
+        "source": "env_deepseek_onsite",
+    }
+    assert "key" not in str(route).lower()
+
+
 def test_fact_public_use_requires_explicit_human_authorization():
     assert not onsite_ai.public_use_authorized({"public_use": {"allowed": True}})
     assert not onsite_ai.public_use_authorized({"public_use": {

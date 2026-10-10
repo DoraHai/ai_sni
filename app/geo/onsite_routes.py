@@ -4,31 +4,54 @@ import hashlib
 import ipaddress
 import json
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app import onsite_workflow as work
-from app.api_metering import background_scope
 from app.database import get_session
-from app.models import GeoProject, GeoActionTicket, GeoFact, GeoPrompt, Tenant
+from app.models import GeoProject, GeoActionTicket, GeoAsyncJob, GeoFact, GeoPrompt, Tenant
 from app.security.auth import require_scoped_auth
 from app.geo.project_scope import binding, project_scope, prompt_ids_for_businesses
 from app.geo.project_workflows import PLAN_KEY, plan_for, advisor_available
 from app.geo.tenant_scope import ensure_geo_entitlement
 from app.geo.audit import safe_fetch, GeoAuditError
-from app.geo.ai_client import DeepSeekError, chat_json
 from app.geo.content.ai_settings import resolve_llm_credentials
-from app.geo import onsite_ai
+from app.geo.content import async_jobs
+from app.geo import onsite_ai, onsite_jobs
 
 router = APIRouter()
 PREFIX = "onsite:v1:"
 MAX_PUBLIC_FACTS = 30
 MAX_PRIORITY_QUESTIONS = 50
+ONSITE_PROTOCOL = "durable-v1"
+_SCHEMA_PENDING_SQLSTATES = frozenset({"42P01", "42703"})
+_PUBLIC_RUN_STATES = frozenset({
+    "queued", "running", "ready", "failed", "unknown", "stale", "cancelled",
+})
+_PUBLIC_ERROR_CATEGORIES = frozenset({
+    "pre_execution", "admission_denied", "admission_unavailable",
+    "metering_finalize_unknown", "authentication", "rate_limit",
+    "invalid_request", "provider_unavailable", "model_not_found", "timeout",
+    "network", "invalid_response", "unknown", "result_validation",
+    "save_unknown", "interrupted", "queue_timeout",
+})
+_PUBLIC_ERROR_CODES = frozenset({
+    "api_concurrency_limit", "api_budget_exhausted", "api_charge_unresolved",
+    "api_provider_disabled", "api_budget_quote_unavailable", "model_not_found",
+})
+
+
+def _is_schema_pending_error(exc: SQLAlchemyError) -> bool:
+    original = getattr(exc, "orig", None)
+    code = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+    return code in _SCHEMA_PENDING_SQLSTATES
 
 class Create(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -71,6 +94,11 @@ async def scope(session, ctx, tenant_id, project_id, write=False):
     return project
 
 def _next_action(value: dict) -> str:
+    stored_run = value.get("ai_run") if isinstance(value.get("ai_run"), dict) else None
+    if stored_run and stored_run.get("state") == "queued":
+        return "AI 方案已入队，可等待或由发起顾问取消"
+    if stored_run and stored_run.get("state") == "running":
+        return "AI 方案执行中，可等待或由发起顾问请求取消"
     run = onsite_ai.projected_ai_run(value)
     if run and run.get("state") in {"failed", "unknown", "stale"}:
         return "人工核对 AI 调用状态后决定是否重新生成"
@@ -95,20 +123,31 @@ def _blocker(value: dict, project: GeoProject) -> str | None:
 
 def public(row, project, can_write, *, provider_ready=False, provider_reason=None, tenant_name=None):
     value = dict(row.progress["onsite"])
-    projected = onsite_ai.projected_ai_run(value)
+    stored_run = value.get("ai_run") if isinstance(value.get("ai_run"), dict) else {}
+    active_ai = stored_run.get("state") in {"queued", "running"}
+    # Durable jobs are reconciled by the background owner/recovery path.  Do
+    # not invent a read-time stale state that disagrees with request_run.
+    projected = dict(stored_run) if stored_run.get("job_id") else onsite_ai.projected_ai_run(value)
     if projected:
         projected.pop("request_hash", None)
         value["ai_run"] = projected
     proposal = onsite_ai.public_ai_proposal(value.get("ai_proposal"))
     if proposal is not None:
         value["ai_proposal"] = proposal
+    allowed_actions = [] if active_ai else work.allowed_actions(value, can_write)
+    capabilities = onsite_ai.capabilities(provider_ready=provider_ready, can_write=can_write,
+                                            phase=value["phase"], reason=provider_reason)
+    if active_ai:
+        capabilities["ai_planning"] = {
+            **capabilities["ai_planning"], "can_generate": False,
+            "reason": "AI 方案正在排队或执行",
+        }
     return dict(id=row.id, module="geo", tenant_id=row.tenant_id, scope_id=project.id,
-        title=row.title, workflow=value, allowed_actions=work.allowed_actions(value, can_write),
+        title=row.title, workflow=value, allowed_actions=allowed_actions,
         completion_evidence=dict(acceptance=value.get("acceptance"), recheck=value.get("recheck")) if value["phase"] == "done" else None,
         scope_name=project.name, tenant_name=tenant_name,
         next_action=_next_action(value), blocker=_blocker(value, project),
-        capabilities=onsite_ai.capabilities(provider_ready=provider_ready, can_write=can_write,
-                                            phase=value["phase"], reason=provider_reason))
+        capabilities=capabilities)
 
 
 async def _provider_status(session, tenant_id: int) -> tuple[bool, str | None]:
@@ -275,34 +314,75 @@ async def _proposal_snapshot(session, project: GeoProject, row: GeoActionTicket)
     return payload
 
 
-async def _finish_run(session, task_id: int, request_id: str, *, state: str,
-                      error: str | None = None, metadata: dict | None = None) -> None:
-    row = await session.get(GeoActionTicket, task_id, with_for_update=True, populate_existing=True)
-    if row is None:
-        await session.rollback()
-        return
-    value = dict((row.progress or {}).get("onsite") or {})
-    run = dict(value.get("ai_run") or {})
-    if run.get("request_id") != request_id:
-        await session.rollback()
-        return
-    run.update(state=state, finished_at=onsite_ai.now_iso())
-    if error:
-        run["error"] = error[:500]
-    else:
-        run.pop("error", None)
-    if metadata:
-        run.update({key: value for key, value in metadata.items() if value is not None})
-    value["ai_run"] = run
-    row.progress = {**(row.progress or {}), "onsite": value}
-    row.updated_at = datetime.utcnow()
-    await session.commit()
+def _request_run(job: GeoAsyncJob, value: dict | None = None, *, can_cancel: bool = False) -> dict[str, Any]:
+    meta = job.request_meta if isinstance(job.request_meta, dict) else {}
+    result = job.result_meta if isinstance(job.result_meta, dict) else {}
+    run = dict((value or {}).get("ai_run") or {})
+    current = run.get("request_id") == meta.get("request_id") and int(run.get("job_id") or 0) == int(job.id)
+    terminal = job.status in {"succeeded", "failed", "cancelled"}
+    raw_state = result.get("public_state") if terminal else (run.get("state") if current else None)
+    error = result.get("message") if terminal else (run.get("error") if current else None)
+    diagnostics = result if terminal else (run if current else {})
+    state = raw_state if raw_state in _PUBLIC_RUN_STATES else {
+        "pending":"queued", "running":"running", "succeeded":"ready",
+        "cancelled":"cancelled", "failed":"failed",
+    }.get(job.status, "failed")
+    category = diagnostics.get("error_category")
+    code = diagnostics.get("error_code")
+    status = diagnostics.get("http_status")
+    return {"request_id": str(meta.get("request_id") or ""), "job_id": int(job.id),
+        "state": state, "cancel_requested": bool(meta.get("cancel_requested")),
+        "can_cancel": bool(can_cancel and state in {"queued", "running"}), "error": error,
+        "error_category": category if category in _PUBLIC_ERROR_CATEGORIES else None,
+        "error_code": code if code in _PUBLIC_ERROR_CODES else None,
+        "http_status": status if isinstance(status, int) and not isinstance(status, bool)
+        and 100 <= status <= 599 else None,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        "poll_url": f"/api/v1/geo/workbench/onsite-tasks/{job.ref_id}/ai-requests/{meta.get('request_id')}"}
 
 
-@router.post("/workbench/onsite-tasks/{task_id}/ai-proposal")
-async def ai_proposal(task_id: PositiveInt, req: AiProposal, session=Depends(get_session),
-                      ctx=Depends(require_scoped_auth)):
-    """Reserve, draft and save an AI proposal with save_proposal semantics."""
+async def _task_with_request(session, row, project, can_write, job, *, actor_user_id=None):
+    payload = await _public(session, row, project, can_write)
+    payload["request_run"] = _request_run(
+        job, row.progress["onsite"],
+        can_cancel=bool(can_write and actor_user_id is not None
+                        and int(job.created_by or 0) == int(actor_user_id)),
+    )
+    return payload
+
+
+async def _request_job(session, *, tenant_id: int, task_id: int, request_id: str,
+                       lock: bool = False):
+    query = select(GeoAsyncJob).where(
+        GeoAsyncJob.tenant_id == tenant_id,
+        GeoAsyncJob.kind == async_jobs.KIND_ONSITE_PROPOSAL,
+        GeoAsyncJob.ref_type == "onsite_task", GeoAsyncJob.ref_id == task_id,
+        GeoAsyncJob.request_meta["request_id"].as_string() == request_id,
+    ).order_by(GeoAsyncJob.id.desc()).limit(1)
+    return await session.scalar(query.with_for_update() if lock else query)
+
+
+@router.post("/workbench/onsite-tasks/{task_id}/ai-proposal", status_code=202)
+async def ai_proposal(task_id: PositiveInt, req: AiProposal,
+                      session=Depends(get_session), ctx=Depends(require_scoped_auth),
+                      background_tasks: BackgroundTasks = None, response: Response = None,
+                      protocol: Annotated[
+                          str | None, Header(alias="X-Snipers-Onsite-Protocol")
+                      ] = None):
+    """Durably enqueue one proposal request and return without waiting for AI."""
+    if protocol != ONSITE_PROTOCOL:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "工作台版本过旧，请刷新页面后重试",
+                "code": "onsite_client_upgrade_required",
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+    if ctx.user_id is None:
+        raise HTTPException(403, "异步 AI 方案必须由实名顾问发起")
     project = await scope(session, ctx, req.tenant_id, req.project_id, True)
     row = await session.get(GeoActionTicket, task_id, with_for_update=True, populate_existing=True)
     if (not row or row.tenant_id != req.tenant_id or not (row.advice_code or "").startswith(PREFIX)
@@ -311,14 +391,21 @@ async def ai_proposal(task_id: PositiveInt, req: AiProposal, session=Depends(get
     value = dict(row.progress["onsite"])
     request_id = str(req.request_id)
     digest = onsite_ai.request_hash(task_id=task_id, tenant_id=req.tenant_id,
-                                    project_id=req.project_id,
-                                    expected_revision=req.expected_revision, mode=req.mode,
-                                    actor_user_id=ctx.user_id)
-    existing_run = value.get("ai_run") if isinstance(value.get("ai_run"), dict) else None
-    if existing_run and existing_run.get("request_id") == request_id:
-        if existing_run.get("request_hash") != digest:
+        project_id=req.project_id, expected_revision=req.expected_revision, mode=req.mode,
+        actor_user_id=ctx.user_id)
+    existing = value.get("ai_run") if isinstance(value.get("ai_run"), dict) else None
+    if existing and existing.get("request_id") == request_id:
+        if existing.get("request_hash") != digest:
             raise HTTPException(409, "请求编号已用于不同的 AI 方案参数")
-        return await _public(session, row, project, True)
+        job = await _request_job(session, tenant_id=req.tenant_id, task_id=task_id, request_id=request_id)
+        if job is None:
+            raise HTTPException(409, "历史 AI 请求缺少持久化作业记录，请人工核对")
+        if response is not None and _request_run(job, value)["state"] not in {"queued", "running"}:
+            response.status_code = 200
+        return await _task_with_request(session, row, project, True, job,
+                                        actor_user_id=ctx.user_id)
+    if existing and existing.get("state") in {"queued", "running"}:
+        raise HTTPException(409, "当前任务已有 AI 方案排队或执行中")
     if value["revision"] != req.expected_revision:
         raise HTTPException(409, "任务版本已变化，请重新读取核对后操作")
     if "save_proposal" not in work.allowed_actions(value, True):
@@ -327,111 +414,161 @@ async def ai_proposal(task_id: PositiveInt, req: AiProposal, session=Depends(get
         raise HTTPException(409, "draft 阶段使用 initial，其余可写阶段使用 revise")
     if len(value.get("history") or []) >= 100:
         raise HTTPException(409, "任务历史达到上限，请保留记录并建立后续任务")
-    projected = onsite_ai.projected_ai_run(value)
-    if projected and projected.get("state") == "running":
-        raise HTTPException(409, "当前任务已有 AI 方案正在生成")
-    credentials = onsite_ai.select_planning_credentials(
-        await resolve_llm_credentials(session, req.tenant_id) or {})
+    credentials = onsite_ai.select_planning_credentials(await resolve_llm_credentials(session, req.tenant_id) or {})
     if not credentials.get("api_key"):
         raise HTTPException(409, "平台 AI 供应商尚未配置")
     snapshot = await _proposal_snapshot(session, project, row)
     onsite_ai.planning_preflight(snapshot)
-    system_prompt, user_prompt = onsite_ai.prompt_text(snapshot, req.mode)
-    generation_options = onsite_ai.generation_options(credentials, snapshot)
-    project.project_settings = onsite_ai.reserve_daily(
-        project.project_settings, request_id, request_digest=digest)
-    started = onsite_ai.now_iso()
-    value["ai_run"] = {
-        "request_id": request_id,
-        "request_hash": digest,
-        "state": "running",
-        "mode": req.mode,
-        "source_revision": req.expected_revision,
-        "source_hash": snapshot["source_hash"],
-        "actor_user_id": ctx.user_id,
-        "started_at": started,
+    project.project_settings = onsite_ai.reserve_daily(project.project_settings, request_id, request_digest=digest)
+    job = GeoAsyncJob(tenant_id=req.tenant_id, kind=async_jobs.KIND_ONSITE_PROPOSAL,
+        status="pending", ref_type="onsite_task", ref_id=task_id, created_by=ctx.user_id,
+        request_meta={"schema":1, "request_id":request_id, "request_hash":digest,
+            "task_id":int(task_id), "project_id":int(req.project_id), "actor_user_id":int(ctx.user_id),
+            "expected_revision":int(req.expected_revision), "mode":req.mode,
+            "source_hash":snapshot["source_hash"], "execution_protocol":async_jobs.JOB_EXECUTION_PROTOCOL})
+    job.request_meta = {
+        **job.request_meta,
+        "provider_route": onsite_ai.planning_route(credentials),
     }
-    row.progress = {**(row.progress or {}), "onsite": value}
+    session.add(job)
+    await session.flush()
+    value["ai_run"] = {"request_id":request_id, "request_hash":digest, "job_id":int(job.id),
+        "state":"queued", "mode":req.mode, "source_revision":req.expected_revision,
+        "source_hash":snapshot["source_hash"], "actor_user_id":ctx.user_id,
+        "queued_at":onsite_ai.now_iso()}
+    row.progress = {**(row.progress or {}), "onsite":value}
     row.updated_at = datetime.utcnow()
-    await session.commit()  # release project/task locks before the provider request
+    await session.commit()
+    await session.refresh(job); await session.refresh(row)
+    if background_tasks is not None:
+        background_tasks.add_task(async_jobs.run_job_in_background, job.id, job.tenant_id)
+    return await _task_with_request(session, row, project, True, job,
+                                    actor_user_id=ctx.user_id)
 
-    try:
-        with background_scope(tenant_id=req.tenant_id, module="geo",
-                              operation="onsite.ai_proposal", user_id=ctx.user_id,
-                              job_ref=f"geo-onsite-ai:{task_id}:{request_id}"):
-            result = await chat_json(system_prompt, user_prompt, timeout=45.0,
-                api_key=credentials["api_key"], base_url=credentials["base_url"],
-                model=credentials["model"], **generation_options)
-    except DeepSeekError as exc:
-        uncertain = exc.category in {"timeout", "network", "unknown"}
-        state = "unknown" if uncertain else "failed"
-        detail = ("AI 供应商结果未知，系统未自动重试；请核对调用记录后决定下一步"
-                  if uncertain else "AI 供应商请求失败，系统未自动重试；请检查供应商与模型配置")
-        await _finish_run(session, task_id, request_id, state=state, error=detail,
-                          metadata={"error_category": exc.category,
-                                    "error_code": exc.code,
-                                    "http_status": exc.status_code})
-        raise HTTPException(424, detail) from None
-    except Exception:
-        await _finish_run(session, task_id, request_id, state="unknown",
-                          error="AI 调用未能确认结果，系统未自动重试")
-        raise HTTPException(424, "AI 调用结果未知，未自动重试") from None
 
+@router.get("/workbench/onsite-ai/health")
+async def onsite_ai_health(
+    response: Response,
+    session=Depends(get_session),
+    ctx=Depends(require_scoped_auth),
+):
+    """Read-only process evidence and aggregate queue state for global operations."""
+    if not ctx.is_superadmin or ctx.tenant_id is not None:
+        raise HTTPException(403, "仅全局超级管理员可查看站内 AI 健康状态")
+    queue_payload = {
+        "state": "schema_pending", "queued": None, "running": None,
+        "unknown": None, "oldest_queued_at": None, "oldest_running_at": None,
+    }
     try:
-        # Entitlement and assignment are revalidated after the paid call.
-        await ensure_geo_entitlement(session, req.tenant_id, allow_demo_read=False, lock_binding=True)
-        project = await session.get(GeoProject, req.project_id, with_for_update=True, populate_existing=True)
-        row = await session.get(GeoActionTicket, task_id, with_for_update=True, populate_existing=True)
-        if (project is None or row is None or project.tenant_id != req.tenant_id
-                or row.tenant_id != req.tenant_id
-                or (row.progress or {}).get("onsite", {}).get("project_id") != project.id):
-            raise HTTPException(404, "当前项目的站内任务不存在")
-        current = dict(row.progress["onsite"])
-        run = dict(current.get("ai_run") or {})
-        if run.get("request_id") != request_id:
-            raise HTTPException(409, "AI 任务已被其他请求替代")
-        if not await can_operate(session, ctx, project, lock_advisor=True):
-            await _finish_run(session, task_id, request_id, state="stale",
-                              error="项目顾问分配或编辑权限已变化，AI 结果未保存")
-            raise HTTPException(409, "项目顾问分配或编辑权限已变化，AI 结果未保存")
-        fresh = await _proposal_snapshot(session, project, row)
-        if (current["revision"] != req.expected_revision
-                or fresh["source_hash"] != snapshot["source_hash"]):
-            await _finish_run(session, task_id, request_id, state="stale",
-                              error="任务版本、项目范围或事实资料已变化，AI 结果未覆盖当前方案")
-            raise HTTPException(409, "任务或资料已变化，AI 结果未保存")
-        items, explanation = onsite_ai.validate_provider_result(
-            result, current_items=current["items"], facts=fresh["facts"],
-            domain=project.canonical_domain)
-        deterministic_missing = []
-        if not fresh["facts"]:
-            deterministic_missing.append("缺少当前项目范围内已核验、未过期且明确授权公开使用的事实资料")
-        if not fresh["questions"]:
-            deterministic_missing.append("缺少当前项目服务计划中的有效重点问题")
-        explanation["missing_information"] = list(dict.fromkeys([
-            *deterministic_missing, *explanation.get("missing_information", [])
-        ]))[:50]
-        change = work.Change(action="save_proposal", expected_revision=req.expected_revision,
-                             items=items, note="AI 起草，等待人工核对")
-        updated = work.prepare_change(current, change, "geo", project.canonical_domain, ctx.user_id)
-        explanation["proposal_revision"] = updated["revision"]
-        updated["ai_proposal"] = explanation
-        updated["ai_run"] = {
-            **run,
-            "state": "ready",
-            "finished_at": onsite_ai.now_iso(),
+        unknown = and_(
+            GeoAsyncJob.status == "failed",
+            GeoAsyncJob.result_meta["public_state"].as_string() == "unknown",
+        )
+        queue = (await session.execute(select(
+            func.count().filter(GeoAsyncJob.status == "pending").label("queued"),
+            func.count().filter(GeoAsyncJob.status == "running").label("running"),
+            func.count().filter(unknown).label("unknown"),
+            func.min(case((GeoAsyncJob.status == "pending", GeoAsyncJob.created_at))).label(
+                "oldest_queued_at"
+            ),
+            func.min(case((GeoAsyncJob.status == "running", GeoAsyncJob.started_at))).label(
+                "oldest_running_at"
+            ),
+        ).where(GeoAsyncJob.kind == async_jobs.KIND_ONSITE_PROPOSAL))).one()
+        queue_payload = {
+            "state": "available",
+            "queued": int(queue.queued or 0),
+            "running": int(queue.running or 0),
+            "unknown": int(queue.unknown or 0),
+            "oldest_queued_at": queue.oldest_queued_at.isoformat()
+            if queue.oldest_queued_at else None,
+            "oldest_running_at": queue.oldest_running_at.isoformat()
+            if queue.oldest_running_at else None,
         }
-        row.progress = {**(row.progress or {}), "onsite": updated}
-        row.status = "doing"
-        row.updated_at = datetime.utcnow()
-        await session.commit()
-        await session.refresh(row)
-        return await _public(session, row, project, True)
-    except HTTPException as exc:
-        if exc.status_code == 422:
-            await _finish_run(session, task_id, request_id, state="failed",
-                              error="AI 返回内容未通过站内方案安全校验")
-        raise
+    except SQLAlchemyError as exc:
+        if not _is_schema_pending_error(exc):
+            raise
+        # Missing rollout schema is observable; it is never reported as an empty queue.
+        await session.rollback()
+    worker = onsite_jobs.pending_worker_status()
+    worker_verified = bool(worker.get("verified"))
+    worker_evidence = worker.get("evidence")
+    if worker_evidence != {"kind": "local_tick", "scope": "this_process"}:
+        worker_evidence = None
+        worker_verified = False
+    worker_state = worker.get("state")
+    if worker_state not in {
+        "active", "degraded", "stopped", "unverified", "not_connected",
+    }:
+        worker_state = "unverified"
+    if not worker_verified and worker_state in {"active", "degraded"}:
+        worker_state = "unverified"
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "schema": 1,
+        "module": "geo",
+        "observed_at": onsite_ai.now_iso(),
+        "worker": {
+            "scope": "this_process",
+            "enabled": bool(worker.get("enabled")),
+            "state": worker_state,
+            "verified": worker_verified,
+            "evidence": worker_evidence,
+            "last_tick_at": worker.get("last_tick_at") if worker_verified else None,
+            "last_attempted": int(worker.get("last_attempted") or 0),
+            "last_completed": int(worker.get("last_completed") or 0),
+            "last_error_code": worker.get("last_error_code")
+            if worker.get("last_error_code") in {"worker_batch_failed"} else None,
+        },
+        "queue": queue_payload,
+    }
+
+
+@router.get("/workbench/onsite-tasks/{task_id}/ai-requests/{request_id}")
+async def get_ai_request(task_id: PositiveInt, request_id: UUID, tenant_id: PositiveInt,
+                         project_id: PositiveInt, session=Depends(get_session),
+                         ctx=Depends(require_scoped_auth)):
+    """Pure status read; never reconciles, initializes, retries or calls AI."""
+    project = await scope(session, ctx, tenant_id, project_id)
+    row = await session.get(GeoActionTicket, task_id)
+    if (not row or row.tenant_id != tenant_id or not (row.advice_code or "").startswith(PREFIX)
+            or (row.progress or {}).get("onsite", {}).get("project_id") != project.id):
+        raise HTTPException(404, "当前项目的站内任务不存在")
+    job = await _request_job(session, tenant_id=tenant_id, task_id=task_id,
+                             request_id=str(request_id))
+    if job is None:
+        raise HTTPException(404, "AI 请求不存在")
+    permitted = await can_operate(session, ctx, project)
+    return await _task_with_request(session, row, project, permitted, job,
+                                    actor_user_id=ctx.user_id)
+
+
+@router.post("/workbench/onsite-tasks/{task_id}/ai-requests/{request_id}/cancel")
+async def cancel_ai_request(task_id: PositiveInt, request_id: UUID, tenant_id: PositiveInt,
+                            project_id: PositiveInt, session=Depends(get_session),
+                            ctx=Depends(require_scoped_auth)):
+    project = await scope(session, ctx, tenant_id, project_id, True)
+    row = await session.get(GeoActionTicket, task_id, with_for_update=True, populate_existing=True)
+    if (not row or row.tenant_id != tenant_id or not (row.advice_code or "").startswith(PREFIX)
+            or (row.progress or {}).get("onsite", {}).get("project_id") != project.id):
+        raise HTTPException(404, "当前项目的站内任务不存在")
+    job = await _request_job(session, tenant_id=tenant_id, task_id=task_id,
+                             request_id=str(request_id), lock=True)
+    if job is None:
+        raise HTTPException(404, "AI 请求不存在")
+    if int(job.created_by or 0) != int(ctx.user_id or 0):
+        raise HTTPException(403, "只有发起该请求的当前顾问可以取消")
+    await async_jobs.request_cancel(session, job)
+    await session.refresh(row); await session.refresh(job)
+    value = dict(row.progress["onsite"]); run = dict(value.get("ai_run") or {})
+    if (run.get("request_id") == str(request_id) and int(run.get("job_id") or 0) == int(job.id)
+            and job.status == "cancelled"):
+        run.update(state="cancelled", error="请求已取消", finished_at=onsite_ai.now_iso())
+        value["ai_run"] = run; row.progress = {**(row.progress or {}), "onsite":value}
+        row.updated_at = datetime.utcnow(); await session.commit(); await session.refresh(row)
+    return await _task_with_request(session, row, project, True, job,
+                                    actor_user_id=ctx.user_id)
+
 
 @router.post("/workbench/onsite-tasks")
 async def create(req: Create, session=Depends(get_session), ctx=Depends(require_scoped_auth)):
@@ -478,6 +615,9 @@ async def act(task_id: PositiveInt, req: Update, session=Depends(get_session), c
     if (not row or row.tenant_id != req.tenant_id or not (row.advice_code or "").startswith(PREFIX)
             or (row.progress or {}).get("onsite", {}).get("project_id") != project.id):
         raise HTTPException(404, "当前项目的站内任务不存在")
+    active_run = (row.progress or {}).get("onsite", {}).get("ai_run")
+    if isinstance(active_run, dict) and active_run.get("state") in {"queued", "running"}:
+        raise HTTPException(409, "AI 方案正在排队或执行，请先等待结果或取消请求")
     value = work.prepare_change(row.progress["onsite"], req, "geo", project.canonical_domain, ctx.user_id)
     if req.action == "save_proposal":
         # A human edit creates a new proposal revision. Old AI reasoning must not
