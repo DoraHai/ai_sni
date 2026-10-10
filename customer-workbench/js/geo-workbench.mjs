@@ -22,7 +22,7 @@ export function mountGeoWorkbench({root,host,logout,initialOnsiteTaskId=null}){
   }
   async function run(fn){const input=protection.capture(),stamp=++epoch;busy=true;message='正在处理…';render();
     try{await fn(()=>stamp===epoch);if(stamp===epoch)message='';}
-    catch(e){if(stamp===epoch){data=null;selected=null;client.invalidate();protection.recover(input);message=e.code==='WRITE_OUTCOME_UNKNOWN'?'操作结果未知，请先刷新核对。不会自动重试。':e.code==='PERMISSION_DENIED'?'权限已变化，请重新核验客户与项目。':e.message;}}
+    catch(e){if(stamp===epoch){data=null;selected=null;client.invalidate();protection.recover(input);message=e.code==='onsite_client_upgrade_required'?'工作台版本已更新，请刷新页面后再生成方案。':e.code==='WRITE_OUTCOME_UNKNOWN'?'操作结果未知，请先刷新核对。不会自动重试。':e.code==='PERMISSION_DENIED'?'权限已变化，请重新核验客户与项目。':e.message;}}
     finally{if(stamp===epoch){busy=false;render();}}
   }
   async function connect(){identity=null;data=null;selected=null;client.invalidate();protection.clear();await run(async current=>{

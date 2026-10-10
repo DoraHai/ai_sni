@@ -6,6 +6,7 @@ import {renderControlPanel,hydrateControlForm,controlPayload} from './platform-c
 import {renderSystemConfig,hydrateConnectionForm,setConnectionMode,connectionPayload} from './platform-system-config.mjs';
 import {renderUsagePanel,renderAlertsPanel,renderSuppliersPanel,renderBackupPanel,renderCallMonitor} from './platform-ops-panel.mjs';
 import {platformNotifications} from './platform-alert-archive.mjs';
+import {canReviewUsage,usageReviewPayload,reviewableUsageRow} from './platform-usage-review.mjs';
 
 const tabs=[['overview','平台总览'],['customers','客户与服务'],['accounts','账号与权限'],['apis','API 与调用'],
   ['ai-governance','AI 自动化治理'],['balances','实时余额与预警'],['costs','成本与用量'],['controls','API 与预算管理'],['config','系统配置'],['alerts','告警与处理'],['tasks','任务与调度'],['security','安全与运维'],['inventory','系统盘点']];
@@ -93,20 +94,20 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     if(api&&['recording','ready'].includes(api.state)){
       const money=n=>n==null?'待定价':`¥${Number(n).toLocaleString('zh-CN',{minimumFractionDigits:4,maximumFractionDigits:12})}`;
       const blank={calls:0,input_tokens:0,output_tokens:0,known_amount:'0',estimated_amount:'0',unpriced:0};
-      const cells=r=>[value(r.calls),`${value(r.input_tokens)} / ${value(r.output_tokens)}`,money(r.estimated_amount),value(r.unpriced)];
+      const cells=r=>[value(r.calls),`${value(r.input_tokens)} / ${value(r.output_tokens)}`,money(r.estimated_amount),r.verified_amount==null?'未接入':money(r.verified_amount),money(r.known_amount),value(r.unpriced)];
       const userRows=source('users').rows.filter(u=>matches(u.username+' '+(u.display_name||''))).map(u=>{
         const r=api.user_totals.find(r=>r.user_id===u.id)||blank;
         return [esc(u.display_name||u.username),esc(tenant(u.tenant_id)),status(u.is_active?'active':'disabled'),...cells(r)];
       });
       const customerRows=source('tenants').rows.filter(t=>matches(t.name)).map(t=>[esc(t.name),...cells(api.tenant_totals.find(r=>r.tenant_id===t.id)||blank)]);
       const system=api.user_totals.find(r=>r.user_id==null)||blank;
-      return card('本月 API 费用',`<div class="pc-metrics"><div><small>已定价小计</small><b>${money(api.known_amount)}</b></div><div><small>本月估算合计</small><b>${money(api.estimated_amount)}</b></div><div><small>已记录请求</small><b>${value(api.calls)}</b></div></div><p class="pc-lead">${esc(api.note)}</p><p class="pc-note">${esc(api.period)} · ${api.state==='recording'?'计量已启用':'计量等待启用'} · 未定价请求 ${value(api.unpriced)} · 等待完成 ${value(api.pending)}</p>`)+
-        card('全部账号的 API 用量与费用',`${search('搜索客户或账号')}${table(['账号','所属客户','状态','请求数','输入 / 输出 Token','估算费用','未定价请求'],userRows)}`,`覆盖清单内全部 ${value(source('users').total)} 个登录账号，包括停用和当月无调用账号。无登录账号的自动任务另行汇总。${sourceNote('users')}`)+
-        card('无登录账号的任务与运维调用',table(['归属','请求数','输入 / 输出 Token','估算费用','未定价请求'],[['系统任务 / 运维调用',...cells(system)]]),'客户归属取服务端已授权范围；无法确认客户的请求保留在“未归属”汇总。')+
-        card('全部客户的 API 用量与费用',table(['客户','请求数','输入 / 输出 Token','估算费用','未定价请求'],customerRows),'客户汇总和账号汇总是同一批调用的不同视角，不能相加。')+
-        card('未归属客户的调用',table(['归属','请求数','输入 / 输出 Token','估算费用','未定价请求'],[['未归属客户',...cells(api.unattributed)]]))+
-        card('服务商与模型',table(['模块','服务商','模型 / 接口','请求数','输入 / 输出 Token','估算费用','未定价请求'],api.provider_totals.map(r=>[esc(r.module.toUpperCase()),esc(providerLabel(r.provider)),esc(r.model||r.endpoint||'按次接口'),...cells(r)])))+
-        card('最近真实调用',table(['时间','客户','账号 / 任务','模块','模型 / 接口','状态','费用'],api.recent.map(r=>[esc(time(r.started_at)),esc(r.tenant_id==null?'未归属':tenant(r.tenant_id)),esc(source('users').rows.find(u=>u.id===r.user_id)?.username||r.job_ref||'系统'),esc(r.module),esc(r.model||r.operation),status(r.state),money(r.estimated_amount)])),'每次真实请求分别记录；本地规则、模拟采样和缓存命中不产生新的外部调用记录。');
+      return card('本月 API 费用',`<div class="pc-metrics"><div><small>已知费用小计</small><b>${money(api.known_amount)}</b></div><div><small>本月原估算合计</small><b>${money(api.estimated_amount)}</b></div><div><small>人工核实小计</small><b>${api.verified_amount==null?'未接入':money(api.verified_amount)}</b></div><div><small>已记录请求</small><b>${value(api.calls)}</b></div></div><p class="pc-lead">${esc(api.note)}</p><p class="pc-note">${esc(api.period)} · ${api.state==='recording'?'计量已启用':'计量等待启用'} · 费用未知请求 ${value(api.unpriced)} · 等待完成 ${value(api.pending)} · 已知小计混合未核实估算与人工核实费用，不能当作完整账单。</p>`)+
+        card('全部账号的 API 用量与费用',`${search('搜索客户或账号')}${table(['账号','所属客户','状态','请求数','输入 / 输出 Token','原估算','人工核实','已知小计','费用未知请求'],userRows)}`,`覆盖清单内全部 ${value(source('users').total)} 个登录账号，包括停用和当月无调用账号。无登录账号的自动任务另行汇总。${sourceNote('users')}`)+
+        card('无登录账号的任务与运维调用',table(['归属','请求数','输入 / 输出 Token','原估算','人工核实','已知小计','费用未知请求'],[['系统任务 / 运维调用',...cells(system)]]),'客户归属取服务端已授权范围；无法确认客户的请求保留在“未归属”汇总。')+
+        card('全部客户的 API 用量与费用',table(['客户','请求数','输入 / 输出 Token','原估算','人工核实','已知小计','费用未知请求'],customerRows),'客户汇总和账号汇总是同一批调用的不同视角，不能相加。')+
+        card('未归属客户的调用',table(['归属','请求数','输入 / 输出 Token','原估算','人工核实','已知小计','费用未知请求'],[['未归属客户',...cells(api.unattributed)]]))+
+        card('服务商与模型',table(['模块','服务商','模型 / 接口','请求数','输入 / 输出 Token','原估算','人工核实','已知小计','费用未知请求'],api.provider_totals.map(r=>[esc(r.module.toUpperCase()),esc(providerLabel(r.provider)),esc(r.model||r.endpoint||'按次接口'),...cells(r)])))+
+        card('最近真实调用',table(['时间','客户','账号 / 任务','模块','模型 / 接口','状态','原估算','人工核实'],api.recent.map(r=>[esc(time(r.started_at)),esc(r.tenant_id==null?'未归属':tenant(r.tenant_id)),esc(source('users').rows.find(u=>u.id===r.user_id)?.username||r.job_ref||'系统'),esc(r.module),esc(r.model||r.operation),status(r.state),money(r.estimated_amount),r.reviewed_at?money(r.verified_amount):'尚未核实'])),'每次真实请求分别记录；本地规则、模拟采样和缓存命中不产生新的外部调用记录。');
     }
     const rows=snapshot.costs.usage.filter(r=>matches(tenant(r.tenant_id)));
     return card('平台成本',`<div class="pc-metrics"><div><small>实际费用</small><b>待接入</b></div><div><small>估算费用</small><b>待接入</b></div><div><small>费用预算</small><b>待统一</b></div></div><p class="pc-lead">${esc(snapshot.costs.note)}</p><p class="pc-note">客户广告投放预算与平台 API 成本分别管理。</p>`)+
@@ -167,7 +168,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     }finally{if(!disposed&&started===revision&&balanceState===current){current.busy=false;if(page==='balances')render();}}
   }
   async function queryUsage(cursor=null,direction='first'){
-    if(!snapshot||history.busy)return;
+    if(!snapshot||history.busy||history.reviewBusy)return;
     const started=revision,oldCursor=history.cursor||null;
     history.busy=true;history.error='';history.data=null;render();
     try{
@@ -176,15 +177,32 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
       if(data?.state!=='available'&&data?.state!=='schema_pending')throw Error('invalid-history');
       if(direction==='next')history.cursors.push(oldCursor);
       if(direction==='prev')history.cursors.pop();
-      history.cursor=cursor;history.data=data;
+      history.cursor=cursor;history.data=data;history.reviewBlocked=false;history.reviewRecord=null;
+      if(canReviewUsage(snapshot)){
+        const eligible=(data.rows||[]).filter(reviewableUsageRow),row=eligible.find(r=>r.id===history.reviewEventId)||eligible[0];
+        if(row)await loadReviewRecord(row.id,false);
+      }
     }catch(e){
       if(disposed||started!==revision||e.code==='CONSOLE_STALE')return;
       if(e.status===403||e.status===401){snapshot=null;identity=null;history=blankHistory();gate('无法读取调用明细','登录或管理员权限已变化，请重新登录。');return;}
       history.error='明细未读取，请检查日期和筛选条件后重试。';
     }finally{if(!disposed&&started===revision){history.busy=false;render();}}
   }
+  async function loadReviewRecord(eventId,repaint=true){
+    const current=history,started=revision,ticket=(current.reviewTicket||0)+1;
+    current.reviewTicket=ticket;current.reviewRecord=null;current.reviewReadBusy=true;current.reviewEventId=eventId;if(repaint)render();
+    try{
+      const row=await client.readUsageReview(eventId);
+      if(disposed||started!==revision||history!==current||current.reviewTicket!==ticket)return;
+      current.reviewRecord=row;
+    }catch(e){
+      if(disposed||started!==revision||history!==current||current.reviewTicket!==ticket||e.code==='CONSOLE_STALE')return;
+      if(e.status===401||e.status===403){snapshot=null;identity=null;history=blankHistory();gate('无法核实调用费用','登录或管理员权限已变化，请重新登录。');return;}
+      current.reviewBlocked=true;notice='具体核实记录未读取，请重新查询明细；不会采用旧版本提交。';
+    }finally{if(!disposed&&started===revision&&history===current&&current.reviewTicket===ticket){current.reviewReadBusy=false;if(repaint&&snapshot)render();}}
+  }
   async function downloadUsage(){
-    if(!snapshot||history.busy)return;
+    if(!snapshot||history.busy||history.reviewBusy)return;
     const form=root.querySelector('#pc-usage-query');if(!form?.reportValidity())return;
     const filters=Object.fromEntries(new FormData(form)),started=revision;
     history.filters=filters;history.data=null;history.cursors=[];history.busy=true;history.error='';render();
@@ -223,8 +241,31 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     }
   }
   async function submit(event){
+    if(event.target.id==='pc-usage-review'){
+      event.preventDefault();if(saving||history.busy||history.reviewBlocked||!canReviewUsage(snapshot)||!event.target.reportValidity())return;
+      const form=event.target,fields=Object.fromEntries(new FormData(form)),started=revision;
+      const row=history.reviewRecord;let payload;
+      try{payload=usageReviewPayload({row,fields,requestId:browser.crypto.randomUUID()});}
+      catch(e){notice=e.message;render();return;}
+      saving=true;history.reviewBusy=true;history.reviewBlocked=true;form.querySelector('button').disabled=true;
+      try{
+        await client.reviewUsage(payload);if(disposed||started!==revision)return;
+        notice=payload.verified_amount===null?'已记录供应商终态核实；费用仍未知，不能据此放行金额预算。':'已保存人工核实费用与证据审计，原估算保留。';
+        const filters={...history.filters};history.reviewBusy=false;await load();
+        if(disposed||revision!==started+1||!snapshot)return;
+        history.filters=filters;await queryUsage();
+      }catch(e){
+        if(disposed||started!==revision||e.code==='CONSOLE_STALE')return;
+        notice=e.status===409?'记录已有新变化，请重新查询明细后核对。':e.status===422?'证据或金额未通过检查，请重新查询并核对。':'核实提交结果尚未确认，请重新查询明细核对；不会自动重试。';
+        if(e.status===401||e.status===403){snapshot=null;identity=null;history=blankHistory();gate('无法核实调用费用','登录或管理员权限已变化，请重新登录。');}
+      }finally{
+        saving=false;history.reviewBusy=false;
+        if(!disposed&&started===revision&&snapshot)render();
+      }
+      return;
+    }
     if(event.target.id==='pc-usage-query'){
-      event.preventDefault();if(history.busy)return;
+      event.preventDefault();if(history.busy||history.reviewBusy)return;
       history.filters=Object.fromEntries(new FormData(event.target));history.cursors=[];
       await queryUsage();return;
     }
@@ -297,6 +338,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   }
   function input(event){if(event.target.id==='pc-search'){query=event.target.value;const position=event.target.selectionStart;render();const field=root.querySelector('#pc-search');field?.focus();field?.setSelectionRange?.(position,position);}}
   function change(event){
+    if(event.target.matches('#pc-usage-review [name=event_id]')){if(!history.reviewBusy)void loadReviewRecord(event.target.value);return;}
     if(event.target.matches('#pc-alert-operation [name=alert_id]')){alertId=event.target.value;render();return;}
     if(event.target.matches('#pc-supplier-operation [name=host]')){supplierHost=event.target.value;render();return;}
     const form=event.target.closest('.pc-control-form');if(!form||!snapshot)return;

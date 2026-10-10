@@ -98,7 +98,8 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
     }
     const controller=new AbortController();pending.add(controller);
     try{
-      const response=await fetchImpl(url.href,{method,body:options.body,headers:{Authorization:`Bearer ${s.token}`,Accept:'application/json',...(method==='GET'?{}:{'Content-Type':'application/json'})},cache:'no-store',credentials:'omit',redirect:'error',signal:options.signal?AbortSignal.any([controller.signal,options.signal]):controller.signal});
+      const onsiteAi=method==='POST'&&/^\/api\/v1\/seo\/workbench\/onsite-tasks\/[1-9]\d*\/ai-proposal$/.test(url.pathname);
+      const response=await fetchImpl(url.href,{method,body:options.body,headers:{Authorization:`Bearer ${s.token}`,Accept:'application/json',...(method==='GET'?{}:{'Content-Type':'application/json'}),...(onsiteAi?{'X-Snipers-Onsite-Protocol':'durable-v1'}:{})},cache:'no-store',credentials:'omit',redirect:'error',signal:options.signal?AbortSignal.any([controller.signal,options.signal]):controller.signal});
       assertCurrent(s,started);
       if(response.status===401){invalidate('expired');logout?.();login();throw error('AUTH_EXPIRED',401);}
       if(response.status===403){let reason='forbidden';if(url.pathname==='/api/v1/seo/workbench/assistant/chat'){try{const data=await response.json();if(data?.detail?.code==='assistant_customer_binding_required')reason='customer_binding_required';}catch{}assertCurrent(s,started);}invalidate(reason);throw error('PERMISSION_DENIED',403);}

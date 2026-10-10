@@ -1,11 +1,35 @@
 import {visiblePlatformAlerts} from './platform-alert-archive.mjs';
+import {renderUsageReview} from './platform-usage-review.mjs';
+
+export function renderWorkerMonitor({workers,esc,card,table,time}){
+  if(!Array.isArray(workers?.rows)||!workers.rows.length)return card('后台任务心跳与队列','<p>待接入</p>',esc(workers?.note||'尚无执行器证据，不能据此判断任务数量为零或调度正常。'));
+  const count=n=>Number.isSafeInteger(n)&&n>=0?esc(n):'未知';
+  const transport={available:'已读取',connected:'已读取',unavailable:'读取失败',timeout:'读取超时',forbidden:'读取被拒绝',unauthorized:'读取被拒绝',invalid:'响应不符合契约',not_connected:'未接入'};
+  const rows=workers.rows.map(row=>{
+    const worker=row.worker||{},queue=row.queue||{},evidence=worker.evidence;
+    const local=evidence?.kind==='local_tick'&&evidence.scope==='this_process';
+    const tick=typeof worker.last_tick_at==='string'&&Number.isFinite(Date.parse(worker.last_tick_at));
+    const age=Date.parse(row.module_observed_at)-Date.parse(worker.last_tick_at);
+    const recent=tick&&Number.isFinite(age)&&age>=0&&age<=120000;
+    let label=worker.state==='degraded'?'执行器报告异常':worker.state==='stopped'?'执行器已停止':worker.state==='disabled'?'执行器未启用':worker.state==='not_connected'?'未接入':'存活尚未验证';
+    if(['available','connected'].includes(row.transport_state)&&worker.state==='active'&&worker.verified===true&&local&&recent)label='采样时当前进程有心跳';
+    const readable=queue.state==='available';
+    return [esc(row.module?.toUpperCase()||'未知模块'),esc(transport[row.transport_state]||'读取状态未知'),
+      `${esc(label)}<small class="pc-cell-note">${local?'证据范围：当前进程':'证据范围尚未确认'}${worker.last_error_code||worker.last_error?' · '+esc(worker.last_error_code||worker.last_error):''}</small>`,
+      esc(tick?time(worker.last_tick_at):'无可核验心跳'),
+      readable?[count(queue.queued),count(queue.running),count(queue.unknown)].join(' / '):'未知 / 未知 / 未知',
+      `${esc(readable?time(queue.oldest_queued_at):'未知')}<small class="pc-cell-note">运行：${esc(readable?time(queue.oldest_running_at):'未知')}</small>`];
+  });
+  return card('后台任务心跳与队列',table(['模块','健康读取','执行器证据','最后心跳','排队 / 执行 / AI 结果未知','最早排队 / 运行'],rows),
+    '只读汇总已接入模块的执行器证据和持久化队列。当前进程心跳不能证明所有进程正常；队列为零不能证明执行器存活。读取失败或未接入保持未知，不会因此重试付费请求。');
+}
 
 export function renderCallMonitor({snapshot,esc,card,table,time}){
   const monitor=snapshot.operations?.call_monitor;
   if(!monitor||monitor.state==='schema_pending')return card('调用监控','<p>调用监控待接入，无法据此判断调用数量为零。</p>')+
     ((snapshot.operations?.provider_health||[]).length?card('服务商近期运行（原有统计）',table(['模块','服务商','24 小时调用','异常','最后异常'],snapshot.operations.provider_health.map(r=>[
       esc(r.module?.toUpperCase()),esc(r.provider),esc(r.calls),esc(r.failed),esc(time(r.last_failure))])),'扩展监控尚未提供，保留已有供应商调用统计。'):'')+
-    card('后台任务心跳','<p>待接入</p>','后台任务心跳与队列契约待接入；供应商调用记录不能证明调度器存活，待命也不表示故障。');
+    renderWorkerMonitor({workers:monitor?.workers,esc,card,table,time});
   const display=n=>n==null?'未知':esc(n),rate=n=>n==null?'暂无确定结果':esc(n)+'%',ms=n=>n==null?'未知':esc(n)+' ms';
   const s=monitor.summary;
   const metrics=s?table(['24 小时调用','已知结果成功率','平均 / P95 耗时','未结束（全部）','超 10 分钟未结束','结果未知（24h）','费用未知（24h）','未匹配价格（24h）'],[[
@@ -16,7 +40,7 @@ export function renderCallMonitor({snapshot,esc,card,table,time}){
       esc(r.module?.toUpperCase()),esc(r.provider),display(r.calls),rate(r.success_percent),ms(r.average_latency_ms)+' / '+ms(r.p95_latency_ms),
       display(r.errors)+' / '+display(r.unknown),display(r.pending)+' / '+display(r.stale_pending),display(r.unpriced)+' / '+display(r.missing_rate),esc(time(r.oldest_pending_at))])),
       '从已计量的真实调用读取，不额外发起付费探测。超时或缺价保持未知；标记告警已处理不会重试请求、结算费用或释放占用。')+
-    card('后台任务心跳',`<p>${monitor.workers?.state==='not_connected'?'待接入':'心跳契约待核对'}</p>`,monitor.workers?.note||'后台任务心跳待接入。');
+    renderWorkerMonitor({workers:monitor.workers,esc,card,table,time});
 }
 
 export function renderUsagePanel({snapshot,history,esc,card,table,tenant,time,providerLabel}){
@@ -34,15 +58,17 @@ export function renderUsagePanel({snapshot,history,esc,card,table,tenant,time,pr
     <label>模型<input name="model" maxlength="120" value="${esc(f.model||'')}" placeholder="模型名称，可留空"></label>
     <div class="pc-ops-actions"><button ${history.busy?'disabled':''}>${history.busy?'正在查询…':'查询明细'}</button><button type="button" data-pc="usage-export" ${history.busy?'disabled':''}>导出 CSV</button></div></form>`;
   let results=history.error?`<p role="alert" class="pc-note">${esc(history.error)}</p>`:history.data?history.data.state!=='available'?'<p class="pc-note">调用台账尚未启用。</p>':
-    `<p class="pc-note">匹配 ${history.data.total} 条 · 未定价 ${history.data.unpriced} 条 · 已计价部分 ¥${esc(history.data.known_amount)} · 查询截至 ${esc(time(history.data.as_of))}</p>`+
-    table(['时间 / 请求编号','客户 / 账号','模块 / 服务商','接口 / 模型','状态 / 耗时','Token 输入 / 输出','估算费用'],rows.map(r=>[
+    `<p class="pc-note">匹配 ${history.data.total} 条 · 费用未知 ${history.data.unpriced} 条 · 已知费用小计 ¥${esc(history.data.known_amount)} · 人工核实小计 ${history.data.verified_amount==null?'未接入':'¥'+esc(history.data.verified_amount)} · 查询截至 ${esc(time(history.data.as_of))}</p>`+
+    table(['时间 / 请求编号','客户 / 账号','模块 / 服务商','接口 / 模型','状态 / 耗时','Token 输入 / 输出','原估算费用','人工核实费用'],rows.map(r=>[
       `${esc(time(r.started_at))}<small class="pc-cell-note">${esc(r.provider_request_id||r.id)}</small>`,`${esc(tenant(r.tenant_id))}<small class="pc-cell-note">${esc((snapshot.sources.users?.rows||[]).find(u=>u.id===r.user_id)?.username||r.job_ref||'系统任务')}</small>`,
       `${esc(r.module?.toUpperCase())}<small class="pc-cell-note">${esc(providerLabel(r.provider))}</small>`,`${esc(r.endpoint)}<small class="pc-cell-note">${esc(r.model||'按次接口')}</small>`,
       `${esc({requested:'等待结果',succeeded:'成功',error:'失败',unknown:'结果未知'}[r.state]||r.state)}<small class="pc-cell-note">${r.latency_ms==null?'耗时未知':esc(r.latency_ms)+' ms'}</small>`,
-      `${r.prompt_tokens??'未知'} / ${r.completion_tokens??'未知'}`,r.estimated_amount==null?'待定价':`${esc(r.currency)} ${esc(r.estimated_amount)}`]))+
+      `${r.prompt_tokens??'未知'} / ${r.completion_tokens??'未知'}`,r.estimated_amount==null?'待定价':`${esc(r.currency)} ${esc(r.estimated_amount)}`,
+      r.verified_amount!=null?`${esc(r.verified_currency)} ${esc(r.verified_amount)}`:r.reviewed_at?'终态已核实，费用仍未知':'尚未核实']))+
     `<div class="pc-ops-actions"><button data-pc="usage-prev" ${history.busy||!history.cursors.length?'disabled':''}>上一页</button><span>第 ${history.cursors.length+1} 页</span><button data-pc="usage-next" ${history.busy||!history.data.next_cursor?'disabled':''}>下一页</button></div>`:
     '<p class="pc-note">选择条件后查询完整台账；此处可查看最近 50 条以外的记录。</p>';
-  return card('完整调用明细与导出',filters+results,'按北京时间筛选；空费用表示未知。CSV 每次最多 50000 条，超出会提示缩小范围，不截断导出。');
+  return card('完整调用明细与导出',filters+results,'按北京时间筛选；核实费用与原估算分开保留，空费用表示未知。CSV 每次最多 50000 条，超出会提示缩小范围，不截断导出。')+
+    renderUsageReview({snapshot,history,esc,card});
 }
 
 export function renderAlertsPanel({snapshot,selected,esc,card,table,tenant,time,users}){

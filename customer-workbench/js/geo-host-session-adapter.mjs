@@ -34,7 +34,7 @@ export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscrib
     }
     const c=new AbortController();pending.add(c);
     try{
-      const response=await fetchImpl(url.href,{method,body:options.body,headers:{Authorization:'Bearer '+s.token,Accept:'application/json',...(method==='POST'?{'Content-Type':'application/json'}:{})},cache:'no-store',credentials:'omit',redirect:'error',signal:c.signal});
+      const response=await fetchImpl(url.href,{method,body:options.body,headers:{Authorization:'Bearer '+s.token,Accept:'application/json',...(method==='POST'?{'Content-Type':'application/json'}:{}),...(ai&&method==='POST'?{'X-Snipers-Onsite-Protocol':'durable-v1'}:{})},cache:'no-store',credentials:'omit',redirect:'error',signal:c.signal});
       current(s,r);
       if(response.status===401){invalidate('expired');logout?.();redirectToLogin?.();fail('AUTH_EXPIRED',401);}
       if(response.status===403){invalidate('forbidden');fail('PERMISSION_DENIED',403);}
