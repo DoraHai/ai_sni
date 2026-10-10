@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import onsite_workflow as work
 from app.api_controls import ControlDenied
-from app.api_metering import background_scope
+from app.api_metering import MeteringUnavailable, background_scope
 from app.geo import onsite_ai
 from app.geo.ai_client import DeepSeekError, chat_json
 from app.geo.content.ai_settings import resolve_llm_credentials
@@ -303,6 +303,21 @@ async def execute_onsite_proposal(
             "AI 请求未通过平台调用门禁，供应商未被调用",
             error_category="admission_denied",
             error_code=exc.code,
+        )
+    except MeteringUnavailable as exc:
+        attempted = bool(exc.provider_attempted)
+        return await _terminal(
+            session,
+            job,
+            "unknown" if attempted else "failed",
+            (
+                "AI 供应商调用后计量结果未能确认，系统不会自动重试"
+                if attempted
+                else "AI 调用计量服务暂不可用，供应商未被调用"
+            ),
+            error_category=(
+                "metering_finalize_unknown" if attempted else "admission_unavailable"
+            ),
         )
     except DeepSeekError as exc:
         uncertain = exc.category in {"timeout", "network", "unknown"}

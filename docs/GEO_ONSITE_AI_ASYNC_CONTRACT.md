@@ -23,6 +23,9 @@
 - `ready`：严格校验通过且方案已保存，仍需人工审核。
 - `failed`：已确认失败，不自动重试。
 - `unknown`：计费请求或保存结果无法确认，必须人工核对，系统不自动重试。
+- 调用门禁拒绝或初始计量台账写入失败时，供应商尚未被调用，分别记为
+  `failed/admission_denied` 或 `failed/admission_unavailable`。供应商调用后终态计量写入失败记为
+  `unknown/metering_finalize_unknown`，不得自动重试。
 - `stale`：权限、项目范围、任务版本或公开资料版本已变化，结果未写入。
 - `cancelled`：已取消；已发出的请求如返回，其迟到结果不会写入。
 

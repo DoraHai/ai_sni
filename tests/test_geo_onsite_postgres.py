@@ -794,6 +794,56 @@ def test_ai_admission_denial_is_definitive_failed_and_not_unknown(monkeypatch):
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("provider_attempted,expected_state,expected_category", [
+    (False, "failed", "admission_unavailable"),
+    (True, "unknown", "metering_finalize_unknown"),
+])
+def test_ai_metering_failure_uses_explicit_provider_attempt_marker(
+        monkeypatch, provider_attempted, expected_state, expected_category):
+    async def credentials(session, tenant_id):
+        return {"api_key": "test", "base_url": "https://provider.invalid/v1",
+                "model": "test-model"}
+
+    async def metering_failure(*args, **kwargs):
+        from app.api_metering import MeteringUnavailable
+        raise MeteringUnavailable(
+            "internal accounting detail", provider_attempted=provider_attempted,
+        )
+
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "chat_json", metering_failure)
+
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
+            async with sessions() as db:
+                row = await api.create(api.Create(
+                    tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员",
+                ), db, ADVISOR)
+            request_id = uuid4()
+            async with sessions() as db:
+                queued = await api.ai_proposal(row["id"], api.AiProposal(
+                    tenant_id=1, project_id=10, expected_revision=1,
+                    request_id=request_id, mode="initial",
+                ), db, ADVISOR)
+            result = await run_owned(sessions, queued["request_run"]["job_id"])
+            assert result["result_meta"]["public_state"] == expected_state
+            async with sessions() as db:
+                polled = await api.get_ai_request(
+                    row["id"], request_id, 1, 10, db, ADVISOR,
+                )
+            request_run = polled["request_run"]
+            assert request_run["state"] == expected_state
+            assert request_run["error_category"] == expected_category
+            assert "internal accounting detail" not in str(request_run)
+
+    asyncio.run(run())
+
+
 def test_advisor_list_filters_assignment_before_pagination(monkeypatch):
     async def credentials(session, tenant_id):
         return None
