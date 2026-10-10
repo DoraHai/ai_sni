@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 
+from app.api_connection_config import managed_runtime
 from app.config import get_settings
 from app.geo.audit import normalize_url, safe_fetch
 
@@ -317,6 +318,7 @@ async def _run_local_lighthouse(
     return _parse_lighthouse_report(report, url, strategy)
 
 
+@managed_runtime('geo')
 async def fetch_pagespeed_insights(
     url: str,
     *,

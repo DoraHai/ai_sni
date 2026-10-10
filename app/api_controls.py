@@ -307,17 +307,22 @@ async def register_runtime(module):
                 (id,module,label,host,model,configured,can_rotate) VALUES(:id,:module,:label,:host,:model,:configured,:can_rotate)
                 ON CONFLICT(module,label) DO UPDATE SET id=excluded.id,host=excluded.host,model=excluded.model,configured=excluded.configured,
                 can_rotate=excluded.can_rotate,seen_at=CURRENT_TIMESTAMP'''), row)
+        from app.api_connection_config import register_connections
+        await register_connections(session,module,s)
         await session.commit()
 
 
 async def read_controls(session):
     present = await session.scalar(text("SELECT to_regclass(current_schema() || '.api_control_settings') IS NOT NULL"))
-    result = {'state': 'schema_pending', 'settings': [], 'bindings': [], 'credentials': [], 'audit': [], 'budgets': []}
+    from app.api_connection_config import public_connections
+    result = {'state': 'schema_pending', 'settings': [], 'bindings': [], 'credentials': [], 'audit': [], 'budgets': [], 'connections':public_connections([],[]), 'module_status': []}
     if not present:
         return result
     result['state'] = 'enabled' if enabled() else 'ready'
     result['settings'] = [dict(r) for r in (await session.execute(text('SELECT key,kind,value,revision,updated_by,updated_at FROM api_control_settings ORDER BY key'))).mappings()]
-    result['bindings'] = [dict(r) for r in (await session.execute(text('SELECT id,module,label,host,model,configured,can_rotate,seen_at FROM api_control_bindings ORDER BY module,label'))).mappings()]
+    result['bindings'] = [dict(r) for r in (await session.execute(text('SELECT id,module,label,host,model,configured,can_rotate,seen_at,metadata FROM api_control_bindings ORDER BY module,label'))).mappings()]
+    result['module_status'] = [{'module':r['module'],'settings':r['metadata']['runtime'],'seen_at':r['seen_at']}
+        for r in result['bindings'] if 'runtime' in r['metadata']]
     result['credentials'] = [dict(r) for r in (await session.execute(text('SELECT id,(ciphertext IS NOT NULL) AS overridden,revision,updated_at FROM api_control_credentials ORDER BY id'))).mappings()]
     result['audit'] = [dict(r) for r in (await session.execute(text('SELECT id,actor_id,resource,action,before_value,after_value,created_at FROM api_control_audit ORDER BY created_at DESC,id DESC LIMIT 50'))).mappings()]
     for row in result['settings']:
@@ -328,6 +333,7 @@ async def read_controls(session):
                                       'status': budget_status(row['value'], spent)})
     from app.api_metering import DEFAULT_RATES
     result['default_rates'] = DEFAULT_RATES
+    result['connections'] = public_connections(result['bindings'],result['settings'])
     return result
 
 
@@ -335,6 +341,8 @@ async def mutate(session, *, actor_id, request_id, kind, key, expected_revision,
     await lock(session)
     if type(expected_revision) is not int or expected_revision < 0:
         raise ValueError('配置版本无效')
+    if kind=='connection':
+        return await mutate_connection(session,actor_id=actor_id,request_id=request_id,key=key,expected_revision=expected_revision,value=value)
     if kind == 'credential':
         if not re.fullmatch(r'[a-f0-9]{64}', key):
             raise ValueError('密钥绑定无效')
@@ -406,3 +414,47 @@ async def mutate(session, *, actor_id, request_id, kind, key, expected_revision,
          'after': json.dumps({'revision': revision, 'value': after})})
     await session.commit()
     return {'revision': revision, 'value': after, 'replayed': False}
+
+
+async def mutate_connection(session, *, actor_id, request_id, key, expected_revision, value):
+    from app.api_connection_config import validate_connection, spec_for, credential_id
+    from app.api_metering import credential_ref
+    parameters,secrets,restore=validate_connection(key,value)
+    spec=spec_for(key)
+    registered=await session.scalar(text('''SELECT (metadata->>'supported')::boolean FROM api_control_bindings
+      WHERE module=:module AND label=:label'''),{'module':spec['module'],'label':key})
+    if registered is not True:
+        raise ValueError('对应服务尚未登记此接口配置，请先核对服务版本')
+    fingerprint={'parameters':parameters,'restore':restore,'secrets':{k:credential_ref(v) for k,v in secrets.items()}}
+    digest=hashlib.sha256(json.dumps([actor_id,'connection',key,expected_revision,fingerprint],sort_keys=True).encode()).hexdigest()
+    prior=(await session.execute(text('SELECT actor_id,request_hash,after_value FROM api_control_audit WHERE id=CAST(:id AS uuid)'),{'id':request_id})).mappings().first()
+    if prior:
+        if prior['actor_id']!=actor_id or prior['request_hash']!=digest:
+            raise ControlConflict('请求编号已用于其他操作，请刷新页面')
+        return {'revision':expected_revision+1,'value':prior['after_value']['value'],'replayed':True}
+    current=(await session.execute(text('SELECT revision,value FROM api_control_settings WHERE key=:key'),{'key':key})).mappings().first()
+    if (current['revision'] if current else 0)!=expected_revision:
+        raise ControlConflict('配置已被其他管理员修改，请刷新后重试')
+    before=current['value'] if current else None
+    ident=credential_id(spec['id'])
+    ciphertext=await session.scalar(text('SELECT ciphertext FROM api_control_credentials WHERE id=:id'),{'id':ident})
+    try: bundle=json.loads(decrypt(ciphertext)) if ciphertext else {}
+    except Exception: raise ValueError('已有密钥无法解密，请核对平台加密配置') from None
+    bundle={} if restore else {**bundle,**secrets}
+    after={'parameters':{} if restore else {**(before or {}).get('parameters',{}),**parameters},
+           'secrets':{name:bool(secret) for name,secret in bundle.items()}}
+    revision=expected_revision+1
+    await session.execute(text('''INSERT INTO api_control_credentials(id,ciphertext,revision,updated_by)
+      VALUES(:id,:ciphertext,:revision,:actor) ON CONFLICT(id) DO UPDATE SET ciphertext=excluded.ciphertext,
+      revision=excluded.revision,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP'''),
+      {'id':ident,'ciphertext':encrypt(json.dumps(bundle)) if bundle else None,'revision':revision,'actor':actor_id})
+    await session.execute(text('''INSERT INTO api_control_settings(key,kind,value,revision,updated_by)
+      VALUES(:key,'connection',CAST(:value AS jsonb),:revision,:actor) ON CONFLICT(key) DO UPDATE SET
+      value=excluded.value,revision=excluded.revision,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP'''),
+      {'key':key,'value':json.dumps(after),'revision':revision,'actor':actor_id})
+    await session.execute(text('''INSERT INTO api_control_audit(id,actor_id,resource,action,request_hash,before_value,after_value)
+      VALUES(CAST(:id AS uuid),:actor,:resource,'connection.update',:hash,CAST(:before AS jsonb),CAST(:after AS jsonb))'''),
+      {'id':request_id,'actor':actor_id,'resource':key,'hash':digest,'before':json.dumps({'revision':expected_revision,'value':before}),
+       'after':json.dumps({'revision':revision,'value':after})})
+    await session.commit()
+    return {'revision':revision,'value':after,'replayed':False}

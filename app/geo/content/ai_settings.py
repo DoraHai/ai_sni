@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api_connection_config import managed_runtime
 from app.config import get_settings
 from app.models.geo_ai_setting import GeoAiSetting
 from app.security.crypto import decrypt, encrypt
@@ -102,6 +103,7 @@ def settings_public_payload(row: GeoAiSetting) -> dict[str, Any]:
     }
 
 
+@managed_runtime('geo')
 async def resolve_llm_credentials(
     session: AsyncSession, tenant_id: int
 ) -> dict[str, str] | None:
