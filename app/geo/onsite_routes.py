@@ -12,6 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, 
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app import onsite_workflow as work
 from app.database import get_session
@@ -30,6 +31,7 @@ PREFIX = "onsite:v1:"
 MAX_PUBLIC_FACTS = 30
 MAX_PRIORITY_QUESTIONS = 50
 ONSITE_PROTOCOL = "durable-v1"
+_SCHEMA_PENDING_SQLSTATES = frozenset({"42P01", "42703"})
 _PUBLIC_RUN_STATES = frozenset({
     "queued", "running", "ready", "failed", "unknown", "stale", "cancelled",
 })
@@ -44,6 +46,12 @@ _PUBLIC_ERROR_CODES = frozenset({
     "api_concurrency_limit", "api_budget_exhausted", "api_charge_unresolved",
     "api_provider_disabled", "api_budget_quote_unavailable", "model_not_found",
 })
+
+
+def _is_schema_pending_error(exc: SQLAlchemyError) -> bool:
+    original = getattr(exc, "orig", None)
+    code = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+    return code in _SCHEMA_PENDING_SQLSTATES
 
 class Create(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -447,22 +455,54 @@ async def onsite_ai_health(
     """Read-only process evidence and aggregate queue state for global operations."""
     if not ctx.is_superadmin or ctx.tenant_id is not None:
         raise HTTPException(403, "仅全局超级管理员可查看站内 AI 健康状态")
-    unknown = and_(
-        GeoAsyncJob.status == "failed",
-        GeoAsyncJob.result_meta["public_state"].as_string() == "unknown",
-    )
-    queue = (await session.execute(select(
-        func.count().filter(GeoAsyncJob.status == "pending").label("queued"),
-        func.count().filter(GeoAsyncJob.status == "running").label("running"),
-        func.count().filter(unknown).label("unknown"),
-        func.min(case((GeoAsyncJob.status == "pending", GeoAsyncJob.created_at))).label(
-            "oldest_queued_at"
-        ),
-        func.min(case((GeoAsyncJob.status == "running", GeoAsyncJob.started_at))).label(
-            "oldest_running_at"
-        ),
-    ).where(GeoAsyncJob.kind == async_jobs.KIND_ONSITE_PROPOSAL))).one()
+    queue_payload = {
+        "state": "schema_pending", "queued": None, "running": None,
+        "unknown": None, "oldest_queued_at": None, "oldest_running_at": None,
+    }
+    try:
+        unknown = and_(
+            GeoAsyncJob.status == "failed",
+            GeoAsyncJob.result_meta["public_state"].as_string() == "unknown",
+        )
+        queue = (await session.execute(select(
+            func.count().filter(GeoAsyncJob.status == "pending").label("queued"),
+            func.count().filter(GeoAsyncJob.status == "running").label("running"),
+            func.count().filter(unknown).label("unknown"),
+            func.min(case((GeoAsyncJob.status == "pending", GeoAsyncJob.created_at))).label(
+                "oldest_queued_at"
+            ),
+            func.min(case((GeoAsyncJob.status == "running", GeoAsyncJob.started_at))).label(
+                "oldest_running_at"
+            ),
+        ).where(GeoAsyncJob.kind == async_jobs.KIND_ONSITE_PROPOSAL))).one()
+        queue_payload = {
+            "state": "available",
+            "queued": int(queue.queued or 0),
+            "running": int(queue.running or 0),
+            "unknown": int(queue.unknown or 0),
+            "oldest_queued_at": queue.oldest_queued_at.isoformat()
+            if queue.oldest_queued_at else None,
+            "oldest_running_at": queue.oldest_running_at.isoformat()
+            if queue.oldest_running_at else None,
+        }
+    except SQLAlchemyError as exc:
+        if not _is_schema_pending_error(exc):
+            raise
+        # Missing rollout schema is observable; it is never reported as an empty queue.
+        await session.rollback()
     worker = onsite_jobs.pending_worker_status()
+    worker_verified = bool(worker.get("verified"))
+    worker_evidence = worker.get("evidence")
+    if worker_evidence != {"kind": "local_tick", "scope": "this_process"}:
+        worker_evidence = None
+        worker_verified = False
+    worker_state = worker.get("state")
+    if worker_state not in {
+        "active", "degraded", "stopped", "unverified", "not_connected",
+    }:
+        worker_state = "unverified"
+    if not worker_verified and worker_state in {"active", "degraded"}:
+        worker_state = "unverified"
     response.headers["Cache-Control"] = "no-store"
     return {
         "schema": 1,
@@ -471,27 +511,16 @@ async def onsite_ai_health(
         "worker": {
             "scope": "this_process",
             "enabled": bool(worker.get("enabled")),
-            "state": worker.get("state") if worker.get("state") in {
-                "active", "degraded", "stopped", "disabled", "unverified",
-            } else "unverified",
-            "verified": bool(worker.get("verified")),
-            "evidence": worker.get("evidence") if worker.get("evidence") in {
-                "tick", "error", "stopped", "disabled", "none",
-            } else "none",
-            "last_tick_at": worker.get("last_tick_at"),
+            "state": worker_state,
+            "verified": worker_verified,
+            "evidence": worker_evidence,
+            "last_tick_at": worker.get("last_tick_at") if worker_verified else None,
             "last_attempted": int(worker.get("last_attempted") or 0),
             "last_completed": int(worker.get("last_completed") or 0),
-            "last_error": worker.get("last_error"),
+            "last_error_code": worker.get("last_error_code")
+            if worker.get("last_error_code") in {"worker_batch_failed"} else None,
         },
-        "queue": {
-            "queued": int(queue.queued or 0),
-            "running": int(queue.running or 0),
-            "unknown": int(queue.unknown or 0),
-            "oldest_queued_at": queue.oldest_queued_at.isoformat()
-            if queue.oldest_queued_at else None,
-            "oldest_running_at": queue.oldest_running_at.isoformat()
-            if queue.oldest_running_at else None,
-        },
+        "queue": queue_payload,
     }
 
 

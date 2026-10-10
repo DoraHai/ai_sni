@@ -47,7 +47,9 @@
 
 仅全局超级管理员可读，返回 `schema=1`、`module=geo`、`observed_at`、`worker`和 `queue`。
 
-- `worker.scope=this_process`。只有本进程真实成功 tick 才是 `active/verified`；启动但尚无 tick 是
-  `unverified`，不代表整个服务健康。
-- `queue` 是 `geo_async_jobs` 中站内 AI 作业的单次只读聚合：`queued`、`running`、`unknown`
-  数量以及最早排队/运行时间。该接口不恢复任务、不调用供应商，也不返回客户正文、prompt 或密钥。
+- `worker.scope=this_process`。状态为 `active/degraded/stopped/unverified/not_connected`。只有本进程
+  真实执行过 worker tick 时 `verified=true` 且 `evidence={kind:local_tick,scope:this_process}`；没有
+  进程内证据时 `evidence=null`，读取接口的时间不能冒充 worker tick。
+- `queue.state=available` 时，`queued`、`running`、`unknown` 和最早排队/运行时间来自
+  `geo_async_jobs` 的单次只读聚合。结构尚未部署时返回 `queue.state=schema_pending`，数量为 `null`，
+  不伪装成空队列。该接口不恢复任务、不调用供应商，也不返回客户正文、prompt 或密钥。

@@ -3,8 +3,11 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.exc import ProgrammingError
+from starlette.responses import Response
 
 from app.geo import onsite_jobs, onsite_routes
+from app.security.auth import AuthContext
 
 
 class _Session:
@@ -52,7 +55,8 @@ def test_supervisor_keeps_failed_tick_degraded_until_success_and_stops_on_cancel
     ))
     onsite_jobs._worker_status.update(
         enabled=False, state="stopped", last_tick_at=None,
-        last_attempted=0, last_completed=0, last_error=None,
+        last_attempted=0, last_completed=0, last_error_code=None,
+        evidence=None, verified=False,
     )
 
     async def check():
@@ -60,11 +64,55 @@ def test_supervisor_keeps_failed_tick_degraded_until_success_and_stops_on_cancel
         await asyncio.wait_for(entered_sleep.wait(), 1)
         health = onsite_jobs.pending_worker_status()
         assert health["state"] == "degraded"
-        assert health["last_error"] == "PendingBatchError"
+        assert health["last_error_code"] == "worker_batch_failed"
+        assert health["evidence"] == {
+            "kind": "local_tick", "scope": "this_process",
+        }
         worker.cancel()
         with pytest.raises(asyncio.CancelledError):
             await worker
         assert onsite_jobs.pending_worker_status()["state"] == "stopped"
+
+    asyncio.run(check())
+
+
+def test_health_does_not_fake_worker_evidence_or_empty_queue(monkeypatch):
+    class MissingSchemaSession:
+        rolled_back = False
+
+        async def execute(self, _statement):
+            original = RuntimeError("sensitive database detail")
+            original.sqlstate = "42P01"
+            raise ProgrammingError("SELECT secret", {}, original)
+
+        async def rollback(self):
+            self.rolled_back = True
+
+    monkeypatch.setattr(onsite_jobs, "pending_worker_status", lambda: {
+        "enabled": True, "state": "active", "verified": True,
+        "evidence": {"kind": "untrusted", "scope": "other_process"},
+        "last_tick_at": "2099-01-01T00:00:00Z", "last_attempted": 9,
+        "last_completed": 8, "last_error_code": "secret_error",
+    })
+    session = MissingSchemaSession()
+    ctx = AuthContext(None, "ops", "superadmin", None, {}, is_superadmin=True)
+
+    async def check():
+        response = Response()
+        result = await onsite_routes.onsite_ai_health(response, session, ctx)
+        assert response.headers["cache-control"] == "no-store"
+        assert session.rolled_back
+        assert result["worker"]["state"] == "unverified"
+        assert result["worker"]["verified"] is False
+        assert result["worker"]["evidence"] is None
+        assert result["worker"]["last_tick_at"] is None
+        assert result["worker"]["last_error_code"] is None
+        assert result["queue"] == {
+            "state": "schema_pending", "queued": None, "running": None,
+            "unknown": None, "oldest_queued_at": None,
+            "oldest_running_at": None,
+        }
+        assert "sensitive" not in str(result)
 
     asyncio.run(check())
 

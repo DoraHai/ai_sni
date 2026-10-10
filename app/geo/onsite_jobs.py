@@ -33,11 +33,11 @@ _worker_status: dict[str, Any] = {
     "enabled": False,
     "state": "unverified",
     "verified": False,
-    "evidence": "none",
+    "evidence": None,
     "last_tick_at": None,
     "last_attempted": 0,
     "last_completed": 0,
-    "last_error": None,
+    "last_error_code": None,
 }
 
 
@@ -94,9 +94,11 @@ async def supervise_pending_jobs() -> None:
     enabled = bool(getattr(get_settings(), "geo_async_worker_enabled", True))
     _worker_status.update(
         enabled=enabled,
-        state="unverified" if enabled else "disabled",
-        verified=not enabled,
-        evidence="none" if enabled else "disabled",
+        state="unverified" if enabled else "not_connected",
+        verified=False,
+        evidence=None,
+        last_tick_at=None,
+        last_error_code=None,
     )
     if not enabled:
         return
@@ -107,16 +109,18 @@ async def supervise_pending_jobs() -> None:
                 _worker_status.update(
                     state="active", last_tick_at=onsite_ai.now_iso(),
                     last_attempted=result["attempted"], last_completed=result["completed"],
-                    last_error=None, verified=True, evidence="tick",
+                    last_error_code=None, verified=True,
+                    evidence={"kind": "local_tick", "scope": "this_process"},
                 )
             except Exception as exc:  # noqa: BLE001
                 _worker_status.update(
                     state="degraded", last_tick_at=onsite_ai.now_iso(),
-                    last_error=type(exc).__name__, verified=True, evidence="error",
+                    last_error_code="worker_batch_failed", verified=True,
+                    evidence={"kind": "local_tick", "scope": "this_process"},
                 )
             await asyncio.sleep(PENDING_TICK_SECONDS)
         except asyncio.CancelledError:
-            _worker_status.update(state="stopped", verified=True, evidence="stopped")
+            _worker_status.update(state="stopped")
             raise
 
 

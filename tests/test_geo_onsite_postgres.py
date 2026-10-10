@@ -202,8 +202,8 @@ def test_ai_proposal_requires_durable_protocol_before_writes_or_quota(
 def test_onsite_health_is_global_admin_read_only_real_queue_aggregate(monkeypatch):
     monkeypatch.setattr(onsite_jobs, "pending_worker_status", lambda: {
         "enabled": True, "state": "unverified", "verified": False,
-        "evidence": "none", "last_tick_at": None,
-        "last_attempted": 0, "last_completed": 0, "last_error": None,
+        "evidence": None, "last_tick_at": None,
+        "last_attempted": 0, "last_completed": 0, "last_error_code": None,
     })
 
     async def run():
@@ -229,10 +229,11 @@ def test_onsite_health_is_global_admin_read_only_real_queue_aggregate(monkeypatc
                 assert result["schema"] == 1 and result["module"] == "geo"
                 assert result["worker"] == {
                     "scope": "this_process", "enabled": True,
-                    "state": "unverified", "verified": False, "evidence": "none",
+                    "state": "unverified", "verified": False, "evidence": None,
                     "last_tick_at": None, "last_attempted": 0,
-                    "last_completed": 0, "last_error": None,
+                    "last_completed": 0, "last_error_code": None,
                 }
+                assert result["queue"]["state"] == "available"
                 assert result["queue"]["queued"] == 1
                 assert result["queue"]["running"] == 1
                 assert result["queue"]["unknown"] == 1
