@@ -1,3 +1,5 @@
+import {visiblePlatformAlerts} from './platform-alert-archive.mjs';
+
 export function renderUsagePanel({snapshot,history,esc,card,table,tenant,time,providerLabel}){
   const option=(v,label,selected)=>`<option value="${esc(v)}" ${String(v)===String(selected)?'selected':''}>${esc(label)}</option>`;
   const select=(name,label,options)=>`<label>${label}<select name="${name}">${option('','全部',history.filters[name])}${options.map(([v,l])=>option(v,l,history.filters[name])).join('')}</select></label>`;
@@ -25,7 +27,7 @@ export function renderUsagePanel({snapshot,history,esc,card,table,tenant,time,pr
 }
 
 export function renderAlertsPanel({snapshot,selected,esc,card,table,tenant,time,users}){
-  const enabled=snapshot.operations?.state==='enabled',alerts=snapshot.alerts||[];
+  const enabled=snapshot.operations?.state==='enabled',alerts=visiblePlatformAlerts(snapshot);
   const label={open:'待处理',in_progress:'处理中',resolved:'已标记处理'};
   const current=alerts.find(a=>a.id===selected)||alerts[0];
   const content=table(['客户','告警','处理状态','处理人','处理说明'],alerts.map(a=>[

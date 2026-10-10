@@ -3,6 +3,7 @@ import {createPlatformConsoleClient,platformConsolePath,isPlatformAdmin} from '.
 import {renderControlPanel,hydrateControlForm,controlPayload} from './platform-control-panel.mjs';
 import {renderSystemConfig,hydrateConnectionForm,setConnectionMode,connectionPayload} from './platform-system-config.mjs';
 import {renderUsagePanel,renderAlertsPanel,renderSuppliersPanel,renderBackupPanel} from './platform-ops-panel.mjs';
+import {platformNotifications} from './platform-alert-archive.mjs';
 
 const tabs=[['overview','平台总览'],['customers','客户与服务'],['accounts','账号与权限'],['apis','API 与调用'],
   ['costs','成本与用量'],['controls','API 与预算管理'],['config','系统配置'],['alerts','告警与处理'],['tasks','任务与调度'],['security','安全与运维'],['inventory','系统盘点']];
@@ -137,9 +138,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   function search(placeholder){return `<label class="pc-search"><span>筛选</span><input id="pc-search" type="search" value="${esc(query)}" placeholder="${placeholder}" maxlength="100"></label>`;}
   function render(){
     if(disposed||!snapshot)return;
-    const alerts=[...(snapshot.alerts||[])].filter(a=>a.handling?.status!=='resolved');
-    if(snapshot.api_costs?.unpriced>0)alerts.unshift({tenant_id:null,severity:'warning',message:`本月 ${value(snapshot.api_costs.unpriced)} 次调用尚未定价，请按接口维护单价。`});
-    if(snapshot.controls?.state!=='enabled')alerts.push({tenant_id:null,severity:'warning',message:'接口配置与预算管理尚未启用，调用计量继续运行。'});
+    const alerts=platformNotifications(snapshot,value);
     root.innerHTML=`<header class="pc-header"><a class="pc-brand" href="${platformConsolePath}">G-SNIPERS</a><span class="pc-header-label">超级管理员工作台</span><span class="pc-admin-badge">平台管理</span><div class="pc-header-actions"><span>${esc(identity.display_name||identity.username)}</span><a href="/customer-workbench/">客户工作台</a><button data-pc="logout">退出</button></div></header><div class="pc-layout"><aside class="pc-sidebar"><small>全局管理</small><nav aria-label="超级管理员导航">${tabs.map(([id,label])=>`<button data-pc-page="${id}" ${page===id?'aria-current="page" class="active"':''}>${label}</button>`).join('')}</nav><div class="pc-sidebar-foot"><b>统一管理入口</b><p>客户、账号和服务记录集中查看。</p></div></aside><main class="pc-main"><div class="pc-title"><div><small>平台管理 / ${tabs.find(t=>t[0]===page)[1]}</small><h1>${tabs.find(t=>t[0]===page)[1]}</h1></div><button data-pc="refresh" ${busy?'disabled':''}>${busy?'正在读取…':'刷新数据'}</button></div><p class="pc-updated" role="status">最近读取 ${esc(time(snapshot.generated_at))} · 数据来自现有系统</p><p class="pc-save-notice" role="status">${esc(notice)}</p><div class="pc-kpis">${summary()}</div><div class="pc-content">${({overview,customers,accounts,apis,costs,controls,config,alerts:alertsPage,tasks,security,inventory:inventoryView})[page]()}</div></main><aside class="pc-right"><section class="pc-card"><div class="pc-section-head"><h2>告警与待处理</h2><span class="pc-tag">${alerts.length}</span></div><p class="pc-note">来自已有记录的提醒</p>${alerts.length?alerts.map(a=>`<div class="pc-alert"><span class="pc-alert-dot ${a.severity==='error'?'error':''}"></span><div><b>${esc(tenant(a.tenant_id))}</b><p>${esc(a.message)}</p></div></div>`).join(''):empty('暂无已记录告警')}<p class="pc-note">告警覆盖随数据源接入逐步完善。</p></section><section class="pc-card pc-help"><h2>管理入口</h2>${link('客户与模块','/platform/customers')}${link('账号与角色','/platform/accounts')}<button data-pc-page="inventory">查看系统盘点 →</button></section></aside></div>`;
     root.querySelectorAll(".pc-control-form").forEach(form=>form.dataset.controlKind==='connection'?hydrateConnectionForm(form,snapshot):hydrateControlForm(form,snapshot));
   }
