@@ -4,11 +4,12 @@ from uuid import uuid4
 import os
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text, update
+from sqlalchemy.exc import DBAPIError
 from test_geo_project_scope_postgres import database
 from app.geo import onsite_routes as api
 from app.geo.project_workflows import save_plan
-from app.models import GeoActionTicket, GeoFact
+from app.models import GeoActionTicket, GeoFact, GeoProject
 from app.security.auth import AuthContext
 from app.models.user import User
 from app.models.role import Role
@@ -114,6 +115,8 @@ async def _add_public_fact(db, *, fact_id=80, title="公开产品资料", expire
 
 def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(monkeypatch):
     calls = []
+    advisor_locks = []
+    original_advisor_available = api.advisor_available
     async def credentials(session, tenant_id):
         return {"api_key": "test", "base_url": "https://provider.invalid/v1", "model": "test-model"}
     async def provider(system, user, **kwargs):
@@ -121,8 +124,12 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
         import json
         current = json.loads(user)["current_items"]
         return _ai_result(current)
+    async def tracked_advisor_available(session, tenant_id, user_id, **kwargs):
+        advisor_locks.append(bool(kwargs.get("lock")))
+        return await original_advisor_available(session, tenant_id, user_id, **kwargs)
     monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
     monkeypatch.setattr(api, "chat_json", provider)
+    monkeypatch.setattr(api, "advisor_available", tracked_advisor_available)
     async def run():
         async with database() as sessions:
             await configured(sessions)
@@ -149,6 +156,7 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
             assert same["workflow"]["ai_run"]["state"] == "ready"
             assert len(calls) == 1
             assert "API" not in str(result["workflow"]["ai_proposal"])
+            assert True in advisor_locks
             manual_items = [api.work.Item.model_validate(item) for item in same["workflow"]["items"]]
             async with sessions() as db:
                 manual = await api.act(row["id"], api.Update(
@@ -156,6 +164,63 @@ def test_ai_proposal_is_nonce_idempotent_meter_scoped_and_invalidates_review(mon
                     expected_revision=same["workflow"]["revision"], items=manual_items,
                     note="人工调整当前版本"), db, ADVISOR)
             assert "ai_proposal" not in manual["workflow"]
+    asyncio.run(run())
+
+
+def test_ai_proposal_rejects_full_history_before_quota_or_provider_call(monkeypatch):
+    calls = 0
+    async def credentials(session, tenant_id):
+        return {"api_key": "test", "base_url": "https://provider.invalid/v1", "model": "test-model"}
+    async def provider(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return {}
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(api, "chat_json", provider)
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                row = await api.create(api.Create(tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员"), db, ADVISOR)
+            async with sessions() as db:
+                stored = await db.get(GeoActionTicket, row["id"], with_for_update=True)
+                onsite = dict(stored.progress["onsite"])
+                onsite["history"] = [dict(action="save_proposal", actor=7, at=str(index))
+                                     for index in range(100)]
+                stored.progress = {**stored.progress, "onsite": onsite}
+                await db.commit()
+            request = api.AiProposal(tenant_id=1, project_id=10,
+                expected_revision=1, request_id=uuid4(), mode="initial")
+            async with sessions() as db:
+                with pytest.raises(HTTPException) as error:
+                    await api.ai_proposal(row["id"], request, db, ADVISOR)
+                assert error.value.status_code == 409
+            async with sessions() as db:
+                project = await db.get(GeoProject, 10)
+                assert "onsite_ai_quota" not in (project.project_settings or {})
+            assert calls == 0
+    asyncio.run(run())
+
+
+def test_final_advisor_read_lock_blocks_permission_change_until_commit():
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as checking:
+                project = await checking.get(GeoProject, 10, with_for_update=True)
+                assert await api.can_operate(checking, ADVISOR, project, lock_advisor=True)
+                async with sessions() as revoking:
+                    await revoking.execute(text("SET LOCAL lock_timeout = '100ms'"))
+                    with pytest.raises(DBAPIError):
+                        await revoking.execute(update(Role).where(Role.id == 5).values(
+                            permissions={"geo.assets": "view", "geo.content": "view"}))
+                    await revoking.rollback()
+                await checking.commit()
+            async with sessions() as revoking:
+                role = await revoking.get(Role, 5, with_for_update=True)
+                role.permissions = {"geo.assets": "view", "geo.content": "view"}
+                await revoking.commit()
     asyncio.run(run())
 
 

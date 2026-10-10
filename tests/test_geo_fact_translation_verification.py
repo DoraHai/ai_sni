@@ -39,7 +39,8 @@ def fact(**overrides):
 
 
 def context():
-    return NS(user_id=42, ensure_tenant=lambda tenant_id: None)
+    return NS(user_id=42, role_name="GEO 顾问", ensure_tenant=lambda tenant_id: None,
+              can_edit=lambda key: key == "geo.content")
 
 
 def session():
@@ -104,9 +105,50 @@ def test_api_key_cannot_authorize_fact_for_public_use():
     )
 
     async def exercise():
-        api_key_context = NS(user_id=None, ensure_tenant=lambda tenant_id: None)
+        api_key_context = NS(user_id=None, role_name="API Key", ensure_tenant=lambda tenant_id: None,
+                             can_edit=lambda key: True)
         with patch("app.geo.content.routes._get_fact", AsyncMock(return_value=row)):
             await verify_fact(3, req, 7, api_key_context, session())
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(exercise())
+    assert error.value.status_code == 403
+
+
+def test_view_only_user_cannot_authorize_fact_for_public_use():
+    row = fact()
+    req = FactVerifyRequest(
+        excerpt=SOURCE,
+        excerpt_locator="product page specification",
+        public_use_allowed=True,
+    )
+
+    async def exercise():
+        view_context = NS(user_id=88, role_name="只读", ensure_tenant=lambda tenant_id: None,
+                          can_edit=lambda key: False)
+        with patch("app.geo.content.routes._get_fact", AsyncMock(return_value=row)):
+            await verify_fact(3, req, 7, view_context, session())
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(exercise())
+    assert error.value.status_code == 403
+
+
+def test_customer_role_cannot_authorize_even_with_misconfigured_edit_permission():
+    row = fact()
+    req = FactVerifyRequest(
+        excerpt=SOURCE,
+        excerpt_locator="product page specification",
+        public_use_allowed=True,
+    )
+
+    async def exercise():
+        customer_context = NS(
+            user_id=89, role_name="品牌方客户", ensure_tenant=lambda tenant_id: None,
+            can_edit=lambda key: True,
+        )
+        with patch("app.geo.content.routes._get_fact", AsyncMock(return_value=row)):
+            await verify_fact(3, req, 7, customer_context, session())
 
     with pytest.raises(HTTPException) as error:
         asyncio.run(exercise())

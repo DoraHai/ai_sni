@@ -52,10 +52,11 @@ class AiProposal(BaseModel):
     request_id: UUID
     mode: Literal["initial", "revise"]
 
-async def can_operate(session, ctx, project):
+async def can_operate(session, ctx, project, *, lock_advisor=False):
     return bool(ctx.user_id and ctx.can_edit("geo.assets") and ctx.can_edit("geo.content")
         and project.status == "active" and plan_for(project).get("advisor_user_id") == ctx.user_id
-        and await advisor_available(session, project.tenant_id, ctx.user_id))
+        and await advisor_available(
+            session, project.tenant_id, ctx.user_id, lock=lock_advisor))
 
 async def scope(session, ctx, tenant_id, project_id, write=False):
     ctx.ensure_tenant(tenant_id)
@@ -311,6 +312,8 @@ async def ai_proposal(task_id: PositiveInt, req: AiProposal, session=Depends(get
         raise HTTPException(409, "当前任务状态不能生成 AI 方案")
     if (req.mode == "initial") != (value["phase"] == "draft"):
         raise HTTPException(409, "draft 阶段使用 initial，其余可写阶段使用 revise")
+    if len(value.get("history") or []) >= 100:
+        raise HTTPException(409, "任务历史达到上限，请保留记录并建立后续任务")
     projected = onsite_ai.projected_ai_run(value)
     if projected and projected.get("state") == "running":
         raise HTTPException(409, "当前任务已有 AI 方案正在生成")
@@ -365,7 +368,7 @@ async def ai_proposal(task_id: PositiveInt, req: AiProposal, session=Depends(get
         run = dict(current.get("ai_run") or {})
         if run.get("request_id") != request_id:
             raise HTTPException(409, "AI 任务已被其他请求替代")
-        if not await can_operate(session, ctx, project):
+        if not await can_operate(session, ctx, project, lock_advisor=True):
             await _finish_run(session, task_id, request_id, state="stale",
                               error="项目顾问分配或编辑权限已变化，AI 结果未保存")
             raise HTTPException(409, "项目顾问分配或编辑权限已变化，AI 结果未保存")

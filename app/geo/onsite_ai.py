@@ -25,6 +25,7 @@ PRIVATE_MARKERS = ("内部事实卡", "事实卡原文", "系统提示词", "sys
 MAX_PROMPT_CHARS = 240_000
 MAX_PROVIDER_RESULT_CHARS = 100_000
 MAX_SOURCE_REFS_PER_ITEM = 20
+MAX_REQUEST_IDS = 500
 
 
 def now_iso() -> str:
@@ -54,7 +55,8 @@ def request_hash(*, task_id: int, tenant_id: int, project_id: int,
 
 
 def reserve_daily(settings: dict | None, request_id: str, *, request_digest: str | None = None,
-                  day: str | None = None, limit: int = DAILY_LIMIT) -> dict:
+                  day: str | None = None, limit: int = DAILY_LIMIT,
+                  request_limit: int = MAX_REQUEST_IDS) -> dict:
     """Reserve one paid attempt under the caller's project row lock."""
     result = dict(settings or {})
     today = day or shanghai_day()
@@ -64,6 +66,11 @@ def reserve_daily(settings: dict | None, request_id: str, *, request_digest: str
         if previous.get("hash") != request_digest:
             raise HTTPException(409, "请求编号已用于当前项目的其他 AI 方案")
         return result
+    if len(requests) >= request_limit:
+        raise HTTPException(
+            409,
+            f"当前项目已保留 {request_limit} 个 AI 请求去重记录；请续建项目后再生成，不能覆盖历史防重依据",
+        )
     quota = result.get("onsite_ai_quota")
     quota = dict(quota) if isinstance(quota, dict) and quota.get("day") == today else {
         "day": today, "count": 0
@@ -71,7 +78,7 @@ def reserve_daily(settings: dict | None, request_id: str, *, request_digest: str
     count = int(quota.get("count") or 0)
     if count >= limit:
         raise HTTPException(429, f"今日 AI 站内方案调用已达上限（{limit} 次）")
-    result["onsite_ai_requests"] = [*requests[-499:], {"id": request_id, "hash": request_digest}]
+    result["onsite_ai_requests"] = [*requests, {"id": request_id, "hash": request_digest}]
     result["onsite_ai_quota"] = {"day": today, "count": count + 1}
     return result
 

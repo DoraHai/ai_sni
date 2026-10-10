@@ -59,6 +59,26 @@ def test_daily_quota_is_bounded_and_request_nonce_is_idempotent():
     assert reset["onsite_ai_quota"]["count"] == 1
 
 
+def test_request_nonce_history_is_never_silently_truncated():
+    settings = {}
+    for index in range(3):
+        settings = onsite_ai.reserve_daily(
+            settings, f"request-{index}", request_digest=f"hash-{index}",
+            day=f"2026-10-{10 + index:02d}", limit=10, request_limit=3)
+    assert [value["id"] for value in settings["onsite_ai_requests"]] == [
+        "request-0", "request-1", "request-2"]
+    replay = onsite_ai.reserve_daily(
+        settings, "request-0", request_digest="hash-0",
+        day="2026-10-13", limit=10, request_limit=3)
+    assert replay == settings
+    with pytest.raises(HTTPException) as error:
+        onsite_ai.reserve_daily(
+            settings, "request-3", request_digest="hash-3",
+            day="2026-10-13", limit=10, request_limit=3)
+    assert error.value.status_code == 409
+    assert "不能覆盖历史防重依据" in str(error.value.detail)
+
+
 def test_capabilities_never_claim_website_execution():
     value = onsite_ai.capabilities(provider_ready=True, can_write=True, phase="draft")
     assert value["ai_planning"]["can_generate"] is True
