@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { imageReviewPrecondition, requireImageVersion } from '../../utils/seoImageReview'
 import { copySeoImageRemediation, fetchSeoImageEvidence, fetchSeoImageRemediation, fetchSeoImageRemediationHistory, fetchSeoImageRemediationReusePreview, reuseSeoImageRemediation, saveSeoImageRemediation } from '../../api/seo'
 
 const props = defineProps({ visible: Boolean, tenantId: Number, siteId: Number, page: Object, focusPosition: Number, canEdit: Boolean })
@@ -77,6 +78,7 @@ async function load(snapshotId = null) {
         : {}
       drafts.value = Object.fromEntries((response.evidence?.items || []).map(row => [row.position, {
         id: saved[row.position]?.id || null,
+        version: saved[row.position]?.version,
         decision: saved[row.position]?.decision || 'undecided',
         alt_suggestion: saved[row.position]?.alt_suggestion || '',
         note: saved[row.position]?.note || '',
@@ -100,7 +102,7 @@ async function saveReview(row) {
   savingPosition.value = row.position
   try {
     await saveSeoImageRemediation({ tenant_id: active.tenantId, site_id: active.siteId, page_id: active.pageId,
-      expected_snapshot_id: active.snapshotId, expected_review_id: draft.id, position: row.position,
+      expected_snapshot_id: active.snapshotId, ...imageReviewPrecondition(draft.id == null ? null : draft), position: row.position,
       decision: draft.decision, alt_suggestion: draft.alt_suggestion, note: draft.note, review_status: draft.review_status })
     if (!scopeIsCurrent(active)) return
     ElMessage.success('图片整改记录已保存，未修改客户官网')
@@ -123,6 +125,7 @@ async function copyPrevious() {
     const result = await copySeoImageRemediation({
       tenant_id: active.tenantId, site_id: active.siteId, page_id: active.pageId,
       expected_snapshot_id: active.snapshotId, source_snapshot_id: source.snapshot_id,
+      expected_source_version: requireImageVersion(source.approved_version),
     })
     if (!scopeIsCurrent(active)) return
     const message = `已复制 ${result.copied} 条为草稿；跳过已有 ${result.skipped_existing} 条、无法唯一匹配 ${result.skipped_ambiguous} 条`
@@ -148,6 +151,7 @@ async function reuseAcrossPages() {
     const result = await reuseSeoImageRemediation({
       tenant_id: active.tenantId, site_id: active.siteId, page_id: active.pageId,
       expected_snapshot_id: active.snapshotId,
+      expected_reuse_version: requireImageVersion(preview.reuse_version),
     })
     if (!scopeIsCurrent(active)) return
     const message = `已复用 ${result.copied} 条为草稿；跳过已有 ${result.skipped_existing} 条、重复或冲突 ${result.skipped_ambiguous} 条`

@@ -661,3 +661,24 @@ def test_manifest_is_deterministic(tmp_path: Path) -> None:
     assert manifest["schema"] == 1
     assert manifest["files"]["app/api/seo.py"]["size"] == 3
     assert len(manifest["files"]["app/api/seo.py"]["sha256"]) == 64
+
+
+def test_review_guard_source_admission_is_exact() -> None:
+    for path in (
+        "frontend/scripts/test-seo-image-review.mjs",
+        "frontend/src/utils/seoImageReview.js",
+        "tests/fixtures/seo_api_controls.sql",
+        "tests/test_seo_review_guards_postgres.py",
+    ):
+        assert source_path_allowed(path)
+        assert not source_path_allowed(path + ".unreviewed")
+    assert not source_path_allowed("tests/fixtures/production_api_controls.sql")
+    assert not source_path_allowed("frontend/src/utils/semImageReview.js")
+
+
+def test_image_review_frontend_guards_run_before_every_seo_build() -> None:
+    root = Path(__file__).parents[1]
+    for name in ("seo-baseline-check.yml", "production-seo-deploy.yml", "production-seo-frontend-deploy.yml"):
+        workflow = (root / ".github/workflows" / name).read_text(encoding="utf-8")
+        command = next(line for line in workflow.splitlines() if "run:" in line and "npm run build:seo" in line)
+        assert command.index("scripts/test-seo-image-review.mjs") < command.index("npm run build:seo")

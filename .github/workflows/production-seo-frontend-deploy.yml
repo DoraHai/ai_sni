@@ -83,7 +83,7 @@ jobs:
 
       - name: Test, build, and verify the isolated SEO frontend
         working-directory: frontend
-        run: npm run test:session-storage && node --test scripts/test-seo-keyword-delete.mjs && npm run build:seo && npm run verify:seo-build
+        run: npm run test:session-storage && node --test scripts/test-seo-keyword-delete.mjs scripts/test-seo-image-review.mjs && npm run build:seo && npm run verify:seo-build
 
       - name: Create immutable frontend-only release archive
         env:

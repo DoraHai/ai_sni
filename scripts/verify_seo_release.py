@@ -11,6 +11,10 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "frontend/scripts/test-seo-image-review.mjs",
+    "frontend/src/utils/seoImageReview.js",
+    "tests/fixtures/seo_api_controls.sql",
+    "tests/test_seo_review_guards_postgres.py",
     "app/api_controls.py",
     "app/http_errors.py",
     "app/api_metering.py",

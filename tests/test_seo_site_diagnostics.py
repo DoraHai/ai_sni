@@ -19,6 +19,7 @@ from app.api.seo_site_diagnostics import (
     preview_cross_page_image_remediation_reuse, reuse_cross_page_image_remediation,
     save_image_remediation, generate_image_alt_drafts,
 )
+from app.api.seo_site_diagnostics import image_review_payload, _approved_image_version, _reuse_image_version
 from app.models.seo import SeoImageAltReview, SeoPageIndexReview, SeoSitePage
 from app.security.auth import AuthContext, _required
 from app.ai.deepseek import DeepSeekError
@@ -203,7 +204,7 @@ def test_ai_alt_drafts_are_scoped_current_human_reviewable_and_never_overwrite()
     snapshot = SimpleNamespace(id=12, error_type=None, image_alt_evidence={"items": [candidate]})
     row = page(title="NORDAC 操作手册")
     req = ImageAltAiDraftRequest(tenant_id=1, site_id=1, items=[{
-        "page_id": 231, "expected_snapshot_id": 12, "position": 2, "expected_review_id": None,
+        "page_id": 231, "expected_snapshot_id": 12, "position": 2, "expected_review_id": None, "expected_review_version": None,
     }])
     db = AsyncMock()
     db.add = MagicMock()
@@ -230,7 +231,7 @@ def test_ai_alt_drafts_revalidate_after_provider_call_and_skip_human_race():
     candidate = {"position": 2, "source_url": "https://cdn.example/manual.webp", "section": "main", "alt_state": "empty"}
     snapshot = SimpleNamespace(id=12, error_type=None, image_alt_evidence={"items": [candidate]})
     req = ImageAltAiDraftRequest(tenant_id=1, site_id=1, items=[{
-        "page_id": 231, "expected_snapshot_id": 12, "position": 2, "expected_review_id": None,
+        "page_id": 231, "expected_snapshot_id": 12, "position": 2, "expected_review_id": None, "expected_review_version": None,
     }])
     db = AsyncMock(); db.add = MagicMock()
     # The second review lookup sees a record created by a human while AI ran.
@@ -250,7 +251,7 @@ def test_ai_alt_drafts_fail_closed_when_quota_settlement_cannot_commit():
                  "section": "main", "alt_state": "empty"}
     snapshot = SimpleNamespace(id=12, error_type=None, image_alt_evidence={"items": [candidate]})
     req = ImageAltAiDraftRequest(tenant_id=1, site_id=1, items=[{
-        "page_id": 231, "expected_snapshot_id": 12, "position": 2, "expected_review_id": None,
+        "page_id": 231, "expected_snapshot_id": 12, "position": 2, "expected_review_id": None, "expected_review_version": None,
     }])
     db = AsyncMock(); db.add = MagicMock()
     db.scalar.side_effect = [1, page(), snapshot, None, page(), snapshot, None]
@@ -265,7 +266,7 @@ def test_ai_alt_drafts_fail_closed_when_quota_settlement_cannot_commit():
 
 
 def test_ai_alt_draft_request_is_bounded_unique_and_unreviewed_only():
-    base = {"page_id": 231, "expected_snapshot_id": 12, "position": 2, "expected_review_id": None}
+    base = {"page_id": 231, "expected_snapshot_id": 12, "position": 2, "expected_review_id": None, "expected_review_version": None}
     with pytest.raises(ValidationError):
         ImageAltAiDraftRequest(tenant_id=1, site_id=1, items=[base, base])
     with pytest.raises(ValidationError):
@@ -381,6 +382,14 @@ def test_image_evidence_explicit_unknown_snapshot_is_404():
     assert error.value.status_code == 404
 
 
+def image_review(**values):
+    defaults = dict(id=8, snapshot_id=11, position=2, source_url="https://cdn.example/a.webp",
+        observed_alt_state="empty", decision="informative", alt_suggestion="product", note=None,
+        review_status="approved", actor_id=7, actor_name="operator",
+        reviewed_at=datetime(2026, 9, 4, tzinfo=timezone.utc), updated_at=datetime(2026, 9, 4, tzinfo=timezone.utc))
+    return SimpleNamespace(**(defaults | values))
+
+
 def image_snapshot(snapshot_id=12, fetched_at=None, items=None):
     candidates = items or [{
         "position": 2, "source_url": "https://cdn.example/a.webp", "source_attribute": "src",
@@ -432,7 +441,7 @@ def test_image_remediation_workbench_uses_only_latest_scoped_snapshots_and_filte
 def image_review_request(**values):
     return ImageAltReviewUpdate(**(dict(
         tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=12, position=2,
-        expected_review_id=None,
+        expected_review_id=None, expected_review_version="0" * 64 if values.get("expected_review_id") else None,
         decision="informative", alt_suggestion="NORDBLOC.1 伞齿轮减速电机", note="产品主图",
         review_status="approved",
     ) | values))
@@ -469,7 +478,7 @@ def test_image_remediation_can_read_an_explicit_historic_snapshot():
 def test_image_remediation_history_is_scoped_and_summarized():
     current = image_snapshot(12, datetime(2026, 9, 4, 3, 0))
     previous = image_snapshot(11, datetime(2026, 9, 3, 3, 0))
-    approved = SimpleNamespace(snapshot_id=11, position=2, review_status="approved")
+    approved = image_review(snapshot_id=11, position=2, review_status="approved")
     draft = SimpleNamespace(snapshot_id=12, position=2, review_status="draft")
     db = AsyncMock(); db.scalar.side_effect = [1, page(), current]
     db.scalars.side_effect = [[current, previous], [draft, approved]]
@@ -478,7 +487,7 @@ def test_image_remediation_history_is_scoped_and_summarized():
     assert result["items"][0] == {
         "snapshot_id": 12, "fetched_at": "2026-09-04T03:00:00+08:00",
         "candidate_count": 1, "saved_count": 1, "approved_count": 0,
-        "draft_count": 1, "is_current": True,
+        "draft_count": 1, "is_current": True, "approved_version": _approved_image_version(12, []),
     }
     assert result["items"][1]["approved_count"] == 1
     history_sql = str(db.scalars.call_args_list[0].args[0].compile(dialect=postgresql.dialect()))
@@ -498,13 +507,14 @@ def test_copy_image_remediation_matches_unique_evidence_and_resets_to_draft():
     target_items = [{**source_items[0], "position": 7}]
     source = image_snapshot(11, datetime(2026, 9, 3, 3, 0), source_items)
     target = image_snapshot(12, datetime(2026, 9, 4, 3, 0), target_items)
-    approved = SimpleNamespace(position=2, source_url="https://cdn.example/a.webp",
+    approved = image_review(position=2, source_url="https://cdn.example/a.webp",
                                observed_alt_state="empty", decision="informative",
                                alt_suggestion="产品主图", note="人工核对", review_status="approved")
     db = AsyncMock(); db.add = MagicMock(); db.scalar.side_effect = [1, page(), target, source]
     db.scalars.side_effect = [[approved], []]
     req = ImageAltReviewCopy(tenant_id=1, site_id=1, page_id=231,
-                             expected_snapshot_id=12, source_snapshot_id=11)
+                             expected_snapshot_id=12, source_snapshot_id=11,
+                             expected_source_version=_approved_image_version(11, [approved]))
     result = asyncio.run(copy_image_remediation(req, context(), db))
     assert result["copied_positions"] == [7] and result["review_status"] == "draft"
     copied = db.add.call_args.args[0]
@@ -521,14 +531,14 @@ def test_copy_image_remediation_never_guesses_ambiguous_or_overwrites_existing()
                 "role": None, "alt_state": "empty"}
     source = image_snapshot(11, datetime(2026, 9, 3), [{**repeated, "position": 2}, {**repeated, "position": 3}])
     target = image_snapshot(12, datetime(2026, 9, 4), [{**repeated, "position": 4}, {**repeated, "position": 5}])
-    approved = SimpleNamespace(position=2, source_url="https://cdn.example/shared.webp",
+    approved = image_review(position=2, source_url="https://cdn.example/shared.webp",
                                observed_alt_state="empty", decision="decorative",
                                alt_suggestion=None, note=None, review_status="approved")
     existing = SimpleNamespace(position=5)
     db = AsyncMock(); db.add = MagicMock(); db.scalar.side_effect = [1, page(), target, source]
     db.scalars.side_effect = [[approved], [existing]]
     result = asyncio.run(copy_image_remediation(ImageAltReviewCopy(
-        tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=12, source_snapshot_id=11,
+        tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=12, source_snapshot_id=11, expected_source_version=_approved_image_version(11, [approved]),
     ), context(), db))
     assert result["copied"] == 0 and result["skipped_ambiguous"] == 1
     db.add.assert_not_called(); db.commit.assert_not_awaited()
@@ -540,12 +550,12 @@ def test_copy_image_remediation_does_not_overwrite_current_draft():
             "role": None, "alt_state": "empty"}
     source = image_snapshot(11, datetime(2026, 9, 3), [item])
     target = image_snapshot(12, datetime(2026, 9, 4), [{**item, "position": 7}])
-    approved = SimpleNamespace(position=2, source_url=item["source_url"], observed_alt_state="empty",
+    approved = image_review(position=2, source_url=item["source_url"], observed_alt_state="empty",
                                decision="decorative", alt_suggestion=None, note=None)
     db = AsyncMock(); db.add = MagicMock(); db.scalar.side_effect = [1, page(), target, source]
     db.scalars.side_effect = [[approved], [SimpleNamespace(position=7)]]
     result = asyncio.run(copy_image_remediation(ImageAltReviewCopy(
-        tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=12, source_snapshot_id=11,
+        tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=12, source_snapshot_id=11, expected_source_version=_approved_image_version(11, [approved]),
     ), context(), db))
     assert result["copied"] == 0 and result["skipped_existing"] == 1
     db.add.assert_not_called(); db.commit.assert_not_awaited()
@@ -558,7 +568,7 @@ def test_copy_image_remediation_does_not_overwrite_current_draft():
 def test_copy_image_remediation_rejects_stale_or_current_source(request_values, status):
     db = AsyncMock(); db.scalar.side_effect = [1, page(), image_snapshot(12)]
     values = dict(tenant_id=1, site_id=1, page_id=231,
-                  expected_snapshot_id=12, source_snapshot_id=11) | request_values
+                  expected_snapshot_id=12, source_snapshot_id=11, expected_source_version="0" * 64) | request_values
     with pytest.raises(HTTPException) as error:
         asyncio.run(copy_image_remediation(ImageAltReviewCopy(**values), context(), db))
     assert error.value.status_code == status
@@ -575,7 +585,7 @@ def cross_page_reuse_data(*, conflicting=False, existing=False):
     target.url = "https://example.com/product"
     source = image_snapshot(450, datetime(2026, 9, 3, 10, 0), [shared])
     source.url = "https://example.com/other"
-    approved = [SimpleNamespace(
+    approved = [image_review(
         id=8, tenant_id=1, site_id=1, page_id=232, snapshot_id=450, position=33,
         source_url=shared["source_url"], observed_alt_state="empty",
         decision="decorative", alt_suggestion=None, note="备案装饰图",
@@ -588,7 +598,7 @@ def cross_page_reuse_data(*, conflicting=False, existing=False):
         conflicting_source.url = "https://example.com/third"
         sources.append(conflicting_source)
         source_pages.append(page(id=233, url=conflicting_source.url))
-        approved.append(SimpleNamespace(
+        approved.append(image_review(
             id=7, tenant_id=1, site_id=1, page_id=233, snapshot_id=449, position=21,
             source_url=shared["source_url"], observed_alt_state="empty",
             decision="informative", alt_suggestion="备案图标", note=None,
@@ -597,13 +607,19 @@ def cross_page_reuse_data(*, conflicting=False, existing=False):
     return target, sources, approved, source_pages, current
 
 
+def reuse_version(target, sources, approved, source_pages, current):
+    db = AsyncMock(); db.scalar.side_effect = [1, page(url=target.url), target]
+    db.scalars.side_effect = [current, approved, sources, source_pages]
+    return asyncio.run(preview_cross_page_image_remediation_reuse(1, 1, 231, context(), db))["reuse_version"]
+
+
 def test_cross_page_image_reuse_preview_is_exact_and_site_scoped():
     target, sources, approved, source_pages, current = cross_page_reuse_data()
     db = AsyncMock(); db.scalar.side_effect = [1, page(url=target.url), target]
     db.scalars.side_effect = [current, approved, sources, source_pages]
     result = asyncio.run(preview_cross_page_image_remediation_reuse(1, 1, 231, context(), db))
     assert result == {
-        "target_snapshot_id": 451, "eligible_count": 1, "source_page_count": 1,
+        "target_snapshot_id": 451, "eligible_count": 1, "source_page_count": 1, "reuse_version": result["reuse_version"],
         "skipped_existing": 0, "skipped_ambiguous": 0,
     }
     approved_sql = str(db.scalars.call_args_list[1].args[0].compile(dialect=postgresql.dialect()))
@@ -619,7 +635,7 @@ def test_cross_page_image_reuse_copies_draft_with_page_provenance():
     db.scalar.side_effect = [1, page(url=target.url), target]
     db.scalars.side_effect = [current, approved, sources, source_pages]
     result = asyncio.run(reuse_cross_page_image_remediation(ImageAltReviewReuse(
-        tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=451,
+        tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=451, expected_reuse_version=reuse_version(target, sources, approved, source_pages, current),
     ), context(), db))
     assert result["copied_positions"] == [26] and result["review_status"] == "draft"
     saved = next(call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], (SeoImageAltReview, SeoPageIndexReview)))
@@ -641,7 +657,7 @@ def test_cross_page_image_reuse_never_copies_conflicts_or_overwrites(conflicting
     db.scalar.side_effect = [1, page(url=target.url), target]
     db.scalars.side_effect = [current, approved, sources, source_pages]
     result = asyncio.run(reuse_cross_page_image_remediation(ImageAltReviewReuse(
-        tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=451,
+        tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=451, expected_reuse_version=reuse_version(target, sources, approved, source_pages, current),
     ), context(), db))
     assert result["copied"] == 0 and result[skipped] == 1
     db.add.assert_not_called(); db.commit.assert_not_awaited()
@@ -651,7 +667,7 @@ def test_cross_page_image_reuse_rejects_stale_target():
     db = AsyncMock(); db.scalar.side_effect = [1, page(), image_snapshot(452)]
     with pytest.raises(HTTPException) as error:
         asyncio.run(reuse_cross_page_image_remediation(ImageAltReviewReuse(
-            tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=451,
+            tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=451, expected_reuse_version="0" * 64,
         ), context(), db))
     assert error.value.status_code == 409
     db.commit.assert_not_awaited()
@@ -683,6 +699,32 @@ def test_image_remediation_requires_explicit_optimistic_review_token():
     values.pop("expected_review_id")
     with pytest.raises(ValidationError):
         ImageAltReviewUpdate(**values)
+
+
+def test_old_image_write_contracts_require_explicit_versions_before_execution():
+    values = image_review_request().model_dump()
+    values.pop('expected_review_version')
+    with pytest.raises(ValidationError): ImageAltReviewUpdate(**values)
+    with pytest.raises(ValidationError): image_review_request(expected_review_id=9, expected_review_version=None)
+    with pytest.raises(ValidationError): image_review_request(expected_review_version='a'*64)
+    base = dict(tenant_id=1,site_id=1,page_id=231,expected_snapshot_id=12)
+    with pytest.raises(ValidationError): ImageAltReviewCopy(**base, source_snapshot_id=11)
+    with pytest.raises(ValidationError): ImageAltReviewReuse(**base)
+    with pytest.raises(ValidationError): ImageAltAiDraftRequest(tenant_id=1,site_id=1,items=[dict(page_id=231,
+        expected_snapshot_id=12,position=2,expected_review_id=None)])
+
+
+def test_same_review_id_with_stale_version_cannot_change_approval_or_enqueue():
+    row = image_review(id=9, snapshot_id=12)
+    observed = image_review_payload(row)['version']
+    row.alt_suggestion = 'newer edit'
+    db = AsyncMock(); db.add = MagicMock(); db.scalar.side_effect = [1,page(),image_snapshot(),row]
+    with patch('app.seo_image_verification.enqueue_image_verification',new=AsyncMock()) as enqueue:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(save_image_remediation(image_review_request(expected_review_id=9,
+                expected_review_version=observed), context(), db))
+    assert exc.value.status_code==409 and row.alt_suggestion=='newer edit'
+    db.add.assert_not_called();db.commit.assert_not_awaited();enqueue.assert_not_awaited()
 
 
 def test_decorative_image_clears_alt_suggestion_before_save():

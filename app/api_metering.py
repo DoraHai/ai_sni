@@ -229,7 +229,7 @@ async def _write(sql, params):
 
 async def metered_request(client, method: str, url: str, *, api_key=None,
                           model=None, provider=None, tenant_id=None,
-                          operation=None, **kwargs):
+                          operation=None, classify_response=None, **kwargs):
     """Wrap only known provider clients, preserving their existing transport."""
     if not enabled():
         if api_controls.enabled():
@@ -272,13 +272,18 @@ async def metered_request(client, method: str, url: str, *, api_key=None,
                 if isinstance(data, dict):
                     if data.get('StateCode', 1) != 1 or isinstance(data.get('header'),dict) and data['header'].get('status',0) != 0:
                         state = 'error'
+                if response.is_success and classify_response is not None:
+                    state = classify_response(data)
+                    if state not in {'succeeded', 'error', 'unknown'}:
+                        state = 'unknown'
                 prompt, cached, completion = extract_usage(data)
                 request_id = safe_code(data.get('id')) if isinstance(data, dict) else None
                 # An error response without token usage cannot be assumed free.
                 if state == 'succeeded' or prompt is not None:
                     amount = estimate(quote, prompt, cached, completion)
             except (ValueError, TypeError):
-                pass
+                if response.is_success and classify_response is not None:
+                    state = 'unknown'
             request_id = request_id or safe_code(response.headers.get('x-request-id'))
         # Independent committed transaction: later parse/business failure cannot
         # erase a charged provider call. Interrupted attempts remain requested.

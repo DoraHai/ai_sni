@@ -96,3 +96,28 @@ def test_route_permission_and_reference_retention_contract():
                                    (SeoSitePage, "target_keyword_id", "SET NULL"), (SeoContentAsset, "keyword_id", "SET NULL")]:
         fk, = model.__table__.c[column].foreign_keys
         assert fk.ondelete == action
+
+
+@pytest.mark.parametrize('actual_site', [9, None])
+def test_site_precondition_rejects_moved_keyword_before_reference_cleanup(actual_site):
+    session, row, assets = fixture()
+    # A move completed before the DELETE acquired its lock.
+    row.site_id = actual_site
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(seo.delete_seo_keyword(11, 1, session, context(), site_id=8))
+    assert exc.value.status_code == 404
+    assert 'FOR UPDATE' in str(session.scalar.call_args.args[0])
+    assert [a.keyword_ids for a in assets] == [[11,22,11],[11]]
+    session.scalars.assert_not_awaited(); session.delete.assert_not_awaited(); session.commit.assert_not_awaited()
+
+
+def test_site_precondition_verifies_tenant_and_operational_scope():
+    session, row, _ = fixture()
+    with patch.object(seo, '_seo_site', new=AsyncMock(side_effect=HTTPException(404, 'foreign site'))) as site_gate:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(seo.delete_seo_keyword(11,1,session,context(),site_id=8))
+    assert exc.value.status_code == 404
+    site_gate.assert_awaited_once_with(session,1,8,require_active=True)
+    session.scalars.assert_not_awaited(); session.delete.assert_not_awaited()
+    with patch.object(seo, '_seo_site', new=AsyncMock()), patch.object(seo, '_require_resource_operational_site', new=AsyncMock()):
+        assert asyncio.run(seo.delete_seo_keyword(11,1,session,context(),site_id=8))['deleted']

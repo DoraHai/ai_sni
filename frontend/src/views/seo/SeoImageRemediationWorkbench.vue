@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { imageReviewPrecondition } from '../../utils/seoImageReview'
 import { fetchSeoImageRemediationWorkbench, generateSeoImageAltDrafts, saveSeoImageRemediation } from '../../api/seo'
 import SeoImageEvidenceDialog from './SeoImageEvidenceDialog.vue'
 
@@ -70,7 +71,7 @@ async function generateAiDrafts() {
   try {
     const response = await generateSeoImageAltDrafts({
       tenant_id: tenantId, site_id: siteId,
-      items: rows.map(row => ({ page_id: row.page_id, expected_snapshot_id: row.snapshot_id, position: row.position, expected_review_id: null })),
+      items: rows.map(row => ({ page_id: row.page_id, expected_snapshot_id: row.snapshot_id, position: row.position, ...imageReviewPrecondition(row.review) })),
     })
     if (tenantId !== props.tenantId || siteId !== props.siteId) return
     if (response.generated) ElMessage.success(`AI 已生成 ${response.generated} 条待审草稿；AI 明确跳过 ${response.skipped_ai || 0} 条，状态变化 ${response.skipped_changed || 0} 条，不可处理 ${response.skipped_ineligible || 0} 条`)
@@ -101,7 +102,7 @@ async function batchApprove() {
     try {
       await saveSeoImageRemediation({
         tenant_id: tenantId, site_id: siteId, page_id: row.page_id,
-        expected_snapshot_id: row.snapshot_id, expected_review_id: row.review?.id || null,
+        expected_snapshot_id: row.snapshot_id, ...imageReviewPrecondition(row.review),
         position: row.position, decision: row.decision, alt_suggestion: row.alt_suggestion,
         note: row.note, review_status: 'approved',
       })
