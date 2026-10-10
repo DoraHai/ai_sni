@@ -34,7 +34,11 @@ logger = logging.getLogger(__name__)
 
 
 class MeteringUnavailable(RuntimeError):
-    """Fail before a paid call when its accounting reservation cannot be saved."""
+    """Accounting failure with a controlled pre/post provider-attempt marker."""
+
+    def __init__(self, *args, provider_attempted=False):
+        super().__init__(*args)
+        self.provider_attempted = provider_attempted
 
 
 @dataclass(frozen=True)
@@ -316,13 +320,19 @@ async def metered_request(client, method: str, url: str, *, api_key=None,
             request_id = request_id or safe_code(response.headers.get('x-request-id'))
         # Independent committed transaction: later parse/business failure cannot
         # erase a charged provider call. Interrupted attempts remain requested.
-        await _write('''UPDATE api_usage_events SET state=:state,status_code=:status_code,
-            provider_request_id=:request_id,latency_ms=:latency_ms,prompt_tokens=:prompt,
-            cached_tokens=:cached,completion_tokens=:completion,currency=:currency,
-            estimated_amount=:amount,finished_at=CURRENT_TIMESTAMP
-            WHERE id=CAST(:id AS uuid) AND state='requested' ''',
-            dict(id=event_id, state=state, status_code=response.status_code if response is not None else None,
-                 request_id=request_id, latency_ms=min(int((time.monotonic()-started)*1000), 2147483647),
-                 prompt=prompt,cached=cached,completion=completion,
-                 currency='CNY' if amount is not None else None, amount=amount))
+        try:
+            await _write('''UPDATE api_usage_events SET state=:state,status_code=:status_code,
+                provider_request_id=:request_id,latency_ms=:latency_ms,prompt_tokens=:prompt,
+                cached_tokens=:cached,completion_tokens=:completion,currency=:currency,
+                estimated_amount=:amount,finished_at=CURRENT_TIMESTAMP
+                WHERE id=CAST(:id AS uuid) AND state='requested' ''',
+                dict(id=event_id, state=state, status_code=response.status_code if response is not None else None,
+                     request_id=request_id, latency_ms=min(int((time.monotonic()-started)*1000), 2147483647),
+                     prompt=prompt,cached=cached,completion=completion,
+                     currency='CNY' if amount is not None else None, amount=amount))
+        except MeteringUnavailable as exc:
+            # The committed attempt may already have charged. Task owners must
+            # classify this as unknown, not a safe-to-repeat admission failure.
+            exc.provider_attempted = True
+            raise
     return response

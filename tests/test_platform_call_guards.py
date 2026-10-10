@@ -298,8 +298,9 @@ def test_native_incomplete_controls_deny_before_attempt_or_provider(monkeypatch,
         monkeypatch.setattr(controls, 'async_session_factory', other)
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: pytest.fail('must not send'))) as client:
             with meter.background_scope(tenant_id=1, module='sem', operation='test'):
-                with pytest.raises(meter.MeteringUnavailable):
+                with pytest.raises(meter.MeteringUnavailable) as denied:
                     await meter.metered_request(client, 'post', 'https://provider.test/v1')
+                assert denied.value.provider_attempted is False
         async with factory() as s:
             assert await s.scalar(text('SELECT count(*) FROM api_usage_events')) == 0
     native(monkeypatch, scenario)
@@ -316,6 +317,53 @@ def test_native_metering_only_needs_no_control_schema(monkeypatch):
             assert await s.scalar(text('SELECT count(*) FROM api_usage_events')) == 1
             assert await s.scalar(text('SELECT state FROM api_usage_events')) == 'succeeded'
     native(monkeypatch, scenario, schema_controls=False)
+
+
+def test_native_initial_ledger_failure_is_known_not_sent(monkeypatch):
+    async def scenario(factory, other):
+        async with factory() as s:
+            await s.execute(text("""CREATE FUNCTION reject_meter_insert() RETURNS trigger LANGUAGE plpgsql AS
+                $$ BEGIN RAISE EXCEPTION 'fixture initial write failure'; END $$"""))
+            await s.execute(text('CREATE TRIGGER reject_meter_insert BEFORE INSERT ON api_usage_events FOR EACH ROW EXECUTE FUNCTION reject_meter_insert()'))
+            await s.commit()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: pytest.fail('must not send'))) as client:
+            with pytest.raises(meter.MeteringUnavailable) as denied:
+                await meter.metered_request(client, 'post', 'https://provider.test/v1')
+            assert denied.value.provider_attempted is False
+        async with factory() as s:
+            assert await s.scalar(text('SELECT count(*) FROM api_usage_events')) == 0
+    native(monkeypatch, scenario, schema_controls=False)
+
+
+@pytest.mark.parametrize('outcome', ['success', 'error', 'timeout'])
+def test_native_terminal_commit_failure_is_attempted_and_keeps_occupancy(monkeypatch, outcome):
+    async def scenario(factory, other):
+        await change(factory, 'global', budget(max_concurrent=1))
+        async with factory() as s:
+            await s.execute(text("""CREATE FUNCTION reject_meter_update() RETURNS trigger LANGUAGE plpgsql AS
+                $$ BEGIN RAISE EXCEPTION 'fixture final write failure'; END $$"""))
+            await s.execute(text('CREATE TRIGGER reject_meter_update BEFORE UPDATE ON api_usage_events FOR EACH ROW EXECUTE FUNCTION reject_meter_update()'))
+            await s.commit()
+        sent = []
+        async def provider(request):
+            sent.append(request)
+            if outcome == 'timeout':
+                raise httpx.ReadTimeout('fixture', request=request)
+            return httpx.Response(200 if outcome == 'success' else 400, json={})
+        monkeypatch.setattr(meter, 'async_session_factory', other)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as client:
+            with pytest.raises(meter.MeteringUnavailable) as failed:
+                await meter.metered_request(client, 'post', 'https://provider.test/v1')
+            assert failed.value.provider_attempted is True
+            async with factory() as s:
+                assert await s.scalar(text('SELECT count(*) FROM api_usage_events')) == 1
+                assert await s.scalar(text('SELECT state FROM api_usage_events')) == 'requested'
+                assert (await controls.usage(s, 'global'))['active_calls'] == 1
+            with pytest.raises(controls.ControlDenied) as denied:
+                await meter.metered_request(client, 'post', 'https://provider.test/v1')
+            assert denied.value.code == 'api_concurrency_limit'
+            assert len(sent) == 1
+    native(monkeypatch, scenario)
 
 
 def test_native_reviewed_permission_scripts_keep_audit_append_only(monkeypatch):
