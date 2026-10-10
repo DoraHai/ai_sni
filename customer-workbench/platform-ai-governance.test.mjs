@@ -25,6 +25,6 @@ test('late governance response after identity change is rejected',async()=>{
 test('only allowlisted presentation fields render; unknown counts and unapproved schema stay honest',()=>{
   const data={schema:1,state:'available',api_key:'fixture-secret',modules:[{module:'seo',provider:'dashscope',model:'qwen',configured:true,metering:{state:'recording'},calls:{failed:0,unknown:null},limits:[{kind:'budget',state:'disabled',value:100}],secrets:{api_key:'fixture-secret'}}],website:{enabled:true}};
   const html=render(data);assert.match(html,/阿里云百炼/);assert.match(html,/计量中/);assert.match(html,/0\|未知/);assert.doesNotMatch(html,/fixture-secret|100/);assert.match(html,/reserved \/ disabled/);
-  const pending=render({...data,state:'schema_pending'});assert.match(pending,/等待数据库人工审核/);assert.doesNotMatch(pending,/qwen|计量中/);assert.match(pending,/<button disabled>/);
+  const pending=render({...data,state:'schema_pending'});assert.match(pending,/等待数据库人工审核/);assert.match(pending,/qwen/);assert.match(pending,/计量中/);assert.match(pending,/0\|未知/);assert.match(pending,/治理编辑保持禁用/);assert.doesNotMatch(pending,/fixture-secret|100/);assert.match(pending,/<button disabled>/);
   assert.match(render(null,'AI 治理接口未部署，运行状态未接入。'),/接口未部署/);
 });

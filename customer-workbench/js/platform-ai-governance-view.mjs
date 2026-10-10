@@ -4,8 +4,8 @@ const states={available:'已接入',enabled:'已生效',disabled:'未启用',sch
 const state=s=>states[s]||'未知';
 const count=n=>Number.isSafeInteger(n)&&n>=0?String(n):'未知';
 export function renderAiGovernance({data,error='',card,table}){
-  const ready=data?.schema===1&&data?.state==='available'&&Array.isArray(data.modules);
-  const note=error||(!ready?(data?.state==='schema_pending'?states.schema_pending:'治理接口未接入或响应不完整；不能据此判断配置、限制已生效。'):'来自服务端运行配置与调用台账；配置状态不代表供应商实时连通。');
+  const ready=data?.schema===1&&['available','schema_pending'].includes(data?.state)&&Array.isArray(data.modules);
+  const note=error||(data?.state==='schema_pending'?states.schema_pending+'；已接入的只读配置与计量仍可查看，治理编辑保持禁用。':!ready?'治理接口未接入或响应不完整；不能据此判断配置、限制已生效。':'来自服务端运行配置与调用台账；配置状态不代表供应商实时连通。');
   const rows=['sem','seo','geo'].map(module=>{
     const r=ready?data.modules.find(r=>r.module===module):null;
     return [module.toUpperCase(),r?esc(({dashscope:'阿里云百炼',deepseek:'DeepSeek'}[r.provider]||'未提供')):'未接入',
