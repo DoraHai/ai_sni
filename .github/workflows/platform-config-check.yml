@@ -10,6 +10,7 @@ on:
       - 'app/geo/**'
       - 'scripts/api_*schema.sql'
       - 'tests/test_api_connection_config.py'
+      - 'tests/test_platform_call_guards.py'
       - '.github/workflows/platform-config-check.yml'
   push:
     branches: [codex/production-geo]
@@ -49,4 +50,7 @@ jobs:
           BAIDU_SELF_TOKEN_EXPIRES_AT: '2099-01-01T00:00:00Z'
           CRYPTO_MASTER_KEY_B64: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
           ADMIN_API_KEY: ci-dummy-admin
-        run: python -m pytest -q tests/test_api_connection_config.py
+        run: >-
+          python -m pytest -q
+          tests/test_api_connection_config.py
+          tests/test_platform_call_guards.py
