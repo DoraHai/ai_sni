@@ -184,7 +184,9 @@ def test_prompt_marks_all_inputs_untrusted_and_has_a_hard_size_limit():
     assert "https://source.example/fact" not in user
     assert '"fact_id": 8' in user
     assert '"kind": "schema"' not in user
-    assert '"fact_ids":[1]' in system
+    assert '"fact_ids":[]' in system
+    assert "不提供任何假来源 ID" in system
+    assert "不能默认第一个事实" in system
     assert '"blocking_missing_information":[' in system
     assert "没有内容时必须写 []" in system
     assert "禁止完整照抄任一较长事实句" in system
@@ -217,6 +219,37 @@ def test_revise_labels_old_expected_as_untrusted_and_does_not_present_it_as_evid
     assert old["previous_expected_untrusted"] == "HC-50 清水箱 60 升，适用于所有环境。"
     assert "按当前 approved_public_facts 纠正旧稿" in system
     assert "不得笼统声称“缺少公开事实”" in system
+
+
+def test_prompt_and_validator_use_reassigned_fact_ids_without_guessing_one():
+    reassigned = [
+        {**facts()[0], "fact_id": 271, "source_id": "geo-public-source:271"},
+        {**facts()[0], "fact_id": 913, "source_id": "geo-public-source:913"},
+    ]
+    snapshot = {"project": {}, "questions": [], "facts": reassigned, "items": items()}
+    system, user = onsite_ai.prompt_text(snapshot, "initial")
+    decoded = json.loads(user)
+    assert {fact["fact_id"] for fact in decoded["approved_public_facts"]} == {271, 913}
+    assert '"fact_ids":[1]' not in system
+    payload = result()
+    for item in payload["items"]:
+        item["fact_ids"] = [271]
+    output, explanation = onsite_ai.validate_provider_result(
+        payload, current_items=items(), facts=reassigned, domain="example.com")
+    assert any(item["expected"] for item in output)
+    assert explanation["items"][0]["source_refs"][0]["source_id"] == "geo-public-source:271"
+
+    empty_snapshot = {**snapshot, "facts": []}
+    _, empty_user = onsite_ai.prompt_text(empty_snapshot, "initial")
+    assert json.loads(empty_user)["approved_public_facts"] == []
+    empty_payload = result()
+    for item in empty_payload["items"]:
+        item["expected"] = ""
+        item["fact_ids"] = []
+        item["blocking_missing_information"] = ["缺少获准公开使用的事实"]
+    empty_output, _ = onsite_ai.validate_provider_result(
+        empty_payload, current_items=items(), facts=[], domain="example.com")
+    assert all(not item["expected"] for item in empty_output)
 
 
 @pytest.mark.parametrize("mutation, message", [

@@ -213,8 +213,10 @@ optional_information 仅表示可改善内容但不阻止当前正文的信息�
 items 必须恰好对应输入中的全部可见内容清单项，每项只含 id、expected、reason、fact_ids、blocking_missing_information、optional_information。
 类型不可变：schema_version 是整数 2；expected、reason、summary 是字符串；fact_ids 是整数数组；
 blocking_missing_information、optional_information、missing_information 都是字符串数组，没有内容时必须写 []，不能写空字符串或普通字符串。
-以下仅示范字段类型，尖括号内容不可照抄，id 和 fact_ids 必须取自本次输入：
-{"schema_version":2,"summary":"<简短摘要>","items":[{"id":"<输入中的原始ID>","expected":"<获准事实的公众改写>","reason":"<简短理由>","fact_ids":[1],"blocking_missing_information":[],"optional_information":[]}],"missing_information":[]}"""
+以下对象只演示单项字段类型，不是有效方案且不能原样返回；它不提供任何假来源 ID：
+{"id":"string","expected":"string","reason":"string","fact_ids":[],"blocking_missing_information":[],"optional_information":[]}
+实际 items 必须完整，id 取当前清单；fact_ids 只能按真实支持关系从本次 approved_public_facts 选择，不能默认第一个事实
+支撑所有正文，也不能猜测编号；没有获准事实时只能使用 []。"""
     public_facts = [{key: fact.get(key) for key in (
         "fact_id", "title", "statement", "source_name", "updated_at", "expires_at"
     )} for fact in snapshot["facts"]]
