@@ -455,6 +455,53 @@ def test_running_cancel_discards_late_result_without_second_provider_call(monkey
     asyncio.run(run())
 
 
+def test_pending_consumer_finishes_lost_http_callback_and_two_ticks_call_once(monkeypatch):
+    calls = 0
+    async def credentials(session, tenant_id):
+        return {"api_key": "ignored", "base_url": "https://ignored.invalid/v1",
+                "model": "ignored", "provider": "ignored"}
+    async def provider(system, user, **kwargs):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.05)
+        return _ai_result(json.loads(user)["current_items"])
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "chat_json", provider)
+    monkeypatch.setattr(api.onsite_ai, "get_settings", lambda: SimpleNamespace(
+        geo_onsite_ai_provider="deepseek", geo_onsite_ai_model="deepseek-chat",
+        deepseek_api_key="official-platform-key",
+        deepseek_base_url="https://api.deepseek.com"))
+    async def run():
+        async with database() as sessions:
+            await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
+                row = await api.create(api.Create(tenant_id=1, project_id=10,
+                    request_id=uuid4(), work_type="startup", owner_name="维护人员"), db, ADVISOR)
+            rid = uuid4()
+            async with sessions() as db:
+                queued = await api.ai_proposal(row["id"], api.AiProposal(
+                    tenant_id=1, project_id=10, expected_revision=1,
+                    request_id=rid, mode="initial"), db, ADVISOR)
+            assert queued["request_run"]["state"] == "queued"
+            async def runner(job_id, tenant_id):
+                return await run_owned(sessions, job_id, tenant_id)
+            ticks = await asyncio.gather(
+                onsite_jobs.run_pending_batch(session_factory=sessions, runner=runner),
+                onsite_jobs.run_pending_batch(session_factory=sessions, runner=runner),
+            )
+            assert sum(item["completed"] for item in ticks) == 1
+            async with sessions() as db:
+                polled = await api.get_ai_request(row["id"], rid, 1, 10, db, ADVISOR)
+                assert polled["workflow"]["ai_run"]["state"] == "ready"
+                assert polled["request_run"]["state"] == "ready"
+                assert polled["workflow"]["ai_run"]["request_id"] == str(rid)
+                assert polled["request_run"]["request_id"] == str(rid)
+            assert calls == 1
+    asyncio.run(run())
+
+
 def test_interrupted_running_request_becomes_unknown_and_is_never_requeued(monkeypatch):
     calls = 0
     async def credentials(session, tenant_id):

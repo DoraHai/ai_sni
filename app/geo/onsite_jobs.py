@@ -6,10 +6,12 @@ recovery never repeats a possibly billed request.
 """
 from __future__ import annotations
 
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import onsite_workflow as work
@@ -23,6 +25,80 @@ from app.models import GeoActionTicket, GeoAsyncJob, GeoProject
 from app.models.role import Role
 from app.models.user import User
 from app.security.auth import AuthContext
+
+PENDING_BATCH_LIMIT = 5
+PENDING_TICK_SECONDS = 10
+_worker_status: dict[str, Any] = {
+    "enabled": False,
+    "state": "stopped",
+    "last_tick_at": None,
+    "last_attempted": 0,
+    "last_completed": 0,
+    "last_error": None,
+}
+
+
+def pending_worker_status() -> dict[str, Any]:
+    return dict(_worker_status)
+
+
+async def run_pending_batch(*, session_factory=None, runner=None,
+                            limit: int = PENDING_BATCH_LIMIT) -> dict[str, int]:
+    """Consume recent queued jobs; never selects or replays ``running`` jobs."""
+    from app.database import async_session_factory
+    from app.geo.content.async_jobs import (
+        KIND_ONSITE_PROPOSAL, STALE_PENDING_SECONDS, run_job_synchronously,
+    )
+    from app.geo.tenant16_demo import DEMO_TENANT_ID
+
+    factory = session_factory or async_session_factory
+    execute = runner or run_job_synchronously
+    cutoff = datetime.utcnow() - timedelta(seconds=STALE_PENDING_SECONDS)
+    async with factory() as session:
+        rows = list(await session.execute(
+            select(GeoAsyncJob.id, GeoAsyncJob.tenant_id).where(
+                GeoAsyncJob.kind == KIND_ONSITE_PROPOSAL,
+                GeoAsyncJob.status == "pending",
+                GeoAsyncJob.tenant_id != DEMO_TENANT_ID,
+                GeoAsyncJob.created_at >= cutoff,
+            ).order_by(GeoAsyncJob.id).limit(max(1, min(int(limit), 20)))
+        ))
+    outcomes = await asyncio.gather(
+        *(execute(int(row.id), int(row.tenant_id)) for row in rows),
+        return_exceptions=True,
+    )
+    completed = sum(
+        1 for outcome in outcomes
+        if isinstance(outcome, dict) and outcome.get("status") not in {"conflict", "blocked"}
+    )
+    return {"attempted": len(rows), "completed": completed}
+
+
+async def supervise_pending_jobs() -> None:
+    """Continuously recover committed submissions whose HTTP callback was lost."""
+    from app.config import get_settings
+
+    enabled = bool(getattr(get_settings(), "geo_async_worker_enabled", True))
+    _worker_status.update(enabled=enabled, state="active" if enabled else "disabled")
+    if not enabled:
+        return
+    while True:
+        try:
+            result = await run_pending_batch()
+            _worker_status.update(
+                state="active", last_tick_at=onsite_ai.now_iso(),
+                last_attempted=result["attempted"], last_completed=result["completed"],
+                last_error=None,
+            )
+        except asyncio.CancelledError:
+            _worker_status["state"] = "stopped"
+            raise
+        except Exception as exc:  # noqa: BLE001
+            _worker_status.update(
+                state="degraded", last_tick_at=onsite_ai.now_iso(),
+                last_error=type(exc).__name__,
+            )
+        await asyncio.sleep(PENDING_TICK_SECONDS)
 
 
 def _meta(job: GeoAsyncJob) -> dict[str, Any]:
