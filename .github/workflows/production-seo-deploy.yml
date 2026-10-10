@@ -140,6 +140,7 @@ jobs:
           tests/test_seo_cockpit_auth.py
           tests/test_seo_onsite.py
           tests/test_seo_onsite_core.py
+          tests/test_seo_onsite_ai.py
           tests/test_seo_video_platforms.py
           tests/test_seo_backlink_workflow.py
           tests/test_seo_foundation.py
