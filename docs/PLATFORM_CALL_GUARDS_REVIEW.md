@@ -39,7 +39,7 @@
 同一 PostgreSQL 事务级 advisory lock 保护“读配置、读占用、检查、INSERT requested、提交”，然后才能发请求。两个进程/池共享记录而非各自计数。全局、已确认客户、登录用户、供应商 host 的策略同时检查。供应商依据去掉 query/credentials 的 endpoint host，业务 provider 别名不能绕过限制。
 
 - 请求次数与金额按北京时间日/月统计，requested 也计请求次数，拒绝的请求不计供应商尝试。
-- 并发是全部 requested。0 表示暂停新请求，null 表示未设置；成功或收到明确失败响应且终态写入提交后才结束并发占用。写终态失败或崩溃时保留 requested，不按 PID/时间自动释放。
+- 并发占用是全部历史 requested + unknown。0 表示暂停新请求，null 表示未设置；成功或收到明确失败响应且终态写入提交后才结束并发占用。超时结果 unknown 继续占用；写终态失败或崩溃时保留 requested，不按 PID/时间自动释放。
 - 金额预算先预留保守费用；缺少价格、无法限制输入/输出、流式/多模态仍拒绝。错误或 unknown 不能假定免费；即使有 reserved_amount，已结束且 estimated_amount 为空仍暂停同范围金额预算。
 - 跨日/月的历史未结束请求或未核清费用不会被日历重置抹除。历史未知费用可能持续阻断，须账单核查；禁用保护绕过占用不是结算办法。
 - 准入拒绝给出范围标识；超管预算表列并发与待核清数，监控列最早未结束时间并提供调用台账入口。可按客户/用户/接口、状态和包含该时间的日期范围定位请求 ID。告警认领/标记处理只写告警审计，不修改调用或预算。
@@ -64,6 +64,14 @@ api.deepseek.com 的 deepseek-flash，以及该页明确承认的旧名 deepseek
 总控读取的现用 SEM/SEO 默认及 GEO 站内模型是 deepseek-chat；GEO 全局 DashScope 槽为 deepseek-v4-flash-0731，专用 DeepSeek 槽为 deepseek-v4-flash，三种用途分开。现行价格页没有 deepseek-chat，且 [官方旧版公告](https://api-docs.deepseek.com/zh-cn/news/news260424) 表述其退役日期，与此前真实调用成功证据存在差异；因此本轮不自动把它计为 Flash、不猜金额、不改路由、不发付费探针。DashScope 的 -0731 也不按官方 DeepSeek 价格算。准确合同/别名计费证据待核对；可审核后配置精确 rate override，仅作用后续请求。
 
 历史价格不追补，unknown 不归零，账单实际扣款保持未接入。
+
+## 集成验收补充
+
+完整表/列/权限、生产只读证据、重复/部分安装和回退、三池 fixture 与上线检查见
+[PLATFORM_CONTROLS_ROLLOUT_20261011.md](PLATFORM_CONTROLS_ROLLOUT_20261011.md)。
+共享补丁按序取入：`f49cd5af`（unknown 并发保留）、`6fc9b74a`（半安装准入阻断）、
+`eed858cf`（计量失败发送阶段）；SEM 后台客户作用域是后续独立提交，不能整包取到 SEO/GEO。
+UI #650 已交总控整合到 #646，本轮冻结 #650，不单独发布。
 
 ## 风险与回退
 
