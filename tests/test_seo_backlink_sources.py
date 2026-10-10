@@ -80,7 +80,7 @@ def test_import_preview_errors_never_partially_write():
     from fastapi import HTTPException
     session=SimpleNamespace(commit=AsyncMock())
     upload=SimpleNamespace(read=AsyncMock(return_value=b'source_url,target_url\nhttps://media.example/a,https://other.example/a'))
-    ctx=SimpleNamespace(ensure_tenant=lambda _:None)
+    ctx=SimpleNamespace(ensure_tenant=lambda _:None, user_id=7)
     with patch('app.api.seo._seo_site',new=AsyncMock(return_value=SimpleNamespace(canonical_domain='brand.example'))),patch('app.api.seo.import_candidates',new=AsyncMock()) as write:
         with pytest.raises(HTTPException) as exc:asyncio.run(import_backlink_file(1,2,False,upload,session,ctx))
         assert exc.value.status_code==422
@@ -118,7 +118,7 @@ def test_index_database_reservation_prevents_concurrent_and_failed_retries():
                 entered.set()
                 await release.wait()
                 raise ValueError('模拟网络失败')
-            ctx=SimpleNamespace(ensure_tenant=lambda _:None)
+            ctx=SimpleNamespace(ensure_tenant=lambda _:None, user_id=7)
             req=BacklinkScope(tenant_id=7,site_id=9)
             with patch('app.api.seo._seo_site',new=AsyncMock()), patch('app.api.seo.index_status',return_value={'configured':True}), patch('app.api.seo.fetch_index_candidates',new=AsyncMock(side_effect=provider)) as fetch:
                 async with sessions() as first, sessions() as second:
@@ -144,3 +144,32 @@ def test_index_database_reservation_prevents_concurrent_and_failed_retries():
 def test_csv_accepts_utf16_export():
     value=parse_backlink_csv('来源页面,目标页面,锚文本\nhttps://media.example/a,https://brand.example/a,品牌'.encode('utf-16'),'brand.example')
     assert value['items'][0]['anchor_text']=='品牌'
+
+
+@pytest.mark.parametrize('body,state', [
+    ({'status_code':40501},'error'),
+    ({'status_code':20000,'tasks':[{'status_code':40501}]},'error'),
+    ({'status_code':20000,'tasks':[{'status_code':20000,'result':[{'items':None}]}]},'succeeded'),
+    ({'status_code':20000,'tasks':[{'status_code':20000,'result':[{'items':{}}]}]},'unknown'),
+    ({'status_code':20000,'tasks':None},'unknown'),
+    ([], 'unknown'),
+])
+def test_index_supplier_result_classification(body,state):
+    from app.seo_backlink_sources import classify_index_response
+    assert classify_index_response(body)==state
+
+
+def test_unwritable_ledger_prevents_backlink_provider_request(monkeypatch):
+    from app import api_metering as meter
+    monkeypatch.setenv('API_METERING_ENABLED','true');monkeypatch.setenv('API_CONTROLS_ENABLED','false')
+    monkeypatch.setattr(meter,'_write',AsyncMock(side_effect=meter.MeteringUnavailable('unavailable')))
+    requests=[]
+    def provider(request):
+        requests.append(request)
+        return httpx.Response(200,json={})
+    original=httpx.AsyncClient
+    with patch('app.seo_backlink_sources.get_settings',return_value=SimpleNamespace(seo_backlink_index_enabled=True,
+            seo_dataforseo_login='synthetic',seo_dataforseo_password='synthetic')), \
+         patch('app.seo_backlink_sources.httpx.AsyncClient',side_effect=lambda **kw:original(transport=httpx.MockTransport(provider),**kw)):
+        with pytest.raises(meter.MeteringUnavailable): asyncio.run(fetch_index_candidates('example.com'))
+    assert not requests

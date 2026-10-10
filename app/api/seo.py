@@ -671,7 +671,7 @@ async def _keyword_for_update(
             SeoKeywordAsset.id == keyword_id,
             SeoKeywordAsset.tenant_id == tenant_id,
         )
-        .with_for_update()
+        .with_for_update().execution_options(populate_existing=True)
     )
     if not row:
         raise HTTPException(404, "SEO 关键词不存在")
@@ -1671,11 +1671,16 @@ async def delete_seo_keyword(
     tenant_id: int,
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_scoped_auth),
+    site_id: PositiveInt | None = None,
 ) -> dict[str, Any]:
     ctx.ensure_tenant(tenant_id)
     if not ctx.can_edit("seo.keywords"):
         raise HTTPException(403, "无权删除 SEO 关键词")
     row = await _keyword_for_update(session, keyword_id, tenant_id)
+    if site_id is not None:
+        if row.site_id != site_id:
+            raise HTTPException(404, "当前网站下不存在该关键词，请刷新后核对")
+        await _seo_site(session, tenant_id, site_id, require_active=True)
     await _require_resource_operational_site(session, tenant_id, row.site_id)
     try:
         # JSON references have no FK: lock and clean them in the same transaction.
@@ -10243,6 +10248,9 @@ async def backlink_index_status(tenant_id: int, site_id: int, session: AsyncSess
 
 @router.post("/backlinks/query-index")
 async def query_backlink_index(req: BacklinkScope, session: AsyncSession = Depends(get_session), ctx: AuthContext = Depends(require_scoped_auth)):
+    from app.api_controls import ControlDenied
+    from app.api_metering import MeteringUnavailable
+    from app.seo_backlink_sources import backlink_index_scope, BacklinkIndexUnknown
     ctx.ensure_tenant(req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
     if not index_status()["configured"]:
@@ -10262,18 +10270,34 @@ async def query_backlink_index(req: BacklinkScope, session: AsyncSession = Depen
     domain = site.canonical_domain
     await session.commit()  # Durable reservation survives uncertain provider/network outcomes.
     try:
-        result = await fetch_index_candidates(domain)
+        with backlink_index_scope(req.tenant_id, req.site_id, ctx.user_id, claim['request_id']):
+            result = await fetch_index_candidates(domain)
         site = await session.get(SeoSite, req.site_id, with_for_update=True, populate_existing=True)
         if not site or site.tenant_id != req.tenant_id or site.canonical_domain != domain or ((site.site_settings or {}).get("backlink_index") or {}).get("request_id") != claim["request_id"]:
             raise HTTPException(409, "网站或查询任务已变化，未写入过期结果")
         imported = await import_candidates(session, req.tenant_id, req.site_id, result["items"], "dataforseo_index")
         outcome = {**claim, **imported, "received":len(result["items"]), "rejected":result["rejected"], "state":"completed"}
+    except ControlDenied:
+        # No provider request was sent. Restore the daily slot only if this is
+        # still our claim; never erase a newer request or consume a paid quota.
+        await session.rollback()
+        site = await session.get(SeoSite, req.site_id, with_for_update=True, populate_existing=True)
+        if site and site.tenant_id == req.tenant_id and ((site.site_settings or {}).get('backlink_index') or {}).get('request_id') == claim['request_id']:
+            restored = dict(site.site_settings or {})
+            if previous:
+                restored['backlink_index'] = previous
+            else:
+                restored.pop('backlink_index', None)
+            site.site_settings = restored
+            await session.commit()
+        raise
     except HTTPException:
         await session.rollback()
         raise
     except Exception as exc:
         await session.rollback()
-        outcome = {**claim, "state":"failed", "message":str(exc) if isinstance(exc, ValueError) else "索引查询未完成，请检查服务状态；未自动重试"}
+        outcome = {**claim, "state":"unknown" if isinstance(exc, (BacklinkIndexUnknown, MeteringUnavailable)) else "failed",
+                   "message":str(exc) if isinstance(exc, ValueError) else "索引查询未完成，请检查服务状态；未自动重试"}
     site = await session.get(SeoSite, req.site_id, with_for_update=True, populate_existing=True)
     if not site or site.tenant_id != req.tenant_id or ((site.site_settings or {}).get("backlink_index") or {}).get("request_id") != claim["request_id"]:
         raise HTTPException(409, "查询任务已变化，未覆盖较新的结果")

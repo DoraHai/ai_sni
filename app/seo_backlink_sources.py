@@ -3,10 +3,12 @@ import csv
 import io
 import ipaddress
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 import httpx
+from app.api_metering import MeterScope, scope, metered_request
 from app.config import get_settings
 from app.seo_backlinks import belongs_to_site
 from app.seo_serp import canonical_url
@@ -109,6 +111,43 @@ def index_status():
             "message": "单次最多 100 条供应商索引候选，每个网站每日最多查询一次；供应商按调用计费。" if ready else "未启用外链索引服务；可先导入 CSV 或扫描来源页面。"}
 
 
+class BacklinkIndexUnknown(ValueError):
+    """The provider may have handled the paid request; do not automatically retry."""
+
+
+@contextmanager
+def backlink_index_scope(tenant_id, site_id, user_id, request_id):
+    """Only called after the endpoint has authorized and reserved this site."""
+    token = scope.set(MeterScope(tenant_id=tenant_id, user_id=user_id,
+        origin='interactive' if user_id is not None else 'system', module='seo',
+        operation='seo.backlink_index', job_ref=f'site:{site_id}:backlink:{request_id}'))
+    try:
+        yield
+    finally:
+        scope.reset(token)
+
+
+def classify_index_response(body):
+    if not isinstance(body, dict):
+        return 'unknown'
+    if body.get('status_code') is not None and body['status_code'] != 20000:
+        return 'error'
+    tasks = body.get('tasks')
+    if body.get('status_code') != 20000 or not isinstance(tasks, list) or len(tasks) != 1 or not isinstance(tasks[0], dict):
+        return 'unknown'
+    task = tasks[0]
+    if task.get('status_code') is not None and task['status_code'] != 20000:
+        return 'error'
+    results = task.get('result')
+    if task.get('status_code') != 20000 or not isinstance(results, list) or len(results) != 1 or not isinstance(results[0], dict):
+        return 'unknown'
+    records = results[0].get('items')
+    # DataForSEO uses null for a successful empty item set.
+    if 'items' in results[0] and records is None:
+        return 'succeeded'
+    return 'succeeded' if isinstance(records, list) and len(records) <= 100 else 'unknown'
+
+
 async def fetch_index_candidates(domain):
     if not index_status()["configured"]:
         raise ValueError("外链索引服务未启用或未配置凭据")
@@ -116,11 +155,17 @@ async def fetch_index_candidates(domain):
     # Fixed official origin; never send provider credentials to a configurable mirror.
     async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
         try:
-            response = await client.post("https://api.dataforseo.com/v3/backlinks/backlinks/live",
+            response = await metered_request(client, 'post', "https://api.dataforseo.com/v3/backlinks/backlinks/live",
+                provider='dataforseo', operation='seo.backlink_index', classify_response=classify_index_response,
                 auth=(settings.seo_dataforseo_login, settings.seo_dataforseo_password),
                 json=[{"target": domain, "limit": 100, "mode": "one_per_domain", "backlinks_status_type": "live"}])
             response.raise_for_status()
-            body = response.json()
+            try:
+                body = response.json()
+            except ValueError as exc:
+                raise BacklinkIndexUnknown('外链索引响应无法解析，已保留查询记录；未自动重试') from exc
+            if classify_index_response(body) == 'unknown':
+                raise BacklinkIndexUnknown('外链索引返回结果不明，已保留查询记录，请核对供应商结果；未自动重试')
             tasks = body.get("tasks") or []
             if body.get("status_code") != 20000 or len(tasks) != 1 or tasks[0].get("status_code") != 20000:
                 code = tasks[0].get("status_code") if tasks else body.get("status_code")
@@ -138,7 +183,9 @@ async def fetch_index_candidates(domain):
                 except (ValueError, AttributeError):
                     rejected += 1
             return {"items":items,"rejected":rejected}
-        except (httpx.HTTPError, TypeError, AttributeError) as exc:
+        except (httpx.RequestError, TypeError, AttributeError) as exc:
+            raise BacklinkIndexUnknown('外链索引请求结果不明，未自动重试；请核对供应商结果') from exc
+        except httpx.HTTPStatusError as exc:
             raise ValueError("外链索引请求失败，未自动重试；可导入供应商导出的 CSV") from exc
 
 

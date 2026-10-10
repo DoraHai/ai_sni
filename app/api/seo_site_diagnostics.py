@@ -1,12 +1,15 @@
 """SEO-only diagnostic review; all writes are local, append-only intent records."""
 
 from collections import defaultdict
+import hashlib
+import json
 from datetime import datetime, timezone, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, PositiveInt, field_validator
+from pydantic import BaseModel, Field, PositiveInt, field_validator, model_validator
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.seo_demo_source import (
@@ -125,7 +128,7 @@ async def get_image_evidence(
 
 
 def image_review_payload(row):
-    return {
+    payload = {
         "id": row.id, "snapshot_id": row.snapshot_id, "position": row.position,
         "source_url": row.source_url, "observed_alt_state": row.observed_alt_state,
         "decision": row.decision, "alt_suggestion": row.alt_suggestion,
@@ -133,6 +136,28 @@ def image_review_payload(row):
         "actor_id": row.actor_id, "actor_name": row.actor_name,
         "reviewed_at": checked_iso(row.reviewed_at), "updated_at": checked_iso(row.updated_at),
     }
+    return {**payload, "version": _image_version(payload)}
+
+
+def _image_version(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
+        separators=(',', ':')).encode()).hexdigest()
+
+
+def _approved_image_version(snapshot_id, reviews):
+    return _image_version([snapshot_id, sorted(
+        (row.id, image_review_payload(row)['version']) for row in reviews if row.review_status == 'approved')])
+
+
+def _reuse_image_version(target, plan):
+    return _image_version([target.id, sorted(
+        (candidate['position'], prior.id, image_review_payload(prior)['version'], page.id, page.url, snapshot.id)
+        for candidate, prior, page, snapshot in plan['reusable']),
+        plan['skipped_existing'], plan['skipped_ambiguous']])
+
+
+def _image_version_conflict():
+    return HTTPException(409, "图片整改内容已更新，请重新读取并核对后提交")
 
 
 def _image_candidate_payload(page, snapshot, candidate, review):
@@ -242,7 +267,7 @@ async def _page_and_latest_snapshot(session, tenant_id, site_id, page_id, *, loc
     page_query = select(SeoSitePage).where(
         SeoSitePage.id == page_id, SeoSitePage.tenant_id == tenant_id, SeoSitePage.site_id == site_id,
     )
-    page = await session.scalar(page_query.with_for_update() if lock_page else page_query)
+    page = await session.scalar(page_query.with_for_update().execution_options(populate_existing=True) if lock_page else page_query)
     if page is None:
         raise HTTPException(404, "页面不存在")
     snapshot = await session.scalar(select(SeoPageSnapshot).where(
@@ -334,6 +359,7 @@ async def list_image_remediation_history(
             "saved_count": len(saved),
             "approved_count": sum(row.review_status == "approved" for row in saved),
             "draft_count": sum(row.review_status == "draft" for row in saved),
+            "approved_version": _approved_image_version(snapshot.id, saved),
             "is_current": bool(current and current.id == snapshot.id),
         })
     return {
@@ -349,11 +375,18 @@ class ImageAltReviewUpdate(BaseModel):
     page_id: PositiveInt
     expected_snapshot_id: PositiveInt
     expected_review_id: PositiveInt | None
+    expected_review_version: str | None = Field(..., pattern=r"^[0-9a-f]{64}$")
     position: PositiveInt
     decision: Literal["undecided", "decorative", "informative"]
     alt_suggestion: str | None = Field(None, max_length=300)
     note: str | None = Field(None, max_length=1000)
     review_status: Literal["draft", "approved"] = "draft"
+
+    @model_validator(mode='after')
+    def matching_precondition(self):
+        if (self.expected_review_id is None) != (self.expected_review_version is None):
+            raise ValueError('新建须明确提交空版本，更新须提交读取时的审核版本')
+        return self
 
     @field_validator("alt_suggestion", "note")
     @classmethod
@@ -366,6 +399,7 @@ class ImageAltAiDraftSelection(BaseModel):
     expected_snapshot_id: PositiveInt
     position: PositiveInt
     expected_review_id: None
+    expected_review_version: None
 
 
 class ImageAltAiDraftRequest(BaseModel):
@@ -387,7 +421,7 @@ async def _ai_draft_candidates(session, req, *, lock_pages=False):
     resolved = []
     pages = {}
     snapshots = {}
-    for selected in req.items:
+    for selected in sorted(req.items, key=lambda item: (item.page_id, item.position)):
         if selected.expected_review_id is not None:
             continue
         if selected.page_id not in pages:
@@ -509,9 +543,14 @@ async def save_image_remediation(
     row = await session.scalar(select(SeoImageAltReview).where(
         SeoImageAltReview.snapshot_id == snapshot.id,
         SeoImageAltReview.position == req.position,
-    ).with_for_update())
-    if (row.id if row else None) != req.expected_review_id:
-        raise HTTPException(409, "图片整改记录已被其他操作更新，请刷新后重试")
+    ).with_for_update().execution_options(populate_existing=True))
+    if ((row.id if row else None) != req.expected_review_id
+            or (image_review_payload(row)['version'] if row else None) != req.expected_review_version):
+        raise _image_version_conflict()
+    now = datetime.now(timezone.utc)
+    if row is not None:
+        previous_time = row.updated_at.replace(tzinfo=timezone.utc) if row.updated_at.tzinfo is None else row.updated_at
+        now = max(now, previous_time + timedelta(microseconds=1))
     values = {
         "tenant_id": req.tenant_id, "site_id": req.site_id, "page_id": req.page_id,
         "snapshot_id": snapshot.id, "position": req.position,
@@ -519,7 +558,7 @@ async def save_image_remediation(
         "observed_alt_state": observed_state, "decision": req.decision,
         "alt_suggestion": suggestion, "note": req.note, "review_status": req.review_status,
         "actor_id": ctx.user_id, "actor_name": ctx.username,
-        "reviewed_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
+        "reviewed_at": now, "updated_at": now,
     }
     if row is None:
         row = SeoImageAltReview(**values)
@@ -540,6 +579,7 @@ class ImageAltReviewCopy(BaseModel):
     page_id: PositiveInt
     expected_snapshot_id: PositiveInt
     source_snapshot_id: PositiveInt
+    expected_source_version: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class ImageAltReviewReuse(BaseModel):
@@ -547,6 +587,7 @@ class ImageAltReviewReuse(BaseModel):
     site_id: PositiveInt
     page_id: PositiveInt
     expected_snapshot_id: PositiveInt
+    expected_reuse_version: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 _IMAGE_FINGERPRINT_FIELDS = (
@@ -618,14 +659,25 @@ async def _cross_page_reuse_plan(session, tenant_id, site_id, page_id, target, *
         }
 
     target_urls = {fingerprint[0] for fingerprint in target_candidates}
-    approved = list(await session.scalars(select(SeoImageAltReview).where(
+    approved_query = select(SeoImageAltReview).where(
         SeoImageAltReview.tenant_id == tenant_id,
         SeoImageAltReview.site_id == site_id,
         SeoImageAltReview.page_id != page_id,
         SeoImageAltReview.source_url.in_(target_urls),
         SeoImageAltReview.review_status == "approved",
         SeoImageAltReview.decision.in_(("decorative", "informative")),
-    ).order_by(SeoImageAltReview.updated_at.desc(), SeoImageAltReview.id.desc())))
+    ).order_by(SeoImageAltReview.updated_at.desc(), SeoImageAltReview.id.desc())
+    # Target page is already locked. Do not wait on another page's review:
+    # concurrent cross-page reuse in the opposite direction must not deadlock.
+    if lock_existing:
+        approved_query = approved_query.with_for_update(nowait=True).execution_options(populate_existing=True)
+    try:
+        approved = list(await session.scalars(approved_query))
+    except DBAPIError as exc:
+        if getattr(exc.orig, 'sqlstate', None) == '55P03':
+            await session.rollback()
+            raise _image_version_conflict() from None
+        raise
     snapshot_ids = {row.snapshot_id for row in approved}
     page_ids = {row.page_id for row in approved}
     snapshots = list(await session.scalars(select(SeoPageSnapshot).where(
@@ -736,6 +788,8 @@ async def copy_image_remediation(
         SeoImageAltReview.review_status == "approved",
         SeoImageAltReview.decision.in_(("decorative", "informative")),
     ).order_by(SeoImageAltReview.position)))
+    if _approved_image_version(source.id, approved) != req.expected_source_version:
+        raise _image_version_conflict()
     existing = list(await session.scalars(select(SeoImageAltReview).where(
         SeoImageAltReview.tenant_id == req.tenant_id,
         SeoImageAltReview.site_id == req.site_id,
@@ -810,6 +864,7 @@ async def preview_cross_page_image_remediation_reuse(
     plan = await _cross_page_reuse_plan(session, tenant_id, site_id, page_id, target)
     return {
         "target_snapshot_id": target.id,
+        "reuse_version": _reuse_image_version(target, plan),
         "eligible_count": len(plan["reusable"]),
         "source_page_count": len({row[2].id for row in plan["reusable"]}),
         "skipped_existing": plan["skipped_existing"],
@@ -833,6 +888,8 @@ async def reuse_cross_page_image_remediation(
         raise HTTPException(409, "当前图片快照没有可审核证据")
     plan = await _cross_page_reuse_plan(
         session, req.tenant_id, req.site_id, req.page_id, target, lock_existing=True)
+    if _reuse_image_version(target, plan) != req.expected_reuse_version:
+        raise _image_version_conflict()
     now = datetime.now(timezone.utc)
     copied_positions = []
     source_page_ids = set()
