@@ -23,7 +23,8 @@ from app.security.auth import AuthContext, require_auth
 from app.api_cost_summary import read_api_costs
 from app.api_controls import read_controls, mutate, enabled as controls_enabled, ControlConflict
 from app.platform_history import parse_query, read_history, export_csv
-from app.platform_operations import (alert_identity, attach_alert_states, provider_health,
+from app.platform_call_monitor import read_call_monitor, monitor_alerts
+from app.platform_operations import (alert_identity, attach_alert_states,
     read_suppliers, read_backup_status, mutate_operation)
 
 
@@ -163,8 +164,9 @@ async def build_snapshot(session: AsyncSession) -> dict:
             target = budget['target']
             alerts.append(alert_identity({'kind': 'api_budget', 'severity': 'warning',
                            'tenant_id': int(target.split(':')[1]) if target.startswith('tenant:') else None,
-                           'message': f"API 预算 {target}：" + {'warning': '接近上限', 'blocked': '已达到上限，新请求暂停',
-                                                               'unknown': '存在未知费用，金额预算暂停新请求'}[budget['status']]},
+                           'message': f"API 预算 {target}：" + ({'warning': '接近上限', 'blocked': '已达到上限，新请求暂停',
+                                                               'unknown': '存在未知费用，金额预算暂停新请求'}[budget['status']]
+                                if controls['state'] == 'enabled' else '配置尚未启用，不会拦截请求')},
                 'budget:' + target, [budget['status'], budget['revision'], budget['usage']]))
     for row in sources["baidu_oauth_grants"]["rows"]:
         expiry = row["expires_at"]
@@ -184,7 +186,9 @@ async def build_snapshot(session: AsyncSession) -> dict:
                 alerts.append(alert_identity({"kind": "task_failed", "severity": "error", "tenant_id": row["tenant_id"],
                                "message": "GEO 异步任务失败" if name == "geo_async_jobs" else "SEO AI 操作失败"},
                                name + ':' + str(row['id']), str(row['created_at'])))
-    health = await provider_health(session)
+    monitor = await read_call_monitor(session)
+    health = monitor['providers']
+    alerts.extend(monitor_alerts(monitor, alert_identity))
     if calls["failed"]:
         failures = [r['last_failure'] for r in health if r['last_failure']]
         if not failures:
@@ -194,7 +198,7 @@ async def build_snapshot(session: AsyncSession) -> dict:
                        "message": f'近 24 小时已记录 {calls["failed"]} 次接口异常'},
                        'api-errors:' + today, str(max(failures)) if failures else 'recorded-errors'))
     for row in health:
-        if row['failed'] >= 3 and row['failed'] / row['calls'] >= .2:
+        if row['calls'] and row['failed'] >= 3 and row['failed'] / row['calls'] >= .2:
             alerts.append(alert_identity({'kind': 'provider_errors', 'severity': 'error', 'tenant_id': None,
                 'message': f"{row['module'].upper()} / {row['provider']} 近 24 小时 {row['calls']} 次调用中 {row['failed']} 次异常"},
                 f"provider:{row['module']}:{row['provider']}", str(row['last_failure'])))
@@ -219,7 +223,7 @@ async def build_snapshot(session: AsyncSession) -> dict:
     return {
         "schema": 1, "generated_at": now.isoformat(), "mode": "read_only_inventory",
         "sources": sources, "calls": calls, "alerts": alerts,
-        "operations": {"state": handling_state, "provider_health": health, "suppliers": suppliers, "backup": backup},
+        "operations": {"state": handling_state, "provider_health": health, "call_monitor": monitor, "suppliers": suppliers, "backup": backup},
         "api_costs": api_costs, "controls": controls,
         "costs": {"state": "metering_incomplete", "date": today, "currency": "CNY",
                   "actual_amount": None, "estimated_amount": None,

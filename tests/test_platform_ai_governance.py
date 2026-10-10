@@ -53,6 +53,8 @@ class FakeSession:
             if name == ".api_usage_events":
                 return self.metering
             return self.controls
+        if "information_schema.columns" in sql:
+            return self.controls
         raise AssertionError(sql)
 
     async def execute(self, statement, params=None):
@@ -62,7 +64,7 @@ class FakeSession:
         if "FROM api_control_settings" in sql:
             return Rows([{
                 "key": "budget:global", "kind": "budget", "revision": 3,
-                "value": {"daily_calls": 100, "daily_cny": "20", "private": "DROP"},
+                "value": {"daily_calls": 100, "daily_cny": "20", "max_concurrent": 2, "private": "DROP"},
             }]) if self.control_rows else Rows([])
         if "FROM api_control_bindings" in sql:
             return Rows([{
@@ -214,11 +216,16 @@ def test_effective_platform_limit_and_resolved_incident_are_preserved(monkeypatc
     daily_budget = next(limit for limit in seo["limits"] if limit.get("key") == "global.daily_cny")
     assert daily_calls == {
         "kind": "calls", "key": "global.daily_calls", "scope": "global",
-        "state": "enabled", "value": 100, "source": "api_control_settings",
+        "state": "runtime_unverified", "value": 100, "source": "api_control_settings",
     }
     assert daily_budget["kind"] == "budget"
-    assert daily_budget["state"] == "enabled"
+    assert daily_budget["state"] == "runtime_unverified"
     assert daily_budget["value"] == "20"
+    assert seo['controls']['runtime_enabled'] is None
+    sem = next(item for item in result['modules'] if item['module'] == 'sem')
+    assert sem['controls']['runtime_enabled'] is True
+    concurrency = next(limit for limit in sem['limits'] if limit.get('key') == 'global.max_concurrent')
+    assert concurrency['state'] == 'enabled' and concurrency['kind'] == 'concurrency' and concurrency['value'] == 2
     assert result["incidents"]["resolved"] == 1
     assert result["incidents"]["in_progress"] == 1
 
