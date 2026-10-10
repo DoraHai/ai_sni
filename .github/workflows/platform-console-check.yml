@@ -151,7 +151,7 @@ jobs:
                                   ('test_platform_call_monitor', 2),
                                   ('test_api_usage_review_basis', 8),
                                   ('test_platform_usage_review', 25),
-                                  ('test_platform_worker_health', 15)]:
+                                  ('test_platform_worker_health', 27)]:
               selected = [case for case in cases if case.get('classname', '').rsplit('.', 1)[-1] == module]
               skipped = sum(case.find('skipped') is not None for case in selected)
               failed = sum(case.find('failure') is not None or case.find('error') is not None for case in selected)

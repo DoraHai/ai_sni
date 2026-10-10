@@ -115,3 +115,36 @@ async def read_workers(authorization):
     connected = sum(row['transport_state'] == 'available' for row in result['rows'])
     result['state'] = 'connected' if connected == len(DESTINATIONS) else 'partial' if connected else 'unavailable'
     return result
+
+
+def worker_alerts(workers, identity, now=None):
+    """Stable incident signals; observation timestamps never reopen an alert."""
+    now = now or datetime.now(timezone.utc)
+    alerts = []
+    for row in workers.get('rows', []):
+        module = row['module']
+        label = module.upper()
+        transport = row['transport_state']
+        def add(kind, message, signal, severity='warning'):
+            alerts.append(identity({'kind':kind,'severity':severity,'tenant_id':None,
+                'message':message},'onsite-health:'+module+':'+kind,signal))
+        if transport in {'timeout','unavailable','unauthorized','invalid'}:
+            add('worker_health_read',label+' 监控读取失败，执行器与队列证据未知',transport)
+            continue
+        if transport!='available':
+            continue
+        worker,queue = row['worker'],row['queue']
+        if worker['verified'] and worker['scope']=='this_process' and worker['state']=='degraded':
+            add('worker_execution',label+' 响应进程的站内 AI 执行器出现异常，证据仅覆盖本进程',
+                [worker['scope'],worker['last_error_code'],worker['last_attempted'],worker['last_completed']],'error')
+        if queue['state']!='available':
+            continue
+        for name,threshold,kind,message in [
+            ('queued',600,'onsite_queue_stale',' 站内 AI 队列等待超过 10 分钟，请核查执行器与任务'),
+            ('running',180,'onsite_running_stale',' 站内 AI 任务运行超过 3 分钟，结果待核查，请勿直接重试')]:
+            oldest = queue['oldest_'+name+'_at']
+            if queue[name]>0 and oldest and (now-datetime.fromisoformat(oldest)).total_seconds()>threshold:
+                add(kind,label+message,[queue[name],oldest])
+        if queue['unknown']>0:
+            add('onsite_business_unknown',label+' 有 '+str(queue['unknown'])+' 个站内 AI 任务业务结果待顾问核实；费用请另查调用台账',queue['unknown'])
+    return alerts

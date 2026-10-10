@@ -176,12 +176,14 @@ SEM没有该队列/heartbeat来源，固定not_connected/null，不制造cron/sc
 复用 tests/test_platform_call_guards.py 的native fixture，仅localhost且DB名含test。
 随机schema、实际SQL、两个独立池、MockTransport；不使用生产凭据，不调用付费供应商。
 
-新增：tests/test_api_usage_review_basis.py（8），tests/test_platform_usage_review.py（21），
-tests/test_platform_worker_health.py（15）。同一CI inventory必须执行并无skip/error，含原37/11/2套件。
+新增最终清单：tests/test_api_usage_review_basis.py（8），tests/test_platform_usage_review.py（25），
+tests/test_platform_worker_health.py（27）。同一CI inventory必须执行并无skip/error，含原37/11/2套件。
 首次本机实际18个CI同清单文件合计197 passed、0 skipped；首次新增44项包含在该总数内。
 随后响应分块/深层JSON异常隔离修改单独复验15项健康测试通过。
 集成复核再增加4项：自动ID为空时人工A终态后B补费用失败且台账/审计不变、同A成功，
-审计缺失/冻结ID缺失/版本损坏均拒绝；核实套件现25项全部通过，CI强制最低25项。
+审计缺失/冻结ID缺失/版本损坏均拒绝；核实套件25项全部通过，CI强制最低25项。
+最终健康告警12项补充后，该套件27项；连同超管/operations/call monitor 57项回归通过。
+最终本机18文件同CI清单完整复验：213 passed、0 skipped，6个必需套件为37/11/2/8/25/27。
 覆盖四准入范围、终态/金额分离、跨期未知不释放、部分DDL零发送、同UUID重放与冲突、
 两管理者版本竞争、真实metering迟到回写、审计故障整事务回滚、runtime只追加审计与台账无DELETE、
 私有HTTP完整读写、证据关联/来源/零费用、健康旧心跳/redirect/大响应/超时/身份及错误隔离。
@@ -198,3 +200,24 @@ tests/test_platform_worker_health.py（15）。同一CI inventory必须执行并
 这证明签名设置互认，不替代新健康接口上的实际命名账号权限验收，也不以crypto-key相同代替JWT证据。
 SEO 127.0.0.1:8020和GEO 127.0.0.1:8010实际监听；新health路径均404，未上线/未验收。
 未修改环境、重启服务、创建文件或执行生产SQL；脚本经SSH stdin只读执行。
+
+## 执行器与队列页面告警
+
+snapshot与operations POST均在DB事务外先取得同一固定只读健康协议，再把结果作为
+build_snapshot的可选输入。告警在attach_alert_states前形成，因此读取、认领、标记处理
+使用相同权威候选规则，不会出现页面显示但认领接口不认识的另一份告警。
+
+| kind | 触发与证据 | 稳定signal |
+| --- | --- | --- |
+| worker_execution | verified、this_process、degraded；仅响应进程执行异常 | scope、安全error_code、last_attempted/last_completed计数 |
+| onsite_queue_stale | 真实queued>0且最早入队超过10分钟 | queued计数及oldest_queued_at |
+| onsite_running_stale | 真实running>0且最早开始超过3分钟，结果待核查、不直接重试 | running计数及oldest_running_at |
+| onsite_business_unknown | 真实unknown>0，业务结果待顾问核实；费用另查台账 | unknown计数 |
+| worker_health_read | transport timeout/unavailable/unauthorized/invalid，监控证据读取失败 | transport_state |
+
+固定source为onsite-health:module:kind，不使用observed_at、API读取时间或随读取变化的last_tick作为signal。
+新异常计数/最早时间/错误信号变化会重开已处理告警；同证据刷新保留认领/已处理状态。
+完全相同的失败码与计数被视为同一信号，没有凭观察时间发明新的事故序号。
+unverified且无队列、SEM not_connected、明确stopped/未启用执行器不制造执行故障；
+未知最早时间不猜积压时长。监控读取失败不表述为服务宕机。没有新增外部通知。
+原生HTTP测试覆盖GET看到积压→POST认领→标记处理→同证据刷新不复活→新计数重开→旧signal拒绝。

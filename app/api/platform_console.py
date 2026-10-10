@@ -131,7 +131,7 @@ async def read_usage(session: AsyncSession, catalog: dict, today: str) -> list[d
             for row in rows]
 
 
-async def build_snapshot(session: AsyncSession) -> dict:
+async def build_snapshot(session: AsyncSession, workers=None) -> dict:
     from app.platform_usage_review import status as review_status
     catalog = await table_catalog(session)
     now = datetime.now(timezone.utc)
@@ -188,6 +188,10 @@ async def build_snapshot(session: AsyncSession) -> dict:
                                "message": "GEO 异步任务失败" if name == "geo_async_jobs" else "SEO AI 操作失败"},
                                name + ':' + str(row['id']), str(row['created_at'])))
     monitor = await read_call_monitor(session)
+    if workers is not None:
+        from app.platform_worker_health import worker_alerts
+        monitor['workers'] = workers
+        alerts.extend(worker_alerts(workers,alert_identity,now))
     health = monitor['providers']
     alerts.extend(monitor_alerts(monitor, alert_identity))
     if calls["failed"]:
@@ -245,13 +249,12 @@ async def console_snapshot(response: Response, request: Request = None) -> dict:
     # Separate bounded read-only transaction; auth dependency has its own session.
     try:
         async with asyncio.timeout(12):
+            from app.platform_worker_health import read_workers
+            workers = await read_workers(request.headers.get('authorization') if request is not None else None)
             async with _read_slots, async_session_factory() as session:
                 await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
                 await session.execute(text("SET LOCAL statement_timeout = '3000ms'"))
-                result = await build_snapshot(session)
-            from app.platform_worker_health import read_workers
-            result['operations']['call_monitor']['workers'] = await read_workers(
-                request.headers.get('authorization') if request is not None else None)
+                result = await build_snapshot(session,workers)
             return result
     except TimeoutError:
         raise HTTPException(503, "平台盘点读取超时，请稍后重试") from None
@@ -395,8 +398,10 @@ async def console_operation(request: Request, response: Response, ctx: AuthConte
     except Exception:
         raise HTTPException(422, '操作请求格式无效') from None
     try:
+        from app.platform_worker_health import read_workers
+        workers = await read_workers(request.headers.get('authorization'))
         async with asyncio.timeout(10), async_session_factory() as session:
-            snapshot = await build_snapshot(session)
+            snapshot = await build_snapshot(session,workers)
             return await mutate_operation(session, ctx.user_id, data, snapshot['alerts'])
     except ControlConflict as exc:
         raise HTTPException(409, str(exc)) from None
