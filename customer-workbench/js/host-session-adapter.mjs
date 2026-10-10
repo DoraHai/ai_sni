@@ -4,6 +4,7 @@ const routes=[
   ['GET',/^\/api\/v1\/seo\/workbench\/onsite-tasks$/,['tenant_id','site_id','before_id'],'site'],
   ['POST',/^\/api\/v1\/seo\/workbench\/onsite-tasks$/,[],'site',['tenant_id','site_id','request_id','work_type','month','keyword_ids','page_ids','owner_name']],
   ['POST',/^\/api\/v1\/seo\/workbench\/onsite-tasks\/[1-9]\d*\/actions$/,[],'site',['tenant_id','site_id','action','expected_revision','items','note','owner_name']],
+  ['POST',/^\/api\/v1\/seo\/workbench\/onsite-tasks\/[1-9]\d*\/ai-proposal$/,[],'site',['tenant_id','site_id','expected_revision','request_id','mode']],
   ['POST',/^\/api\/v1\/seo\/workbench\/assistant\/chat$/,[],'content',['tenant_id','site_id','request_id','message','history','content_id']],
   ['GET',/^\/api\/v1\/seo\/workbench\/content-assets\/[1-9]\d*\/conversation$/,['tenant_id','site_id'],'content'],
   ['GET',/^\/api\/v1\/seo\/workbench\/content-assets\/[1-9]\d*\/conversation\/messages$/,['tenant_id','site_id','limit','before_id'],'content'],
@@ -87,6 +88,7 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
     if(!preflight&&route[3]==='site'&&!['view','edit'].includes(authorized.user.permissions['seo.site']))throw error('PERMISSION_DENIED',403);
     if(!preflight&&route[3]==='keywords'&&!['view','edit'].includes(authorized.user.permissions['seo.keywords']))throw error('PERMISSION_DENIED',403);
     if(!preflight&&route[3]==='keywords'&&method==='DELETE'&&authorized.user.permissions['seo.keywords']!=='edit')throw error('PERMISSION_DENIED',403);
+    if(url.pathname.endsWith('/ai-proposal')&&!['seo.site','seo.content'].every(k=>authorized?.user.permissions[k]==='edit'))throw error('PERMISSION_DENIED',403);
     if(['GET','DELETE'].includes(method)&&options.body!==undefined)throw error('BODY_DENIED');
     if(!['GET','DELETE'].includes(method)){
       let body;try{body=JSON.parse(options.body);}catch{throw error('BODY_DENIED');}

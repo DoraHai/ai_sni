@@ -16,7 +16,8 @@ export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscrib
     if(url.origin!==origin||url.pathname!==path.split('?')[0])fail('ROUTE_DENIED');
     const list=url.pathname==='/api/v1/geo/workbench/onsite-tasks';
     const act=/^\/api\/v1\/geo\/workbench\/onsite-tasks\/[1-9]\d*\/actions$/.test(url.pathname);
-    const allowed=preflight?method==='GET'&&readRoutes.has(url.pathname):identity&&((list&&['GET','POST'].includes(method))||(act&&method==='POST'));
+    const ai=/^\/api\/v1\/geo\/workbench\/onsite-tasks\/[1-9]\d*\/ai-proposal$/.test(url.pathname);
+    const allowed=preflight?method==='GET'&&readRoutes.has(url.pathname):identity&&((list&&['GET','POST'].includes(method))||((act||ai)&&method==='POST'));
     if(!allowed)fail('ROUTE_DENIED');
     const keys=preflight?(url.pathname.endsWith('/projects')?['tenant_id']:[]):method==='GET'?['tenant_id','project_id','before_id']:[];
     for(const name of url.searchParams.keys())if(!keys.includes(name)||url.searchParams.getAll(name).length!==1)fail('QUERY_DENIED');
@@ -25,7 +26,7 @@ export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscrib
     if(method==='GET'&&options.body!==undefined)fail('BODY_DENIED');
     if(method==='POST'){
       let body;try{body=JSON.parse(options.body);}catch{fail('BODY_DENIED');}
-      const fields=act?['tenant_id','project_id','action','expected_revision','items','note','owner_name']:['tenant_id','project_id','request_id','work_type','month','owner_name'];
+      const fields=ai?['tenant_id','project_id','expected_revision','request_id','mode']:act?['tenant_id','project_id','action','expected_revision','items','note','owner_name']:['tenant_id','project_id','request_id','work_type','month','owner_name'];
       if(!body||Array.isArray(body)||Object.keys(body).some(k=>!fields.includes(k)))fail('BODY_DENIED');
       if(body.tenant_id!==s.tenantId||body.project_id!==s.projectId)fail('SCOPE_MISMATCH');
       if(!['geo.assets','geo.content'].every(k=>identity.user.permissions[k]==='edit'))fail('PERMISSION_DENIED',403);

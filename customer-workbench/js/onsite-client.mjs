@@ -1,6 +1,13 @@
 // Versioned onsite writes only follow freshly read, server-granted actions.
+export function onsiteTaskId(search=''){
+  const p=new URLSearchParams(search),values=p.getAll('onsite_task_id');
+  if(!values.length)return null;
+  if(values.length!==1||! /^[1-9]\d*$/.test(values[0]))throw Error('INVALID_ONSITE_TASK');
+  const id=Number(values[0]);if(!Number.isSafeInteger(id)||id>=Number.MAX_SAFE_INTEGER)throw Error('INVALID_ONSITE_TASK');
+  return id;
+}
 export function createOnsiteClient({transport,getContext,module='seo'}) {
-  let rows=new Map(),latest=null;
+  let rows=new Map(),latest=null;const aiRequests=new Map();
   const fail=(code,status)=>{rows.clear();latest=null;throw Object.assign(Error(code),{code,status});};
   function ctx(){const c=getContext();if(!c?.connected)fail('NOT_CONNECTED');return {...c};}
   const stamp=c=>JSON.stringify([c.tenantId,c.siteId,c.projectId,c.userId,c.revision]);
@@ -21,7 +28,7 @@ export function createOnsiteClient({transport,getContext,module='seo'}) {
     rows.set(row.id,{context:stamp(c),row:structuredClone(row)});return row;
   }
   return {
-    invalidate(){rows.clear();latest=null;},
+    invalidate(){rows.clear();latest=null;aiRequests.clear();},
     async list(beforeId=null){const c=ctx(),p=new URLSearchParams(scope(c));if(beforeId)p.set('before_id',beforeId);
       const data=await request(base+'?'+p,'GET',c);
       if(data.module!==module||data.tenant_id!==c.tenantId||data.scope_id!==id(c)||!Array.isArray(data.items)||typeof data.can_create!=='boolean')fail('CONTRACT_MISMATCH');
@@ -32,6 +39,27 @@ export function createOnsiteClient({transport,getContext,module='seo'}) {
       if(!stored||stored.context!==stamp(c)||!stored.row.allowed_actions.includes(action))fail('ACTION_EXPIRED');
       const data=await request(base+'/'+taskId+'/actions','POST',c,{...input,...scope(c),action,expected_revision:stored.row.workflow.revision});
       return validate(data,c);},
+    async propose(taskId,mode='initial'){
+      const c=ctx(),stored=rows.get(taskId);
+      if(!['initial','revise'].includes(mode))fail('AI_MODE_DENIED');
+      if(!stored||stored.context!==stamp(c)||!stored.row.allowed_actions.includes('save_proposal')||
+        stored.row.capabilities?.ai_planning?.enabled!==true||stored.row.capabilities.ai_planning.can_generate!==true||
+        ['running','unknown'].includes(stored.row.workflow.ai_run?.state))
+        fail('AI_PLANNING_UNAVAILABLE');
+      const key=JSON.stringify([stamp(c),taskId,stored.row.workflow.revision,mode]);
+      if(aiRequests.has(key))return aiRequests.get(key);
+      const requestId=crypto.randomUUID();
+      const pending=(async()=>{
+        const data=await request(base+'/'+taskId+'/ai-proposal','POST',c,
+          {...scope(c),expected_revision:stored.row.workflow.revision,request_id:requestId,mode});
+        if(data?.id!==taskId||data.workflow?.ai_run?.request_id!==requestId||
+          !['running','ready','failed','unknown','stale'].includes(data.workflow.ai_run.state))fail('WRITE_OUTCOME_UNKNOWN');
+        return validate(data,c);
+      })();
+      aiRequests.set(key,pending);
+      // Keep the promise for this read version: a duplicate click never pays twice.
+      return pending;
+    },
   };
 }
 
