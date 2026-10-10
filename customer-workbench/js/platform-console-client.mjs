@@ -1,9 +1,10 @@
+import {governanceRoute} from './platform-ai-governance-view.mjs';
 // Separate global-console transport. Customer host allowlists remain unchanged.
 export const platformConsolePath='/customer-workbench/?console=platform';
 export const isPlatformAdmin=user=>Number.isSafeInteger(user?.id)&&user.id>0&&user.tenant_id===null&&
   user.permissions?.['settings.accounts']==='edit'&&user.permissions?.['settings.customers']==='edit';
 const fail=(code,status)=>Object.assign(Error(code),{code,status});
-const routes=new Set(['/api/v1/auth/me','/api/v1/admin/console/snapshot']);
+const routes=new Set(['/api/v1/auth/me','/api/v1/admin/console/snapshot',governanceRoute]);
 const writeRoute='/api/v1/admin/console/controls';
 const operationRoute='/api/v1/admin/console/operations';
 const usageRoute='/api/v1/admin/console/usage';
@@ -57,6 +58,12 @@ export function createPlatformConsoleClient({session,fetchImpl=fetch,onExpired=(
       const {user}=await read('/api/v1/auth/me',true);
       if(user?.id!==identity.id||!isPlatformAdmin(user)){invalidate();throw fail('CONSOLE_FORBIDDEN',403);}
       return read(writeRoute,false,data);
+    },
+    async governance(){
+      const data=await read(governanceRoute);
+      if(data?.schema!==1||!['available','schema_pending'].includes(data.state)||
+        (data.state==='available'&&!Array.isArray(data.modules)))throw fail('CONSOLE_INVALID_GOVERNANCE');
+      return data;
     },
     async usage(filters){return read(usagePath(filters));},
     async exportUsage(filters){
