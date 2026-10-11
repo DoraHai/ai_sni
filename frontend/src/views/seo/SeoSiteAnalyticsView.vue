@@ -91,7 +91,7 @@ watch([currentTenantId, siteId], init); watch(month, load); onMounted(init)
 
 <template>
   <div class="settings">
-    <header><div><h2>数据源与导出设置</h2><p>按网站配置客户分析数据，月度 UV/PV 由手动拉取。缺失数据始终显示“无数据”。</p></div><el-select v-model="siteId" placeholder="选择网站" style="width:240px"><el-option v-for="item in sites" :key="item.id" :label="item.name" :value="item.id" /></el-select></header>
+    <header><div><h2>数据源与导出设置</h2><p>按网站配置客户分析数据，月度 UV/PV 由手动拉取。缺失数据始终显示“无数据”。</p></div><el-select v-model="siteId" placeholder="选择网站" style="width:240px"><el-option v-for="item in sites.filter(site => site.status !== 'archived')" :key="item.id" :label="item.name" :value="item.id" /></el-select></header>
     <template v-if="siteId">
       <el-alert title="客户需提供：百度账号模式的统计站点 ID、API Key、Secret Key，并由客户完成授权；也可提供 Refresh Token。商业账号模式需用户名、站点 ID、数据 API Access Token。GA4 需媒体资源 ID 和服务账号 JSON，并在媒体资源访问管理中将服务账号邮箱添加为查看者。GA4 媒体资源时区建议设为 Asia/Shanghai，以对齐自然月。" type="info" :closable="false" show-icon />
       <div class="cards">

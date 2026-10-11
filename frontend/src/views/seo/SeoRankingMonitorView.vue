@@ -357,7 +357,7 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
       </div>
       <div class="hero-controls">
         <el-select v-model="siteId" class="site-picker" placeholder="选择 SEO 网站">
-          <el-option v-for="site in sites" :key="site.id" :label="site.name || site.canonical_domain" :value="site.id" />
+          <el-option v-for="site in sites.filter(item => item.status !== 'archived')" :key="site.id" :label="site.name || site.canonical_domain" :value="site.id" />
         </el-select>
         <el-select v-model="engine" class="site-picker" placeholder="选择搜索引擎">
           <el-option v-for="item in engines" :key="item.k" :label="engineOptionLabel(item)" :value="item.k" />

@@ -1,4 +1,4 @@
-import { computed, reactive } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { currentTenantId } from '../../store/session'
 
 const SITE_KEY = 'seo_site_id'
@@ -40,3 +40,6 @@ export function clearSeoSiteId() {
   sessionStorage.removeItem(TENANT_KEY)
   sessionStorage.removeItem(SITE_KEY)
 }
+
+export const seoSitesRevision = ref(0)
+export function notifySeoSitesChanged() { seoSitesRevision.value += 1 }

@@ -293,7 +293,7 @@ onUnmounted(() => window.clearInterval(cooldownTimer))
       </div>
       <div class="hero-actions">
         <el-select v-model="siteId" class="site-picker" placeholder="选择 SEO 网站">
-          <el-option v-for="site in sites" :key="site.id" :label="site.name || site.canonical_domain" :value="site.id" />
+          <el-option v-for="site in sites.filter(item => item.status !== 'archived')" :key="site.id" :label="site.name || site.canonical_domain" :value="site.id" />
         </el-select>
         <button v-if="canEdit" class="kw-btn" :disabled="!siteId" @click="dialog = true">＋ 添加竞品</button>
         <button class="kw-btn primary" :disabled="!siteId" @click="load">刷新排名对比</button>

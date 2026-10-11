@@ -379,7 +379,7 @@ onMounted(loadSites)
       </div>
       <div class="page-actions">
         <el-select v-model="siteId" class="content-site-picker" placeholder="选择 SEO 网站">
-          <el-option v-for="site in sites" :key="site.id" :label="site.name || site.canonical_domain" :value="site.id" />
+          <el-option v-for="site in sites.filter(item => item.status !== 'archived')" :key="site.id" :label="site.name || site.canonical_domain" :value="site.id" />
         </el-select>
         <button v-if="mode === 'article' && canEdit" class="ghost-action" type="button" @click="openTemplates">内容模板</button>
         <button v-if="canEdit" class="primary-action" type="button" @click="createByMode">AI 智能生成</button>

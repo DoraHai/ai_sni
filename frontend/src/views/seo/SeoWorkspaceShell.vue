@@ -5,7 +5,7 @@ import { fetchMe } from '../../api/auth'
 import client from '../../api/client'
 import { fetchSeoWorkbenchSites } from '../../api/moduleAssets'
 import { session } from '../../store/session'
-import { clearSeoSiteId, currentSeoSiteId } from './seoSiteContext'
+import { clearSeoSiteId, currentSeoSiteId, seoSitesRevision } from './seoSiteContext'
 import { canRenderSeoRoute, createSeoWorkspaceAccess, reconcileSeoRouteSite } from './seoWorkspaceAccess'
 
 const route = useRoute()
@@ -196,6 +196,7 @@ async function onTenantChange(value) {
 
 watch(() => route.path, () => { mobileOpen.value = false })
 watch(() => session.tenantId, validateCurrentScope, { immediate: true })
+watch(seoSitesRevision, validateCurrentScope)
 watch(() => session.authRevision, validateCurrentScope)
 watch(() => session.tenantListRevision, validateCurrentScope)
 watch(() => route.query.site_id, (value, previous) => {
