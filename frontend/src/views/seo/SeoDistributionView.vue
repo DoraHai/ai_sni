@@ -995,7 +995,7 @@ onMounted(loadSites)
         <p>选择品牌账号，为各平台准备专属稿，填稿发布后统一收回文章链接。</p>
       </div>
       <div class="hero-actions">
-        <el-select v-model="siteId" class="distribution-site-picker" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name||site.canonical_domain" :value="site.id" /></el-select>
+        <el-select v-model="siteId" class="distribution-site-picker" placeholder="选择 SEO 网站"><el-option v-for="site in sites.filter(item => item.status !== 'archived')" :key="site.id" :label="site.name||site.canonical_domain" :value="site.id" /></el-select>
         <input v-if="canEdit" ref="importInput" class="file-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" @change="previewImport">
         <el-button v-if="canEdit" :loading="importing" @click="selectImport">Excel 批量登记</el-button>
         <el-button v-if="canEdit" @click="openManual()">登记发布链接</el-button>

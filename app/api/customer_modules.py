@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -222,7 +222,7 @@ class SeoSiteCreate(BaseModel):
 class SeoSiteUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=120)
     domain: str | None = Field(None, min_length=3, max_length=255)
-    status: str | None = Field(None, pattern="^(active|paused|archived)$")
+    status: str | None = Field(None, pattern="^(active|paused)$")
 
 
 def _site_payload(row: SeoSite) -> dict:
@@ -250,42 +250,6 @@ def _require_seo_asset_permission(ctx: AuthContext, *, edit: bool = False) -> No
 def _require_seo_workbench_site_permission(ctx: AuthContext) -> None:
     if not ctx.can_view("seo.content", "seo.site"):
         raise HTTPException(403, "当前账号没有 SEO 内容或页面查看权限")
-
-
-_SEO_SITE_DEPENDENCIES = (
-    (SeoKeywordAsset, "关键词"),
-    (SeoRankSnapshot, "排名快照"),
-    (SeoSerpResult, "SERP 结果"),
-    (SeoBrandAsset, "品牌资产"),
-    (SeoSitePage, "站内页面"),
-    (SeoContentAsset, "内容资产"),
-    (SeoInternalLink, "内链"),
-    (SeoBacklink, "外链"),
-    (SeoCompetitor, "竞品"),
-    (SeoCompetitorEvent, "竞品动态"),
-    (SeoCrawlRun, "抓取任务"),
-    (SeoPageSnapshot, "页面抓取快照"),
-    (SeoMetricSnapshot, "网站指标快照"),
-)
-
-
-async def _seo_site_delete_blockers(
-    session: AsyncSession, *, tenant_id: int, site_id: int
-) -> dict[str, int]:
-    blockers: dict[str, int] = {}
-    for model, label in _SEO_SITE_DEPENDENCIES:
-        count = int(
-            await session.scalar(
-                select(func.count()).select_from(model).where(
-                    model.tenant_id == tenant_id,
-                    model.site_id == site_id,
-                )
-            )
-            or 0
-        )
-        if count:
-            blockers[label] = count
-    return blockers
 
 
 @seo_sites_router.get("/api/v1/seo/sites", dependencies=[Depends(require_seo_auth)])
@@ -401,26 +365,35 @@ async def update_seo_site(
 async def delete_seo_site(
     site_id: int,
     tenant_id: int,
+    confirm_domain: str = Query(..., min_length=3),
     ctx: AuthContext = Depends(require_seo_auth),
     session: AsyncSession = Depends(get_seo_session),
 ) -> dict:
-    """Delete only an empty SEO site; populated sites must be archived instead."""
+    """Delete this website and its SEO records in one transaction after confirmation."""
     _require_seo_asset_permission(ctx, edit=True)
+    ctx.ensure_tenant(tenant_id)
     await ensure_module_access(session, ctx, tenant_id, "seo")
-    row = await session.get(SeoSite, site_id)
-    if row is None or row.tenant_id != tenant_id:
+    row = await session.scalar(select(SeoSite).where(
+        SeoSite.id == site_id, SeoSite.tenant_id == tenant_id,
+    ).with_for_update())
+    if row is None:
         raise HTTPException(404, "SEO 网站不存在")
-    blockers = await _seo_site_delete_blockers(
-        session, tenant_id=tenant_id, site_id=site_id
-    )
-    if blockers:
-        summary = "、".join(f"{label} {count} 条" for label, count in blockers.items())
-        raise HTTPException(
-            409,
-            f"该网站已有 SEO 数据（{summary}），不能直接删除；请将状态改为归档。",
-        )
-    await session.delete(row)
-    await session.commit()
+    if not isinstance(confirm_domain, str) or confirm_domain != row.canonical_domain:
+        raise HTTPException(409, "网站域名已变化，请刷新后重新确认删除")
+    # Never allow an old database to SET NULL child rows and leave orphaned assets.
+    ready = await session.scalar(text("""
+        SELECT EXISTS (SELECT 1 FROM pg_trigger
+          WHERE tgrelid=to_regclass('seo_sites') AND tgname='trg_seo_site_purge'
+            AND tgenabled='O' AND NOT tgisinternal)
+    """))
+    if not ready:
+        raise HTTPException(503, "网站彻底删除功能尚未完成数据库升级")
+    try:
+        await session.delete(row)
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(409, "删除未完成，所有数据已保留，请稍后重试") from exc
     return {"deleted": True, "site_id": site_id}
 
 

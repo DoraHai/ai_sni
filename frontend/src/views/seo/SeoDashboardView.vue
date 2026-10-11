@@ -308,7 +308,7 @@ onMounted(loadSites)
       <div><h1>SEO 工作台</h1><p>自然搜索运营总览 · {{ engines.find(item => item.k === engine)?.n }}</p></div>
       <div class="command-actions">
         <el-select v-model="siteId" clearable placeholder="选择 SEO 网站" class="site-select">
-          <el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id"><span>{{ site.name }}</span><small>{{ site.canonical_domain }}</small></el-option>
+          <el-option v-for="site in sites.filter(item => item.status !== 'archived')" :key="site.id" :label="site.name" :value="site.id"><span>{{ site.name }}</span><small>{{ site.canonical_domain }}</small></el-option>
         </el-select>
         <el-input v-model="search" clearable placeholder="搜索关键词 / 页面" @keyup.enter="goSearch"><template #prefix>⌕</template></el-input>
         <span class="freshness"><i />{{ updatedLabel }}</span>

@@ -57,7 +57,7 @@ watch(siteId,load);watch(currentTenantId,loadSites);onMounted(loadSites)
   <div class="seo-content-page" v-loading="loading">
     <header class="topbar">
       <div><h1>文章改写</h1><div class="sub">基于客户已有内容智能改写，扩大关键词覆盖与全网声量</div></div>
-      <div class="right"><el-select v-model="siteId" class="rewrite-site-picker" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name||site.canonical_domain" :value="site.id" /></el-select><button v-if="canEdit" class="btn" @click="importSource">导入原文</button><button v-if="canEdit" class="btn primary" @click="importSource">AI 智能改写</button><div class="avatar">{{String(session.user?.name||session.user?.username||'DZ').slice(0,2).toUpperCase()}}</div></div>
+      <div class="right"><el-select v-model="siteId" class="rewrite-site-picker" placeholder="选择 SEO 网站"><el-option v-for="site in sites.filter(item => item.status !== 'archived')" :key="site.id" :label="site.name||site.canonical_domain" :value="site.id" /></el-select><button v-if="canEdit" class="btn" @click="importSource">导入原文</button><button v-if="canEdit" class="btn primary" @click="importSource">AI 智能改写</button><div class="avatar">{{String(session.user?.name||session.user?.username||'DZ').slice(0,2).toUpperCase()}}</div></div>
     </header>
     <main class="content">
       <section class="article-intro rewrite">
