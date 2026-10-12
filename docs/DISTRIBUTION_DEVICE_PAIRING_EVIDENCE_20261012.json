@@ -1,0 +1,126 @@
+{
+  "schema": 1,
+  "checked_at": "2026-10-12T05:57:32.828749+00:00",
+  "base_head": "30ab07bbd2a08b3612c6e0f2946ccd3f26449fae",
+  "business_code_head": "cf8fd1e4171bec5ae19a7cc1ec1db6752909672e",
+  "test_head": "577caf134a13fa698451ede514d63d5b04323812",
+  "runtime_head": "577caf134a13fa698451ede514d63d5b04323812",
+  "code_tree": "ab9166691e9d7d5210f32dfc0a22d90d37b62c5b",
+  "commits_in_order": [
+    "98a39f82d025e702a01f3139ba046a5427cce38e",
+    "9ec7eded2fd6e740b1c548c9fb969ac6500bf47d",
+    "cf8fd1e4171bec5ae19a7cc1ec1db6752909672e",
+    "577caf134a13fa698451ede514d63d5b04323812"
+  ],
+  "native_seo_head": "b4d8387123355348f79e26ea2838585c5106a4b9",
+  "native_geo_discovery_tested": false,
+  "production": false,
+  "automatic_submit": false,
+  "default_pairing_enabled": false,
+  "default_remote_enabled": false,
+  "test_fixture_pairing_enabled": true,
+  "test_fixture_remote_enabled": true,
+  "final_unique_passed": 22,
+  "owned_temp_root": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\distribution-device-pairing-tests-20261012",
+  "ports": {
+    "pg": 55547,
+    "https": 55881,
+    "default_off_https": 55882
+  },
+  "tables_added": [
+    "distribution_device_pairings"
+  ],
+  "artifacts": [
+    {
+      "name": "pairing-initial-tests.xml",
+      "sha256": "1c5e4cbc5d69111a261f09ad2c26f7b45d5dcacaa533aafc3e7f155eaee7ae00",
+      "tests": 17,
+      "failures": 0,
+      "errors": 12,
+      "skipped": 0
+    },
+    {
+      "name": "pairing-focused-tests.xml",
+      "sha256": "323244ed7d414d34d536790a3184d7235dc462be0092e9867b7c720281270d6f",
+      "tests": 20,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "pairing-final-tests.xml",
+      "sha256": "9c5d18cfba2d650f6bc724e5eb7cd4f74ade3607f8b0508b352f10e1ed05bd2d",
+      "tests": 22,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "pairing-lock-probe-tests.xml",
+      "sha256": "a2566961368dc34ed216ee307ea7bee6875280530ac1721a8cab5676c0115e77",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "pairing-green-tests.xml",
+      "sha256": "514d59277665ba7d0642203c1ab6e99bbe0aeccfab51667954519b87460b8154",
+      "tests": 22,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "native-schema.json",
+      "sha256": "7953f96a84ccb0d81f2ae36fcbd8f1bf55c56bd5af23953b64e0922b034fd0b4"
+    },
+    {
+      "name": "native-manifest.json",
+      "sha256": "546cc54597d82b333d5d7e914b2ad554be53f2b0137c17655b565539a9ea3692"
+    },
+    {
+      "name": "runtime-manifest.json",
+      "sha256": "dddaa561cd5adae6172b4aa0f7d91b70bfbcfe6e4bab9ce81896ddb1f26a8dd2"
+    },
+    {
+      "name": "pairing-runtime-health.json",
+      "sha256": "4ff0cfed0eea61ec9bcf9858fbdbc7e029bbd4b4f363f3043d1a0ede9b182654"
+    },
+    {
+      "name": "pairing-pg-readback.json",
+      "sha256": "1726a974224a7184a7f29bf79c21d742d94b2ef272323d08d03ab88e61524d15"
+    },
+    {
+      "name": "loopback.pem",
+      "sha256": "e8cff320a3057fd33cef2ff7580d841f8270b6519f23a415531f484f81eff205"
+    },
+    {
+      "name": "pairing-owned-shutdown.json",
+      "sha256": "f27b9e0e28ae02735de74dbf0ef39822e43ae6513566e826a897bb8ff3ac1a79"
+    }
+  ],
+  "runtime_files": {
+    "app/distribution_pairing_contract.py": "b4c0a5e95e8ee27d86a959c02709386ed94cb732f9fa600a425337a86327824a",
+    "app/distribution_pairing.py": "fcde1ce9c148f9c3bae3023ff2682678383640ef7c1ff639c6baca4f29c6f2bf",
+    "app/api/distribution_pairing.py": "269a84de1d5d36a5b590bb3d33856c9698a304ade51f243f5b02a4d3487349e2",
+    "app/api/distribution.py": "3f5a89ab30b5be8ea4e9cf453a489517136a04ebec0abc6b4bd4a4606fbdb921",
+    "scripts/distribution_device_pairing_schema.sql": "77ea8f0be211ffbaf77b2f04cd05187f4120be10dfe635c3ed88b7a8703670bd",
+    "scripts/distribution_pairing_test_service.py": "36d4d775636a855d84c965347ee430a346d3fc917721e122ce244e4ecde30080"
+  },
+  "historical_failures": [
+    "Initial fixture restoration returned only settings permissions and caused 12 native assignment setup403 errors; fixed test role restoration, did not weaken native gates.",
+    "Old bind response intentionally lacks external_account_id; fixture assertion corrected to compare submitted identity with actual new discovery metadata.",
+    "Long-transaction observation cached pg_stat_activity; test-only pg_stat_clear_snapshot verifies real role-lock wait and expiry rejection."
+  ],
+  "scope": "Actual native JWT, native0105 migration, isolated PG, trusted HTTPS; synthetic PC bootstrap/control client; actual native SEO content/review/confirmation/source/leased-task gates and capability registration exercised.",
+  "not_tested": [
+    "Actual company Windows PC first pairing GUI and protected credential persistence",
+    "Actual standard superadmin pairing page",
+    "Actual GEO native discovery lifecycle",
+    "Public standalone acceptance deployment",
+    "Real WeChat login, verification and publication"
+  ],
+  "sensitive_data": "No code/credential/request or response payloads committed. PostgreSQL stores code/credential SHA only; ordinary logs checked for generated plaintext code/credential. Evidence contains only public metadata.",
+  "owned_services_stopped": true
+}
