@@ -24,6 +24,7 @@ CUSTOMER_READS = (
     ('list_workbench_publication_page_evidence', '/api/v1/seo/workbench/publication-page-evidence'),
 )
 EVIDENCE_READ_PATH = CUSTOMER_READS[-1][1]
+STORED_PUBLICATIONS_READ_PATH = '/api/v1/seo/content-distribution/publications'
 
 
 def record_seo_media_manifest(native_root, module, manifest):
@@ -137,6 +138,42 @@ def readonly_publication_evidence(request, root, config, module, app, reader):
             if not 1 <= int(value) <= ({'page': 10000, 'page_size': 100}.get(key, 2**63 - 1)):
                 return False
     return True
+
+
+def mount_stored_publications_read(app, native, module):
+    """Keep the existing native stored-list route and owned dependency provider."""
+    if module != 'seo':
+        return None
+    mount_exact_native_read(app, native, 'list_content_publications', STORED_PUBLICATIONS_READ_PATH)
+    return next(route.endpoint for route in native.routes
+                if route.endpoint.__name__ == 'list_content_publications'
+                and route.path == STORED_PUBLICATIONS_READ_PATH and route.methods == {'GET'})
+
+
+def readonly_stored_publications(request, root, config, module, app, reader):
+    """Read this pilot's stored delivery records even after its mint permit ends.
+
+    The native named JWT/module/tenant/site guards still run. This exception
+    neither admits attempts/detail URLs nor authorizes any write or public fetch.
+    """
+    if (module != 'seo' or config.get('production') is not False
+            or config.get('platform') != 'linux-acceptance'
+            or root != Path('/opt/gsnipers-distribution-acceptance/work/distribution-server-pilot-20261012')
+            or config.get('root') != str(root) or config.get('ports') != PORTS
+            or config.get('native_heads', {}).get('seo') != '3087e62f23e799fe82d279f79f698f0499bf3a27'
+            or request.method != 'GET' or request.url.path != STORED_PUBLICATIONS_READ_PATH
+            or request.scope.get('raw_path') != STORED_PUBLICATIONS_READ_PATH.encode('ascii')
+            or not request.headers.get('authorization', '').startswith('Bearer ')
+            or not request.headers['authorization'][7:].strip() or reader is None):
+        return False
+    registered = [route for route in app.router.routes
+                  if getattr(route, 'path', None) == STORED_PUBLICATIONS_READ_PATH
+                  and getattr(route, 'methods', None) == {'GET'}]
+    if len(registered) != 1 or registered[0].endpoint is not reader:
+        return False
+    pairs = list(request.query_params.multi_items())
+    return (len(pairs) == 3 and len({key for key, _ in pairs}) == 3
+            and dict(pairs) == {'tenant_id': '15', 'site_id': '6', 'content_id': '61'})
 
 
 def prepare(config_path, module):
@@ -398,6 +435,7 @@ def application(root, config, sessions, module, manifest):
     from app.api.auth import router as auth_router
     app = FastAPI(title='Independent distribution acceptance '+module)
     evidence_reader = None
+    stored_publications_reader = None
     @app.on_event('startup')
     async def metadata_registration():
         from app.api_controls import register_runtime
@@ -470,6 +508,7 @@ def application(root, config, sessions, module, manifest):
         app.include_router(selected)
         mount_seo_media_routes(app, module)
         evidence_reader = mount_seo_customer_reads(app, native, module)
+        stored_publications_reader = mount_stored_publications_read(app, native, module)
         from app.api.customer_modules import seo_sites_router
         mount_exact_native_read(app, seo_sites_router, 'list_seo_workbench_sites',
                                 '/api/v1/seo/workbench/sites')
@@ -521,8 +560,9 @@ def application(root, config, sessions, module, manifest):
                     return JSONResponse(status_code=403, content={'detail':'Acceptance customer is read-only'})
             except HTTPException as exc:
                 return JSONResponse(status_code=exc.status_code,content={'detail':'Local login unavailable'})
-        if single.publication_request(request, payload) and not readonly_publication_evidence(
-                request, root, config, module, app, evidence_reader):
+        if (single.publication_request(request, payload)
+                and not readonly_publication_evidence(request, root, config, module, app, evidence_reader)
+                and not readonly_stored_publications(request, root, config, module, app, stored_publications_reader)):
             try:
                 await single.authorize(request, root, config, sessions, module, payload)
             except HTTPException as exc:

@@ -199,6 +199,7 @@ def test_original_native_gets_are_stored_projections_and_factory_keeps_scope_dep
     assert 'dependencies=[Depends(require_seo_module_access)]' in sources['seo.py']
     factory_source = (ROOT / 'scripts/distribution_server_pilot_native.py').read_text(encoding='utf-8')
     assert 'evidence_reader = mount_seo_customer_reads(app, native, module)' in factory_source
-    assert 'if single.publication_request(request, payload) and not readonly_publication_evidence(' in factory_source
+    assert 'single.publication_request(request, payload)' in factory_source
+    assert 'and not readonly_publication_evidence(' in factory_source
     assert 'await single.authorize(request, root, config, sessions, module, payload)' in factory_source
 
