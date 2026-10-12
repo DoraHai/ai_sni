@@ -32,6 +32,19 @@ def positive(value):
     return type(value) is int and 0 < value < 2**63
 
 
+async def media_installed(session, platform):
+    """Optional pure-text compatibility; partially installed storage fails closed."""
+    with session.no_autoflush:
+        row = (await session.execute(text("SELECT "
+            "to_regclass(current_schema()||'.seo_distribution_media_sets') IS NOT NULL AS sets,"
+            "to_regclass(current_schema()||'.seo_distribution_media_bytes') IS NOT NULL AS bytes,"
+            "to_regclass(current_schema()||'.seo_distribution_media_reviews') IS NOT NULL AS reviews"))).mappings().one()
+    if all(row.values()): return True
+    if any(row.values()) or platform == 'xiaohongshu-image':
+        raise denied('source_unavailable','素材存储结构尚未完整就绪',503)
+    return False
+
+
 def _check_scope(row, tenant):
     if row is None or not row['user_is_active'] or row['role_id'] is None or row['user_tenant_id'] not in (None,tenant):
         raise denied('identity_required', '账号状态或客户归属不允许读取发布来源', 403)
@@ -91,6 +104,19 @@ async def load_source(session, actor_user_id: int, tenant_id: int, scope_id: int
             return await _load(session, actor_user_id, tenant_id, scope_id, variant_id, platform)
     except (SQLAlchemyError, OSError, TimeoutError):
         raise denied('source_unavailable', '来源结构或数据库暂不可用，请稍后核对', 503) from None
+
+
+async def load_publication_source(session, actor_user_id: int, tenant_id: int, scope_id: int,
+                                  variant_id: int, platform: str) -> dict:
+    """Fresh native source for an explicitly authorized publish intention only.
+
+    No publish, commit or grant. Central/executor must call this for publication;
+    load_source remains compatible with pure-text preflight/handoff.
+    """
+    snapshot = await load_source(session, actor_user_id, tenant_id, scope_id, variant_id, platform)
+    if platform == 'wechat-article' and len(snapshot['content']['assets']) != 1:
+        raise denied('cover_required','公众号正式发布须有一张当前独立审核冻结的封面')
+    return snapshot
 
 
 async def list_sources(session, actor_user_id: int, tenant_id: int, scope_id: int,
@@ -190,7 +216,8 @@ async def _intake_page(session, actor_user_id, tenant_id, scope_id, platform, *,
     # draft_version. Approval/connection changes must reuse the same queue item.
     columns += [v.status.label('status'), v.reviewed_by.label('reviewed_by'),
         v.reviewed_at.label('reviewed_at'), v.updated_at.label('updated_at')]
-    if platform == 'xiaohongshu-image':
+    has_media = await media_installed(session, platform)
+    if has_media:
         columns.append(literal_column("""(SELECT jsonb_build_object(
             'id', b.id, 'manifest', b.manifest, 'draft_hash', b.draft_hash)
             FROM seo_distribution_media_sets b
@@ -217,7 +244,8 @@ async def _intake_page(session, actor_user_id, tenant_id, scope_id, platform, *,
             items = []
             for row in rows[:limit]:
                 version = 'seo-draft-' + hashlib.sha256(json.dumps(
-                    {key: row[key] for key in version_keys}, ensure_ascii=False,
+                    {key: row[key] for key in version_keys if key != 'material'
+                     or platform == 'xiaohongshu-image' or row['material'] is not None}, ensure_ascii=False,
                     sort_keys=True, default=str).encode()).hexdigest()
                 revision, readiness, reason = None, 'ready', 'ready'
                 try:
@@ -280,17 +308,18 @@ async def _load(session, actor, tenant, scope, variant_id, platform):
     }
     columns = [getattr(model, name).label(prefix+'_'+name)
         for prefix, (model, names) in fields.items() for name in names]
-    if platform == 'xiaohongshu-image':
-        # Optional media tables are never queried for legacy pure articles.
+    has_media = await media_installed(session, platform)
+    if has_media:
         columns.append(literal_column("""(SELECT jsonb_build_object(
             'id',b.id,'tenant_id',b.tenant_id,'site_id',b.site_id,'manifest',b.manifest,
             'draft_hash',b.draft_hash,'uploaded_by',b.uploaded_by,
-            'reviewed_by',r.reviewed_by,'variant_seal',r.variant_seal,
+            'reviewed_by',r.reviewed_by,'reviewed_at',r.reviewed_at,'variant_seal',r.variant_seal,
             'records',(SELECT jsonb_agg(jsonb_build_object('id',a.id,'sha256',a.sha256,
                 'mediaType',a.media_type,'bytes',a.byte_count) ORDER BY a.position)
                 FROM seo_distribution_media_bytes a WHERE a.set_id=b.id))
             FROM seo_distribution_media_sets b LEFT JOIN seo_distribution_media_reviews r ON r.set_id=b.id
             WHERE b.variant_id=seo_distribution_variants.id ORDER BY b.created_at DESC,b.id DESC LIMIT 1)""").label('media'))
+        columns.append(v.created_by.label('variant_creator'))
     # One PostgreSQL statement gives identity, permissions, scope, versions,
     # latest confirmation and selected keywords the same MVCC snapshot.
     query = select(*columns, assigned.label('assigned'), latest_variant.label('latest_variant'),
@@ -325,13 +354,14 @@ async def _load(session, actor, tenant, scope, variant_id, platform):
             or approval.actor_mode not in {'customer_direct','advisor_proxy'} or not positive(approval.actor_user_id)):
         raise denied('confirmation_required', '当前准确母稿版本尚未获得客户确认或顾问代确认')
     assets = []
-    if platform == 'xiaohongshu-image':
+    media = row['media'] if has_media else None
+    if platform == 'xiaohongshu-image' or media is not None:
         from app.seo_distribution_media import draft_hash, variant_seal, MAX_TOTAL, MAX_IMAGES
-        media = row['media']
         if (not media or media['tenant_id']!=tenant or media['site_id']!=scope
                 or media['draft_hash']!=draft_hash(vars(variant)) or media['variant_seal']!=variant_seal(vars(variant))
                 or media['reviewed_by']!=variant.reviewed_by or media['uploaded_by']==media['reviewed_by']
-                or not isinstance(media['manifest'],list) or not 1<=len(media['manifest'])<=MAX_IMAGES
+                or media['reviewed_by']==row['variant_creator']
+                or not isinstance(media['manifest'],list) or not 1<=len(media['manifest'])<=(1 if platform=='wechat-article' else MAX_IMAGES)
                 or media['manifest']!=media['records'] or sum(a['bytes'] for a in media['manifest'])>MAX_TOTAL):
             raise denied('assets_unavailable','图片尚未独立审核冻结或与当前稿件不符')
         assets = media['manifest']
@@ -358,6 +388,8 @@ async def _load(session, actor, tenant, scope, variant_id, platform):
         'variant':vars(variant), 'content_review':[content.id,content.reviewed_by,content.reviewed_at],
         'confirmation':vars(approval), 'keywords':sorted(registered,key=lambda item:item['id'])}
     if assets: fingerprint['assets'] = assets
+    if assets and platform == 'wechat-article':
+        fingerprint['cover_review'] = {key:media[key] for key in ('id','variant_seal','reviewed_by','reviewed_at')}
     digest = hashlib.sha256(json.dumps(fingerprint,ensure_ascii=False,sort_keys=True,default=str).encode()).hexdigest()
     revision = f'seo-m{content.version_count}-v{variant.revision_number}-{digest}'
     return {'module':'seo','tenant_id':tenant,'scope_id':scope,'variant_id':variant_id,'source_revision':revision,

@@ -87,7 +87,7 @@ async def preview(variant_id:int,tenant_id:int=Query(gt=0),site_id:int=Query(gt=
 async def upload(variant_id:int,tenant_id:int=Form(gt=0),site_id:int=Form(gt=0),expected_token:str=Form(pattern='^[a-f0-9]{64}$'),
                  files:list[UploadFile]=File(...),db=Depends(get_session),ctx=Depends(require_auth)):
     await authorize_scope(db,ctx.user_id,tenant_id,site_id)
-    if not 1<=len(files)<=media.MAX_IMAGES: raise denied('asset_invalid','须上传 1 至 9 张图片',422)
+    if not 1<=len(files)<=media.MAX_IMAGES: raise denied('asset_invalid','公众号须上传 1 张封面，小红书为 1 至 9 张图片',422)
     images=[]
     for file in files:
         images.append(await file.read(media.MAX_IMAGE+1))

@@ -11,7 +11,7 @@ from PIL import Image, ImageFile, ImageOps, UnidentifiedImageError
 from bs4 import BeautifulSoup
 from sqlalchemy import text
 
-from app.seo_distribution_sources import authorize_scope, denied, positive
+from app.seo_distribution_sources import authorize_scope, denied, positive, PLATFORMS
 
 MAX_IMAGE = 20_000_000
 MAX_TOTAL = 40_000_000
@@ -19,6 +19,14 @@ MAX_IMAGES = 9
 MAX_PIXELS = 25_000_000
 VARIANT_FIELDS = ('id','tenant_id','content_asset_id','connection_id','platform_code','source_version',
     'revision_number','status','title','content','reviewed_by','reviewed_at','updated_at')
+
+
+def central_platform(row):
+    return 'wechat-article' if row['platform_code'] in PLATFORMS['wechat-article'] else 'xiaohongshu-image'
+
+
+def image_limit(row):
+    return 1 if row['platform_code'] in PLATFORMS['wechat-article'] else MAX_IMAGES
 
 
 def hash_value(value):
@@ -96,7 +104,8 @@ async def variant_row(db,actor,tenant,scope,variant_id,*,lock=False):
         'JOIN seo_content_assets c ON c.id=v.content_asset_id '
         'JOIN seo_distribution_connections a ON a.id=v.connection_id '
         'WHERE v.id=:variant AND v.tenant_id=:tenant AND c.tenant_id=:tenant AND c.site_id=:scope '
-        "AND a.tenant_id=:tenant AND a.platform_code='xiaohongshu' AND v.platform_code='xiaohongshu' "
+        "AND a.tenant_id=:tenant AND a.platform_code=v.platform_code "
+        "AND v.platform_code IN ('xiaohongshu','wechat_official','wechat_browser') "
         "AND c.content_type='article' AND a.enabled "
         "AND (a.mode<>'api' OR a.status='connected') "
         'AND v.source_version=c.version_count AND v.id=(SELECT n.id FROM seo_distribution_variants n '
@@ -104,7 +113,7 @@ async def variant_row(db,actor,tenant,scope,variant_id,*,lock=False):
         'ORDER BY n.revision_number DESC,n.id DESC LIMIT 1)' + (' FOR UPDATE OF v' if lock else '')),
         {'variant':variant_id,'tenant':tenant,'scope':scope})
     row = result.mappings().one_or_none()
-    if row is None: raise denied('source_not_found','当前网站最新的小红书文章稿不可用',404)
+    if row is None: raise denied('source_not_found','当前网站最新的图文或公众号文章稿不可用',404)
     return row
 
 
@@ -120,7 +129,8 @@ async def preview(db,actor,tenant,scope,variant_id):
         return {'variant_id':variant_id,'edit_token':variant_seal(row),'title':row['title'],'body':row['content'],
             'body_text':BeautifulSoup(row['content'],'html.parser').get_text('\n',strip=True),
             'status':row['status'],'set_id':str(bundle['id']) if bundle else None,
-            'assets':bundle['manifest'] if bundle else []}
+            'assets':bundle['manifest'] if bundle else [], 'platform':central_platform(row),
+            'max_images':image_limit(row), 'asset_role':'cover' if image_limit(row)==1 else 'image-text'}
 
 
 async def list_drafts(db,actor,tenant,scope):
@@ -130,7 +140,8 @@ async def list_drafts(db,actor,tenant,scope):
         rows=(await db.execute(text('SELECT v.id AS variant_id,v.title,v.status FROM seo_distribution_variants v '
             'JOIN seo_content_assets c ON c.id=v.content_asset_id JOIN seo_distribution_connections a ON a.id=v.connection_id '
             'WHERE v.tenant_id=:tenant AND c.tenant_id=:tenant AND c.site_id=:scope AND a.tenant_id=:tenant '
-            "AND v.platform_code='xiaohongshu' AND a.platform_code='xiaohongshu' AND c.content_type='article' AND a.enabled "
+            "AND v.platform_code IN ('xiaohongshu','wechat_official','wechat_browser') "
+            "AND a.platform_code=v.platform_code AND c.content_type='article' AND a.enabled "
             "AND (a.mode<>'api' OR a.status='connected') AND v.source_version=c.version_count "
             'AND v.id=(SELECT n.id FROM seo_distribution_variants n WHERE n.tenant_id=v.tenant_id '
             'AND n.content_asset_id=v.content_asset_id AND n.connection_id=v.connection_id '
@@ -145,8 +156,8 @@ async def replace_assets(db,actor,tenant,scope,variant_id,expected_token,images)
     with db.no_autoflush:
         row = await variant_row(db,actor,tenant,scope,variant_id,lock=True)
         if variant_seal(row)!=expected_token: raise denied('source_stale','稿件已变化，请重新预览')
-        if not isinstance(images,list) or not 1<=len(images)<=MAX_IMAGES or sum(map(len,images))>MAX_TOTAL:
-            raise denied('asset_invalid','须上传 1 至 9 张图片，合计不超过 40000000 字节',422)
+        if not isinstance(images,list) or not 1<=len(images)<=image_limit(row) or sum(map(len,images))>MAX_TOTAL:
+            raise denied('asset_invalid','公众号须上传 1 张封面，小红书为 1 至 9 张图片，合计不超过 40000000 字节',422)
         decoded = [await asyncio.to_thread(normalized_image,raw) for raw in images]
         if sum(len(data) for data,_ in decoded)>MAX_TOTAL:
             raise denied('asset_invalid','规范化后图片合计超过 40000000 字节',422)
@@ -170,10 +181,10 @@ async def replace_assets(db,actor,tenant,scope,variant_id,expected_token,images)
         return await preview(db,actor,tenant,scope,variant_id)
 
 
-def checked_manifest(bundle,records):
+def checked_manifest(bundle,records,limit=MAX_IMAGES):
     manifest = [{'id':str(row['id']),'sha256':row['sha256'],'mediaType':row['media_type'],
         'bytes':row['byte_count']} for row in records]
-    if (not 1<=len(manifest)<=MAX_IMAGES or manifest!=bundle['manifest']
+    if (not 1<=len(manifest)<=limit or manifest!=bundle['manifest']
             or sum(item['bytes'] for item in manifest)>MAX_TOTAL):
         raise denied('assets_unavailable','图片清单不完整或不匹配，请重新上传审核')
     return manifest
@@ -203,7 +214,7 @@ async def review_assets(db,actor,tenant,scope,variant_id,expected_token,set_id):
         if actor in {bundle['uploaded_by'],row['created_by']}:
             raise denied('independent_review_required','请由其他有权限的顾问审核正文及图片',403)
         records = await records_for(db,bundle['id'])
-        checked_manifest(bundle,records)
+        checked_manifest(bundle,records,image_limit(row))
         for record in records: await asyncio.to_thread(checked_bytes,record)
         prior = await db.scalar(text('SELECT 1 FROM seo_distribution_media_reviews WHERE set_id=:id'),{'id':bundle['id']})
         if prior: raise denied('source_stale','该素材集已冻结，需要重新上传后再审')
@@ -214,7 +225,7 @@ async def review_assets(db,actor,tenant,scope,variant_id,expected_token,set_id):
             'VALUES(:id,:actor,:seal)'),{'id':bundle['id'],'actor':actor,'seal':variant_seal(row)})
         # Reuse every mother/confirmation/keyword/content gate; failure rolls back.
         from app.seo_distribution_sources import load_source
-        return await load_source(db,actor,tenant,scope,variant_id,'xiaohongshu-image')
+        return await load_source(db,actor,tenant,scope,variant_id,central_platform(row))
 
 
 async def preview_asset(db,actor,tenant,scope,variant_id,asset_id):
