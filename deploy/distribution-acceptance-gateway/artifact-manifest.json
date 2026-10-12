@@ -2,7 +2,7 @@
   "schema": 1,
   "component": "independent-seo-acceptance-https-gateway",
   "files": {
-    "scripts/distribution_acceptance_gateway.py": "ed70b752ef48b7c7876bf5952e68fceed49050acbdebda5ca2f9f1fd773f1ad8",
+    "scripts/distribution_acceptance_gateway.py": "4963648766fad34bae16823c79bd71c46f78ed6cfb213749aec8a04445ff7fff",
     "deploy/distribution-acceptance-gateway/standalone-nginx.conf": "8a9a5a068a15bfa87260cace8758fd90f7e1a33e5f3bb0a03d8cedf818b1c605",
     "deploy/distribution-acceptance-gateway/nginx-proxy.inc": "e53154c52c90c8b8291eb8f01d47ae5d8e03f4dc22a54a8be74c143f8bb84383",
     "deploy/distribution-acceptance-gateway/gsnipers-distribution-acceptance-gateway.service": "188afdd95a60bacfbc981f7da5cb2782dd337933815485ba63fc72612da62b6c"

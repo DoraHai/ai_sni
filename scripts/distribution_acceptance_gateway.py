@@ -146,7 +146,8 @@ def install(source, expected, expected_manifest):
         run(['systemctl', 'is-active', '--quiet', UNIT_NAME])
         # This test uses the public certificate chain with no custom CA or -k.
         local = run(['curl', '--fail', '--silent', '--show-error', '--noproxy', '*',
-                     '--resolve', 'gsnipers.snipers.com.cn:58443:127.0.0.1', '--head',
+                     '--resolve', 'gsnipers.snipers.com.cn:58443:127.0.0.1',
+                     '--dump-header', '-', '--output', '/dev/null',
                      'https://gsnipers.snipers.com.cn:58443/customer-workbench/?console=advisor'])
         need('200' in local.stdout.splitlines()[0], 'Strict local public TLS probe failed')
         prior = run(['firewall-cmd', '--zone=public', '--query-port=' + PORT], allowed=(0, 1))
