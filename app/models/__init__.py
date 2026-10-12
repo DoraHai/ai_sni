@@ -74,6 +74,7 @@ from app.models.geo_optimization_period import GeoOptimizationPeriod
 from app.models.geo_async_job import GeoAsyncJob
 from app.models.geo_content import (
     GeoArticleVersion,
+    GeoChannelAsset,
     GeoChannelVariant,
     GeoContentTask,
     GeoPublication,
@@ -174,6 +175,7 @@ __all__ = [
     "GeoContentTask",
     "GeoTaskFact",
     "GeoArticleVersion",
+    "GeoChannelAsset",
     "GeoChannelVariant",
     "GeoPublication",
     "GeoProject",

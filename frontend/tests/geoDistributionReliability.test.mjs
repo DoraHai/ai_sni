@@ -8,10 +8,15 @@ function fixture() {
  const notices=[];let changed,unmount
  const ctx=vm.createContext({tenantId:{value:7},taskId:{value:12},error:{value:''},loading:{value:false},busy:{value:''},
  channels:{value:[]},accounts:{value:[]},task:{value:{id:12}},pushTargets:{value:[]},webhookAccounts:{value:[]},
+ projects:{value:[]},distributionAssets:{value:[]},assetUrls:{value:new Map()},assetError:{value:''},assetBusy:{value:''},assetInput:{value:null},
+ redVariant:{value:null},projectId:{value:null},canManageAssets:{value:true},route:{query:{}},session:{canEdit:()=>true},
  webhookAccountId:{value:null},webhookUrl:{value:''},backfillChannel:{value:'website'},backfillUrl:{value:'https://example.invalid/a'},backfillNote:{value:'test'},
  listGeoPublishingChannels:async()=>({items:[]}),listGeoChannelAccounts:async()=>({items:[]}),getGeoContentTask:async()=>({id:12}),fetchTaskPushTargets:async()=>({targets:[]}),
- pushGeoVariantWebhook:async()=>({}),publishGeoVariant:async()=>({}),
+ fetchGeoProjects:async()=>({projects:[]}),listGeoDistributionAssets:async()=>({assets:[]}),fetchGeoDistributionAssetContent:async()=>new Blob(),
+ uploadGeoDistributionAsset:async()=>({}),deleteGeoDistributionAsset:async()=>({}),pushGeoVariantWebhook:async()=>({}),publishGeoVariant:async()=>({}),
+ URL:{createObjectURL:()=>"blob:test",revokeObjectURL:()=>{}},
  ElMessage:{success:x=>notices.push(x),error:x=>notices.push(x),warning:x=>notices.push(x)},
+ ElMessageBox:{confirm:async()=>{}},
  watch:(_,fn)=>{changed=fn},onBeforeUnmount:fn=>{unmount=fn}})
  vm.runInContext(code,ctx)
  return {ctx,notices,change:()=>changed(),unmount:()=>unmount()}

@@ -27,6 +27,32 @@ DRAFT_ITEM_KINDS = {"structured_content", "knowledge", "faq"}
 PROVIDER_CONTRACT_VERSION = 2
 PRIVATE_MARKERS = ("内部事实卡", "事实卡原文", "系统提示词", "system prompt", "api key",
                    "private_note")
+SECRET_PATTERNS = (
+    re.compile(r"(?i)(?<![a-z0-9])api[\s_-]*key\s*[:=]\s*[\"']?[a-z0-9_./+=-]{12,}"),
+    re.compile(r"(?i)(?<![a-z0-9])(?:secret|access[_-]?token)\s*[:=]\s*[\"']?[a-z0-9_./+=-]{12,}"),
+    re.compile(r"(?<![A-Za-z0-9])(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{16,}"),
+    re.compile(r"(?i)(?<![a-z0-9])bearer\s+[a-z0-9._~+/-]{16,}"),
+    re.compile(r"(?<![A-Z0-9])AKIA[A-Z0-9]{16}(?![A-Z0-9])"),
+    re.compile(r"(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{30,}"),
+)
+COMPLETION_CLAIMS = re.compile(
+    r"(?:已经|现已|已)(?:(?:自动|成功|正式|全部|经人工|经客户))*"
+    r"(?:完成(?:网站|官网|页面|方案)?(?:修改|更新|实施|部署|发布|上线|审核|审批|验收)|"
+    r"(?:修改|更新|实施|部署)(?:完成|成功|并上线)?|发布|上线|"
+    r"通过(?:人工|客户)?(?:审核|审批|验收)|验收|交付|客户确认)"
+    r"|(?:完成|通过)(?:了)?(?:网站|官网|页面|方案)(?:的)?(?:发布|上线|验收)"
+    r"|(?:网站|官网|页面|方案)(?:修改|实施|部署|发布|上线|验收)(?:已)?(?:完成|成功)"
+    r"|(?:hasbeen|was)(?:implemented|deployed|published|accepted)",
+    re.I,
+)
+COMPLETION_WARNING = re.compile(
+    r"(?:不得|不能|不可|禁止|切勿|不要|请勿)(?:自行)?"
+    r"(?:声称|宣称|断言|承诺|编造|表示|描述为|标记为|标注为|写成|写为|输出)"
+    r"[“\"‘']?(?:(?:本|该)?(?:网站|官网|页面|方案))?$"
+    r"|(?:donot|mustnot|cannot|can't)(?:claim|state|say)"
+    r"(?:it|this|thewebsite|thesite|thepage)?$",
+    re.I,
+)
 MAX_PROMPT_CHARS = 240_000
 MAX_PROVIDER_RESULT_CHARS = 100_000
 MAX_SOURCE_REFS_PER_ITEM = 20
@@ -382,9 +408,12 @@ def _normal(value: str) -> str:
 
 
 def _reject_private_text(value: str, facts: list[dict[str, Any]]) -> None:
+    _reject_false_completion_text(value)
     lowered = value.lower()
     if any(marker.lower() in lowered for marker in PRIVATE_MARKERS):
         raise HTTPException(422, "AI 方案含内部资料标记，已拒绝保存")
+    if any(pattern.search(value) for pattern in SECRET_PATTERNS):
+        raise HTTPException(422, "AI 方案疑似包含密钥或访问凭据，已拒绝保存")
     card_keys = set(re.findall(
         r"(?i)[\"']?(fact_id|statement|verification|private_note|source_url|meta)[\"']?\s*:",
         value))
@@ -396,6 +425,25 @@ def _reject_private_text(value: str, facts: list[dict[str, Any]]) -> None:
         if (len(statement) >= 20 and statement in normalized
                 and fact.get("statement_publicly_authorized") is not True):
             raise HTTPException(422, "AI 方案逐字复述内部事实卡，已拒绝保存")
+
+
+def _reject_false_completion_text(value: str) -> None:
+    """A proposal may describe future work, but cannot assert that it happened."""
+    prose = re.sub(r"(?:(?:https?:)?//)[^\s<>〈〉\]\)\"']+", "", value, flags=re.I)
+    for clause in re.split(r"[，。；：！？,;!?:\n]", prose):
+        clause = re.sub(r"[\s\u200b\u200c\u200d\ufeff]", "", clause)
+        for match in COMPLETION_CLAIMS.finditer(clause):
+            prefix = clause[:match.start()]
+            warning = COMPLETION_WARNING.search(prefix)
+            if warning and not re.search(r"(?:并非|不是|并不)$", prefix[:warning.start()]):
+                continue
+            if re.search(r"(?:尚未|还未|未|没有|尚未曾|未曾)$", prefix):
+                continue
+            if match.group().startswith(("完成", "通过")) and (
+                    re.search(r"(?:请|建议|需要|应|须|后|再|才能|方可)$", prefix)
+                    or re.match(r"(?:之前|之后|以后|前|后|时)", clause[match.end():])):
+                continue
+            raise HTTPException(422, "AI 草稿不得声称已实施、发布或验收")
 
 
 def _reject_model_urls(value: str) -> None:

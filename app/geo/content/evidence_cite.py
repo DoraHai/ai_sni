@@ -47,13 +47,8 @@ _CTA = re.compile(
     r"如需了解设备选型[，,]请联系专业团队|如有设备选型问题[，,]请向专业团队咨询|"
     r"建议咨询专业团队)[。.!！]?$"
 )
-_PROCESS_INSTRUCTION = re.compile(
-    r"^(?:步骤\s*\d+|第[一二三四五六七八九十]+步)[：:]\s*"
-    r"(?:明确|核对|核验|验证|检查|完成|开展|进行|试点)[^。！？]*[。.!！]?$"
-)
 _GUIDANCE = re.compile(
-    r"^(?:应结合场景与可核验事实选择[^，,。！？]{0,20}|"
-    r"建议核验来源与时效|建议核对应?事实卡|优先核验|优先核验来源后再决策)[。.!！]?$"
+    r"^(?:建议核验来源与时效|建议核对应?事实卡|优先核验|优先核验来源后再决策)[。.!！]?$"
 )
 _SOURCE_REFERENCE = re.compile(
     r"^(?:白皮书|文档|报告|官网|标准|手册|案例集|案例)$",
@@ -65,6 +60,61 @@ _SOURCE_METADATA_NAME = re.compile(
 )
 _SOURCE_PREFIX = re.compile(r"^\*{0,2}来源[：:]\s*", re.I)
 _URL_DISALLOWED = re.compile(r"[\s，。；！？、*]")
+
+# Prove a pure instruction from a complete bounded grammar, rather than trying
+# to recognize every dangerous predicate in open-ended prose. Unknown tails,
+# product states, numbers and foreign-language clauses cannot match these nouns.
+_DATA_OBJECT = (
+    r"(?:设备用途|设备需求|工况清单|工况资料|工况表|现场资料|设备资料|输入资料|"
+    r"负载变化|机械负载|输出扭矩|转速|启动情况|启动条件|冲击条件|"
+    r"运行时间|计划运行时间|运行方式|计划运行方式|环境条件|环境温度|通风条件|"
+    r"安装方向|安装空间|可用空间|连接位置|检修安排|检修条件|维护资料|"
+    r"方案版本|方案回复|书面回复|未决问题|待确认事项|确认记录|确认日期|"
+    r"来源链接|系列名称|引用来源|资料来源|具体型号|型号|配置|具体配置|散热配置|适用前提|资料)"
+)
+_DATA_LIST = _DATA_OBJECT + r"(?:[、和与及]" + _DATA_OBJECT + r"){0,12}"
+_INSTRUCTION_PREFIX = r"(?:(?:建议|请|应|可以))?(?:(?:先|再|并|同时|最后))?(?:请)?"
+_RECIPIENT = r"(?:厂家|选型团队|技术团队|官方渠道)"
+_PROCESS_CLAUSE = re.compile(
+    _INSTRUCTION_PREFIX + r"(?:整理|准备|提交|保存|保留|核对|检查|确认|注明|记录|补充|补齐|标明)"
+    + _DATA_LIST + r"(?:等资料|等信息)?"
+    + r"|" + _INSTRUCTION_PREFIX + r"(?:向|通过)" + _RECIPIENT + r"(?:提交|核对|咨询)" + _DATA_LIST
+    + r"|" + _INSTRUCTION_PREFIX + _RECIPIENT + r"核算" + _DATA_LIST
+)
+_METHOD_DOMAIN = r"(?:具体设备|重载连续运行设备|连续运行场景|工业齿轮箱|设备|方案|资料|现场资料|配置)"
+_METHOD_OBJECT = r"(?:工业齿轮箱|具体配置|现场资料|设备资料|工况资料|资料|散热与安装|安装资料|方案|配置)"
+_METHOD_BODY = _METHOD_DOMAIN + r"?(?:如何|怎样|怎么)(?:选择|核对|核验|检查|准备|整理|提交|比较|评估|操作)" + _METHOD_OBJECT + r"?"
+_METHOD_QUESTION = re.compile(_METHOD_BODY + r"[?？]")
+_STRUCTURAL_HEADING = re.compile(
+    r"^(?:定义与选型参数|结论与常见问题|资料准备|资料核对|来源与参考|"
+    + _METHOD_BODY + r")$"
+)
+
+
+def non_claim_reason(sentence: str) -> str | None:
+    """Narrow server-side classification; unknown or mixed claims remain gated."""
+    value = str(sentence or "").strip()
+    heading = re.match(r"^#{1,6}\s*(.*?)\s*$", value)
+    plain = heading.group(1) if heading else value
+    plain = re.sub(r"^\*{0,2}(?:问|Q)[：:]\*{0,2}\s*", "", plain, flags=re.I)
+    plain = plain.rstrip("*").strip()
+    plain = re.sub(r"^(?:[-*+]\s*|\d+[.)、]\s*|步骤\s*\d+[：:]\s*)", "", plain)
+    if _METHOD_QUESTION.fullmatch(plain):
+        return "method_question"
+    if heading and _STRUCTURAL_HEADING.fullmatch(plain):
+        return "structural_navigation"
+    if plain.startswith("|") and plain.endswith("|"):
+        labels = {"资料", "操作", "工况清单", "方案回复"}
+        cells = [cell.strip() for cell in plain.strip("|").split("|")]
+        if 2 <= len(cells) <= 8 and all(cell in labels or non_claim_reason(cell) == "process_instruction" for cell in cells):
+            return "process_table"
+    # Each clause must remain an instruction, rather than hiding a declarative
+    # claim after a neutral opening. No client-controlled classification exists.
+    plain = re.sub(r"^(?:收到回复后|条件变化时|读表时)[，,]", "", plain)
+    clauses = [s.strip().rstrip("。.!！；;") for s in re.split(r"[，,]", plain) if s.strip()]
+    if clauses and all(_PROCESS_CLAUSE.fullmatch(s) for s in clauses):
+        return "process_instruction"
+    return None
 
 
 def split_sentences(text: str) -> list[str]:
@@ -125,6 +175,8 @@ def is_presentation_sentence(sentence: str) -> bool:
 def is_evidence_exempt(sentence: str) -> bool:
     """Return true only for syntax that does not assert a product/world fact."""
     value = str(sentence or "").strip()
+    if non_claim_reason(value) is not None:
+        return True
     if (
         not value
         or _METADATA.fullmatch(value)
@@ -145,7 +197,6 @@ def is_evidence_exempt(sentence: str) -> bool:
     return bool(
         _EVIDENCE_NOTICE.fullmatch(plain)
         or _CTA.fullmatch(plain)
-        or _PROCESS_INSTRUCTION.fullmatch(plain)
         or _GUIDANCE.fullmatch(plain)
         or (
             bool(re.match(r"^(?:[-*+]\s*|\d+[.)、]\s*)", value))

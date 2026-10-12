@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import ExitStack
+from datetime import datetime
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -18,14 +19,15 @@ def task_fixture():
 
 
 def variant_fixture(status='draft'):
-    return NS(channel='website', title='title', body_markdown='old', status=status,
+    return NS(id=33, task_id=12, updated_at=datetime(2026,10,12), export_format='html',
+              channel='website', title='title', body_markdown='old', status=status,
               article_version_id=15, adapt_meta={'quality': 'publish_ready', 'publishable': True})
 
 
 @pytest.mark.parametrize('payload', [VariantUpdate(title='new'), VariantUpdate(body_markdown='new')])
 def test_edit_invalidates_approval_and_publish_ready_metadata(payload):
     task, variant = task_fixture(), variant_fixture()
-    session = NS(refresh=AsyncMock(), commit=AsyncMock())
+    session = NS(refresh=AsyncMock(), commit=AsyncMock(), add=Mock())
 
     async def read_variants(*args):
         session.refresh.assert_awaited_once_with(task, with_for_update=True)
@@ -37,10 +39,12 @@ def test_edit_invalidates_approval_and_publish_ready_metadata(payload):
          patch.object(routes, '_task_payload', AsyncMock(return_value={})):
         asyncio.run(routes.update_variant(12, 'website', payload, 1, NS(ensure_tenant=Mock()), session))
     assert task.review_status == 'none' and task.reviewed_by is None
-    assert variant.adapt_meta['publishable'] is False
-    assert variant.adapt_meta['quality'] == 'adapted_draft_not_publishable'
-    assert variant.adapt_meta['delivery'] == 'html_preview_only'
-    assert variant.status == 'draft'
+    successor = session.add.call_args.args[0]
+    assert successor.adapt_meta['publishable'] is False
+    assert successor.adapt_meta['quality'] == 'adapted_draft_not_publishable'
+    assert successor.adapt_meta['delivery'] == 'html_preview_only'
+    assert successor.status == 'draft'
+    assert variant.adapt_meta['publishable'] is True and variant.body_markdown == 'old'
     session.commit.assert_awaited_once()
 
 

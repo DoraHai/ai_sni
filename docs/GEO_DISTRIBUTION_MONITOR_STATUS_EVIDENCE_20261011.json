@@ -1,0 +1,46 @@
+{
+  "date": "2026-10-11",
+  "nativeBaseline": "b61e885627206029ff54bd6a572f6c1049b5dc25",
+  "interface": "app.geo.distribution_results.publication_monitor_status",
+  "localOnly": true,
+  "productionDdlApplied": false,
+  "deployed": false,
+  "realPlatformUsed": false,
+  "semAiTakeoverEnabled": false,
+  "centralFinalInteropIncluded": true,
+  "finalCentralCommit": "4a15d242b234cc4a71ccb8c4885921eedebb9c57",
+  "finalCentralTreeClean": true,
+  "dedicatedDatabase": {"host": "127.0.0.1", "port": 55507, "database": "geo_ci", "username": "geo_ci", "randomSchemaPrefix": "geo_results_test_", "shared55443Touched": false, "randomSchemasRemaining": 0, "owned55507Stopped": true},
+  "suite": {"passed": 100, "failed": 0, "skipped": 0, "newNativePostgresCases": 35, "nativeResultsRegression": 34, "nativeSourcePostgresRegression": 8, "nativeFinalGateRegression": 1, "nativeMonitorUnitRegression": 22, "xmlFile": "geo-distribution-monitor-status-regression-20261011.xml", "xmlSha256": "f438946084ceaa4c53dea3baa643c82ab2607d25559439995e7828a13b773b08"},
+  "centralInterop": {"passed": 10, "failed": 0, "skipped": 0, "newMonitorGetCases": 3, "priorNativeWritebackRegression": 7, "xmlFile": "geo-distribution-monitor-broker-frozen-4a15d242-20261011.xml", "xmlSha256": "807bf0ce8fff0093a4ad6f1c01c457af2d09afc3f5d7d57589615d2a05ac22d0"},
+  "filesSha256": {
+    "app/geo/distribution_results.py": "d36b75f101da877fb4f4c07aeb513fa15da34d331ea713683d143a6e3a8f9d97",
+    "tests/test_geo_distribution_monitor_status_postgres.py": "0785630ea48b32850f5af44e626da082b92b05a1440527e96602df24d451f6e2",
+    "tests/test_geo_distribution_publication_broker_postgres.py": "647df2bed0b4482ff78279fd06b145c919ddb0e56333c5335935d26a7d91a97e",
+    "scripts/geo_distribution_results_schema.sql": "3c834abafb801c061da70ba65d9e3a93a00a1d96f8328b841f4f7ba6deeef76d"
+  },
+  "centralFilesSha256": {
+    "app/distribution_contract.py": "ad7946483f317bea278a0a648e8d8503be20a1c3d30fbefd1c90a58969c593f7",
+    "app/distribution_control.py": "648a748fdfe9b89ffb5f7aa96fe4b07826fa0c84d815fb410f8ff32bc58e5a83",
+    "app/distribution_scheduling.py": "7433e67121140ae98072b89c715a4ad44c5237d6964318a8256858bec4bf486c",
+    "app/distribution_publication_verify.py": "281c8fc92c64e3b2b08cafb827c9596f833a934fdb90180997752192ed59dc5c",
+    "app/distribution_publication_results.py": "e32fc9c2e5318c15bd33024a0b9326254d996680cbf38f4fbcd8a288493a9921",
+    "app/api/distribution.py": "5c5a4ec08634e9c015d935d1519f172c8e23726f5007c492a3ba4cf61f19816c",
+    "scripts/distribution_control_schema.sql": "c3637aaeeb75931b3befb27a7f522070618bb67f961ba61b6c0e66da776ac7cd",
+    "scripts/distribution_scheduling_schema.sql": "b810747c2cf49b088a94caf5e7be1ffda7a5fddd90e9d70f095eb2eea327ae91",
+    "scripts/distribution_publication_schema.sql": "5c81a7bc4279bd0a61f28cddff8ac104084bf18ea505bb13cb41862cfb5946d9"
+  },
+  "boundaries": [
+    "Read-only: no public network fetch, republishing, native algorithm/worker/DDL changes or commit",
+    "Current native advisor/entitlement/project authorization and exact publication/variant/task/business/prompt ownership",
+    "Authorization or scope rejection remains HTTP403; structural failure is sanitized unavailable",
+    "Native HTTP401 preserved; 403/404/409 normalized to safe403 and HTTP5xx sanitized unavailable",
+    "Historical body/review/master revisions do not block reading the original stored monitor state",
+    "healthy maps to observed public-text only and requires its actual checked_at",
+    "No reliable native observation provenance or independent evidence ID: source none and evidence_id null",
+    "No metadata/history/URL/body/free-form errors in returned whitelist",
+    "Connection savepoint and no_autoflush preserve caller transaction and pending ORM objects",
+    "Actual central GET/router/JWT/PG interop with fixed real native adapter, synthetic receipts and stored observation fixtures; no real public-page fetch",
+    "No production schema change, deployment, real platform operation or SEM takeover"
+  ]
+}

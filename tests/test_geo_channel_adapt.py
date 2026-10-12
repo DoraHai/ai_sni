@@ -25,7 +25,7 @@ OUTLINE = {"direct_answer": "直接答案段落足够长。", "updated_at": "202
 class ChannelProfileTests(unittest.TestCase):
     def test_list_includes_china_core(self):
         keys = {p["key"] for p in list_profiles()}
-        self.assertTrue({"website", "wechat", "zhihu", "baijiahao", "toutiao"} <= keys)
+        self.assertTrue({"website", "wechat", "zhihu", "xiaohongshu", "baijiahao", "toutiao"} <= keys)
 
     def test_default_targets(self):
         self.assertEqual(
@@ -47,6 +47,12 @@ class ChannelProfileTests(unittest.TestCase):
         self.assertLessEqual(len(t2), 30)
         self.assertIn("直接答案", out2)
         self.assertNotIn("## 定义", out2)
+
+        red_title, red_body = adapt_for_channel(
+            "xiaohongshu", "小红书标题需要保持简洁不夸张", BODY, OUTLINE
+        )
+        self.assertLessEqual(len(red_title), 40)
+        self.assertIn("直接答案", red_body)
 
     def test_adapt_meta(self):
         meta = build_adapt_meta(

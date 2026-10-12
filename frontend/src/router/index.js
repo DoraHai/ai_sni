@@ -81,6 +81,7 @@ const routes = [
       { path: 'competitors', component: () => import('../views/geo/GeoCompetitorsView.vue'), meta: { title: '竞品分析', documentTitle: 'GEO 工作台｜竞品分析' } },
       { path: 'tasks', component: () => import('../views/geo/GeoTasksView.vue'), meta: { title: '优化文章', documentTitle: 'GEO 工作台｜优化文章' } },
       { path: 'tasks/:taskId', component: () => import('../views/geo/GeoTaskEditorView.vue'), meta: { title: '内容编辑器', documentTitle: 'GEO 工作台｜内容编辑器' } },
+      { path: 'tasks/:taskId/distribution', component: () => import('../views/geo/GeoDistributionView.vue'), meta: { title: '分发记录', documentTitle: 'GEO 工作台｜分发记录' } },
       { path: 'ai-settings', redirect: GEO_WORKBENCH_START },
       { path: 'channel-polish-prompts', component: () => import('../views/geo/GeoChannelPolishPromptsView.vue'), meta: { title: '渠道成稿提示词', documentTitle: 'GEO 工作台｜渠道成稿提示词' } },
       { path: 'publishing', component: () => import('../views/geo/GeoPublishingView.vue'), meta: { title: '分发平台', documentTitle: 'GEO 工作台｜分发平台' } },

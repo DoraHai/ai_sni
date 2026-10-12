@@ -1,15 +1,20 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  deleteGeoDistributionAsset,
+  fetchGeoDistributionAssetContent,
   fetchTaskPushTargets,
   getGeoContentTask,
+  listGeoDistributionAssets,
   listGeoChannelAccounts,
   listGeoPublishingChannels,
   publishGeoVariant,
   pushGeoVariantWebhook,
+  uploadGeoDistributionAsset,
 } from '../../api/geoContent'
+import { fetchGeoProjects } from '../../api/geoProjects'
 import GeoPublicationMonitor from '../../components/GeoPublicationMonitor.vue'
 import GeoDeliveryRecovery from '../../components/GeoDeliveryRecovery.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
@@ -18,7 +23,7 @@ import { pushBlockLabels } from '../../utils/geoPushBlockers'
 
 const route = useRoute()
 const router = useRouter()
-const { tenantId } = useGeoTenant()
+const { tenantId, session } = useGeoTenant()
 const loading = ref(false)
 const busy = ref('')
 const error = ref('')
@@ -26,18 +31,33 @@ const channels = ref([])
 const accounts = ref([])
 const task = ref(null)
 const pushTargets = ref([])
+const projects = ref([])
+const distributionAssets = ref([])
+const assetUrls = ref(new Map())
+const assetError = ref('')
+const assetBusy = ref('')
+const assetInput = ref(null)
 const webhookAccountId = ref(null)
 const webhookUrl = ref('')
 const backfillChannel = ref('')
 const backfillUrl = ref('')
 const backfillNote = ref('')
+let pendingAssetSelection = null
 
 const CHANNEL_CN = {
   website: '官网 CMS', docs: '文档', wechat: '微信公众号', zhihu: '知乎',
-  baijiahao: '百家号', toutiao: '头条', industry_media: '行业媒体',
+  xiaohongshu: '小红书图文', baijiahao: '百家号', toutiao: '头条', industry_media: '行业媒体',
 }
 const taskId = computed(() => Number(route.params.taskId || route.query.task_id || 0) || null)
 const focusMode = computed(() => String(route.query.mode || ''))
+const redVariant = computed(() => (task.value?.variants || []).find((item) => item.channel === 'xiaohongshu' && !item.stale) || null)
+const canManageAssets = computed(() => session.canEdit('geo.assets') && session.canEdit('geo.content'))
+const projectId = computed(() => {
+  const requested = Number(route.query.project_id || 0)
+  if (requested && projects.value.some((item) => Number(item.id) === requested)) return requested
+  const businessId = Number(task.value?.business_id || 0)
+  return Number(projects.value.find((item) => (item.business_scope?.business_ids || []).map(Number).includes(businessId))?.id || 0) || null
+})
 function channelLabel(key) { return CHANNEL_CN[key] || key || '—' }
 function pushBlockText(row) {
   return pushBlockLabels(row).join(' · ')
@@ -82,11 +102,56 @@ const webhookAccounts = computed(() => accounts.value.filter((account) => {
 let contextVersion = 0
 let loadVersion = 0
 function sameContext(version) { return version === contextVersion }
+function clearAssetUrls() {
+  for (const url of assetUrls.value.values()) URL.revokeObjectURL(url)
+  assetUrls.value = new Map()
+}
+function clearAssetState() {
+  clearAssetUrls()
+  distributionAssets.value = []
+}
+function assetNumericId(asset) { return Number(String(asset.id || '').replace('geo-asset-', '')) || 0 }
+function nextAssetOrder() {
+  const used = new Set(distributionAssets.value.map((item) => Number(item.sort_order)))
+  for (let value = 0; value < 20; value += 1) if (!used.has(value)) return value
+  return null
+}
+
+async function loadAssets(version = contextVersion) {
+  clearAssetUrls()
+  distributionAssets.value = []
+  assetError.value = ''
+  if (!canManageAssets.value || !redVariant.value || !projectId.value || !tenantId.value) return
+  const targetTenant = tenantId.value
+  const targetScope = projectId.value
+  const targetVariant = redVariant.value.id
+  const loaded = new Map()
+  try {
+    const result = await listGeoDistributionAssets(targetTenant, targetScope, targetVariant)
+    if (!sameContext(version)) return
+    distributionAssets.value = result.assets || []
+    await Promise.all(distributionAssets.value.map(async (asset) => {
+      const id = assetNumericId(asset)
+      if (!id) return
+      const blob = await fetchGeoDistributionAssetContent(targetTenant, targetScope, targetVariant, id)
+      if (sameContext(version)) loaded.set(asset.id, URL.createObjectURL(blob))
+    }))
+    if (!sameContext(version)) {
+      for (const url of loaded.values()) URL.revokeObjectURL(url)
+      return
+    }
+    assetUrls.value = loaded
+  } catch (e) {
+    for (const url of loaded.values()) URL.revokeObjectURL(url)
+    if (sameContext(version)) assetError.value = e.message || '加载小红书配图失败'
+  }
+}
 
 async function load() {
   const version = contextVersion, request = ++loadVersion
   const current = () => sameContext(version) && request === loadVersion
-  channels.value = []; accounts.value = []; task.value = null; pushTargets.value = []
+  channels.value = []; accounts.value = []; task.value = null; pushTargets.value = []; projects.value = []
+  clearAssetUrls(); distributionAssets.value = []; assetError.value = ''
   loading.value = false
   if (!tenantId.value) {
     error.value = '请先选择客户或配置本地 API Key'
@@ -99,23 +164,108 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [channelResult, accountResult, taskResult, targets] = await Promise.all([
+    const [channelResult, accountResult, taskResult, targets, projectResult] = await Promise.all([
       listGeoPublishingChannels(tenantId.value, false),
       listGeoChannelAccounts(tenantId.value),
       getGeoContentTask(tenantId.value, taskId.value),
       fetchTaskPushTargets(tenantId.value, taskId.value).catch(() => ({ targets: [] })),
+      fetchGeoProjects(tenantId.value),
     ])
     if (!current()) return
     channels.value = channelResult.items || []
     accounts.value = accountResult.items || []
     task.value = taskResult
     pushTargets.value = targets.targets || []
+    projects.value = projectResult.projects || []
     if (!webhookAccountId.value && webhookAccounts.value.length) webhookAccountId.value = webhookAccounts.value[0].id
     if (!backfillChannel.value && taskResult.variants?.length) backfillChannel.value = taskResult.variants[0].channel
+    await loadAssets(version)
   } catch (e) {
     if (current()) error.value = e.message || '加载分发记录失败'
   } finally {
     if (current()) loading.value = false
+  }
+}
+
+function chooseAsset() {
+  if (!canManageAssets.value) return ElMessage.warning('当前账号没有配图编辑权限')
+  if (!redVariant.value) return ElMessage.warning('请先在编辑器生成小红书渠道稿')
+  if (!projectId.value) return ElMessage.warning('当前任务未绑定可编辑 GEO 项目')
+  if (distributionAssets.value.length >= 20) return ElMessage.warning('每个渠道稿最多 20 张图片')
+  pendingAssetSelection = {
+    version: contextVersion,
+    tenant: tenantId.value,
+    scope: projectId.value,
+    variant: redVariant.value.id,
+  }
+  assetInput.value?.click()
+}
+
+async function uploadAsset(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  const selected = pendingAssetSelection
+  pendingAssetSelection = null
+  if (!file || !selected || assetBusy.value) return
+  if (!sameContext(selected.version)
+    || tenantId.value !== selected.tenant
+    || projectId.value !== selected.scope
+    || redVariant.value?.id !== selected.variant) {
+    return ElMessage.warning('客户或项目已切换，请重新选择配图')
+  }
+  if (!['image/png', 'image/jpeg'].includes(file.type)) return ElMessage.warning('只能上传 PNG 或 JPEG')
+  if (file.size > 20_000_000) return ElMessage.warning('单张图片不能超过 20MB')
+  const order = nextAssetOrder()
+  if (order === null) return ElMessage.warning('每个渠道稿最多 20 张图片')
+  const version = selected.version
+  assetBusy.value = 'upload'
+  try {
+    await uploadGeoDistributionAsset(selected.tenant, selected.scope, selected.variant, order, file)
+    if (!sameContext(version)) return
+    ElMessage.success('配图已保存，旧客户审核已作废，请重新提交客户审核')
+    await load()
+  } catch (e) {
+    if (sameContext(version)) {
+      clearAssetState()
+      ElMessage.error(e.message || '上传配图失败')
+    }
+  } finally {
+    if (sameContext(version)) assetBusy.value = ''
+  }
+}
+
+async function deleteAsset(asset) {
+  if (assetBusy.value || !redVariant.value || !projectId.value) return
+  const selected = {
+    version: contextVersion,
+    tenant: tenantId.value,
+    scope: projectId.value,
+    variant: redVariant.value.id,
+    assetId: assetNumericId(asset),
+  }
+  try {
+    await ElMessageBox.confirm('删除配图会作废当前客户审核，删除后需重新提交客户审核。', '确认删除配图', { type: 'warning' })
+  } catch {
+    return
+  }
+  if (!sameContext(selected.version)
+    || tenantId.value !== selected.tenant
+    || projectId.value !== selected.scope
+    || redVariant.value?.id !== selected.variant) return
+  const version = selected.version
+  assetBusy.value = asset.id
+  try {
+    await deleteGeoDistributionAsset(selected.tenant, selected.scope, selected.variant, selected.assetId)
+    if (!sameContext(version)) return
+    ElMessage.success('配图已删除，旧客户审核已作废')
+    await load()
+  } catch (e) {
+    if (sameContext(version)) {
+      clearAssetState()
+      ElMessage.error(e.message || '删除配图失败')
+    }
+  } finally {
+    if (sameContext(version)) assetBusy.value = ''
   }
 }
 
@@ -206,14 +356,15 @@ async function backfill() {
   }
 }
 
-watch([tenantId, taskId], () => {
+watch([tenantId, taskId, canManageAssets], () => {
   contextVersion++
+  pendingAssetSelection = null
   busy.value = ''; error.value = ''
   webhookAccountId.value = null; webhookUrl.value = ''
   backfillChannel.value = ''; backfillUrl.value = ''; backfillNote.value = ''
   load()
 }, { flush: 'sync' })
-onBeforeUnmount(() => { contextVersion++; loadVersion++ })
+onBeforeUnmount(() => { contextVersion++; loadVersion++; pendingAssetSelection = null; clearAssetUrls() })
 onMounted(load)
 </script>
 
@@ -267,6 +418,33 @@ onMounted(load)
           </el-table>
         </div>
       </section>
+      <section class="gd-card mb red-assets">
+        <div class="gd-hd">
+          <div>
+            <h3>小红书配图</h3>
+            <span class="muted">只使用当前小红书渠道稿的不可变 PNG/JPEG；增删配图后必须重新客户审核。</span>
+          </div>
+          <div>
+            <input ref="assetInput" class="asset-input" type="file" accept="image/png,image/jpeg" @change="uploadAsset" />
+            <el-button type="primary" :disabled="!canManageAssets || !redVariant || !projectId || distributionAssets.length >= 20" :loading="assetBusy === 'upload'" @click="chooseAsset">上传配图</el-button>
+          </div>
+        </div>
+        <div class="gd-bd">
+          <el-alert v-if="assetError" type="error" :title="assetError" show-icon class="mb" />
+          <el-alert v-if="!canManageAssets" type="warning" title="当前账号没有 GEO 配图编辑权限。" show-icon class="mb" />
+          <el-alert v-if="task && task.review_status !== 'approved'" type="warning" title="当前稿件未通过客户审核，配图不会进入正式分发清单。" show-icon class="mb" />
+          <p v-if="!redVariant" class="muted">当前任务没有最新小红书渠道稿。请返回编辑器，在「选择渠道稿」中勾选小红书后生成。</p>
+          <p v-else-if="!projectId" class="muted">当前任务未归属到可编辑的 GEO 项目，无法维护配图。</p>
+          <p v-else-if="!distributionAssets.length" class="muted">尚无配图，上传后请返回编辑器走原有客户审核流程。</p>
+          <div v-else class="asset-grid">
+            <article v-for="asset in distributionAssets" :key="asset.id" class="asset-card">
+              <img v-if="assetUrls.get(asset.id)" :src="assetUrls.get(asset.id)" :alt="`配图 ${asset.sort_order + 1}`" />
+              <div class="asset-meta"><b>第 {{ asset.sort_order + 1 }} 张</b><span>{{ asset.mediaType }} · {{ Math.ceil(asset.bytes / 1024) }}KB</span></div>
+              <el-button type="danger" plain size="small" :disabled="!canManageAssets" :loading="assetBusy === asset.id" @click="deleteAsset(asset)">删除</el-button>
+            </article>
+          </div>
+        </div>
+      </section>
       <GeoDeliveryRecovery :tenant-id="tenantId" :task-id="taskId" @resolved="load" />
       <GeoPublicationMonitor :tenant-id="tenantId" :task-id="taskId" :revision="task?.publications?.length || 0" />
       <section class="gd-card" :class="{ focus: focusMode === 'manual' }">
@@ -303,4 +481,11 @@ onMounted(load)
 .push-block-reason :deep(.el-button) { margin-left: 4px; padding: 0; vertical-align: baseline; }
 .push-action { display: inline-flex; }
 .focus { outline: 2px solid #c7d2fe; border-radius: 12px; }
+.asset-input { display: none; }
+.red-assets .gd-hd { align-items: flex-start; }
+.asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.asset-card { display: grid; gap: 8px; padding: 10px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
+.asset-card img { width: 100%; height: 150px; object-fit: cover; border-radius: 8px; background: #f8fafc; }
+.asset-meta { display: flex; justify-content: space-between; gap: 8px; color: #64748b; font-size: 12px; }
+.asset-meta b { color: #334155; }
 </style>

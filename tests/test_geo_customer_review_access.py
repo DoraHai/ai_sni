@@ -93,7 +93,7 @@ def test_bound_customer_reviewer_can_decide_current_pending_version(decision):
     )
     with patch.object(routes, "_get_task", AsyncMock(return_value=task)), patch.object(
         routes, "_latest_article", AsyncMock(return_value=NS(id=22))
-    ), patch.object(routes, "_sync_task_pipeline", AsyncMock()), patch.object(
+    ), patch("app.geo.content.manual_finalization.bind_customer_review", AsyncMock()), patch.object(routes, "_sync_task_pipeline", AsyncMock()), patch.object(
         routes, "_task_payload", AsyncMock(return_value={"review_status": decision})
     ):
         result = asyncio.run(routes.decide_task_review(14, req, 7, _ctx(), session))
@@ -192,7 +192,7 @@ def test_existing_geo_editor_review_flow_remains_compatible():
     editor = _ctx(tenant_id=None, level="edit")
     with patch.object(routes, "_get_task", AsyncMock(return_value=task)), patch.object(
         routes, "_sync_task_pipeline", AsyncMock()
-    ), patch.object(
+    ), patch("app.geo.content.manual_finalization.bind_customer_review", AsyncMock()), patch.object(
         routes, "_task_payload", AsyncMock(return_value={"review_status": "approved"})
     ):
         result = asyncio.run(routes.decide_task_review(

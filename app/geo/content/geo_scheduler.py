@@ -101,6 +101,7 @@ async def run_geo_visibility_patrols() -> None:
         should_run_scheduled_patrol,
     )
     from app.models import GeoVisibilityPatrolRun
+    from app.geo.automation_v2_adapter import legacy_prompt_ids
     from app.geo.tenant_scope import GeoEntitlementUnavailable, ensure_geo_entitlement
 
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
@@ -165,6 +166,25 @@ async def run_geo_visibility_patrols() -> None:
                 )
                 await session.commit()
                 continue
+            try:
+                prompt_ids = await legacy_prompt_ids(
+                    session, st.tenant_id, int(st.prompt_limit or 20)
+                )
+            except Exception as exc:  # registry/audit/schema errors must fail closed
+                _telemetry.record_failure("geo_visibility_patrols", exc)
+                logger.exception(
+                    "[geo-scheduler] automation ownership unavailable tenant=%s",
+                    st.tenant_id,
+                )
+                await session.rollback()
+                continue
+            if not prompt_ids:
+                logger.info(
+                    "[geo-scheduler] no legacy-unclaimed patrol prompts tenant=%s",
+                    st.tenant_id,
+                )
+                await session.commit()
+                continue
             run = GeoVisibilityPatrolRun(
                 tenant_id=st.tenant_id,
                 status="pending",
@@ -173,6 +193,11 @@ async def run_geo_visibility_patrols() -> None:
                 prefer_real=bool(st.prefer_real),
                 prompt_limit=int(st.prompt_limit or 20),
                 engine_keys=st.engine_keys,
+                summary={"scheduler_scope": {
+                    "schema": 1,
+                    "source": "legacy_unclaimed",
+                    "prompt_ids": prompt_ids,
+                }},
                 created_by=None,
             )
             session.add(run)

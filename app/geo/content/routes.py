@@ -18,6 +18,8 @@ from app.geo.read_routes import read_session as geo_read_session
 from app.geo.tenant_scope import ensure_geo_entitlement, require_geo_read_entitlement
 from app.geo.content.export_view import export_revision, export_view
 from app.geo.content.schemas import VariantExportRequest
+from app.geo.content.schemas import ManualChannelFinalize
+from app.geo.content.manual_finalization import current_variants, record_valid, digest as manual_digest
 from app.geo.content.bridge import (
     create_and_bind_diagnosis_facts,
     create_task_from_diagnosis,
@@ -688,6 +690,7 @@ async def _build_rule_input(
     if refresh_citations:
         _refresh_article_citations(article, fact_dicts)
     variants = await _variants(session, task.id, fresh=fresh)
+    variants = current_variants(variants)
     tenant = await session.get(Tenant, task.tenant_id, populate_existing=fresh)
     default_author = tenant.name if tenant else None
     return RuleInput(
@@ -710,6 +713,7 @@ async def _evaluate_and_store_rules(
     article: GeoArticleVersion | None,
     *,
     require_channels: bool = False,
+    refresh_citations: bool = True,
 ) -> dict[str, Any]:
     """Run checks + GEO Score and persist onto task.rule_result.
 
@@ -721,7 +725,7 @@ async def _evaluate_and_store_rules(
     from app.geo.content.extractable_blocks import blocks_payload
     from app.geo.content.geo_score import compute_geo_score, score_blocks_ready
 
-    rule_input = await _build_rule_input(session, task, article, fresh=True)
+    rule_input = await _build_rule_input(session, task, article, fresh=True, refresh_citations=refresh_citations)
     checks = run_checks(rule_input)
     check_dicts = [c.to_dict() for c in checks]
     ready = is_ready(checks, require_channels=require_channels)
@@ -874,6 +878,7 @@ async def _task_payload(
     payload['generation_evidence'] = generation_evidence_readiness(_fact_dicts(facts))
     article = await _latest_article(session, task.id)
     variants = await _variants(session, task.id)
+    latest_variants = current_variants(variants)
     current_brand_validation = None
     if article is not None:
         from app.geo.content.brand_geo import markdown_brand_validation
@@ -940,12 +945,16 @@ async def _task_payload(
                     "article_version_id": v.article_version_id,
                     "export_revision": export_revision(v, article.id if article else None),
                     "adapt_meta": v.adapt_meta or {},
+                    "manual_finalization_current": (
+                        record_valid(task, article, v, allow_pending=True)
+                        and (v.adapt_meta or {}).get("manual_finalization", {}).get("facts_digest") == manual_digest(_fact_dicts(facts))
+                    ) if isinstance((v.adapt_meta or {}).get("manual_finalization"), dict) else None,
                     "stale": bool(
                         article is not None and v.article_version_id != article.id
                     ),
                     "updated_at": _iso(v.updated_at),
                 }
-                for v in variants
+                for v in latest_variants
             ],
             "publications": pubs,
             "channel_profiles": list_profiles(),
@@ -953,6 +962,10 @@ async def _task_payload(
             "variant_polish": await _latest_variant_polish(session, task),
         }
     )
+    payload["variant_history"] = [{"id": v.id, "channel": v.channel, "title": v.title,
+        "body_markdown": v.body_markdown, "adapt_meta": v.adapt_meta or {}, "status": v.status,
+        "article_version_id": v.article_version_id, "updated_at": _iso(v.updated_at)}
+        for v in variants if v.id not in {row.id for row in latest_variants}]
     return payload
 
 
@@ -6024,6 +6037,37 @@ async def delete_publishing_channel(
     return {"deleted": False, "disabled": True, "channel": _channel_payload(row)}
 
 
+@router.get("/content-tasks/{task_id}/variants/{channel}/manual-finalization",
+    dependencies=[Depends(require_geo_read_entitlement)])
+async def preview_manual_channel_finalization(task_id: int, channel: str,
+        tenant_id: int = Query(..., gt=0), scope_id: int = Query(..., gt=0),
+        ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session)):
+    from app.geo.content.manual_finalization import preview
+    ctx.ensure_tenant(tenant_id)
+    return await preview(session, ctx.user_id, tenant_id, scope_id, task_id, channel)
+
+
+@router.post("/content-tasks/{task_id}/variants/{channel}/manual-finalization",
+    dependencies=[Depends(require_geo_read_entitlement)])
+async def finalize_manual_channel(task_id: int, channel: str, req: ManualChannelFinalize,
+        tenant_id: int = Query(..., gt=0), ctx: AuthContext = Depends(require_scoped_auth),
+        session: AsyncSession = Depends(get_session)):
+    from app.geo.content.manual_finalization import finalize
+    ctx.ensure_tenant(tenant_id)
+    variant, replay = await finalize(session, ctx.user_id, tenant_id, task_id, channel, req)
+    task = await _get_task(session, task_id, tenant_id)
+    if not replay:
+        article = await _latest_article(session, task_id, fresh=True)
+        await _evaluate_and_store_rules(session, task, article, require_channels=True, refresh_citations=False)
+        await _sync_task_pipeline(session, task)
+    await session.commit()
+    await session.refresh(task)
+    payload = await _task_payload(session, task, detail=True)
+    payload["manual_finalize_result"] = {"variant_id": variant.id, "source": "manual",
+        "idempotent": replay, "review_required": task.review_status != "approved", "publishing_authorized": False}
+    return payload
+
+
 @router.patch(
     "/publishing-channels/{channel_id}",
     dependencies=[Depends(require_geo_read_entitlement)],
@@ -8255,7 +8299,7 @@ async def update_variant(
     task = await _get_task(session, task_id, tenant_id)
     await session.refresh(task, with_for_update=True)
     channel_key = str(channel or "").strip().lower()
-    existing = {v.channel: v for v in await _variants(session, task.id)}
+    existing = {v.channel: v for v in current_variants(await _variants(session, task.id))}
     variant = existing.get(channel_key)
     if variant is None:
         raise HTTPException(404, f"渠道版本不存在: {channel_key}")
@@ -8267,6 +8311,19 @@ async def update_variant(
         return await _task_payload(session, task, detail=True)
     if variant.status == "published":
         raise HTTPException(409, "已发布渠道稿不能直接覆盖，请建立新的稿件版本")
+    if changed:
+        # Preserve previews as well as finalized evidence. Editing always creates
+        # a preview successor that must be explicitly finalized again.
+        old = variant
+        meta = {key: value for key, value in (old.adapt_meta or {}).items() if key != "manual_finalization"}
+        meta["engine"] = "manual_edit_preview_v1"
+        meta["previous_variant_id"] = old.id
+        now = datetime.utcnow()
+        variant = GeoChannelVariant(task_id=old.task_id, article_version_id=old.article_version_id,
+            channel=old.channel, title=old.title, body_markdown=old.body_markdown, adapt_meta=meta,
+            status="draft", export_format=old.export_format, created_at=now,
+            updated_at=max(now, old.updated_at + timedelta(microseconds=1)) if old.updated_at else now)
+        session.add(variant)
     if req.title is not None:
         variant.title = req.title.strip()
     if req.body_markdown is not None:
@@ -8309,7 +8366,7 @@ async def preview_variant_export(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
-    variant = next((v for v in await _variants(session, task.id) if v.channel == channel), None)
+    variant = next((v for v in current_variants(await _variants(session, task.id)) if v.channel == channel), None)
     if variant is None:
         raise HTTPException(404, f"渠道版本不存在: {channel}")
     article = await _latest_article(session, task.id)
@@ -8328,7 +8385,7 @@ async def export_variant(
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
     await session.refresh(task, with_for_update=True)
-    variants = {v.channel: v for v in await _variants(session, task.id)}
+    variants = {v.channel: v for v in current_variants(await _variants(session, task.id))}
     variant = variants.get(channel)
     if variant is None:
         raise HTTPException(404, f"渠道版本不存在: {channel}")
@@ -8419,6 +8476,8 @@ async def decide_task_review(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    from app.geo.content.manual_finalization import bind_customer_review
+    await bind_customer_review(session, task, ctx, req.decision)
     await _sync_task_pipeline(session, task)
     await session.commit()
     await session.refresh(task)

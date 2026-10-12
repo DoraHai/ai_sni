@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-11",
+  "nativeBaseline": "01a578577d053c9a895f8bdbb7d88e8b8d23f3e6",
+  "localOnly": true,
+  "productionDdlApplied": false,
+  "deployed": false,
+  "realPlatformUsed": false,
+  "semAiTakeoverEnabled": false,
+  "suite": {
+    "passed": 65,
+    "failed": 0,
+    "skipped": 0,
+    "newTests": 34,
+    "newPostgresScenarios": 18,
+    "newContractChecks": 16,
+    "nativeSourcePostgresRegression": 8,
+    "nativeMonitorUnitRegression": 22,
+    "nativeFinalGateRegression": 1,
+    "xmlSha256": "529cc7fce4165e20715aa6574df0ed9963e6787f893b1b3e87ce774fe3c919c0"
+  },
+  "testedFilesSha256": {
+    "app/geo/distribution_results.py": "92406c6d71f16adaa87d2927b9b1670f9cf46bdac252601458345c6e9bcd4d2e",
+    "scripts/geo_distribution_results_schema.sql": "3c834abafb801c061da70ba65d9e3a93a00a1d96f8328b841f4f7ba6deeef76d",
+    "tests/test_geo_distribution_results_postgres.py": "244edd3686828adfed954e21d5a979461cb4d893fa89ac88cee8461a77b5ab7d"
+  },
+  "boundaries": [
+    "Server-only adapter: no HTTP client body or approval write API",
+    "Caller transaction with adapter savepoint; no adapter commit",
+    "Current native authorization and review gates remain required on replay",
+    "Unknown and human-reported receipts are not verified publications",
+    "Publication registration does not imply healthy monitoring or AI citation",
+    "Reported timestamp is registration time, not verified platform first publication time",
+    "No production schema change, deployment or real platform operation"
+  ]
+}

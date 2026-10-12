@@ -86,7 +86,7 @@ def phase_state(ticket, plan, now):
     return state
 
 
-async def refresh_project(project_id, *, session_factory=None, now=None):
+async def refresh_project(project_id, *, session_factory=None, now=None, automation_token=None):
     from app.geo.routes import build_ticket_execution_plan
     from app.geo.execution_plan import ticket_prompt_id
     factory = session_factory or async_session_factory
@@ -97,6 +97,33 @@ async def refresh_project(project_id, *, session_factory=None, now=None):
             return
         tenant_id = seed.tenant_id
         ensure_geo_background_execution_allowed(tenant_id)
+        # Hold the shared scope advisory lock through the legacy write. Once a
+        # v2 project adopts this operation, pause/end_project retains ownership
+        # and the old minute scheduler cannot recreate work behind the gate.
+        from app import automation_project_v2 as automation_v2
+        from app import automation_projects as automation_core
+        if automation_token is None:
+            try:
+                await automation_v2.check_legacy(
+                    session, automation_core.scope("geo", tenant_id, project_id),
+                    "periodic_workflow",
+                )
+            except HTTPException as exc:
+                detail = exc.detail if isinstance(exc.detail, dict) else {}
+                if detail.get("code") == "automation_legacy_owned":
+                    await session.rollback()
+                    return
+                raise
+        else:
+            _, current_run, _ = await automation_core.check_step(session, automation_token)
+            from app.automation_project_contract import ConfigurationV2
+            from app.geo.automation_v2_adapter import validate_configuration
+            await validate_configuration(
+                session, tenant_id, project_id,
+                ConfigurationV2.model_validate(current_run["configuration"]),
+                int(automation_token["owner_user_id"]),
+                current_targets=[automation_token["target"]],
+            )
         await session.scalar(select(Tenant.id).where(Tenant.id == tenant_id).with_for_update())
         project = await session.get(GeoProject, project_id, with_for_update=True, populate_existing=True)
         if project is None:

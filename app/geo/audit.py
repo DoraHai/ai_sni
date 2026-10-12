@@ -219,7 +219,8 @@ async def _ensure_public_host(url: str) -> list[str]:
 
 async def safe_fetch(
     url: str, *, allow_text: bool = False, allow_xml: bool = False,
-    allowed_hosts: frozenset[str] | None = None
+    allowed_hosts: frozenset[str] | None = None,
+    request_gate: Any | None = None,
 ) -> PageDocument:
     """逐跳校验重定向目标，阻止 SSRF，并限制响应类型和体积。"""
     current = normalize_url(url)
@@ -233,7 +234,7 @@ async def safe_fetch(
             "Accept": "text/html,application/xml,text/xml;q=0.9,text/plain;q=0.8",
         },
     ) as client:
-        for _ in range(MAX_REDIRECTS + 1):
+        for hop in range(MAX_REDIRECTS + 1):
             current = normalize_url(current)
             target = urlparse(current)
             if allowed_hosts is not None and ((target.hostname or '').lower().rstrip('.') not in allowed_hosts
@@ -242,16 +243,22 @@ async def safe_fetch(
             addresses = await _ensure_public_host(current)
             original = httpx.URL(current)
             pinned = original.copy_with(host=addresses[0])
+            if request_gate is not None:
+                await request_gate.before(current, hop)
             try:
                 async with client.stream("GET", pinned, headers={"Host": original.netloc.decode("ascii")},
                                          extensions={"sni_hostname": original.raw_host.decode("ascii")}) as response:
                     if response.status_code in {301, 302, 303, 307, 308}:
+                        if request_gate is not None:
+                            await request_gate.after(hop, "succeeded")
                         location = response.headers.get("location")
                         if not location:
                             raise GeoAuditError("网站返回了无目标地址的重定向")
                         current = urljoin(current, location)
                         continue
                     if response.status_code >= 400:
+                        if request_gate is not None:
+                            await request_gate.after(hop, "succeeded")
                         raise GeoAuditError(f"网站访问失败：HTTP {response.status_code}")
                     content_type = response.headers.get("content-type", "").lower()
                     accepted = "text/html" in content_type or (
@@ -260,23 +267,32 @@ async def safe_fetch(
                         allow_xml and "xml" in content_type
                     )
                     if not accepted:
+                        if request_gate is not None:
+                            await request_gate.after(hop, "succeeded")
                         raise GeoAuditError(f"不支持的页面类型：{content_type or '未知'}")
                     chunks: list[bytes] = []
                     size = 0
                     async for chunk in response.aiter_bytes():
                         size += len(chunk)
                         if size > MAX_HTML_BYTES:
+                            if request_gate is not None:
+                                await request_gate.after(hop, "succeeded")
                             raise GeoAuditError("页面超过 3MB，已停止抓取")
                         chunks.append(chunk)
                     encoding = response.encoding or "utf-8"
-                    return PageDocument(
+                    document = PageDocument(
                         requested_url=url,
                         final_url=current,
                         html=b"".join(chunks).decode(encoding, errors="replace"),
                         content_type=content_type,
                         headers={"x-robots-tag": ",".join(response.headers.get_list("x-robots-tag"))},
                     )
+                    if request_gate is not None:
+                        await request_gate.after(hop, "succeeded")
+                    return document
             except httpx.HTTPError as exc:
+                if request_gate is not None:
+                    await request_gate.after(hop, "unknown")
                 raise GeoAuditError(f"网站连接失败：{exc}") from exc
     raise GeoAuditError("网站重定向次数过多")
 

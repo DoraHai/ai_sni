@@ -7,7 +7,7 @@ from uuid import uuid4
 import os
 import httpx
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from starlette.responses import Response
 from sqlalchemy import select, func, text, update
 from sqlalchemy.exc import DBAPIError
@@ -20,6 +20,7 @@ from app.models import GeoActionTicket, GeoAsyncJob, GeoFact, GeoProject
 from app.security.auth import AuthContext
 from app.models.user import User
 from app.models.role import Role
+from app.automation_project_contract import Configure as AutomationConfigure, Control as AutomationControl
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -160,6 +161,14 @@ async def _install_api_accounting(sessions):
             ADD COLUMN verified_amount numeric(24,12),
             ADD COLUMN verified_currency varchar(3),
             ADD COLUMN reviewed_at timestamptz""")
+
+
+async def _install_automation_control(sessions):
+    engine = sessions.kw["bind"]
+    root = Path(__file__).parents[1]
+    async with engine.connect() as connection:
+        raw = (await connection.get_raw_connection()).driver_connection
+        await raw.execute((root / "scripts/automation_projects_schema.sql").read_text())
 
 
 @pytest.mark.parametrize(
@@ -1132,4 +1141,573 @@ def test_advisor_list_filters_assignment_before_pagination(monkeypatch):
             item = result["items"][0]
             assert item["scope_name"] == "project 10" and item["tenant_name"] == "scope fixture"
             assert item["capabilities"]["ai_planning"]["enabled"] is False
+    asyncio.run(run())
+
+
+def test_project_control_drives_real_geo_queue_metering_and_shared_events(monkeypatch):
+    """HTTP adapter -> durable child -> real executor -> metering -> shared result."""
+    from app import automation_projects as control
+    from app.geo import automation_routes
+
+    provider_calls = 0
+    original_client = httpx.AsyncClient
+
+    async def credentials(_session, _tenant_id):
+        return {
+            "api_key": "fixture-key",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "deepseek-v4-flash",
+        }
+
+    async def provider(_request):
+        nonlocal provider_calls
+        provider_calls += 1
+        return httpx.Response(200, json={
+            "id": "automation-fixture",
+            "choices": [{"message": {"content": json.dumps(_ai_result([
+                {"id": "structured_content", "kind": "structured_content"},
+                {"id": "knowledge", "kind": "knowledge"},
+                {"id": "faq", "kind": "faq"},
+            ]))}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 20,
+                      "prompt_tokens_details": {"cached_tokens": 0}},
+        })
+
+    def client_factory(*_args, **kwargs):
+        return original_client(timeout=kwargs.get("timeout"), transport=httpx.MockTransport(provider))
+
+    monkeypatch.setenv("API_METERING_ENABLED", "true")
+    monkeypatch.setenv("API_CONTROLS_ENABLED", "false")
+    monkeypatch.delenv("API_METERING_RATES_JSON", raising=False)
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(onsite_jobs, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(ai_client.httpx, "AsyncClient", client_factory)
+
+    async def run():
+        async with database() as sessions:
+            await _install_api_accounting(sessions)
+            await _install_automation_control(sessions)
+            monkeypatch.setattr(api_metering, "async_session_factory", sessions)
+            monkeypatch.setattr(automation_routes, "async_session_factory", sessions)
+            await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
+            async with sessions() as db:
+                task = await api.create(api.Create(
+                    tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员",
+                ), db, ADVISOR)
+            queued_ids = []
+
+            async def owned(job_id, tenant_id):
+                queued_ids.append((job_id, tenant_id))
+                return None
+
+            monkeypatch.setattr(automation_routes.async_jobs, "run_job_in_background", owned)
+            from app.database import get_session
+            from app.security.auth import require_scoped_auth
+            web = FastAPI()
+            web.include_router(automation_routes.router, prefix="/api/v1/geo")
+
+            async def session_dependency():
+                async with sessions() as db:
+                    yield db
+
+            web.dependency_overrides[get_session] = session_dependency
+            web.dependency_overrides[require_scoped_auth] = lambda: ADVISOR
+            async with original_client(
+                transport=httpx.ASGITransport(app=web), base_url="http://automation.test"
+            ) as client:
+                configured_response = await client.put(
+                    "/api/v1/geo/workbench/automation-projects/10/control",
+                    json={
+                        "tenant_id": 1, "request_id": str(uuid4()), "expected_version": 0,
+                        "configuration": {
+                            "task_ids": [task["id"]], "operations": ["onsite_ai"],
+                            "cycle": {"mode": "once", "enabled": False},
+                            "limits": {"max_dispatches_per_run": 1},
+                            "stop_condition": "drafts_ready_or_blocked", "owner_user_id": 7,
+                        },
+                    },
+                )
+                assert configured_response.status_code == 200
+                assert configured_response.headers["cache-control"] == "no-store"
+                configured_project = configured_response.json()
+                started_response = await client.post(
+                    "/api/v1/geo/workbench/automation-projects/10/control",
+                    json={
+                        "tenant_id": 1, "request_id": str(uuid4()),
+                        "expected_version": configured_project["version"], "action": "start",
+                    },
+                )
+                assert started_response.status_code == 200
+                assert started_response.headers["cache-control"] == "no-store"
+                started = started_response.json()
+            key = control.scope("geo", 1, 10)
+            assert len(queued_ids) == 1
+            async with sessions() as db:
+                queued_job = await db.get(GeoAsyncJob, queued_ids[0][0], with_for_update=True)
+                queued_job.request_meta = {
+                    key: value for key, value in queued_job.request_meta.items()
+                    if key != "automation_token"
+                }
+                await db.commit()
+            await run_owned(sessions, *queued_ids[0])
+            assert provider_calls == 1
+            async with sessions() as db:
+                jobs = list(await db.scalars(select(GeoAsyncJob)))
+                assert len(jobs) == 1 and jobs[0].status == "succeeded"
+                assert "automation_token" not in jobs[0].request_meta
+                run_row = await control.read_run(db, key, started["current_run_id"])
+                step = run_row["steps"][0]
+                assert step["status"] == "succeeded"
+                assert step["evidence_refs"] == [f"geo_ticket:{task['id']}"]
+                assert step["result_links"][0].startswith("/api/v1/geo/")
+                assert step["fee_state"] == "unverified"
+                events = await control.events_page(db, key, started["current_run_id"])
+                assert {event["code"] for event in events["items"]} >= {
+                    "run_queued", "step_claimed", "dispatch_admitted", "step_succeeded",
+                }
+                usage = (await db.execute(text(
+                    "SELECT state,module,operation FROM api_usage_events"
+                ))).one()
+                assert usage.state == "succeeded" and usage.module == "geo"
+                assert usage.operation == "chat.completions"
+                assert "fixture-key" not in str(events)
+            # Recovery sees a terminal step and cannot create or repay it.
+            await automation_routes.recover_automation_runs()
+            async with sessions() as db:
+                assert await db.scalar(select(func.count()).select_from(GeoAsyncJob)) == 1
+            paths = [
+                "/api/v1/geo/workbench/automation-projects?tenant_id=1",
+                "/api/v1/geo/workbench/automation-projects/10/control?tenant_id=1",
+                "/api/v1/geo/workbench/automation-projects/10/runs?tenant_id=1",
+                f"/api/v1/geo/workbench/automation-projects/10/runs/{started['current_run_id']}?tenant_id=1",
+                f"/api/v1/geo/workbench/automation-projects/10/runs/{started['current_run_id']}/events?tenant_id=1",
+                "/api/v1/geo/workbench/automation-projects/10/events?tenant_id=1",
+            ]
+            responses = {}
+            async with original_client(
+                transport=httpx.ASGITransport(app=web), base_url="http://automation.test"
+            ) as client:
+                for path in paths:
+                    response = await client.get(path)
+                    assert response.status_code == 200
+                    assert response.headers["cache-control"] == "no-store"
+                    responses[path] = response.json()
+            sample_path = os.getenv("GEO_AUTOMATION_SAMPLE_PATH")
+            if sample_path:
+                Path(sample_path).write_text(json.dumps({
+                    "source": "isolated PostgreSQL + ASGI routes",
+                    "responses": responses,
+                }, ensure_ascii=False, indent=2), encoding="utf-8")
+            async with sessions() as db:
+                role = await db.get(Role, 5, with_for_update=True)
+                role.permissions = {"geo.assets": "view", "geo.content": "view"}
+                await db.commit()
+            async with sessions() as db:
+                project = await db.get(GeoProject, 10)
+                assert not await api.can_operate(db, ADVISOR, project)
+                payload = await automation_routes._project_payload(
+                    db, key, live_project=project, actor_id=7
+                )
+                assert payload["scope_name"] == "project 10"
+                assert payload["blocker"] == "automation_owner_mismatch"
+                assert payload["allowed_actions"] == []
+                assert payload["capabilities"]["can_control"] is False
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("action,final_state", [("pause", "paused"), ("takeover", "taken_over")])
+def test_project_control_fences_inflight_geo_result_and_never_requeues(
+        monkeypatch, action, final_state):
+    from app import automation_projects as control
+    from app.geo import automation_routes
+
+    async def credentials(_session, _tenant_id):
+        return {"api_key": "fixture-key", "base_url": "https://provider.invalid/v1",
+                "model": "fixture-model"}
+
+    async def no_worker(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(automation_routes.async_jobs, "run_job_in_background", no_worker)
+    monkeypatch.setattr(automation_routes, "run_automation", automation_routes.run_automation)
+
+    async def run():
+        async with database() as sessions:
+            await _install_automation_control(sessions)
+            monkeypatch.setattr(automation_routes, "async_session_factory", sessions)
+            await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
+            async with sessions() as db:
+                task = await api.create(api.Create(
+                    tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员",
+                ), db, ADVISOR)
+            async with sessions() as db:
+                configured_project = await automation_routes.configure(
+                    10, AutomationConfigure(
+                        tenant_id=1, request_id=uuid4(), expected_version=0,
+                        configuration={
+                            "task_ids": [task["id"]], "operations": ["onsite_ai"],
+                            "cycle": {"mode": "once", "enabled": False},
+                            "limits": {"max_dispatches_per_run": 1},
+                            "stop_condition": "drafts_ready_or_blocked", "owner_user_id": 7,
+                        },
+                    ), Response(), db, ADVISOR,
+                )
+            async with sessions() as db:
+                started = await automation_routes.act(
+                    10, AutomationControl(
+                        tenant_id=1, request_id=uuid4(),
+                        expected_version=configured_project["version"], action="start",
+                    ), Response(), BackgroundTasks(), db, ADVISOR,
+                )
+            key = control.scope("geo", 1, 10)
+            await automation_routes.run_automation(key, started["current_run_id"])
+            async with sessions() as db:
+                job = await db.scalar(select(GeoAsyncJob).with_for_update())
+                token = job.request_meta["automation_token"]
+                assert await control.begin_dispatch(db, token)
+                job.status = "running"
+                job.request_meta = {
+                    **{key: value for key, value in job.request_meta.items()
+                       if key != "automation_token"},
+                    "provider_started_at": "2026-10-11T00:00:00Z",
+                }
+                await db.commit()
+            async with sessions() as db:
+                stopped = await automation_routes.act(
+                    10, AutomationControl(
+                        tenant_id=1, request_id=uuid4(),
+                        expected_version=started["version"], action=action,
+                    ), Response(), BackgroundTasks(), db, ADVISOR,
+                )
+                assert stopped["state"] in {"pausing", "taking_over"}
+            resumed = asyncio.Event()
+
+            async def no_resume(*_args, **_kwargs):
+                resumed.set()
+
+            monkeypatch.setattr(automation_routes, "run_automation", no_resume)
+            async with sessions() as db:
+                job = await db.scalar(select(GeoAsyncJob).with_for_update())
+                assert job.request_meta["cancel_requested"] is True
+                assert await onsite_jobs._settle_automation(
+                    db, job, status="succeeded", fee_state="recorded", success=True
+                )
+            await asyncio.wait_for(resumed.wait(), 1)
+            async with sessions() as db:
+                project = await control.read_project(db, key)
+                run_row = await control.read_run(db, key, started["current_run_id"])
+                assert project["state"] == final_state
+                assert run_row["steps"][0]["status"] == "stale"
+                assert run_row["steps"][0]["fee_state"] == "recorded"
+                assert run_row["steps"][0]["result_links"] == []
+                assert await db.scalar(select(func.count()).select_from(GeoAsyncJob)) == 1
+
+    asyncio.run(run())
+
+
+def test_recovery_filters_waiting_projects_before_limit(monkeypatch):
+    from app.geo import automation_routes
+
+    async def run():
+        async with database() as sessions:
+            await _install_automation_control(sessions)
+            monkeypatch.setattr(automation_routes, "async_session_factory", sessions)
+            captured = []
+
+            async def capture(key, run_id):
+                captured.append((key, run_id))
+
+            monkeypatch.setattr(automation_routes, "run_automation", capture)
+            config = json.dumps({
+                "task_ids": [1], "operations": ["onsite_ai"],
+                "cycle": {"mode": "once", "enabled": False},
+                "limits": {"max_dispatches_per_run": 1},
+                "stop_condition": "drafts_ready_or_blocked", "owner_user_id": 7,
+            })
+            async with sessions() as db:
+                for scope_id in range(100, 121):
+                    run_id = uuid4()
+                    pending = scope_id == 120
+                    steps = json.dumps([{
+                        "step_key": f"onsite_ai:{scope_id}", "kind": "onsite_ai",
+                        "task_id": scope_id, "status": "pending" if pending else "succeeded",
+                        "started_at": None, "finished_at": None, "waiting_for": "system",
+                        "blocker": None, "result_links": [], "error_code": None,
+                        "request_id": str(uuid4()), "evidence_refs": [],
+                        "fee_state": "not_called", "dispatched_at": None,
+                    }])
+                    await db.execute(text("""INSERT INTO automation_projects
+                        (module,tenant_id,scope_id,owner_user_id,configuration,state)
+                        VALUES('geo',1,:scope,7,CAST(:config AS jsonb),'active')"""),
+                        {"scope": scope_id, "config": config})
+                    await db.execute(text("""INSERT INTO automation_project_runs
+                        (id,module,tenant_id,scope_id,generation,state,configuration,steps)
+                        VALUES(CAST(:run AS uuid),'geo',1,:scope,1,:state,
+                               CAST(:config AS jsonb),CAST(:steps AS jsonb))"""),
+                        {"run": str(run_id), "scope": scope_id,
+                         "state": "queued" if pending else "waiting_human",
+                         "config": config, "steps": steps})
+                    await db.execute(text("""UPDATE automation_projects
+                        SET current_run_id=CAST(:run AS uuid),updated_at=CURRENT_TIMESTAMP
+                        WHERE module='geo' AND tenant_id=1 AND scope_id=:scope"""),
+                        {"run": str(run_id), "scope": scope_id})
+                await db.commit()
+            assert await automation_routes.recover_automation_runs(limit=20) == 1
+            assert len(captured) == 1 and captured[0][0]["scope_id"] == 120
+
+    asyncio.run(run())
+
+
+def test_automation_preflight_block_is_atomic_bounded_and_free(monkeypatch):
+    from app import automation_projects as control
+    from app.geo import automation_routes
+
+    async def no_credentials(_session, _tenant_id):
+        return None
+
+    monkeypatch.setattr(api, "resolve_llm_credentials", no_credentials)
+
+    async def run():
+        async with database() as sessions:
+            await _install_automation_control(sessions)
+            monkeypatch.setattr(automation_routes, "async_session_factory", sessions)
+            await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
+            async with sessions() as db:
+                task = await api.create(api.Create(
+                    tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员",
+                ), db, ADVISOR)
+            async with sessions() as db:
+                configured_project = await automation_routes.configure(
+                    10, AutomationConfigure(
+                        tenant_id=1, request_id=uuid4(), expected_version=0,
+                        configuration={
+                            "task_ids": [task["id"]], "operations": ["onsite_ai"],
+                            "cycle": {"mode": "once", "enabled": False},
+                            "limits": {"max_dispatches_per_run": 1},
+                            "stop_condition": "drafts_ready_or_blocked", "owner_user_id": 7,
+                        },
+                    ), Response(), db, ADVISOR,
+                )
+            async with sessions() as db:
+                started = await automation_routes.act(
+                    10, AutomationControl(
+                        tenant_id=1, request_id=uuid4(),
+                        expected_version=configured_project["version"], action="start",
+                    ), Response(), BackgroundTasks(), db, ADVISOR,
+                )
+            key = control.scope("geo", 1, 10)
+            await asyncio.wait_for(
+                automation_routes.run_automation(key, started["current_run_id"]), 2
+            )
+            async with sessions() as db:
+                run_row = await control.read_run(db, key, started["current_run_id"])
+                assert run_row["state"] == "waiting_input"
+                assert run_row["dispatch_count"] == 1
+                assert run_row["steps"][0]["status"] == "blocked"
+                assert run_row["steps"][0]["fee_state"] == "not_called"
+                assert await db.scalar(select(func.count()).select_from(GeoAsyncJob)) == 0
+                events = await control.events_page(db, key, started["current_run_id"])
+                assert [event["code"] for event in events["items"]].count("step_claimed") == 1
+                assert [event["code"] for event in events["items"]].count("step_blocked") == 1
+
+    asyncio.run(run())
+
+
+def test_automation_never_revises_review_task_on_new_start_or_due_cycle(monkeypatch):
+    from app import automation_projects as control
+    from app.geo import automation_routes
+
+    async def run():
+        async with database() as sessions:
+            await _install_automation_control(sessions)
+            monkeypatch.setattr(automation_routes, "async_session_factory", sessions)
+            await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
+            async with sessions() as db:
+                task = await api.create(api.Create(
+                    tenant_id=1, project_id=10, request_id=uuid4(),
+                    work_type="startup", owner_name="维护人员",
+                ), db, ADVISOR)
+            async with sessions() as db:
+                configured_project = await automation_routes.configure(
+                    10, AutomationConfigure(
+                        tenant_id=1, request_id=uuid4(), expected_version=0,
+                        configuration={
+                            "task_ids": [task["id"]], "operations": ["onsite_ai"],
+                            "cycle": {"mode": "daily", "enabled": True},
+                            "limits": {"max_dispatches_per_run": 1},
+                            "stop_condition": "drafts_ready_or_blocked", "owner_user_id": 7,
+                        },
+                    ), Response(), db, ADVISOR,
+                )
+            async with sessions() as db:
+                started = await automation_routes.act(
+                    10, AutomationControl(
+                        tenant_id=1, request_id=uuid4(),
+                        expected_version=configured_project["version"], action="start",
+                    ), Response(), BackgroundTasks(), db, ADVISOR,
+                )
+            key = control.scope("geo", 1, 10)
+            async with sessions() as db:
+                token = await control.claim_step(db, key)
+                assert await control.settle_step(
+                    db, token, status="succeeded", evidence_refs=[f"geo_ticket:{task['id']}"],
+                    result_links=[f"/api/v1/geo/workbench/onsite-tasks/{task['id']}"],
+                    fee_state="unverified",
+                )
+                row = await db.get(GeoActionTicket, task["id"], with_for_update=True)
+                value = dict(row.progress["onsite"])
+                value.update(
+                    phase="review",
+                    revision=int(value["revision"]) + 1,
+                    ai_proposal={"schema": 2, "proposal_revision": int(value["revision"]) + 1},
+                    ai_run={"request_id": token["request_id"], "state": "ready"},
+                )
+                row.progress = {**row.progress, "onsite": value}
+                await db.commit()
+            async with sessions() as db:
+                ended = await automation_routes.act(
+                    10, AutomationControl(
+                        tenant_id=1, request_id=uuid4(), expected_version=started["version"],
+                        action="end",
+                    ), Response(), BackgroundTasks(), db, ADVISOR,
+                )
+                assert ended["state"] == "idle" and ended["next_due_at"] is not None
+            async with sessions() as db:
+                with pytest.raises(HTTPException) as error:
+                    await automation_routes.act(
+                        10, AutomationControl(
+                            tenant_id=1, request_id=uuid4(),
+                            expected_version=ended["version"], action="start",
+                        ), Response(), BackgroundTasks(), db, ADVISOR,
+                    )
+                assert error.value.detail["code"] == "automation_task_not_draft"
+                await db.rollback()
+                assert await db.scalar(select(func.count()).select_from(GeoAsyncJob)) == 0
+                assert await db.scalar(text("SELECT count(*) FROM automation_project_runs")) == 1
+                await db.execute(text("""UPDATE automation_projects
+                    SET next_due_at=CURRENT_TIMESTAMP-INTERVAL '1 second'
+                    WHERE module='geo' AND tenant_id=1 AND scope_id=10"""))
+                await db.commit()
+            assert await automation_routes.recover_automation_runs() == 1
+            async with sessions() as db:
+                runs = list((await db.execute(text("""SELECT * FROM automation_project_runs
+                    WHERE module='geo' AND tenant_id=1 AND scope_id=10
+                    ORDER BY created_at,id"""))).mappings())
+                assert len(runs) == 2
+                assert runs[-1]["state"] == "waiting_input"
+                assert runs[-1]["steps"][0]["status"] == "blocked"
+                assert runs[-1]["steps"][0]["error_code"] == "automation_task_not_draft"
+                assert runs[-1]["steps"][0]["fee_state"] == "not_called"
+                assert await db.scalar(select(func.count()).select_from(GeoAsyncJob)) == 0
+                row = await db.get(GeoActionTicket, task["id"])
+                assert row.progress["onsite"]["phase"] == "review"
+                assert row.progress["onsite"]["ai_proposal"]["proposal_revision"] == 2
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "mutation,expected_code",
+    [
+        ("review", "automation_task_not_draft"),
+        ("project", "automation_task_not_found"),
+        ("prefix", "automation_task_not_found"),
+    ],
+)
+def test_pending_automation_task_change_is_blocked_without_child_job(
+        monkeypatch, mutation, expected_code):
+    from app import automation_projects as control
+    from app.geo import automation_routes
+
+    async def credentials(_session, _tenant_id):
+        return {"api_key": "fixture-key", "base_url": "https://provider.invalid/v1",
+                "model": "fixture-model"}
+
+    async def no_worker(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(api, "resolve_llm_credentials", credentials)
+    monkeypatch.setattr(automation_routes.async_jobs, "run_job_in_background", no_worker)
+
+    async def run():
+        async with database() as sessions:
+            await _install_automation_control(sessions)
+            monkeypatch.setattr(automation_routes, "async_session_factory", sessions)
+            await configured(sessions)
+            async with sessions() as db:
+                await _add_public_fact(db)
+            tasks = []
+            for owner in ("维护人员一", "维护人员二"):
+                async with sessions() as db:
+                    tasks.append(await api.create(api.Create(
+                        tenant_id=1, project_id=10, request_id=uuid4(),
+                        work_type="startup", owner_name=owner,
+                    ), db, ADVISOR))
+            async with sessions() as db:
+                configured_project = await automation_routes.configure(
+                    10, AutomationConfigure(
+                        tenant_id=1, request_id=uuid4(), expected_version=0,
+                        configuration={
+                            "task_ids": [item["id"] for item in tasks],
+                            "operations": ["onsite_ai"],
+                            "cycle": {"mode": "once", "enabled": False},
+                            "limits": {"max_dispatches_per_run": 2},
+                            "stop_condition": "drafts_ready_or_blocked", "owner_user_id": 7,
+                        },
+                    ), Response(), db, ADVISOR,
+                )
+            async with sessions() as db:
+                started = await automation_routes.act(
+                    10, AutomationControl(
+                        tenant_id=1, request_id=uuid4(),
+                        expected_version=configured_project["version"], action="start",
+                    ), Response(), BackgroundTasks(), db, ADVISOR,
+                )
+            key = control.scope("geo", 1, 10)
+            await automation_routes.run_automation(key, started["current_run_id"])
+            async with sessions() as db:
+                first_job = await db.scalar(select(GeoAsyncJob))
+                token = first_job.request_meta["automation_token"]
+                assert await control.settle_step(
+                    db, token, status="succeeded", evidence_refs=[f"geo_ticket:{tasks[0]['id']}"],
+                    result_links=[f"/api/v1/geo/workbench/onsite-tasks/{tasks[0]['id']}"],
+                    fee_state="unverified",
+                )
+                second = await db.get(GeoActionTicket, tasks[1]["id"], with_for_update=True)
+                value = dict(second.progress["onsite"])
+                if mutation == "review":
+                    value.update(phase="review", revision=int(value["revision"]) + 1)
+                elif mutation == "project":
+                    value["project_id"] = 11
+                else:
+                    second.advice_code = "cockpit:v1:task"
+                second.progress = {**second.progress, "onsite": value}
+                await db.commit()
+                expected_progress = json.loads(json.dumps(second.progress))
+                expected_advice_code = second.advice_code
+            await automation_routes.run_automation(key, started["current_run_id"])
+            async with sessions() as db:
+                run_row = await control.read_run(db, key, started["current_run_id"])
+                assert run_row["steps"][0]["status"] == "succeeded"
+                assert run_row["steps"][1]["status"] == "blocked"
+                assert run_row["steps"][1]["error_code"] == expected_code
+                assert run_row["steps"][1]["fee_state"] == "not_called"
+                assert await db.scalar(select(func.count()).select_from(GeoAsyncJob)) == 1
+                second = await db.get(GeoActionTicket, tasks[1]["id"])
+                assert second.progress == expected_progress
+                assert second.advice_code == expected_advice_code
+
     asyncio.run(run())

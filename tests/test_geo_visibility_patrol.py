@@ -16,9 +16,51 @@ from app.geo.content.patrol import (
     mark_patrol_run_failed,
     patrol_run_payload,
     reconcile_stale_patrol_run,
+    automation_token,
+    scheduled_prompt_ids,
     should_run_scheduled_patrol,
 )
 from app.geo.content.probe import SAMPLE_MODE_PERSONA, SAMPLE_MODE_REAL
+
+
+class ScheduledPromptScopeTests(unittest.TestCase):
+    def test_legacy_row_keeps_historical_tenant_selection(self):
+        row = SimpleNamespace(trigger="schedule", summary={})
+        self.assertIsNone(scheduled_prompt_ids(row))
+
+    def test_explicit_legacy_remainder_is_sorted_and_bounded(self):
+        row = SimpleNamespace(
+            trigger="schedule",
+            summary={"scheduler_scope": {
+                "schema": 1, "source": "legacy_unclaimed", "prompt_ids": [9, 3],
+            }},
+        )
+        self.assertEqual(scheduled_prompt_ids(row), [3, 9])
+
+    def test_malformed_marker_never_falls_back_to_all_prompts(self):
+        for scope in (
+            {"schema": 1, "source": "legacy_unclaimed", "prompt_ids": []},
+            {"schema": 1, "source": "legacy_unclaimed", "prompt_ids": [True]},
+            {"schema": 1, "source": "other", "prompt_ids": [1]},
+        ):
+            with self.subTest(scope=scope), self.assertRaises(ValueError):
+                scheduled_prompt_ids(SimpleNamespace(trigger="schedule", summary={"scheduler_scope": scope}))
+
+    def test_controlled_token_is_exact_and_never_accepted_as_legacy_scope(self):
+        token = {"module": "geo", "tenant_id": 4, "scope_id": 9,
+                 "run_id": "12345678-1234-4234-8234-123456789abc", "generation": 2,
+                 "step_key": "visibility_patrol:x", "task_id": None,
+                 "request_id": "request", "owner_user_id": 7,
+                 "operation": "visibility_patrol",
+                 "target": {"operation": "visibility_patrol", "object_type": "prompt",
+                            "object_id": 3, "source_revision": 0, "source_hash": "a" * 64,
+                            "variant": "deepseek"}}
+        row = SimpleNamespace(tenant_id=4, engine_keys=["deepseek"], summary={"automation_token": token})
+        self.assertEqual(automation_token(row), token)
+        with self.assertRaises(ValueError):
+            automation_token(SimpleNamespace(
+                tenant_id=4, engine_keys=["chatgpt"], summary={"automation_token": token}
+            ))
 
 
 class StalePatrolReconcileTests(unittest.IsolatedAsyncioTestCase):

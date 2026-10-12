@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -111,6 +111,36 @@ class GeoChannelVariant(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+
+
+class GeoChannelAsset(Base):
+    """Immutable, reviewed bytes attached to one exact channel variant."""
+
+    __tablename__ = "geo_channel_assets"
+    __table_args__ = (
+        UniqueConstraint("variant_id", "sort_order", name="uq_geo_channel_asset_order"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    task_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("geo_content_tasks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    article_version_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("geo_article_versions.id", ondelete="CASCADE"), nullable=False
+    )
+    variant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("geo_channel_variants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    media_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_bytes: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class GeoPublication(Base):

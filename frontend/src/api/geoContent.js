@@ -692,6 +692,47 @@ export function patchGeoVariant(tenantId, taskId, channel, body) {
   })
 }
 
+export function previewGeoManualFinalization(tenantId, taskId, channel, scopeId) {
+  return client.get(`/api/v1/geo/content-tasks/${taskId}/variants/${channel}/manual-finalization`, {
+    params: { tenant_id: tenantId, scope_id: scopeId },
+  })
+}
+
+export function finalizeGeoManualChannel(tenantId, taskId, channel, body) {
+  return client.post(`/api/v1/geo/content-tasks/${taskId}/variants/${channel}/manual-finalization`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function listGeoDistributionAssets(tenantId, scopeId, variantId) {
+  return client.get('/api/v1/geo/distribution-assets', {
+    params: { tenant_id: tenantId, scope_id: scopeId, variant_id: variantId },
+  })
+}
+
+export function uploadGeoDistributionAsset(tenantId, scopeId, variantId, sortOrder, file) {
+  const form = new FormData()
+  form.append('tenant_id', String(tenantId))
+  form.append('scope_id', String(scopeId))
+  form.append('variant_id', String(variantId))
+  form.append('sort_order', String(sortOrder))
+  form.append('file', file)
+  return client.post('/api/v1/geo/distribution-assets', form)
+}
+
+export function deleteGeoDistributionAsset(tenantId, scopeId, variantId, assetId) {
+  return client.delete(`/api/v1/geo/distribution-assets/${assetId}`, {
+    params: { tenant_id: tenantId, scope_id: scopeId, variant_id: variantId },
+  })
+}
+
+export function fetchGeoDistributionAssetContent(tenantId, scopeId, variantId, assetId) {
+  return client.get(`/api/v1/geo/distribution-assets/${assetId}/content`, {
+    params: { tenant_id: tenantId, scope_id: scopeId, variant_id: variantId },
+    responseType: 'blob',
+  })
+}
+
 export function exportGeoVariant(tenantId, taskId, channel = 'website', expectedRevision) {
   return client.post(`/api/v1/geo/content-tasks/${taskId}/export`, { expected_revision: expectedRevision }, {
     params: { tenant_id: tenantId, channel },

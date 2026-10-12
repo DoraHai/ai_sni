@@ -1,0 +1,53 @@
+{
+  "date": "2026-10-11",
+  "nativeBaseline": "beb7b468a7a6c256fee3d5ccc48409d3ec51f677",
+  "finalCentralCommit": "729af3c4071d6f410ef12ecb88de6ca6a3559f13",
+  "finalCentralTreeClean": true,
+  "localOnly": true,
+  "productionDdlApplied": false,
+  "deployed": false,
+  "realPlatformUsed": false,
+  "semAiTakeoverEnabled": false,
+  "dedicatedDatabase": {"host": "127.0.0.1", "port": 55507, "database": "geo_ci", "username": "geo_ci", "randomSchemaPrefix": "geo_results_test_"},
+  "newSuite": {"passed": 7, "failed": 0, "skipped": 0, "xmlFile": "geo-distribution-publication-broker-20261011.xml", "xmlSha256": "222af55d2b3a531b3c6d554d8542218f0e8a8b7af587db2c19495734e638d91d"},
+  "preFreezeRegression": {"passed": 72, "failed": 0, "skipped": 0, "newBrokerPostgresScenarios": 7, "nativeResultRegression": 34, "nativeSourcePostgresRegression": 8, "nativeFinalGateRegression": 1, "nativeMonitorUnitRegression": 22, "xmlFile": "geo-distribution-publication-broker-regression-20261011.xml", "xmlSha256": "193f7e5dcd8928d411e41814e3ca9962fca1df71b1623b785b5a552235614250"},
+  "finalFrozenSuite": {"passed": 7, "failed": 0, "skipped": 0, "newDistinctCases": 0, "xmlFile": "geo-distribution-publication-broker-frozen-729af3c4-20261011.xml", "xmlSha256": "0c4f641eb28e485aaa48f69b15d5abac854525e285caa196cd5498ab6ea7089c"},
+  "databaseCleanup": {"randomSchemasRemaining": 0, "owned55507Stopped": true, "shared55443Touched": false},
+  "nativeFilesSha256": {
+    "app/geo/distribution_results.py": "92406c6d71f16adaa87d2927b9b1670f9cf46bdac252601458345c6e9bcd4d2e",
+    "scripts/geo_distribution_results_schema.sql": "3c834abafb801c061da70ba65d9e3a93a00a1d96f8328b841f4f7ba6deeef76d",
+    "tests/test_geo_distribution_publication_broker_postgres.py": "22faa7acc082586af2e8eb68a7f17d5a6b3c6e721d6ef2d39bd48822f751fc54"
+  },
+  "preFreezeCentralFilesSha256": {
+    "app/distribution_contract.py": "4b8f7e4d58ca712c01583977a3283e95890c083387b2242e9e4cdb261a5971dd",
+    "app/distribution_control.py": "648a748fdfe9b89ffb5f7aa96fe4b07826fa0c84d815fb410f8ff32bc58e5a83",
+    "app/distribution_scheduling.py": "7433e67121140ae98072b89c715a4ad44c5237d6964318a8256858bec4bf486c",
+    "app/distribution_publication_verify.py": "f3a86db67842b4f1610694dfa11e57d595c2d3619f144d058bc23fc5fcfe0528",
+    "app/distribution_publication_results.py": "eb5772658789f0deffb5c3b839d322e345730bcef1099457f50f512ea2337a36",
+    "app/api/distribution.py": "6ed84954374a88ecc8bf1c95845caeb18f2f908f54459b6708fb0aaa89b3f777",
+    "scripts/distribution_control_schema.sql": "c3637aaeeb75931b3befb27a7f522070618bb67f961ba61b6c0e66da776ac7cd",
+    "scripts/distribution_scheduling_schema.sql": "b810747c2cf49b088a94caf5e7be1ffda7a5fddd90e9d70f095eb2eea327ae91",
+    "scripts/distribution_publication_schema.sql": "5c81a7bc4279bd0a61f28cddff8ac104084bf18ea505bb13cb41862cfb5946d9"
+  },
+  "finalCentralFilesSha256": {
+    "app/distribution_contract.py": "4b8f7e4d58ca712c01583977a3283e95890c083387b2242e9e4cdb261a5971dd",
+    "app/distribution_control.py": "648a748fdfe9b89ffb5f7aa96fe4b07826fa0c84d815fb410f8ff32bc58e5a83",
+    "app/distribution_scheduling.py": "7433e67121140ae98072b89c715a4ad44c5237d6964318a8256858bec4bf486c",
+    "app/distribution_publication_verify.py": "281c8fc92c64e3b2b08cafb827c9596f833a934fdb90180997752192ed59dc5c",
+    "app/distribution_publication_results.py": "44dde77dc352e58f3efd083b2c4d2bf6996f2339410326def40652adca61721b",
+    "app/api/distribution.py": "e946326f0c3c444e55245cb4ca6f30277c2f9293b64f2d19d32bf60353380001",
+    "scripts/distribution_control_schema.sql": "c3637aaeeb75931b3befb27a7f522070618bb67f961ba61b6c0e66da776ac7cd",
+    "scripts/distribution_scheduling_schema.sql": "b810747c2cf49b088a94caf5e7be1ffda7a5fddd90e9d70f095eb2eea327ae91",
+    "scripts/distribution_publication_schema.sql": "5c81a7bc4279bd0a61f28cddff8ac104084bf18ea505bb13cb41862cfb5946d9"
+  },
+  "boundaries": [
+    "Actual native login JWT and broker HTTP/ASGI router; no authentication override",
+    "Fixed result_adapter imports real app.geo.distribution_results; no native writer or gate mock",
+    "Synthetic device HUMAN_PUBLISHED report and advisor human confirmations; no public-page or platform observation",
+    "Frozen central static public-text checks return needs-human and do not grant machine-verified writeback",
+    "Database trigger injects failure after actual native writes; nested transaction rolls native changes back and preserves central pending check",
+    "Explicit retry only registers historical result and does not create or execute publishing tasks",
+    "Native publication/placement/monitor pending do not imply healthy public content or AI citation",
+    "No production schema change, deployment, real platform operation or SEM takeover"
+  ]
+}

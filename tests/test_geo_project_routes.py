@@ -51,11 +51,18 @@ def test_independent_geo_app_registers_project_contract():
     assert "GET" in methods_by_path["/api/v1/geo/projects"]
     assert "POST" in methods_by_path["/api/v1/geo/projects"]
     assert "PATCH" in methods_by_path["/api/v1/geo/projects/{project_id}"]
+    assert "POST" in methods_by_path["/api/v1/geo/distribution-assets"]
+    assert "GET" in methods_by_path["/api/v1/geo/distribution-assets"]
+    assert "DELETE" in methods_by_path["/api/v1/geo/distribution-assets/{asset_id}"]
+    assert "GET" in methods_by_path["/api/v1/geo/distribution-assets/{asset_id}/content"]
 
 
 def test_project_permission_requires_geo_assets_at_matching_access_level():
     assert _required("/api/v1/geo/projects", "GET") == ({"geo.assets"}, False)
     assert _required("/api/v1/geo/projects/4", "PATCH") == ({"geo.assets"}, True)
+    assert _required("/api/v1/geo/distribution-assets", "POST") == (
+        {"geo.assets", "geo.content"}, True
+    )
 
     viewer = AuthContext(1, "viewer", "viewer", 17, {"geo.assets": "view"})
     asyncio.run(require_scoped_auth(_request("GET", "/api/v1/geo/projects", "tenant_id=17"), viewer))

@@ -59,6 +59,7 @@ import {
   getGeoPrototypeEditorSurface,
 } from '../../utils/geoEditorSurface'
 import GeoLaunchChecklist from '../../components/GeoLaunchChecklist.vue'
+import GeoManualFinalize from '../../components/GeoManualFinalize.vue'
 import RichTextMarkdownEditor from '../../components/RichTextMarkdownEditor.vue'
 
 import { createEditorContext } from '../../utils/geoEditorContext'
@@ -1784,15 +1785,16 @@ async function genVariants() {
   }
 }
 
-const currentVariantMeta = computed(() => {
+const currentVariant = computed(() => {
   if (docTab.value === 'master') return null
-  const v = (task.value?.variants || []).find((x) => x.channel === docTab.value)
-  return v?.adapt_meta || null
+  return (task.value?.variants || []).find((x) => x.channel === docTab.value) || null
 })
+const currentVariantMeta = computed(() => currentVariant.value?.adapt_meta || null)
 /** 仅 quality===publish_ready 且无编造风险才标「可发布」 */
 const isPublishReadyVariant = computed(() => {
   const m = currentVariantMeta.value
   if (!m) return false
+  if (m.manual_finalization && (!currentVariant.value?.manual_finalization_current || m.manual_finalization.state !== 'approved' || task.value?.review_status !== 'approved')) return false
   if (m.publishable === false) return false
   const q = m.quality || ''
   if (q !== 'publish_ready' || m.delivery !== 'html_publish_ready') return false
@@ -1804,6 +1806,12 @@ const isPublishReadyVariant = computed(() => {
 const currentVariantQualityLabel = computed(() => {
   const m = currentVariantMeta.value
   if (!m) return null
+  if (m.manual_finalization) {
+    if (!currentVariant.value?.manual_finalization_current) return '人工定版已失效 · 请重新核对定版'
+    if (m.manual_finalization.state === 'approved' && task.value?.review_status === 'approved') return '人工定版已通过客户审核 · 尚未发布'
+    if (m.manual_finalization.state === 'awaiting-review' && task.value?.review_status === 'pending') return '人工定版 · 等待客户重审'
+    return '人工定版已失效 · 请重新核对定版'
+  }
   if (m.quality === 'publish_ready_with_warnings') {
     const n = (m.quality_issues || []).length
     return `未过硬门控（遗留 ${n} 项问题）· 请重新「生成成稿」`
@@ -3582,6 +3590,8 @@ onMounted(load)
             />
           </el-tabs>
           <div class="ed-doc-note">
+            <GeoManualFinalize :tenant-id="tenantId" :task="task" :channel="docTab" :changed="reviewDraftChanged"
+              @updated="value => { task=value; checkResult=value.rule_result; applyVariantFromTask() }" />
             <button
               v-if="editorSurface.showChannelVariants"
               type="button"

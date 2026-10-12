@@ -425,6 +425,69 @@ def test_provider_result_rejects_scope_and_disclosure_failures(mutation, message
     assert message in str(error.value.detail)
 
 
+@pytest.mark.parametrize("leak", [
+    "API_KEY=sk-fictional-secret-abcdefghijklmnop",
+    "api-key: abcdefghijklmnopqrstuv",
+    "apikey = abcdefghijklmnopqrstuv",
+    "access_token=abcdefghijklmnopqrstuv",
+    "Bearer syntheticneverused123456",
+    "sk-fictional-secret-abcdefghijklmnop",
+    "AKIAABCDEFGHIJKLMNOP",
+])
+def test_provider_result_rejects_high_confidence_secret_shapes(leak):
+    payload = result()
+    payload["items"][0]["expected"] = leak
+    with pytest.raises(HTTPException) as error:
+        onsite_ai.validate_provider_result(
+            payload, current_items=items(), facts=facts(), domain="example.com")
+    assert "密钥或访问凭据" in str(error.value.detail)
+
+
+@pytest.mark.parametrize("field", ["summary", "expected", "reason", "missing_information"])
+@pytest.mark.parametrize("claim", [
+    "本方案已发布并完成官网验收",
+    "不得声称已发布，但是网站已经上线。",
+    "网站已经自动修改并上线，无需人工审批",
+    "尚未发布。实际上方案已发布",
+    "不是不能声称已发布",
+    "网站已\u200b经自 动修 改并上线",
+    "The website has been published",
+    "The page was deployed",
+])
+def test_provider_result_rejects_false_implementation_and_release_claims(field, claim):
+    payload = result()
+    if field == "summary":
+        payload[field] = claim
+    elif field in {"expected", "reason"}:
+        payload["items"][0][field] = claim
+    else:
+        payload[field] = [claim]
+    with pytest.raises(HTTPException) as error:
+        onsite_ai.validate_provider_result(
+            payload, current_items=items(), facts=facts(), domain="example.com")
+    assert "不得声称已实施" in str(error.value.detail)
+
+
+@pytest.mark.parametrize("guidance", [
+    "人工审核后实施",
+    "尚未发布，需要客户审核",
+    "不得声称已发布",
+    "不能宣称已验收",
+    "待客户确认后再发布",
+    "不得声称已发布，也不得声称已完成官网验收。",
+    "人工审核后完成官网验收",
+    "完成官网验收后再记录结果",
+    "Do not claim it has been published",
+    "It has not been published",
+    "Implement after human review",
+])
+def test_provider_result_allows_future_or_negated_workflow_guidance(guidance):
+    payload = result()
+    payload["summary"] = guidance
+    onsite_ai.validate_provider_result(
+        payload, current_items=items(), facts=facts(), domain="example.com")
+
+
 @pytest.mark.parametrize("mutate", [
     lambda payload: payload.__setitem__("missing_information", "缺少资料"),
     lambda payload: payload["items"][0].__setitem__("blocking_missing_information", "缺少资料"),

@@ -140,6 +140,126 @@ async def check_publication(session, tenant_id, task_id, publication_id, *, sche
     return fresh
 
 
+async def check_publication_controlled(session, tenant_id: int, project_id: int,
+                                       automation_token: dict):
+    """Run one admitted public-page observation for an exact typed target."""
+    from app import automation_project_v2 as automation_v2
+    from app import automation_projects as automation_core
+    from app.automation_project_contract import ConfigurationV2
+    from app.geo.automation_v2_adapter import validate_configuration
+    from app.geo.tenant_scope import (ensure_geo_background_execution_allowed,
+                                      ensure_geo_entitlement)
+
+    ensure_geo_background_execution_allowed(tenant_id)
+
+    async def validate_current():
+        _, run, _ = await automation_core.check_step(session, automation_token)
+        await validate_configuration(
+            session, tenant_id, project_id,
+            ConfigurationV2.model_validate(run["configuration"]),
+            int(automation_token["owner_user_id"]),
+            current_targets=[automation_token["target"]],
+        )
+
+    await validate_current()
+    await ensure_geo_entitlement(session, tenant_id)
+    publication_id = int(automation_token["target"]["object_id"])
+    identity = (await session.execute(select(
+        GeoContentTask.id, GeoPublication.published_url
+    ).join(GeoChannelVariant, GeoChannelVariant.task_id == GeoContentTask.id)
+     .join(GeoPublication, GeoPublication.variant_id == GeoChannelVariant.id)
+     .where(GeoContentTask.tenant_id == tenant_id,
+            GeoContentTask.status.notin_(["archived", "cancelled"]),
+            GeoPublication.id == publication_id,
+            GeoPublication.status == "published",
+            GeoPublication.published_url.is_not(None)))).first()
+    if identity is None:
+        raise automation_core.problem("automation_target_changed", "发布记录已变化，请刷新")
+    task_id, published_url = int(identity.id), str(identity.published_url)
+    class RequestGate:
+        def __init__(self):
+            self.admitted = None
+            self.finished = set()
+
+        async def before(self, _url, hop):
+            await validate_current()
+            await ensure_geo_entitlement(session, tenant_id)
+            call_key = f"publication_{publication_id}:hop_{hop + 1}"
+            if not await automation_v2.begin_call(
+                    session, automation_token, call_key, kind="http"):
+                raise automation_core.problem(
+                    "automation_dispatch_replay", "发布页请求已准入过，禁止重复发送"
+                )
+            self.admitted = hop
+            await session.commit()
+
+        async def after(self, hop, state):
+            call_key = f"publication_{publication_id}:hop_{hop + 1}"
+            await automation_v2.finish_call(
+                session, automation_token, call_key, state=state,
+                fee_state="not_called",
+                evidence_refs=(f"geo_publication:{publication_id}",),
+            )
+            self.finished.add(hop)
+            await session.commit()
+
+        async def abort(self):
+            if self.admitted is not None and self.admitted not in self.finished:
+                await self.after(self.admitted, "unknown")
+
+    proof = {}
+    gate = RequestGate()
+    try:
+        document = await asyncio.wait_for(
+            safe_fetch(published_url, request_gate=gate), timeout=25
+        )
+        fetched = True
+    except (GeoAuditError, TimeoutError):
+        await gate.abort()
+        document, fetched = None, False
+
+    # Admission released locks before network I/O. Reacquire the current
+    # generation and business rows, then validate the exact target again.
+    await validate_current()
+    await ensure_geo_entitlement(session, tenant_id)
+    content = await session.scalar(select(GeoContentTask).where(
+        GeoContentTask.id == task_id, GeoContentTask.tenant_id == tenant_id,
+        GeoContentTask.status.notin_(["archived", "cancelled"])).with_for_update())
+    result = (await session.execute(select(GeoPublication, GeoChannelVariant).join(
+        GeoChannelVariant, GeoChannelVariant.id == GeoPublication.variant_id).where(
+        GeoPublication.id == publication_id, GeoChannelVariant.task_id == task_id,
+        GeoPublication.status == "published", GeoPublication.published_url == published_url)
+        .with_for_update(of=[GeoPublication, GeoChannelVariant])
+        .execution_options(populate_existing=True))).first()
+    if content is None or result is None:
+        raise automation_core.problem("automation_target_changed", "发布记录已变化，请刷新")
+    pub, variant = result
+    await validate_current()
+    old = state_for(variant, pub) or {
+        **initial_state(variant), "baseline_source": "first_monitor_current_variant"
+    }
+    now = datetime.utcnow()
+    if old.get("expected_fingerprint") != fingerprint(variant):
+        state = "version_changed"
+    elif not fetched:
+        state = "unreachable"
+    else:
+        try:
+            proof = match_publication(variant.title, variant.body_markdown, document.html)
+            proof["observed_url"] = document.final_url
+            state = "healthy"
+        except HTTPException as exc:
+            if exc.status_code != 409:
+                raise
+            state = "mismatch"
+    fresh = outcome(old, state, now, checked_url=published_url, **proof)
+    await ensure_geo_entitlement(session, tenant_id)
+    store_state(variant, pub, fresh)
+    await follow_up(session, content, pub, fresh)
+    await session.commit()
+    return fresh
+
+
 def report_check(variant, pub, latest_article_id):
     """Project actual page observations without inferring citation accuracy."""
     state = state_for(variant, pub)
@@ -188,6 +308,11 @@ async def run_monitor_batch():
     for tenant_id, task_id, publication_id in rows:
         try:
             async with async_session_factory() as session:
+                from app.geo.automation_v2_adapter import (PUBLICATION_OPERATION,
+                                                            owned_target_ids)
+                if int(publication_id) in await owned_target_ids(
+                        session, int(tenant_id), PUBLICATION_OPERATION, "publication"):
+                    continue
                 await check_publication(session, tenant_id, task_id, publication_id, scheduled=True)
         except GeoEntitlementUnavailable:
             # Expiry is an intentional stop, not a monitor failure. Do not write

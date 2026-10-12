@@ -28,15 +28,35 @@ async def assess_outcome(session, row):
             'checked_at': datetime.utcnow().isoformat() + 'Z'}
 
 
-async def update_outcome_review(session, task_id, *, tenant_id: int):
+async def update_outcome_review(session, task_id, *, tenant_id: int,
+                                automation_token: dict | None = None):
     from app.geo.tenant_scope import ensure_geo_background_execution_allowed
     ensure_geo_background_execution_allowed(tenant_id)
+    async def validate_current():
+        if automation_token is None:
+            return
+        from app import automation_projects as automation_core
+        from app.automation_project_contract import ConfigurationV2
+        from app.geo.automation_v2_adapter import validate_configuration
+        _, current_run, _ = await automation_core.check_step(session, automation_token)
+        await validate_configuration(
+            session, tenant_id, int(automation_token["scope_id"]),
+            ConfigurationV2.model_validate(current_run["configuration"]),
+            int(automation_token["owner_user_id"]),
+            current_targets=[automation_token["target"]],
+        )
+    await validate_current()
     row = await session.scalar(select(GeoActionTicket).where(GeoActionTicket.id == task_id,
         GeoActionTicket.tenant_id == tenant_id,
         GeoActionTicket.advice_code.like('cockpit:v1:%'), GeoActionTicket.status.in_(['todo', 'doing']), active_review_source())
         .with_for_update(skip_locked=True))
     if row is None or not (row.progress_first or {}).get('params', {}).get('content_task_id'):
-        return
+        if automation_token is not None:
+            from app import automation_projects as automation_core
+            raise automation_core.problem(
+                "automation_target_changed", "复盘任务已变化，请刷新"
+            )
+        return False
     from app.geo.tenant_scope import ensure_geo_entitlement
 
     await ensure_geo_entitlement(session, row.tenant_id)
@@ -46,6 +66,9 @@ async def update_outcome_review(session, task_id, *, tenant_id: int):
         if exc.status_code != 409:
             raise
         assessment = {'state': 'waiting', 'reason': exc.detail, 'checked_at': datetime.utcnow().isoformat() + 'Z'}
+    # Metrics and baseline reads contain awaits. Recheck the current generation,
+    # advisor permissions and exact live target before any assessment is saved.
+    await validate_current()
     row.progress = {**(row.progress or {}), 'outcome_review': assessment, 'outcome_review_error': None,
                     'outcome_review_next_at': (datetime.utcnow() + timedelta(hours=24)).isoformat() + 'Z'}
     if assessment['state'] == 'needs_review':
@@ -86,6 +109,7 @@ async def update_outcome_review(session, task_id, *, tenant_id: int):
     # access expired before its task/ticket mutations become durable.
     await ensure_geo_entitlement(session, row.tenant_id)
     await session.commit()
+    return True
 
 
 async def run_outcome_reviews():
@@ -103,6 +127,10 @@ async def run_outcome_reviews():
     for task_id, tenant_id in tasks:
         try:
             async with async_session_factory() as session:
+                from app.geo.automation_v2_adapter import OUTCOME_OPERATION, owned_target_ids
+                if int(task_id) in await owned_target_ids(
+                        session, int(tenant_id), OUTCOME_OPERATION, "metric_task"):
+                    continue
                 await update_outcome_review(session, task_id, tenant_id=int(tenant_id))
         except GeoEntitlementUnavailable:
             # Keep historical task evidence unchanged. Expiry is not a failed

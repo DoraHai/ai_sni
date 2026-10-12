@@ -1,6 +1,6 @@
 """中国主流图文分发渠道画像（Channel Profile）。
 
-只服务「母稿 → 平台文稿」确定性改写；不含短视频/小红书，不含自动发布。
+只服务「母稿 → 平台文稿」确定性改写；不含短视频或自动发布。
 """
 
 from __future__ import annotations
@@ -75,6 +75,21 @@ CHANNEL_PROFILES: dict[str, ChannelProfile] = {
         default_selected=True,
         notes="导出 HTML 正稿；首段必须是直接答案；对比用表格。",
     ),
+    "xiaohongshu": ChannelProfile(
+        key="xiaohongshu",
+        display_name="小红书图文",
+        tier="must",
+        goal="结论前置的简洁图文，搭配经审核的不可变图片素材",
+        title_max=40,
+        mode="short",
+        faq_limit=2,
+        keep_definition=True,
+        keep_conclusion=True,
+        keep_sources=True,
+        export_format="html",
+        default_selected=False,
+        notes="生成文稿后在分发页配置 PNG/JPEG；配图变更需客户重新审核。",
+    ),
     "baijiahao": ChannelProfile(
         key="baijiahao",
         display_name="百家号",
@@ -118,7 +133,7 @@ def get_profile(channel: str) -> ChannelProfile | None:
 
 
 def list_profiles() -> list[dict[str, Any]]:
-    order = ["website", "wechat", "zhihu", "baijiahao", "toutiao"]
+    order = ["website", "wechat", "zhihu", "xiaohongshu", "baijiahao", "toutiao"]
     return [CHANNEL_PROFILES[k].to_dict() for k in order if k in CHANNEL_PROFILES]
 
 

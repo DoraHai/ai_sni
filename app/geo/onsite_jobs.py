@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import onsite_workflow as work
@@ -43,6 +43,130 @@ _worker_status: dict[str, Any] = {
 
 class PendingBatchError(RuntimeError):
     """One or more queued jobs failed before returning a worker result."""
+
+
+async def _automation_token(session: AsyncSession, job: GeoAsyncJob) -> dict[str, Any] | None:
+    """Resolve canonical ownership from the append-only shared run.
+
+    request_meta is operational state and can be patched by cancellation or
+    recovery.  It is never the authority for whether a paid job belongs to a
+    project run; removing or replacing its cached token must not turn that job
+    into an uncontrolled manual request.
+    """
+    from app import automation_projects as automation
+
+    meta = _meta(job)
+    cached = meta.get("automation_token")
+    if not await automation.schema_ready(session):
+        if isinstance(cached, dict):
+            raise automation.problem(
+                "automation_schema_pending", "自动执行归属暂不可核验，供应商不会被调用", 503
+            )
+        return None
+    request_id = str(meta.get("request_id") or "")
+    if not request_id or job.kind != "onsite_ai_proposal" or job.ref_type != "onsite_task":
+        return None
+    rows = list((await session.execute(text("""
+        SELECT p.scope_id,p.owner_user_id,r.id AS run_id,
+               step->>'step_key' AS step_key,(step->>'task_id')::bigint AS task_id,
+               step->>'request_id' AS request_id,
+               (step->>'claim_generation')::bigint AS claim_generation,
+               (step->>'job_id')::bigint AS job_id,
+               step->>'operation' AS operation,step->'target' AS target
+        FROM automation_project_runs r
+        JOIN automation_projects p ON p.module=r.module AND p.tenant_id=r.tenant_id
+          AND p.scope_id=r.scope_id
+        CROSS JOIN LATERAL jsonb_array_elements(r.steps) step
+        WHERE r.module='geo' AND r.tenant_id=:tenant
+          AND step->>'request_id'=:request_id
+          AND (step->>'task_id')::bigint=:task_id
+        LIMIT 2
+    """), {"tenant": int(job.tenant_id), "request_id": request_id,
+             "task_id": int(job.ref_id or 0)})).mappings())
+    if not rows:
+        if isinstance(cached, dict):
+            raise automation.problem(
+                "automation_step_stale", "自动执行归属已变化，供应商不会被调用"
+            )
+        return None
+    if len(rows) != 1:
+        raise automation.problem("automation_step_stale", "自动执行归属不唯一，供应商不会被调用")
+    row = rows[0]
+    if (int(meta.get("project_id") or 0) != int(row["scope_id"])
+            or int(meta.get("actor_user_id") or 0) != int(row["owner_user_id"])
+            or row["claim_generation"] is None
+            or int(row["job_id"] or 0) != int(job.id)):
+        raise automation.problem("automation_step_stale", "自动执行归属已变化，供应商不会被调用")
+    token = {
+        "module": "geo", "tenant_id": int(job.tenant_id),
+        "scope_id": int(row["scope_id"]), "run_id": str(row["run_id"]),
+        "generation": int(row["claim_generation"]), "step_key": row["step_key"],
+        "task_id": int(row["task_id"]), "request_id": row["request_id"],
+        "owner_user_id": int(row["owner_user_id"]),
+    }
+    if row.get("operation") is not None or row.get("target") is not None:
+        if row.get("operation") != "onsite_ai" or not isinstance(row.get("target"), dict):
+            raise automation.problem("automation_step_stale", "自动步骤目标绑定已变化")
+        token.update(operation=row["operation"], target=dict(row["target"]))
+    return token
+
+
+async def _finish_call_receipt(session: AsyncSession, job: GeoAsyncJob, *, state: str,
+                               fee_state: str | None = None) -> None:
+    """Finish a typed onsite provider receipt without authorizing result writes."""
+    token = await _automation_token(session, job)
+    if token is None or "target" not in token:
+        return
+    from app import automation_project_v2 as automation_v2
+    fee_refs = []
+    if fee_state is None:
+        from app.geo.automation_v2_adapter import provider_fee_receipt
+        meta = _meta(job)
+        fee_state, fee_refs = await provider_fee_receipt(
+            session, tenant_id=int(job.tenant_id),
+            job_ref=f"geo-onsite-ai:{meta['task_id']}:{meta['request_id']}",
+        )
+    await automation_v2.finish_call(
+        session, token, "primary", state=state, fee_state=fee_state,
+        evidence_refs=(f"geo_async_job:{job.id}", *fee_refs),
+    )
+    await session.commit()
+
+
+async def _settle_automation(
+    session: AsyncSession, job: GeoAsyncJob, *, status: str,
+    error_code: str | None = None, fee_state: str = "unverified",
+    success: bool = False,
+) -> bool:
+    token = await _automation_token(session, job)
+    if token is None:
+        return False
+    from app import automation_projects as automation
+
+    if "target" in token:
+        from app.geo.automation_v2_adapter import aggregate_step_fee
+        key = automation.scope("geo", int(token["tenant_id"]), int(token["scope_id"]))
+        run = await automation.read_run(session, key, token["run_id"])
+        step = next((item for item in (run or {}).get("steps", [])
+                     if item.get("request_id") == token["request_id"]), None)
+        fee_state = aggregate_step_fee(step)
+
+    result_links = (
+        f"/api/v1/geo/workbench/onsite-tasks/{token['task_id']}?tenant_id={token['tenant_id']}&project_id={token['scope_id']}",
+    ) if success else ()
+    changed = await automation.settle_step(
+        session, token, status=status, error_code=error_code,
+        evidence_refs=(f"geo_ticket:{token['task_id']}",) if success else (),
+        result_links=result_links, fee_state=fee_state,
+    )
+    if changed:
+        await session.commit()
+        from app.geo.automation_routes import run_automation
+        asyncio.create_task(run_automation(
+            automation.scope("geo", int(token["tenant_id"]), int(token["scope_id"])),
+            str(token["run_id"]),
+        ))
+    return changed
 
 
 def pending_worker_status() -> dict[str, Any]:
@@ -106,6 +230,8 @@ async def supervise_pending_jobs() -> None:
         try:
             try:
                 result = await run_pending_batch()
+                from app.geo.automation_routes import recover_automation_runs
+                await recover_automation_runs()
                 _worker_status.update(
                     state="active", last_tick_at=onsite_ai.now_iso(),
                     last_attempted=result["attempted"], last_completed=result["completed"],
@@ -247,6 +373,22 @@ async def _terminal(
     if job is None:
         return {"public_state": state, "message": message, **metadata}
     await _set_run(session, job, state=state, error=message, extra=metadata)
+    job = await session.get(GeoAsyncJob, job_id, populate_existing=True)
+    if job is not None:
+        started = bool(_meta(job).get("provider_started_at"))
+        step_status = state if state in {"failed", "unknown", "stale", "cancelled"} else "failed"
+        try:
+            await _settle_automation(
+                session, job, status=step_status,
+                error_code=str(metadata.get("error_category") or "onsite_ai_failed"),
+                fee_state="unknown_charge" if started and state == "unknown" else
+                          "unverified" if started else "not_called",
+            )
+        except HTTPException:
+            # The module job is already safely terminal.  A damaged shared
+            # marker/schema must not reopen it or turn a provider call into a
+            # retry; background operations can inspect both ledgers later.
+            await session.rollback()
     return {"public_state": state, "message": message, **metadata}
 
 
@@ -257,9 +399,21 @@ async def execute_onsite_proposal(
     meta = _meta(job)
     if meta.get("cancel_requested"):
         await _set_run(session, job, state="cancelled", error="请求已取消")
+        await _settle_automation(
+            session, job, status="cancelled", error_code="automation_cancelled",
+            fee_state="not_called",
+        )
         raise ValueError("已取消")
 
     try:
+        token = await _automation_token(session, job)
+        if token is not None:
+            from app import automation_projects as automation
+            if not await automation.begin_dispatch(session, token):
+                return await _terminal(
+                    session, job, "stale", "自动步骤已准入过，系统不会重复调用",
+                    error_category="automation_dispatch_replay",
+                )
         meta, ctx, project, row, snapshot = await _current_scope(session, job, lock=True)
         credentials = onsite_ai.select_planning_credentials(
             await resolve_llm_credentials(session, int(job.tenant_id)) or {}
@@ -277,6 +431,10 @@ async def execute_onsite_proposal(
             return {"public_state": "stale", "message": "AI 作业已不存在"}
         if _meta(job).get("cancel_requested"):
             await _set_run(session, job, state="cancelled", error="请求已取消")
+            await _settle_automation(
+                session, job, status="cancelled", error_code="automation_cancelled",
+                fee_state="not_called",
+            )
             raise ValueError("已取消")
         current_meta = _meta(job)
         current_meta["provider_started_at"] = onsite_ai.now_iso()
@@ -307,6 +465,7 @@ async def execute_onsite_proposal(
                 **generation_options,
             )
     except ControlDenied as exc:
+        await _finish_call_receipt(session, job, state="failed", fee_state="not_called")
         return await _terminal(
             session,
             job,
@@ -317,6 +476,10 @@ async def execute_onsite_proposal(
         )
     except MeteringUnavailable as exc:
         attempted = bool(exc.provider_attempted)
+        await _finish_call_receipt(
+            session, job, state="unknown" if attempted else "failed",
+            fee_state="unknown_charge" if attempted else "not_called",
+        )
         return await _terminal(
             session,
             job,
@@ -333,6 +496,7 @@ async def execute_onsite_proposal(
     except DeepSeekError as exc:
         uncertain = exc.category in {"timeout", "network", "unknown"}
         state = "unknown" if uncertain else "failed"
+        await _finish_call_receipt(session, job, state=state)
         message = (
             "AI 供应商结果未知，系统不会自动重试；请人工核对调用记录"
             if uncertain
@@ -348,6 +512,7 @@ async def execute_onsite_proposal(
             http_status=exc.status_code,
         )
     except Exception:
+        await _finish_call_receipt(session, job, state="unknown")
         return await _terminal(
             session,
             job,
@@ -356,7 +521,12 @@ async def execute_onsite_proposal(
             error_category="unknown",
         )
 
+    await _finish_call_receipt(session, job, state="succeeded")
     try:
+        token = await _automation_token(session, job)
+        if token is not None:
+            from app import automation_projects as automation
+            await automation.check_step(session, token)
         meta, ctx, project, row, fresh = await _current_scope(session, job, lock=True)
         job = await session.get(
             GeoAsyncJob, int(job.id), with_for_update=True, populate_existing=True
@@ -365,6 +535,10 @@ async def execute_onsite_proposal(
             return {"public_state": "stale", "message": "AI 作业已不存在"}
         if _meta(job).get("cancel_requested"):
             await _set_run(session, job, state="cancelled", error="请求已取消；迟到结果未保存")
+            await _settle_automation(
+                session, job, status="cancelled", error_code="automation_cancelled",
+                fee_state="unverified",
+            )
             raise ValueError("已取消")
         current = dict(row.progress["onsite"])
         items, explanation = onsite_ai.validate_provider_result(
@@ -401,6 +575,9 @@ async def execute_onsite_proposal(
         row.progress = {**(row.progress or {}), "onsite": updated}
         row.status = "doing"
         row.updated_at = datetime.utcnow()
+        await _settle_automation(
+            session, job, status="succeeded", fee_state="unverified", success=True,
+        )
         await session.commit()
         return {
             "public_state": "ready",

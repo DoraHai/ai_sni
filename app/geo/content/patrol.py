@@ -12,6 +12,8 @@ from typing import Any
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.automation_project_contract import ConfigurationV2
+from app.geo.automation_v2_adapter import validate_configuration
 from app.geo.tenant16_demo import DEMO_TENANT_ID
 from app.geo.tenant_scope import GeoEntitlementUnavailable, ensure_geo_entitlement
 from app.geo.content.probe import (
@@ -50,6 +52,49 @@ PATROL_INTERVAL_HOURS_CHOICES = (1, 2, 3, 4, 6, 8, 12, 24)
 STALE_PENDING_SECONDS = 90
 STALE_RUNNING_SECONDS = 45 * 60
 PATROL_EXECUTION_PROTOCOL = "advisory_v1"
+SCHEDULE_SCOPE_SCHEMA = 1
+
+
+def scheduled_prompt_ids(row: GeoVisibilityPatrolRun) -> list[int] | None:
+    """Return a server-owned legacy scheduler subset, or fail closed.
+
+    Existing rows have no ``scheduler_scope`` and retain their historical
+    tenant-wide selection.  New scheduler rows use this marker only after the
+    automation registry has separated explicitly adopted prompts from legacy
+    prompts.  A malformed marker must never fall back to all prompts.
+    """
+    summary = row.summary if isinstance(row.summary, dict) else {}
+    scope = summary.get("scheduler_scope")
+    if scope is None:
+        return None
+    if (row.trigger != "schedule" or not isinstance(scope, dict)
+            or scope.get("schema") != SCHEDULE_SCOPE_SCHEMA
+            or scope.get("source") != "legacy_unclaimed"):
+        raise ValueError("定时巡检问题范围标记无效，已停止执行")
+    values = scope.get("prompt_ids")
+    if (not isinstance(values, list) or not values or len(values) > 50
+            or any(type(value) is not int or value < 1 for value in values)
+            or len(values) != len(set(values))):
+        raise ValueError("定时巡检问题范围无效，已停止执行")
+    return sorted(values)
+
+
+def automation_token(row: GeoVisibilityPatrolRun) -> dict | None:
+    summary = row.summary if isinstance(row.summary, dict) else {}
+    token = summary.get("automation_token")
+    if token is None:
+        return None
+    target = token.get("target") if isinstance(token, dict) else None
+    required = {"module", "tenant_id", "scope_id", "run_id", "generation", "step_key",
+                "task_id", "request_id", "owner_user_id", "operation", "target"}
+    if (set(token) != required or token.get("module") != "geo"
+            or token.get("operation") != "visibility_patrol"
+            or token.get("tenant_id") != row.tenant_id
+            or not isinstance(target, dict) or target.get("object_type") != "prompt"
+            or target.get("operation") != "visibility_patrol"
+            or target.get("variant") not in (row.engine_keys or [])):
+        raise ValueError("受控巡检范围标记无效，已停止执行")
+    return token
 
 
 def _naive_utc(dt: datetime | None) -> datetime | None:
@@ -503,6 +548,7 @@ async def execute_patrol_run(
         await session.refresh(row)
         return row
     contract_plan = (row.summary or {}).get("contract_plan")
+    automation = automation_token(row)
     row.status = "running"
     row.started_at = datetime.utcnow()
     row.error = None
@@ -579,18 +625,25 @@ async def execute_patrol_run(
                 GeoPrompt.tenant_id == row.tenant_id, GeoPrompt.id.in_(ids)).order_by(GeoPrompt.id)))
             validate_plan_prompts(contract_plan, prompts)
         else:
+            selected_prompt_ids = ([int(automation["target"]["object_id"])]
+                                   if automation else scheduled_prompt_ids(row))
+            prompt_query = select(GeoPrompt).where(
+                GeoPrompt.tenant_id == row.tenant_id,
+                GeoPrompt.status == "active",
+            )
+            if selected_prompt_ids is not None:
+                prompt_query = prompt_query.where(GeoPrompt.id.in_(selected_prompt_ids))
             prompts = list(
                 await session.scalars(
-                    select(GeoPrompt)
-                    .where(
-                        GeoPrompt.tenant_id == row.tenant_id,
-                        GeoPrompt.status == "active",
-                    )
+                    prompt_query
                     .order_by(GeoPrompt.priority.desc(), GeoPrompt.id.desc())
                     .limit(max(1, min(int(row.prompt_limit or 20), 50)))
                 )
             )
-            if not prompts:
+            if selected_prompt_ids is not None:
+                if {int(prompt.id) for prompt in prompts} != set(selected_prompt_ids):
+                    raise ValueError("定时巡检问题已变化，已停止执行")
+            elif not prompts:
                 # fallback any prompts
                 prompts = list(
                     await session.scalars(
@@ -727,6 +780,74 @@ async def execute_patrol_run(
                         from app.geo.retest import validate_plan_model
                         validate_plan_model(contract_plan, prompt.id, engine, llm)
                     cell_brand, cell_names = _brand_for_prompt(prompt)
+                    controlled_chat_json = chat_json
+                    if automation:
+                        from app import automation_project_v2 as automation_v2
+                        from app import automation_projects as automation_core
+                        if (int(automation["target"]["object_id"]) != int(prompt.id)
+                                or automation["target"]["variant"] != engine):
+                            raise ValueError("受控巡检目标已变化，已停止执行")
+                        call_number = 0
+
+                        async def controlled_chat_json(*args, **kwargs):
+                            nonlocal call_number
+                            call_number += 1
+                            call_key = f"prompt_{prompt.id}:{engine}:{call_number}"
+                            admitted = await automation_v2.begin_call(
+                                session, automation, call_key, kind="provider"
+                            )
+                            if not admitted:
+                                raise ValueError("受控巡检外呼已准入过，禁止重复发送")
+                            _, current_run, _ = await automation_core.check_step(session, automation)
+                            await validate_configuration(
+                                session, int(automation["tenant_id"]), int(automation["scope_id"]),
+                                ConfigurationV2.model_validate(current_run["configuration"]),
+                                int(automation["owner_user_id"]),
+                                current_targets=[automation["target"]],
+                            )
+                            await ensure_geo_entitlement(session, row.tenant_id)
+                            await session.commit()
+                            ledger_ref = f"geo_auto:{automation['run_id']}:{call_key}"[:160]
+                            try:
+                                with background_scope(
+                                    tenant_id=row.tenant_id,
+                                    user_id=getattr(row, "created_by", None), module="geo",
+                                    operation="geo_patrol",
+                                    job_ref=ledger_ref,
+                                ):
+                                    value = await chat_json(*args, **kwargs)
+                            except Exception:
+                                await session.rollback()
+                                from app.geo.automation_v2_adapter import provider_fee_receipt
+                                fee_state, fee_refs = await provider_fee_receipt(
+                                    session, tenant_id=int(row.tenant_id), job_ref=ledger_ref
+                                )
+                                await automation_v2.finish_call(
+                                    session, automation, call_key, state="unknown",
+                                    fee_state=fee_state,
+                                    evidence_refs=[f"geo_patrol_run:{run_id}", *fee_refs],
+                                )
+                                await session.commit()
+                                raise
+                            from app.geo.automation_v2_adapter import provider_fee_receipt
+                            fee_state, fee_refs = await provider_fee_receipt(
+                                session, tenant_id=int(row.tenant_id), job_ref=ledger_ref
+                            )
+                            await automation_v2.finish_call(
+                                session, automation, call_key, state="succeeded",
+                                fee_state=fee_state,
+                                evidence_refs=[f"geo_patrol_run:{run_id}", *fee_refs],
+                            )
+                            await session.commit()
+                            _, current_run, _ = await automation_core.check_step(session, automation)
+                            await validate_configuration(
+                                session, int(automation["tenant_id"]), int(automation["scope_id"]),
+                                ConfigurationV2.model_validate(current_run["configuration"]),
+                                int(automation["owner_user_id"]),
+                                current_targets=[automation["target"]],
+                            )
+                            await ensure_geo_entitlement(session, row.tenant_id)
+                            return value
                     from app.api_metering import background_scope
                     with background_scope(tenant_id=row.tenant_id, user_id=getattr(row, "created_by", None), module="geo",
                                           operation="geo_patrol", job_ref=f"geo_patrol:{row.id}"):
@@ -736,10 +857,20 @@ async def execute_patrol_run(
                             brand_names=cell_names,
                             engine=engine,
                             llm=llm,
-                            chat_json=chat_json,
+                            chat_json=controlled_chat_json,
                             sample_mode=sample_mode,
                             fallback_reason=fallback_reason,
                         )
+                    if automation:
+                        # Locks the current generation through the following business write.
+                        _, current_run, _ = await automation_core.check_step(session, automation)
+                        await validate_configuration(
+                            session, int(automation["tenant_id"]), int(automation["scope_id"]),
+                            ConfigurationV2.model_validate(current_run["configuration"]),
+                            int(automation["owner_user_id"]),
+                            current_targets=[automation["target"]],
+                        )
+                        await ensure_geo_entitlement(session, row.tenant_id)
                     # A provider response arriving after revocation is not a
                     # valid customer sample and must never be persisted.
                     await ensure_geo_entitlement(session, row.tenant_id)

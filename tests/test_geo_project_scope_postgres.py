@@ -14,7 +14,7 @@ from sqlalchemy.schema import CreateTable
 
 from app.models import (Tenant, GeoProject, GeoOptimizationBusiness, GeoOptimizationUnit, GeoPrompt,
                         GeoContentTask, GeoAnswerSnapshot, GeoTrackingEngine, GeoActionTicket, GeoArticleVersion,
-                        GeoTaskFact, GeoFact, GeoPublication, GeoChannelVariant, GeoAsyncJob,
+                        GeoTaskFact, GeoFact, GeoPublication, GeoChannelVariant, GeoChannelAsset, GeoAsyncJob,
                         TenantModule)
 from app.models.user import User
 from app.models.role import Role
@@ -41,7 +41,7 @@ async def database():
             created = True
             for model in (Tenant, GeoProject, GeoOptimizationBusiness, GeoOptimizationUnit,
                           GeoPrompt, GeoContentTask, GeoAnswerSnapshot, GeoTrackingEngine, GeoActionTicket,
-                          GeoArticleVersion, GeoTaskFact, GeoFact, GeoPublication, GeoChannelVariant,
+                          GeoArticleVersion, GeoTaskFact, GeoFact, GeoPublication, GeoChannelVariant, GeoChannelAsset,
                           GeoAsyncJob, TenantModule, Role, User):
                 await connection.execute(CreateTable(model.__table__, include_foreign_key_constraints=[]))
             await connection.execute(text("""CREATE TABLE demo_tenant_bindings (tenant_id bigint, demo_tenant_id bigint,

@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from uuid import UUID
 
 
 class VariantExportRequest(BaseModel):
@@ -262,6 +263,27 @@ class VariantsCreate(BaseModel):
 class VariantUpdate(BaseModel):
     title: str | None = Field(None, min_length=1)
     body_markdown: str | None = Field(None, min_length=1)
+
+
+class ManualChannelFinalize(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scope_id: int = Field(..., strict=True, gt=0)
+    expected_variant_id: int = Field(..., strict=True, gt=0)
+    expected_article_id: int = Field(..., strict=True, gt=0)
+    expected_revision: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    request_id: UUID
+    confirm_title_body: StrictBool
+    confirm_layout: StrictBool
+    confirm_facts: StrictBool
+    confirm_brand_author: StrictBool
+    confirm_platform: StrictBool
+
+    @field_validator("confirm_title_body", "confirm_layout", "confirm_facts", "confirm_brand_author", "confirm_platform")
+    @classmethod
+    def explicitly_confirmed(cls, value):
+        if value is not True:
+            raise ValueError("每项人工核对必须明确确认")
+        return value
 
 
 class PublicationCreate(BaseModel):

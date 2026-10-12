@@ -133,9 +133,28 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
         return {"assistant"}, False
     if p.startswith("/api/v1/geo/integration/"):
         return {"geo.content"}, edit
+    if p.startswith("/api/v1/geo/workbench/automation-projects"):
+        # Advisor automation controls GEO assets/content and has its own
+        # stricter real-user, ownership and entitlement checks in the route.
+        return {"geo.assets", "geo.content"}, edit
+    if (p.startswith("/api/v1/geo/workbench/onsite-")
+            or p.startswith("/api/v1/geo/workbench/advisor-tasks")):
+        # Customers may read their tenant's delivery state. Creating tasks,
+        # requesting AI, changing workflow phases and cancelling work require
+        # an advisor's GEO asset/content edit permission; route ownership and
+        # assignment checks remain authoritative after this menu gate.
+        return {"geo.assets", "geo.content"}, edit
+    if p == "/api/v1/geo/workbench/automation-health":
+        # The endpoint additionally requires both platform-admin permissions,
+        # a global real user, and a fresh database role lookup.
+        return {"settings.accounts", "settings.customers"}, False
     if p == "/api/v1/geo/tenants":
         # GEO 顶部客户切换器是所有 GEO 工作台的公共只读数据源。
         return {"geo.assets", "geo.content", "geo.diagnosis"}, False
+    if p.startswith("/api/v1/geo/distribution-assets"):
+        # Immutable channel media changes invalidate content approval and need
+        # the same dual project/content authority as source distribution.
+        return {"geo.assets", "geo.content"}, True
     if p.startswith("/api/v1/geo/projects"):
         return {"geo.assets"}, edit
     if p.startswith("/api/v1/geo/audits"):

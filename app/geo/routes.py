@@ -1175,3 +1175,9 @@ from app.geo.question_read_routes import router as question_read_router
 router.include_router(question_read_router)
 from app.geo.onsite_routes import router as onsite_router
 router.include_router(onsite_router)
+from app.geo.automation_routes import router as automation_router, health_router as automation_health_router
+router.include_router(automation_router)
+router.include_router(automation_health_router)
+
+from app.geo.distribution_assets import router as distribution_assets_router
+router.include_router(distribution_assets_router)

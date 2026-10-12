@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from app.api_connection_config import managed_runtime
@@ -27,6 +28,63 @@ KIND_ONSITE_PROPOSAL = "onsite_ai_proposal"
 STALE_PENDING_SECONDS = 120
 STALE_RUNNING_SECONDS = 45 * 60
 JOB_EXECUTION_PROTOCOL = "advisory_v1"
+
+
+def automation_token_for_job(job: GeoAsyncJob) -> dict | None:
+    meta = job.request_meta if isinstance(job.request_meta, dict) else {}
+    token = meta.get("automation_token")
+    if token is None:
+        return None
+    required = {"module", "tenant_id", "scope_id", "run_id", "generation", "step_key",
+                "task_id", "request_id", "owner_user_id", "operation", "target"}
+    if (not isinstance(token, dict) or set(token) != required
+            or token.get("module") != "geo" or token.get("tenant_id") != job.tenant_id
+            or token.get("operation") not in {"content_master_draft", "channel_variant_draft"}
+            or not isinstance(token.get("target"), dict)
+            or token["target"].get("object_id") != job.ref_id):
+        raise ValueError("受控内容作业标记无效")
+    return token
+
+
+async def validate_automation_job(session, job: GeoAsyncJob, token: dict):
+    from app import automation_projects as automation_core
+    from app.automation_project_contract import ConfigurationV2
+    from app.geo.automation_v2_adapter import validate_configuration
+    _, run, _ = await automation_core.check_step(session, token)
+    await validate_configuration(
+        session, int(token["tenant_id"]), int(token["scope_id"]),
+        ConfigurationV2.model_validate(run["configuration"]),
+        int(token["owner_user_id"]),
+        current_targets=[token["target"]],
+    )
+    return run
+
+
+async def settle_automation_job(session, job: GeoAsyncJob, *, success: bool) -> None:
+    token = automation_token_for_job(job)
+    if token is None:
+        return
+    from app import automation_projects as automation_core
+    key = automation_core.scope("geo", int(token["tenant_id"]), int(token["scope_id"]))
+    run = await automation_core.read_run(session, key, token["run_id"])
+    step = next((item for item in (run or {}).get("steps", [])
+                 if item.get("request_id") == token["request_id"]), None)
+    from app.geo.automation_v2_adapter import aggregate_step_fee
+    fee_state = aggregate_step_fee(step)
+    changed = await automation_core.settle_step(
+        session, token, status="succeeded" if success else "blocked",
+        error_code=None if success else "automation_content_job_failed",
+        fee_state=fee_state, evidence_refs=(f"geo_async_job:{job.id}",),
+        result_links=(f"/api/v1/geo/content/async-jobs/{job.id}?tenant_id={job.tenant_id}",),
+        success_actor_kind=("ai" if token["operation"] == "content_master_draft"
+                            else "system"),
+    )
+    await session.commit()
+    if changed:
+        from app.geo.automation_routes import run_automation
+        asyncio.create_task(run_automation(
+            key, str(token["run_id"]),
+        ))
 
 
 @asynccontextmanager
@@ -634,6 +692,7 @@ async def _run_owned_job(job_id: int, *, tenant_id: int, connection=None) -> dic
                     return {"status": "failed", "error": result.get("message"),
                             "result_meta": result}
                 await mark_job(session, job_id, status="succeeded", result_meta=result)
+                await settle_automation_job(session, row, success=True)
                 return {"status": "succeeded", "error": None, "result_meta": result}
             except Exception as exc:  # noqa: BLE001
                 rollback = getattr(session, "rollback", None)
@@ -664,6 +723,7 @@ async def _run_owned_job(job_id: int, *, tenant_id: int, connection=None) -> dic
                     error=str(exc),
                     result_meta={"error_type": type(exc).__name__},
                 )
+                await settle_automation_job(session, live, success=False)
                 return {
                     "status": "failed",
                     "error": str(exc),
@@ -689,6 +749,9 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
     from app.geo.tenant_scope import ensure_geo_background_execution_allowed, ensure_geo_entitlement
 
     ensure_geo_background_execution_allowed(job.tenant_id)
+    automation = automation_token_for_job(job)
+    if automation:
+        await validate_automation_job(session, job, automation)
 
     task = await session.get(GeoContentTask, job.ref_id)
     if task is None or task.tenant_id != job.tenant_id:
@@ -753,12 +816,66 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
         getattr(biz_row, "profile", None) if biz_row else None,
         fallback=tenant.name,
     )
+    controlled_chat_json = None
+    if automation:
+        from app import automation_project_v2 as automation_v2
+        from app.ai.deepseek import chat_json as provider_chat_json
+        from app.api_metering import background_scope
+        call_number = 0
+
+        async def controlled_chat_json(*args, **kwargs):
+            nonlocal call_number
+            call_number += 1
+            call_key = f"master_{task.id}:{call_number}"
+            admitted = await automation_v2.begin_call(
+                session, automation, call_key, kind="provider"
+            )
+            if not admitted:
+                raise ValueError("受控母稿外呼已准入过，禁止重复发送")
+            await validate_automation_job(session, job, automation)
+            await ensure_geo_entitlement(session, job.tenant_id)
+            await session.commit()
+            try:
+                ledger_ref = f"geo_auto:{automation['run_id']}:{call_key}"[:160]
+                with background_scope(
+                    tenant_id=job.tenant_id, user_id=job.created_by, module="geo",
+                    operation="content_master_draft",
+                    job_ref=ledger_ref,
+                ):
+                    value = await provider_chat_json(*args, **kwargs)
+            except Exception:
+                await session.rollback()
+                from app.geo.automation_v2_adapter import provider_fee_receipt
+                fee_state, fee_refs = await provider_fee_receipt(
+                    session, tenant_id=int(job.tenant_id), job_ref=ledger_ref
+                )
+                await automation_v2.finish_call(
+                    session, automation, call_key, state="unknown",
+                    fee_state=fee_state,
+                    evidence_refs=[f"geo_async_job:{job.id}", *fee_refs],
+                )
+                await session.commit()
+                raise
+            from app.geo.automation_v2_adapter import provider_fee_receipt
+            fee_state, fee_refs = await provider_fee_receipt(
+                session, tenant_id=int(job.tenant_id), job_ref=ledger_ref
+            )
+            await automation_v2.finish_call(
+                session, automation, call_key, state="succeeded",
+                fee_state=fee_state,
+                evidence_refs=[f"geo_async_job:{job.id}", *fee_refs],
+            )
+            await session.commit()
+            await validate_automation_job(session, job, automation)
+            await ensure_geo_entitlement(session, job.tenant_id)
+            return value
     payload = await generate_master_article(
         tenant_name=author_name,
         question=prompt.question,
         facts=fact_dicts,
         llm=llm,
         brief=brief_norm,
+        chat_json_fn=controlled_chat_json,
     )
     # The subscription can change while the remote model is running. Discard
     # the response before any article write when access is no longer valid.
@@ -768,6 +885,8 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
         task.status = "editing"
         await session.commit()
         raise ValueError("已取消")
+    if automation:
+        await validate_automation_job(session, job, automation)
     await set_job_progress(session, job, message="正在挂事实引用并落库", pct=80)
     body = to_markdown(payload)
     outline = outline_from_payload(payload)
@@ -823,6 +942,9 @@ async def _execute_variants(session: AsyncSession, job: GeoAsyncJob) -> dict[str
     from app.geo.content.variant_execute import execute_variants_for_task
 
     meta = job.request_meta or {}
+    token = automation_token_for_job(job)
+    if token is not None:
+        await validate_automation_job(session, job, token)
     channels = meta.get("channels")
     use_llm = bool(meta.get("use_llm", True))
     if not job.ref_id:

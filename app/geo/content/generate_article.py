@@ -246,6 +246,7 @@ async def generate_master_article(
     today: date | None = None,
     min_eligible: int = 3,
     brief: dict[str, Any] | None = None,
+    chat_json_fn=None,
 ) -> dict[str, Any]:
     """Generate master article using only publishable evidence facts.
 
@@ -317,6 +318,7 @@ async def generate_master_article(
         return _stamp_brief_meta(payload)
 
     from app.geo.content.brand_geo import payload_brand_issues
+    call_json = chat_json_fn or chat_json
 
     brand = (tenant_name or "").strip()
     system = (
@@ -375,7 +377,7 @@ async def generate_master_article(
                     "model": llm.get("model"),
                 }
             )
-        data = await chat_json(
+        data = await call_json(
             system, json.dumps(base_user, ensure_ascii=False), **kwargs
         )
         data["_source"] = "ai"
@@ -394,7 +396,7 @@ async def generate_master_article(
                 ),
             }
             try:
-                data2 = await chat_json(
+                data2 = await call_json(
                     system, json.dumps(fix_user, ensure_ascii=False), **kwargs
                 )
                 data2["_source"] = "ai"
@@ -423,7 +425,7 @@ async def generate_master_article(
                         "外文事实没有已核验译文时，直接保留官方原句并标明来源，不要自行翻译或解释其功效。"
                     ),
                 }
-                data3 = await chat_json(
+                data3 = await call_json(
                     system, json.dumps(fix_claims, ensure_ascii=False), **kwargs
                 )
                 data3["_source"] = "ai"
