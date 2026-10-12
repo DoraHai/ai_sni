@@ -1,0 +1,25 @@
+# A root master reads the existing TLS key in memory; workers use distacceptance.
+[Unit]
+Description=Independent SEO acceptance HTTPS gateway on 58443
+After=network.target gsnipers-distribution-acceptance-seo.service
+Requires=gsnipers-distribution-acceptance-seo.service
+
+[Service]
+Type=forking
+User=root
+Group=root
+UMask=0077
+PIDFile=/opt/gsnipers-distribution-acceptance-gateway/run/nginx.pid
+ExecStartPre=/usr/bin/python3.11 /opt/gsnipers-distribution-acceptance-gateway/gateway-control.py verify
+ExecStartPre=/usr/sbin/nginx -t -p /opt/gsnipers-distribution-acceptance-gateway/ -c /opt/gsnipers-distribution-acceptance-gateway/standalone-nginx.conf
+ExecStart=/usr/sbin/nginx -p /opt/gsnipers-distribution-acceptance-gateway/ -c /opt/gsnipers-distribution-acceptance-gateway/standalone-nginx.conf
+ExecStop=/bin/kill -QUIT $MAINPID
+Restart=no
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/gsnipers-distribution-acceptance-gateway/run /opt/gsnipers-distribution-acceptance-gateway/log /opt/gsnipers-distribution-acceptance-gateway/tmp
+
+[Install]
+WantedBy=multi-user.target
