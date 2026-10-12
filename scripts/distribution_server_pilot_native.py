@@ -291,8 +291,16 @@ def application(root, config, sessions, module, manifest):
         spec=importlib.util.spec_from_file_location('app.api.server_pilot_modules_auth',auth_source)
         modules_auth=importlib.util.module_from_spec(spec)
         spec.loader.exec_module(modules_auth)
-        for route in modules_auth.router.routes:
-            if route.endpoint.__name__=='list_my_modules': app.router.routes.append(route)
+        @app.get('/api/v1/auth/modules')
+        async def seo_native_modules(ctx=Depends(require_auth),db=Depends(get_session)):
+            result=await modules_auth.list_my_modules(ctx=ctx,session=db)
+            # A global admin's production catalogue also permits SEM settings.
+            # This separate native unit does not serve SEM or GEO, so its login
+            # must not offer those unavailable execution modules.
+            result['modules']=[row if row['module_code']=='seo' else {
+                **row,'available':False,'status':'not_in_acceptance','tenant_count':0}
+                for row in result['modules']]
+            return result
     else:
         # The frozen GEO module has its own older scope interface. Build its
         # acceptance catalogue from actual native entitlements, without replacing

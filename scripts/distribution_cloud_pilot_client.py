@@ -130,10 +130,28 @@ def guards(root):
             client.close()
 
 
+def catalog(root):
+    result = {'production': False, 'modules': {}}
+    for module in ('seo', 'geo'):
+        admin = Client(root, module)
+        try:
+            me = admin.call('GET', '/api/v1/auth/me')['user']
+            directory = admin.call('GET', '/api/v1/auth/modules')
+            rows = directory['modules']
+            available = [row['module_code'] for row in rows if row['available']]
+            if me['id'] != 100008 or available != [module]:
+                raise RuntimeError('NATIVE_MODULE_SCOPE_CHECK_FAILED')
+            result['modules'][module] = {'actorId': me['id'], 'available': available, 'http': admin.journal}
+        finally:
+            admin.close()
+    (root / 'cloud-native-module-catalog.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
+    return result
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=('status', 'bind-unverified', 'guards'))
+    parser.add_argument('action', choices=('status', 'bind-unverified', 'guards', 'catalog'))
     parser.add_argument('--root', required=True)
     args = parser.parse_args()
     root = owned(args.root)
-    print(json.dumps({'status': status, 'bind-unverified': bind_unverified, 'guards': guards}[args.action](root), ensure_ascii=True))
+    print(json.dumps({'status': status, 'bind-unverified': bind_unverified, 'guards': guards, 'catalog': catalog}[args.action](root), ensure_ascii=True))

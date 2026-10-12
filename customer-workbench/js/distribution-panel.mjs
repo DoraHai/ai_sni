@@ -314,8 +314,8 @@ export function mountDistributionAdmin({root,session,fetchImpl=fetch,browser=win
     if(b.dataset.distributionAdmin==='revoke'&&browser.confirm('停用设备后停止继续派发；已经开始的操作仍需核查。')){credential=null;void operation(()=>client.revoke(b.dataset.id));}
     if(b.dataset.distributionAdmin==='revoke-binding'&&browser.confirm('停用此账号绑定后停止继续派发；已经开始的操作仍需核查。')){credential=null;void operation(()=>client.revokeBinding(b.dataset.id));}
   }
-  root.addEventListener('submit',submit);root.addEventListener('click',click);render();pairing.refresh();void operation(async()=>{});
-  return {dispose(){disposed=true;epoch++;pairing.dispose();clear();client.dispose();credential=null;devices=[];bindings=[];schedules=[];events=[];root.removeEventListener('submit',submit);root.removeEventListener('click',click);root.replaceChildren();}};
+  const input=event=>pairing.input(event);root.addEventListener('input',input);root.addEventListener('submit',submit);root.addEventListener('click',click);render();pairing.refresh();void operation(async()=>{});
+  return {dispose(){disposed=true;epoch++;pairing.dispose();root.removeEventListener('input',input);clear();client.dispose();credential=null;devices=[];bindings=[];schedules=[];events=[];root.removeEventListener('submit',submit);root.removeEventListener('click',click);root.replaceChildren();}};
 }
 
 const planningReasons={AI_PROVIDER_DISABLED:'超管已关闭服务商连接，采用规则安排',AI_BUDGET_EXHAUSTED:'AI 请求额度不足，采用规则安排',AI_CONCURRENCY_LIMIT:'AI 并发额度已占用，采用规则安排',AI_CHARGE_UNRESOLVED:'AI 费用结果待核查，暂停新请求',AI_PRICE_REQUIRED:'AI 计价信息不足，采用规则安排',AI_REQUESTED:'正在请求 AI 建议',AI_ADVICE_ADMITTED:'AI 建议已通过账号规则校验',AI_INVALID_OUTPUT:'AI 返回未通过校验，采用规则安排',AI_TIMEOUT:'AI 请求超时，采用规则安排',AI_FAILED:'AI 请求失败，采用规则安排',AI_GATEWAY_UNAVAILABLE:'主 AI 网关未接入，采用规则安排',AI_METERING_REQUIRED:'AI 计量未启用，采用规则安排',AI_NOT_CONFIGURED:'AI 配置缺失，采用规则安排',AI_ATTEMPT_UNKNOWN:'AI 请求结果未知，暂停重试并等待人工核查',ACCOUNT_SLOT_UNAVAILABLE:'允许时段内没有可用额度',ACCOUNT_SLOT_CHANGED:'账号占用变化，原建议已失效',PLANNING_RULES_CHANGED:'账号规则或项目状态变化，原建议已失效',AUTHORIZATION_OR_SOURCE_CHANGED:'权限或稿件变化，原建议已失效',AUTHORIZATION_REVOKED:'顾问权限已撤销',SOURCE_CHANGED:'稿件版本变化',REPLANNED:'已由新建议替代'};
