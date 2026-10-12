@@ -55,6 +55,27 @@ def mount_seo_media_routes(app, module):
     app.include_router(selected)
 
 
+def mount_exact_native_read(app, native, endpoint_name, path):
+    """Expose one existing GET without recreating handler/auth dependencies."""
+    matches = [route for route in native.routes if route.endpoint.__name__ == endpoint_name
+               and route.path == path and route.methods == {'GET'}]
+    if len(matches) != 1:
+        raise RuntimeError('Exact native read route required')
+    existing = [route for route in app.router.routes if getattr(route, 'path', None) == path
+                and getattr(route, 'methods', None) == {'GET'}]
+    if existing:
+        if len(existing) != 1 or existing[0].endpoint is not matches[0].endpoint:
+            raise RuntimeError('Conflicting native read route')
+        return
+    # include_router retains the original endpoint/class/dependencies while
+    # attaching this application's dependency_overrides_provider. Raw append
+    # would leave get_seo_session's primary alias outside the owned override.
+    from fastapi import APIRouter
+    selected = APIRouter()
+    selected.routes.append(matches[0])
+    app.include_router(selected)
+
+
 def prepare(config_path, module):
     config = read(config_path)
     root = owned(config['root'])
@@ -333,6 +354,9 @@ def application(root, config, sessions, module, manifest):
         spec=importlib.util.spec_from_file_location('app.api.server_pilot_modules_auth',auth_source)
         modules_auth=importlib.util.module_from_spec(spec)
         spec.loader.exec_module(modules_auth)
+        # The older native auth list omits module; this existing central handler
+        # is the real permission/entitlement-filtered product read contract.
+        mount_exact_native_read(app, modules_auth.router, 'list_tenants', '/api/v1/auth/tenants')
         @app.get('/api/v1/auth/modules')
         async def seo_native_modules(ctx=Depends(require_auth),db=Depends(get_session)):
             result=await modules_auth.list_my_modules(ctx=ctx,session=db)
@@ -381,6 +405,9 @@ def application(root, config, sessions, module, manifest):
             if route.endpoint.__name__ in names: selected.routes.append(route)
         app.include_router(selected)
         mount_seo_media_routes(app, module)
+        from app.api.customer_modules import seo_sites_router
+        mount_exact_native_read(app, seo_sites_router, 'list_seo_workbench_sites',
+                                '/api/v1/seo/workbench/sites')
     else:
         from app.geo.project_routes import geo_projects_router
         for route in geo_projects_router.routes:
