@@ -1,12 +1,12 @@
 # 公司执行电脑分发验收 · 2026-10-12
 
-本轮已部署独立 Linux API／数据库验收环境，完成实际网页配对、公司 Windows 执行端绑定、原生 SEO 稿件准备及预检回执。扫码后的官方账号身份已匹配，执行端实际打开了官方空白图文编辑器。现已进一步部署原生公众号封面支持，通过实际命名 JWT 完成上传、素材回读、禁止自审、另一名已分配网站顾问审核及新来源读取。**完整真实发布尚未验收**：官方编辑器稿件导入、平台封面上传、单次提交、公开链接及工作台发布回传仍待执行；不得把内部素材上传算作平台发布。SEM 未部署或启用 AI 接管。
+本轮已部署独立 Linux API／数据库验收环境，完成实际网页配对、公司 Windows 执行端绑定、原生 SEO 稿件与封面准备。首次有限真实发表任务完成账号身份与空白页核验，导入过程中中断，原生服务器收到 seq3 unknown；未进入平台封面上传、保存、预检或发表。项目已暂停 revision4，执行器停止、窗口0，原任务与回执保留。**完整真实发布尚未验收**：全文回读、平台封面上传、单次提交、公开链接及发布回写仍待完成。工作台读取修复已部署并完成真实页面与权限复测。SEM 未部署或启用 AI 接管。
 
 ## 可复核的部署与仓库版本
 
 | 单元 | 验收源提交 | GitHub 独立分支快照 | 完整源树 |
 | --- | --- | --- | --- |
-| 中央工作台／API | `1674c84c221b8027354bfaf12cd80fd6df617acd` | `097b7e1fb22c096d44180e1b0d3b0b6e3c79cff6` | `f23566c72c32ea779fd61faaa066395683806c2a` |
+| 中央工作台／API | `e5e402a852e43431ada8143c13909bb466c2c2ba` | `8c23a5c72b3aa3d58e5bc76f62b05ef07cbf4272` | `91363e63021ee08b029fb2338d3dcb5e2cabe442` |
 | 原生 SEO | `3087e62f23e799fe82d279f79f698f0499bf3a27` | `8b34c1578efc123f8e045696c59425ee00dd0c44` | `250882ffa7aa822f90561e5c91a68f0d8811cb57` |
 | 原生 GEO | `46dacbd805afc00f37eba344306fde004039efed` | `8737194fdf6f0f2517fc831794a320d7a40e2fc0` | `259699522c8694171738972b23a32ad81a0ab0ed` |
 
@@ -53,7 +53,7 @@ GitHub 插件同步采用完整 UTF-8／mode 树与期望分支头校验，三�
 
 发布稿件也经新的原生 GET 再核对，variant2 的 source revision／digest 与审核快照完全一致，标题 31 字、正文 2329 字、assets=[]；封面及官方发布必填项尚未核验。元数据证据为 `cloud-publish-source-readiness.json`。
 
-## 最新封面与单次发布准备（北京时间 19:17）
+## 封面与单次发布准备记录（北京时间 19:17）
 
 独立环境通过既有 prepare/activate 脚本从上述冻结提交构建部署，没有重新 initialize 数据库，没有修改生产代码、数据库或 Nginx。实际 health 核对中央/原生 pin、标准顾问页面构建及四个原生素材文件 SHA。GEO 固定版本不变，未创建 GEO 发布任务。
 
@@ -70,6 +70,18 @@ GitHub 插件同步采用完整 UTF-8／mode 树与期望分支头校验，三�
 多号通已完成空白编辑器真实只读探测，正在冻结依赖原生task及两类grant的封面导入与单次提交适配。总控只在该执行适配就绪后签一个账号、一篇稿件的有限发布任务；来源、封面、范围、账号、期限任一改变均须拒绝旧授权。提交未知不能自动重试或伪造人工发布；须实际公开页检查后按原生顾问处理/发布回写，并验证双方工作台。此时尚未签发任务、未平台发稿。
 
 新增私有证据：`native-cover-api-state-20261012.json`、`current-approved-seo-source-with-cover.json`、`native-reviewed-cover-preview.png`、`cloud-cover-real-auth-guards-before-publication.json`、`root-cover-integration-127.xml`；全文、密码、JWT、Cookie和设备密钥仍不入仓库。
+
+## 首次有限真实任务与工作台复测（北京时间 20:18）
+
+原生任务 `b1e28c56-5f37-4d7c-9584-a7293186a488` 于19:59创建，固定SEO15/site6、variant2、上述新来源与唯一封面、账号 `gh_1864ed0c0506`。双grant与lease到20:14:38，单篇permit到20:24:37；不延长、重绑或删除历史。执行包为多号通 `14a7c5a0451a2014d5a1a4e58d51ca9d712b287b`。初次实际执行仅一次：账号身份和空白检查成功，持久化唯一import claim；约1.14秒后通用异常退出。没有全文回读成功记录，也没有cover/upload/crop/submit claim。seq3 `EXECUTION_RESULT_UNKNOWN` 实际ACK已持久化，pending/isolated/localOnly均0。根随后以原生控制API暂停项目到revision4。
+
+原始异常码未持久化，因此不能断言是排版、粘贴或超时。完整代码中asset1任务的执行上限是60秒；构造参数30秒用于默认网络等待等，不能把约30秒退出当作总任务超时证明。下一步需新建无task的有限只读账号核验会话、观察实际编辑器与model，补允许列表的阶段/异常码诊断。原unknown未经核定不能重发或伪造人工成功。
+
+验收环境缺失五个客户只读接口，且publication-page-evidence列表被宽泛发布门禁拒绝，导致客户会话失效。已只挂载原生GET、保留真实权限与独立数据库依赖，并为精确SEO15/site6、真实路由、合法唯一参数的已存证据读取增加有限例外。未开放相邻写接口、外部页面抓取或publication/check/source门禁。174项合同/内存接线测试通过并经独立复核；另外30项实际JWT/PG读取验证当前客户与顾问200、外部客户和跨scope403、匿名拒绝，项目仍paused4，unknown seq3保留。
+
+真实编译页面使用原生JWT和独立HTTPS，没有fixture响应：顾问16个API读取均200，显示暂停版本4、原未知任务和回执；客户13个API读取均200，身份保持100015、测试母稿61仍待发布。页面无脚本错误或跨域/业务写请求。原母稿60已有发布状态属于此前快照，不能用作本次公众号成功证据。公网58443入口仍未完成外部连通验证；本轮实页测试走私有通道及只信任本轮证书SPKI的独立测试浏览器，未改变系统CA或声称用户公网可用。
+
+私有新增证据：`customer-reader-real-auth-20261012.json`、`real-workbench-current-report.json`及顾问/客户截图、`first-publication-test-pause-operation-20261012.json`、`single-publication-actual-progress-20261012.json`、多号通`finite-live-one-shot-b1e28c56-proof.json`。全文、账号凭证和control nonce均不入仓库。
 
 ## 早期后续计划（保留当时边界）
 
