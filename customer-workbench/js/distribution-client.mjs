@@ -304,9 +304,7 @@ export function createDistributionClient({session,fetchImpl=fetch,subscribeSessi
     },
     async devices(){const value=await request(base+'/devices');if(value.schema!==1||!Array.isArray(value.items)||value.items.length>100||
       value.items.some(d=>!uuid(d.id)||typeof d.label!=='string'||typeof d.active!=='boolean'||'credential' in d||'credential_hash' in d))fail();return value;},
-    async createDevice(label){if(typeof label!=='string'||!label.trim()||label.length>80)fail();const value=await request(base+'/devices',{method:'POST',body:{label}});
-      if(value.schema!==1||!uuid(value.device?.id)||value.device.label!==label||value.device.credential_once!==true||
-        typeof value.device.credential!=='string'||!/^[a-zA-Z0-9_-]{40,100}$/.test(value.device.credential))throw fault('WRITE_OUTCOME_UNKNOWN');return value;},
+    async createDevice(){throw fault('DEVICE_PAIRING_REQUIRED');},
     async bindings(){const value=await request(base+'/bindings');if(value.schema!==1||!Array.isArray(value.items)||value.items.length>100||
       value.items.some(b=>!uuid(b.id)||!modules.includes(b.module)||!positive(b.tenant_id)||!positive(b.scope_id)||!uuid(b.device_id)||
         !id(b.account_id)||!id(b.external_account_id)||!platforms.includes(b.platform)||typeof b.active!=='boolean'||

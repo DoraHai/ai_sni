@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test:device-pairing": "npm run build && node --test device-pairing.test.mjs device-pairing-browser.test.mjs",
     "test:advisor-remote": "npm run build && node --test advisor-remote-session.test.mjs advisor-remote-task.test.mjs advisor-remote-poller.test.mjs advisor-remote-release.test.mjs advisor-remote-browser.test.mjs",
     "test:advisor": "npm run build && node --test advisor-client.test.mjs advisor-automation.test.mjs advisor-automation-export.test.mjs advisor-automation-v2.test.mjs advisor-automation-bindings.test.mjs advisor-browser.test.mjs advisor-automation-browser.test.mjs advisor-automation-v2-browser.test.mjs",
     "build": "node scripts/build.mjs",

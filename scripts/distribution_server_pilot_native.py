@@ -317,7 +317,7 @@ def application(root, config, sessions, module, manifest):
         from fastapi.responses import JSONResponse
         device_path = request.url.path.startswith(('/api/distribution/v1/device/',
             '/api/distribution/capabilities/v1/device/', '/api/distribution/handoff/v1/device/',
-            '/api/distribution/v1/remote/device/'))
+            '/api/distribution/v1/remote/device/')) or request.url.path == '/api/distribution/v1/device-pairings/claim'
         if request.method not in {'GET','HEAD','OPTIONS'} and not device_path and request.url.path != '/api/v1/auth/login':
             from fastapi.security import HTTPAuthorizationCredentials
             value = request.headers.get('authorization','')

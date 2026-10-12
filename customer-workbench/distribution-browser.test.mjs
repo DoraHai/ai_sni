@@ -242,9 +242,9 @@ test('built advisor distribution reviews the approved draft, gates publication, 
   }finally{await f.close();}
 });
 
-test('built admin device secret is transient and individual account bindings can be revoked',async()=>{
+test('built admin short pairing code is transient and individual account bindings can be revoked',async()=>{
   const admin={id:8,tenant_id:null,display_name:'合成超管',permissions:{'settings.accounts':'edit','settings.customers':'edit'}};
-  let devices=[],bindings=[],serverUser=admin,account=null,cap=channel();
+  let pairingRow=null,devices=[],bindings=[],serverUser=admin,account=null,cap=channel();
   const f=await pageHarness(admin,'platform',async(url,method,body)=>{
     if(url.pathname==='/api/v1/auth/me')return {value:{user:serverUser}};
     if(url.pathname==='/api/v1/admin/console/snapshot')return {value:{schema:1,mode:'read_only_inventory',
@@ -271,9 +271,10 @@ test('built admin device secret is transient and individual account bindings can
       account={...account,policy:{...account.policy,revision:2,paused_reason:'ACCOUNT_PAUSED'},reason:'ACCOUNT_PAUSED',available:false,next_allowed_at:null};
       return {value:{schema:1,schedule:account}};
     }
-    if(url.pathname===base+'/devices'){
+    if(url.pathname===base+'/device-pairings'&&method==='GET')return {value:{schema:1,items:pairingRow?[pairingRow]:[],as_of:Date.now()}};
+    if(url.pathname===base+'/device-pairings'){
       devices=[{id:deviceId,label:body.label,active:true,last_seen_at:null,created_at:Date.now()}];
-      return {value:{schema:1,device:{id:deviceId,label:body.label,credential:'synthetic_'+ 'x'.repeat(48),credential_once:true}}};
+      return {value:{schema:1,pairing:(pairingRow={id:deviceId,request_id:body.request_id,device_id:deviceId,label:body.label,state:'pending',created_at:Date.now(),expires_at:Date.now()+300000,claimed_at:null,revoked_at:null,automatic_submit:false,bindings_configured:false}),pairing_code:'x'.repeat(32),code_once:true}};
     }
     if(url.pathname===base+'/bindings'){
       assert.equal(body.confirm_account_ownership,true);
@@ -291,8 +292,8 @@ test('built admin device secret is transient and individual account bindings can
     assert.equal(await p.$eval('[data-platform=website-article]',e=>e.disabled),true);
     await p.click('[data-platform=wechat-article]');await p.waitForFunction(()=>document.body.textContent.includes('撤销全局排队授权'));
     assert.match(await p.$eval('.distribution-panel',e=>e.textContent),/实页发布与结果确认未验收/);
-    await p.type('[data-distribution-admin=device] [name=label]','合成设备');await p.click('[data-distribution-admin=device] button');
-    await p.waitForSelector('[aria-label=本次设备凭证]');
+    await p.type('[data-pairing-create] [name=label]','合成设备');await p.click('[data-pairing-create] button');
+    await p.waitForSelector('[data-pairing-code]');
     assert.equal(await p.evaluate(()=>localStorage.getItem('distribution_device_token')),null);
     await p.click('[data-pc-page=accounts]');assert(!await p.$('[aria-label=本次设备凭证]'));
     await p.click('[data-pc-page=distribution]');await p.waitForFunction(()=>document.querySelector('.distribution-panel [role=status]')?.textContent==='已更新。');

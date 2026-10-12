@@ -1,3 +1,4 @@
+import {createDevicePairingPanel} from './device-pairing-panel.mjs';
 const queueState=s=>({'queued':'排队','awaiting-review':'待审核','awaiting-adaptation':'待适配','awaiting-authorization':'待授权',paused:'已暂停',scheduled:'待定时', 'awaiting-intervention':'待介入',superseded:'旧版本失效'}[s]||s);
 const queueReason=s=>({'NOT_INTEGRATED':'未接入','NOT_AUTHORIZED':'超管未授权自动排队','REAL_CHANNEL_NOT_ACCEPTED':'实页发布与结果确认未验收','BINDING_UNAVAILABLE':'账号绑定或设备不可用','SOURCE_CHANGED':'稿件版本已变化','SOURCE_REVIEW_REQUIRED':'当前审核或来源门禁未通过','REVIEW_REQUIRED':'等待原模块审核','READY':'来源已就绪','APPROVED_SOURCE':'已审核来源','PROJECT_PAUSED':'项目未运行','CHANNEL_DISABLED':'项目渠道已停用','SCANNED':'已复核','AUTHORIZATION_REVOKED':'当前顾问权限已撤销','SOURCE_UNAVAILABLE':'来源暂不可用','SCAN_UNAVAILABLE':'扫描未完成','OUTCOME_UNKNOWN':'结果未知，保留占用等待核查','ACCOUNT_BUSY':'同账号正在处理其他任务','REVIEW_NOT_SUBMITTED':'尚未提交原模块审核','REVIEW_PENDING':'等待原模块审核','REVIEW_REJECTED':'原模块审核已退回','REVIEW_INVALID':'原模块审核信息无效或已过期','MASTER_STALE':'母稿版本已变化','CONTENT_EMPTY':'渠道稿正文或标题缺失','SOURCE_INVALID':'稿件来源未通过校验','PUBLISH_GATE_BLOCKED':'原模块发布规则或事实门禁未通过','ASSET_MANIFEST_INVALID':'素材清单与冻结稿不一致','ADAPTATION_INVALID':'渠道适配信息无效','ADAPTATION_PENDING':'等待渠道适配','SOURCE_READY':'来源已就绪','CONFIRMATION_REQUIRED':'等待原模块客户或顾问代确认','CONNECTION_UNAVAILABLE':'来源连接停用或尚未就绪','SOURCE_STALE':'母稿或渠道稿版本不匹配','ASSETS_UNAVAILABLE':'素材未冻结或与稿件不符','CONTENT_INVALID':'稿件格式或长度未通过渠道校验','KEYWORDS_INVALID':'关键词归属或内容覆盖未通过门禁','POLICY_REQUIRED':'超管尚未配置账号规则','POLICY_DISABLED':'账号规则未启用','ACCOUNT_PAUSED':'账号已暂停','CAPTCHA':'待人工处理验证码','LOGIN_REQUIRED':'待人工恢复登录','RESULT_CONFLICT':'发布结果冲突，待核查','DAILY_LIMIT':'等待下一日额度','MIN_INTERVAL':'等待最小间隔','OUTSIDE_WINDOW':'等待允许时段'}[s.replace(/^(geo|seo)_distribution_/i,'').toUpperCase()]||'原模块门禁未通过，请进入对应内容审核页核对');
 import {createDistributionClient,safeDistributionUrl,distributionScope} from './distribution-client.mjs';
@@ -246,11 +247,11 @@ export function mountDistributionAdmin({root,session,fetchImpl=fetch,browser=win
   const subscribeSession=fn=>session.$subscribe?session.$subscribe(fn,{detached:true}):()=>{};
   const client=createDistributionClient({session,fetchImpl,subscribeSession});
   let devices=[],bindings=[],schedules=[],events=[],channelCatalog=[],credential=null,notice='',busy=false,disposed=false,epoch=0;
+  const pairing=createDevicePairingPanel({session,fetchImpl,browser,onChange:()=>render()});
   const admin=()=>session.user?.tenant_id===null&&['settings.accounts','settings.customers'].every(k=>session.user?.permissions?.[k]==='edit');
   function render(){if(disposed)return;root.innerHTML=!admin()?'<p>请重新核验超管身份。</p>':`<section class="pc-card distribution-panel"><h2>多号通执行设备与账号绑定</h2>
-    <p>为内部执行端分配设备凭证和客户平台账号；项目启动、审核稿授权及暂停由顾问操作。</p><p role="status">${esc(notice)}</p>
-    <form data-distribution-admin="device"><label>设备名称 <input name="label" required maxlength="80"></label><button ${busy?'disabled':''}>创建执行设备</button></form>
-    ${credential?`<p>设备凭证仅本次展示，请保存至受控凭证存储。离开页面后不能再次读取。</p><textarea readonly aria-label="本次设备凭证">${esc(credential)}</textarea>`:''}
+    <p>为公司专用电脑创建短期配对码并明确绑定客户平台账号；项目启动、审核稿授权及暂停由顾问操作。</p><p role="status">${esc(notice)}</p>
+    ${pairing.html()}
     <button type="button" data-distribution-admin="refresh" ${busy?'disabled':''}>刷新设备与绑定</button>
     ${devices.map(d=>`<p>${esc(d.label)} · ${d.active?'启用':'已停用'} · 最近联系 ${esc(time(d.last_seen_at))}${d.active?` <button type="button" data-distribution-admin="revoke" data-id="${d.id}" ${busy?'disabled':''}>停用</button>`:''}</p>`).join('')}
     <form data-distribution-admin="binding"><h3>绑定客户平台账号</h3>
@@ -280,13 +281,13 @@ export function mountDistributionAdmin({root,session,fetchImpl=fetch,browser=win
         <button ${busy||!s?'disabled':''}>保存发布规则</button></form>
         ${p?`<button type="button" data-distribution-admin="account-${p.paused_reason?'resume':'pause'}" data-id="${b.id}" data-revision="${p.revision}" ${busy?'disabled':''}>${p.paused_reason?'人工处理后恢复账号':'暂停账号分发'}</button>`:''}</details>`;}).join('')}
     <details><summary>最近分发操作日志 · 最多 100 条</summary>${events.map(e=>`<p>${esc(time(e.at))} · 操作者 ${esc(e.actor)} · ${esc(e.action)} · ${esc(e.result)}${e.target.module?' · '+esc(e.target.module.toUpperCase()):''}${e.target.tenant_id?' · 客户 #'+esc(e.target.tenant_id):''}${e.target.scope_id?' / 项目 #'+esc(e.target.scope_id):''}${e.target.binding_id?' · 绑定 '+esc(e.target.binding_id):''}${e.target.platform?' · 渠道 '+esc(e.target.platform):''}${e.target.content_type?' · 内容类型 '+esc(e.target.content_type):''}${e.task_id?' · 任务 '+esc(e.task_id):''}</p>`).join('')||'<p>暂无分发记录。</p>'}</details></section>`;}
-  const clear=client.subscribe(()=>{epoch++;devices=[];bindings=[];schedules=[];events=[];channelCatalog=[];credential=null;busy=false;notice='身份或权限已变化，设备信息已清除。';render();});
+  const clear=client.subscribe(()=>{pairing.invalidate();epoch++;devices=[];bindings=[];schedules=[];events=[];channelCatalog=[];credential=null;busy=false;notice='身份或权限已变化，设备信息已清除。';render();});
   async function operation(work){if(!admin()||busy)return;const stamp=epoch;busy=true;notice='正在处理…';render();
     try{await work();if(epoch!==stamp||disposed)return;const result=await Promise.all([client.devices(),client.bindings(),client.accountPolicies(),client.adminEvents(),client.channelCatalog()]);
       if(epoch!==stamp||disposed)return;devices=result[0].items;bindings=result[1].items;schedules=result[2].items;events=result[3].items;channelCatalog=result[4].items;notice='已更新。';}
     catch(error){if(epoch===stamp){credential=null;notice=errors[error.code]||'接入尚未就绪，请核对';}}
     finally{if(epoch===stamp){busy=false;render();}}}
-  function submit(event){const form=event.target.closest('[data-distribution-admin]');if(!form||form.tagName!=='FORM')return;event.preventDefault();
+  function submit(event){if(pairing.submit(event))return;const form=event.target.closest('[data-distribution-admin]');if(!form||form.tagName!=='FORM')return;event.preventDefault();
     const value=Object.fromEntries(new browser.FormData(form));
     if(form.dataset.distributionAdmin==='policy'){
       try{const windows=value.windows.trim().split(/\r?\n/).map(line=>{const m=/^(\d{2}):(\d{2})\s*-\s*(\d{2}):(\d{2})$/.exec(line.trim());
@@ -296,7 +297,7 @@ export function mountDistributionAdmin({root,session,fetchImpl=fetch,browser=win
         credential=null;void operation(()=>client.savePolicy({binding_id:form.dataset.id,expected_revision:Number(form.dataset.revision),enabled:value.enabled==='on',
           timezone:value.timezone.trim(),daily_limit:Number(value.daily_limit),min_interval_seconds:Number(value.min_interval_seconds),windows,request_id:browser.crypto.randomUUID()}));
       }catch{notice='请填写有效、按时间排序且不重叠的发布时段，例如09:00-18:00。';render();}}
-    if(form.dataset.distributionAdmin==='device'){credential=null;void operation(async()=>{const result=await client.createDevice(value.label);credential=result.device.credential;});}
+
     if(form.dataset.distributionAdmin==='binding'){
       const s=catalog.find(s=>key(s)===value.target_scope);if(!s)return;
       credential=null;void operation(()=>client.bind({module:s.module,tenant_id:s.tenant_id,scope_id:s.scope_id,
@@ -304,7 +305,7 @@ export function mountDistributionAdmin({root,session,fetchImpl=fetch,browser=win
         confirm_account_ownership:value.confirm_account_ownership==='on'}));
     }
   }
-  function click(event){const b=event.target.closest('button[data-distribution-admin]');if(!b||b.disabled)return;
+  function click(event){if(pairing.click(event))return;const b=event.target.closest('button[data-distribution-admin]');if(!b||b.disabled)return;
     if(b.dataset.distributionAdmin==='channel-permission'){const c=channelCatalog.find(c=>c.platform===b.dataset.platform);if(!c)return;
       void operation(()=>client.saveChannelPermission({platform:c.platform,content_type:c.content_type,enabled:!c.enabled,expected_revision:c.revision,request_id:browser.crypto.randomUUID()}));}
     if(b.dataset.distributionAdmin==='refresh')void operation(async()=>{});
@@ -313,8 +314,8 @@ export function mountDistributionAdmin({root,session,fetchImpl=fetch,browser=win
     if(b.dataset.distributionAdmin==='revoke'&&browser.confirm('停用设备后停止继续派发；已经开始的操作仍需核查。')){credential=null;void operation(()=>client.revoke(b.dataset.id));}
     if(b.dataset.distributionAdmin==='revoke-binding'&&browser.confirm('停用此账号绑定后停止继续派发；已经开始的操作仍需核查。')){credential=null;void operation(()=>client.revokeBinding(b.dataset.id));}
   }
-  root.addEventListener('submit',submit);root.addEventListener('click',click);render();void operation(async()=>{});
-  return {dispose(){disposed=true;epoch++;clear();client.dispose();credential=null;devices=[];bindings=[];schedules=[];events=[];root.removeEventListener('submit',submit);root.removeEventListener('click',click);root.replaceChildren();}};
+  root.addEventListener('submit',submit);root.addEventListener('click',click);render();pairing.refresh();void operation(async()=>{});
+  return {dispose(){disposed=true;epoch++;pairing.dispose();clear();client.dispose();credential=null;devices=[];bindings=[];schedules=[];events=[];root.removeEventListener('submit',submit);root.removeEventListener('click',click);root.replaceChildren();}};
 }
 
 const planningReasons={AI_PROVIDER_DISABLED:'超管已关闭服务商连接，采用规则安排',AI_BUDGET_EXHAUSTED:'AI 请求额度不足，采用规则安排',AI_CONCURRENCY_LIMIT:'AI 并发额度已占用，采用规则安排',AI_CHARGE_UNRESOLVED:'AI 费用结果待核查，暂停新请求',AI_PRICE_REQUIRED:'AI 计价信息不足，采用规则安排',AI_REQUESTED:'正在请求 AI 建议',AI_ADVICE_ADMITTED:'AI 建议已通过账号规则校验',AI_INVALID_OUTPUT:'AI 返回未通过校验，采用规则安排',AI_TIMEOUT:'AI 请求超时，采用规则安排',AI_FAILED:'AI 请求失败，采用规则安排',AI_GATEWAY_UNAVAILABLE:'主 AI 网关未接入，采用规则安排',AI_METERING_REQUIRED:'AI 计量未启用，采用规则安排',AI_NOT_CONFIGURED:'AI 配置缺失，采用规则安排',AI_ATTEMPT_UNKNOWN:'AI 请求结果未知，暂停重试并等待人工核查',ACCOUNT_SLOT_UNAVAILABLE:'允许时段内没有可用额度',ACCOUNT_SLOT_CHANGED:'账号占用变化，原建议已失效',PLANNING_RULES_CHANGED:'账号规则或项目状态变化，原建议已失效',AUTHORIZATION_OR_SOURCE_CHANGED:'权限或稿件变化，原建议已失效',AUTHORIZATION_REVOKED:'顾问权限已撤销',SOURCE_CHANGED:'稿件版本变化',REPLANNED:'已由新建议替代'};
