@@ -123,6 +123,20 @@ def environment(module):
     return config
 
 
+def activate(release):
+    release=verify_release(release)
+    target=WORK/'environment.json'
+    current=read(target)
+    if current.get('root')!=str(WORK) or current.get('production') is not False or current.get('ports')!=PORTS:
+        raise RuntimeError('Refuse to alter any non-acceptance configuration')
+    if target.stat().st_uid!=os.getuid() or stat.S_IMODE(target.stat().st_mode)&0o077:
+        raise RuntimeError('Private acceptance owner required')
+    current.update(central_root=str(release/'central'),native_roots={module:str(release/module) for module in NATIVE},native_heads=NATIVE)
+    pending=WORK/'environment-next.json'
+    private_write(pending,json.dumps(current,indent=2))
+    os.replace(pending,target)
+
+
 async def initialize(native, root, config, engine, sessions, module, manifest):
     snapshot = root / 'customer-snapshot.json'
     if not snapshot.is_file() or hashlib.sha256(snapshot.read_bytes()).hexdigest() != SNAPSHOT_SHA:
@@ -149,13 +163,17 @@ async def initialize(native, root, config, engine, sessions, module, manifest):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=('bootstrap', 'initialize', 'serve', 'worker'))
+    parser.add_argument('action', choices=('bootstrap', 'activate', 'initialize', 'serve', 'worker'))
     parser.add_argument('--release', type=Path)
     parser.add_argument('--module', choices=tuple(NATIVE), default='seo')
     arguments = parser.parse_args()
     if arguments.action == 'bootstrap':
         bootstrap(arguments.release)
         print(json.dumps({'bootstrapped': True, 'production': False, 'private_credentials_printed': False}))
+        return
+    if arguments.action=='activate':
+        activate(arguments.release)
+        print(json.dumps({'activated_source':str(arguments.release),'production':False,'database_changes':False}))
         return
     environment(arguments.module)
     import distribution_server_pilot_native as native
@@ -166,7 +184,22 @@ def main():
         print(json.dumps({'initialized_module': arguments.module, 'production': False}))
     elif arguments.action == 'serve':
         import uvicorn
-        uvicorn.run(native.application(root, config, sessions, arguments.module, manifest), host='127.0.0.1',
+        from fastapi.responses import FileResponse
+        application = native.application(root, config, sessions, arguments.module, manifest)
+        pairing_ui = Path(config['central_root']) / 'customer-workbench/dist/device-pairing-acceptance'
+        ui_manifest = read(pairing_ui / 'manifest.json')
+        if ui_manifest['sourceCommit'] != git(Path(config['central_root']), 'rev-parse', 'HEAD'):
+            raise RuntimeError('Pairing UI source commit mismatch')
+        for name, expected in ui_manifest['files'].items():
+            if hashlib.sha256((pairing_ui / name).read_bytes()).hexdigest() != expected['sha256']:
+                raise RuntimeError('Pairing UI artifact mismatch')
+        @application.get('/acceptance/pairing/')
+        async def pairing_page():
+            return FileResponse(pairing_ui / 'index.html', headers={'Cache-Control': 'no-store'})
+        @application.get('/acceptance/pairing/app.js')
+        async def pairing_script():
+            return FileResponse(pairing_ui / 'app.js', headers={'Cache-Control': 'no-store'})
+        uvicorn.run(application, host='127.0.0.1',
             port=PORTS[arguments.module], ssl_keyfile=str(WORK / 'loopback.key'), ssl_certfile=str(WORK / 'loopback.pem'),
             access_log=False, log_level='warning')
     else:

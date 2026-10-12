@@ -285,13 +285,37 @@ def application(root, config, sessions, module, manifest):
         if route.endpoint.__name__ in {'login','me','logout'}: app.router.routes.append(route)
     # Mount the reviewed real modules handler, not a generated auth/scope fixture.
     # Native login/me/security keep their frozen source and the same owned DB.
-    import importlib.util
-    auth_source=Path(config['central_root'])/'app/api/auth.py'
-    spec=importlib.util.spec_from_file_location('app.api.server_pilot_modules_auth',auth_source)
-    modules_auth=importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(modules_auth)
-    for route in modules_auth.router.routes:
-        if route.endpoint.__name__=='list_my_modules': app.router.routes.append(route)
+    if module=='seo':
+        import importlib.util
+        auth_source=Path(config['central_root'])/'app/api/auth.py'
+        spec=importlib.util.spec_from_file_location('app.api.server_pilot_modules_auth',auth_source)
+        modules_auth=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(modules_auth)
+        for route in modules_auth.router.routes:
+            if route.endpoint.__name__=='list_my_modules': app.router.routes.append(route)
+    else:
+        # The frozen GEO module has its own older scope interface. Build its
+        # acceptance catalogue from actual native entitlements, without replacing
+        # shared authentication or importing incompatible SEO scope functions.
+        from app.models import TenantModule
+        from app.module_scope import module_is_available
+        from sqlalchemy import select
+        @app.get('/api/v1/auth/modules')
+        async def geo_native_modules(ctx=Depends(require_auth),db=Depends(get_session)):
+            query=select(TenantModule).where(TenantModule.module_code=='geo')
+            if ctx.tenant_id is not None: query=query.where(TenantModule.tenant_id==ctx.tenant_id)
+            rows=list(await db.scalars(query))
+            permitted=ctx.can_view('geo.assets','geo.content','geo.diagnosis')
+            available=[row for row in rows if module_is_available(row)]
+            count=len(available) if permitted else 0
+            result=[]
+            for code in ('sem','seo','geo'):
+                active=code=='geo' and permitted and (ctx.tenant_id is None or bool(available))
+                row=rows[0] if code=='geo' and ctx.tenant_id is not None and rows else None
+                result.append({'module_code':code,'status':row.status if row else 'active' if active else 'no_permission',
+                    'available':bool(active),'expires_at':row.expires_at.isoformat() if row and row.expires_at else None,
+                    'tenant_count':count if code=='geo' else 0})
+            return {'tenant_id':ctx.tenant_id,'modules':result}
     if module == 'seo':
         from app.api.seo import router as native
         names = {'upsert_advisor_assignment','list_advisor_assignments','create_content_confirmation',

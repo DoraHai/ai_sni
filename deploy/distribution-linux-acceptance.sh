@@ -4,7 +4,7 @@ set -euo pipefail
 base=/opt/gsnipers-distribution-acceptance
 work="$base/work/distribution-server-pilot-20261012"
 actor=distacceptance
-action=${1:?prepare|initialize|start|health|stop}
+action=${1:?prepare|initialize|start|activate|health|stop}
 release=${2:-}
 if [[ $(id -u) != 0 ]]; then echo 'Root is required for owned service setup' >&2; exit 1; fi
 if [[ -n "$release" && ! "$release" =~ ^[0-9a-f]{40}$ ]]; then echo 'Invalid exact source commit' >&2; exit 1; fi
@@ -33,7 +33,7 @@ if [[ "$action" == prepare ]]; then
   if [[ ! -d "$base/venv" ]]; then run_owned python3.11 -m venv "$base/venv"; fi
   # These locks belong to the reviewed native SEO pilot; there are no browser installs.
   run_owned "$base/venv/bin/python" -m pip install --disable-pip-version-check --timeout 20 --retries 2 --index-url https://mirrors.aliyun.com/pypi/simple/ -r "$destination/seo/requirements.txt" tzdata==2026.3
-  run_owned bash -c 'cd "$1/customer-workbench"; npm ci --no-audit --no-fund; npm run build' _ "$destination/central"
+  run_owned bash -c 'cd "$1/customer-workbench"; npm ci --no-audit --no-fund; npm run build; node scripts/build-device-pairing-acceptance.mjs' _ "$destination/central"
   printf '{"prepared":true,"source_commit":"%s","production":false}\n' "$release"
 elif [[ "$action" == initialize ]]; then
   [[ -n "$release" ]]
@@ -81,12 +81,24 @@ UNIT
   install -m 600 -o "$actor" -g "$actor" "$snapshot" "$work/customer-snapshot.json"
   for module in seo geo; do run_owned "$base/venv/bin/python" -B "$runner" initialize --module "$module"; done
   printf '{"initialized":true,"production":false,"private_credentials_printed":false}\n'
-elif [[ "$action" == start ]]; then
+elif [[ "$action" == start || "$action" == activate ]]; then
   [[ -n "$release" && -f "$work/environment.json" ]]
   runner="$base/releases/$release/central/scripts/distribution_linux_acceptance.py"
+  if [[ "$action" == activate ]]; then
+    prior=$(python3.11 -c "import json;print(json.load(open('$work/environment.json'))['central_root'])")
+    [[ "$prior" =~ ^/opt/gsnipers-distribution-acceptance/releases/[0-9a-f]{40}/central$ ]]
+    for module in seo geo; do
+      unit="/etc/systemd/system/gsnipers-distribution-acceptance-$module.service"
+      grep -Fxq "ExecStart=$base/venv/bin/python -B $prior/scripts/distribution_linux_acceptance.py serve --module $module" "$unit"
+      grep -Fxq "User=$actor" "$unit"
+      grep -Fxq "WorkingDirectory=$work" "$unit"
+    done
+    systemctl stop gsnipers-distribution-acceptance-seo gsnipers-distribution-acceptance-geo
+    run_owned "$base/venv/bin/python" -B "$runner" activate --release "$base/releases/$release"
+  fi
   for module in seo geo; do
     name="gsnipers-distribution-acceptance-$module"
-    [[ ! -e "/etc/systemd/system/$name.service" ]] || { echo 'Do not replace an existing unit' >&2; exit 1; }
+    [[ "$action" == activate || ! -e "/etc/systemd/system/$name.service" ]] || { echo 'Do not replace an existing unit' >&2; exit 1; }
     cat > "/etc/systemd/system/$name.service" <<UNIT
 [Unit]
 Description=Independent distribution acceptance $module (no production database)
