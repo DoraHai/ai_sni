@@ -16,7 +16,7 @@ import sys
 BASE = Path('/opt/gsnipers-distribution-acceptance')
 WORK = BASE / 'work/distribution-server-pilot-20261012'
 PORTS = {'pg': 55483, 'seo': 55861, 'geo': 55862}
-NATIVE = {'seo': 'b4d8387123355348f79e26ea2838585c5106a4b9',
+NATIVE = {'seo': '3087e62f23e799fe82d279f79f698f0499bf3a27',
           'geo': '46dacbd805afc00f37eba344306fde004039efed'}
 SNAPSHOT_SHA = 'f75d382a54ec33f0c892cc4c6afcc17b082c130cc1b58236fb4dde48e383f609'
 

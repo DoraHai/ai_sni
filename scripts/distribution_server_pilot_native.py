@@ -13,8 +13,46 @@ import types
 from distribution_server_pilot_environment import PORTS, read, write, owned
 from distribution_assembled_worker import assemble, HEADS
 
-REVIEWED_ACCEPTANCE_HEADS={'seo':{'b4d8387123355348f79e26ea2838585c5106a4b9'},
+REVIEWED_ACCEPTANCE_HEADS={'seo':{'b4d8387123355348f79e26ea2838585c5106a4b9',
+    '3087e62f23e799fe82d279f79f698f0499bf3a27'},
     'geo':{'46dacbd805afc00f37eba344306fde004039efed'}}
+
+
+def record_seo_media_manifest(native_root, module, manifest):
+    """Audit immutable native bytes only; never infer/install database objects."""
+    if module != 'seo':
+        return
+    names = ('app/seo_distribution_sources.py', 'app/seo_distribution_media.py',
+             'app/api/seo_distribution_media.py', 'scripts/seo_distribution_media_schema.sql')
+    for name in names:
+        source = Path(native_root) / name
+        manifest.setdefault('pilot_native_files', {})[name] = hashlib.sha256(source.read_bytes()).hexdigest()
+    manifest['seo_media_schema'] = {
+        'source': names[-1], 'sha256': manifest['pilot_native_files'][names[-1]],
+        'target_schema': 'acceptance_seo', 'automatic_install': False,
+        'database_status': 'not_inspected_by_manifest',
+    }
+
+
+def mount_seo_media_routes(app, module):
+    """Retain actual native route classes/auth/dependencies; omit static shells."""
+    if module != 'seo':
+        return
+    from fastapi import APIRouter
+    from app.api.seo_distribution_media import router as native
+    prefix = '/api/seo/distribution-media/variants'
+    expected = {'drafts': (prefix, {'GET'}), 'preview': (prefix + '/{variant_id}', {'GET'}),
+        'upload': (prefix + '/{variant_id}/assets', {'POST'}),
+        'preview_asset': (prefix + '/{variant_id}/assets/{asset_id}', {'GET'}),
+        'review': (prefix + '/{variant_id}/review', {'POST'})}
+    selected = APIRouter()
+    for name, (path, methods) in expected.items():
+        matches = [route for route in native.routes if route.endpoint.__name__ == name
+                   and route.path == path and route.methods == methods]
+        if len(matches) != 1:
+            raise RuntimeError('Exact reviewed native media route required')
+        selected.routes.append(matches[0])
+    app.include_router(selected)
 
 
 def prepare(config_path, module):
@@ -71,6 +109,7 @@ def prepare(config_path, module):
     for name in ('app/api/seo_automation_projects.py','app/api/seo_onsite_ai.py','app/seo_demo_source.py'):
         source=Path(config['native_roots'][module])/name
         if source.exists(): manifest.setdefault('pilot_native_files',{})[name]=hashlib.sha256(source.read_bytes()).hexdigest()
+    record_seo_media_manifest(config['native_roots'][module], module, manifest)
     for file in ('distribution_server_pilot_environment.py', 'distribution_server_pilot_native.py','distribution_server_pilot_configure.py',
                  'distribution_single_publication_gate.py'):
         manifest.setdefault('acceptance_files', {})[file] = hashlib.sha256((Path(__file__).parent/file).read_bytes()).hexdigest()
@@ -341,6 +380,7 @@ def application(root, config, sessions, module, manifest):
         for route in native.routes:
             if route.endpoint.__name__ in names: selected.routes.append(route)
         app.include_router(selected)
+        mount_seo_media_routes(app, module)
     else:
         from app.geo.project_routes import geo_projects_router
         for route in geo_projects_router.routes:

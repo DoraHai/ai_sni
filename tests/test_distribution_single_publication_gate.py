@@ -17,6 +17,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 import pytest
+from app.distribution_contract import content_digest
 
 SOURCE = Path(__file__).parents[1] / 'scripts/distribution_single_publication_gate.py'
 spec = importlib.util.spec_from_file_location('single_publication_test_gate', SOURCE)
@@ -26,12 +27,23 @@ spec.loader.exec_module(gate)
 AT = 1791800000000
 
 
+def approved_content():
+    # Synthetic contract metadata only: not image bytes or a native review proof.
+    return {'version': 'seo_test_v2', 'title': 'Synthetic reviewed title',
+            'body': '<p>Synthetic reviewed body.</p>',
+            'assets': [{'id': 'cover_1', 'sha256': 'c' * 64, 'mediaType': 'image/png', 'bytes': 128}]}
+
+
+def publication_source():
+    return {**gate.SCOPE, 'variant_id': 2, 'source_revision': 'seo_test_v2', 'content': approved_content()}
+
+
 def value(**changes):
     return {'schema': 1, 'purpose': 'isolated-single-seo-publication', **gate.SCOPE,
             'actor_id': 100007, 'device_id': gate.DEVICE, 'binding_id': gate.BINDING,
             'account_id': gate.ACCOUNT, 'external_account_id': gate.EXTERNAL_ACCOUNT,
             'platform': 'wechat-article', 'content_id': 61, 'variant_id': 2,
-            'source_revision': 'seo_test_v2', 'expected_digest': 'a' * 64,
+            'source_revision': 'seo_test_v2', 'expected_digest': content_digest(approved_content()),
             'request_id': 'a097434a-deba-474a-b18a-fb8ae3fbe62c',
             'issued_at': AT - 1000, 'expires_at': AT + 1200000, 'expires_in_seconds': 300,
             'task_id': '331f3c6f-89da-4556-99fd-2300d98f4f86', **changes}
@@ -283,7 +295,7 @@ def test_private_linux_stat_guards_are_exercised_with_simulated_os_metadata(monk
 
 
 @pytest.mark.parametrize('failure', ['account_wait', 'native_source_wait', 'permit_changed',
-                                   'binding_changed', 'prior_deadline', 'commit_failure', 'canceled', None])
+    'binding_changed', 'prior_deadline', 'commit_failure', 'canceled', 'cover_wait', 'cover_changed', None])
 def test_locked_wrapper_deadline_rollback_and_success_with_controlled_scheduler(monkeypatch, failure):
     """In-memory transaction/clock scheduler, not PostgreSQL/native auth proof."""
     async def run():
@@ -307,6 +319,18 @@ def test_locked_wrapper_deadline_rollback_and_success_with_controlled_scheduler(
                 events.append('rollback'); self.staged = None
         db = Transaction()
         class Core:
+            def adapter(self, module):
+                assert module == 'seo'
+                return self
+            async def load_publication_source(self, database, actor, tenant, scope, variant, platform):
+                assert database is db and (actor, tenant, scope, variant, platform) == (
+                    100007, 15, 6, 2, 'wechat-article')
+                events.append('native_publication_source')
+                await asyncio.sleep(0)
+                if failure == 'cover_wait': clock['now'] += 1000
+                source = publication_source()
+                if failure == 'cover_changed': source['content']['assets'][0]['sha256'] = 'd' * 64
+                return source
             def canonical(self, obj):
                 return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
             async def one(self, database, sql, **params):
@@ -359,16 +383,52 @@ def test_locked_wrapper_deadline_rollback_and_success_with_controlled_scheduler(
             assert db.committed['grant_expires_at'] <= item.expires_at
             assert db.committed['lease_expires_at'] <= item.expires_at
             assert events[-1] == 'commit' and 'rollback' not in events
+            assert events.index('native_current_scope') < events.index('native_publication_source') < events.index('native_enqueue')
         else:
             exception = asyncio.CancelledError if failure == 'canceled' else RuntimeError if failure == 'commit_failure' else HTTPException
             with pytest.raises(exception):
                 await gate.enqueue_locked(request(gate.PREFIX + '/tasks', 'POST'), req, db,
                     SimpleNamespace(user_id=100007), Path('.'), {}, 'seo', core)
             assert db.committed is None and db.staged is None and events[-1] == 'rollback'
-            if failure in ('account_wait', 'permit_changed', 'binding_changed', 'canceled'):
+            if failure in ('account_wait', 'permit_changed', 'binding_changed', 'canceled', 'cover_wait', 'cover_changed'):
                 assert 'native_enqueue' not in events
         assert events[:3] == ['device:' + gate.DEVICE, 'scope:' + core.canonical(gate.SCOPE),
                               'account:wechat-article:' + gate.EXTERNAL_ACCOUNT]
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('change', [
+    'module', 'tenant_id', 'scope_id', 'variant_id', 'source_revision', 'boolean_identity',
+    'version', 'title', 'body', 'asset_sha', 'no_cover', 'two_covers', 'asset_url',
+    'unknown_content', 'bad_content', 'missing_loader', 'native_rejection', 'native_unavailable',
+])
+def test_publication_source_cannot_replace_native_cover_review_or_exact_permit(change):
+    """Pure Pydantic/adapter-contract sentinel; not PostgreSQL/native review."""
+    async def run():
+        current = publication_source()
+        identity_changes = {'module': 'geo', 'tenant_id': 16, 'scope_id': 7,
+                            'variant_id': 3, 'source_revision': 'old_v1'}
+        if change in identity_changes: current[change] = identity_changes[change]
+        if change == 'boolean_identity': current['tenant_id'] = True
+        if change in ('version', 'title', 'body'): current['content'][change] = 'changed'
+        if change == 'asset_sha': current['content']['assets'][0]['sha256'] = 'd' * 64
+        if change == 'no_cover': current['content']['assets'] = []
+        if change == 'two_covers': current['content']['assets'].append({**current['content']['assets'][0], 'id': 'cover_2'})
+        if change == 'asset_url': current['content']['assets'][0]['url'] = 'https://synthetic.invalid'
+        if change == 'unknown_content': current['content']['reviewed'] = True
+        if change == 'bad_content': current['content'] = None
+        db = object()
+        async def loader(database, actor, tenant, scope, variant, platform):
+            assert database is db and (actor, tenant, scope, variant, platform) == (100007, 15, 6, 2, 'wechat-article')
+            if change == 'native_rejection': raise HTTPException(409, {'code': 'native_review_required'})
+            if change == 'native_unavailable': raise HTTPException(503, {'code': 'native_unavailable'})
+            return current
+        adapter = SimpleNamespace() if change == 'missing_loader' else SimpleNamespace(load_publication_source=loader)
+        with pytest.raises(HTTPException) as exc:
+            await gate.require_publication_source(db, SimpleNamespace(user_id=100007), permit(),
+                                                 SimpleNamespace(adapter=lambda module: adapter))
+        expected = 409 if change == 'native_rejection' else 503 if change in ('missing_loader', 'native_unavailable') else 403
+        assert exc.value.status_code == expected
     asyncio.run(run())
 
 

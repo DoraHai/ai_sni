@@ -321,6 +321,32 @@ def assert_deadlines(permit, task, at):
             raise denied()
 
 
+async def require_publication_source(db, fresh, permit, core):
+    """Use the native reviewed-cover gate in the actual mint transaction.
+
+    The native adapter validates the current independent review seal and bytes
+    manifest. This fence validates only its exact contract/identity/digest;
+    a caller supplied manifest cannot authorize a cover or replace native review.
+    """
+    from app.distribution_contract import ApprovedContent, content_digest
+    loader = getattr(core.adapter('seo'), 'load_publication_source', None)
+    if not callable(loader):
+        raise HTTPException(503, 'Acceptance reviewed publication source unavailable')
+    value = await loader(db, fresh.user_id, permit.tenant_id, permit.scope_id,
+                         permit.variant_id, permit.platform)
+    expected = {**SCOPE, 'variant_id': permit.variant_id, 'source_revision': permit.source_revision}
+    if (not isinstance(value, dict) or any(type(value.get(key)) is not type(wanted)
+            or value[key] != wanted for key, wanted in expected.items())):
+        raise denied()
+    try:
+        content = ApprovedContent.model_validate(value.get('content')).model_dump()
+    except ValidationError:
+        raise denied() from None
+    if (content['version'] != permit.source_revision or len(content['assets']) != 1
+            or content_digest(content) != permit.expected_digest):
+        raise denied()
+
+
 async def enqueue_locked(request, req, db, fresh, root, config, module, core):
     """Only the acceptance wrapper owns commit/rollback; native core is intact.
 
@@ -350,6 +376,12 @@ async def enqueue_locked(request, req, db, fresh, root, config, module, core):
         before = read_permit(root, config, module)
         same_permit(locked, before)
         route_parameters(request, before, payload)
+        await require_publication_source(db, fresh, before, core)
+        # Reading the native sealed source can await; recheck the unchanged
+        # permit/window again before the unchanged core mints both grants.
+        after_source = read_permit(root, config, module)
+        same_permit(before, after_source)
+        route_parameters(request, after_source, payload)
         result = await core.enqueue(db, fresh.user_id, req)
         actual = await core.one(db, 'SELECT * FROM distribution_tasks WHERE id=:id', id=result['id'])
         current = read_permit(root, config, module)
