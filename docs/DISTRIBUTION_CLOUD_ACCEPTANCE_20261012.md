@@ -31,7 +31,9 @@ GitHub 插件同步采用完整 UTF-8／mode 树与期望分支头校验，三�
 1. GEO 的隔离目录入口与原生模块版本不兼容：修正验收入口后，两端实际 HTTPS／命名登录／模块目录复验通过；不修改共享原生鉴权。
 2. 配对列表异步重绘擦除正在输入的字段：共享面板改为内存草稿、身份变化清空；本机延迟 DOM 回归及真实云延迟请求验证通过。
 3. 隔离 SEO 超管目录显示了 SEM：独立入口保留真实 SEO 权限结果，仅将其他未服务模块标为不可用，两端实际严格 own-module 检查通过。
-4. 初次预检把 `pending=0` 误判为最终回执确认：原 seq3 `PAGE_UNVERIFIED` 属于 localOnly，服务器只收到 seq2 DISPATCHED。原记录保留；同 task／lease／version／digest 追加新 seq4 `HUMAN_REQUIRED`，获得完整中央 ack，恢复执行次数为 0。未扩大 strict-v1 白名单，未延长 grant，未重发任务或伪造成功。执行端源码修复与冻结记录由独立多号通窗口补充。
+4. 初次预检把 `pending=0` 误判为最终回执确认：原 seq3 `PAGE_UNVERIFIED` 属于 localOnly，服务器只收到 seq2 DISPATCHED。原记录保留；同 task／lease／version／digest 追加新 seq4 `HUMAN_REQUIRED`，获得完整中央 ack，恢复执行次数为 0。未扩大 strict-v1 白名单，未延长 grant，未重发任务或伪造成功。
+
+执行端修复已冻结在独立多号通提交 `710a1d7de90629a1b8ba2808ff171a0b57b98986`，工作区干净，静态复核未发现恢复闭环阻断。完整六字段 ack 在真实 exchange 校验后同事务持久化；历史总数与尚未确认结果分开；重启从同范围／版本／摘要／租约的持久回执恢复，不重新执行。typecheck 与四个文件中的 75 项相关测试通过；普通已确认记录和保留原 localOnly 的桥接记录，两种离线恢复入口均运行验证为本轮执行0／HTTP0。测试库中新加入 SQL 防修改触发器；实际旧库转送时采用仅追加策略，不能倒推旧历史已有这些触发器。详见多号通 `docs/ACTUAL_CLOUD_WINDOWS_ACCEPTANCE_20261012.md`。
 
 ## 后续扫码验收
 
