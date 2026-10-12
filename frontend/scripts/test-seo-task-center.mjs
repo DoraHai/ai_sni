@@ -5,16 +5,17 @@ import * as Vue from 'vue'
 
 const source = await readFile(new URL('../src/views/seo/SeoTaskCenterView.vue', import.meta.url), 'utf8')
 const code = compileScript(parse(source).descriptor, { id: 'task-center-test', genDefaultAs: 'component' }).content.replace(/^import .* from .*$/gm, '')
-const reads = [], recoveries = [], retries = [], audits = [], confirmations = []
+const reads = [], recoveries = [], retries = [], audits = [], confirmations = [], detailReads = [], navigations = [], queueReads = []
 function deferred(args) { let resolve, reject; const promise = new Promise((r,j) => { resolve=r; reject=j }); return { args, promise, resolve, reject } }
 const tenant = Vue.ref(1), site = Vue.ref(10), session = Vue.reactive({ user: { id: 7 } })
 const bindings = { computed:Vue.computed, onMounted:Vue.onMounted, onUnmounted:Vue.onUnmounted,
   reactive:Vue.reactive, ref:Vue.ref, watch:Vue.watch, currentTenantId: tenant, currentSeoSiteId: site, session,
-  useRouter: () => ({ push() {} }),
+  useRouter: () => ({ push(value) { navigations.push(value) } }),
   ElMessage: { success(){},warning(){},error(){} },
   ElMessageBox: { confirm: (...args) => { const d=deferred(args);confirmations.push(d);return d.promise } },
   fetchSeoTaskCenter: args => { const d=deferred(args);reads.push(d);return d.promise },
-  fetchSeoCustomerVerificationQueue: args => args.tenant_id === 4
+  fetchSeoSitePageDetail: args => { const d=deferred(args);detailReads.push(d);return d.promise },
+  fetchSeoCustomerVerificationQueue: args => (queueReads.push(args), args.tenant_id === 4)
     ? Promise.reject(new Error('queue unavailable'))
     : Promise.resolve({ items: [], total: 0, summary: {} }),
   retrySeoImageVerification: () => Promise.resolve({}),
@@ -64,6 +65,42 @@ try {
   assert.match(state.publicationAttemptLabel(attempt),/\u4eba\u5de5\u56de\u586b #42 · 成功 · 操作人 #17/)
   assert.equal(state.publicationAttempt({kind:'publication_url',evidence:{latest_attempt:attempt}}),attempt)
   assert.equal(state.publicationAttempt({kind:'page_recheck',evidence:{latest_attempt:attempt}}),null)
+  tenant.value=2;await Vue.nextTick()
+  const detailRow={id:'page_recheck:31',source_id:31,site_id:20,kind:'page_recheck',state:'pending_customer_action',action_url:'/seo/site?site_id=20'}
+  const auditCount=audits.length, retryCount=retries.length
+  const opening=state.openDetails(detailRow)
+  assert.equal(state.detailOpen,true)
+  assert.deepEqual(detailReads.at(-1).args,{pageId:31,tenantId:2})
+  detailReads.at(-1).resolve({page:{id:31,site_id:20,url:'https://example.cn/a',title_suggestion:'新标题'},issue_details:[{code:'title_missing',label:'标题',guidance:'填写页面标题'}]})
+  await opening
+  assert.equal(state.pageDetail.page.title_suggestion,'新标题')
+  assert.equal(state.detailLinks[0].url,'https://example.cn/a')
+  assert.match(state.steps.join(' '),/优化记录.*已实施，待复检/)
+  assert.equal(audits.length,auditCount);assert.equal(retries.length,retryCount)
+  assert.equal(state.processingUrl(detailRow),'/seo/site?site_id=20&page_id=31')
+  assert.equal(state.processingUrl({...detailRow,site_id:99}),'')
+  assert.equal(state.processingUrl({...detailRow,action_url:'https://evil.invalid/seo/site'}),'')
+  assert.equal(state.publicUrl('javascript:alert(1)'),'')
+  assert.equal(state.publicUrl('https://user:secret@example.cn/'),'')
+  const stale=state.openDetails(detailRow)
+  state.detailOpen=false;await Vue.nextTick()
+  detailReads.at(-1).resolve({page:{id:31,site_id:20,title:'closed secret'}});await stale
+  assert.equal(state.pageDetail,null)
+  const wrongSite=state.openDetails(detailRow)
+  detailReads.at(-1).resolve({page:{id:31,site_id:99,title:'wrong site'}});await wrongSite
+  assert.equal(state.pageDetail,null);assert.match(state.detailError,/页面范围已变化/)
+  const failed=state.openDetails(detailRow);detailReads.at(-1).reject(new Error('无法读取页面'));await failed
+  assert.equal(state.detailError,'无法读取页面')
+  const switched=state.openDetails(detailRow);tenant.value=3;await Vue.nextTick()
+  detailReads.at(-1).resolve({page:{id:31,site_id:20,title:'old tenant'}});await switched
+  assert.equal(state.detailOpen,false);assert.equal(state.pageDetail,null)
+  tenant.value=2;await Vue.nextTick()
+  state.goToProcessing(detailRow);assert.equal(navigations.at(-1),'/seo/site?site_id=20&page_id=31')
+  state.queueFilters.kind='page_recheck';state.queueFilters.state='pending_customer_action';await Vue.nextTick()
+  assert.equal(queueReads.at(-1).kind,'page_recheck');assert.equal(queueReads.at(-1).state,'pending_customer_action')
+  state.queueFilters.page=2;await Vue.nextTick();assert.equal(queueReads.at(-1).page,2)
+  await state.openDetails({source:'automation',id:'run-1',kind:'ranking',detail:'抓取失败'})
+  assert.equal(state.detailRow.detail,'抓取失败');assert.equal(state.steps.length,0)
   assert.ok(!source.includes('v-html'))
-  console.log('Task center checks passed: page recheck, stale tenant response, user-private recovery, scope switch before confirmation, read-only retry')
+  console.log('Task center checks passed: detail guidance, scoped page reads, closed/stale/error responses, safe links, deep links, queue filters/pagination, page recheck and AI recovery')
 } finally { app.unmount() }
