@@ -43,6 +43,10 @@
 
 以上说明中的字符串占位符不是有效请求。总控须在原生审核与渠道 ready 后签发配置。原生路由仍检查当前实名角色、顾问范围、active binding/device、真实已审来源、当前版本/正文素材摘要、项目 running/owner、排重，并事务化生成不同的 task grant 与 publication grant；本门禁不签发任一 grant。相同 request UUID 原生幂等重放只能返回原任务；配置绑定 task 后还核对该任务请求指纹、两 grant、lease 和全部目标元数据，不能切成另一任务。
 
+独立验收入口只替换精确 `POST /api/distribution/v1/tasks` handler：preflight/handoff 继续委托原 handler；publish 在实际任务事务内按照原生 `device → scope（canonical实际scope）→ account（platform:external_account_id）` 锁序预先取得同一组 xact advisory 锁。原生 enqueue 在同事务内可重入这些锁，不改变共享 core。锁等待后重新读取完整同一 permit、核对精确请求，二次读取 active binding/device；原生范围检查等待结束后、调用 enqueue 前再次检查余下期限。配置换 UUID/版本/摘要/taskID/期限也拒绝。原生 source 检查仍可能等待，因此提交前再次读取实际完整 task，核对请求指纹与两种不同 grant，并确认当前时间未到 permit 截止、grant/lease 均未过期且其实际 deadline 不超过 permit 截止。不合格的未提交任务整体回滚，不用先提交后撤销的方式补救。既有幂等任务同样核对 deadline，重复请求不会延长授权期限。
+
+提交响应不确定时不能据此断言数据库没有任务：客户端须保留原 request UUID，先核对现有任务；不能换新 UUID 自动重发文章。代码对失败/取消回滚仍活跃的未提交事务，不宣称能撤回已经完成但响应丢失的 commit。
+
 绑定真实 `task_id` 后，允许顾问 100007 使用以下原路由，所有 scope、任务必须完全相同：
 
 - `GET /api/distribution/v1/publication-source?module=seo&tenant_id=15&scope_id=6&task_id=<唯一任务>`
@@ -68,5 +72,9 @@
 ## 定向验证边界
 
 本地专项测试覆盖配置身份/类型/有效期/大小/编码/重复字段、精确任务请求、无确认或错误版本、路径与查询绕行、真实表字段形状的任务元数据核对、当前 binding 撤销、两种 grant 不可相同、原生只读路由挂载保留以及 ASGI 请求体重放到计数 sentinel。Linux stat/descriptor 测试在 Windows 上明确注入 OS 元数据，**不是实际云 Linux 权限验收**。数据库元数据校验为纯输入负例，不冒称真实 PostgreSQL/原生 JWT 联调。本批无服务启动、DDL、真实任务、平台请求或发布。
+
+期限修复新增受控时钟/内存事务专项：模拟 1 秒账号锁等待跨过 300 秒任务 TTL 的可签发余量、原生 source await 后 deadline 越界、permit/绑定变化、旧任务 deadline 越界、提交失败及取消时拒绝/回滚；成功路径同时保留请求和有界 deadline。它们不证明 PostgreSQL advisory 锁、真实原生 JWT 或 commit 响应丢失行为。真实锁等待集成留给总控的独立库验收，避免为了复现等待 300 秒或触碰实际客户任务。
+
+本期限修复定向执行 13 项通过（10 项新增、3 项相关复核，86 项未运行）。原门禁基线的 89 项结果是此前 checkpoint，不合并为本次全回归计数。原始 XML 保留于 TEMP `distribution-single-publication-gate-tests-20261012/gate-tests.xml`；期限修复 XML 为同目录 `gate-lock-expiry-tests.xml`。
 
 总控后续须在冻结源部署的独立 Linux 入口实际验证：无文件默认 deny、真实 0600/owner/path 边界、当前顾问 JWT、审核 ready/version、项目 running、唯一 publish task/双 grant、设备只领取此任务、一次真实发布、公开页核验、原生回写、当前客户/顾问读取和撤权/过期关闭。若发布结果不确定先核平台与原生任务，不能自动再发。执行端能力、账号身份、封面上传和平台最后提交由其受控流程负责，本脚本不称这些已验证。

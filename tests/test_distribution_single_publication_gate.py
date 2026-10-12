@@ -61,7 +61,7 @@ def test_private_contract_is_exact_and_short_lived(changes):
     assert exc.value.status_code == 403 and 'synthetic' not in str(exc.value.detail)
 
 
-@pytest.mark.parametrize('data', [b'', b'{' + b' ' * gate.MAX_BYTES, b'[]', b'{"schema":1,"schema":1}', b'\xff', b'{'])
+@pytest.mark.parametrize('data', [b'', b'{' + b' ' * gate.MAX_BYTES, b'[]', b'{"schema":1,"schema":1}', b'\xff', b'{', b'[' * 1500 + b']' * 1500])
 def test_bad_file_encoding_size_duplicates_fail_closed(data):
     with pytest.raises(HTTPException):
         gate.parse_permit(data, AT)
@@ -154,7 +154,7 @@ def test_actual_asgi_bounded_json_and_exact_dispatch(monkeypatch):
             good = await client.post(gate.PREFIX + '/tasks', json=item.task_request())
             assert good.status_code == 200 and calls == [item.task_request()]
             for body in (b'[]', b'{', b'{"action":"publish","action":"publish"}', b'{}', b' ' * 8193,
-                         b'{"action":"publish","expected_digest":NaN}'):
+                         b'{"action":"publish","expected_digest":NaN}', b'[' * 1500 + b']' * 1500):
                 assert (await client.post(gate.PREFIX + '/tasks', content=body)).status_code == 403
             assert (await client.post(gate.PREFIX + '/tasks', json={**item.task_request(), 'confirm_manual_publication': 1})).status_code == 403
             assert len(calls) == 1
@@ -280,3 +280,161 @@ def test_private_linux_stat_guards_are_exercised_with_simulated_os_metadata(monk
     state['file'] = good
     state['root'] = SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=1000)
     with pytest.raises(HTTPException): gate.read_permit(root, config, 'seo')
+
+
+@pytest.mark.parametrize('failure', ['account_wait', 'native_source_wait', 'permit_changed',
+                                   'binding_changed', 'prior_deadline', 'commit_failure', 'canceled', None])
+def test_locked_wrapper_deadline_rollback_and_success_with_controlled_scheduler(monkeypatch, failure):
+    """In-memory transaction/clock scheduler, not PostgreSQL/native auth proof."""
+    async def run():
+        from app.distribution_contract import TaskCreate
+        item = permit(task_id=None, expires_at=AT + 300500)
+        clock = {'now': AT}
+        events = []
+        row = task()
+        row.update(revoked=False, grant_expires_at=AT + 300000, lease_expires_at=AT + 300000)
+        class Transaction:
+            def __init__(self):
+                self.bind = SimpleNamespace(url=SimpleNamespace(drivername='postgresql+asyncpg', host='127.0.0.1',
+                    port=55483, username='distribution_acceptance', database='distribution_acceptance_seo', query={}))
+                self.staged = None
+                self.committed = None
+            async def commit(self):
+                events.append('commit')
+                if failure == 'commit_failure': raise RuntimeError('synthetic commit failure')
+                self.committed = self.staged
+            async def rollback(self):
+                events.append('rollback'); self.staged = None
+        db = Transaction()
+        class Core:
+            def canonical(self, obj):
+                return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+            async def one(self, database, sql, **params):
+                assert database is db
+                if 'current_schema()' in sql: return {'name': 'acceptance_seo'}
+                if 'distribution_bindings' in sql:
+                    current = binding()
+                    if failure == 'binding_changed' and 'JOIN distribution_devices' in sql:
+                        current['external_account_id'] = 'gh_other'
+                    return current
+                if 'seo_distribution_variants' in sql: return {'content_asset_id': 61, 'tenant_id': 15, 'site_id': 6}
+                if 'distribution_tasks WHERE advisor_user_id' in sql: return None
+                if 'distribution_tasks WHERE id' in sql: return db.staged
+                raise AssertionError('Unexpected query')
+            async def lock(self, database, key):
+                assert database is db
+                events.append(key)
+                if key.startswith('account:'):
+                    await asyncio.sleep(0)
+                    if failure == 'account_wait': clock['now'] += 1000
+                    if failure == 'canceled': raise asyncio.CancelledError()
+            async def authorize_scope(self, database, actor, scope):
+                assert database is db and actor == 100007 and scope == gate.SCOPE
+                events.append('native_current_scope')
+            async def enqueue(self, database, actor, req):
+                assert database is db and actor == 100007
+                events.append('native_enqueue')
+                # Simulate native source/auth await before its existing expiry mint.
+                await asyncio.sleep(0)
+                if failure == 'native_source_wait': clock['now'] += 1000
+                staged = {**row, 'grant_expires_at': clock['now'] + req.expires_in_seconds * 1000,
+                          'lease_expires_at': clock['now'] + req.expires_in_seconds * 1000}
+                if failure == 'prior_deadline': staged['lease_expires_at'] = item.expires_at + 1
+                db.staged = staged
+                return {'id': staged['id']}
+        core = Core()
+        reads = {'count': 0}
+        def current_permit(*args):
+            reads['count'] += 1
+            if failure == 'permit_changed' and reads['count'] > 1:
+                return permit(task_id=None, expires_at=AT + 300500, request_id=str(uuid4()))
+            return gate.parse_permit(json.dumps(item.model_dump(mode='json', by_alias=True)).encode(), clock['now'])
+        monkeypatch.setattr(gate, 'read_permit', current_permit)
+        monkeypatch.setattr(gate, 'now_ms', lambda: clock['now'])
+        req = TaskCreate.model_validate(item.task_request())
+        if failure is None:
+            result = await gate.enqueue_locked(request(gate.PREFIX + '/tasks', 'POST'), req, db,
+                SimpleNamespace(user_id=100007), Path('.'), {}, 'seo', core)
+            assert result['task']['id'] == row['id'] and db.committed is not None
+            assert db.committed['grant_expires_at'] <= item.expires_at
+            assert db.committed['lease_expires_at'] <= item.expires_at
+            assert events[-1] == 'commit' and 'rollback' not in events
+        else:
+            exception = asyncio.CancelledError if failure == 'canceled' else RuntimeError if failure == 'commit_failure' else HTTPException
+            with pytest.raises(exception):
+                await gate.enqueue_locked(request(gate.PREFIX + '/tasks', 'POST'), req, db,
+                    SimpleNamespace(user_id=100007), Path('.'), {}, 'seo', core)
+            assert db.committed is None and db.staged is None and events[-1] == 'rollback'
+            if failure in ('account_wait', 'permit_changed', 'binding_changed', 'canceled'):
+                assert 'native_enqueue' not in events
+        assert events[:3] == ['device:' + gate.DEVICE, 'scope:' + core.canonical(gate.SCOPE),
+                              'account:wechat-article:' + gate.EXTERNAL_ACCOUNT]
+    asyncio.run(run())
+
+
+def test_prior_deadlines_do_not_refresh_and_same_permit_is_required():
+    item = permit()
+    row = {**task(), 'revoked': False, 'grant_expires_at': AT + 300000, 'lease_expires_at': AT + 300000}
+    original = (row['grant_expires_at'], row['lease_expires_at'])
+    gate.assert_deadlines(item, row, AT)
+    gate.assert_deadlines(item, row, AT + 1000)
+    assert original == (row['grant_expires_at'], row['lease_expires_at'])
+    for changes in ({'grant_expires_at': AT}, {'lease_expires_at': item.expires_at + 1}, {'revoked': True}):
+        with pytest.raises(HTTPException): gate.assert_deadlines(item, {**row, **changes}, AT)
+    for changes in ({'source_revision': 'new_v3'}, {'expected_digest': 'b' * 64}, {'request_id': str(uuid4())},
+                    {'task_id': str(uuid4())}, {'expires_at': item.expires_at + 1}):
+        with pytest.raises(HTTPException): gate.same_permit(item, permit(**changes))
+
+
+def test_wrapper_mount_replaces_only_post_and_resolves_actual_task_contract(monkeypatch):
+    """Actual FastAPI routing/Pydantic; auth/native action handlers are sentinels."""
+    async def run():
+        import types
+        from fastapi.routing import APIRoute
+        from app.distribution_contract import TaskCreate
+        token_context = SimpleNamespace(user_id=100007)
+        database = object()
+        calls = []
+        async def get_session(): yield database
+        async def require_auth(): return token_context
+        async def named(db, ctx):
+            assert db is database and ctx is token_context
+            return token_context
+        async def original_task(req, db, ctx):
+            assert isinstance(req, TaskCreate) and db is database and ctx is token_context
+            calls.append('original_' + req.action)
+            return {'action': req.action}
+        async def guarded(request, req, db, fresh, *args):
+            assert isinstance(req, TaskCreate) and db is database and fresh is token_context
+            calls.append('guarded_publish')
+            return {'action': 'publish', 'sentinel_only': True}
+        native = types.ModuleType('app.api.distribution')
+        native.PrivateRoute = APIRoute
+        native.named = named
+        native.task = original_task
+        api = types.ModuleType('app.api'); api.distribution = native
+        database_module = types.ModuleType('app.database'); database_module.get_session = get_session
+        security = types.ModuleType('app.security.auth'); security.require_auth = require_auth
+        for name, module in {'app.api': api, 'app.api.distribution': native, 'app.database': database_module,
+                             'app.security.auth': security, 'app.distribution_control': types.ModuleType('app.distribution_control')}.items():
+            monkeypatch.setitem(sys.modules, name, module)
+        monkeypatch.setattr(gate, 'enqueue_locked', guarded)
+        app = FastAPI()
+        @app.post(gate.PREFIX + '/tasks')
+        async def old(): raise AssertionError('old unguarded POST reached')
+        @app.get(gate.PREFIX + '/tasks')
+        async def get_tasks(): return {'read_only': True}
+        @app.get(gate.PREFIX + '/other')
+        async def other(): return {'untouched': True}
+        gate.mount_task_wrapper(app, Path('.'), {}, 'seo')
+        assert len([route for route in app.routes if getattr(route, 'path', '') == gate.PREFIX + '/tasks'
+                    and getattr(route, 'methods', None) == {'POST'}]) == 1
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='https://127.0.0.1') as client:
+            assert (await client.post(gate.PREFIX + '/tasks', json=permit().task_request())).status_code == 200
+            preflight = {**permit().task_request(), 'action': 'preflight', 'confirm_manual_publication': False}
+            assert (await client.post(gate.PREFIX + '/tasks', json=preflight)).json() == {'action': 'preflight'}
+            assert (await client.post(gate.PREFIX + '/tasks', json={**preflight, 'unexpected': 1})).status_code == 422
+            assert (await client.get(gate.PREFIX + '/tasks')).json() == {'read_only': True}
+            assert (await client.get(gate.PREFIX + '/other')).json() == {'untouched': True}
+        assert calls == ['guarded_publish', 'original_preflight']
+    asyncio.run(run())

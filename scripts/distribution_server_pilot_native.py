@@ -282,6 +282,8 @@ def application(root, config, sessions, module, manifest):
         async with sessions() as db: yield db
     app.dependency_overrides[get_session] = database
     app.include_router(router)
+    import distribution_single_publication_gate as single_publication
+    single_publication.mount_task_wrapper(app, root, config, module)
     for route in auth_router.routes:
         if route.endpoint.__name__ in {'login','me','logout'}: app.router.routes.append(route)
     # Mount the reviewed real modules handler, not a generated auth/scope fixture.

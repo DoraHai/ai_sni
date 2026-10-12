@@ -103,7 +103,7 @@ def parse_permit(data: bytes, at: int) -> Permit:
         if not permit.issued_at <= at < permit.expires_at or not 0 < permit.expires_at - permit.issued_at <= MAX_WINDOW_MS:
             raise ValueError()
         return permit
-    except (ValueError, TypeError, UnicodeError, ValidationError):
+    except (ValueError, TypeError, UnicodeError, ValidationError, RecursionError):
         raise denied() from None
 
 
@@ -161,7 +161,7 @@ async def request_payload(request):
         if not isinstance(value, dict):
             raise ValueError()
         return value
-    except (ValueError, UnicodeError):
+    except (ValueError, UnicodeError, RecursionError):
         raise denied() from None
 
 
@@ -259,38 +259,137 @@ async def authorize(request, root, config, sessions, module, payload=None):
     if not header.startswith('Bearer '):
         raise denied()
     async with sessions() as db:
-        url = db.bind.url
-        if (url.drivername, url.host, url.port, url.username, url.database) != (
-            'postgresql+asyncpg', '127.0.0.1', 55483, 'distribution_acceptance', 'distribution_acceptance_seo') or url.query:
-            raise denied()
-        if (await core.one(db, 'SELECT current_schema() AS name'))['name'] != 'acceptance_seo':
-            raise denied()
+        await assert_owned_database(db, core)
         ctx = await require_auth(bearer=HTTPAuthorizationCredentials(scheme='Bearer', credentials=header[7:]),
                                  header_key=None, key=None, session=db)
         fresh = await named(db, ctx)
-        if route == 'delivery' and fresh.user_id != permit.actor_id:
-            if fresh.tenant_id != permit.tenant_id or not fresh.can_view('seo.content'):
-                raise denied()
-        else:
-            if fresh.user_id != permit.actor_id:
-                raise denied()
-            await core.authorize_scope(db, fresh.user_id, SCOPE)
-        binding = await core.one(db, 'SELECT b.*,d.active AS device_active FROM distribution_bindings b '
-                                'JOIN distribution_devices d ON d.id=b.device_id WHERE b.id=:id', id=permit.binding_id)
-        expected = assert_binding(permit, binding, route)
-        source = await core.one(db, 'SELECT v.content_asset_id,c.tenant_id,c.site_id FROM seo_distribution_variants v '
-                               'JOIN seo_content_assets c ON c.id=v.content_asset_id WHERE v.id=:id AND v.tenant_id=:tenant',
-                               id=permit.variant_id, tenant=permit.tenant_id)
-        assert_source(permit, source)
-        task = None
-        if permit.task_id:
-            task = await core.one(db, 'SELECT * FROM distribution_tasks WHERE id=:id', id=permit.task_id)
-        elif route == 'create':
-            task = await core.one(db, 'SELECT * FROM distribution_tasks WHERE advisor_user_id=:actor AND request_id=:request',
-                                  actor=permit.actor_id, request=permit.request_id)
-        if permit.task_id and not task:
+        await authorize_in_session(db, fresh, permit, route, core)
+
+
+async def assert_owned_database(db, core):
+    url = db.bind.url
+    if (url.drivername, url.host, url.port, url.username, url.database) != (
+        'postgresql+asyncpg', '127.0.0.1', 55483, 'distribution_acceptance', 'distribution_acceptance_seo') or url.query:
+        raise denied()
+    if (await core.one(db, 'SELECT current_schema() AS name'))['name'] != 'acceptance_seo':
+        raise denied()
+
+
+async def authorize_in_session(db, fresh, permit, route, core):
+    """The same current metadata checks can fence the actual mint transaction."""
+    await assert_owned_database(db, core)
+    if route == 'delivery' and fresh.user_id != permit.actor_id:
+        if fresh.tenant_id != permit.tenant_id or not fresh.can_view('seo.content'):
             raise denied()
-        if task:
-            assert_task(permit, task, expected)
-        if now_ms() >= permit.expires_at:
+    else:
+        if fresh.user_id != permit.actor_id:
             raise denied()
+        await core.authorize_scope(db, fresh.user_id, SCOPE)
+    binding = await core.one(db, 'SELECT b.*,d.active AS device_active FROM distribution_bindings b '
+                            'JOIN distribution_devices d ON d.id=b.device_id WHERE b.id=:id', id=permit.binding_id)
+    expected = assert_binding(permit, binding, route)
+    source = await core.one(db, 'SELECT v.content_asset_id,c.tenant_id,c.site_id FROM seo_distribution_variants v '
+                           'JOIN seo_content_assets c ON c.id=v.content_asset_id WHERE v.id=:id AND v.tenant_id=:tenant',
+                           id=permit.variant_id, tenant=permit.tenant_id)
+    assert_source(permit, source)
+    task = None
+    if permit.task_id:
+        task = await core.one(db, 'SELECT * FROM distribution_tasks WHERE id=:id', id=permit.task_id)
+    elif route == 'create':
+        task = await core.one(db, 'SELECT * FROM distribution_tasks WHERE advisor_user_id=:actor AND request_id=:request',
+                              actor=permit.actor_id, request=permit.request_id)
+    if permit.task_id and not task:
+        raise denied()
+    if task:
+        assert_task(permit, task, expected)
+    if now_ms() >= permit.expires_at:
+        raise denied()
+    return expected
+
+
+def same_permit(prior, current):
+    if not exactly(prior.model_dump(mode='json'), current.model_dump(mode='json')):
+        raise denied()
+
+
+def assert_deadlines(permit, task, at):
+    if at >= permit.expires_at or task['revoked']:
+        raise denied()
+    for field in ('grant_expires_at', 'lease_expires_at'):
+        deadline = task[field]
+        if type(deadline) is not int or not at < deadline <= permit.expires_at:
+            raise denied()
+
+
+async def enqueue_locked(request, req, db, fresh, root, config, module, core):
+    """Only the acceptance wrapper owns commit/rollback; native core is intact.
+
+    Acquire the same device -> scope -> canonical account xact locks as enqueue.
+    Re-read the same private permit after waiting, then repeat all native gates.
+    A delayed native source/auth read must not commit a deadline past the permit.
+    """
+    try:
+        initial = read_permit(root, config, module)
+        payload = req.model_dump(mode='json')
+        route_parameters(request, initial, payload)
+        await assert_owned_database(db, core)
+        if fresh.user_id != initial.actor_id:
+            raise denied()
+        locator = await core.one(db, 'SELECT * FROM distribution_bindings WHERE id=:id', id=req.binding_id)
+        if not locator or any(locator.get(k) != v for k, v in {**SCOPE, 'device_id': initial.device_id,
+            'platform': initial.platform, 'external_account_id': initial.external_account_id}.items()):
+            raise denied()
+        await core.lock(db, 'device:' + locator['device_id'])
+        await core.lock(db, 'scope:' + core.canonical(SCOPE))
+        await core.lock(db, 'account:' + locator['platform'] + ':' + locator['external_account_id'])
+        locked = read_permit(root, config, module)
+        same_permit(initial, locked)
+        route_parameters(request, locked, payload)
+        expected = await authorize_in_session(db, fresh, locked, 'create', core)
+        # Authorization itself can await. Check again immediately before enqueue.
+        before = read_permit(root, config, module)
+        same_permit(locked, before)
+        route_parameters(request, before, payload)
+        result = await core.enqueue(db, fresh.user_id, req)
+        actual = await core.one(db, 'SELECT * FROM distribution_tasks WHERE id=:id', id=result['id'])
+        current = read_permit(root, config, module)
+        same_permit(before, current)
+        if not actual:
+            raise denied()
+        assert_task(current, actual, expected)
+        assert_deadlines(current, actual, now_ms())
+        await db.commit()
+        return {'schema': 1, 'task': result}
+    except BaseException:
+        # Cancel/failure rolls back any active uncommitted transaction. An unknown
+        # commit response must be reconciled using the same request UUID, never
+        # treated as proof that no task exists and retried as a new intention.
+        await db.rollback()
+        raise
+
+
+def mount_task_wrapper(app, root, config, module):
+    """Replace only the exact POST task handler, retaining its strict route class."""
+    if module != 'seo':
+        return
+    from fastapi import APIRouter, Depends, Request
+    from app.database import get_session
+    from app.security.auth import require_auth
+    from app.api import distribution as native
+    from app.distribution_contract import TaskCreate
+    from app import distribution_control as core
+    matches = [route for route in app.router.routes if getattr(route, 'path', None) == PREFIX + '/tasks'
+               and getattr(route, 'methods', None) == {'POST'}]
+    if len(matches) != 1:
+        raise RuntimeError('Exactly one native POST task route required')
+    selected = APIRouter(route_class=native.PrivateRoute)
+    async def acceptance_task(request: Request, req: TaskCreate, db=Depends(get_session), ctx=Depends(require_auth)):
+        if req.action != 'publish':
+            return await native.task(req=req, db=db, ctx=ctx)
+        fresh = await native.named(db, ctx)
+        return await enqueue_locked(request, req, db, fresh, root, config, module, core)
+    # These types are local imports; resolve annotations before FastAPI reads them.
+    acceptance_task.__annotations__.update(request=Request, req=TaskCreate)
+    selected.add_api_route(PREFIX + '/tasks', acceptance_task, methods=['POST'])
+    app.router.routes.remove(matches[0])
+    app.include_router(selected)
