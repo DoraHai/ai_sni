@@ -71,7 +71,8 @@ def prepare(config_path, module):
     for name in ('app/api/seo_automation_projects.py','app/api/seo_onsite_ai.py','app/seo_demo_source.py'):
         source=Path(config['native_roots'][module])/name
         if source.exists(): manifest.setdefault('pilot_native_files',{})[name]=hashlib.sha256(source.read_bytes()).hexdigest()
-    for file in ('distribution_server_pilot_environment.py', 'distribution_server_pilot_native.py','distribution_server_pilot_configure.py'):
+    for file in ('distribution_server_pilot_environment.py', 'distribution_server_pilot_native.py','distribution_server_pilot_configure.py',
+                 'distribution_single_publication_gate.py'):
         manifest.setdefault('acceptance_files', {})[file] = hashlib.sha256((Path(__file__).parent/file).read_bytes()).hexdigest()
     linux_runner=Path(__file__).parent/'distribution_linux_acceptance.py'
     if linux_runner.exists():
@@ -332,6 +333,8 @@ def application(root, config, sessions, module, manifest):
             'create_content_asset','list_content_assets','submit_content_review','update_content_asset',
             'list_distribution_variants','list_distribution_connections','create_distribution_connection'}
         names.update({'projects','advisor_tasks'})
+        # Read the actual native publication delivery model; no write handler.
+        names.add('list_content_publications')
         selected = APIRouter()
         for route in native.routes:
             if route.endpoint.__name__ in names: selected.routes.append(route)
@@ -352,6 +355,17 @@ def application(root, config, sessions, module, manifest):
     @app.middleware('http')
     async def no_publish(request, call_next):
         from fastapi.responses import JSONResponse
+        import distribution_single_publication_gate as single
+        payload = None
+        protected_post = request.method == 'POST' and (
+            request.url.path.rstrip('/').endswith('/tasks')
+            or any(part in request.url.path for part in ('/publication-', '/publications', '/push')))
+        if protected_post:
+            try:
+                payload = await single.request_payload(request)
+            except HTTPException:
+                return JSONResponse(status_code=403, content={'detail':'Acceptance formal publication disabled'},
+                                    headers={'Cache-Control':'no-store'})
         device_path = request.url.path.startswith(('/api/distribution/v1/device/',
             '/api/distribution/capabilities/v1/device/', '/api/distribution/handoff/v1/device/',
             '/api/distribution/v1/remote/device/')) or request.url.path == '/api/distribution/v1/device-pairings/claim'
@@ -373,12 +387,12 @@ def application(root, config, sessions, module, manifest):
                     return JSONResponse(status_code=403, content={'detail':'Acceptance customer is read-only'})
             except HTTPException as exc:
                 return JSONResponse(status_code=exc.status_code,content={'detail':'Local login unavailable'})
-        if any(part in request.url.path for part in ('/publication-', '/publications','/push')):
-            return JSONResponse(status_code=403, content={'detail':'Acceptance formal publication disabled'})
-        if request.url.path.endswith('/tasks') and request.method == 'POST':
-            value = await request.json()
-            if value.get('action') == 'publish':
-                return JSONResponse(status_code=403, content={'detail':'Acceptance only preflight/handoff'})
+        if single.publication_request(request, payload):
+            try:
+                await single.authorize(request, root, config, sessions, module, payload)
+            except HTTPException as exc:
+                return JSONResponse(status_code=exc.status_code, content={'detail':'Acceptance single publication not authorized'},
+                                    headers={'Cache-Control':'no-store'})
         response=await call_next(request)
         delay_path=root/('ui-delay-'+module+'.json')
         if request.url.path=='/acceptance/original' and delay_path.exists():

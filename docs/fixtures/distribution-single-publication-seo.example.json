@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "purpose": "isolated-single-seo-publication",
+  "module": "seo",
+  "tenant_id": 15,
+  "scope_id": 6,
+  "actor_id": 100007,
+  "device_id": "0c764dd4-ebc0-45e9-912e-d46f7a42fc05",
+  "binding_id": "a68a1fb9-af29-4b31-bb08-2f5d43bda3e5",
+  "account_id": "acceptance-seo-gh-1864ed0c0506",
+  "external_account_id": "gh_1864ed0c0506",
+  "platform": "wechat-article",
+  "content_id": 0,
+  "variant_id": 0,
+  "source_revision": "REPLACE_WITH_CURRENT_APPROVED_REVISION",
+  "expected_digest": "REPLACE_WITH_CURRENT_APPROVED_SHA256",
+  "request_id": "REPLACE_WITH_ONE_NEW_UUID",
+  "issued_at": 0,
+  "expires_at": 0,
+  "expires_in_seconds": 300,
+  "task_id": null
+}
