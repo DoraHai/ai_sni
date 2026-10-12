@@ -16,6 +16,14 @@ from distribution_assembled_worker import assemble, HEADS
 REVIEWED_ACCEPTANCE_HEADS={'seo':{'b4d8387123355348f79e26ea2838585c5106a4b9',
     '3087e62f23e799fe82d279f79f698f0499bf3a27'},
     'geo':{'46dacbd805afc00f37eba344306fde004039efed'}}
+CUSTOMER_READS = (
+    ('get_workbench_service_status', '/api/v1/seo/workbench/service-status'),
+    ('list_executions', '/api/v1/seo/workbench/executions'),
+    ('list_tasks', '/api/v1/seo/workbench/onsite-tasks'),
+    ('list_site_pages', '/api/v1/seo/site-pages'),
+    ('list_workbench_publication_page_evidence', '/api/v1/seo/workbench/publication-page-evidence'),
+)
+EVIDENCE_READ_PATH = CUSTOMER_READS[-1][1]
 
 
 def record_seo_media_manifest(native_root, module, manifest):
@@ -74,6 +82,61 @@ def mount_exact_native_read(app, native, endpoint_name, path):
     selected = APIRouter()
     selected.routes.append(matches[0])
     app.include_router(selected)
+
+
+def mount_seo_customer_reads(app, native, module):
+    """Mount only the five stored-data GETs, never their adjacent writes."""
+    if module != 'seo':
+        return None
+    # Validate the whole set before adding any of it. Keep original route class,
+    # module/scope/auth dependencies and the owned session override provider.
+    routes = []
+    for name, path in CUSTOMER_READS:
+        matches = [route for route in native.routes if route.endpoint.__name__ == name
+                   and route.path == path and route.methods == {'GET'}]
+        if len(matches) != 1:
+            raise RuntimeError('Exact native customer read route required')
+        routes.append(matches[0])
+    for route in routes:
+        mount_exact_native_read(app, native, route.endpoint.__name__, route.path)
+    return routes[-1].endpoint
+
+
+def readonly_publication_evidence(request, root, config, module, app, reader):
+    """One owned pilot list exception; no publication/source/check admission.
+
+    A bearer header is required here; actual JWT/current role/tenant/site checks
+    still run in the original native route. Nothing authorizes a write/fetch.
+    """
+    if (module != 'seo' or config.get('production') is not False
+            or config.get('platform') != 'linux-acceptance'
+            or root != Path('/opt/gsnipers-distribution-acceptance/work/distribution-server-pilot-20261012')
+            or config.get('root') != str(root) or config.get('ports') != PORTS
+            or config.get('native_heads', {}).get('seo') != '3087e62f23e799fe82d279f79f698f0499bf3a27'
+            or request.method != 'GET' or request.url.path != EVIDENCE_READ_PATH
+            or request.scope.get('raw_path') != EVIDENCE_READ_PATH.encode('ascii')
+            or not request.headers.get('authorization', '').startswith('Bearer ')
+            or not request.headers['authorization'][7:].strip() or reader is None):
+        return False
+    registered = [route for route in app.router.routes if getattr(route, 'path', None) == EVIDENCE_READ_PATH
+                  and getattr(route, 'methods', None) == {'GET'}]
+    if len(registered) != 1 or registered[0].endpoint is not reader:
+        return False
+    pairs = list(request.query_params.multi_items())
+    if len({key for key, _ in pairs}) != len(pairs):
+        return False
+    values = dict(pairs)
+    if (values.get('tenant_id') != '15' or values.get('site_id') != '6'
+            or set(values) - {'tenant_id', 'site_id', 'content_id', 'publication_id', 'page', 'page_size'}):
+        return False
+    for key in ('content_id', 'publication_id', 'page', 'page_size'):
+        if key in values:
+            value = values[key]
+            if not value.isascii() or not value.isdecimal() or len(value) > 19 or value.startswith('0'):
+                return False
+            if not 1 <= int(value) <= ({'page': 10000, 'page_size': 100}.get(key, 2**63 - 1)):
+                return False
+    return True
 
 
 def prepare(config_path, module):
@@ -334,6 +397,7 @@ def application(root, config, sessions, module, manifest):
     from app.api.distribution import router
     from app.api.auth import router as auth_router
     app = FastAPI(title='Independent distribution acceptance '+module)
+    evidence_reader = None
     @app.on_event('startup')
     async def metadata_registration():
         from app.api_controls import register_runtime
@@ -405,6 +469,7 @@ def application(root, config, sessions, module, manifest):
             if route.endpoint.__name__ in names: selected.routes.append(route)
         app.include_router(selected)
         mount_seo_media_routes(app, module)
+        evidence_reader = mount_seo_customer_reads(app, native, module)
         from app.api.customer_modules import seo_sites_router
         mount_exact_native_read(app, seo_sites_router, 'list_seo_workbench_sites',
                                 '/api/v1/seo/workbench/sites')
@@ -456,7 +521,8 @@ def application(root, config, sessions, module, manifest):
                     return JSONResponse(status_code=403, content={'detail':'Acceptance customer is read-only'})
             except HTTPException as exc:
                 return JSONResponse(status_code=exc.status_code,content={'detail':'Local login unavailable'})
-        if single.publication_request(request, payload):
+        if single.publication_request(request, payload) and not readonly_publication_evidence(
+                request, root, config, module, app, evidence_reader):
             try:
                 await single.authorize(request, root, config, sessions, module, payload)
             except HTTPException as exc:
