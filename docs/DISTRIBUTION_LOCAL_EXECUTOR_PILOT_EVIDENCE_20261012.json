@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "date": "2026-10-12",
+  "scope": "isolated local Windows executor; SEO one account/one channel synthetic page",
+  "runtime_commit": "e73a1f2765c4b8382a906b709ef226901bae1941",
+  "native_seo_commit": "b4d8387123355348f79e26ea2838585c5106a4b9",
+  "mht_commit": "c69b4f704e98404b3429eef280ca264f175bcb33",
+  "mht_package_manifest_sha256": "f2b183d115c80a4a18d6665c97c41bb555ab8957e37a01f71bc93df8b24bb90f",
+  "API_contract_tests": 25,
+  "directory_and_related_JS_tests": 9,
+  "actual_UI_HTTP_requests": 50,
+  "actual_native_login": true,
+  "actual_device_process": true,
+  "mouse_and_text_ack_applied": true,
+  "real_scope_denials": 2,
+  "native_advisor_withdrawal_denied": true,
+  "close_and_logout": true,
+  "metadata_ledger_only": true,
+  "source_body_and_version_preserved": true,
+  "compiled_and_runtime_files_same_commit": true,
+  "SEM_source_modified": false,
+  "SEM_frozen_artifact_JS_checked": 100,
+  "production_mutations": false,
+  "paid_AI_called": false,
+  "real_platform_login": false,
+  "formal_publication": false,
+  "supplier_connected": false,
+  "first_failures_preserved": true,
+  "final_raw_png_valid": true,
+  "evidence": [
+    {
+      "path": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\distribution-server-pilot-20261012\\advisor-real-broker-evidence.json",
+      "sha256": "8660f1a081b2e88bf8205540aaad996703bc5ef2bf7e2a35b0de4487c0501f1c"
+    },
+    {
+      "path": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\distribution-server-pilot-20261012\\root-final-integrity.json",
+      "sha256": "1566a66a1699e5d7de22b94125db5e872b42a633fc949562b3a41b1b69a88853"
+    },
+    {
+      "path": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\distribution-server-pilot-20261012\\root-remote-scope-denials.json",
+      "sha256": "8cc3b6aea2839e0d276adb596a3d5472073b5cdc468081fa42cfea9698eaad7d"
+    },
+    {
+      "path": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\distribution-server-pilot-20261012\\root-assignment-withdrawal.json",
+      "sha256": "1694b2fabaeb7f08a1edbb2ba2d265b389a44483363daaaefa3f3a18f3d56794"
+    },
+    {
+      "path": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\distribution-server-pilot-20261012\\root-original-source-preserved.json",
+      "sha256": "22d7ab6014ebc76b2ecd9d0a60e9cd1ce634c3f1d2e400d97493457b8e50baf1"
+    },
+    {
+      "path": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\distribution-server-pilot-20261012\\seo-native-schema.json",
+      "sha256": "69e71d8e11dd281d8ff1b41b48e00b730cef0bbb1dbe8b042cb502b35e58babb"
+    },
+    {
+      "path": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\distribution-server-pilot-20261012\\seo-remote-schema.json",
+      "sha256": "c2b92e16e215c4df0be0c38d0af2ebb7a01bc3b1482b4580d63e6c84dc0979e8"
+    },
+    {
+      "path": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\distribution-server-pilot-20261012\\health-summary.json",
+      "sha256": "1e3f4cd99537a0c43ea8ad25f4f42d23457fd2776554de0e6f77ca419c69b211"
+    },
+    {
+      "path": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\distribution-server-pilot-20261012\\advisor-browser-7ed18107-ec69-4ace-983d-47d6f5cd9e22\\remote-input-applied.png",
+      "sha256": "b6aef157d33e840b2b3d5cdd6a2fa3d2ed9a8380093c421d67385689c590ac41"
+    }
+  ]
+}

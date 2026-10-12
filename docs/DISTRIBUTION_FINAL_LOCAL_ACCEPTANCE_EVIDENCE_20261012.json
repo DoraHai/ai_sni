@@ -1,0 +1,1217 @@
+{
+  "local_acceptance": "PASS_FOR_AUTHORIZED_ISOLATED_PAIRED_HANDOFF_AND_RECOVERY",
+  "central_frozen_code_commit": "c4091c8c245ee9524aa738627aa1a82b97ee7c3d",
+  "central_runtime_last_change": "e1d2983441b066c78eea7ade3a5c93f534710248",
+  "mht_final_frozen_code_commit": "bd8fcc50f2ead8b8cbf07ba6512b40b121e5334b",
+  "final_targeted_run": {
+    "passed": 4,
+    "deselected": 37,
+    "scope": "2 actual paired recovery cases plus 2 exact scoped read authorization tests",
+    "duration_seconds": 13.83
+  },
+  "actual_cases": {
+    "unknown": {
+      "scenario": "unknown",
+      "result": "PASS",
+      "central_head": "c4091c8c245ee9524aa738627aa1a82b97ee7c3d",
+      "mht_snapshot": {
+        "source_commit": "bd8fcc50f2ead8b8cbf07ba6512b40b121e5334b",
+        "artifacts": [
+          {
+            "name": "cli.mjs",
+            "sha256": "a11cdb26e9d163dab07085a7a7bd79a1291965e91fb5c0a2968650069229f426"
+          },
+          {
+            "name": "https-runner.mjs",
+            "sha256": "28236c8e768cb30d4a196c668ce04d9dbc5056982ac53184a7e3a0bb09d28534"
+          },
+          {
+            "name": "capability-client.mjs",
+            "sha256": "135b8a76f9745a48000c3b8e1d98af07614335974b832f165c795d100c22098d"
+          },
+          {
+            "name": "agent.mjs",
+            "sha256": "b4b554ad1ed84dde46d26c5f45a49eb758c952c47f3d0381916553213314121d"
+          },
+          {
+            "name": "candidate-gui.cjs",
+            "sha256": "c9ada7b5fde4004587654b8a353fa0ef91f9f347e6584f80942c390b5b20cd37"
+          },
+          {
+            "name": "candidate-preload.cjs",
+            "sha256": "ec0e726aeb5e3e6ae245e7d9976fca4b48d43821a439b065526c28c15d703547"
+          },
+          {
+            "name": "decode-worker.cjs",
+            "sha256": "ad398ad476af46dd473a7fe62822afed91b2fcf1fb1542a022219059b6734497"
+          },
+          {
+            "name": "pages.mjs",
+            "sha256": "b91b0c50c846ae72de59bdf57aadbe6aca0df4070c1c11b69f3cf79ba98cf644"
+          }
+        ],
+        "fixtures": [
+          {
+            "name": "distribution-strict-v1-receipt-codes.json",
+            "sha256": "15068c4b01ed3b549a08d78cf8779c469ae3a0cd49dfbff46c9ffd97af41e6bf"
+          },
+          {
+            "name": "distribution-handoff-resolution-read-v1.json",
+            "sha256": "7c82ccf7431efa1aab42915a9c3c5ddda299fbb8b7ab6fce974eaac5a7bfa8fc"
+          },
+          {
+            "name": "distribution-handoff-receipt-v1.json",
+            "sha256": "f9ed7b8fa151ba560f6c76c97ddd17cf70e488b24e4571b48ad67896bc337a29"
+          }
+        ]
+      },
+      "resolution_reads": [
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "real",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "deny",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "deny",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "taskId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "taskId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "taskId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "taskId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "taskId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "taskId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "grantId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "grantId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "grantId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "grantId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "grantId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "grantId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "leaseId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "leaseId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "leaseId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "leaseId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "leaseId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "leaseId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "projectId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "projectId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "projectId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "projectId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "projectId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "projectId",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "contentVersion",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "contentVersion",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "contentVersion",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "contentVersion",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "contentVersion",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "contentVersion",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "contentDigest",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "contentDigest",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "contentDigest",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "contentDigest",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "contentDigest",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "contentDigest",
+          "proof": true
+        },
+        {
+          "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+          "mode": "real",
+          "proof": true
+        },
+        {
+          "taskId": "c140ba19-aeb9-46ae-8c98-8f34f60bdf60",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "c140ba19-aeb9-46ae-8c98-8f34f60bdf60",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "c140ba19-aeb9-46ae-8c98-8f34f60bdf60",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "c140ba19-aeb9-46ae-8c98-8f34f60bdf60",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "c140ba19-aeb9-46ae-8c98-8f34f60bdf60",
+          "mode": "real",
+          "proof": false
+        }
+      ],
+      "original_receipt": {
+        "receiptId": "153e6377-a3be-4c67-99fa-bb7928e4dbe5",
+        "sequence": 3,
+        "contractVersion": 1,
+        "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+        "customerId": "4",
+        "projectId": "seo-19",
+        "deviceId": "7b0fa30a-31f8-4d37-bda8-dd078f9780d8",
+        "accountId": "synthetic-local-7b0fa30a-31f8-4d37-bda8-dd078f9780d8",
+        "platform": "wechat-article",
+        "contentVersion": "seo_variant_11_r1",
+        "contentDigest": "ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b",
+        "leaseId": "e8a15dea-9648-4162-9a8b-973f0356cbcd",
+        "status": "unknown",
+        "code": "EXECUTION_RESULT_UNKNOWN",
+        "at": 1791750211637,
+        "evidence": "none",
+        "publicUrl": null
+      },
+      "original_audit": [
+        {
+          "receipt": "{\"receiptId\":\"9e664de9-bbb3-4ef7-82d3-6c13ab61fdb7\",\"sequence\":1,\"contractVersion\":1,\"taskId\":\"a9991ba9-a811-4733-aef3-1544c595dd6c\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"accountId\":\"synthetic-local-7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"e8a15dea-9648-4162-9a8b-973f0356cbcd\",\"status\":\"queued\",\"code\":\"ACCEPTED\",\"at\":1791750211608,\"evidence\":\"none\",\"publicUrl\":null}"
+        },
+        {
+          "receipt": "{\"receiptId\":\"f1a74226-c3d2-4143-b533-16335c1bfc58\",\"sequence\":2,\"contractVersion\":1,\"taskId\":\"a9991ba9-a811-4733-aef3-1544c595dd6c\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"accountId\":\"synthetic-local-7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"e8a15dea-9648-4162-9a8b-973f0356cbcd\",\"status\":\"running\",\"code\":\"DISPATCHED\",\"at\":1791750211636,\"evidence\":\"none\",\"publicUrl\":null}"
+        },
+        {
+          "receipt": "{\"receiptId\":\"153e6377-a3be-4c67-99fa-bb7928e4dbe5\",\"sequence\":3,\"contractVersion\":1,\"taskId\":\"a9991ba9-a811-4733-aef3-1544c595dd6c\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"accountId\":\"synthetic-local-7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"e8a15dea-9648-4162-9a8b-973f0356cbcd\",\"status\":\"unknown\",\"code\":\"EXECUTION_RESULT_UNKNOWN\",\"at\":1791750211637,\"evidence\":\"none\",\"publicUrl\":null}"
+        }
+      ],
+      "recovered_original_receipt": {
+        "receiptId": "153e6377-a3be-4c67-99fa-bb7928e4dbe5",
+        "sequence": 3,
+        "contractVersion": 1,
+        "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+        "customerId": "4",
+        "projectId": "seo-19",
+        "deviceId": "7b0fa30a-31f8-4d37-bda8-dd078f9780d8",
+        "accountId": "synthetic-local-7b0fa30a-31f8-4d37-bda8-dd078f9780d8",
+        "platform": "wechat-article",
+        "contentVersion": "seo_variant_11_r1",
+        "contentDigest": "ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b",
+        "leaseId": "e8a15dea-9648-4162-9a8b-973f0356cbcd",
+        "status": "unknown",
+        "code": "EXECUTION_RESULT_UNKNOWN",
+        "at": 1791750211637,
+        "evidence": "none",
+        "publicUrl": null
+      },
+      "recovered_original_audit": [
+        {
+          "receipt": "{\"receiptId\":\"9e664de9-bbb3-4ef7-82d3-6c13ab61fdb7\",\"sequence\":1,\"contractVersion\":1,\"taskId\":\"a9991ba9-a811-4733-aef3-1544c595dd6c\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"accountId\":\"synthetic-local-7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"e8a15dea-9648-4162-9a8b-973f0356cbcd\",\"status\":\"queued\",\"code\":\"ACCEPTED\",\"at\":1791750211608,\"evidence\":\"none\",\"publicUrl\":null}"
+        },
+        {
+          "receipt": "{\"receiptId\":\"f1a74226-c3d2-4143-b533-16335c1bfc58\",\"sequence\":2,\"contractVersion\":1,\"taskId\":\"a9991ba9-a811-4733-aef3-1544c595dd6c\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"accountId\":\"synthetic-local-7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"e8a15dea-9648-4162-9a8b-973f0356cbcd\",\"status\":\"running\",\"code\":\"DISPATCHED\",\"at\":1791750211636,\"evidence\":\"none\",\"publicUrl\":null}"
+        },
+        {
+          "receipt": "{\"receiptId\":\"153e6377-a3be-4c67-99fa-bb7928e4dbe5\",\"sequence\":3,\"contractVersion\":1,\"taskId\":\"a9991ba9-a811-4733-aef3-1544c595dd6c\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"accountId\":\"synthetic-local-7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"e8a15dea-9648-4162-9a8b-973f0356cbcd\",\"status\":\"unknown\",\"code\":\"EXECUTION_RESULT_UNKNOWN\",\"at\":1791750211637,\"evidence\":\"none\",\"publicUrl\":null}"
+        }
+      ],
+      "negative_proof": {
+        "handoffVersion": 1,
+        "deviceId": "7b0fa30a-31f8-4d37-bda8-dd078f9780d8",
+        "taskId": "a9991ba9-a811-4733-aef3-1544c595dd6c",
+        "grantId": "60bf1e23-74ea-4be2-a9c7-f8f0c7ffdaab",
+        "leaseId": "e8a15dea-9648-4162-9a8b-973f0356cbcd",
+        "customerId": "4",
+        "projectId": "seo-19",
+        "accountId": "synthetic-local-7b0fa30a-31f8-4d37-bda8-dd078f9780d8",
+        "platform": "wechat-article",
+        "contentVersion": "seo_variant_11_r1",
+        "contentDigest": "ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b",
+        "resolution": {
+          "id": "ed6ff550-aa3c-4b62-a2d7-f4f3b36d07b4",
+          "outcome": "not-published",
+          "checkedAt": 1791750211965,
+          "evidence": "advisor-reported"
+        },
+        "publicationVerified": false
+      },
+      "new_receipt": {
+        "receiptId": "69214ee2-57d4-4d27-9743-da3dccb52d45",
+        "sequence": 4,
+        "contractVersion": 1,
+        "taskId": "c140ba19-aeb9-46ae-8c98-8f34f60bdf60",
+        "customerId": "4",
+        "projectId": "seo-19",
+        "deviceId": "7b0fa30a-31f8-4d37-bda8-dd078f9780d8",
+        "accountId": "synthetic-local-7b0fa30a-31f8-4d37-bda8-dd078f9780d8",
+        "platform": "wechat-article",
+        "contentVersion": "seo_variant_11_r1",
+        "contentDigest": "ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b",
+        "leaseId": "ea29144a-3f40-42dd-a0a2-70536ca8220f",
+        "status": "awaiting-human",
+        "code": "HUMAN_REQUIRED",
+        "at": 1791750214524,
+        "evidence": "none",
+        "publicUrl": null
+      },
+      "new_task_id": "c140ba19-aeb9-46ae-8c98-8f34f60bdf60",
+      "new_grant_id": "9db103b6-fc1b-4421-adb9-cda347c22a68",
+      "new_lease_id": "ea29144a-3f40-42dd-a0a2-70536ca8220f",
+      "new_dispatch_count": 1,
+      "restart_replay": false,
+      "old_authorization_allowed": false,
+      "legacy_wait_receipt_raw": "{\"receiptId\":\"d294e74c-b0c2-4326-a6b8-87cade87b717\",\"sequence\":2,\"contractVersion\":1,\"taskId\":\"c140ba19-aeb9-46ae-8c98-8f34f60bdf60\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"accountId\":\"synthetic-local-7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"ea29144a-3f40-42dd-a0a2-70536ca8220f\",\"status\":\"queued\",\"code\":\"ACCOUNT_INTERVENTION_REQUIRED\",\"at\":1791750212223,\"evidence\":\"none\",\"publicUrl\":null}",
+      "legacy_wait_audit": [
+        {
+          "receipt": "{\"receiptId\":\"76f869a7-2bb4-42fc-bba7-21e616b1312f\",\"sequence\":1,\"contractVersion\":1,\"taskId\":\"c140ba19-aeb9-46ae-8c98-8f34f60bdf60\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"accountId\":\"synthetic-local-7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"ea29144a-3f40-42dd-a0a2-70536ca8220f\",\"status\":\"queued\",\"code\":\"ACCEPTED\",\"at\":1791750212175,\"evidence\":\"none\",\"publicUrl\":null}"
+        },
+        {
+          "receipt": "{\"receiptId\":\"d294e74c-b0c2-4326-a6b8-87cade87b717\",\"sequence\":2,\"contractVersion\":1,\"taskId\":\"c140ba19-aeb9-46ae-8c98-8f34f60bdf60\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"accountId\":\"synthetic-local-7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"ea29144a-3f40-42dd-a0a2-70536ca8220f\",\"status\":\"queued\",\"code\":\"ACCOUNT_INTERVENTION_REQUIRED\",\"at\":1791750212223,\"evidence\":\"none\",\"publicUrl\":null}"
+        }
+      ],
+      "legacy_wait_isolated_retained": [
+        {
+          "payload": "{\"receiptId\":\"d294e74c-b0c2-4326-a6b8-87cade87b717\",\"sequence\":2,\"contractVersion\":1,\"taskId\":\"c140ba19-aeb9-46ae-8c98-8f34f60bdf60\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"accountId\":\"synthetic-local-7b0fa30a-31f8-4d37-bda8-dd078f9780d8\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"ea29144a-3f40-42dd-a0a2-70536ca8220f\",\"status\":\"queued\",\"code\":\"ACCOUNT_INTERVENTION_REQUIRED\",\"at\":1791750212223,\"evidence\":\"none\",\"publicUrl\":null}",
+          "retained": 1
+        }
+      ],
+      "legacy_mht_source_commit": "834a883276b499bff2cd649abfa5ba63db648fd7",
+      "old_slot": "released",
+      "new_slot": "held",
+      "publicationVerified": false,
+      "source": "synthetic approved source; executor fault only for unknown; actual HumanHandoffExecutor for expired-human and all new attempts",
+      "adversarial_responses": "test wrapper injects 403 and corrupted echoes after actual central scoped read; null is actual unresolved central response",
+      "proof_files_sha256": {
+        "tests\\test_distribution_capability_registration.py": "626d6cba60a2a9a04948e5e741ac6916bee3918aab6e02e31439b9d034b6c72d",
+        "scripts\\distribution_frozen_mht_pair.mjs": "05d537344b98753402fa3cdf93428b2ad6f0d96e006f4f26624a22c43908654c"
+      }
+    },
+    "expired-human": {
+      "scenario": "expired-human",
+      "result": "PASS",
+      "central_head": "c4091c8c245ee9524aa738627aa1a82b97ee7c3d",
+      "mht_snapshot": {
+        "source_commit": "bd8fcc50f2ead8b8cbf07ba6512b40b121e5334b",
+        "artifacts": [
+          {
+            "name": "cli.mjs",
+            "sha256": "a11cdb26e9d163dab07085a7a7bd79a1291965e91fb5c0a2968650069229f426"
+          },
+          {
+            "name": "https-runner.mjs",
+            "sha256": "28236c8e768cb30d4a196c668ce04d9dbc5056982ac53184a7e3a0bb09d28534"
+          },
+          {
+            "name": "capability-client.mjs",
+            "sha256": "135b8a76f9745a48000c3b8e1d98af07614335974b832f165c795d100c22098d"
+          },
+          {
+            "name": "agent.mjs",
+            "sha256": "b4b554ad1ed84dde46d26c5f45a49eb758c952c47f3d0381916553213314121d"
+          },
+          {
+            "name": "candidate-gui.cjs",
+            "sha256": "c9ada7b5fde4004587654b8a353fa0ef91f9f347e6584f80942c390b5b20cd37"
+          },
+          {
+            "name": "candidate-preload.cjs",
+            "sha256": "ec0e726aeb5e3e6ae245e7d9976fca4b48d43821a439b065526c28c15d703547"
+          },
+          {
+            "name": "decode-worker.cjs",
+            "sha256": "ad398ad476af46dd473a7fe62822afed91b2fcf1fb1542a022219059b6734497"
+          },
+          {
+            "name": "pages.mjs",
+            "sha256": "b91b0c50c846ae72de59bdf57aadbe6aca0df4070c1c11b69f3cf79ba98cf644"
+          }
+        ],
+        "fixtures": [
+          {
+            "name": "distribution-strict-v1-receipt-codes.json",
+            "sha256": "15068c4b01ed3b549a08d78cf8779c469ae3a0cd49dfbff46c9ffd97af41e6bf"
+          },
+          {
+            "name": "distribution-handoff-resolution-read-v1.json",
+            "sha256": "7c82ccf7431efa1aab42915a9c3c5ddda299fbb8b7ab6fce974eaac5a7bfa8fc"
+          },
+          {
+            "name": "distribution-handoff-receipt-v1.json",
+            "sha256": "f9ed7b8fa151ba560f6c76c97ddd17cf70e488b24e4571b48ad67896bc337a29"
+          }
+        ]
+      },
+      "resolution_reads": [
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "real",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "taskId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "taskId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "taskId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "taskId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "taskId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "taskId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "grantId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "grantId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "grantId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "grantId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "grantId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "grantId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "leaseId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "leaseId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "leaseId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "leaseId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "leaseId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "leaseId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "projectId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "projectId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "projectId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "projectId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "projectId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "projectId",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "contentVersion",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "contentVersion",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "contentVersion",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "contentVersion",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "contentVersion",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "contentVersion",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "contentDigest",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "contentDigest",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "contentDigest",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "contentDigest",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "contentDigest",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "contentDigest",
+          "proof": true
+        },
+        {
+          "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+          "mode": "real",
+          "proof": true
+        },
+        {
+          "taskId": "3bdf637a-9a62-44b1-9a6f-9b56b5996a40",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "3bdf637a-9a62-44b1-9a6f-9b56b5996a40",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "3bdf637a-9a62-44b1-9a6f-9b56b5996a40",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "3bdf637a-9a62-44b1-9a6f-9b56b5996a40",
+          "mode": "real",
+          "proof": false
+        },
+        {
+          "taskId": "3bdf637a-9a62-44b1-9a6f-9b56b5996a40",
+          "mode": "real",
+          "proof": false
+        }
+      ],
+      "original_receipt": {
+        "receiptId": "9f11dc0a-055e-4751-94eb-f73edf735f67",
+        "sequence": 3,
+        "contractVersion": 1,
+        "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+        "customerId": "4",
+        "projectId": "seo-19",
+        "deviceId": "337c9a71-c569-4823-9bf7-a667e0723678",
+        "accountId": "synthetic-local-337c9a71-c569-4823-9bf7-a667e0723678",
+        "platform": "wechat-article",
+        "contentVersion": "seo_variant_11_r1",
+        "contentDigest": "ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b",
+        "leaseId": "c1463362-f870-4440-ad1a-f9eb80eb4f6a",
+        "status": "awaiting-human",
+        "code": "HUMAN_REQUIRED",
+        "at": 1791750216086,
+        "evidence": "none",
+        "publicUrl": null
+      },
+      "original_audit": [
+        {
+          "receipt": "{\"receiptId\":\"2656b55c-bd6c-4ef9-9579-8e1818f3428a\",\"sequence\":1,\"contractVersion\":1,\"taskId\":\"f92876b1-78c4-4f9e-a917-04fda3b7a02c\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"337c9a71-c569-4823-9bf7-a667e0723678\",\"accountId\":\"synthetic-local-337c9a71-c569-4823-9bf7-a667e0723678\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"c1463362-f870-4440-ad1a-f9eb80eb4f6a\",\"status\":\"queued\",\"code\":\"ACCEPTED\",\"at\":1791750216018,\"evidence\":\"none\",\"publicUrl\":null}"
+        },
+        {
+          "receipt": "{\"receiptId\":\"24fdfac3-a33d-476d-a820-c880d59b7adb\",\"sequence\":2,\"contractVersion\":1,\"taskId\":\"f92876b1-78c4-4f9e-a917-04fda3b7a02c\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"337c9a71-c569-4823-9bf7-a667e0723678\",\"accountId\":\"synthetic-local-337c9a71-c569-4823-9bf7-a667e0723678\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"c1463362-f870-4440-ad1a-f9eb80eb4f6a\",\"status\":\"running\",\"code\":\"DISPATCHED\",\"at\":1791750216047,\"evidence\":\"none\",\"publicUrl\":null}"
+        },
+        {
+          "receipt": "{\"receiptId\":\"9f11dc0a-055e-4751-94eb-f73edf735f67\",\"sequence\":3,\"contractVersion\":1,\"taskId\":\"f92876b1-78c4-4f9e-a917-04fda3b7a02c\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"337c9a71-c569-4823-9bf7-a667e0723678\",\"accountId\":\"synthetic-local-337c9a71-c569-4823-9bf7-a667e0723678\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"c1463362-f870-4440-ad1a-f9eb80eb4f6a\",\"status\":\"awaiting-human\",\"code\":\"HUMAN_REQUIRED\",\"at\":1791750216086,\"evidence\":\"none\",\"publicUrl\":null}"
+        }
+      ],
+      "recovered_original_receipt": {
+        "receiptId": "9f11dc0a-055e-4751-94eb-f73edf735f67",
+        "sequence": 3,
+        "contractVersion": 1,
+        "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+        "customerId": "4",
+        "projectId": "seo-19",
+        "deviceId": "337c9a71-c569-4823-9bf7-a667e0723678",
+        "accountId": "synthetic-local-337c9a71-c569-4823-9bf7-a667e0723678",
+        "platform": "wechat-article",
+        "contentVersion": "seo_variant_11_r1",
+        "contentDigest": "ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b",
+        "leaseId": "c1463362-f870-4440-ad1a-f9eb80eb4f6a",
+        "status": "awaiting-human",
+        "code": "HUMAN_REQUIRED",
+        "at": 1791750216086,
+        "evidence": "none",
+        "publicUrl": null
+      },
+      "recovered_original_audit": [
+        {
+          "receipt": "{\"receiptId\":\"2656b55c-bd6c-4ef9-9579-8e1818f3428a\",\"sequence\":1,\"contractVersion\":1,\"taskId\":\"f92876b1-78c4-4f9e-a917-04fda3b7a02c\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"337c9a71-c569-4823-9bf7-a667e0723678\",\"accountId\":\"synthetic-local-337c9a71-c569-4823-9bf7-a667e0723678\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"c1463362-f870-4440-ad1a-f9eb80eb4f6a\",\"status\":\"queued\",\"code\":\"ACCEPTED\",\"at\":1791750216018,\"evidence\":\"none\",\"publicUrl\":null}"
+        },
+        {
+          "receipt": "{\"receiptId\":\"24fdfac3-a33d-476d-a820-c880d59b7adb\",\"sequence\":2,\"contractVersion\":1,\"taskId\":\"f92876b1-78c4-4f9e-a917-04fda3b7a02c\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"337c9a71-c569-4823-9bf7-a667e0723678\",\"accountId\":\"synthetic-local-337c9a71-c569-4823-9bf7-a667e0723678\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"c1463362-f870-4440-ad1a-f9eb80eb4f6a\",\"status\":\"running\",\"code\":\"DISPATCHED\",\"at\":1791750216047,\"evidence\":\"none\",\"publicUrl\":null}"
+        },
+        {
+          "receipt": "{\"receiptId\":\"9f11dc0a-055e-4751-94eb-f73edf735f67\",\"sequence\":3,\"contractVersion\":1,\"taskId\":\"f92876b1-78c4-4f9e-a917-04fda3b7a02c\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"337c9a71-c569-4823-9bf7-a667e0723678\",\"accountId\":\"synthetic-local-337c9a71-c569-4823-9bf7-a667e0723678\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"c1463362-f870-4440-ad1a-f9eb80eb4f6a\",\"status\":\"awaiting-human\",\"code\":\"HUMAN_REQUIRED\",\"at\":1791750216086,\"evidence\":\"none\",\"publicUrl\":null}"
+        }
+      ],
+      "negative_proof": {
+        "handoffVersion": 1,
+        "deviceId": "337c9a71-c569-4823-9bf7-a667e0723678",
+        "taskId": "f92876b1-78c4-4f9e-a917-04fda3b7a02c",
+        "grantId": "ba61f900-58a5-4566-9c04-103eff9e6828",
+        "leaseId": "c1463362-f870-4440-ad1a-f9eb80eb4f6a",
+        "customerId": "4",
+        "projectId": "seo-19",
+        "accountId": "synthetic-local-337c9a71-c569-4823-9bf7-a667e0723678",
+        "platform": "wechat-article",
+        "contentVersion": "seo_variant_11_r1",
+        "contentDigest": "ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b",
+        "resolution": {
+          "id": "d212223c-7cbf-473b-bc6f-fccc85469d22",
+          "outcome": "not-published",
+          "checkedAt": 1791750216408,
+          "evidence": "advisor-reported"
+        },
+        "publicationVerified": false
+      },
+      "new_receipt": {
+        "receiptId": "851aac8e-34f8-470f-ad46-96cf18401958",
+        "sequence": 4,
+        "contractVersion": 1,
+        "taskId": "3bdf637a-9a62-44b1-9a6f-9b56b5996a40",
+        "customerId": "4",
+        "projectId": "seo-19",
+        "deviceId": "337c9a71-c569-4823-9bf7-a667e0723678",
+        "accountId": "synthetic-local-337c9a71-c569-4823-9bf7-a667e0723678",
+        "platform": "wechat-article",
+        "contentVersion": "seo_variant_11_r1",
+        "contentDigest": "ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b",
+        "leaseId": "4616aee9-c928-441b-8c6d-b7ad970a6843",
+        "status": "awaiting-human",
+        "code": "HUMAN_REQUIRED",
+        "at": 1791750218909,
+        "evidence": "none",
+        "publicUrl": null
+      },
+      "new_task_id": "3bdf637a-9a62-44b1-9a6f-9b56b5996a40",
+      "new_grant_id": "12daf82c-70de-4ced-9f63-8dbd7a541ec2",
+      "new_lease_id": "4616aee9-c928-441b-8c6d-b7ad970a6843",
+      "new_dispatch_count": 1,
+      "restart_replay": false,
+      "old_authorization_allowed": false,
+      "legacy_wait_receipt_raw": "{\"receiptId\":\"d9d2c305-7c74-4019-884a-4722e1bbc7a5\",\"sequence\":2,\"contractVersion\":1,\"taskId\":\"3bdf637a-9a62-44b1-9a6f-9b56b5996a40\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"337c9a71-c569-4823-9bf7-a667e0723678\",\"accountId\":\"synthetic-local-337c9a71-c569-4823-9bf7-a667e0723678\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"4616aee9-c928-441b-8c6d-b7ad970a6843\",\"status\":\"queued\",\"code\":\"ACCOUNT_INTERVENTION_REQUIRED\",\"at\":1791750216634,\"evidence\":\"none\",\"publicUrl\":null}",
+      "legacy_wait_audit": [
+        {
+          "receipt": "{\"receiptId\":\"9d12bad3-44a7-4033-85ad-7ebf00cc94e0\",\"sequence\":1,\"contractVersion\":1,\"taskId\":\"3bdf637a-9a62-44b1-9a6f-9b56b5996a40\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"337c9a71-c569-4823-9bf7-a667e0723678\",\"accountId\":\"synthetic-local-337c9a71-c569-4823-9bf7-a667e0723678\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"4616aee9-c928-441b-8c6d-b7ad970a6843\",\"status\":\"queued\",\"code\":\"ACCEPTED\",\"at\":1791750216608,\"evidence\":\"none\",\"publicUrl\":null}"
+        },
+        {
+          "receipt": "{\"receiptId\":\"d9d2c305-7c74-4019-884a-4722e1bbc7a5\",\"sequence\":2,\"contractVersion\":1,\"taskId\":\"3bdf637a-9a62-44b1-9a6f-9b56b5996a40\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"337c9a71-c569-4823-9bf7-a667e0723678\",\"accountId\":\"synthetic-local-337c9a71-c569-4823-9bf7-a667e0723678\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"4616aee9-c928-441b-8c6d-b7ad970a6843\",\"status\":\"queued\",\"code\":\"ACCOUNT_INTERVENTION_REQUIRED\",\"at\":1791750216634,\"evidence\":\"none\",\"publicUrl\":null}"
+        }
+      ],
+      "legacy_wait_isolated_retained": [
+        {
+          "payload": "{\"receiptId\":\"d9d2c305-7c74-4019-884a-4722e1bbc7a5\",\"sequence\":2,\"contractVersion\":1,\"taskId\":\"3bdf637a-9a62-44b1-9a6f-9b56b5996a40\",\"customerId\":\"4\",\"projectId\":\"seo-19\",\"deviceId\":\"337c9a71-c569-4823-9bf7-a667e0723678\",\"accountId\":\"synthetic-local-337c9a71-c569-4823-9bf7-a667e0723678\",\"platform\":\"wechat-article\",\"contentVersion\":\"seo_variant_11_r1\",\"contentDigest\":\"ce42457984fb22c290350b0f5d598939bc492e5688c371a58c684199de450b8b\",\"leaseId\":\"4616aee9-c928-441b-8c6d-b7ad970a6843\",\"status\":\"queued\",\"code\":\"ACCOUNT_INTERVENTION_REQUIRED\",\"at\":1791750216634,\"evidence\":\"none\",\"publicUrl\":null}",
+          "retained": 1
+        }
+      ],
+      "legacy_mht_source_commit": "834a883276b499bff2cd649abfa5ba63db648fd7",
+      "old_slot": "released",
+      "new_slot": "held",
+      "publicationVerified": false,
+      "source": "synthetic approved source; executor fault only for unknown; actual HumanHandoffExecutor for expired-human and all new attempts",
+      "adversarial_responses": "test wrapper injects 403 and corrupted echoes after actual central scoped read; null is actual unresolved central response",
+      "proof_files_sha256": {
+        "tests\\test_distribution_capability_registration.py": "626d6cba60a2a9a04948e5e741ac6916bee3918aab6e02e31439b9d034b6c72d",
+        "scripts\\distribution_frozen_mht_pair.mjs": "05d537344b98753402fa3cdf93428b2ad6f0d96e006f4f26624a22c43908654c"
+      }
+    }
+  },
+  "assembled_native_entry_smokes": {
+    "seo": {
+      "module": "seo",
+      "exact_cli_entry_executed": true,
+      "no_work_no_tasks_no_ai_events": true,
+      "manifest": {
+        "native_module": "seo",
+        "native_head": "139cc7f57650afb1e83930149b6fac33cb9f861a",
+        "central_head": "c4091c8c245ee9524aa738627aa1a82b97ee7c3d",
+        "central_files": {
+          "app/distribution_contract.py": "505c2644cda71258572ece913089c287a4a2941250cf2653bb827ffca1c63a2d",
+          "app/distribution_control.py": "1725c98ad057f88073a0e67dcc765d0267a32c905dbeda384f419dfad4dabccd",
+          "app/distribution_scheduling.py": "e4c0b661f5cff81a989701ebfd1ad8bf1a52367347768fc584674f1f617a8e3c",
+          "app/distribution_publication_results.py": "e32fc9c2e5318c15bd33024a0b9326254d996680cbf38f4fbcd8a288493a9921",
+          "app/distribution_publication_verify.py": "281c8fc92c64e3b2b08cafb827c9596f833a934fdb90180997752192ed59dc5c",
+          "app/distribution_planning.py": "95bf752bad56643a6ed4673160d34cf2bfd8a51976b08d0d67160f191921a54d",
+          "app/distribution_planning_gateway.py": "ec74a9b113cb543288bc6b347af7c7320a90ed4ec2d4816b18443232ead69fb4",
+          "app/distribution_queue.py": "c62ee650cafd8e7c92abc96f65252cc0e05c73d3e1306683aa49c69cb0685fd4",
+          "app/distribution_execution.py": "6d661307c454ea505c32c8f1a533e7ed91c8510e441d1c44fd380b6b5a491182",
+          "app/distribution_execution_capabilities.py": "9b6a6e2aff04f82b66eb9e11c09562373c210064d0761ed962f708d75f9ac444",
+          "app/distribution_capability_contract.py": "19bc6e01c7d9b408eab0a6d61c57fa2ed8b8bbd07b0037cb977e306e690a39cc",
+          "app/distribution_handoff_receipts.py": "b5c522eff7ca50813d86ca03e9b448872b21c619c16d3ad8f651c9af8f5803f9",
+          "app/api/distribution.py": "ebf17ce9d3b2aa3c1c88d07b30722431926cafa1fcad17a77f227d6edcceb466",
+          "scripts/distribution_queue_worker.py": "919d48699062bf5b4cb200a6fcfadaa97183cff3c37e1b4553728e6a935972c3",
+          "scripts/distribution_assembled_worker.py": "274eef6a0d96568e9f1b3bfd3ce48fed496ec53dd241acfdac8d7f4762dd5f86",
+          "scripts/distribution_execution_schema.sql": "3e13922cdc969310cb36eb0c445e99e0a57b0236c5ba6817ed5d44d0666e2fc9",
+          "scripts/distribution_capability_registration_schema.sql": "4d914c7f1d783399174706a200fe3448372359a241eaf7f1d824a19b106603e7",
+          "docs/fixtures/mht-distribution-capabilities-v1.json": "d16ca1d08ab0eba00eef569ea014a55aa5c05f77ff443af983077338aea36136",
+          "docs/fixtures/distribution-capability-registration-v1.json": "b6a00e07905cc80f9b61fb8b4005cdd86ceac4dd86e5b878241397e0296fcbe8",
+          "docs/fixtures/distribution-handoff-receipt-v1.json": "f9ed7b8fa151ba560f6c76c97ddd17cf70e488b24e4571b48ad67896bc337a29",
+          "docs/fixtures/distribution-handoff-resolution-read-v1.json": "7c82ccf7431efa1aab42915a9c3c5ddda299fbb8b7ab6fce974eaac5a7bfa8fc"
+        },
+        "dependencies": {
+          "app/config.py": {
+            "sha256": "86e99c9e8185f3eaaed6016e76d1d886446f651dc95e6b65511f05bf7378602b",
+            "source_commit": "20316f9ecbf30403ebb4ce740b06f131f5255b51"
+          },
+          "app/database.py": {
+            "sha256": "1825eaeaaacf6b5594f450c20e852ea0a1f780588dc6a3785cc7dd50f5315033",
+            "source_commit": "2d6bfcb82eacd1c20a434bb38885a3966ae36e29"
+          },
+          "app/security/auth.py": {
+            "sha256": "a20f6e975d558d2435cd1dfc99587f3857a809f8d56c14aaefce161dc8db86cb",
+            "source_commit": "6000a979215fb79f607e29c1125a3781eda10d67"
+          },
+          "app/security/crypto.py": {
+            "sha256": "ed5f5ed9c06d4f4caebeae2e17ce0d1f0e50aec697be148f7cd55d7f058801c2",
+            "source_commit": "2d6bfcb82eacd1c20a434bb38885a3966ae36e29"
+          },
+          "app/api_metering.py": {
+            "sha256": "47c64d412541a2089d3ecc26d09387d6de2d8178d789c5f4176ef8992959c63c",
+            "source_commit": "eb3bc813b26c0519fb4ddba20d031de924fe47f8"
+          },
+          "app/api_controls.py": {
+            "sha256": "86eca0b7f0dd7aa880524d16568984e28c57c1633833a1e2f475f5e851a607ba",
+            "source_commit": "b23239234f62d622a0c2096df9e6b8e54a630810"
+          },
+          "app/api_connection_config.py": {
+            "sha256": "6645af699f209b505398c29fab35a58d8f632e1c66298fb39178cede130f7050",
+            "source_commit": "20316f9ecbf30403ebb4ce740b06f131f5255b51"
+          },
+          "app/api_usage_review_basis.py": {
+            "sha256": "efc3d14799eab45cc0e7d1ba741e0d1cb850cc87809c57ad554985b430367f62",
+            "source_commit": "5c37f5e7e4e8d62dd0c661951b694aad73e716bc"
+          },
+          "scripts/api_metering_schema.sql": {
+            "sha256": "295286b1952ab21cce4802dc10cd02cd07ced137ad7bcf69e95458ec2158b0d5",
+            "source_commit": "20316f9ecbf30403ebb4ce740b06f131f5255b51"
+          },
+          "scripts/api_controls_schema.sql": {
+            "sha256": "8e34c298ec9aa4a79bf78e401f7866b435a81eddd31980724a154130af2befd0",
+            "source_commit": "20316f9ecbf30403ebb4ce740b06f131f5255b51"
+          }
+        }
+      }
+    },
+    "geo": {
+      "module": "geo",
+      "exact_cli_entry_executed": true,
+      "no_work_no_tasks_no_ai_events": true,
+      "manifest": {
+        "native_module": "geo",
+        "native_head": "ba713f06da330362cd0539531e4edd3216a09d78",
+        "central_head": "c4091c8c245ee9524aa738627aa1a82b97ee7c3d",
+        "central_files": {
+          "app/distribution_contract.py": "505c2644cda71258572ece913089c287a4a2941250cf2653bb827ffca1c63a2d",
+          "app/distribution_control.py": "1725c98ad057f88073a0e67dcc765d0267a32c905dbeda384f419dfad4dabccd",
+          "app/distribution_scheduling.py": "e4c0b661f5cff81a989701ebfd1ad8bf1a52367347768fc584674f1f617a8e3c",
+          "app/distribution_publication_results.py": "e32fc9c2e5318c15bd33024a0b9326254d996680cbf38f4fbcd8a288493a9921",
+          "app/distribution_publication_verify.py": "281c8fc92c64e3b2b08cafb827c9596f833a934fdb90180997752192ed59dc5c",
+          "app/distribution_planning.py": "95bf752bad56643a6ed4673160d34cf2bfd8a51976b08d0d67160f191921a54d",
+          "app/distribution_planning_gateway.py": "ec74a9b113cb543288bc6b347af7c7320a90ed4ec2d4816b18443232ead69fb4",
+          "app/distribution_queue.py": "c62ee650cafd8e7c92abc96f65252cc0e05c73d3e1306683aa49c69cb0685fd4",
+          "app/distribution_execution.py": "6d661307c454ea505c32c8f1a533e7ed91c8510e441d1c44fd380b6b5a491182",
+          "app/distribution_execution_capabilities.py": "9b6a6e2aff04f82b66eb9e11c09562373c210064d0761ed962f708d75f9ac444",
+          "app/distribution_capability_contract.py": "19bc6e01c7d9b408eab0a6d61c57fa2ed8b8bbd07b0037cb977e306e690a39cc",
+          "app/distribution_handoff_receipts.py": "b5c522eff7ca50813d86ca03e9b448872b21c619c16d3ad8f651c9af8f5803f9",
+          "app/api/distribution.py": "ebf17ce9d3b2aa3c1c88d07b30722431926cafa1fcad17a77f227d6edcceb466",
+          "scripts/distribution_queue_worker.py": "919d48699062bf5b4cb200a6fcfadaa97183cff3c37e1b4553728e6a935972c3",
+          "scripts/distribution_assembled_worker.py": "274eef6a0d96568e9f1b3bfd3ce48fed496ec53dd241acfdac8d7f4762dd5f86",
+          "scripts/distribution_execution_schema.sql": "3e13922cdc969310cb36eb0c445e99e0a57b0236c5ba6817ed5d44d0666e2fc9",
+          "scripts/distribution_capability_registration_schema.sql": "4d914c7f1d783399174706a200fe3448372359a241eaf7f1d824a19b106603e7",
+          "docs/fixtures/mht-distribution-capabilities-v1.json": "d16ca1d08ab0eba00eef569ea014a55aa5c05f77ff443af983077338aea36136",
+          "docs/fixtures/distribution-capability-registration-v1.json": "b6a00e07905cc80f9b61fb8b4005cdd86ceac4dd86e5b878241397e0296fcbe8",
+          "docs/fixtures/distribution-handoff-receipt-v1.json": "f9ed7b8fa151ba560f6c76c97ddd17cf70e488b24e4571b48ad67896bc337a29",
+          "docs/fixtures/distribution-handoff-resolution-read-v1.json": "7c82ccf7431efa1aab42915a9c3c5ddda299fbb8b7ab6fce974eaac5a7bfa8fc"
+        },
+        "dependencies": {
+          "app/config.py": {
+            "sha256": "9a8e9c3ce2428dc13036a472912f2b8af380a981297f400153289989011e2d7d",
+            "source_commit": "d3aff8bc264262268860004de8eefeb81cbe9a2d"
+          },
+          "app/database.py": {
+            "sha256": "1825eaeaaacf6b5594f450c20e852ea0a1f780588dc6a3785cc7dd50f5315033",
+            "source_commit": "2d6bfcb82eacd1c20a434bb38885a3966ae36e29"
+          },
+          "app/security/auth.py": {
+            "sha256": "a0ffd2d643681c7cbe14d2f0b2d7865cdc450a6392523fe3b31a75a1c158ee48",
+            "source_commit": "151604688c4e4f3b3ba03aa447dbdb8a4e78ef04"
+          },
+          "app/security/crypto.py": {
+            "sha256": "ed5f5ed9c06d4f4caebeae2e17ce0d1f0e50aec697be148f7cd55d7f058801c2",
+            "source_commit": "2d6bfcb82eacd1c20a434bb38885a3966ae36e29"
+          },
+          "app/api_metering.py": {
+            "sha256": "e86ffed5499ba4af4986ba55df6a739dc077e86e637cd5cb3ed922c928d99508",
+            "source_commit": "b5454ffcc601f35121037a881cb27d56787659dc"
+          },
+          "app/api_controls.py": {
+            "sha256": "86eca0b7f0dd7aa880524d16568984e28c57c1633833a1e2f475f5e851a607ba",
+            "source_commit": "e8656210732bde42c6225a43d9e04c4107b68d41"
+          },
+          "app/api_connection_config.py": {
+            "sha256": "6645af699f209b505398c29fab35a58d8f632e1c66298fb39178cede130f7050",
+            "source_commit": "55496c06cde9de0221f5b82d6493f4c460d2f2b6"
+          },
+          "app/api_usage_review_basis.py": {
+            "sha256": "efc3d14799eab45cc0e7d1ba741e0d1cb850cc87809c57ad554985b430367f62",
+            "source_commit": "454799bfd39833be3e5b86d106aca215b148bb09"
+          },
+          "scripts/api_metering_schema.sql": {
+            "sha256": "295286b1952ab21cce4802dc10cd02cd07ced137ad7bcf69e95458ec2158b0d5",
+            "source_commit": "55496c06cde9de0221f5b82d6493f4c460d2f2b6"
+          },
+          "scripts/api_controls_schema.sql": {
+            "sha256": "8e34c298ec9aa4a79bf78e401f7866b435a81eddd31980724a154130af2befd0",
+            "source_commit": "55496c06cde9de0221f5b82d6493f4c460d2f2b6"
+          }
+        }
+      }
+    }
+  },
+  "central_critical_files": {
+    "app/distribution_contract.py": {
+      "worktree_sha256": "505c2644cda71258572ece913089c287a4a2941250cf2653bb827ffca1c63a2d",
+      "git_blob_sha256": "505c2644cda71258572ece913089c287a4a2941250cf2653bb827ffca1c63a2d",
+      "last_source_commit": "4a648a3c5baa8f7a461d32bef8c786df9d0ce1b6"
+    },
+    "app/distribution_control.py": {
+      "worktree_sha256": "1725c98ad057f88073a0e67dcc765d0267a32c905dbeda384f419dfad4dabccd",
+      "git_blob_sha256": "1725c98ad057f88073a0e67dcc765d0267a32c905dbeda384f419dfad4dabccd",
+      "last_source_commit": "2597db1f86ffcb762d7e2e1ec9d169f791e78305"
+    },
+    "app/distribution_scheduling.py": {
+      "worktree_sha256": "e4c0b661f5cff81a989701ebfd1ad8bf1a52367347768fc584674f1f617a8e3c",
+      "git_blob_sha256": "e4c0b661f5cff81a989701ebfd1ad8bf1a52367347768fc584674f1f617a8e3c",
+      "last_source_commit": "4a648a3c5baa8f7a461d32bef8c786df9d0ce1b6"
+    },
+    "app/distribution_publication_results.py": {
+      "worktree_sha256": "e32fc9c2e5318c15bd33024a0b9326254d996680cbf38f4fbcd8a288493a9921",
+      "git_blob_sha256": "e32fc9c2e5318c15bd33024a0b9326254d996680cbf38f4fbcd8a288493a9921",
+      "last_source_commit": "4a15d242b234cc4a71ccb8c4885921eedebb9c57"
+    },
+    "app/distribution_publication_verify.py": {
+      "worktree_sha256": "281c8fc92c64e3b2b08cafb827c9596f833a934fdb90180997752192ed59dc5c",
+      "git_blob_sha256": "281c8fc92c64e3b2b08cafb827c9596f833a934fdb90180997752192ed59dc5c",
+      "last_source_commit": "729af3c4071d6f410ef12ecb88de6ca6a3559f13"
+    },
+    "app/distribution_planning.py": {
+      "worktree_sha256": "95bf752bad56643a6ed4673160d34cf2bfd8a51976b08d0d67160f191921a54d",
+      "git_blob_sha256": "0646ec304972ab7ef0c03b7468d484de5c002beaf9622bf4910762cb3f7bf84c",
+      "last_source_commit": "4a648a3c5baa8f7a461d32bef8c786df9d0ce1b6"
+    },
+    "app/distribution_planning_gateway.py": {
+      "worktree_sha256": "ec74a9b113cb543288bc6b347af7c7320a90ed4ec2d4816b18443232ead69fb4",
+      "git_blob_sha256": "ec74a9b113cb543288bc6b347af7c7320a90ed4ec2d4816b18443232ead69fb4",
+      "last_source_commit": "9a5afb03bae76a9489db357f615267abef3ed9aa"
+    },
+    "app/distribution_queue.py": {
+      "worktree_sha256": "c62ee650cafd8e7c92abc96f65252cc0e05c73d3e1306683aa49c69cb0685fd4",
+      "git_blob_sha256": "070188303747ceacab67221bdf4fda891d0afa704923c33b75e51a79f30c38be",
+      "last_source_commit": "9a5afb03bae76a9489db357f615267abef3ed9aa"
+    },
+    "app/distribution_execution.py": {
+      "worktree_sha256": "6d661307c454ea505c32c8f1a533e7ed91c8510e441d1c44fd380b6b5a491182",
+      "git_blob_sha256": "0c530165a162aca7924cd35c3064bfe1523313b8b70e977c240d8dac9439c97b",
+      "last_source_commit": "2597db1f86ffcb762d7e2e1ec9d169f791e78305"
+    },
+    "app/distribution_execution_capabilities.py": {
+      "worktree_sha256": "9b6a6e2aff04f82b66eb9e11c09562373c210064d0761ed962f708d75f9ac444",
+      "git_blob_sha256": "9b6a6e2aff04f82b66eb9e11c09562373c210064d0761ed962f708d75f9ac444",
+      "last_source_commit": "b2ac713b25f0dd8f3b770b6701d3a2f4ae337fae"
+    },
+    "app/distribution_capability_contract.py": {
+      "worktree_sha256": "19bc6e01c7d9b408eab0a6d61c57fa2ed8b8bbd07b0037cb977e306e690a39cc",
+      "git_blob_sha256": "19bc6e01c7d9b408eab0a6d61c57fa2ed8b8bbd07b0037cb977e306e690a39cc",
+      "last_source_commit": "e1d2983441b066c78eea7ade3a5c93f534710248"
+    },
+    "app/distribution_handoff_receipts.py": {
+      "worktree_sha256": "b5c522eff7ca50813d86ca03e9b448872b21c619c16d3ad8f651c9af8f5803f9",
+      "git_blob_sha256": "b5c522eff7ca50813d86ca03e9b448872b21c619c16d3ad8f651c9af8f5803f9",
+      "last_source_commit": "e1d2983441b066c78eea7ade3a5c93f534710248"
+    },
+    "app/api/distribution.py": {
+      "worktree_sha256": "ebf17ce9d3b2aa3c1c88d07b30722431926cafa1fcad17a77f227d6edcceb466",
+      "git_blob_sha256": "3b5c372d3ad6b60c2e625f1ce851997f2b4dccecf3b6c09812b9358d4ca7bc8e",
+      "last_source_commit": "e1d2983441b066c78eea7ade3a5c93f534710248"
+    },
+    "scripts/distribution_queue_worker.py": {
+      "worktree_sha256": "919d48699062bf5b4cb200a6fcfadaa97183cff3c37e1b4553728e6a935972c3",
+      "git_blob_sha256": "919d48699062bf5b4cb200a6fcfadaa97183cff3c37e1b4553728e6a935972c3",
+      "last_source_commit": "4a648a3c5baa8f7a461d32bef8c786df9d0ce1b6"
+    },
+    "scripts/distribution_assembled_worker.py": {
+      "worktree_sha256": "274eef6a0d96568e9f1b3bfd3ce48fed496ec53dd241acfdac8d7f4762dd5f86",
+      "git_blob_sha256": "274eef6a0d96568e9f1b3bfd3ce48fed496ec53dd241acfdac8d7f4762dd5f86",
+      "last_source_commit": "e1d2983441b066c78eea7ade3a5c93f534710248"
+    },
+    "scripts/distribution_execution_schema.sql": {
+      "worktree_sha256": "3e13922cdc969310cb36eb0c445e99e0a57b0236c5ba6817ed5d44d0666e2fc9",
+      "git_blob_sha256": "5334b3d949b2487f7e2c8ce3295441c6a829932ec33d6fb55c3e5983ccaf16cf",
+      "last_source_commit": "b2ac713b25f0dd8f3b770b6701d3a2f4ae337fae"
+    },
+    "scripts/distribution_capability_registration_schema.sql": {
+      "worktree_sha256": "4d914c7f1d783399174706a200fe3448372359a241eaf7f1d824a19b106603e7",
+      "git_blob_sha256": "4d914c7f1d783399174706a200fe3448372359a241eaf7f1d824a19b106603e7",
+      "last_source_commit": "b2ac713b25f0dd8f3b770b6701d3a2f4ae337fae"
+    },
+    "docs/fixtures/mht-distribution-capabilities-v1.json": {
+      "worktree_sha256": "d16ca1d08ab0eba00eef569ea014a55aa5c05f77ff443af983077338aea36136",
+      "git_blob_sha256": "d16ca1d08ab0eba00eef569ea014a55aa5c05f77ff443af983077338aea36136",
+      "last_source_commit": "4a648a3c5baa8f7a461d32bef8c786df9d0ce1b6"
+    },
+    "docs/fixtures/distribution-capability-registration-v1.json": {
+      "worktree_sha256": "b6a00e07905cc80f9b61fb8b4005cdd86ceac4dd86e5b878241397e0296fcbe8",
+      "git_blob_sha256": "b6a00e07905cc80f9b61fb8b4005cdd86ceac4dd86e5b878241397e0296fcbe8",
+      "last_source_commit": "b2ac713b25f0dd8f3b770b6701d3a2f4ae337fae"
+    },
+    "docs/fixtures/distribution-handoff-receipt-v1.json": {
+      "worktree_sha256": "f9ed7b8fa151ba560f6c76c97ddd17cf70e488b24e4571b48ad67896bc337a29",
+      "git_blob_sha256": "f9ed7b8fa151ba560f6c76c97ddd17cf70e488b24e4571b48ad67896bc337a29",
+      "last_source_commit": "e1d2983441b066c78eea7ade3a5c93f534710248"
+    },
+    "docs/fixtures/distribution-handoff-resolution-read-v1.json": {
+      "worktree_sha256": "7c82ccf7431efa1aab42915a9c3c5ddda299fbb8b7ab6fce974eaac5a7bfa8fc",
+      "git_blob_sha256": "7c82ccf7431efa1aab42915a9c3c5ddda299fbb8b7ab6fce974eaac5a7bfa8fc",
+      "last_source_commit": "e1d2983441b066c78eea7ade3a5c93f534710248"
+    }
+  },
+  "prior_normal_paired_evidence": "DISTRIBUTION_FROZEN_MHT_NORMAL_HANDOFF_PAIRED_EVIDENCE_20261012.json",
+  "retained_834_failure": {
+    "status": "FAILED_NEGATIVE_THEN_RECOVER_SCENARIO_834",
+    "mht_snapshot": {
+      "source_commit": "834a883276b499bff2cd649abfa5ba63db648fd7",
+      "artifacts": [
+        {
+          "name": "cli.mjs",
+          "sha256": "2e0dadd6ab6a7b37380567855342e4df41d9b064f04669543ece10f03a1c84a5"
+        },
+        {
+          "name": "capability-client.mjs",
+          "sha256": "135b8a76f9745a48000c3b8e1d98af07614335974b832f165c795d100c22098d"
+        },
+        {
+          "name": "agent.mjs",
+          "sha256": "6cf86303d44d225384d1892f7521597584e885cbf39d57584f33d13521206120"
+        },
+        {
+          "name": "candidate-gui.cjs",
+          "sha256": "4ed41c9ac6624eb58571070e307f57b8ccadb8d22556c29c9b31946b4f9e4900"
+        },
+        {
+          "name": "candidate-preload.cjs",
+          "sha256": "ec0e726aeb5e3e6ae245e7d9976fca4b48d43821a439b065526c28c15d703547"
+        },
+        {
+          "name": "decode-worker.cjs",
+          "sha256": "ad398ad476af46dd473a7fe62822afed91b2fcf1fb1542a022219059b6734497"
+        },
+        {
+          "name": "pages.mjs",
+          "sha256": "b91b0c50c846ae72de59bdf57aadbe6aca0df4070c1c11b69f3cf79ba98cf644"
+        }
+      ],
+      "fixtures": [
+        {
+          "name": "distribution-handoff-resolution-read-v1.json",
+          "sha256": "7c82ccf7431efa1aab42915a9c3c5ddda299fbb8b7ab6fce974eaac5a7bfa8fc"
+        },
+        {
+          "name": "distribution-handoff-receipt-v1.json",
+          "sha256": "f9ed7b8fa151ba560f6c76c97ddd17cf70e488b24e4571b48ad67896bc337a29"
+        },
+        {
+          "name": "distribution-capability-registration-v1.json",
+          "sha256": "b6a00e07905cc80f9b61fb8b4005cdd86ceac4dd86e5b878241397e0296fcbe8"
+        }
+      ]
+    },
+    "central_runtime_commit": "e1d2983441b066c78eea7ade3a5c93f534710248",
+    "normal_pair_proof_commit": "ba65dbeaf7a53c01cde759104e55562acbaa1c09",
+    "diagnosis": {
+      "actual_positive_without_initial_wait": "passed correct proof synchronization, old receipt and audit preserved, new lease awaiting-human, restart no replay",
+      "complete_negative_then_positive": "failed: correct proof not saved and new receipt ACCOUNT_INTERVENTION_REQUIRED after initial 403 wait",
+      "root_cause": "MHT local wait code retained in strict-v1 outbox; central code table intentionally unchanged",
+      "additional_owner_review": "expired awaiting-human not a resolution read candidate in 834; owner preparing next freeze"
+    },
+    "proof_harness_sha256": "3d6075b72e7b894029b332f25493ae358942d6eb9212f59f83f78a3e388f2240",
+    "new_tests_sha256": "7b294b107896e0f20489603a66a0373fee6759f13a073d5e7f7a5ee61e7f8fb7",
+    "publicationVerified": false,
+    "production_deployed": false
+  },
+  "limits": {
+    "source_adapter": "synthetic approved source; real PostgreSQL and JWT; actual frozen MHT clients and loopback HTTPS",
+    "native_entry_smokes": "exact CLI, empty isolated schema, no-work and zero AI events; not populated native end-to-end workflow",
+    "publicationVerified": false,
+    "productionDeployed": false,
+    "realPlatformPublicationTested": false,
+    "automaticSubmit": false,
+    "productionDDLApplied": false
+  },
+  "cleanup": {
+    "loopback_TLS_servers": "stopped in test finally",
+    "temporary_client_databases_profiles_certificates": "test-owned directories cleaned automatically",
+    "owned_postgres_55443": "stopped after final checks; data retained for reproduction",
+    "foreign_trees": "read-only; no build or mutation"
+  }
+}

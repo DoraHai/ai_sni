@@ -1,12 +1,13 @@
 import {balanceRoute} from './platform-balances-view.mjs';
 import {governanceRoute} from './platform-ai-governance-view.mjs';
 import {usageReviewRoute} from './platform-usage-review.mjs';
+import {automationHealthPaths,validateAutomationHealth} from './platform-automation-health.mjs';
 // Separate global-console transport. Customer host allowlists remain unchanged.
 export const platformConsolePath='/customer-workbench/?console=platform';
 export const isPlatformAdmin=user=>Number.isSafeInteger(user?.id)&&user.id>0&&user.tenant_id===null&&
   user.permissions?.['settings.accounts']==='edit'&&user.permissions?.['settings.customers']==='edit';
 const fail=(code,status)=>Object.assign(Error(code),{code,status});
-const routes=new Set(['/api/v1/auth/me','/api/v1/admin/console/snapshot',governanceRoute]);
+const routes=new Set(['/api/v1/auth/me','/api/v1/admin/console/snapshot',governanceRoute,...Object.values(automationHealthPaths)]);
 const writeRoute='/api/v1/admin/console/controls';
 const operationRoute='/api/v1/admin/console/operations';
 const usageRoute='/api/v1/admin/console/usage';
@@ -43,7 +44,10 @@ export function createPlatformConsoleClient({session,fetchImpl=fetch,onExpired=(
         if(!r.headers.get('content-type')?.startsWith('text/csv'))throw fail('CONSOLE_INVALID_EXPORT');
         const data=await r.blob();current();return data;
       }
-      const data=await r.json();current();return data;
+      let data;
+      try{data=await r.json();}
+      catch(e){current();if(e instanceof SyntaxError&&Object.values(automationHealthPaths).includes(path))throw fail('CONSOLE_INVALID_AUTOMATION_HEALTH');throw e;}
+      current();return data;
     }finally{pending.delete(controller);}
   }
   return {
@@ -73,6 +77,13 @@ export function createPlatformConsoleClient({session,fetchImpl=fetch,onExpired=(
       if(data?.schema!==1||!['available','schema_pending'].includes(data.state)||
         (data.state==='available'&&!Array.isArray(data.modules)))throw fail('CONSOLE_INVALID_GOVERNANCE');
       return data;
+    },
+    async automationHealth(module){
+      if(!Object.hasOwn(automationHealthPaths,module))throw fail('CONSOLE_INVALID_QUERY');
+      if(!identity)throw fail('CONSOLE_NOT_AUTHORIZED',403);
+      const {user}=await read('/api/v1/auth/me',true);
+      if(user?.id!==identity?.id||!isPlatformAdmin(user)){invalidate();throw fail('CONSOLE_FORBIDDEN',403);}
+      return validateAutomationHealth(await read(automationHealthPaths[module]),module);
     },
     async usage(filters){return read(usagePath(filters));},
     async readUsageReview(eventId){

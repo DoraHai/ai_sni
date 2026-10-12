@@ -37,6 +37,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
       if(u.origin!==origin){external.push(u.href);return r.abort();}
       if(u.pathname.startsWith('/api/')){
         requests.push({path:u.pathname,method:r.method()});
+        if(['/api/v1/seo/workbench/automation-health','/api/v1/geo/workbench/automation-health'].includes(u.pathname))return r.respond({status:404,contentType:'application/json',body:'{}'});
         if(u.pathname==='/api/v1/admin/console/balances'){
           balanceReads++;if(u.searchParams.get('refresh')==='true')balanceRefreshes++;if(balanceHeld)await balanceHeld;
           return r.respond({status:balanceStatus,contentType:'application/json',body:JSON.stringify({schema:1,state:'available',coverage:{state:'schema_pending',rows:[{id:'seo.chinaz',module:'seo',name:'站长之家 / 百度收录',configured:null,capability:'package',note:'套餐查询接口尚待确认'},{id:'geo.geo_kimi',module:'geo',name:'Kimi',configured:null,capability:'direct'},{id:'geo.geo_qwen',module:'geo',name:'通义千问',configured:null,capability:'billing_authorization'}]},rows:[{id:'deepseek',provider:'deepseek',name:'DeepSeek 官方账户',tenant_id:null,state:'available',balances:[{currency:'CNY',available:'0',cash:'0',warning_threshold:'100'}],warning:'low',queried_at:'2026-10-10T12:00:00Z',api_key:'never-balance-secret'},{id:'aliyun',provider:'aliyun',name:'阿里云账户',tenant_id:null,state:'not_configured',note:'需配置费用查询只读授权',balances:[],warning:'unknown',queried_at:'2026-10-10T12:00:00Z'}]})});
@@ -259,7 +260,8 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     await new Promise(r=>setTimeout(r,50));assert(!await p.$('.pc-kpis'));assert.equal(await p.evaluate(()=>sessionStorage.getItem('sem_auth_v1')),null);
     await signIn();await p.waitForSelector('.pc-kpis');status=401;await p.click('[data-pc=refresh]');await p.waitForSelector('#pc-login');assert(!await p.$('.pc-kpis'));
     assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
-    assert(requests.every(r=>['/api/v1/auth/login','/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/admin/console/controls','/api/v1/admin/console/usage','/api/v1/admin/console/usage/export','/api/v1/admin/console/operations','/api/v1/platform/ai-governance','/api/v1/admin/console/balances'].includes(r.path)));
+    assert(requests.every(r=>['/api/v1/auth/login','/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/admin/console/controls','/api/v1/admin/console/usage','/api/v1/admin/console/usage/export','/api/v1/admin/console/operations','/api/v1/platform/ai-governance','/api/v1/admin/console/balances','/api/v1/seo/workbench/automation-health','/api/v1/geo/workbench/automation-health'].includes(r.path)));
+    assert(requests.filter(r=>r.path.endsWith('/automation-health')).every(r=>r.method==='GET'));
     assert(requests.filter(r=>r.method!=='GET').every(r=>['/api/v1/auth/login','/api/v1/admin/console/controls','/api/v1/admin/console/operations'].includes(r.path)));
   }finally{await browser.close();await f.close();}
 });

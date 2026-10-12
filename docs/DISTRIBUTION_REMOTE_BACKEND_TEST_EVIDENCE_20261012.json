@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "checked_at": "2026-10-12T04:33:00.138259+00:00",
+  "base_head": "257895ed37e098d7697fa1aa28e13eb87f4d2986",
+  "code_head": "7a03c83272222995a5b5a7907000dfd6676f2df5",
+  "code_tree": "aff07a2aeb463f3ad52d10ac6fa3f1a6da61b2c1",
+  "native_seo_head": "b4d8387123355348f79e26ea2838585c5106a4b9",
+  "native_geo_execution_tested": false,
+  "owned_temp_root": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\distribution-remote-broker-tests-20261012",
+  "ports": {
+    "pg": 55537,
+    "https": 55871,
+    "default_off_test_https": 55872
+  },
+  "production": false,
+  "automatic_submit": false,
+  "test_observations": 33,
+  "unique_test_cases": 29,
+  "artifacts": [
+    {
+      "name": "remote-tests.xml",
+      "sha256": "b44c39dd241ec0273195100a1c57584fb7dd0e9a929bb367d192badebe5391c7",
+      "tests": 19,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "remote-native-task-tests.xml",
+      "sha256": "af39012f285800adac998f3af7f6b7a5ea039dd827d77f9c98281b392d581833",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "remote-runtime-tests.xml",
+      "sha256": "3d658c88df677c3886ff505af20515b07a6957281b054e58fe864a13e160e209",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "remote-final-pin-tests.xml",
+      "sha256": "e7323ec79112d12071873bcd664e1dbc091d2147699fbb535055352f53f494ce",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "native-schema.json",
+      "sha256": "7953f96a84ccb0d81f2ae36fcbd8f1bf55c56bd5af23953b64e0922b034fd0b4"
+    },
+    {
+      "name": "native-manifest.json",
+      "sha256": "299a588402b198d6d470fe637405d238177775bd1ae56fc3e7df54c8d58d3a36"
+    },
+    {
+      "name": "runtime-manifest.json",
+      "sha256": "1b85ed510484adb4f3df08966ae5d6fc1f26f0078b1d6fa91ae3793d28124572"
+    },
+    {
+      "name": "final-runtime-health.json",
+      "sha256": "cc2b1048e436e2db6f5d94a6cffb6c87e32b5f0e94fbe1f477e279283b9027cb"
+    },
+    {
+      "name": "final-pg-readback.json",
+      "sha256": "254fda62aa786b2b42f58698b97034f35149aace8ce36745c2a4a318604486b7"
+    },
+    {
+      "name": "loopback.pem",
+      "sha256": "ded156dba1033ae53dbdea828b362521a030e8785522d522ddfbe7b2187fc05a"
+    },
+    {
+      "name": "final-owned-shutdown.json",
+      "sha256": "c2d8de7f87248c2314691412ee962234c3415cf508456eac800fd254adb9d1ee"
+    }
+  ],
+  "runtime_files": {
+    "app/distribution_remote_contract.py": "6ceed7fe9bec8d967068deb8bc1a8597c62461c593befccaa269ed263de3383c",
+    "app/distribution_remote.py": "8cc693bb230c605ad71ec5fc35718e0acacb7ea31905ce5c3243872551ef7ace",
+    "app/api/distribution_remote.py": "43f76aa0612341704f1e4f68b0e1d47311d830c75b82195fdc9781820d2e185e",
+    "app/api/distribution.py": "0faf6198b9060bd52b876e6a89d9a52ca58c319ac8aeaec4705b40924491847e",
+    "scripts/distribution_remote_schema.sql": "0c3be3122a5356109d560a51566c9e26ca749e783770e18277d742ffd6effc99",
+    "scripts/distribution_remote_test_service.py": "2626b2c51f07588319dc59a946ea0533de38e7bce3b83f9a206a142729122d83"
+  },
+  "tested": {
+    "initial_https_permission_input_png_capacity_sql_faults": 19,
+    "actual_native_seo_approved_source_task_current_gates": 4,
+    "runtime_increment_with_three_affected_retests": 9,
+    "frozen_runtime_header_scope_check": 1
+  },
+  "not_tested": [
+    "Real company Windows MHT GUI integration",
+    "Real WeChat login or verification-code completion",
+    "Executor network-level publish/submit isolation",
+    "Actual GEO remote task lifecycle",
+    "Actual standard advisor Vue page",
+    "Active platform upload interruption or publication",
+    "Multi-worker deployment (intentionally unsupported)"
+  ],
+  "transaction_and_storage": "PostgreSQL metadata only; input and PNG are process memory, popped on first delivery and discarded on restart; no production data used",
+  "historical_manifest_notice": "native-manifest.json was created at initial assembly checkpoint d8f7610a. Final running code provenance is runtime-manifest.json plus final-runtime-health.json, which include frozen code head and remote file hashes. Earlier 19/4 tests ran during implementation; 9-case affected/runtime verification and final 1-case frozen runtime verification were performed separately.",
+  "owned_services_stopped": true
+}

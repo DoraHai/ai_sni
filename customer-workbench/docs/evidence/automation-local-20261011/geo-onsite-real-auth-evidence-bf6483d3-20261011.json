@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "generated_at": "2026-10-11T05:30:22.4158023Z",
+  "commit": "bf6483d337398ba35aa2841b27545c06fb0cb896",
+  "working_tree_clean": true,
+  "workspace": "D:\\SNIPERS国内版\\ai_sni-worktrees\\geo-onsite-ai-jobs-20261011",
+  "authentication": {
+    "source": "POST /api/v1/auth/login -> JWT -> require_scoped_auth -> database User/Role",
+    "dependency_overrides": [
+      "get_session"
+    ],
+    "auth_overridden": false
+  },
+  "execution": {
+    "database": "isolated PostgreSQL schema, dropped after each test",
+    "provider": "httpx.MockTransport",
+    "paid_external_calls": 0,
+    "page_recheck": "mocked page fetch, production recheck parser/state machine",
+    "browser": false,
+    "production": false
+  },
+  "results": [
+    {
+      "suite": "GEO onsite AI/core/worker/PostgreSQL/real JWT",
+      "passed": 148,
+      "failed": 0,
+      "skipped": 0,
+      "warnings": 1,
+      "junit_xml": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\geo-onsite-real-auth-bf6483d3-20261011.xml",
+      "junit_sha256": "47037fac98e2bdd74d39d37135cec19f21626298e1f0aecd005fb6913a8767e8"
+    },
+    {
+      "suite": "GEO automation v2 real JWT",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "GEO automation frozen HTTP/health",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "sample": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\geo-automation-v2-http-sample.json",
+      "sample_sha256": "80facbaf8b9238ce624bdba8934ff46091b189c63fd8ded14024c2e213e6340b",
+      "scenario_count": 9,
+      "all_health_cache_control_no_store": true
+    }
+  ],
+  "coverage": [
+    "advisor real login/JWT and current database role",
+    "assets+content permission succeeds; diagnosis-only role denied",
+    "customer read-only and create/action/AI writes denied",
+    "cross-tenant project denied",
+    "missing public evidence blocks before provider",
+    "role revocation blocks before provider",
+    "AI draft remains pending human review",
+    "premature acceptance and stale/repeated writes denied",
+    "human approve/implement/recheck/accept",
+    "recheck post-network role and project/domain revalidation",
+    "cancelled provider late result discarded"
+  ],
+  "unverified": [
+    "browser UI",
+    "production deployment/runtime",
+    "real external provider",
+    "real website network fetch",
+    "publish/distribute/handoff"
+  ]
+}

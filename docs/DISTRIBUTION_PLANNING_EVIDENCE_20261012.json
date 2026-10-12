@@ -1,0 +1,86 @@
+{
+  "runtime_commit": "2a9cad531123621d4ba23eb248a27346bf8728f8",
+  "production_ready": false,
+  "automatic_publication": false,
+  "validation": {
+    "backend_regression": {
+      "passed": 105,
+      "note": "Includes initial 13 planning tests; overlaps focused checks"
+    },
+    "planning_final": {
+      "passed": 15,
+      "note": "Includes two later permission/policy changes and window assertions; not additive to regression"
+    },
+    "frontend_contracts": {
+      "passed": 184,
+      "includes_distribution": 37
+    },
+    "synthetic_edge_browser": {
+      "passed": 3,
+      "includes_planning_fallback_display": true
+    },
+    "native_seo": {
+      "schema": 1,
+      "native_head": "139cc7f57650afb1e83930149b6fac33cb9f861a",
+      "native_sha256": "4ab7cc1287ee90c45230042f488526357c745907a649db4642a28f51589fb890",
+      "central_head": "2a9cad531123621d4ba23eb248a27346bf8728f8",
+      "central_files": {
+        "app\\distribution_queue.py": "080213487e322e57a739ddc990c900374ec3ffcf64b7a2f95f4a108785f87397",
+        "app\\api\\distribution.py": "35e3c4bf31678123be5bedf5119df1a6b3faf1a64a9689975d6c0f42e855d71a",
+        "app\\distribution_contract.py": "a6ff02bafa70d441334093c8ea66247fbd9d7e1f5775196e31513c255d2be5d8"
+      },
+      "verified": [
+        "real-native-pending-intake",
+        "approval-reuses-queue-id",
+        "live-source-gates",
+        "global-authorization",
+        "policy-checked-unverified-path-blocked",
+        "pause-resume",
+        "new-variant-invalidates-old",
+        "JWT-revocation",
+        "no-execution-grants",
+        "GET-read-only",
+        "native-planner-authorization",
+        "native-planner-idempotency",
+        "native-planner-revocation"
+      ],
+      "real_platform_publication": false,
+      "production_ready": false
+    },
+    "main_metering": {
+      "native_head": "139cc7f57650afb1e83930149b6fac33cb9f861a",
+      "provider": "synthetic transport only",
+      "actual_main_metering": true,
+      "events": 3,
+      "attribution": "tenant 4/user 7/seo/distribution_planning/job_ref",
+      "invalid_output_still_metered": true,
+      "timeout_persisted_unknown": true,
+      "disabled_meter_no_http": true,
+      "api_controls_enabled": false
+    }
+  },
+  "build": {
+    "manifest_sha256": "0595d33721f3318866f51b101b9fe571f2cdc0608d1152e8bbbadbcad0a1bd01",
+    "sourceTreeClean": true,
+    "upstreamCommit": "2a9cad531123621d4ba23eb248a27346bf8728f8"
+  },
+  "cleanup": {
+    "postgres_port": 55443,
+    "temporary_schemas_remaining": 0,
+    "postgres_stopped": true
+  },
+  "limits": {
+    "max_model_calls_per_round": 2,
+    "max_items_per_call": 10,
+    "max_attempts_per_fingerprint": 3,
+    "retry_seconds": 300,
+    "planning_horizon_days": 7
+  },
+  "not_verified": [
+    "real provider response",
+    "API_CONTROLS_ENABLED governance integration",
+    "GEO native planning integration",
+    "real platform publication",
+    "production DDL or deployment"
+  ]
+}

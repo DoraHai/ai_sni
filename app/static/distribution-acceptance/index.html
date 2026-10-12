@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>独立分发验收</title><link rel="stylesheet" href="/acceptance/style.css">
+<body><main><header><div><small>本机独立环境</small><h1 id="heading">SEO / GEO 分发验收</h1></div><span class="pill">正式发布关闭</span></header>
+<p class="notice">现有客户稿件只读快照。本页的适配、审核和确认仅发生在隔离库；不代表生产或真人客户批准。节奏提案使用本地模拟器，不调用真实 AI 供应商。</p>
+<section id="login-panel"><h2>实名测试账号登录</h2><div class="row"><label>账号<select id="username"><option value="acceptance-advisor">本地验收顾问</option><option value="acceptance-reviewer">本地验收审核人</option><option value="acceptance-admin">本地验收管理员</option><option value="acceptance-customer-15">客户15只读</option><option value="acceptance-customer-1">客户1只读</option></select></label><label>本地测试密码<input id="password" type="password" autocomplete="off"></label><button id="login">登录</button></div></section>
+<section id="workspace" hidden><div class="row"><h2 id="actor"></h2><button id="refresh">刷新状态</button><button id="logout">退出当前账号</button></div><p id="scope"></p>
+<div class="grid"><article><h3>原始稿件</h3><p id="original-title"></p><p id="original-state"></p><textarea id="original-body" readonly aria-label="原文预览"></textarea><small>原文保留不等于平台排版成功；封面、表格和正式渠道填写仍需顾问核对。</small></article><article><h3>本地审批与交接</h3><p id="local-state"></p><p id="project-state"></p><p id="planner-state">节奏规划：本地确定性模拟</p><div id="actions"><label class="check"><input type="checkbox" id="checked">已核对当前版本，仅对本地验收操作负责</label><div class="buttons"><button id="clone">新建本地公众号副本</button><button id="submit-master">提交内部审核</button><button id="approve-master">内部审核通过</button><button id="confirm">顾问代确认</button><button id="adapt">公众号手工适配并送审</button><button id="approve-variant">渠道稿审核通过</button><button id="resume">启用自动接入</button><button id="pause">暂停自动接入</button></div></div><p id="geo-note" hidden>GEO 稿件保存、事实核查、人工定版及客户重审按真实原生 API 验证；本页显示当前原生版本并测试顾问启停，不代替原生 Vue 编辑器或真人审校。</p><p id="readonly-note" hidden>当前客户账号仅能查看，不提供项目控制和分发操作。</p></article></div>
+<article><h3>当前本地版本预览</h3><p id="local-preview-title"></p><textarea id="local-body" readonly aria-label="当前本地稿件预览"></textarea><small>审核按钮对应这一准确版本；这里保留原文，不代替平台排版验收。</small></article>
+<article><h3>交接结果 · 尚未发布</h3><div id="tasks"></div></article></section>
+<section><h2>本地操作日志</h2><p id="status" role="status">等待登录</p><ol id="events"></ol></section>
+</main><script type="module" src="/acceptance/app.js"></script></body></html>

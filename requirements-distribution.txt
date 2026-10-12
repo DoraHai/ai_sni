@@ -1,0 +1,4 @@
+# Additional runtime for the reviewed image delivery and IANA account schedules.
+# Exact versions used by the local regression suite.
+Pillow==12.3.0
+tzdata==2026.3

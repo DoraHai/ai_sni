@@ -1,0 +1,119 @@
+{
+  "schema": 1,
+  "module": "geo",
+  "backend_commit": "bc13259e20478ff78595df6068c8c00c04bd8561",
+  "source_tree_clean": true,
+  "frontend_commit": "88a591101b28827468a188135f0e48c120965d03",
+  "source": "synthetic AuthContext over native ASGI/PostgreSQL",
+  "sample_sha256": "bbfd7312f3d4a9db42e94786f8052e163bf976e4129ea08e43a3249a8d31efb1",
+  "route": "/api/v1/geo/workbench/automation-health",
+  "cases_checked": 9,
+  "captured_response_overwritten_by_last_scenario": false,
+  "results": [
+    {
+      "index": 0,
+      "test_case": "health_available",
+      "http_status": 200,
+      "no_store": true,
+      "body_state": "available",
+      "frontend_read_state": "available",
+      "shape_accepted": true,
+      "visible_counts": {
+        "projects": 1,
+        "runs": 1,
+        "pending_human": 0,
+        "unknown_cost": 0
+      },
+      "private_identity_cleared": false
+    },
+    {
+      "index": 1,
+      "test_case": "health_schema_pending",
+      "http_status": 200,
+      "no_store": true,
+      "body_state": "schema_pending",
+      "frontend_read_state": "available",
+      "shape_accepted": true,
+      "visible_counts": null,
+      "private_identity_cleared": false
+    },
+    {
+      "index": 2,
+      "test_case": "health_db_unavailable",
+      "http_status": 503,
+      "no_store": true,
+      "body_state": "unavailable",
+      "frontend_read_state": "unavailable",
+      "shape_accepted": true,
+      "visible_counts": null,
+      "private_identity_cleared": false
+    },
+    {
+      "index": 3,
+      "test_case": "health_auth_missing",
+      "http_status": 401,
+      "no_store": true,
+      "body_state": null,
+      "frontend_read_state": "unauthorized",
+      "shape_accepted": false,
+      "visible_counts": null,
+      "private_identity_cleared": true
+    },
+    {
+      "index": 4,
+      "test_case": "health_api_key_rejected",
+      "http_status": 403,
+      "no_store": true,
+      "body_state": null,
+      "frontend_read_state": "forbidden",
+      "shape_accepted": false,
+      "visible_counts": null,
+      "private_identity_cleared": true
+    },
+    {
+      "index": 5,
+      "test_case": "health_tenant_bound_rejected",
+      "http_status": 403,
+      "no_store": true,
+      "body_state": null,
+      "frontend_read_state": "forbidden",
+      "shape_accepted": false,
+      "visible_counts": null,
+      "private_identity_cleared": true
+    },
+    {
+      "index": 6,
+      "test_case": "health_ordinary_advisor_rejected",
+      "http_status": 403,
+      "no_store": true,
+      "body_state": null,
+      "frontend_read_state": "forbidden",
+      "shape_accepted": false,
+      "visible_counts": null,
+      "private_identity_cleared": true
+    },
+    {
+      "index": 7,
+      "test_case": "health_single_permission_rejected",
+      "http_status": 403,
+      "no_store": true,
+      "body_state": null,
+      "frontend_read_state": "forbidden",
+      "shape_accepted": false,
+      "visible_counts": null,
+      "private_identity_cleared": true
+    },
+    {
+      "index": 8,
+      "test_case": "health_fresh_role_revoked",
+      "http_status": 403,
+      "no_store": true,
+      "body_state": null,
+      "frontend_read_state": "forbidden",
+      "shape_accepted": false,
+      "visible_counts": null,
+      "private_identity_cleared": true
+    }
+  ],
+  "limitations": []
+}

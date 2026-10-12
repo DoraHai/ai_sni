@@ -1,0 +1,132 @@
+{
+  "schema": 1,
+  "module": "geo",
+  "evaluated_at": "2026-10-11T04:24:24.567197+00:00",
+  "candidate_commit": "bc13259e20478ff78595df6068c8c00c04bd8561",
+  "candidate_tree_clean": true,
+  "validator_sha256": "796864cbc56c0f89228417b1e1f319af5f88e65fc9a94af43e266cb9c93b8d98",
+  "input_sha256": "4cb540951d26666f05dc3b60b9bd61506eadabcfc1bd6e97565c5e3f3ffc45ef",
+  "source_kind": "synthetic_guard_fixture",
+  "source_provenance": {
+    "description": "Negative and safe fixtures derived from recorded synthetic examples; they are not new model runs."
+  },
+  "rubric": {
+    "facts": 30,
+    "focus": 20,
+    "actionability": 20,
+    "traceability": 15,
+    "human_boundary": 15
+  },
+  "business_threshold": 85,
+  "cases": [
+    {
+      "name": "normal",
+      "validator_accepted": true,
+      "accepted": true,
+      "reason": "accepted",
+      "items": 5,
+      "nonempty_items": 5,
+      "expectation_met": true,
+      "score": null,
+      "decision": "synthetic_fixture_not_model_quality"
+    },
+    {
+      "name": "missing_facts",
+      "validator_accepted": true,
+      "accepted": true,
+      "reason": "accepted",
+      "items": 5,
+      "nonempty_items": 0,
+      "expectation_met": true,
+      "score": null,
+      "decision": "synthetic_fixture_not_model_quality"
+    },
+    {
+      "name": "blocking_information",
+      "validator_accepted": true,
+      "accepted": true,
+      "reason": "accepted",
+      "items": 5,
+      "nonempty_items": 0,
+      "expectation_met": true,
+      "score": null,
+      "decision": "synthetic_fixture_not_model_quality"
+    },
+    {
+      "name": "injected_input",
+      "validator_accepted": true,
+      "accepted": true,
+      "reason": "accepted",
+      "items": 5,
+      "nonempty_items": 5,
+      "expectation_met": true,
+      "score": null,
+      "decision": "synthetic_fixture_not_model_quality"
+    },
+    {
+      "name": "forged_source",
+      "validator_accepted": false,
+      "accepted": false,
+      "reason": "production_validator_rejected",
+      "expectation_met": true,
+      "score": null,
+      "decision": "automatic_gate_rejected"
+    },
+    {
+      "name": "extra_target",
+      "validator_accepted": false,
+      "accepted": false,
+      "reason": "production_validator_rejected",
+      "expectation_met": true,
+      "score": null,
+      "decision": "automatic_gate_rejected"
+    },
+    {
+      "name": "private_output",
+      "validator_accepted": false,
+      "accepted": false,
+      "reason": "production_validator_rejected",
+      "expectation_met": true,
+      "score": null,
+      "decision": "automatic_gate_rejected"
+    },
+    {
+      "name": "false_completion",
+      "validator_accepted": false,
+      "accepted": false,
+      "reason": "production_validator_rejected",
+      "expectation_met": true,
+      "score": null,
+      "decision": "automatic_gate_rejected"
+    },
+    {
+      "name": "negation_does_not_cover_next_claim",
+      "validator_accepted": false,
+      "accepted": false,
+      "reason": "production_validator_rejected",
+      "expectation_met": true,
+      "score": null,
+      "decision": "automatic_gate_rejected"
+    },
+    {
+      "name": "automatic_completion_claim",
+      "validator_accepted": false,
+      "accepted": false,
+      "reason": "production_validator_rejected",
+      "expectation_met": true,
+      "score": null,
+      "decision": "automatic_gate_rejected"
+    }
+  ],
+  "expectations_passed": 10,
+  "total": 10,
+  "model_calls_made": 0,
+  "business_scores_available": 0,
+  "production_approval": false,
+  "limitations": [
+    "Offline replay does not prove current provider availability.",
+    "Synthetic fixtures do not earn model-quality scores.",
+    "Business scores require explicit human review; no score is derived from test counts.",
+    "Completion-text screening is an evaluation gate, not a new deployed runtime guard."
+  ]
+}

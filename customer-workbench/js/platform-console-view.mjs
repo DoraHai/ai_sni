@@ -1,3 +1,4 @@
+import {mountDistributionAdmin} from './distribution-panel.mjs';
 import {renderBalances} from './platform-balances-view.mjs';
 import {renderAiGovernance} from './platform-ai-governance-view.mjs';
 import {escapeText as esc} from './customer-display.mjs';
@@ -7,9 +8,11 @@ import {renderSystemConfig,hydrateConnectionForm,setConnectionMode,connectionPay
 import {renderUsagePanel,renderAlertsPanel,renderSuppliersPanel,renderBackupPanel,renderCallMonitor} from './platform-ops-panel.mjs';
 import {platformNotifications} from './platform-alert-archive.mjs';
 import {canReviewUsage,usageReviewPayload,reviewableUsageRow} from './platform-usage-review.mjs';
+import {automationReadState} from './platform-automation-health.mjs';
+import {renderAutomationOps,automationNotifications} from './platform-automation-ops-view.mjs';
 
 const tabs=[['overview','平台总览'],['customers','客户与服务'],['accounts','账号与权限'],['apis','API 与调用'],
-  ['ai-governance','AI 自动化治理'],['balances','实时余额与预警'],['costs','成本与用量'],['controls','API 与预算管理'],['config','系统配置'],['alerts','告警与处理'],['tasks','任务与调度'],['security','安全与运维'],['inventory','系统盘点']];
+  ['ai-governance','AI 自动化治理'],['automation-ops','自动执行运维'],['distribution','多号通分发接入'],['balances','实时余额与预警'],['costs','成本与用量'],['controls','API 与预算管理'],['config','系统配置'],['alerts','告警与处理'],['tasks','任务与调度'],['security','安全与运维'],['inventory','系统盘点']];
 const value=n=>n==null?'待接入':Number(n).toLocaleString('zh-CN');
 const time=s=>s?new Date(s).toLocaleString('zh-CN',{hour12:false}):'暂无记录';
 const providerLabel=p=>({chinaz:'站长之家',dataforseo:'DataForSEO',dashscope:'阿里云百炼',deepseek:'DeepSeek',baidu:'百度推广'}[p]||p||'未提供');
@@ -34,6 +37,7 @@ const inventory=[
 
 export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=window}){
   root.classList.add('platform-console');browser.document.title='超级管理员工作台 · G-SNIPERS';
+  let distributionMount=null;
   let page='overview',snapshot=null,identity=null,busy=false,disposed=false,ownChange=false,query='',revision=0;
   let loginController=null,notice='',saving=false,connectionId=null,alertId=null,supplierHost=null;
   const today=()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai'}).format(new Date());
@@ -41,6 +45,8 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   let history=blankHistory(),governance=null,governanceError='';
   const blankBalances=()=>({data:null,error:'',busy:false,after_id:0,cursors:[]});
   let balanceState=blankBalances();
+  const blankAutomation=()=>({busy:false,modules:{seo:{state:'unknown',data:null},geo:{state:'unknown',data:null}}});
+  let automationState=blankAutomation();
   const client=createPlatformConsoleClient({session,fetchImpl,onExpired:()=>login('登录已失效，请重新登录。'),
     refreshUser(user){ownChange=true;try{session.refreshUser(user);}finally{ownChange=false;}}});
   const source=name=>snapshot?.sources[name]||{state:'unavailable',total:null,rows:[],truncated:false};
@@ -141,15 +147,35 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     return [`<b>${n}</b>`,status(pending?'管理待启用':s),esc(d),esc(pending?'管理模块代码已就绪，等待数据库审核启用。':next)];
   })),'盘点以当前源码、接口和本页实际接入范围为依据。已接入、部分接入与待接入分别标注。');}
   function search(placeholder){return `<label class="pc-search"><span>筛选</span><input id="pc-search" type="search" value="${esc(query)}" placeholder="${placeholder}" maxlength="100"></label>`;}
+  function currentAlerts(){
+    const alerts=platformNotifications(snapshot,value);
+    alerts.push(...automationNotifications(automationState));
+    for(const r of balanceState.data?.rows||[]){if(r.state==='available'&&r.warning==='low')alerts.push({tenant_id:r.tenant_id,severity:'warning',message:r.name+' 余额低于预警阈值，请核对充值安排（查询时间 '+time(r.queried_at)+'）。'});}
+    return alerts;
+  }
+  function alertsMarkup(alerts){
+    return `<div class="pc-section-head"><h2>告警与待处理</h2><span class="pc-tag">${alerts.length}</span></div><p class="pc-note">来自已有记录的提醒</p>${alerts.length?alerts.map(a=>`<div class="pc-alert"><span class="pc-alert-dot ${a.severity==='error'?'error':''}"></span><div><b>${esc(tenant(a.tenant_id))}</b><p>${esc(a.message)}</p></div></div>`).join(''):empty('暂无已记录告警')}<p class="pc-note">告警覆盖随数据源接入逐步完善。</p>`;
+  }
+  function repaintAutomation(){
+    if(!snapshot||disposed)return;
+    if(page==='automation-ops'){render();return;}
+    const panel=root.querySelector('.pc-right > section:first-child');
+    if(panel)panel.innerHTML=alertsMarkup(currentAlerts());
+  }
   function render(){
     if(disposed||!snapshot)return;
-    const alerts=platformNotifications(snapshot,value);
-    for(const r of balanceState.data?.rows||[]){if(r.state==='available'&&r.warning==='low')alerts.push({tenant_id:r.tenant_id,severity:'warning',message:r.name+' 余额低于预警阈值，请核对充值安排（查询时间 '+time(r.queried_at)+'）。'});}
-    root.innerHTML=`<header class="pc-header"><a class="pc-brand" href="${platformConsolePath}">G-SNIPERS</a><span class="pc-header-label">超级管理员工作台</span><span class="pc-admin-badge">平台管理</span><div class="pc-header-actions"><span>${esc(identity.display_name||identity.username)}</span><a href="/customer-workbench/">客户工作台</a><button data-pc="logout">退出</button></div></header><div class="pc-layout"><aside class="pc-sidebar"><small>全局管理</small><nav aria-label="超级管理员导航">${tabs.map(([id,label])=>`<button data-pc-page="${id}" ${page===id?'aria-current="page" class="active"':''}>${label}</button>`).join('')}</nav><div class="pc-sidebar-foot"><b>统一管理入口</b><p>客户、账号和服务记录集中查看。</p></div></aside><main class="pc-main"><div class="pc-title"><div><small>平台管理 / ${tabs.find(t=>t[0]===page)[1]}</small><h1>${tabs.find(t=>t[0]===page)[1]}</h1></div><button data-pc="refresh" ${busy?'disabled':''}>${busy?'正在读取…':'刷新数据'}</button></div><p class="pc-updated" role="status">最近读取 ${esc(time(snapshot.generated_at))} · 数据来自现有系统</p><p class="pc-save-notice" role="status">${esc(notice)}</p><div class="pc-kpis">${summary()}</div><div class="pc-content">${({overview,customers,accounts,apis,'ai-governance':()=>renderAiGovernance({data:governance,error:governanceError,card,table}),balances:()=>renderBalances({state:balanceState,card,table,time}),costs,controls,config,alerts:alertsPage,tasks,security,inventory:inventoryView})[page]()}</div></main><aside class="pc-right"><section class="pc-card"><div class="pc-section-head"><h2>告警与待处理</h2><span class="pc-tag">${alerts.length}</span></div><p class="pc-note">来自已有记录的提醒</p>${alerts.length?alerts.map(a=>`<div class="pc-alert"><span class="pc-alert-dot ${a.severity==='error'?'error':''}"></span><div><b>${esc(tenant(a.tenant_id))}</b><p>${esc(a.message)}</p></div></div>`).join(''):empty('暂无已记录告警')}<p class="pc-note">告警覆盖随数据源接入逐步完善。</p></section><section class="pc-card pc-help"><h2>管理入口</h2>${link('客户与模块','/platform/customers')}${link('账号与角色','/platform/accounts')}<button data-pc-page="inventory">查看系统盘点 →</button></section></aside></div>`;
+    distributionMount?.dispose();distributionMount=null;
+    const alerts=currentAlerts();
+    root.innerHTML=`<header class="pc-header"><a class="pc-brand" href="${platformConsolePath}">G-SNIPERS</a><span class="pc-header-label">超级管理员工作台</span><span class="pc-admin-badge">平台管理</span><div class="pc-header-actions"><span>${esc(identity.display_name||identity.username)}</span><a href="/customer-workbench/">客户工作台</a><button data-pc="logout">退出</button></div></header><div class="pc-layout"><aside class="pc-sidebar"><small>全局管理</small><nav aria-label="超级管理员导航">${tabs.map(([id,label])=>`<button data-pc-page="${id}" ${page===id?'aria-current="page" class="active"':''}>${label}</button>`).join('')}</nav><div class="pc-sidebar-foot"><b>统一管理入口</b><p>客户、账号和服务记录集中查看。</p></div></aside><main class="pc-main"><div class="pc-title"><div><small>平台管理 / ${tabs.find(t=>t[0]===page)[1]}</small><h1>${tabs.find(t=>t[0]===page)[1]}</h1></div><button data-pc="refresh" ${busy?'disabled':''}>${busy?'正在读取…':'刷新数据'}</button></div><p class="pc-updated" role="status">最近读取 ${esc(time(snapshot.generated_at))} · 数据来自现有系统</p><p class="pc-save-notice" role="status">${esc(notice)}</p><div class="pc-kpis">${summary()}</div><div class="pc-content">${({overview,customers,accounts,apis,distribution:()=>'<div class="distribution-admin-host"></div>','ai-governance':()=>renderAiGovernance({data:governance,error:governanceError,card,table}),'automation-ops':()=>renderAutomationOps({state:automationState,card,table,time,tenant}),balances:()=>renderBalances({state:balanceState,card,table,time}),costs,controls,config,alerts:alertsPage,tasks,security,inventory:inventoryView})[page]()}</div></main><aside class="pc-right"><section class="pc-card">${alertsMarkup(alerts)}</section><section class="pc-card pc-help"><h2>管理入口</h2>${link('客户与模块','/platform/customers')}${link('账号与角色','/platform/accounts')}<button data-pc-page="automation-ops">查看自动执行运维 →</button><button data-pc-page="inventory">查看系统盘点 →</button></section></aside></div>`;
+    if(page==='distribution')distributionMount=mountDistributionAdmin({root:root.querySelector('.distribution-admin-host'),session,fetchImpl,browser,
+      catalog:[['seo','seo_sites'],['geo','geo_projects']].flatMap(([module,sourceName])=>source(sourceName).rows
+        .filter(row=>Number.isSafeInteger(row.id)&&row.id>0&&Number.isSafeInteger(row.tenant_id)&&row.tenant_id>0)
+        .map(row=>({module,tenant_id:row.tenant_id,scope_id:row.id,tenant_name:tenant(row.tenant_id),scope_name:row.name||'项目 #'+row.id})))});
     root.querySelectorAll(".pc-control-form").forEach(form=>form.dataset.controlKind==='connection'?hydrateConnectionForm(form,snapshot):hydrateControlForm(form,snapshot));
   }
-  function gate(title,note){root.innerHTML=`<header class="pc-header"><a class="pc-brand" href="${platformConsolePath}">G-SNIPERS</a><span>超级管理员工作台</span></header><main class="pc-gate"><section class="pc-card"><small>平台管理</small><h1>${esc(title)}</h1><p role="status">${esc(note)}</p><div class="pc-shortcuts"><button data-pc="refresh">重新读取</button><button data-pc="logout">切换账号</button><a href="/customer-workbench/">返回客户工作台</a></div></section></main>`;}
+  function gate(title,note){distributionMount?.dispose();distributionMount=null;root.innerHTML=`<header class="pc-header"><a class="pc-brand" href="${platformConsolePath}">G-SNIPERS</a><span>超级管理员工作台</span></header><main class="pc-gate"><section class="pc-card"><small>平台管理</small><h1>${esc(title)}</h1><p role="status">${esc(note)}</p><div class="pc-shortcuts"><button data-pc="refresh">重新读取</button><button data-pc="logout">切换账号</button><a href="/customer-workbench/">返回客户工作台</a></div></section></main>`;}
   function login(note=''){
+    automationState=blankAutomation();
     snapshot=null;identity=null;history=blankHistory();balanceState=blankBalances();
     root.innerHTML=`<header class="pc-header"><a class="pc-brand" href="${platformConsolePath}">G-SNIPERS</a><span>超级管理员工作台</span></header><main class="pc-gate"><section class="pc-card"><small>平台管理</small><h1>登录超级管理员工作台</h1><p>使用现有的全局管理员账号。</p><form id="pc-login"><label>账号<input name="username" autocomplete="username" minlength="2" maxlength="50" required></label><label>密码<input name="password" type="password" autocomplete="current-password" maxlength="100" required></label><label class="pc-remember"><input name="remember" type="checkbox">记住登录状态</label><p role="status">${esc(note)}</p><button class="primary" type="submit">登录并进入</button></form><a href="/customer-workbench/">返回客户工作台</a></section></main>`;
   }
@@ -218,6 +244,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     }finally{if(!disposed&&started===revision){history.busy=false;render();}}
   }
   async function load(){
+    automationState=blankAutomation();
     if(disposed)return;revision++;const started=revision;snapshot=null;identity=null;busy=true;query='';history=blankHistory();governance=null;governanceError='';balanceState=blankBalances();
     if(!session.token){busy=false;login();return;}
     gate('正在读取平台数据','正在核对账号权限…');
@@ -225,6 +252,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
       const result=await client.initialize();
       if(disposed||started!==revision)return;
       identity=result.user;snapshot=result.data;busy=false;render();if(page==='balances')void queryBalances();
+      void queryAutomation();
       try{
         const data=await client.governance();
         if(disposed||started!==revision)return;
@@ -239,6 +267,29 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
       if(e.code==='CONSOLE_EXPIRED'||!session.token){login('登录已失效，请重新登录。');return;}
       snapshot=null;identity=null;gate(e.status===403?'此账号无法进入超管工作台':'平台数据暂时无法读取',e.status===403?'需要未绑定客户、且同时拥有客户和账号管理编辑权限的全局账号。':'请稍后重试。读取失败不会显示为零或沿用旧数据。');
     }
+  }
+  async function queryAutomation(){
+    if(disposed||!snapshot||automationState.busy)return;
+    const started=revision,current=blankAutomation();current.busy=true;
+    for(const module of ['seo','geo'])current.modules[module].state='loading';
+    automationState=current;repaintAutomation();
+    await Promise.all(['seo','geo'].map(async module=>{
+      try{
+        const data=await client.automationHealth(module);
+        if(disposed||started!==revision||automationState!==current||!snapshot)return;
+        current.modules[module]={state:'available',data};
+      }catch(e){
+        if(disposed||started!==revision||e.code==='CONSOLE_STALE'||automationState!==current)return;
+        if(e.status===401||e.status===403){
+          revision++;client.invalidate();automationState=blankAutomation();snapshot=null;identity=null;
+          history=blankHistory();balanceState=blankBalances();governance=null;
+          gate('无法读取自动执行运维','登录已失效或无读取权限，请重新核验全局管理员身份。');return;
+        }
+        current.modules[module]={state:automationReadState(e),data:null};
+      }
+      if(!disposed&&started===revision&&automationState===current)repaintAutomation();
+    }));
+    if(!disposed&&started===revision&&automationState===current){current.busy=false;repaintAutomation();}
   }
   async function submit(event){
     if(event.target.id==='pc-usage-review'){
@@ -325,6 +376,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     finally{loginController=null;}
   }
   function click(event){const b=event.target.closest('[data-pc],[data-pc-page],[data-pc-connection]');if(!b||b.disabled)return;
+    if(b.dataset.pc==='automation-refresh')void queryAutomation();
     if(b.dataset.pc==='balance-refresh')void queryBalances(true);
     if(b.dataset.pc==='balance-next'&&balanceState.data?.next_after_id)void queryBalances(false,balanceState.data.next_after_id);
     if(b.dataset.pc==='balance-first')void queryBalances(false,0);
@@ -354,6 +406,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   function changed(){if(disposed||ownChange)return;notice='';revision++;client.invalidate();loginController?.abort();snapshot=null;identity=null;if(!session.token)login('账号已退出。');else void load();}
   root.addEventListener('click',click);root.addEventListener('submit',submit);root.addEventListener('input',input);root.addEventListener('change',change);browser.addEventListener('sem:auth-context-changed',changed);
   const balanceTimer=browser.setInterval(()=>{if(page==='balances'&&snapshot&&browser.document.visibilityState==='visible')void queryBalances();},300000);
+  const automationTimer=browser.setInterval(()=>{if(snapshot&&browser.document.visibilityState==='visible')void queryAutomation();},60000);
   void load();
-  return {dispose(){browser.clearInterval(balanceTimer);disposed=true;revision++;client.invalidate();loginController?.abort();browser.removeEventListener('sem:auth-context-changed',changed);root.removeEventListener('click',click);root.removeEventListener('submit',submit);root.removeEventListener('input',input);root.removeEventListener('change',change);root.classList.remove('platform-console');root.replaceChildren();}};
+  return {dispose(){browser.clearInterval(balanceTimer);browser.clearInterval(automationTimer);automationState=blankAutomation();disposed=true;distributionMount?.dispose();distributionMount=null;revision++;client.invalidate();loginController?.abort();browser.removeEventListener('sem:auth-context-changed',changed);root.removeEventListener('click',click);root.removeEventListener('submit',submit);root.removeEventListener('input',input);root.removeEventListener('change',change);root.classList.remove('platform-console');root.replaceChildren();}};
 }

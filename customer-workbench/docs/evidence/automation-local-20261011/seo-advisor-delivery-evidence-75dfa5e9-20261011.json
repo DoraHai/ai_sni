@@ -1,0 +1,36 @@
+{
+  "backend_commit": "75dfa5e9fc75af51a27f4bc221ba3008ca7f1724",
+  "source_tree_clean": true,
+  "test_counts": {
+    "tests": 348,
+    "failed": 0,
+    "skipped": 0
+  },
+  "delivery_postgres_cases": 15,
+  "environment": "dedicated loopback PostgreSQL; actual login/JWT/full SEO ASGI routes; provider and page HTTP mocked",
+  "not_verified": [
+    "browser-to-PG",
+    "real website changes",
+    "live supplier quality",
+    "production deployment",
+    "publication/distribution",
+    "search improvement"
+  ],
+  "files": {
+    "C:\\Users\\Administrator\\AppData\\Local\\Temp\\seo-advisor-delivery-final.xml": {
+      "sha256": "18e3e07c84259698563b2d6afc53ada20ab39da33829b23217e49b268f8efe29"
+    },
+    "C:\\Users\\Administrator\\AppData\\Local\\Temp\\seo-advisor-delivery-http-samples.json": {
+      "sha256": "030097a6fe936db90a80727983eb21c0929f113249abd8b81cb223c47ba8d336"
+    },
+    "C:\\Users\\Administrator\\AppData\\Local\\Temp\\seo-automation-v2-http-samples.json": {
+      "sha256": "3424690db15c9bb585151c410d306ee19e8110e49a69a64ca2b69eb2ecde6927"
+    }
+  },
+  "changed_sources": {
+    "D:\\SNIPERS国内版\\ai_sni-worktrees\\seo-ai-planning-20261010\\app\\api\\seo_onsite.py": "319c558cdf07b498fd65720dc84967d85ce0f25b68b4d3ab9f300b64bc9284e5",
+    "D:\\SNIPERS国内版\\ai_sni-worktrees\\seo-ai-planning-20261010\\tests\\test_seo_onsite_postgres.py": "7d2e693f5872bc2e5eeab410f23822927029afa519f214028d6e3c5284b28f6a",
+    "D:\\SNIPERS国内版\\ai_sni-worktrees\\seo-ai-planning-20261010\\tests\\test_seo_onsite.py": "a7305f74f5a81e09d4f266897b15271c168d3f7678c2c19874e3112ce6466430",
+    "D:\\SNIPERS国内版\\ai_sni-worktrees\\seo-ai-planning-20261010\\docs\\SEO_ONSITE_AI_CONTRACT.md": "428c6a4a53edbf35817c666da7c8d8d2300c440defdfdd0829b4106e2d1d0aea"
+  }
+}

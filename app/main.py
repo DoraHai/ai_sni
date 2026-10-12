@@ -64,6 +64,7 @@ from app.scheduler import (
 from app.security.auth import require_scoped_auth
 from app.security.crypto import encrypt
 from app.security.prod_guard import enforce_production_secrets
+from app.api.distribution import router as distribution_router
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level)
@@ -122,6 +123,7 @@ app.include_router(manage_router)
 app.include_router(assistant_router)
 app.include_router(onboarding_builder_router)
 app.include_router(seo_router)
+app.include_router(distribution_router)
 
 
 @app.get("/health")

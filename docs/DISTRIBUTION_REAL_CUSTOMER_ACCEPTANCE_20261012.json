@@ -1,0 +1,670 @@
+{
+  "recorded_at": "2026-10-12T01:09:21.447589+00:00",
+  "runtime": {
+    "seo": {
+      "central_head": "7a585f5425ac2c1269f37448cdb840f803e8830c",
+      "native_head": "b4d8387123355348f79e26ea2838585c5106a4b9",
+      "module": "seo",
+      "port": 55851,
+      "schema": "acceptance_seo",
+      "automaticSubmit": false,
+      "publicationVerified": false,
+      "production": false,
+      "central_files": {
+        "app/distribution_contract.py": "aa99eff7ed7071155d4ba0700ce6924e7d69b466a9035118eb61abbee1327c1a",
+        "app/distribution_control.py": "17a9b8967141aafb7dc646f7fafdb2f5970c8709f53b052ae1dc43501af6aa97",
+        "app/distribution_scheduling.py": "87b56704b8dfc70eadda04ada79719d35841f3e2aea75759c53c8698d6d0a140",
+        "app/distribution_publication_results.py": "da9cca5cfed0d60be9dc90711bc39a218b527f77f6f0c83ccd765afe86af4e1b",
+        "app/distribution_publication_verify.py": "c85e39c68b50f23f6f762dfc1083f833843d62a16c0e01dd4e0e881d3d9a5bae",
+        "app/distribution_planning.py": "95bf752bad56643a6ed4673160d34cf2bfd8a51976b08d0d67160f191921a54d",
+        "app/distribution_planning_gateway.py": "b34426f30ce144a6d9d4e4ac09e94e678fccd79111a0909f58329ee4f2e1befe",
+        "app/distribution_queue.py": "7645fa80515aa601c4d470162b3ad663827e8fb69fe06004d5f81e52e2648a17",
+        "app/distribution_execution.py": "6d661307c454ea505c32c8f1a533e7ed91c8510e441d1c44fd380b6b5a491182",
+        "app/distribution_execution_capabilities.py": "a990fa744855f831441eb1218629bb765c1cd8e327a893f6edf87fed41b96f7d",
+        "app/distribution_capability_contract.py": "799ccc5a63154f843d129020b72247738af11974455ae6b1aab1e2c23b8a8467",
+        "app/distribution_handoff_receipts.py": "2db8c29a3b0ba64572bec02ba62701eaa1f501b3fd4e295f5387e8cfed5f4e44",
+        "app/api/distribution.py": "ebf17ce9d3b2aa3c1c88d07b30722431926cafa1fcad17a77f227d6edcceb466",
+        "scripts/distribution_queue_worker.py": "7e745308c5c6dd41409c69a65cc9d4fcf0ffcbb1e1813a12cc56ae60cce6cd24",
+        "scripts/distribution_assembled_worker.py": "ca8fd29d40b93626fcb4176e175284d00ceb597c020d192c8596b8caad0d4a86",
+        "scripts/distribution_execution_schema.sql": "62ce9ac8e687aa73f616df353a22595d8caf8c6ae712f2ff1133d185d2e20669",
+        "scripts/distribution_capability_registration_schema.sql": "3a435f760020be6f88c2ffd286d9965d44366b26e14fedf90a4bdde3c094a2b5",
+        "docs/fixtures/mht-distribution-capabilities-v1.json": "d16ca1d08ab0eba00eef569ea014a55aa5c05f77ff443af983077338aea36136",
+        "docs/fixtures/distribution-capability-registration-v1.json": "b6a00e07905cc80f9b61fb8b4005cdd86ceac4dd86e5b878241397e0296fcbe8",
+        "docs/fixtures/distribution-handoff-receipt-v1.json": "f9ed7b8fa151ba560f6c76c97ddd17cf70e488b24e4571b48ad67896bc337a29",
+        "docs/fixtures/distribution-handoff-resolution-read-v1.json": "7c82ccf7431efa1aab42915a9c3c5ddda299fbb8b7ab6fce974eaac5a7bfa8fc"
+      },
+      "acceptance_files": {
+        "distribution_acceptance_environment.py": "be095bd1e93732e53db8037b4849d0e12d535e60d77f4c12586d5a6b9e945603",
+        "distribution_acceptance_native.py": "517d5973dcddac4d50fa8021ac62fb3390ae46fff3700a8a9dcecf34c02d6059",
+        "distribution_acceptance_configure.py": "964b85acc3458cb47ed22d62f55181149f1daba3e3e20d4176eec9d60413bdd4",
+        "ui/app.js": "ef7c286dc8c2b54ff51c9241a4fcc076af9f37e71165d68b214438c8a9d2f0eb",
+        "ui/index.html": "5e3e15d954317d79479312e02f7553d7fb85a04f26aac800033438a27a0d76db",
+        "ui/style.css": "e5c7b4e3bb6fb0320fd11578b95cabde72fb6f43661841bc8c58d23fe49f0655"
+      },
+      "dependencies": {
+        "app/config.py": {
+          "sha256": "86e99c9e8185f3eaaed6016e76d1d886446f651dc95e6b65511f05bf7378602b",
+          "source_commit": "20316f9ecbf30403ebb4ce740b06f131f5255b51"
+        },
+        "app/database.py": {
+          "sha256": "1825eaeaaacf6b5594f450c20e852ea0a1f780588dc6a3785cc7dd50f5315033",
+          "source_commit": "2d6bfcb82eacd1c20a434bb38885a3966ae36e29"
+        },
+        "app/security/auth.py": {
+          "sha256": "a20f6e975d558d2435cd1dfc99587f3857a809f8d56c14aaefce161dc8db86cb",
+          "source_commit": "6000a979215fb79f607e29c1125a3781eda10d67"
+        },
+        "app/security/crypto.py": {
+          "sha256": "ed5f5ed9c06d4f4caebeae2e17ce0d1f0e50aec697be148f7cd55d7f058801c2",
+          "source_commit": "2d6bfcb82eacd1c20a434bb38885a3966ae36e29"
+        },
+        "app/api_metering.py": {
+          "sha256": "47c64d412541a2089d3ecc26d09387d6de2d8178d789c5f4176ef8992959c63c",
+          "source_commit": "eb3bc813b26c0519fb4ddba20d031de924fe47f8"
+        },
+        "app/api_controls.py": {
+          "sha256": "86eca0b7f0dd7aa880524d16568984e28c57c1633833a1e2f475f5e851a607ba",
+          "source_commit": "b23239234f62d622a0c2096df9e6b8e54a630810"
+        },
+        "app/api_connection_config.py": {
+          "sha256": "6645af699f209b505398c29fab35a58d8f632e1c66298fb39178cede130f7050",
+          "source_commit": "20316f9ecbf30403ebb4ce740b06f131f5255b51"
+        },
+        "app/api_usage_review_basis.py": {
+          "sha256": "efc3d14799eab45cc0e7d1ba741e0d1cb850cc87809c57ad554985b430367f62",
+          "source_commit": "5c37f5e7e4e8d62dd0c661951b694aad73e716bc"
+        },
+        "scripts/api_metering_schema.sql": {
+          "sha256": "295286b1952ab21cce4802dc10cd02cd07ced137ad7bcf69e95458ec2158b0d5",
+          "source_commit": "20316f9ecbf30403ebb4ce740b06f131f5255b51"
+        },
+        "scripts/api_controls_schema.sql": {
+          "sha256": "8e34c298ec9aa4a79bf78e401f7866b435a81eddd31980724a154130af2befd0",
+          "source_commit": "20316f9ecbf30403ebb4ce740b06f131f5255b51"
+        }
+      },
+      "planner_provider": "deterministic in-process simulator; no external provider call"
+    },
+    "geo": {
+      "central_head": "7a585f5425ac2c1269f37448cdb840f803e8830c",
+      "native_head": "46dacbd805afc00f37eba344306fde004039efed",
+      "module": "geo",
+      "port": 55852,
+      "schema": "acceptance_geo",
+      "automaticSubmit": false,
+      "publicationVerified": false,
+      "production": false,
+      "central_files": {
+        "app/distribution_contract.py": "aa99eff7ed7071155d4ba0700ce6924e7d69b466a9035118eb61abbee1327c1a",
+        "app/distribution_control.py": "17a9b8967141aafb7dc646f7fafdb2f5970c8709f53b052ae1dc43501af6aa97",
+        "app/distribution_scheduling.py": "87b56704b8dfc70eadda04ada79719d35841f3e2aea75759c53c8698d6d0a140",
+        "app/distribution_publication_results.py": "da9cca5cfed0d60be9dc90711bc39a218b527f77f6f0c83ccd765afe86af4e1b",
+        "app/distribution_publication_verify.py": "c85e39c68b50f23f6f762dfc1083f833843d62a16c0e01dd4e0e881d3d9a5bae",
+        "app/distribution_planning.py": "95bf752bad56643a6ed4673160d34cf2bfd8a51976b08d0d67160f191921a54d",
+        "app/distribution_planning_gateway.py": "b34426f30ce144a6d9d4e4ac09e94e678fccd79111a0909f58329ee4f2e1befe",
+        "app/distribution_queue.py": "7645fa80515aa601c4d470162b3ad663827e8fb69fe06004d5f81e52e2648a17",
+        "app/distribution_execution.py": "6d661307c454ea505c32c8f1a533e7ed91c8510e441d1c44fd380b6b5a491182",
+        "app/distribution_execution_capabilities.py": "a990fa744855f831441eb1218629bb765c1cd8e327a893f6edf87fed41b96f7d",
+        "app/distribution_capability_contract.py": "799ccc5a63154f843d129020b72247738af11974455ae6b1aab1e2c23b8a8467",
+        "app/distribution_handoff_receipts.py": "2db8c29a3b0ba64572bec02ba62701eaa1f501b3fd4e295f5387e8cfed5f4e44",
+        "app/api/distribution.py": "ebf17ce9d3b2aa3c1c88d07b30722431926cafa1fcad17a77f227d6edcceb466",
+        "scripts/distribution_queue_worker.py": "7e745308c5c6dd41409c69a65cc9d4fcf0ffcbb1e1813a12cc56ae60cce6cd24",
+        "scripts/distribution_assembled_worker.py": "ca8fd29d40b93626fcb4176e175284d00ceb597c020d192c8596b8caad0d4a86",
+        "scripts/distribution_execution_schema.sql": "62ce9ac8e687aa73f616df353a22595d8caf8c6ae712f2ff1133d185d2e20669",
+        "scripts/distribution_capability_registration_schema.sql": "3a435f760020be6f88c2ffd286d9965d44366b26e14fedf90a4bdde3c094a2b5",
+        "docs/fixtures/mht-distribution-capabilities-v1.json": "d16ca1d08ab0eba00eef569ea014a55aa5c05f77ff443af983077338aea36136",
+        "docs/fixtures/distribution-capability-registration-v1.json": "b6a00e07905cc80f9b61fb8b4005cdd86ceac4dd86e5b878241397e0296fcbe8",
+        "docs/fixtures/distribution-handoff-receipt-v1.json": "f9ed7b8fa151ba560f6c76c97ddd17cf70e488b24e4571b48ad67896bc337a29",
+        "docs/fixtures/distribution-handoff-resolution-read-v1.json": "7c82ccf7431efa1aab42915a9c3c5ddda299fbb8b7ab6fce974eaac5a7bfa8fc"
+      },
+      "acceptance_files": {
+        "distribution_acceptance_environment.py": "be095bd1e93732e53db8037b4849d0e12d535e60d77f4c12586d5a6b9e945603",
+        "distribution_acceptance_native.py": "517d5973dcddac4d50fa8021ac62fb3390ae46fff3700a8a9dcecf34c02d6059",
+        "distribution_acceptance_configure.py": "964b85acc3458cb47ed22d62f55181149f1daba3e3e20d4176eec9d60413bdd4",
+        "ui/app.js": "ef7c286dc8c2b54ff51c9241a4fcc076af9f37e71165d68b214438c8a9d2f0eb",
+        "ui/index.html": "5e3e15d954317d79479312e02f7553d7fb85a04f26aac800033438a27a0d76db",
+        "ui/style.css": "e5c7b4e3bb6fb0320fd11578b95cabde72fb6f43661841bc8c58d23fe49f0655"
+      },
+      "dependencies": {
+        "app/config.py": {
+          "sha256": "9a8e9c3ce2428dc13036a472912f2b8af380a981297f400153289989011e2d7d",
+          "source_commit": "d3aff8bc264262268860004de8eefeb81cbe9a2d"
+        },
+        "app/database.py": {
+          "sha256": "1825eaeaaacf6b5594f450c20e852ea0a1f780588dc6a3785cc7dd50f5315033",
+          "source_commit": "2d6bfcb82eacd1c20a434bb38885a3966ae36e29"
+        },
+        "app/security/auth.py": {
+          "sha256": "a0ffd2d643681c7cbe14d2f0b2d7865cdc450a6392523fe3b31a75a1c158ee48",
+          "source_commit": "151604688c4e4f3b3ba03aa447dbdb8a4e78ef04"
+        },
+        "app/security/crypto.py": {
+          "sha256": "ed5f5ed9c06d4f4caebeae2e17ce0d1f0e50aec697be148f7cd55d7f058801c2",
+          "source_commit": "2d6bfcb82eacd1c20a434bb38885a3966ae36e29"
+        },
+        "app/api_metering.py": {
+          "sha256": "e86ffed5499ba4af4986ba55df6a739dc077e86e637cd5cb3ed922c928d99508",
+          "source_commit": "b5454ffcc601f35121037a881cb27d56787659dc"
+        },
+        "app/api_controls.py": {
+          "sha256": "86eca0b7f0dd7aa880524d16568984e28c57c1633833a1e2f475f5e851a607ba",
+          "source_commit": "e8656210732bde42c6225a43d9e04c4107b68d41"
+        },
+        "app/api_connection_config.py": {
+          "sha256": "6645af699f209b505398c29fab35a58d8f632e1c66298fb39178cede130f7050",
+          "source_commit": "55496c06cde9de0221f5b82d6493f4c460d2f2b6"
+        },
+        "app/api_usage_review_basis.py": {
+          "sha256": "efc3d14799eab45cc0e7d1ba741e0d1cb850cc87809c57ad554985b430367f62",
+          "source_commit": "454799bfd39833be3e5b86d106aca215b148bb09"
+        },
+        "scripts/api_metering_schema.sql": {
+          "sha256": "295286b1952ab21cce4802dc10cd02cd07ced137ad7bcf69e95458ec2158b0d5",
+          "source_commit": "55496c06cde9de0221f5b82d6493f4c460d2f2b6"
+        },
+        "scripts/api_controls_schema.sql": {
+          "sha256": "8e34c298ec9aa4a79bf78e401f7866b435a81eddd31980724a154130af2befd0",
+          "source_commit": "55496c06cde9de0221f5b82d6493f4c460d2f2b6"
+        }
+      },
+      "planner_provider": "deterministic in-process simulator; no external provider call"
+    }
+  },
+  "modules": {
+    "seo": {
+      "source": {
+        "scope": {
+          "module": "seo",
+          "tenant_id": 15,
+          "scope_id": 6
+        },
+        "variant_id": 2,
+        "source_revision": "seo-m1-v1-0c334a4e507a90d59696798129b28e3d3b371bffbb81dddb2caacd93930314bb",
+        "content_digest": "28f0ef1c49e6cd6c8b70f94edee79d6b27925c39df68f9dbbe6178d0a2cdbece",
+        "body_sha256": "0f2d3bb31d010d20620d2264fc6c07d8e6635d7f1828b260c858198225514452",
+        "publicationVerified": false,
+        "source_current_native_gate": true
+      },
+      "task": {
+        "taskId": "99d30cca-83b0-4fa1-aefa-b314725b650d",
+        "grantId": "b710a1bd-b9ec-4b7b-88d6-38f90e5eabf3",
+        "leaseId": "6cc5dbee-e672-44c1-ba46-38a81e8be226",
+        "deviceId": "8172561d-499d-4949-973c-34c53b59288b",
+        "customerId": "15",
+        "projectId": "seo-6",
+        "accountId": "acceptance-seo",
+        "platform": "wechat-article",
+        "contentVersion": "seo-m1-v1-0c334a4e507a90d59696798129b28e3d3b371bffbb81dddb2caacd93930314bb",
+        "contentDigest": "28f0ef1c49e6cd6c8b70f94edee79d6b27925c39df68f9dbbe6178d0a2cdbece",
+        "action": "handoff",
+        "status": "succeeded",
+        "revoked": true,
+        "publicationGrantId": null,
+        "receiptCode": "HUMAN_HANDOFF_ACCEPTED",
+        "publicationVerified": false
+      },
+      "project": {
+        "tenant_id": 15,
+        "module": "seo",
+        "scope_id": 6,
+        "owner_user_id": 100007,
+        "state": "paused",
+        "revision": 4
+      },
+      "binding_active": false,
+      "native_publications": 0,
+      "central_publication_reservations": 0,
+      "sim_meter": {
+        "module": "seo",
+        "operation": "distribution_planning",
+        "user_id": 100007,
+        "tenant_id": 15,
+        "state": "succeeded",
+        "model": "sim-local-distribution-planning",
+        "provider_request_id": "acceptance-local-planner",
+        "prompt_tokens": 0,
+        "completion_tokens": 0
+      },
+      "customer_readonly_DOM": true,
+      "advisor_start_pause_DOM": true,
+      "post_restart_task_count": 1,
+      "closure_http_checks": [
+        {
+          "method": "GET",
+          "path": "/api/distribution/v1/scope",
+          "status": 200,
+          "code": null
+        },
+        {
+          "method": "GET",
+          "path": "/acceptance/handoff-results",
+          "status": 200,
+          "code": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/distribution/v1/control",
+          "status": 409,
+          "code": "version_conflict"
+        },
+        {
+          "method": "POST",
+          "path": "/api/distribution/v1/tasks",
+          "status": 403,
+          "code": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/distribution/v1/scope",
+          "status": 200,
+          "code": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/distribution/v1/bindings",
+          "status": 200,
+          "code": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/distribution/v1/bindings/8c10e5bf-c259-4045-9e93-f793be48de6f/revoke",
+          "status": 200,
+          "code": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/distribution/v1/bindings",
+          "status": 200,
+          "code": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/distribution/v1/control",
+          "status": 403,
+          "code": null
+        },
+        {
+          "method": "GET",
+          "path": "/acceptance/handoff-results",
+          "status": 200,
+          "code": null
+        },
+        {
+          "method": "GET",
+          "path": "/acceptance/handoff-results",
+          "status": 403,
+          "code": null
+        }
+      ],
+      "audit_actions": [
+        "account_binding_revoked",
+        "account_bound",
+        "handoff_closed",
+        "handoff_permission",
+        "plan_blocked",
+        "plan_requested",
+        "plan_saved",
+        "project_channel",
+        "project_pause",
+        "project_resume",
+        "project_start",
+        "queue_awaiting-adaptation",
+        "queue_awaiting-intervention",
+        "queue_handoff_authorized",
+        "queue_intake",
+        "queue_paused",
+        "queue_scan",
+        "receipt_recorded",
+        "task_authorized",
+        "task_dispatched"
+      ]
+    },
+    "geo": {
+      "source": {
+        "scope": {
+          "module": "geo",
+          "tenant_id": 1,
+          "scope_id": 2
+        },
+        "variant_id": 13,
+        "source_revision": "geo-a23-v4-c13-r1791766818565636-q1791766818571753-h9938dfbc31d67956faa6",
+        "content_digest": "4ce18723c175a24ab536d6f2e6672f96b4ae169200ca38092151da479474efac",
+        "body_sha256": "5e92654652489c83cd2c2f2f4825b46042310dff0b6ee29b171847b2750c5771",
+        "publicationVerified": false,
+        "source_current_native_gate": true
+      },
+      "task": {
+        "taskId": "eb3574b7-e93e-44ed-b8fb-6aeb367bd053",
+        "grantId": "649c4623-b125-4361-a2ff-87074c3a168f",
+        "leaseId": "2b4e384e-cfea-4109-ab53-74b2cd220554",
+        "deviceId": "a28bf450-625c-41b7-b753-79f896637fbe",
+        "customerId": "1",
+        "projectId": "geo-2",
+        "accountId": "acceptance-geo",
+        "platform": "wechat-article",
+        "contentVersion": "geo-a23-v4-c13-r1791766818565636-q1791766818571753-h9938dfbc31d67956faa6",
+        "contentDigest": "4ce18723c175a24ab536d6f2e6672f96b4ae169200ca38092151da479474efac",
+        "action": "handoff",
+        "status": "succeeded",
+        "revoked": true,
+        "publicationGrantId": null,
+        "receiptCode": "HUMAN_HANDOFF_ACCEPTED",
+        "publicationVerified": false
+      },
+      "project": {
+        "tenant_id": 1,
+        "module": "geo",
+        "scope_id": 2,
+        "owner_user_id": 100007,
+        "state": "paused",
+        "revision": 4
+      },
+      "binding_active": false,
+      "native_publications": 0,
+      "central_publication_reservations": 0,
+      "sim_meter": {
+        "module": "geo",
+        "operation": "distribution_planning",
+        "user_id": 100007,
+        "tenant_id": 1,
+        "state": "succeeded",
+        "model": "sim-local-distribution-planning",
+        "provider_request_id": "acceptance-local-planner",
+        "prompt_tokens": 0,
+        "completion_tokens": 0
+      },
+      "customer_readonly_DOM": true,
+      "advisor_start_pause_DOM": true,
+      "post_restart_task_count": 1,
+      "closure_http_checks": [
+        {
+          "method": "GET",
+          "path": "/api/distribution/v1/scope",
+          "status": 200,
+          "code": null
+        },
+        {
+          "method": "GET",
+          "path": "/acceptance/handoff-results",
+          "status": 200,
+          "code": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/distribution/v1/control",
+          "status": 409,
+          "code": "version_conflict"
+        },
+        {
+          "method": "POST",
+          "path": "/api/distribution/v1/tasks",
+          "status": 403,
+          "code": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/distribution/v1/scope",
+          "status": 200,
+          "code": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/distribution/v1/bindings",
+          "status": 200,
+          "code": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/distribution/v1/bindings/cec08db3-28b9-4abd-bf3b-ca96d4d91194/revoke",
+          "status": 200,
+          "code": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/distribution/v1/bindings",
+          "status": 200,
+          "code": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/distribution/v1/control",
+          "status": 403,
+          "code": null
+        },
+        {
+          "method": "GET",
+          "path": "/acceptance/handoff-results",
+          "status": 200,
+          "code": null
+        },
+        {
+          "method": "GET",
+          "path": "/acceptance/handoff-results",
+          "status": 403,
+          "code": null
+        }
+      ],
+      "audit_actions": [
+        "account_binding_revoked",
+        "account_bound",
+        "handoff_closed",
+        "handoff_permission",
+        "plan_blocked",
+        "plan_requested",
+        "plan_saved",
+        "project_channel",
+        "project_pause",
+        "project_resume",
+        "project_start",
+        "queue_awaiting-adaptation",
+        "queue_awaiting-intervention",
+        "queue_handoff_authorized",
+        "queue_intake",
+        "queue_paused",
+        "queue_scan",
+        "queue_superseded",
+        "receipt_recorded",
+        "task_authorized",
+        "task_dispatched"
+      ]
+    }
+  },
+  "input_snapshot_sha256": "f75d382a54ec33f0c892cc4c6afcc17b082c130cc1b58236fb4dde48e383f609",
+  "private_artifact_sha256": {
+    "seo-source-ready.json": "692d2f383f6ad7f3a6ddaa3f06e72a8d28d8b2bfd57383e4d26aec8c7972c6c9",
+    "seo-runtime-checkpoint.json": "12fa3ac6de3076137addd95d65b4aa1d505e96197be4daa5b843b465802c9cb3",
+    "seo-main-task-tuple.json": "5f870d1c67140b4f913848eb60b3e6ca97d195bdfb3edf1691c88af558006245",
+    "seo-closure-evidence.json": "112632527fcb583ebaef0e88ab177ccb39f2adc091f9140b92b60de463d12996",
+    "seo-ui-start-evidence.json": "97d6e6dea6f25c80c854565e7251cea9072974b9c77562cc3c0555aa7179f2a6",
+    "seo-ui-pause-evidence.json": "8ca15df0d751c7978b78572cd866a4fd940b2ce4baceee195a9c5c30784c7700",
+    "seo-ui-customer-evidence.json": "a0a1cd12219413b04560ab3ab7510adcd80d157ed230a7e8c4d3d43440968056",
+    "geo-source-ready.json": "c55abd76253454f53ba1ae93da6a0f2adee50f6aadb8f007bad951407d6a1a9a",
+    "geo-runtime-checkpoint.json": "e554e768ceb60590a92c909e490cc315e111ce29a05acbb3f0b76bc1243bfa5c",
+    "geo-main-task-tuple.json": "109cdb4a0b9a7a8cf0b48c2bc520f097130460a3638789af529b1abbc3c42ab4",
+    "geo-closure-evidence.json": "3830ed136030de88b19bf3f20f126c82e75e61cce58f8838e6ee49474508ef5e",
+    "geo-ui-start-evidence.json": "4f4a12f9216540460222a5a6e53b6ce0d0c5bd947f12b928fc76540c028aa6db",
+    "geo-ui-pause-evidence.json": "7c65e3f19d587e2231821ae2021b265b59579a2ce66708553b328d0dffa8726b",
+    "geo-ui-customer-evidence.json": "839ddf6ab489c7d4bb49636b8cb30d590fbecc6cbc8bf0690e1e7da2c666142f",
+    "seo-ui-review-evidence.json": "3a6391b0ec60d09a59401286c14f512930cf830aba8c9eb9643c180d6c137e7c",
+    "seo-ui-current-read-evidence.json": "b011c86cfc2787f33a91c9ca731abba2261fab919d50ae26b22b7c7ac563e5d9",
+    "seo-ui-session-evidence.json": "b80b515f70e1e9b1ce137fe2d85c45056a55a0e51a1a47e05c189831ec7f82e8",
+    "geo-native-flow-evidence.json": "386381eb2db5ca422812ce2bca3d305d85df0fdd6544e4c9a53675500f7311e8",
+    "geo-native-intake-evidence.json": "cb18d3b1dfaf390ebb791de7a78589b93da32522e1b022ad6e9e50f079ec884f",
+    "geo-fresh-copy-api-journal.json": "6b01ffd17e19ca3767588a3e2aa7e9a6eb45fc5f3c7583b9b8c7be1e56070908",
+    "initial-gates.json": "e8357535fbb79d910b95466c3e61d25960efc4750e279e987c4811d1f4acc11f",
+    "health-summary.json": "b5bd1c5e7e0e2fbe0fd009bc54345f4e4adbb472bd018a295c8dbca607df8b53",
+    "seo-native-schema.json": "69e71d8e11dd281d8ff1b41b48e00b730cef0bbb1dbe8b042cb502b35e58babb",
+    "geo-mht-gui-flow-blocked.json": "7546f484aa53dd64a1196a92f711e8d84774892451481935fd5c6151eedbf6b2",
+    "geo-fresh-quality-private.json": "fd5d6fc3cf944819c65e56c017c39e54577e00b030001a6b3e2ebbb3ec0516df",
+    "seo-advisor-approved-paused.png": "877f5bfa822dbff700baec6658596947102f884a5fabe7d6b33d36ce7cf3f8b7",
+    "seo-advisor-running.png": "15f1f1968336da8e59d21b1cc01e22fc82edfa7beac90cd81d35c8830864871f",
+    "seo-advisor-paused-final.png": "95b2da1ebae118eadd101295495adccd6556334a88ed0cc28c1982aa7c161ff7",
+    "seo-customer-handoff-readonly.png": "7e4dfcbfd4a695664cb4a4d533fd835aa2b49f0e0d2a705d42977d590d71b233",
+    "geo-advisor-running.png": "6a98cc674b5c6699357f36fb9ab20830c82564d032e36827517e5f2e7c37bbff",
+    "geo-advisor-paused-final.png": "6d9274cf2576a6827dc9a5d77d5829e2a66a8c0bb0624ae952b55b9ffd84c8a7",
+    "geo-customer-handoff-readonly.png": "e4822f98e3da161613052d8c06c8a1f32ed33cfafbbd051463af3deb80dd4468",
+    "seo-mht-gui-flow-proof.json": "04357c0fa3e4e5deca3044c8a5f622d17674b825b0d3855d964e42d5271bf55f",
+    "seo-history-gui-proof.json": "07f7f1849b7b3906602820cd87d40198e1c295dbc6792bd108d294e53d4f8057",
+    "geo-mht-gui-flow-proof.json": "a0cf190b0926b10c55ce4d6f4665e05543ce2775b366988e15b97897db7fbdab"
+  },
+  "proof_script_sha256": "7994bd87ab6e3b76fcc321c7e35bbcad25308827fa0cbd4166eb414643dae976",
+  "MHT": {
+    "SEO_main_source": "a63b3c89d6ab9161805773341e9d1ef86b690ae7",
+    "history_and_GEO_source": "889abf6e7d27f228f9306f22ba607ca2d9c59345",
+    "manifest_sha256": "756c5661cd7ecf88d293c94c4708ee1d6624f50bc79c8c001a15e9ea6f62e630",
+    "verified_artifacts": [
+      {
+        "name": "cli.mjs",
+        "sha256": "318c1abfbb6d6a4d4cff5273b18d8296954853bddc694a3132dbeb4c50f4cbfc"
+      },
+      {
+        "name": "https-runner.mjs",
+        "sha256": "0509ea82a40d620c19be057143021defc16e23870b989b8f7e4e3391adca0d05"
+      },
+      {
+        "name": "capability-client.mjs",
+        "sha256": "135b8a76f9745a48000c3b8e1d98af07614335974b832f165c795d100c22098d"
+      },
+      {
+        "name": "agent.mjs",
+        "sha256": "922583872707080680a43d3fb743da0fe301b91fdeece46ea4b6e779bca07e15"
+      },
+      {
+        "name": "candidate-gui.cjs",
+        "sha256": "f1db7679aebf6fb564dfdc4af4f9a89c1d80c031c24e7301a6abdb5840ff6512"
+      },
+      {
+        "name": "candidate-preload.cjs",
+        "sha256": "ec0e726aeb5e3e6ae245e7d9976fca4b48d43821a439b065526c28c15d703547"
+      },
+      {
+        "name": "decode-worker.cjs",
+        "sha256": "ad398ad476af46dd473a7fe62822afed91b2fcf1fb1542a022219059b6734497"
+      },
+      {
+        "name": "pages.mjs",
+        "sha256": "b91b0c50c846ae72de59bdf57aadbe6aca0df4070c1c11b69f3cf79ba98cf644"
+      }
+    ],
+    "GUI_proofs": {
+      "seo-mht-gui-flow-proof.json": {
+        "sha256": "04357c0fa3e4e5deca3044c8a5f622d17674b825b0d3855d964e42d5271bf55f",
+        "hostStoppedAndClosed": true,
+        "publicationVerified": false
+      },
+      "seo-history-gui-proof.json": {
+        "sha256": "07f7f1849b7b3906602820cd87d40198e1c295dbc6792bd108d294e53d4f8057",
+        "hostStoppedAndClosed": true,
+        "publicationVerified": false
+      },
+      "geo-mht-gui-flow-proof.json": {
+        "sha256": "a0cf190b0926b10c55ce4d6f4665e05543ce2775b366988e15b97897db7fbdab",
+        "hostStoppedAndClosed": true,
+        "publicationVerified": false
+      }
+    },
+    "attested_history_targeted_tests": 62,
+    "history_tests_repeated_here": false
+  },
+  "root_independent_checkpoints": {
+    "root-customer-control-check-current.json": {
+      "sha256": "eee5edcfa0a56491290c7985f4b554a5db021e81061560ecad3b0c9996115365",
+      "runtime_pins": [
+        {
+          "module": "seo",
+          "native_head": "b4d8387123355348f79e26ea2838585c5106a4b9",
+          "central_head": "7a585f5425ac2c1269f37448cdb840f803e8830c"
+        },
+        {
+          "module": "geo",
+          "native_head": "46dacbd805afc00f37eba344306fde004039efed",
+          "central_head": "7a585f5425ac2c1269f37448cdb840f803e8830c"
+        }
+      ]
+    },
+    "root-customer-control-check-f1dc68d4.json": {
+      "sha256": "57f8ab43a353884d59fd2a7f5fa54141913889f5466281d4e67218ac19d8b641",
+      "runtime_pins": [
+        {
+          "module": "seo",
+          "native_head": "b4d8387123355348f79e26ea2838585c5106a4b9",
+          "central_head": "f1dc68d425a91088823a216327dc68b0be3d5c40"
+        },
+        {
+          "module": "geo",
+          "native_head": "46dacbd805afc00f37eba344306fde004039efed",
+          "central_head": "f1dc68d425a91088823a216327dc68b0be3d5c40"
+        }
+      ]
+    },
+    "root-final-runtime-readback.json": {
+      "sha256": "c517948627747533c36ee82793eaea636f8eef13dba6c50f3f1e758c69dccaef",
+      "runtime_pins": []
+    },
+    "root-mht-artifact-readback.json": {
+      "sha256": "d36a8ccfc4442c9b1e6808fd2c570248e981018390ea2201baf06f056d7033cc",
+      "runtime_pins": []
+    },
+    "root-native-original-readback-current.json": {
+      "sha256": "470721689d3a70f72815aadf8e9e80364e66a1ae926ba0159581c5f4ac9eab95",
+      "runtime_pins": []
+    },
+    "root-source-boundary-check-current.json": {
+      "sha256": "7d7ea9a3fa94295dc5056011fe706abe1e424cae9cd831a531d03056286a8add",
+      "runtime_pins": [
+        {
+          "module": "seo",
+          "native_head": "b4d8387123355348f79e26ea2838585c5106a4b9",
+          "central_head": "7a585f5425ac2c1269f37448cdb840f803e8830c"
+        },
+        {
+          "module": "geo",
+          "native_head": "46dacbd805afc00f37eba344306fde004039efed",
+          "central_head": "7a585f5425ac2c1269f37448cdb840f803e8830c"
+        }
+      ]
+    },
+    "root-source-boundary-check-f1dc68d4.json": {
+      "sha256": "a6a3edb9f21afdccf4317fc9e51d1e18b81027f15bc714aa108b259bb6ddadd3",
+      "runtime_pins": [
+        {
+          "module": "seo",
+          "native_head": "b4d8387123355348f79e26ea2838585c5106a4b9",
+          "central_head": "f1dc68d425a91088823a216327dc68b0be3d5c40"
+        },
+        {
+          "module": "geo",
+          "native_head": "46dacbd805afc00f37eba344306fde004039efed",
+          "central_head": "f1dc68d425a91088823a216327dc68b0be3d5c40"
+        }
+      ]
+    }
+  },
+  "original_customer_body_or_credentials_included": false,
+  "production_mutations": false,
+  "formal_publish": false,
+  "SEM_AI": false,
+  "actual_supplier_AI": false,
+  "GEO_native_Vue_writing_tested": false,
+  "approval_actors": "separate named LOCAL synthetic test roles; not real customer consent",
+  "retained_negatives": [
+    "original SEO published baijiahao variant",
+    "original GEO article17/preview2",
+    "local non-UTC article18/variant5",
+    "older future-sorted task12 article19/variant7",
+    "new task13 article20 missing editorial date",
+    "task13 article22 noncanonical metadata sentence"
+  ],
+  "historical_runtime_pins": {
+    "root_12_boundary_checks": "f1dc68d425a91088823a216327dc68b0be3d5c40",
+    "SEO_main_chain": "f27cd2dbc82c087bfeac64eebdc4a3e473ebb910",
+    "GEO_main_chain": "1171bed7b3b3cdd0216d6a5b01743db5d969b63b"
+  },
+  "boundaries": [
+    "No platform browser, cookies, submission or public publication.",
+    "Actual native authentication/review/source and central queue/dispatch; no per-draft task POST.",
+    "Planner explicitly simulated in process through the actual metering gateway, zero paid API.",
+    "Dedicated acceptance DOM only; GEO authoring/fact verification used actual native APIs.",
+    "Pause and binding revoke followed completed GUI handoffs, not an active-upload crash experiment."
+  ]
+}

@@ -1,0 +1,2 @@
+# Qualification reports bind the exact input-file SHA256.
+*.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

@@ -1,0 +1,217 @@
+{
+  "status": "PARTIAL_NORMAL_HANDOFF_PAIRED_UNKNOWN_SYNC_PENDING",
+  "central_runtime_commit": "ba65dbeaf7a53c01cde759104e55562acbaa1c09",
+  "mht_frozen_snapshot": {
+    "source_commit": "808304d132e4114263cef597c04126a7cec8125f",
+    "artifacts": [
+      {
+        "name": "cli.mjs",
+        "sha256": "4ae184d0eb1ae3f695341d0ee67fb4367e48179bd8b74b3c881fc38b7017987e"
+      },
+      {
+        "name": "capability-client.mjs",
+        "sha256": "135b8a76f9745a48000c3b8e1d98af07614335974b832f165c795d100c22098d"
+      },
+      {
+        "name": "agent.mjs",
+        "sha256": "e78cc9a297dc070c60698670cdde5ef54ff992562c67f144261c3a0383a0b2e5"
+      },
+      {
+        "name": "candidate-gui.cjs",
+        "sha256": "090d849abf8226c96ddaaa059df3fb756a0d623c4c2468c0a988844778cf06e3"
+      },
+      {
+        "name": "candidate-preload.cjs",
+        "sha256": "ec0e726aeb5e3e6ae245e7d9976fca4b48d43821a439b065526c28c15d703547"
+      },
+      {
+        "name": "decode-worker.cjs",
+        "sha256": "ad398ad476af46dd473a7fe62822afed91b2fcf1fb1542a022219059b6734497"
+      },
+      {
+        "name": "pages.mjs",
+        "sha256": "b91b0c50c846ae72de59bdf57aadbe6aca0df4070c1c11b69f3cf79ba98cf644"
+      }
+    ]
+  },
+  "checks": {
+    "capability_registration_suite": "38 passed, 1 preliminary moving-runner test deselected",
+    "actual_frozen_MHT_clients": [
+      "authenticated registration",
+      "renewal preserves attestation digest",
+      "durable dispatch",
+      "HumanHandoffExecutor HUMAN_REQUIRED",
+      "HUMAN_HANDOFF_ACCEPTED via separate HTTPS receipt route",
+      "durable SQLite outbox acknowledged",
+      "central slot consumed",
+      "capability revocation"
+    ],
+    "source": "synthetic approved source fixture with real SQL/JWT; no real channels or publication"
+  },
+  "assembled_entry_smokes": {
+    "seo": {
+      "module": "seo",
+      "exact_cli_entry_executed": true,
+      "no_work_no_tasks_no_ai_events": true,
+      "manifest": {
+        "native_module": "seo",
+        "native_head": "139cc7f57650afb1e83930149b6fac33cb9f861a",
+        "central_head": "ba65dbeaf7a53c01cde759104e55562acbaa1c09",
+        "central_files": {
+          "app/distribution_contract.py": "505c2644cda71258572ece913089c287a4a2941250cf2653bb827ffca1c63a2d",
+          "app/distribution_control.py": "1725c98ad057f88073a0e67dcc765d0267a32c905dbeda384f419dfad4dabccd",
+          "app/distribution_scheduling.py": "e4c0b661f5cff81a989701ebfd1ad8bf1a52367347768fc584674f1f617a8e3c",
+          "app/distribution_publication_results.py": "e32fc9c2e5318c15bd33024a0b9326254d996680cbf38f4fbcd8a288493a9921",
+          "app/distribution_publication_verify.py": "281c8fc92c64e3b2b08cafb827c9596f833a934fdb90180997752192ed59dc5c",
+          "app/distribution_planning.py": "95bf752bad56643a6ed4673160d34cf2bfd8a51976b08d0d67160f191921a54d",
+          "app/distribution_planning_gateway.py": "ec74a9b113cb543288bc6b347af7c7320a90ed4ec2d4816b18443232ead69fb4",
+          "app/distribution_queue.py": "c62ee650cafd8e7c92abc96f65252cc0e05c73d3e1306683aa49c69cb0685fd4",
+          "app/distribution_execution.py": "6d661307c454ea505c32c8f1a533e7ed91c8510e441d1c44fd380b6b5a491182",
+          "app/distribution_execution_capabilities.py": "9b6a6e2aff04f82b66eb9e11c09562373c210064d0761ed962f708d75f9ac444",
+          "app/distribution_capability_contract.py": "19bc6e01c7d9b408eab0a6d61c57fa2ed8b8bbd07b0037cb977e306e690a39cc",
+          "app/distribution_handoff_receipts.py": "b5c522eff7ca50813d86ca03e9b448872b21c619c16d3ad8f651c9af8f5803f9",
+          "app/api/distribution.py": "ebf17ce9d3b2aa3c1c88d07b30722431926cafa1fcad17a77f227d6edcceb466",
+          "scripts/distribution_queue_worker.py": "919d48699062bf5b4cb200a6fcfadaa97183cff3c37e1b4553728e6a935972c3",
+          "scripts/distribution_assembled_worker.py": "274eef6a0d96568e9f1b3bfd3ce48fed496ec53dd241acfdac8d7f4762dd5f86",
+          "scripts/distribution_execution_schema.sql": "3e13922cdc969310cb36eb0c445e99e0a57b0236c5ba6817ed5d44d0666e2fc9",
+          "scripts/distribution_capability_registration_schema.sql": "4d914c7f1d783399174706a200fe3448372359a241eaf7f1d824a19b106603e7",
+          "docs/fixtures/mht-distribution-capabilities-v1.json": "d16ca1d08ab0eba00eef569ea014a55aa5c05f77ff443af983077338aea36136",
+          "docs/fixtures/distribution-capability-registration-v1.json": "b6a00e07905cc80f9b61fb8b4005cdd86ceac4dd86e5b878241397e0296fcbe8",
+          "docs/fixtures/distribution-handoff-receipt-v1.json": "f9ed7b8fa151ba560f6c76c97ddd17cf70e488b24e4571b48ad67896bc337a29",
+          "docs/fixtures/distribution-handoff-resolution-read-v1.json": "7c82ccf7431efa1aab42915a9c3c5ddda299fbb8b7ab6fce974eaac5a7bfa8fc"
+        },
+        "dependencies": {
+          "app/config.py": {
+            "sha256": "86e99c9e8185f3eaaed6016e76d1d886446f651dc95e6b65511f05bf7378602b",
+            "source_commit": "20316f9ecbf30403ebb4ce740b06f131f5255b51"
+          },
+          "app/database.py": {
+            "sha256": "1825eaeaaacf6b5594f450c20e852ea0a1f780588dc6a3785cc7dd50f5315033",
+            "source_commit": "2d6bfcb82eacd1c20a434bb38885a3966ae36e29"
+          },
+          "app/security/auth.py": {
+            "sha256": "a20f6e975d558d2435cd1dfc99587f3857a809f8d56c14aaefce161dc8db86cb",
+            "source_commit": "6000a979215fb79f607e29c1125a3781eda10d67"
+          },
+          "app/security/crypto.py": {
+            "sha256": "ed5f5ed9c06d4f4caebeae2e17ce0d1f0e50aec697be148f7cd55d7f058801c2",
+            "source_commit": "2d6bfcb82eacd1c20a434bb38885a3966ae36e29"
+          },
+          "app/api_metering.py": {
+            "sha256": "47c64d412541a2089d3ecc26d09387d6de2d8178d789c5f4176ef8992959c63c",
+            "source_commit": "eb3bc813b26c0519fb4ddba20d031de924fe47f8"
+          },
+          "app/api_controls.py": {
+            "sha256": "86eca0b7f0dd7aa880524d16568984e28c57c1633833a1e2f475f5e851a607ba",
+            "source_commit": "b23239234f62d622a0c2096df9e6b8e54a630810"
+          },
+          "app/api_connection_config.py": {
+            "sha256": "6645af699f209b505398c29fab35a58d8f632e1c66298fb39178cede130f7050",
+            "source_commit": "20316f9ecbf30403ebb4ce740b06f131f5255b51"
+          },
+          "app/api_usage_review_basis.py": {
+            "sha256": "efc3d14799eab45cc0e7d1ba741e0d1cb850cc87809c57ad554985b430367f62",
+            "source_commit": "5c37f5e7e4e8d62dd0c661951b694aad73e716bc"
+          },
+          "scripts/api_metering_schema.sql": {
+            "sha256": "295286b1952ab21cce4802dc10cd02cd07ced137ad7bcf69e95458ec2158b0d5",
+            "source_commit": "20316f9ecbf30403ebb4ce740b06f131f5255b51"
+          },
+          "scripts/api_controls_schema.sql": {
+            "sha256": "8e34c298ec9aa4a79bf78e401f7866b435a81eddd31980724a154130af2befd0",
+            "source_commit": "20316f9ecbf30403ebb4ce740b06f131f5255b51"
+          }
+        }
+      }
+    },
+    "geo": {
+      "module": "geo",
+      "exact_cli_entry_executed": true,
+      "no_work_no_tasks_no_ai_events": true,
+      "manifest": {
+        "native_module": "geo",
+        "native_head": "ba713f06da330362cd0539531e4edd3216a09d78",
+        "central_head": "ba65dbeaf7a53c01cde759104e55562acbaa1c09",
+        "central_files": {
+          "app/distribution_contract.py": "505c2644cda71258572ece913089c287a4a2941250cf2653bb827ffca1c63a2d",
+          "app/distribution_control.py": "1725c98ad057f88073a0e67dcc765d0267a32c905dbeda384f419dfad4dabccd",
+          "app/distribution_scheduling.py": "e4c0b661f5cff81a989701ebfd1ad8bf1a52367347768fc584674f1f617a8e3c",
+          "app/distribution_publication_results.py": "e32fc9c2e5318c15bd33024a0b9326254d996680cbf38f4fbcd8a288493a9921",
+          "app/distribution_publication_verify.py": "281c8fc92c64e3b2b08cafb827c9596f833a934fdb90180997752192ed59dc5c",
+          "app/distribution_planning.py": "95bf752bad56643a6ed4673160d34cf2bfd8a51976b08d0d67160f191921a54d",
+          "app/distribution_planning_gateway.py": "ec74a9b113cb543288bc6b347af7c7320a90ed4ec2d4816b18443232ead69fb4",
+          "app/distribution_queue.py": "c62ee650cafd8e7c92abc96f65252cc0e05c73d3e1306683aa49c69cb0685fd4",
+          "app/distribution_execution.py": "6d661307c454ea505c32c8f1a533e7ed91c8510e441d1c44fd380b6b5a491182",
+          "app/distribution_execution_capabilities.py": "9b6a6e2aff04f82b66eb9e11c09562373c210064d0761ed962f708d75f9ac444",
+          "app/distribution_capability_contract.py": "19bc6e01c7d9b408eab0a6d61c57fa2ed8b8bbd07b0037cb977e306e690a39cc",
+          "app/distribution_handoff_receipts.py": "b5c522eff7ca50813d86ca03e9b448872b21c619c16d3ad8f651c9af8f5803f9",
+          "app/api/distribution.py": "ebf17ce9d3b2aa3c1c88d07b30722431926cafa1fcad17a77f227d6edcceb466",
+          "scripts/distribution_queue_worker.py": "919d48699062bf5b4cb200a6fcfadaa97183cff3c37e1b4553728e6a935972c3",
+          "scripts/distribution_assembled_worker.py": "274eef6a0d96568e9f1b3bfd3ce48fed496ec53dd241acfdac8d7f4762dd5f86",
+          "scripts/distribution_execution_schema.sql": "3e13922cdc969310cb36eb0c445e99e0a57b0236c5ba6817ed5d44d0666e2fc9",
+          "scripts/distribution_capability_registration_schema.sql": "4d914c7f1d783399174706a200fe3448372359a241eaf7f1d824a19b106603e7",
+          "docs/fixtures/mht-distribution-capabilities-v1.json": "d16ca1d08ab0eba00eef569ea014a55aa5c05f77ff443af983077338aea36136",
+          "docs/fixtures/distribution-capability-registration-v1.json": "b6a00e07905cc80f9b61fb8b4005cdd86ceac4dd86e5b878241397e0296fcbe8",
+          "docs/fixtures/distribution-handoff-receipt-v1.json": "f9ed7b8fa151ba560f6c76c97ddd17cf70e488b24e4571b48ad67896bc337a29",
+          "docs/fixtures/distribution-handoff-resolution-read-v1.json": "7c82ccf7431efa1aab42915a9c3c5ddda299fbb8b7ab6fce974eaac5a7bfa8fc"
+        },
+        "dependencies": {
+          "app/config.py": {
+            "sha256": "9a8e9c3ce2428dc13036a472912f2b8af380a981297f400153289989011e2d7d",
+            "source_commit": "d3aff8bc264262268860004de8eefeb81cbe9a2d"
+          },
+          "app/database.py": {
+            "sha256": "1825eaeaaacf6b5594f450c20e852ea0a1f780588dc6a3785cc7dd50f5315033",
+            "source_commit": "2d6bfcb82eacd1c20a434bb38885a3966ae36e29"
+          },
+          "app/security/auth.py": {
+            "sha256": "a0ffd2d643681c7cbe14d2f0b2d7865cdc450a6392523fe3b31a75a1c158ee48",
+            "source_commit": "151604688c4e4f3b3ba03aa447dbdb8a4e78ef04"
+          },
+          "app/security/crypto.py": {
+            "sha256": "ed5f5ed9c06d4f4caebeae2e17ce0d1f0e50aec697be148f7cd55d7f058801c2",
+            "source_commit": "2d6bfcb82eacd1c20a434bb38885a3966ae36e29"
+          },
+          "app/api_metering.py": {
+            "sha256": "e86ffed5499ba4af4986ba55df6a739dc077e86e637cd5cb3ed922c928d99508",
+            "source_commit": "b5454ffcc601f35121037a881cb27d56787659dc"
+          },
+          "app/api_controls.py": {
+            "sha256": "86eca0b7f0dd7aa880524d16568984e28c57c1633833a1e2f475f5e851a607ba",
+            "source_commit": "e8656210732bde42c6225a43d9e04c4107b68d41"
+          },
+          "app/api_connection_config.py": {
+            "sha256": "6645af699f209b505398c29fab35a58d8f632e1c66298fb39178cede130f7050",
+            "source_commit": "55496c06cde9de0221f5b82d6493f4c460d2f2b6"
+          },
+          "app/api_usage_review_basis.py": {
+            "sha256": "efc3d14799eab45cc0e7d1ba741e0d1cb850cc87809c57ad554985b430367f62",
+            "source_commit": "454799bfd39833be3e5b86d106aca215b148bb09"
+          },
+          "scripts/api_metering_schema.sql": {
+            "sha256": "295286b1952ab21cce4802dc10cd02cd07ced137ad7bcf69e95458ec2158b0d5",
+            "source_commit": "55496c06cde9de0221f5b82d6493f4c460d2f2b6"
+          },
+          "scripts/api_controls_schema.sql": {
+            "sha256": "8e34c298ec9aa4a79bf78e401f7866b435a81eddd31980724a154130af2befd0",
+            "source_commit": "55496c06cde9de0221f5b82d6493f4c460d2f2b6"
+          }
+        }
+      }
+    }
+  },
+  "pending": [
+    "new MHT freeze with device resolution transport",
+    "actual negative investigation to local unknown gate release to new retry task"
+  ],
+  "excluded": [
+    "real platform publication",
+    "production DDL",
+    "paid AI",
+    "native full populated paired workflow"
+  ],
+  "central_proof_files": {
+    "scripts/distribution_frozen_mht_pair.mjs": "de0c5f8adb19f87cfb864901cec12e20a2811608e2cfd5fe884fdbdf4bdef8c0",
+    "tests/test_distribution_capability_registration.py": "58521697e33a24fa7edf28dbcf7b86daff973eaf02ca851b3fc5beeb09e6cc8b"
+  }
+}

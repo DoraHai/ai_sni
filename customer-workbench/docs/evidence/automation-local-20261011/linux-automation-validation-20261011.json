@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "captured_at": "2026-10-11T04:29:24.599772+00:00",
+  "platform": "Linux",
+  "kernel": "6.18.52-0-virt",
+  "machine": "x86_64",
+  "python": "3.14.8",
+  "test_exit_code": 0,
+  "counts": {
+    "tests": 35,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "dependencies": {
+    "pytest": "9.0.3",
+    "apscheduler": "3.10.4",
+    "sqlalchemy": "2.0.49",
+    "fastapi": "0.136.1",
+    "pydantic": "2.12.5",
+    "asyncpg": "0.31.0"
+  },
+  "source_sha256": {
+    "app/geo/scheduler.py": "0290a79297f7aa092e50e34f9fc86de1fc296fbcfb3312d34e41e3066f632637",
+    "app/geo/scheduler_observability.py": "9f77285fc7622c50eef842c8ed3406515d56caed59a4ebc69a94fa0bc68460bd",
+    "tests/test_geo_followup_scheduler.py": "04bbac52351e3b9a2acfa615d8858334b49672c2b8ca79a0ace194e8df850bfe",
+    "tests/test_geo_scheduler.py": "55ec72d723ad22a04d62762dacc57a13c948be82b962ac14226058d97c8ef893",
+    "tests/test_geo_scheduler_observability.py": "cb2acda89d27000135ba5901e12f0916456816f06d07538f370e76ca0dab8548",
+    "tests/test_geo_scheduler_eligibility.py": "e029a0a99d9b2e179ee20ab444ebd81cfdf8f37b91d07579e3e8b96324ddcf8e",
+    "test_linux_automation_process.py": "9c9e8b638fd3483b4ef32ddc474d985182ecf969ef8d2335d58841553f139e03"
+  },
+  "network_io_permitted": false,
+  "database_operations": false,
+  "production_approval": false,
+  "scope": "Actual GEO scheduler functions and Linux process/file-lock behavior; callbacks and timers isolated.",
+  "limitations": [
+    "Guest dependencies differ from production pins; not a production environment-parity check.",
+    "No deployed worker-fleet, live queue, service-manager or paid-provider validation."
+  ],
+  "source_snapshot_commit": "0501b9f196de8a72f6254c158605a1d9565fe6d7",
+  "source_archive_sha256": "3f63bfc3b2390279c9b9a8985a5bf1c5ce6cf2352b6ee184f75fa1df895cc1ff",
+  "environment": "temporary local QEMU 11.1.0 + Alpine 3.24.2; exact-byte verified source-only guest snapshot",
+  "runner_sha256": "30a198000c21e2581db237967a73bb5503d88d01e679a19ae9bfe262f719a624",
+  "xml_sha256": "cd6ca7b578824fc631e4b3524c97269236ae34f04e490bdcf273ca9b670ae61a"
+}

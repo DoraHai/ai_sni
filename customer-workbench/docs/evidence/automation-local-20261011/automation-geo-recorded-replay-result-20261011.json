@@ -1,0 +1,150 @@
+{
+  "schema": 1,
+  "module": "geo",
+  "evaluated_at": "2026-10-11T04:24:25.603978+00:00",
+  "candidate_commit": "bc13259e20478ff78595df6068c8c00c04bd8561",
+  "candidate_tree_clean": true,
+  "validator_sha256": "796864cbc56c0f89228417b1e1f319af5f88e65fc9a94af43e266cb9c93b8d98",
+  "input_sha256": "07a67aebe2923ea8cb822a34e01b6898b1205c8e829e0e4ba3fcb00addadf22a",
+  "source_kind": "recorded_provider_response",
+  "source_provenance": {
+    "source_sha256": "3cd530a1b259c785b74929650721009d7f4169c0b4f8a78ea17bf7e2eadd96f0",
+    "recorded_on": "2026-10-10",
+    "original_source_commit": "97d228b4dfeae72a979e0afe3f999aa56f439a38",
+    "provider": "api.deepseek.com",
+    "model": "deepseek-chat",
+    "fixture_type": "synthetic_known_ground_truth",
+    "note": "Historical real supplier outputs over synthetic data; availability and current model quality require fresh validation."
+  },
+  "rubric": {
+    "facts": 30,
+    "focus": 20,
+    "actionability": 20,
+    "traceability": 15,
+    "human_boundary": 15
+  },
+  "business_threshold": 85,
+  "cases": [
+    {
+      "name": "normal_a",
+      "validator_accepted": true,
+      "accepted": true,
+      "reason": "accepted",
+      "items": 5,
+      "nonempty_items": 5,
+      "expectation_met": true,
+      "score": null,
+      "decision": "human_review_pending"
+    },
+    {
+      "name": "normal_b",
+      "validator_accepted": true,
+      "accepted": true,
+      "reason": "accepted",
+      "items": 5,
+      "nonempty_items": 5,
+      "expectation_met": true,
+      "score": null,
+      "decision": "human_review_pending"
+    },
+    {
+      "name": "revise",
+      "validator_accepted": true,
+      "accepted": true,
+      "reason": "accepted",
+      "items": 5,
+      "nonempty_items": 5,
+      "expectation_met": true,
+      "score": null,
+      "decision": "human_review_pending"
+    },
+    {
+      "name": "injection",
+      "validator_accepted": true,
+      "accepted": true,
+      "reason": "accepted",
+      "items": 5,
+      "nonempty_items": 5,
+      "expectation_met": true,
+      "score": null,
+      "decision": "human_review_pending"
+    },
+    {
+      "name": "scope",
+      "validator_accepted": true,
+      "accepted": true,
+      "reason": "accepted",
+      "items": 5,
+      "nonempty_items": 5,
+      "expectation_met": true,
+      "score": null,
+      "decision": "human_review_pending"
+    },
+    {
+      "name": "conflict",
+      "validator_accepted": true,
+      "accepted": true,
+      "reason": "accepted",
+      "items": 5,
+      "nonempty_items": 0,
+      "expectation_met": true,
+      "score": null,
+      "decision": "human_review_pending"
+    },
+    {
+      "name": "unsupported",
+      "validator_accepted": true,
+      "accepted": true,
+      "reason": "accepted",
+      "items": 5,
+      "nonempty_items": 5,
+      "expectation_met": true,
+      "score": null,
+      "decision": "human_review_pending"
+    },
+    {
+      "name": "reindexed",
+      "validator_accepted": true,
+      "accepted": true,
+      "reason": "accepted",
+      "items": 5,
+      "nonempty_items": 5,
+      "expectation_met": true,
+      "score": null,
+      "decision": "human_review_pending"
+    },
+    {
+      "name": "heldout_normal_a",
+      "validator_accepted": true,
+      "accepted": true,
+      "reason": "accepted",
+      "items": 5,
+      "nonempty_items": 5,
+      "expectation_met": true,
+      "score": null,
+      "decision": "human_review_pending"
+    },
+    {
+      "name": "heldout_conflict",
+      "validator_accepted": true,
+      "accepted": true,
+      "reason": "accepted",
+      "items": 5,
+      "nonempty_items": 0,
+      "expectation_met": true,
+      "score": null,
+      "decision": "human_review_pending"
+    }
+  ],
+  "expectations_passed": 10,
+  "total": 10,
+  "model_calls_made": 0,
+  "business_scores_available": 0,
+  "production_approval": false,
+  "limitations": [
+    "Offline replay does not prove current provider availability.",
+    "Synthetic fixtures do not earn model-quality scores.",
+    "Business scores require explicit human review; no score is derived from test counts.",
+    "Completion-text screening is an evaluation gate, not a new deployed runtime guard."
+  ]
+}

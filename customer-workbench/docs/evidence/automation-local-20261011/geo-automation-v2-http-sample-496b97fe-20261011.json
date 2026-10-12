@@ -1,0 +1,1171 @@
+{
+  "source": "synthetic AuthContext over native ASGI/PostgreSQL",
+  "responses": {
+    "/api/v1/geo/workbench/automation-projects/10/configuration-basis?tenant_id=1&operation=channel_variant_draft": {
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "schema": 1,
+        "module": "geo",
+        "tenant_id": 1,
+        "scope_id": 10,
+        "contract_version": 2,
+        "state": "ready",
+        "service_plan": {
+          "revision": 1,
+          "sha256": "269e339fd7220bc9a30e0685a64b436aa91f7069162e45c8cba356c5ca97fc34"
+        },
+        "source_bindings": [
+          {
+            "kind": "project_prompt_set",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "32f9ed85920c982c2430c64f02e8e4bc659d4b6106e0c7043b9344654f806f07"
+          },
+          {
+            "kind": "project_scope_registry",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "8c1d02410b7433f963cac530e6540be74562d509c6c99a15cea43fc24e1ed790"
+          }
+        ],
+        "available_operations": [
+          "channel_variant_draft",
+          "competitor_report_draft",
+          "content_brief_suggestion",
+          "content_master_draft",
+          "onsite_ai",
+          "outcome_review",
+          "periodic_workflow",
+          "publication_monitor",
+          "visibility_patrol"
+        ],
+        "targets": [],
+        "next_before_object_id": null
+      }
+    },
+    "/api/v1/geo/workbench/automation-projects/10/configuration-basis?tenant_id=1&operation=competitor_report_draft": {
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "schema": 1,
+        "module": "geo",
+        "tenant_id": 1,
+        "scope_id": 10,
+        "contract_version": 2,
+        "state": "ready",
+        "service_plan": {
+          "revision": 1,
+          "sha256": "269e339fd7220bc9a30e0685a64b436aa91f7069162e45c8cba356c5ca97fc34"
+        },
+        "source_bindings": [
+          {
+            "kind": "project_prompt_set",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "32f9ed85920c982c2430c64f02e8e4bc659d4b6106e0c7043b9344654f806f07"
+          },
+          {
+            "kind": "project_scope_registry",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "8c1d02410b7433f963cac530e6540be74562d509c6c99a15cea43fc24e1ed790"
+          }
+        ],
+        "available_operations": [
+          "channel_variant_draft",
+          "competitor_report_draft",
+          "content_brief_suggestion",
+          "content_master_draft",
+          "onsite_ai",
+          "outcome_review",
+          "periodic_workflow",
+          "publication_monitor",
+          "visibility_patrol"
+        ],
+        "targets": [
+          {
+            "operation": "competitor_report_draft",
+            "object_type": "competitor_alias",
+            "object_id": 70,
+            "source_revision": 0,
+            "source_hash": "572dc4280cf9ec6720da82b977baef59fc0f4aa89d9d5b032e31307ec8c3ef6e",
+            "variant": null,
+            "label": "70"
+          }
+        ],
+        "next_before_object_id": null
+      }
+    },
+    "/api/v1/geo/workbench/automation-projects/10/configuration-basis?tenant_id=1&operation=content_brief_suggestion": {
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "schema": 1,
+        "module": "geo",
+        "tenant_id": 1,
+        "scope_id": 10,
+        "contract_version": 2,
+        "state": "ready",
+        "service_plan": {
+          "revision": 1,
+          "sha256": "269e339fd7220bc9a30e0685a64b436aa91f7069162e45c8cba356c5ca97fc34"
+        },
+        "source_bindings": [
+          {
+            "kind": "project_prompt_set",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "32f9ed85920c982c2430c64f02e8e4bc659d4b6106e0c7043b9344654f806f07"
+          },
+          {
+            "kind": "project_scope_registry",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "8c1d02410b7433f963cac530e6540be74562d509c6c99a15cea43fc24e1ed790"
+          }
+        ],
+        "available_operations": [
+          "channel_variant_draft",
+          "competitor_report_draft",
+          "content_brief_suggestion",
+          "content_master_draft",
+          "onsite_ai",
+          "outcome_review",
+          "periodic_workflow",
+          "publication_monitor",
+          "visibility_patrol"
+        ],
+        "targets": [
+          {
+            "operation": "content_brief_suggestion",
+            "object_type": "content_task",
+            "object_id": 50,
+            "source_revision": 0,
+            "source_hash": "87c5f2371f830e1b5a16a612c107f9706ae4041e8a55d6e9ba30330904c3446b",
+            "variant": null,
+            "label": "50"
+          }
+        ],
+        "next_before_object_id": null
+      }
+    },
+    "/api/v1/geo/workbench/automation-projects/10/configuration-basis?tenant_id=1&operation=content_master_draft": {
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "schema": 1,
+        "module": "geo",
+        "tenant_id": 1,
+        "scope_id": 10,
+        "contract_version": 2,
+        "state": "ready",
+        "service_plan": {
+          "revision": 1,
+          "sha256": "269e339fd7220bc9a30e0685a64b436aa91f7069162e45c8cba356c5ca97fc34"
+        },
+        "source_bindings": [
+          {
+            "kind": "project_prompt_set",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "32f9ed85920c982c2430c64f02e8e4bc659d4b6106e0c7043b9344654f806f07"
+          },
+          {
+            "kind": "project_scope_registry",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "8c1d02410b7433f963cac530e6540be74562d509c6c99a15cea43fc24e1ed790"
+          }
+        ],
+        "available_operations": [
+          "channel_variant_draft",
+          "competitor_report_draft",
+          "content_brief_suggestion",
+          "content_master_draft",
+          "onsite_ai",
+          "outcome_review",
+          "periodic_workflow",
+          "publication_monitor",
+          "visibility_patrol"
+        ],
+        "targets": [
+          {
+            "operation": "content_master_draft",
+            "object_type": "content_task",
+            "object_id": 50,
+            "source_revision": 0,
+            "source_hash": "25ecd20e2942bf4605e2ddc4427046a498a2578965acf766dd7cdba69564d485",
+            "variant": null,
+            "label": "50"
+          }
+        ],
+        "next_before_object_id": null
+      }
+    },
+    "/api/v1/geo/workbench/automation-projects/10/configuration-basis?tenant_id=1&operation=onsite_ai": {
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "schema": 1,
+        "module": "geo",
+        "tenant_id": 1,
+        "scope_id": 10,
+        "contract_version": 2,
+        "state": "ready",
+        "service_plan": {
+          "revision": 1,
+          "sha256": "269e339fd7220bc9a30e0685a64b436aa91f7069162e45c8cba356c5ca97fc34"
+        },
+        "source_bindings": [
+          {
+            "kind": "project_prompt_set",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "32f9ed85920c982c2430c64f02e8e4bc659d4b6106e0c7043b9344654f806f07"
+          },
+          {
+            "kind": "project_scope_registry",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "8c1d02410b7433f963cac530e6540be74562d509c6c99a15cea43fc24e1ed790"
+          }
+        ],
+        "available_operations": [
+          "channel_variant_draft",
+          "competitor_report_draft",
+          "content_brief_suggestion",
+          "content_master_draft",
+          "onsite_ai",
+          "outcome_review",
+          "periodic_workflow",
+          "publication_monitor",
+          "visibility_patrol"
+        ],
+        "targets": [],
+        "next_before_object_id": null
+      }
+    },
+    "/api/v1/geo/workbench/automation-projects/10/configuration-basis?tenant_id=1&operation=outcome_review": {
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "schema": 1,
+        "module": "geo",
+        "tenant_id": 1,
+        "scope_id": 10,
+        "contract_version": 2,
+        "state": "ready",
+        "service_plan": {
+          "revision": 1,
+          "sha256": "269e339fd7220bc9a30e0685a64b436aa91f7069162e45c8cba356c5ca97fc34"
+        },
+        "source_bindings": [
+          {
+            "kind": "project_prompt_set",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "32f9ed85920c982c2430c64f02e8e4bc659d4b6106e0c7043b9344654f806f07"
+          },
+          {
+            "kind": "project_scope_registry",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "8c1d02410b7433f963cac530e6540be74562d509c6c99a15cea43fc24e1ed790"
+          }
+        ],
+        "available_operations": [
+          "channel_variant_draft",
+          "competitor_report_draft",
+          "content_brief_suggestion",
+          "content_master_draft",
+          "onsite_ai",
+          "outcome_review",
+          "periodic_workflow",
+          "publication_monitor",
+          "visibility_patrol"
+        ],
+        "targets": [],
+        "next_before_object_id": null
+      }
+    },
+    "/api/v1/geo/workbench/automation-projects/10/configuration-basis?tenant_id=1&operation=periodic_workflow": {
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "schema": 1,
+        "module": "geo",
+        "tenant_id": 1,
+        "scope_id": 10,
+        "contract_version": 2,
+        "state": "ready",
+        "service_plan": {
+          "revision": 1,
+          "sha256": "269e339fd7220bc9a30e0685a64b436aa91f7069162e45c8cba356c5ca97fc34"
+        },
+        "source_bindings": [
+          {
+            "kind": "project_prompt_set",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "32f9ed85920c982c2430c64f02e8e4bc659d4b6106e0c7043b9344654f806f07"
+          },
+          {
+            "kind": "project_scope_registry",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "8c1d02410b7433f963cac530e6540be74562d509c6c99a15cea43fc24e1ed790"
+          }
+        ],
+        "available_operations": [
+          "channel_variant_draft",
+          "competitor_report_draft",
+          "content_brief_suggestion",
+          "content_master_draft",
+          "onsite_ai",
+          "outcome_review",
+          "periodic_workflow",
+          "publication_monitor",
+          "visibility_patrol"
+        ],
+        "targets": [
+          {
+            "operation": "periodic_workflow",
+            "object_type": "project",
+            "object_id": 10,
+            "source_revision": 1,
+            "source_hash": "07cb17864f2774ab98103a9f9b18233f099445a43b65a186b27a5052e1998db6",
+            "variant": null,
+            "label": "10"
+          }
+        ],
+        "next_before_object_id": null
+      }
+    },
+    "/api/v1/geo/workbench/automation-projects/10/configuration-basis?tenant_id=1&operation=publication_monitor": {
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "schema": 1,
+        "module": "geo",
+        "tenant_id": 1,
+        "scope_id": 10,
+        "contract_version": 2,
+        "state": "ready",
+        "service_plan": {
+          "revision": 1,
+          "sha256": "269e339fd7220bc9a30e0685a64b436aa91f7069162e45c8cba356c5ca97fc34"
+        },
+        "source_bindings": [
+          {
+            "kind": "project_prompt_set",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "32f9ed85920c982c2430c64f02e8e4bc659d4b6106e0c7043b9344654f806f07"
+          },
+          {
+            "kind": "project_scope_registry",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "8c1d02410b7433f963cac530e6540be74562d509c6c99a15cea43fc24e1ed790"
+          }
+        ],
+        "available_operations": [
+          "channel_variant_draft",
+          "competitor_report_draft",
+          "content_brief_suggestion",
+          "content_master_draft",
+          "onsite_ai",
+          "outcome_review",
+          "periodic_workflow",
+          "publication_monitor",
+          "visibility_patrol"
+        ],
+        "targets": [],
+        "next_before_object_id": null
+      }
+    },
+    "/api/v1/geo/workbench/automation-projects/10/configuration-basis?tenant_id=1&operation=visibility_patrol": {
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "schema": 1,
+        "module": "geo",
+        "tenant_id": 1,
+        "scope_id": 10,
+        "contract_version": 2,
+        "state": "ready",
+        "service_plan": {
+          "revision": 1,
+          "sha256": "269e339fd7220bc9a30e0685a64b436aa91f7069162e45c8cba356c5ca97fc34"
+        },
+        "source_bindings": [
+          {
+            "kind": "tenant_patrol_settings",
+            "object_id": 1,
+            "revision": 0,
+            "sha256": "0d103cec3f8e6fa0d71064c9368bd9274b5a41de4c97ebd6e1e781a87f866ce1"
+          },
+          {
+            "kind": "project_prompt_set",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "32f9ed85920c982c2430c64f02e8e4bc659d4b6106e0c7043b9344654f806f07"
+          },
+          {
+            "kind": "project_scope_registry",
+            "object_id": 10,
+            "revision": 1,
+            "sha256": "8c1d02410b7433f963cac530e6540be74562d509c6c99a15cea43fc24e1ed790"
+          }
+        ],
+        "available_operations": [
+          "channel_variant_draft",
+          "competitor_report_draft",
+          "content_brief_suggestion",
+          "content_master_draft",
+          "onsite_ai",
+          "outcome_review",
+          "periodic_workflow",
+          "publication_monitor",
+          "visibility_patrol"
+        ],
+        "targets": [
+          {
+            "operation": "visibility_patrol",
+            "object_type": "prompt",
+            "object_id": 40,
+            "source_revision": 0,
+            "source_hash": "942318a10f42877494a89b7f84691642477237e33928d02abd32c01642b92296",
+            "variant": "deepseek",
+            "label": "scope question 20"
+          },
+          {
+            "operation": "visibility_patrol",
+            "object_type": "prompt",
+            "object_id": 40,
+            "source_revision": 0,
+            "source_hash": "942318a10f42877494a89b7f84691642477237e33928d02abd32c01642b92296",
+            "variant": "chatgpt",
+            "label": "scope question 20"
+          }
+        ],
+        "next_before_object_id": null
+      }
+    },
+    "/api/v1/geo/workbench/automation-projects/10/control?tenant_id=1": {
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "schema": 1,
+        "module": "geo",
+        "tenant_id": 1,
+        "scope_id": 10,
+        "version": 2,
+        "generation": 2,
+        "state": "active",
+        "configuration": {
+          "cycle": {
+            "mode": "daily",
+            "enabled": true
+          },
+          "limits": {
+            "max_dispatches_per_run": 20,
+            "max_external_calls_per_run": 20
+          },
+          "targets": [
+            {
+              "variant": "deepseek",
+              "object_id": 40,
+              "operation": "visibility_patrol",
+              "object_type": "prompt",
+              "source_hash": "942318a10f42877494a89b7f84691642477237e33928d02abd32c01642b92296",
+              "source_revision": 0
+            },
+            {
+              "variant": "chatgpt",
+              "object_id": 40,
+              "operation": "visibility_patrol",
+              "object_type": "prompt",
+              "source_hash": "942318a10f42877494a89b7f84691642477237e33928d02abd32c01642b92296",
+              "source_revision": 0
+            }
+          ],
+          "operations": [
+            "visibility_patrol"
+          ],
+          "service_plan": {
+            "sha256": "269e339fd7220bc9a30e0685a64b436aa91f7069162e45c8cba356c5ca97fc34",
+            "revision": 1
+          },
+          "owner_user_id": 7,
+          "stop_condition": "drafts_ready_or_blocked",
+          "source_bindings": [
+            {
+              "kind": "tenant_patrol_settings",
+              "sha256": "0d103cec3f8e6fa0d71064c9368bd9274b5a41de4c97ebd6e1e781a87f866ce1",
+              "revision": 0,
+              "object_id": 1
+            },
+            {
+              "kind": "project_prompt_set",
+              "sha256": "32f9ed85920c982c2430c64f02e8e4bc659d4b6106e0c7043b9344654f806f07",
+              "revision": 1,
+              "object_id": 10
+            },
+            {
+              "kind": "project_scope_registry",
+              "sha256": "8c1d02410b7433f963cac530e6540be74562d509c6c99a15cea43fc24e1ed790",
+              "revision": 1,
+              "object_id": 10
+            }
+          ],
+          "contract_version": 2
+        },
+        "cycle_enabled": true,
+        "next_due_at": null,
+        "current_run_id": "8985fc57-5d58-4d97-b40f-c5efb852a6ae",
+        "ended_at": null,
+        "capabilities": {
+          "schema_state": "ready",
+          "can_configure": false,
+          "can_control": true,
+          "available_operations": [
+            "channel_variant_draft",
+            "competitor_report_draft",
+            "content_brief_suggestion",
+            "content_master_draft",
+            "onsite_ai",
+            "outcome_review",
+            "periodic_workflow",
+            "publication_monitor",
+            "visibility_patrol"
+          ]
+        },
+        "coverage": {
+          "controlled": [
+            "visibility_patrol"
+          ],
+          "not_controlled": [
+            "acceptance",
+            "approval",
+            "channel_variant_draft",
+            "competitor_report_draft",
+            "configured_onsite_ai",
+            "content_brief_suggestion",
+            "content_master_draft",
+            "distribution",
+            "manual_onsite_ai",
+            "onsite_ai",
+            "outcome_review",
+            "periodic_workflow",
+            "platform_publication",
+            "publication_monitor",
+            "website_mutation"
+          ]
+        },
+        "allowed_actions": [
+          "pause",
+          "takeover",
+          "end",
+          "disable_cycle",
+          "end_project"
+        ],
+        "blocker": null,
+        "updated_at": "2026-10-11T05:33:01.642916+00:00",
+        "scope_name": "project 10"
+      }
+    },
+    "/api/v1/geo/workbench/automation-projects/10/runs/8985fc57-5d58-4d97-b40f-c5efb852a6ae?tenant_id=1": {
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "schema": 1,
+        "module": "geo",
+        "tenant_id": 1,
+        "scope_id": 10,
+        "run": {
+          "id": "8985fc57-5d58-4d97-b40f-c5efb852a6ae",
+          "state": "queued",
+          "generation": 2,
+          "stop_requested": false,
+          "started_at": "2026-10-11T05:33:01.642916+00:00",
+          "finished_at": null,
+          "dispatch_count": 0,
+          "steps": [
+            {
+              "kind": "visibility_patrol",
+              "calls": [],
+              "status": "pending",
+              "target": {
+                "variant": "deepseek",
+                "object_id": 40,
+                "operation": "visibility_patrol",
+                "object_type": "prompt",
+                "source_hash": "942318a10f42877494a89b7f84691642477237e33928d02abd32c01642b92296",
+                "source_revision": 0
+              },
+              "blocker": null,
+              "task_id": null,
+              "step_key": "visibility_patrol:29a55f065bc838bc19695089",
+              "fee_state": "not_called",
+              "operation": "visibility_patrol",
+              "error_code": null,
+              "request_id": "7ac4933d-4115-5b29-a7b3-d54ba3251192",
+              "started_at": null,
+              "finished_at": null,
+              "waiting_for": "system",
+              "result_links": [],
+              "dispatched_at": null,
+              "evidence_refs": []
+            },
+            {
+              "kind": "visibility_patrol",
+              "calls": [],
+              "status": "pending",
+              "target": {
+                "variant": "chatgpt",
+                "object_id": 40,
+                "operation": "visibility_patrol",
+                "object_type": "prompt",
+                "source_hash": "942318a10f42877494a89b7f84691642477237e33928d02abd32c01642b92296",
+                "source_revision": 0
+              },
+              "blocker": null,
+              "task_id": null,
+              "step_key": "visibility_patrol:31e93bf26cd115648d33f3ed",
+              "fee_state": "not_called",
+              "operation": "visibility_patrol",
+              "error_code": null,
+              "request_id": "336a8ce6-3bbe-5866-9dfb-7aa683e994be",
+              "started_at": null,
+              "finished_at": null,
+              "waiting_for": "system",
+              "result_links": [],
+              "dispatched_at": null,
+              "evidence_refs": []
+            }
+          ],
+          "progress": {
+            "total_steps": 2,
+            "terminal_steps": 0,
+            "running_steps": 0,
+            "waiting_steps": 2
+          },
+          "completion_evidence": null
+        }
+      }
+    },
+    "/api/v1/geo/workbench/automation-projects/10/events/export?tenant_id=1&format=json&after_id=0&limit=500": {
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "schema": 1,
+        "module": "geo",
+        "tenant_id": 1,
+        "scope_id": 10,
+        "snapshot_upper_id": 3,
+        "items": [
+          {
+            "id": 1,
+            "module": "geo",
+            "tenant_id": 1,
+            "scope_id": 10,
+            "run_id": null,
+            "actor_kind": "human",
+            "actor_user_id": 7,
+            "step_key": null,
+            "code": "project_configure",
+            "request_id": "a68aa230-679f-47f2-821f-201d5e246151",
+            "evidence_refs": [],
+            "fee_state": "not_called",
+            "safe_changes": [
+              {
+                "path": "configuration.contract_version",
+                "after": 2,
+                "before": null
+              },
+              {
+                "path": "configuration.cycle",
+                "after": {
+                  "mode": "daily",
+                  "enabled": true
+                },
+                "before": null
+              },
+              {
+                "path": "configuration.limits",
+                "after": {
+                  "max_dispatches_per_run": 20,
+                  "max_external_calls_per_run": 20
+                },
+                "before": null
+              },
+              {
+                "path": "configuration.operations",
+                "after": [
+                  "visibility_patrol"
+                ],
+                "before": null
+              },
+              {
+                "path": "configuration.service_plan",
+                "after": {
+                  "sha256": "269e339fd7220bc9a30e0685a64b436aa91f7069162e45c8cba356c5ca97fc34",
+                  "revision": 1
+                },
+                "before": null
+              },
+              {
+                "path": "configuration.source_bindings",
+                "after": [
+                  {
+                    "kind": "tenant_patrol_settings",
+                    "sha256": "0d103cec3f8e6fa0d71064c9368bd9274b5a41de4c97ebd6e1e781a87f866ce1",
+                    "revision": 0,
+                    "object_id": 1
+                  },
+                  {
+                    "kind": "project_prompt_set",
+                    "sha256": "32f9ed85920c982c2430c64f02e8e4bc659d4b6106e0c7043b9344654f806f07",
+                    "revision": 1,
+                    "object_id": 10
+                  },
+                  {
+                    "kind": "project_scope_registry",
+                    "sha256": "8c1d02410b7433f963cac530e6540be74562d509c6c99a15cea43fc24e1ed790",
+                    "revision": 1,
+                    "object_id": 10
+                  }
+                ],
+                "before": null
+              },
+              {
+                "path": "configuration.stop_condition",
+                "after": "drafts_ready_or_blocked",
+                "before": null
+              },
+              {
+                "path": "configuration.targets",
+                "after": [
+                  {
+                    "variant": "deepseek",
+                    "object_id": 40,
+                    "operation": "visibility_patrol",
+                    "object_type": "prompt",
+                    "source_hash": "942318a10f42877494a89b7f84691642477237e33928d02abd32c01642b92296",
+                    "source_revision": 0
+                  },
+                  {
+                    "variant": "chatgpt",
+                    "object_id": 40,
+                    "operation": "visibility_patrol",
+                    "object_type": "prompt",
+                    "source_hash": "942318a10f42877494a89b7f84691642477237e33928d02abd32c01642b92296",
+                    "source_revision": 0
+                  }
+                ],
+                "before": null
+              },
+              {
+                "path": "cycle_enabled",
+                "after": true,
+                "before": null
+              },
+              {
+                "path": "generation",
+                "after": 1,
+                "before": null
+              },
+              {
+                "path": "owner_user_id",
+                "after": 7,
+                "before": null
+              },
+              {
+                "path": "state",
+                "after": "not_started",
+                "before": null
+              },
+              {
+                "path": "version",
+                "after": 1,
+                "before": null
+              }
+            ],
+            "created_at": "2026-10-11T05:33:01.642916+00:00"
+          },
+          {
+            "id": 2,
+            "module": "geo",
+            "tenant_id": 1,
+            "scope_id": 10,
+            "run_id": "8985fc57-5d58-4d97-b40f-c5efb852a6ae",
+            "actor_kind": "human",
+            "actor_user_id": 7,
+            "step_key": null,
+            "code": "run_queued",
+            "request_id": null,
+            "evidence_refs": [],
+            "fee_state": "not_called",
+            "safe_changes": [],
+            "created_at": "2026-10-11T05:33:01.642916+00:00"
+          },
+          {
+            "id": 3,
+            "module": "geo",
+            "tenant_id": 1,
+            "scope_id": 10,
+            "run_id": "8985fc57-5d58-4d97-b40f-c5efb852a6ae",
+            "actor_kind": "human",
+            "actor_user_id": 7,
+            "step_key": null,
+            "code": "project_start",
+            "request_id": "62c50da4-593e-4bc5-a796-78e992eca766",
+            "evidence_refs": [],
+            "fee_state": "not_called",
+            "safe_changes": [
+              {
+                "path": "generation",
+                "after": 2,
+                "before": 1
+              },
+              {
+                "path": "state",
+                "after": "active",
+                "before": "not_started"
+              },
+              {
+                "path": "version",
+                "after": 2,
+                "before": 1
+              }
+            ],
+            "created_at": "2026-10-11T05:33:01.642916+00:00"
+          }
+        ],
+        "next_after_id": null
+      }
+    },
+    "/api/v1/geo/workbench/automation-health": {
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "schema": 1,
+        "module": "geo",
+        "scope": {
+          "kind": "global",
+          "tenant_id": null
+        },
+        "as_of": "2026-10-11T05:33:02.098314+00:00",
+        "state": "available",
+        "contract_versions": [
+          1,
+          2
+        ],
+        "counts": {
+          "projects": 1,
+          "runs": 1,
+          "pending_human": 0,
+          "unknown_cost": 0
+        },
+        "rows": [
+          {
+            "tenant_id": 1,
+            "scope_id": 10,
+            "project_state": "active",
+            "run_state": "queued",
+            "pending_human": 0,
+            "unknown_cost": 0,
+            "cycle_enabled": true,
+            "updated_at": "2026-10-11T05:33:01.642916+00:00"
+          }
+        ],
+        "truncated": false,
+        "queue": {
+          "state": "not_connected",
+          "queued": null,
+          "running": null,
+          "unknown": null
+        },
+        "worker": {
+          "state": "stopped",
+          "verified": false,
+          "last_tick_at": null,
+          "evidence": null
+        },
+        "overall": "unverified",
+        "alerts": [
+          {
+            "code": "automation_worker_unverified",
+            "summary": "尚无可核实的本进程工作心跳"
+          }
+        ]
+      }
+    }
+  },
+  "scenarios": [
+    {
+      "case": "health_available",
+      "method": "GET",
+      "path": "/api/v1/geo/workbench/automation-health",
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "schema": 1,
+        "module": "geo",
+        "scope": {
+          "kind": "global",
+          "tenant_id": null
+        },
+        "as_of": "2026-10-11T05:33:02.098314+00:00",
+        "state": "available",
+        "contract_versions": [
+          1,
+          2
+        ],
+        "counts": {
+          "projects": 1,
+          "runs": 1,
+          "pending_human": 0,
+          "unknown_cost": 0
+        },
+        "rows": [
+          {
+            "tenant_id": 1,
+            "scope_id": 10,
+            "project_state": "active",
+            "run_state": "queued",
+            "pending_human": 0,
+            "unknown_cost": 0,
+            "cycle_enabled": true,
+            "updated_at": "2026-10-11T05:33:01.642916+00:00"
+          }
+        ],
+        "truncated": false,
+        "queue": {
+          "state": "not_connected",
+          "queued": null,
+          "running": null,
+          "unknown": null
+        },
+        "worker": {
+          "state": "stopped",
+          "verified": false,
+          "last_tick_at": null,
+          "evidence": null
+        },
+        "overall": "unverified",
+        "alerts": [
+          {
+            "code": "automation_worker_unverified",
+            "summary": "尚无可核实的本进程工作心跳"
+          }
+        ]
+      }
+    },
+    {
+      "case": "health_schema_pending",
+      "method": "GET",
+      "path": "/api/v1/geo/workbench/automation-health",
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "schema": 1,
+        "module": "geo",
+        "scope": {
+          "kind": "global",
+          "tenant_id": null
+        },
+        "as_of": "2026-10-11T05:33:02.344914+00:00",
+        "state": "schema_pending",
+        "contract_versions": [],
+        "counts": {
+          "projects": null,
+          "runs": null,
+          "pending_human": null,
+          "unknown_cost": null
+        },
+        "rows": [],
+        "truncated": false,
+        "queue": {
+          "state": "not_connected",
+          "queued": null,
+          "running": null,
+          "unknown": null
+        },
+        "worker": {
+          "state": "stopped",
+          "verified": false,
+          "last_tick_at": null,
+          "evidence": null
+        },
+        "overall": "unverified",
+        "alerts": [
+          {
+            "code": "automation_schema_pending",
+            "summary": "结构或权限未就绪，计数未知"
+          }
+        ]
+      }
+    },
+    {
+      "case": "health_db_unavailable",
+      "method": "GET",
+      "path": "/api/v1/geo/workbench/automation-health",
+      "status": 503,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "schema": 1,
+        "module": "geo",
+        "scope": {
+          "kind": "global",
+          "tenant_id": null
+        },
+        "as_of": "2026-10-11T05:33:02.417768+00:00",
+        "state": "unavailable",
+        "contract_versions": [],
+        "counts": {
+          "projects": null,
+          "runs": null,
+          "pending_human": null,
+          "unknown_cost": null
+        },
+        "rows": [],
+        "truncated": false,
+        "queue": {
+          "state": "unknown",
+          "queued": null,
+          "running": null,
+          "unknown": null
+        },
+        "worker": {
+          "state": "unverified",
+          "verified": false,
+          "last_tick_at": null,
+          "evidence": null
+        },
+        "overall": "unavailable",
+        "alerts": [
+          {
+            "code": "automation_health_unavailable",
+            "summary": "自动执行健康数据暂不可用"
+          }
+        ]
+      }
+    },
+    {
+      "case": "health_auth_missing",
+      "method": "GET",
+      "path": "/api/v1/geo/workbench/automation-health",
+      "status": 401,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "detail": "未登录"
+      }
+    },
+    {
+      "case": "health_api_key_rejected",
+      "method": "GET",
+      "path": "/api/v1/geo/workbench/automation-health",
+      "status": 403,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "detail": "仅平台超管可读取全局自动执行健康状态"
+      }
+    },
+    {
+      "case": "health_tenant_bound_rejected",
+      "method": "GET",
+      "path": "/api/v1/geo/workbench/automation-health",
+      "status": 403,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "detail": "仅平台超管可读取全局自动执行健康状态"
+      }
+    },
+    {
+      "case": "health_ordinary_advisor_rejected",
+      "method": "GET",
+      "path": "/api/v1/geo/workbench/automation-health",
+      "status": 403,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "detail": "仅平台超管可读取全局自动执行健康状态"
+      }
+    },
+    {
+      "case": "health_single_permission_rejected",
+      "method": "GET",
+      "path": "/api/v1/geo/workbench/automation-health",
+      "status": 403,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "detail": "仅平台超管可读取全局自动执行健康状态"
+      }
+    },
+    {
+      "case": "health_fresh_role_revoked",
+      "method": "GET",
+      "path": "/api/v1/geo/workbench/automation-health",
+      "status": 403,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "detail": "当前数据库身份不再具备平台超管权限"
+      }
+    }
+  ],
+  "backend_commit": "496b97fe2127dd725c43697e965bfc53e2acf003",
+  "source_tree_clean": true,
+  "capture": {
+    "head_before": "496b97fe2127dd725c43697e965bfc53e2acf003",
+    "head_after": "496b97fe2127dd725c43697e965bfc53e2acf003",
+    "freeze_mode": true,
+    "source": "tests/test_geo_automation_v2_postgres.py",
+    "source_sha256": "10b1088abe1db0e810b4c23a6b36d0352f8cea50067a54ed84ac983686feee7b"
+  }
+}

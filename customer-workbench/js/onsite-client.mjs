@@ -51,6 +51,7 @@ export function createOnsiteClient({transport,getContext,module='seo'}) {
     async act(taskId,action,input={}){const c=ctx(),stored=rows.get(taskId);
       if(!stored||stored.context!==stamp(c)||!stored.row.allowed_actions.includes(action))fail('ACTION_EXPIRED');
       const data=await request(base+'/'+taskId+'/actions','POST',c,{...input,...scope(c),action,expected_revision:stored.row.workflow.revision});
+      if(data?.id!==taskId)fail('WRITE_OUTCOME_UNKNOWN');
       return validate(data,c);},
     async propose(taskId,mode='initial'){
       const c=ctx(),stored=rows.get(taskId);

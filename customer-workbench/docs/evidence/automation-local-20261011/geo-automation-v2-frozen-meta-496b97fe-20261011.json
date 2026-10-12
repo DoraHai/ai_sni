@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "generated_at": "2026-10-11T05:33:11.2230375Z",
+  "backend_commit": "496b97fe2127dd725c43697e965bfc53e2acf003",
+  "source_tree_clean": true,
+  "capture": {
+    "head_before": "496b97fe2127dd725c43697e965bfc53e2acf003",
+    "head_after": "496b97fe2127dd725c43697e965bfc53e2acf003",
+    "freeze_mode": true,
+    "source": "tests/test_geo_automation_v2_postgres.py",
+    "source_sha256": "10b1088abe1db0e810b4c23a6b36d0352f8cea50067a54ed84ac983686feee7b"
+  },
+  "sample": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\geo-automation-v2-http-sample.json",
+  "sample_sha256": "d389bbfb9ce0982e80df44e4a45cb0c4d6d9c673c7ddb2a516ac515488afab3f",
+  "source": "synthetic AuthContext over native ASGI/PostgreSQL",
+  "responses": 13,
+  "scenarios": 9,
+  "all_response_cache_control_no_store": true,
+  "all_scenario_cache_control_no_store": true,
+  "test": {
+    "nodeid": "tests/test_geo_automation_v2_postgres.py::test_basis_export_health_http_and_fresh_identity_revocation",
+    "mode": "GEO_AUTOMATION_FREEZE=1",
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0
+  },
+  "functional_commit": "bf6483d337398ba35aa2841b27545c06fb0cb896",
+  "notes": [
+    "Normal tests record dirty state without failing solely for that state",
+    "Explicit freeze mode requires clean source tree",
+    "Release preflight remains strict",
+    "Response bodies unchanged"
+  ]
+}

@@ -1,0 +1,120 @@
+{
+  "schema": 1,
+  "module": "seo",
+  "backend_commit": "75dfa5e9fc75af51a27f4bc221ba3008ca7f1724",
+  "source_tree_clean": true,
+  "frontend_commit": "88a591101b28827468a188135f0e48c120965d03",
+  "source": "isolated PostgreSQL + real JWT + ASGI HTTP; synthetic records and mocked providers only",
+  "sample_file": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\seo-automation-v2-http-samples.json",
+  "sample_sha256": "3424690db15c9bb585151c410d306ee19e8110e49a69a64ca2b69eb2ecde6927",
+  "route": "/api/v1/seo/workbench/automation-health",
+  "cases_checked": 9,
+  "captured_response_overwritten_by_last_scenario": true,
+  "results": [
+    {
+      "index": 0,
+      "test_case": "tests/test_seo_automation_v2_postgres.py::test_v2_actual_http_lifecycle_receipts_export_and_samples",
+      "http_status": 200,
+      "no_store": true,
+      "body_state": "available",
+      "frontend_read_state": "available",
+      "shape_accepted": true,
+      "visible_counts": {
+        "projects": 1,
+        "runs": 1,
+        "pending_human": 0,
+        "unknown_cost": 1
+      },
+      "private_identity_cleared": false
+    },
+    {
+      "index": 1,
+      "test_case": "tests/test_seo_automation_v2_postgres.py::test_health_rejects_non_global_named_live_two_permission_identity[advisor]",
+      "http_status": 403,
+      "no_store": true,
+      "body_state": null,
+      "frontend_read_state": "forbidden",
+      "shape_accepted": false,
+      "visible_counts": null,
+      "private_identity_cleared": true
+    },
+    {
+      "index": 2,
+      "test_case": "tests/test_seo_automation_v2_postgres.py::test_health_rejects_non_global_named_live_two_permission_identity[one_permission]",
+      "http_status": 403,
+      "no_store": true,
+      "body_state": null,
+      "frontend_read_state": "forbidden",
+      "shape_accepted": false,
+      "visible_counts": null,
+      "private_identity_cleared": true
+    },
+    {
+      "index": 3,
+      "test_case": "tests/test_seo_automation_v2_postgres.py::test_health_rejects_non_global_named_live_two_permission_identity[tenant]",
+      "http_status": 403,
+      "no_store": true,
+      "body_state": null,
+      "frontend_read_state": "forbidden",
+      "shape_accepted": false,
+      "visible_counts": null,
+      "private_identity_cleared": true
+    },
+    {
+      "index": 4,
+      "test_case": "tests/test_seo_automation_v2_postgres.py::test_health_rejects_non_global_named_live_two_permission_identity[inactive]",
+      "http_status": 401,
+      "no_store": true,
+      "body_state": null,
+      "frontend_read_state": "unauthorized",
+      "shape_accepted": false,
+      "visible_counts": null,
+      "private_identity_cleared": true
+    },
+    {
+      "index": 5,
+      "test_case": "tests/test_seo_automation_v2_postgres.py::test_health_rejects_non_global_named_live_two_permission_identity[api_key]",
+      "http_status": 403,
+      "no_store": true,
+      "body_state": null,
+      "frontend_read_state": "forbidden",
+      "shape_accepted": false,
+      "visible_counts": null,
+      "private_identity_cleared": true
+    },
+    {
+      "index": 6,
+      "test_case": "tests/test_seo_automation_v2_postgres.py::test_health_rejects_non_global_named_live_two_permission_identity[anonymous]",
+      "http_status": 401,
+      "no_store": true,
+      "body_state": null,
+      "frontend_read_state": "unauthorized",
+      "shape_accepted": false,
+      "visible_counts": null,
+      "private_identity_cleared": true
+    },
+    {
+      "index": 7,
+      "test_case": "tests/test_seo_automation_v2_postgres.py::test_readonly_missing_schema_scope_and_database_failure",
+      "http_status": 200,
+      "no_store": true,
+      "body_state": "schema_pending",
+      "frontend_read_state": "available",
+      "shape_accepted": true,
+      "visible_counts": null,
+      "private_identity_cleared": false
+    },
+    {
+      "index": 8,
+      "test_case": "tests/test_seo_automation_v2_postgres.py::test_readonly_missing_schema_scope_and_database_failure",
+      "http_status": 503,
+      "no_store": true,
+      "body_state": "unavailable",
+      "frontend_read_state": "unavailable",
+      "shape_accepted": true,
+      "visible_counts": null,
+      "private_identity_cleared": false
+    }
+  ],
+  "limitations": []
+}

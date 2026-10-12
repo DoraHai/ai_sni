@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "module": "geo",
+  "evidence_kind": "real_login_jwt_database_identity",
+  "backend_commit": "bc13259e20478ff78595df6068c8c00c04bd8561",
+  "source_tree_clean": true,
+  "captured_at": "2026-10-11T04:23:07.325261+00:00",
+  "suite": "tests/test_geo_automation_v2_real_auth_postgres.py",
+  "result": {
+    "passed": 3,
+    "failed": 0,
+    "skipped": 0,
+    "summary": "3 passed in 6.33s"
+  },
+  "auth_chain": [
+    "POST /api/v1/auth/login",
+    "signed JWT validation",
+    "database User.is_active lookup",
+    "database Role.permissions lookup",
+    "require_scoped_auth",
+    "GEO v2 route ownership and entitlement checks"
+  ],
+  "dependency_overrides": [
+    "get_session -> isolated PostgreSQL schema"
+  ],
+  "forbidden_overrides_present": false,
+  "external_calls": "MockTransport only",
+  "scenarios": [
+    "complete HTTP basis/configure/start/control/run/events/export/health chain",
+    "anonymous, API key, tampered/expired JWT, cross-tenant, role and user revocation",
+    "module revocation before external call and authenticated pause before late response persistence"
+  ],
+  "database": {
+    "host": "loopback",
+    "database": "seo_workflow_test",
+    "isolation": "random schema",
+    "production_data_used": false
+  }
+}

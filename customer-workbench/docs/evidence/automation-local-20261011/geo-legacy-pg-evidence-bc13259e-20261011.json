@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "module": "geo",
+  "evidence_kind": "legacy_geo_ci_postgres_acceptance",
+  "backend_commit": "bc13259e20478ff78595df6068c8c00c04bd8561",
+  "source_tree_clean": true,
+  "captured_at": "2026-10-11T04:23:34.077913+00:00",
+  "suites": [
+    "tests/test_geo_read_http_postgres.py",
+    "tests/test_geo_legacy_reads_postgres.py"
+  ],
+  "result": {
+    "passed": 11,
+    "failed": 0,
+    "skipped": 0,
+    "summary": "11 passed, 1 warning in 13.79s"
+  },
+  "database": {
+    "host": "127.0.0.1",
+    "port": 55432,
+    "database": "geo_ci",
+    "user": "geo_ci",
+    "temporary_database_created": true,
+    "temporary_role_created": true,
+    "initialized_by": "ops.run_geo_checks.initialize_postgres",
+    "dropped_after_run": true,
+    "production_data_used": false
+  },
+  "safety": {
+    "test_database_name_guard_modified": false,
+    "temporary_exact_hba_rule_removed_after_capture": true,
+    "credentials_recorded": false
+  }
+}

@@ -1,0 +1,322 @@
+{
+  "schema": 1,
+  "status": "candidate-partial-integration",
+  "runtime_commit": "1e74a9812f0ef36122371151c9a9eb9af17326f1",
+  "feature_commit": "4a648a3c5baa8f7a461d32bef8c786df9d0ce1b6",
+  "mht_source_commit": "f271408e12c2569557e734029c720fb7f70a8903",
+  "manifest_sha256": "d16ca1d08ab0eba00eef569ea014a55aa5c05f77ff443af983077338aea36136",
+  "automatic_publish": false,
+  "real_manifest_executable_stages": {},
+  "attestation_tests": "synthetic only; no authenticated MHT capability intake exists",
+  "cli_reports": {
+    "seo": {
+      "module": "seo",
+      "exact_cli_entry_executed": true,
+      "no_work_no_tasks_no_ai_events": true,
+      "manifest": {
+        "native_module": "seo",
+        "native_head": "139cc7f57650afb1e83930149b6fac33cb9f861a",
+        "central_head": "1e74a9812f0ef36122371151c9a9eb9af17326f1",
+        "central_files": {
+          "app/distribution_contract.py": "505c2644cda71258572ece913089c287a4a2941250cf2653bb827ffca1c63a2d",
+          "app/distribution_control.py": "dc8f957ce51746915a7b2dde4c55ca57503b0039220d9fc634a06883aff44ab5",
+          "app/distribution_scheduling.py": "e4c0b661f5cff81a989701ebfd1ad8bf1a52367347768fc584674f1f617a8e3c",
+          "app/distribution_publication_results.py": "e32fc9c2e5318c15bd33024a0b9326254d996680cbf38f4fbcd8a288493a9921",
+          "app/distribution_publication_verify.py": "281c8fc92c64e3b2b08cafb827c9596f833a934fdb90180997752192ed59dc5c",
+          "app/distribution_planning.py": "95bf752bad56643a6ed4673160d34cf2bfd8a51976b08d0d67160f191921a54d",
+          "app/distribution_planning_gateway.py": "ec74a9b113cb543288bc6b347af7c7320a90ed4ec2d4816b18443232ead69fb4",
+          "app/distribution_queue.py": "c62ee650cafd8e7c92abc96f65252cc0e05c73d3e1306683aa49c69cb0685fd4",
+          "app/distribution_execution.py": "bf85e796ae20cbe7b94e4f3b92213e7a51fae246e60579ea6b5ba7dbd3a6532f",
+          "app/distribution_execution_capabilities.py": "19c2cf268ef54317e5dcb6ef04ed902349ec16573642fd3334162349ab7060ce",
+          "app/api/distribution.py": "22da0a1dcb966bff0d3f81cb16c4541b88fc077b33e6e4ce9990d91048e5b5f1",
+          "scripts/distribution_queue_worker.py": "919d48699062bf5b4cb200a6fcfadaa97183cff3c37e1b4553728e6a935972c3",
+          "scripts/distribution_assembled_worker.py": "36b160d48cb562bb02454987c20a3ec1c238885a43c13ae8995fc8875de24fa0",
+          "scripts/distribution_execution_schema.sql": "7f89bb959091e66efa97447c2954c0e797f463b929068f40073e9b36cc6764c9",
+          "docs/fixtures/mht-distribution-capabilities-v1.json": "d16ca1d08ab0eba00eef569ea014a55aa5c05f77ff443af983077338aea36136"
+        },
+        "dependencies": {
+          "app/config.py": {
+            "sha256": "86e99c9e8185f3eaaed6016e76d1d886446f651dc95e6b65511f05bf7378602b",
+            "source_commit": "20316f9ecbf30403ebb4ce740b06f131f5255b51"
+          },
+          "app/database.py": {
+            "sha256": "1825eaeaaacf6b5594f450c20e852ea0a1f780588dc6a3785cc7dd50f5315033",
+            "source_commit": "2d6bfcb82eacd1c20a434bb38885a3966ae36e29"
+          },
+          "app/security/auth.py": {
+            "sha256": "a20f6e975d558d2435cd1dfc99587f3857a809f8d56c14aaefce161dc8db86cb",
+            "source_commit": "6000a979215fb79f607e29c1125a3781eda10d67"
+          },
+          "app/security/crypto.py": {
+            "sha256": "ed5f5ed9c06d4f4caebeae2e17ce0d1f0e50aec697be148f7cd55d7f058801c2",
+            "source_commit": "2d6bfcb82eacd1c20a434bb38885a3966ae36e29"
+          },
+          "app/api_metering.py": {
+            "sha256": "47c64d412541a2089d3ecc26d09387d6de2d8178d789c5f4176ef8992959c63c",
+            "source_commit": "eb3bc813b26c0519fb4ddba20d031de924fe47f8"
+          },
+          "app/api_controls.py": {
+            "sha256": "86eca0b7f0dd7aa880524d16568984e28c57c1633833a1e2f475f5e851a607ba",
+            "source_commit": "b23239234f62d622a0c2096df9e6b8e54a630810"
+          },
+          "app/api_connection_config.py": {
+            "sha256": "6645af699f209b505398c29fab35a58d8f632e1c66298fb39178cede130f7050",
+            "source_commit": "20316f9ecbf30403ebb4ce740b06f131f5255b51"
+          },
+          "app/api_usage_review_basis.py": {
+            "sha256": "efc3d14799eab45cc0e7d1ba741e0d1cb850cc87809c57ad554985b430367f62",
+            "source_commit": "5c37f5e7e4e8d62dd0c661951b694aad73e716bc"
+          },
+          "scripts/api_metering_schema.sql": {
+            "sha256": "295286b1952ab21cce4802dc10cd02cd07ced137ad7bcf69e95458ec2158b0d5",
+            "source_commit": "20316f9ecbf30403ebb4ce740b06f131f5255b51"
+          },
+          "scripts/api_controls_schema.sql": {
+            "sha256": "8e34c298ec9aa4a79bf78e401f7866b435a81eddd31980724a154130af2befd0",
+            "source_commit": "20316f9ecbf30403ebb4ce740b06f131f5255b51"
+          }
+        }
+      }
+    },
+    "geo": {
+      "module": "geo",
+      "exact_cli_entry_executed": true,
+      "no_work_no_tasks_no_ai_events": true,
+      "manifest": {
+        "native_module": "geo",
+        "native_head": "ba713f06da330362cd0539531e4edd3216a09d78",
+        "central_head": "1e74a9812f0ef36122371151c9a9eb9af17326f1",
+        "central_files": {
+          "app/distribution_contract.py": "505c2644cda71258572ece913089c287a4a2941250cf2653bb827ffca1c63a2d",
+          "app/distribution_control.py": "dc8f957ce51746915a7b2dde4c55ca57503b0039220d9fc634a06883aff44ab5",
+          "app/distribution_scheduling.py": "e4c0b661f5cff81a989701ebfd1ad8bf1a52367347768fc584674f1f617a8e3c",
+          "app/distribution_publication_results.py": "e32fc9c2e5318c15bd33024a0b9326254d996680cbf38f4fbcd8a288493a9921",
+          "app/distribution_publication_verify.py": "281c8fc92c64e3b2b08cafb827c9596f833a934fdb90180997752192ed59dc5c",
+          "app/distribution_planning.py": "95bf752bad56643a6ed4673160d34cf2bfd8a51976b08d0d67160f191921a54d",
+          "app/distribution_planning_gateway.py": "ec74a9b113cb543288bc6b347af7c7320a90ed4ec2d4816b18443232ead69fb4",
+          "app/distribution_queue.py": "c62ee650cafd8e7c92abc96f65252cc0e05c73d3e1306683aa49c69cb0685fd4",
+          "app/distribution_execution.py": "bf85e796ae20cbe7b94e4f3b92213e7a51fae246e60579ea6b5ba7dbd3a6532f",
+          "app/distribution_execution_capabilities.py": "19c2cf268ef54317e5dcb6ef04ed902349ec16573642fd3334162349ab7060ce",
+          "app/api/distribution.py": "22da0a1dcb966bff0d3f81cb16c4541b88fc077b33e6e4ce9990d91048e5b5f1",
+          "scripts/distribution_queue_worker.py": "919d48699062bf5b4cb200a6fcfadaa97183cff3c37e1b4553728e6a935972c3",
+          "scripts/distribution_assembled_worker.py": "36b160d48cb562bb02454987c20a3ec1c238885a43c13ae8995fc8875de24fa0",
+          "scripts/distribution_execution_schema.sql": "7f89bb959091e66efa97447c2954c0e797f463b929068f40073e9b36cc6764c9",
+          "docs/fixtures/mht-distribution-capabilities-v1.json": "d16ca1d08ab0eba00eef569ea014a55aa5c05f77ff443af983077338aea36136"
+        },
+        "dependencies": {
+          "app/config.py": {
+            "sha256": "9a8e9c3ce2428dc13036a472912f2b8af380a981297f400153289989011e2d7d",
+            "source_commit": "d3aff8bc264262268860004de8eefeb81cbe9a2d"
+          },
+          "app/database.py": {
+            "sha256": "1825eaeaaacf6b5594f450c20e852ea0a1f780588dc6a3785cc7dd50f5315033",
+            "source_commit": "2d6bfcb82eacd1c20a434bb38885a3966ae36e29"
+          },
+          "app/security/auth.py": {
+            "sha256": "a0ffd2d643681c7cbe14d2f0b2d7865cdc450a6392523fe3b31a75a1c158ee48",
+            "source_commit": "151604688c4e4f3b3ba03aa447dbdb8a4e78ef04"
+          },
+          "app/security/crypto.py": {
+            "sha256": "ed5f5ed9c06d4f4caebeae2e17ce0d1f0e50aec697be148f7cd55d7f058801c2",
+            "source_commit": "2d6bfcb82eacd1c20a434bb38885a3966ae36e29"
+          },
+          "app/api_metering.py": {
+            "sha256": "e86ffed5499ba4af4986ba55df6a739dc077e86e637cd5cb3ed922c928d99508",
+            "source_commit": "b5454ffcc601f35121037a881cb27d56787659dc"
+          },
+          "app/api_controls.py": {
+            "sha256": "86eca0b7f0dd7aa880524d16568984e28c57c1633833a1e2f475f5e851a607ba",
+            "source_commit": "e8656210732bde42c6225a43d9e04c4107b68d41"
+          },
+          "app/api_connection_config.py": {
+            "sha256": "6645af699f209b505398c29fab35a58d8f632e1c66298fb39178cede130f7050",
+            "source_commit": "55496c06cde9de0221f5b82d6493f4c460d2f2b6"
+          },
+          "app/api_usage_review_basis.py": {
+            "sha256": "efc3d14799eab45cc0e7d1ba741e0d1cb850cc87809c57ad554985b430367f62",
+            "source_commit": "454799bfd39833be3e5b86d106aca215b148bb09"
+          },
+          "scripts/api_metering_schema.sql": {
+            "sha256": "295286b1952ab21cce4802dc10cd02cd07ced137ad7bcf69e95458ec2158b0d5",
+            "source_commit": "55496c06cde9de0221f5b82d6493f4c460d2f2b6"
+          },
+          "scripts/api_controls_schema.sql": {
+            "sha256": "8e34c298ec9aa4a79bf78e401f7866b435a81eddd31980724a154130af2befd0",
+            "source_commit": "55496c06cde9de0221f5b82d6493f4c460d2f2b6"
+          }
+        }
+      }
+    }
+  },
+  "build_manifest": {
+    "schema": 1,
+    "base": "/customer-workbench/",
+    "upstreamCommit": "1e74a9812f0ef36122371151c9a9eb9af17326f1",
+    "sourceTreeClean": true,
+    "canonicalSources": {
+      "src/store/session.js": "0ac7193075063281ecf0333368f6fd6223be7d3b764831eefb5f58fc3abb1b73",
+      "src/store/sessionStorage.js": "5777e0e0935bb6a00410d157759aa7a0d04d69892bd18733c642af23e6114b5e"
+    },
+    "localSources": {
+      "js/geo-host-session-adapter.mjs": "2b6c1cd0080d8055cb9c55a9e1b928d67de540a305e1ad6e50467286af4286f2",
+      "js/onsite-client.mjs": "467af062b8a86ffc27797b8b77f53b216bd400d157420169470e1022690052a6",
+      "js/onsite-ai-poller.mjs": "687b56e417e3adad2d5fb830dc3477df5846af291185849c8721f7818efc89f7",
+      "js/customer-display.mjs": "820d76e136853e8aa3f5506847289cbf388ad420ddf3c21a0c2b31e67abbb4a0",
+      "js/onsite-view.mjs": "398d5c0b08669e587f8f61a7e48b257ddfb427ef1e5391a369030fe78e3d1119",
+      "js/input-protection.mjs": "929cb85688a8901388980ce6d5e389ea694d0973506df3eb225bba307c09819d",
+      "js/customer-onsite-summary.mjs": "c41f1f3d350fda7f667ef39c6712ffc8124029f622f5d4c86274d9e72d22f243",
+      "js/geo-workbench.mjs": "8fe090e2073cea3707189725f682059713827fad1fd0da15199b6aa7c5ef736b",
+      "js/host-session-adapter.mjs": "f7fbfef9f43c62771890c10ea45328dd7103dd987b07d744cac2188b7cb5653b",
+      "js/seo-cycle-config.mjs": "5965ab714a0db30ba993e9a453d1407d9100e9884269bd02752abe63cccf9fbf",
+      "js/seo-workflow-client.mjs": "8d268c2396e15bc715d233d0b0f54bec37ffa95371cd1bf5aa6e5c7dc0be4590",
+      "js/seo-readonly-client.mjs": "f872113bc8c2d688c98efade6dc34ffa7cb7ccf2f2eaa48eb93fc0dfb87dce0c",
+      "js/seo-contract-view.mjs": "16dce40fb5afbac13f8b694740874235a25ba31a77341b98b89fe63e1659871c",
+      "js/service-plan-controller.mjs": "f13d1b8f81646412563b6f2c8e765ba08cec307be5a8b876b7759d1daff04f69",
+      "js/seo-execution-client.mjs": "764024ef68a8477f7c0eb59ecc158f488fba6b997cf5efe618ab4d6049457160",
+      "js/seo-evidence-view.mjs": "3639b716b176775b38aadfd7e8e43981388c378a90cb60b72b1d789c1b7e7ef6",
+      "js/seo-execution-view.mjs": "b3b26c75341ccd5c664cc75010e1cc630cd5b068107c44111cdb10d57c3e7c2c",
+      "js/seo-content-operations-view.mjs": "e3bba63b86970abcf22b9ff45cfdc7a9bf66a32d6ce75f8402dd845de0f3a630",
+      "js/seo-trigger-client.mjs": "9e29ea8bc9d307ef0abb77356c9c600b6ad32c17d32662103ca068b555a43fca",
+      "js/seo-ai-plan-view.mjs": "1abd42a6c660eb30a33a88912ddd18b99ea818d5e9dda451aee6a9ffbe7f194f",
+      "js/content-preview.mjs": "73392b882d4ed1dc98c811de54fda22c79c57498bdd595bdd040e8dc14aa4c03",
+      "js/content-media.mjs": "fe5e7312a404c09a4e01c99ff891edfdf602be56feb7ebee548bc5cc7ec3949d",
+      "js/conversation-client.mjs": "a960d37d75af0bcd2d042b1b30fb6890850066c63cc0844a40c1d1c8f7ba92b3",
+      "js/conversation-view.mjs": "815a8eeddd7ff4924957a5a9960b879f6102d6a09b05652ae04d6f15944cf058",
+      "js/conversation-panel.mjs": "b734fd86b4406b0c399effa82438f83b9f6ba2236d9b7db7059b0b21a5c41fc6",
+      "js/seo-data-client.mjs": "46712fc0ca5101a616f482fc308aa3631685f91723828ffe1a5e2431caf4facb",
+      "js/home-view.mjs": "be9b56dac3c08e974aa74644fb715c21bee96285a0391db60970a00e5e053868",
+      "js/workspace-assistant.mjs": "0951994d0821dd0b834b39fe731f13478c9973458f0164793df3c990ca4b9a4c",
+      "js/workspace-ai-client.mjs": "1d116ba1dece999479d20e3f6813c189e4215fd9818320ccc222393ef3fb01dd",
+      "js/maintenance-view.mjs": "6f6f63d949e46931b50ed575541405666b1b6db725157c15416a3b71a262e240",
+      "js/seo-data-view.mjs": "b3b3621543a341dece8b333168114a6d2b9ed02fd04f8f7c6d741b0e4eb87ad4",
+      "js/data-workspace-view.mjs": "f0308dd4e5325b6e6ab281428d14b1290781ff4bb8e14ef4d8fe550c12e4c431",
+      "js/connected-workbench.mjs": "b3a6e3744346f94acbf784815c355c582544ec0b5e49e19f26bbe28f85620c22",
+      "js/advisor-client.mjs": "e747ce583cd0986848ba373ef74993f1af6be4e749e5974db8fc0c2c8f52570c",
+      "js/advisor-task-link.mjs": "2f7aed88de3b71a1787430824803e85b7aa9bc3f364a692ff8ddb86d51e665d9",
+      "js/workbench-entry.mjs": "13f6d60812c310e7fbc5e180584fdb85fcd652a4ecc0b39745c527aade370e33",
+      "js/distribution-client.mjs": "7962dc8323601cb81cc77596e19b57deadcd212b3ab0f85fa41b17acaf9033b4",
+      "js/distribution-panel.mjs": "804e06e0a9b48f9c2cab42b9d9dde104b3f9428a757734677152daacde6e2af5",
+      "js/platform-balances-view.mjs": "62517739752ce5d90e6dd9ad6ca665d6b91c16e89efb90f835d057381075b23c",
+      "js/platform-ai-governance-view.mjs": "8672c84662a0015b59b30fec1a15047e03745612d7b2646e430565729456b2b0",
+      "js/platform-usage-review.mjs": "6c85c1339eaa754d52770cd275822d891b1293580911c8b88b905fafe97141f2",
+      "js/platform-automation-health.mjs": "2f438a436b03b62d75b7a3922f128b810e8498cd6efbdc53d8ea404a50fb064e",
+      "js/platform-console-client.mjs": "3313e9159289a4e847a77e737c8ee1f39c8b1c428baf24ee7c44a1d5a93815a4",
+      "js/platform-control-panel.mjs": "6b7c7d9007c99a3e96e56768dc4c986b8a38c9ed344223fa4fcdf85fb793353e",
+      "js/platform-system-config.mjs": "009467ebfe11a65f3678c3f4532c1a4eb63364c95a08435f6cd467e4cda24ba9",
+      "js/platform-alert-archive.mjs": "7b9664bb3aff2721d5945d1bfd045fb9e656a18ca98359fda309a2564d4aabb2",
+      "js/platform-ops-panel.mjs": "d7f9c34db15204daab4788d39c7993c2b5a279329f1943e624a3eaf82db835a9",
+      "js/platform-automation-ops-view.mjs": "1c255ff66655f40426b20c36aac5163f07bdd4ebf76588469184084b19b4b390",
+      "js/platform-console-view.mjs": "b519d9158126a026e2e105a316e21313d38605ac66f6890bcfc8ef62f4e1657d",
+      "js/advisor-automation-contract.mjs": "a44e3a424dacdcf7c16c6af7fa9debd52d128c8ba06d4056f4243579c065f829",
+      "js/advisor-automation-client.mjs": "06b8d5cc91fba45e07f70bf22c2eec7090a6ac8dc7329376115a202933aefd19",
+      "js/advisor-automation-labels.mjs": "3346b68d9942ffae6688fab794a2b1cff9b96a6716970c507a0535623751750d",
+      "js/advisor-automation-config-view.mjs": "672ad2bb8551f79ce8a013403f9a8285f333849e73fdb66e8ae0f1d1341fd34c",
+      "js/advisor-run-view.mjs": "5d600d1115cd28b1d02ed0c0fd59daf333ebb73ff427b886e4344d4b096734e1",
+      "js/advisor-automation-export.mjs": "baf53e5d03f9d27c90b24d1a290392ddb295b57c3354fb039d943c4030552c50",
+      "js/advisor-automation-panel.mjs": "ae7df5921ea01566458c32da9775211988fbab33e9a3751e0bb3ad7699954f57",
+      "js/advisor-workbench.mjs": "3aa81a5f7b30016f50eae69a1d46805671a424988f955301e866f0c53376ac83",
+      "js/production-entry.mjs": "9c5bbad76b371cb4d604a2c98684511059e4ca68276a342a56119057f22b153c",
+      "scripts/build.mjs": "4e26b9fe1bf645ea7a136c6109b5ea1769fbc0c46f28e4c82264f1e5d34c43d9",
+      "css/r12-base.css": "bb06729b6e75197917873ed436f0c9dbdc09ac0a13a63d6b880e9ba29afdd144",
+      "css/workbench.css": "58fed436b587db9cd3eb6b061a6b025bb6cd266940815cce2270b97f1b17a034",
+      "css/connected.css": "dcb02d03f6f4a38aa0b7ac1881fdd85c27ba8befbc315f6519c087e7ad8b9e69",
+      "css/platform-console.css": "ce21e3d3f93cd2cb5178c7e261f8accc50533e2c60615d9c21f72d707cf1ce33",
+      "css/advisor-workbench.css": "3ef6e47ba3ef4da595eca3c012955a6541f7dca839eee5f48918192169ca3a90"
+    },
+    "hostLockSha256": "9599d9f195d6ad39e5a8cff72d761c0bede62e74a021fbf6809a64e186ff4388",
+    "independentLockSha256": "3ad0f715bc8e257e7f9b1eedb44690548836e40019be8c8253e3c11cbbbd458d",
+    "vueVersion": "3.5.42",
+    "files": {
+      "app.js": {
+        "sha256": "728b34ff7c4829cbfd057277ac74e874534548b9877d0d6fde6cb6d20a0081d2",
+        "bytes": 546884
+      },
+      "app.css": {
+        "sha256": "4309821c00a6e62eb37d83be33bb22f7e4fc5dcf3451e6637e77eafbc1c2ecc5",
+        "bytes": 43710
+      },
+      "index.html": {
+        "sha256": "64d21b76cd63aa7bf76a71437807b094151a302367d6dfc25f67615a7654deae",
+        "bytes": 292
+      }
+    }
+  },
+  "source_hashes": {
+    "app/distribution_contract.py": {
+      "worktree_sha256": "505c2644cda71258572ece913089c287a4a2941250cf2653bb827ffca1c63a2d",
+      "git_blob_sha256": "505c2644cda71258572ece913089c287a4a2941250cf2653bb827ffca1c63a2d"
+    },
+    "app/distribution_control.py": {
+      "worktree_sha256": "dc8f957ce51746915a7b2dde4c55ca57503b0039220d9fc634a06883aff44ab5",
+      "git_blob_sha256": "dc8f957ce51746915a7b2dde4c55ca57503b0039220d9fc634a06883aff44ab5"
+    },
+    "app/distribution_scheduling.py": {
+      "worktree_sha256": "e4c0b661f5cff81a989701ebfd1ad8bf1a52367347768fc584674f1f617a8e3c",
+      "git_blob_sha256": "e4c0b661f5cff81a989701ebfd1ad8bf1a52367347768fc584674f1f617a8e3c"
+    },
+    "app/distribution_publication_results.py": {
+      "worktree_sha256": "e32fc9c2e5318c15bd33024a0b9326254d996680cbf38f4fbcd8a288493a9921",
+      "git_blob_sha256": "e32fc9c2e5318c15bd33024a0b9326254d996680cbf38f4fbcd8a288493a9921"
+    },
+    "app/distribution_publication_verify.py": {
+      "worktree_sha256": "281c8fc92c64e3b2b08cafb827c9596f833a934fdb90180997752192ed59dc5c",
+      "git_blob_sha256": "281c8fc92c64e3b2b08cafb827c9596f833a934fdb90180997752192ed59dc5c"
+    },
+    "app/distribution_planning.py": {
+      "worktree_sha256": "95bf752bad56643a6ed4673160d34cf2bfd8a51976b08d0d67160f191921a54d",
+      "git_blob_sha256": "0646ec304972ab7ef0c03b7468d484de5c002beaf9622bf4910762cb3f7bf84c"
+    },
+    "app/distribution_planning_gateway.py": {
+      "worktree_sha256": "ec74a9b113cb543288bc6b347af7c7320a90ed4ec2d4816b18443232ead69fb4",
+      "git_blob_sha256": "ec74a9b113cb543288bc6b347af7c7320a90ed4ec2d4816b18443232ead69fb4"
+    },
+    "app/distribution_queue.py": {
+      "worktree_sha256": "c62ee650cafd8e7c92abc96f65252cc0e05c73d3e1306683aa49c69cb0685fd4",
+      "git_blob_sha256": "070188303747ceacab67221bdf4fda891d0afa704923c33b75e51a79f30c38be"
+    },
+    "app/distribution_execution.py": {
+      "worktree_sha256": "bf85e796ae20cbe7b94e4f3b92213e7a51fae246e60579ea6b5ba7dbd3a6532f",
+      "git_blob_sha256": "4e9120eeaca5e5428aa72919faec8e49709c4f15eacff9b8062e4569982f2cfb"
+    },
+    "app/distribution_execution_capabilities.py": {
+      "worktree_sha256": "19c2cf268ef54317e5dcb6ef04ed902349ec16573642fd3334162349ab7060ce",
+      "git_blob_sha256": "19c2cf268ef54317e5dcb6ef04ed902349ec16573642fd3334162349ab7060ce"
+    },
+    "app/api/distribution.py": {
+      "worktree_sha256": "22da0a1dcb966bff0d3f81cb16c4541b88fc077b33e6e4ce9990d91048e5b5f1",
+      "git_blob_sha256": "7e05e9f71eb5b474bad1c009d72179e59786f4060a00fc72a8b3afd53d794ed8"
+    },
+    "scripts/distribution_queue_worker.py": {
+      "worktree_sha256": "919d48699062bf5b4cb200a6fcfadaa97183cff3c37e1b4553728e6a935972c3",
+      "git_blob_sha256": "919d48699062bf5b4cb200a6fcfadaa97183cff3c37e1b4553728e6a935972c3"
+    },
+    "scripts/distribution_assembled_worker.py": {
+      "worktree_sha256": "36b160d48cb562bb02454987c20a3ec1c238885a43c13ae8995fc8875de24fa0",
+      "git_blob_sha256": "36b160d48cb562bb02454987c20a3ec1c238885a43c13ae8995fc8875de24fa0"
+    },
+    "scripts/distribution_execution_schema.sql": {
+      "worktree_sha256": "7f89bb959091e66efa97447c2954c0e797f463b929068f40073e9b36cc6764c9",
+      "git_blob_sha256": "bf87ca1cffb2fa1e3f83c8a7bd772849eb7e381e7981c34de1ad0a81989bac9a"
+    },
+    "docs/fixtures/mht-distribution-capabilities-v1.json": {
+      "worktree_sha256": "d16ca1d08ab0eba00eef569ea014a55aa5c05f77ff443af983077338aea36136",
+      "git_blob_sha256": "d16ca1d08ab0eba00eef569ea014a55aa5c05f77ff443af983077338aea36136"
+    }
+  },
+  "verification": {
+    "backend_broad_passed": 138,
+    "https_rerun_passed": 2,
+    "planning_execution_manifest_rerun_passed": 48,
+    "workbench_contracts_passed": 189,
+    "counts_not_additive": true,
+    "distribution_suite_passed": 45,
+    "distribution_browser_checks": 3,
+    "owned_database_stopped": true
+  },
+  "remaining": [
+    "Authenticated versioned executable capability adapter",
+    "Human handoff closure and unknown intervention before account release",
+    "Native SEO/GEO queue-to-handoff-to-publication combined integration evidence",
+    "Full delivery acceptance; no real channels verified"
+  ]
+}

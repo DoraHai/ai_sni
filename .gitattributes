@@ -1,0 +1,5 @@
+# Keep the pinned external capability fixture byte-identical on Windows checkout.
+docs/fixtures/mht-distribution-capabilities-v1.json -text
+docs/fixtures/distribution-capability-registration-v1.json -text
+docs/fixtures/distribution-handoff-receipt-v1.json -text
+docs/fixtures/distribution-handoff-resolution-read-v1.json -text

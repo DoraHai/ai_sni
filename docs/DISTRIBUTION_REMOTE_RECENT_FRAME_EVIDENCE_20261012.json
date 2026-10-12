@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "checked_at": "2026-10-12T04:52:22.127020+00:00",
+  "base_head": "e82c0db30ad7a13d00d1976a9f77e6b45015f663",
+  "code_head": "d6f4747db5cf576dc9ac79f4e7214c4cc3bdd0e4",
+  "code_tree": "130cf1cb81b3fcc845a7bebdb9521c51417f98ed",
+  "native_seo_head": "b4d8387123355348f79e26ea2838585c5106a4b9",
+  "production": false,
+  "automatic_submit": false,
+  "wire_changed": false,
+  "ddl_changed": false,
+  "native_or_sem_changed": false,
+  "new_cases": 6,
+  "affected_previous_cases": 13,
+  "final_passed": 19,
+  "historical_first_run": {
+    "passed": 18,
+    "failed": 1,
+    "cause": "Expired pending command correctly became unknown, but expired read metadata remained until periodic sweep; final fix prunes metadata during poll."
+  },
+  "owned_temp_root": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\distribution-remote-broker-tests-20261012",
+  "baseline_public_evidence_archive": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\distribution-remote-broker-tests-20261012\\baseline-7a03c832",
+  "artifacts": [
+    {
+      "name": "remote-recent-frame-first-pass.xml",
+      "sha256": "e8b5ed4c8a06c1e815391cb64bca3ab08e872656441a124c7996ce055b00fec5",
+      "tests": 19,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "remote-recent-frame-tests.xml",
+      "sha256": "819a5b6f0da1dccd421f8f8237231159d1d1c3bf9b9877339fdbb106a882cbaf",
+      "tests": 19,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "recent-frame-runtime-health.json",
+      "sha256": "98562d23559b770f386253d86214d5b018b8b77d2d8927f7923aee824d1d6c41"
+    },
+    {
+      "name": "recent-frame-pg-readback.json",
+      "sha256": "746c70d5a24f8756ec151a5a73803c8d36fe77ac2ad8ed27fd4f3974fa4c77c6"
+    },
+    {
+      "name": "recent-frame-owned-shutdown.json",
+      "sha256": "2a797b20678e3e64fa1d50f198ded69cf4bf74cbbfd22bc6eeb3411cbe7afa12"
+    }
+  ],
+  "runtime_files": {
+    "app/distribution_remote_contract.py": "6ceed7fe9bec8d967068deb8bc1a8597c62461c593befccaa269ed263de3383c",
+    "app/distribution_remote.py": "dc8debf1e2d48771069ce496372c957cf9608cec370547bfde5fcb9a62a67649",
+    "app/api/distribution_remote.py": "6d72b250c76fa8d3c77c6348e7847eea1ab913c248f8776ed50834f53140d76a",
+    "app/api/distribution.py": "0faf6198b9060bd52b876e6a89d9a52ca58c319ac8aeaec4705b40924491847e",
+    "scripts/distribution_remote_schema.sql": "0c3be3122a5356109d560a51566c9e26ca749e783770e18277d742ffd6effc99",
+    "scripts/distribution_remote_test_service.py": "a16de38eeae06b4c37d6d901da25285bafca2e997295018018652ec540578bb5"
+  },
+  "scope": "Actual native JWT and PG plus trusted loopback HTTPS; synthetic PNG/input consumer. Root live UI/MHT failure proof remains separately preserved, and root will repeat its actual GUI integration.",
+  "owned_services_stopped": true
+}

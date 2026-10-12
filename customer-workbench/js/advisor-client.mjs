@@ -20,7 +20,7 @@ export function validateAdvisorPage(data,module,{beforeId=null,limit=25}={}){
 // This boundary never permits tenant enumeration, business writes or arbitrary URLs.
 export function createAdvisorClient({session,fetchImpl=fetch,subscribeSession=()=>()=>{}}){
   let generation=0,authorized=null;const controllers=new Set(),listeners=new Set();
-  const key=()=>JSON.stringify([session.token,session.user?.id,session.authRevision,session.user?.permissions,session.modules]);
+  const key=()=>JSON.stringify([session.token,session.user?.id,session.user?.tenant_id,session.authRevision,session.user?.permissions,session.modules]);
   let fingerprint=key();
   function invalidate(reason='context_changed'){generation++;authorized=null;for(const c of controllers)c.abort();controllers.clear();for(const fn of listeners)fn(reason);}
   function sync(){const next=key();if(next!==fingerprint){fingerprint=next;invalidate();}}
@@ -46,9 +46,10 @@ export function createAdvisorClient({session,fetchImpl=fetch,subscribeSession=()
   }
   const unsubscribe=subscribeSession(()=>sync());
   return {
-    async initialize(){invalidate('initializing');const {user}=await read('/api/v1/auth/me');
-      if(user?.id!==session.user?.id||!positive(user.id)||!user.permissions)throw fail('IDENTITY_MISMATCH');
+    async initialize(){sync();invalidate('initializing');const stamp=generation,context=key();const {user}=await read('/api/v1/auth/me');current(stamp,context);
+      if(user?.id!==session.user?.id||user.tenant_id!==session.user?.tenant_id||!positive(user.id)||!user.permissions)throw fail('IDENTITY_MISMATCH');
       const catalog=await read('/api/v1/auth/modules');
+      current(stamp,context);
       if(catalog?.tenant_id!==user.tenant_id||!Array.isArray(catalog.modules))throw fail('CONTRACT_MISMATCH');
       authorized={user,modules:modules.filter(m=>advisorModuleEligible(user,m)&&catalog.modules.some(v=>v.module_code===m&&v.available===true))};
       return structuredClone(authorized);

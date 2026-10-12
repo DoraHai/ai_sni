@@ -1,0 +1,426 @@
+"""One module per process, native auth/models/adapters, owned acceptance DB only."""
+import argparse
+import asyncio
+import base64
+from datetime import date, datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import types
+
+from distribution_acceptance_environment import PORTS, read, write, owned
+from distribution_assembled_worker import assemble, HEADS
+
+REVIEWED_ACCEPTANCE_HEADS={'seo':{'b4d8387123355348f79e26ea2838585c5106a4b9'},
+    'geo':{'46dacbd805afc00f37eba344306fde004039efed'}}
+
+
+def prepare(config_path, module):
+    config = read(config_path)
+    root = owned(config['root'])
+    if config_path.resolve() != root/'environment.json' or config['production'] is not False or config['ports']!=PORTS:
+        raise RuntimeError('Owned non-production config required')
+    from sqlalchemy.engine import make_url
+    url = make_url(os.environ['DATABASE_URL'])
+    if (url.host, url.port, url.username, url.database) != ('127.0.0.1', PORTS['pg'],
+        'distribution_acceptance', 'distribution_acceptance_'+module) or url.query:
+        raise RuntimeError('Refuse any non-acceptance database')
+    if Path.cwd().resolve() != root or (root/'.env').exists():
+        raise RuntimeError('Private cwd with no dotenv required')
+    fallback = Path(config.get('dependency_fallback','C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/python'))
+    if (root/'python-deps').is_dir(): sys.path.append(str(root/'python-deps'))
+    if (fallback/'Lib/site-packages').is_dir(): sys.path.append(str(fallback/'Lib/site-packages'))
+    elif fallback.is_dir(): sys.path.append(str(fallback))
+    expected=config.get('native_heads',{}).get(module,HEADS[module])
+    if expected not in REVIEWED_ACCEPTANCE_HEADS[module]:raise RuntimeError('Unreviewed acceptance native commit')
+    default=HEADS[module]
+    try:
+        HEADS[module]=expected
+        manifest = assemble(config['native_roots'][module], module)
+    finally:HEADS[module]=default
+    import app
+    # Native api/__init__.py registers unrelated modules. Use a package path,
+    # then load only reviewed native handlers, without executing that registry.
+    package = types.ModuleType('app.api')
+    package.__path__ = [str(Path(config['native_roots'][module])/'app/api'), str(Path(config['central_root'])/'app/api')]
+    sys.modules['app.api'] = package
+    app.api = package
+    from app import database
+    schema = 'acceptance_'+module
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    engine = create_async_engine(url, pool_pre_ping=True, hide_parameters=True, connect_args={'server_settings':{
+        'search_path': schema, 'timezone':'UTC', 'lock_timeout': '5000', 'statement_timeout': '20000'}},
+        execution_options={'schema_translate_map': {'public': schema}})
+    database.engine = engine
+    database.async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    from app import api_controls, api_metering
+    api_controls.async_session_factory = database.async_session_factory
+    api_metering.async_session_factory = database.async_session_factory
+    for file in ('distribution_acceptance_environment.py', 'distribution_acceptance_native.py','distribution_acceptance_configure.py'):
+        manifest.setdefault('acceptance_files', {})[file] = hashlib.sha256((Path(__file__).parent/file).read_bytes()).hexdigest()
+    static=Path(config['central_root'])/'app/static/distribution-acceptance'
+    for file in static.glob('*'):
+        manifest.setdefault('acceptance_files', {})['ui/'+file.name]=hashlib.sha256(file.read_bytes()).hexdigest()
+    manifest.update(environment_root=str(root), module=module, port=PORTS[module], schema=schema,
+        automaticSubmit=False, publicationVerified=False, production=False,
+        planner_provider='deterministic in-process simulator; no external provider call')
+    manifest['dependency_fallback'] = str(fallback)
+    if (root/'python-deps').is_dir():
+        files = {str(file.relative_to(root/'python-deps')).replace('\\','/'):hashlib.sha256(file.read_bytes()).hexdigest()
+            for file in sorted((root/'python-deps').rglob('*')) if file.is_file() and '__pycache__' not in file.parts}
+        manifest['acceptance_python_dependencies'] = {'files':len(files),
+            'tree_sha256':hashlib.sha256(json.dumps(files,sort_keys=True).encode()).hexdigest(),
+            'packages':{'python-docx':'1.2.0','lxml':'5.3.2'},'python':'3.11'}
+    return root, config, engine, database.async_session_factory, manifest
+
+
+def install_transport_guard():
+    """Intercept the managed planner only; reject every other overseas transport."""
+    import httpx
+    original = httpx.AsyncHTTPTransport.handle_async_request
+    async def guarded(self, request):
+        if request.url.host == 'api.deepseek.com' and request.url.path.endswith('/chat/completions'):
+            body = json.loads(request.content)
+            if set(body) != {'model','messages','response_format','temperature','stream','max_tokens'} or body['max_tokens'] != 1500:
+                raise RuntimeError('Only bounded distribution planning simulator supported')
+            snapshot = json.loads(body['messages'][-1]['content'])
+            result = {'items': [{'queue_id': item['queue_id'], 'at': item['earliest_at']} for item in snapshot['items']]}
+            return httpx.Response(200, json={'id': 'acceptance-local-planner',
+                'choices': [{'message': {'content': json.dumps(result)}}],
+                'usage': {'prompt_tokens': 0, 'completion_tokens': 0}}, request=request)
+        if request.url.host not in {'127.0.0.1', 'localhost'}:
+            raise RuntimeError('Acceptance external transport disabled')
+        return await original(self, request)
+    httpx.AsyncHTTPTransport.handle_async_request = guarded
+
+
+async def initialize(root, config, engine, sessions, module, manifest):
+    import app.models
+    from app.database import Base
+    from app.models.user import User
+    from app.models.role import Role
+    from app.security.auth import hash_password
+    from sqlalchemy import text, Integer
+    from sqlalchemy.schema import CreateTable
+    common = {'tenants', 'tenant_modules', 'roles', 'users'}
+    tables = {table.name: table for table in Base.metadata.tables.values()
+        if table.name in common or table.name.startswith(module+'_')}
+    async with engine.begin() as db:
+        await db.execute(text('CREATE SCHEMA acceptance_'+module))
+        # Native table contracts are kept; omitted FKs match the established
+        # isolated native fixtures, never a candidate production migration.
+        for table in tables.values():
+            await db.execute(CreateTable(table, include_foreign_key_constraints=[]))
+        raw = (await db.get_raw_connection()).driver_connection
+        if module == 'geo':
+            await raw.execute('CREATE TABLE public.demo_tenant_bindings (tenant_id bigint,demo_tenant_id bigint,dataset_key varchar(64),dataset_version varchar(40),status varchar(16),version integer)')
+        native = Path(config['native_roots'][module])
+        central = Path(config['central_root'])
+        sources = [native/'scripts/api_metering_schema.sql', native/'scripts/api_controls_schema.sql']
+        sources += [central/('scripts/distribution_'+name+'_schema.sql') for name in
+                    ('control','scheduling','publication','queue','planning','execution','capability_registration')]
+        result_sql = native/('scripts/'+module+'_distribution_results_schema.sql')
+        if result_sql.exists(): sources.append(result_sql)
+        for source in sources:
+            await raw.execute(source.read_text(encoding='utf-8-sig').replace('BEGIN;', '').replace('COMMIT;', ''))
+        await raw.execute('CREATE TABLE acceptance_handoff_events(task_id uuid,sequence integer,tenant_id bigint,module varchar(3),scope_id bigint,variant_id bigint,source_revision text,status text,code text,at bigint,PRIMARY KEY(task_id,sequence))')
+    report = {'snapshot': None, 'collections': {}, 'ignored_fields': {}, 'production_mutations': False}
+    snapshot_path = root/'customer-snapshot.json'
+    if snapshot_path.exists():
+        data = snapshot_path.read_bytes()
+        snapshot = json.loads(data)
+        if snapshot.get('snapshotVersion') != 1:
+            raise RuntimeError('Unsupported customer snapshot version')
+        report['snapshot'] = {'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data),
+            'capturedAt': snapshot['capturedAt'], 'source': 'read-only customer snapshot'}
+        async with engine.begin() as db:
+            for name, rows in snapshot['collections'].items():
+                if name not in tables: continue
+                table = tables[name]
+                report['collections'][name] = len(rows)
+                ignored = set()
+                for row in rows:
+                    if any(key in row for key in ('password_hash','credentials','config','api_key','access_token')):
+                        raise RuntimeError('Disallowed credential-bearing snapshot column')
+                    values = {}
+                    for key, value in row.items():
+                        if key not in table.c:
+                            ignored.add(key); continue
+                        column = table.c[key]
+                        if value is not None:
+                            try: kind = column.type.python_type
+                            except NotImplementedError: kind = None
+                            if kind is datetime:
+                                value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                                if value.tzinfo and not getattr(column.type, 'timezone', False):
+                                    value = value.astimezone(timezone.utc).replace(tzinfo=None)
+                            elif kind is date: value = date.fromisoformat(value)
+                            elif kind is bytes: value = base64.b64decode(value, validate=True)
+                        values[key] = value
+                    await db.execute(table.insert().values(**values))
+                if ignored: report['ignored_fields'][name] = sorted(ignored)
+    private = read(root/'secrets.json')
+    async with sessions.begin() as db:
+        permissions = {module+'.content': 'edit', module+'.assets': 'edit', module+'.site': 'edit'}
+        if module=='geo': permissions['geo.diagnosis']='view'
+        customer_role='独立验收客户只读'
+        if module=='geo':
+            from app.permissions import CUSTOMER_ROLE
+            customer_role=CUSTOMER_ROLE
+        db.add_all([Role(id=100005, name='独立验收顾问', permissions=permissions),
+            Role(id=100006, name='独立验收管理员', permissions={**permissions,'settings.accounts':'edit','settings.customers':'edit'}),
+            Role(id=100010, name=customer_role, permissions={module+'.content':'view',module+'.assets':'view',module+'.site':'view',**({'geo.diagnosis':'view'} if module=='geo' else {})})])
+        for ident, name, role, tenant in [(100007,'acceptance-advisor',100005,None),
+            (100008,'acceptance-admin',100006,None),(100012,'acceptance-reviewer',100005,None),
+            (100001,'acceptance-customer-1',100010,1),(100015,'acceptance-customer-15',100010,15),
+            (100099,'acceptance-foreign-customer',100010,999999)]:
+            db.add(User(id=ident, username=name, display_name=name, password_hash=hash_password(private['password']),
+                role_id=role, tenant_id=tenant, is_active=True))
+    # Imported explicit IDs must not make later native inserts collide.
+    async with engine.begin() as db:
+        for table in tables.values():
+            if 'id' in table.c and table.c.id.primary_key and isinstance(table.c.id.type, Integer):
+                qualified = manifest['schema']+'.'+table.name
+                await db.execute(text("SELECT setval(pg_get_serial_sequence(:name,'id'), COALESCE((SELECT max(id) FROM "+qualified+"),1), true)"), {'name':qualified})
+    write(root/(module+'-import-report.json'), report)
+    write(root/(module+'-manifest.json'), manifest)
+
+
+async def native_schema(root,config,engine,module):
+    if module!='seo': raise RuntimeError('Only reviewed SEO 0105 migration supported here')
+    from sqlalchemy import text
+    import importlib.util
+    source=Path(config['native_roots'][module])/'migrations/versions/20261007_0105_seo_content_confirmations.py'
+    async with engine.begin() as db:
+        exists=await db.scalar(text("SELECT to_regclass(current_schema()||'.alembic_version') IS NOT NULL"))
+        if exists:
+            revision=await db.scalar(text('SELECT version_num FROM alembic_version'))
+            if revision=='0105_seo_content_confirmations':
+                proof=read(root/'seo-native-schema.json')
+                if not proof.get('actual_native_upgrade_executed') or proof.get('source_sha256')!=hashlib.sha256(source.read_bytes()).hexdigest():
+                    raise RuntimeError('Native migration completion proof unavailable')
+                return
+            raise RuntimeError('Unexpected acceptance migration revision')
+        for name in ('seo_content_confirmations','seo_site_advisor_assignments'):
+            if await db.scalar(text('SELECT count(*) FROM '+name)):
+                raise RuntimeError('Refuse to replace any populated native gate table')
+        # These two empty fixture tables are replaced by the actual native DDL,
+        # including native foreign keys, checks and indexes.
+        await db.execute(text('DROP TABLE seo_content_confirmations'))
+        await db.execute(text('DROP TABLE seo_site_advisor_assignments'))
+        def migrate(connection):
+            from alembic.migration import MigrationContext
+            from alembic.operations import Operations
+            spec=importlib.util.spec_from_file_location('acceptance_native_0105',source)
+            migration=importlib.util.module_from_spec(spec);spec.loader.exec_module(migration)
+            if migration.revision!='0105_seo_content_confirmations':raise RuntimeError('Native revision changed')
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.upgrade()
+        await db.run_sync(migrate)
+        await db.execute(text('CREATE TABLE alembic_version(version_num varchar(40) PRIMARY KEY)'))
+        await db.execute(text("INSERT INTO alembic_version VALUES('0105_seo_content_confirmations')"))
+    write(root/'seo-native-schema.json',{'revision':'0105_seo_content_confirmations',
+        'actual_native_upgrade_executed':True,'source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),
+        'baseline':'isolated native ORM module tables; not a production Alembic upgrade chain',
+        'productionDDL':False})
+
+
+def application(root, config, sessions, module, manifest):
+    from fastapi import FastAPI, APIRouter, Depends, HTTPException
+    from fastapi.responses import HTMLResponse
+    from app.database import get_session
+    from app.security.auth import require_auth
+    from app.api.distribution import router
+    from app.api.auth import router as auth_router
+    app = FastAPI(title='Independent distribution acceptance '+module)
+    @app.on_event('startup')
+    async def metadata_registration():
+        from app.api_controls import register_runtime
+        await register_runtime(module)
+    async def database():
+        async with sessions() as db: yield db
+    app.dependency_overrides[get_session] = database
+    app.include_router(router)
+    for route in auth_router.routes:
+        if route.endpoint.__name__ in {'login','me','logout'}: app.router.routes.append(route)
+    if module == 'seo':
+        from app.api.seo import router as native
+        names = {'upsert_advisor_assignment','list_advisor_assignments','create_content_confirmation',
+            'get_content_delivery','get_content_review_history','save_distribution_variant',
+            'adapt_content_distribution','review_distribution_variant','decide_content_review',
+            'create_content_asset','list_content_assets','submit_content_review','update_content_asset',
+            'list_distribution_variants','list_distribution_connections','create_distribution_connection'}
+        selected = APIRouter()
+        for route in native.routes:
+            if route.endpoint.__name__ in names: selected.routes.append(route)
+        app.include_router(selected)
+    else:
+        from app.geo.project_routes import geo_projects_router
+        for route in geo_projects_router.routes:
+            if '/service-plan/run' not in route.path: app.router.routes.append(route)
+        from app.geo.content.routes import router as native
+        names = {'list_content_tasks','get_task','patch_task','submit_task_review',
+            'decide_task_review','update_variant','save_article','check_task','lint_task_article',
+            'verify_fact','preview_manual_channel_finalization','finalize_manual_channel',
+            'create_task','create_variants'}
+        selected = APIRouter()
+        for route in native.routes:
+            if route.endpoint.__name__ in names: selected.routes.append(route)
+        app.include_router(selected,prefix='/api/v1/geo')
+    @app.middleware('http')
+    async def no_publish(request, call_next):
+        from fastapi.responses import JSONResponse
+        device_path = request.url.path.startswith(('/api/distribution/v1/device/',
+            '/api/distribution/capabilities/v1/device/', '/api/distribution/handoff/v1/device/'))
+        if request.method not in {'GET','HEAD','OPTIONS'} and not device_path and request.url.path != '/api/v1/auth/login':
+            from fastapi.security import HTTPAuthorizationCredentials
+            value = request.headers.get('authorization','')
+            if not value.startswith('Bearer '):
+                return JSONResponse(status_code=401, content={'detail':'Named local login required'})
+            try:
+                async with sessions() as db:
+                    ctx = await require_auth(bearer=HTTPAuthorizationCredentials(scheme='Bearer',credentials=value[7:]),
+                        header_key=None,key=None,session=db)
+                import re
+                native_customer_review=False
+                if module=='geo' and request.method=='POST' and re.fullmatch(r'/api/v1/geo/content-tasks/[1-9][0-9]*/review',request.url.path):
+                    from app.geo.content.review import is_tenant_customer_reviewer
+                    native_customer_review=is_tenant_customer_reviewer(ctx)
+                if not native_customer_review and not ctx.can_edit(module+'.content',module+'.assets',module+'.site','settings.accounts'):
+                    return JSONResponse(status_code=403, content={'detail':'Acceptance customer is read-only'})
+            except HTTPException as exc:
+                return JSONResponse(status_code=exc.status_code,content={'detail':'Local login unavailable'})
+        if any(part in request.url.path for part in ('/publication-', '/publications','/push')):
+            return JSONResponse(status_code=403, content={'detail':'Acceptance formal publication disabled'})
+        if request.url.path.endswith('/tasks') and request.method == 'POST':
+            value = await request.json()
+            if value.get('action') == 'publish':
+                return JSONResponse(status_code=403, content={'detail':'Acceptance only preflight/handoff'})
+        response=await call_next(request)
+        delay_path=root/('ui-delay-'+module+'.json')
+        if request.url.path=='/acceptance/original' and delay_path.exists():
+            delay=read(delay_path)
+            if delay.get('remaining',0)>0:
+                milliseconds=delay.get('delay_ms',0)
+                if type(milliseconds) is not int or not 0<=milliseconds<=5000:
+                    raise RuntimeError('Bounded acceptance UI delay required')
+                delay['remaining']-=1;delay['actual_response_status']=response.status_code
+                write(delay_path,delay)
+                await asyncio.sleep(milliseconds/1000)
+        response.headers['Cache-Control']='no-store'
+        response.headers['Content-Security-Policy']="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:"
+        return response
+    @app.get('/acceptance/health')
+    async def health():
+        from sqlalchemy import text
+        async with sessions() as db: await db.execute(text('SELECT 1'))
+        return {'running':True, **manifest}
+    @app.get('/acceptance/routes')
+    async def routes(ctx=Depends(require_auth)):
+        if not ctx.can_edit('settings.accounts'): raise HTTPException(403,'Admin only')
+        return {'module':module,'routes':[{'path':r.path,'methods':sorted(r.methods)} for r in app.routes if hasattr(r,'methods')]}
+    @app.get('/acceptance/context')
+    async def context(ctx=Depends(require_auth),db=Depends(get_session)):
+        from app.module_scope import ensure_module_access
+        public=read(root/(module+'-pairing.json'))
+        await ensure_module_access(db,ctx,public['scope']['tenant_id'],module)
+        local_master=None
+        if module=='geo' and (root/'geo-derived-task.json').exists():
+            pointer=read(root/'geo-derived-task.json')
+            from app.models import GeoContentTask
+            row=await db.get(GeoContentTask,pointer['task_id'])
+            if not row or row.tenant_id!=public['scope']['tenant_id'] or row.business_id!=13 or pointer['scope']!=public['scope']:
+                raise HTTPException(403,'Local derived task scope mismatch')
+            local_master=row.id
+        return {'module':module,'scope':public['scope'],'bindingIds':public['bindingIds'],
+            'actorId':ctx.user_id,'actorName':ctx.username,'canEdit':ctx.can_edit(module+'.content'),
+            'originalMasterId':60 if module=='seo' else 12,'originalVariantId':1 if module=='seo' else 2,
+            'localMasterId':local_master,
+            'publicationVerified':False,'plannerSimulation':True}
+    @app.get('/acceptance/original')
+    async def original(ctx=Depends(require_auth),db=Depends(get_session)):
+        from app.module_scope import ensure_module_access
+        public=read(root/(module+'-pairing.json'));scope=public['scope']
+        await ensure_module_access(db,ctx,scope['tenant_id'],module)
+        if not ctx.can_view(module+'.content'):raise HTTPException(403,'Content permission required')
+        if module=='seo':
+            from app.models.seo import SeoContentAsset,SeoDistributionVariant
+            master=await db.get(SeoContentAsset,60);variant=await db.get(SeoDistributionVariant,1)
+            if not master or master.tenant_id!=scope['tenant_id'] or master.site_id!=scope['scope_id'] or variant.content_asset_id!=master.id:
+                raise HTTPException(404,'Original source unavailable')
+            return {'masterId':master.id,'variantId':variant.id,'title':variant.title,'body':variant.content,
+                'keywordIds':master.keyword_ids or [master.keyword_id],'version':master.version_count,
+                'status':master.status,'platform':variant.platform_code,'originalOnly':True,'executionAuthority':False}
+        from app.models import GeoContentTask,GeoArticleVersion
+        task=await db.get(GeoContentTask,12);article=await db.get(GeoArticleVersion,17)
+        if not task or task.tenant_id!=scope['tenant_id'] or article.task_id!=task.id:raise HTTPException(404,'Original source unavailable')
+        return {'masterId':task.id,'articleId':article.id,'title':article.title,'body':article.body_markdown,
+            'version':article.version_no,'status':task.status,'reviewStatus':task.review_status,
+            'originalOnly':True,'executionAuthority':False}
+    @app.get('/acceptance/handoff-results')
+    async def customer_results(tenant_id:int,scope_id:int,ctx=Depends(require_auth),db=Depends(get_session)):
+        from sqlalchemy import text
+        from app.module_scope import ensure_module_access
+        await ensure_module_access(db,ctx,tenant_id,module)
+        if not ctx.can_view(module+'.content'): raise HTTPException(403,'Content read permission required')
+        table = 'seo_sites' if module=='seo' else 'geo_projects'
+        scope = (await db.execute(text('SELECT tenant_id,status FROM '+table+' WHERE id=:id'),{'id':scope_id})).mappings().one_or_none()
+        if not scope or scope['tenant_id']!=tenant_id: raise HTTPException(404,'Project unavailable')
+        rows = (await db.execute(text('SELECT task_id,sequence,variant_id,source_revision,status,code,at FROM acceptance_handoff_events WHERE module=:module AND tenant_id=:tenant AND scope_id=:scope ORDER BY at DESC,sequence DESC LIMIT 100'),
+            {'module':module,'tenant':tenant_id,'scope':scope_id})).mappings().all()
+        return {'module':module,'tenant_id':tenant_id,'scope_id':scope_id,'items':[dict(row) for row in rows],
+            'publicationVerified':False,'result_type':'isolated acceptance handoff ledger; no native published status'}
+    @app.get('/acceptance/')
+    async def page():
+        from fastapi.responses import FileResponse
+        return FileResponse(Path(config['central_root'])/'app/static/distribution-acceptance/index.html')
+    @app.get('/acceptance/app.js')
+    async def page_script():
+        from fastapi.responses import FileResponse
+        return FileResponse(Path(config['central_root'])/'app/static/distribution-acceptance/app.js',media_type='text/javascript')
+    @app.get('/acceptance/style.css')
+    async def page_style():
+        from fastapi.responses import FileResponse
+        return FileResponse(Path(config['central_root'])/'app/static/distribution-acceptance/style.css',media_type='text/css')
+    return app
+
+
+async def work(sessions, module):
+    from app.api_controls import register_runtime
+    await register_runtime(module)
+    from app.distribution_queue import run_once as queue
+    from app.distribution_planning import run_once as planning
+    from app.distribution_execution import run_once as dispatch
+    from sqlalchemy import text
+    while True:
+        await queue(sessions, module=module)
+        await planning(sessions, module=module)
+        await dispatch(sessions, module=module)
+        async with sessions.begin() as db:
+            await db.execute(text("INSERT INTO acceptance_handoff_events SELECT id,receipt_sequence,tenant_id,module,scope_id,variant_id,source_revision,status,receipt->>'code',receipt_at FROM distribution_tasks WHERE module=:module AND action='handoff' AND receipt IS NOT NULL ON CONFLICT DO NOTHING"), {'module':module})
+        await asyncio.sleep(5)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', type=Path, required=True)
+    parser.add_argument('--module', choices=('seo','geo'), required=True)
+    parser.add_argument('action', choices=('initialize','native-schema','serve','worker'))
+    args = parser.parse_args()
+    root, config, engine, sessions, manifest = prepare(args.config, args.module)
+    install_transport_guard()
+    if args.action == 'initialize':
+        asyncio.run(initialize(root, config, engine, sessions, args.module, manifest))
+    elif args.action=='native-schema':
+        asyncio.run(native_schema(root,config,engine,args.module))
+    elif args.action == 'serve':
+        import uvicorn
+        uvicorn.run(application(root, config, sessions, args.module, manifest), host='127.0.0.1',
+            port=PORTS[args.module], ssl_keyfile=str(root/'loopback.key'), ssl_certfile=str(root/'loopback.pem'),
+            access_log=False, log_level='warning')
+    else: asyncio.run(work(sessions, args.module))
+
+
+if __name__ == '__main__': main()

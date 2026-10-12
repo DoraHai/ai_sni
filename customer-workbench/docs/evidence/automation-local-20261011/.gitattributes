@@ -1,0 +1,4 @@
+# Captured evidence hashes refer to exact bytes, including newline encoding.
+*.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+*.xml -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+*.tap -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

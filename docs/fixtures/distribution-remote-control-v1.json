@@ -1,0 +1,712 @@
+{
+  "version": 1,
+  "prefix": "/api/distribution/v1/remote",
+  "case": "snake_case",
+  "time_unit": "UTC epoch milliseconds",
+  "platform": "wechat-article",
+  "session_ttl_ms": 600000,
+  "frame_max_bytes": 2097152,
+  "frame_fresh_ms": 5000,
+  "poll_max_items": 10,
+  "poll_long_poll": false,
+  "frame_transport": "binary image/png",
+  "frame_headers": [
+    "X-Remote-Device-Id",
+    "X-Remote-Session-Id",
+    "X-Frame-Seq",
+    "X-Control-Revision",
+    "X-Viewport-Width",
+    "X-Viewport-Height",
+    "X-Frame-Captured-At"
+  ],
+  "schemas": {
+    "SessionCreate": {
+      "$defs": {
+        "TaskRequest": {
+          "additionalProperties": false,
+          "properties": {
+            "task_id": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            },
+            "expected_source_revision": {
+              "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+              "title": "Expected Source Revision",
+              "type": "string"
+            },
+            "expected_content_digest": {
+              "pattern": "^[a-f0-9]{64}$",
+              "title": "Expected Content Digest",
+              "type": "string"
+            }
+          },
+          "required": [
+            "task_id",
+            "expected_source_revision",
+            "expected_content_digest"
+          ],
+          "title": "TaskRequest",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "module": {
+          "enum": [
+            "seo",
+            "geo"
+          ],
+          "title": "Module",
+          "type": "string"
+        },
+        "tenant_id": {
+          "exclusiveMinimum": 0,
+          "title": "Tenant Id",
+          "type": "integer"
+        },
+        "scope_id": {
+          "exclusiveMinimum": 0,
+          "title": "Scope Id",
+          "type": "integer"
+        },
+        "binding_id": {
+          "format": "uuid",
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "purpose": {
+          "enum": [
+            "account-login",
+            "account-verification",
+            "task-intervention"
+          ],
+          "title": "Purpose",
+          "type": "string"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "request_id": {
+          "format": "uuid",
+          "title": "Request Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "module",
+        "tenant_id",
+        "scope_id",
+        "binding_id",
+        "purpose",
+        "request_id"
+      ],
+      "title": "SessionCreate",
+      "type": "object"
+    },
+    "SessionInput": {
+      "$defs": {
+        "Key": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "key",
+              "title": "Kind",
+              "type": "string"
+            },
+            "key": {
+              "enum": [
+                "Enter",
+                "Escape",
+                "Tab",
+                "Backspace",
+                "Delete",
+                "ArrowLeft",
+                "ArrowRight",
+                "ArrowUp",
+                "ArrowDown"
+              ],
+              "title": "Key",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "key"
+          ],
+          "title": "Key",
+          "type": "object"
+        },
+        "Mouse": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "mouse",
+              "title": "Kind",
+              "type": "string"
+            },
+            "event": {
+              "const": "click",
+              "title": "Event",
+              "type": "string"
+            },
+            "x": {
+              "maximum": 1919,
+              "minimum": 0,
+              "title": "X",
+              "type": "integer"
+            },
+            "y": {
+              "maximum": 1079,
+              "minimum": 0,
+              "title": "Y",
+              "type": "integer"
+            },
+            "button": {
+              "const": "left",
+              "title": "Button",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "event",
+            "x",
+            "y",
+            "button"
+          ],
+          "title": "Mouse",
+          "type": "object"
+        },
+        "Text": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "text",
+              "title": "Kind",
+              "type": "string"
+            },
+            "text": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "title": "Text",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "format": "uuid",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "control_nonce": {
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "title": "Control Nonce",
+          "type": "string"
+        },
+        "frame_seq": {
+          "maximum": 2147483647,
+          "minimum": 1,
+          "title": "Frame Seq",
+          "type": "integer"
+        },
+        "control_revision": {
+          "maximum": 2147483647,
+          "minimum": 1,
+          "title": "Control Revision",
+          "type": "integer"
+        },
+        "input": {
+          "discriminator": {
+            "mapping": {
+              "key": "#/$defs/Key",
+              "mouse": "#/$defs/Mouse",
+              "text": "#/$defs/Text"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Mouse"
+            },
+            {
+              "$ref": "#/$defs/Key"
+            },
+            {
+              "$ref": "#/$defs/Text"
+            }
+          ],
+          "title": "Input"
+        }
+      },
+      "required": [
+        "command_id",
+        "control_nonce",
+        "frame_seq",
+        "control_revision",
+        "input"
+      ],
+      "title": "SessionInput",
+      "type": "object"
+    },
+    "SessionClose": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "format": "uuid",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "control_nonce": {
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "title": "Control Nonce",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "control_nonce"
+      ],
+      "title": "SessionClose",
+      "type": "object"
+    },
+    "DevicePoll": {
+      "additionalProperties": false,
+      "properties": {
+        "device_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+          "title": "Device Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "device_id"
+      ],
+      "title": "DevicePoll",
+      "type": "object"
+    },
+    "DeviceAck": {
+      "additionalProperties": false,
+      "properties": {
+        "device_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+          "title": "Device Id",
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "command_seq": {
+          "maximum": 2147483647,
+          "minimum": 1,
+          "title": "Command Seq",
+          "type": "integer"
+        },
+        "control_revision": {
+          "maximum": 2147483647,
+          "minimum": 1,
+          "title": "Control Revision",
+          "type": "integer"
+        },
+        "state": {
+          "enum": [
+            "applied",
+            "rejected",
+            "unknown"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "code": {
+          "enum": [
+            "INPUT_APPLIED",
+            "INPUT_REJECTED",
+            "WINDOW_UNAVAILABLE",
+            "AUTHORIZATION_CHANGED",
+            "VIEWPORT_CHANGED",
+            "EXECUTION_UNKNOWN"
+          ],
+          "title": "Code",
+          "type": "string"
+        }
+      },
+      "required": [
+        "device_id",
+        "session_id",
+        "command_id",
+        "command_seq",
+        "control_revision",
+        "state",
+        "code"
+      ],
+      "title": "DeviceAck",
+      "type": "object"
+    },
+    "FrameHeaders": {
+      "additionalProperties": false,
+      "properties": {
+        "device_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+          "title": "Device Id",
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "frame_seq": {
+          "maximum": 2147483647,
+          "minimum": 1,
+          "title": "Frame Seq",
+          "type": "integer"
+        },
+        "control_revision": {
+          "maximum": 2147483647,
+          "minimum": 1,
+          "title": "Control Revision",
+          "type": "integer"
+        },
+        "viewport_width": {
+          "maximum": 1920,
+          "minimum": 1,
+          "title": "Viewport Width",
+          "type": "integer"
+        },
+        "viewport_height": {
+          "maximum": 1080,
+          "minimum": 1,
+          "title": "Viewport Height",
+          "type": "integer"
+        },
+        "captured_at": {
+          "maximum": 4102444800000,
+          "minimum": 0,
+          "title": "Captured At",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "device_id",
+        "session_id",
+        "frame_seq",
+        "control_revision",
+        "viewport_width",
+        "viewport_height",
+        "captured_at"
+      ],
+      "title": "FrameHeaders",
+      "type": "object"
+    },
+    "SessionView": {
+      "$defs": {
+        "FrameView": {
+          "additionalProperties": false,
+          "properties": {
+            "frame_seq": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Frame Seq",
+              "type": "integer"
+            },
+            "control_revision": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Control Revision",
+              "type": "integer"
+            },
+            "viewport_width": {
+              "maximum": 1920,
+              "minimum": 1,
+              "title": "Viewport Width",
+              "type": "integer"
+            },
+            "viewport_height": {
+              "maximum": 1080,
+              "minimum": 1,
+              "title": "Viewport Height",
+              "type": "integer"
+            },
+            "captured_at": {
+              "maximum": 4102444800000,
+              "minimum": 0,
+              "title": "Captured At",
+              "type": "integer"
+            },
+            "uploaded_at": {
+              "maximum": 4102444800000,
+              "minimum": 0,
+              "title": "Uploaded At",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "frame_seq",
+            "control_revision",
+            "viewport_width",
+            "viewport_height",
+            "captured_at",
+            "uploaded_at"
+          ],
+          "title": "FrameView",
+          "type": "object"
+        },
+        "TaskBinding": {
+          "additionalProperties": false,
+          "properties": {
+            "task_id": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            },
+            "grant_id": {
+              "format": "uuid",
+              "title": "Grant Id",
+              "type": "string"
+            },
+            "lease_id": {
+              "format": "uuid",
+              "title": "Lease Id",
+              "type": "string"
+            },
+            "source_revision": {
+              "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+              "title": "Source Revision",
+              "type": "string"
+            },
+            "content_digest": {
+              "pattern": "^[a-f0-9]{64}$",
+              "title": "Content Digest",
+              "type": "string"
+            }
+          },
+          "required": [
+            "task_id",
+            "grant_id",
+            "lease_id",
+            "source_revision",
+            "content_digest"
+          ],
+          "title": "TaskBinding",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "module": {
+          "enum": [
+            "seo",
+            "geo"
+          ],
+          "title": "Module",
+          "type": "string"
+        },
+        "tenant_id": {
+          "exclusiveMinimum": 0,
+          "title": "Tenant Id",
+          "type": "integer"
+        },
+        "scope_id": {
+          "exclusiveMinimum": 0,
+          "title": "Scope Id",
+          "type": "integer"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "binding_id": {
+          "format": "uuid",
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "device_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+          "title": "Device Id",
+          "type": "string"
+        },
+        "account_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+          "title": "Account Id",
+          "type": "string"
+        },
+        "platform": {
+          "const": "wechat-article",
+          "title": "Platform",
+          "type": "string"
+        },
+        "purpose": {
+          "enum": [
+            "account-login",
+            "account-verification",
+            "task-intervention"
+          ],
+          "title": "Purpose",
+          "type": "string"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskBinding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "controller_user_id": {
+          "exclusiveMinimum": 0,
+          "title": "Controller User Id",
+          "type": "integer"
+        },
+        "broker_epoch": {
+          "format": "uuid",
+          "title": "Broker Epoch",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "requested",
+            "active",
+            "closed",
+            "expired",
+            "failed"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "code": {
+          "pattern": "^[A-Z0-9_]{1,64}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "expires_at": {
+          "maximum": 4102444800000,
+          "minimum": 0,
+          "title": "Expires At",
+          "type": "integer"
+        },
+        "control_revision": {
+          "maximum": 2147483647,
+          "minimum": 1,
+          "title": "Control Revision",
+          "type": "integer"
+        },
+        "frame": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FrameView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_command_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Command Id"
+        },
+        "last_command_state": {
+          "anyOf": [
+            {
+              "enum": [
+                "queued",
+                "delivered",
+                "applied",
+                "rejected",
+                "unknown",
+                "canceled"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Command State"
+        },
+        "automatic_submit": {
+          "const": false,
+          "default": false,
+          "title": "Automatic Submit",
+          "type": "boolean"
+        },
+        "publication_verified": {
+          "const": false,
+          "default": false,
+          "title": "Publication Verified",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "module",
+        "tenant_id",
+        "scope_id",
+        "id",
+        "binding_id",
+        "device_id",
+        "account_id",
+        "platform",
+        "purpose",
+        "task",
+        "controller_user_id",
+        "broker_epoch",
+        "state",
+        "code",
+        "expires_at",
+        "control_revision",
+        "frame",
+        "last_command_id",
+        "last_command_state"
+      ],
+      "title": "SessionView",
+      "type": "object"
+    }
+  },
+  "automatic_submit": false,
+  "publication_verified": false,
+  "input_replay": false,
+  "broker_mode": "single-instance/single-worker PG advisory owner-lock",
+  "frame_response_headers": [
+    "X-Remote-Session-Id",
+    "X-Remote-Device-Id",
+    "X-Frame-Captured-At",
+    "X-Frame-Seq",
+    "X-Control-Revision",
+    "X-Viewport-Width",
+    "X-Viewport-Height"
+  ]
+}

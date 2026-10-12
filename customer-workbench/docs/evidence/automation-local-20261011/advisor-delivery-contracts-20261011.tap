@@ -1,0 +1,892 @@
+TAP version 13
+# Subtest: mixed capabilities keep exact source bindings and remove patrol-only inputs with the last patrol target
+ok 1 - mixed capabilities keep exact source bindings and remove patrol-only inputs with the last patrol target
+  ---
+  duration_ms: 13.0714
+  type: 'test'
+  ...
+# Subtest: audit CSV exports only verified scoped fields and states its pagination boundary
+ok 2 - audit CSV exports only verified scoped fields and states its pagination boundary
+  ---
+  duration_ms: 3.1733
+  type: 'test'
+  ...
+# Subtest: spreadsheet formula prefixes including whitespace are neutralized and cells are escaped
+ok 3 - spreadsheet formula prefixes including whitespace are neutralized and cells are escaped
+  ---
+  duration_ms: 0.3839
+  type: 'test'
+  ...
+# Subtest: a local download uses a bounded filename and revokes its object URL
+ok 4 - a local download uses a bounded filename and revokes its object URL
+  ---
+  duration_ms: 1.4554
+  type: 'test'
+  ...
+# Subtest: export rereads authorized events and revocation prevents a cached download
+ok 5 - export rereads authorized events and revocation prevents a cached download
+  ---
+  duration_ms: 29.9777
+  type: 'test'
+  ...
+# Subtest: v2 accepts independently bound variants and rejects forged fields, limits and unused operations
+ok 6 - v2 accepts independently bound variants and rejects forged fields, limits and unused operations
+  ---
+  duration_ms: 2.3049
+  type: 'test'
+  ...
+# Subtest: basis pagination groups variants by object and rejects cross-scope, repeated or unbounded targets
+ok 7 - basis pagination groups variants by object and rejects cross-scope, repeated or unbounded targets
+  ---
+  duration_ms: 0.8398
+  type: 'test'
+  ...
+# Subtest: ended projects cannot expose start/resume and audit fields exclude credentials or raw prompts
+ok 8 - ended projects cannot expose start/resume and audit fields exclude credentials or raw prompts
+  ---
+  duration_ms: 0.9282
+  type: 'test'
+  ...
+# Subtest: typed steps distinguish external admissions, receipts and unknown costs without pretending success
+ok 9 - typed steps distinguish external admissions, receipts and unknown costs without pretending success
+  ---
+  duration_ms: 1.3405
+  type: 'test'
+  ...
+# Subtest: fixed historical windows reject scope or upper-bound drift and explicitly export only one batch
+ok 10 - fixed historical windows reject scope or upper-bound drift and explicitly export only one batch
+  ---
+  duration_ms: 1.7867
+  type: 'test'
+  ...
+# Subtest: client uses only authorized fixed basis/export routes and fresh capability gates before configuration
+ok 11 - client uses only authorized fixed basis/export routes and fresh capability gates before configuration
+  ---
+  duration_ms: 6.7391
+  type: 'test'
+  ...
+# Subtest: basis picker saves server hashes, never starts on read/save and clears targets when source versions change
+ok 12 - basis picker saves server hashes, never starts on read/save and clears targets when source versions change
+  ---
+  duration_ms: 14.9559
+  type: 'test'
+  ...
+# Subtest: view exposes project end boundary, safe before/after and unknown request evidence
+ok 13 - view exposes project end boundary, safe before/after and unknown request evidence
+  ---
+  duration_ms: 31.2984
+  type: 'test'
+  ...
+# Subtest: scope, model operations, schema capability and event cursor failures reject cross-project data
+ok 14 - scope, model operations, schema capability and event cursor failures reject cross-project data
+  ---
+  duration_ms: 2.7917
+  type: 'test'
+  ...
+# Subtest: reading progress and logs never starts AI and uses fixed same-origin scoped GETs
+ok 15 - reading progress and logs never starts AI and uses fixed same-origin scoped GETs
+  ---
+  duration_ms: 5.088
+  type: 'test'
+  ...
+# Subtest: project-wide configuration audit remains visible without a run and history cursors remain scoped
+ok 16 - project-wide configuration audit remains visible without a run and history cursors remain scoped
+  ---
+  duration_ms: 0.572
+  type: 'test'
+  ...
+# Subtest: control rereads the exact version and real permission, refusing stale or revoked writes before POST
+ok 17 - control rereads the exact version and real permission, refusing stale or revoked writes before POST
+  ---
+  duration_ms: 1.6203
+  type: 'test'
+  ...
+# Subtest: a lost control receipt is uncertain and identical submissions never issue another POST
+ok 18 - a lost control receipt is uncertain and identical submissions never issue another POST
+  ---
+  duration_ms: 1.1762
+  type: 'test'
+  ...
+# Subtest: configuration owner and finite dispatch count cannot be replaced by caller fields
+ok 19 - configuration owner and finite dispatch count cannot be replaced by caller fields
+  ---
+  duration_ms: 1.6986
+  type: 'test'
+  ...
+# Subtest: an identity switch between auth preflight stages cannot authorize an old user
+ok 20 - an identity switch between auth preflight stages cannot authorize an old user
+  ---
+  duration_ms: 3.9504
+  type: 'test'
+  ...
+# Subtest: SEO execution requires content edit and keyword view permissions before reading controls
+ok 21 - SEO execution requires content edit and keyword view permissions before reading controls
+  ---
+  duration_ms: 3.117
+  type: 'test'
+  ...
+# Subtest: progress preserves pending and human boundaries, escapes logs and creates only exact task links
+ok 22 - progress preserves pending and human boundaries, escapes logs and creates only exact task links
+  ---
+  duration_ms: 33.7422
+  type: 'test'
+  ...
+# Subtest: panel stays idle until an explicit start, stops reads for human work and bounds failed progress refreshes
+ok 23 - panel stays idle until an explicit start, stops reads for human work and bounds failed progress refreshes
+  ---
+  duration_ms: 14.079
+  type: 'test'
+  ...
+# Subtest: advisor preflight uses real identity, enabled modules and edit eligibility without tenant enumeration
+ok 24 - advisor preflight uses real identity, enabled modules and edit eligibility without tenant enumeration
+  ---
+  duration_ms: 3.7196
+  type: 'test'
+  ...
+# Subtest: bounded queries and cursor integrity reject invalid or cross-module data
+ok 25 - bounded queries and cursor integrity reject invalid or cross-module data
+  ---
+  duration_ms: 1.1173
+  type: 'test'
+  ...
+# Subtest: account switch rejects late header and JSON responses
+ok 26 - account switch rejects late header and JSON responses
+  ---
+  duration_ms: 1.0635
+  type: 'test'
+  ...
+# Subtest: 401/403 invalidate all modules and missing interfaces remain unavailable
+ok 27 - 401/403 invalidate all modules and missing interfaces remain unavailable
+  ---
+  duration_ms: 1.688
+  type: 'test'
+  ...
+# Subtest: deep links retain exact module scope and reread the original scoped record
+ok 28 - deep links retain exact module scope and reread the original scoped record
+  ---
+  duration_ms: 0.7675
+  type: 'test'
+  ...
+# Subtest: display escapes real metadata, uses page counts and preserves manual next actions
+ok 29 - display escapes real metadata, uses page counts and preserves manual next actions
+  ---
+  duration_ms: 0.664
+  type: 'test'
+  ...
+# Subtest: entry rejects ambiguous or invalid task hints and preserves valid exact IDs
+ok 30 - entry rejects ambiguous or invalid task hints and preserves valid exact IDs
+  ---
+  duration_ms: 0.5401
+  type: 'test'
+  ...
+# Subtest: server action codes and structured blockers show clear advisor next steps
+ok 31 - server action codes and structured blockers show clear advisor next steps
+  ---
+  duration_ms: 0.5601
+  type: 'test'
+  ...
+# Subtest: bound advisor cannot receive another customer through the aggregate contract
+ok 32 - bound advisor cannot receive another customer through the aggregate contract
+  ---
+  duration_ms: 3.1888
+  type: 'test'
+  ...
+# Subtest: late JSON body cannot survive a changed canonical auth revision
+ok 33 - late JSON body cannot survive a changed canonical auth revision
+  ---
+  duration_ms: 1.619
+  type: 'test'
+  ...
+# Subtest: a tenant scope change with the same login ID invalidates pending advisor reads
+ok 34 - a tenant scope change with the same login ID invalidates pending advisor reads
+  ---
+  duration_ms: 0.6927
+  type: 'test'
+  ...
+# Subtest: an account change between advisor identity and module reads rejects the old identity
+ok 35 - an account change between advisor identity and module reads rejects the old identity
+  ---
+  duration_ms: 0.7018
+  type: 'test'
+  ...
+# Subtest: human conversation uses authorized scope, explicit read and same-key recovery after committed response loss
+ok 36 - human conversation uses authorized scope, explicit read and same-key recovery after committed response loss
+  ---
+  duration_ms: 244.8564
+  type: 'test'
+  ...
+# Subtest: conversation checks foreign metadata and invalid cursors before rendering or writing
+ok 37 - conversation checks foreign metadata and invalid cursors before rendering or writing
+  ---
+  duration_ms: 0.6852
+  type: 'test'
+  ...
+# Subtest: unread, failure, empty and malformed data remain distinct without echoing errors
+ok 38 - unread, failure, empty and malformed data remain distinct without echoing errors
+  ---
+  duration_ms: 4.6361
+  type: 'test'
+  ...
+# Subtest: mixed tenants, scopes and modules fail closed for the whole list
+ok 39 - mixed tenants, scopes and modules fail closed for the whole list
+  ---
+  duration_ms: 0.4394
+  type: 'test'
+  ...
+# Subtest: links carry only fixed module, matching tenant/scope and a validated task id
+ok 40 - links carry only fixed module, matching tenant/scope and a validated task id
+  ---
+  duration_ms: 1.5893
+  type: 'test'
+  ...
+# Subtest: coverage never treats a page count as a global total, including an empty page
+ok 41 - coverage never treats a page count as a global total, including an empty page
+  ---
+  duration_ms: 0.3677
+  type: 'test'
+  ...
+# Subtest: months are filtered independently of dates and startup/undated tasks are separately marked
+ok 42 - months are filtered independently of dates and startup/undated tasks are separately marked
+  ---
+  duration_ms: 0.4941
+  type: 'test'
+  ...
+# Subtest: true stages, owner, focus and next step appear; completion does not imply performance
+ok 43 - true stages, owner, focus and next step appear; completion does not imply performance
+  ---
+  duration_ms: 0.9411
+  type: 'test'
+  ...
+# Subtest: unknown stages/types and absent owner/focus are not invented or taken from prototypes
+ok 44 - unknown stages/types and absent owner/focus are not invented or taken from prototypes
+  ---
+  duration_ms: 0.4766
+  type: 'test'
+  ...
+# Subtest: missing information uses explicit proposal lists without claiming that missing means complete
+ok 45 - missing information uses explicit proposal lists without claiming that missing means complete
+  ---
+  duration_ms: 0.4024
+  type: 'test'
+  ...
+# Subtest: all external text is escaped, ancillary provider/governance data is never rendered
+ok 46 - all external text is escaped, ancillary provider/governance data is never rendered
+  ---
+  duration_ms: 0.4098
+  type: 'test'
+  ...
+# Subtest: GEO uses task focus and AI citation wording without consuming SEO keywords
+ok 47 - GEO uses task focus and AI citation wording without consuming SEO keywords
+  ---
+  duration_ms: 0.4415
+  type: 'test'
+  ...
+# Subtest: rendering leaves the original response intact and is deterministic for an explicit month
+ok 48 - rendering leaves the original response intact and is deterministic for an explicit month
+  ---
+  duration_ms: 21.4586
+  type: 'test'
+  ...
+# Subtest: keyword deletion requires edit permission and both exact tenant and site scope, with no body
+ok 49 - keyword deletion requires edit permission and both exact tenant and site scope, with no body
+  ---
+  duration_ms: 133.1338
+  type: 'test'
+  ...
+# Subtest: caller abort reaches an authorized media fetch and its response body
+ok 50 - caller abort reaches an authorized media fetch and its response body
+  ---
+  duration_ms: 28.1596
+  type: 'test'
+  ...
+# Subtest: no session sends no request; login keeps same-origin safe redirect
+ok 51 - no session sends no request; login keeps same-origin safe redirect
+  ---
+  duration_ms: 0.5519
+  type: 'test'
+  ...
+# Subtest: login returns to scope, rejects encoded external paths and login loops
+ok 52 - login returns to scope, rejects encoded external paths and login loops
+  ---
+  duration_ms: 0.3342
+  type: 'test'
+  ...
+# Subtest: preflight scope and route allowlist reject foreign clients and unapproved writes
+ok 53 - preflight scope and route allowlist reject foreign clients and unapproved writes
+  ---
+  duration_ms: 33.5389
+  type: 'test'
+  ...
+# Subtest: session bridge tracks tenant changes independently of authRevision
+ok 54 - session bridge tracks tenant changes independently of authRevision
+  ---
+  duration_ms: 1.5904
+  type: 'test'
+  ...
+# Subtest: queued requests update through running to ready using only bounded reads
+ok 55 - queued requests update through running to ready using only bounded reads
+  ---
+  duration_ms: 6.0295
+  type: 'test'
+  ...
+# Subtest: unsaved input pauses reads and a newly started edit prevents applying an in-flight reply
+ok 56 - unsaved input pauses reads and a newly started edit prevents applying an in-flight reply
+  ---
+  duration_ms: 5.2863
+  type: 'test'
+  ...
+# Subtest: responses cannot follow a customer or user scope change
+ok 57 - responses cannot follow a customer or user scope change
+  ---
+  duration_ms: 2.0711
+  type: 'test'
+  ...
+# Subtest: a late result cannot replace a newly selected request or survive disposal
+ok 58 - a late result cannot replace a newly selected request or survive disposal
+  ---
+  duration_ms: 0.998
+  type: 'test'
+  ...
+# Subtest: three read failures stop polling without restarting on render
+ok 59 - three read failures stop polling without restarting on render
+  ---
+  duration_ms: 0.7023
+  type: 'test'
+  ...
+# Subtest: permission or contract failure stops immediately and the duration limit does not reset on render
+ok 60 - permission or contract failure stops immediately and the duration limit does not reset on render
+  ---
+  duration_ms: 0.8441
+  type: 'test'
+  ...
+# Subtest: seo accepts 202 queued and keeps polling separate from writable state
+ok 61 - seo accepts 202 queued and keeps polling separate from writable state
+  ---
+  duration_ms: 5.1857
+  type: 'test'
+  ...
+# Subtest: geo accepts 202 queued and keeps polling separate from writable state
+ok 62 - geo accepts 202 queued and keeps polling separate from writable state
+  ---
+  duration_ms: 0.7764
+  type: 'test'
+  ...
+# Subtest: queued status cannot offer another generation even with inconsistent server capability
+ok 63 - queued status cannot offer another generation even with inconsistent server capability
+  ---
+  duration_ms: 0.9461
+  type: 'test'
+  ...
+# Subtest: seo AI proposals bind server revision and scope, coalescing duplicate requests
+ok 64 - seo AI proposals bind server revision and scope, coalescing duplicate requests
+  ---
+  duration_ms: 6.6039
+  type: 'test'
+  ...
+# Subtest: seo AI call requires fresh capabilities and a writable proposal
+ok 65 - seo AI call requires fresh capabilities and a writable proposal
+  ---
+  duration_ms: 1.4674
+  type: 'test'
+  ...
+# Subtest: seo uncertain or mismatched AI replies cannot be resent from stale read state
+ok 66 - seo uncertain or mismatched AI replies cannot be resent from stale read state
+  ---
+  duration_ms: 0.6912
+  type: 'test'
+  ...
+# Subtest: seo late AI proposal cannot enter another account or project context
+ok 67 - seo late AI proposal cannot enter another account or project context
+  ---
+  duration_ms: 0.3445
+  type: 'test'
+  ...
+# Subtest: geo AI proposals bind server revision and scope, coalescing duplicate requests
+ok 68 - geo AI proposals bind server revision and scope, coalescing duplicate requests
+  ---
+  duration_ms: 1.2855
+  type: 'test'
+  ...
+# Subtest: geo AI call requires fresh capabilities and a writable proposal
+ok 69 - geo AI call requires fresh capabilities and a writable proposal
+  ---
+  duration_ms: 2.1922
+  type: 'test'
+  ...
+# Subtest: geo uncertain or mismatched AI replies cannot be resent from stale read state
+ok 70 - geo uncertain or mismatched AI replies cannot be resent from stale read state
+  ---
+  duration_ms: 1.0673
+  type: 'test'
+  ...
+# Subtest: geo late AI proposal cannot enter another account or project context
+ok 71 - geo late AI proposal cannot enter another account or project context
+  ---
+  duration_ms: 0.6175
+  type: 'test'
+  ...
+# Subtest: focused onsite links accept only one safe positive task ID
+ok 72 - focused onsite links accept only one safe positive task ID
+  ---
+  duration_ms: 0.6721
+  type: 'test'
+  ...
+# Subtest: customer status never claims effect gains, exposes unavailable writes, and escapes AI explanations
+ok 73 - customer status never claims effect gains, exposes unavailable writes, and escapes AI explanations
+  ---
+  duration_ms: 0.9191
+  type: 'test'
+  ...
+# Subtest: seo host denies customer AI writes and foreign scope or injected body fields
+ok 74 - seo host denies customer AI writes and foreign scope or injected body fields
+  ---
+  duration_ms: 4.7241
+  type: 'test'
+  ...
+# Subtest: geo host denies customer AI writes and foreign scope or injected body fields
+ok 75 - geo host denies customer AI writes and foreign scope or injected body fields
+  ---
+  duration_ms: 4.3134
+  type: 'test'
+  ...
+# Subtest: GEO entry accepts only an explicit unambiguous project scope
+ok 76 - GEO entry accepts only an explicit unambiguous project scope
+  ---
+  duration_ms: 3.5136
+  type: 'test'
+  ...
+# Subtest: GEO host verifies entitlement, tenant and project separately, then rejects foreign routes and bodies
+ok 77 - GEO host verifies entitlement, tenant and project separately, then rejects foreign routes and bodies
+  ---
+  duration_ms: 4.2152
+  type: 'test'
+  ...
+# Subtest: GEO late responses are discarded when the canonical session scope changes
+ok 78 - GEO late responses are discarded when the canonical session scope changes
+  ---
+  duration_ms: 22.2969
+  type: 'test'
+  ...
+# Subtest: GEO customer cannot inject a write even after read authorization
+ok 79 - GEO customer cannot inject a write even after read authorization
+  ---
+  duration_ms: 0.9078
+  type: 'test'
+  ...
+# Subtest: onsite client binds the read revision and consumes uncertain writes without resending
+ok 80 - onsite client binds the read revision and consumes uncertain writes without resending
+  ---
+  duration_ms: 0.9482
+  type: 'test'
+  ...
+# Subtest: seo never adopts an action response for a different task in the same scope
+ok 81 - seo never adopts an action response for a different task in the same scope
+  ---
+  duration_ms: 0.4947
+  type: 'test'
+  ...
+# Subtest: geo never adopts an action response for a different task in the same scope
+ok 82 - geo never adopts an action response for a different task in the same scope
+  ---
+  duration_ms: 0.3036
+  type: 'test'
+  ...
+# Subtest: governance route requires verified server identity and is strictly read-only
+ok 83 - governance route requires verified server identity and is strictly read-only
+  ---
+  duration_ms: 2.5933
+  type: 'test'
+  ...
+# Subtest: missing endpoint, invalid schema and permission denial are not successful empty results
+ok 84 - missing endpoint, invalid schema and permission denial are not successful empty results
+  ---
+  duration_ms: 1.1168
+  type: 'test'
+  ...
+# Subtest: late governance response after identity change is rejected
+ok 85 - late governance response after identity change is rejected
+  ---
+  duration_ms: 4.3731
+  type: 'test'
+  ...
+# Subtest: only allowlisted presentation fields render; unknown counts and unapproved schema stay honest
+ok 86 - only allowlisted presentation fields render; unknown counts and unapproved schema stay honest
+  ---
+  duration_ms: 1.2013
+  type: 'test'
+  ...
+# Subtest: real backend provider hosts and ledger observation windows retain their meaning
+ok 87 - real backend provider hosts and ledger observation windows retain their meaning
+  ---
+  duration_ms: 0.201
+  type: 'test'
+  ...
+# Subtest: shared configuration does not present independent service protection as enabled
+ok 88 - shared configuration does not present independent service protection as enabled
+  ---
+  duration_ms: 0.1991
+  type: 'test'
+  ...
+# Subtest: balance reads use fixed authorized GET with validated pagination and real refresh flag
+ok 89 - balance reads use fixed authorized GET with validated pagination and real refresh flag
+  ---
+  duration_ms: 7.5597
+  type: 'test'
+  ...
+# Subtest: coverage separates supported services, observed configuration and live supplier results
+ok 90 - coverage separates supported services, observed configuration and live supplier results
+  ---
+  duration_ms: 1.1254
+  type: 'test'
+  ...
+# Subtest: 403 clears authorization, 404 is unavailable and late balance bodies cannot cross identities
+ok 91 - 403 clears authorization, 404 is unavailable and late balance bodies cannot cross identities
+  ---
+  duration_ms: 3.8207
+  type: 'test'
+  ...
+# Subtest: balance panel renders real zero, unknown errors and warnings without raw secrets or HTML
+ok 92 - balance panel renders real zero, unknown errors and warnings without raw secrets or HTML
+  ---
+  duration_ms: 0.7088
+  type: 'test'
+  ...
+# Subtest: console requires an unbound named identity with both management permissions
+ok 93 - console requires an unbound named identity with both management permissions
+  ---
+  duration_ms: 1.2227
+  type: 'test'
+  ...
+# Subtest: server identity is checked before fetching the global snapshot
+ok 94 - server identity is checked before fetching the global snapshot
+  ---
+  duration_ms: 1.8481
+  type: 'test'
+  ...
+# Subtest: reads only the two global preflight routes and authenticates without keys
+ok 95 - reads only the two global preflight routes and authenticates without keys
+  ---
+  duration_ms: 0.5036
+  type: 'test'
+  ...
+# Subtest: late global data is rejected after session changes, including body parsing
+ok 96 - late global data is rejected after session changes, including body parsing
+  ---
+  duration_ms: 4.5722
+  type: 'test'
+  ...
+# Subtest: expiry clears the canonical session and permission denial invalidates authorization
+ok 97 - expiry clears the canonical session and permission denial invalidates authorization
+  ---
+  duration_ms: 0.7141
+  type: 'test'
+  ...
+# Subtest: configuration writes have fresh permission preflight and one fixed authenticated route
+ok 98 - configuration writes have fresh permission preflight and one fixed authenticated route
+  ---
+  duration_ms: 0.5765
+  type: 'test'
+  ...
+# Subtest: identity changes during write preflight cancel the write
+ok 99 - identity changes during write preflight cancel the write
+  ---
+  duration_ms: 0.2849
+  type: 'test'
+  ...
+# Subtest: history filters stay on fixed routes and CSV export checks current permission
+ok 100 - history filters stay on fixed routes and CSV export checks current permission
+  ---
+  duration_ms: 33.9675
+  type: 'test'
+  ...
+# Subtest: incident and supplier writes require fresh identity and discard stale downloads
+ok 101 - incident and supplier writes require fresh identity and discard stale downloads
+  ---
+  duration_ms: 2.2443
+  type: 'test'
+  ...
+# Subtest: manual usage review checks fresh admin identity and coalesces a lost submission without retry
+ok 102 - manual usage review checks fresh admin identity and coalesces a lost submission without retry
+  ---
+  duration_ms: 1.5735
+  type: 'test'
+  ...
+# Subtest: late or mismatched review receipts cannot be shown as a confirmed settlement
+ok 103 - late or mismatched review receipts cannot be shown as a confirmed settlement
+  ---
+  duration_ms: 10.4891
+  type: 'test'
+  ...
+# Subtest: keyword deletion requires the latest owned selection and advisor permission, binds the site, and consumes selection once
+ok 104 - keyword deletion requires the latest owned selection and advisor permission, binds the site, and consumes selection once
+  ---
+  duration_ms: 3.0375
+  type: 'test'
+  ...
+# Subtest: keyword deletion fails closed across context changes and uncertain outcomes without automatic resends
+ok 105 - keyword deletion fails closed across context changes and uncertain outcomes without automatic resends
+  ---
+  duration_ms: 1.8845
+  type: 'test'
+  ...
+# Subtest: data reader sends only real supported filters, preserves scoped paging, and requires list ownership for details
+ok 106 - data reader sends only real supported filters, preserves scoped paging, and requires list ownership for details
+  ---
+  duration_ms: 1.1093
+  type: 'test'
+  ...
+# Subtest: late data responses are discarded on scope change and publication rows must belong to requested site
+ok 107 - late data responses are discarded on scope change and publication rows must belong to requested site
+  ---
+  duration_ms: 0.542
+  type: 'test'
+  ...
+# Subtest: fact saves include all fields and frozen version; unknown writes are not retried, keyword updates stay limited
+ok 108 - fact saves include all fields and frozen version; unknown writes are not retried, keyword updates stay limited
+  ---
+  duration_ms: 3.7182
+  type: 'test'
+  ...
+# Subtest: home counts actionable delivery status, not ready content, and clearly limits coverage
+ok 109 - home counts actionable delivery status, not ready content, and clearly limits coverage
+  ---
+  duration_ms: 29.209
+  type: 'test'
+  ...
+# Subtest: missing, malformed and empty lists are different, scoped totals do not use whole-site stats
+ok 110 - missing, malformed and empty lists are different, scoped totals do not use whole-site stats
+  ---
+  duration_ms: 22.817
+  type: 'test'
+  ...
+# Subtest: stale ranking is not shown as current and zero delta is retained
+ok 111 - stale ranking is not shown as current and zero delta is retained
+  ---
+  duration_ms: 1.1696
+  type: 'test'
+  ...
+# Subtest: page zero score is valid, missing score is not manufactured and indexing is qualified
+ok 112 - page zero score is valid, missing score is not manufactured and indexing is qualified
+  ---
+  duration_ms: 0.6131
+  type: 'test'
+  ...
+# Subtest: publication readback never promotes available evidence into verified or search performance
+ok 113 - publication readback never promotes available evidence into verified or search performance
+  ---
+  duration_ms: 0.4637
+  type: 'test'
+  ...
+# Subtest: external content is escaped and links allow neither scripts nor embedded credentials
+ok 114 - external content is escaped and links allow neither scripts nor embedded credentials
+  ---
+  duration_ms: 0.4074
+  type: 'test'
+  ...
+# Subtest: execution GET is read-only, scoped and server-action gated; keyword permission filters counts
+ok 115 - execution GET is read-only, scoped and server-action gated; keyword permission filters counts
+  ---
+  duration_ms: 112.4203
+  type: 'test'
+  ...
+# Subtest: content advance uses SEO-08; failed page retry, paused cancellation, and post-write re-read use current capabilities
+ok 116 - content advance uses SEO-08; failed page retry, paused cancellation, and post-write re-read use current capabilities
+  ---
+  duration_ms: 167.3446
+  type: 'test'
+  ...
+# Subtest: frozen report checks ETag and bytes, explanation binds read hash; 409 never retries
+ok 117 - frozen report checks ETag and bytes, explanation binds read hash; 409 never retries
+  ---
+  duration_ms: 108.1468
+  type: 'test'
+  ...
+# Subtest: scope changes discard held details; unexpected links and uncertain writes cannot become success
+ok 118 - scope changes discard held details; unexpected links and uncertain writes cannot become success
+  ---
+  duration_ms: 90.5573
+  type: 'test'
+  ...
+# Subtest: cycle settings default off, changes are explicit and bounded; server response must preserve submitted settings
+ok 119 - cycle settings default off, changes are explicit and bounded; server response must preserve submitted settings
+  ---
+  duration_ms: 73.4897
+  type: 'test'
+  ...
+# Subtest: analytics recovery and incomplete report require current server actions; reading a notice never completes a task
+ok 120 - analytics recovery and incomplete report require current server actions; reading a notice never completes a task
+  ---
+  duration_ms: 102.8869
+  type: 'test'
+  ...
+# Subtest: GET-only exact scope and verified history reference; no invented writes
+ok 121 - GET-only exact scope and verified history reference; no invented writes
+  ---
+  duration_ms: 1.7275
+  type: 'test'
+  ...
+# Subtest: forbidden has no demo fallback; foreign site is rejected
+ok 122 - forbidden has no demo fallback; foreign site is rejected
+  ---
+  duration_ms: 1.1075
+  type: 'test'
+  ...
+# Subtest: pagination uses the server page contract, invalidates prior references and rejects bad values
+ok 123 - pagination uses the server page contract, invalidates prior references and rejects bad values
+  ---
+  duration_ms: 1.697
+  type: 'test'
+  ...
+# Subtest: context change during response discards old payload
+ok 124 - context change during response discards old payload
+  ---
+  duration_ms: 1.2241
+  type: 'test'
+  ...
+# Subtest: unconnected host never sends requests
+ok 125 - unconnected host never sends requests
+  ---
+  duration_ms: 2.3302
+  type: 'test'
+  ...
+# Subtest: customer approval and advisor proxy use exact server version/hash and real response actor
+ok 126 - customer approval and advisor proxy use exact server version/hash and real response actor
+  ---
+  duration_ms: 2.1219
+  type: 'test'
+  ...
+# Subtest: server denied actions and missing rejection note prevent writes; reject sends note
+ok 127 - server denied actions and missing rejection note prevent writes; reject sends note
+  ---
+  duration_ms: 0.591
+  type: 'test'
+  ...
+# Subtest: 409 conflict and 503 missing migration invalidate snapshot; never mock success
+ok 128 - 409 conflict and 503 missing migration invalidate snapshot; never mock success
+  ---
+  duration_ms: 1.0095
+  type: 'test'
+  ...
+# Subtest: review includes exact version and discards old delivery after write
+ok 129 - review includes exact version and discards old delivery after write
+  ---
+  duration_ms: 0.6587
+  type: 'test'
+  ...
+# Subtest: plan read preserves revision; absent server write eligibility stays disabled even with host flag
+ok 130 - plan read preserves revision; absent server write eligibility stays disabled even with host flag
+  ---
+  duration_ms: 0.6487
+  type: 'test'
+  ...
+# Subtest: service status preserves phase vocabulary; ready is not completed
+ok 131 - service status preserves phase vocabulary; ready is not completed
+  ---
+  duration_ms: 0.3027
+  type: 'test'
+  ...
+# Subtest: context change and uncertain write never resend automatically
+ok 132 - context change and uncertain write never resend automatically
+  ---
+  duration_ms: 0.5096
+  type: 'test'
+  ...
+# Subtest: display mapping keeps server allowed actions, actual proxy actor and unavailable schema
+ok 133 - display mapping keeps server allowed actions, actual proxy actor and unavailable schema
+  ---
+  duration_ms: 0.4409
+  type: 'test'
+  ...
+# Subtest: feedback distinguishes rejected history from current approval and does not invent missing decisions
+ok 134 - feedback distinguishes rejected history from current approval and does not invent missing decisions
+  ---
+  duration_ms: 0.5665
+  type: 'test'
+  ...
+# Subtest: phase view never invents missing workflow owners or history
+ok 135 - phase view never invents missing workflow owners or history
+  ---
+  duration_ms: 0.4977
+  type: 'test'
+  ...
+# Subtest: malformed confirmation response invalidates snapshot
+ok 136 - malformed confirmation response invalidates snapshot
+  ---
+  duration_ms: 0.6762
+  type: 'test'
+  ...
+# Subtest: 0104 unavailable prevents confirm even if a malformed response advertises an action
+ok 137 - 0104 unavailable prevents confirm even if a malformed response advertises an action
+  ---
+  duration_ms: 0.4273
+  type: 'test'
+  ...
+# Subtest: server true enables exact PUT; only validated response displays saved; next edit rereads permission
+ok 138 - server true enables exact PUT; only validated response displays saved; next edit rereads permission
+  ---
+  duration_ms: 3.5235
+  type: 'test'
+  ...
+# Subtest: false, absent and non-boolean permission remain disabled; role and host flags cannot override
+ok 139 - false, absent and non-boolean permission remain disabled; role and host flags cannot override
+  ---
+  duration_ms: 1.3694
+  type: 'test'
+  ...
+# Subtest: 409 conflict never displays saved and requires a fresh GET
+ok 140 - 409 conflict never displays saved and requires a fresh GET
+  ---
+  duration_ms: 0.9175
+  type: 'test'
+  ...
+# Subtest: assignment revoked after GET causes 403; reread denial is displayed without save success
+ok 141 - assignment revoked after GET causes 403; reread denial is displayed without save success
+  ---
+  duration_ms: 0.564
+  type: 'test'
+  ...
+# Subtest: 503, uncertain PUT and malformed success do not produce saved state
+ok 142 - 503, uncertain PUT and malformed success do not produce saved state
+  ---
+  duration_ms: 2.179
+  type: 'test'
+  ...
+# Subtest: session changes or view invalidation discard late successful PUT without a success banner
+ok 143 - session changes or view invalidation discard late successful PUT without a success banner
+  ---
+  duration_ms: 0.4654
+  type: 'test'
+  ...
+# Subtest: no host remains explicitly disconnected
+ok 144 - no host remains explicitly disconnected
+  ---
+  duration_ms: 0.1643
+  type: 'test'
+  ...
+# Subtest: semantics and server evidence references are preserved without creating workflow completion
+ok 145 - semantics and server evidence references are preserved without creating workflow completion
+  ---
+  duration_ms: 0.2179
+  type: 'test'
+  ...
+# Subtest: AI retry retains exact payload and rejects mismatched scope, identity and nonadvisory responses
+ok 146 - AI retry retains exact payload and rejects mismatched scope, identity and nonadvisory responses
+  ---
+  duration_ms: 2.3162
+  type: 'test'
+  ...
+# Subtest: AI throttling exposes safe retry duration and distinct server policy code
+ok 147 - AI throttling exposes safe retry duration and distinct server policy code
+  ---
+  duration_ms: 25.9996
+  type: 'test'
+  ...
+1..147
+# tests 147
+# suites 0
+# pass 147
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1940.4613
