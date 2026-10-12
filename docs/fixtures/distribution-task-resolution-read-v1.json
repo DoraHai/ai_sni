@@ -1,0 +1,34 @@
+{
+  "request": {
+    "resolutionVersion": 1,
+    "deviceId": "00000000-0000-4000-8000-000000000001",
+    "taskId": "00000000-0000-4000-8000-000000000002",
+    "grantId": "00000000-0000-4000-8000-000000000003",
+    "publicationGrantId": "00000000-0000-4000-8000-000000000004",
+    "leaseId": "00000000-0000-4000-8000-000000000005",
+    "customerId": "15",
+    "projectId": "seo-6",
+    "accountId": "synthetic_account",
+    "platform": "wechat-article",
+    "contentVersion": "synthetic_approved_v2",
+    "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "response": {
+    "resolutionVersion": 1,
+    "deviceId": "00000000-0000-4000-8000-000000000001",
+    "taskId": "00000000-0000-4000-8000-000000000002",
+    "grantId": "00000000-0000-4000-8000-000000000003",
+    "publicationGrantId": "00000000-0000-4000-8000-000000000004",
+    "leaseId": "00000000-0000-4000-8000-000000000005",
+    "customerId": "15",
+    "projectId": "seo-6",
+    "accountId": "synthetic_account",
+    "platform": "wechat-article",
+    "contentVersion": "synthetic_approved_v2",
+    "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "asOf": 1791809000000,
+    "resolution": {"id": 1,"outcome": "not-published","checkedAt": 1791808999000,"evidence": "advisor-reported"},
+    "publicationVerified": false,
+    "executionAuthorized": false
+  }
+}

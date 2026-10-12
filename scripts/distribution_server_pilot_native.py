@@ -224,7 +224,9 @@ def prepare(config_path, module):
                  'app/distribution_api_contract.py','app/distribution_api_orders.py',
                  'app/distribution_pairing.py','app/distribution_pairing_contract.py',
                  'app/api/distribution_pairing.py','scripts/distribution_device_pairing_schema.sql',
-                 'docs/fixtures/distribution-device-pairing-v1.json','scripts/distribution_remote_schema.sql'):
+                 'docs/fixtures/distribution-device-pairing-v1.json','scripts/distribution_remote_schema.sql',
+                 'app/distribution_task_resolution_contract.py','app/distribution_task_resolution_read.py',
+                 'app/api/distribution_task_resolution_read.py','docs/fixtures/distribution-task-resolution-read-v1.json'):
         source=Path(config['central_root'])/name
         if source.exists(): manifest.setdefault('central_files',{})[name]=hashlib.sha256(source.read_bytes()).hexdigest()
     for name in ('app/api/seo_automation_projects.py','app/api/seo_onsite_ai.py','app/seo_demo_source.py'):
@@ -446,6 +448,10 @@ def application(root, config, sessions, module, manifest):
     app.include_router(router)
     import distribution_single_publication_gate as single_publication
     single_publication.mount_task_wrapper(app, root, config, module)
+    # SEO-only read pilot; never enter GEO's different native lock order.
+    if module == 'seo':
+        from app.api.distribution_task_resolution_read import router as task_resolution_read_router
+        app.include_router(task_resolution_read_router)
     for route in auth_router.routes:
         if route.endpoint.__name__ in {'login','me','logout'}: app.router.routes.append(route)
     # Mount the reviewed real modules handler, not a generated auth/scope fixture.
