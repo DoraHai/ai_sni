@@ -1,6 +1,6 @@
 # 公司执行电脑分发验收 · 2026-10-12
 
-本轮已部署独立 Linux API／数据库验收环境，完成实际网页配对、公司 Windows 执行端绑定、原生 SEO 稿件准备、单条预检领取及待人工回执。用户随后完成扫码，官方主页的稳定公众号身份已核验，原生服务器已撤销占位绑定并创建真实账号的新绑定。**完整真实发布尚未验收**；执行端新绑定的当前身份复核仍待完成，没有导入编辑器、上传封面、提交发表或获取公开文章链接。SEM 未部署或启用 AI 接管。
+本轮已部署独立 Linux API／数据库验收环境，完成实际网页配对、公司 Windows 执行端绑定、原生 SEO 稿件准备、单条预检领取及待人工回执。用户随后完成扫码，官方主页的稳定公众号身份已核验，原生服务器已撤销占位绑定并创建真实账号的新绑定；执行端通过新的账号核验会话再次取得相同的当前官方身份。**完整真实发布尚未验收**；没有导入编辑器、上传封面、提交发表或获取公开文章链接。SEM 未部署或启用 AI 接管。
 
 ## 可复核的部署与仓库版本
 
@@ -19,11 +19,11 @@ GitHub 插件同步采用完整 UTF-8／mode 树与期望分支头校验，三�
 | 环节 | 结果与边界 |
 | --- | --- |
 | 网页首次配对 | 原生命名账号登录；一次创建短码；真实 Electron 领取一次，服务器确认 claimed／设备 active。长期凭据只保存在执行端，外部 SID 权限规则为 0。 |
-| 绑定与登录介入 | 初始 discovery 空；原生配置唯一 SEO15／站点6 绑定后 GUI 重读并选择。真实顾问 API 创建登录会话、读取官方二维码帧均 200。后续用户扫码后获得官方主页稳定 `gh_` 身份；原生服务器新建真实绑定，旧占位绑定已撤销并保留其不可变身份与历史。新绑定的执行端当前身份复核待完成。到期关闭会话，无静默续期。 |
+| 绑定与登录介入 | 初始 discovery 空；原生配置唯一 SEO15／站点6 绑定后 GUI 重读并选择。真实顾问 API 创建登录会话、读取官方二维码帧均 200。后续用户扫码后获得官方主页稳定 `gh_` 身份；原生服务器新建真实绑定，旧占位绑定已撤销并保留其不可变身份与历史。执行端新会话的当前身份精确匹配；总控独立复核新会话／绑定／scope／新鲜原生帧均 200。本轮同一个自有 profile 无需再次扫码。到期关闭会话，无静默续期。 |
 | 网页身份与输入 | pagehide 清码、缓存恢复重新核验；慢网真实 GET 期间的名称／TTL 输入保留，离开后清空。相关前端 9 项回归通过，另有实际云浏览器验证，无响应模拟。 |
 | 权限拦截 | 8 项实际云检查：客户不能配对／控制项目、外部客户不能读测试 scope／source、旧长期凭据创建口拒绝、Authorization／Origin／Sec-Fetch 的网页 claim 拒绝。两模块的真实目录只开放本单元。 |
 | 原生 SEO 稿件 | 28 次实际 API 调用。派生母稿61 v2 ready、公众号稿2 revision1 approved，精确版本确认后 source-ready／eligible。审批是命名测试账号及 advisor_proxy，不等于真人内容批准。原母稿60／百家号稿1的正文、版本、状态保留。 |
-| 单条任务与回执 | 原生顾问授权一条 preflight，云任务 `3228b482-ebde-434e-9e6e-d353ae8609ca`。PC 实际领取并执行一次，页面未核验时停止；没有平台写操作或 publication grant。经同任务结果桥接，中央最终为 seq4 `HUMAN_REQUIRED`／`awaiting-human`，项目暂停 revision2。 |
+| 单条任务与回执 | 原生顾问授权一条 preflight，云任务 `3228b482-ebde-434e-9e6e-d353ae8609ca`。PC 实际领取并执行一次，页面未核验时停止；没有平台写操作或 publication grant。经同任务结果桥接，初轮中央为 seq4 `HUMAN_REQUIRED`／`awaiting-human`，项目暂停 revision2。后续真实账号绑定流程停用旧占位绑定，保留原任务及回执，不复执行旧任务。 |
 | 真实发布 | 未验收。编辑器导入、标题／排版／封面、提交发表、公开链接核验与原生发布回写均没有本轮成功证据。当前正式发布入口仍关闭。 |
 
 ## 已发现并处理的问题
@@ -41,11 +41,23 @@ GitHub 插件同步采用完整 UTF-8／mode 树与期望分支头校验，三�
 
 北京时间 16:39:54，总控使用命名超管原生 API 撤销旧占位绑定、建立新逻辑账号的真实绑定，并通过 GET 再核对。旧绑定的 external identity 未修改，原有任务／回执历史保留；没有复执行旧预检。项目仍为 SEO15／站点6、paused revision2、owner100007；没有新增任务或 publication grant。私有元数据证据为 `cloud-verified-wechat-binding-evidence.json`。
 
-现有执行端按 device／binding／module／tenant／scope／account 确定独立 profile，没有跨新逻辑账号沿用本轮 profile 的现成安全路径。已安排多号通在独立工作树补齐受约束的 metadata 重新关联：核对旧绑定撤销、旧会话与锁释放、新绑定真实范围一致，再取得全新的登录授权并重新读取当前官方身份；不读取、复制或导出 Cookie，不使用原多号通 profile。当前仍在开发与验证，不提前标为通过。
+执行端按 device／binding／module／tenant／scope／account 确定独立 profile，原先没有跨新逻辑账号沿用本轮 profile 的安全路径。多号通在独立工作树补齐受约束的 metadata 重新关联：核对旧绑定撤销、旧会话与锁释放、新绑定真实范围一致，再取得全新的账号核验授权并重新读取当前官方身份；不读取、复制或导出 Cookie，不使用原多号通 profile。
+
+旧绑定停用后，原生旧 session GET 实际返回 403 `REMOTE_SCOPE_FORBIDDEN`，不能当成关闭证明。总控在独立 `distribution_acceptance_seo`／`acceptance_seo` 内以 REPEATABLE READ READ ONLY 事务提取精确 session／controller／scope／device／binding 白名单元数据，确认该会话 state=closed、code=`BROKER_RESTARTED`、closed_at 与同 session 的 `remote_closed` 审计相符，旧绑定仍 inactive。没有重开旧绑定、改写会话状态或读取 nonce／Cookie 列。该固定指纹关闭证明仅用于本轮受约束登记入口，保留 GET403 的真实结果，不泛化为生产 API 已支持停用绑定历史读取。
+
+北京时间 17:10:08，新账号核验会话的当前主页观察为 `IDENTITY_MATCH`。总控另行通过真实命名 JWT／受信 CA HTTPS 复核新 session、binding、scope、frame，均 200；设备／范围／binding／account／revision 均匹配，身份观察与原生帧均在 10 秒以内。页面截图再次显示相同公众号；没有再次扫码。项目仍 paused revision2，没有新任务、发布授权或编辑器写入。证据为 `cloud-real-binding-current-login-evidence.json` 与 `cloud-real-binding-home-frame.png`。随后本轮会话 close 200，执行端停止、窗口为零；不是常驻有效登录控制授权。
+
+本地关联实现冻结于多号通干净提交 `36e62117b4ef69f52fba011ef1ffaa2fb2f28a52`，不可变包 `release/profile-reassociation-36e62117b4ef`；类型检查与 51 项相关回归通过。实际关联登记只执行一次，初次 CA 配置顺序失败与 8.3 路径比较失败均保留记录；没有关闭 TLS 验证或靠再次登记恢复。
+
+静态复核发现新登记入口未提前完整检查根目录祖先及待写 SQLite／proof 叶子链接。总控实读本轮根至 C 盘共 9 层祖先、实际 DB 与 proof 叶子，均非 ReparsePoint，既有登录证据有效。路径修复在新的独立工作树干净冻结为 `33df23af29a23a0b4b6a1758c1b1bfe5c00bc225`，包 `release/profile-reassociation-33df23af29a2`；类型检查与 56 项定向回归通过，包含假 TEMP 祖先 junction、DB／sidecar／proof／history 叶子链接负例。未操作或重新登记真实 profile／registry。该修复为本地程序边界检查，未部署到生产服务器、未改变项目或发布权限。
+
+发布稿件也经新的原生 GET 再核对，variant2 的 source revision／digest 与审核快照完全一致，标题 31 字、正文 2329 字、assets=[]；封面及官方发布必填项尚未核验。元数据证据为 `cloud-publish-source-readiness.json`。
 
 ## 后续真实发布验收
 
-执行端新绑定的当前官方身份精确匹配后，继续用已确认测试版本验证导入、排版、封面／必填项、受控提交、结果未知处理、公开链接核验及原生回写。现有真实编辑器与提交适配仍需核验，正式发布入口仍关闭。每一步通过后才标记对应能力，不从登录、配对、素材交接或点击提交推断发布成功。
+执行端新绑定的当前官方身份已精确匹配。已安排多号通在路径修复提交基础上的另一独立工作树开发受约束真实编辑器只读探测：新的账号核验会话中先匹配主页身份，仅许可官方空白文章 GET，检查当前标题／正文／图片控件与封面、声明等必填条件，保持保存、自动保存、上传和发表 POST 禁止。本批不填写稿件或恢复全域分发，尚在开发，不能算编辑器已通过。
+
+随后再按精确 scope／version／digest 下发单条有限稿件导入任务，完成标题／全文回读；封面及选项准备完成后才进入受控单次提交、结果未知处理、公开链接核验及原生回写。现有正式发布入口仍关闭。每一步通过后才标记对应能力，不从登录、配对、素材交接或点击提交推断发布成功。
 
 ## 私有证据索引
 
