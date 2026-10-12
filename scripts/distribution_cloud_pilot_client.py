@@ -8,6 +8,8 @@ from uuid import uuid4
 import httpx
 
 SCOPE = {'module': 'seo', 'tenant_id': 15, 'scope_id': 6}
+SOURCE_REVISION = 'seo-m2-v1-351641b2519e96eda71a7a1236ca43db5c9e08f18cf82a31e56be3c52942d942'
+CONTENT_DIGEST = '528da4b3dd69288446e0001f35cf86454abbc8be3ef608256c9a7a0123460958'
 
 
 class Client:
@@ -148,10 +150,82 @@ def catalog(root):
     return result
 
 
+def preflight(root):
+    path = root / 'cloud-single-preflight-intent.json'
+    if path.exists():
+        raise RuntimeError('SINGLE_PREFLIGHT_ALREADY_RECORDED_DO_NOT_RETRY')
+    advisor = Client(root, actor='advisor')
+    try:
+        binding = json.loads((root / 'cloud-unverified-binding-evidence.json').read_text(encoding='utf-8'))['binding']
+        source = advisor.call('GET', '/api/distribution/v1/source',
+                              params={**SCOPE, 'variant_id': 2, 'platform': 'wechat-article'})
+        if source['source_revision'] != SOURCE_REVISION or source['content_digest'] != CONTENT_DIGEST or source['content']['assets']:
+            raise RuntimeError('EXACT_DERIVED_REVIEWED_SOURCE_REQUIRED')
+        if advisor.call('GET', '/api/distribution/v1/tasks', params=SCOPE)['items']:
+            raise RuntimeError('EMPTY_OWNED_TASK_QUEUE_REQUIRED')
+        project = advisor.call('GET', '/api/distribution/v1/scope', params=SCOPE)['project']
+        if project['state'] != 'paused' or project['revision'] != 0:
+            raise RuntimeError('UNTOUCHED_PAUSED_SCOPE_REQUIRED')
+        intent = {'phase': 'prepared', 'scope': SCOPE, 'request_id': str(uuid4()),
+                  'variant_id': 2, 'binding_id': binding['id'], 'source_revision': SOURCE_REVISION,
+                  'content_digest': CONTENT_DIGEST, 'action': 'preflight',
+                  'production': False, 'publicationAttempted': False}
+        with path.open('x', encoding='utf-8') as output:
+            json.dump(intent, output, indent=2)
+        advisor.call('POST', '/api/distribution/v1/control', json={**SCOPE,
+                     'action': 'start', 'expected_revision': 0, 'request_id': str(uuid4())})
+        intent['phase'] = 'project-started'
+        path.write_text(json.dumps(intent, indent=2), encoding='utf-8')
+        task = advisor.call('POST', '/api/distribution/v1/tasks', json={**SCOPE,
+            'variant_id': 2, 'binding_id': binding['id'], 'source_revision': SOURCE_REVISION,
+            'expected_digest': CONTENT_DIGEST, 'action': 'preflight', 'confirm_reviewed_content': True,
+            'confirm_manual_publication': False, 'expires_in_seconds': 600, 'request_id': intent['request_id']})['task']
+        intent.update(phase='queued', task=task, http=advisor.journal)
+        path.write_text(json.dumps(intent, indent=2), encoding='utf-8')
+        return intent
+    except Exception:
+        if path.exists():
+            intent['phase'] = 'needs-investigation-do-not-retry'
+            intent['http'] = advisor.journal
+            path.write_text(json.dumps(intent, indent=2), encoding='utf-8')
+        raise
+    finally:
+        advisor.close()
+
+
+def preflight_status(root, pause=False):
+    advisor = Client(root, actor='advisor')
+    try:
+        intent = json.loads((root / 'cloud-single-preflight-intent.json').read_text(encoding='utf-8'))
+        tasks = advisor.call('GET', '/api/distribution/v1/tasks', params=SCOPE)['items']
+        task = next(row for row in tasks if row['id'] == intent['task']['id'])
+        if len(tasks) != 1 or task['action'] != 'preflight' or task['source_revision'] != SOURCE_REVISION:
+            raise RuntimeError('EXACT_SINGLE_PREFLIGHT_REQUIRED')
+        project = advisor.call('GET', '/api/distribution/v1/scope', params=SCOPE)['project']
+        if pause:
+            if task['status'] != 'awaiting-human' or task['receipt']['code'] not in ('HUMAN_REQUIRED', 'LOGIN_REQUIRED', 'CAPTCHA'):
+                raise RuntimeError('ACTUAL_HUMAN_WAIT_RECEIPT_REQUIRED')
+            if project['state'] != 'running':
+                raise RuntimeError('RUNNING_OWNED_TEST_SCOPE_REQUIRED')
+            project = advisor.call('POST', '/api/distribution/v1/control', json={**SCOPE,
+                'action': 'pause', 'expected_revision': project['revision'], 'request_id': str(uuid4())})['project']
+        result = {'task': task, 'project': project, 'actualCloudHTTP': True,
+                  'formalPublicationAttempted': False, 'automaticPublicationGranted': False,
+                  'production': False, 'http': advisor.journal}
+        (root / ('cloud-single-preflight-paused.json' if pause else 'cloud-single-preflight-status.json')).write_text(
+            json.dumps(result, indent=2), encoding='utf-8')
+        return result
+    finally:
+        advisor.close()
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=('status', 'bind-unverified', 'guards', 'catalog'))
+    parser.add_argument('action', choices=('status', 'bind-unverified', 'guards', 'catalog', 'preflight', 'preflight-status', 'preflight-pause'))
     parser.add_argument('--root', required=True)
     args = parser.parse_args()
     root = owned(args.root)
-    print(json.dumps({'status': status, 'bind-unverified': bind_unverified, 'guards': guards, 'catalog': catalog}[args.action](root), ensure_ascii=True))
+    action = {'status': status, 'bind-unverified': bind_unverified, 'guards': guards, 'catalog': catalog,
+              'preflight': preflight, 'preflight-status': preflight_status,
+              'preflight-pause': lambda root: preflight_status(root, pause=True)}[args.action]
+    print(json.dumps(action(root), ensure_ascii=True))
