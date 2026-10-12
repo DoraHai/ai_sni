@@ -10,7 +10,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import CreateTable
 
-from test_seo_content_workflow import Store, trigger
+from test_seo_content_workflow import Store, trigger, mock_legacy_registry
 from app import seo_content_drafting as drafts, seo_content_workflow as flow, seo_ai_operations as ops
 from app.api import seo as api
 from app.models.module_workspace import TenantModule, SeoSite
@@ -29,6 +29,7 @@ RESULT = {"title": "选型依据", "outline": "已提供的选型资料", "conte
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
+    mock_legacy_registry(monkeypatch)
     store = Store(tmp_path / "drafts.sqlite")
     with store.engine.begin() as conn:
         for model in (Tenant, User, Role, SeoKeywordAsset, SeoQaFact, SeoAiOperation):

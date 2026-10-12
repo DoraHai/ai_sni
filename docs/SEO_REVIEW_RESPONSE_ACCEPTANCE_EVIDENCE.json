@@ -1,0 +1,96 @@
+{
+  "date": "2026-10-12",
+  "baseline_commit": "080d75f923894fc0a10cb23171f0feeca4f7c2f1",
+  "code_commit": "75bbc3cf1997ea77d8da1f7293bd4de601955888",
+  "native_root": "D:/SNIPERS国内版/ai_sni-worktrees/seo-review-response-acceptance-20261012",
+  "branch": "codex/seo-review-response-acceptance-20261012",
+  "frozen_baseline_unchanged_and_clean": true,
+  "test_execution": "Sources tested before code commit, committed unchanged; clean verified before recording evidence",
+  "reproduction": {
+    "report": {
+      "filename": "seo-review-response-reproduction.xml",
+      "sha256": "538b6365b288377184d2be19ffc4666d2723717c61e03a5fc9b03b01465989f4",
+      "tests": 4,
+      "failures": 4,
+      "errors": 0,
+      "skipped": 0,
+      "by_module": {
+        "tests.test_seo_variant_review_response_postgres": 4
+      }
+    },
+    "expected_failures": true,
+    "observation": "All four decision/expiry combinations committed once in PostgreSQL then returned HTTP 500 before fix",
+    "safe_log_frames": [
+      "review_distribution_variant line 9071",
+      "_distribution_variant_payload line 6496",
+      "sqlalchemy.exc.MissingGreenlet"
+    ],
+    "customer_log_contents_or_parameters_copied": false
+  },
+  "validation": {
+    "report": {
+      "filename": "seo-review-response-regression.xml",
+      "sha256": "4d1a9f5de4416c15358144b7f3b671b02b9ccd63c678fcf41884dcf32c2e834b",
+      "tests": 145,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "by_module": {
+        "tests.test_seo_variant_review_response_postgres": 12,
+        "tests.test_seo_browser_channel_sources_postgres": 24,
+        "tests.test_seo_distribution_sources_postgres": 53,
+        "tests.test_seo_distribution": 56
+      }
+    },
+    "warning_count": 1,
+    "expire_on_commit": [
+      false,
+      true
+    ],
+    "real_postgresql": true,
+    "real_jwt": true,
+    "actual_native_asgi_route": true,
+    "commit_flush_refresh_mocked": false,
+    "decisions": [
+      "approve",
+      "reject"
+    ],
+    "single_review_proof": "Test-only transactional trigger in isolated random schema: one durable review UPDATE; repeated request 409 and still one UPDATE",
+    "native_separate_variant_event_table": false
+  },
+  "actual_file_sha256": {
+    "app/api/seo.py": "08a0c04936708b40c6d30cda073ef21863bd6136097320fa12df3a65a55ab07f",
+    "tests/test_seo_variant_review_response_postgres.py": "2c5fbcb554c778c65ae36c50372715fa819cc827ff1c3cbbca2df79a93ac0d40",
+    "docs/SEO_REVIEW_RESPONSE_ACCEPTANCE.md": "f6948cc0b3c62e27ffb9e836c7946a946b1e8d34d9ba1924fc4bb054bb71eb06"
+  },
+  "git_blob_sha256": {
+    "app/api/seo.py": "03f3a16954cf9ac692e1c16ddc08c66a4589a426f52523d84e03f8dc56441099",
+    "tests/test_seo_variant_review_response_postgres.py": "2c5fbcb554c778c65ae36c50372715fa819cc827ff1c3cbbca2df79a93ac0d40",
+    "docs/SEO_REVIEW_RESPONSE_ACCEPTANCE.md": "f6948cc0b3c62e27ffb9e836c7946a946b1e8d34d9ba1924fc4bb054bb71eb06"
+  },
+  "review": {
+    "method": "Manual minimal diff review plus real ASGI/JWT/PG tests and related regressions",
+    "git_diff_check": "passed",
+    "production_diff": "Three awaited refresh calls plus explanation after existing commit; no state/auth/default changes",
+    "verified_unchanged": [
+      "app/database.py",
+      "app/security/auth.py",
+      "app/main.py",
+      "app/seo_distribution_sources.py"
+    ]
+  },
+  "coverage": [
+    "Approve/reject HTTP 200 with complete JSON payload after actual commit and under both expiry modes",
+    "Separate DB session verifies committed status, reviewer, timestamp and publication source readiness",
+    "Repeated review 409 does not repeat audit UPDATE or change review timestamp",
+    "Anonymous/inactive/view-only/wrong tenant/site/old master/old variant cause no review UPDATE",
+    "Approved variant without mother confirmation still fails source gate with confirmation_required",
+    "Existing browser/official source and native distribution regressions"
+  ],
+  "boundaries": [
+    "Only own loopback PostgreSQL randomized schemas; no central 55463 or GEO 55527 access",
+    "No replay of central existing approved record; no production DDL or shared settings changes",
+    "No external platform calls, push or deployment; central/SEM/GEO unchanged",
+    "Old schema-missing traces are unrelated and were not changed"
+  ]
+}

@@ -14,6 +14,7 @@ from time import monotonic
 from typing import Any, Literal
 from urllib.parse import quote, urljoin, urlparse, urlsplit, urlunsplit
 from uuid import UUID, uuid4
+from app import seo_automation_boundary as automation_boundary
 
 from app.seo_backlinks import apply_backlink_evidence, discover_backlinks, fetch_backlink_page
 from app.seo_backlink_sources import parse_backlink_csv, import_candidates, index_status, fetch_index_candidates, backlink_analysis
@@ -42,7 +43,7 @@ from app.seo_demo_source import (
 )
 from app.config import get_settings, seo_rank_freshness_hours
 from app.geo.audit import GeoAuditError, PageDocument, audit_url, normalize_url, safe_fetch
-from app.geo.chinaz import fetch_chinaz_seo_metrics
+from app.seo_chinaz import fetch_metrics as fetch_chinaz_seo_metrics
 from app.models import (
     SeoBacklink,
     SeoAutomationRun,
@@ -322,7 +323,7 @@ async def _limited_seo_chat_json(
         if usage_receipt is not None:
             usage_receipt.update(receipt)
     try:
-        return await chat_json(system, user, timeout=timeout, **route_kwargs)
+        return await automation_boundary.ai_call(chat_json,system,user,timeout=timeout,**route_kwargs)
     except (Exception, asyncio.CancelledError):
         if charge_usage:
             await _refund_failed_seo_ai_request(session, tenant_id, charged_on=charged_on, operation_id=receipt.get("operation_id"))
@@ -384,6 +385,9 @@ from app.api.seo_onsite import router as onsite_router
 router.include_router(onsite_router)
 from app.api.seo_onsite_ai import router as onsite_ai_router
 router.include_router(onsite_ai_router)
+from app.api.seo_automation_projects import router as automation_projects_router, health_router as automation_health_router
+router.include_router(automation_projects_router)
+router.include_router(automation_health_router)
 from app.api.seo_tdk_review import router as tdk_review_router
 router.include_router(tdk_review_router)
 from app.api.seo_ai_tdk import router as ai_tdk_router
@@ -1257,7 +1261,11 @@ async def collect_overview_metrics(
     if site is None:
         raise HTTPException(404, "SEO site does not exist")
     target_url = site.default_url or f"https://{site.canonical_domain}"
-    provider = await fetch_chinaz_seo_metrics(target_url)
+    gate=automation_boundary.Boundary(automation_boundary.core.scope('seo',req.tenant_id,req.site_id),'indexation_collection')
+    await gate.checkpoint()
+    with automation_boundary.use(gate):
+        provider = await fetch_chinaz_seo_metrics(target_url)
+    await gate.check(session)
     observed_at = datetime.utcnow()
     snapshots: list[SeoMetricSnapshot] = []
 
@@ -2223,6 +2231,7 @@ def _preferred_provider_error(
 
 
 @business_scope("seo")
+@automation_boundary.legacy_collector('ranking_collect')
 async def collect_rank_serp_for_tenant(
     *,
     session: AsyncSession,
@@ -2261,7 +2270,9 @@ async def collect_rank_serp_for_tenant(
     keywords = list(await session.scalars(statement))
     if not keywords:
         raise HTTPException(400, "没有可采集的启用关键词")
-    context = await _brand_match_context(session, tenant_id, site_id)
+    managed = automation_boundary.current.get() and automation_boundary.current.get().token
+    context = ({'official_domains':{site.canonical_domain},'content_urls':set(),
+        'account_patterns':[],'assets':[]} if managed else await _brand_match_context(session, tenant_id, site_id))
     batch_requests = [
         (keyword, device)
         for keyword in keywords
@@ -2294,6 +2305,8 @@ async def collect_rank_serp_for_tenant(
             strict=True,
         )
     ]
+    # Project -> business locks; late legacy/managed observations cannot bypass stop.
+    await automation_boundary.before_save(session)
     batch_captured_at = captured_at or datetime.utcnow()
     errors: list[dict[str, Any]] = []
     created = 0
@@ -2346,7 +2359,9 @@ async def collect_rank_serp_for_tenant(
                 unresolved.append(prepared_item)
         should_use_ai = bool(use_ai and ai_available and unresolved)
         ai_attempted = ai_attempted or should_use_ai
-        ai_results = await _ai_classify_serp(tenant, keyword.keyword, unresolved) if use_ai else {}
+        # Managed rank collection is factual collection, without implicit AI calls.
+        ai_results = await _ai_classify_serp(tenant, keyword.keyword, unresolved) if use_ai and not (
+            automation_boundary.current.get() and automation_boundary.current.get().token) else {}
         for item in prepared:
             if item["index"] in ai_results:
                 item.update(ai_results[item["index"]])
@@ -5399,6 +5414,8 @@ async def _assist_seo_content(req, session, ctx, *, generation_route=None):
             )
             repair_reason = "；".join(filter(None, (repair_reason, detail)))
         if repair_reason:
+            if automation_boundary.current.get() and automation_boundary.current.get().token:
+                raise HTTPException(409, {'code':'automation_draft_requires_manual_review'})
             correction = _seo_assist_repair_prompt(
                 user,
                 req.action,
@@ -9051,6 +9068,12 @@ async def review_distribution_variant(
     row.reviewed_by = ctx.user_id
     row.reviewed_at = datetime.utcnow()
     await session.commit()
+    # SQL-generated updated_at expires even with expire_on_commit=False.
+    # Load every payload object explicitly before synchronous serialization;
+    # this also supports sessions that expire all identities at commit.
+    await session.refresh(row)
+    await session.refresh(content)
+    await session.refresh(connection)
     return _distribution_variant_payload(row, content=content, connection=connection)
 
 

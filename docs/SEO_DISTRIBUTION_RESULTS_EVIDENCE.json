@@ -1,0 +1,124 @@
+{
+  "native_code_commit": "3cf2ddb9892eb5c0dca7db6510e2459d9c0e7ba9",
+  "native_clean_during_test": true,
+  "native_git_blob_sha256": {
+    "app/seo_distribution_results.py": "72a7e93576acfdf40bdeb077c2892fd59220d97e24716ac3cd7c31c12ce5421f",
+    "scripts/seo_distribution_results_schema.sql": "a2878c50321eb81edb7f0bd79212b8faf3fe8513f4344a91bc68d8360d2e087b",
+    "tests/test_seo_distribution_results_postgres.py": "e7b6dec88b6c1b55f9acee2824361ac76f565029bfb88d53be263c57a5a24128",
+    "tests/test_seo_distribution_results_broker_postgres.py": "0224bcf8635173684ec555b35fc361dc9a38c0f7f791551644acc2669c7cfcd4",
+    "tests/test_seo_distribution_broker_postgres.py": "5b18f79c74fb024a05346b7cb08d13939825059963f717772798cfc5368adb73"
+  },
+  "publication_cases": [
+    {
+      "case": "actual-native-result",
+      "project_state": "running",
+      "verification": "human-verified",
+      "native_publications": 1,
+      "page_checks": 1,
+      "page_state": "pending",
+      "indexed": null
+    },
+    {
+      "case": "actual-native-result",
+      "project_state": "paused",
+      "verification": "human-verified",
+      "native_publications": 1,
+      "page_checks": 1,
+      "page_state": "pending",
+      "indexed": null
+    },
+    {
+      "case": "actual-native-result",
+      "project_state": "ended",
+      "verification": "human-verified",
+      "native_publications": 1,
+      "page_checks": 1,
+      "page_state": "pending",
+      "indexed": null
+    },
+    {
+      "case": "actual-native-withdrawn-review",
+      "state": "blocked",
+      "native_publications": 0
+    },
+    {
+      "case": "actual-native-schema-recovery",
+      "before": "pending",
+      "after": "written",
+      "new_platform_tasks": 0,
+      "native_publications": 1,
+      "page_checks": 1
+    },
+    {
+      "case": "actual-native-negative-scope-and-unconfirmed",
+      "native_publications": 0
+    }
+  ],
+  "scope": "Final frozen recheck: actual JWT/native PostgreSQL/router/adapter; synthetic human checks only, zero platform calls. Earlier 232-case run retained separately, not claimed rerun.",
+  "limitations": [
+    "Pending page capture requires native after-commit dispatch/recovery integration",
+    "No article indexation or search-effect claim",
+    "Candidate DDL not registered in production; no production DDL, deployment or push"
+  ],
+  "prior_working_tree_run": {
+    "central_source": "working_tree",
+    "central_head_at_load": "c5c3c16773131a259313ed0eebce614c91536b19",
+    "central_head_is_not_tested_revision": true,
+    "central_file_sha256": {
+      "app/distribution_contract.py": "4b8f7e4d58ca712c01583977a3283e95890c083387b2242e9e4cdb261a5971dd",
+      "app/distribution_control.py": "648a748fdfe9b89ffb5f7aa96fe4b07826fa0c84d815fb410f8ff32bc58e5a83",
+      "app/distribution_scheduling.py": "7433e67121140ae98072b89c715a4ad44c5237d6964318a8256858bec4bf486c",
+      "app/distribution_publication_verify.py": "f3a86db67842b4f1610694dfa11e57d595c2d3619f144d058bc23fc5fcfe0528",
+      "app/distribution_publication_results.py": "eb5772658789f0deffb5c3b839d322e345730bcef1099457f50f512ea2337a36",
+      "app/api/distribution.py": "3ab527e3fc152d16c8f2699685904c2b4d0a9effab050fdfd239ac94dc2b4b13",
+      "scripts/distribution_control_schema.sql": "c3637aaeeb75931b3befb27a7f522070618bb67f961ba61b6c0e66da776ac7cd",
+      "scripts/distribution_scheduling_schema.sql": "b810747c2cf49b088a94caf5e7be1ffda7a5fddd90e9d70f095eb2eea327ae91",
+      "scripts/distribution_publication_schema.sql": "5c81a7bc4279bd0a61f28cddff8ac104084bf18ea505bb13cb41862cfb5946d9"
+    },
+    "central_files_changed_after_test": [
+      "app/api/distribution.py"
+    ],
+    "regression": {
+      "tests": 232,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "warning_count": 3,
+      "report_sha256": "2ae236b1ada7f2ec45d48fbfc3047a7bd2799910b276b0da5935b674313ad6ed",
+      "by_module": {
+        "tests.test_seo_distribution_broker_postgres": 19,
+        "tests.test_seo_distribution_results_broker_postgres": 6,
+        "tests.test_seo_distribution_results_postgres": 52,
+        "tests.test_seo_distribution_media_postgres": 25,
+        "tests.test_seo_distribution_media_browser": 1,
+        "tests.test_seo_distribution_sources_postgres": 53,
+        "tests.test_seo_distribution": 56,
+        "tests.test_seo_content_confirmations": 17,
+        "tests.test_seo_publication_export": 3
+      }
+    }
+  },
+  "central_source": "git_commit",
+  "central_commit": "729af3c4071d6f410ef12ecb88de6ca6a3559f13",
+  "central_file_sha256": {
+    "app/distribution_contract.py": "4b8f7e4d58ca712c01583977a3283e95890c083387b2242e9e4cdb261a5971dd",
+    "app/distribution_control.py": "648a748fdfe9b89ffb5f7aa96fe4b07826fa0c84d815fb410f8ff32bc58e5a83",
+    "app/distribution_scheduling.py": "7433e67121140ae98072b89c715a4ad44c5237d6964318a8256858bec4bf486c",
+    "app/distribution_publication_verify.py": "281c8fc92c64e3b2b08cafb827c9596f833a934fdb90180997752192ed59dc5c",
+    "app/distribution_publication_results.py": "44dde77dc352e58f3efd083b2c4d2bf6996f2339410326def40652adca61721b",
+    "app/api/distribution.py": "e946326f0c3c444e55245cb4ca6f30277c2f9293b64f2d19d32bf60353380001",
+    "scripts/distribution_control_schema.sql": "c3637aaeeb75931b3befb27a7f522070618bb67f961ba61b6c0e66da776ac7cd",
+    "scripts/distribution_scheduling_schema.sql": "b810747c2cf49b088a94caf5e7be1ffda7a5fddd90e9d70f095eb2eea327ae91",
+    "scripts/distribution_publication_schema.sql": "5c81a7bc4279bd0a61f28cddff8ac104084bf18ea505bb13cb41862cfb5946d9"
+  },
+  "native_head_at_frozen_recheck": "6f73851bd14d849124f84dabd8d9ed60f974399f",
+  "frozen_recheck": {
+    "tests": 6,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "warning_count": 1,
+    "test_module": "tests/test_seo_distribution_results_broker_postgres.py",
+    "report_sha256": "d0e14bdc4ae340adffbb5a311c914e86e6c0ed3ff868956315c36562d4a44c03"
+  }
+}

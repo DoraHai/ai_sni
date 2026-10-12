@@ -70,15 +70,16 @@ def public(row, can_write, site_settings=None, can_ai=None, *, can_keywords=True
         result = redact_sources(deepcopy(result))
     return result
 
-async def sources_current(session, row):
+async def sources_current(session, row, *, lock=False):
     source = row.params["onsite"]["source"]
+    locks = {"with_for_update": {"read": True}} if lock else {}
     for old in source.get("keywords", []):
-        kw = await session.get(SeoKeywordAsset, old["id"], populate_existing=True)
+        kw = await session.get(SeoKeywordAsset, old["id"], populate_existing=True, **locks)
         if (not kw or kw.tenant_id != row.tenant_id or kw.site_id != row.site_id or kw.status != "active"
                 or kw.keyword != old["keyword"] or kw.landing_page != old["landing_page"]):
             raise HTTPException(409, "重点关键词或部署页面已变化，请重新建立任务")
     for old in source.get("pages", []):
-        page = await session.get(SeoSitePage, old["id"], populate_existing=True)
+        page = await session.get(SeoSitePage, old["id"], populate_existing=True, **locks)
         if not page or page.tenant_id != row.tenant_id or page.site_id != row.site_id or page.url != old["url"]:
             raise HTTPException(409, "页面归属或地址已变化，请重新建立任务")
 
@@ -98,6 +99,10 @@ async def list_tasks(tenant_id: PositiveInt, site_id: PositiveInt, before_id: Po
 
 @router.post("/workbench/onsite-tasks")
 async def create(req: Create, session=Depends(get_session), ctx=Depends(require_scoped_auth)):
+    return await create_task(req,session,ctx)
+
+
+async def create_task(req,session,ctx,*,commit=True):
     site = await scope(session, ctx, req.tenant_id, req.site_id, True)
     key = str(req.request_id)
     request_hash = hashlib.sha256(json.dumps(req.model_dump(mode="json"), sort_keys=True).encode()).hexdigest()
@@ -159,7 +164,8 @@ async def create(req: Create, session=Depends(get_session), ctx=Depends(require_
         params=dict(request_id=key, request_hash=request_hash, onsite=workflow), status="open", created_by=str(ctx.user_id),
         assignee_role="seo_advisor", baseline={})
     session.add(row)
-    await session.commit()
+    if commit: await session.commit()
+    else: await session.flush()
     await session.refresh(row)
     return public(row, True, site.site_settings, ctx.can_view("seo.keywords"), can_keywords=ctx.can_view("seo.keywords"))
 
@@ -189,6 +195,23 @@ async def act(task_id: PositiveInt, req: Update, session=Depends(get_session), c
             except TimeoutError:
                 raise HTTPException(424, "页面读取超时")
         value = await work.recheck(value, fetch)
+        # Network waits can outlive a role/assignment revocation. Re-read and
+        # briefly lock live authorization before adopting the checked result.
+        from app.api.seo_onsite_ai import fresh_context
+        from app.models.module_workspace import TenantModule
+        from app.models.seo import SeoSiteAdvisorAssignment
+        ctx = await fresh_context(session, ctx, lock=True)
+        ctx.ensure_tenant(req.tenant_id)
+        await session.get(TenantModule, site.tenant_module_id,
+            with_for_update={"read": True}, populate_existing=True)
+        await session.scalar(select(SeoSiteAdvisorAssignment).where(
+            SeoSiteAdvisorAssignment.tenant_id == req.tenant_id,
+            SeoSiteAdvisorAssignment.site_id == req.site_id,
+            SeoSiteAdvisorAssignment.advisor_user_id == ctx.user_id)
+            .with_for_update(read=True).execution_options(populate_existing=True))
+        if not await can_operate(session, ctx, site):
+            raise HTTPException(403, "顾问权限或网站分配已变化，复检结果未采用")
+        await sources_current(session, row, lock=True)
     row.params = {**row.params, "onsite": value}
     active = value.get("ai_run") or {}
     if req.action == "cancel" and active.get("state") in {"queued", "running"}:

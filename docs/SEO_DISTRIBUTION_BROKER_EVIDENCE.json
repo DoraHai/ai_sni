@@ -1,0 +1,205 @@
+{
+  "native_base_commit": "6d523672e9b175293469fb7049aaf40a06653b99",
+  "native_file_sha256": {
+    "app/seo_distribution_sources.py": "9b6f8f25faee0cc371a5fe3160dea2490df2f22db6cf43d3e0479ddc546ee6f5",
+    "app/seo_distribution_media.py": "ef8100ec9a0353079031d56e4db1aca24789fddd160cc7462aecf24e5e1f61ba",
+    "app/api/seo_distribution_media.py": "4a545ce6cd713fd7e468787f9725e331b739a8b04f0cc73289d8830004aa5771",
+    "app/static/seo-distribution-media/index.html": "08f223a234fb1bca6151057c6f68740620b836f30f30816e5767d1f9b9c2c4d9",
+    "app/static/seo-distribution-media/app.js": "0ee199a07b0a24075257d9d40bec22efbe77c562b2ceef14b6734161f2f00b23",
+    "app/static/seo-distribution-media/style.css": "fccbc79cc2799d0d1b223ddd3a1036847e5f61af120d2c6ddb89a1df7e39d57b",
+    "frontend/src/store/sessionStorage.js": "5777e0e0935bb6a00410d157759aa7a0d04d69892bd18733c642af23e6114b5e",
+    "scripts/seo_distribution_media_schema.sql": "5e2f95f87a9a3df19144b57b24e2e6b7c67c900eaa02e3272274c362b0f923a8",
+    "tests/test_seo_distribution_broker_postgres.py": "20a9d98f118d8e7df0ec00cf75895d3116f45c76a7e0926ed91474dc3b48cd3f",
+    "tests/test_seo_distribution_media_postgres.py": "355eb5db04b21a9690ab5e58ddc604e75fee60dfd7b6fde80bc1dd5f7b6ca567",
+    "tests/test_seo_distribution_media_browser.py": "d4c6dd1adc796769af36d3c85dbdc2fbbd21d4dec6fdfc1e8391584058a1481f",
+    "tests/test_seo_distribution_sources_postgres.py": "f39187f5bbfbe5806e15bf443c3ed164a906cb28e54f82a544a24112d6c38fc7"
+  },
+  "central_commit": "cb305e8580602569485e55588760cfbd94dc67fc",
+  "central_source": "git_commit",
+  "central_file_sha256": {
+    "app/distribution_contract.py": "7af463565da2636a3bc44bc15dbc4dd42c6f1e6f06b0866da604b6ff42e75c3b",
+    "app/distribution_control.py": "648a748fdfe9b89ffb5f7aa96fe4b07826fa0c84d815fb410f8ff32bc58e5a83",
+    "app/distribution_scheduling.py": "7433e67121140ae98072b89c715a4ad44c5237d6964318a8256858bec4bf486c",
+    "app/api/distribution.py": "ce79d282186b04f06d990de2341d654e7e2aa4f84031fec971a7f46074d7dc92",
+    "scripts/distribution_control_schema.sql": "c3637aaeeb75931b3befb27a7f522070618bb67f961ba61b6c0e66da776ac7cd",
+    "scripts/distribution_scheduling_schema.sql": "b810747c2cf49b088a94caf5e7be1ffda7a5fddd90e9d70f095eb2eea327ae91"
+  },
+  "tests": {
+    "combined_total": 171,
+    "failures": 0,
+    "integration": 19,
+    "skipped": 0,
+    "native_media": 25,
+    "browser": 1,
+    "report_sha256": "0aa06f6b33ed15226a236319aca5c4ecee45835d81421c9ba6ef57b481981929",
+    "errors": 0,
+    "existing_regression": 126
+  },
+  "cases": [
+    {
+      "case": "roundtrip",
+      "action": "preflight",
+      "status": "succeeded",
+      "projectId": "seo-2"
+    },
+    {
+      "case": "roundtrip",
+      "action": "handoff",
+      "status": "awaiting-human",
+      "projectId": "seo-2"
+    },
+    {
+      "case": "native-xiaohongshu-bytes",
+      "assets": 2,
+      "change": "review",
+      "revoked_download_status": 409,
+      "old_grants_removed": true,
+      "permissive_decoder_download_status": 503
+    },
+    {
+      "case": "native-xiaohongshu-bytes",
+      "assets": 2,
+      "change": "replacement",
+      "revoked_download_status": 409,
+      "old_grants_removed": true,
+      "permissive_decoder_download_status": 503
+    },
+    {
+      "case": "native-xiaohongshu-bytes",
+      "assets": 2,
+      "change": "assignment",
+      "revoked_download_status": 403,
+      "old_grants_removed": true,
+      "permissive_decoder_download_status": 503
+    },
+    {
+      "case": "fenced",
+      "change": "body",
+      "leased": false,
+      "status": "canceled"
+    },
+    {
+      "case": "fenced",
+      "change": "review",
+      "leased": false,
+      "status": "canceled"
+    },
+    {
+      "case": "fenced",
+      "change": "assignment",
+      "leased": false,
+      "status": "canceled"
+    },
+    {
+      "case": "fenced",
+      "change": "new_draft",
+      "leased": false,
+      "status": "canceled"
+    },
+    {
+      "case": "fenced",
+      "change": "body",
+      "leased": true,
+      "status": "unknown"
+    },
+    {
+      "case": "fenced",
+      "change": "review",
+      "leased": true,
+      "status": "unknown"
+    },
+    {
+      "case": "fenced",
+      "change": "assignment",
+      "leased": true,
+      "status": "unknown"
+    },
+    {
+      "case": "fenced",
+      "change": "new_draft",
+      "leased": true,
+      "status": "unknown"
+    },
+    {
+      "case": "jwt-current-role-scope-admin",
+      "result": "passed"
+    },
+    {
+      "case": "receipt-after-authorization-changed",
+      "change": "review",
+      "observed_status": "unknown"
+    },
+    {
+      "case": "receipt-after-authorization-changed",
+      "change": "body",
+      "observed_status": "unknown"
+    },
+    {
+      "case": "receipt-after-authorization-changed",
+      "change": "assignment",
+      "observed_status": "unknown"
+    },
+    {
+      "case": "content-length-filter-regression",
+      "native_characters": 100010,
+      "utf16_units": 100010,
+      "native_listed": true,
+      "central_listed": false,
+      "preview_status": 409,
+      "preview_code": "source_changed",
+      "normal_article_fully_readable": true,
+      "stored_long_body_unchanged": true,
+      "resolution": "central list validates complete source against ApprovedContent"
+    },
+    {
+      "case": "content-length-filter-regression",
+      "native_characters": 50010,
+      "utf16_units": 100010,
+      "native_listed": true,
+      "central_listed": false,
+      "preview_status": 409,
+      "preview_code": "source_changed",
+      "normal_article_fully_readable": true,
+      "stored_long_body_unchanged": true,
+      "resolution": "central list validates complete source against ApprovedContent"
+    }
+  ],
+  "browser_evidence": {
+    "checks": [
+      "real JWT",
+      "native PostgreSQL",
+      "draft picker",
+      "upload PNG/JPEG",
+      "preview images",
+      "self-review rejected",
+      "independent review frozen",
+      "replacement revokes review",
+      "scope change clears stale view"
+    ],
+    "external_requests": 0,
+    "page_errors": 0,
+    "screenshot": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\seo-media-browser-approved.png"
+  },
+  "browser_screenshot_sha256": "edd26aa5295e5c4278609bcd367a7902c84a1106eaf5713750aad8ad6c5b5302",
+  "transport": "in-process ASGI; actual JWT/native DB/adapter; zero platform calls",
+  "database": "loopback 127.0.0.1:55443/distribution_control_test; random schemas cleaned",
+  "native_media_database": "loopback 127.0.0.1:55432/seo_workflow_test; random schemas cleaned",
+  "image_limits": {
+    "formats": [
+      "PNG",
+      "JPEG"
+    ],
+    "per_image_bytes": 20000000,
+    "pixels": 25000000,
+    "single_frame": true,
+    "total_bytes": 40000000,
+    "count": 9
+  },
+  "strict_decoder": "Upload, review, preview and native/central downloads fail closed with 503 when ImageFile.LOAD_TRUNCATED_IMAGES is enabled; no global decoder changes",
+  "boundaries": [
+    "Independent native upload/review browser UI validated with real JWT and PostgreSQL",
+    "Shared workbench navigation and production route registration are not deployed",
+    "No production migration, real platform calls or publication"
+  ],
+  "tested_native_tree_clean": true
+}

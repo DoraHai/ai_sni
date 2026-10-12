@@ -73,6 +73,15 @@ class Adapter:
         self.db.refresh(row)
 
 
+def mock_legacy_registry(monkeypatch):
+    """SQLite tests exercise old workflows only; native PG tests prove registry gates."""
+    from app import automation_project_v2 as v2,automation_projects as controls
+    async def absent(*args,**kwargs): return None
+    monkeypatch.setattr(v2,'ownership',absent)
+    monkeypatch.setattr(v2,'check_legacy',absent)
+    monkeypatch.setattr(controls,'lock_scope',absent)
+
+
 class Store:
     def __init__(self, path):
         self.engine = create_engine(f"sqlite:///{path}")
@@ -135,6 +144,7 @@ ACTOR = AuthContext(7, "advisor", "test", None, {"seo.content": "edit", "seo.sit
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
+    mock_legacy_registry(monkeypatch)
     store = Store(tmp_path / "workflow.sqlite")
     monkeypatch.setattr(flow, "async_session_factory", store.session)
     monkeypatch.setattr(captures, "async_session_factory", store.session)

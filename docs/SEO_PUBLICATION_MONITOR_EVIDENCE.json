@@ -1,0 +1,149 @@
+{
+  "date": "2026-10-12",
+  "native_code_commit": "0259cfd280b31927a5c48c9208650657f3682672",
+  "native_clean_during_test": true,
+  "central_source": "git_commit",
+  "central_commit": "4a15d242b234cc4a71ccb8c4885921eedebb9c57",
+  "central_file_sha256": {
+    "app/distribution_contract.py": "ad7946483f317bea278a0a648e8d8503be20a1c3d30fbefd1c90a58969c593f7",
+    "app/distribution_control.py": "648a748fdfe9b89ffb5f7aa96fe4b07826fa0c84d815fb410f8ff32bc58e5a83",
+    "app/distribution_scheduling.py": "7433e67121140ae98072b89c715a4ad44c5237d6964318a8256858bec4bf486c",
+    "app/distribution_publication_verify.py": "281c8fc92c64e3b2b08cafb827c9596f833a934fdb90180997752192ed59dc5c",
+    "app/distribution_publication_results.py": "e32fc9c2e5318c15bd33024a0b9326254d996680cbf38f4fbcd8a288493a9921",
+    "app/api/distribution.py": "5c5a4ec08634e9c015d935d1519f172c8e23726f5007c492a3ba4cf61f19816c",
+    "scripts/distribution_control_schema.sql": "c3637aaeeb75931b3befb27a7f522070618bb67f961ba61b6c0e66da776ac7cd",
+    "scripts/distribution_scheduling_schema.sql": "b810747c2cf49b088a94caf5e7be1ffda7a5fddd90e9d70f095eb2eea327ae91",
+    "scripts/distribution_publication_schema.sql": "5c81a7bc4279bd0a61f28cddff8ac104084bf18ea505bb13cb41862cfb5946d9"
+  },
+  "native_actual_file_sha256": {
+    "app/seo_publication_monitor.py": "36d9de7c7eb52932c89a7be4b45228717923b035cd141dd39ca9d6ffa2b1d794",
+    "app/api/seo_page_captures.py": "dde84b3e5386e9754f658e4ae264fbfdfe6794779bcb87466adde7d1b7a722e0",
+    "app/seo_distribution_results.py": "2c266431eb2f11ba32f6eb07ca21c6f9f00592dd9008ebc6390ee7b34f637cfd",
+    "app/seo_scheduler.py": "d052188427ccd2bbcd54d5599a1a91c6e77dda1c5120dd6b0eec564945f1b7f8",
+    "tests/test_seo_publication_monitor_postgres.py": "e9d4dfcdd2b22f1a60db74ae02b499786d6382c17526b1ca79993ea8696801da",
+    "tests/test_seo_distribution_results_broker_postgres.py": "70de25a55b6b16f549a114865803272d44cbf335986d433295fa408580d2a158",
+    "tests/test_seo_scheduler.py": "b55ef7bafa1f6c92a61f31058afc9dbfb6ce62d4f4ba2422c1bb20448eabfa01"
+  },
+  "native_git_blob_sha256": {
+    "app/seo_publication_monitor.py": "36d9de7c7eb52932c89a7be4b45228717923b035cd141dd39ca9d6ffa2b1d794",
+    "app/api/seo_page_captures.py": "337b05c5ddc06bc70a53f28130b84a3b0d59446d73dc7ddeaaf827f324b9d189",
+    "app/seo_distribution_results.py": "2c266431eb2f11ba32f6eb07ca21c6f9f00592dd9008ebc6390ee7b34f637cfd",
+    "app/seo_scheduler.py": "e8031ca7a9050824d9f390fb3aa382e4bc8ad2301e8b43a41c881a410750c99a",
+    "tests/test_seo_publication_monitor_postgres.py": "e9d4dfcdd2b22f1a60db74ae02b499786d6382c17526b1ca79993ea8696801da",
+    "tests/test_seo_distribution_results_broker_postgres.py": "70de25a55b6b16f549a114865803272d44cbf335986d433295fa408580d2a158",
+    "tests/test_seo_scheduler.py": "62149d6181688053fe40d1d5c685010e99e67e9f840d3ba6a849a96e06f3181c"
+  },
+  "tests": {
+    "tests": 198,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "native": 189,
+    "central_integration": 9,
+    "native_monitor_cases": 42,
+    "warning_count": 1,
+    "by_module": {
+      "tests.test_seo_distribution_results_broker_postgres": 9,
+      "tests.test_seo_publication_monitor_postgres": 42,
+      "tests.test_seo_page_capture_api": 13,
+      "tests.test_seo_page_capture": 54,
+      "tests.test_seo_scheduler.SeoSchedulerTests": 28,
+      "tests.test_seo_distribution_results_postgres": 52
+    },
+    "report_sha256": "a3cb7856fb6a4f7b08305dc3f8baea2a189747aee4f06a8d871a8a26b4b54acd",
+    "report_filename": "seo-publication-monitor-final.xml"
+  },
+  "central_cases": [
+    {
+      "case": "actual-native-result",
+      "project_state": "running",
+      "verification": "human-verified",
+      "native_publications": 1,
+      "page_checks": 1,
+      "page_state": "pending",
+      "indexed": null
+    },
+    {
+      "case": "actual-native-result",
+      "project_state": "paused",
+      "verification": "human-verified",
+      "native_publications": 1,
+      "page_checks": 1,
+      "page_state": "pending",
+      "indexed": null
+    },
+    {
+      "case": "actual-native-result",
+      "project_state": "ended",
+      "verification": "human-verified",
+      "native_publications": 1,
+      "page_checks": 1,
+      "page_state": "pending",
+      "indexed": null
+    },
+    {
+      "case": "actual-native-withdrawn-review",
+      "state": "blocked",
+      "native_publications": 0
+    },
+    {
+      "case": "actual-native-schema-recovery",
+      "before": "pending",
+      "after": "written",
+      "new_platform_tasks": 0,
+      "native_publications": 1,
+      "page_checks": 1
+    },
+    {
+      "case": "actual-native-negative-scope-and-unconfirmed",
+      "native_publications": 0
+    },
+    {
+      "case": "actual-live-monitor",
+      "evidence_source": "auto",
+      "state": "captured",
+      "initial_snapshot": "pending",
+      "readonly_get_started_worker": false,
+      "real_platform": false
+    },
+    {
+      "case": "actual-live-monitor",
+      "evidence_source": "manual",
+      "state": "captured",
+      "initial_snapshot": "pending",
+      "readonly_get_started_worker": false,
+      "real_platform": false
+    },
+    {
+      "case": "actual-live-monitor-scope",
+      "revoked_identity_status": 403,
+      "readonly_get_started_worker": false
+    }
+  ],
+  "coverage": [
+    "Committed reservations only; existing scheduler jobs retained",
+    "Fresh scope, advisor, entitlement, review, URL gates",
+    "Exclusive PostgreSQL advisory lease and claim fencing",
+    "Cancelled process recovery without duplicate capture/publication",
+    "Due filtering before LIMIT with 20 waiting rows and the 21st due row",
+    "Malformed JSON scheduling times cannot break query",
+    "Paused/disabled/ended render result discarded; pause budget settled atomically exactly once",
+    "Third attempt pause commit then cancellation; original capture resumes",
+    "Post-render SQL failure removes actual synthetic image file",
+    "Second capture created by native API is recoverable",
+    "One/two-connection pools, eight entries, no self-deadlock, busy rows recover",
+    "Renderer backend session is idle, not in transaction",
+    "Exact live whitelist, real JWT scope/role revocation, no GET-triggered jobs",
+    "Auto/manual screenshot distinction and later article edits do not erase historical evidence",
+    "First central writeback snapshot remains pending while live monitor returns captured"
+  ],
+  "test_boundaries": [
+    "Synthetic customer/site/JWT/receipts and renderer only",
+    "Loopback PostgreSQL random schemas cleaned",
+    "No real platform/external network, no publication",
+    "No new tables or production migration for this monitoring batch",
+    "No deployment/push, no shared PostgreSQL shutdown",
+    "Screenshot captured is not content verification, indexation or SEO uplift"
+  ],
+  "transport": "in-process ASGI; actual JWT/native DB/adapter; zero platform calls"
+}

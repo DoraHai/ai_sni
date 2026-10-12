@@ -271,6 +271,21 @@ async def ai_proposal(task_id: PositiveInt, req: Request,
     if onsite_protocol != ["durable-v1"]:
         return JSONResponse(status_code=409, headers={"Cache-Control": "no-store"}, content={
             "detail": "工作台版本过旧，请刷新页面后重试", "code": "onsite_client_upgrade_required"})
+    return await enqueue_proposal(task_id,req,session,ctx)
+
+
+async def enqueue_proposal(task_id,req,session,ctx,*,automation_token=None,commit=True):
+    if automation_token is None:
+        await authorized(session,ctx,req,await session.get(SeoSite,req.site_id,populate_existing=True),lock=False)
+        from app import automation_project_v2 as gates, automation_projects as controls
+        await gates.check_legacy(session,controls.scope('seo',req.tenant_id,req.site_id),'onsite_ai')
+    if automation_token is not None:
+        from app import automation_projects as controls
+        await controls.check_step(session,automation_token)
+        if (automation_token['module'],automation_token['tenant_id'],automation_token['scope_id'],
+                automation_token['task_id'],automation_token['request_id'],automation_token['owner_user_id']) != (
+                'seo',req.tenant_id,req.site_id,task_id,str(req.request_id),ctx.user_id):
+            raise controls.problem('automation_scope_mismatch','自动请求范围不一致',403)
     ctx.ensure_tenant(req.tenant_id)
     # Serialize the nonce across every task/site in this tenant, without a new
     # table or an unbounded site JSON index. The lock ends with the admission
@@ -282,6 +297,9 @@ async def ai_proposal(task_id: PositiveInt, req: Request,
     fresh = await authorized(session, ctx, req, site)
     row = await session.get(SeoTask, task_id, with_for_update=True, populate_existing=True)
     task_matches(row, req)
+    if automation_token is not None and automation_token.get('target'):
+        from app import seo_automation_sources as sources
+        await sources.validate_token(session,automation_token,site)
     w = row.params["onsite"]
     if w["phase"] in {"done", "cancelled"} or row.status in {"done", "cancelled"}:
         raise ai.problem(409, "onsite_ai_task_closed", "任务已结束，不能生成或重放方案")
@@ -300,6 +318,10 @@ async def ai_proposal(task_id: PositiveInt, req: Request,
         if prior["request_hash"] != request_hash:
             raise ai.problem(409, "onsite_ai_request_conflict", "请求编号已用于不同参数或操作人")
         return run_response(row, site, prior, can_write=True, can_keywords=fresh.can_view("seo.keywords"), replayed=True)
+    if automation_token is not None:
+        from app.api.seo_automation_projects import eligible
+        if not eligible(row):
+            raise controls.problem('automation_task_ineligible','任务已处理或不可自动起草')
     execution_enabled(site)
     if w["revision"] != req.expected_revision:
         raise ai.problem(409, "onsite_ai_revision_changed", "任务版本已变化，请重新读取核对")
@@ -320,8 +342,11 @@ async def ai_proposal(task_id: PositiveInt, req: Request,
              "provider_metadata": provider_metadata,
              "actor_user_id": fresh.user_id, "actor_tenant_id": fresh.tenant_id,
              "queued_at": ai.now().isoformat(), "started_at": None, "finished_at": None}
+    if automation_token is not None:
+        claim['automation_token']=automation_token
     site.site_settings = ai.reserve(site.site_settings)
     row.params = {**row.params, "onsite": {**row.params["onsite"], "ai_run": {"request_id": key}}}
     save_run(row, claim)
-    await session.commit()  # Durable nonce/quota BEFORE provider; release all row locks.
+    if commit:
+        await session.commit()  # Durable nonce/quota BEFORE provider; release all row locks.
     return run_response(row, site, claim, can_write=True, can_keywords=fresh.can_view("seo.keywords"), replayed=False)

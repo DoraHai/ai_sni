@@ -95,6 +95,35 @@ def supplier(monkeypatch):
     return calls
 
 
+@pytest.mark.parametrize('statement',[
+    '网站已经自动修改并上线，无需人工审批',
+    '本方案已发布并完成官网验收',
+])
+def test_false_completion_output_is_not_saved_or_retried(statement,monkeypatch,supplier):
+    original=ai.deepseek.chat_json
+    async def chat(*args,**kwargs):
+        raw=await original(*args,**kwargs)
+        raw['items'][0]['instruction']=statement
+        return raw
+    monkeypatch.setattr(ai.deepseek,'chat_json',chat)
+    async def run():
+        async with fixture() as (sessions,task):
+            req=request(task)
+            async with sessions() as db:
+                response=await complete(sessions,task['id'],req,db,ADVISOR)
+            assert response['workflow']['ai_run']['state']=='unknown'
+            assert 'ai_proposal' not in response['workflow']
+            assert response['completion_evidence'] is None
+            async with sessions() as db:
+                stored=await db.get(SeoTask,task['id'])
+                assert statement not in json.dumps(stored.params,ensure_ascii=False)
+                replay=await complete(sessions,task['id'],req,db,ADVISOR)
+                assert replay['replayed']
+            assert await jobs.execute_request(task['id'],4,2,str(req.request_id),sessions=sessions)=='unknown'
+            assert len(supplier)==1
+    asyncio.run(run())
+
+
 def test_success_replay_scope_and_manual_review_boundary(supplier):
     async def run():
         async with fixture() as (sessions, task):

@@ -88,6 +88,15 @@ async def locked_context(session, task_id):
     if not hint or hint.action_type != ACTION:
         return None
     tenant_id, site_id = hint.tenant_id, hint.site_id
+    from app import seo_automation_boundary as boundary
+    from app import automation_projects as core, automation_project_v2 as v2
+    gate=boundary.current.get()
+    if gate:
+        if (gate.key['tenant_id'],gate.key['scope_id'],gate.operation)!=(tenant_id,site_id,'content_draft'):
+            raise blocked('automation_scope_mismatch')
+        await gate.check(session)
+    else:
+        await v2.check_legacy(session,core.scope('seo',tenant_id,site_id),'content_draft')
     site = await session.get(SeoSite, site_id)
     if not site or site.tenant_id != tenant_id:
         return None
@@ -140,10 +149,10 @@ async def validate_claim(session, site, content, claim):
     return material
 
 
-async def persist_result(task_id, result=None, error=None):
+async def persist_result(task_id, result=None, error=None, *, sessions=None):
     """Also used after restart; never invokes assist or refunds successful work."""
     from app.api.seo import _sanitize_content_html
-    async with async_session_factory() as session:
+    async with (sessions or async_session_factory)() as session:
         scope = await locked_context(session, task_id)
         if scope is None:
             return
@@ -209,10 +218,11 @@ async def persist_result(task_id, result=None, error=None):
 
 
 @managed_runtime('seo')
-async def execute_content_draft(task_id):
+async def execute_content_draft(task_id, *, sessions=None):
     from app.api.seo import SeoContentAssistRequest, _assist_seo_content, _seo_draft_route, _seo_assist_request_payload
     request = ctx = None
-    async with async_session_factory() as session:
+    sessions=sessions or async_session_factory
+    async with sessions() as session:
         scope = await locked_context(session, task_id)
         if scope is None:
             return
@@ -250,10 +260,10 @@ async def execute_content_draft(task_id):
                 attention(task, exc.detail["code"])
             await session.commit()
     if request is None:
-        await persist_result(task_id)
+        await persist_result(task_id,sessions=sessions)
         return
     # Recheck after the committed claim, immediately before any quota/provider work.
-    async with async_session_factory() as session:
+    async with sessions() as session:
         scope = await locked_context(session, task_id)
         if scope is None:
             return
@@ -269,7 +279,7 @@ async def execute_content_draft(task_id):
         await session.commit()
     error = None
     try:
-        async with async_session_factory() as session:
+        async with sessions() as session:
             await _assist_seo_content(request, session, ctx, generation_route=claim["generation_route"])
     except HTTPException as exc:
         error = (exc.detail.get("code") if isinstance(exc.detail, dict) else None) or {429: "ai_draft_quota_exceeded", 503: "ai_draft_provider_unavailable"}.get(exc.status_code, "ai_draft_generation_failed")
@@ -280,4 +290,4 @@ async def execute_content_draft(task_id):
         # Provider errors may include submitted material; persist only a stable code.
         error = "ai_draft_generation_failed"
         logger.warning("SEO automatic draft needs attention: task_id=%s", task_id)
-    await persist_result(task_id, error=error)
+    await persist_result(task_id,error=error,sessions=sessions)

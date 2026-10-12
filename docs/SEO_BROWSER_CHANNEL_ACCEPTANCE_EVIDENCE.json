@@ -1,0 +1,95 @@
+{
+  "date": "2026-10-12",
+  "baseline_commit": "139cc7f57650afb1e83930149b6fac33cb9f861a",
+  "code_commit": "ae72b4059aac3130247f3fb82de54d56483150b2",
+  "branch": "codex/seo-browser-channel-acceptance-20261012",
+  "native_root": "D:/SNIPERS国内版/ai_sni-worktrees/seo-browser-channel-acceptance-20261012",
+  "frozen_baseline_unchanged_and_clean": true,
+  "test_execution": "Working tree before code commit; tested sources committed unchanged; clean verified before evidence recording",
+  "tests": {
+    "total": 232,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "reports": [
+      {
+        "filename": "seo-browser-channel-first.xml",
+        "sha256": "e3eeaca0a5871d9e907f8f322f4d69d8a86fa442b6dcfecb9bc66405f428e85d",
+        "tests": 24,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "by_module": {
+          "tests.test_seo_browser_channel_sources_postgres": 24
+        }
+      },
+      {
+        "filename": "seo-browser-channel-regression.xml",
+        "sha256": "e57a9dc5617397705e241775b6613527d8872025ca8fb309aeeee5cbdc758bdf",
+        "tests": 208,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "by_module": {
+          "tests.test_seo_distribution_sources_postgres": 53,
+          "tests.test_seo_distribution_intake_postgres": 64,
+          "tests.test_seo_distribution_media_postgres": 25,
+          "tests.test_seo_distribution": 56,
+          "tests.test_seo_domestic_distribution": 10
+        }
+      }
+    ],
+    "warnings": "One existing jieba/pkg_resources deprecation warning in each run"
+  },
+  "actual_file_sha256": {
+    "app/seo_distribution_sources.py": "a2c6ef7f87c68c0183d09f2f86d18a8411a19ed2403e64de4d65c7f96912a563",
+    "tests/test_seo_browser_channel_sources_postgres.py": "5457e44d052f69e02881860eec8dee2457f38f3a627847e1d3ba13d819f9c3d4",
+    "docs/SEO_BROWSER_CHANNEL_ACCEPTANCE.md": "477f273315add0fb720b1f000d1889f626641a41df8a811662880aaf6c0d2656",
+    "app/api/seo.py": "624ed45ce418764975beb3be4593f8118dfd5d9bf13e60651a72defdb3ee7ca4",
+    "app/seo_distribution.py": "5929c1b905b1a0c482ed393a631dd36aa086b1fa350332c2b064af63a50712e0",
+    "app/security/auth.py": "a20f6e975d558d2435cd1dfc99587f3857a809f8d56c14aaefce161dc8db86cb"
+  },
+  "git_blob_sha256": {
+    "app/seo_distribution_sources.py": "903878e16f5a6af20f1b136c1a7a16173a9af728d623c57e930349a2de263bb3",
+    "tests/test_seo_browser_channel_sources_postgres.py": "5457e44d052f69e02881860eec8dee2457f38f3a627847e1d3ba13d819f9c3d4",
+    "docs/SEO_BROWSER_CHANNEL_ACCEPTANCE.md": "477f273315add0fb720b1f000d1889f626641a41df8a811662880aaf6c0d2656",
+    "app/api/seo.py": "7eab918227110ecbbce0686c4760f7f5e98515b915f98d8ee2c25ad9dbc779f9",
+    "app/seo_distribution.py": "edecaf8c65ccce4112b6177368e3b1db09640f2e4a868b33d6c9086765710f18",
+    "app/security/auth.py": "1ca0da66281d5a22b6b828cd66bb2ca39856c45abd704b971b2aa4b3146d6c8f"
+  },
+  "production_change": "Only native source adapter: alias whitelist plus exact connection/variant platform equality in listing, intake and source load",
+  "credential_evidence": {
+    "native_browser_create_without_credentials": 200,
+    "browser_credentials_encrypted": null,
+    "browser_has_credentials": false,
+    "native_official_create_without_credentials": 400,
+    "real_platform_credentials_used": false,
+    "real_official_API_authorization_tested": false
+  },
+  "coverage": [
+    "Actual native connection creation through ASGI with real JWT; browser assisted mode and no credentials",
+    "Missing official API credentials rejected by unchanged native creation endpoint",
+    "Anonymous and revoked advisor JWT denied; actor/role/assignment/tenant/site/entitlement gates",
+    "Pending/master-review/unconfirmed/stale/disabled/unconnected sources retain native gates",
+    "Exact native platform match: browser/official cross-wiring, xiaohongshu cross-wiring and unknown channels rejected",
+    "Two native connections on same mother draft remain separate; latest revision and pagination consistent in all four readers",
+    "Generating browser revision hides its old draft without hiding official connection candidate",
+    "Browser approval preserves draft_version; database structural failures remain 503",
+    "Existing official/source, intake, xiaohongshu media, domestic catalog and publication unit regressions"
+  ],
+  "review": {
+    "method": "Manual diff review and targeted real PG/JWT regressions",
+    "git_diff_check": "passed",
+    "catalog_api_auth_unchanged": [
+      "app/api/seo.py",
+      "app/seo_distribution.py",
+      "app/security/auth.py"
+    ]
+  },
+  "integration": "Central switches native_root to this freeze and creates native wechat_browser for MHT; central platform stays wechat-article; no DTO change",
+  "boundaries": [
+    "Own loopback PostgreSQL random schemas only; no central 55463 or GEO 55527 access",
+    "No fake credentials, real browser login, real MHT publication or platform network calls",
+    "No push, deployment, production DDL, central/SEM/GEO/shared-auth edits; SEM unchanged"
+  ]
+}

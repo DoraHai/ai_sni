@@ -14,6 +14,8 @@ from app.seo_cockpit_metrics import collect_cockpit_metrics
 from app.seo_content_workflow import run_content_workflows
 from app.seo_service_workflows import run_service_workflows
 from app.seo_onsite_ai_jobs import run_onsite_ai_jobs
+from app.seo_automation_projects import run_automation_projects
+from app.seo_publication_monitor import run_publication_captures
 from app.seo_onsite_ai_health import worker_started, worker_stopped
 
 from app.config import get_settings
@@ -137,6 +139,8 @@ def _start_seo_scheduler() -> None:
     seo_scheduler.add_job(run_content_workflows, IntervalTrigger(minutes=1), id='run_seo_content_workflows', replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=60)
     seo_scheduler.add_job(run_service_workflows, IntervalTrigger(minutes=1), id='run_seo_service_workflows', replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=60)
     seo_scheduler.add_job(run_onsite_ai_jobs, IntervalTrigger(seconds=10), id='run_seo_onsite_ai_jobs', replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=60)
+    seo_scheduler.add_job(run_automation_projects, IntervalTrigger(seconds=10), id='run_seo_automation_projects', replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=60)
+    seo_scheduler.add_job(run_publication_captures, IntervalTrigger(minutes=1), id='run_seo_publication_captures', replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=60)
     seo_scheduler.start()
     worker_started()
     logger.info("[scheduler][SEO] 独立调度器已启动")

@@ -20,6 +20,7 @@ from app.seo_page_audit import collect_page_snapshot, save_page_snapshot
 from app.seo_service_plan import service_plan_is_paused
 from app.seo_serp import domain_matches
 from app.seo_usage_limits import charge_seo_usage, refund_seo_usage, SeoUsageLimitError
+from app import seo_automation_boundary as automation_boundary
 
 KINDS = {"website": "site_diagnosis", "monitoring": "ranking_followup", "report": "monthly_report"}
 PERMISSIONS = {"site_diagnosis": "seo.site", "ranking_followup": "seo.keywords", "monthly_report": "seo.site"}
@@ -325,14 +326,17 @@ async def advance_service_workflow(session, site, task, *, explanation=None, rep
                 "remediation_task_ids": task.params["child_task_ids"], "meaning": "bounded_diagnosis_and_required_remediation"})
 
 
-async def execute_discovery(task_id):
+@automation_boundary.legacy_task('site_diagnosis')
+async def execute_discovery(task_id, *, sessions=None):
     from app import seo_incremental_crawl as incremental
-    async with async_session_factory() as session:
+    sessions=sessions or async_session_factory
+    async with sessions() as session:
         if not await schema_ready(session):
             return
         seed = await session.get(SeoTask, task_id)
         if not seed or seed.action_type != KINDS["website"]:
             return
+        await automation_boundary.before_save(session)
         site = await session.get(SeoSite, seed.site_id, with_for_update=True)
         task = await session.get(SeoTask, task_id, with_for_update=True, populate_existing=True)
         state = dict(task.params.get("incremental") or {})
@@ -365,9 +369,10 @@ async def execute_discovery(task_id):
                       int(result.get("request_count", incremental.SITEMAP_LIMIT + 1))))
     unused = incremental.SITEMAP_LIMIT + 1 - used
     if unused:
-        async with async_session_factory() as accounting:
+        async with sessions() as accounting:
             await refund_seo_usage(accounting, seed.tenant_id, "crawl_urls", unused, charged_on=charge_date)
-    async with async_session_factory() as session:
+    async with sessions() as session:
+        await automation_boundary.before_save(session)
         site = await session.get(SeoSite, seed.site_id, with_for_update=True)
         task = await session.get(SeoTask, task_id, with_for_update=True)
         if not task or task.status not in {"open", "in_progress"}:
@@ -403,9 +408,11 @@ async def execute_discovery(task_id):
         await session.commit()
 
 
-async def execute_diagnosis_page(task_id):
+@automation_boundary.legacy_task('site_diagnosis')
+async def execute_diagnosis_page(task_id, *, sessions=None):
     """Claim one page durably; an interrupted external read is never blindly replayed."""
-    async with async_session_factory() as session:
+    sessions=sessions or async_session_factory
+    async with sessions() as session:
         if not await schema_ready(session):
             return
         seed = await session.get(SeoTask, task_id)
@@ -417,13 +424,14 @@ async def execute_diagnosis_page(task_id):
         else:
             discovery = False
     if discovery:
-        await execute_discovery(task_id)
+        await execute_discovery(task_id,sessions=sessions)
         return
-    async with async_session_factory() as session:
+    async with sessions() as session:
         seed = await session.get(SeoTask, task_id)
         if not seed:
             return
         tenant_id, site_id = seed.tenant_id, seed.site_id
+        await automation_boundary.before_save(session)
         advisor = await session.scalar(select(SeoSiteAdvisorAssignment.id).where(
             SeoSiteAdvisorAssignment.tenant_id == tenant_id, SeoSiteAdvisorAssignment.site_id == site_id,
             SeoSiteAdvisorAssignment.active.is_(True)).order_by(SeoSiteAdvisorAssignment.id).limit(1).with_for_update())
@@ -482,7 +490,8 @@ async def execute_diagnosis_page(task_id):
         values = await collect_page_snapshot(url, include_links=True, allowed_hosts=incremental.site_hosts(domain)) if incremental_mode else await collect_page_snapshot(url)
     except Exception:
         values = None
-    async with async_session_factory() as session:
+    async with sessions() as session:
+        await automation_boundary.before_save(session)
         site = await session.get(SeoSite, site_id, with_for_update=True)
         task = await session.get(SeoTask, task_id, with_for_update=True)
         if not task or task.status not in {"open", "in_progress"}:
@@ -554,6 +563,13 @@ async def process_service_site(site_id):
     async with async_session_factory() as session:
         if not await schema_ready(session):
             return
+        from app import automation_projects as controls,automation_project_v2 as v2
+        hint=await session.get(SeoSite,site_id)
+        if hint is None: return
+        key=controls.scope('seo',hint.tenant_id,site_id)
+        await controls.lock_scope(session,key)
+        adopted={operation for operation in ('site_diagnosis','monthly_report') if await v2.ownership(session,key,operation)}
+        if await v2.ownership(session,key,'incremental_diagnosis'): adopted.add('site_diagnosis')
         advisor = await session.scalar(select(SeoSiteAdvisorAssignment).where(
             SeoSiteAdvisorAssignment.site_id == site_id, SeoSiteAdvisorAssignment.active.is_(True))
             .order_by(SeoSiteAdvisorAssignment.id).limit(1).with_for_update())
@@ -564,6 +580,7 @@ async def process_service_site(site_id):
         settings = dict(site.site_settings or {})
         cursors = dict(settings.get("seo_service_cycle_cursors") or {})
         for kind, action in KINDS.items():
+            if action in adopted: continue
             tasks = list(await session.scalars(select(SeoTask).where(
                 SeoTask.tenant_id == site.tenant_id, SeoTask.site_id == site_id, SeoTask.action_type == action,
                 SeoTask.status.in_(("open", "in_progress"))).order_by(SeoTask.id).with_for_update()))

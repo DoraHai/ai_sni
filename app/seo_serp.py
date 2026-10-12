@@ -16,6 +16,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 import httpx
 
 from app.api_metering import metered_request
+from app.seo_automation_boundary import provider_call
 
 from app.api_connection_config import managed_runtime
 from app.config import get_settings
@@ -358,7 +359,7 @@ async def fetch_baidu_top50(
     operation_started_at = perf_counter()
 
     async def request(provider_client: httpx.AsyncClient) -> dict[str, Any]:
-        response = await metered_request(
+        response = await provider_call(metered_request,
             provider_client, "get", endpoint, api_key=key, provider="chinaz", operation="seo.top50",
             params={"keyword": keyword, "APIKey": key, "ChinazVer": "1.0"},
         )
@@ -569,7 +570,7 @@ async def _chinaz_get_json(
         try:
             if request_counter is not None:
                 request_counter.consume()
-            response = await metered_request(client, "get", endpoint, api_key=params.get("APIKey"), provider="chinaz", operation="seo.rank", params=params)
+            response = await provider_call(metered_request, client, "get", endpoint, api_key=params.get("APIKey"), provider="chinaz", operation="seo.rank", params=params)
             response.raise_for_status()
             payload = response.json()
             if not isinstance(payload, dict):
@@ -901,7 +902,7 @@ async def fetch_dataforseo_serp(
         try:
             if request_counter is not None:
                 request_counter.consume()
-            response = await metered_request(
+            response = await provider_call(metered_request,
                 client, "post", endpoint, provider="dataforseo", operation="seo.serp",
                 auth=(settings.seo_dataforseo_login, settings.seo_dataforseo_password),
                 json=[{

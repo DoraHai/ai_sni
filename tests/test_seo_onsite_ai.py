@@ -24,6 +24,56 @@ def result():
         "source_refs": ["fact:1:v1"], "missing_information": []}]}
 
 
+@pytest.mark.parametrize('statement',[
+    '网站已经自动修改并上线，无需人工审批',
+    '本方案已发布并完成官网验收',
+    '已完成官网验收', '页面已通过人工审核', '官网修改完成',
+    '网站已成功上线', '已自动实施', '页面已部署完成',
+    '不得声称已发布，但网站已经上线',
+    '尚未发布。实际上方案已发布',
+    '不是不能声称已发布',
+    '网站已\u200b经自 动修 改并上线',
+])
+@pytest.mark.parametrize('field',['expected','instruction','reason','missing_information'])
+def test_draft_rejects_false_implementation_claim(statement,field):
+    raw=result()
+    raw['items'][0][field]=[statement] if field=='missing_information' else statement
+    # Even blocked proposals must not launder a claim by blanking expected.
+    if field!='missing_information': raw['items'][0]['missing_information']=['仍需补充资料']
+    with pytest.raises(ValueError,match='completion claim'):
+        ai.validate_result(raw,facts())
+
+
+@pytest.mark.parametrize('statement',[
+    '尚未发布', '人工审核后实施', '不得声称已发布',
+    '当前没有修改官网，须由人工审核后实施。',
+    '草稿中不得声称网站已经上线', '不要写成“已发布”',
+    '尚未完成官网验收', '没有通过官网验收',
+    '不能宣称本方案已发布；应等待顾问审核。',
+    '不得声称已发布，也不得声称已完成官网验收。',
+    '人工审核后完成官网验收', '请完成官网验收',
+    '完成官网验收后再记录结果',
+])
+def test_draft_preserves_negative_and_manual_implementation_guidance(statement):
+    raw=result()
+    raw['items'][0].update(instruction=statement,reason=statement)
+    items,reasons=ai.validate_result(raw,facts())
+    assert items[0]['instruction']==statement and reasons[0]['reason']==statement
+
+
+@pytest.mark.parametrize('value',[
+    'API_KEY=synthetic-not-a-real-key', '密钥：synthetic-not-a-real-key',
+    'sk-syntheticneverused123456', 'Bearer syntheticneverused123456',
+])
+@pytest.mark.parametrize('field',['expected','instruction','reason','missing_information'])
+def test_completion_warning_does_not_bypass_existing_secret_guard(value,field):
+    raw=result()
+    value='不得声称已发布；'+value
+    raw['items'][0][field]=[value] if field=='missing_information' else value
+    with pytest.raises(ValueError,match='sensitive response'):
+        ai.validate_result(raw,facts())
+
+
 @pytest.mark.parametrize("change", [
     {"id": "new-item"}, {"kind": "description"}, {"target_url": "https://example.com/unbound"},
     {"source_refs": ["fact:999:v1"]}, {"source_refs": []},

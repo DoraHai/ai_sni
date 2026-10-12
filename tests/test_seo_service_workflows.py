@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import CreateTable
 
-from test_seo_content_workflow import Store, ACTOR
+from test_seo_content_workflow import Store, ACTOR, mock_legacy_registry
 from app import seo_service_workflows as flows
 from app.api import seo_service_workflows as api
 from app.models.seo import (SeoSitePage, SeoPageSnapshot, SeoCrawlRun, SeoKeywordAsset, SeoRankSnapshot,
@@ -26,6 +26,7 @@ ADVISOR = AuthContext(7, "advisor", "test", None, {"seo.content": "edit", "seo.s
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
+    mock_legacy_registry(monkeypatch)
     store = Store(tmp_path / "cycles.sqlite")
     with store.engine.begin() as conn:
         for model in (SeoSitePage, SeoPageSnapshot, SeoCrawlRun, SeoKeywordAsset, SeoRankSnapshot,

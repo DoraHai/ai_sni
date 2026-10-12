@@ -230,6 +230,7 @@ async def fetch_url(
     allow_xml: bool = False,
     allowed_hosts: frozenset[str] | None = None,
 ) -> FetchResult:
+    from app import seo_automation_boundary as automation_boundary
     requested = normalize_crawl_url(url, preserve_path=True)
     current = requested
     redirects: list[str] = []
@@ -253,7 +254,7 @@ async def fetch_url(
             if allowed_hosts is not None and (hostname not in allowed_hosts or port not in {80, 443}):
                 return FetchResult(requested, current, None, redirects, None, "", None, None, {},
                                    "site_scope_redirect", "目标或跳转地址超出授权网站范围")
-            async with pin_public_target(current):
+            async with pin_public_target(current), automation_boundary.http_attempt():
                 async with http_client.stream("GET", current) as response:
                     if response.status_code in {301, 302, 303, 307, 308}:
                         location = response.headers.get("location")

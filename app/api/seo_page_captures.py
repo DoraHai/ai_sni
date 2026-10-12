@@ -18,7 +18,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, PositiveInt
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, update, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -176,12 +176,15 @@ def _capture_service() -> PageCaptureService:
 
 
 def _payload(row: SeoPageCapture) -> dict:
-    return {name: getattr(row, name) for name in (
+    value = {name: getattr(row, name) for name in (
         "id", "tenant_id", "site_id", "relation_type", "relation_id", "source_url", "status",
         "error_code", "final_url", "http_status", "redirect_chain", "warnings",
         "viewport_width", "viewport_height", "image_width", "image_height", "sha256", "captured_at",
         "source", "uploaded_by", "uploaded_at", "content_type",
     )}
+    value['warnings'] = {key: item for key, item in (value['warnings'] if isinstance(value['warnings'],dict) else {}).items()
+                         if key not in {'_publication_dispatch','_central_publication'}}
+    return value
 
 
 def _publication_url(value: str | None) -> str | None:
@@ -258,8 +261,31 @@ async def _relation(session: AsyncSession, tenant_id: int, site_id: int, url: st
 
 
 async def execute_page_capture(capture_id: int) -> None:
-    """Use a fresh session after the response, following the SEO crawl-run pattern."""
+    # Central-backed captures use the same durable recovery/lock path even when
+    # explicitly requested through the existing native BackgroundTasks API.
     async with async_session_factory() as session:
+        row = await session.get(SeoPageCapture, capture_id)
+        publication = (await session.get(SeoContentPublication, row.relation_id)
+                       if row is not None and row.relation_type == 'publication' else None)
+        info = getattr(publication, 'link_discovery', None)
+        central = bool(row and ((row.warnings or {}).get('_central_publication')
+                       or (row.warnings or {}).get('_publication_dispatch')))
+        central = central or bool(isinstance(info, dict) and info.get('module') == 'seo' and info.get('event_id'))
+        if publication and not central and hasattr(session, 'get_bind') and session.get_bind().dialect.name == 'postgresql':
+            if await session.scalar(text("SELECT to_regclass('seo_distribution_result_events') IS NOT NULL")):
+                central = bool(await session.scalar(text('SELECT EXISTS(SELECT 1 FROM seo_distribution_result_events WHERE publication_id=:id)'),
+                                                    {'id': publication.id}))
+    if central:
+        from app.seo_publication_monitor import run_capture
+        await run_capture(capture_id, sessions=async_session_factory)
+        return
+    await _execute_page_capture(capture_id)
+
+
+async def _execute_page_capture(capture_id: int, *, gate=None, sessions=None) -> None:
+    """Use a fresh session after the response, following the SEO crawl-run pattern."""
+    sessions = sessions or async_session_factory
+    async with sessions() as session:
         row = await session.get(SeoPageCapture, capture_id, with_for_update=True)
         if row is None or row.status != "pending":
             return
@@ -272,6 +298,8 @@ async def execute_page_capture(capture_id: int) -> None:
             await session.commit()
             return
         try:
+            if gate is not None:
+                await gate(session, row)
             await _relation(session, row.tenant_id, row.site_id, row.source_url,
                             row.relation_type, row.relation_id)
             _check_url(row.source_url)
@@ -280,11 +308,23 @@ async def execute_page_capture(capture_id: int) -> None:
                 raise _error(422, "invalid_site_url", "链接不属于该站点")
         except (HTTPException, CaptureError) as exc:
             row.status = "failed"
-            row.error_code = exc.detail["code"] if isinstance(exc, HTTPException) else exc.code
+            row.error_code = ("dispatch_unavailable" if isinstance(exc, HTTPException) and exc.status_code >= 500
+                              else exc.detail["code"] if isinstance(exc, HTTPException) else exc.code)
+            if row.error_code == 'lease_lost':
+                return
+            if row.error_code in {'project_paused','project_ended','capture_disabled'}:
+                from app.seo_publication_monitor import settle_hold
+                settle_hold(row,row.error_code)
             await session.commit()
             return
         row.status = "running"
         row.captured_at = datetime.now(timezone.utc)
+        if gate is not None:
+            # A new attempt must not present previous HTTP/image evidence as
+            # observations made at the new claim timestamp.
+            row.final_url, row.http_status, row.sha256, row.storage_key = None, None, None, None
+            row.image_width, row.image_height, row.redirect_chain = None, None, []
+        claimed_at = row.captured_at
         await session.commit()
         arguments = dict(tenant_id=row.tenant_id, site_id=row.site_id,
                          relation_type=row.relation_type, relation_id=row.relation_id, url=row.source_url)
@@ -296,21 +336,45 @@ async def execute_page_capture(capture_id: int) -> None:
     except Exception:
         logger.exception("SEO page capture worker failed: capture_id=%s", capture_id)
         result = None
-    async with async_session_factory() as session:
-        row = await session.get(SeoPageCapture, capture_id)
-        if row is None or row.status != "running":
+    async with sessions() as session:
+        try:
+            row = await session.get(SeoPageCapture, capture_id, with_for_update=True)
+            if (row is None or row.status != "running"
+                    or (row.captured_at.replace(tzinfo=timezone.utc) if row.captured_at.tzinfo is None else row.captured_at) != claimed_at):
+                _discard_image(result)
+                return
+            if gate is not None:
+                await gate(session, row)
+            operational = await seo_site_is_operational(session, row.tenant_id, row.site_id)
+        except HTTPException as exc:
             _discard_image(result)
+            if isinstance(exc.detail, dict) and exc.detail.get('code') == 'lease_lost':
+                return
+            code = "dispatch_unavailable" if exc.status_code >= 500 else exc.detail['code']
+            row.status, row.error_code = ("pending" if code in {'project_paused','project_ended','capture_disabled'} else "failed"), code
+            if code in {'project_paused','project_ended','capture_disabled'}:
+                from app.seo_publication_monitor import settle_hold
+                settle_hold(row,code)
+            await session.commit()
             return
-        if not await seo_site_is_operational(session, row.tenant_id, row.site_id):
+        except BaseException:
+            # No result has been committed yet. Even SQL/cancellation failures
+            # at the post-render gate must remove this attempt's actual file.
+            _discard_image(result)
+            raise
+        if not operational:
             row.status, row.error_code = "failed", "site_inactive"
             _discard_image(result)
         elif result is None:
             row.status, row.error_code = "failed", "worker_error"
         else:
+            private_dispatch = (row.warnings or {}).get('_publication_dispatch')
             for name in ("status", "error_code", "final_url", "http_status", "redirect_chain",
                          "warnings", "viewport_width", "viewport_height", "image_width", "image_height",
                          "sha256", "storage_key", "captured_at"):
                 setattr(row, name, getattr(result, name))
+            if private_dispatch is not None:
+                row.warnings = {**(row.warnings or {}), '_publication_dispatch': private_dispatch, '_central_publication': True}
         await session.commit()
 
 

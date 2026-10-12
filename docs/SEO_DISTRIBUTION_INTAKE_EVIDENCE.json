@@ -1,0 +1,67 @@
+{
+  "date": "2026-10-12",
+  "baseline_commit": "12ce7fb31f61ca4c7a7ab24569599ca6ae97b38d",
+  "code_commit": "230dd2ff7f91f5846901baadff6ae4d98f44b5b9",
+  "test_execution": "working tree before code commit; tested code committed unchanged; clean verified before recording this evidence",
+  "interfaces": [
+    "list_intake_candidates",
+    "load_intake_candidate"
+  ],
+  "tests": {
+    "tests": 142,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "warning_count": 1,
+    "by_module": {
+      "tests.test_seo_distribution_intake_postgres": 64,
+      "tests.test_seo_distribution_sources_postgres": 53,
+      "tests.test_seo_distribution_media_postgres": 25
+    },
+    "report_filename": "seo-distribution-intake-regression.xml",
+    "report_sha256": "3fd2848e473f7557abcd6b2316eab785afbe18c9137f4aa0a2d67fea21051760"
+  },
+  "actual_file_sha256": {
+    "app/seo_distribution_sources.py": "4ab7cc1287ee90c45230042f488526357c745907a649db4642a28f51589fb890",
+    "tests/test_seo_distribution_intake_postgres.py": "2de64a0ff2deea1494e98d268c96339e377c66c73f70428027244331a3878111",
+    "tests/test_seo_distribution_sources_postgres.py": "a31fbf5647c9d29898b82c4ec296e7010f46085d5e45c99fb13103d74a79e879",
+    "tests/test_seo_distribution_media_postgres.py": "355eb5db04b21a9690ab5e58ddc604e75fee60dfd7b6fde80bc1dd5f7b6ca567"
+  },
+  "git_blob_sha256": {
+    "app/seo_distribution_sources.py": "4ab7cc1287ee90c45230042f488526357c745907a649db4642a28f51589fb890",
+    "tests/test_seo_distribution_intake_postgres.py": "2de64a0ff2deea1494e98d268c96339e377c66c73f70428027244331a3878111",
+    "tests/test_seo_distribution_sources_postgres.py": "a31fbf5647c9d29898b82c4ec296e7010f46085d5e45c99fb13103d74a79e879",
+    "tests/test_seo_distribution_media_postgres.py": "355eb5db04b21a9690ab5e58ddc604e75fee60dfd7b6fde80bc1dd5f7b6ca567"
+  },
+  "coverage": [
+    "Exact five-field metadata for pending/ready candidates, no content or asset leakage",
+    "Current actor, role, tenant, site, advisor and module entitlement, real JWT and ASGI requests",
+    "Revoked authorization and missing native/media structure fail closed",
+    "Latest revision before completed-status filtering; generating does not expose older approved draft",
+    "Review/rejection/reapproval preserve draft_version; body and image replacement change it",
+    "Ready source_revision equals existing load_source; original gates and ready-only listing preserved",
+    "55 candidates, 50-row first page, tail/exact-full-page/null cursor, restart detects approvals",
+    "Strict cursor/limit and point-ID types reject booleans, floats, strings and out-of-range IDs",
+    "Readonly PostgreSQL transaction, dirty/new ORM objects not flushed or returned",
+    "Concurrent edit/latest replacement rejects mixed old-version/new-seal page; empty page reauthorization",
+    "Point lookup removes replaced/absent/foreign-scope/platform/unfinished IDs only, failures are not None",
+    "Existing tenant row lock with pool_size=1/max_overflow=0; same connection and no extra connection",
+    "Existing source regression timestamp fixture made independent of wall-clock date"
+  ],
+  "review": {
+    "new_production_changes": "Only SEO source adapter; existing list_sources/load_source unchanged",
+    "git_diff_check": "passed",
+    "review_method": "manual diff review and targeted real PostgreSQL/JWT regressions"
+  },
+  "dependencies": [
+    "Central 3.0 wiring and integration validation remains separate",
+    "Authorized tenant/site/advisor identity",
+    "Existing optional native media tables for xiaohongshu-image; missing tables yield 503"
+  ],
+  "boundaries": [
+    "Loopback PostgreSQL random schemas and synthetic fixtures only; real JWT",
+    "No platform requests or real publication; no production route/config/schema changes",
+    "No push/deployment/production migration; existing 198-check evidence untouched",
+    "No central/GEO/shared auth/main changes; SEM AI remains off"
+  ]
+}

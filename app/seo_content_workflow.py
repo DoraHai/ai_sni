@@ -242,6 +242,12 @@ async def process_site(site_id):
     async with async_session_factory() as session:
         if not await schema_ready(session):
             return
+        from app import automation_projects as controls, automation_project_v2 as v2
+        hint=await session.get(SeoSite,site_id)
+        if hint is None: return
+        key=controls.scope('seo',hint.tenant_id,site_id)
+        await controls.lock_scope(session,key)
+        if await v2.ownership(session,key,'content_draft'): return
         # Same lock order as service-plan writes: assignment, then site.
         advisor = await session.scalar(select(SeoSiteAdvisorAssignment).where(
             SeoSiteAdvisorAssignment.site_id == site_id, SeoSiteAdvisorAssignment.active.is_(True),

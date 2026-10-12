@@ -9,6 +9,8 @@ from sqlalchemy.schema import CreateTable
 from test_seo_content_workflow import Store
 from app.api import seo_onsite as api, seo_cockpit
 from app.models.seo import SeoSitePage, SeoKeywordAsset, SeoSiteAdvisorAssignment
+from app.models.user import User
+from app.models.role import Role
 from app.security.auth import AuthContext
 
 ADVISOR = AuthContext(7, "advisor", "advisor", None, {"seo.content":"edit", "seo.site":"edit", "seo.keywords":"edit"})
@@ -18,9 +20,11 @@ CUSTOMER = AuthContext(12, "customer", "customer", 4, {"seo.content":"view", "se
 def store(tmp_path, monkeypatch):
     value = Store(tmp_path/"onsite.sqlite")
     with value.engine.begin() as conn:
-        for model in (SeoSitePage, SeoKeywordAsset):
+        for model in (SeoSitePage, SeoKeywordAsset, Role, User):
             conn.execute(CreateTable(model.__table__, include_foreign_key_constraints=[]))
     with Session(value.engine) as db:
+        db.add(Role(id=5,name='advisor',permissions=ADVISOR.permissions))
+        db.add(User(id=7,username='advisor',password_hash='unused-synthetic',role_id=5,is_active=True))
         db.add(SeoSitePage(id=10, tenant_id=4, site_id=2, url="https://example.com/p", status="pending",
                           title_suggestion="重点词的事实标题", description_suggestion="事实描述"))
         db.add(SeoKeywordAsset(id=11, tenant_id=4, site_id=2, keyword="重点词", status="active", priority="P0", landing_page="https://example.com/p"))

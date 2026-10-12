@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app import onsite_workflow as work, seo_onsite_ai as ai
+from app import automation_projects as controls, seo_automation_projects as automation
 from app.seo_onsite_ai_health import record_tick
 from app.api import seo_onsite as onsite, seo_onsite_ai as api
 from app.config import get_settings
@@ -63,6 +64,7 @@ async def execute_request(task_id, tenant_id, site_id, key, *, sessions=None):
     """
     sessions = sessions or async_session_factory
     async with sessions() as session:
+        token = await automation.lock_managed(session,task_id,tenant_id,site_id,key)
         site = await session.get(SeoSite, site_id, with_for_update={"skip_locked": True})
         if not site or site.tenant_id != tenant_id:
             return None
@@ -75,25 +77,40 @@ async def execute_request(task_id, tenant_id, site_id, key, *, sessions=None):
             return None
         if run["state"] == "running":
             if expired(run):
-                finish(row, run, "unknown", "onsite_ai_interrupted", "调用中断或超时，结果未核实；原请求不会自动重试")
+                ended = finish(row, run, "unknown", "onsite_ai_interrupted", "调用中断或超时，结果未核实；原请求不会自动重试")
+                await automation.settle_request(session,token,ended)
                 await session.commit()
                 return "unknown"
             return "running"
         if run["state"] != "queued":
+            if token:
+                await automation.settle_request(session,token,run)
+                await session.commit()
             return run["state"]
         req = api.Request(tenant_id=tenant_id, site_id=site_id, request_id=key,
                           expected_revision=run["source_revision"], mode=run["mode"])
         ctx = AuthContext(run["actor_user_id"], "", "", run.get("actor_tenant_id"), {})
         try:
+            if run.get('automation_token') != token:
+                raise ai.problem(409,'onsite_ai_request_stale','请求执行归属已变化')
+            if token:
+                await controls.check_step(session,token)
+                await automation.sources.validate_token(session,token,site)
             fresh, facts = await validate_current(session, ctx, req, site, row, run)
             if (ai.now() - datetime.fromisoformat(run["queued_at"])).total_seconds() > QUEUE_MAX_AGE_SECONDS:
                 raise ai.problem(409, "onsite_ai_queue_expired", "排队超过一天，请人工核对后重新申请")
         except HTTPException:
-            finish(row, run, "stale", "onsite_ai_request_stale", "权限、服务、任务或依据已变化，未调用供应商")
+            ended = finish(row, run, "stale", "onsite_ai_request_stale", "权限、服务、任务或依据已变化，未调用供应商")
+            await automation.settle_request(session,token,ended)
             await session.commit()
             return "stale"
         # Persist the call intent BEFORE the HTTP request. Even a crash directly
         # after this commit is unknown, never a reason to repeat a paid attempt.
+        if token and not await controls.begin_dispatch(session,token):
+            ended = finish(row,run,'unknown','onsite_ai_interrupted','已有持久化外呼记录，原请求不会自动重试')
+            await automation.settle_request(session,token,ended)
+            await session.commit()
+            return 'unknown'
         run.update(state="running", started_at=ai.now().isoformat(), claim_id=str(uuid4()))
         api.save_run(row, run)
         await session.commit()
@@ -108,20 +125,37 @@ async def execute_request(task_id, tenant_id, site_id, key, *, sessions=None):
         cancelled = isinstance(exc, asyncio.CancelledError)
     try:
         async with sessions() as session:
+            # Keep the token admitted before HTTP. Never downgrade a managed
+            # request to manual if its JSON marker changed while in flight.
+            if token:
+                await controls.require_schema(session)
+                await controls.read_project(session,controls.scope('seo',tenant_id,site_id),lock=True)
+            else:
+                await automation.v2.check_legacy(session,controls.scope('seo',tenant_id,site_id),'onsite_ai')
             site = await session.get(SeoSite, site_id, with_for_update=True)
             row = await session.get(SeoTask, task_id, with_for_update=True)
             api.task_matches(row, req)
             current_run = deepcopy((row.params.get("onsite_ai_requests") or {}).get(key))
             if not current_run or current_run["state"] != "running" or current_run.get("claim_id") != run["claim_id"]:
+                if current_run and token:
+                    await automation.settle_request(session,token,current_run,late=True)
+                    await session.commit()
                 return current_run["state"] if current_run else None
             if expired(current_run):
-                finish(row, current_run, "unknown", "onsite_ai_interrupted", "原调用已超过核实时限，迟到结果未采用")
+                ended = finish(row, current_run, "unknown", "onsite_ai_interrupted", "原调用已超过核实时限，迟到结果未采用")
+                await automation.settle_request(session,token,ended)
                 await session.commit()
                 return "unknown"
             try:
+                if current_run.get('automation_token') != token:
+                    raise ai.problem(409,'onsite_ai_result_stale','请求执行归属已变化')
+                if token:
+                    await controls.check_step(session,token)
+                    await automation.sources.validate_token(session,token,site)
                 fresh, _ = await validate_current(session, ctx, req, site, row, current_run)
             except HTTPException:
-                finish(row, current_run, "stale", "onsite_ai_result_stale", "权限、服务、任务或依据已变化，结果未采用")
+                ended = finish(row, current_run, "stale", "onsite_ai_result_stale", "权限、服务、任务或依据已变化，结果未采用")
+                await automation.settle_request(session,token,ended)
                 await session.commit()
                 return "stale"
             if failure:
@@ -138,6 +172,7 @@ async def execute_request(task_id, tenant_id, site_id, key, *, sessions=None):
                 current_run.update(state="ready")
             current_run["finished_at"] = ai.now().isoformat()
             api.save_run(row, current_run)
+            await automation.settle_request(session,token,current_run)
             await session.commit()
             return current_run["state"]
     finally:

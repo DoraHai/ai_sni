@@ -194,6 +194,44 @@ def planning_input(facts):
 PROSE_URL = re.compile(r'''(?:https?://|(?<![\w:/])//)[^\s<>"'`，。；：！？、（）【】“”‘’《》]+''', re.I)
 
 
+# These are claims of performed work, not instructions to perform that work.
+# Check original model fields before any blank-on-missing/server assembly.
+COMPLETION_CLAIM = re.compile(
+    r'(?:已经|现已|已)(?:(?:自动|成功|正式|全部|经人工|经客户))*'
+    r'(?:完成(?:网站|官网|页面|方案)?(?:修改|更新|实施|部署|发布|上线|审核|审批|验收)|'
+    r'(?:修改|更新|实施|部署)(?:完成|成功|并上线)?|发布|上线|通过(?:人工|客户)?(?:审核|审批|验收)|验收)'
+    r'|(?:完成|通过)(?:了)?(?:网站|官网|页面|方案)(?:的)?(?:发布|上线|验收)'
+    r'|(?:网站|官网|页面|方案)(?:修改|实施|部署|发布|上线|验收)(?:已)?(?:完成|成功)')
+COMPLETION_WARNING = re.compile(
+    r'(?:不得|不能|不可|禁止|切勿|不要|请勿)(?:自行)?'
+    r'(?:声称|宣称|断言|承诺|编造|表示|描述为|标记为|标注为|写成|写为|输出)'
+    r'[“\"‘\']?(?:(?:本|该)?(?:网站|官网|页面|方案))?$')
+
+
+def check_completion_claim(text):
+    # Bound URLs have already passed their own exact allowlist; their paths are
+    # identifiers, not completion claims. Negation only applies to the immediate
+    # warning phrase, never to another assertion later in the same sentence.
+    prose = PROSE_URL.sub('', text)
+    for clause in re.split(r'[，。；：！？,;!?:\n]', prose):
+        clause = re.sub(r'[\s\u200b\u200c\u200d\ufeff]', '', clause)
+        for claim in COMPLETION_CLAIM.finditer(clause):
+            prefix = clause[:claim.start()]
+            warning = COMPLETION_WARNING.search(prefix)
+            if warning and not re.search(r'(?:并非|不是|并不)$',prefix[:warning.start()]):
+                continue
+            # e.g. “未完成官网验收”, “没有通过官网验收”.
+            if re.search(r'(?:尚未|还未|未|没有|尚未曾|未曾)$',prefix):
+                continue
+            # An imperative/conditional “完成官网验收” is future manual work.
+            # This exception never covers a past-tense “已完成/已发布” claim.
+            if claim.group().startswith(('完成','通过')) and (
+                re.search(r'(?:请|建议|需要|应|须|后|再|才能|方可)$',prefix)
+                or re.match(r'(?:之前|之后|以后|前|后|时)',clause[claim.end():])):
+                continue
+            raise ValueError('unsupported completion claim in draft')
+
+
 def check_prose(text, allowed):
     for match in PROSE_URL.finditer(text):
         candidate = match.group()
@@ -205,6 +243,7 @@ def check_prose(text, allowed):
             raise ValueError("unbound URL in proposal")
     if redact_text(text) != text or "\x00" in text:
         raise ValueError("sensitive response")
+    check_completion_claim(text)
 
 
 def source_conflicts(facts, old, refs):
