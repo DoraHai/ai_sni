@@ -18,6 +18,7 @@ WORK = BASE / 'work/distribution-server-pilot-20261012'
 PORTS = {'pg': 55483, 'seo': 55861, 'geo': 55862}
 NATIVE = {'seo': 'b4d8387123355348f79e26ea2838585c5106a4b9',
           'geo': '46dacbd805afc00f37eba344306fde004039efed'}
+SNAPSHOT_SHA = 'f75d382a54ec33f0c892cc4c6afcc17b082c130cc1b58236fb4dde48e383f609'
 
 
 def read(path):
@@ -123,6 +124,9 @@ def environment(module):
 
 
 async def initialize(native, root, config, engine, sessions, module, manifest):
+    snapshot = root / 'customer-snapshot.json'
+    if not snapshot.is_file() or hashlib.sha256(snapshot.read_bytes()).hexdigest() != SNAPSHOT_SHA:
+        raise RuntimeError('Exact previously authorized customer snapshot required before acceptance DDL')
     await native.initialize(root, config, engine, sessions, module, manifest)
     if module == 'seo':
         await native.native_schema(root, config, engine, module)

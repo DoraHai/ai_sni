@@ -32,12 +32,14 @@ if [[ "$action" == prepare ]]; then
   done
   if [[ ! -d "$base/venv" ]]; then run_owned python3.11 -m venv "$base/venv"; fi
   # These locks belong to the reviewed native SEO pilot; there are no browser installs.
-  run_owned "$base/venv/bin/python" -m pip install --disable-pip-version-check -q -r "$destination/seo/requirements.txt" tzdata==2026.3
+  run_owned "$base/venv/bin/python" -m pip install --disable-pip-version-check --timeout 20 --retries 2 --index-url https://mirrors.aliyun.com/pypi/simple/ -r "$destination/seo/requirements.txt" tzdata==2026.3
   run_owned bash -c 'cd "$1/customer-workbench"; npm ci --no-audit --no-fund; npm run build' _ "$destination/central"
   printf '{"prepared":true,"source_commit":"%s","production":false}\n' "$release"
 elif [[ "$action" == initialize ]]; then
   [[ -n "$release" ]]
   [[ ! -e "$work" ]] || { echo 'Do not reinitialize an existing private cluster' >&2; exit 1; }
+  snapshot="/var/tmp/gsnipers-distribution-acceptance-$release-snapshot.json"
+  [[ -f "$snapshot" && $(sha256sum "$snapshot" | cut -d' ' -f1) == f75d382a54ec33f0c892cc4c6afcc17b082c130cc1b58236fb4dde48e383f609 ]]
   runner="$base/releases/$release/central/scripts/distribution_linux_acceptance.py"
   run_owned "$base/venv/bin/python" -B "$runner" bootstrap --release "$base/releases/$release"
   run_owned /usr/bin/initdb -D "$work/pg" -U distribution_acceptance --pwfile="$work/postgres.secret" --auth-local=peer --auth-host=scram-sha-256 --encoding=UTF8 >/dev/null
@@ -76,8 +78,6 @@ UNIT
     run_owned bash -c 'export PGPASSWORD=$(cat "$1/postgres.secret"); createdb -h 127.0.0.1 -p 55483 -U distribution_acceptance "distribution_acceptance_$2"' _ "$work" "$module"
   done
   # The previously authorized snapshot is copied separately over SSH, never through GitHub.
-  snapshot="/var/tmp/gsnipers-distribution-acceptance-$release-snapshot.json"
-  [[ -f "$snapshot" ]]
   install -m 600 -o "$actor" -g "$actor" "$snapshot" "$work/customer-snapshot.json"
   for module in seo geo; do run_owned "$base/venv/bin/python" -B "$runner" initialize --module "$module"; done
   printf '{"initialized":true,"production":false,"private_credentials_printed":false}\n'

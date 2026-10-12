@@ -138,6 +138,8 @@ async def named(db, ctx, *, admin=False):
 @router.post('/devices')
 async def create_device(req:DeviceCreate,db=Depends(get_session),ctx=Depends(require_auth)):
     fresh=await named(db,ctx,admin=True)
+    from app.distribution_pairing import enabled
+    if enabled():raise core.problem('DEVICE_PAIRING_REQUIRED',409)
     result=await core.create_device(db,fresh.user_id,req.label)
     await db.commit(); return {'schema':1,'device':result}
 
@@ -154,6 +156,8 @@ async def revoke(device_id:str,db=Depends(get_session),ctx=Depends(require_auth)
     fresh=await named(db,ctx,admin=True); await core.lock(db,'device:'+device_id)
     device=await core.one(db,'SELECT id FROM distribution_devices WHERE id=:id',id=device_id)
     if not device: raise core.problem('binding_unavailable',404)
+    from app.distribution_pairing import revoke_for_device
+    await revoke_for_device(db,device_id,fresh.user_id)
     await db.execute(core.text('UPDATE distribution_devices SET active=false WHERE id=:id'),{'id':device_id})
     await db.execute(core.text("UPDATE distribution_tasks SET revoked=true,status=CASE WHEN status='queued' THEN 'canceled' "
         "WHEN status IN ('leased','running','awaiting-human') THEN 'unknown' ELSE status END WHERE device_id=:id"),{'id':device_id})
@@ -515,3 +519,5 @@ router.include_router(capability_router)
 router.include_router(handoff_router)
 from app.api.distribution_remote import router as remote_router
 router.include_router(remote_router)
+from app.api.distribution_pairing import router as pairing_router
+router.include_router(pairing_router)

@@ -63,7 +63,9 @@ def prepare(config_path, module):
     for name in ('app/distribution_remote.py','app/distribution_remote_contract.py',
                  'app/api/distribution_remote.py','app/api/auth.py',
                  'app/distribution_api_contract.py','app/distribution_api_orders.py',
-                 'scripts/distribution_remote_schema.sql'):
+                 'app/distribution_pairing.py','app/distribution_pairing_contract.py',
+                 'app/api/distribution_pairing.py','scripts/distribution_device_pairing_schema.sql',
+                 'docs/fixtures/distribution-device-pairing-v1.json','scripts/distribution_remote_schema.sql'):
         source=Path(config['central_root'])/name
         if source.exists(): manifest.setdefault('central_files',{})[name]=hashlib.sha256(source.read_bytes()).hexdigest()
     for name in ('app/api/seo_automation_projects.py','app/api/seo_onsite_ai.py','app/seo_demo_source.py'):
@@ -71,6 +73,9 @@ def prepare(config_path, module):
         if source.exists(): manifest.setdefault('pilot_native_files',{})[name]=hashlib.sha256(source.read_bytes()).hexdigest()
     for file in ('distribution_server_pilot_environment.py', 'distribution_server_pilot_native.py','distribution_server_pilot_configure.py'):
         manifest.setdefault('acceptance_files', {})[file] = hashlib.sha256((Path(__file__).parent/file).read_bytes()).hexdigest()
+    linux_runner=Path(__file__).parent/'distribution_linux_acceptance.py'
+    if linux_runner.exists():
+        manifest.setdefault('acceptance_files', {})[linux_runner.name]=hashlib.sha256(linux_runner.read_bytes()).hexdigest()
     static=Path(config['central_root'])/'app/static/distribution-acceptance'
     for file in static.glob('*'):
         manifest.setdefault('acceptance_files', {})['ui/'+file.name]=hashlib.sha256(file.read_bytes()).hexdigest()

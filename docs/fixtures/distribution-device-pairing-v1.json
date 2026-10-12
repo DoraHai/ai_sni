@@ -1,0 +1,584 @@
+{
+  "schema": 1,
+  "prefix": "/api/distribution/v1",
+  "time_unit": "utc-epoch-milliseconds",
+  "https_required": true,
+  "feature_flag": "DISTRIBUTION_DEVICE_PAIRING_ENABLED",
+  "default_enabled": false,
+  "models": {
+    "PairingCreate": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "expires_in_seconds": {
+          "default": 300,
+          "maximum": 600,
+          "minimum": 60,
+          "title": "Expires In Seconds",
+          "type": "integer"
+        },
+        "request_id": {
+          "format": "uuid",
+          "title": "Request Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "request_id"
+      ],
+      "title": "PairingCreate",
+      "type": "object"
+    },
+    "PairingClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "pairing_code": {
+          "pattern": "^[A-Za-z0-9_-]{32}$",
+          "title": "Pairing Code",
+          "type": "string"
+        },
+        "request_id": {
+          "format": "uuid",
+          "title": "Request Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pairing_code",
+        "request_id"
+      ],
+      "title": "PairingClaim",
+      "type": "object"
+    },
+    "PairingRevoke": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "format": "uuid",
+          "title": "Request Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id"
+      ],
+      "title": "PairingRevoke",
+      "type": "object"
+    },
+    "PairingView": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "request_id": {
+          "format": "uuid",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "device_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+          "title": "Device Id",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "claimed",
+            "expired",
+            "revoked"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "created_at": {
+          "maximum": 4102444800000,
+          "minimum": 0,
+          "title": "Created At",
+          "type": "integer"
+        },
+        "expires_at": {
+          "maximum": 4102444800000,
+          "minimum": 0,
+          "title": "Expires At",
+          "type": "integer"
+        },
+        "claimed_at": {
+          "anyOf": [
+            {
+              "maximum": 4102444800000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Claimed At"
+        },
+        "revoked_at": {
+          "anyOf": [
+            {
+              "maximum": 4102444800000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Revoked At"
+        },
+        "automatic_submit": {
+          "const": false,
+          "default": false,
+          "title": "Automatic Submit",
+          "type": "boolean"
+        },
+        "bindings_configured": {
+          "const": false,
+          "default": false,
+          "title": "Bindings Configured",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "request_id",
+        "device_id",
+        "label",
+        "state",
+        "created_at",
+        "expires_at",
+        "claimed_at",
+        "revoked_at"
+      ],
+      "title": "PairingView",
+      "type": "object"
+    },
+    "PairingCreated": {
+      "$defs": {
+        "PairingView": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "format": "uuid",
+              "title": "Id",
+              "type": "string"
+            },
+            "request_id": {
+              "format": "uuid",
+              "title": "Request Id",
+              "type": "string"
+            },
+            "device_id": {
+              "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+              "title": "Device Id",
+              "type": "string"
+            },
+            "label": {
+              "maxLength": 80,
+              "minLength": 1,
+              "title": "Label",
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "pending",
+                "claimed",
+                "expired",
+                "revoked"
+              ],
+              "title": "State",
+              "type": "string"
+            },
+            "created_at": {
+              "maximum": 4102444800000,
+              "minimum": 0,
+              "title": "Created At",
+              "type": "integer"
+            },
+            "expires_at": {
+              "maximum": 4102444800000,
+              "minimum": 0,
+              "title": "Expires At",
+              "type": "integer"
+            },
+            "claimed_at": {
+              "anyOf": [
+                {
+                  "maximum": 4102444800000,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Claimed At"
+            },
+            "revoked_at": {
+              "anyOf": [
+                {
+                  "maximum": 4102444800000,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Revoked At"
+            },
+            "automatic_submit": {
+              "const": false,
+              "default": false,
+              "title": "Automatic Submit",
+              "type": "boolean"
+            },
+            "bindings_configured": {
+              "const": false,
+              "default": false,
+              "title": "Bindings Configured",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "request_id",
+            "device_id",
+            "label",
+            "state",
+            "created_at",
+            "expires_at",
+            "claimed_at",
+            "revoked_at"
+          ],
+          "title": "PairingView",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": 1,
+          "title": "Schema",
+          "type": "integer"
+        },
+        "pairing": {
+          "$ref": "#/$defs/PairingView"
+        },
+        "pairing_code": {
+          "pattern": "^[A-Za-z0-9_-]{32}$",
+          "title": "Pairing Code",
+          "type": "string"
+        },
+        "code_once": {
+          "const": true,
+          "title": "Code Once",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema",
+        "pairing",
+        "pairing_code",
+        "code_once"
+      ],
+      "title": "PairingCreated",
+      "type": "object"
+    },
+    "PairingClaimed": {
+      "$defs": {
+        "DeviceClaimed": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+              "title": "Id",
+              "type": "string"
+            },
+            "label": {
+              "maxLength": 80,
+              "minLength": 1,
+              "title": "Label",
+              "type": "string"
+            },
+            "active": {
+              "const": true,
+              "title": "Active",
+              "type": "boolean"
+            },
+            "credential": {
+              "pattern": "^[A-Za-z0-9_-]{64}$",
+              "title": "Credential",
+              "type": "string"
+            },
+            "credential_once": {
+              "const": true,
+              "title": "Credential Once",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "active",
+            "credential",
+            "credential_once"
+          ],
+          "title": "DeviceClaimed",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": 1,
+          "title": "Schema",
+          "type": "integer"
+        },
+        "pairing_id": {
+          "format": "uuid",
+          "title": "Pairing Id",
+          "type": "string"
+        },
+        "claimed_at": {
+          "maximum": 4102444800000,
+          "minimum": 0,
+          "title": "Claimed At",
+          "type": "integer"
+        },
+        "device": {
+          "$ref": "#/$defs/DeviceClaimed"
+        },
+        "bindings_configured": {
+          "const": false,
+          "default": false,
+          "title": "Bindings Configured",
+          "type": "boolean"
+        },
+        "automatic_submit": {
+          "const": false,
+          "default": false,
+          "title": "Automatic Submit",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema",
+        "pairing_id",
+        "claimed_at",
+        "device"
+      ],
+      "title": "PairingClaimed",
+      "type": "object"
+    },
+    "DeviceBindingsRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "device_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+          "title": "Device Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "device_id"
+      ],
+      "title": "DeviceBindingsRequest",
+      "type": "object"
+    },
+    "DeviceBindingView": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_id": {
+          "format": "uuid",
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "device_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+          "title": "Device Id",
+          "type": "string"
+        },
+        "module": {
+          "enum": [
+            "seo",
+            "geo"
+          ],
+          "title": "Module",
+          "type": "string"
+        },
+        "tenant_id": {
+          "exclusiveMinimum": 0,
+          "title": "Tenant Id",
+          "type": "integer"
+        },
+        "scope_id": {
+          "exclusiveMinimum": 0,
+          "title": "Scope Id",
+          "type": "integer"
+        },
+        "account_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+          "title": "Account Id",
+          "type": "string"
+        },
+        "external_account_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+          "title": "External Account Id",
+          "type": "string"
+        },
+        "platform": {
+          "const": "wechat-article",
+          "title": "Platform",
+          "type": "string"
+        },
+        "login_state": {
+          "const": "unverified",
+          "default": "unverified",
+          "title": "Login State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_id",
+        "device_id",
+        "module",
+        "tenant_id",
+        "scope_id",
+        "account_id",
+        "external_account_id",
+        "platform"
+      ],
+      "title": "DeviceBindingView",
+      "type": "object"
+    },
+    "DeviceBindingsResponse": {
+      "$defs": {
+        "DeviceBindingView": {
+          "additionalProperties": false,
+          "properties": {
+            "binding_id": {
+              "format": "uuid",
+              "title": "Binding Id",
+              "type": "string"
+            },
+            "device_id": {
+              "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+              "title": "Device Id",
+              "type": "string"
+            },
+            "module": {
+              "enum": [
+                "seo",
+                "geo"
+              ],
+              "title": "Module",
+              "type": "string"
+            },
+            "tenant_id": {
+              "exclusiveMinimum": 0,
+              "title": "Tenant Id",
+              "type": "integer"
+            },
+            "scope_id": {
+              "exclusiveMinimum": 0,
+              "title": "Scope Id",
+              "type": "integer"
+            },
+            "account_id": {
+              "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+              "title": "Account Id",
+              "type": "string"
+            },
+            "external_account_id": {
+              "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+              "title": "External Account Id",
+              "type": "string"
+            },
+            "platform": {
+              "const": "wechat-article",
+              "title": "Platform",
+              "type": "string"
+            },
+            "login_state": {
+              "const": "unverified",
+              "default": "unverified",
+              "title": "Login State",
+              "type": "string"
+            }
+          },
+          "required": [
+            "binding_id",
+            "device_id",
+            "module",
+            "tenant_id",
+            "scope_id",
+            "account_id",
+            "external_account_id",
+            "platform"
+          ],
+          "title": "DeviceBindingView",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": 1,
+          "title": "Schema",
+          "type": "integer"
+        },
+        "device_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+          "title": "Device Id",
+          "type": "string"
+        },
+        "as_of": {
+          "maximum": 4102444800000,
+          "minimum": 0,
+          "title": "As Of",
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/DeviceBindingView"
+          },
+          "maxItems": 50,
+          "title": "Items",
+          "type": "array"
+        },
+        "automatic_submit": {
+          "const": false,
+          "default": false,
+          "title": "Automatic Submit",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema",
+        "device_id",
+        "as_of",
+        "items"
+      ],
+      "title": "DeviceBindingsResponse",
+      "type": "object"
+    }
+  }
+}
