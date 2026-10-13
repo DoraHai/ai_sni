@@ -160,9 +160,17 @@ def publish(archive,sha,commit,nginx_sha):
         run('nginx','-t');run('systemctl','reload','nginx')
         # Strict TLS via the real server_name; anonymous adviser access stays 401.
         url='https://gsnipers.snipers.com.cn/api/distribution/v1/platform-directory?module=seo&tenant_id=1&scope_id=1'
-        result=run('curl','--silent','--show-error','--resolve','gsnipers.snipers.com.cn:443:127.0.0.1',
-                   '-o','/dev/null','-w','%{http_code}',url).decode()
-        if result!='401':raise RuntimeError('Public anonymous auth check failed')
+        # nginx reload is asynchronous; old workers can answer immediately
+        # after systemctl returns. Wait boundedly for the reviewed route.
+        result=''
+        for _ in range(10):
+            result=run('curl','--silent','--show-error','--noproxy','*',
+                       '--connect-timeout','3','--max-time','8',
+                       '--resolve','gsnipers.snipers.com.cn:443:127.0.0.1',
+                       '-o','/dev/null','-w','%{http_code}',url).decode()
+            if result=='401':break
+            time.sleep(1)
+        if result!='401':raise RuntimeError('Public anonymous auth check failed: HTTP '+result)
         run('systemctl','enable','gsnipers-distribution')
         receipt={'status':'deployed','release_commit':commit,'archive_sha256':sha,
             'health':status,'anonymous_advisor_http':401,'previous_release':str(previous) if previous else None,
