@@ -1,5 +1,6 @@
 import {createDevicePairingPanel} from './device-pairing-panel.mjs';
 import {nordDefaults,readNordIdentity,nordBindingMatches} from './nord-onboarding.mjs';
+import {createNordFirstTaskPanel} from './nord-first-task-panel.mjs';
 const queueState=s=>({'queued':'排队','awaiting-review':'待审核','awaiting-adaptation':'待适配','awaiting-authorization':'待授权',paused:'已暂停',scheduled:'待定时', 'awaiting-intervention':'待介入',superseded:'旧版本失效'}[s]||s);
 const queueReason=s=>({'NOT_INTEGRATED':'未接入','NOT_AUTHORIZED':'超管未授权自动排队','REAL_CHANNEL_NOT_ACCEPTED':'实页发布与结果确认未验收','BINDING_UNAVAILABLE':'账号绑定或设备不可用','SOURCE_CHANGED':'稿件版本已变化','SOURCE_REVIEW_REQUIRED':'当前审核或来源门禁未通过','REVIEW_REQUIRED':'等待原模块审核','READY':'来源已就绪','APPROVED_SOURCE':'已审核来源','PROJECT_PAUSED':'项目未运行','CHANNEL_DISABLED':'项目渠道已停用','SCANNED':'已复核','AUTHORIZATION_REVOKED':'当前顾问权限已撤销','SOURCE_UNAVAILABLE':'来源暂不可用','SCAN_UNAVAILABLE':'扫描未完成','OUTCOME_UNKNOWN':'结果未知，保留占用等待核查','ACCOUNT_BUSY':'同账号正在处理其他任务','REVIEW_NOT_SUBMITTED':'尚未提交原模块审核','REVIEW_PENDING':'等待原模块审核','REVIEW_REJECTED':'原模块审核已退回','REVIEW_INVALID':'原模块审核信息无效或已过期','MASTER_STALE':'母稿版本已变化','CONTENT_EMPTY':'渠道稿正文或标题缺失','SOURCE_INVALID':'稿件来源未通过校验','PUBLISH_GATE_BLOCKED':'原模块发布规则或事实门禁未通过','ASSET_MANIFEST_INVALID':'素材清单与冻结稿不一致','ADAPTATION_INVALID':'渠道适配信息无效','ADAPTATION_PENDING':'等待渠道适配','SOURCE_READY':'来源已就绪','CONFIRMATION_REQUIRED':'等待原模块客户或顾问代确认','CONNECTION_UNAVAILABLE':'来源连接停用或尚未就绪','SOURCE_STALE':'母稿或渠道稿版本不匹配','ASSETS_UNAVAILABLE':'素材未冻结或与稿件不符','CONTENT_INVALID':'稿件格式或长度未通过渠道校验','KEYWORDS_INVALID':'关键词归属或内容覆盖未通过门禁','POLICY_REQUIRED':'超管尚未配置账号规则','POLICY_DISABLED':'账号规则未启用','ACCOUNT_PAUSED':'账号已暂停','CAPTCHA':'待人工处理验证码','LOGIN_REQUIRED':'待人工恢复登录','RESULT_CONFLICT':'发布结果冲突，待核查','DAILY_LIMIT':'等待下一日额度','MIN_INTERVAL':'等待最小间隔','OUTSIDE_WINDOW':'等待允许时段'}[s.replace(/^(geo|seo)_distribution_/i,'').toUpperCase()]||'原模块门禁未通过，请进入对应内容审核页核对');
 import {createDistributionClient,safeDistributionUrl,distributionScope} from './distribution-client.mjs';
@@ -250,12 +251,14 @@ export function mountDistributionAdmin({root,session,fetchImpl=fetch,browser=win
   let devices=[],bindings=[],schedules=[],events=[],channelCatalog=[],credential=null,notice='',busy=false,disposed=false,epoch=0;
   const nordScope=catalog.find(s=>s.module==='seo'&&s.tenant_id===1&&s.scope_id===1);
   let nordIdentity=null,nordUnknown=false,nordStage='';
+  const firstTask=createNordFirstTaskPanel({session,fetchImpl,browser,onChange:()=>render()});
   const pairing=createDevicePairingPanel({session,fetchImpl,browser,onChange:()=>render(),defaults:nordScope?nordDefaults:{}});
   const admin=()=>session.user?.tenant_id===null&&['settings.accounts','settings.customers'].every(k=>session.user?.permissions?.[k]==='edit');
   function render(){if(disposed)return;root.innerHTML=!admin()?'<p>请重新核验超管身份。</p>':`<section class="pc-card distribution-panel"><h2>多号通执行设备与账号绑定</h2>
     <p>为公司专用电脑创建短期配对码并明确绑定客户平台账号；项目启动、审核稿授权及暂停由顾问操作。</p><p role="status">${esc(notice)}</p>
     ${pairing.html()}
     ${nordScope?`<section><h3>诺德首条任务接入</h3><p>客户：诺德 · 网站：${esc(nordScope.scope_name)} · 渠道：公众号文章。日上限 1 条，最小间隔 1 小时，时区为北京时间，全天可排期。</p><p>在本机接入窗口扫码登录公众号，进入账号信息页，点击“确认账号并复制接入信息”，再点击下面的读取按钮。</p><button type="button" data-distribution-admin="nord-import" ${busy?'disabled':''}>读取本机已确认账号</button>${nordIdentity?`<p>待绑定公众号原始 ID：${esc(nordIdentity.external_account_id)}</p><button type="button" data-distribution-admin="nord-confirm" ${busy||nordUnknown?'disabled':''}>确认此账号可用于诺德，并完成接入配置</button>`:''}${nordUnknown?'<p>上一项写入结果待核对。请刷新设备与绑定，核对现有绑定和账号规则；不要再次创建。</p>':''}<p>确认后会为当前实名管理员分配诺德首条任务顾问职责，并创建公众号浏览器连接、账号绑定和首条任务规则。已有规则会保留。稿件审核和最终发表仍需确认。</p></section>`:''}
+    ${firstTask.html()}
     <details><summary>其他客户与设备的管理设置</summary>
     <button type="button" data-distribution-admin="refresh" ${busy?'disabled':''}>刷新设备与绑定</button>
     ${devices.map(d=>`<p>${esc(d.label)} · ${d.active?'启用':'已停用'} · 最近联系 ${esc(time(d.last_seen_at))}${d.active?` <button type="button" data-distribution-admin="revoke" data-id="${d.id}" ${busy?'disabled':''}>停用</button>`:''}</p>`).join('')}
@@ -286,10 +289,10 @@ export function mountDistributionAdmin({root,session,fetchImpl=fetch,browser=win
         <button ${busy||!s?'disabled':''}>保存发布规则</button></form>
         ${p?`<button type="button" data-distribution-admin="account-${p.paused_reason?'resume':'pause'}" data-id="${b.id}" data-revision="${p.revision}" ${busy?'disabled':''}>${p.paused_reason?'人工处理后恢复账号':'暂停账号分发'}</button>`:''}</details>`;}).join('')}
     <details><summary>最近分发操作日志 · 最多 100 条</summary>${events.map(e=>`<p>${esc(time(e.at))} · 操作者 ${esc(e.actor)} · ${esc(e.action)} · ${esc(e.result)}${e.target.module?' · '+esc(e.target.module.toUpperCase()):''}${e.target.tenant_id?' · 客户 #'+esc(e.target.tenant_id):''}${e.target.scope_id?' / 项目 #'+esc(e.target.scope_id):''}${e.target.binding_id?' · 绑定 '+esc(e.target.binding_id):''}${e.target.platform?' · 渠道 '+esc(e.target.platform):''}${e.target.content_type?' · 内容类型 '+esc(e.target.content_type):''}${e.task_id?' · 任务 '+esc(e.task_id):''}</p>`).join('')||'<p>暂无分发记录。</p>'}</details></details></section>`;}
-  const clear=client.subscribe(()=>{pairing.invalidate();epoch++;devices=[];bindings=[];schedules=[];events=[];channelCatalog=[];credential=null;nordIdentity=null;nordUnknown=false;busy=false;notice='身份或权限已变化，设备信息已清除。';render();});
+  const clear=client.subscribe(()=>{pairing.invalidate();firstTask.invalidate();epoch++;devices=[];bindings=[];schedules=[];events=[];channelCatalog=[];credential=null;nordIdentity=null;nordUnknown=false;busy=false;notice='身份或权限已变化，设备信息已清除。';render();});
   async function operation(work){if(!admin()||busy)return;const stamp=epoch;busy=true;notice='正在处理…';render();
     try{await work();if(epoch!==stamp||disposed)return;const result=await Promise.all([client.devices(),client.bindings(),client.accountPolicies(),client.adminEvents(),client.channelCatalog()]);
-      if(epoch!==stamp||disposed)return;devices=result[0].items;bindings=result[1].items;schedules=result[2].items;events=result[3].items;channelCatalog=result[4].items;
+      if(epoch!==stamp||disposed)return;devices=result[0].items;bindings=result[1].items;schedules=result[2].items;events=result[3].items;channelCatalog=result[4].items;firstTask.updateBindings(bindings);
       if(nordUnknown&&nordIdentity){const state=await client.nordPreparation(nordIdentity),binding=bindings.find(v=>nordBindingMatches(v,nordIdentity));if(nordStage==='preparation'&&state.advisor_assigned&&state.connection_id||nordStage==='binding'&&binding||nordStage==='policy'&&binding&&schedules.some(s=>s.binding_id===binding.id&&s.policy))nordUnknown=false;}
       notice='已更新。';}
     catch(error){if(epoch===stamp){credential=null;notice=errors[error.code]||'接入尚未就绪，请核对';}}
@@ -312,7 +315,7 @@ export function mountDistributionAdmin({root,session,fetchImpl=fetch,browser=win
         confirm_account_ownership:value.confirm_account_ownership==='on'}));
     }
   }
-  function click(event){if(pairing.click(event))return;const b=event.target.closest('button[data-distribution-admin]');if(!b||b.disabled)return;
+  function click(event){if(pairing.click(event)||firstTask.click(event))return;const b=event.target.closest('button[data-distribution-admin]');if(!b||b.disabled)return;
     if(b.dataset.distributionAdmin==='nord-import'){
       const stamp=epoch;nordIdentity=null;notice='正在读取你选择复制的账号信息…';render();
       void Promise.resolve().then(()=>browser.navigator.clipboard.readText()).then(text=>{
@@ -346,7 +349,7 @@ export function mountDistributionAdmin({root,session,fetchImpl=fetch,browser=win
     if(b.dataset.distributionAdmin==='revoke-binding'&&browser.confirm('停用此账号绑定后停止继续派发；已经开始的操作仍需核查。')){credential=null;void operation(()=>client.revokeBinding(b.dataset.id));}
   }
   const input=event=>pairing.input(event);root.addEventListener('input',input);root.addEventListener('submit',submit);root.addEventListener('click',click);render();pairing.refresh();void operation(async()=>{});
-  return {dispose(){disposed=true;epoch++;pairing.dispose();root.removeEventListener('input',input);clear();client.dispose();credential=null;devices=[];bindings=[];schedules=[];events=[];root.removeEventListener('submit',submit);root.removeEventListener('click',click);root.replaceChildren();}};
+  return {dispose(){disposed=true;epoch++;pairing.dispose();firstTask.dispose();root.removeEventListener('input',input);clear();client.dispose();credential=null;devices=[];bindings=[];schedules=[];events=[];root.removeEventListener('submit',submit);root.removeEventListener('click',click);root.replaceChildren();}};
 }
 
 const planningReasons={AI_PROVIDER_DISABLED:'超管已关闭服务商连接，采用规则安排',AI_BUDGET_EXHAUSTED:'AI 请求额度不足，采用规则安排',AI_CONCURRENCY_LIMIT:'AI 并发额度已占用，采用规则安排',AI_CHARGE_UNRESOLVED:'AI 费用结果待核查，暂停新请求',AI_PRICE_REQUIRED:'AI 计价信息不足，采用规则安排',AI_REQUESTED:'正在请求 AI 建议',AI_ADVICE_ADMITTED:'AI 建议已通过账号规则校验',AI_INVALID_OUTPUT:'AI 返回未通过校验，采用规则安排',AI_TIMEOUT:'AI 请求超时，采用规则安排',AI_FAILED:'AI 请求失败，采用规则安排',AI_GATEWAY_UNAVAILABLE:'主 AI 网关未接入，采用规则安排',AI_METERING_REQUIRED:'AI 计量未启用，采用规则安排',AI_NOT_CONFIGURED:'AI 配置缺失，采用规则安排',AI_ATTEMPT_UNKNOWN:'AI 请求结果未知，暂停重试并等待人工核查',ACCOUNT_SLOT_UNAVAILABLE:'允许时段内没有可用额度',ACCOUNT_SLOT_CHANGED:'账号占用变化，原建议已失效',PLANNING_RULES_CHANGED:'账号规则或项目状态变化，原建议已失效',AUTHORIZATION_OR_SOURCE_CHANGED:'权限或稿件变化，原建议已失效',AUTHORIZATION_REVOKED:'顾问权限已撤销',SOURCE_CHANGED:'稿件版本变化',REPLANNED:'已由新建议替代'};
