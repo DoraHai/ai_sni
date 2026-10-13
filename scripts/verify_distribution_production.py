@@ -55,8 +55,8 @@ async def check():
   for headers,status in (({},401),({"X-API-Key":"unit-only-invalid-key"},403),({"Authorization":"Bearer invalid"},401)):
    r=await c.post("/api/distribution/nord/v1/preparation",json=valid,headers=headers);assert r.status_code==status
    assert r.headers.get("cache-control")=="no-store"
-   for path,body in (("/api/distribution/nord/v1/first-task/prepare",{**valid,"prepare_unreviewed_draft":True}),
-                    ("/api/distribution/nord/v1/first-task/master-review",{})):
+   for path,body in (("/api/distribution/nord/v1/first-task/prepare",{k:v for k,v in {**valid,"prepare_unreviewed_draft":True}.items() if k in ('device_id','external_account_id','prepare_unreviewed_draft')}),
+                    ("/api/distribution/nord/v1/first-task/master-review",{k:v for k,v in {**valid,"content_id":1,"expected_version":1,"expected_hash":"0"*64,"confirm_full_content":True,"confirm_advisor_proxy":True}.items() if k not in ('confirm_account_ownership','confirm_current_advisor')})):
     r=await c.post(path,json=body,headers=headers);assert r.status_code==status
   r=await c.get("/api/distribution/v1/remote/sessions");assert r.status_code==404
   r=await c.get("/docs");assert r.status_code==404
