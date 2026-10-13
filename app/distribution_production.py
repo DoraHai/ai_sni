@@ -16,6 +16,8 @@ from app.database import async_session_factory, engine
 from app.security.prod_guard import enforce_production_secrets
 from app.api.distribution import legacy_router, capability_router, handoff_router
 from app.api.distribution_pairing import router as pairing_router
+from app.api.distribution_task_resolution_read import router as resolution_router
+from app.api.seo_distribution_media import router as media_router
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -48,10 +50,28 @@ async def readiness():
                     raise RuntimeError('Core distribution sequence ACL differs')
         seo_storage = await session.scalar(text("SELECT count(*) FROM unnest(ARRAY["
             "'seo_distribution_media_sets','seo_distribution_media_bytes',"
-            "'seo_distribution_media_reviews','seo_distribution_result_events']) n "
+            "'seo_distribution_media_reviews','seo_distribution_result_events',"
+            "'nord_seo_site_purge_context']) n "
             "WHERE to_regclass('public.'||n) IS NOT NULL"))
+        if seo_storage not in (0,5):
+            raise RuntimeError('Incomplete SEO publication storage')
+        if seo_storage==5:
+            seo_policy=json.loads((ROOT/'scripts/nord_seo_distribution_storage_policy.json').read_text())
+            for name in seo_policy['tables']+seo_policy['private_tables']:
+                for privilege in ('SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'):
+                    actual=await session.scalar(text('SELECT has_table_privilege(current_user,:name,:p)'),
+                        {'name':'public.'+name,'p':privilege})
+                    expected=name in seo_policy['tables'] and privilege in ('SELECT','INSERT')
+                    if actual != expected:raise RuntimeError('SEO publication storage ACL differs')
+            for name,definer in [('nord_seo_distribution_immutable',False),('nord_seo_site_purge_context_guard',True)]:
+                verified=await session.scalar(text("SELECT count(*)=1 FROM pg_proc WHERE oid=to_regprocedure(:name) "
+                    "AND prosecdef=:definer AND pg_get_userbyid(proowner)='sem_app' "
+                    "AND proconfig=ARRAY['search_path=pg_catalog'] "
+                    "AND NOT has_function_privilege(current_user,oid,'EXECUTE')"),
+                    {'name':'public.'+name+'()','definer':definer})
+                if not verified:raise RuntimeError('SEO publication guard configuration differs')
     return {'db': 'ok', 'core_tables': len(policy['tables']),
-            'seo_publication_storage_ready': seo_storage == 4,
+            'seo_publication_storage_ready': seo_storage == 5,
             'automatic_publish': False, 'remote_control': False}
 
 
@@ -70,7 +90,7 @@ async def lifespan(app):
 
 app = FastAPI(title='GSnipers Distribution', version='1.0.0', lifespan=lifespan,
               docs_url=None, redoc_url=None, openapi_url=None)
-for router in (legacy_router, capability_router, handoff_router, pairing_router):
+for router in (legacy_router, capability_router, handoff_router, pairing_router,resolution_router,media_router):
     app.include_router(router)
 
 

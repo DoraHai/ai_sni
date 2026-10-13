@@ -25,6 +25,8 @@ paths={r.path for r in app.routes}
 assert "/api/distribution/v1/device-pairings/claim" in paths
 assert "/api/distribution/capabilities/v1/device/register" in paths
 assert "/api/distribution/v1/device/exchange" in paths
+assert "/api/distribution/v1/device/task-resolution" in paths
+assert "/api/seo/distribution-media/workspace" in paths
 assert not any("/remote/" in p or "/login" in p or "/auth" in p for p in paths)
 assert not {"app.main","app.scheduler","app.api.auth","app.baidu.writeback"}.intersection(sys.modules)
 async def check():
@@ -41,6 +43,11 @@ async def check():
   r=await c.get("/api/distribution/v1/device-pairings",headers={"Authorization":"Bearer invalid"});assert r.status_code==401
   r=await c.get("/api/distribution/v1/remote/sessions");assert r.status_code==404
   r=await c.get("/docs");assert r.status_code==404
+  r=await c.get("/api/seo/distribution-media/variants?tenant_id=1&site_id=1");assert r.status_code==401
+  r=await c.get("/api/seo/distribution-media/workspace");assert r.status_code==200
+  assert 'frame-ancestors' in r.headers['content-security-policy']
+  for asset in ('app.js','style.css','session.js'):
+   r=await c.get('/api/seo/distribution-media/ui/'+asset);assert r.status_code==200
  print(json.dumps({"passed":True,"assembled_routes":len(paths),"anonymous_advisor_and_pairing_denied":True,
   "query_key_not_accepted":True,"api_key_cannot_replace_named_advisor":True,"invalid_bearer_denied":True,
   "https_only_pairing":True,"remote_and_auth_routes_absent":True,"business_entries_not_imported":True,

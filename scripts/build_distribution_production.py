@@ -65,6 +65,11 @@ def assemble(commit):
                     for alias in node.names:add_module(module+'.'+alias.name)
     for name in ('docs/fixtures/mht-distribution-capabilities-v1.json',
                  'scripts/nord_distribution_acl_policy.json',
+                 'scripts/nord_seo_distribution_storage_policy.json',
+                 'app/static/seo-distribution-media/index.html',
+                 'app/static/seo-distribution-media/app.js',
+                 'app/static/seo-distribution-media/style.css',
+                 'frontend/src/store/sessionStorage.js',
                  'deploy/distribution-production/source-pins.json',
                  'deploy/distribution-production/requirements.txt',
                  'deploy/distribution-production/gsnipers-distribution.service',

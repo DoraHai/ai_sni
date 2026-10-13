@@ -1,0 +1,34 @@
+{
+  "baseline": "0107_seo_site_delete",
+  "requires_core_commit": "102e4026539d0de24851b27d8f7ead5fc56e8ca8",
+  "tables": [
+    "seo_distribution_media_sets",
+    "seo_distribution_media_bytes",
+    "seo_distribution_media_reviews",
+    "seo_distribution_result_events"
+  ],
+  "indexes": [
+    "seo_distribution_media_sets_pkey",
+    "seo_distribution_media_latest",
+    "seo_distribution_media_bytes_pkey",
+    "seo_distribution_media_bytes_set_id_position_key",
+    "seo_distribution_media_reviews_pkey",
+    "seo_distribution_result_events_pkey",
+    "seo_distribution_results_task",
+    "seo_distribution_results_scope",
+    "nord_seo_site_purge_context_pkey"
+  ],
+  "sequences": [],
+  "runtime_privileges": [
+    "SELECT",
+    "INSERT"
+  ],
+  "0107_source_unmodified": true,
+  "schema_original_source": "3087e62f23e799fe82d279f79f698f0499bf3a27",
+  "purge_strategy": "Exact seo_sites BEFORE/AFTER trigger owns private transaction_id/site/tenant context; runtime/PUBLIC have no privileges on the ledger or guard function. Evidence cascades also require the private context. Spoofing GUCs and deleting old parent rows cannot authorize mutation.",
+  "private_tables": [
+    "nord_seo_site_purge_context"
+  ],
+  "new_functions": 2,
+  "new_triggers": 6
+}

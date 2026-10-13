@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SEO 图文审核</title><link rel="stylesheet" href="./ui/style.css"></head>
+<body><main><header><p class="eyebrow">SEO 内容协作</p><h1>图文素材与审核</h1>
+<p>选择渠道稿，上传图片，再由另一位顾问核对正文与图片。此页面不会发布文章。</p></header>
+<p id="notice" role="status" aria-live="polite">正在读取登录状态…</p>
+<form id="scope"><label>客户编号<input id="tenant" type="number" min="1" required></label>
+<label>网站编号<input id="site" type="number" min="1" required></label><button id="refresh">读取稿件</button></form>
+<section><label>小红书渠道稿<select id="variant" disabled><option value="">请先读取稿件</option></select></label>
+<p id="state"></p><h2 id="title">尚未选择稿件</h2><pre id="body"></pre></section>
+<section><h2>当前图片</h2><p>1–9 张 PNG/JPEG，每张最多 20,000,000 字节，合计最多 40,000,000 字节；仅单帧，最多 2500 万像素。</p>
+<p>新图片集会整体替换当前图片，并撤销旧审核。上传后请按页面展示的顺序与内容核对。</p>
+<label>选择图片<input id="files" type="file" accept="image/png,image/jpeg" multiple disabled></label>
+<ol id="selected"></ol><button id="upload" type="button" disabled>上传并替换图片</button>
+<div id="images" class="images"></div></section>
+<section><h2>独立审核</h2><p>稿件创建者和本次上传者不能自审。请其他已分配到此网站的顾问登录后完成审核。</p>
+<label class="check"><input id="confirmed" type="checkbox" disabled>我已核对当前正文及全部图片</label>
+<button id="review" type="button" disabled>审核通过并冻结</button></section>
+</main><script type="module" src="./ui/app.js"></script></body></html>

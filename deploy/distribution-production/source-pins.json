@@ -29,7 +29,12 @@
     "app/seo_distribution_results.py": "3087e62f23e799fe82d279f79f698f0499bf3a27",
     "app/seo_distribution_media.py": "3087e62f23e799fe82d279f79f698f0499bf3a27",
     "docs/fixtures/mht-distribution-capabilities-v1.json": "1f155e2d0c12d780716bac27be4895cf692d5f8c",
-    "scripts/nord_distribution_acl_policy.json": "102e4026539d0de24851b27d8f7ead5fc56e8ca8"
+    "scripts/nord_distribution_acl_policy.json": "102e4026539d0de24851b27d8f7ead5fc56e8ca8",
+    "app/api/seo_distribution_media.py": "3087e62f23e799fe82d279f79f698f0499bf3a27",
+    "app/static/seo-distribution-media/index.html": "3087e62f23e799fe82d279f79f698f0499bf3a27",
+    "app/static/seo-distribution-media/app.js": "3087e62f23e799fe82d279f79f698f0499bf3a27",
+    "app/static/seo-distribution-media/style.css": "3087e62f23e799fe82d279f79f698f0499bf3a27",
+    "scripts/nord_seo_distribution_storage_policy.json": "531119e6b74089f50bad3b69ede5a5126de24259"
   },
   "auth_config_models": "unchanged production SEO0107 baseline; matches native SEO3087"
 }
