@@ -1,5 +1,6 @@
 const base='/api/distribution/v1';
 const handoffResolution='/api/distribution/handoff/v1/advisor/resolution';
+const nordPreparationPath='/api/distribution/nord/v1/preparation';
 const handoffRetry='/api/distribution/handoff/v1/advisor/retry';
 const positive=n=>Number.isSafeInteger(n)&&n>0;
 const uuid=s=>typeof s==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(s);
@@ -157,15 +158,15 @@ export function createDistributionClient({session,fetchImpl=fetch,subscribeSessi
     const u=new URL(path,'https://same-origin.invalid');
     if(u.origin!=='https://same-origin.invalid'||/[\\#\s]/.test(path)||u.pathname!==path.split('?')[0]||
       !['/scope','/source','/sources','/tasks','/events','/control','/devices','/bindings','/account-policies','/account-schedules',
-        '/account-policy','/account-pause','/account-restriction','/task-resolution','/admin-events','/publication-check','/publication-writeback','/publication-source','/publication-monitor','/project-channels','/queue','/plans','/platform-directory','/execution-progress','/channel-catalog','/project-channel','/channel-permission','/handoff-permission'].some(p=>u.pathname===base+p)&&![handoffResolution,handoffRetry].includes(u.pathname)&&
+        '/account-policy','/account-pause','/account-restriction','/task-resolution','/admin-events','/publication-check','/publication-writeback','/publication-source','/publication-monitor','/project-channels','/queue','/plans','/platform-directory','/execution-progress','/channel-catalog','/project-channel','/channel-permission','/handoff-permission'].some(p=>u.pathname===base+p)&&![handoffResolution,handoffRetry,nordPreparationPath].includes(u.pathname)&&
       !new RegExp('^'+base+'/(devices|bindings)/[a-f0-9-]{36}/revoke$').test(u.pathname)&&
       !new RegExp('^'+base+'/publication-assets/[a-f0-9-]{36}/[a-zA-Z0-9_-]{1,100}$').test(u.pathname)||
-      !['GET','POST'].includes(method)||method==='GET'&&!['/scope','/source','/sources','/tasks','/events','/devices','/bindings','/account-policies','/account-schedules','/admin-events','/publication-source','/publication-monitor','/project-channels','/queue','/plans','/platform-directory','/execution-progress','/channel-catalog'].some(p=>u.pathname===base+p)&&!u.pathname.startsWith(base+'/publication-assets/')||
-      method==='POST'&&!['/control','/tasks','/devices','/bindings','/account-policy','/account-pause','/account-restriction','/task-resolution','/publication-check','/publication-writeback','/project-channel','/channel-permission','/handoff-permission'].some(p=>u.pathname===base+p)&&![handoffResolution,handoffRetry].includes(u.pathname)&&!u.pathname.endsWith('/revoke'))throw fault('ROUTE_DENIED');
-    const allowedQuery=['/publication-source','/publication-monitor'].some(p=>u.pathname===base+p)?['module','tenant_id','scope_id','task_id']:u.pathname===base+'/source'?['module','tenant_id','scope_id','variant_id','platform']:
+      !['GET','POST'].includes(method)||method==='GET'&&!['/scope','/source','/sources','/tasks','/events','/devices','/bindings','/account-policies','/account-schedules','/admin-events','/publication-source','/publication-monitor','/project-channels','/queue','/plans','/platform-directory','/execution-progress','/channel-catalog'].some(p=>u.pathname===base+p)&&u.pathname!==nordPreparationPath&&!u.pathname.startsWith(base+'/publication-assets/')||
+      method==='POST'&&!['/control','/tasks','/devices','/bindings','/account-policy','/account-pause','/account-restriction','/task-resolution','/publication-check','/publication-writeback','/project-channel','/channel-permission','/handoff-permission'].some(p=>u.pathname===base+p)&&![handoffResolution,handoffRetry,nordPreparationPath].includes(u.pathname)&&!u.pathname.endsWith('/revoke'))throw fault('ROUTE_DENIED');
+    const allowedQuery=u.pathname===nordPreparationPath?['device_id','external_account_id']:['/publication-source','/publication-monitor'].some(p=>u.pathname===base+p)?['module','tenant_id','scope_id','task_id']:u.pathname===base+'/source'?['module','tenant_id','scope_id','variant_id','platform']:
       u.pathname===base+'/sources'?['module','tenant_id','scope_id','platform']:['module','tenant_id','scope_id'];
     for(const name of u.searchParams.keys())if(!allowedQuery.includes(name)||u.searchParams.getAll(name).length!==1)throw fault('ROUTE_DENIED');
-    const adminRoute=['/devices','/bindings','/account-policies','/account-policy','/account-pause','/admin-events','/channel-catalog','/channel-permission'].some(p=>u.pathname===base+p)||u.pathname.endsWith('/revoke');
+    const adminRoute=u.pathname===nordPreparationPath||['/devices','/bindings','/account-policies','/account-policy','/account-pause','/admin-events','/channel-catalog','/channel-permission'].some(p=>u.pathname===base+p)||u.pathname.endsWith('/revoke');
     if(adminRoute){if(session.user.tenant_id!==null||!['settings.accounts','settings.customers'].every(k=>session.user.permissions?.[k]==='edit'))throw fault('PERMISSION_DENIED',403);}
     else {const module=body?.module??u.searchParams.get('module'),tenant=body?.tenant_id??Number(u.searchParams.get('tenant_id'));
       const permitted=module==='seo'?['seo.site','seo.content'].every(k=>session.user.permissions?.[k]==='edit'):
@@ -305,6 +306,13 @@ export function createDistributionClient({session,fetchImpl=fetch,subscribeSessi
     async devices(){const value=await request(base+'/devices');if(value.schema!==1||!Array.isArray(value.items)||value.items.length>100||
       value.items.some(d=>!uuid(d.id)||typeof d.label!=='string'||typeof d.active!=='boolean'||'credential' in d||'credential_hash' in d))fail();return value;},
     async createDevice(){throw fault('DEVICE_PAIRING_REQUIRED');},
+    async nordPreparation(identity,{confirm=false}={}){
+      if(!uuid(identity.device_id)||!/^gh_[a-f0-9]{12}$/.test(identity.external_account_id))fail();
+      const path='/api/distribution/nord/v1/preparation';
+      const v=await request(confirm?path:path+'?'+new URLSearchParams({device_id:identity.device_id,external_account_id:identity.external_account_id}),confirm?{method:'POST',body:{device_id:identity.device_id,external_account_id:identity.external_account_id,confirm_account_ownership:true,confirm_current_advisor:true}}:{});
+      if(v.schema!==1||v.module!=='seo'||v.tenant_id!==1||v.scope_id!==1||v.external_account_id!==identity.external_account_id||!positive(v.advisor_user_id)||typeof v.advisor_assigned!=='boolean'||v.connection_id!==null&&!positive(v.connection_id)||v.automatic_publish!==false||v.publication_verified!==false)throw fault(confirm?'WRITE_OUTCOME_UNKNOWN':'CONTRACT_MISMATCH');
+      return v;
+    },
     async bindings(){const value=await request(base+'/bindings');if(value.schema!==1||!Array.isArray(value.items)||value.items.length>100||
       value.items.some(b=>!uuid(b.id)||!modules.includes(b.module)||!positive(b.tenant_id)||!positive(b.scope_id)||!uuid(b.device_id)||
         !id(b.account_id)||!id(b.external_account_id)||!platforms.includes(b.platform)||typeof b.active!=='boolean'||

@@ -40,7 +40,7 @@ const inventory=[
 export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=window}){
   root.classList.add('platform-console');browser.document.title='超级管理员工作台 · G-SNIPERS';
   let distributionMount=null;
-  let page='overview',snapshot=null,identity=null,busy=false,disposed=false,ownChange=false,query='',revision=0;
+  let page=new URLSearchParams(browser.location?.search||'').get('setup')==='nord'?'distribution':'overview',snapshot=null,identity=null,busy=false,disposed=false,ownChange=false,query='',revision=0;
   let loginController=null,notice='',saving=false,connectionId=null,alertId=null,supplierHost=null;
   const today=()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai'}).format(new Date());
   const blankHistory=()=>({filters:{from:today().slice(0,7)+'-01',to:today()},data:null,cursors:[],busy:false,error:''});
