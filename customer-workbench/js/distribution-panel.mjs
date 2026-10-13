@@ -250,14 +250,14 @@ export function mountDistributionAdmin({root,session,fetchImpl=fetch,browser=win
   const client=createDistributionClient({session,fetchImpl,subscribeSession});
   let devices=[],bindings=[],schedules=[],events=[],channelCatalog=[],credential=null,notice='',busy=false,disposed=false,epoch=0;
   const nordScope=catalog.find(s=>s.module==='seo'&&s.tenant_id===1&&s.scope_id===1);
-  let nordIdentity=null,nordUnknown=false,nordStage='';
+  let nordIdentity=null,nordUnknown=false,nordStage='',nordPrepareAfterSave=false;
   const firstTask=createNordFirstTaskPanel({session,fetchImpl,browser,onChange:()=>render()});
   const pairing=createDevicePairingPanel({session,fetchImpl,browser,onChange:()=>render(),defaults:nordScope?nordDefaults:{}});
   const admin=()=>session.user?.tenant_id===null&&['settings.accounts','settings.customers'].every(k=>session.user?.permissions?.[k]==='edit');
   function render(){if(disposed)return;root.innerHTML=!admin()?'<p>请重新核验超管身份。</p>':`<section class="pc-card distribution-panel"><h2>多号通执行设备与账号绑定</h2>
     <p>为公司专用电脑创建短期配对码并明确绑定客户平台账号；项目启动、审核稿授权及暂停由顾问操作。</p><p role="status">${esc(notice)}</p>
     ${pairing.html()}
-    ${nordScope?`<section><h3>诺德首条任务接入</h3><p>客户：诺德 · 网站：${esc(nordScope.scope_name)} · 渠道：公众号文章。日上限 1 条，最小间隔 1 小时，时区为北京时间，全天可排期。</p><p>在本机接入窗口扫码登录公众号，进入账号信息页，点击“确认账号并复制接入信息”，再点击下面的读取按钮。</p><button type="button" data-distribution-admin="nord-import" ${busy?'disabled':''}>读取本机已确认账号</button>${nordIdentity?`<p>待绑定公众号原始 ID：${esc(nordIdentity.external_account_id)}</p><button type="button" data-distribution-admin="nord-confirm" ${busy||nordUnknown?'disabled':''}>确认此账号可用于诺德，并完成接入配置</button>`:''}${nordUnknown?'<p>上一项写入结果待核对。请刷新设备与绑定，核对现有绑定和账号规则；不要再次创建。</p>':''}<p>确认后会为当前实名管理员分配诺德首条任务顾问职责，并创建公众号浏览器连接、账号绑定和首条任务规则。已有规则会保留。稿件审核和最终发表仍需确认。</p></section>`:''}
+    ${nordScope?`<section><h3>诺德首条任务接入</h3><p>客户：诺德 · 网站：${esc(nordScope.scope_name)} · 渠道：公众号文章。日上限 1 条，最小间隔 1 小时，时区为北京时间，全天可排期。</p><p>在本机接入窗口扫码登录公众号，进入账号信息页，点击“确认账号并复制接入信息”，再点击下面的读取按钮。</p><button type="button" data-distribution-admin="nord-import" ${busy?'disabled':''}>读取本机已确认账号</button>${nordIdentity?`<p>待绑定公众号原始 ID：${esc(nordIdentity.external_account_id)}</p><button type="button" data-distribution-admin="nord-confirm" ${busy||nordUnknown?'disabled':''}>确认此账号可用于诺德，并完成接入配置</button>`:''}${nordUnknown?'<p>上一项写入结果待核对。请刷新设备与绑定，核对现有绑定和账号规则；不要再次创建。</p>':''}<p>确认后会为当前实名管理员分配诺德首条任务顾问职责，并创建公众号浏览器连接、账号绑定和首条任务规则。已有规则会保留。接入后自动准备待审稿和封面，供人工审核；最终发表仍需确认。</p></section>`:''}
     ${firstTask.html()}
     <details><summary>其他客户与设备的管理设置</summary>
     <button type="button" data-distribution-admin="refresh" ${busy?'disabled':''}>刷新设备与绑定</button>
@@ -289,10 +289,10 @@ export function mountDistributionAdmin({root,session,fetchImpl=fetch,browser=win
         <button ${busy||!s?'disabled':''}>保存发布规则</button></form>
         ${p?`<button type="button" data-distribution-admin="account-${p.paused_reason?'resume':'pause'}" data-id="${b.id}" data-revision="${p.revision}" ${busy?'disabled':''}>${p.paused_reason?'人工处理后恢复账号':'暂停账号分发'}</button>`:''}</details>`;}).join('')}
     <details><summary>最近分发操作日志 · 最多 100 条</summary>${events.map(e=>`<p>${esc(time(e.at))} · 操作者 ${esc(e.actor)} · ${esc(e.action)} · ${esc(e.result)}${e.target.module?' · '+esc(e.target.module.toUpperCase()):''}${e.target.tenant_id?' · 客户 #'+esc(e.target.tenant_id):''}${e.target.scope_id?' / 项目 #'+esc(e.target.scope_id):''}${e.target.binding_id?' · 绑定 '+esc(e.target.binding_id):''}${e.target.platform?' · 渠道 '+esc(e.target.platform):''}${e.target.content_type?' · 内容类型 '+esc(e.target.content_type):''}${e.task_id?' · 任务 '+esc(e.task_id):''}</p>`).join('')||'<p>暂无分发记录。</p>'}</details></details></section>`;}
-  const clear=client.subscribe(()=>{pairing.invalidate();firstTask.invalidate();epoch++;devices=[];bindings=[];schedules=[];events=[];channelCatalog=[];credential=null;nordIdentity=null;nordUnknown=false;busy=false;notice='身份或权限已变化，设备信息已清除。';render();});
+  const clear=client.subscribe(()=>{pairing.invalidate();firstTask.invalidate();epoch++;devices=[];bindings=[];schedules=[];events=[];channelCatalog=[];credential=null;nordIdentity=null;nordUnknown=false;nordPrepareAfterSave=false;busy=false;notice='身份或权限已变化，设备信息已清除。';render();});
   async function operation(work){if(!admin()||busy)return;const stamp=epoch;busy=true;notice='正在处理…';render();
     try{await work();if(epoch!==stamp||disposed)return;const result=await Promise.all([client.devices(),client.bindings(),client.accountPolicies(),client.adminEvents(),client.channelCatalog()]);
-      if(epoch!==stamp||disposed)return;devices=result[0].items;bindings=result[1].items;schedules=result[2].items;events=result[3].items;channelCatalog=result[4].items;firstTask.updateBindings(bindings);
+      if(epoch!==stamp||disposed)return;devices=result[0].items;bindings=result[1].items;schedules=result[2].items;events=result[3].items;channelCatalog=result[4].items;firstTask.updateBindings(bindings,{prepareDraft:nordPrepareAfterSave});nordPrepareAfterSave=false;
       if(nordUnknown&&nordIdentity){const state=await client.nordPreparation(nordIdentity),binding=bindings.find(v=>nordBindingMatches(v,nordIdentity));if(nordStage==='preparation'&&state.advisor_assigned&&state.connection_id||nordStage==='binding'&&binding||nordStage==='policy'&&binding&&schedules.some(s=>s.binding_id===binding.id&&s.policy))nordUnknown=false;}
       notice='已更新。';}
     catch(error){if(epoch===stamp){credential=null;notice=errors[error.code]||'接入尚未就绪，请核对';}}
@@ -340,6 +340,7 @@ export function mountDistributionAdmin({root,session,fetchImpl=fetch,browser=win
         const schedule=(await client.accountPolicies()).items.find(s=>s.binding_id===binding.id);
         if(!schedule)throw Error('SCHEDULE_UNAVAILABLE');
         if(!schedule.policy){nordStage='policy';nordUnknown=true;render();await client.savePolicy({binding_id:binding.id,expected_revision:0,enabled:true,timezone:nordDefaults.timezone,daily_limit:1,min_interval_seconds:3600,windows:nordDefaults.windows,request_id:browser.crypto.randomUUID()});nordUnknown=false;}
+        nordPrepareAfterSave=true;
       });return;
     }
     if(b.dataset.distributionAdmin==='channel-permission'){const c=channelCatalog.find(c=>c.platform===b.dataset.platform);if(!c)return;
