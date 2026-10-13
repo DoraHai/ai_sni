@@ -17,7 +17,9 @@ RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
+# Native asyncpg probes ~/.postgresql for optional TLS client material. Permit
+# read-only probes; hiding /home makes even a missing-file check raise EACCES.
+ProtectHome=read-only
 UMask=0077
 
 [Install]
