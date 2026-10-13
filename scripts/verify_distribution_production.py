@@ -19,6 +19,7 @@ os.environ.update(DATABASE_URL="postgresql+asyncpg://unused:unused@127.0.0.1:9/t
  ADMIN_API_KEY="unit-only-invalid-key",JWT_SECRET="unit-only-invalid-jwt",
  DISTRIBUTION_DEVICE_PAIRING_ENABLED="true",ADMIN_API_KEY_QUERY_ENABLED="false")
 from app.distribution_production import app
+from app.api import seo as native_seo
 from app import seo_distribution_sources,seo_distribution_results
 from httpx import ASGITransport,AsyncClient
 paths={r.path for r in app.routes}
@@ -28,6 +29,7 @@ assert "/api/distribution/v1/device/exchange" in paths
 assert "/api/distribution/v1/device/task-resolution" in paths
 assert "/api/seo/distribution-media/workspace" in paths
 assert "/api/distribution/nord/v1/preparation" in paths
+assert "/api/distribution/nord/v1/first-task/prepare" in paths
 from app.api.distribution_nord_onboarding import Prepare
 from pydantic import ValidationError
 valid=dict(device_id="11111111-1111-4111-8111-111111111111",external_account_id="gh_123456789abc",confirm_account_ownership=True,confirm_current_advisor=True)
@@ -53,6 +55,9 @@ async def check():
   for headers,status in (({},401),({"X-API-Key":"unit-only-invalid-key"},403),({"Authorization":"Bearer invalid"},401)):
    r=await c.post("/api/distribution/nord/v1/preparation",json=valid,headers=headers);assert r.status_code==status
    assert r.headers.get("cache-control")=="no-store"
+   for path,body in (("/api/distribution/nord/v1/first-task/prepare",{**valid,"prepare_unreviewed_draft":True}),
+                    ("/api/distribution/nord/v1/first-task/master-review",{})):
+    r=await c.post(path,json=body,headers=headers);assert r.status_code==status
   r=await c.get("/api/distribution/v1/remote/sessions");assert r.status_code==404
   r=await c.get("/docs");assert r.status_code==404
   r=await c.get("/api/seo/distribution-media/variants?tenant_id=1&site_id=1");assert r.status_code==401

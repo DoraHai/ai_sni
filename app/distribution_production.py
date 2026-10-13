@@ -19,6 +19,7 @@ from app.api.distribution_pairing import router as pairing_router
 from app.api.distribution_task_resolution_read import router as resolution_router
 from app.api.seo_distribution_media import router as media_router
 from app.api.distribution_nord_onboarding import router as nord_onboarding_router
+from app.api.distribution_nord_first_task import router as nord_first_task_router
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -91,7 +92,7 @@ async def lifespan(app):
 
 app = FastAPI(title='GSnipers Distribution', version='1.0.0', lifespan=lifespan,
               docs_url=None, redoc_url=None, openapi_url=None)
-for router in (legacy_router, capability_router, handoff_router, pairing_router,resolution_router,media_router,nord_onboarding_router):
+for router in (legacy_router, capability_router, handoff_router, pairing_router,resolution_router,media_router,nord_onboarding_router,nord_first_task_router):
     app.include_router(router)
 
 

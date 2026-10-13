@@ -69,6 +69,7 @@ def assemble(commit):
                  'app/static/seo-distribution-media/index.html',
                  'app/static/seo-distribution-media/app.js',
                  'app/static/seo-distribution-media/style.css',
+                 'app/static/nord-first-task/cover.png',
                  'frontend/src/store/sessionStorage.js',
                  'deploy/distribution-production/source-pins.json',
                  'deploy/distribution-production/requirements.txt',
