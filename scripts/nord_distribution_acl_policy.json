@@ -1,0 +1,478 @@
+{
+  "schema": 1,
+  "database_baseline": "0107_seo_site_delete",
+  "migration_role": "sem_app",
+  "runtime_role": "sem_runtime",
+  "core_source": "ed5487afc957decacdddb82b73268a5cbcda18a6",
+  "schema_order": [
+    "control",
+    "scheduling",
+    "publication",
+    "queue",
+    "planning",
+    "execution",
+    "capability_registration",
+    "device_pairing"
+  ],
+  "tables": [
+    "distribution_devices",
+    "distribution_bindings",
+    "distribution_controls",
+    "distribution_tasks",
+    "distribution_events",
+    "distribution_receipts",
+    "distribution_requests",
+    "distribution_account_policies",
+    "distribution_account_restrictions",
+    "distribution_publish_reservations",
+    "distribution_task_resolutions",
+    "distribution_publication_checks",
+    "distribution_publication_writebacks",
+    "distribution_channel_permissions",
+    "distribution_project_channels",
+    "distribution_queue",
+    "distribution_queue_scans",
+    "distribution_planner_scans",
+    "distribution_plan_requests",
+    "distribution_plans",
+    "distribution_handoff_permissions",
+    "distribution_capability_attestations",
+    "distribution_execution_intents",
+    "distribution_handoff_slots",
+    "distribution_execution_scans",
+    "distribution_device_capability_registrations",
+    "distribution_capability_requests",
+    "distribution_handoff_resolutions",
+    "distribution_handoff_retry_links",
+    "distribution_device_pairings"
+  ],
+  "table_privileges": {
+    "distribution_devices": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_bindings": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_controls": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_tasks": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_events": [
+      "SELECT",
+      "INSERT"
+    ],
+    "distribution_receipts": [
+      "SELECT",
+      "INSERT"
+    ],
+    "distribution_requests": [
+      "SELECT",
+      "INSERT"
+    ],
+    "distribution_account_policies": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_account_restrictions": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_publish_reservations": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_task_resolutions": [
+      "SELECT",
+      "INSERT"
+    ],
+    "distribution_publication_checks": [
+      "SELECT",
+      "INSERT"
+    ],
+    "distribution_publication_writebacks": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_channel_permissions": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_project_channels": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_queue": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_queue_scans": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_planner_scans": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_plan_requests": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_plans": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_handoff_permissions": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_capability_attestations": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_execution_intents": [
+      "SELECT",
+      "INSERT"
+    ],
+    "distribution_handoff_slots": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_execution_scans": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_device_capability_registrations": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ],
+    "distribution_capability_requests": [
+      "SELECT",
+      "INSERT"
+    ],
+    "distribution_handoff_resolutions": [
+      "SELECT",
+      "INSERT"
+    ],
+    "distribution_handoff_retry_links": [
+      "SELECT",
+      "INSERT"
+    ],
+    "distribution_device_pairings": [
+      "SELECT",
+      "INSERT",
+      "UPDATE"
+    ]
+  },
+  "sequence_privileges": {
+    "distribution_events_id_seq": [
+      "USAGE"
+    ],
+    "distribution_publication_checks_sequence_seq": [
+      "USAGE"
+    ],
+    "distribution_task_resolutions_id_seq": [
+      "USAGE"
+    ]
+  },
+  "runtime_function_execute": false,
+  "scope": "core30 only; source-specific media/results excluded until actual source module known",
+  "unchanged": "existing objects, global default privileges, Alembic version, SEM business services",
+  "target_indexes": [
+    {
+      "name": "distribution_account_policies_pkey",
+      "table_name": "distribution_account_policies"
+    },
+    {
+      "name": "distribution_account_reservations",
+      "table_name": "distribution_publish_reservations"
+    },
+    {
+      "name": "distribution_account_restrictions_pkey",
+      "table_name": "distribution_account_restrictions"
+    },
+    {
+      "name": "distribution_advisor_tasks",
+      "table_name": "distribution_tasks"
+    },
+    {
+      "name": "distribution_bindings_device_id_account_id_module_tenant_id_key",
+      "table_name": "distribution_bindings"
+    },
+    {
+      "name": "distribution_bindings_pkey",
+      "table_name": "distribution_bindings"
+    },
+    {
+      "name": "distribution_capability_attestations_pkey",
+      "table_name": "distribution_capability_attestations"
+    },
+    {
+      "name": "distribution_capability_requests_pkey",
+      "table_name": "distribution_capability_requests"
+    },
+    {
+      "name": "distribution_channel_permissions_pkey",
+      "table_name": "distribution_channel_permissions"
+    },
+    {
+      "name": "distribution_controls_pkey",
+      "table_name": "distribution_controls"
+    },
+    {
+      "name": "distribution_device_capability_registrations_pkey",
+      "table_name": "distribution_device_capability_registrations"
+    },
+    {
+      "name": "distribution_device_pairings_code_hash_key",
+      "table_name": "distribution_device_pairings"
+    },
+    {
+      "name": "distribution_device_pairings_created_by_request_id_key",
+      "table_name": "distribution_device_pairings"
+    },
+    {
+      "name": "distribution_device_pairings_device_id_key",
+      "table_name": "distribution_device_pairings"
+    },
+    {
+      "name": "distribution_device_pairings_pkey",
+      "table_name": "distribution_device_pairings"
+    },
+    {
+      "name": "distribution_device_pending",
+      "table_name": "distribution_tasks"
+    },
+    {
+      "name": "distribution_devices_pkey",
+      "table_name": "distribution_devices"
+    },
+    {
+      "name": "distribution_events_pkey",
+      "table_name": "distribution_events"
+    },
+    {
+      "name": "distribution_execution_intent_queue_id_source_revision_cont_key",
+      "table_name": "distribution_execution_intents"
+    },
+    {
+      "name": "distribution_execution_intents_pkey",
+      "table_name": "distribution_execution_intents"
+    },
+    {
+      "name": "distribution_execution_intents_task_id_key",
+      "table_name": "distribution_execution_intents"
+    },
+    {
+      "name": "distribution_execution_scans_pkey",
+      "table_name": "distribution_execution_scans"
+    },
+    {
+      "name": "distribution_handoff_account",
+      "table_name": "distribution_handoff_slots"
+    },
+    {
+      "name": "distribution_handoff_permissions_pkey",
+      "table_name": "distribution_handoff_permissions"
+    },
+    {
+      "name": "distribution_handoff_resolutions_pkey",
+      "table_name": "distribution_handoff_resolutions"
+    },
+    {
+      "name": "distribution_handoff_resolutions_task_id_key",
+      "table_name": "distribution_handoff_resolutions"
+    },
+    {
+      "name": "distribution_handoff_retry_links_new_intent_id_key",
+      "table_name": "distribution_handoff_retry_links"
+    },
+    {
+      "name": "distribution_handoff_retry_links_pkey",
+      "table_name": "distribution_handoff_retry_links"
+    },
+    {
+      "name": "distribution_handoff_slots_pkey",
+      "table_name": "distribution_handoff_slots"
+    },
+    {
+      "name": "distribution_live_plan",
+      "table_name": "distribution_plans"
+    },
+    {
+      "name": "distribution_pairing_recent",
+      "table_name": "distribution_device_pairings"
+    },
+    {
+      "name": "distribution_plan_account",
+      "table_name": "distribution_plans"
+    },
+    {
+      "name": "distribution_plan_requests_pkey",
+      "table_name": "distribution_plan_requests"
+    },
+    {
+      "name": "distribution_plan_requests_tenant_id_module_scope_id_finger_key",
+      "table_name": "distribution_plan_requests"
+    },
+    {
+      "name": "distribution_planner_scans_pkey",
+      "table_name": "distribution_planner_scans"
+    },
+    {
+      "name": "distribution_plans_pkey",
+      "table_name": "distribution_plans"
+    },
+    {
+      "name": "distribution_plans_request_id_queue_id_key",
+      "table_name": "distribution_plans"
+    },
+    {
+      "name": "distribution_project_channels_pkey",
+      "table_name": "distribution_project_channels"
+    },
+    {
+      "name": "distribution_project_events",
+      "table_name": "distribution_events"
+    },
+    {
+      "name": "distribution_publication_check_history",
+      "table_name": "distribution_publication_checks"
+    },
+    {
+      "name": "distribution_publication_checks_pkey",
+      "table_name": "distribution_publication_checks"
+    },
+    {
+      "name": "distribution_publication_checks_sequence_key",
+      "table_name": "distribution_publication_checks"
+    },
+    {
+      "name": "distribution_publication_writebacks_event_id_key",
+      "table_name": "distribution_publication_writebacks"
+    },
+    {
+      "name": "distribution_publication_writebacks_pkey",
+      "table_name": "distribution_publication_writebacks"
+    },
+    {
+      "name": "distribution_publish_reservations_pkey",
+      "table_name": "distribution_publish_reservations"
+    },
+    {
+      "name": "distribution_queue_pkey",
+      "table_name": "distribution_queue"
+    },
+    {
+      "name": "distribution_queue_scans_pkey",
+      "table_name": "distribution_queue_scans"
+    },
+    {
+      "name": "distribution_queue_scope",
+      "table_name": "distribution_queue"
+    },
+    {
+      "name": "distribution_queue_tenant_id_module_scope_id_platform_exter_key",
+      "table_name": "distribution_queue"
+    },
+    {
+      "name": "distribution_receipts_pkey",
+      "table_name": "distribution_receipts"
+    },
+    {
+      "name": "distribution_receipts_task_id_lease_id_sequence_key",
+      "table_name": "distribution_receipts"
+    },
+    {
+      "name": "distribution_requests_pkey",
+      "table_name": "distribution_requests"
+    },
+    {
+      "name": "distribution_task_intent",
+      "table_name": "distribution_tasks"
+    },
+    {
+      "name": "distribution_task_resolution_history",
+      "table_name": "distribution_task_resolutions"
+    },
+    {
+      "name": "distribution_task_resolutions_pkey",
+      "table_name": "distribution_task_resolutions"
+    },
+    {
+      "name": "distribution_tasks_grant_id_key",
+      "table_name": "distribution_tasks"
+    },
+    {
+      "name": "distribution_tasks_lease_id_key",
+      "table_name": "distribution_tasks"
+    },
+    {
+      "name": "distribution_tasks_pkey",
+      "table_name": "distribution_tasks"
+    },
+    {
+      "name": "distribution_tasks_publication_grant_id_key",
+      "table_name": "distribution_tasks"
+    },
+    {
+      "name": "distribution_tasks_tenant_id_module_scope_id_advisor_user_i_key",
+      "table_name": "distribution_tasks"
+    }
+  ],
+  "target_sequences": [
+    {
+      "name": "distribution_events_id_seq",
+      "table_name": "distribution_events",
+      "column_name": "id"
+    },
+    {
+      "name": "distribution_publication_checks_sequence_seq",
+      "table_name": "distribution_publication_checks",
+      "column_name": "sequence"
+    },
+    {
+      "name": "distribution_task_resolutions_id_seq",
+      "table_name": "distribution_task_resolutions",
+      "column_name": "id"
+    }
+  ],
+  "runtime_parent_roles_allowed": [],
+  "runtime_memberships_allowed": [
+    {
+      "member": "pg_rds_superuser",
+      "parent": "sem_runtime",
+      "grantor": "alicloud_rds_admin",
+      "grantor_superuser": true,
+      "admin_option": true,
+      "inherit_option": false,
+      "set_option": false,
+      "reason": "Existing RDS administration edge independently read on 2026-10-13; no runtime parent role and no membership changes authorized"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+# 独立生产分发接口
+
+基于生产SEO提交0c6410bdfcdd303f027376548b0f2caaab165201，纳入已冻结中央分发接口及SEO原生来源/结果/媒体适配器；具体来源在deploy/distribution-production/source-pins.json。共享auth/config/models保持此生产基线原样，且与SEO适配器来源3087e62f相同。此发布不覆盖SEM/SEO/GEO应用树。
+
+入口app.distribution_production，使用原生require_auth/实名角色/顾问分配/来源审核、单独设备Bearer和一次性配对。没有登录/发token接口，不启动任何scheduler、AI planner或第三方发布worker；没有自动发表、远程控制路由。装配时采用Git内最小API包initializer，阻止导入SEM全局注册表；构建闭包拒绝主应用入口、scheduler、auth发token路由或百度写回模块。所有装配字节来自同一Git提交，生成manifest绑定源路径、大小和SHA256。
+
+启动和健康接口必须只读验证sem_runtime/sem_prod/单行0107、30核心表及210表有效权限、9序列有效权限，失败拒绝就绪。SEO公众号正式发布还需要3媒体表和1结果表；未齐备时健康响应seo_publication_storage_ready=false，正式来源继续按原生封面审核规则阻断，不能把核心接口健康当作完整发表可用。
+
+发布器不执行DDL。在数据库机器人复审且执行核心事务、前后核验完成之后，运行Git内scripts/build_distribution_production.py --output <新输出目录>。将该冻结归档及其内正式publisher交给101服务管理员，使用既有Python环境运行publisher，传入归档SHA、唯一Git提交和此前读取的nginx配置SHA。部署账号/密钥只从现有安全.env读取到新独立unit的0600 EnvironmentFile，既有.env和业务开关不变；新unit不装载投放provider秘密。
+
+正式publisher逐文件验hash，使用独立发布目录/venv，原子切换current，启动127.0.0.1:8145独立unit。就绪后只在真实gsnipers HTTPS server中新增/api/distribution/精确前缀代理，保留其他路由。nginx语法检查和严格TLS匿名顾问接口401核验通过后才完成；失败恢复原路由/此前独立服务版本（首次发布则停新服务）。只reload nginx，不重启SEM/SEO/GEO。数据库机器人回执必须独立保留。
+
+用户授权本机先作执行电脑，最后换公司电脑。只使用新的生产执行桌面配置，不能沿用历史验收设备/Cookie/草稿。人工通过正常登录工作台创建一次性配对码，由新桌面领取、登记能力、绑定实际账号。诺德生产SEO检查发现租户1/站点1有效，但分发variant=0、顾问分配=0且无公众号连接；这不是系统完成状态，需要真实来源和正常人类审核/账号登录。不得为跑通而伪造审核、签发用户token或替代人类最终发表。

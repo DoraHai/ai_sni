@@ -1,0 +1,24 @@
+[Unit]
+Description=GSnipers independent distribution API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sem
+Group=sem
+WorkingDirectory=/opt/gsnipers-distribution/current
+EnvironmentFile=/opt/gsnipers-distribution/shared/distribution.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/gsnipers-distribution/current/.venv/bin/uvicorn app.distribution_production:app --host 127.0.0.1 --port 8145 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
