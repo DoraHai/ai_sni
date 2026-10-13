@@ -41,6 +41,11 @@ for changed in ({"confirm_account_ownership":False},{"confirm_current_advisor":F
 assert not any("/remote/" in p or "/login" in p or "/auth" in p for p in paths)
 assert not {"app.main","app.scheduler","app.api.auth","app.baidu.writeback"}.intersection(sys.modules)
 async def check():
+ from types import SimpleNamespace
+ from unittest.mock import AsyncMock
+ for revision,expected in (("0107_seo_site_delete",True),("0106_seo_content_messages",True),("0105_seo_content_confirmations",True),("0104_seo_content_review",False),("unknown_revision",False)):
+  session=SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda:revision)))
+  assert await native_seo._content_confirmation_schema_ready(session) is expected
  async with AsyncClient(transport=ASGITransport(app=app),base_url="https://gsnipers.snipers.com.cn") as c:
   for path in ["/api/distribution/v1/platform-directory?module=seo&tenant_id=1&scope_id=1", "/api/distribution/v1/device-pairings"]:
    r=await c.get(path);assert r.status_code==401,(path,r.status_code)
