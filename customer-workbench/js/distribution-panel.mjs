@@ -318,9 +318,11 @@ export function mountDistributionAdmin({root,session,fetchImpl=fetch,browser=win
   function click(event){if(pairing.click(event)||firstTask.click(event))return;const b=event.target.closest('button[data-distribution-admin]');if(!b||b.disabled)return;
     if(b.dataset.distributionAdmin==='nord-import'){
       const stamp=epoch;nordIdentity=null;notice='正在读取你选择复制的账号信息…';render();
-      void Promise.resolve().then(()=>browser.navigator.clipboard.readText()).then(text=>{
+      void Promise.resolve().then(()=>browser.navigator.clipboard.readText()).then(async text=>{
         if(stamp!==epoch||disposed||!admin())return;
         const identity=readNordIdentity(text);
+        const current=(await client.devices()).items;
+        if(stamp!==epoch||disposed||!admin())return;devices=current;
         if(!nordScope||!devices.some(d=>d.active&&d.id===identity.device_id))throw Error('DEVICE_NOT_PAIRED');
         nordIdentity=identity;notice='已读取账号身份，请核对该账号可用于诺德。';render();
       }).catch(()=>{if(stamp===epoch&&!disposed){nordIdentity=null;notice='未读取到有效接入信息。请在本机接入窗口完成配对、扫码登录和账号确认后重新复制；无需填写参数。';render();}});return;
