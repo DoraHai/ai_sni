@@ -135,6 +135,35 @@ async def named(db, ctx, *, admin=False):
     return fresh
 
 
+@router.get('/bound-scopes')
+async def bound_scopes(module:Module,db=Depends(get_session),ctx=Depends(require_auth)):
+    """Discover bound projects independently of onsite tasks or automation."""
+    fresh=await named(db,ctx)
+    permissions=('seo.site','seo.content') if module=='seo' else ('geo.assets','geo.content')
+    if not all(fresh.can_edit(k) for k in permissions):
+        raise core.problem('scope_forbidden',403)
+    candidates=await core.rows(db,'SELECT DISTINCT b.tenant_id,b.scope_id FROM distribution_bindings b '
+        'JOIN distribution_devices d ON d.id=b.device_id WHERE b.module=:module AND b.active AND d.active '
+        'AND (CAST(:tenant_id AS bigint) IS NULL OR b.tenant_id=:tenant_id) ORDER BY b.tenant_id,b.scope_id LIMIT 100',
+        module=module,tenant_id=fresh.tenant_id)
+    items=[]
+    for row in candidates:
+        scope={'module':module,'tenant_id':row['tenant_id'],'scope_id':row['scope_id']}
+        try:
+            await core.authorize_scope(db,fresh.user_id,scope)
+        except HTTPException as exc:
+            if exc.status_code in (403,404,409):
+                continue
+            raise
+        table='seo_sites' if module=='seo' else 'geo_projects'
+        labels=await core.one(db,f'SELECT t.name AS tenant_name,s.name AS scope_name FROM {table} s '
+            'JOIN tenants t ON t.id=s.tenant_id WHERE s.id=:scope_id AND s.tenant_id=:tenant_id',
+            tenant_id=scope['tenant_id'],scope_id=scope['scope_id'])
+        if labels:
+            items.append({**scope,**labels})
+    return {'schema':1,'module':module,'items':items}
+
+
 @router.post('/devices')
 async def create_device(req:DeviceCreate,db=Depends(get_session),ctx=Depends(require_auth)):
     fresh=await named(db,ctx,admin=True)

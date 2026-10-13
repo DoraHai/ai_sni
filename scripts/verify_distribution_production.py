@@ -43,11 +43,26 @@ assert not {"app.main","app.scheduler","app.api.auth","app.baidu.writeback"}.int
 async def check():
  from types import SimpleNamespace
  from unittest.mock import AsyncMock
+ from unittest.mock import patch
+ from fastapi import HTTPException
+ from app.api import distribution as api
+ from app.security.auth import AuthContext
+ fresh=AuthContext(7,'fixture','advisor',2,{'seo.site':'edit','seo.content':'edit'})
+ with patch.object(api,'named',AsyncMock(return_value=fresh)),patch.object(api.core,'rows',AsyncMock(return_value=[{'tenant_id':2,'scope_id':19},{'tenant_id':2,'scope_id':20}])) as rows,patch.object(api.core,'authorize_scope',AsyncMock(side_effect=[None,HTTPException(403)])) as auth,patch.object(api.core,'one',AsyncMock(return_value={'tenant_name':'Customer','scope_name':'Site'})) as labels:
+  result=await api.bound_scopes('seo',object(),object())
+  assert result['items']==[{'module':'seo','tenant_id':2,'scope_id':19,'tenant_name':'Customer','scope_name':'Site'}]
+  assert rows.call_args.kwargs=={'module':'seo','tenant_id':2}
+  assert auth.await_count==2 and labels.await_count==1
+ with patch.object(api,'named',AsyncMock(return_value=AuthContext(7,'fixture','advisor',2,{'seo.site':'view'}))),patch.object(api.core,'rows',AsyncMock()) as rows:
+  try:await api.bound_scopes('seo',object(),object())
+  except HTTPException as exc:assert exc.status_code==403
+  else:raise AssertionError('Read-only role discovered publishing scopes')
+  rows.assert_not_awaited()
  for revision,expected in (("0107_seo_site_delete",True),("0106_seo_content_messages",True),("0105_seo_content_confirmations",True),("0104_seo_content_review",False),("unknown_revision",False)):
   session=SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda:revision)))
   assert await native_seo._content_confirmation_schema_ready(session) is expected
  async with AsyncClient(transport=ASGITransport(app=app),base_url="https://gsnipers.snipers.com.cn") as c:
-  for path in ["/api/distribution/v1/platform-directory?module=seo&tenant_id=1&scope_id=1", "/api/distribution/v1/device-pairings"]:
+  for path in ["/api/distribution/v1/bound-scopes?module=seo", "/api/distribution/v1/platform-directory?module=seo&tenant_id=1&scope_id=1", "/api/distribution/v1/device-pairings"]:
    r=await c.get(path);assert r.status_code==401,(path,r.status_code)
    assert r.headers.get("cache-control")=="no-store"
   r=await c.get("/api/distribution/v1/device-pairings?key=unit-only-invalid-key");assert r.status_code==400
