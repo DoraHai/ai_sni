@@ -157,13 +157,13 @@ export function createDistributionClient({session,fetchImpl=fetch,subscribeSessi
     if(!session.token||!positive(session.user?.id)||/\s/.test(session.token))throw fault('NOT_AUTHENTICATED',401);
     const u=new URL(path,'https://same-origin.invalid');
     if(u.origin!=='https://same-origin.invalid'||/[\\#\s]/.test(path)||u.pathname!==path.split('?')[0]||
-      !['/scope','/source','/sources','/tasks','/events','/control','/devices','/bindings','/account-policies','/account-schedules',
+      !['/bound-scopes','/scope','/source','/sources','/tasks','/events','/control','/devices','/bindings','/account-policies','/account-schedules',
         '/account-policy','/account-pause','/account-restriction','/task-resolution','/admin-events','/publication-check','/publication-writeback','/publication-source','/publication-monitor','/project-channels','/queue','/plans','/platform-directory','/execution-progress','/channel-catalog','/project-channel','/channel-permission','/handoff-permission'].some(p=>u.pathname===base+p)&&![handoffResolution,handoffRetry,nordPreparationPath].includes(u.pathname)&&
       !new RegExp('^'+base+'/(devices|bindings)/[a-f0-9-]{36}/revoke$').test(u.pathname)&&
       !new RegExp('^'+base+'/publication-assets/[a-f0-9-]{36}/[a-zA-Z0-9_-]{1,100}$').test(u.pathname)||
-      !['GET','POST'].includes(method)||method==='GET'&&!['/scope','/source','/sources','/tasks','/events','/devices','/bindings','/account-policies','/account-schedules','/admin-events','/publication-source','/publication-monitor','/project-channels','/queue','/plans','/platform-directory','/execution-progress','/channel-catalog'].some(p=>u.pathname===base+p)&&u.pathname!==nordPreparationPath&&!u.pathname.startsWith(base+'/publication-assets/')||
+      !['GET','POST'].includes(method)||method==='GET'&&!['/bound-scopes','/scope','/source','/sources','/tasks','/events','/devices','/bindings','/account-policies','/account-schedules','/admin-events','/publication-source','/publication-monitor','/project-channels','/queue','/plans','/platform-directory','/execution-progress','/channel-catalog'].some(p=>u.pathname===base+p)&&u.pathname!==nordPreparationPath&&!u.pathname.startsWith(base+'/publication-assets/')||
       method==='POST'&&!['/control','/tasks','/devices','/bindings','/account-policy','/account-pause','/account-restriction','/task-resolution','/publication-check','/publication-writeback','/project-channel','/channel-permission','/handoff-permission'].some(p=>u.pathname===base+p)&&![handoffResolution,handoffRetry,nordPreparationPath].includes(u.pathname)&&!u.pathname.endsWith('/revoke'))throw fault('ROUTE_DENIED');
-    const allowedQuery=u.pathname===nordPreparationPath?['device_id','external_account_id']:['/publication-source','/publication-monitor'].some(p=>u.pathname===base+p)?['module','tenant_id','scope_id','task_id']:u.pathname===base+'/source'?['module','tenant_id','scope_id','variant_id','platform']:
+    const allowedQuery=u.pathname===base+'/bound-scopes'?['module']:u.pathname===nordPreparationPath?['device_id','external_account_id']:['/publication-source','/publication-monitor'].some(p=>u.pathname===base+p)?['module','tenant_id','scope_id','task_id']:u.pathname===base+'/source'?['module','tenant_id','scope_id','variant_id','platform']:
       u.pathname===base+'/sources'?['module','tenant_id','scope_id','platform']:['module','tenant_id','scope_id'];
     for(const name of u.searchParams.keys())if(!allowedQuery.includes(name)||u.searchParams.getAll(name).length!==1)throw fault('ROUTE_DENIED');
     const adminRoute=u.pathname===nordPreparationPath||['/devices','/bindings','/account-policies','/account-policy','/account-pause','/admin-events','/channel-catalog','/channel-permission'].some(p=>u.pathname===base+p)||u.pathname.endsWith('/revoke');
@@ -171,7 +171,7 @@ export function createDistributionClient({session,fetchImpl=fetch,subscribeSessi
     else {const module=body?.module??u.searchParams.get('module'),tenant=body?.tenant_id??Number(u.searchParams.get('tenant_id'));
       const permitted=module==='seo'?['seo.site','seo.content'].every(k=>session.user.permissions?.[k]==='edit'):
         module==='geo'&&['geo.assets','geo.content'].every(k=>session.user.permissions?.[k]==='edit');
-      if(!permitted||session.user.tenant_id!==null&&session.user.tenant_id!==tenant)throw fault('PERMISSION_DENIED',403);}
+      if(!permitted||u.pathname!==base+'/bound-scopes'&&session.user.tenant_id!==null&&session.user.tenant_id!==tenant)throw fault('PERMISSION_DENIED',403);}
     const c=new AbortController();controllers.add(c);let sent=false;
     try{
       sent=true;const response=await fetchImpl(path,{method,headers:{Authorization:`Bearer ${session.token}`,Accept:'application/json',
@@ -272,6 +272,16 @@ export function createDistributionClient({session,fetchImpl=fetch,subscribeSessi
         event_id:task.publication.writeback.event_id,request_id:requestId}});
       try{match(value,scope);if(value.task_id!==task.id)fail();validateDistributionPublication(value.publication,task.id,task.platform,scope.module);}
       catch{throw fault('WRITE_OUTCOME_UNKNOWN');}return value;
+    },
+    async boundScopes(module){
+      if(!modules.includes(module))fail();
+      const value=await request(base+'/bound-scopes?'+new URLSearchParams({module}));
+      if(value.schema!==1||value.module!==module||!Array.isArray(value.items)||value.items.length>100)fail();
+      const seen=new Set();
+      for(const row of value.items){distributionScope(row);const k=row.tenant_id+':'+row.scope_id;
+        if(row.module!==module||seen.has(k)||session.user.tenant_id!==null&&row.tenant_id!==session.user.tenant_id||
+          ![row.tenant_name,row.scope_name].every(s=>typeof s==='string'&&s.length<=160))fail();seen.add(k);}
+      return structuredClone(value);
     },
     async scope(scope){return validateDistributionScope(await request(base+'/scope?'+params(scope)),scope);},
     async tasks(scope){return validateDistributionTasks(await request(base+'/tasks?'+params(scope)),scope);},

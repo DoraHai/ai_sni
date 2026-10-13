@@ -58,15 +58,15 @@ export function distributionTaskMarkup(task){
 }
 export function createAdvisorDistributionPanel({session,fetchImpl=fetch,subscribeSession,browser=window,onChange=()=>{},scopesForAdvisor=()=>[]}){
   const client=createDistributionClient({session,fetchImpl,subscribeSession});
-  let modules=[],filter='all',selected=null,snapshot=null,tasks=[],events=[],sources=[],schedules=[],bindingId=null,variantId=null,preview=null;
+  let modules=[],boundScopes=[],filter='all',selected=null,snapshot=null,tasks=[],events=[],sources=[],schedules=[],bindingId=null,variantId=null,preview=null;
   let reviewed=false,manual=false,busy=false,epoch=0,disposed=false,notice='';
   let publicationPreview=null,channels=[],queueItems=[],queueScans=[],plans=null,platformDirectory=[],executionProgress=null;
   function clearPublication(){for(const url of publicationPreview?.image_urls||[])URL.revokeObjectURL(url);publicationPreview=null;}
-  const scopes=()=>scopesForAdvisor().filter(s=>modules.includes(s.module)&&(filter==='all'||filter===s.module));
+  const scopes=()=>[...new Map([...scopesForAdvisor(),...boundScopes].map(s=>[key(s),s])).values()].filter(s=>modules.includes(s.module)&&(filter==='all'||filter===s.module));
   const scope=()=>{const value=scopes().find(s=>key(s)===selected);return value?{module:value.module,tenant_id:value.tenant_id,scope_id:value.scope_id}:null;};
   function clear(){clearPublication();channels=[];queueItems=[];queueScans=[];plans=null;platformDirectory=[];executionProgress=null;snapshot=null;tasks=[];events=[];sources=[];schedules=[];bindingId=null;variantId=null;preview=null;reviewed=false;manual=false;}
-  function invalidate(){epoch++;clear();busy=false;notice='';client.invalidate();}
-  const unsubscribe=client.subscribe(()=>{epoch++;clear();busy=false;notice='会话或权限已变化，请重新核验。';onChange();});
+  function invalidate(){epoch++;boundScopes=[];clear();busy=false;notice='';client.invalidate();}
+  const unsubscribe=client.subscribe(()=>{epoch++;boundScopes=[];selected=null;clear();busy=false;notice='会话或权限已变化，请重新核验。';onChange();});
   async function load(){
     const s=scope();if(!s||disposed)return;
     if(snapshot&&['module','tenant_id','scope_id'].some(k=>snapshot[k]!==s[k]))clear();
@@ -239,7 +239,13 @@ export function createAdvisorDistributionPanel({session,fetchImpl=fetch,subscrib
   return {html,click,change,invalidate,
     remoteContext(){const s=scope(),binding=snapshot?.bindings.find(b=>b.id===bindingId);return s&&binding?.platform==='wechat-article'?{...s,binding_id:binding.id,account_id:binding.account_id}:null;},
     remoteTasks(){const s=scope();return s?tasks.filter(t=>t.module===s.module&&t.tenant_id===s.tenant_id&&t.scope_id===s.scope_id&&t.binding_id===bindingId&&t.platform==='wechat-article'&&!t.revoked&&['preflight','handoff'].includes(t.action)&&['leased','running','awaiting-human'].includes(t.status)&&/^[a-f0-9]{64}$/.test(t.content_digest||'')).map(t=>({id:t.id,source_revision:t.source_revision,content_digest:t.content_digest,action:t.action,status:t.status})):[];},
-    async initialize(allowed){modules=allowed;selected=scopes()[0]?key(scopes()[0]):null;await load();},
+    async initialize(allowed){modules=allowed;boundScopes=[];const stamp=++epoch;
+      const results=await Promise.allSettled(allowed.map(module=>client.boundScopes(module)));
+      if(disposed||epoch!==stamp)return;
+      boundScopes=results.flatMap(r=>r.status==='fulfilled'?r.value.items:[]);
+      selected=scopes()[0]?key(scopes()[0]):null;
+      if(!selected){notice=results.some(r=>r.status==='rejected')?'已绑定项目读取未完成，请重新核验。':'暂无可操作的已绑定项目。';onChange();return;}
+      await load();},
     filterModule(value){filter=value;if(!scope()){selected=scopes()[0]?key(scopes()[0]):null;clear();void load();}},
     dispose(){disposed=true;epoch++;unsubscribe();client.dispose();clear();},
   };
