@@ -54,6 +54,8 @@ $('scope').addEventListener('submit',event=>{event.preventDefault();perform(asyn
   const result=await (await api(`/variants?${query()}`)).json();
   const empty=document.createElement('option');empty.value='';empty.textContent=result.items.length?'请选择稿件':'没有可编辑的小红书渠道稿';$('variant').append(empty);
   for(const row of result.items){const option=document.createElement('option');option.value=row.variant_id;option.textContent=`${row.title} · ${statuses[row.status]||row.status}`;$('variant').append(option);}
+  const requested=new URLSearchParams(location.search).get('variant_id');
+  if(requested&&/^\d+$/.test(requested)&&result.items.some(row=>String(row.variant_id)===requested)){$('variant').value=requested;await show(requested);return;}
   notice(result.items.length?'请选择需要上传图片或审核的稿件。':'请先在 SEO 内容模块准备小红书渠道稿。');
 });});
 $('variant').addEventListener('change',()=>perform(()=>show($('variant').value)));
@@ -82,4 +84,5 @@ function invalidate(){const current=selectStoredAuth(localStorage,sessionStorage
 window.addEventListener('storage',invalidate);window.addEventListener('sem:auth-context-changed',invalidate);
 for(const [id,key]of [['tenant','tenant_id'],['site','site_id']])$(id).value=new URLSearchParams(location.search).get(key)||'';
 notice(auth?'请选择当前客户和网站，读取可编辑稿件。':'请先在同源 SEO 页面登录，再打开此页面。',!auth);controls();
+if(auth&&/^\d+$/.test($('tenant').value)&&/^\d+$/.test($('site').value))$('scope').requestSubmit();
 window.addEventListener('pagehide',clearPreview);
