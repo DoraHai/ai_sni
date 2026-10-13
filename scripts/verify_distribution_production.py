@@ -27,6 +27,15 @@ assert "/api/distribution/capabilities/v1/device/register" in paths
 assert "/api/distribution/v1/device/exchange" in paths
 assert "/api/distribution/v1/device/task-resolution" in paths
 assert "/api/seo/distribution-media/workspace" in paths
+assert "/api/distribution/nord/v1/preparation" in paths
+from app.api.distribution_nord_onboarding import Prepare
+from pydantic import ValidationError
+valid=dict(device_id="11111111-1111-4111-8111-111111111111",external_account_id="gh_123456789abc",confirm_account_ownership=True,confirm_current_advisor=True)
+Prepare(**valid)
+for changed in ({"confirm_account_ownership":False},{"confirm_current_advisor":False},{"tenant_id":2},{"external_account_id":"arbitrary"}):
+ try:Prepare(**{**valid,**changed})
+ except ValidationError:pass
+ else:raise AssertionError("Unconfirmed or foreign preparation accepted")
 assert not any("/remote/" in p or "/login" in p or "/auth" in p for p in paths)
 assert not {"app.main","app.scheduler","app.api.auth","app.baidu.writeback"}.intersection(sys.modules)
 async def check():
@@ -41,6 +50,9 @@ async def check():
   assert r.status_code==403
   r=await c.get("http://gsnipers.snipers.com.cn/api/distribution/v1/device-pairings");assert r.status_code==426
   r=await c.get("/api/distribution/v1/device-pairings",headers={"Authorization":"Bearer invalid"});assert r.status_code==401
+  for headers,status in (({},401),({"X-API-Key":"unit-only-invalid-key"},403),({"Authorization":"Bearer invalid"},401)):
+   r=await c.post("/api/distribution/nord/v1/preparation",json=valid,headers=headers);assert r.status_code==status
+   assert r.headers.get("cache-control")=="no-store"
   r=await c.get("/api/distribution/v1/remote/sessions");assert r.status_code==404
   r=await c.get("/docs");assert r.status_code==404
   r=await c.get("/api/seo/distribution-media/variants?tenant_id=1&site_id=1");assert r.status_code==401
@@ -51,6 +63,7 @@ async def check():
  print(json.dumps({"passed":True,"assembled_routes":len(paths),"anonymous_advisor_and_pairing_denied":True,
   "query_key_not_accepted":True,"api_key_cannot_replace_named_advisor":True,"invalid_bearer_denied":True,
   "https_only_pairing":True,"remote_and_auth_routes_absent":True,"business_entries_not_imported":True,
+  "nord_preparation_anonymous_and_api_key_denied":True,"nord_preparation_explicit_confirmation_required":True,
   "production_database_or_tasks_used":False}))
 asyncio.run(check())
 '''
