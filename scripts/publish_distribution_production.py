@@ -69,6 +69,8 @@ def safe_env():
         BAIDU_DEFAULT_USERNAME='unused-distribution',BAIDU_DEFAULT_UCID='1',
         BAIDU_SELF_ACCESS_TOKEN='unused-distribution',
         BAIDU_SELF_TOKEN_EXPIRES_AT='2099-01-01T00:00:00Z',BAIDU_WRITE_DRY_RUN='true')
+    if any('\n' in value or '\r' in value or '\x00' in value for value in env.values()):
+        raise RuntimeError('Invalid native environment values')
     # systemd quoted EnvironmentFile syntax, no shell expansion or secret argv.
     return ''.join(key+'="'+value.replace('\\','\\\\').replace('"','\\"')+'"\n'
                    for key,value in env.items()).encode()
