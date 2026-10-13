@@ -1,4 +1,6 @@
 import {createOnsiteClient,onsiteTaskId} from './onsite-client.mjs';
+import {createOnsiteAiPoller} from './onsite-ai-poller.mjs';
+
 import {onsiteView,onsiteCreateInput,onsiteActionInput,onsiteProposalMode} from './onsite-view.mjs';
 import {createInputProtection} from './input-protection.mjs';
 import {escapeText as esc} from './customer-display.mjs';
@@ -7,14 +9,20 @@ export function mountGeoWorkbench({root,host,logout,initialOnsiteTaskId=null}){
   root.classList.add('customer-connected');let identity=null,data=null,selected=null,busy=false,message='',epoch=0,before=null;
   const protection=createInputProtection(root);
   const client=createOnsiteClient({transport:host.transport,getContext:host.getContext,module:'geo'});
+  const poller=createOnsiteAiPoller({getTask:()=>selected,getContext:host.getContext,
+    canRead:()=>!busy&&!!identity&&!protection.capture()&&!root.querySelector('#input-recovery')&&document.visibilityState!=='hidden',
+    read:(taskId,requestId)=>client.readAi(taskId,requestId),
+    apply:row=>{client.adopt(row);selected=row;if(data)data={...data,items:data.items.map(t=>t.id===row.id?row:t)};render();},
+    onError:()=>{message='自动更新已暂停，请刷新任务核对。系统不会重发 AI 请求。';render();}});
+
   function render(){
     protection.setContext('geo-onsite:'+String(selected?.id||'list'));
     root.innerHTML=`<header><b>G-SNIPERS</b><span>客户工作台 · GEO</span><small>${identity?esc(identity.tenant.name+' / '+identity.project.name):'正在核验客户与项目'}</small><a href="/customer-workbench/">选择工作空间</a><button data-action="logout">退出登录</button></header><main class="connected-main"><p role="status">${esc(message)}</p><section id="page" class="page-card">${identity?(selected?'':customerOnsiteSummary(data,{module:'geo'}))+onsiteView(data,selected,busy,'geo'):`<h2>GEO 官网与知识建设</h2><button data-action="connect" ${busy?'disabled':''}>重新核验</button><a href="/customer-workbench/?module=geo">重新选择 GEO 项目</a>`}</section></main>`;
-    protection.render();
+    protection.render();poller.sync();
   }
   async function run(fn){const input=protection.capture(),stamp=++epoch;busy=true;message='正在处理…';render();
     try{await fn(()=>stamp===epoch);if(stamp===epoch)message='';}
-    catch(e){if(stamp===epoch){data=null;selected=null;client.invalidate();protection.recover(input);message=e.code==='WRITE_OUTCOME_UNKNOWN'?'操作结果未知，请先刷新核对。不会自动重试。':e.code==='PERMISSION_DENIED'?'权限已变化，请重新核验客户与项目。':e.message;}}
+    catch(e){if(stamp===epoch){data=null;selected=null;client.invalidate();protection.recover(input);message=e.code==='onsite_client_upgrade_required'?'工作台版本已更新，请刷新页面后再生成方案。':e.code==='WRITE_OUTCOME_UNKNOWN'?'操作结果未知，请先刷新核对。不会自动重试。':e.code==='PERMISSION_DENIED'?'权限已变化，请重新核验客户与项目。':e.message;}}
     finally{if(stamp===epoch){busy=false;render();}}
   }
   async function connect(){identity=null;data=null;selected=null;client.invalidate();protection.clear();await run(async current=>{
@@ -38,6 +46,6 @@ export function mountGeoWorkbench({root,host,logout,initialOnsiteTaskId=null}){
     await run(async current=>{const result=action==='create'?await client.create(input):action==='ai-proposal'?await client.propose(selected.id,onsiteProposalMode(selected)):await client.act(selected.id,action,input);if(current()){selected=result;protection.saved();if(action==='create')before=null;const list=await client.list(before);if(current()){data=list;selected=list.items.find(t=>t.id===result.id)||null;}}});
   }
   root.addEventListener('click',click);void connect();
-  return {dispose(){epoch++;unsubscribe();client.invalidate();protection.dispose();host.dispose();root.removeEventListener('click',click);root.replaceChildren();}};
+  return {dispose(){poller.dispose();epoch++;unsubscribe();client.invalidate();protection.dispose();host.dispose();root.removeEventListener('click',click);root.replaceChildren();}};
 }
 

@@ -49,3 +49,22 @@ test('onsite client binds the read revision and consumes uncertain writes withou
  assert.equal(calls.length,2);
 });
 
+for(const module of ['seo','geo']){
+ test(module+' never adopts an action response for a different task in the same scope',async()=>{
+  const context={connected:true,tenantId:1,siteId:9,projectId:10,userId:7,revision:1},calls=[];
+  const row={id:20,module,tenant_id:1,scope_id:module==='seo'?9:10,
+   workflow:{module,revision:3,phase:'review',items:[]},allowed_actions:['approve']};
+  const client=createOnsiteClient({module,getContext:()=>context,transport:async(path,options)=>{
+   calls.push({path,options});
+   return {ok:true,status:200,json:async()=>options.method==='GET'
+    ?{module,tenant_id:1,scope_id:row.scope_id,can_create:true,items:[row]}
+    :{...row,id:21,workflow:{...row.workflow,revision:4,phase:'implementation'},allowed_actions:['implement']}};
+  }});
+  await client.list();
+  await assert.rejects(()=>client.act(20,'approve',{note:'人工审核'}),/WRITE_OUTCOME_UNKNOWN/);
+  await assert.rejects(()=>client.act(20,'approve',{note:'重复审核'}),/ACTION_EXPIRED/);
+  await assert.rejects(()=>client.act(21,'implement',{note:'其他任务不得被采用'}),/ACTION_EXPIRED/);
+  assert.equal(calls.length,2);
+ });
+}
+

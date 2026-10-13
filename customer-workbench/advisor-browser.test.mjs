@@ -20,10 +20,12 @@ test('advisor production UI isolates modules, paginates, clears revoked sessions
    if(url.pathname==='/api/v1/auth/login')return send({token:'fixture-advisor',user:{id:7,tenant_id:null,display_name:'顾问',permissions}});
    if(url.pathname==='/api/v1/auth/me')return send({user:{id:7,tenant_id:null,display_name:'顾问',permissions}});
    if(url.pathname==='/api/v1/auth/modules')return send({tenant_id:null,modules:['seo','geo'].map(module_code=>({module_code,available:true}))});
+   if(url.pathname.endsWith('/automation-projects'))return send({detail:{code:'not_integrated'}},404);
    if(url.pathname.endsWith('/advisor-tasks')){const module=url.pathname.includes('/geo/')?'geo':'seo';if(held&&module==='seo')await held;const id=url.searchParams.has('before_id')?76:77;return send({schema:1,module,items:[row(module,id)],next_before_id:id===77?77:null},moduleStatus[module]);}
    try{const r=await fetch(f.origin+url.pathname+url.search,{method:req.method(),headers:req.headers(),body:req.postData()});await req.respond({status:r.status,contentType:r.headers.get('content-type'),body:Buffer.from(await r.arrayBuffer())});}catch{await req.abort().catch(()=>{});}
   });
-  await p.goto(origin+'/customer-workbench/?console=advisor');await p.waitForSelector('.advisor-task');await p.waitForFunction(()=>document.body.textContent.includes('未接入'));
+  await p.goto(origin+'/customer-workbench/?console=advisor');await p.waitForSelector('.advisor-task');
+  await p.waitForFunction(()=>document.body.textContent.includes('未接入')).catch(async error=>{error.message+=' · '+JSON.stringify({body:(await p.$eval('body',e=>e.textContent)).slice(0,1800),errors,calls});throw error;});
   assert.equal(await p.$$eval('.advisor-task',v=>v.length),1);assert(!calls.some(c=>c.path.includes('/tenants')));
   assert.equal(await p.$eval('.advisor-task a',v=>v.getAttribute('href')),'/customer-workbench/?tenant_id=2&site_id=19&onsite_task_id=77');
   assert.match(await p.$eval('.advisor-task',e=>e.textContent),/核实产品规格/);

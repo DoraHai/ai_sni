@@ -1,11 +1,14 @@
 import {balanceRoute} from './platform-balances-view.mjs';
 import {governanceRoute} from './platform-ai-governance-view.mjs';
+import {usageReviewRoute} from './platform-usage-review.mjs';
+import {automationHealthPaths,validateAutomationHealth} from './platform-automation-health.mjs';
+import {auditRoute,auditPath} from './platform-audit-view.mjs';
 // Separate global-console transport. Customer host allowlists remain unchanged.
 export const platformConsolePath='/customer-workbench/?console=platform';
 export const isPlatformAdmin=user=>Number.isSafeInteger(user?.id)&&user.id>0&&user.tenant_id===null&&
   user.permissions?.['settings.accounts']==='edit'&&user.permissions?.['settings.customers']==='edit';
 const fail=(code,status)=>Object.assign(Error(code),{code,status});
-const routes=new Set(['/api/v1/auth/me','/api/v1/admin/console/snapshot',governanceRoute]);
+const routes=new Set(['/api/v1/auth/me','/api/v1/admin/console/snapshot',governanceRoute,...Object.values(automationHealthPaths)]);
 const writeRoute='/api/v1/admin/console/controls';
 const operationRoute='/api/v1/admin/console/operations';
 const usageRoute='/api/v1/admin/console/usage';
@@ -18,13 +21,14 @@ function usagePath(filters={},exporting=false){
 
 export function createPlatformConsoleClient({session,fetchImpl=fetch,onExpired=()=>{},refreshUser=user=>session.refreshUser(user)}){
   let epoch=0,identity=null;
-  const pending=new Set();
+  const pending=new Set(),reviewRequests=new Map();
   const fingerprint=()=>JSON.stringify([session.token,session.user?.id,session.user?.tenant_id,session.authRevision]);
-  function invalidate(){epoch++;identity=null;for(const c of pending)c.abort();pending.clear();}
+  function invalidate(){epoch++;identity=null;for(const c of pending)c.abort();pending.clear();reviewRequests.clear();}
   async function read(path,preflight=false,body=null,download=false){
     const url=new URL(path,'https://console.invalid');
     const permitted=url.origin==='https://console.invalid'&&(body===null?
-      routes.has(path)||[usageRoute,usageRoute+'/export',balanceRoute].includes(url.pathname):[writeRoute,operationRoute].includes(path));
+      routes.has(path)||[usageRoute,usageRoute+'/export',balanceRoute,auditRoute,auditRoute+'/export'].includes(url.pathname)||
+      path===url.pathname&&/^\/api\/v1\/admin\/console\/usage\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\/review$/.test(path):[writeRoute,operationRoute,usageReviewRoute].includes(path));
     if(!permitted||(!preflight&&!identity))throw fail('CONSOLE_NOT_AUTHORIZED',403);
     if(!session.token)throw fail('CONSOLE_LOGIN_REQUIRED',401);
     const started=epoch,key=fingerprint(),controller=new AbortController();pending.add(controller);
@@ -41,7 +45,10 @@ export function createPlatformConsoleClient({session,fetchImpl=fetch,onExpired=(
         if(!r.headers.get('content-type')?.startsWith('text/csv'))throw fail('CONSOLE_INVALID_EXPORT');
         const data=await r.blob();current();return data;
       }
-      const data=await r.json();current();return data;
+      let data;
+      try{data=await r.json();}
+      catch(e){current();if(e instanceof SyntaxError&&Object.values(automationHealthPaths).includes(path))throw fail('CONSOLE_INVALID_AUTOMATION_HEALTH');throw e;}
+      current();return data;
     }finally{pending.delete(controller);}
   }
   return {
@@ -62,6 +69,9 @@ export function createPlatformConsoleClient({session,fetchImpl=fetch,onExpired=(
     },
     async balances({refresh=false,after_id=0}={}){
       if(typeof refresh!=='boolean'||!Number.isSafeInteger(after_id)||after_id<0)throw fail('CONSOLE_INVALID_QUERY');
+      if(!identity)throw fail('CONSOLE_NOT_AUTHORIZED',403);
+      const {user}=await read('/api/v1/auth/me',true);
+      if(user?.id!==identity?.id||!isPlatformAdmin(user)){invalidate();throw fail('CONSOLE_FORBIDDEN',403);}
       const data=await read(balanceRoute+'?'+new URLSearchParams({refresh:String(refresh),after_id:String(after_id)}));
       if(data?.schema!==1||data.state!=='available'||!Array.isArray(data.rows)||data.rows.some(r=>!r||typeof r.id!=='string'||!Array.isArray(r.balances)))throw fail('CONSOLE_INVALID_BALANCES');
       return data;
@@ -72,7 +82,53 @@ export function createPlatformConsoleClient({session,fetchImpl=fetch,onExpired=(
         (data.state==='available'&&!Array.isArray(data.modules)))throw fail('CONSOLE_INVALID_GOVERNANCE');
       return data;
     },
+    async automationHealth(module){
+      if(!Object.hasOwn(automationHealthPaths,module))throw fail('CONSOLE_INVALID_QUERY');
+      if(!identity)throw fail('CONSOLE_NOT_AUTHORIZED',403);
+      const {user}=await read('/api/v1/auth/me',true);
+      if(user?.id!==identity?.id||!isPlatformAdmin(user)){invalidate();throw fail('CONSOLE_FORBIDDEN',403);}
+      return validateAutomationHealth(await read(automationHealthPaths[module]),module);
+    },
     async usage(filters){return read(usagePath(filters));},
+    async audit(filters={},exporting=false){
+      const path=auditPath(filters,exporting);
+      if(!identity)throw fail('CONSOLE_NOT_AUTHORIZED',403);
+      const {user}=await read('/api/v1/auth/me',true);
+      if(user?.id!==identity?.id||!isPlatformAdmin(user)){invalidate();throw fail('CONSOLE_FORBIDDEN',403);}
+      const data=await read(path,false,null,exporting);
+      if(exporting)return data;
+      if(data?.schema!==1||!['available','schema_pending'].includes(data.state)||!Array.isArray(data.rows)||data.rows.length>100||
+        data.rows.some(r=>!r||typeof r.id!=='string'||!Number.isSafeInteger(r.actor_id)||!Array.isArray(r.recorded_fields)))throw fail('CONSOLE_INVALID_AUDIT');
+      return data;
+    },
+    async readUsageReview(eventId){
+      if(!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(eventId||''))throw fail('CONSOLE_INVALID_REVIEW');
+      const result=await read(usageRoute+'/'+eventId+'/review');
+      if(result?.schema!==1||result.state!=='available'||result.row?.id!==eventId||!Number.isSafeInteger(result.row.review_version))throw fail('CONSOLE_INVALID_REVIEW');
+      return result.row;
+    },
+    async reviewUsage(data){
+      if(!identity)throw fail('CONSOLE_NOT_AUTHORIZED',403);
+      if(![data?.request_id,data?.event_id].every(id=>/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id||'')))throw fail('CONSOLE_INVALID_REVIEW');
+      const payload=structuredClone(data),key=JSON.stringify([fingerprint(),payload]);
+      if(reviewRequests.has(key))return reviewRequests.get(key);
+      const promise=(async()=>{
+        const {user}=await read('/api/v1/auth/me',true);
+        if(user?.id!==identity?.id||!isPlatformAdmin(user)){invalidate();throw fail('CONSOLE_FORBIDDEN',403);}
+        const current=await read(usageRoute+'/'+payload.event_id+'/review');
+        if(current?.schema!==1||current.state!=='available'||current.row?.id!==payload.event_id||current.row.can_review!==true||
+          current.row.review_version!==payload.expected_version||current.row.state!==payload.expected_state)throw fail('CONSOLE_REVIEW_CONFLICT',409);
+        if(current.row.review_version>0&&current.row.reviewed_provider_request_id!==payload.provider_request_id)throw fail('CONSOLE_REVIEW_CONFLICT',409);
+        let result;
+        try{result=await read(usageReviewRoute,false,payload);}
+        catch(e){if(e.status||['CONSOLE_STALE','CONSOLE_FORBIDDEN','CONSOLE_EXPIRED'].includes(e.code))throw e;throw fail('CONSOLE_REVIEW_OUTCOME_UNKNOWN');}
+        if(result?.schema!==1||result.state!=='available'||result.row?.id!==payload.event_id||
+          !Number.isSafeInteger(result.row.review_version)||result.row.review_version<=payload.expected_version)
+          throw fail('CONSOLE_REVIEW_OUTCOME_UNKNOWN');
+        return result;
+      })();
+      reviewRequests.set(key,promise);return promise;
+    },
     async exportUsage(filters){
       if(!identity)throw fail('CONSOLE_NOT_AUTHORIZED',403);
       const {user}=await read('/api/v1/auth/me',true);

@@ -104,3 +104,43 @@ test('incident and supplier writes require fresh identity and discard stale down
   await client.initialize();permitted=false;
   await assert.rejects(client.operation({kind:'supplier'}),{code:'CONSOLE_FORBIDDEN'});assert.equal(writes.length,1);
 });
+
+test('manual usage review checks fresh admin identity and coalesces a lost submission without retry',async()=>{
+ const s=session(admin),calls=[];let permitted=true;
+ const client=createPlatformConsoleClient({session:s,fetchImpl:async(path,o)=>{
+  calls.push({path,o});
+  if(path.endsWith('/me'))return response({user:permitted?admin:{...admin,tenant_id:1}});
+  if(/^\/api\/v1\/admin\/console\/usage\/[0-9a-f-]+\/review$/.test(path))return response({schema:1,state:'available',row:{id:data.event_id,review_version:data.expected_version,state:data.expected_state,can_review:true}});
+  if(path.endsWith('/usage/review'))throw Error('response lost');
+  return response(snapshot);
+ }});
+ await client.initialize();
+ const data={request_id:crypto.randomUUID(),event_id:crypto.randomUUID(),expected_version:0,expected_state:'unknown'};
+ await assert.rejects(client.reviewUsage(data),{code:'CONSOLE_REVIEW_OUTCOME_UNKNOWN'});
+ await assert.rejects(client.reviewUsage(data),{code:'CONSOLE_REVIEW_OUTCOME_UNKNOWN'});
+ assert.equal(calls.filter(c=>c.o.method==='POST').length,1);
+ assert.equal(calls.at(-1).path,'/api/v1/admin/console/usage/review');
+ assert.equal(calls.at(-1).o.headers.Authorization,'Bearer test-token');
+ assert.deepEqual(JSON.parse(calls.at(-1).o.body),data);
+ permitted=false;const before=calls.length;
+ await assert.rejects(client.reviewUsage({...data,request_id:crypto.randomUUID()}),{code:'CONSOLE_FORBIDDEN'});
+ assert.equal(calls.length,before+1);assert.equal(client.getIdentity(),null);
+});
+
+test('late or mismatched review receipts cannot be shown as a confirmed settlement',async()=>{
+ const s=session(admin),event_id=crypto.randomUUID();let hold=false,release;
+ const client=createPlatformConsoleClient({session:s,fetchImpl:async(path)=>{
+  if(path.endsWith('/me'))return response({user:admin});
+  if(/^\/api\/v1\/admin\/console\/usage\/[0-9a-f-]+\/review$/.test(path))return response({schema:1,state:'available',row:{id:event_id,review_version:0,state:'unknown',can_review:true}});
+  if(path.endsWith('/usage/review'))return hold?{ok:true,status:200,json:()=>new Promise(r=>release=r)}:
+   response({schema:1,state:'available',row:{id:crypto.randomUUID(),review_version:1}});
+  return response(snapshot);
+ }});
+ await client.initialize();
+ const payload={request_id:crypto.randomUUID(),event_id,expected_version:0,expected_state:'unknown'};
+ await assert.rejects(client.reviewUsage(payload),{code:'CONSOLE_REVIEW_OUTCOME_UNKNOWN'});
+ hold=true;const pending=client.reviewUsage({...payload,request_id:crypto.randomUUID()});
+ while(!release)await new Promise(r=>setTimeout(r,1));s.token='changed';
+ release({schema:1,state:'available',row:{id:event_id,review_version:1}});
+ await assert.rejects(pending,{code:'CONSOLE_STALE'});
+});
