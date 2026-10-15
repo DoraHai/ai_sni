@@ -26,6 +26,7 @@ from app.api.users import (
     _payload as user_payload,
     delete_user,
     reset_user_password,
+    router as users_router,
     update_user,
 )
 from app.models import Role, User
@@ -246,6 +247,26 @@ def test_delete_user_rejects_self_and_builtin_superadmin():
 
     assert self_error.value.status_code == admin_error.value.status_code == 400
     assert actor.is_active and admin.is_active
+    assert session.commits == 0
+
+
+def test_delete_user_uses_account_edit_gate_and_missing_id_is_404():
+    route = next(
+        route for route in users_router.routes
+        if route.path == "/api/v1/users/{user_id}" and "DELETE" in route.methods
+    )
+    assert any(dependency.dependency is require_admin for dependency in route.dependencies)
+
+    viewer = AuthContext(3, "viewer", "viewer", None, {"settings.accounts": "view"})
+    with pytest.raises(HTTPException) as denied:
+        asyncio.run(require_admin(viewer))
+    assert denied.value.status_code == 403
+
+    editor = AuthContext(1, "editor", "editor", None, {"settings.accounts": "edit"})
+    session = _Session()
+    with pytest.raises(HTTPException) as missing:
+        asyncio.run(delete_user(999, session, editor))
+    assert missing.value.status_code == 404
     assert session.commits == 0
 
 
