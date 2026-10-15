@@ -773,7 +773,7 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
             name
             for name in tenant_scoped_tables
             if name.startswith(("seo_", "geo_"))
-            or name in {"tenant_modules", "users", "api_audit_logs"}
+            or name in {"tenant_modules", "users", "api_audit_logs", "advisor_account_links"}
         }
 
         self.assertTrue(table_names)

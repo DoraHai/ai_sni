@@ -2,6 +2,7 @@ from app.models.tenant import Tenant
 from app.models.baidu_account import BaiduAccount
 from app.models.baidu_oauth import BaiduOAuthGrant, BaiduOAuthState
 from app.models.api_audit_log import ApiAuditLog
+from app.models.advisor_account import AdvisorAccountLink, AdvisorAccountSwitchAudit
 from app.models.kw_report_snapshot import KwReportSnapshot
 from app.models.kw_region_snapshot import KwRegionSnapshot
 from app.models.keyword_dimension_report import KeywordHourlyReport, KeywordRegionReport
