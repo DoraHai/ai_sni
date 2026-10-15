@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, String, func
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,14 +22,10 @@ class AdvisorAccountLink(Base):
 
 class AdvisorAccountSwitchAudit(Base):
     __tablename__ = "advisor_account_switch_audit"
-    __table_args__ = (
-        CheckConstraint("status IN ('success', 'denied')", name="ck_advisor_account_audit_status"),
-        CheckConstraint("action IN ('link', 'unlink', 'switch')", name="ck_advisor_account_audit_action"),
-        Index("ix_advisor_account_switch_audit_from_user_id", "from_user_id", "created_at"),
-    )
+    __table_args__ = (CheckConstraint("status IN ('success', 'denied')", name="ck_advisor_account_audit_status"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    from_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    from_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     to_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     action: Mapped[str] = mapped_column(String(16), nullable=False)
     actor_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)

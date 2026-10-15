@@ -82,18 +82,16 @@ def _jwt_secret() -> str:
 
 
 def issue_token(user: User, *, switch_source_id: int | None = None,
-                switch_group_id: str | None = None, root_source_id: int | None = None,
-                auth_exp: int | None = None) -> str:
+                switch_group_id: str | None = None) -> str:
     """token 只放 user id + 过期（角色/权限运行时从库读，便于即时生效）。"""
     s = get_settings()
-    now = datetime.now(timezone.utc)
-    payload = {"sub": str(user.id), "exp": now + timedelta(hours=s.jwt_expire_hours)}
+    payload = {
+        "sub": str(user.id),
+        "exp": datetime.now(timezone.utc) + timedelta(
+            hours=2 if switch_source_id is not None else s.jwt_expire_hours),
+    }
     if switch_source_id is not None:
-        if root_source_id is None or auth_exp is None or auth_exp <= now.timestamp():
-            raise ValueError("切换会话缺少有效的原登录信息")
-        payload.update(via="advisor_switch", src=switch_source_id, grp=switch_group_id,
-                       root_src=root_source_id, auth_exp=auth_exp,
-                       exp=min(int((now + timedelta(hours=2)).timestamp()), auth_exp))
+        payload.update(via="advisor_switch", src=switch_source_id, grp=switch_group_id)
     return jwt.encode(payload, _jwt_secret(), algorithm=JWT_ALG)
 
 
@@ -302,8 +300,34 @@ async def require_auth(
         user = await session.get(User, user_id)
         if user is None or not user.is_active:
             raise HTTPException(401, "账号不存在或已停用")
-        from app.security.advisor_switch import validate_switch_claims
-        await validate_switch_claims(session, payload, user)
+        if payload.get("via") == "advisor_switch":
+            from app.models.advisor_account import AdvisorAccountLink
+            try:
+                source_id = int(payload["src"])
+                group_id = str(payload["grp"])
+            except (KeyError, TypeError, ValueError):
+                raise HTTPException(401, "切换登录凭证无效")
+            source = await session.get(User, source_id)
+            source_link = await session.get(AdvisorAccountLink, source_id)
+            target_link = await session.get(AdvisorAccountLink, user.id)
+            source_role = await session.get(Role, source.role_id) if source else None
+            target_role = await session.get(Role, user.role_id)
+            def eligible(role):
+                perms = effective_role_permissions(role.name, role.is_system, role.permissions) if role else {}
+                return (not any(k.startswith("settings.") and v == "edit" for k, v in perms.items())
+                        and ((perms.get("seo.site") == "edit" and perms.get("seo.content") == "edit")
+                             or (perms.get("geo.assets") == "edit" and perms.get("geo.content") == "edit")))
+            if (source is None or not source.is_active or source.tenant_id is None
+                or user.tenant_id is None or source.tenant_id == user.tenant_id
+                or not eligible(source_role) or not eligible(target_role)
+                or source_link is None or target_link is None
+                or source_link.group_id != target_link.group_id
+                or str(source_link.group_id) != group_id
+                or source_link.tenant_id != source.tenant_id
+                or target_link.tenant_id != user.tenant_id):
+                raise HTTPException(401, "关联已变化，请重新登录")
+        elif "via" in payload:
+            raise HTTPException(401, "登录凭证无效，请重新登录")
         return await _build_context(user, session)
 
     # 2) admin API Key 兜底（curl / 冒烟 / 调度）= 超管

@@ -1,8 +1,6 @@
 """登录态 + 当前用户（含菜单权限）+ 租户列表（多客户切换器数据源）。"""
 import logging
 import ipaddress
-import jwt
-from functools import wraps
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -22,8 +20,6 @@ from app.security.auth import (
     AuthContext,
     hash_password,
     issue_token,
-    _jwt_secret,
-    JWT_ALG,
     require_auth,
     require_admin,
     verify_password,
@@ -40,16 +36,6 @@ def _raise_missing_link_schema(exc: DBAPIError) -> None:
     if getattr(exc.orig, "sqlstate", None) == "42P01" or getattr(exc.orig, "pgcode", None) == "42P01":
         raise HTTPException(503, "顾问关联表尚未就绪") from exc
     raise exc
-
-
-def _link_schema_guard(fn):
-    @wraps(fn)
-    async def guarded(*args, **kwargs):
-        try:
-            return await fn(*args, **kwargs)
-        except DBAPIError as exc:
-            _raise_missing_link_schema(exc)
-    return guarded
 
 
 def _audit_ip(request):
@@ -192,7 +178,6 @@ async def _require_named_account_admin(session: AsyncSession, ctx: AuthContext) 
 
 
 @router.post("/account-links")
-@_link_schema_guard
 async def link_advisor_accounts(
     req: AccountLinkRequest,
     ctx: AuthContext = Depends(require_admin),
@@ -236,7 +221,6 @@ async def link_advisor_accounts(
 
 
 @router.delete("/account-links/{user_id}")
-@_link_schema_guard
 async def unlink_advisor_account(
     user_id: int,
     ctx: AuthContext = Depends(require_admin),
@@ -314,19 +298,6 @@ async def switch_account(
 ) -> dict:
     if ctx.user_id is None:
         raise HTTPException(403, "需要实名顾问账号")
-    authorization = request.headers.get("authorization", "")
-    if not authorization.lower().startswith("bearer "):
-        raise HTTPException(401, "需要有效的登录凭证")
-    try:
-        claims = jwt.decode(authorization[7:].strip(), _jwt_secret(), algorithms=[JWT_ALG])
-        if claims.get("sub") != str(ctx.user_id):
-            raise ValueError("会话账号不匹配")
-        auth_exp = claims.get("auth_exp", claims["exp"])
-        root_source_id = claims.get("root_src", ctx.user_id)
-        if type(auth_exp) is not int or type(root_source_id) is not int:
-            raise ValueError("登录来源无效")
-    except (jwt.InvalidTokenError, KeyError, ValueError, TypeError) as exc:
-        raise HTTPException(401, "登录凭证无效，请重新登录") from exc
     source = await session.get(User, ctx.user_id)
     if not await _eligible_advisor(session, source):
         raise HTTPException(403, "当前账号无顾问切换资格")
@@ -366,18 +337,13 @@ async def switch_account(
     if (not await _eligible_advisor(session, target) or target.tenant_id == source.tenant_id
             or target_link.tenant_id != target.tenant_id or locked):
         await deny("目标账号不具备有效顾问资格", "target_ineligible")
-    try:
-        target_token = issue_token(target, switch_source_id=source.id,
-                                   switch_group_id=str(link.group_id),
-                                   root_source_id=root_source_id, auth_exp=auth_exp)
-    except ValueError as exc:
-        raise HTTPException(401, "原登录会话已到期，请重新登录") from exc
     session.add(_audit(request, action="switch", actor=ctx.user_id, source=source.id,
                        target=target.id, group=link.group_id))
     await session.commit()
     logger.info("advisor_account_switch from_user_id=%s to_user_id=%s at=%s",
                 source.id, target.id, now.isoformat())
-    return {"token": target_token,
+    return {"token": issue_token(target, switch_source_id=source.id,
+                                  switch_group_id=str(link.group_id)),
             "user": await _user_payload(target, session)}
 
 
