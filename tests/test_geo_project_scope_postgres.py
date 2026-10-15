@@ -101,7 +101,7 @@ def test_project_cycles_are_idempotent_resume_on_evidence_and_stop_on_revocation
             async with sessions() as db:
                 await set_binding(db, 1, 10, [20], 0, 7)
                 await save_plan(db, 1, 10, dict(enabled=True, status="active", prompt_ids=[40],
-                    interval_days=7, advisor_user_id=7), 0, 7)
+                    interval_days=7, advisor_user_id=7), 0, 7, allow_advisor_change=True)
                 await db.commit()
             now = datetime(2026, 10, 9, tzinfo=timezone.utc)
             await asyncio.gather(*(refresh_project(10, session_factory=sessions, now=now) for _ in range(6)))
@@ -158,7 +158,7 @@ def test_legacy_ticket_reads_keep_project_scope_and_paused_plan_blocks_legacy_wr
             async with sessions() as db:
                 await set_binding(db, 1, 10, [20], 0, 7)
                 await save_plan(db, 1, 10, dict(enabled=True, status="active", prompt_ids=[40],
-                    interval_days=7, advisor_user_id=7), 0, 7)
+                    interval_days=7, advisor_user_id=7), 0, 7, allow_advisor_change=True)
                 await db.commit()
             await refresh_project(10, session_factory=sessions)
             async with sessions() as db:

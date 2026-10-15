@@ -23,7 +23,7 @@ OTHER_ADVISOR = AuthContext(8, "advisor2", "advisor", None, {"geo.assets":"edit"
 
 async def configured(sessions):
     async with sessions() as db:
-        await save_plan(db, 1, 10, dict(enabled=False, status="active", prompt_ids=[], interval_days=7, advisor_user_id=7), 0, 7)
+        await save_plan(db, 1, 10, dict(enabled=False, status="active", prompt_ids=[], interval_days=7, advisor_user_id=7), 0, 7, allow_advisor_change=True)
         await db.commit()
 
 def test_project_task_is_idempotent_and_scope_or_legacy_writes_cannot_complete_it():
@@ -470,7 +470,7 @@ def test_advisor_list_filters_assignment_before_pagination(monkeypatch):
                 await db.commit()
             async with sessions() as db:
                 await save_plan(db, 1, 11, dict(enabled=False, status="active", prompt_ids=[],
-                    interval_days=7, advisor_user_id=8), 0, 8)
+                    interval_days=7, advisor_user_id=8), 0, 8, allow_advisor_change=True)
                 await db.commit()
             async with sessions() as db:
                 own = await api.create(api.Create(tenant_id=1, project_id=10, request_id=uuid4(),
