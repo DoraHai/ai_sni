@@ -38,9 +38,13 @@ def actor(user_id=1):
                        {"seo.site": "edit", "seo.content": "edit"})
 
 
-def request():
+def request(token=None):
+    if token is None:
+        token = issue_token(User(id=1, username="source", role_id=1, tenant_id=10,
+                                 is_active=True, password_hash="unused"))
     return Request({"type": "http", "method": "POST", "path": "/api/v1/auth/switch-account",
-                    "headers": [], "client": ("127.0.0.1", 40000)})
+                    "headers": [(b"authorization", f"Bearer {token}".encode())],
+                    "client": ("127.0.0.1", 40000)})
 
 
 def test_audit_ip_uses_nginx_real_ip_only_from_local_proxy():
@@ -258,11 +262,14 @@ def test_missing_link_schema_is_service_unavailable():
 
 def test_switch_token_expires_in_two_hours_and_unlink_revokes_it():
     session, users = fixture()
-    token = issue_token(users[2], switch_source_id=1, switch_group_id=str(session.link_group))
+    auth_exp = int((datetime.now(timezone.utc) + timedelta(hours=3)).timestamp())
+    token = issue_token(users[2], switch_source_id=1, switch_group_id=str(session.link_group),
+                        root_source_id=1, auth_exp=auth_exp)
     import jwt
     claims = jwt.decode(token, options={"verify_signature": False})
     assert claims["via"] == "advisor_switch"
     assert claims["src"] == 1 and claims["grp"] == str(session.link_group)
+    assert claims["root_src"] == 1 and claims["auth_exp"] == auth_exp
     assert 0 < claims["exp"] - datetime.now(timezone.utc).timestamp() <= 7200
     bearer = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
     assert asyncio.run(require_auth(bearer, None, None, session)).user_id == 2
@@ -291,6 +298,52 @@ def test_switch_token_expires_in_two_hours_and_unlink_revokes_it():
     with pytest.raises(HTTPException) as denied:
         asyncio.run(require_auth(bearer, None, None, session))
     assert denied.value.status_code == 401
+
+
+def test_chained_switch_keeps_original_expiry_and_root_revocation():
+    session, users = fixture()
+    users[3] = User(id=3, username="third", role_id=1, tenant_id=30,
+                    is_active=True, password_hash="unused")
+    original_get = session.get.side_effect
+    async def get(model, ident, **kwargs):
+        if model is AdvisorAccountLink and ident == 3:
+            return SimpleNamespace(user_id=3, group_id=session.link_group, tenant_id=30)
+        return await original_get(model, ident, **kwargs)
+    session.get.side_effect = get
+    session.scalar.side_effect = [SimpleNamespace(user_id=2, group_id=session.link_group, tenant_id=20),
+                                  0, SimpleNamespace(user_id=3, group_id=session.link_group, tenant_id=30)]
+    auth_exp = int((datetime.now(timezone.utc) + timedelta(seconds=90)).timestamp())
+    first = issue_token(users[2], switch_source_id=1, switch_group_id=str(session.link_group),
+                        root_source_id=1, auth_exp=auth_exp)
+    ctx = AuthContext(2, "target", "advisor", 20, {"seo.site": "edit", "seo.content": "edit"})
+    result = asyncio.run(switch_account(SwitchAccountRequest(target_user_id=3), request(first), ctx, session))
+    import jwt
+    claims = jwt.decode(result["token"], options={"verify_signature": False})
+    assert claims["root_src"] == 1 and claims["src"] == 2
+    assert claims["auth_exp"] == auth_exp and claims["exp"] <= auth_exp
+    bearer = HTTPAuthorizationCredentials(scheme="Bearer", credentials=result["token"])
+    assert asyncio.run(require_auth(bearer, None, None, session)).user_id == 3
+    users[1].is_active = False
+    with pytest.raises(HTTPException) as denied:
+        asyncio.run(require_auth(bearer, None, None, session))
+    assert denied.value.status_code == 401
+
+
+def test_admin_link_routes_return_503_without_tables():
+    session, _ = fixture()
+    original_get = session.get.side_effect
+    async def missing(model, ident, **kwargs):
+        if model is AdvisorAccountLink:
+            raise DBAPIError("SELECT", {}, SimpleNamespace(sqlstate="42P01"))
+        return await original_get(model, ident, **kwargs)
+    session.get.side_effect = missing
+    admin = AuthContext(99, "admin", "admin", None, {"settings.accounts": "edit"})
+    with patch("app.security.platform_admin.acquire_platform_admin_lock", new=AsyncMock()):
+        for operation in (lambda: link_advisor_accounts(AccountLinkRequest(user_ids=[1, 2]), admin, session),
+                          lambda: unlink_advisor_account(2, admin, session)):
+            with pytest.raises(HTTPException) as denied:
+                asyncio.run(operation())
+            assert denied.value.status_code == 503
 
 
 def test_link_audit_records_actor_group_and_reason():
