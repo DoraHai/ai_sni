@@ -93,16 +93,38 @@ async function mountContentList(rows, canEdit = true) {
 
 const acceptanceText = '【验收勿发布】仅验证编辑器保存，不调用 AI、不审核、不发布。\n第一段：NORD 操作手册测试。\n第二段：保留换行与中文尾字，正常。\n字面标签：<h1>R&D</h1>\n字面实体：&amp; 与 &lt; 保持原样。\n测试链接：https://example.com/?a=1&b=2'
 
-test('AI assist keeps an existing title and fills only an empty title', async () => {
+test('generate keeps an existing title while updating the body', async () => {
+  const view = await mountEditor('<p>原正文</p>', 'drafting', value => value, {
+    item: { source_page_id: null },
+    assistSeoContent: async () => ({ title: 'AI 建议标题', content: 'AI 正文' }),
+  })
+  try {
+    assert.equal(view.state.form.title, '验收勿发布')
+    await view.state.assist('generate')
+    assert.equal(view.state.form.title, '验收勿发布')
+    assert.ok(view.state.form.draft.includes('AI 正文'))
+    assert.equal(view.editor.textContent, 'AI 正文')
+  } finally { view.close() }
+})
+
+test('generate fills a whitespace-only title', async () => {
+  const view = await mountEditor('', 'drafting', value => value, {
+    item: { title: '   ', source_page_id: null },
+    assistSeoContent: async () => ({ title: 'AI 建议标题', content: 'AI 正文' }),
+  })
+  try {
+    await view.state.assist('generate')
+    assert.equal(view.state.form.title, 'AI 建议标题')
+  } finally { view.close() }
+})
+
+test('title optimization replaces an existing title', async () => {
   const view = await mountEditor('', 'drafting', value => value, {
     assistSeoContent: async () => ({ title: 'AI 建议标题' }),
   })
   try {
     assert.equal(view.state.form.title, '验收勿发布')
-    await view.state.assist('outline')
-    assert.equal(view.state.form.title, '验收勿发布')
-    view.state.form.title = '   '
-    await view.state.assist('outline')
+    await view.state.assist('title')
     assert.equal(view.state.form.title, 'AI 建议标题')
   } finally { view.close() }
 })
