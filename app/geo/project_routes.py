@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, PositiveInt
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -196,14 +196,20 @@ async def project_advisor_candidates(project_id: int, tenant_id: int,
     await ensure_module_access(session, ctx, tenant_id, "geo")
     if ctx.user_id is None or ctx.tenant_id is not None or not ctx.can_edit("settings.accounts"):
         raise HTTPException(403, "只有实名平台管理员可以选择项目顾问")
-    from app.geo.project_workflows import advisor_available
+    from app.geo.project_workflows import advisor_assignable
     from app.models import User
+    from app.models.role import Role
     project = await session.get(GeoProject, project_id)
     if not project or project.tenant_id != tenant_id:
         raise HTTPException(404, "GEO 项目不存在")
-    users = list(await session.scalars(select(User).where(User.is_active.is_(True)).order_by(User.id)))
+    users = list(await session.scalars(select(User).join(Role, Role.id == User.role_id).where(
+        User.is_active.is_(True),
+        or_(User.tenant_id.is_(None), User.tenant_id == tenant_id),
+        Role.permissions["geo.assets"].as_string() == "edit",
+        Role.permissions["geo.content"].as_string() == "edit",
+    ).order_by(User.id)))
     return {"accounts": [{"id": user.id, "name": user.display_name or user.username}
-                         for user in users if await advisor_available(session, tenant_id, user.id)]}
+                         for user in users if await advisor_assignable(session, tenant_id, user.id)]}
 
 
 @geo_projects_router.get("/api/v1/geo/projects/{project_id}/executions")

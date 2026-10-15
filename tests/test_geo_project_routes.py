@@ -1,5 +1,6 @@
 import os
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,7 +24,10 @@ from app.geo_main import app
 from app.module_scope import ensure_module_access, module_is_available
 from app.security.auth import AuthContext, _required, require_scoped_auth
 from app.geo.project_routes import GeoServicePlanUpdate, update_project_plan, project_advisor_candidates
-from app.geo.project_workflows import save_plan
+from app.geo.project_workflows import save_plan, advisor_available, advisor_assignable, refresh_project
+from app.geo.onsite_routes import can_operate, advisor_tasks
+from app.models.user import User
+from app.models.role import Role
 
 
 class ScalarSession:
@@ -109,7 +113,7 @@ def test_service_plan_blocks_self_assignment_and_preserves_other_edits():
               "interval_days": 10, "advisor_user_id": 7}
     with (patch("app.geo.project_workflows.project_scope", new=AsyncMock(return_value=(project, []))),
           patch("app.geo.project_workflows.prompt_ids_for_businesses", new=AsyncMock(return_value=[])),
-          patch("app.geo.project_workflows.advisor_available", new=AsyncMock(return_value=True)) as available,
+          patch("app.geo.project_workflows.advisor_assignable", new=AsyncMock(return_value=True)) as available,
           patch("app.geo.project_workflows.logger.info") as audit_log):
         with pytest.raises(HTTPException) as denied:
             asyncio.run(save_plan(session, 17, 3, values, 1, 7))
@@ -190,6 +194,57 @@ def test_advisor_candidates_are_platform_admin_only():
                                         SimpleNamespace(id=8, display_name="顾问乙", username="b")]
         async def available(_session, _tenant, user_id):
             return user_id == 7
-        with patch("app.geo.project_workflows.advisor_available", new=available):
+        with patch("app.geo.project_workflows.advisor_assignable", new=available):
             result = asyncio.run(project_advisor_candidates(3, 17, admin, session))
         assert result == {"accounts": [{"id": 7, "name": "顾问甲"}]}
+        candidate_query = str(session.scalars.await_args.args[0])
+        assert "users.tenant_id" in candidate_query
+        assert "roles.permissions" in candidate_query
+
+
+def test_existing_admin_advisor_keeps_runtime_access_but_is_not_assignable():
+    user = User(id=99, username="admin", role_id=5, tenant_id=None,
+                is_active=True, password_hash="unused")
+    role = Role(id=5, name="管理员", is_system=True, permissions={
+        "geo.assets": "edit", "geo.content": "edit", "settings.accounts": "edit"})
+    session = AsyncMock()
+    async def get(model, _ident, **_kwargs):
+        return user if model is User else role if model is Role else None
+    session.get.side_effect = get
+    assert asyncio.run(advisor_available(session, 17, 99)) is True
+    assert asyncio.run(advisor_assignable(session, 17, 99)) is False
+    project = SimpleNamespace(status="active", tenant_id=17, project_settings={
+        "geo_service_plan": {"revision": 1, "advisor_user_id": 99}})
+    ctx = AuthContext(99, "admin", "管理员", None, role.permissions)
+    assert asyncio.run(can_operate(session, ctx, project)) is True
+
+
+def test_existing_admin_advisor_remains_in_scheduler_and_task_list():
+    project = SimpleNamespace(id=3, tenant_id=17, status="active", project_settings={
+        "geo_service_plan": {"revision": 1, "enabled": True, "status": "active",
+                             "prompt_ids": [], "interval_days": 7, "advisor_user_id": 99}})
+    user = User(id=99, username="admin", role_id=5, tenant_id=None,
+                is_active=True, password_hash="unused")
+    role = Role(id=5, name="管理员", is_system=True, permissions={
+        "geo.assets": "edit", "geo.content": "edit", "settings.accounts": "edit"})
+    session = AsyncMock()
+    async def get(model, _ident, **_kwargs):
+        return project if model.__name__ == "GeoProject" else user if model is User else role if model is Role else None
+    session.get.side_effect = get
+    session.scalars.side_effect = [[project], []]
+    @asynccontextmanager
+    async def factory():
+        yield session
+    with (patch("app.geo.project_workflows.ensure_geo_background_execution_allowed"),
+          patch("app.geo.project_workflows.ensure_geo_entitlement", new=AsyncMock()),
+          patch("app.geo.project_workflows.project_scope", new=AsyncMock(return_value=(project, []))),
+          patch("app.geo.project_workflows.prompt_ids_for_businesses", new=AsyncMock(return_value=[])),
+          patch("app.geo.onsite_routes.ensure_geo_entitlement", new=AsyncMock()),
+          patch("app.geo.onsite_routes.project_scope", new=AsyncMock(return_value=(project, [])))):
+        asyncio.run(refresh_project(3, session_factory=factory))
+        assert "geo_workflow_blocker" not in project.project_settings
+        session.commit.assert_awaited_once()
+        ctx = AuthContext(99, "admin", "管理员", None, role.permissions)
+        result = asyncio.run(advisor_tasks(17, None, 20, session, ctx))
+        assert result["items"] == []
+        assert session.scalars.await_count == 2  # task query reached after accepting the project
