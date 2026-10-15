@@ -11,6 +11,7 @@ from app.models.module_workspace import SeoSite
 from app.models.seo import SeoContentAsset, SeoSiteAdvisorAssignment
 from app.models.seo_messages import SeoContentConversation as Conversation, SeoConversationParticipant as Participant, SeoContentMessage as Message
 from app.module_scope import ensure_module_access, seo_site_is_operational
+from app.seo_customer_identity import customer_account_for_tenant
 
 SCHEMA = "0106_seo_content_messages"
 router = APIRouter(prefix="/workbench/content-assets/{content_id}/conversation", tags=["SEO human messages"])
@@ -69,7 +70,7 @@ async def scope(session, ctx, tenant_id, site_id, content_id, *, write=False):
         if not ctx.can_edit("seo.content") or not assignment or not assignment.active:
             raise error(403, "conversation_forbidden", "当前账号没有活动站点顾问分配")
         kind = "advisor"
-    elif user.tenant_id == tenant_id and ctx.tenant_id == tenant_id:
+    elif await customer_account_for_tenant(session, ctx, tenant_id, lock=write):
         kind = "customer"
     else:
         raise error(403, "conversation_forbidden", "客户账号须绑定当前客户")

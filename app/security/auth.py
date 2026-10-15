@@ -271,6 +271,10 @@ async def require_auth(
             raise HTTPException(401, "登录已过期，请重新登录")
         except jwt.InvalidTokenError:
             raise HTTPException(401, "登录凭证无效，请重新登录")
+        # The SEO rollback has no switch-session revocation check. Reject every
+        # token carrying the same marker used by validate_switch_claims.
+        if "via" in payload:
+            raise HTTPException(401, "SEO 暂不接受切换登录凭证")
         user = await session.get(User, int(payload["sub"]))
         if user is None or not user.is_active:
             raise HTTPException(401, "账号不存在或已停用")
