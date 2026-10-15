@@ -7085,7 +7085,7 @@ async def create_content_confirmation(
         raise HTTPException(403, "稿件确认必须由实名登录账号操作")
     assignment = await _advisor_assignment(session, row, ctx.user_id)
     if req.actor_mode == "customer_direct":
-        if not await customer_account_for_tenant(session, ctx, tenant_id):
+        if not await customer_account_for_tenant(session, ctx, tenant_id, lock=True):
             raise HTTPException(403, "只有当前租户的真实客户账号可以直接确认稿件")
     else:
         if assignment is None or not ctx.can_edit("seo.content"):

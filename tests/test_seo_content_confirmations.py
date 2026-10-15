@@ -108,7 +108,7 @@ def test_message_customer_path_uses_the_same_identity_rule(revision):
           patch("app.api.seo_messages.customer_account_for_tenant", new=AsyncMock(return_value=True)) as customer):
         actor, _ = asyncio.run(message_scope(session, ctx, 1, 9, 88))
         assert actor["kind"] == "customer"
-        customer.assert_awaited_once_with(session, ctx, 1)
+        customer.assert_awaited_once_with(session, ctx, 1, lock=False)
 
 
 def test_content_confirmation_gate_accepts_existing_0107_revision():
@@ -131,6 +131,29 @@ def test_customer_identity_fails_closed_when_geo_table_is_unavailable():
     session.scalars.return_value = []
     ctx = AuthContext(7, "customer", "品牌方客户", 1, {"seo.content": "view"})
     assert asyncio.run(customer_account_for_tenant(session, ctx, 1)) is False
+
+
+def test_customer_identity_read_only_session_uses_no_share_locks():
+    session = AsyncMock()
+    session.begin_nested = MagicMock()
+    user = User(id=7, username="customer", role_id=1, tenant_id=1,
+                is_active=True, password_hash="unused")
+    role = Role(id=1, name="品牌方客户", is_system=True,
+                permissions={"seo.content": "view"})
+    async def scalar(statement):
+        assert "FOR SHARE" not in str(statement)
+        return user if "FROM users" in str(statement) else None
+    async def get(_model, _ident, **kwargs):
+        assert "with_for_update" not in kwargs
+        return role
+    async def scalars(statement):
+        assert "FOR SHARE" not in str(statement)
+        return []
+    session.scalar.side_effect = scalar
+    session.get.side_effect = get
+    session.scalars.side_effect = scalars
+    ctx = AuthContext(7, "customer", "品牌方客户", 1, {"seo.content": "view"})
+    assert asyncio.run(customer_account_for_tenant(session, ctx, 1)) is True
 
 
 def test_global_content_editor_is_not_implicitly_an_assigned_advisor() -> None:

@@ -70,7 +70,7 @@ async def scope(session, ctx, tenant_id, site_id, content_id, *, write=False):
         if not ctx.can_edit("seo.content") or not assignment or not assignment.active:
             raise error(403, "conversation_forbidden", "当前账号没有活动站点顾问分配")
         kind = "advisor"
-    elif await customer_account_for_tenant(session, ctx, tenant_id):
+    elif await customer_account_for_tenant(session, ctx, tenant_id, lock=write):
         kind = "customer"
     else:
         raise error(403, "conversation_forbidden", "客户账号须绑定当前客户")

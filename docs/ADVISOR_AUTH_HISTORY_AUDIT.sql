@@ -17,3 +17,27 @@ WHERE c.actor_mode = 'customer_direct'
                     AND (g.project_settings->'geo_service_plan'->>'advisor_user_id')::bigint = u.id));
 
 -- Review affected content with the business owner and obtain a new customer confirmation.
+-- Release note: historical approval is validated against the actor's current
+-- active status, role and tenant. Disabling or changing a real customer's account
+-- can return an earlier approved item to pending until a qualified customer reconfirms.
+
+-- READ ONLY: tenant-bound SEO viewers with non-built-in customer roles who
+-- confirmed directly or joined a human conversation. Participants do not store
+-- a role kind, so inspect these candidates with the business owner.
+SELECT DISTINCT u.id AS user_id, u.tenant_id, u.username, r.name AS role_name,
+       EXISTS (SELECT 1 FROM seo_content_confirmations c
+               WHERE c.actor_user_id = u.id AND c.tenant_id = u.tenant_id
+                 AND c.actor_mode = 'customer_direct') AS confirmed_directly,
+       EXISTS (SELECT 1 FROM seo_conversation_participants p
+               JOIN seo_content_conversations c ON c.id = p.conversation_id
+               WHERE p.user_id = u.id AND c.tenant_id = u.tenant_id) AS conversation_participant
+FROM users u JOIN roles r ON r.id = u.role_id
+WHERE u.tenant_id IS NOT NULL
+  AND r.permissions->>'seo.content' IN ('view', 'edit')
+  AND NOT (r.is_system AND r.name = '品牌方客户')
+  AND (EXISTS (SELECT 1 FROM seo_content_confirmations c
+               WHERE c.actor_user_id = u.id AND c.tenant_id = u.tenant_id
+                 AND c.actor_mode = 'customer_direct')
+       OR EXISTS (SELECT 1 FROM seo_conversation_participants p
+                  JOIN seo_content_conversations c ON c.id = p.conversation_id
+                  WHERE p.user_id = u.id AND c.tenant_id = u.tenant_id));

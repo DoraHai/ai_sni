@@ -34,7 +34,7 @@ def is_customer_account(ctx, user, assignments, tenant_id: int, *, role=None,
 
 
 async def customer_account_for_tenant(session, ctx, tenant_id: int,
-                                      *, user_id: int | None = None) -> bool:
+                                      *, user_id: int | None = None, lock: bool = False) -> bool:
     actor_id = ctx.user_id if user_id is None else user_id
     if actor_id is None or (user_id is None and (
         ctx.tenant_id != tenant_id or ctx.is_superadmin
@@ -42,20 +42,24 @@ async def customer_account_for_tenant(session, ctx, tenant_id: int,
                for key, level in ctx.permissions.items())
     )):
         return False
-    user = await session.scalar(select(User).where(User.id == actor_id).with_for_update(read=True))
+    user_query = select(User).where(User.id == actor_id)
+    user = await session.scalar(user_query.with_for_update(read=True) if lock else user_query)
     if user is None or user.tenant_id != tenant_id:
         return False
-    role = await session.get(Role, user.role_id, with_for_update={"read": True})
+    role = await session.get(Role, user.role_id, **({"with_for_update": {"read": True}} if lock else {}))
     if role is None or not role.is_system or role.name != "品牌方客户":
         return False
-    assignments = list(await session.scalars(select(SeoSiteAdvisorAssignment.id).where(
-        SeoSiteAdvisorAssignment.advisor_user_id == actor_id
-    ).with_for_update(read=True)))
+    assignment_query = select(SeoSiteAdvisorAssignment.id).where(
+        SeoSiteAdvisorAssignment.advisor_user_id == actor_id)
+    assignments = list(await session.scalars(
+        assignment_query.with_for_update(read=True) if lock else assignment_query))
     try:
         async with session.begin_nested():
-            geo_assignment = await session.scalar(select(GeoProject.id).where(
+            geo_query = select(GeoProject.id).where(
                 GeoProject.project_settings["geo_service_plan"]["advisor_user_id"].as_string() == str(actor_id)
-            ).limit(1).with_for_update(read=True))
+            ).limit(1)
+            geo_assignment = await session.scalar(
+                geo_query.with_for_update(read=True) if lock else geo_query)
     except DBAPIError:
         return False  # Missing or incompatible GEO schema must fail closed.
     if user_id is not None:
