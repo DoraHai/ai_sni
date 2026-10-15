@@ -91,7 +91,7 @@ def test_historical_internal_customer_direct_confirmation_is_pending():
         assert asyncio.run(_validated_content_confirmation_status(AsyncMock(), row, confirmation)) == "pending"
 
 
-@pytest.mark.parametrize("revision", ["0106_seo_content_messages", "0107_seo_site_delete"])
+@pytest.mark.parametrize("revision", ["0106_seo_content_messages", "0107_seo_site_delete", "0108_advisor_account_links"])
 def test_message_customer_path_uses_the_same_identity_rule(revision):
     session = AsyncMock()
     revisions = MagicMock()
@@ -111,10 +111,11 @@ def test_message_customer_path_uses_the_same_identity_rule(revision):
         customer.assert_awaited_once_with(session, ctx, 1, lock=False)
 
 
-def test_content_confirmation_gate_accepts_existing_0107_revision():
+@pytest.mark.parametrize("revision", ["0107_seo_site_delete", "0108_advisor_account_links"])
+def test_content_confirmation_gate_accepts_reviewed_later_revisions(revision):
     session = AsyncMock()
     result = MagicMock()
-    result.scalar_one_or_none.return_value = "0107_seo_site_delete"
+    result.scalar_one_or_none.return_value = revision
     session.execute.return_value = result
     assert asyncio.run(_content_confirmation_schema_ready(session)) is True
 

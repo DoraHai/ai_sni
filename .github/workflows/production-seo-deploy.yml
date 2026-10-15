@@ -102,6 +102,8 @@ jobs:
           tests/test_seo_competitors.py
           tests/test_seo_deploy_isolation.py
           tests/test_seo_content_confirmations.py
+          tests/test_advisor_switch_auth.py
+          tests/test_advisor_account_links_migration.py
           tests/test_seo_local_acceptance.py
           tests/test_seo_messages_postgres.py
           tests/test_seo_migration_readiness.py
@@ -178,7 +180,7 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0107_seo_site_delete (head)'
+          printf '%s\n' "$heads" | grep -F '0108_advisor_account_links (head)'
 
       - working-directory: frontend
         run: npm ci --no-audit
