@@ -86,11 +86,17 @@ async def _lifespan(_app: FastAPI):
 
         logging.getLogger("geo-api").exception("patrol recover on startup failed")
     start_geo_scheduler()
+    from app.geo.onsite_jobs import supervise_pending_jobs
+
+    onsite_ai_supervisor = asyncio.create_task(supervise_pending_jobs())
     followup_supervisor = asyncio.create_task(supervise_geo_followups())
     stale_supervisor = asyncio.create_task(_supervise_stale_reconciliation())
     try:
         yield
     finally:
+        onsite_ai_supervisor.cancel()
+        with suppress(asyncio.CancelledError):
+            await onsite_ai_supervisor
         stale_supervisor.cancel()
         with suppress(asyncio.CancelledError):
             await stale_supervisor
@@ -127,6 +133,8 @@ async def geo_health(response: Response) -> dict:
         db_status = "error"
         db_error = str(exc)
         response.status_code = 503
+    from app.geo.onsite_jobs import pending_worker_status
+
     return {
         "service": "geo-api",
         "env": settings.app_env,
@@ -138,6 +146,7 @@ async def geo_health(response: Response) -> dict:
             "content": scheduler_runtime_status(),
             "followup": followup_scheduler_runtime_status(),
         },
+        "onsite_ai_worker": pending_worker_status(),
         "demo_runtime": settings.app_env == "demo",
         "execution_enabled": settings.app_env != "demo",
     }

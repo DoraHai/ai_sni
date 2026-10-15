@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 KIND_GENERATE = "generate_article"
 KIND_PUSH_BATCH = "push_batch"
 KIND_VARIANTS = "create_variants"
+KIND_ONSITE_PROPOSAL = "onsite_ai_proposal"
 
 # Defaults; runtime reads settings when reconciling
 STALE_PENDING_SECONDS = 120
@@ -204,6 +205,15 @@ async def _reconcile_unowned_job(
     """Mark hanging pending/running jobs failed; free content-task locks."""
     if row.status not in {"pending", "running"}:
         return row
+    if getattr(row, "kind", None) == KIND_ONSITE_PROPOSAL and row.status == "running":
+        pending_lim, running_lim = _stale_limits()
+        age = _age_seconds(row.started_at or row.created_at)
+        if age is None or age < running_lim:
+            return row
+        from app.geo.onsite_jobs import recover_interrupted_job
+
+        await recover_interrupted_job(session, row)
+        return row
     if row.status == "running" and not job_has_advisory_owner(row):
         return row
     pending_lim, running_lim = _stale_limits()
@@ -212,6 +222,11 @@ async def _reconcile_unowned_job(
         if age is None or age < pending_lim:
             return row
         reason = f"作业排队超时（>{pending_lim}s）已自动失败；请重试"
+        if getattr(row, "kind", None) == KIND_ONSITE_PROPOSAL:
+            from app.geo.onsite_jobs import expire_queued_job
+
+            await expire_queued_job(session, row, reason)
+            return row
         row.status = "failed"
         row.error = reason
         row.finished_at = datetime.utcnow()
@@ -426,6 +441,14 @@ async def _recover_unowned_job(session, row, pending_lim, requeue_pending, stats
         return
     # Only a job without a live execution lock can be considered interrupted.
     if row.status == "running":
+        if getattr(row, "kind", None) == KIND_ONSITE_PROPOSAL:
+            from app.geo.onsite_jobs import recover_interrupted_job
+
+            outcome = await recover_interrupted_job(session, row)
+            if outcome == "ready":
+                return
+            stats["failed_running"] += 1
+            return
         if not job_has_advisory_owner(row):
             stats["legacy_running_deferred"] += 1
             return
@@ -441,6 +464,12 @@ async def _recover_unowned_job(session, row, pending_lim, requeue_pending, stats
     age = _age_seconds(row.created_at)
     if age is not None and age >= pending_lim:
         reason = f"进程重启且排队已超时（>{pending_lim}s），标记失败"
+        if getattr(row, "kind", None) == KIND_ONSITE_PROPOSAL:
+            from app.geo.onsite_jobs import expire_queued_job
+
+            await expire_queued_job(session, row, reason)
+            stats["failed_stale_pending"] += 1
+            return
         row.status = "failed"
         row.error = reason
         row.finished_at = datetime.utcnow()
@@ -451,6 +480,12 @@ async def _recover_unowned_job(session, row, pending_lim, requeue_pending, stats
         stats["requeued"] += 1
     else:
         reason = "进程重启：pending 作业未自动续跑（requeue 关闭）"
+        if getattr(row, "kind", None) == KIND_ONSITE_PROPOSAL:
+            from app.geo.onsite_jobs import expire_queued_job
+
+            await expire_queued_job(session, row, reason)
+            stats["failed_stale_pending"] += 1
+            return
         row.status = "failed"
         row.error = reason
         row.finished_at = datetime.utcnow()
@@ -583,8 +618,21 @@ async def _run_owned_job(job_id: int, *, tenant_id: int, connection=None) -> dic
                         result = await _execute_push_batch(session, row)
                     elif job_kind == KIND_VARIANTS:
                         result = await _execute_variants(session, row)
+                    elif job_kind == KIND_ONSITE_PROPOSAL:
+                        from app.geo.onsite_jobs import execute_onsite_proposal
+
+                        result = await execute_onsite_proposal(session, row)
                     else:
                         raise ValueError(f"未知作业类型: {job_kind}")
+                if (job_kind == KIND_ONSITE_PROPOSAL
+                        and result.get("public_state") != "ready"):
+                    await mark_job(
+                        session, job_id, status="failed",
+                        error=result.get("message") or "AI 方案任务未就绪",
+                        result_meta=result,
+                    )
+                    return {"status": "failed", "error": result.get("message"),
+                            "result_meta": result}
                 await mark_job(session, job_id, status="succeeded", result_meta=result)
                 return {"status": "succeeded", "error": None, "result_meta": result}
             except Exception as exc:  # noqa: BLE001

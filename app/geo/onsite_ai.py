@@ -142,6 +142,19 @@ def generation_options(credentials: dict[str, str], snapshot: dict[str, Any]) ->
     return options if model in DASHSCOPE_HYBRID_DEEPSEEK_MODELS else {}
 
 
+def planning_route(credentials: dict[str, str]) -> dict[str, str]:
+    """Freeze the non-secret provider route used by one durable request."""
+    raw_base = str(credentials.get("base_url") or "").rstrip("/")
+    parsed = urlsplit(raw_base)
+    return {
+        "provider": str(credentials.get("provider") or ""),
+        "base_url": raw_base,
+        "host": (parsed.hostname or "").lower(),
+        "model": str(credentials.get("model") or ""),
+        "source": str(credentials.get("source") or ""),
+    }
+
+
 def select_planning_credentials(credentials: dict[str, str]) -> dict[str, str]:
     """Apply the optional onsite-only model after validating its provider route."""
     settings = get_settings()
