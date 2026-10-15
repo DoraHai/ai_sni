@@ -1,31 +1,22 @@
 """登录态 + 当前用户（含菜单权限）+ 租户列表（多客户切换器数据源）。"""
 import logging
-import ipaddress
-import jwt
-from functools import wraps
-from uuid import UUID, uuid4
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_session
 from app.models import BaiduAccount, Role, Tenant, TenantModule, User
-from app.models.advisor_account import AdvisorAccountLink, AdvisorAccountSwitchAudit
-from app.permissions import ALL_EDIT, OPERATOR_PERMS, effective_role_permissions
+from app.permissions import ALL_EDIT, OPERATOR_PERMS
 from app.module_scope import list_module_tenants, module_is_available
 from app.security.auth import (
     AuthContext,
     hash_password,
     issue_token,
-    _jwt_secret,
-    JWT_ALG,
     require_auth,
-    require_admin,
     verify_password,
 )
 from app.security.sem_identity import (
@@ -34,45 +25,6 @@ from app.security.sem_identity import (
 )
 
 logger = logging.getLogger(__name__)
-
-def _raise_missing_link_schema(exc: DBAPIError) -> None:
-    if getattr(exc.orig, "sqlstate", None) == "42P01" or getattr(exc.orig, "pgcode", None) == "42P01":
-        raise HTTPException(503, "顾问关联表尚未就绪") from exc
-    raise exc
-
-
-def _link_schema_guard(fn):
-    @wraps(fn)
-    async def guarded(*args, **kwargs):
-        try:
-            return await fn(*args, **kwargs)
-        except DBAPIError as exc:
-            _raise_missing_link_schema(exc)
-    return guarded
-
-
-def _audit_ip(request):
-    if not request or not request.client:
-        return None
-    peer = request.client.host
-    if peer in {"127.0.0.1", "::1"}:
-        real = request.headers.get("x-real-ip")
-        if real:
-            try:
-                return str(ipaddress.ip_address(real))
-            except ValueError:
-                pass
-    return peer
-
-
-def _audit(request, *, action, actor, source, target, group, status="success", reason=None):
-    return AdvisorAccountSwitchAudit(
-        action=action, actor_user_id=actor, from_user_id=source, to_user_id=target,
-        group_id=group, status=status, reason=reason,
-        ip_address=_audit_ip(request),
-        user_agent=request.headers.get("user-agent", "")[:512] if request else None,
-        created_at=datetime.now(timezone.utc),
-    )
 
 router = APIRouter(prefix="/api/v1/auth", tags=["认证"])
 
@@ -170,225 +122,6 @@ async def me(
     if user is None or not user.is_active:
         raise HTTPException(401, "账号不存在或已停用")
     return {"user": await _user_payload(user, session)}
-
-
-async def _eligible_advisor(session: AsyncSession, user: User | None) -> bool:
-    if user is None or not user.is_active or user.tenant_id is None:
-        return False
-    role = await session.get(Role, user.role_id)
-    permissions = effective_role_permissions(role.name, role.is_system, role.permissions) if role else {}
-    if any(key.startswith("settings.") and level == "edit" for key, level in permissions.items()):
-        return False
-    return (
-        permissions.get("seo.site") == "edit" and permissions.get("seo.content") == "edit"
-    ) or (
-        permissions.get("geo.assets") == "edit" and permissions.get("geo.content") == "edit"
-    )
-
-
-class AccountLinkRequest(BaseModel):
-    user_ids: list[int] = Field(min_length=1, max_length=20)
-    group_id: UUID | None = None
-
-
-async def _require_named_account_admin(session: AsyncSession, ctx: AuthContext) -> None:
-    if ctx.user_id is None:
-        raise HTTPException(403, "需要实名平台管理员")
-    admin = await session.get(User, ctx.user_id, with_for_update=True)
-    role = await session.get(Role, admin.role_id) if admin else None
-    permissions = effective_role_permissions(role.name, role.is_system, role.permissions) if role else {}
-    if not admin or not admin.is_active or admin.tenant_id is not None or permissions.get("settings.accounts") != "edit":
-        raise HTTPException(403, "平台管理员权限已变化")
-
-
-@router.post("/account-links")
-@_link_schema_guard
-async def link_advisor_accounts(
-    req: AccountLinkRequest,
-    ctx: AuthContext = Depends(require_admin),
-    session: AsyncSession = Depends(get_session),
-    request: Request = None,
-) -> dict:
-    """A named platform administrator creates or extends an explicit advisor group."""
-    if ctx.user_id is None or len(set(req.user_ids)) != len(req.user_ids):
-        raise HTTPException(403, "需要实名平台管理员且账号不得重复")
-    if req.group_id is None and len(req.user_ids) < 2:
-        raise HTTPException(400, "新关联组至少需要两个账号")
-    from app.security.platform_admin import acquire_platform_admin_lock
-    await acquire_platform_admin_lock(session)
-    await _require_named_account_admin(session, ctx)
-    existing = list(await session.scalars(select(AdvisorAccountLink).where(
-        AdvisorAccountLink.group_id == req.group_id
-    ))) if req.group_id else []
-    if req.group_id and not existing:
-        raise HTTPException(404, "关联组不存在")
-    users = []
-    for user_id in [*(link.user_id for link in existing), *req.user_ids]:
-        user = await session.get(User, user_id, with_for_update=True)
-        if not await _eligible_advisor(session, user):
-            raise HTTPException(403, "关联组只允许已启用的单租户顾问账号")
-        users.append(user)
-    if len({user.tenant_id for user in users}) != len(users):
-        raise HTTPException(403, "关联组内每个账号必须属于不同客户")
-    for user_id in req.user_ids:
-        if await session.get(AdvisorAccountLink, user_id):
-            raise HTTPException(409, "账号已有关联组")
-    group_id = req.group_id or uuid4()
-    for user_id in req.user_ids:
-        user = next(u for u in users if u.id == user_id)
-        session.add(AdvisorAccountLink(user_id=user_id, group_id=group_id,
-                                       tenant_id=user.tenant_id, created_by=ctx.user_id))
-        session.add(_audit(request, action="link", actor=ctx.user_id, source=ctx.user_id,
-                           target=user_id, group=group_id,
-                           reason="extend" if req.group_id else "create"))
-    await session.commit()
-    return {"group_id": str(group_id), "user_ids": [user.id for user in users]}
-
-
-@router.delete("/account-links/{user_id}")
-@_link_schema_guard
-async def unlink_advisor_account(
-    user_id: int,
-    ctx: AuthContext = Depends(require_admin),
-    session: AsyncSession = Depends(get_session),
-    request: Request = None,
-) -> dict:
-    if ctx.user_id is None:
-        raise HTTPException(403, "需要实名平台管理员")
-    from app.security.platform_admin import acquire_platform_admin_lock
-    await acquire_platform_admin_lock(session)
-    await _require_named_account_admin(session, ctx)
-    link = await session.get(AdvisorAccountLink, user_id)
-    if link is None:
-        raise HTTPException(404, "账号未关联")
-    await session.delete(link)
-    session.add(_audit(request, action="unlink", actor=ctx.user_id, source=ctx.user_id,
-                       target=user_id, group=link.group_id, reason="admin_unlink"))
-    remaining = list(await session.scalars(select(AdvisorAccountLink).where(
-        AdvisorAccountLink.group_id == link.group_id, AdvisorAccountLink.user_id != user_id
-    )))
-    if len(remaining) == 1:
-        await session.delete(remaining[0])
-        session.add(_audit(request, action="unlink", actor=ctx.user_id, source=ctx.user_id,
-                           target=remaining[0].user_id, group=link.group_id, reason="group_dissolved"))
-    await session.commit()
-    return {"status": "ok"}
-
-
-@router.get("/linked-accounts")
-async def linked_accounts(
-    ctx: AuthContext = Depends(require_auth),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    if ctx.user_id is None:
-        raise HTTPException(403, "需要实名顾问账号")
-    current = await session.get(User, ctx.user_id)
-    if not await _eligible_advisor(session, current):
-        return {"accounts": []}
-    try:
-        link = await session.get(AdvisorAccountLink, ctx.user_id)
-    except DBAPIError as exc:
-        _raise_missing_link_schema(exc)
-    if link is None:
-        return {"accounts": []}
-    if link.tenant_id != current.tenant_id:
-        return {"accounts": []}
-    others = list(await session.scalars(select(User).join(
-        AdvisorAccountLink, AdvisorAccountLink.user_id == User.id
-    ).where(AdvisorAccountLink.group_id == link.group_id, User.id != ctx.user_id).order_by(User.id)))
-    accounts = []
-    for user in others:
-        if (not await _eligible_advisor(session, user) or user.tenant_id == current.tenant_id
-                or (user.locked_until is not None and user.locked_until > datetime.now(timezone.utc).replace(tzinfo=None))):
-            continue
-        target_link = await session.get(AdvisorAccountLink, user.id)
-        if not target_link or target_link.tenant_id != user.tenant_id:
-            continue
-        tenant = await session.get(Tenant, user.tenant_id)
-        if tenant:
-            accounts.append({"id": user.id, "display_name": user.display_name or user.username,
-                             "customer_name": tenant.name})
-    return {"accounts": accounts}
-
-
-class SwitchAccountRequest(BaseModel):
-    target_user_id: int = Field(gt=0)
-
-
-@router.post("/switch-account")
-async def switch_account(
-    req: SwitchAccountRequest,
-    request: Request,
-    ctx: AuthContext = Depends(require_auth),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    if ctx.user_id is None:
-        raise HTTPException(403, "需要实名顾问账号")
-    authorization = request.headers.get("authorization", "")
-    if not authorization.lower().startswith("bearer "):
-        raise HTTPException(401, "需要有效的登录凭证")
-    try:
-        claims = jwt.decode(authorization[7:].strip(), _jwt_secret(), algorithms=[JWT_ALG])
-        if claims.get("sub") != str(ctx.user_id):
-            raise ValueError("会话账号不匹配")
-        auth_exp = claims.get("auth_exp", claims["exp"])
-        root_source_id = claims.get("root_src", ctx.user_id)
-        if type(auth_exp) is not int or type(root_source_id) is not int:
-            raise ValueError("登录来源无效")
-    except (jwt.InvalidTokenError, KeyError, ValueError, TypeError) as exc:
-        raise HTTPException(401, "登录凭证无效，请重新登录") from exc
-    source = await session.get(User, ctx.user_id)
-    if not await _eligible_advisor(session, source):
-        raise HTTPException(403, "当前账号无顾问切换资格")
-    try:
-        source_link = await session.get(AdvisorAccountLink, ctx.user_id)
-    except DBAPIError as exc:
-        _raise_missing_link_schema(exc)
-    if not source_link or source_link.tenant_id != source.tenant_id:
-        raise HTTPException(403, "当前账号没有有效关联组")
-    # Serialize attempts per source, without contending with account administration.
-    await session.execute(select(func.pg_advisory_xact_lock(
-        func.hashtextextended("advisor_switch:" + str(ctx.user_id), 0))))
-    source = await session.get(User, ctx.user_id, with_for_update={"read": True}, populate_existing=True)
-    link = await session.scalar(select(AdvisorAccountLink).where(
-        AdvisorAccountLink.user_id == ctx.user_id).with_for_update(read=True))
-    if not await _eligible_advisor(session, source) or not link or link.tenant_id != source.tenant_id:
-        raise HTTPException(403, "当前账号没有有效关联组")
-    now = datetime.now(timezone.utc)
-    async def deny(message: str, reason: str):
-        session.add(_audit(request, action="switch", actor=ctx.user_id, source=ctx.user_id,
-                           target=req.target_user_id, group=link.group_id,
-                           status="denied", reason=reason))
-        await session.commit()
-        raise HTTPException(403, message)
-    recent = await session.scalar(select(func.count()).select_from(AdvisorAccountSwitchAudit).where(
-        AdvisorAccountSwitchAudit.from_user_id == ctx.user_id,
-        AdvisorAccountSwitchAudit.action == "switch",
-        AdvisorAccountSwitchAudit.created_at >= now - timedelta(minutes=1)))
-    if (recent or 0) >= 10:
-        raise HTTPException(429, "切换过于频繁，请稍后重试")
-    target_link = await session.scalar(select(AdvisorAccountLink).where(
-        AdvisorAccountLink.user_id == req.target_user_id).with_for_update(read=True))
-    if not target_link or link.group_id != target_link.group_id or source.id == req.target_user_id:
-        await deny("目标账号不在当前关联组", "not_linked")
-    target = await session.get(User, req.target_user_id, with_for_update={"read": True}, populate_existing=True)
-    locked = target and target.locked_until and target.locked_until > now.replace(tzinfo=None)
-    if (not await _eligible_advisor(session, target) or target.tenant_id == source.tenant_id
-            or target_link.tenant_id != target.tenant_id or locked):
-        await deny("目标账号不具备有效顾问资格", "target_ineligible")
-    try:
-        target_token = issue_token(target, switch_source_id=source.id,
-                                   switch_group_id=str(link.group_id),
-                                   root_source_id=root_source_id, auth_exp=auth_exp)
-    except ValueError as exc:
-        raise HTTPException(401, "原登录会话已到期，请重新登录") from exc
-    session.add(_audit(request, action="switch", actor=ctx.user_id, source=source.id,
-                       target=target.id, group=link.group_id))
-    await session.commit()
-    logger.info("advisor_account_switch from_user_id=%s to_user_id=%s at=%s",
-                source.id, target.id, now.isoformat())
-    return {"token": target_token,
-            "user": await _user_payload(target, session)}
 
 
 class ChangePasswordRequest(BaseModel):

@@ -26,7 +26,7 @@ from app.models.role import Role
 from app.models.user import User
 from app.security.api_key import resolve_api_key
 from app.security.sem_identity import ensure_sem_identity_access
-from app.permissions import OPERATOR_PERMS, effective_role_permissions
+from app.permissions import OPERATOR_PERMS
 
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _bearer = HTTPBearer(auto_error=False)
@@ -82,19 +82,13 @@ def _jwt_secret() -> str:
     return s.jwt_secret or s.admin_api_key
 
 
-def issue_token(user: User, *, switch_source_id: int | None = None,
-                switch_group_id: str | None = None, root_source_id: int | None = None,
-                auth_exp: int | None = None) -> str:
+def issue_token(user: User) -> str:
     """token 只放 user id + 过期（角色/权限运行时从库读，便于即时生效）。"""
     s = get_settings()
-    now = datetime.now(timezone.utc)
-    payload = {"sub": str(user.id), "exp": now + timedelta(hours=s.jwt_expire_hours)}
-    if switch_source_id is not None:
-        if root_source_id is None or auth_exp is None or auth_exp <= now.timestamp():
-            raise ValueError("切换会话缺少有效的原登录信息")
-        payload.update(via="advisor_switch", src=switch_source_id, grp=switch_group_id,
-                       root_src=root_source_id, auth_exp=auth_exp,
-                       exp=min(int((now + timedelta(hours=2)).timestamp()), auth_exp))
+    payload = {
+        "sub": str(user.id),
+        "exp": datetime.now(timezone.utc) + timedelta(hours=s.jwt_expire_hours),
+    }
     return jwt.encode(payload, _jwt_secret(), algorithm=JWT_ALG)
 
 
@@ -290,10 +284,7 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
 
 async def _build_context(user: User, session: AsyncSession) -> AuthContext:
     role = await session.get(Role, user.role_id)
-    perms = (
-        effective_role_permissions(role.name, role.is_system, role.permissions)
-        if role else {}
-    )
+    perms = dict(role.permissions or {}) if role else {}
     return bind_identity(AuthContext(
         user_id=user.id,
         username=user.username,
@@ -317,15 +308,9 @@ async def require_auth(
             raise HTTPException(401, "登录已过期，请重新登录")
         except jwt.InvalidTokenError:
             raise HTTPException(401, "登录凭证无效，请重新登录")
-        try:
-            user_id = int(payload["sub"])
-        except (KeyError, TypeError, ValueError):
-            raise HTTPException(401, "登录凭证无效，请重新登录")
-        user = await session.get(User, user_id)
+        user = await session.get(User, int(payload["sub"]))
         if user is None or not user.is_active:
             raise HTTPException(401, "账号不存在或已停用")
-        from app.security.advisor_switch import validate_switch_claims
-        await validate_switch_claims(session, payload, user)
         return await _build_context(user, session)
 
     # 2) admin API Key 兜底（curl / 冒烟 / 调度）
