@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.models import Role, Tenant, User
-from app.permissions import ADMIN_ROLE_NAME, effective_role_permissions, has_full_platform_admin
+from app.permissions import effective_role_permissions, has_full_platform_admin
 from app.security.auth import AuthContext, hash_password, require_admin
 from app.security.platform_admin import acquire_platform_admin_lock
 
@@ -204,7 +204,9 @@ async def delete_user(
     if user.id == ctx.user_id:
         raise HTTPException(400, "不能删除自己的账号")
     role = await session.get(Role, user.role_id)
-    if role and role.is_system and role.name == ADMIN_ROLE_NAME:
+    if role and has_full_platform_admin(
+        effective_role_permissions(role.name, role.is_system, role.permissions)
+    ):
         raise HTTPException(400, "不能删除超级管理员账号")
     user.is_active = False
     await session.commit()

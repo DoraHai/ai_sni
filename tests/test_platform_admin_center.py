@@ -250,6 +250,24 @@ def test_delete_user_rejects_self_and_builtin_superadmin():
     assert session.commits == 0
 
 
+def test_delete_user_rejects_custom_full_platform_admin():
+    editor_role = _role(2, name="账号管理员", is_system=False, permissions={"settings.accounts": "edit"})
+    admin_role = _role(
+        3, name="自定义平台管理员", is_system=False,
+        permissions={"settings.accounts": "edit", "settings.customers": "edit"},
+    )
+    actor = _user(1, role_id=editor_role.id)
+    target = _user(2, role_id=admin_role.id)
+    session = _Session(roles=[editor_role, admin_role], users=[actor, target])
+    ctx = AuthContext(actor.id, actor.username, editor_role.name, None, editor_role.permissions)
+
+    with pytest.raises(HTTPException, match="超级管理员") as error:
+        asyncio.run(delete_user(target.id, session, ctx))
+
+    assert error.value.status_code == 400
+    assert target.is_active and session.commits == 0
+
+
 def test_delete_user_uses_account_edit_gate_and_missing_id_is_404():
     route = next(
         route for route in users_router.routes
