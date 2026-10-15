@@ -1,5 +1,6 @@
 """Exercise the deployed account-page contract without accessing any real accounts."""
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -71,3 +72,18 @@ def test_unauthenticated_reset_does_not_write(reset_client):
     app.dependency_overrides[require_auth] = unauthenticated
     assert client.patch('/api/v1/users/7/password', json={'new_password': 'new-test-password'}).status_code == 401
     session.commit.assert_not_awaited()
+
+
+def test_user_list_exposes_existing_tenants_as_dropdown_options(reset_client):
+    client, session, user, *_ = reset_client
+    session.scalars.side_effect = [
+        SimpleNamespace(all=lambda: [user]),
+        SimpleNamespace(all=lambda: [SimpleNamespace(id=3, name="测试角色")]),
+        SimpleNamespace(all=lambda: [SimpleNamespace(id=5, name="测试客户")]),
+    ]
+
+    response = client.get('/api/v1/users')
+
+    assert response.status_code == 200
+    assert response.json()['tenant_options'] == [{'id': 5, 'name': '测试客户'}]
+    assert response.json()['users'][0]['tenant_name'] == '测试客户'
