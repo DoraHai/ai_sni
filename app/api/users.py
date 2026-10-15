@@ -46,6 +46,10 @@ async def list_users(session: AsyncSession = Depends(get_session)) -> dict:
     return {
         "users": [_payload(u, role_names, tenant_names) for u in users],
         "role_options": [{"id": rid, "label": name} for rid, name in role_names.items()],
+        "tenant_options": [
+            {"id": tenant_id, "name": name}
+            for tenant_id, name in tenant_names.items()
+        ],
     }
 
 
