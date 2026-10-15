@@ -8,8 +8,8 @@
 
 ## DB 审核与发布顺序
 
-两张表由正式迁移 `0108_advisor_account_links`（`down_revision=0107_seo_site_delete`）创建。三服务共用数据库，共享迁移链位于 SEO 分支（`codex/production-seo` 的 `migrations/versions/20261015_0108_advisor_account_links.py`），本分支 Alembic 链不包含 0107，因此不在此重复迁移文件。同一 SEO 提交已把 0108 加入 `app/seo_main.py` 的两个兼容集合与结构检查集合，以及 `app/api/seo.py`、`app/api/seo_messages.py`、`app/seo_content_workflow.py` 的白名单。迁移只建表；`sem_app` 的默认权限会给 `sem_runtime` 自动授予增删改查，须由 DB 审核包中的精确权限脚本在同一事务内收回多余权限：关联表仅 SELECT/INSERT/DELETE 与 `UPDATE (created_at)`（`FOR SHARE` 需要），审计表仅 SELECT/INSERT，序列不授权。迁移须经 DB 审核后由负责人执行，开发分支不得自行执行。
+本分支的 `migrations/pending-db-review/advisor_account_links.sql` **只是审核草案，不能直接执行**；它仅新增关联表与审计表，不挂在本分支 Alembic 链上。三服务共用数据库，DB 负责人须核实现场 head，在其后分配正式修订号并纳入统一迁移链。SEO 的精确修订门禁须把正式修订号同时加入 `app/seo_main.py` 的 `SEO_COMPATIBLE_SCHEMA_REVISIONS` 和 `SEO_GEO_TICKET_REQUIRED_REVISIONS` 两个集合，以及 `app/api/seo.py`、`app/api/seo_messages.py`、`app/seo_content_workflow.py` 的白名单；其他同类门禁也须同步，然后才能应用迁移。当前代码已将 SEO 0107 纳入相关确认和消息门禁；未来正式修订号未确定，不能提前列入。
 
 发布顺序：先发布带切换 JWT 复核的 SEO 和 GEO 服务，再由 DB 负责人执行审核后的正式迁移，最后发布 SEM 并开放切换、建立关联组。任何服务缺少复核时，不能开放切换；否则该服务在切换 JWT 到期前无法立即撤销派生会话。
 
-迁移使用租户快照、`timestamptz`、审计状态和动作 CHECK 与明确的用户外键删除语义。降级删除两张表会永久丢失审计，需单独批准并先备份。代码早于建表部署时，已登录且具顾问资格的 `/linked-accounts`、`/switch-account` 和管理员关联接口对 PostgreSQL 未定义表错误返回 503，SEO/GEO 对切换 token 返回 401。
+SQL 草案使用租户快照、`timestamptz`、审计状态和动作 CHECK 与明确的用户外键删除语义。降级删除两张表会永久丢失审计，需单独批准。代码早于建表部署时，已登录且具顾问资格的 `/linked-accounts`、`/switch-account` 和管理员关联接口对 PostgreSQL 未定义表错误返回 503。整个流程须走 DB 审核；此开发任务不连接真实数据库、不执行迁移。
