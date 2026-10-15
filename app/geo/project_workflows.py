@@ -30,8 +30,10 @@ async def advisor_available(session, tenant_id, user_id, *, lock=False):
     if user is None or not user.is_active or user.tenant_id not in {None, tenant_id}:
         return False
     role = await session.get(Role, user.role_id, **load_options)
-    perms = role.permissions if role else {}
-    return perms.get("geo.content") == "edit" and perms.get("geo.assets") == "edit"
+    perms = role.permissions or {} if role else {}
+    return (perms.get("geo.content") == "edit" and perms.get("geo.assets") == "edit"
+            and not (role.is_system and role.name == "管理员")
+            and not any(k.startswith("settings.") and v == "edit" for k, v in perms.items()))
 
 
 async def ensure_ticket_project(session, row, tenant_id, prompt_id, project_id=None, *, business_id=None):
@@ -48,7 +50,8 @@ async def ensure_ticket_project(session, row, tenant_id, prompt_id, project_id=N
         raise HTTPException(404, "目标问题不属于当前项目")
 
 
-async def save_plan(session, tenant_id, project_id, values, expected_revision, actor_id):
+async def save_plan(session, tenant_id, project_id, values, expected_revision, actor_id,
+                    *, allow_advisor_change=False):
     await session.scalar(select(Tenant.id).where(Tenant.id == tenant_id).with_for_update())
     project = await session.get(GeoProject, project_id, with_for_update=True, populate_existing=True)
     if project is None or project.tenant_id != tenant_id:
@@ -56,6 +59,13 @@ async def save_plan(session, tenant_id, project_id, values, expected_revision, a
     current = plan_for(project)
     if current["revision"] != expected_revision:
         raise HTTPException(409, "服务计划已更新，请重新读取")
+    advisor_user_id = values.get("advisor_user_id", current.get("advisor_user_id"))
+    if advisor_user_id != current.get("advisor_user_id") and not allow_advisor_change:
+        raise HTTPException(403, "只有平台管理员可以指定或变更 GEO 顾问")
+    if advisor_user_id != current.get("advisor_user_id") and advisor_user_id is not None:
+        if not await advisor_available(session, tenant_id, advisor_user_id, lock=True):
+            raise HTTPException(409, "指定的 GEO 顾问账号无效")
+    values = {**values, "advisor_user_id": advisor_user_id}
     _, business_ids = await project_scope(session, tenant_id, project_id)
     ids = set(await prompt_ids_for_businesses(session, tenant_id, business_ids))
     selected = sorted(set(values["prompt_ids"]))
@@ -67,6 +77,10 @@ async def save_plan(session, tenant_id, project_id, values, expected_revision, a
         "updated_by": actor_id, "updated_at": datetime.now(timezone.utc).isoformat()}
     project.project_settings = {**(project.project_settings or {}), PLAN_KEY: result}
     await session.flush()
+    if advisor_user_id != current.get("advisor_user_id"):
+        logger.info("geo_advisor_assignment_changed tenant_id=%s project_id=%s old_user_id=%s new_user_id=%s actor_user_id=%s revision=%s at=%s",
+                    tenant_id, project_id, current.get("advisor_user_id"), advisor_user_id,
+                    actor_id, result["revision"], result["updated_at"])
     return result
 
 

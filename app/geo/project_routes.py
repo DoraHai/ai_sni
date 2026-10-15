@@ -180,9 +180,30 @@ async def update_project_plan(project_id: int, tenant_id: int, req: GeoServicePl
         raise HTTPException(403, "配置服务计划需要项目与内容编辑权限")
     from app.geo.project_workflows import save_plan
     values = req.model_dump(exclude={"expected_revision"})
-    result = await save_plan(session, tenant_id, project_id, values, req.expected_revision, ctx.user_id)
+    if "advisor_user_id" not in req.model_fields_set:
+        values.pop("advisor_user_id")
+    can_assign_advisor = ctx.tenant_id is None and ctx.can_edit("settings.accounts")
+    result = await save_plan(session, tenant_id, project_id, values, req.expected_revision,
+                             ctx.user_id, allow_advisor_change=can_assign_advisor)
     await session.commit()
     return {"project_id": project_id, "service_plan": result}
+
+
+@geo_projects_router.get("/api/v1/geo/projects/{project_id}/advisor-candidates")
+async def project_advisor_candidates(project_id: int, tenant_id: int,
+                                     ctx: AuthContext = Depends(require_scoped_auth),
+                                     session: AsyncSession = Depends(get_session)):
+    await ensure_module_access(session, ctx, tenant_id, "geo")
+    if ctx.user_id is None or ctx.tenant_id is not None or not ctx.can_edit("settings.accounts"):
+        raise HTTPException(403, "只有实名平台管理员可以选择项目顾问")
+    from app.geo.project_workflows import advisor_available
+    from app.models import User
+    project = await session.get(GeoProject, project_id)
+    if not project or project.tenant_id != tenant_id:
+        raise HTTPException(404, "GEO 项目不存在")
+    users = list(await session.scalars(select(User).where(User.is_active.is_(True)).order_by(User.id)))
+    return {"accounts": [{"id": user.id, "name": user.display_name or user.username}
+                         for user in users if await advisor_available(session, tenant_id, user.id)]}
 
 
 @geo_projects_router.get("/api/v1/geo/projects/{project_id}/executions")
@@ -212,7 +233,11 @@ async def project_executions(project_id: int, tenant_id: int,
             "workflow": (row.progress or {}).get("project_workflow"),
             "links": {"ticket": f"/geo/tickets?ticket_id={row.id}",
                 "content": f"/geo/tasks/{execution['selected_task_id']}" if execution["selected_task_id"] else None}})
+    from app.models import User
+    advisor_id = plan_for(project).get("advisor_user_id")
+    advisor = await session.get(User, advisor_id) if advisor_id else None
     return {"project_id": project_id, "business_scope": binding(project), "service_plan": plan_for(project),
+        "advisor_name": (advisor.display_name or advisor.username) if advisor else None,
         "blocker": (project.project_settings or {}).get("geo_workflow_blocker"),
         "effective_pause": project.status != "active" or plan_for(project).get("status") != "active",
         "prompts": [{"id": p.id, "question": p.question} for p in prompts[:200]],

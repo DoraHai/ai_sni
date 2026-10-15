@@ -2,12 +2,14 @@
 import { ref, reactive, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { session } from '../store/session'
-import { fetchGeoProjectExecutions, saveGeoProjectPlan } from '../api/geoProjects'
+import { fetchGeoProjectExecutions, fetchGeoAdvisorCandidates, saveGeoProjectPlan } from '../api/geoProjects'
 import GeoTicketExecution from './GeoTicketExecution.vue'
 
 const props = defineProps({ projectId: { type: Number, required: true }, tenantId: [Number, String] })
 const data = ref(null), loading = ref(false), saving = ref(false), error = ref('')
-const form = reactive({ enabled: false, status: 'paused', prompt_ids: [], interval_days: 7 })
+const candidates = ref([])
+const form = reactive({ enabled: false, status: 'paused', prompt_ids: [], interval_days: 7, advisor_user_id: null })
+const canAssignAdvisor = () => !!session.user?.id && session.user.tenant_id == null && session.canEdit('settings.accounts')
 const labels = { baseline: '保留修改前证据', content: '准备内容任务', materials: '补齐创作要求与事实',
   article: '制作内容', review: '确认当前内容版本', publication: '发布与回填', retest: '同题复测',
   comparison: '核对前后变化', acceptance: '顾问验收' }
@@ -17,10 +19,14 @@ async function load() {
   data.value = null; error.value = ''; loading.value = true
   try {
     const result = await fetchGeoProjectExecutions(props.projectId, props.tenantId)
+    const options = canAssignAdvisor()
+      ? await fetchGeoAdvisorCandidates(props.projectId, props.tenantId) : { accounts: [] }
     if (current !== generation) return
     data.value = result
+    candidates.value = options.accounts
     Object.assign(form, { enabled: result.service_plan.enabled, status: result.service_plan.status,
-      prompt_ids: [...result.service_plan.prompt_ids], interval_days: result.service_plan.interval_days })
+      prompt_ids: [...result.service_plan.prompt_ids], interval_days: result.service_plan.interval_days,
+      advisor_user_id: result.service_plan.advisor_user_id ?? null })
   } catch (e) { if (current === generation) error.value = e.message || '执行进度读取失败' }
   finally { if (current === generation) loading.value = false }
 }
@@ -31,7 +37,7 @@ async function save() {
   try {
     await saveGeoProjectPlan(props.projectId, props.tenantId, { ...form,
       expected_revision: data.value.service_plan.revision,
-      advisor_user_id: data.value.service_plan.advisor_user_id || session.user?.id || null })
+      advisor_user_id: canAssignAdvisor() ? form.advisor_user_id : data.value.service_plan.advisor_user_id ?? null })
     if (current !== generation) return
     ElMessage.success('项目服务计划已保存')
     await load()
@@ -56,7 +62,13 @@ onBeforeUnmount(() => { generation++ })
         <el-form-item label="计划状态"><el-select v-model="form.status" :disabled="saving"><el-option label="运行" value="active" /><el-option label="暂停" value="paused" /></el-select></el-form-item>
         <el-form-item label="目标问题"><el-select v-model="form.prompt_ids" multiple :multiple-limit="20" :disabled="saving" style="width:100%"><el-option v-for="p in data.prompts" :key="p.id" :value="p.id" :label="p.question" /></el-select></el-form-item>
         <el-form-item label="周期天数"><el-input-number v-model="form.interval_days" :min="1" :max="90" :disabled="saving" /></el-form-item>
-        <p>新计划由当前顾问负责。已开启的周期不会自动替客户确认稿件，也不会直接调用付费采样或发布渠道。</p>
+        <p>项目顾问由平台管理员指定。已开启的周期不会自动替客户确认稿件，也不会直接调用付费采样或发布渠道。</p>
+        <el-form-item v-if="canAssignAdvisor()" label="项目顾问">
+          <el-select v-model="form.advisor_user_id" clearable :disabled="saving" placeholder="未指定">
+            <el-option v-for="u in candidates" :key="u.id" :value="u.id" :label="u.name" />
+          </el-select>
+        </el-form-item>
+        <p v-else>已分配顾问：{{ data.advisor_name || '未指定' }}（仅平台管理员可变更）</p>
         <el-button type="primary" :loading="saving" @click="save">保存服务计划</el-button>
       </el-form>
       <p v-else>{{ data.service_plan.enabled ? '已开启周期待办' : '周期待办尚未开启' }} · 每 {{ data.service_plan.interval_days }} 天</p>
