@@ -43,7 +43,7 @@ async function mountEditor(draft, status = 'drafting', saveDraft = value => valu
     fetchSeoSitePages: async () => ({ items: [{ id: 234, title: '来源 Title', meta_description: '当前描述', h1: '当前 H1', title_suggestion: '建议 Title', description_suggestion: '建议描述', audit_score: 73, issue_codes: ['title', 'h1_missing'], last_checked_at: '2026-09-05T02:00:00+08:00', diagnostic: { assessment_state: 'assessed' }, url: 'https://example.com/page' }] }),
     updateSeoContentAsset: async args => { writes.push(args); row = { ...row, ...args.payload, ...('draft' in args.payload ? { draft: saveDraft(args.payload.draft) } : {}), version_count: row.version_count + 1 }; return row },
     createSeoContentAsset: () => { throw Error('Must not create another task') },
-    assistSeoContent: () => { throw Error('Must not call AI') },
+    assistSeoContent: options.assistSeoContent || (() => { throw Error('Must not call AI') }),
     submitSeoContentReview: () => { throw Error('Must not submit a review') },
   }
   const Component = new Function('b', `const {${Object.keys(bindings).join(',')}}=b;${code};return component`)(bindings)
@@ -92,6 +92,20 @@ async function mountContentList(rows, canEdit = true) {
 }
 
 const acceptanceText = '【验收勿发布】仅验证编辑器保存，不调用 AI、不审核、不发布。\n第一段：NORD 操作手册测试。\n第二段：保留换行与中文尾字，正常。\n字面标签：<h1>R&D</h1>\n字面实体：&amp; 与 &lt; 保持原样。\n测试链接：https://example.com/?a=1&b=2'
+
+test('AI assist keeps an existing title and fills only an empty title', async () => {
+  const view = await mountEditor('', 'drafting', value => value, {
+    assistSeoContent: async () => ({ title: 'AI 建议标题' }),
+  })
+  try {
+    assert.equal(view.state.form.title, '验收勿发布')
+    await view.state.assist('outline')
+    assert.equal(view.state.form.title, '验收勿发布')
+    view.state.form.title = '   '
+    await view.state.assist('outline')
+    assert.equal(view.state.form.title, 'AI 建议标题')
+  } finally { view.close() }
+})
 
 test('bound content shows archived program evidence without calling AI', async () => {
   const view = await mountEditor('', 'planned')

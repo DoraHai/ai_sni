@@ -398,7 +398,7 @@ async function assist(action) {
   aiMessage.value = ''
   try {
     const result = await assistSeoContent(buildAssistPayload(action, draftText))
-    if (result.title) form.title = result.title
+    if (result.title && !form.title.trim()) form.title = result.title
     if (result.outline) form.outline = result.outline
     if (result.content) {
       const html = textToHtml(result.content)
