@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { createTenant, createUser, fetchTenants, fetchUsers, updateUser } from '../../api/auth'
+import { createTenant, createUser, deleteUser, fetchTenants, fetchUsers, updateUser } from '../../api/auth'
 import { createRole, deleteRole, fetchRoles, updateRole } from '../../api/roles'
 import { session } from '../../store/session'
 
@@ -178,6 +178,17 @@ async function toggleActive(row) {
   } catch (e) { ElMessage.error(e.message) }
 }
 
+async function removeUser(row) {
+  try {
+    await ElMessageBox.confirm(`确认删除账号「${row.username}」？账号将停用，历史记录会保留。`, '删除账号', { type: 'warning' })
+  } catch { return }
+  try {
+    await deleteUser(row.id)
+    ElMessage.success('账号已删除（停用）')
+    await load()
+  } catch (e) { ElMessage.error(e.message || '删除账号失败') }
+}
+
 // ===== 角色 =====
 const roleDialog = ref(false)
 const savingRole = ref(false)
@@ -324,7 +335,7 @@ onMounted(load)
             <el-table-column label="最近登录" width="140">
               <template #default="{ row }"><span class="sub">{{ fmtTime(row.last_login_at) }}</span></template>
             </el-table-column>
-            <el-table-column label="操作" width="230">
+            <el-table-column label="操作" width="300">
               <template #default="{ row }">
                 <el-button size="small" @click="openEditUser(row)">编辑</el-button>
                 <el-button
@@ -332,6 +343,7 @@ onMounted(load)
                   :disabled="row.id === session.user?.id"
                   @click="toggleActive(row)"
                 >{{ row.is_active ? '停用' : '启用' }}</el-button>
+                <el-button size="small" type="danger" plain :disabled="row.id === session.user?.id" @click="removeUser(row)">删除</el-button>
               </template>
             </el-table-column>
             <template #empty>
