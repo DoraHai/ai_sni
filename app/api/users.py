@@ -2,6 +2,8 @@
 
 角色由 role_id 指向 roles 表（自定义角色）；tenant_id = 限定单客户（可选，独立于角色）。
 """
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -9,8 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.models import Role, Tenant, User
+from app.permissions import PLATFORM_ADMIN_KEYS, effective_role_permissions
 from app.security.auth import AuthContext, hash_password, require_admin
 from app.platform_operations import audit_business
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/v1/users",
@@ -136,6 +141,29 @@ async def update_user(
         after['password_changed'] = True
     await audit_business(session, ctx, 'user:' + str(user.id), 'user.update', before, after)
     await session.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/{user_id}")
+async def delete_user(
+    user_id: int,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_admin),
+) -> dict:
+    user = await session.get(User, user_id, with_for_update=True)
+    if user is None:
+        raise HTTPException(404, "用户不存在")
+    if user.id == ctx.user_id:
+        raise HTTPException(400, "不能删除自己的账号")
+    role = await session.get(Role, user.role_id)
+    permissions = effective_role_permissions(role.name, role.is_system, role.permissions) if role else {}
+    if user.tenant_id is None and all(permissions.get(key) == "edit" for key in PLATFORM_ADMIN_KEYS):
+        raise HTTPException(400, "不能删除超级管理员账号")
+    before = _audit_state(user)
+    user.is_active = False
+    await audit_business(session, ctx, 'user:' + str(user.id), 'user.delete', before, _audit_state(user))
+    await session.commit()
+    logger.info("account_deactivated actor_user_id=%s target_user_id=%s", ctx.user_id, user_id)
     return {"status": "ok"}
 
 
