@@ -7496,6 +7496,32 @@ async def upsert_advisor_assignment(
     }
 
 
+@router.delete("/workbench/advisor-assignments/{assignment_id}")
+async def delete_advisor_assignment(
+    assignment_id: PositiveInt,
+    tenant_id: PositiveInt,
+    site_id: PositiveInt,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, str]:
+    ctx.ensure_tenant(tenant_id)
+    if not await _content_confirmation_schema_ready(session):
+        raise HTTPException(503, "顾问分配能力尚未完成数据库迁移")
+    if (
+        ctx.user_id is None
+        or not ctx.can_edit("seo.content")
+        or not ctx.can_edit("settings.accounts")
+    ):
+        raise HTTPException(403, "顾问分配必须由实名账号管理员操作")
+    await _seo_site(session, tenant_id, site_id)
+    row = await session.get(SeoSiteAdvisorAssignment, assignment_id, with_for_update=True)
+    if row is None or row.tenant_id != tenant_id or row.site_id != site_id:
+        raise HTTPException(404, "顾问分配不存在")
+    await session.delete(row)
+    await session.commit()
+    return {"status": "ok"}
+
+
 @router.post("/content-assets")
 async def create_content_asset(req: ContentCreate, session: AsyncSession = Depends(get_session), ctx: AuthContext = Depends(require_scoped_auth)) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
