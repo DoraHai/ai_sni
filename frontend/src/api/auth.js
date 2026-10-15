@@ -41,6 +41,10 @@ export function updateUser(userId, patch) {
   return client.patch(`/api/v1/users/${userId}`, patch)
 }
 
+export function deleteUser(userId) {
+  return client.delete(`/api/v1/users/${userId}`)
+}
+
 export function resetUserPassword(userId, newPassword) {
   return client.patch(`/api/v1/users/${userId}/password`, { new_password: newPassword })
 }
