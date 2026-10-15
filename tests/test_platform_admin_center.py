@@ -24,6 +24,7 @@ from app.api.users import (
     ResetPasswordRequest,
     UpdateUserRequest,
     _payload as user_payload,
+    delete_user,
     reset_user_password,
     update_user,
 )
@@ -211,6 +212,41 @@ def test_accounts_only_admin_can_edit_own_non_privilege_fields():
     assert result == {"status": "ok"}
     assert actor.display_name == "新显示名"
     assert session.commits == 1
+
+
+def test_delete_user_deactivates_and_logs_without_erasing_history(caplog):
+    role = _role(2, name="账号管理员", is_system=False, permissions={"settings.accounts": "edit"})
+    actor = _user(1, role_id=role.id)
+    target = _user(2, role_id=role.id)
+    session = _Session(roles=[role], users=[actor, target])
+    ctx = AuthContext(actor.id, actor.username, role.name, None, role.permissions)
+
+    with caplog.at_level("INFO", logger="app.api.users"):
+        result = asyncio.run(delete_user(target.id, session, ctx))
+
+    assert result == {"status": "ok"}
+    assert target.is_active is False
+    assert target in session.users
+    assert session.commits == 1
+    assert "account_deactivated actor_user_id=1 target_user_id=2" in caplog.text
+
+
+def test_delete_user_rejects_self_and_builtin_superadmin():
+    role = _role(2, name="账号管理员", is_system=False, permissions={"settings.accounts": "edit"})
+    admin_role = _role()
+    actor = _user(1, role_id=role.id)
+    admin = _user(2, role_id=admin_role.id)
+    session = _Session(roles=[role, admin_role], users=[actor, admin])
+    ctx = AuthContext(actor.id, actor.username, role.name, None, role.permissions)
+
+    with pytest.raises(HTTPException, match="自己的账号") as self_error:
+        asyncio.run(delete_user(actor.id, session, ctx))
+    with pytest.raises(HTTPException, match="超级管理员") as admin_error:
+        asyncio.run(delete_user(admin.id, session, ctx))
+
+    assert self_error.value.status_code == admin_error.value.status_code == 400
+    assert actor.is_active and admin.is_active
+    assert session.commits == 0
 
 
 def test_password_reset_is_separate_and_never_serializes_password_or_hash(monkeypatch):
