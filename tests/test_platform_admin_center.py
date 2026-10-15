@@ -24,10 +24,11 @@ from app.api.users import (
     ResetPasswordRequest,
     UpdateUserRequest,
     _payload as user_payload,
+    list_users,
     reset_user_password,
     update_user,
 )
-from app.models import Role, User
+from app.models import Role, Tenant, User
 from app.permissions import effective_role_permissions, has_full_platform_admin
 from app.security.auth import AuthContext, _build_context, require_admin
 
@@ -44,9 +45,10 @@ class _Rows:
 
 
 class _Session:
-    def __init__(self, *, roles=(), users=(), user_query_rows=None):
+    def __init__(self, *, roles=(), users=(), tenants=(), user_query_rows=None):
         self.roles = list(roles)
         self.users = list(users)
+        self.tenants = list(tenants)
         self.user_query_rows = user_query_rows
         self.commits = 0
 
@@ -58,6 +60,8 @@ class _Session:
         entity = statement.column_descriptions[0].get("entity")
         if entity is Role:
             return _Rows(self.roles)
+        if entity is Tenant:
+            return _Rows(self.tenants)
         rows = self.users if self.user_query_rows is None else self.user_query_rows
         return _Rows(rows)
 
@@ -89,6 +93,17 @@ def _user(user_id=1, *, role_id=1, tenant_id=None, active=True):
         tenant_id=tenant_id,
         is_active=active,
     )
+
+
+def test_account_list_includes_tenant_options_for_create_dialog():
+    role = _role()
+    tenant = Tenant(id=7, name="测试客户")
+    user = _user(2, tenant_id=tenant.id)
+
+    result = asyncio.run(list_users(_Session(roles=[role], users=[user], tenants=[tenant])))
+
+    assert result["tenant_options"] == [{"id": 7, "name": "测试客户"}]
+    assert result["users"][0]["tenant_name"] == "测试客户"
 
 
 def test_only_trusted_builtin_administrator_receives_dual_platform_invariant():
