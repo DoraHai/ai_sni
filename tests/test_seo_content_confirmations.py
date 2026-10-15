@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import DBAPIError
 
 from app.api.seo import (
     ContentConfirmationRequest,
@@ -12,7 +13,9 @@ from app.api.seo import (
     SeoServicePlanUpdate,
     _content_allowed_actions,
     _content_confirmation_hash,
+    _content_confirmation_schema_ready,
     _content_confirmation_status,
+    _validated_content_confirmation_status,
     _content_delivery_payload,
     _publication_attempt_requires_manual_check,
     _require_active_content_confirmation,
@@ -22,6 +25,10 @@ from app.api.seo import (
     update_seo_service_plan,
 )
 from app.models.seo import SeoContentAsset, SeoContentConfirmation, SeoPublishAttempt
+from app.models.user import User
+from app.models.role import Role
+from app.api.seo_messages import scope as message_scope
+from app.seo_customer_identity import customer_account_for_tenant
 from app.security.auth import AuthContext, _required
 
 
@@ -73,6 +80,83 @@ def test_confirmation_hash_and_status_are_bound_to_exact_customer_payload() -> N
     assert _content_confirmation_status(row, confirmation) == "stale"
 
 
+def test_historical_internal_customer_direct_confirmation_is_pending():
+    row = _content()
+    confirmation = SeoContentConfirmation(
+        tenant_id=1, site_id=9, content_asset_id=88, content_version=3,
+        content_hash=_content_confirmation_hash(row), decision="approve",
+        actor_mode="customer_direct", actor_user_id=11,
+    )
+    with patch("app.api.seo.customer_account_for_tenant", new=AsyncMock(return_value=False)):
+        assert asyncio.run(_validated_content_confirmation_status(AsyncMock(), row, confirmation)) == "pending"
+
+
+@pytest.mark.parametrize("revision", ["0106_seo_content_messages", "0107_seo_site_delete", "0108_advisor_account_links"])
+def test_message_customer_path_uses_the_same_identity_rule(revision):
+    session = AsyncMock()
+    revisions = MagicMock()
+    revisions.scalars.return_value = [revision]
+    session.execute.return_value = revisions
+    user = User(id=7, username="customer", role_id=1, tenant_id=1,
+                is_active=True, password_hash="unused")
+    session.scalar.side_effect = [user, _content()]
+    session.get.return_value = SimpleNamespace(tenant_id=1)
+    session.scalars.return_value = []
+    ctx = AuthContext(7, "customer", "品牌方客户", 1, {"seo.content": "view"})
+    with (patch("app.api.seo_messages.ensure_module_access", new=AsyncMock()),
+          patch("app.api.seo_messages.seo_site_is_operational", new=AsyncMock(return_value=True)),
+          patch("app.api.seo_messages.customer_account_for_tenant", new=AsyncMock(return_value=True)) as customer):
+        actor, _ = asyncio.run(message_scope(session, ctx, 1, 9, 88))
+        assert actor["kind"] == "customer"
+        customer.assert_awaited_once_with(session, ctx, 1, lock=False)
+
+
+@pytest.mark.parametrize("revision", ["0107_seo_site_delete", "0108_advisor_account_links"])
+def test_content_confirmation_gate_accepts_reviewed_later_revisions(revision):
+    session = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = revision
+    session.execute.return_value = result
+    assert asyncio.run(_content_confirmation_schema_ready(session)) is True
+
+
+def test_customer_identity_fails_closed_when_geo_table_is_unavailable():
+    session = AsyncMock()
+    session.begin_nested = MagicMock()
+    user = User(id=7, username="customer", role_id=1, tenant_id=1,
+                is_active=True, password_hash="unused")
+    role = Role(id=1, name="品牌方客户", is_system=True,
+                permissions={"seo.content": "view"})
+    session.scalar.side_effect = [user, DBAPIError("SELECT", {}, Exception("missing table"))]
+    session.get.return_value = role
+    session.scalars.return_value = []
+    ctx = AuthContext(7, "customer", "品牌方客户", 1, {"seo.content": "view"})
+    assert asyncio.run(customer_account_for_tenant(session, ctx, 1)) is False
+
+
+def test_customer_identity_read_only_session_uses_no_share_locks():
+    session = AsyncMock()
+    session.begin_nested = MagicMock()
+    user = User(id=7, username="customer", role_id=1, tenant_id=1,
+                is_active=True, password_hash="unused")
+    role = Role(id=1, name="品牌方客户", is_system=True,
+                permissions={"seo.content": "view"})
+    async def scalar(statement):
+        assert "FOR SHARE" not in str(statement)
+        return user if "FROM users" in str(statement) else None
+    async def get(_model, _ident, **kwargs):
+        assert "with_for_update" not in kwargs
+        return role
+    async def scalars(statement):
+        assert "FOR SHARE" not in str(statement)
+        return []
+    session.scalar.side_effect = scalar
+    session.get.side_effect = get
+    session.scalars.side_effect = scalars
+    ctx = AuthContext(7, "customer", "品牌方客户", 1, {"seo.content": "view"})
+    assert asyncio.run(customer_account_for_tenant(session, ctx, 1)) is True
+
+
 def test_global_content_editor_is_not_implicitly_an_assigned_advisor() -> None:
     session = AsyncMock()
     session.scalar = AsyncMock(return_value=None)
@@ -88,7 +172,7 @@ def test_global_content_editor_is_not_implicitly_an_assigned_advisor() -> None:
     assert basis["tenant_bound_customer_account"] is False
 
 
-def test_tenant_bound_customer_editor_is_not_treated_as_advisor_without_assignment() -> None:
+def test_tenant_bound_content_editor_is_not_customer_without_assignment() -> None:
     session = AsyncMock()
     session.scalar = AsyncMock(return_value=None)
 
@@ -96,9 +180,9 @@ def test_tenant_bound_customer_editor_is_not_treated_as_advisor_without_assignme
         _content_allowed_actions(session, _content(), _ctx(tenant_id=1), "pending")
     )
 
-    assert actions["confirm_as_customer"] is True
+    assert actions["confirm_as_customer"] is False
     assert actions["confirm_as_advisor_proxy"] is False
-    assert basis["tenant_bound_customer_account"] is True
+    assert basis["tenant_bound_customer_account"] is False
     assert basis["active_site_advisor_assignment"] is False
 
 
@@ -164,8 +248,71 @@ def test_assigned_tenant_editor_cannot_masquerade_as_customer_direct() -> None:
             )
 
     assert raised.value.status_code == 403
-    assert "顾问代确认模式" in raised.value.detail
+    assert "真实客户账号" in raised.value.detail
     session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("case,expected", [
+    ("customer", True), ("editor", False), ("other_site_advisor", False),
+    ("other_site_assignment_viewer", False),
+    ("administrator", False), ("cross_tenant", False), ("api_key", False),
+    ("internal_viewer", False), ("geo_editor", False), ("custom_customer_name", False),
+    ("geo_advisor", False), ("disabled", False), ("actor_mismatch", False),
+    ("tenant_api_key", False),
+])
+def test_customer_confirmation_identity_matches_allowed_actions(case, expected):
+    row = _content()
+    permissions = {"seo.content": "view"}
+    tenant = 2 if case == "cross_tenant" else 1
+    if case in {"editor", "other_site_advisor"}:
+        permissions["seo.content"] = "edit"
+    if case == "administrator":
+        permissions["settings.accounts"] = "edit"
+    if case == "geo_editor":
+        permissions["geo.content"] = "edit"
+    ctx = AuthContext(None if case in {"api_key", "tenant_api_key"} else 7, "actor", "customer",
+                      None if case == "api_key" else tenant, permissions,
+                      is_superadmin=case in {"api_key", "tenant_api_key"})
+    if case == "internal_viewer":
+        ctx.role_name = "operations"
+    user = User(id=8 if case == "actor_mismatch" else 7, username="actor", role_id=1, tenant_id=tenant,
+                is_active=case != "disabled", password_hash="unused")
+    role = Role(id=1, name="customer" if case == "custom_customer_name" else
+                "operations" if case == "internal_viewer" else "品牌方客户",
+                is_system=case != "custom_customer_name", permissions=permissions)
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.begin_nested = MagicMock()
+
+    async def get(model, ident, **kwargs):
+        return row if model is SeoContentAsset else user if model is User else role if model is Role else None
+
+    session.get.side_effect = get
+    async def scalar(statement):
+        if "FROM users" in str(statement):
+            return user
+        if "FROM geo_projects" in str(statement):
+            return 55 if case == "geo_advisor" else None
+        return None
+    session.scalar.side_effect = scalar
+    session.scalars.return_value = [88] if case in {"other_site_advisor", "other_site_assignment_viewer"} else []
+    req = ContentConfirmationRequest(version_count=3, payload_hash=_content_confirmation_hash(row),
+                                      decision="approve", actor_mode="customer_direct")
+    with (patch("app.api.seo._content_confirmation_schema_ready", new=AsyncMock(return_value=True)),
+          patch("app.api.seo._require_resource_operational_site", new=AsyncMock()),
+          patch("app.api.seo._content_delivery_payload", new=AsyncMock(return_value={"ok": True}))):
+        actions, basis = asyncio.run(_content_allowed_actions(session, row, ctx, "pending"))
+        assert actions["confirm_as_customer"] is expected
+        assert actions["reject_as_customer"] is expected
+        assert basis["tenant_bound_customer_account"] is expected
+        if expected:
+            assert asyncio.run(create_content_confirmation(88, 1, req, session, ctx)) == {"ok": True}
+            session.commit.assert_awaited_once()
+        else:
+            with pytest.raises(HTTPException) as denied:
+                asyncio.run(create_content_confirmation(88, 1, req, session, ctx))
+            assert denied.value.status_code == 403
+            session.commit.assert_not_awaited()
 
 
 def test_assigned_advisor_proxy_confirmation_records_real_actor_and_exact_version() -> None:

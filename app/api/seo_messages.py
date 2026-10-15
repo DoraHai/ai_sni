@@ -11,6 +11,7 @@ from app.models.module_workspace import SeoSite
 from app.models.seo import SeoContentAsset, SeoSiteAdvisorAssignment
 from app.models.seo_messages import SeoContentConversation as Conversation, SeoConversationParticipant as Participant, SeoContentMessage as Message
 from app.module_scope import ensure_module_access, seo_site_is_operational
+from app.seo_customer_identity import customer_account_for_tenant
 
 SCHEMA = "0106_seo_content_messages"
 router = APIRouter(prefix="/workbench/content-assets/{content_id}/conversation", tags=["SEO human messages"])
@@ -50,7 +51,7 @@ async def scope(session, ctx, tenant_id, site_id, content_id, *, write=False):
         raise error(403, "conversation_forbidden", "需要获授权的实名客户或站点顾问")
     await ensure_module_access(session, ctx, tenant_id, "seo")
     revisions = list((await session.execute(text("SELECT version_num FROM alembic_version"))).scalars())
-    if revisions != [SCHEMA]:
+    if len(revisions) != 1 or revisions[0] not in {SCHEMA, "0107_seo_site_delete", "0108_advisor_account_links"}:
         raise error(503, "conversation_schema_unavailable", "站内沟通结构尚未就绪")
     # Shared locks keep account activation and assignment stable through this request.
     user = await session.scalar(select(User).where(User.id == ctx.user_id).with_for_update(read=True))
@@ -69,7 +70,7 @@ async def scope(session, ctx, tenant_id, site_id, content_id, *, write=False):
         if not ctx.can_edit("seo.content") or not assignment or not assignment.active:
             raise error(403, "conversation_forbidden", "当前账号没有活动站点顾问分配")
         kind = "advisor"
-    elif user.tenant_id == tenant_id and ctx.tenant_id == tenant_id:
+    elif await customer_account_for_tenant(session, ctx, tenant_id, lock=write):
         kind = "customer"
     else:
         raise error(403, "conversation_forbidden", "客户账号须绑定当前客户")
