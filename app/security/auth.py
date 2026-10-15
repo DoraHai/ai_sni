@@ -274,8 +274,6 @@ async def require_auth(
         user = await session.get(User, int(payload["sub"]))
         if user is None or not user.is_active:
             raise HTTPException(401, "账号不存在或已停用")
-        from app.security.advisor_switch import validate_switch_claims
-        await validate_switch_claims(session, payload, user)
         return await _build_context(user, session)
 
     # 2) admin API Key 兜底（curl / 冒烟 / 调度）

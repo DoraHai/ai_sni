@@ -85,7 +85,6 @@ from app.module_scope import (
     seo_site_is_operational,
 )
 from app.security.auth import AuthContext
-from app.seo_customer_identity import customer_account_for_tenant
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_distribution import (
     domestic_content_warnings,
@@ -6694,15 +6693,6 @@ def _content_confirmation_status(
     return "approved" if latest.decision == "approve" else "rejected"
 
 
-async def _validated_content_confirmation_status(session, row, latest) -> str:
-    status = _content_confirmation_status(row, latest)
-    if latest is not None and latest.actor_mode == "customer_direct" and status in {"approved", "rejected"}:
-        if not await customer_account_for_tenant(session, None, row.tenant_id,
-                                                  user_id=latest.actor_user_id):
-            return "pending"
-    return status
-
-
 async def _content_confirmation_schema_ready(session: AsyncSession) -> bool:
     """Enable the new gate only after the separately approved 0105 migration."""
     result = await session.execute(text("SELECT version_num FROM alembic_version"))
@@ -6763,7 +6753,11 @@ async def _content_allowed_actions(
     confirmation_status: str,
 ) -> tuple[dict[str, bool], dict[str, Any]]:
     assignment = await _advisor_assignment(session, row, ctx.user_id)
-    is_customer_account = await customer_account_for_tenant(session, ctx, row.tenant_id)
+    is_customer_account = bool(
+        ctx.user_id is not None
+        and ctx.tenant_id == row.tenant_id
+        and ctx.can_view("seo.content")
+    )
     is_assigned_advisor = bool(
         assignment is not None
         and ctx.user_id is not None
@@ -6809,7 +6803,7 @@ async def _content_delivery_payload(
     if latest is None and schema_ready:
         latest = await _latest_content_confirmation(session, row)
     confirmation_status = (
-        await _validated_content_confirmation_status(session, row, latest) if schema_ready else "unavailable"
+        _content_confirmation_status(row, latest) if schema_ready else "unavailable"
     )
     actions, permission_basis = await _content_allowed_actions(
         session, row, ctx, confirmation_status
@@ -6877,7 +6871,7 @@ async def _require_active_content_confirmation(
         # flow until the separately approved 0105 migration activates the gate.
         return None
     latest = await _latest_content_confirmation(session, row)
-    status = await _validated_content_confirmation_status(session, row, latest)
+    status = _content_confirmation_status(row, latest)
     if status != "approved" or latest is None:
         raise HTTPException(
             409,
@@ -7086,8 +7080,10 @@ async def create_content_confirmation(
         raise HTTPException(403, "稿件确认必须由实名登录账号操作")
     assignment = await _advisor_assignment(session, row, ctx.user_id)
     if req.actor_mode == "customer_direct":
-        if not await customer_account_for_tenant(session, ctx, tenant_id, lock=True):
-            raise HTTPException(403, "只有当前租户的真实客户账号可以直接确认稿件")
+        if ctx.tenant_id != tenant_id or not ctx.can_view("seo.content"):
+            raise HTTPException(403, "只有绑定当前客户的实名账号可以直接确认稿件")
+        if assignment is not None:
+            raise HTTPException(403, "当前账号已作为该站点顾问分配，请使用顾问代确认模式")
     else:
         if assignment is None or not ctx.can_edit("seo.content"):
             raise HTTPException(403, "只有当前站点已分配且具备内容编辑权限的顾问可以代确认")
@@ -8532,7 +8528,7 @@ async def _manual_complete_denial(session, ctx, row, content):
         if await session.scalar(select(SeoQaAnswer.id).where(SeoQaAnswer.content_id == content.id)) is not None:
             return "question_distribution_required"
     if await _content_confirmation_schema_ready(session):
-        state = await _validated_content_confirmation_status(session, content, await _latest_content_confirmation(session, content))
+        state = _content_confirmation_status(content, await _latest_content_confirmation(session, content))
         if state != "approved":
             return "content_confirmation_" + state
     return None
@@ -9080,8 +9076,8 @@ async def preflight_content_distribution(
     confirmation_gate_enabled = await _content_confirmation_schema_ready(session)
     confirmation_statuses = (
         {
-            content.id: await _validated_content_confirmation_status(
-                session, content, await _latest_content_confirmation(session, content)
+            content.id: _content_confirmation_status(
+                content, await _latest_content_confirmation(session, content)
             )
             for content in contents
         }

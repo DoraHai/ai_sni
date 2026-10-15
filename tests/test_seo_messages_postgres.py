@@ -10,14 +10,12 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import select, text, func
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.schema import CreateTable
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from test_seo_workflow_postgres import database, ADVISOR, requires_pg, trigger
 from app.api import seo_messages as api
 from app.models.user import User
 from app.models.role import Role
-from app.models.module_workspace import GeoProject
 from app.models.seo import SeoContentAsset, SeoSiteAdvisorAssignment
 from app.models.seo_messages import SeoContentConversation as Conversation, SeoContentMessage as Message, SeoConversationParticipant as Participant
 from app.security.auth import AuthContext
@@ -39,9 +37,8 @@ async def store():
                 with Operations.context(MigrationContext.configure(conn)):
                     module.upgrade()
             await connection.run_sync(upgrade)
-            await connection.execute(CreateTable(GeoProject.__table__, include_foreign_key_constraints=[]))
             await session.execute(text("UPDATE alembic_version SET version_num=:revision"), {"revision": api.SCHEMA})
-            session.add(Role(id=6, name="品牌方客户", is_system=True, permissions=CUSTOMER.permissions))
+            session.add(Role(id=6, name="customer", permissions=CUSTOMER.permissions))
             session.add(User(id=8, role_id=6, username="customer", display_name="Actual customer", password_hash="unused", tenant_id=4, is_active=True))
             await session.commit()
         yield sessions

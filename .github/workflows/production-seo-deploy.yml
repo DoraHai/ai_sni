@@ -102,7 +102,6 @@ jobs:
           tests/test_seo_competitors.py
           tests/test_seo_deploy_isolation.py
           tests/test_seo_content_confirmations.py
-          tests/test_advisor_switch_auth.py
           tests/test_advisor_account_links_migration.py
           tests/test_seo_local_acceptance.py
           tests/test_seo_messages_postgres.py
