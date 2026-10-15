@@ -97,7 +97,8 @@ def main():
         os.environ['GEO_TEST_POSTGRES_URL'] = postgres_url
     import pytest
     files = sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'tests').glob('test_geo*.py'))
-    files += ['tests/test_metric_service.py', 'tests/test_md_to_html_tables.py', 'tests/test_channel_article_quality.py']
+    files += ['tests/test_metric_service.py', 'tests/test_md_to_html_tables.py', 'tests/test_channel_article_quality.py',
+              'tests/test_advisor_switch_auth.py']
     return pytest.main(['-q', '--tb=short', *files])
 
 
