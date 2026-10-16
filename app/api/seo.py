@@ -158,6 +158,11 @@ from app.seo_distribution_import import (
     normalize_published_at,
     parse_publication_xlsx,
 )
+from app.seo_offline_handoff import (
+    MAX_BYTES as OFFLINE_MAX_BYTES,
+    Receipt as OfflineReceipt, Snapshot as OfflineSnapshot, aware_time,
+    order_package, parse_receipts,
+)
 
 
 def _request_integer(value: object, field: str) -> int:
@@ -7735,6 +7740,151 @@ async def import_published_links(
         "imported": len(validated),
         "rows": results,
     }
+
+
+class OfflineOrderExport(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    articles: list[OfflineSnapshot] = Field(min_length=1, max_length=20)
+    target_platform: str
+    target_account: str = Field(min_length=1, max_length=120)
+    scheduled_at: datetime | None = None
+
+    @field_validator("target_platform")
+    @classmethod
+    def offline_platform(cls, value):
+        return OfflineReceipt.platform_name(value)
+
+    @field_validator("target_account")
+    @classmethod
+    def offline_account(cls, value):
+        return OfflineReceipt.account_name(value)
+
+    @field_validator("scheduled_at", mode="before")
+    @classmethod
+    def offline_schedule(cls, value):
+        return aware_time(value)
+
+
+@router.post("/content-assets/offline-handoff/export")
+async def export_offline_orders(
+    req: OfflineOrderExport,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> Response:
+    ctx.ensure_tenant(req.tenant_id)
+    if not ctx.can_edit("seo.content"):
+        raise HTTPException(403, "需要SEO内容编辑权限")
+    await _seo_site(session, req.tenant_id, req.site_id)
+    if len({item.article_id for item in req.articles}) != len(req.articles):
+        raise HTTPException(422, "发布单中稿件不能重复")
+    orders = []
+    for snapshot in req.articles:
+        content = await _distribution_content(session, req.tenant_id, int(snapshot.article_id), req.site_id)
+        _require_content_ready(content)
+        await _require_active_content_confirmation(session, content)
+        if snapshot.source_version != (content.version_count or 1) or snapshot.payload_hash != _content_confirmation_hash(content):
+            raise HTTPException(409, "稿件版本已变化，请刷新后重新导出")
+        body = _sanitize_content_html(content.humanized_content or content.draft or "")
+        if not body:
+            raise HTTPException(422, "稿件正文为空")
+        orders.append({**snapshot.model_dump(), "title": content.title, "content_markdown": body,
+                       "material_path": None, "target_platform": req.target_platform,
+                       "target_account": req.target_account,
+                       "scheduled_at": req.scheduled_at.isoformat() if req.scheduled_at else None})
+    if len(json.dumps(orders, ensure_ascii=False).encode("utf-8")) > OFFLINE_MAX_BYTES:
+        raise HTTPException(422, "发布单超过2MiB，请减少选稿")
+    return Response(order_package(orders), media_type="application/zip", headers={
+        "Content-Disposition": 'attachment; filename="seo-offline-orders.zip"', "Cache-Control": "no-store",
+    })
+
+
+@router.post("/content-assets/offline-handoff/import-receipts")
+async def import_offline_receipts(
+    tenant_id: PositiveInt,
+    site_id: PositiveInt,
+    dry_run: bool = Query(True),
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    if not ctx.can_edit("seo.content"):
+        raise HTTPException(403, "需要SEO内容编辑权限")
+    await _seo_site(session, tenant_id, site_id)
+    try:
+        receipts = parse_receipts(await file.read(OFFLINE_MAX_BYTES + 1), file.filename or "")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    # A consistent lock order serializes duplicate uploads and avoids cross-batch deadlocks.
+    contents = {}
+    for content_id in sorted({int(r.article_id) for r in receipts}):
+        contents[content_id] = await _distribution_content(session, tenant_id, content_id, site_id, lock=True)
+    validated, results = [], []
+    for number, receipt in enumerate(receipts, 1):
+        content = contents[int(receipt.article_id)]
+        _require_content_ready(content)
+        await _require_active_content_confirmation(session, content)
+        if receipt.source_version != (content.version_count or 1) or receipt.payload_hash != _content_confirmation_hash(content):
+            raise HTTPException(409, f"第{number}条稿件版本已变化，请人工核对原稿")
+        key = hashlib.sha256(json.dumps(["offline-handoff-v1", tenant_id, site_id,
+            receipt.article_id, receipt.platform, receipt.account, receipt.source_version, receipt.payload_hash],
+            ensure_ascii=False).encode("utf-8")).hexdigest()
+        publication = await session.scalar(select(SeoContentPublication).where(
+            SeoContentPublication.tenant_id == tenant_id, SeoContentPublication.idempotency_key == key,
+        ))
+        published_at = receipt.published_at.replace(tzinfo=None) if receipt.published_at else None
+        unchanged = bool(publication and publication.status == receipt.status
+                         and publication.page_url == receipt.public_url and publication.published_at == published_at)
+        if publication and publication.status == "published" and not unchanged:
+            raise HTTPException(409, f"第{number}条已有成功回执，不能覆盖或降级")
+        if receipt.public_url:
+            other = await session.scalar(select(SeoContentPublication).where(
+                SeoContentPublication.tenant_id == tenant_id,
+                SeoContentPublication.content_asset_id == content.id,
+                SeoContentPublication.page_url == receipt.public_url,
+            ))
+            if other is not None and (publication is None or other.id != publication.id):
+                raise HTTPException(409, f"第{number}条链接已有发布记录，请人工核对")
+        validated.append((receipt, content, key, publication, published_at, unchanged))
+        results.append({"row_number": number, "article_id": receipt.article_id, "platform": receipt.platform,
+                        "account": receipt.account, "status": receipt.status, "unchanged": unchanged})
+    changed = 0
+    if not dry_run:
+        try:
+            for receipt, content, key, publication, published_at, unchanged in validated:
+                if unchanged:
+                    continue
+                if publication is None:
+                    publication = SeoContentPublication(tenant_id=tenant_id, content_asset_id=content.id,
+                        platform_code="manual", platform_name=receipt.platform, publish_mode="manual",
+                        source_version=receipt.source_version, idempotency_key=key, created_by=ctx.user_id)
+                    session.add(publication)
+                publication.status = receipt.status
+                publication.page_url = receipt.public_url
+                publication.published_at = published_at
+                await session.flush()
+                session.add(SeoPublishAttempt(tenant_id=tenant_id, publication_id=publication.id,
+                    action="offline_receipt", status=receipt.status, created_by=ctx.user_id,
+                    request_summary={"source": "offline-handoff-v1", "platform": receipt.platform,
+                        "account": receipt.account, "source_version": receipt.source_version,
+                        "payload_hash": receipt.payload_hash},
+                    response_summary={"human_reported": True, "outcome": receipt.status,
+                        "requires_manual_review": receipt.status == "unknown", "public_url": receipt.public_url,
+                        "published_at": receipt.published_at.isoformat() if receipt.published_at else None},
+                    completed_at=datetime.utcnow()))
+                if receipt.status == "published":
+                    content.page_url = content.page_url or receipt.public_url
+                    content.status = "published"
+                    content.published_at = content.published_at or published_at
+                    content.target_platforms = list(dict.fromkeys([*(content.target_platforms or []), receipt.platform]))[:25]
+                changed += 1
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            raise HTTPException(409, "回执存在并发或链接冲突，整批未写入，请重新预检") from None
+    return {"dry_run": dry_run, "committed": not dry_run, "total": len(results), "changed": changed,
+            "rows": results, "human_reported": True}
 
 
 @router.get("/content-distribution/catalog")

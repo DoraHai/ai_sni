@@ -373,6 +373,17 @@ export function downloadSeoPublishedLinksTemplate() {
   return client.get('/api/v1/seo/content-assets/published-links-template', { responseType: 'blob' })
 }
 
+export function exportSeoOfflineOrders(payload) {
+  return client.post('/api/v1/seo/content-assets/offline-handoff/export', payload, { responseType: 'blob' })
+}
+
+export function importSeoOfflineReceipts({ tenantId, siteId, file, dryRun = true }) {
+  const form = new FormData(); form.append('file', file)
+  return client.post('/api/v1/seo/content-assets/offline-handoff/import-receipts', form, {
+    params: { tenant_id: tenantId, site_id: siteId, dry_run: dryRun },
+  })
+}
+
 export function fetchSeoDistributionCatalog() {
   return client.get('/api/v1/seo/content-distribution/catalog')
 }
