@@ -11,6 +11,16 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "app/api_usage_review_basis.py",
+    "tests/test_api_usage_review_basis.py",
+    "app/seo_onsite_ai_health.py",
+    "tests/test_seo_onsite_ai_health.py",
+    "tests/test_seo_onsite_ai_health_postgres.py",
+    "docs/SEO_WORKFLOW_IMPLEMENTATION_AUDIT.md",
+    "docs/API_METERING_FAILURE_PHASE_REVIEW.md",
+    "docs/API_UNKNOWN_CONCURRENCY_PATCH.md",
+    "tests/test_platform_call_guards.py",
+    "app/seo_onsite_ai_jobs.py",
     "tests/fixtures/seo_onsite_ai_observed.json",
     "app/api/seo_onsite_ai.py",
     "app/seo_onsite_ai.py",

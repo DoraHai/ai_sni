@@ -1,6 +1,6 @@
 # SEO 站内 AI 提案与顾问汇总
 
-开发基线：`29b125cbb02b65c24a2c7c8ab55bd7c09047c06f`（origin/codex/production-seo，含 PR633）。
+开发基线：`ca6a34c28da342327526539579898bfa3baedd87`（origin/codex/production-seo，含 PR640）。
 对齐 `AI_WORKFLOW_COORDINATION_20261010.md`。本轮仅后端、本地测试与提交，无生产配置、迁移、采集、发布或官网写入。
 
 ## 顾问汇总（只读）
@@ -17,6 +17,11 @@
 
 `POST /api/v1/seo/workbench/onsite-tasks/123/ai-proposal`
 
+必须带 `X-Snipers-Onsite-Protocol: durable-v1`。缺失、空值、重复或其它值返回 HTTP 409、
+`{"detail":"工作台版本过旧，请刷新页面后重试","code":"onsite_client_upgrade_required"}`，
+`Cache-Control: no-store`。在入队、配额预留或供应商请求前拒绝；已有认证与模块权益依赖仍可能只读验证身份及授权。
+仅此 POST 需要协议头，GET 轮询和取消契约不变。先发新版前端，再发异步后端；旧标签页安全拒绝并提示刷新。
+
 ```json
 {
   "tenant_id": 4,
@@ -29,7 +34,9 @@
 
 必须为有效实名顾问，拥有本站 active 分配、seo.site/seo.content 编辑权限和 seo.keywords 查看权限，客户绑定匹配且网站与模块启用。接口不接受新增 URL、模型配置、资料 ID 或工具命令。
 
-`initial` 仅 draft；`revise` 允许当前未结束任务，包括复检失败。done/cancelled 拒绝。成功响应沿用站内记录，增加 `replayed`；主要字段示意（非真实客户数据）：
+`initial` 仅 draft；`revise` 允许当前未结束任务，包括复检失败。done/cancelled 拒绝。POST 只持久化入队，HTTP 202 立即返回当前任务、`replayed`、`request_run`、`poll_after_seconds` 和 `links`，不等待供应商。
+
+下面是后台生成完成后的 GET 响应主要字段示意（非真实客户数据）：
 
 ```json
 {
@@ -55,22 +62,54 @@
     "ai_planning": {"enabled": true, "can_generate": true, "reason": null, "daily_limit": 5},
     "website_execution": {"enabled": false, "status": "reserved", "reason": "官网自动修改暂未接入，按批准方案人工实施"}
   },
-  "replayed": false
+  "replayed": false,
+  "request_run": {"request_id": "9d4d4214-ce30-4b89-a6d8-cbfa51186ec8", "state": "ready"},
+  "poll_after_seconds": null,
+  "links": {
+    "status": "/api/v1/seo/workbench/onsite-tasks/123/ai-requests/9d4d4214-ce30-4b89-a6d8-cbfa51186ec8?tenant_id=4&site_id=2",
+    "cancel": null
+  }
 }
 ```
 
 示例省略原记录的 title、items/source/history 等不变字段；实际 source_hash 是 64 位十六进制。理由与缺项仅在 ai_proposal 内，既有验收 Item 仍只有 id/kind/target_url/expected/instruction。缺证据的项 expected 为空、missing_information 有说明，整体仍待人工补充，不能审核空预期值。
 
+## 持久化后台请求与轮询（2026-10-11）
+
+不新增表、列或迁移。队列复用 `SeoTask.params.onsite_ai_requests`；`onsite.ai_run` 是当前请求的公开投影。SEO 独立调度器每 10 秒发现持久化任务，每批最多 20 条、同时最多处理 2 条，每条独立数据库事务。调度器关闭/演示环境/外部动作关闭时拒绝新增入队；本次不修改生产开关。保持现有官方主模型和入队时记录的模型路由，配置变化时拒绝执行，绝不自动切换或重试供应商。
+
+```http
+GET /api/v1/seo/workbench/onsite-tasks/123/ai-requests/9d4d4214-ce30-4b89-a6d8-cbfa51186ec8?tenant_id=4&site_id=2
+```
+
+- GET 返回现有 public task 顶层结构及指定请求的 `request_run`；`workflow.ai_run` 始终代表当前请求。查询历史请求不会替换它。GET 沿用站内任务列表的只读门禁：核对当前有效身份、客户/网站范围、网站与内容查看权限和模块授权，不要求顾问编辑分配。真实 can_operate 决定写动作，客户 view 角色可以轮询但没有写动作或取消链接；提交和取消仍要求有效顾问编辑资格及关键词查看权限。没有 seo.keywords 查看权限时隐藏 source.keywords、关键词/Meta Keywords 项及对应来源引用（列表同步处理），不修改存储原稿。越权 403、范围/请求不存在 404，不泄露任务。
+- 前端每 3 秒查询 `links.status`；`queued/running` 返回 `poll_after_seconds=3`；终态返回 null 并停止轮询。读接口不领取、不恢复、不调用模型、不更新记录。网络中断后使用同一个 request_id 查询；需要确认入队结果时重放同一 POST，不生成新 nonce。
+- 只有返回的 `request_run.request_id` 与界面等待的请求及 `workflow.ai_run.request_id` 都一致时，前端才可采用该请求完成的提案。被后续请求替代时应刷新当前任务，不能把旧响应覆盖到新方案。
+- 公开状态：`queued` 已持久化待领取；`running` 已提交调用意图，可能已付费；`ready` 提案已保存待人审；`failed` 调用未获准或供应商明确拒绝；`unknown` 中断/超时/输出不合规或运行中取消，需人工核实；`stale` 权限、服务、任务或事实变化，结果未采用；`cancelled` 领取前取消，未调用供应商。除 queued/running 外均为终态，不自动付费重试。
+- 公开时间为带 UTC 时区 ISO 8601：`queued_at` 入队时间，`started_at` 领取并提交调用意图时间（排队时 null），`finished_at` 终态时间。旧请求可能没有 queued_at。公开字段仍含 request_id/mode/source_revision/source_hash/actor_user_id/error，不暴露 prompt、凭证、claim_id 或供应商元数据。
+- 排队与运行期间，`allowed_actions` 只保留取消；其它方案写入/审批/实施/复检返回 409 `onsite_ai_busy`。原方案、审核和完成证据在成功生成前保持原状。后台结果通过全部校验后才保存待审方案并清除旧审批与完成证据。
+
+可选受控取消，不要求首期 UI 接入：
+
+```http
+POST /api/v1/seo/workbench/onsite-tasks/123/ai-requests/9d4d4214-ce30-4b89-a6d8-cbfa51186ec8/cancel
+Content-Type: application/json
+
+{"tenant_id":4,"site_id":2}
+```
+
+取消也重新核对当前顾问权限并持久化终态。queued → cancelled；running → unknown，明确供应商可能已调用，不能承诺退费或中止远端计算；迟到结果不再采用。重复取消返回原终态。既有整项任务 cancel 同样使当前请求终止。配额作为准入记录不退还。
+
 ## 有界、幂等与事实边界
 
 - 每网站每天最多 **5 次准入**，北京时间自然日，记录在既有 `SeoSite.site_settings.onsite_ai_quota`。本站多个任务共享配额；成功、失败和不明都保留额度，平台 controls 未启用也生效。没有付费自动重试。
 - 每任务最多 **40 个不同请求**，请求台账保存在 `SeoTask.params.onsite_ai_requests`，不删除旧 nonce；仍受原任务 100 条历史上限。无需 DDL。
-- 先按客户+UUID 的事务级 advisory lock 去重（跨本站任务及同客户其他网站），再按网站/任务行锁串行保存 nonce、操作者、模式、源版本/哈希、无密钥的供应商地址/模型元数据和 `running`，提交释放事务后才调用供应商。同 nonce 同参数返回已记录状态（replayed=true），不同参数/操作者或跨任务复用 UUID 返回 409，不暴露另一任务资料；旧 nonce 已被后续请求替代返回 409，不再付费。另一 nonce 遇到当前运行返回 409。
-- 供应商超时 45 秒，外层 55 秒；一次尝试。崩溃后状态可保留 running，显式重放同请求在 120 秒后将其记为 unknown，绝不重新调用。GET 不负责恢复或偷偷重试。此后顾问核对并使用新 UUID 才是新尝试，仍受配额限制。
+- 先按客户+UUID 的事务级 advisory lock 去重（跨本站任务及同客户其他网站），再按网站/任务行锁串行保存 nonce、操作者、模式、源版本/哈希、无密钥的供应商地址/模型元数据和 `queued`，提交后立即返回。后台按相同网站→任务加锁顺序领取，核对身份/顾问分配/服务授权/事实哈希与版本，提交 `running` 和唯一 claim_id 并释放锁后才调用供应商。同 nonce 同参数返回已记录状态（replayed=true），不同参数/操作者或跨任务复用 UUID 返回 409，不暴露另一任务资料；旧 nonce 已被后续请求替代返回 409，不再付费。另一 nonce 遇到 queued/running 返回 409。
+- 供应商超时 45 秒，外层 55 秒；一次尝试。崩溃后 running 保留在数据库，后台发现开始时间超过 120 秒则记 unknown，绝不重新调用（包含已领取但尚未实际发送时的中断）。queued 可在重启后继续领取，但超过 24 小时过期并需人工核对；权限或来源变化则 stale。GET 和 POST 重放都不负责恢复或偷偷重试。此后顾问核对并使用新 UUID 才是新尝试，仍受配额限制。
 - 只使用当前任务绑定的关键词和页面、当前网站最多 20 条有效且有出处的 QA 事实；资料总上下文最多 5 万字符。page/keyword/fact 引用使用服务器提供的 ID/版本，未检查页面不提供伪造的页面事实。
 - 保留清单所有 id/kind/target_url；关键词预期须属于绑定词，Meta Keywords 限于该页绑定词；内链/canonical 只能选已绑定页面。新网址、假来源、敏感输出、结构不合规拒绝保存。当前没有 robots/sitemap 文件正文证据，因此这类预期必须留空并列缺项；不能编造文件策略。
 - AI 文案是待审核建议，引用有效来源不等于系统证明每句话正确，事实、适用条件和内容质量必须人工确认。只发 JSON 提案，没有网站执行工具。
-- 外部调用后重新读取实名用户/角色、顾问分配、模块/网站、任务版本以及来源哈希；最终事务对权限与来源记录加短读锁。撤权、人工修改、资料变更、任务结束或迟到结果均不能覆盖人工状态，记 stale。撤权后错误只回安全描述，不回任务内容。
+- 外部调用后重新读取实名用户/角色、顾问分配、模块/网站、任务版本以及来源哈希；最终事务对权限与来源记录加短读锁。撤权、版本或资料变化时结果记 stale；受控取消、已过期或已终止请求维持既有终态，迟到结果均不能覆盖人工状态。撤权后的查询拒绝返回任务内容。
 - 成功通过原 `prepare_change(save_proposal)`，增加 revision、转 review、清除旧审核/实施/复检/验收与 completion_evidence。人工再次保存方案会清除旧 AI 提案说明，避免把理由挂在已修改方案上。
 
 ## 供应商与错误
@@ -84,15 +123,78 @@
 - 缺项结果可以保存为待审草案，`ai_run.state=ready` 只表示草案处理成功。存在空 expected 的方案不能审批，不能视作已完成内容或已修改网站。敏感输出、伪造出处、外部地址先校验再处理缺项，不允许借留空绕过拒绝。
 - 回归保存 18 份既有真实供应商输出，含正常资料、缺项及检测仪量程冲突，离线执行且不再次调用供应商。另以真实本地 PostgreSQL 验证保存、审批拒绝、nonce 重放及异常输出不覆盖原方案。离线通过不代表新提示词的在线生成成功率，需另行批准真实模型评测。
 
-复用现有 `app.ai.deepseek.chat_json`：沿用百炼优先、DeepSeek 后备的配置选择，单次请求不做失败回退，不创建密钥、不换供应商。仅接受现有官方 HTTPS 入口。计量 context 绑定 tenant/user/module=seo/feature；`job_ref=site:{site_id}:onsite_ai_proposal:{task_id}:{request_id}`，底层供应商 operation 仍为既有 `chat.completions`。不修改 metering/controls schema 或开关，不向普通客户/顾问返回供应商成本、密钥或原始错误。
+复用现有 `app.ai.deepseek.chat_json` 及当前官方 DeepSeek 主模型配置；不修改现有配置解析器、不增加默认第二模型，不创建密钥、不换供应商。入队记录服务器当时解析出的路由，后台调用前必须完全相同；单次请求不做失败回退。仅接受现有官方 HTTPS 入口。计量 context 绑定 tenant/user/module=seo/feature；`job_ref=site:{site_id}:onsite_ai_proposal:{task_id}:{request_id}`，底层供应商 operation 仍为既有 `chat.completions`。不修改 metering/controls schema 或开关，不向普通客户/顾问返回供应商成本、密钥或原始错误。
 
 - 401/403：身份、权限、分配不符；404：任务/站点范围不符。
 - 409：旧 revision、nonce 冲突、正在运行、已结束、来源变化或迟到结果。
 - 422：请求或上下文不符合限制；429：本站当日准入上限；503：未配置可用官方供应商。
-- 已完成准入的供应商拒绝记录 failed，超时/解析失败/不合规输出记录 unknown，并用 HTTP 200 返回安全状态，调用方须检查 ai_run.state，不能把 HTTP 200 当作生成成功。
+- 已完成准入的供应商拒绝记录 failed，超时/解析失败/不合规输出记录 unknown。POST 202 仅代表请求已记录；GET 200 仅代表成功读取，调用方必须检查指定 request_run.state，不能把 HTTP 成功当作生成完成。
 
 ## 本轮未启用与验证
 
 月度自动建单、自动接续、官网自动修改均未启用；不新增计划开关或调度任务。启动/月度/整改由已有人工建单入口创建，再由有权限顾问明确触发 AI。
 
 测试包含纯校验、HTTP 契约及真实 PostgreSQL：跨客户、撤权、角色/客户绑定变化、模块到期、并发 nonce、跨任务日限额、迟到与人工更新、资料变化、供应商失败/未知、复检失败后修订清证据、GET 无写入。PG 使用现有 loopback `seo_workflow_test`、显式 schema-create 授权和每测试随机 schema；供应商替身，不接真实平台。SEO baseline 原生 PG 作业纳入新测试并检查零跳过；常规回归纳入 baseline/deploy，发布白名单仅增加必要精确路径。
+
+后台队列专项验证包含并发入队/领取、请求连接断开、领取后进程丢失模拟、协程取消、结果提交失败、重新扫描恢复、取消与迟到输出、入队后和调用中的权限/资料变更、只读轮询、历史请求隔离、运行期开关、排队过期及路由变化。本地数据库均为临时独立 schema，供应商全部替身；没有真实付费调用或生产变更。
+
+## 共享调用保护集成候选（2026-10-11）
+
+- 独立共享来源 `3347b111d65d2f3e07211fcb0d1a0c00de4b70c2`，SEO cherry-pick 为 `de26b28e`，只取 api_controls/api_metering/deepseek 与对应测试四个文件。无冲突；保留 SEO 的 classify_response 和 response_metadata 扩展，没有导入整个 SEM 后端。
+- SEO PostgreSQL 集成测试执行真实 `jobs.execute_request → ai.generate → deepseek.chat_json → metered_request → controls.admit` 路径，只在 HTTP 传输处替换供应商；验证 tenant=4/user=7/module=seo/job_ref 与金额台账、其他模块占用同客户/用户/供应商范围、0 暂停、金额未知跨月阻断、超时与同 nonce 不重发。
+- 管理开关关闭但计量开启仍记录费用；两者关闭兼容原行为，不声称有统一保护。管理开启但计量关闭、无计量表或缺凭据表时拒绝调用。没有变更生产开关；真实启用需要另审共享 SQL 和运行账号权限。
+- unknown 占用补丁来源 `f49cd5af04313cd66fb12b65e99288f351651c86`，SEO 提交 `20cb0716`：只有 max_concurrent、没有金额预算时，unknown 也保留全历史占用。模块四范围超时/跨月阻断已通过；金额 unknown 单独设置 max_concurrent=null，避免被并发限制掩盖。
+- 完整结构补丁来源 `6fc9b74a524ed1052a3ce5e0527495d9414d394f`，SEO 提交 `c67c08e5`：准入事务检查四表与 reserved_amount。修复前删除审计/绑定表各发生 1 次模拟调用；修复后逐表/列删除的 SEO 后台测试均拒绝、无 requested 插入、无出站。
+- 共享测试里的 SEM 告警管理模块和运行账号权限脚本不在该四文件源包中：SEO 不引入这些依赖。持久化 requested 占用仍执行；SEM 告警“标记处理”对占用的影响由 SEM 验证。权限脚本测试在本地明确跳过 1 项，SEO 原生 CI 明确排除同一项，其余共享与模块测试要求零跳过。
+
+- 异常阶段补丁来源 `eed858cf07a224d0a5ed6b0d20465ffa882ca260`，SEO 提交 `eb3bc813`。failed_state 沿 __cause__ 链优先识别 MeteringUnavailable.provider_attempted=True，归为 unknown；调用前计量拒绝或 ControlDenied 归为 failed。HTTP200、HTTP400、ReadTimeout 后终态写失败的模块 PostgreSQL 回归均确认仅发 1 次、ledger 保留 requested、不自动重试。共享测试另外用真实 PostgreSQL 触发器覆盖初始及终态提交失败。
+
+共享保护集成当时的限定回归：199 passed / 1 skipped / 0 failed；唯一跳过为不在 SEO 源包内的 SEM 运行账号权限脚本。原生 CI 明确运行 onsite PostgreSQL + shared guards，排除该权限脚本项，其余要求零跳过。
+
+这只是 Draft 集成候选，不合并、不部署，不以代码已集成代表统一保护已上线。生产启用仍须单独审核结构、权限与开关；金额报价仅为配置口径的估算/预留，unknown 费用须人工核对。
+
+## 全局超管只读执行器与队列契约（2026-10-11）
+
+`GET /api/v1/seo/workbench/onsite-ai/health`，没有租户/站点筛选参数。
+使用与超管工作台一致的实名全局身份：user_id 非空、tenant_id 为空，且
+`settings.accounts` 和 `settings.customers` 均可编辑；仅 API Key、客户绑定账号或角色名称相似不够。
+读取主数据库，不走演示库；不返回客户 ID、正文、提示词、URL、凭证、原始异常。
+
+与 GEO 共用字段：
+
+```json
+{
+  "schema": 1, "module": "seo", "observed_at": "2026-10-11T00:00:00+00:00",
+  "worker": {
+    "scope": "this_process", "enabled": true, "state": "unverified", "verified": false,
+    "evidence": null, "last_tick_at": null,
+    "last_attempted": 0, "last_completed": 0, "last_error_code": null
+  },
+  "queue": {
+    "state": "available", "queued": 0, "running": 0, "unknown": 0,
+    "oldest_queued_at": null, "oldest_running_at": null
+  }
+}
+```
+
+- `observed_at` 仅为接口采样时间，绝不是心跳。所有时间为 UTC ISO 8601 或 null。
+- `worker.scope` 固定 `this_process`，没有跨进程/跨主机心跳存储；非调度锁拥有进程无法判断 owner 是否存活，返回 unverified。不能把任何进程的 200/active 当成全服务健康。
+- `enabled` 仅反映本进程调度/演示/外部动作策略允许执行，不能证明 worker 活着。
+- `state` 为 active/degraded/stopped/unverified/not_connected。只有本进程调度器已启动、真实完成轮次且证据未过期才 active+verified；轮次错误 degraded+verified（验证的是执行证据，非成功）；已观察的停机 stopped；策略不允许 stopped 且 enabled=false；本模块不输出 not_connected（由聚合端用于未接入）；无证据或证据过期 unverified。
+- `last_tick_at` 由真实执行轮次结束时记录（含错误轮次），接口读取绝不改写。`last_attempted` 为该轮候选执行数，`last_completed` 为该轮正常返回的候选数（不是提案成功数）。错误只返回固定安全代码。轮次超过 120 秒未结束的证据视为过期；此阈值只用于监控，不恢复或重新调用。
+- `evidence` 固定为 {"kind":"local_tick","scope":"this_process"} 或 null；`verified` 只代表当前进程存在可信且新鲜的执行轮次，不代表轮次成功。`last_error_code` 仅 worker_batch_failed 或 null；active 必须无轮次错误。
+- `queue` 单次 SELECT 聚合 SEO onsite_optimization、onsite.schema=1 的 `onsite_ai_requests` 全部请求记录，不限当前 ai_run；因此历史 unknown 在创建后续请求后仍计入。不是工单数，不是全模块 AI 调用数，也不是资金台账未结算数。
+- `oldest_*` 从各状态真实 queued_at/started_at 取最小值；无该状态或旧记录没有时间时 null，不用 updated_at/采样时间猜测。缺少表/列时返回 queue.state=schema_pending 且数量/时间均为 null；数据库不可用、2 秒超时或时间数据非法时 HTTP 503、code=onsite_ai_health_unavailable，不返回伪造的零队列。
+- 成功、队列读取失败和本接口权限拒绝响应 `Cache-Control: no-store`；未登录仍沿用认证层 401。非全局超管 403。不领取、恢复、重试任务，不启动调度器、不调用供应商、不写库。
+
+协议与健康收尾回归（取入后续金额补丁前）：387 passed / 1 skipped / 0 failed（15 个文件）；唯一跳过仍为缺少 SEM 运行账号权限 SQL。新增 27 项协议与健康检查均实际通过，包括完整 SEO 路由 + 真实 JWT + 当前角色撤权、隔离 PostgreSQL 的只读事务聚合、缺表不伪造零、非法历史时间拒绝、数据库连接拒绝/超时、缺协议头零业务 SQL/零写入/零配额/零供应商。原生 CI 纳入两份新增测试且要求零跳过，并检查各文件实际执行数量。所有供应商均模拟，本轮没有真实付费请求或生产变更。业务流程实现与缺口见 `SEO_WORKFLOW_IMPLEMENTATION_AUDIT.md`。
+
+## 人工核实金额的共享准入口径（2026-10-11）
+
+- 审核来源 `07304cf8d0d8ffb945fa8ae0166efda3d181be9c` → SEO `5c37f5e7`；无预算也拒绝半安装的补充 `501f502928e809182e92986700980d6ddb3873e2` → SEO `b2323923`。仅取入 `api_controls.py`、`api_usage_review_basis.py` 及共享原生测试，不引入人工核实写接口或生产 SQL。
+- 没有新核实列时保持现有估算；4 列齐备且 review_version>0 时只认 verified_amount/CNY，null 不回退旧估算或预留。已核实终态不占并发，但未核实金额跨日/月继续阻断金额预算；非 CNY 不猜换算。
+- 4 列部分存在时必须在 HTTP/台账写入前拒绝，即使尚未配置预算。本地真实执行链已复现只取第一个补丁时的无预算绕过，因此第二补丁为必需项，不能只部署其中一个。
+- 新增 SEO 执行器→真实 DeepSeek 客户端→计量→共享准入 20 项隔离 PostgreSQL 用例：全局/客户/用户/供应商范围内，其他模块已核实费用计入、超限拒绝、终态金额 null 当前周期及跨周期拒绝金额预算、仅移除金额限制后仍可用并发；4 缺列分别覆盖有/无预算。所有 HTTP 均模拟；核实记录只是隔离库合成夹具，不冒称人工核实写接口已集成。
+- CI 同时纳入 8 项共享原生测试与这 20 项模块执行链测试，要求实际执行且零跳过。最终整合回归与固定提交见 PR；资金开关、核实 DDL/权限、人工核实写接口及迟到记账协调仍归共享发布审核，不在 SEO 本轮执行。
+
+两份金额补丁取入后的完整限定回归：**415 passed / 1 skipped / 0 failed**（16 个文件）；上述 8 项共享 + 20 项真实模块执行链 + 27 项健康/协议测试均实际通过，唯一跳过仍是未提供的 SEM 权限脚本。未安装新核实列的原有模式亦通过既有调用链回归。

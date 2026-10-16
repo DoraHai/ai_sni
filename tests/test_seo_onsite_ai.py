@@ -197,3 +197,39 @@ def test_no_material_cannot_promote_old_draft_to_a_fact():
     items,reasons=ai.validate_result(r,f)
     assert items[0]["expected"]==""
     assert any("没有有效产品事实" in m for m in reasons[0]["missing_information"])
+
+
+def test_durable_worker_registered_in_seo_scheduler(monkeypatch):
+    from types import SimpleNamespace
+    from app import seo_scheduler as scheduler, seo_onsite_ai_jobs as jobs
+    registered = []
+    monkeypatch.setattr(scheduler, "_acquire_scheduler_lock", lambda: True)
+    monkeypatch.setattr(scheduler, "seo_scheduler", SimpleNamespace(
+        add_job=lambda *args, **kwargs: registered.append((args, kwargs)), start=lambda: None))
+    scheduler._start_seo_scheduler()
+    matching = [(args, kw) for args, kw in registered if kw["id"] == "run_seo_onsite_ai_jobs"]
+    assert len(matching) == 1
+    args, kwargs = matching[0]
+    assert args[0] is jobs.run_onsite_ai_jobs
+    assert args[1].interval.total_seconds() == 10
+    assert kwargs["max_instances"] == 1 and kwargs["coalesce"]
+
+
+@pytest.mark.parametrize('attempted', [False, True])
+@pytest.mark.parametrize('wrapped', [False, True])
+def test_accounting_failure_phase_uses_cause_marker_not_error_text(attempted, wrapped):
+    from app.api_metering import MeteringUnavailable
+    failure = MeteringUnavailable('identical text; private-key-not-for-output', provider_attempted=attempted)
+    if wrapped:
+        outer = RuntimeError('wrapper')
+        outer.__cause__ = failure
+        failure = outer
+    state, error = api.failed_state(failure)
+    assert state == ('unknown' if attempted else 'failed')
+    assert 'private-key' not in str(error)
+
+
+def test_wrapped_explicit_admission_denial_is_failed():
+    error = RuntimeError('wrapper')
+    error.__cause__ = ControlDenied('synthetic policy refusal', code='api_concurrency_limit')
+    assert api.failed_state(error)[0] == 'failed'
