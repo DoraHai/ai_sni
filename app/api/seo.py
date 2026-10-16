@@ -9082,6 +9082,7 @@ async def review_distribution_variant(
     row.reviewed_by = ctx.user_id
     row.reviewed_at = datetime.utcnow()
     await session.commit()
+    await session.refresh(row)
     return _distribution_variant_payload(row, content=content, connection=connection)
 
 
