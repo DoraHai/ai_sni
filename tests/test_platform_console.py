@@ -128,9 +128,9 @@ def test_native_inventory_is_read_only_and_scoped_to_owned_schema(monkeypatch):
             # Assert the actual transaction mode used by the endpoint, rather
             # than merely finding a READ ONLY string in its implementation.
             original = console.build_snapshot
-            async def check_read_only(session):
+            async def check_read_only(session,workers=None):
                 assert await session.scalar(text("SHOW transaction_read_only")) == "on"
-                return await original(session)
+                return await original(session,workers)
             monkeypatch.setattr(console, "build_snapshot", check_read_only)
             assert (await console.console_snapshot(Response()))["sources"]["tenants"]["total"] == 1
         finally:

@@ -34,7 +34,11 @@ logger = logging.getLogger(__name__)
 
 
 class MeteringUnavailable(RuntimeError):
-    """Fail before a paid call when its accounting reservation cannot be saved."""
+    """Accounting failure with a controlled pre/post provider-attempt marker."""
+
+    def __init__(self, *args, provider_attempted=False):
+        super().__init__(*args)
+        self.provider_attempted = provider_attempted
 
 
 @dataclass(frozen=True)
@@ -121,9 +125,12 @@ class MeteringScopeMiddleware:
                 try:
                     async with runtime_scope(self.module):
                         await self.app(asgi_scope, receive, send)
-                except ControlDenied:
-                    await JSONResponse(status_code=503,
-                        content={'detail': '平台接口配置暂时无法读取，请联系超级管理员'},
+                except ControlDenied as exc:
+                    policy = exc.code in {'api_concurrency_limit', 'api_charge_unresolved', 'api_budget_exhausted', 'api_provider_disabled', 'api_budget_quote_unavailable'}
+                    content = {'detail': str(exc), 'code': exc.code, 'scope': exc.target} if policy else {
+                        'detail': '平台接口配置暂时无法读取，请联系超级管理员'}
+                    await JSONResponse(status_code=429 if exc.code in {'api_concurrency_limit', 'api_budget_exhausted'} else 503,
+                        content=content,
                         headers={'Cache-Control': 'no-store'})(asgi_scope, receive, send)
             else:
                 await self.app(asgi_scope, receive, send)
@@ -178,6 +185,17 @@ DEFAULT_RATES = [
     {'host': 'dashscope.aliyuncs.com', 'model': 'qwen3.8-max',
      'input': '12', 'output': '36', 'max_input': 1000000,
      'version': 'aliyun-cn-list-20261010', 'source': OFFICIAL_SOURCE},
+    # Official peak CNY rates are an explicit ceiling, not a guess at the
+    # holiday/off-peak calendar or actual billed amount. Only documented aliases.
+    *[{'host': 'api.deepseek.com', 'model': model, 'input': '2', 'output': '8',
+       'cached': '0.04', 'max_input': 1000000, 'pricing_basis': 'peak_ceiling',
+       'version': 'deepseek-cn-peak-ceiling-20261011',
+       'source': 'https://api-docs.deepseek.com/zh-cn/quick_start/pricing'}
+      for model in ('deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp')],
+    {'host': 'api.deepseek.com', 'model': 'deepseek-v4-pro', 'input': '9', 'output': '27',
+     'cached': '0.30', 'max_input': 1000000, 'pricing_basis': 'peak_ceiling',
+     'version': 'deepseek-cn-peak-ceiling-20261011',
+     'source': 'https://api-docs.deepseek.com/zh-cn/quick_start/pricing'},
 ]
 
 
@@ -211,6 +229,8 @@ def quote_rate(url, model):
             result.update(unit=unit,currency='CNY', version=safe_code(row.get('version'), 80),
                           max_input=token_count(row.get('max_input')),
                           source=str(row.get('source', 'configured'))[:200])
+            if row.get('pricing_basis') == 'peak_ceiling':
+                result['pricing_basis'] = 'peak_ceiling'
             if result['version'] is None:
                 raise ValueError
             return result
@@ -300,13 +320,19 @@ async def metered_request(client, method: str, url: str, *, api_key=None,
             request_id = request_id or safe_code(response.headers.get('x-request-id'))
         # Independent committed transaction: later parse/business failure cannot
         # erase a charged provider call. Interrupted attempts remain requested.
-        await _write('''UPDATE api_usage_events SET state=:state,status_code=:status_code,
-            provider_request_id=:request_id,latency_ms=:latency_ms,prompt_tokens=:prompt,
-            cached_tokens=:cached,completion_tokens=:completion,currency=:currency,
-            estimated_amount=:amount,finished_at=CURRENT_TIMESTAMP
-            WHERE id=CAST(:id AS uuid) AND state='requested' ''',
-            dict(id=event_id, state=state, status_code=response.status_code if response is not None else None,
-                 request_id=request_id, latency_ms=min(int((time.monotonic()-started)*1000), 2147483647),
-                 prompt=prompt,cached=cached,completion=completion,
-                 currency='CNY' if amount is not None else None, amount=amount))
+        try:
+            await _write('''UPDATE api_usage_events SET state=:state,status_code=:status_code,
+                provider_request_id=:request_id,latency_ms=:latency_ms,prompt_tokens=:prompt,
+                cached_tokens=:cached,completion_tokens=:completion,currency=:currency,
+                estimated_amount=:amount,finished_at=CURRENT_TIMESTAMP
+                WHERE id=CAST(:id AS uuid) AND state='requested' ''',
+                dict(id=event_id, state=state, status_code=response.status_code if response is not None else None,
+                     request_id=request_id, latency_ms=min(int((time.monotonic()-started)*1000), 2147483647),
+                     prompt=prompt,cached=cached,completion=completion,
+                     currency='CNY' if amount is not None else None, amount=amount))
+        except MeteringUnavailable as exc:
+            # The committed attempt may already have charged. Task owners must
+            # classify this as unknown, not a safe-to-repeat admission failure.
+            exc.provider_attempted = True
+            raise
     return response
