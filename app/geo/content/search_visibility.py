@@ -459,10 +459,14 @@ async def execution_lock():
     """Wait without occupying pool connections, so queued jobs cannot starve the owner."""
     while True:
         async with engine.connect() as connection:
-            acquired = await connection.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": _LOCK_ID})
+            try:
+                acquired = await connection.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": _LOCK_ID})
+            except BaseException:
+                await connection.invalidate()
+                raise
             if acquired:
                 try:
-                    yield
+                    yield connection
                 finally:
                     try:
                         await connection.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _LOCK_ID})
@@ -480,7 +484,7 @@ async def execute_run(job_id: int):
     A busy worker leaves pending evidence; it never calls a provider concurrently.
     Request reservations survive a crash and conservatively consume monthly headroom.
     """
-    async with execution_lock():
+    async with execution_lock() as owner_connection:
         async with async_session_factory() as session:
             job = await session.scalar(select(GeoAsyncJob).where(GeoAsyncJob.id == job_id, GeoAsyncJob.kind == KIND).with_for_update())
             if job is None or job.status not in {"pending", "running"}:
@@ -514,6 +518,10 @@ async def execute_run(job_id: int):
 
                 async def checkpoint():
                     from copy import deepcopy
+                    # A lost owner connection cannot silently reconnect and continue dispatching.
+                    if owner_connection.invalidated:
+                        raise RuntimeError("execution owner unavailable")
+                    await owner_connection.execute(text("SELECT 1"))
                     job.result_meta = deepcopy(result)
                     await session.commit()
 
