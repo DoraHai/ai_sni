@@ -1,7 +1,7 @@
 import {escapeText as esc} from './customer-display.mjs';
 // Local guidance and explicit server-backed advisory chat never execute business actions.
 export function createWorkspaceAssistant(root,getHome,{aiClient=null,getContentId=()=>null}={}){
- let draft='',history=[],collapsed=false,context='首页',fullscreen=false,width=null,drag=null;
+ let draft='',history=[],collapsed=window.matchMedia('(max-width: 800px)').matches,context='首页',fullscreen=false,width=null,drag=null;
  let mode=aiClient?'ai':'guide',aiHistory=[],pending=null,sending=false,feedback='',recoverable=false,generation=0;
  const sourceLinks={content:['稿件','内容'],selected_content:['当前稿件','内容'],tasks:['任务进度','进度'],pages:['网站页面','数据','pages'],keywords:['关键词','数据','keywords']};
  function aiMessages(){return aiHistory.map(m=>`<div class="bubble user">${esc(m.question)}</div><div class="bubble"><small>DeepSeek AI · 建议，未经业务执行</small><div class="assistant-ai-answer">${esc(m.answer)}</div>${m.sources.map(s=>{const [label,page,kind]=sourceLinks[s];return `<button data-action="home-data" data-page="${page}" ${kind?`data-kind="${kind}"`:''}>查看${label} ↗</button>`;}).join('')}</div>`).join('');}
