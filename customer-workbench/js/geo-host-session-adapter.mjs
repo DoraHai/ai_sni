@@ -1,4 +1,5 @@
 // GEO has an independently verified project scope; an SEO site ID conveys no authority.
+import {visibilityAdvisor} from './search-visibility-client.mjs';
 export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscribeSession,logout,redirectToLogin}){
   let revision=0,identity=null,fingerprint=null;const listeners=new Set(),pending=new Set();
   const key=s=>JSON.stringify(s?[s.token,s.userId,s.tenantId,s.projectId,s.revision]:null);
@@ -18,14 +19,22 @@ export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscrib
     const act=/^\/api\/v1\/geo\/workbench\/onsite-tasks\/[1-9]\d*\/actions$/.test(url.pathname);
     const ai=/^\/api\/v1\/geo\/workbench\/onsite-tasks\/[1-9]\d*\/ai-proposal$/.test(url.pathname);
     const aiRead=/^\/api\/v1\/geo\/workbench\/onsite-tasks\/[1-9]\d*\/ai-requests\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(url.pathname);
-    const allowed=preflight?method==='GET'&&readRoutes.has(url.pathname):identity&&((list&&['GET','POST'].includes(method))||(aiRead&&method==='GET')||((act||ai)&&method==='POST'));
+    const visibility=url.pathname.match(/^\/api\/v1\/geo\/projects\/([1-9]\d*)\/search-visibility(?:\/(config|run)|\/runs\/([1-9]\d*)(\/csv)?)?$/);
+    const visibilityAllowed=visibility&&Number(visibility[1])===s.projectId&&(
+      method==='GET'&&visibility[2]!=='run'||method==='PUT'&&visibility[2]==='config'||method==='POST'&&visibility[2]==='run');
+    const allowed=preflight?method==='GET'&&readRoutes.has(url.pathname):identity&&(visibilityAllowed||(list&&['GET','POST'].includes(method))||(aiRead&&method==='GET')||((act||ai)&&method==='POST'));
     if(!allowed)fail('ROUTE_DENIED');
-    const keys=preflight?(url.pathname.endsWith('/projects')?['tenant_id']:[]):method==='GET'?['tenant_id','project_id',...(list?['before_id']:[])]:[];
+    const keys=visibility?['tenant_id']:preflight?(url.pathname.endsWith('/projects')?['tenant_id']:[]):method==='GET'?['tenant_id','project_id',...(list?['before_id']:[])]:[];
     for(const name of url.searchParams.keys())if(!keys.includes(name)||url.searchParams.getAll(name).length!==1)fail('QUERY_DENIED');
     if(keys.includes('tenant_id')&&url.searchParams.get('tenant_id')!==String(s.tenantId))fail('SCOPE_MISMATCH');
     if(keys.includes('project_id')&&url.searchParams.get('project_id')!==String(s.projectId))fail('SCOPE_MISMATCH');
     if(method==='GET'&&options.body!==undefined)fail('BODY_DENIED');
-    if(method==='POST'){
+    if(visibility&&(method!=='GET'||visibility[2]==='config')&&!visibilityAdvisor(identity.user))fail('PERMISSION_DENIED',403);
+    if(visibility&&method!=='GET'){
+      let body;try{body=options.body===undefined?{}:JSON.parse(options.body);}catch{fail('BODY_DENIED');}
+      const fields=method==='PUT'?['enabled','domains','zh_url','brand_terms','core_terms','extra_article_urls','customer_visible']:[];
+      if(!body||Array.isArray(body)||Object.keys(body).some(k=>!fields.includes(k)))fail('BODY_DENIED');
+    }else if(method==='POST'){
       let body;try{body=JSON.parse(options.body);}catch{fail('BODY_DENIED');}
       const fields=ai?['tenant_id','project_id','expected_revision','request_id','mode']:act?['tenant_id','project_id','action','expected_revision','items','note','owner_name']:['tenant_id','project_id','request_id','work_type','month','owner_name'];
       if(!body||Array.isArray(body)||Object.keys(body).some(k=>!fields.includes(k)))fail('BODY_DENIED');
@@ -34,11 +43,13 @@ export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscrib
     }
     const c=new AbortController();pending.add(c);
     try{
-      const response=await fetchImpl(url.href,{method,body:options.body,headers:{Authorization:'Bearer '+s.token,Accept:'application/json',...(method==='POST'?{'Content-Type':'application/json'}:{}),...(ai&&method==='POST'?{'X-Snipers-Onsite-Protocol':'durable-v1'}:{})},cache:'no-store',credentials:'omit',redirect:'error',signal:c.signal});
+      const response=await fetchImpl(url.href,{method,body:options.body,headers:{Authorization:'Bearer '+s.token,Accept:'application/json',...(['POST','PUT'].includes(method)?{'Content-Type':'application/json'}:{}),...(ai&&method==='POST'?{'X-Snipers-Onsite-Protocol':'durable-v1'}:{})},cache:'no-store',credentials:'omit',redirect:'error',signal:visibility?AbortSignal.any([c.signal,AbortSignal.timeout(20000)]):c.signal});
       current(s,r);
       if(response.status===401){invalidate('expired');logout?.();redirectToLogin?.();fail('AUTH_EXPIRED',401);}
       if(response.status===403){invalidate('forbidden');fail('PERMISSION_DENIED',403);}
-      return {ok:response.ok,status:response.status,async json(){current(s,r);const data=await response.json();current(s,r);return data;}};
+      return {ok:response.ok,status:response.status,headers:response.headers,
+        async json(){current(s,r);const data=await response.json();current(s,r);return data;},
+        async arrayBuffer(){current(s,r);const data=await response.arrayBuffer();current(s,r);return data;}};
     }catch(e){if(!['AUTH_EXPIRED','PERMISSION_DENIED'].includes(e.code))current(s,r);throw e;}finally{pending.delete(c);}
   }
   async function initialize(){

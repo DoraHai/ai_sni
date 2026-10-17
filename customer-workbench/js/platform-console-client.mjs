@@ -8,7 +8,7 @@ export const platformConsolePath='/customer-workbench/?console=platform';
 export const isPlatformAdmin=user=>Number.isSafeInteger(user?.id)&&user.id>0&&user.tenant_id===null&&
   user.permissions?.['settings.accounts']==='edit'&&user.permissions?.['settings.customers']==='edit';
 const fail=(code,status)=>Object.assign(Error(code),{code,status});
-const routes=new Set(['/api/v1/auth/me','/api/v1/admin/console/snapshot',governanceRoute,...Object.values(automationHealthPaths)]);
+const routes=new Set(['/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/geo/search-visibility/usage',governanceRoute,...Object.values(automationHealthPaths)]);
 const writeRoute='/api/v1/admin/console/controls';
 const operationRoute='/api/v1/admin/console/operations';
 const usageRoute='/api/v1/admin/console/usage';
@@ -53,6 +53,11 @@ export function createPlatformConsoleClient({session,fetchImpl=fetch,onExpired=(
   }
   return {
     invalidate,
+    async searchVisibilityUsage(){
+      const data=await read('/api/v1/geo/search-visibility/usage');
+      if(!data||!['requests','billable','cost_cny','reserved_cny','limit_cny'].every(k=>typeof data[k]==='number'&&Number.isFinite(data[k])&&data[k]>=0))throw fail('CONSOLE_INVALID_SEARCH_USAGE');
+      return data;
+    },
     async initialize(){
       invalidate();const {user}=await read('/api/v1/auth/me',true);
       if(user?.id!==session.user?.id||!isPlatformAdmin(user))throw fail('CONSOLE_FORBIDDEN',403);
