@@ -68,7 +68,7 @@ jobs:
           import sys
           import xml.etree.ElementTree as ET
           cases = list(ET.parse(sys.argv[1]).getroot().iter("testcase"))
-          assert len(cases) == 4 and all(
+          assert len(cases) == 17 and all(
               c.find("skipped") is None and c.find("failure") is None and c.find("error") is None for c in cases
           )
           PY

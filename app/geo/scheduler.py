@@ -98,6 +98,7 @@ async def run_geo_search_visibility() -> None:
     """Enabled, entitled projects run sequentially; existing scheduler owns the lock."""
     import asyncio
     from app.geo.content.search_visibility import StopRun, create_run, execute_run, resolve_config
+    from app.geo.tenant_scope import GeoEntitlementUnavailable
     from app.models import GeoProject, Tenant, TenantModule
     from app.module_scope import module_is_available
 
@@ -125,6 +126,9 @@ async def run_geo_search_visibility() -> None:
                 job_id = job.id if job else None
             if job_id:
                 await execute_run(job_id)
+        except GeoEntitlementUnavailable as exc:
+            logger.info("[geo-scheduler] search visibility project=%s skipped: %s", project_id, exc.detail["message"])
+            continue
         except StopRun as exc:
             logger.info("[geo-scheduler] search visibility project=%s skipped: %s", project_id, str(exc))
             continue

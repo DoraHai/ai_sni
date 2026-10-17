@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from sqlalchemy import MetaData, func, select
+from sqlalchemy import BigInteger, Column, MetaData, String, Table, func, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.schema import CreateSchema, DropSchema
@@ -30,7 +30,7 @@ async def database(monkeypatch):
     assert parsed.database in {"postgres", "platform_admin_test", "geo_search_test", "geo_ci"}
     schema = "geo_search_test_" + uuid4().hex
     engine = create_async_engine(url, pool_size=3, max_overflow=0,
-        execution_options={"schema_translate_map": {None: schema}},
+        execution_options={"schema_translate_map": {None: schema, "public": schema}},
         connect_args={"server_settings": {"statement_timeout": "10000"}})
     factory = async_sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr(sv, "engine", engine)
@@ -48,6 +48,16 @@ async def database(monkeypatch):
             metadata = MetaData()
             for model in (Tenant, TenantModule, GeoProject, GeoAsyncJob):
                 model.__table__.to_metadata(metadata)
+            Table("demo_tenant_bindings", metadata,
+                Column("tenant_id", BigInteger, primary_key=True),
+                Column("demo_tenant_id", BigInteger), Column("dataset_key", String),
+                Column("dataset_version", String), Column("status", String),
+                Column("version", BigInteger), schema="public")
+            # Lightweight production table clauses do not apply schema translation.
+            # Use equivalent Tables so the real guard stays in our disposable schema.
+            from app.geo import tenant_scope
+            monkeypatch.setattr(tenant_scope, "_TENANT_MODULES", metadata.tables["tenant_modules"])
+            monkeypatch.setattr(tenant_scope, "_DEMO_BINDINGS", metadata.tables["public.demo_tenant_bindings"])
             await connection.run_sync(metadata.create_all)
         created = True
         async with factory() as session:
@@ -91,7 +101,7 @@ def test_simultaneous_manual_admission_is_atomic(monkeypatch):
     async def scenario():
         async with database(monkeypatch) as factory:
             outcomes = await asyncio.gather(admit(factory), admit(factory), return_exceptions=True)
-            assert sum(isinstance(x, sv.StopRun) for x in outcomes) == 1
+            assert sum(isinstance(x, sv.StopRun) for x in outcomes) == 1, outcomes
             async with factory() as session:
                 assert await session.scalar(select(func.count()).select_from(GeoAsyncJob)) == 1
     asyncio.run(scenario())
@@ -157,4 +167,114 @@ def test_abandoned_running_retains_reservation_and_never_replays(monkeypatch):
                 row = await session.get(GeoAsyncJob, job.id)
                 assert row.status == "failed" and "未重新请求" in row.error
                 assert (await sv.month_usage(session))["reserved_cny"] == .005
+    asyncio.run(scenario())
+
+
+async def bind_demo(factory, *, status="active", dataset_version="synthetic-v1"):
+    from app.geo.tenant_scope import _DEMO_BINDINGS
+    async with factory() as session:
+        await session.execute(_DEMO_BINDINGS.insert().values(
+            tenant_id=1, demo_tenant_id=10001, dataset_key="gsnipers_demo",
+            dataset_version=dataset_version, status=status, version=1))
+        await session.commit()
+
+
+@pytest.mark.parametrize("status,version", [("active", "synthetic-v1"), ("disabled", "synthetic-v1"), ("active", "")])
+def test_demo_and_invalid_binding_reject_admission_without_job(monkeypatch, status, version):
+    """Regression of policy-gap-reproduction.py using the real existing guard."""
+    from app.geo.tenant_scope import GeoEntitlementUnavailable
+    async def scenario():
+        async with database(monkeypatch) as factory:
+            await bind_demo(factory, status=status, dataset_version=version)
+            with pytest.raises(GeoEntitlementUnavailable) as error:
+                await admit(factory)
+            assert error.value.status_code == 403
+            assert error.value.detail["code"] == "geo_not_available"
+            async with factory() as session:
+                assert await session.scalar(select(func.count()).select_from(GeoAsyncJob)) == 0
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status", ["active", "disabled"])
+@pytest.mark.parametrize("running", [False, True])
+def test_recovery_denies_old_work_after_demo_binding(monkeypatch, status, running, caplog):
+    from app.geo import scheduler
+    async def scenario():
+        async with database(monkeypatch) as factory:
+            job = await admit(factory)
+            if running:
+                async with factory() as session:
+                    row = await session.get(GeoAsyncJob, job.id)
+                    row.status = "running"
+                    await session.commit()
+            await bind_demo(factory, status=status)
+            paths = []
+            supplier_mock(monkeypatch, paths)
+            monkeypatch.setattr(scheduler, "async_session_factory", factory)
+            monkeypatch.setattr(scheduler, "get_settings", sv.get_settings)
+            with caplog.at_level("INFO"):
+                await scheduler.resume_geo_search_visibility()
+            async with factory() as session:
+                row = await session.get(GeoAsyncJob, job.id)
+                assert row.status == "failed"
+                assert row.error == "该客户未开通 GEO、已停用或已到期"
+                assert row.result_meta["summary"]["stopped_reason"] == row.error
+            assert not paths and "blocked" in caplog.text
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status", ["active", "disabled"])
+def test_weekly_scheduler_skips_demo_and_invalid_binding(monkeypatch, status, caplog):
+    from app.geo import scheduler
+    async def scenario():
+        async with database(monkeypatch) as factory:
+            await bind_demo(factory, status=status)
+            monkeypatch.setattr(scheduler, "async_session_factory", factory)
+            monkeypatch.setattr(scheduler, "get_settings", sv.get_settings)
+            monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+            paths = []
+            supplier_mock(monkeypatch, paths)
+            with caplog.at_level("INFO"):
+                await scheduler.run_geo_search_visibility()
+            async with factory() as session:
+                assert await session.scalar(select(func.count()).select_from(GeoAsyncJob)) == 0
+            assert not paths and "skipped" in caplog.text
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("revoke_at", ["balance", "search", "retry", "before_send"])
+def test_permission_change_stops_next_supplier_request_and_preserves_usage(monkeypatch, revoke_at):
+    async def scenario():
+        async with database(monkeypatch) as factory:
+            job = await admit(factory)
+            paths = []
+            original = httpx.AsyncClient
+            async def revoke(*_):
+                # Independent transaction must commit while provider call is in flight.
+                async with factory() as session:
+                    module = await session.get(TenantModule, 1)
+                    module.status = "disabled"
+                    await session.commit()
+            async def handler(request):
+                paths.append(request.url.path)
+                if request.method == "GET":
+                    if revoke_at == "balance":
+                        await revoke()
+                    return httpx.Response(200, json={"is_available": True})
+                await revoke()
+                return httpx.Response(503 if revoke_at == "retry" else 200,
+                    json={"results": [{"url": "https://site1.example.com/cn"}]})
+            monkeypatch.setattr(sv.httpx, "AsyncClient", lambda **kw: original(**kw, transport=httpx.MockTransport(handler)))
+            if revoke_at == "before_send":
+                monkeypatch.setattr(sv.LIMITER, "wait", AsyncMock(side_effect=revoke))
+            await sv.execute_run(job.id)
+            assert paths == ([] if revoke_at == "before_send" else ["/user/balance"] if revoke_at == "balance"
+                             else ["/user/balance", "/v1/tools/search"])
+            async with factory() as session:
+                row = await session.get(GeoAsyncJob, job.id)
+                assert row.status == "failed" and "未开通 GEO" in row.error
+                assert row.result_meta["summary"]["stopped_reason"] == row.error
+                if revoke_at == "search":
+                    assert row.result_meta["summary"]["billable"] == 1
+                    assert (await sv.month_usage(session))["cost_cny"] == .005
     asyncio.run(scenario())

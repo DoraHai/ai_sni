@@ -6,6 +6,7 @@ import asyncio
 import csv
 import io
 import ipaddress
+import logging
 import re
 import time
 from contextlib import asynccontextmanager
@@ -37,6 +38,7 @@ MONTH_LIMIT = "本月额度已用完"
 RUN_LIMIT = "本次请求已达上限"
 BALANCE_LOW = "余额不足"
 _LOCK_ID = 714061018  # Dedicated GEO search lock; never a SEM scheduler lock.
+logger = logging.getLogger(__name__)
 
 
 def now_utc() -> datetime:
@@ -406,6 +408,7 @@ async def collect(client: SearchClient, articles: list[str]):
                         error=reply["error"], alive=alive, **page_info(content, str(reply["data"].get("title") or ""), markdown=True))
             if item["foreign_language"]:
                 item["warning"] = "被跳到外语版"
+                await client.checkpoint()
                 try:
                     document = await safe_fetch(url)
                     fallback_info = page_info(document.html)
@@ -418,6 +421,7 @@ async def collect(client: SearchClient, articles: list[str]):
                     item["effective_foreign_language"] = fallback_info["foreign_language"]
                 except Exception:
                     item["fallback"] = {"source": "local_safe_fetch", "error": "本机兜底抓取未成功"}
+                await client.checkpoint()
         summary["articles_alive"] += int(kind == "article" and item["alive"] is True)
         result["items"].append(item)
         await client.checkpoint()
@@ -454,6 +458,10 @@ async def month_usage(session, month: str | None = None) -> dict:
 
 
 async def create_run(session, project: GeoProject, config: VisibilityConfig, *, trigger: str, actor: int | None):
+    from app.geo.tenant_scope import ensure_geo_background_execution_allowed, ensure_geo_entitlement
+
+    ensure_geo_background_execution_allowed(project.tenant_id)
+    await ensure_geo_entitlement(session, project.tenant_id)
     # Project row lock makes daily and in-flight dedup atomic across HTTP/scheduler workers.
     await session.execute(select(GeoProject.id).where(GeoProject.id == project.id).with_for_update())
     today = beijing(now_utc()).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).replace(tzinfo=None)
@@ -508,24 +516,23 @@ async def execute_run(job_id: int):
     A busy worker leaves pending evidence; it never calls a provider concurrently.
     Request reservations survive a crash and conservatively consume monthly headroom.
     """
+    from app.geo.tenant_scope import (
+        GeoEntitlementUnavailable, ensure_geo_background_execution_allowed, ensure_geo_entitlement,
+    )
+
     async with execution_lock() as owner_connection:
         async with async_session_factory() as session:
             job = await session.scalar(select(GeoAsyncJob).where(GeoAsyncJob.id == job_id, GeoAsyncJob.kind == KIND).with_for_update())
             if job is None or job.status not in {"pending", "running"}:
                 return
-            if job.status == "running":
-                # Acquiring the global lock proves the previous owner is gone.
-                from copy import deepcopy
-                result = deepcopy(job.result_meta or {})
-                reason = "上次运行被中断，已保留用量记录；本次未重新请求"
-                result.setdefault("summary", {})["stopped_reason"] = reason
-                job.result_meta, job.status, job.error = result, "failed", reason
-                job.finished_at = now_utc()
-                await session.commit()
-                return
             project = await session.get(GeoProject, job.ref_id)
             module = await session.get(TenantModule, project.tenant_module_id) if project else None
             try:
+                ensure_geo_background_execution_allowed(job.tenant_id)
+                await ensure_geo_entitlement(session, job.tenant_id)
+                if job.status == "running":
+                    # Acquiring the global lock proves the previous owner is gone.
+                    raise StopRun("上次运行被中断，已保留用量记录；本次未重新请求")
                 if (not project or project.tenant_id != job.tenant_id or project.status != "active"
                     or not module or module.tenant_id != job.tenant_id or module.module_code != "geo"
                     or not module_is_available(module)):
@@ -548,6 +555,10 @@ async def execute_run(job_id: int):
                     await owner_connection.execute(text("SELECT 1"))
                     job.result_meta = deepcopy(result)
                     await session.commit()
+                    ensure_geo_background_execution_allowed(job.tenant_id)
+                    await ensure_geo_entitlement(session, job.tenant_id)
+                    # Release binding locks so revocation can commit during external work.
+                    await session.commit()
 
                 async def usage(month):
                     return await month_usage(session, month)
@@ -561,9 +572,13 @@ async def execute_run(job_id: int):
                                              timeout=30, follow_redirects=False, trust_env=False) as http:
                     client = SearchClient(http, config, result, checkpoint=checkpoint, monthly_usage=usage)
                     await collect(client, job.request_meta["article_urls"])
+                await checkpoint()
                 errors = any(i.get("error") and i.get("source") != "skipped" for i in result["items"])
                 job.status = "failed" if errors else "succeeded"
                 job.error = "部分项目查询失败，请查看明细" if errors else None
+            except GeoEntitlementUnavailable as exc:
+                job.status, job.error = "failed", exc.detail["message"]
+                logger.info("[search-visibility] job=%s tenant=%s blocked: %s", job_id, job.tenant_id, job.error)
             except StopRun as exc:
                 job.status, job.error = "failed", str(exc)
             except Exception:

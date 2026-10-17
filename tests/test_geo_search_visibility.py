@@ -45,6 +45,8 @@ def offline(monkeypatch):
     monkeypatch.setattr(sv, "safe_fetch", AsyncMock(side_effect=AssertionError("unmocked fallback")))
     monkeypatch.setattr(sv, "get_settings", lambda: settings())
     monkeypatch.setattr(routes, "get_settings", lambda: settings())
+    from app.geo import tenant_scope
+    monkeypatch.setattr(tenant_scope, "ensure_geo_entitlement", AsyncMock())
 
 
 def run(coro):
@@ -326,6 +328,27 @@ def test_customer_cannot_configure_run_or_see_global_usage():
     with pytest.raises(HTTPException):
         run(routes.usage(customer(), AsyncMock()))
     assert sv.is_admin(AuthContext(None, "api-key", "admin", None, {}, True))
+
+
+def test_run_now_entitlement_denial_returns_existing_403_without_queue(monkeypatch):
+    from app.geo import tenant_scope
+    guard = AsyncMock(side_effect=tenant_scope.GeoEntitlementUnavailable())
+    monkeypatch.setattr(tenant_scope, "ensure_geo_entitlement", guard)
+    session = AsyncMock()
+    session.add = MagicMock()
+    app = FastAPI()
+    app.include_router(routes.router, prefix="/api/v1/geo")
+    app.dependency_overrides[require_scoped_auth] = advisor
+    app.dependency_overrides[get_session] = lambda: session
+    executor = AsyncMock()
+    with patch.object(routes, "load_project", AsyncMock(return_value=(project(), sv.VisibilityConfig(enabled=True)))), \
+         patch.object(routes, "execute_run", executor):
+        response = TestClient(app).post("/api/v1/geo/projects/2/search-visibility/run?tenant_id=1")
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "geo_not_available"
+    session.add.assert_not_called()
+    session.commit.assert_not_awaited()
+    executor.assert_not_awaited()
 
 
 def test_cross_tenant_and_project_mismatch_rejected():
