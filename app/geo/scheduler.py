@@ -74,6 +74,61 @@ async def run_geo_daily_metrics_nightly() -> None:
         logger.exception("[geo-scheduler] daily metrics rebuild failed")
 
 
+async def run_geo_search_visibility() -> None:
+    """Enabled, entitled projects run sequentially; existing scheduler owns the lock."""
+    import asyncio
+    from app.geo.content.search_visibility import StopRun, create_run, execute_run, resolve_config
+    from app.models import GeoProject, Tenant, TenantModule
+    from app.module_scope import module_is_available
+
+    if not get_settings().deepseek_search_api_key.strip():
+        return
+    async with async_session_factory() as session:
+        project_ids = list(await session.scalars(select(GeoProject.id).where(
+            GeoProject.status == "active",
+            GeoProject.project_settings["deepseek_visibility"]["enabled"].as_boolean().is_(True),
+        ).order_by(GeoProject.id)))
+    for index, project_id in enumerate(project_ids):
+        if index:
+            await asyncio.sleep(120)
+        try:
+            async with async_session_factory() as session:
+                project = await session.get(GeoProject, project_id)
+                module = await session.get(TenantModule, project.tenant_module_id) if project else None
+                if not project or not module or not module_is_available(module):
+                    continue
+                tenant = await session.get(Tenant, project.tenant_id)
+                config = resolve_config(project, tenant)
+                if not config.enabled:
+                    continue
+                job = await create_run(session, project, config, trigger="schedule", actor=None)
+                job_id = job.id if job else None
+            if job_id:
+                await execute_run(job_id)
+        except StopRun:
+            continue
+        except Exception:
+            logger.warning("[geo-scheduler] search visibility project=%s failed", project_id)
+
+
+async def resume_geo_search_visibility() -> None:
+    """Resume durable pending work; the execution lock detects abandoned running work."""
+    from app.geo.content.search_visibility import KIND, execute_run
+    from app.models import GeoAsyncJob
+
+    if not get_settings().deepseek_search_api_key.strip():
+        return
+    async with async_session_factory() as session:
+        job_ids = list(await session.scalars(select(GeoAsyncJob.id).where(
+            GeoAsyncJob.kind == KIND, GeoAsyncJob.status.in_(("pending", "running")),
+        ).order_by(GeoAsyncJob.id).limit(100)))
+    for job_id in job_ids:
+        try:
+            await execute_run(job_id)
+        except Exception:
+            logger.warning("[geo-scheduler] search visibility recovery job=%s failed", job_id)
+
+
 async def run_geo_visibility_patrols() -> None:
     """Start due visibility patrols inside their configured time windows."""
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
@@ -169,6 +224,22 @@ def start_geo_scheduler() -> None:
     if not _acquire_scheduler_lock():
         logger.info("[geo-scheduler] another GEO worker owns the scheduler lock")
         return
+    geo_scheduler.add_job(
+        run_geo_search_visibility,
+        CronTrigger(day_of_week="mon", hour=6, minute=0, timezone="Asia/Shanghai"),
+        id="geo_search_visibility_weekly",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    geo_scheduler.add_job(
+        resume_geo_search_visibility,
+        CronTrigger(minute="*", timezone="Asia/Shanghai"),
+        id="geo_search_visibility_recovery",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
     geo_scheduler.add_job(
         run_geo_visibility_patrols,
         CronTrigger(minute=5),
