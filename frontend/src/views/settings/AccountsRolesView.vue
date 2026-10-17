@@ -249,7 +249,6 @@ onMounted(load)
 
     <el-alert v-if="error" :title="permissionDenied ? '当前账号不能管理同事和角色' : error.message" :description="permissionDenied ? '需要 settings.accounts 的“可编辑”权限。请联系现有管理员调整角色；这不是数据为空。' : '请重试；若持续失败，请记录当前时间并联系管理员。'" type="error" :closable="false" show-icon style="margin-bottom: 14px"><template #default><el-button size="small" @click="load">重试</el-button></template></el-alert>
 
-    <p class="platform-table-hint">表格可左右滑动，查看全部信息和操作。</p>
     <el-tabs v-model="tab">
       <!-- ===== 账号 ===== -->
       <el-tab-pane label="账号" name="accounts">
@@ -327,7 +326,7 @@ onMounted(load)
     </el-tabs>
 
     <!-- 账号 dialog -->
-    <el-dialog class="platform-responsive-dialog" v-model="userDialog" :title="editingUserId ? '编辑账号' : '新建账号'" width="460px">
+    <el-dialog v-model="userDialog" :title="editingUserId ? '编辑账号' : '新建账号'" width="460px">
       <el-form label-width="84px">
         <el-form-item label="用户名" required>
           <el-input v-model="uform.username" :disabled="!!editingUserId" placeholder="登录用，2-50 字符" />
@@ -356,7 +355,7 @@ onMounted(load)
     </el-dialog>
 
     <!-- 角色 dialog（权限矩阵） -->
-    <el-dialog class="platform-responsive-dialog" v-model="roleDialog" :title="editingRoleId ? '配置角色权限' : '新建角色'" width="560px">
+    <el-dialog v-model="roleDialog" :title="editingRoleId ? '配置角色权限' : '新建角色'" width="560px">
       <el-form label-width="72px">
         <el-form-item label="角色名" required>
           <el-input v-model="rform.name" :disabled="rform.isSystem" :placeholder="rform.isSystem ? '内置角色不可改名' : '如：投放专员'" />

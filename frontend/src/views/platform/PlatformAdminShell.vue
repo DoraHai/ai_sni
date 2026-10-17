@@ -1,5 +1,4 @@
 <script setup>
-import './platform-mobile.css'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { session } from '../../store/session'
