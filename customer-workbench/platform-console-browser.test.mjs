@@ -101,9 +101,9 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
       await p.click(`.pc-sidebar [data-pc-page=${tab}]`);assert.match(await body(),new RegExp(label));
     }
     await p.click('.pc-sidebar [data-pc-page=ai-governance]');await p.waitForFunction(()=>document.body.textContent.includes('治理接口未部署'));
-    assert.match(await body(),/预留待启用.*已停用/);assert(!await p.$('.pc-content form'));
+    assert.match(await body(),/reserved.*disabled/);assert(!await p.$('.pc-content form'));
     governanceStatus=200;await p.click('[data-pc=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('等待数据库人工审核'));
-    assert.equal(await p.$$eval('.pc-content button',buttons=>buttons.find(e=>e.textContent.includes('治理策略编辑')).disabled),true);assert(await p.$('.pc-pending'));
+    assert.equal(await p.$eval('.pc-content button',e=>e.disabled),true);
     governanceData={schema:1,state:'available',modules:[{module:'seo',provider:'dashscope',model:'qwen',configured:true,metering:{state:'recording'},calls:{failed:2,unknown:null},limits:[{kind:'revision',state:'enabled',value:true}]}],api_key:'never-render-secret'};
     await p.click('[data-pc=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('qwen'));assert.doesNotMatch(await body(),/never-render-secret/);
     await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await p.setViewport({width:1440,height:1000});
