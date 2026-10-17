@@ -51,12 +51,13 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   let history=blankHistory(),governance=null,governanceError='';
   const blankBalances=()=>({data:null,error:'',busy:false,after_id:0,cursors:[]});
   let balanceState=blankBalances();
-  let searchVisibilityUsage=null;
-  function searchUsageText(){return searchVisibilityUsage?`DeepSeek 搜索可见度 · 本月 ${value(searchVisibilityUsage.requests)} 次请求 / ${value(searchVisibilityUsage.billable)} 次计费 · 估算 ${Number(searchVisibilityUsage.cost_cny).toFixed(3)} 元 / 上限 ${Number(searchVisibilityUsage.limit_cny).toFixed(2)} 元${searchVisibilityUsage.reserved_cny?' · 另有 '+Number(searchVisibilityUsage.reserved_cny).toFixed(3)+' 元待确认预留':''}`:'DeepSeek 搜索可见度 · 待启用或用量暂不可读取';}
+  let searchVisibilityUsage=null,searchVisibilityUsageNote='正在读取本月用量…';
+  function searchUsageText(){return searchVisibilityUsage?`DeepSeek 搜索可见度 · 本月 ${value(searchVisibilityUsage.requests)} 次请求 / ${value(searchVisibilityUsage.billable)} 次计费 · 估算 ${Number(searchVisibilityUsage.cost_cny).toFixed(3)} 元 / 上限 ${Number(searchVisibilityUsage.limit_cny).toFixed(2)} 元${searchVisibilityUsage.reserved_cny?' · 另有 '+Number(searchVisibilityUsage.reserved_cny).toFixed(3)+' 元待确认预留':''}`:'DeepSeek 搜索可见度 · '+searchVisibilityUsageNote;}
   async function querySearchUsage(){
-    const started=revision;searchVisibilityUsage=null;
+    const started=revision;searchVisibilityUsage=null;searchVisibilityUsageNote='正在读取本月用量…';
     try{const data=await client.searchVisibilityUsage();if(disposed||started!==revision)return;searchVisibilityUsage=data;}
-    catch(e){if(disposed||started!==revision)return;if(e.status===401||e.status===403){revision++;client.invalidate();snapshot=null;identity=null;gate('无法读取搜索可见度用量','管理员权限已变化，请重新登录。');return;}}
+    catch(e){if(disposed||started!==revision)return;if(e.status===401||e.status===403){revision++;client.invalidate();snapshot=null;identity=null;gate('无法读取搜索可见度用量','管理员权限已变化，请重新登录。');return;}
+      searchVisibilityUsageNote=e.status===404?'待启用':'本月用量暂时无法读取，请刷新重试。';}
     const line=root.querySelector('[data-sv-usage]');if(line)line.textContent=searchUsageText();
   }
   const blankAutomation=()=>({busy:false,modules:{seo:{state:'unknown',data:null},geo:{state:'unknown',data:null}}});
@@ -304,7 +305,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     advisorLinks.reset();
     balanceAlerts=blankBalances();auditState={...blankHistory()};
     automationState=blankAutomation();
-    if(disposed)return;revision++;const started=revision;snapshot=null;identity=null;searchVisibilityUsage=null;busy=true;query='';history=blankHistory();governance=null;governanceError='';balanceState=blankBalances();
+    if(disposed)return;revision++;const started=revision;snapshot=null;identity=null;searchVisibilityUsage=null;searchVisibilityUsageNote='正在读取本月用量…';busy=true;query='';history=blankHistory();governance=null;governanceError='';balanceState=blankBalances();
     if(!session.token){busy=false;login();return;}
     gate('正在读取平台数据','正在核对账号权限…');
     try{
