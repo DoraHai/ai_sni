@@ -12,6 +12,7 @@ import {automationReadState} from './platform-automation-health.mjs';
 import {renderAutomationOps,automationNotifications} from './platform-automation-ops-view.mjs';
 import {renderReadiness,balanceNotifications} from './platform-readiness-view.mjs';
 import {renderAudit} from './platform-audit-view.mjs';
+import {createAdvisorLinksPanel} from './platform-advisor-links.mjs';
 
 const tabs=[['overview','平台总览'],['customers','客户与服务'],['accounts','账号与权限'],['apis','API 与调用'],
   ['ai-governance','AI 自动化治理'],['automation-ops','自动执行运维'],['distribution','多号通分发接入'],['balances','实时余额与预警'],['costs','成本与用量'],['controls','API 与预算管理'],['config','系统配置'],['alerts','告警与处理'],['tasks','任务与调度'],['security','安全与运维'],['inventory','系统盘点']];
@@ -38,6 +39,7 @@ const inventory=[
 ];
 
 export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=window}){
+  const advisorLinks=createAdvisorLinksPanel({session,fetchImpl,onChange:()=>render()});
   root.classList.add('platform-console');browser.document.title='超级管理员工作台 · G-SNIPERS';
   let distributionMount=null;
   let page=new URLSearchParams(browser.location?.search||'').get('setup')==='nord'?'distribution':'overview',snapshot=null,identity=null,busy=false,disposed=false,ownChange=false,query='',revision=0;
@@ -86,7 +88,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     return card('账号管理',`${search('搜索账号、姓名或客户')}<div class="pc-shortcuts">${link('创建 / 编辑账号','/platform/accounts')}${link('维护角色与权限','/platform/roles')}</div>${table(['账号','角色','数据范围','状态','最近登录'],users.map(u=>[
       `<b>${esc(u.display_name||u.username)}</b><small class="pc-cell-note">${esc(u.username)}</small>`,esc(roles.find(r=>r.id===u.role_id)?.name||'未读取角色'),esc(u.tenant_id==null?'全局范围 · 受角色权限控制':tenant(u.tenant_id)),status(u.is_active?'active':'disabled'),esc(time(u.last_login_at)),
     ]))}`,sourceNote('users'))+
-      card('角色与权限',table(['角色','授权范围','当前清单账号数'],roles.map(r=>[
+      advisorLinks.html()+card('角色与权限',table(['角色','授权范围','当前清单账号数'],roles.map(r=>[
         `<b>${esc(r.name)}</b><small class="pc-cell-note">${esc(r.description||'')}</small>`,`${Object.values(r.permissions||{}).filter(p=>p==='edit').length} 项编辑 / ${Object.values(r.permissions||{}).filter(p=>p==='view').length} 项查看`,value(source('users').rows.filter(u=>u.role_id===r.id).length),
       ])),'超管入口要求全局账号同时拥有客户管理和账号管理编辑权限。客户绑定仍由服务端校验。');
   }
@@ -183,6 +185,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   }
   function gate(title,note){distributionMount?.dispose();distributionMount=null;root.innerHTML=`<header class="pc-header"><a class="pc-brand" href="${platformConsolePath}">G-SNIPERS</a><span>超级管理员工作台</span></header><main class="pc-gate"><section class="pc-card"><small>平台管理</small><h1>${esc(title)}</h1><p role="status">${esc(note)}</p><div class="pc-shortcuts"><button data-pc="refresh">重新读取</button><button data-pc="logout">切换账号</button><a href="/customer-workbench/">返回客户工作台</a></div></section></main>`;}
   function login(note=''){
+    advisorLinks.reset();
     balanceAlerts=blankBalances();auditState={...blankHistory()};
     automationState=blankAutomation();
     snapshot=null;identity=null;history=blankHistory();balanceState=blankBalances();
@@ -286,6 +289,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     }finally{if(!disposed&&started===revision){history.busy=false;render();}}
   }
   async function load(){
+    advisorLinks.reset();
     balanceAlerts=blankBalances();auditState={...blankHistory()};
     automationState=blankAutomation();
     if(disposed)return;revision++;const started=revision;snapshot=null;identity=null;busy=true;query='';history=blankHistory();governance=null;governanceError='';balanceState=blankBalances();
@@ -335,6 +339,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     if(!disposed&&started===revision&&automationState===current){current.busy=false;repaintAutomation();}
   }
   async function submit(event){
+    if(event.target.id==='pc-advisor-links'){void advisorLinks.submit(event);return;}
     if(event.target.id==='pc-audit-query'){
       event.preventDefault();if(!auditState.busy&&event.target.reportValidity()){
         auditState.filters=Object.fromEntries(new FormData(event.target));void queryAudit();
@@ -424,6 +429,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     finally{loginController=null;}
   }
   function click(event){const b=event.target.closest('[data-pc],[data-pc-page],[data-pc-connection]');if(!b||b.disabled)return;
+    advisorLinks.click(event);
     if(b.dataset.pc==='audit-export')void queryAudit(null,true);
     if(b.dataset.pc==='audit-next'&&auditState.data?.next_cursor)void queryAudit(auditState.data.next_cursor);
     if(b.dataset.pc==='audit-first')void queryAudit();
@@ -439,8 +445,9 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     if(b.dataset.pc==='refresh')void load();
     if(b.dataset.pc==='logout'){notice='';revision++;client.invalidate();loginController?.abort();ownChange=true;try{session.logout();}finally{ownChange=false;}login('已退出。');}
   }
-  function input(event){if(event.target.id==='pc-search'){query=event.target.value;const position=event.target.selectionStart;render();const field=root.querySelector('#pc-search');field?.focus();field?.setSelectionRange?.(position,position);}}
+  function input(event){advisorLinks.input(event);if(event.target.id==='pc-search'){query=event.target.value;const position=event.target.selectionStart;render();const field=root.querySelector('#pc-search');field?.focus();field?.setSelectionRange?.(position,position);}}
   function change(event){
+    advisorLinks.change(event);
     if(event.target.matches('#pc-usage-review [name=event_id]')){if(!history.reviewBusy)void loadReviewRecord(event.target.value);return;}
     if(event.target.matches('#pc-alert-operation [name=alert_id]')){alertId=event.target.value;render();return;}
     if(event.target.matches('#pc-supplier-operation [name=host]')){supplierHost=event.target.value;render();return;}
@@ -454,10 +461,10 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     if(['target','host','model','binding'].includes(field))hydrateControlForm(form,snapshot);
     else if(['unit','mode'].includes(field))hydrateControlForm(form,snapshot,false);
   }
-  function changed(){if(disposed||ownChange)return;notice='';revision++;client.invalidate();loginController?.abort();snapshot=null;identity=null;if(!session.token)login('账号已退出。');else void load();}
+  function changed(){if(disposed||ownChange)return;advisorLinks.reset();notice='';revision++;client.invalidate();loginController?.abort();snapshot=null;identity=null;if(!session.token)login('账号已退出。');else void load();}
   root.addEventListener('click',click);root.addEventListener('submit',submit);root.addEventListener('input',input);root.addEventListener('change',change);browser.addEventListener('sem:auth-context-changed',changed);
   const balanceTimer=browser.setInterval(()=>{if(snapshot&&browser.document.visibilityState==='visible'){void queryBalanceAlerts();if(page==='balances')void queryBalances();}},300000);
   const automationTimer=browser.setInterval(()=>{if(snapshot&&browser.document.visibilityState==='visible')void queryAutomation();},60000);
   void load();
-  return {dispose(){browser.clearInterval(balanceTimer);browser.clearInterval(automationTimer);automationState=blankAutomation();disposed=true;distributionMount?.dispose();distributionMount=null;revision++;client.invalidate();loginController?.abort();browser.removeEventListener('sem:auth-context-changed',changed);root.removeEventListener('click',click);root.removeEventListener('submit',submit);root.removeEventListener('input',input);root.removeEventListener('change',change);root.classList.remove('platform-console');root.replaceChildren();}};
+  return {dispose(){advisorLinks.reset();browser.clearInterval(balanceTimer);browser.clearInterval(automationTimer);automationState=blankAutomation();disposed=true;distributionMount?.dispose();distributionMount=null;revision++;client.invalidate();loginController?.abort();browser.removeEventListener('sem:auth-context-changed',changed);root.removeEventListener('click',click);root.removeEventListener('submit',submit);root.removeEventListener('input',input);root.removeEventListener('change',change);root.classList.remove('platform-console');root.replaceChildren();}};
 }
