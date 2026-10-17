@@ -25,7 +25,7 @@ test('production-shaped pending controls remain visible at 1440 and 390, even wh
    return send({},404);
   });
   await p.goto(f.origin+'/customer-workbench/?console=platform');await p.waitForSelector('.pc-kpis');
-  const open=async page=>{await p.click(`.pc-sidebar [data-pc-page="${page}"]`);await p.waitForFunction(id=>document.querySelector('.pc-sidebar .active')?.dataset.pcPage===id,{},page);};
+  const open=async page=>{await p.waitForNetworkIdle({idleTime:100});await p.locator(`.pc-sidebar [data-pc-page="${page}"]`).click();await p.waitForFunction(id=>document.querySelector('.pc-sidebar .active')?.dataset.pcPage===id,{},page);await p.waitForNetworkIdle({idleTime:100});};
   for(const [page,text] of [['ai-governance','治理策略编辑暂未接入'],['automation-ops','接口未部署'],['controls','管理功能等待启用'],['config','配置管理尚未启用'],['alerts','处理记录等待数据库审核启用']]){
    await open(page);await p.waitForFunction(text=>document.querySelector('.pc-content')?.textContent.includes(text),{},text);
    assert.equal(await p.$$eval('.pc-main > .pc-pending',els=>els.length),['controls','automation-ops'].includes(page)?1:0,`${page} ${width}`);
