@@ -46,6 +46,7 @@
 .customer-connected .home-metric{border:0;border-radius:0;border-right:1px solid #e8edf1;border-bottom:1px solid #e8edf1;padding:16px;text-align:left;margin:0;min-width:0;transition:background .16s}
 .customer-connected .home-metric span{display:block;font-size:12px;color:#576b7e}.customer-connected .home-metric strong{display:block;font-size:28px;font-variant-numeric:tabular-nums;margin:7px 0;color:#24485d}
 .customer-connected .home-metric small{display:block;line-height:1.6}
+.customer-connected .home-publication-metric{grid-column:span 2}.customer-connected .home-metric.home-publication-metric strong{font-size:18px;line-height:1.5}
 .customer-connected .home-panels{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0}
 .customer-connected .home-bar{display:grid;grid-template-columns:100px minmax(0,1fr) 28px;gap:10px;align-items:center;margin:14px 0;font-size:12px}
 .customer-connected .home-bar>div{background:#edf2f5;border-radius:4px;height:7px;overflow:hidden}.customer-connected .home-bar i{display:block;background:#789aaa;height:100%;border-radius:4px}

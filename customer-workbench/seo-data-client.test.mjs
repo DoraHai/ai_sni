@@ -41,3 +41,15 @@ test('home counts actionable delivery status, not ready content, and clearly lim
   const html=homeView({contents:{items:[{id:1},{id:2}],total:500},deliveries:[delivery(1,'approved_waiting_publication',{confirm_as_customer:false}),delivery(2,'awaiting_customer_confirmation',{confirm_as_customer:true})],failed:0,executions:{total:0,items:[]}});
   assert.match(html,/仅覆盖本次 2 篇/);assert.match(html,/还有稿件未核对/);assert.equal((html.match(/查看并确认/g)||[]).length,1);assert(!html.includes('全站待确认'));
 });
+test('home publication summary uses distinct content assets rather than publication records',()=>{
+  const html=homeView({contents:{items:[],total:0},deliveries:[],executions:{total:0,items:[]},publications:{total:9},service:{phases:{'SEO-A05':{facts:{published:4,verified_publications:2,published_content_assets:3,verified_content_assets:1}}}}});
+  assert.match(html,/已发布 3 篇，其中已核验 1 篇/);
+  assert.doesNotMatch(html,/已发布 9 篇/);
+  assert.doesNotMatch(html,/已发布 4 篇/);
+  assert.match(html,/同一稿件多渠道发布计为一篇/);
+});
+
+test('home does not substitute legacy record counts when distinct counts are unavailable',()=>{
+  const html=homeView({contents:{items:[],total:0},deliveries:[],service:{phases:{'SEO-A05':{facts:{published:4,verified_publications:2}}}}});
+  assert.match(html,/已发布 — 篇，其中已核验 — 篇/);
+});
