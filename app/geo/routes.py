@@ -588,3 +588,7 @@ async def verify_one_ticket(
 from app.geo.content.routes import router as content_router  # noqa: E402
 
 router.include_router(content_router)
+
+from app.geo.content.search_visibility_routes import router as search_visibility_router  # noqa: E402
+
+router.include_router(search_visibility_router)
