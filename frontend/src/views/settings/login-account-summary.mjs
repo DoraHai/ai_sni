@@ -39,5 +39,5 @@ export function loginAccountSummary(stats, groups = null, tenantId = null) {
   }
   return {count:`${accountCount} 个 · 启用 ${activeCount}`,
     login: accountCount === 0 ? '尚未绑定账号' : timestamp(lastLogin) ? `最近登录 ${lastLogin}` : lastLogin === null ? '已绑定账号尚无登录记录' : '最近登录统计未提供',
-    source: usedList ? '按账号清单统计' : ''};
+    source: usedList ? ['account_count','active_count','last_login_at'].some(provided) ? '部分字段按账号清单统计（其余采用服务端统计）' : '按账号清单统计' : ''};
 }

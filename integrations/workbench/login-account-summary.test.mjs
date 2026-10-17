@@ -13,7 +13,7 @@ test('server fields win independently, including actual zero and null login; par
  const groups=groupLoginAccounts(response);
  assert.deepEqual(loginAccountSummary({account_count:0,active_count:0,last_login_at:null},groups,1),{count:'0 个 · 启用 0',login:'尚未绑定账号',source:''});
  assert.deepEqual(loginAccountSummary({account_count:0},groups,1),{count:'0 个 · 启用 0',login:'尚未绑定账号',source:''});
- const mixed=loginAccountSummary({account_count:8},groups,1);assert.equal(mixed.count,'8 个 · 启用 2');assert.equal(mixed.source,'按账号清单统计');
+ const mixed=loginAccountSummary({account_count:8},groups,1);assert.equal(mixed.count,'8 个 · 启用 2');assert.equal(mixed.source,'部分字段按账号清单统计（其余采用服务端统计）');
  assert.equal(loginAccountSummary({account_count:3,active_count:2,last_login_at:null},groups,1).login,'已绑定账号尚无登录记录');
  assert.equal(loginAccountSummary({account_count:-1},groups,1).count,'统计未提供');
 });
