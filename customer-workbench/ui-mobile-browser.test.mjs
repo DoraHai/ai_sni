@@ -19,7 +19,7 @@ test('each scanned customer tab keeps useful content usable and marks only unava
   if(row.page.startsWith('data-')){await p.click(`[data-action=data-kind][data-kind="${row.page.slice(5)}"]`);await p.waitForFunction(()=>!document.querySelector('#connected-message')?.textContent.includes('正在'));}
   assert.equal(await p.$$eval('.pc-pending',es=>es.length),0,`scanned ${row.page}: no whole-page badge`);
   if(row.page==='站内优化')assert.match(await p.$eval('.pending-feature',e=>e.textContent),/官网自动修改.*待启用/s);
-  if(row.page==='服务计划')assert.match(await p.$eval('.pending-feature',e=>e.textContent),/来源维护入口.*待启用/s);
+  if(row.page==='服务计划')assert.equal(await p.$$eval('.pending-feature',es=>es.length),0,'customer sees the usable read-only plan, without editor-only pending features');
  }
  await p.close();}finally{await browser.close();await f.close();}
 });

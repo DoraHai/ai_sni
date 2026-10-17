@@ -1,3 +1,5 @@
+import {aiPlanView} from './js/seo-ai-plan-view.mjs';
+import {onsiteView} from './js/onsite-view.mjs';
 import {distributionPlanningMarkup,distributionExecutionMarkup} from './js/distribution-panel.mjs';
 import {formatTime} from './js/customer-display.mjs';
 import test from 'node:test';import assert from 'node:assert/strict';
@@ -29,4 +31,11 @@ test('handoff and planning summaries shorten identifiers while retaining complet
  const execution=distributionExecutionMarkup([],{permissions:[],waits:[],items:[{stage:'preflight',status:'succeeded',draft_version:hash,task_id:id}]},[],true);
  for(const html of [planning,execution]){assert.match(html,/aaaaaaaa…aaaaaa/);assert(html.includes(hash));assert.match(html,/<summary>技术详情/);}
  assert(execution.includes('12345678…789abc'));assert(execution.includes(id));
+});
+
+test('production-shaped editor and GEO manual workflow mark only unavailable subfeatures',()=>{
+ const html=aiPlanView({enabled:false,factIds:[],keywordIds:[],policy:{can_configure:true}},null,null,false,true);
+ assert.match(html,/来源维护入口[^]*pending-badge[^]*待启用/);assert.doesNotMatch(html,/pc-pending/);
+ const geo=onsiteView({items:[],can_create:false},null,false,'geo');
+ assert.match(geo,/官网自动修改[^]*pending-badge[^]*待启用/);assert.doesNotMatch(geo,/pc-pending/);
 });
