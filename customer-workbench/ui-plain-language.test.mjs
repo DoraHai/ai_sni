@@ -1,3 +1,4 @@
+import {distributionPlanningMarkup,distributionExecutionMarkup} from './js/distribution-panel.mjs';
 import {formatTime} from './js/customer-display.mjs';
 import test from 'node:test';import assert from 'node:assert/strict';
 import {preparationView} from './js/data-workspace-view.mjs';
@@ -21,3 +22,11 @@ test('malformed optional provider error summary does not break business evidence
 });
 
 test('shared missing time stays neutral outside the SEO update label',()=>{assert.equal(formatTime(null),'时间未提供');});
+
+test('handoff and planning summaries shorten identifiers while retaining complete technical evidence',()=>{
+ const hash='a'.repeat(64),id='12345678-1234-4567-8123-123456789abc';
+ const planning=distributionPlanningMarkup({requests:[],items:[{basis:'rule',state:'planned',planned_at:null,reason:'unknown',draft_version:hash,checked_at:null}]});
+ const execution=distributionExecutionMarkup([],{permissions:[],waits:[],items:[{stage:'preflight',status:'succeeded',draft_version:hash,task_id:id}]},[],true);
+ for(const html of [planning,execution]){assert.match(html,/aaaaaaaa…aaaaaa/);assert(html.includes(hash));assert.match(html,/<summary>技术详情/);}
+ assert(execution.includes('12345678…789abc'));assert(execution.includes(id));
+});
