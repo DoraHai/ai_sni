@@ -1,5 +1,4 @@
 <script setup>
-import { roleDescription } from '../../../../integrations/workbench/role-description.mjs'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
@@ -308,7 +307,7 @@ onMounted(load)
               </template>
             </el-table-column>
             <el-table-column label="说明" min-width="200">
-              <template #default="{ row }"><span class="sub">{{ roleDescription(row, menus) || '—' }}</span></template>
+              <template #default="{ row }"><span class="sub">{{ row.description || '—' }}</span></template>
             </el-table-column>
             <el-table-column label="权限" width="150">
               <template #default="{ row }"><span class="sub">{{ permSummary(row) }}</span></template>

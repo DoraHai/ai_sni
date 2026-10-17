@@ -1,5 +1,4 @@
 <script setup>
-import { loginAccountSummary } from './login-account-summary.mjs'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -488,10 +487,10 @@ onMounted(load)
       <el-table-column label="客户状态" width="110">
         <template #default><el-tag type="info">未提供</el-tag></template>
       </el-table-column>
-      <el-table-column label="登录账号（限定客户）" min-width="160">
+      <el-table-column label="登录账号" min-width="160">
         <template #default="{ row }">
-          <div>{{ loginAccountSummary(row.login_accounts).count }}</div>
-          <small>{{ loginAccountSummary(row.login_accounts).login }}</small>
+          <div>{{ row.login_accounts?.account_count || 0 }} 个 · 启用 {{ row.login_accounts?.active_count || 0 }}</div>
+          <small>{{ row.login_accounts?.last_login_at ? `最近登录 ${row.login_accounts.last_login_at}` : '从未登录' }}</small>
           <el-button v-if="session.canEdit('settings.accounts')" link type="primary" @click="showAccounts(row)">查看账号</el-button>
         </template>
       </el-table-column>
