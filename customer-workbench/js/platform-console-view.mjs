@@ -79,7 +79,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
       return [`<b>${esc(t.name)}</b><small class="pc-cell-note">${esc(t.industry||'行业未填写')}</small>`,source('tenant_modules').state!=='available'?'待接入':modules.map(m=>`<div class="pc-inline">${esc(m.module_code.toUpperCase())} ${status(moduleState(m))}${m.expires_at?`<small>${esc(m.expires_at)} 到期</small>`:''}</div>`).join('')||'暂未开通',
         source('seo_sites').state!=='available'?'待接入':sites.length?sites.map(s=>`<div>${esc(s.domain)}</div>`).join(''):'未登记',source('geo_projects').state!=='available'?'待接入':projects.length?projects.map(p=>`<div>${esc(p.name)}</div>`).join(''):'未登记',link('管理','/platform/customers')];
     });
-    return card('客户与服务',`${search('搜索客户或行业')}${table(['客户','服务开通','SEO 网站','GEO 项目','操作'],rows)}`,sourceNote('tenants'));
+    return card('客户与服务',`<div class="pc-shortcuts">${link('新建客户 / 分配 SEM、SEO、GEO 模块','/platform/customers')}</div>${search('搜索客户或行业')}${table(['客户','服务开通','SEO 网站','GEO 项目','操作'],rows)}`,sourceNote('tenants'));
   }
   function accounts(){
     const users=source('users').rows.filter(u=>matches(u.username+' '+(u.display_name||'')+' '+tenant(u.tenant_id))),roles=source('roles').rows;

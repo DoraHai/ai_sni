@@ -121,7 +121,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     balanceStatus=404;await p.click('[data-pc=balance-refresh]');await p.waitForFunction(()=>document.body.textContent.includes('余额查询接口未部署'));assert.doesNotMatch(await p.$eval('.pc-content',e=>e.textContent),/CNY 0/);
     balanceStatus=403;await p.click('[data-pc=balance-refresh]');await p.waitForFunction(()=>document.body.textContent.includes('无法查询平台余额'));assert(!await p.$('.pc-kpis'));
     balanceStatus=200;await p.click('[data-pc=refresh]');await p.waitForSelector('.pc-kpis');await p.waitForFunction(()=>document.querySelector('.pc-content')?.textContent.includes('CNY 0'));
-    await p.click('.pc-sidebar [data-pc-page=customers]');const beforeOtherPage=balanceReads;await p.evaluate(()=>window.__balancePoll());assert.equal(balanceReads,beforeOtherPage);assert(!await p.$('.pc-table-wrap img'));
+    await p.click('.pc-sidebar [data-pc-page=customers]');assert.equal(await p.$eval('.pc-content a[href="/platform/customers"]',a=>a.textContent.includes('新建客户 / 分配 SEM、SEO、GEO 模块')),true);const beforeOtherPage=balanceReads;await p.evaluate(()=>window.__balancePoll());assert.equal(balanceReads,beforeOtherPage);assert(!await p.$('.pc-table-wrap img'));
     await p.type('#pc-search','制造');assert.match(await body(),/测试客户 A/);assert.doesNotMatch(await p.$eval('.pc-content',e=>e.textContent),/客户 <img/);
     await p.click('.pc-sidebar [data-pc-page=costs]');assert.match(await body(),/不能相加/);assert.doesNotMatch(await body(),/¥0|￥0/);
     // Forward metering includes inactive and zero-activity accounts, and keeps
