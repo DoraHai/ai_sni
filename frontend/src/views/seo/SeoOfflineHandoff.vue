@@ -77,7 +77,7 @@ watch(scope, () => {
   <el-button :disabled="busy || !tenantId || !siteId" @click="openOrders">导出发布单</el-button>
   <el-button :disabled="busy || !tenantId || !siteId" @click="input?.click()">导入回执</el-button>
   <input ref="input" type="file" accept=".json,.csv" hidden @change="previewReceipts">
-  <el-dialog v-model="orderDialog" title="多号通离线发布单" width="620px">
+  <el-dialog v-model="orderDialog" title="多号通离线发布单" width="min(620px, calc(100vw - 32px))">
     <p>从当前已加载的审核通过稿件中选择，最多20篇。多号通单独安装，人工发布后填写回执模板。</p>
     <el-form label-position="top">
       <el-form-item label="稿件" required><el-select v-model="selected" multiple :multiple-limit="20" filterable><el-option v-for="c in candidates" :key="c.article_id" :label="c.title" :value="c.article_id" /></el-select></el-form-item>

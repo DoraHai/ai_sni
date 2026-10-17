@@ -110,18 +110,11 @@ function removeSiteQuery() {
 }
 
 const access = createSeoWorkspaceAccess({
+  fetchTenants: () => client.get('/api/v1/auth/tenants', { params: { module: 'seo' } }),
+  boundTenantId: () => session.user?.tenant_id,
+  selectTenant: (tenantId) => { session.setTenant(tenantId) },
   async fetchSites(tenantId) {
-    const [siteResult, tenantResult] = await Promise.allSettled([
-      fetchSeoWorkbenchSites(tenantId),
-      client.get('/api/v1/auth/tenants', { params: { module: 'seo' } }),
-    ])
-    const tenants = tenantResult.status === 'fulfilled' ? (tenantResult.value.tenants || []) : []
-    if (siteResult.status === 'rejected') {
-      const error = siteResult.reason instanceof Error ? siteResult.reason : new Error('无法核对 SEO 访问范围')
-      error.seoTenants = tenants
-      throw error
-    }
-    return { ...siteResult.value, tenants }
+    return fetchSeoWorkbenchSites(tenantId)
   },
   reset() {
     accessState.value = 'checking'
