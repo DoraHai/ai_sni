@@ -51,6 +51,14 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   let history=blankHistory(),governance=null,governanceError='';
   const blankBalances=()=>({data:null,error:'',busy:false,after_id:0,cursors:[]});
   let balanceState=blankBalances();
+  let searchVisibilityUsage=null;
+  function searchUsageText(){return searchVisibilityUsage?`DeepSeek 搜索可见度 · 本月 ${value(searchVisibilityUsage.requests)} 次请求 / ${value(searchVisibilityUsage.billable)} 次计费 · 估算 ${Number(searchVisibilityUsage.cost_cny).toFixed(3)} 元 / 上限 ${Number(searchVisibilityUsage.limit_cny).toFixed(2)} 元${searchVisibilityUsage.reserved_cny?' · 另有 '+Number(searchVisibilityUsage.reserved_cny).toFixed(3)+' 元待确认预留':''}`:'DeepSeek 搜索可见度 · 待启用或用量暂不可读取';}
+  async function querySearchUsage(){
+    const started=revision;searchVisibilityUsage=null;
+    try{const data=await client.searchVisibilityUsage();if(disposed||started!==revision)return;searchVisibilityUsage=data;}
+    catch(e){if(disposed||started!==revision)return;if(e.status===401||e.status===403){revision++;client.invalidate();snapshot=null;identity=null;gate('无法读取搜索可见度用量','管理员权限已变化，请重新登录。');return;}}
+    const line=root.querySelector('[data-sv-usage]');if(line)line.textContent=searchUsageText();
+  }
   const blankAutomation=()=>({busy:false,modules:{seo:{state:'unknown',data:null},geo:{state:'unknown',data:null}}});
   let automationState=blankAutomation();
   let balanceAlerts=blankBalances(),auditState={...blankHistory()};
@@ -185,6 +193,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
         .filter(row=>Number.isSafeInteger(row.id)&&row.id>0&&Number.isSafeInteger(row.tenant_id)&&row.tenant_id>0)
         .map(row=>({module,tenant_id:row.tenant_id,scope_id:row.id,tenant_name:tenant(row.tenant_id),scope_name:row.name||'项目 #'+row.id})))});
     root.querySelectorAll(".pc-control-form").forEach(form=>form.dataset.controlKind==='connection'?hydrateConnectionForm(form,snapshot):hydrateControlForm(form,snapshot));
+    if(['overview','costs'].includes(page)){const line=browser.document.createElement('p');line.className='pc-updated';line.dataset.svUsage='';line.textContent=searchUsageText();root.querySelector('.pc-title').after(line);}
   }
   function gate(title,note){distributionMount?.dispose();distributionMount=null;root.innerHTML=`<header class="pc-header"><a class="pc-brand" href="${platformConsolePath}">G-SNIPERS</a><span>超级管理员工作台</span></header><main class="pc-gate"><section class="pc-card"><small>平台管理</small><h1>${esc(title)}</h1><p role="status">${esc(note)}</p><div class="pc-shortcuts"><button data-pc="refresh">重新读取</button><button data-pc="logout">切换账号</button><a href="/customer-workbench/">返回客户工作台</a></div></section></main>`;}
   function login(note=''){
@@ -295,13 +304,14 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     advisorLinks.reset();
     balanceAlerts=blankBalances();auditState={...blankHistory()};
     automationState=blankAutomation();
-    if(disposed)return;revision++;const started=revision;snapshot=null;identity=null;busy=true;query='';history=blankHistory();governance=null;governanceError='';balanceState=blankBalances();
+    if(disposed)return;revision++;const started=revision;snapshot=null;identity=null;searchVisibilityUsage=null;busy=true;query='';history=blankHistory();governance=null;governanceError='';balanceState=blankBalances();
     if(!session.token){busy=false;login();return;}
     gate('正在读取平台数据','正在核对账号权限…');
     try{
       const result=await client.initialize();
       if(disposed||started!==revision)return;
       identity=result.user;snapshot=result.data;busy=false;render();if(page==='balances')void queryBalances();else void queryBalanceAlerts();
+      void querySearchUsage();
       void queryAutomation();
       try{
         const data=await client.governance();

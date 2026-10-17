@@ -38,6 +38,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
       if(u.origin!==origin){external.push(u.href);return r.abort();}
       if(u.pathname.startsWith('/api/')){
         requests.push({path:u.pathname,method:r.method()});
+        if(u.pathname==='/api/v1/geo/search-visibility/usage')return r.respond({status:200,contentType:'application/json',body:JSON.stringify({month:'2026-10',requests:3,billable:1,cost_cny:.005,reserved_cny:0,limit_cny:30})});
         if(['/api/v1/seo/workbench/automation-health','/api/v1/geo/workbench/automation-health'].includes(u.pathname))return r.respond({status:404,contentType:'application/json',body:'{}'});
         if(u.pathname==='/api/v1/admin/console/balances'){
           balanceReads++;if(u.searchParams.get('refresh')==='true')balanceRefreshes++;if(balanceHeld)await balanceHeld;
@@ -96,6 +97,13 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     const body=()=>p.evaluate(()=>document.body.textContent);
     await p.goto(origin+'/customer-workbench/?console=platform');await signIn();await p.waitForSelector('.pc-kpis');
     assert.equal(await p.title(),'超级管理员工作台 · G-SNIPERS');assert(!await p.$('.chat'));assert(!await p.$('.composer'));assert.match(await body(),/本月 API 估算待接入/);
+    await p.waitForFunction(()=>document.querySelector('[data-sv-usage]')?.textContent.includes('3 次请求 / 1 次计费'));
+    assert.match(await p.$eval('[data-sv-usage]',e=>e.textContent),/估算 0.005 元 \/ 上限 30.00 元/);
+    if(process.env.GEO_VISIBILITY_SHOTS)for(const [name,width,height] of [['desktop',1440,900],['mobile',390,844]]){
+      await p.setViewport({width,height});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+      await p.screenshot({path:path.join(process.env.GEO_VISIBILITY_SHOTS,`superadmin-${name}.png`)});
+    }
+    await p.setViewport({width:1440,height:1000});
     stage='screenshot:platform-admin-overview-20261010.png';await p.screenshot({path:path.join(os.tmpdir(),'platform-admin-overview-20261010.png'),fullPage:true});
     const pages={'ai-governance':'AI 自动化治理',customers:'客户与服务',accounts:'账号管理',apis:'API 调用情况',costs:'平台成本',tasks:'SEO 执行任务',security:'数据与权限',inventory:'系统盘点'};
     for(const [tab,label] of Object.entries(pages)){
@@ -266,7 +274,8 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     await new Promise(r=>setTimeout(r,50));assert(!await p.$('.pc-kpis'));assert.equal(await p.evaluate(()=>sessionStorage.getItem('sem_auth_v1')),null);
     await signIn();await p.waitForSelector('.pc-kpis');status=401;await p.click('[data-pc=refresh]');await p.waitForSelector('#pc-login');assert(!await p.$('.pc-kpis'));
     assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
-    assert(requests.every(r=>['/api/v1/auth/login','/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/admin/console/controls','/api/v1/admin/console/usage','/api/v1/admin/console/usage/export','/api/v1/admin/console/operations','/api/v1/platform/ai-governance','/api/v1/admin/console/balances','/api/v1/seo/workbench/automation-health','/api/v1/geo/workbench/automation-health'].includes(r.path)));
+    assert(requests.every(r=>['/api/v1/auth/login','/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/admin/console/controls','/api/v1/admin/console/usage','/api/v1/admin/console/usage/export','/api/v1/admin/console/operations','/api/v1/platform/ai-governance','/api/v1/admin/console/balances','/api/v1/seo/workbench/automation-health','/api/v1/geo/workbench/automation-health','/api/v1/geo/search-visibility/usage'].includes(r.path)));
+    assert(requests.filter(r=>r.path==='/api/v1/geo/search-visibility/usage').every(r=>r.method==='GET'));
     assert(requests.filter(r=>r.path.endsWith('/automation-health')).every(r=>r.method==='GET'));
     assert(requests.filter(r=>r.method!=='GET').every(r=>['/api/v1/auth/login','/api/v1/admin/console/controls','/api/v1/admin/console/operations'].includes(r.path)));
   }catch(error){error.message+=' [stage='+stage+']';throw error;}finally{await browser.close();await f.close();}
