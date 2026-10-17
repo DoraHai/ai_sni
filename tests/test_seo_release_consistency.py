@@ -16,6 +16,12 @@ def _write(root: Path, relative: str, content: str) -> None:
 
 
 def test_source_allowlist_rejects_auth_and_other_modules() -> None:
+    for path in (
+        "app/seo_offline_handoff.py", "tests/test_seo_offline_handoff.py",
+        "frontend/scripts/test-seo-offline-handoff.mjs",
+        "docs/seo-offline-handoff/FORMAT.md", "docs/seo-offline-handoff/PLAN.md",
+    ):
+        assert source_path_allowed(path)
     assert source_path_allowed("app/models/sem_task.py")
     assert source_path_allowed("migrations/versions/20260909_0096_sem_tasks.py")
     assert source_path_allowed("migrations/versions/20260909_0097_demo_tenant_bindings.py")

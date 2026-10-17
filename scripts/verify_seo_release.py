@@ -11,6 +11,11 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "app/seo_offline_handoff.py",
+    "tests/test_seo_offline_handoff.py",
+    "frontend/scripts/test-seo-offline-handoff.mjs",
+    "docs/seo-offline-handoff/FORMAT.md",
+    "docs/seo-offline-handoff/PLAN.md",
     "tests/fixtures/seo_onsite_ai_observed.json",
     "app/api/seo_onsite_ai.py",
     "app/seo_onsite_ai.py",

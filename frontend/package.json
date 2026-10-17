@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:seo-offline-handoff": "node --test scripts/test-seo-offline-handoff.mjs",
     "dev": "vite",
     "build": "vite build",
     "dev:auth": "vite --config vite.auth.config.js",

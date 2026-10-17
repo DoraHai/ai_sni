@@ -38,6 +38,7 @@ import { currentSeoSiteId as siteId } from './seoSiteContext'
 import { validateResults } from './publisher/core.js'
 import SeoVideoPublishing from './SeoVideoPublishing.vue'
 import SeoPageCapturePanel from './SeoPageCapturePanel.vue'
+import SeoOfflineHandoff from './SeoOfflineHandoff.vue'
 import { createPublisherPackage, publisherZip } from './seoPublisher'
 const publisherFiles = import.meta.glob('./publisher/*', { query: '?raw', import: 'default', eager: true })
 const runnerFiles = import.meta.glob('./publisher-runner/*', { query: '?raw', import: 'default', eager: true })
@@ -995,6 +996,7 @@ onMounted(loadSites)
         <p>选择品牌账号，为各平台准备专属稿，填稿发布后统一收回文章链接。</p>
       </div>
       <div class="hero-actions">
+        <SeoOfflineHandoff v-if="canEdit" :tenant-id="currentTenantId" :site-id="siteId" :identity="`${session.user?.id}:${session.authRevision}`" :contents="contents" @imported="load" />
         <el-select v-model="siteId" class="distribution-site-picker" placeholder="选择 SEO 网站"><el-option v-for="site in sites.filter(item => item.status !== 'archived')" :key="site.id" :label="site.name||site.canonical_domain" :value="site.id" /></el-select>
         <input v-if="canEdit" ref="importInput" class="file-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" @change="previewImport">
         <el-button v-if="canEdit" :loading="importing" @click="selectImport">Excel 批量登记</el-button>
