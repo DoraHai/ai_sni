@@ -44,7 +44,7 @@ async def get_config(project_id: int, tenant_id: int = Query(...),
     ).order_by(GeoOptimizationUnit.sort_order, GeoOptimizationUnit.id).limit(100))
     suggested = list(dict.fromkeys(k.strip() for k in keywords if k and 0 < len(k.strip()) <= 128))[:20]
     return {**access_state(config, ctx), "config": config.model_dump(), "notice": NOTICE,
-            "suggested_core_terms": suggested}
+            "suggested_core_terms": suggested, "suggested_core_terms_scope": "tenant"}
 
 
 @router.put("/projects/{project_id}/search-visibility/config")

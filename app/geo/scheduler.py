@@ -105,7 +105,8 @@ async def run_geo_search_visibility() -> None:
                 job_id = job.id if job else None
             if job_id:
                 await execute_run(job_id)
-        except StopRun:
+        except StopRun as exc:
+            logger.info("[geo-scheduler] search visibility project=%s skipped: %s", project_id, str(exc))
             continue
         except Exception:
             logger.warning("[geo-scheduler] search visibility project=%s failed", project_id)

@@ -418,3 +418,40 @@ def test_general_recovery_ignores_search_jobs():
     session = AsyncMock()
     assert run(reconcile_stale_job(session, row)) is row
     session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("url", ["https://zhihu.com./p/1", "https://ZHIHU.COM/p/1", "https://ZHUANLAN.ZHIHU.COM./p/1"])
+def test_equivalent_zhihu_hosts_make_zero_fetch_requests(url):
+    config = sv.VisibilityConfig(enabled=True, domains=["example.com"], zh_url=url, extra_article_urls=[url])
+    paths = []
+    def handler(request):
+        paths.append(request.url.path)
+        return httpx.Response(200, json={"is_available": True} if request.method == "GET" else {"results": []})
+    _, result, _ = run(client_case(handler, lambda c: sv.collect(c, [url]), config=config))
+    assert "/v1/tools/fetch" not in paths
+    assert result["summary"]["billable"] == 0
+    assert all(i.get("error") == "知乎暂不能自动核对" for i in result["items"] if i["kind"] in {"homepage", "article"})
+
+
+@pytest.mark.parametrize("domain,expected", [("https://example.com/cn", ["example.com"]), (None, []), ("", []), ("https://", [])])
+def test_legacy_project_domain_defaults_do_not_crash(domain, expected):
+    config = sv.resolve_config(project(primary_domain=domain), NS(brand_terms=[]))
+    assert config.domains == expected
+
+
+def test_markdown_language_ignores_link_destinations_and_code():
+    page = sv.page_info("# 中文标题\n" + "[中文正文](https://example.com/" + "english" * 100 + ")\n```python\nprint('english words')\n```", markdown=True)
+    assert page["foreign_language"] is False
+    assert page["body_chars"] < 30
+
+
+def test_scheduler_has_monday_beijing_trigger_and_recovery():
+    from app.geo import scheduler
+    fake = MagicMock(running=False)
+    with patch.object(scheduler, "geo_scheduler", fake), patch.object(scheduler, "_acquire_scheduler_lock", return_value=True):
+        scheduler.start_geo_scheduler()
+    calls = {c.kwargs["id"]: c.args for c in fake.add_job.call_args_list}
+    trigger = calls["geo_search_visibility_weekly"][1]
+    assert str(trigger.timezone) == "Asia/Shanghai"
+    assert str(trigger) == "cron[day_of_week='mon', hour='6', minute='0']"
+    assert "geo_search_visibility_recovery" in calls

@@ -57,6 +57,15 @@ def week_start(value: datetime | None = None) -> datetime:
     return start.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def url_host(value: str) -> str:
+    return (urlsplit(value).hostname or "").lower().rstrip(".").encode("idna").decode("ascii")
+
+
+def is_zhihu(value: str) -> bool:
+    host = url_host(value)
+    return host == "zhihu.com" or host.endswith(".zhihu.com")
+
+
 def valid_url(value: str) -> str:
     value = value.strip()
     if not value or len(value) > 2048 or re.search(r"[\s\\\x00-\x1f]", value):
@@ -84,7 +93,7 @@ def valid_url(value: str) -> str:
 def canonical_url(value: str) -> str:
     """Keep query (often the article ID), normalize only host/scheme/fragment."""
     p = urlsplit(valid_url(value))
-    host = (p.hostname or "").lower().rstrip(".").encode("idna").decode("ascii").removeprefix("www.")
+    host = url_host(value).removeprefix("www.")
     return urlunsplit(("https", host, p.path.rstrip("/") or "/", p.query, ""))
 
 
@@ -136,9 +145,18 @@ class VisibilityConfig(BaseModel):
 
 def resolve_config(project: GeoProject, tenant: Tenant, override: dict | None = None) -> VisibilityConfig:
     raw = override if override is not None else (project.project_settings or {}).get("deepseek_visibility", {})
+    try:
+        domain = url_host(project.primary_domain if "://" in (project.primary_domain or "") else "https://" + (project.primary_domain or ""))
+        domains = VisibilityConfig(domains=[domain]).domains if domain else []
+    except ValueError:
+        domains = []
+    try:
+        homepage = valid_url(project.default_url) if project.default_url else ""
+    except ValueError:
+        homepage = ""
     defaults = {
-        "domains": [urlsplit(project.primary_domain if "://" in project.primary_domain else "https://" + project.primary_domain).hostname] if project.primary_domain else [],
-        "zh_url": project.default_url or "",
+        "domains": domains,
+        "zh_url": homepage,
         "brand_terms": list(dict.fromkeys(v.strip()[:128] for v in [project.brand_name, *(tenant.brand_terms or [])] if isinstance(v, str) and v.strip()))[:5],
     }
     return VisibilityConfig.model_validate({**defaults, **raw})
@@ -222,7 +240,7 @@ class SearchClient:
 
     async def request(self, method: str, path: str, payload: dict | None = None) -> dict:
         summary = self.result["summary"]
-        domain = urlsplit(payload["url"]).hostname if path.endswith("fetch") else None
+        domain = url_host(payload["url"]) if path.endswith("fetch") else None
         last_status = None
         for attempt in range(3):
             if summary["requests"] >= self.settings.deepseek_search_run_request_limit:
@@ -288,7 +306,7 @@ class SearchClient:
 
 def matches(url: str, domains: list[str], articles: list[str]) -> bool:
     try:
-        host = urlsplit(valid_url(url)).hostname.lower().rstrip(".").encode("idna").decode("ascii")
+        host = url_host(valid_url(url))
         if any(host == d or host.endswith("." + d) for d in domains):
             return True
         return canonical_url(url) in {canonical_url(a) for a in articles}
@@ -316,7 +334,12 @@ def search_items(data: dict, count: int) -> list[dict]:
     return out
 
 
-def page_info(content: str, title: str = "") -> dict:
+def page_info(content: str, title: str = "", *, markdown: bool = False) -> dict:
+    if markdown:
+        # Treat Markdown as text before HTML parsing: URLs/formatting are not body evidence.
+        content = re.sub(r"```.*?```", "", content, flags=re.S)
+        content = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", content)
+        content = re.sub(r"(?m)^\s{0,3}(?:#{1,6}\s+|[-*>]\s+)", "", content)
     soup = BeautifulSoup(content, "html.parser")
     for node in soup(["script", "style", "nav", "footer"]):
         node.decompose()
@@ -335,10 +358,7 @@ async def collect(client: SearchClient, articles: list[str]):
     config, result = client.config, client.result
     summary = result["summary"]
     targets = ([config.zh_url] if config.zh_url else []) + articles
-    expected = len(config.domains) + len(config.brand_terms) + len(config.core_terms) + sum(
-        not ((urlsplit(url).hostname or "") == "zhihu.com" or (urlsplit(url).hostname or "").endswith(".zhihu.com"))
-        for url in targets
-    )
+    expected = len(config.domains) + len(config.brand_terms) + len(config.core_terms) + sum(not is_zhihu(url) for url in targets)
     used = await client.monthly_usage(month_key())
     if Decimal(str(used["cost_cny"])) + Decimal(str(used["reserved_cny"])) + PRICE * expected > Decimal(str(client.settings.deepseek_search_monthly_limit_cny)):
         raise StopRun(MONTH_LIMIT)
@@ -354,6 +374,7 @@ async def collect(client: SearchClient, articles: list[str]):
         hits = [r for r in rows if r["url"] and matches(r["url"], [domain], [])]
         indexed_seen.update(canonical_url(r["url"]) for r in hits)
         indexed_ok = indexed_ok and reply["ok"]
+        summary["index_query_ok"] = indexed_ok
         summary["indexed_count"] = len(indexed_seen)
         summary["indexed"] = bool(indexed_seen) if indexed_ok else (True if indexed_seen else None)
         result["items"].append({"kind": "index", "query": "site:" + domain, "results": rows,
@@ -371,10 +392,9 @@ async def collect(client: SearchClient, articles: list[str]):
     targets = [("homepage", config.zh_url)] if config.zh_url else []
     targets += [("article", url) for url in articles]
     for kind, url in targets:
-        host = urlsplit(url).hostname or ""
         item = {"kind": kind, "url": url, "source": "deepseek", "alive": None,
                 "http_status": None, "title": "", "body_chars": 0, "retries": 0}
-        if host == "zhihu.com" or host.endswith(".zhihu.com"):
+        if is_zhihu(url):
             item.update(source="skipped", error="知乎暂不能自动核对")
         else:
             reply = await client.request("POST", "/v1/tools/fetch", {"url": url})
@@ -383,15 +403,19 @@ async def collect(client: SearchClient, articles: list[str]):
             page_status = reply["data"].get("status_code", reply["http_status"])
             alive = bool(reply["ok"] and content.strip() and isinstance(page_status, int) and 200 <= page_status < 400)
             item.update(http_status=page_status, api_http_status=reply["http_status"], retries=reply["retries"],
-                        error=reply["error"], alive=alive, **page_info(content, str(reply["data"].get("title") or "")))
+                        error=reply["error"], alive=alive, **page_info(content, str(reply["data"].get("title") or ""), markdown=True))
             if item["foreign_language"]:
                 item["warning"] = "被跳到外语版"
                 try:
                     document = await safe_fetch(url)
+                    fallback_info = page_info(document.html)
                     item["fallback"] = {"source": "local_safe_fetch", "http_status": 200,
-                                        "alive": True, **page_info(document.html)}
+                                        "alive": fallback_info["body_chars"] > 0, **fallback_info}
                     item["source"] = "deepseek+local_safe_fetch"
-                    item["alive"] = True
+                    item["alive"] = item["alive"] or item["fallback"]["alive"]
+                    item["effective_title"] = fallback_info["title"]
+                    item["effective_body_chars"] = fallback_info["body_chars"]
+                    item["effective_foreign_language"] = fallback_info["foreign_language"]
                 except Exception:
                     item["fallback"] = {"source": "local_safe_fetch", "error": "本机兜底抓取未成功"}
         summary["articles_alive"] += int(kind == "article" and item["alive"] is True)
