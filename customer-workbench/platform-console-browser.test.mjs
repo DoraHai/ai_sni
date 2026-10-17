@@ -181,11 +181,16 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
       providers:[{module:'seo',provider:'chinaz',calls:10,success_percent:null,average_latency_ms:25,p95_latency_ms:40,errors:2,unknown:1,pending:1,stale_pending:1,unpriced:3,missing_rate:2,oldest_pending_at:'2026-09-10T01:00:00Z'}],workers:{state:'not_connected',note:'供应商调用记录不能证明调度器存活，待命也不表示故障。'}};
     snapshot.alerts=[{id:'a'.repeat(64),signal:'b'.repeat(64),tenant_id:1,message:'测试接口异常',severity:'error',handling:{status:'open',revision:0}}];
     await p.click('[data-pc=refresh]');await p.waitForSelector('.pc-kpis');
-    await p.click('.pc-sidebar [data-pc-page=alerts]');await p.click('#pc-alert-operation button');
+    await p.waitForNetworkIdle({idleTime:150});await p.click('.pc-sidebar [data-pc-page=alerts]');await p.click('#pc-alert-operation button');
     await p.waitForFunction(()=>document.querySelector('.pc-content')?.textContent.includes('处理中'));
     assert.equal(operationWrites[0].value.action,'claim');
+    // load() also starts governance/health GETs which replace the fixture form.
+    // Finish those reads before choosing the next action; never edit a stale form.
+    await p.waitForNetworkIdle({idleTime:150});
     await p.select('#pc-alert-operation [name=action]','resolve');await p.type('#pc-alert-operation [name=note]','已检查上游服务，等待下一次调用确认');
-    await p.click('#pc-alert-operation button');await p.waitForFunction(()=>document.querySelector('.pc-content')?.textContent.includes('已标记处理'));
+    assert.equal(await p.$eval('#pc-alert-operation [name=action]',e=>e.value),'resolve');
+    await p.click('#pc-alert-operation button');await p.waitForFunction(()=>document.querySelector('.pc-content')?.textContent.includes('已标记处理'));await p.waitForNetworkIdle({idleTime:150});
+    assert.equal(operationWrites[1].value.action,'resolve');
     assert.equal(operationWrites[1].expected_revision,1);
     assert.equal(snapshot.operations.call_monitor.summary.pending,1);
     assert.match(await body(),/调用运行监控/);assert.match(await body(),/66.7%/);assert.match(await body(),/暂无确定结果/);
