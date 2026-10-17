@@ -1175,3 +1175,7 @@ from app.geo.question_read_routes import router as question_read_router
 router.include_router(question_read_router)
 from app.geo.onsite_routes import router as onsite_router
 router.include_router(onsite_router)
+
+from app.geo.content.search_visibility_routes import router as search_visibility_router  # noqa: E402
+
+router.include_router(search_visibility_router)
