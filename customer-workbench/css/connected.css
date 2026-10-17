@@ -67,6 +67,7 @@
 @media(min-width:1450px){.customer-connected .summary-grid.home-kpis{grid-template-columns:repeat(6,minmax(0,1fr))}}
 @media(max-width:1100px){.customer-connected .workspace{grid-template-columns:minmax(0,1fr) 310px;padding:18px;gap:16px}.customer-connected .home-panels{grid-template-columns:1fr}}
 @media(max-width:800px){.customer-connected .workspace{grid-template-columns:minmax(0,1fr);padding:12px}.customer-connected .workbench-dialogue{position:static;max-height:none;grid-row:1}.customer-connected .assistant-messages{min-height:0;max-height:180px}.customer-connected .assistant-composer{padding:10px 14px}.customer-connected .home-panels{grid-template-columns:1fr}.customer-connected .summary-grid.home-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.customer-connected .home-summary,.customer-connected .home-block{padding:16px}.customer-connected .home-metric strong{font-size:25px}.customer-connected .home-page .section-head .counts{margin-left:0}}
+@media(max-width:800px){.customer-connected .workbench-dialogue{grid-row:auto}}
 @media(prefers-reduced-motion:reduce){.customer-connected *{scroll-behavior:auto!important;transition:none!important}}
 
 .customer-connected .workspace{grid-template-columns:minmax(0,1fr) clamp(320px,var(--assistant-width,440px),55%)}
@@ -99,3 +100,9 @@
 @media(max-width:800px){.entry-layout{display:block;margin:16px auto;padding:16px;max-width:500px}.entry-intro h1{font-size:25px}.entry-intro{margin-bottom:24px}.entry-card{padding:24px}.entry-header{padding:18px}.entry-intro br{display:none}}
 
 .onsite-detail input,.onsite-detail textarea{display:block;width:100%;box-sizing:border-box;margin:8px 0;padding:10px;border:1px solid #d9e2eb;border-radius:6px}.onsite-detail textarea{min-height:110px}.onsite-detail article{margin-bottom:14px}.onsite-detail label{display:block}.onsite-detail pre{white-space:pre-wrap}
+
+/* Pending labels describe only the capability beside them. */
+.pending-badge{display:inline-block;font-size:11px;line-height:1.5;font-weight:600;color:#98600b;background:#fff3d9;border:1px solid #ebd0a2;border-radius:5px;padding:2px 6px;vertical-align:middle;white-space:nowrap;margin-left:5px}
+.pending-feature{padding:10px 12px;margin:10px 0;border:1px solid #ebd0a2;border-radius:8px;background:#fffaf0}
+.pending-feature h3{font-size:14px;margin:0 0 5px}.pending-feature p,.pending-explanation{font-size:12px;line-height:1.65;color:#795b30;margin:4px 0}
+.pending-module{display:inline-flex;flex-direction:column;gap:3px;font-size:11px;max-width:150px}.pending-module small{white-space:normal}

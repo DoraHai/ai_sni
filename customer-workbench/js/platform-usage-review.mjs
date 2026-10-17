@@ -31,7 +31,7 @@ export function usageReviewPayload({row,fields,requestId}){
 }
 
 export function renderUsageReview({snapshot,history,esc,card}){
-  if(!canReviewUsage(snapshot))return card('调用费用人工核实','<p>核实操作尚未启用。</p>','证据、审计和数据库权限完成审核后启用。不会把未知费用归零或强制释放调用占用。');
+  if(!canReviewUsage(snapshot))return card('调用费用人工核实','<p>核实操作尚未启用。</p>','证据、审计和数据库权限完成审核后启用。不会把未知费用归零或强制释放调用占用。','人工核实尚未启用；现有调用明细仍可查看。');
   const rows=(history.data?.rows||[]).filter(reviewableUsageRow),listed=rows.find(r=>r.id===history.reviewEventId)||rows[0];
   if(!listed)return card('调用费用人工核实','<p>先查询调用明细，再选择精确请求进行核实。</p>');
   const fresh=history.reviewRecord?.id===listed.id,row=fresh?{...listed,...history.reviewRecord}:listed;

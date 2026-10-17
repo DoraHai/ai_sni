@@ -54,7 +54,7 @@ test('coverage never treats a page count as a global total, including an empty p
     assert.match(result, /还有更多任务未读取/); assert.match(result, /本月计划可能不完整/);
     assert.match(result, /不是全站或项目任务总数/); assert.doesNotMatch(result, /99999/);
   }
-  assert.match(html(), /不据此推断历史分页已全部读取/);
+  assert.match(html(), /当前未显示更多记录/);
 });
 
 test('months are filtered independently of dates and startup/undated tasks are separately marked', () => {

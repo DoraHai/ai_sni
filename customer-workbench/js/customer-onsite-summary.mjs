@@ -94,7 +94,7 @@ export function customerOnsiteSummary(data, {module = 'seo', month = currentMont
   const undated = data.items.filter(row => !validMonth(row.workflow.month) && !startup.includes(row));
   const otherMonths = data.items.length - monthly.length - startup.length - undated.length;
   const group = (title, rows) => rows.length ? `<h3>${title}</h3>${rows.map(row => taskCard(row, data, module)).join('')}` : '';
-  const coverage = `<p>仅展示已读取分页范围；已读取 ${data.items.length} 条，其中本月 ${monthly.length} 条。此数量不是全站或项目任务总数。${data.next_before_id != null ? '还有更多任务未读取，本月计划可能不完整。' : '当前响应未提示后续页，不据此推断历史分页已全部读取。'}</p>`;
+  const coverage = `<p>仅展示已读取分页范围；已读取 ${data.items.length} 条，其中本月 ${monthly.length} 条。此数量不是全站或项目任务总数。${data.next_before_id != null ? '还有更多任务未读取，本月计划可能不完整。' : '当前未显示更多记录；如需核对完整月度安排，请刷新或联系顾问。'}</p>`;
   return section(`${heading}${coverage}
     ${!data.items.length ? '<p>已读取的列表为空，当前范围暂无站内任务。</p>' : !monthly.length ? '<p>已读取范围内暂无本月任务。</p>' : ''}
     ${group('本月计划', monthly)}
