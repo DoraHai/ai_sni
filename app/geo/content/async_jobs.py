@@ -185,6 +185,8 @@ async def _release_task_lock(
 async def reconcile_stale_job(
     session: AsyncSession, row: GeoAsyncJob
 ) -> GeoAsyncJob:
+    if getattr(row, "kind", None) == "search_visibility":
+        return row
     from app.geo.tenant_scope import ensure_geo_background_execution_allowed, ensure_geo_entitlement
 
     ensure_geo_background_execution_allowed(int(row.tenant_id))
@@ -202,7 +204,7 @@ async def _reconcile_unowned_job(
     session: AsyncSession, row: GeoAsyncJob
 ) -> GeoAsyncJob:
     """Mark hanging pending/running jobs failed; free content-task locks."""
-    if row.status not in {"pending", "running"}:
+    if getattr(row, "kind", None) == "search_visibility" or row.status not in {"pending", "running"}:
         return row
     if row.status == "running" and not job_has_advisory_owner(row):
         return row
@@ -334,6 +336,7 @@ async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, 
             await session.scalars(
                 select(GeoAsyncJob).where(
                     GeoAsyncJob.tenant_id != DEMO_TENANT_ID,
+                    GeoAsyncJob.kind != "search_visibility",
                     GeoAsyncJob.status.in_(["pending", "running"])
                 )
             )
@@ -519,6 +522,8 @@ async def _run_owned_job(job_id: int, *, tenant_id: int, connection=None) -> dic
     try:
         async with async_session_factory(bind=connection) as session:
             row = await session.get(GeoAsyncJob, job_id)
+            if row is not None and getattr(row, "kind", None) == "search_visibility":
+                return  # Dedicated worker owns its lock, visibility and billing protocol.
             if row is None or row.status != "pending":
                 return {
                     "status": "conflict",

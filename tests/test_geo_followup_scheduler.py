@@ -8,7 +8,7 @@ def test_independent_geo_startup_registers_followups_without_duplicate_patrol():
     scheduler=NS(running=False,add_job=Mock(),start=Mock())
     with patch('app.geo.scheduler.geo_scheduler',scheduler), patch('app.geo.scheduler._acquire_scheduler_lock',return_value=True):
         assert start_geo_followup_scheduler() is True
-    assert [call.kwargs['id'] for call in scheduler.add_job.call_args_list]==['geo_publication_monitor','geo_outcome_reviews']
+    assert [call.kwargs['id'] for call in scheduler.add_job.call_args_list]==['geo_publication_monitor','geo_outcome_reviews','geo_search_visibility_weekly','geo_search_visibility_recovery']
     scheduler.start.assert_called_once()
     assert 'supervise_geo_followups()' in Path('app/geo_main.py').read_text(encoding='utf-8')
     assert 'start_geo_followup_scheduler' not in Path('app/main.py').read_text(encoding='utf-8')
@@ -53,7 +53,8 @@ def test_startup_catches_up_without_waiting_until_next_day():
     scheduler=NS(running=False,add_job=Mock(),start=Mock())
     with patch('app.geo.scheduler.geo_scheduler',scheduler),patch('app.geo.scheduler._acquire_scheduler_lock',return_value=True):
         start_geo_followup_scheduler()
-    assert all(call.kwargs.get('next_run_time') is not None for call in scheduler.add_job.call_args_list)
+    assert all(call.kwargs.get('next_run_time') is not None for call in scheduler.add_job.call_args_list
+               if call.kwargs['id'] in {'geo_publication_monitor','geo_outcome_reviews'})
 
 
 def test_os_releases_lock_when_owner_process_exits(tmp_path):

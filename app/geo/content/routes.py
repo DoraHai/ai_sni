@@ -4745,6 +4745,9 @@ async def get_async_job(
     row = await session.get(GeoAsyncJob, job_id)
     if row is None or row.tenant_id != tenant_id:
         raise HTTPException(404, "异步作业不存在")
+    if row.kind == "search_visibility":
+        # This evidence has its own project/customer visibility gate.
+        raise HTTPException(404, "请从项目搜索可见度查看本次查询")
     return job_read_payload(row)
 
 
@@ -4764,7 +4767,7 @@ async def list_async_jobs(
     from app.geo.content.async_jobs import job_read_payload
 
     ctx.ensure_tenant(tenant_id)
-    stmt = select(GeoAsyncJob).where(GeoAsyncJob.tenant_id == tenant_id)
+    stmt = select(GeoAsyncJob).where(GeoAsyncJob.tenant_id == tenant_id, GeoAsyncJob.kind != "search_visibility")
     if ref_type:
         stmt = stmt.where(GeoAsyncJob.ref_type == ref_type)
     if ref_id is not None:
@@ -4793,6 +4796,8 @@ async def cancel_async_job(
     row = await session.get(GeoAsyncJob, job_id)
     if row is None or row.tenant_id != tenant_id:
         raise HTTPException(404, "异步作业不存在")
+    if row.kind == "search_visibility":
+        raise HTTPException(409, "搜索可见度查询不支持从此入口取消")
     row = await request_cancel(session, row)
     return job_payload(row)
 
