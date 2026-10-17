@@ -15,8 +15,11 @@
       "SEM · 已开通 · 待接入"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "本期要点"
+    ],
+    "expected_pending_features": [
+      "SEM 模块入口"
     ]
   },
   {
@@ -29,8 +32,11 @@
       "SEM · 已开通 · 待接入"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "内容"
+    ],
+    "expected_pending_features": [
+      "SEM 模块入口"
     ]
   },
   {
@@ -49,8 +55,11 @@
       "SEM · 已开通 · 待接入"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "SEO工作"
+    ],
+    "expected_pending_features": [
+      "SEM 模块入口"
     ]
   },
   {
@@ -68,8 +77,11 @@
       "SEM · 已开通 · 待接入"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "实际执行进度"
+    ],
+    "expected_pending_features": [
+      "SEM 模块入口"
     ]
   },
   {
@@ -83,8 +95,12 @@
       "官网自动修改暂未接入，按批准方案人工实施。交付复检与搜索收录、排名和 AI 引用效果分别记录。"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "SEO 站内优化"
+    ],
+    "expected_pending_features": [
+      "SEM 模块入口",
+      "官网自动修改"
     ]
   },
   {
@@ -98,8 +114,11 @@
       "SEM · 已开通 · 待接入"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "数据明细"
+    ],
+    "expected_pending_features": [
+      "SEM 模块入口"
     ]
   },
   {
@@ -114,8 +133,12 @@
       "最终资格、有效期与资料总量由服务端保存时再次检查。资料过多、过期或不在读取范围时请重新选择；来源维护入口尚未接入。"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "服务计划"
+    ],
+    "expected_pending_features": [
+      "SEM 模块入口",
+      "来源维护入口"
     ]
   },
   {
@@ -129,8 +152,11 @@
       "SEM · 已开通 · 待接入"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "交付记录"
+    ],
+    "expected_pending_features": [
+      "SEM 模块入口"
     ]
   },
   {
@@ -142,6 +168,7 @@
     ],
     "observed_pending_text": [],
     "expected_page_badge": false,
+    "observed_pending_block_titles": [],
     "expected_pending_features": []
   },
   {
@@ -181,10 +208,15 @@
       "外链接口发布 · 文章 · 待接线"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "SEO 项目 · 当前页",
       "GEO 项目 · 当前页",
       "发布与分发"
+    ],
+    "expected_pending_features": [
+      "SEO 项目 · 当前页",
+      "GEO 项目 · 当前页",
+      "自动上传与发文"
     ]
   },
   {
@@ -198,6 +230,7 @@
     ],
     "observed_pending_text": [],
     "expected_page_badge": false,
+    "observed_pending_block_titles": [],
     "expected_pending_features": []
   },
   {
@@ -211,6 +244,7 @@
       "暂未开通"
     ],
     "expected_page_badge": false,
+    "observed_pending_block_titles": [],
     "expected_pending_features": []
   },
   {
@@ -224,6 +258,7 @@
     ],
     "observed_pending_text": [],
     "expected_page_badge": false,
+    "observed_pending_block_titles": [],
     "expected_pending_features": []
   },
   {
@@ -242,6 +277,9 @@
       "核实操作尚未启用。"
     ],
     "expected_page_badge": false,
+    "observed_pending_block_titles": [
+      "调用费用人工核实"
+    ],
     "expected_pending_features": [
       "调用费用人工核实"
     ]
@@ -265,8 +303,12 @@
       "reserved / disabled · 官网自动修改未接入。当前通过人工实施完成站点修改。"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "已生效限制与未启用控制",
+      "官网适配器"
+    ],
+    "expected_pending_features": [
+      "治理策略编辑",
       "官网适配器"
     ]
   },
@@ -286,6 +328,12 @@
       "接口未部署，项目与队列保持未知。"
     ],
     "expected_page_badge": true,
+    "observed_pending_block_titles": [
+      "自动执行运维",
+      "SEM 本轮边界",
+      "SEO 执行健康",
+      "GEO 执行健康"
+    ],
     "expected_pending_features": [
       "自动执行运维",
       "SEM 本轮边界",
@@ -309,6 +357,7 @@
     ],
     "observed_pending_text": [],
     "expected_page_badge": false,
+    "observed_pending_block_titles": [],
     "expected_pending_features": []
   },
   {
@@ -328,6 +377,7 @@
       "余额查询尚未接入；保留服务清单，余额与预警状态未知。"
     ],
     "expected_page_badge": false,
+    "observed_pending_block_titles": [],
     "expected_pending_features": []
   },
   {
@@ -347,6 +397,7 @@
       "未接入"
     ],
     "expected_page_badge": false,
+    "observed_pending_block_titles": [],
     "expected_pending_features": []
   },
   {
@@ -360,6 +411,9 @@
       "管理功能等待启用。现有调用与费用统计继续可查看。"
     ],
     "expected_page_badge": true,
+    "observed_pending_block_titles": [
+      "API 与预算管理"
+    ],
     "expected_pending_features": [
       "API 与预算管理"
     ]
@@ -380,8 +434,12 @@
       "管理表及功能尚未启用，或该模块尚未登记此配置；当前不能保存。"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "SEM / SEO / GEO 系统配置",
+      "接口参数与密钥"
+    ],
+    "expected_pending_features": [
+      "配置编辑",
       "接口参数与密钥"
     ]
   },
@@ -403,10 +461,16 @@
       "待接入"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "告警与处理",
       "调用监控",
       "后台任务心跳与队列"
+    ],
+    "expected_pending_features": [
+      "告警处理记录",
+      "调用监控",
+      "后台任务心跳与队列",
+      "服务商余额与套餐登记"
     ]
   },
   {
@@ -428,6 +492,10 @@
       "待接入"
     ],
     "expected_page_badge": false,
+    "observed_pending_block_titles": [
+      "调用监控",
+      "后台任务心跳与队列"
+    ],
     "expected_pending_features": [
       "调用监控",
       "后台任务心跳与队列"
@@ -449,8 +517,11 @@
       "管理操作审计等待启用，账号最近登录仍可查看。"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "运维接入情况"
+    ],
+    "expected_pending_features": [
+      "管理操作审计"
     ]
   },
   {
@@ -471,6 +542,7 @@
       "处理记录等待管理启用；外部告警发送待接入。"
     ],
     "expected_page_badge": false,
+    "observed_pending_block_titles": [],
     "expected_pending_features": []
   },
   {
@@ -483,6 +555,7 @@
       "未开通"
     ],
     "expected_page_badge": false,
+    "observed_pending_block_titles": [],
     "expected_pending_features": []
   },
   {
@@ -491,6 +564,7 @@
     "headings": [],
     "observed_pending_text": [],
     "expected_page_badge": false,
+    "observed_pending_block_titles": [],
     "expected_pending_features": []
   },
   {
@@ -499,6 +573,7 @@
     "headings": [],
     "observed_pending_text": [],
     "expected_page_badge": false,
+    "observed_pending_block_titles": [],
     "expected_pending_features": []
   },
   {
@@ -507,6 +582,7 @@
     "headings": [],
     "observed_pending_text": [],
     "expected_page_badge": false,
+    "observed_pending_block_titles": [],
     "expected_pending_features": []
   },
   {
@@ -515,6 +591,7 @@
     "headings": [],
     "observed_pending_text": [],
     "expected_page_badge": false,
+    "observed_pending_block_titles": [],
     "expected_pending_features": []
   },
   {
@@ -523,6 +600,7 @@
     "headings": [],
     "observed_pending_text": [],
     "expected_page_badge": false,
+    "observed_pending_block_titles": [],
     "expected_pending_features": []
   },
   {
@@ -536,8 +614,11 @@
       "官网自动修改暂未接入，按批准方案人工实施。交付复检与搜索收录、排名和 AI 引用效果分别记录。"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "本月站内计划与进度"
+    ],
+    "expected_pending_features": [
+      "官网自动修改"
     ]
   },
   {
@@ -575,9 +656,13 @@
       "外链接口发布 · 文章 · 待接线"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "SEO 项目 · 当前页",
       "发布与分发"
+    ],
+    "expected_pending_features": [
+      "SEO 项目 · 当前页",
+      "自动上传与发文"
     ]
   },
   {
@@ -596,9 +681,13 @@
       "已读取。发布由人工完成，自动上传和发文尚未接入。"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "GEO 项目 · 当前页",
       "发布与分发"
+    ],
+    "expected_pending_features": [
+      "GEO 项目 · 当前页",
+      "自动上传与发文"
     ]
   },
   {
@@ -612,8 +701,11 @@
       "SEM · 已开通 · 待接入"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "数据明细"
+    ],
+    "expected_pending_features": [
+      "SEM 模块入口"
     ]
   },
   {
@@ -627,8 +719,11 @@
       "SEM · 已开通 · 待接入"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "数据明细"
+    ],
+    "expected_pending_features": [
+      "SEM 模块入口"
     ]
   },
   {
@@ -642,8 +737,11 @@
       "SEM · 已开通 · 待接入"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "数据明细"
+    ],
+    "expected_pending_features": [
+      "SEM 模块入口"
     ]
   },
   {
@@ -662,8 +760,11 @@
       "SEM · 已开通 · 待接入"
     ],
     "expected_page_badge": false,
-    "expected_pending_features": [
+    "observed_pending_block_titles": [
       "SEO工作"
+    ],
+    "expected_pending_features": [
+      "SEM 模块入口"
     ]
   }
 ]

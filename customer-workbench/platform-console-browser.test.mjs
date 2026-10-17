@@ -29,6 +29,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
   const origin='https://workbench.test',requests=[],errors=[],external=[];
   let balanceStatus=200,balanceReads=0,balanceRefreshes=0,balanceHeld=null;
   let serverUser=admin,status=200,held=null,governanceStatus=404,governanceData={schema:1,state:"schema_pending"};const connectionWrites=[],usageQueries=[],operationWrites=[];let exports=0;
+  let stage='initialize';
   try{
     const p=await browser.newPage();await p.evaluateOnNewDocument(()=>{const original=window.setInterval;window.setInterval=(fn,ms,...args)=>{if(ms===300000)window.__balancePoll=fn;return original(fn,ms,...args);};});await p.setViewport({width:1440,height:1000});
     p.on('pageerror',e=>errors.push(e.message));await p.setRequestInterception(true);
@@ -95,19 +96,19 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     const body=()=>p.evaluate(()=>document.body.textContent);
     await p.goto(origin+'/customer-workbench/?console=platform');await signIn();await p.waitForSelector('.pc-kpis');
     assert.equal(await p.title(),'超级管理员工作台 · G-SNIPERS');assert(!await p.$('.chat'));assert(!await p.$('.composer'));assert.match(await body(),/本月 API 估算待接入/);
-    await p.screenshot({path:path.join(os.tmpdir(),'platform-admin-overview-20261010.png'),fullPage:true});
+    stage='screenshot:platform-admin-overview-20261010.png';await p.screenshot({path:path.join(os.tmpdir(),'platform-admin-overview-20261010.png'),fullPage:true});
     const pages={'ai-governance':'AI 自动化治理',customers:'客户与服务',accounts:'账号管理',apis:'API 调用情况',costs:'平台成本',tasks:'SEO 执行任务',security:'数据与权限',inventory:'系统盘点'};
     for(const [tab,label] of Object.entries(pages)){
       await p.click(`.pc-sidebar [data-pc-page=${tab}]`);assert.match(await body(),new RegExp(label));
     }
     await p.click('.pc-sidebar [data-pc-page=ai-governance]');await p.waitForFunction(()=>document.body.textContent.includes('治理接口未部署'));
     assert(await p.$('.pc-main > .pc-pending'));assert.match(await body(),/预留待启用.*已停用/);assert(!await p.$('.pc-content form'));
-    governanceStatus=200;await p.click('[data-pc=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('等待数据库人工审核'));
+    stage='governance-pending';governanceStatus=200;await p.click('[data-pc=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('等待数据库人工审核'));
     assert.equal(await p.$$eval('.pc-content button',buttons=>buttons.find(e=>e.textContent.includes('治理策略编辑')).disabled),true);assert(await p.$('.pc-main > .pc-pending'));assert(await p.$('.pc-content .pending-badge'));
-    governanceData={schema:1,state:'available',modules:[{module:'seo',provider:'dashscope',model:'qwen',configured:true,metering:{state:'recording'},calls:{failed:2,unknown:null},limits:[{kind:'revision',state:'enabled',value:true}]}],api_key:'never-render-secret'};
+    stage='governance-partial';governanceData={schema:1,state:'available',modules:[{module:'seo',provider:'dashscope',model:'qwen',configured:true,metering:{state:'recording'},calls:{failed:2,unknown:null},limits:[{kind:'revision',state:'enabled',value:true}]}],api_key:'never-render-secret'};
     await p.click('[data-pc=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('qwen'));assert(!await p.$('.pc-main > .pc-pending'));assert.doesNotMatch(await body(),/never-render-secret/);
     await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await p.setViewport({width:1440,height:1000});
-    await p.screenshot({path:path.join(os.tmpdir(),'platform-ai-governance-20261010.png'),fullPage:true});
+    stage='screenshot:platform-ai-governance-20261010.png';await p.screenshot({path:path.join(os.tmpdir(),'platform-ai-governance-20261010.png'),fullPage:true});
     governanceStatus=403;await p.click('[data-pc=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('无法读取 AI 治理'));assert(!await p.$('.pc-kpis'));assert.doesNotMatch(await body(),/qwen/);
     governanceStatus=404;await p.click('[data-pc=refresh]');await p.waitForSelector('.pc-kpis');
     await p.click('.pc-sidebar [data-pc-page=balances]');await p.waitForFunction(()=>document.querySelector('.pc-content')?.textContent.includes('CNY 0'));
@@ -117,8 +118,8 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     assert.match(await body(),/余额不足预警/);assert.doesNotMatch(await body(),/never-balance-secret/);
     await p.click('[data-pc=balance-refresh]');await p.waitForFunction(()=>document.querySelector('[data-pc=balance-refresh]')?.disabled===false);assert.equal(balanceRefreshes,1);
     await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await p.setViewport({width:1440,height:1000});
-    await p.screenshot({path:path.join(os.tmpdir(),'platform-live-balances-20261010.png'),fullPage:true});
-    balanceStatus=404;await p.click('[data-pc=balance-refresh]');await p.waitForFunction(()=>document.body.textContent.includes('余额查询接口未部署'));assert.doesNotMatch(await p.$eval('.pc-content',e=>e.textContent),/CNY 0/);
+    stage='screenshot:platform-live-balances-20261010.png';await p.screenshot({path:path.join(os.tmpdir(),'platform-live-balances-20261010.png'),fullPage:true});
+    stage='balance-404';balanceStatus=404;await p.click('[data-pc=balance-refresh]');await p.waitForFunction(()=>document.body.textContent.includes('余额查询接口未部署'));assert.doesNotMatch(await p.$eval('.pc-content',e=>e.textContent),/CNY 0/);
     balanceStatus=403;await p.click('[data-pc=balance-refresh]');await p.waitForFunction(()=>document.body.textContent.includes('无法查询平台余额'));assert(!await p.$('.pc-kpis'));
     balanceStatus=200;await p.click('[data-pc=refresh]');await p.waitForSelector('.pc-kpis');await p.waitForFunction(()=>document.querySelector('.pc-content')?.textContent.includes('CNY 0'));
     await p.click('.pc-sidebar [data-pc-page=customers]');assert.equal(await p.$eval('.pc-content a[href="/platform/customers"]',a=>a.textContent.includes('新建客户 / 分配 SEM、SEO、GEO 模块')),true);const beforeOtherPage=balanceReads;await p.evaluate(()=>window.__balancePoll());assert.equal(balanceReads,beforeOtherPage);assert(!await p.$('.pc-table-wrap img'));
@@ -171,10 +172,10 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     assert.equal(usageQueries[1].cursor,'fixture-next-page');assert.match(await body(),/第 2 页/);
     await p.click('[data-pc=usage-prev]');await p.waitForFunction(()=>document.body.textContent.includes('history-first'));
     assert(!('cursor' in usageQueries[2]));assert.match(await body(),/第 1 页/);
-    await p.screenshot({path:path.join(os.tmpdir(),'platform-usage-history-20261010.png'),fullPage:true});
+    stage='screenshot:platform-usage-history-20261010.png';await p.screenshot({path:path.join(os.tmpdir(),'platform-usage-history-20261010.png'),fullPage:true});
     await p.click('[data-pc=usage-export]');await p.waitForFunction(()=>document.querySelector('.pc-save-notice')?.textContent.includes('已导出'));
     assert.equal(exports,1);
-    snapshot.operations={state:'enabled',provider_health:[{module:'seo',provider:'chinaz',calls:10,failed:3,last_failure:'2026-10-10T01:00:00Z'}],suppliers:[],
+    stage='operations-enabled';snapshot.operations={state:'enabled',provider_health:[{module:'seo',provider:'chinaz',calls:10,failed:3,last_failure:'2026-10-10T01:00:00Z'}],suppliers:[],
       backup:{state:'available',note:'数据库备份与恢复验证分别记录。',records:[{completed_at:'2026-10-10T01:00:00Z',state:'succeeded',archive_verified:true,restore_verified:false}]}};
     snapshot.operations.call_monitor={state:'recording',summary:{calls:10,success_percent:66.7,average_latency_ms:25,p95_latency_ms:40,pending:1,stale_pending:1,unknown:1,unpriced:3,missing_rate:2,unresolved_charges:2,oldest_pending_at:'2026-09-10T01:00:00Z'},
       providers:[{module:'seo',provider:'chinaz',calls:10,success_percent:null,average_latency_ms:25,p95_latency_ms:40,errors:2,unknown:1,pending:1,stale_pending:1,unpriced:3,missing_rate:2,oldest_pending_at:'2026-09-10T01:00:00Z'}],workers:{state:'not_connected',note:'供应商调用记录不能证明调度器存活，待命也不表示故障。'}};
@@ -194,8 +195,8 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     await p.waitForFunction(()=>document.querySelector('#pc-supplier-operation')?.closest('.pc-card').querySelector('tbody tr')?.textContent.includes('dashscope.aliyuncs.com'));
     assert.equal(operationWrites[2].value.balance,null);assert.equal(operationWrites[2].value.remaining_calls,0);
     await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await p.setViewport({width:1440,height:1000});
-    await p.screenshot({path:path.join(os.tmpdir(),'platform-alert-operations-20261010.png'),fullPage:true});
-    await p.screenshot({path:path.join(os.tmpdir(),'platform-call-monitor-20261011.png'),fullPage:true});
+    stage='screenshot:platform-alert-operations-20261010.png';await p.screenshot({path:path.join(os.tmpdir(),'platform-alert-operations-20261010.png'),fullPage:true});
+    stage='screenshot:platform-call-monitor-20261011.png';await p.screenshot({path:path.join(os.tmpdir(),'platform-call-monitor-20261011.png'),fullPage:true});
     await p.click('.pc-sidebar [data-pc-page=config]');await p.waitForSelector('[data-control-kind=connection]');
     const connection='[data-control-kind=connection]';
     assert.equal(await p.$eval(connection+' button',e=>e.disabled),false);
@@ -211,7 +212,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     assert.equal(await p.$eval('[data-connection-secret=api_key]',e=>e.value),'');
     await p.click(connection+' button');await p.waitForFunction(()=>document.querySelector('[data-control-kind=connection] [name=revision]')?.value==='3');
     assert.deepEqual(connectionWrites[2].value,{parameters:{},secrets:{},restore:true});
-    await p.screenshot({path:path.join(os.tmpdir(),'platform-system-config-20261010.png'),fullPage:true});
+    stage='screenshot:platform-system-config-20261010.png';await p.screenshot({path:path.join(os.tmpdir(),'platform-system-config-20261010.png'),fullPage:true});
     await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await p.setViewport({width:1440,height:1000});
     snapshot.controls.state='ready';await p.click('[data-pc=refresh]');await p.waitForSelector(connection);
     assert.equal(await p.$eval(connection+' button',e=>e.disabled),true);
@@ -242,12 +243,12 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     await p.click('[data-control-kind=credential] button');await p.waitForFunction(()=>document.querySelector('[data-control-kind=credential] [name=revision]')?.value==='1');
     assert.equal(await p.$eval('[name=secret]',e=>e.value),'');
     assert.doesNotMatch(await body(),/fixture-private-replacement/);
-    await p.screenshot({path:path.join(os.tmpdir(),'api-controls-console-20261010.png'),fullPage:true});
+    stage='screenshot:api-controls-console-20261010.png';await p.screenshot({path:path.join(os.tmpdir(),'api-controls-console-20261010.png'),fullPage:true});
     await p.click('.pc-sidebar [data-pc-page=security]');assert.match(await body(),/预算设置/);assert.match(await body(),/密钥设置/);assert.doesNotMatch(await body(),/fixture-private-replacement/);
     assert.match(await body(),/待恢复演练/);assert.match(await body(),/已通过/);
-    await p.screenshot({path:path.join(os.tmpdir(),'api-metering-console-20261010.png'),fullPage:true});
+    stage='screenshot:api-metering-console-20261010.png';await p.screenshot({path:path.join(os.tmpdir(),'api-metering-console-20261010.png'),fullPage:true});
     await p.click('.pc-sidebar [data-pc-page=overview]');await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-    await p.screenshot({path:path.join(os.tmpdir(),'platform-admin-mobile-20261010.png'),fullPage:true});await p.setViewport({width:1440,height:1000});
+    stage='screenshot:platform-admin-mobile-20261010.png';await p.screenshot({path:path.join(os.tmpdir(),'platform-admin-mobile-20261010.png'),fullPage:true});await p.setViewport({width:1440,height:1000});
     // Live permission changes clear the old snapshot before a new preflight.
     serverUser={...admin,tenant_id:1};await p.evaluate(()=>window.dispatchEvent(new Event('sem:auth-context-changed')));
     await p.waitForFunction(()=>document.body.textContent.includes('此账号无法进入'));assert(!await p.$('.pc-kpis'));assert.doesNotMatch(await body(),/测试客户 A/);
@@ -263,7 +264,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     assert(requests.every(r=>['/api/v1/auth/login','/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/admin/console/controls','/api/v1/admin/console/usage','/api/v1/admin/console/usage/export','/api/v1/admin/console/operations','/api/v1/platform/ai-governance','/api/v1/admin/console/balances','/api/v1/seo/workbench/automation-health','/api/v1/geo/workbench/automation-health'].includes(r.path)));
     assert(requests.filter(r=>r.path.endsWith('/automation-health')).every(r=>r.method==='GET'));
     assert(requests.filter(r=>r.method!=='GET').every(r=>['/api/v1/auth/login','/api/v1/admin/console/controls','/api/v1/admin/console/operations'].includes(r.path)));
-  }finally{await browser.close();await f.close();}
+  }catch(error){error.message+=' [stage='+stage+']';throw error;}finally{await browser.close();await f.close();}
 });
 
 test('built console safely reviews one exact call and blocks repeating an uncertain submission',async()=>{

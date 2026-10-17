@@ -1,3 +1,4 @@
+import scanFixtures from './tests/pending-scan-fixtures.json' with {type:'json'};
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import puppeteer from 'puppeteer-core';
@@ -45,6 +46,7 @@ test('production-shaped pending controls remain visible at 1440 and 390, even wh
    if(key==='automation-ops')await p.waitForFunction(()=>document.querySelector('.pc-content').textContent.includes('接口未部署'));
    assert.equal(await p.$$eval('.pc-main > .pc-pending',es=>es.length),['controls','automation-ops'].includes(key)?1:0,`full-menu ${key} ${width}`);
    if(['apis','ai-governance','automation-ops','controls','config','alerts','tasks','security'].includes(key))assert(await p.$$eval('.pc-content .pending-badge',es=>es.length)>0,`block ${key} ${width}`);
+   const target=scanFixtures.find(row=>row.area==='supervisor'&&row.page===key);const titles=await p.$$eval('.pc-content .pending-badge',es=>es.map(e=>e.parentElement.textContent));for(const feature of target.expected_pending_features)assert(titles.some(t=>t.includes(feature)),`scanned block ${key}: ${feature}`);
   }
   await p.close();
  }}finally{await browser.close();await f.close();}
