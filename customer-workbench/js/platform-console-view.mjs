@@ -55,7 +55,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   function searchUsageText(){return searchVisibilityUsage?`DeepSeek 搜索可见度 · 本月 ${value(searchVisibilityUsage.requests)} 次请求 / ${value(searchVisibilityUsage.billable)} 次计费 · 估算 ${Number(searchVisibilityUsage.cost_cny).toFixed(3)} 元 / 上限 ${Number(searchVisibilityUsage.limit_cny).toFixed(2)} 元${searchVisibilityUsage.reserved_cny?' · 另有 '+Number(searchVisibilityUsage.reserved_cny).toFixed(3)+' 元待确认预留':''}`:'DeepSeek 搜索可见度 · '+searchVisibilityUsageNote;}
   async function querySearchUsage(){
     const started=revision;searchVisibilityUsage=null;searchVisibilityUsageNote='正在读取本月用量…';
-    try{const data=await client.searchVisibilityUsage();if(disposed||started!==revision)return;searchVisibilityUsage=data;}
+    try{const data=await client.searchVisibilityUsage();if(disposed||started!==revision)return;searchVisibilityUsage=data.state==='ready'?data:null;searchVisibilityUsageNote='待启用';}
     catch(e){if(disposed||started!==revision)return;if(e.status===401||e.status===403){revision++;client.invalidate();snapshot=null;identity=null;gate('无法读取搜索可见度用量','管理员权限已变化，请重新登录。');return;}
       searchVisibilityUsageNote=e.status===404?'待启用':'本月用量暂时无法读取，请刷新重试。';}
     const line=root.querySelector('[data-sv-usage]');if(line)line.textContent=searchUsageText();

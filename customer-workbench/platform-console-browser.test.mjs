@@ -29,6 +29,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
   const origin='https://workbench.test',requests=[],errors=[],external=[];
   let balanceStatus=200,balanceReads=0,balanceRefreshes=0,balanceHeld=null;
   let serverUser=admin,status=200,held=null,governanceStatus=404,governanceData={schema:1,state:"schema_pending"};const connectionWrites=[],usageQueries=[],operationWrites=[];let exports=0;
+  let usageStatus=200,usageData={state:'ready',month:'2026-10',requests:3,billable:1,cost_cny:.005,reserved_cny:0,limit_cny:30};
   let stage='initialize';
   try{
     const p=await browser.newPage();await p.evaluateOnNewDocument(()=>{const original=window.setInterval;window.setInterval=(fn,ms,...args)=>{if(ms===300000)window.__balancePoll=fn;return original(fn,ms,...args);};});await p.setViewport({width:1440,height:1000});
@@ -38,7 +39,7 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
       if(u.origin!==origin){external.push(u.href);return r.abort();}
       if(u.pathname.startsWith('/api/')){
         requests.push({path:u.pathname,method:r.method()});
-        if(u.pathname==='/api/v1/geo/search-visibility/usage')return r.respond({status:200,contentType:'application/json',body:JSON.stringify({month:'2026-10',requests:3,billable:1,cost_cny:.005,reserved_cny:0,limit_cny:30})});
+        if(u.pathname==='/api/v1/geo/search-visibility/usage')return r.respond({status:usageStatus,contentType:'application/json',body:JSON.stringify(usageData)});
         if(['/api/v1/seo/workbench/automation-health','/api/v1/geo/workbench/automation-health'].includes(u.pathname))return r.respond({status:404,contentType:'application/json',body:'{}'});
         if(u.pathname==='/api/v1/admin/console/balances'){
           balanceReads++;if(u.searchParams.get('refresh')==='true')balanceRefreshes++;if(balanceHeld)await balanceHeld;
@@ -99,6 +100,20 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     assert.equal(await p.title(),'超级管理员工作台 · G-SNIPERS');assert(!await p.$('.chat'));assert(!await p.$('.composer'));assert.match(await body(),/本月 API 估算待接入/);
     await p.waitForFunction(()=>document.querySelector('[data-sv-usage]')?.textContent.includes('3 次请求 / 1 次计费'));
     assert.match(await p.$eval('[data-sv-usage]',e=>e.textContent),/估算 0.005 元 \/ 上限 30.00 元/);
+    const originalUsage={...usageData};
+    for(const scenario of ['not_enabled','zero-ready','missing-state','404']){
+      stage='search-usage-'+scenario;
+      usageStatus=scenario==='404'?404:200;
+      usageData=scenario==='zero-ready'?{...originalUsage,requests:0,billable:0,cost_cny:0}:scenario==='not_enabled'?{...originalUsage,state:'not_enabled'}:{...originalUsage};
+      if(scenario==='missing-state')delete usageData.state;
+      await p.click('[data-pc=refresh]');
+      await p.waitForFunction(expected=>document.querySelector('[data-sv-usage]')?.textContent.includes(expected),{},scenario==='zero-ready'?'0 次请求 / 0 次计费':'待启用');
+      const text=await p.$eval('[data-sv-usage]',e=>e.textContent);
+      if(scenario==='zero-ready')assert.doesNotMatch(text,/待启用/);
+      else assert.doesNotMatch(text,/次请求|估算/);
+    }
+    usageStatus=200;usageData=originalUsage;await p.click('[data-pc=refresh]');
+    await p.waitForFunction(()=>document.querySelector('[data-sv-usage]')?.textContent.includes('3 次请求 / 1 次计费'));
     if(process.env.GEO_VISIBILITY_SHOTS)for(const [name,width,height] of [['desktop',1440,900],['mobile',390,844]]){
       await p.setViewport({width,height});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
       await p.screenshot({path:path.join(process.env.GEO_VISIBILITY_SHOTS,`superadmin-${name}.png`)});
