@@ -1,3 +1,4 @@
+import {formatTime} from './js/customer-display.mjs';
 import test from 'node:test';import assert from 'node:assert/strict';
 import {preparationView} from './js/data-workspace-view.mjs';
 import {triggerView} from './js/seo-ai-plan-view.mjs';
@@ -18,3 +19,5 @@ test('status and receipt labels are Chinese and identifiers retain an identifiab
 test('malformed optional provider error summary does not break business evidence rendering',()=>{
  for(const error_summary of [null,{},42])assert.doesNotThrow(()=>preparationView({phases:{a:{state:'ready',blockers:[],facts:{latest_ranking_run:{error_summary}},as_of:null}}},{}));
 });
+
+test('shared missing time stays neutral outside the SEO update label',()=>{assert.equal(formatTime(null),'时间未提供');});

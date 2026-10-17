@@ -130,7 +130,7 @@ function validCalendar(year, month, day) {
 }
 
 export function formatTime(value, { dateOnly = false } = {}) {
-  if (typeof value !== 'string' || !value.trim()) return '更新时间未提供';
+  if (typeof value !== 'string' || !value.trim()) return '时间未提供';
   const source = value.trim();
   const date = source.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (date) return validCalendar(...date.slice(1)) ? source.replaceAll('-', '/') : '时间待核对';
