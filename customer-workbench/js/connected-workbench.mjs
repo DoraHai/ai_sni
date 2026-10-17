@@ -173,6 +173,7 @@ if(editor){const field={'content-title':'title','content-outline':'outline','con
     if(a==='home-data'){
       const target=el.dataset.page;if(!['首页','内容','进度','数据','交付记录'].includes(target))return;
       if(!['view','edit'].includes(identity?.user.permissions['seo.site'])&&['进度','站内优化','数据'].includes(target)){message='当前身份无权查看这项数据';render();return;}
+      if(target==='内容'){contentQuery='';contentStatus=el.dataset.kind==='confirmations'?'ready':'';listPage=1;}
       if(target==='数据'){dataKind=['keywords','pages','facts'].includes(el.dataset.kind)?el.dataset.kind:'keywords';dataFilters=dataKind==='keywords'?{engine:'baidu',device:'desktop',status:'active'}:{};dataPage=1;dataPages.set(dataKind,1);}
       editor=null;manualDraft=null;await navigate(target);root.querySelector('#page')?.scrollIntoView({block:'start',behavior:'smooth'});return;
     }
