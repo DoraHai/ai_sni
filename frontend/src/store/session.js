@@ -15,6 +15,14 @@ const initialAuth = selectStoredAuth(localStorage, sessionStorage)
 let authStorage = initialAuth?.storage ?? null
 const _activeStore = () => (authStorage === 'local' ? localStorage : sessionStorage)
 const initialTenantId = Number(sessionStorage.getItem('sem_tenant_id')) || null
+function clearTenantDrafts() {
+  for (let i = sessionStorage.length - 1; i >= 0; i--) {
+    const key = sessionStorage.key(i)
+    if (key?.startsWith('seo_pending_rewrite_') || key?.startsWith('sem_builder_handoff_')) {
+      sessionStorage.removeItem(key)
+    }
+  }
+}
 const state = reactive({
   token: initialAuth?.token ?? '',
   user: initialAuth?.user ?? null,
@@ -82,6 +90,17 @@ export const session = {
     if (user?.tenant_id) this.setTenant(user.tenant_id)
     else if (previousUserId !== user?.id) this.setTenant(null)
     notifyAuthContext('identity')
+  },
+
+  replaceAuthForAdvisorSwitch(token, user) {
+    const remember = authStorage === 'local'
+    clearTenantDrafts()
+    state.tenants = []
+    state.modules = []
+    state.tenantId = null
+    sessionStorage.removeItem('sem_tenant_id')
+    state.tenantListRevision += 1
+    this.setAuth(token, user, remember)
   },
 
   // 登录态校验后用最新 user 刷新（角色权限可能被管理员改过，即时生效）
@@ -158,6 +177,7 @@ if (typeof window !== 'undefined') {
     state.token = next.token
     state.user = next.user
     if (!changeKind) return
+    if (changeKind === 'identity') clearTenantDrafts()
     state.tenants = []
     state.modules = []
     state.tenantId = next.user.tenant_id
