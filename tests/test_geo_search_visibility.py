@@ -330,6 +330,36 @@ def test_customer_cannot_configure_run_or_see_global_usage():
     assert sv.is_admin(AuthContext(None, "api-key", "admin", None, {}, True))
 
 
+@pytest.mark.parametrize("key,state", [("", "not_enabled"), ("  ", "not_enabled"), ("synthetic-only", "ready")])
+def test_http_usage_state_preserves_existing_numbers_and_never_exposes_key(key, state):
+    app = FastAPI()
+    app.include_router(routes.router, prefix="/api/v1/geo")
+    app.dependency_overrides[require_scoped_auth] = lambda: AuthContext(7, "test", "admin", None, {}, True)
+    app.dependency_overrides[get_session] = lambda: AsyncMock()
+    numbers = {"month": "2026-10", "requests": 3, "billable": 1, "cost_cny": .005, "reserved_cny": .01}
+    with patch.object(routes, "get_settings", return_value=settings(deepseek_search_api_key=key)), \
+         patch.object(routes, "month_usage", AsyncMock(return_value=numbers)):
+        response = TestClient(app).get("/api/v1/geo/search-visibility/usage")
+    assert response.status_code == 200
+    assert response.json() == {**numbers, "limit_cny": 30, "state": state}
+    assert "synthetic-only" not in response.text
+
+
+@pytest.mark.parametrize("who", [customer, advisor])
+@pytest.mark.parametrize("key", ["", "synthetic-only"])
+def test_http_usage_state_does_not_expand_permissions(who, key):
+    app = FastAPI()
+    app.include_router(routes.router, prefix="/api/v1/geo")
+    app.dependency_overrides[require_scoped_auth] = who
+    app.dependency_overrides[get_session] = lambda: AsyncMock()
+    with patch.object(routes, "get_settings", return_value=settings(deepseek_search_api_key=key)) as config, \
+         patch.object(routes, "month_usage", AsyncMock()) as monthly:
+        response = TestClient(app).get("/api/v1/geo/search-visibility/usage")
+    assert response.status_code == 403
+    monthly.assert_not_awaited()
+    config.assert_not_called()
+
+
 def test_run_now_entitlement_denial_returns_existing_403_without_queue(monkeypatch):
     from app.geo import tenant_scope
     guard = AsyncMock(side_effect=tenant_scope.GeoEntitlementUnavailable())

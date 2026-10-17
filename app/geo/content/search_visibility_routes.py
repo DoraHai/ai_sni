@@ -143,4 +143,6 @@ async def usage(ctx: AuthContext = Depends(require_scoped_auth),
                 session: AsyncSession = Depends(get_session)):
     if not is_admin(ctx):
         raise HTTPException(403, "仅超管可查看全平台用量")
-    return {**await month_usage(session), "limit_cny": get_settings().deepseek_search_monthly_limit_cny}
+    settings = get_settings()
+    return {**await month_usage(session), "limit_cny": settings.deepseek_search_monthly_limit_cny,
+            "state": "ready" if settings.deepseek_search_api_key.strip() else "not_enabled"}
