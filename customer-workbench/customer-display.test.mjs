@@ -39,7 +39,7 @@ test('dates and timestamps with unspecified timezone are not guessed', () => {
   assert.equal(formatTime('2026-10-08'), '2026/10/08');
   assert.equal(formatTime('2026-10-08 00:05:23.123456'), '2026/10/08 00:05（时区未提供）');
   for (const value of ['2026-02-30', '2026-02-30T12:00:00Z', '2026-10-08T24:00:00Z', '2026-10-08T00:60:00Z', 'yesterday', '1']) assert.equal(formatTime(value), '时间待核对');
-  assert.equal(formatTime(null), '时间未提供');
+  assert.equal(formatTime(null), '更新时间未提供');
 });
 
 test('labels describe responsibility without suggesting client permission escalation', () => {

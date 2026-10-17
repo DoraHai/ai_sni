@@ -25,5 +25,5 @@ export function renderAiGovernance({data,error='',card,table}){
     })),'SEM 的运行开关只证明本进程状态；SEO/GEO 的独立版本和启用状态需分别核对。共享配置或已有调用记录不能证明所有服务的限制已生效。')+
     card('已生效限制与未启用控制',table(['模块','限制','运行状态','生效值'],limits)+`<p class="pc-note">结果未知不能视为成功，重试前应核对调用台账。缺少审核通过的控制 schema 时，不能保存新治理策略。</p><button disabled>治理策略编辑暂未接入</button><button data-pc-page="controls">查看已有 API 与预算管理</button><button data-pc-page="config">查看已有系统配置</button>`)+
     card('人工审核与实施边界','<div class="pc-gap-grid"><div><b>AI 提出建议</b><p>站内方案、方案修订和下期建议需要进入原有业务流程。</p></div><div><b>人工核实与审核</b><p>事实确认、重要发布和最终验收由人工完成。</p></div><div><b>人工实施</b><p>记录实施结果，真实页面复检后再提交最终验收。</p></div></div>')+
-    card('官网适配器','<p>reserved / disabled · 官网自动修改未接入。当前通过人工实施完成站点修改。</p><button disabled>官网自动写入已关闭</button>','官网适配器尚未接入，自动执行开关保持关闭。');
+    card('官网适配器','<p>预留待启用 / 已停用 · 官网自动修改未接入。当前通过人工实施完成站点修改。</p><button disabled>官网自动写入已关闭</button>','官网适配器尚未接入，自动执行开关保持关闭。');
 }
