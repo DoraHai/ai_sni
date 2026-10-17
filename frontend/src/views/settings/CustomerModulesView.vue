@@ -1,6 +1,6 @@
 <script setup>
 import { stateLabel } from '../../../../integrations/workbench/ui-labels.mjs'
-import { groupLoginAccounts, loginAccountSummary } from './login-account-summary.mjs'
+import { groupLoginAccounts, loginAccountSummary, formatLoginTime } from './login-account-summary.mjs'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -673,7 +673,7 @@ onMounted(load)
         <el-table-column prop="username" label="用户名" />
         <el-table-column prop="role_label" label="角色" />
         <el-table-column label="状态"><template #default="{ row }">{{ row.is_active ? '启用' : '停用' }}</template></el-table-column>
-        <el-table-column prop="last_login_at" label="最近登录"><template #default="{ row }">{{ row.last_login_at || '从未登录' }}</template></el-table-column>
+        <el-table-column prop="last_login_at" label="最近登录"><template #default="{ row }">{{ formatLoginTime(row.last_login_at) }}</template></el-table-column>
       </el-table>
     </el-drawer>
     <el-dialog class="platform-responsive-dialog" v-model="repairVisible" title="SEM 重复客户只读检测与修复预演" width="900px" @closed="closeRepairPreview">
