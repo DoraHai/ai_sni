@@ -1,5 +1,4 @@
 <script setup>
-import { stateLabel } from '../../../../integrations/workbench/ui-labels.mjs'
 import { loginAccountSummary } from './login-account-summary.mjs'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -502,7 +501,7 @@ onMounted(load)
             <span v-for="account in row.sem_accounts.filter((a) => a.status !== 'archived')" :key="account.id">
               <span class="account-label">
                 {{ account.username }} · {{ account.ucid }}
-                <small>{{ account.auth_mode === 'oauth' ? 'OAuth' : '自授权' }} · {{ stateLabel(account.status) }}</small>
+                <small>{{ account.auth_mode === 'oauth' ? 'OAuth' : '自授权' }} · {{ account.status }}</small>
               </span>
               <el-button type="danger" plain size="small" @click="archiveAccount(row, account)">归档</el-button>
             </span>
@@ -597,7 +596,7 @@ onMounted(load)
                 :key="account.id"
                 :value="account.id"
                 :disabled="account.status !== 'active'"
-                :label="`${account.username} · UCID ${account.ucid} · ${stateLabel(account.status)}`"
+                :label="`${account.username} · UCID ${account.ucid} · ${account.status}`"
               />
             </el-select>
           </el-form-item>
@@ -721,7 +720,7 @@ onMounted(load)
               <div class="repair-accounts">
                 <small v-if="!repairPreview.source.accounts?.length">没有推广账户记录</small>
                 <span v-for="account in repairPreview.source.accounts" :key="account.id">
-                  {{ account.username }} · UCID {{ account.ucid }} · {{ stateLabel(account.status) }} / {{ account.auth_mode }}
+                  {{ account.username }} · UCID {{ account.ucid }} · {{ account.status }} / {{ account.auth_mode }}
                 </span>
               </div>
             </section>
@@ -732,7 +731,7 @@ onMounted(load)
               <div class="repair-accounts">
                 <small v-if="!repairPreview.target.accounts?.length">没有推广账户记录</small>
                 <span v-for="account in repairPreview.target.accounts" :key="account.id">
-                  {{ account.username }} · UCID {{ account.ucid }} · {{ stateLabel(account.status) }} / {{ account.auth_mode }}
+                  {{ account.username }} · UCID {{ account.ucid }} · {{ account.status }} / {{ account.auth_mode }}
                 </span>
               </div>
             </section>
