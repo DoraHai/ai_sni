@@ -1,4 +1,6 @@
 <script setup>
+import { stateLabel } from '../../../../integrations/workbench/ui-labels.mjs'
+import { groupLoginAccounts, loginAccountSummary } from './login-account-summary.mjs'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -22,6 +24,9 @@ const router = useRouter()
 const loading = ref(false)
 const customers = ref([])
 const loginUsers = ref([])
+const loginUsersResult = ref(null)
+const loginAccountGroups = computed(() => session.canEdit('settings.accounts') ? groupLoginAccounts(loginUsersResult.value) : null)
+const customerLoginSummary = row => loginAccountSummary(row.login_accounts, loginAccountGroups.value, row.id)
 const identitySummary = ref({ checked_customers: 0, checked_accounts: 0, errors: 0, warnings: 0, healthy: true })
 const visible = ref(false)
 const editingId = ref(null)
@@ -120,13 +125,16 @@ function moduleRow(row, code) {
 
 async function load() {
   loading.value = true
+  loginUsersResult.value = null
+  loginUsers.value = []
   try {
     const [result, users] = await Promise.all([
       fetchCustomers(),
-      session.canEdit('settings.accounts') ? fetchUsers() : Promise.resolve(null),
+      session.canEdit('settings.accounts') ? fetchUsers().catch(() => null) : Promise.resolve(null),
     ])
     customers.value = result.customers || []
-    loginUsers.value = users?.users || []
+    loginUsersResult.value = users
+    loginUsers.value = Array.isArray(users?.users) ? users.users : []
     identitySummary.value = result.identity_summary || { checked_customers: 0, checked_accounts: 0, errors: 0, warnings: 0, healthy: true }
   }
   catch (error) { ElMessage.error(error.message) }
@@ -480,16 +488,19 @@ onMounted(load)
       show-icon
       class="identity-summary"
     />
+    <p class="platform-table-hint">表格可左右滑动，查看全部客户信息和操作。</p>
     <el-table :data="customers" border>
       <el-table-column prop="name" label="客户" min-width="180" />
       <el-table-column prop="industry" label="行业" min-width="150" />
       <el-table-column label="客户状态" width="110">
         <template #default><el-tag type="info">未提供</el-tag></template>
       </el-table-column>
-      <el-table-column label="登录账号" min-width="160">
+      <el-table-column label="登录账号（限定客户）" min-width="160">
         <template #default="{ row }">
-          <div>{{ row.login_accounts?.account_count || 0 }} 个 · 启用 {{ row.login_accounts?.active_count || 0 }}</div>
-          <small>{{ row.login_accounts?.last_login_at ? `最近登录 ${row.login_accounts.last_login_at}` : '从未登录' }}</small>
+          <div>{{ customerLoginSummary(row).count }}</div>
+          <small>{{ customerLoginSummary(row).login }}</small>
+          <br v-if="customerLoginSummary(row).source" />
+          <small v-if="customerLoginSummary(row).source">{{ customerLoginSummary(row).source }}</small>
           <el-button v-if="session.canEdit('settings.accounts')" link type="primary" @click="showAccounts(row)">查看账号</el-button>
         </template>
       </el-table-column>
@@ -499,7 +510,7 @@ onMounted(load)
             <span v-for="account in row.sem_accounts.filter((a) => a.status !== 'archived')" :key="account.id">
               <span class="account-label">
                 {{ account.username }} · {{ account.ucid }}
-                <small>{{ account.auth_mode === 'oauth' ? 'OAuth' : '自授权' }} · {{ account.status }}</small>
+                <small>{{ account.auth_mode === 'oauth' ? 'OAuth' : '自授权' }} · {{ stateLabel(account.status) }}</small>
               </span>
               <el-button type="danger" plain size="small" @click="archiveAccount(row, account)">归档</el-button>
             </span>
@@ -536,7 +547,7 @@ onMounted(load)
       </el-table-column>
       <el-table-column label="操作" width="100"><template #default="{ row }"><el-button link type="primary" @click="openEdit(row)">配置</el-button></template></el-table-column>
     </el-table>
-    <el-dialog v-model="visible" :title="editingId ? '配置客户' : '新建客户'" width="560px">
+    <el-dialog class="platform-responsive-dialog" v-model="visible" :title="editingId ? '配置客户' : '新建客户'" width="560px">
       <el-form label-width="90px">
         <el-alert
           v-if="editingCustomer?.identity_locked"
@@ -553,7 +564,7 @@ onMounted(load)
       </el-form>
       <template #footer><el-button @click="visible=false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template>
     </el-dialog>
-    <el-dialog v-model="moduleVisible" :title="`配置 ${moduleLabels[moduleContext.code]} 模块`" width="480px">
+    <el-dialog class="platform-responsive-dialog" v-model="moduleVisible" :title="`配置 ${moduleLabels[moduleContext.code]} 模块`" width="480px">
       <el-form label-width="96px">
         <el-form-item label="客户"><b>{{ moduleContext.customerName }}</b></el-form-item>
         <el-form-item label="状态" required>
@@ -571,7 +582,7 @@ onMounted(load)
       </el-form>
       <template #footer><el-button @click="moduleVisible=false">取消</el-button><el-button type="primary" :loading="moduleSaving" @click="saveModule">确认更新</el-button></template>
     </el-dialog>
-    <el-dialog v-model="executionVisible" :title="`${executionCustomer?.name || ''} · SEM 执行权限`" width="780px">
+    <el-dialog class="platform-responsive-dialog" v-model="executionVisible" :title="`${executionCustomer?.name || ''} · SEM 执行权限`" width="780px">
       <div v-loading="executionLoading" class="execution-policy">
         <el-alert
           :title="executionPolicy?.global_gate_open ? '环境总闸已具备有限真写条件；仍须同时命中本页账户与动作策略。' : '环境总闸当前保持演练；本页策略不会绕过环境总闸。'"
@@ -594,7 +605,7 @@ onMounted(load)
                 :key="account.id"
                 :value="account.id"
                 :disabled="account.status !== 'active'"
-                :label="`${account.username} · UCID ${account.ucid} · ${account.status}`"
+                :label="`${account.username} · UCID ${account.ucid} · ${stateLabel(account.status)}`"
               />
             </el-select>
           </el-form-item>
@@ -665,7 +676,7 @@ onMounted(load)
         <el-table-column prop="last_login_at" label="最近登录"><template #default="{ row }">{{ row.last_login_at || '从未登录' }}</template></el-table-column>
       </el-table>
     </el-drawer>
-    <el-dialog v-model="repairVisible" title="SEM 重复客户只读检测与修复预演" width="900px" @closed="closeRepairPreview">
+    <el-dialog class="platform-responsive-dialog" v-model="repairVisible" title="SEM 重复客户只读检测与修复预演" width="900px" @closed="closeRepairPreview">
       <div v-loading="repairLoading" class="repair-preview">
         <el-alert
           title="这里只读取并对比数据，不会合并客户、迁移记录、删除数据或执行数据库迁移。预演结果不能直接执行。"
@@ -718,7 +729,7 @@ onMounted(load)
               <div class="repair-accounts">
                 <small v-if="!repairPreview.source.accounts?.length">没有推广账户记录</small>
                 <span v-for="account in repairPreview.source.accounts" :key="account.id">
-                  {{ account.username }} · UCID {{ account.ucid }} · {{ account.status }} / {{ account.auth_mode }}
+                  {{ account.username }} · UCID {{ account.ucid }} · {{ stateLabel(account.status) }} / {{ account.auth_mode }}
                 </span>
               </div>
             </section>
@@ -729,7 +740,7 @@ onMounted(load)
               <div class="repair-accounts">
                 <small v-if="!repairPreview.target.accounts?.length">没有推广账户记录</small>
                 <span v-for="account in repairPreview.target.accounts" :key="account.id">
-                  {{ account.username }} · UCID {{ account.ucid }} · {{ account.status }} / {{ account.auth_mode }}
+                  {{ account.username }} · UCID {{ account.ucid }} · {{ stateLabel(account.status) }} / {{ account.auth_mode }}
                 </span>
               </div>
             </section>
