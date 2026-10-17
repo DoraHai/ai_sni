@@ -8302,12 +8302,26 @@ async def get_workbench_service_status(
         SeoSitePage.tenant_id == tenant_id,
         SeoSitePage.site_id == site_id,
     ))).one()
-    publication_total, published_total, missing_url = (await session.execute(select(
+    successful_publication_capture = select(SeoPageCapture.id).where(
+        SeoPageCapture.tenant_id == tenant_id,
+        SeoPageCapture.site_id == site_id,
+        SeoPageCapture.relation_type == "publication",
+        SeoPageCapture.relation_id == SeoContentPublication.id,
+        SeoPageCapture.status == "succeeded",
+    ).exists()
+    publication_total, published_total, missing_url, published_content_assets, verified_content_assets = (await session.execute(select(
         func.count(),
         func.count().filter(SeoContentPublication.status == "published"),
         func.count().filter(and_(
             SeoContentPublication.status == "published",
             SeoContentPublication.page_url.is_(None),
+        )),
+        func.count(func.distinct(SeoContentPublication.content_asset_id)).filter(
+            SeoContentPublication.status == "published",
+        ),
+        func.count(func.distinct(SeoContentPublication.content_asset_id)).filter(and_(
+            SeoContentPublication.status == "published",
+            successful_publication_capture,
         )),
     ).join(SeoContentAsset, and_(
         SeoContentAsset.id == SeoContentPublication.content_asset_id,
@@ -8433,7 +8447,7 @@ async def get_workbench_service_status(
             "SEO-A05": {
                 "state": _service_phase_state(blockers=a05_blockers, has_data=bool(publication_total)),
                 "blockers": a05_blockers,
-                "facts": {"publications": int(publication_total or 0), "published": int(published_total or 0), "published_url_missing": int(missing_url or 0), "publication_capture_total": capture_total, "verified_publications": verified_publication_total, "capture_status_counts": capture_counts},
+                "facts": {"publications": int(publication_total or 0), "published": int(published_total or 0), "published_url_missing": int(missing_url or 0), "publication_capture_total": capture_total, "verified_publications": verified_publication_total, "capture_status_counts": capture_counts, "published_content_assets": int(published_content_assets or 0), "verified_content_assets": int(verified_content_assets or 0)},
                 "as_of": _iso(capture_latest),
             },
             "SEO-A06": {
