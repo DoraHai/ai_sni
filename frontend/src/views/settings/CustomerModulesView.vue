@@ -667,7 +667,7 @@ onMounted(load)
         <el-button type="primary" :loading="executionSaving" @click="persistExecutionPolicy()">保存执行权限</el-button>
       </template>
     </el-dialog>
-    <el-drawer v-model="accountVisible" :title="`${accountCustomer?.name || ''} · 登录账号`" size="560px">
+    <el-drawer v-model="accountVisible" :title="`${accountCustomer?.name || ''} · 登录账号`" size="min(560px, 100vw)">
       <el-alert v-if="!session.canEdit('settings.accounts')" title="当前权限只能查看账号汇总" type="info" :closable="false" />
       <el-table v-else :data="selectedLoginUsers" border>
         <el-table-column prop="username" label="用户名" />
