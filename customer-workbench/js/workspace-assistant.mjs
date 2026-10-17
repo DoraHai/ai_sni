@@ -42,7 +42,7 @@ export function createWorkspaceAssistant(root,getHome,{aiClient=null,getContentI
   if(/发布|交付/.test(q))return {text:h.publications?'当前网站有 '+h.publications.total+' 条发布记录。登记、页面检查和搜索效果分别判断。':'发布记录尚未取得，可进入交付记录查看。',page:'交付记录'};
   if(/页面|网站|问题/.test(q))return {text:'网站检查和待处理问题已放回首页，具体依据见页面明细。允许索引不等于搜索引擎已收录。',page:'数据',kind:'pages'};
   if(/进度|任务/.test(q))return {text:h.executions?'已登记 '+h.executions.total+' 项服务任务。查看进度可了解正在等待谁处理及完成依据。':'尚未取得任务数据，请查看进度读取状态。',page:'进度'};
-  if(/稿|确认|需要|处理/.test(q)){const n=h.deliveries.filter(v=>v.workflow_status==='awaiting_customer_confirmation'&&(v.allowed_actions.confirm_as_customer||v.allowed_actions.confirm_as_advisor_proxy)).length;return {text:'本次已核对 '+h.deliveries.length+' 篇稿件，其中 '+n+' 篇可由当前身份确认。打开稿件可看全文、图片和与顾问沟通；确认不会发布文章。',page:'内容'};}
+  if(/稿|确认|需要|处理/.test(q)){const n=h.deliveries.filter(v=>v.workflow_status==='awaiting_customer_confirmation'&&(v.allowed_actions.confirm_as_customer||v.allowed_actions.confirm_as_advisor_proxy)).length;return {text:(h.deliveries.length===h.contents.total&&!h.failed?'已核对全部稿件，待当前身份确认 '+n+' 篇。':'已查看 '+h.deliveries.length+'/'+h.contents.total+' 篇，其余请到内容页查看全部待确认稿件。')+'打开稿件可看全文、图片和与顾问沟通；确认不会发布文章。',page:'内容'};}
   return {text:'AI 自由问答尚未接通。当前只按已读数据提供导览，不会把问题发给模型或顾问。可问稿件、关键词、页面和进度；具体修改请打开稿件与顾问沟通。',page:'内容'};
  }
  function paint(){
