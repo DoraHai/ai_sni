@@ -90,7 +90,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
       `<b>${esc(u.display_name||u.username)}</b><small class="pc-cell-note">${esc(u.username)}</small>`,esc(roles.find(r=>r.id===u.role_id)?.name||'未读取角色'),esc(u.tenant_id==null?'全局范围 · 受角色权限控制':tenant(u.tenant_id)),status(u.is_active?'active':'disabled'),esc(time(u.last_login_at)),
     ]))}`,sourceNote('users'))+
       advisorLinks.html()+card('角色与权限',table(['角色','授权范围','当前清单账号数'],roles.map(r=>[
-        `<b>${esc(r.name)}</b><small class="pc-cell-note">${esc(r.description||'')}</small>`,`${Object.values(r.permissions||{}).filter(p=>p==='edit').length} 项编辑 / ${Object.values(r.permissions||{}).filter(p=>p==='view').length} 项查看`,value(source('users').rows.filter(u=>u.role_id===r.id).length),
+        `<b>${esc(r.name)}</b><small class="pc-cell-note">${esc(roleDescription(r))}</small>`,`${Object.values(r.permissions||{}).filter(p=>p==='edit').length} 项编辑 / ${Object.values(r.permissions||{}).filter(p=>p==='view').length} 项查看`,value(source('users').rows.filter(u=>u.role_id===r.id).length),
       ])),'超管入口要求全局账号同时拥有客户管理和账号管理编辑权限。客户绑定仍由服务端校验。');
   }
   function apis(){
@@ -473,3 +473,4 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   void load();
   return {dispose(){advisorLinks.reset();browser.clearInterval(balanceTimer);browser.clearInterval(automationTimer);automationState=blankAutomation();disposed=true;distributionMount?.dispose();distributionMount=null;revision++;client.invalidate();loginController?.abort();browser.removeEventListener('sem:auth-context-changed',changed);root.removeEventListener('click',click);root.removeEventListener('submit',submit);root.removeEventListener('input',input);root.removeEventListener('change',change);root.classList.remove('platform-console');root.replaceChildren();}};
 }
+import {roleDescription} from '../../integrations/workbench/role-description.mjs';
