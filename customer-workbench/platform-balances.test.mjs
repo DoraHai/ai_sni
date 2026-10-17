@@ -51,3 +51,19 @@ test('returned cash, grants, credits and frozen amounts remain distinct',()=>{
  {id:'qianfan',name:'千帆',state:'available',balances:[{currency:'CNY',available:'25',cash:'25',balance_kind:'cash'}]}]}},card:(t,b,n)=>t+b+n,table:(h,r)=>h.join('|')+r.flat().join('|'),time:s=>s||'暂无记录'});
  for(const term of ['账务账号 fixture-account','赠额 / 代金券 CNY 10','信用额度 CNY 100','冻结 CNY 2','现金账户余额'])assert(html.includes(term),term);
 });
+
+test('recorded unsupported balance interfaces get row labels while missing credentials do not disable the page',()=>{
+ const rows=[
+  {module:'geo',name:'OpenAI · 平台采样',capability:'pending',configured:null},
+  {module:'geo',name:'Perplexity · 平台采样',capability:'pending',configured:null},
+  {module:'geo',name:'DeepSeek - 平台默认',capability:'direct',configured:false},
+  {module:'geo',name:'通义千问',capability:'billing_authorization',configured:false},
+  {module:'seo',name:'站长之家',capability:'package',configured:null},
+ ];
+ let cells=[];
+ const html=renderCoverage({coverage:{rows},rows:[],time:()=>'',card:(title,body)=>title+body,table:(headers,values)=>{cells.push(...values);return values.flat().join('|');}});
+ const nameCells=new Map(cells.map(row=>[rows.find(r=>row[0].includes(r.name))?.name,row[0]]));
+ for(const name of ['OpenAI · 平台采样','Perplexity · 平台采样']){assert.match(nameCells.get(name),/待启用/);assert.match(nameCells.get(name),/余额与预警保持未知/);}
+ for(const name of ['DeepSeek - 平台默认','通义千问','站长之家'])assert.doesNotMatch(nameCells.get(name),/待启用/);
+ assert.equal((html.match(/pending-badge/g)||[]).length,2);assert.doesNotMatch(html,/pc-pending/);
+});

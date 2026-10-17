@@ -1,3 +1,4 @@
+import {pendingBadge} from './pending-label.mjs';
 import {escapeText as esc} from './customer-display.mjs';
 export const balanceRoute='/api/v1/admin/console/balances';
 const labels={available:'已查询',not_configured:'未配置余额查询凭据',unsupported:'当前接入点不支持',permission_denied:'查询授权不足',account_mismatch:'账务账号不一致',rate_limited:'供应商限流',error:'查询失败',timeout:'查询超时',unavailable:'未接入'};
@@ -34,7 +35,8 @@ export function renderCoverage({coverage,rows,card,table,time}){
     const list=items.filter(r=>r.module===module);
     return list.length?`<details open class="pc-balance-coverage"><summary><b>${module.toUpperCase()} · ${list.length} 个接口 / 套餐项</b></summary>`+table(['服务 / 套餐','接入配置','查询口径','余额查询状态','说明与下一步'],list.map(r=>{
       const live=results.get(r.balance_row_id);
-      return [esc(r.name),`${esc(configLabel(r))}<small class="pc-cell-note">${r.configuration_source==='sem_runtime'?'本服务运行配置':r.configuration_source==='service_registry'?`最近服务登记 · ${esc(time(r.configuration_seen_at))}`:'独立服务配置尚未取得'}</small>`,esc(strategies[r.capability]||'待核对'),live?`${esc(labels[live.state]||'未知')}<small class="pc-cell-note">${live.state==='available'?live.balances.map(b=>money(b.available,b.currency)).join('<br>'):'余额未知'}</small>`:r.enabled===false?'已停用，未查询':r.capability==='direct'?'查询凭据待接入':r.capability==='billing_authorization'?'账务授权待接入':r.capability==='account'?'见推广账户余额':'未知',esc(r.note||'')];
+      const name=r.capability==='pending'?`<b>${esc(r.name)}</b> ${pendingBadge()}<small class="pc-cell-note">余额查询接口尚未接入，余额与预警保持未知。</small>`:esc(r.name);
+      return [name,`${esc(configLabel(r))}<small class="pc-cell-note">${r.configuration_source==='sem_runtime'?'本服务运行配置':r.configuration_source==='service_registry'?`最近服务登记 · ${esc(time(r.configuration_seen_at))}`:'独立服务配置尚未取得'}</small>`,esc(strategies[r.capability]||'待核对'),live?`${esc(labels[live.state]||'未知')}<small class="pc-cell-note">${live.state==='available'?live.balances.map(b=>money(b.available,b.currency)).join('<br>'):'余额未知'}</small>`:r.enabled===false?'已停用，未查询':r.capability==='direct'?'查询凭据待接入':r.capability==='billing_authorization'?'账务授权待接入':r.capability==='account'?'见推广账户余额':'未知',esc(r.note||'')];
     }))+'</details>':'';
   }).join('');
   return card('API 接入与余额覆盖',`<p>${items.length} 个接口 / 套餐项 · ${known} 项配置已取得 · ${items.length-known} 项配置待核对</p>`+content,

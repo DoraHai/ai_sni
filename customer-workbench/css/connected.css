@@ -106,3 +106,5 @@
 .pending-feature{padding:10px 12px;margin:10px 0;border:1px solid #ebd0a2;border-radius:8px;background:#fffaf0}
 .pending-feature h3{font-size:14px;margin:0 0 5px}.pending-feature p,.pending-explanation{font-size:12px;line-height:1.65;color:#795b30;margin:4px 0}
 .pending-module{display:inline-flex;flex-direction:column;gap:3px;font-size:11px;max-width:150px}.pending-module small{white-space:normal}
+
+.pending-module .pending-badge{align-self:flex-start}
