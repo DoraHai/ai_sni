@@ -455,3 +455,44 @@ def test_scheduler_has_monday_beijing_trigger_and_recovery():
     assert str(trigger.timezone) == "Asia/Shanghai"
     assert str(trigger) == "cron[day_of_week='mon', hour='6', minute='0']"
     assert "geo_search_visibility_recovery" in calls
+
+
+@pytest.mark.parametrize("path,method", [
+    ("/api/v1/geo/projects/2/search-visibility", "GET"),
+    ("/api/v1/geo/projects/2/search-visibility/config", "GET"),
+    ("/api/v1/geo/projects/2/search-visibility/config", "PUT"),
+    ("/api/v1/geo/projects/2/search-visibility/run", "POST"),
+    ("/api/v1/geo/projects/2/search-visibility/runs/3/csv", "GET"),
+    ("/api/v1/geo/search-visibility/usage", "GET"),
+])
+def test_global_settings_admin_passes_only_exact_visibility_menu_gate(path, method):
+    from starlette.requests import Request
+    from app.security.auth import require_scoped_auth
+    ctx = AuthContext(7, "synthetic", "admin", None, {"settings.accounts": "edit", "settings.customers": "edit", "geo.assets": "view", "geo.content": "view"})
+    request = Request({"type": "http", "method": method, "path": path, "query_string": b"tenant_id=1", "headers": []})
+    assert run(require_scoped_auth(request, ctx, AsyncMock())) is ctx
+
+
+@pytest.mark.parametrize("path,method", [
+    ("/api/v1/geo/projects/2", "PATCH"),
+    ("/api/v1/geo/projects/2/search-visibility/config/other", "PUT"),
+    ("/api/v1/manage/campaigns", "POST"),
+])
+def test_visibility_admin_exception_never_extends_to_other_routes(path, method):
+    from starlette.requests import Request
+    from app.security.auth import require_scoped_auth
+    ctx = AuthContext(7, "synthetic", "admin", None, {"settings.accounts": "edit", "settings.customers": "edit"})
+    request = Request({"type": "http", "method": method, "path": path, "query_string": b"", "headers": []})
+    with pytest.raises(HTTPException) as error:
+        run(require_scoped_auth(request, ctx, AsyncMock()))
+    assert error.value.status_code == 403
+
+
+def test_bound_or_partial_settings_role_cannot_use_global_visibility_exception():
+    from starlette.requests import Request
+    from app.security.auth import require_scoped_auth
+    for tenant, permissions in [(1, {"settings.accounts": "edit", "settings.customers": "edit"}), (None, {"settings.accounts": "edit"})]:
+        ctx = AuthContext(7, "synthetic", "partial", tenant, permissions)
+        request = Request({"type": "http", "method": "PUT", "path": "/api/v1/geo/projects/2/search-visibility/config", "query_string": b"tenant_id=1", "headers": []})
+        with pytest.raises(HTTPException):
+            run(require_scoped_auth(request, ctx, AsyncMock()))

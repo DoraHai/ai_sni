@@ -9,6 +9,8 @@
 顾问使用既有 `geo.assets=edit` 和 `geo.content=edit` 权限组合；超管使用全局账号及账号/客户管理权限。
 每个接口同时检查租户与 GEO 服务资格；客户不能配置或运行。客户关闭可见时，概览、明细和 CSV
 均只返回 `state=not_open,message=暂未开放`。通用异步作业接口不暴露本类任务。
+统一菜单门禁对本功能的精确路径承认上述全局超管组合，避免仅有GEO查看菜单的超管被写菜单误拦；
+不扩大其他GEO项目、其他模块或SEM权限，租户隔离与接口自己的顾问/超管检查继续执行。
 
 环境变量 `DEEPSEEK_SEARCH_API_KEY` 独立于 SEM，默认空。缺少时显示“待启用”，不影响启动。
 其他设置：`DEEPSEEK_SEARCH_BASE_URL=https://api.deepseek.com`（只允许官方 HTTPS 源），
