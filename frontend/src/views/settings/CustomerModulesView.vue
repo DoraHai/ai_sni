@@ -1,6 +1,6 @@
 <script setup>
 import { stateLabel } from '../../../../integrations/workbench/ui-labels.mjs'
-import { groupLoginAccounts, loginAccountSummary } from './login-account-summary.mjs'
+import { loginAccountSummary } from './login-account-summary.mjs'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -24,9 +24,6 @@ const router = useRouter()
 const loading = ref(false)
 const customers = ref([])
 const loginUsers = ref([])
-const loginUsersResult = ref(null)
-const loginAccountGroups = computed(() => session.canEdit('settings.accounts') ? groupLoginAccounts(loginUsersResult.value) : null)
-const customerLoginSummary = row => loginAccountSummary(row.login_accounts, loginAccountGroups.value, row.id)
 const identitySummary = ref({ checked_customers: 0, checked_accounts: 0, errors: 0, warnings: 0, healthy: true })
 const visible = ref(false)
 const editingId = ref(null)
@@ -125,16 +122,13 @@ function moduleRow(row, code) {
 
 async function load() {
   loading.value = true
-  loginUsersResult.value = null
-  loginUsers.value = []
   try {
     const [result, users] = await Promise.all([
       fetchCustomers(),
-      session.canEdit('settings.accounts') ? fetchUsers().catch(() => null) : Promise.resolve(null),
+      session.canEdit('settings.accounts') ? fetchUsers() : Promise.resolve(null),
     ])
     customers.value = result.customers || []
-    loginUsersResult.value = users
-    loginUsers.value = Array.isArray(users?.users) ? users.users : []
+    loginUsers.value = users?.users || []
     identitySummary.value = result.identity_summary || { checked_customers: 0, checked_accounts: 0, errors: 0, warnings: 0, healthy: true }
   }
   catch (error) { ElMessage.error(error.message) }
@@ -497,10 +491,8 @@ onMounted(load)
       </el-table-column>
       <el-table-column label="登录账号（限定客户）" min-width="160">
         <template #default="{ row }">
-          <div>{{ customerLoginSummary(row).count }}</div>
-          <small>{{ customerLoginSummary(row).login }}</small>
-          <br v-if="customerLoginSummary(row).source" />
-          <small v-if="customerLoginSummary(row).source">{{ customerLoginSummary(row).source }}</small>
+          <div>{{ loginAccountSummary(row.login_accounts).count }}</div>
+          <small>{{ loginAccountSummary(row.login_accounts).login }}</small>
           <el-button v-if="session.canEdit('settings.accounts')" link type="primary" @click="showAccounts(row)">查看账号</el-button>
         </template>
       </el-table-column>

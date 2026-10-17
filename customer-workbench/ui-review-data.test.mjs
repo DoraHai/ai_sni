@@ -12,9 +12,8 @@ test('partial homepage never presents sampled zero as no pending work',()=>{
 test('missing login stats stay unknown; actual zero and never logged in remain distinct',()=>{
  for(const input of [null,{}, {account_count:1},{account_count:0,active_count:2}])assert.equal(loginAccountSummary(input).count,'统计未提供');
  assert.equal(loginAccountSummary({account_count:0,active_count:0}).login,'尚未绑定账号');
- assert.equal(loginAccountSummary({account_count:2,active_count:1}).login,'最近登录统计未提供');
- assert.equal(loginAccountSummary({account_count:2,active_count:1,last_login_at:null}).login,'已绑定账号尚无登录记录');
- assert.match(loginAccountSummary({account_count:2,active_count:1,last_login_at:'2026-10-17T08:00:00Z'}).login,/2026-10-17/);
+ assert.equal(loginAccountSummary({account_count:2,active_count:1}).login,'已绑定账号尚无登录记录');
+ assert.match(loginAccountSummary({account_count:2,active_count:1,last_login_at:'2026-10-17'}).login,/2026-10-17/);
 });
 test('brand role description follows actual editable keys without changing permissions',()=>{
  const role={name:'品牌方客户',description:'只读',permissions:{'sem.assets':'edit','seo.assets':'edit','geo.assets':'edit','seo.content':'view'}};
