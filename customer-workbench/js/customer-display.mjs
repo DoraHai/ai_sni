@@ -1,11 +1,11 @@
 // Presentation only. Never use these labels to decide permissions or workflow completion.
 const statuses = {
   content: {
-    planned: '待制作', drafting: '修改中', draft: '修改中', review: '顾问审核中',
-    ready: '稿件已备好', approved_waiting_publication: '已确认，待发布',
-    awaiting_confirmation: '待确认稿件', awaiting_customer_confirmation: '等待客户确认', awaiting_content_revision: '待顾问修改稿件', awaiting_internal_review: '顾问审核中',
-    awaiting_draft: '待顾问制作', confirmation_unavailable: '确认功能暂不可用',
-    published: '已发布', archived: '已归档', rejected: '已退回修改',
+    planned: '待制作', drafting: '待制作', draft: '待制作', review: '顾问复核',
+    ready: '待你确认', approved_waiting_publication: '待发布',
+    awaiting_confirmation: '待你确认', awaiting_customer_confirmation: '待你确认', awaiting_content_revision: '待制作', awaiting_internal_review: '顾问复核', internal_review: '顾问复核',
+    awaiting_draft: '待制作', confirmation_unavailable: '确认功能暂不可用',
+    published: '已发布', archived: '已归档', rejected: '待制作',
   },
   confirmation: {
     approved: '当前版本已确认', rejected: '已退回，等待修改',
@@ -18,7 +18,7 @@ const statuses = {
     queued: '等待发布处理', running: '发布处理中', cancelled: '已取消',
     not_loaded: '尚未查看', unavailable: '暂不可用', no_data: '暂无记录',
     not_queued: '尚未安排检查', capture_disabled: '页面检查未开启',
-    pending: '等待检查', verified: '页面已核验',
+    pending: '等待检查', verified: '已核验',
   },
   task: { open: '待处理', in_progress: '处理中', done: '已完成', cancelled: '已取消', failed: '需要处理', paused: '已暂停' },
   readiness: { ready: '资料已备齐', needs_attention: '有事项待处理', not_ready: '尚未准备好', no_data: '暂无数据' },
@@ -93,6 +93,11 @@ export function statusLabel(value, kind = 'content') {
   if (value == null || value === '') return '状态未提供';
   const dictionary = known(statuses, kind) ? statuses[kind] : {};
   return known(dictionary, value) ? dictionary[value] : '状态待核对';
+}
+
+export function contentListLabel(status, workflowStatus) {
+  // A ready asset may already be confirmed, rejected, or temporarily unavailable.
+  return status === 'ready' ? (workflowStatus ? statusLabel(workflowStatus) : '状态待核对') : statusLabel(status);
 }
 
 export function reasonLabel(value) {

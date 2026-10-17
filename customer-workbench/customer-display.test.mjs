@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {statusLabel, reasonLabel, fieldLabel, formatTime, formatMetric, escapeText} from './js/customer-display.mjs';
+import {statusLabel, contentListLabel, reasonLabel, fieldLabel, formatTime, formatMetric, escapeText} from './js/customer-display.mjs';
 
 test('missing observations stay missing while actual zero remains visible', () => {
   for (const value of [null, undefined, '', ' ', false, [], {}, NaN, Infinity, 'not_loaded']) assert.equal(formatMetric(value), '—');
@@ -10,7 +10,16 @@ test('missing observations stay missing while actual zero remains visible', () =
 });
 
 test('ready content is not labelled customer confirmed or completed', () => {
-  assert.equal(statusLabel('ready'), '稿件已备好');
+  assert.equal(statusLabel('ready'), '待你确认');
+  for (const state of ['planned', 'drafting', 'awaiting_draft', 'awaiting_content_revision']) assert.equal(statusLabel(state), '待制作');
+  for (const state of ['review', 'awaiting_internal_review']) assert.equal(statusLabel(state), '顾问复核');
+  assert.equal(statusLabel('awaiting_customer_confirmation'), '待你确认');
+  assert.equal(statusLabel('approved_waiting_publication'), '待发布');
+  assert.equal(statusLabel('published'), '已发布');
+  assert.equal(statusLabel('verified', 'publication'), '已核验');
+  assert.equal(contentListLabel('ready', 'approved_waiting_publication'), '待发布');
+  assert.equal(contentListLabel('ready', 'awaiting_customer_confirmation'), '待你确认');
+  assert.equal(contentListLabel('ready', null), '状态待核对');
   assert.equal(statusLabel('approved', 'confirmation'), '当前版本已确认');
   assert.match(statusLabel('stale', 'confirmation'), /旧确认不适用/);
   assert.equal(statusLabel('ready', 'task'), '状态待核对');
