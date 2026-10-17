@@ -213,3 +213,48 @@ test('workbench site API helper calls the scoped read URL with tenant ownership 
     { params: { tenant_id: 7 } },
   ]])
 })
+
+test('SEO default validates eligible tenants before requesting sites', async () => {
+  for (const remembered of [null, 1, 99, 18]) {
+    const calls = [], events = []
+    const access = createSeoWorkspaceAccess({
+      fetchTenants: async () => { calls.push('tenants'); return { tenants: [{ id: 18 }, { id: 22 }] } },
+      fetchSites: async id => { calls.push(id); return { sites: [{ id: 7, status: 'active' }] } },
+      selectTenant: id => events.push(['select', id]),
+      reset() {}, ready: result => events.push(['ready', result.tenantId]), noSite() {}, unavailable() { throw Error('unexpected unavailable') },
+    })
+    await access.validate({ tenantId: remembered, requestedSiteId: 999 })
+    assert.deepEqual(calls, remembered === 18 ? ['tenants', 18] : ['tenants'])
+    assert.deepEqual(events, remembered === 18 ? [['ready', 18]] : [['select', 18]])
+  }
+})
+
+test('empty or failed eligibility and a bound account never request another tenant', async () => {
+  for (const mode of ['empty', 'failed', 'bound']) {
+    let siteCalls = 0, selected = 0, denied = 0
+    const access = createSeoWorkspaceAccess({
+      fetchTenants: async () => { if (mode === 'failed') throw Error('network'); return { tenants: mode === 'empty' ? [] : [{ id: 18 }] } },
+      boundTenantId: () => mode === 'bound' ? 1 : null,
+      fetchSites: async () => { siteCalls++; return {} }, selectTenant: () => selected++,
+      reset() {}, ready() {}, noSite() {}, unavailable: () => denied++,
+    })
+    await access.validate({ tenantId: 1 })
+    assert.deepEqual([siteCalls, selected, denied], [0, 0, 1])
+  }
+})
+
+test('late eligibility cannot change tenant after a scope change or dispose', async () => {
+  for (const action of ['invalidate', 'dispose']) {
+    const pending = deferred()
+    let selected = 0, sites = 0
+    const access = createSeoWorkspaceAccess({
+      fetchTenants: () => pending.promise, selectTenant: () => selected++,
+      fetchSites: async () => { sites++; return {} }, reset() {}, ready() {}, noSite() {}, unavailable() {},
+    })
+    const run = access.validate({ tenantId: 1 })
+    access[action]()
+    pending.resolve({ tenants: [{ id: 18 }] })
+    await run
+    assert.deepEqual([selected, sites], [0, 0])
+  }
+})

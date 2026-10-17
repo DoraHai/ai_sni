@@ -36,25 +36,44 @@ export function reconcileSeoRouteSite({
   return selected
 }
 
-export function createSeoWorkspaceAccess({ fetchSites, reset, ready, noSite, unavailable }) {
+export function createSeoWorkspaceAccess({ fetchSites, fetchTenants, selectTenant, boundTenantId, reset, ready, noSite, unavailable }) {
   let generation = 0
 
   async function validate({ tenantId, requestedSiteId = null }) {
     const scopeTenantId = positiveId(tenantId)
     const ticket = ++generation
     reset({ tenantId: scopeTenantId })
-    if (!scopeTenantId) {
-      unavailable({ tenantId: null, error: null })
-      return
-    }
-
+    let eligibleTenants
     try {
+      if (fetchTenants) {
+        const response = await fetchTenants()
+        if (ticket !== generation) return
+        eligibleTenants = Array.isArray(response?.tenants) ? response.tenants : []
+        const bound = positiveId(boundTenantId?.())
+        const allowed = eligibleTenants.filter((tenant) => !bound || positiveId(tenant.id) === bound)
+        const selected = allowed.find((tenant) => positiveId(tenant.id) === scopeTenantId) || allowed[0]
+        const selectedId = positiveId(selected?.id)
+        if (!selectedId) {
+          unavailable({ tenantId: scopeTenantId, error: new Error('当前账号没有已开通 SEO 的客户'), tenants: eligibleTenants })
+          return
+        }
+        if (selectedId !== scopeTenantId) {
+          // The tenant watcher starts a fresh validation; never query sites for
+          // a stale remembered tenant or carry its site selection into fallback.
+          selectTenant(selectedId)
+          return
+        }
+      }
+      if (!scopeTenantId) {
+        unavailable({ tenantId: null, error: null, tenants: [] })
+        return
+      }
       // This endpoint checks active/trial + unexpired SEO entitlement and returns
       // only sites owned by the requested tenant. It is the authoritative gate.
       const response = await fetchSites(scopeTenantId)
       if (ticket !== generation) return
       const sites = Array.isArray(response?.sites) ? response.sites : []
-      const tenants = Array.isArray(response?.tenants) ? response.tenants : []
+      const tenants = eligibleTenants ?? (Array.isArray(response?.tenants) ? response.tenants : [])
       const selectableStatuses = Array.isArray(response?.selection_policy?.selectable_statuses)
         ? response.selection_policy.selectable_statuses
         : ['active']
@@ -73,7 +92,7 @@ export function createSeoWorkspaceAccess({ fetchSites, reset, ready, noSite, una
       unavailable({
         tenantId: scopeTenantId,
         error,
-        tenants: Array.isArray(error?.seoTenants) ? error.seoTenants : [],
+        tenants: eligibleTenants ?? (Array.isArray(error?.seoTenants) ? error.seoTenants : []),
       })
     }
   }
