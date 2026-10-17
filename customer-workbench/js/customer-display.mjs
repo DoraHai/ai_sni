@@ -20,7 +20,7 @@ const statuses = {
     not_queued: '尚未安排检查', capture_disabled: '页面检查未开启',
     pending: '等待检查', verified: '已核验',
   },
-  task: { open: '待处理', doing: '进行中', in_progress: '处理中', done: '已完成', cancelled: '已取消', failed: '需要处理', paused: '已暂停' },
+  task: { open: '待处理', in_progress: '处理中', done: '已完成', cancelled: '已取消', failed: '需要处理', paused: '已暂停' },
   readiness: { ready: '资料已备齐', needs_attention: '有事项待处理', not_ready: '尚未准备好', no_data: '暂无数据' },
   phase: {
     ai_draft_in_progress: '正在制作草稿', ai_draft_needs_attention: '草稿需要顾问处理',
@@ -41,17 +41,6 @@ const statuses = {
 };
 
 const reasons = {
-  content_workflow_already_active:'已有内容执行任务，请到进度页查看当前任务，处理完成后再发起。',
-  service_workflow_already_active:'已有同类服务任务，请到进度页查看当前任务。',
-  service_plan_paused:'服务计划已暂停，请本站顾问核对并恢复计划后再发起。',
-  ranking_observations_stale:'关键词排名观测已过期，请顾问更新采集。',
-  latest_ranking_run_incomplete:'最近排名采集未全部完成，请顾问核对失败原因后安排补采。',
-  service_plan_content_topics_required:'请先填写至少一个内容选题，并保存服务计划后再发起；无编辑入口时请联系本站顾问。',
-  service_plan_optimization_directions_required:'请先补充优化方向并保存服务计划，再发起执行。',
-  service_plan_required:'请联系本站顾问先保存服务计划，再发起执行。',
-  provider_quota_exceeded:'服务商额度不足，请顾问联系平台维护人员补充额度后重新采集。',
-  rank_observation_missing:'尚未取得关键词排名，请顾问核对采集安排。',
-  rank_observation_stale:'关键词排名已过期，请顾问更新采集。',
   incremental_crawl_disabled: '增量检查已关闭，需顾问开启或取消当前任务',
   crawl_quota_exhausted: '今日抓取额度已用完，需要顾问稍后重试',
   robots_unavailable: '无法核实网站抓取规则，需顾问接续',
