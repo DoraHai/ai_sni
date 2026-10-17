@@ -7877,7 +7877,7 @@ async def import_offline_receipts(
                     content.page_url = content.page_url or receipt.public_url
                     content.status = "published"
                     content.published_at = content.published_at or published_at
-                    content.target_platforms = list(dict.fromkeys([*(content.target_platforms or []), receipt.platform]))[:25]
+                    content.target_platforms = list(dict.fromkeys([*(content.target_platforms or []), receipt.platform]))[:20]
                 changed += 1
             await session.commit()
         except IntegrityError:
@@ -8694,11 +8694,18 @@ async def list_content_publications(
     return {"items": items, "total": len(items), "status_counts": dict(counts)}
 
 
+def _is_offline_receipt_publication(row):
+    return (row.platform_code == "manual" and row.publish_mode == "manual"
+            and row.connection_id is None and bool(row.idempotency_key))
+
+
 async def _manual_complete_denial(session, ctx, row, content):
     if not ctx.can_edit("seo.content"):
         return "content_edit_permission_required"
     if not content or content.tenant_id != row.tenant_id:
         return "content_missing_or_out_of_scope"
+    if _is_offline_receipt_publication(row):
+        return "offline_receipt_import_required"
     if (content.version_count or 1) != row.source_version:
         return "content_version_conflict"
     if row.status not in {"manual_required", "failed", "preparing"}:
@@ -9605,6 +9612,9 @@ async def complete_manual_publication(
     )
     if not row or row.tenant_id != req.tenant_id:
         raise HTTPException(404, "发布任务不存在")
+    if _is_offline_receipt_publication(row):
+        raise HTTPException(409, {"code": "offline_receipt_import_required",
+            "message": "离线回执请通过导入回执更新"})
     content_asset_id = int(row.content_asset_id)
     content = await _distribution_content(
         session, req.tenant_id, content_asset_id, req.site_id,

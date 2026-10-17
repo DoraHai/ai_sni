@@ -221,6 +221,58 @@ def test_unknown_can_be_resolved_to_published_and_concurrent_conflict_rolls_back
     session.rollback.assert_awaited_once()
 
 
+@pytest.mark.parametrize('status', ['failed', 'unknown', 'published'])
+def test_legacy_completion_rejects_offline_receipts_before_content_lock_or_capture(status):
+    publication = SeoContentPublication(id=90, tenant_id=1, content_asset_id=10,
+        platform_code='manual', publish_mode='manual', source_version=3,
+        idempotency_key='offline-receipt-test-key', status=status,
+        page_url=receipt()['public_url'] if status == 'published' else None)
+    session = fixture(existing=publication)
+    session.get.return_value = publication
+    req = seo.DistributionManualComplete(tenant_id=1, site_id=2, page_url=receipt()['public_url'])
+    with dependencies(), patch.object(seo, '_distribution_content', new=AsyncMock()) as content_lookup, \
+            patch.object(seo, '_queue_published_page_verification', new=AsyncMock()) as capture:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(seo.complete_manual_publication(90, req, session, context()))
+        assert exc.value.status_code == 409
+        assert exc.value.detail['code'] == 'offline_receipt_import_required'
+        content_lookup.assert_not_awaited()
+        capture.assert_not_awaited()
+        assert asyncio.run(seo._manual_complete_denial(session, context(), publication, asset())) == 'offline_receipt_import_required'
+    assert publication.status == status
+    session.add.assert_not_called()
+    session.commit.assert_not_awaited()
+    session.scalar.assert_not_awaited()
+
+
+def test_legacy_manual_completion_without_offline_key_remains_supported():
+    publication = SeoContentPublication(id=90, tenant_id=1, content_asset_id=10,
+        platform_code='manual', publish_mode='manual', source_version=3, status='failed')
+    content = asset()
+    session = fixture()
+    session.get.return_value = publication
+    session.refresh = AsyncMock()
+    req = seo.DistributionManualComplete(tenant_id=1, site_id=2, page_url=receipt()['public_url'])
+    with dependencies(), patch.object(seo, '_distribution_content', new=AsyncMock(return_value=content)), \
+            patch.object(seo, '_content_confirmation_schema_ready', new=AsyncMock(return_value=False)), \
+            patch.object(seo, '_queue_published_page_verification', new=AsyncMock(return_value={})):
+        assert asyncio.run(seo._manual_complete_denial(session, context(), publication, content)) is None
+        result = asyncio.run(seo.complete_manual_publication(90, req, session, context()))
+    assert result['page_url'] == receipt()['public_url']
+    assert publication.status == 'published'
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.parametrize('existing_count', [19, 20])
+def test_published_receipt_preserves_twenty_platform_limit(existing_count):
+    platforms = list(PLATFORMS[:existing_count])
+    content = asset(target_platforms=platforms)
+    import_rows([receipt(platform=PLATFORMS[-1])], fixture(content), False)
+    assert len(content.target_platforms) == 20
+    assert content.target_platforms[:existing_count] == platforms
+    assert (PLATFORMS[-1] in content.target_platforms) is (existing_count == 19)
+
+
 def test_http_multipart_preview_and_confirmation_use_local_file_only():
     session = fixture()
     app = FastAPI()
