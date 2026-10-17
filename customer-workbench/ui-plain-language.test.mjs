@@ -12,5 +12,9 @@ test('trigger denial gives a Chinese next step and an existing field link',()=>{
 });
 test('status and receipt labels are Chinese and identifiers retain an identifiable preview',()=>{
  for(const state of ['active','trial','suspended','disabled','doing'])assert.match(stateLabel(state),/[\u4e00-\u9fff]/);
- assert.equal(stateLabel('new_status'),'状态待核对');assert.equal(codeLabel('PREFLIGHT_OK'),'发布预检通过');assert.equal(shortIdentifier('a'.repeat(64)),'aaaaaaaa…aaaaaa');
+ assert.equal(stateLabel('paused'),'已暂停');assert.equal(stateLabel('archived'),'已归档');assert.equal(stateLabel('new_status'),'状态待核对');assert.equal(codeLabel('PREFLIGHT_OK'),'发布预检通过');assert.equal(shortIdentifier('a'.repeat(64)),'aaaaaaaa…aaaaaa');
+});
+
+test('malformed optional provider error summary does not break business evidence rendering',()=>{
+ for(const error_summary of [null,{},42])assert.doesNotThrow(()=>preparationView({phases:{a:{state:'ready',blockers:[],facts:{latest_ranking_run:{error_summary}},as_of:null}}},{}));
 });
