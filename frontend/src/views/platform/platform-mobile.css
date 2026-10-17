@@ -1,0 +1,28 @@
+.platform-table-hint { display: none; }
+.platform-responsive-dialog.el-dialog {
+  max-width: calc(100vw - 28px);
+  max-height: calc(100dvh - 28px);
+  display: flex;
+  flex-direction: column;
+}
+.platform-responsive-dialog .el-dialog__body { overflow: auto; min-height: 0; }
+.platform-responsive-dialog .el-dialog__header,
+.platform-responsive-dialog .el-dialog__footer { flex-shrink: 0; }
+@media (max-width: 760px) {
+  div.platform-shell .platform-topbar { height: auto; padding: 14px; gap: 14px; flex-wrap: wrap; }
+  .platform-shell .platform-topbar > div:first-child { flex-wrap: wrap; gap: 6px 12px; }
+  .platform-shell .platform-actions { flex-wrap: wrap; gap: 10px 14px; }
+  .platform-shell .platform-topbar b,
+  .platform-shell .platform-actions a { white-space: nowrap; }
+  .platform-shell aside { flex-wrap: wrap; }
+  .platform-shell main { min-width: 0; }
+  div.platform-shell .module-page { padding: 0; }
+  div.platform-shell .platform-body { grid-template-rows: auto minmax(0, 1fr); }
+  .platform-shell .page-head,
+  .platform-shell .page-header { flex-direction: column; align-items: stretch; gap: 14px; }
+  .platform-shell .head-actions,
+  .platform-shell .page-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .platform-shell .head-actions .el-button { margin-left: 0; }
+  .platform-shell .platform-table-hint { display: block; color: #697386; font-size: 13px; }
+  .platform-responsive-dialog.el-dialog { margin-top: 14px; }
+}
