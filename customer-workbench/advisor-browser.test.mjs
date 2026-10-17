@@ -26,6 +26,8 @@ test('advisor production UI isolates modules, paginates, clears revoked sessions
   });
   await p.goto(origin+'/customer-workbench/?console=advisor');await p.waitForSelector('.advisor-task');
   await p.waitForFunction(()=>document.body.textContent.includes('未接入')).catch(async error=>{error.message+=' · '+JSON.stringify({body:(await p.$eval('body',e=>e.textContent)).slice(0,1800),errors,calls});throw error;});
+  await p.waitForFunction(()=>document.querySelectorAll('.advisor-automation-module .pending-badge').length===2);
+  assert.equal(await p.$$eval('.pc-pending',es=>es.length),0);
   assert.equal(await p.$$eval('.advisor-task',v=>v.length),1);assert(!calls.some(c=>c.path.includes('/tenants')));
   assert.equal(await p.$eval('.advisor-task a',v=>v.getAttribute('href')),'/customer-workbench/?tenant_id=2&site_id=19&onsite_task_id=77');
   assert.match(await p.$eval('.advisor-task',e=>e.textContent),/核实产品规格/);
@@ -34,7 +36,7 @@ test('advisor production UI isolates modules, paginates, clears revoked sessions
   await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await p.screenshot({path:path.join(os.tmpdir(),'advisor-workbench-mobile-20261010.png'),fullPage:true});
   moduleStatus.geo=200;await p.click('[data-advisor=refresh]');await p.waitForFunction(()=>document.querySelectorAll('.advisor-task').length===2);
-  await p.select('#advisor-module','geo');assert.equal(await p.$$eval('.advisor-module',e=>e.length),1);assert.equal(await p.$eval('.advisor-task a',e=>e.getAttribute('href')),'/customer-workbench/?module=geo&tenant_id=2&project_id=10&onsite_task_id=77');
+  await p.select('#advisor-module','geo');assert.equal(await p.$$eval('.pc-pending',es=>es.length),0);assert.equal(await p.$$eval('.advisor-automation-module .pending-badge',es=>es.length),1);assert.equal(await p.$$eval('.advisor-module',e=>e.length),1);assert.equal(await p.$eval('.advisor-task a',e=>e.getAttribute('href')),'/customer-workbench/?module=geo&tenant_id=2&project_id=10&onsite_task_id=77');
   await p.select('#advisor-module','all');moduleStatus.geo=403;await p.click('[data-advisor=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('全部列表已清除'));assert(!await p.$('.advisor-task'));
   moduleStatus.geo=200;await p.click('[data-advisor=refresh]');await p.waitForSelector('.advisor-task');
   let release;held=new Promise(r=>release=r);await p.click('[data-advisor=latest][data-module=seo]');await p.click('[data-advisor=logout]');release();held=null;

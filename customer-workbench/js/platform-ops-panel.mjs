@@ -1,8 +1,9 @@
+import {pendingFeature,pendingBadge} from './pending-label.mjs';
 import {visiblePlatformAlerts} from './platform-alert-archive.mjs';
 import {renderUsageReview} from './platform-usage-review.mjs';
 
 export function renderWorkerMonitor({workers,esc,card,table,time}){
-  if(!Array.isArray(workers?.rows)||!workers.rows.length)return card('后台任务心跳与队列','<p>待接入</p>',esc(workers?.note||'尚无执行器证据，不能据此判断任务数量为零或调度正常。'));
+  if(!Array.isArray(workers?.rows)||!workers.rows.length)return card('后台任务心跳与队列','<p>待接入</p>',esc(workers?.note||'尚无执行器证据，不能据此判断任务数量为零或调度正常。'),'尚无已接入执行器证据，心跳与队列保持未知。');
   const count=n=>Number.isSafeInteger(n)&&n>=0?esc(n):'未知';
   const transport={available:'已读取',connected:'已读取',unavailable:'读取失败',timeout:'读取超时',forbidden:'读取被拒绝',unauthorized:'读取被拒绝',invalid:'响应不符合契约',not_connected:'未接入'};
   const rows=workers.rows.map(row=>{
@@ -26,7 +27,7 @@ export function renderWorkerMonitor({workers,esc,card,table,time}){
 
 export function renderCallMonitor({snapshot,esc,card,table,time}){
   const monitor=snapshot.operations?.call_monitor;
-  if(!monitor||monitor.state==='schema_pending')return card('调用监控','<p>调用监控待接入，无法据此判断调用数量为零。</p>')+
+  if(!monitor||monitor.state==='schema_pending')return card('调用监控','<p>调用监控待接入，无法据此判断调用数量为零。</p>','','调用监控接口待接入，已有统计不受影响。')+
     ((snapshot.operations?.provider_health||[]).length?card('服务商近期运行（原有统计）',table(['模块','服务商','24 小时调用','异常','最后异常'],snapshot.operations.provider_health.map(r=>[
       esc(r.module?.toUpperCase()),esc(r.provider),esc(r.calls),esc(r.failed),esc(time(r.last_failure))])),'扩展监控尚未提供，保留已有供应商调用统计。'):'')+
     renderWorkerMonitor({workers:monitor?.workers,esc,card,table,time});
@@ -81,7 +82,7 @@ export function renderAlertsPanel({snapshot,selected,esc,card,table,tenant,time,
   const form=current?`<form id="pc-alert-operation" class="pc-ops-form"><label>选择告警<select name="alert_id">${alerts.filter(a=>a.id).map(a=>`<option value="${esc(a.id)}" ${a===current?'selected':''}>${esc(a.message)}</option>`).join('')}</select></label>
     <label>操作<select name="action"><option value="claim">认领</option><option value="resolve">标记已处理</option><option value="reopen">重新打开</option></select></label>
     <label class="pc-ops-wide">处理说明<textarea name="note" maxlength="500" placeholder="记录处理结果；不要填写密钥或密码"></textarea></label><button ${enabled?'':'disabled'}>保存处理记录</button></form>`:'';
-  return card('告警与处理',content+form,enabled?'标记已处理仅记录处理结果；相同来源出现新异常时重新提醒。不会重试或释放调用占用。':'告警仍可查看，处理记录等待数据库审核启用。')+
+  return card('告警与处理',content+form+(!enabled?pendingFeature('告警处理记录','处理记录等待数据库审核启用；现有告警仍可查看。'):''),enabled?'标记已处理仅记录处理结果；相同来源出现新异常时重新提醒。不会重试或释放调用占用。':'告警仍可查看，处理记录等待数据库审核启用。')+
     renderCallMonitor({snapshot,esc,card,table,time});
 }
 
@@ -95,7 +96,7 @@ export function renderSuppliersPanel({snapshot,selected,esc,card,table,time}){
     <button ${snapshot.operations?.state==='enabled'?'':'disabled'}>保存额度登记</button></form>`:'<p class="pc-note">接口管理启用并登记服务商后，可维护余额与套餐余量。</p>';
   return card('服务商余额与套餐登记',table(['服务商','人工登记余额','剩余次数','到期日','最近登记'],records.map(r=>[
     esc(r.host),r.balance==null?'未登记':`${esc(r.currency)} ${esc(r.balance)}`,r.remaining_calls??'未登记',esc(r.expires_on||'未登记'),esc(time(r.updated_at))]))+form,
-    '此处为人工登记，标明更新时间；尚未自动同步服务商余额。留空表示未知，币种分别记录，不能直接合计。');
+    '此处为人工登记，标明更新时间；尚未自动同步服务商余额。留空表示未知，币种分别记录，不能直接合计。',snapshot.operations?.state!=='enabled'?'人工额度登记等待管理功能启用。':'');
 }
 
 export function renderBackupPanel({snapshot,esc,card,table,time}){

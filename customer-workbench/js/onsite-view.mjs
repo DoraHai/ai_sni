@@ -1,3 +1,4 @@
+import {pendingFeature,pendingBadge} from './pending-label.mjs';
 import {escapeText as esc} from './customer-display.mjs';
 const phases={draft:'待制定方案',review:'待人工审核',implementation:'待网站实施',recheck:'待系统复检',acceptance:'待人工验收',done:'已验收',cancelled:'已取消'};
 const labels={title:'Title',description:'Description',meta_keywords:'Keywords',keyword:'关键词部署',internal_link:'内链',robots:'robots 文件',sitemap:'网站地图',canonical:'SEO 架构与规范地址',structured_content:'官网结构化内容',knowledge:'知识库',faq:'FAQ',schema:'Schema 标记',llms:'llms.txt'};
@@ -19,7 +20,7 @@ const button=(text,action,disabled=false,extra='')=>`<button data-action="onsite
 export function onsiteView(data,selected,busy,module='seo'){
   const title=module==='seo'?'SEO 站内优化':'GEO 官网与知识建设';
   const w=selected?.workflow,canEdit=w&&selected.allowed_actions.includes('save_proposal')&&!busy;
-  return `<h2>${title}</h2><p>顾问确认本月重点与方案，系统保存版本并复检真实页面；网站维护人员实施，顾问最终验收。</p><p>官网自动修改暂未接入，按批准方案人工实施。交付复检与搜索收录、排名和 AI 引用效果分别记录。</p>
+  return `<h2>${title}</h2><p>顾问确认本月重点与方案，系统保存版本并复检真实页面；网站维护人员实施，顾问最终验收。</p>${pendingFeature('官网自动修改','官网自动修改暂未接入，按批准方案人工实施。交付复检与搜索收录、排名和 AI 引用效果分别记录。')}
     <div>${button('刷新任务','refresh',busy)}${data?.next_before_id?button('读取下一页','next',busy,`data-before="${data.next_before_id}"`):''}${button('回到最新任务','latest',busy)}</div>
     ${data?data.items.map(t=>{const s=onsiteTaskStatus(t);return `<article class="phase-row"><b>${esc(t.title)} #${t.id}</b><p>${esc(s.phase)} · ${esc(t.workflow.month||({startup:'启动建设',monthly:'月度优化',remediation:'专项整改'}[t.workflow.work_type]))} · 实施负责人：${esc(t.workflow.owner_name)}</p><p>下一步：${esc(s.next)}</p><p>${esc(s.ai)}</p>${button('方案与验收','select',busy,`data-id="${t.id}"`)}</article>`;}).join('')||'<p>当前没有站内任务。</p>':'<p>正在核验任务范围…</p>'}
     ${data?.can_create?`<details><summary>建立站内任务</summary><label>工作类型<select id="onsite-type"><option value="startup">项目启动基础建设</option><option value="monthly">每月重点优化</option><option value="remediation">专项整改</option></select></label><label>服务月份<input id="onsite-month" type="month"></label><label>网站实施负责人<input id="onsite-owner" maxlength="100" placeholder="填写实际实施人员"></label>${module==='seo'?`<label>重点关键词编号（可留空，采用 P0/P1，最多 3 个）<input id="onsite-keywords" placeholder="如：12,18"></label><label>页面编号（可留空，月度任务采用关键词部署页面，最多 3 个）<input id="onsite-pages" placeholder="如：5,8"></label>`:''}${button('建立任务','create',busy)}</details>`:'<p>客户可查看任务。创建、方案审核、实施回填与验收需要当前网站或项目的顾问资格。</p>'}

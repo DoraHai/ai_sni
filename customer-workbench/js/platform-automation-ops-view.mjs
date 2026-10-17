@@ -44,7 +44,7 @@ export function renderAutomationOps({state,card,table,time,tenant=id=>'客户 '+
   const details=['seo','geo'].map(module=>{
     const r=modules[module],d=r?.data;
     if(r?.state!=='available'||d?.state!=='available')return card(module.toUpperCase()+' 执行健康',
-      `<p>${esc(states[d?.state&&r?.state==='available'?d.state:r?.state]||states.unknown)}，项目与队列保持未知。</p>`);
+      `<p>${esc(states[d?.state&&r?.state==='available'?d.state:r?.state]||states.unknown)}，项目与队列保持未知。</p>`,'',['not_deployed','schema_pending'].includes(d?.state&&r?.state==='available'?d.state:r?.state)?'执行健康接口尚未启用，项目与队列数量未知。':'');
     const q=d.queue,queue=q?.state==='available'?[q.queued,q.running,q.unknown].map(count).join(' / '):'未知 / 未知 / 未知';
     const rows=d.rows.map(row=>{
       const path=automationScopePath(module,row);
@@ -62,6 +62,6 @@ export function renderAutomationOps({state,card,table,time,tenant=id=>'客户 '+
   }).join('');
   return card('自动执行运维',`<p>SEO / GEO 项目与运行只读汇总</p><button data-pc="automation-refresh" ${state?.busy?'disabled':''}>${state?.busy?'正在读取…':'刷新执行状态'}</button>`+
     table(['模块','读取状态','已配置项目','历史运行','待人工项目','费用未知步骤','采样时间'],summary),
-    '待人工统计当前运行待补资料、待人工或已接管的项目。费用未知统计历史已准入供应商调用且费用待核实的步骤，按步骤去重，不能当作金额或请求数。SEO 与 GEO 分别采样；刷新不会重试任务或结算费用。')+
-    card('SEM 本轮边界','<p>SEM 本轮未接入 AI 接管，保留已有人工流程。</p>')+details;
+    '待人工统计当前运行待补资料、待人工或已接管的项目。费用未知统计历史已准入供应商调用且费用待核实的步骤，按步骤去重，不能当作金额或请求数。SEO 与 GEO 分别采样；刷新不会重试任务或结算费用。','seo geo'.split(' ').every(m=>['not_deployed','schema_pending'].includes(modules[m]?.state)||modules[m]?.data?.state==='schema_pending')?'SEO 与 GEO 执行健康接口均待启用。':'')+
+    card('SEM 本轮边界','<p>SEM 本轮未接入 AI 接管，保留已有人工流程。</p>','','SEM AI 接管未接入，继续人工处理。')+details;
 }

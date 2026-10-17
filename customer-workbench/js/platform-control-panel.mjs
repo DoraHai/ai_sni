@@ -1,7 +1,7 @@
 // Superadmin configuration UI. No secret is hydrated from a server response.
 export function renderControlPanel({snapshot,esc,card,table,tenant}){
   const c=snapshot.controls;
-  if(c?.state!=='enabled')return card('API 与预算管理','<p>管理功能等待启用。现有调用与费用统计继续可查看。</p>');
+  if(c?.state!=='enabled')return card('API 与预算管理','<p>管理功能等待启用。现有调用与费用统计继续可查看。</p>','','预算与接口管理需完成数据库审核后启用。');
   const users=snapshot.sources.users.rows,tenants=snapshot.sources.tenants.rows;
   const hosts=[...new Set([...c.bindings.map(b=>b.host),...(c.default_rates||[]).map(r=>r.host)].filter(Boolean))].sort();
   const concurrency=c.capabilities?.includes('budget_concurrency_v1'),providerBudgets=c.capabilities?.includes('provider_budget_v1');

@@ -1,0 +1,669 @@
+[
+  {
+    "area": "customer",
+    "page": "首页",
+    "headings": [
+      "本期要点",
+      "任务与待办",
+      "关键词表现",
+      "内容制作",
+      "最近进度",
+      "网站检查",
+      "本月站内计划与进度"
+    ],
+    "observed_pending_text": [
+      "SEM · 已开通 · 待接入"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "本期要点"
+    ]
+  },
+  {
+    "area": "customer",
+    "page": "内容",
+    "headings": [
+      "内容"
+    ],
+    "observed_pending_text": [
+      "SEM · 已开通 · 待接入"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "内容"
+    ]
+  },
+  {
+    "area": "customer",
+    "page": "SEO工作",
+    "headings": [
+      "SEO工作",
+      "资料与服务计划 · 资料已备齐",
+      "网站检查 · 有事项待处理",
+      "关键词与搜索 · 有事项待处理",
+      "发布核验 · 有事项待处理",
+      "数据报告 · 有事项待处理",
+      "异常与运行 · 有事项待处理"
+    ],
+    "observed_pending_text": [
+      "SEM · 已开通 · 待接入"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "SEO工作"
+    ]
+  },
+  {
+    "area": "customer",
+    "page": "进度",
+    "headings": [
+      "实际执行进度",
+      "任务",
+      "内容交付",
+      "网站诊断与整改",
+      "监测异常",
+      "周期报告"
+    ],
+    "observed_pending_text": [
+      "SEM · 已开通 · 待接入"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "实际执行进度"
+    ]
+  },
+  {
+    "area": "customer",
+    "page": "站内优化",
+    "headings": [
+      "SEO 站内优化"
+    ],
+    "observed_pending_text": [
+      "SEM · 已开通 · 待接入",
+      "官网自动修改暂未接入，按批准方案人工实施。交付复检与搜索收录、排名和 AI 引用效果分别记录。"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "SEO 站内优化"
+    ]
+  },
+  {
+    "area": "customer",
+    "page": "数据",
+    "headings": [
+      "数据明细",
+      "百度关键词排名"
+    ],
+    "observed_pending_text": [
+      "SEM · 已开通 · 待接入"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "数据明细"
+    ]
+  },
+  {
+    "area": "customer",
+    "page": "服务计划",
+    "headings": [
+      "服务计划",
+      "顾问手动发起"
+    ],
+    "observed_pending_text": [
+      "SEM · 已开通 · 待接入",
+      "最终资格、有效期与资料总量由服务端保存时再次检查。资料过多、过期或不在读取范围时请重新选择；来源维护入口尚未接入。"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "服务计划"
+    ]
+  },
+  {
+    "area": "customer",
+    "page": "交付记录",
+    "headings": [
+      "交付记录",
+      "发布与交付记录"
+    ],
+    "observed_pending_text": [
+      "SEM · 已开通 · 待接入"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "交付记录"
+    ]
+  },
+  {
+    "area": "geo",
+    "page": "home",
+    "headings": [
+      "看进展，确认稿件，与顾问一起推进。",
+      "工作空间链接不完整"
+    ],
+    "observed_pending_text": [],
+    "expected_page_badge": false,
+    "expected_pending_features": []
+  },
+  {
+    "area": "advisor",
+    "page": "overview",
+    "headings": [
+      "我的站内交付任务",
+      "SEO 站内任务",
+      "GEO 站内任务",
+      "项目运行与记录",
+      "SEO 项目 · 当前页",
+      "GEO 项目 · 当前页",
+      "发布与分发",
+      "项目渠道排队配置",
+      "自动入队记录",
+      "发布计划建议",
+      "统一渠道目录",
+      "项目素材交接",
+      "逐稿授权与交接记录 · 最多 100 项（发布授权独立于自动排队开关）",
+      "服务器账号会话 · 顾问介入"
+    ],
+    "observed_pending_text": [
+      "项目控制尚未接入或等待启用。",
+      "已读取。发布由人工完成，自动上传和发文尚未接入。",
+      "AI 计量未启用，采用规则安排 · 尝试 1 / 3 · 下次重试 2026/10/16 09:33:14",
+      "AI 计量未启用，采用规则安排 · 稿件版本 seo-draft-bf40e1ed2bedaf05b74e45561df87aa27cbd33c4cc19f4c91ff81199bd2f2dd3 · 最近复核 2026/10/16 09:31:48",
+      "微信视频号 · 视频 · 待接线",
+      "知乎创作中心 · 文章、回答 · 待接线",
+      "哔哩哔哩创作中心 · 文章、视频 · 待接线",
+      "抖音创作者中心 · 视频 · 待接线",
+      "新浪微博 · 帖子 · 待接线",
+      "LinkedIn 领英 · 文章、帖子 · 待接线",
+      "今日头条创作中心 · 文章、视频 · 待接线",
+      "百家号创作中心 · 文章、视频 · 待接线",
+      "快手创作者服务平台 · 视频 · 待接线",
+      "新闻源接口发布 · 文章 · 待接线",
+      "外链接口发布 · 文章 · 待接线"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "SEO 项目 · 当前页",
+      "GEO 项目 · 当前页",
+      "发布与分发"
+    ]
+  },
+  {
+    "area": "supervisor",
+    "page": "overview",
+    "headings": [
+      "平台总览",
+      "今天的平台情况",
+      "常用管理",
+      "管理与后续接入"
+    ],
+    "observed_pending_text": [],
+    "expected_page_badge": false,
+    "expected_pending_features": []
+  },
+  {
+    "area": "supervisor",
+    "page": "customers",
+    "headings": [
+      "客户与服务",
+      "客户与服务"
+    ],
+    "observed_pending_text": [
+      "暂未开通"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": []
+  },
+  {
+    "area": "supervisor",
+    "page": "accounts",
+    "headings": [
+      "账号与权限",
+      "账号管理",
+      "顾问账号关联",
+      "角色与权限"
+    ],
+    "observed_pending_text": [],
+    "expected_page_badge": false,
+    "expected_pending_features": []
+  },
+  {
+    "area": "supervisor",
+    "page": "apis",
+    "headings": [
+      "API 与调用",
+      "API 调用情况",
+      "本月服务商与具体接口",
+      "最近调用",
+      "完整调用明细与导出",
+      "调用费用人工核实",
+      "GEO 采样引擎"
+    ],
+    "observed_pending_text": [
+      "核实操作尚未启用。"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "调用费用人工核实"
+    ]
+  },
+  {
+    "area": "supervisor",
+    "page": "ai-governance",
+    "headings": [
+      "AI 自动化治理",
+      "AI 自动化治理",
+      "调用保护生效范围",
+      "已生效限制与未启用控制",
+      "人工审核与实施边界",
+      "官网适配器"
+    ],
+    "observed_pending_text": [
+      "未接入",
+      "等待数据库人工审核启用",
+      "治理策略编辑暂未接入",
+      "官网适配器尚未接入，自动执行开关保持关闭。",
+      "reserved / disabled · 官网自动修改未接入。当前通过人工实施完成站点修改。"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "已生效限制与未启用控制",
+      "官网适配器"
+    ]
+  },
+  {
+    "area": "supervisor",
+    "page": "automation-ops",
+    "headings": [
+      "自动执行运维",
+      "自动执行运维",
+      "SEM 本轮边界",
+      "SEO 执行健康",
+      "GEO 执行健康"
+    ],
+    "observed_pending_text": [
+      "接口未部署",
+      "SEM 本轮未接入 AI 接管，保留已有人工流程。",
+      "接口未部署，项目与队列保持未知。"
+    ],
+    "expected_page_badge": true,
+    "expected_pending_features": [
+      "自动执行运维",
+      "SEM 本轮边界",
+      "SEO 执行健康",
+      "GEO 执行健康"
+    ]
+  },
+  {
+    "area": "supervisor",
+    "page": "distribution",
+    "headings": [
+      "多号通分发接入",
+      "多号通执行设备与账号绑定",
+      "公司专用电脑首次配对",
+      "诺德首条任务接入",
+      "诺德首条完整任务",
+      "绑定客户平台账号",
+      "现有账号绑定 · 最多 100 项",
+      "全局自动排队授权与能力",
+      "平台账号发布规则"
+    ],
+    "observed_pending_text": [],
+    "expected_page_badge": false,
+    "expected_pending_features": []
+  },
+  {
+    "area": "supervisor",
+    "page": "balances",
+    "headings": [
+      "实时余额与预警",
+      "实时余额与预警",
+      "人工核验与套餐余量",
+      "API 接入与余额覆盖"
+    ],
+    "observed_pending_text": [
+      "清单包含系统支持的服务；配置待核对不表示未接入。模型 Key、查询凭据和账务账户各有范围，多个接口可能共享余额，金额不汇总相加。",
+      "账务授权待接入",
+      "查询凭据待接入",
+      "余额接口待接入",
+      "余额查询尚未接入；保留服务清单，余额与预警状态未知。"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": []
+  },
+  {
+    "area": "supervisor",
+    "page": "costs",
+    "headings": [
+      "成本与用量",
+      "本月 API 费用",
+      "全部账号的 API 用量与费用",
+      "无登录账号的任务与运维调用",
+      "全部客户的 API 用量与费用",
+      "未归属客户的调用",
+      "服务商与模型",
+      "最近真实调用"
+    ],
+    "observed_pending_text": [
+      "未接入"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": []
+  },
+  {
+    "area": "supervisor",
+    "page": "controls",
+    "headings": [
+      "API 与预算管理",
+      "API 与预算管理"
+    ],
+    "observed_pending_text": [
+      "管理功能等待启用。现有调用与费用统计继续可查看。"
+    ],
+    "expected_page_badge": true,
+    "expected_pending_features": [
+      "API 与预算管理"
+    ]
+  },
+  {
+    "area": "supervisor",
+    "page": "config",
+    "headings": [
+      "系统配置",
+      "SEM / SEO / GEO 系统配置",
+      "接口参数与密钥",
+      "业务运行配置",
+      "已有业务配置入口",
+      "启用与检查范围"
+    ],
+    "observed_pending_text": [
+      "配置管理尚未启用，调用计量继续运行。",
+      "管理表及功能尚未启用，或该模块尚未登记此配置；当前不能保存。"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "SEM / SEO / GEO 系统配置",
+      "接口参数与密钥"
+    ]
+  },
+  {
+    "area": "supervisor",
+    "page": "alerts",
+    "headings": [
+      "告警与处理",
+      "告警与处理",
+      "调用监控",
+      "服务商近期运行（原有统计）",
+      "后台任务心跳与队列",
+      "服务商余额与套餐登记"
+    ],
+    "observed_pending_text": [
+      "告警仍可查看，处理记录等待数据库审核启用。",
+      "数据库备份结果未接入、失败或超过 36 小时，请检查运维记录",
+      "调用监控待接入，无法据此判断调用数量为零。",
+      "待接入"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "告警与处理",
+      "调用监控",
+      "后台任务心跳与队列"
+    ]
+  },
+  {
+    "area": "supervisor",
+    "page": "tasks",
+    "headings": [
+      "任务与调度",
+      "SEM 工作任务",
+      "SEO 执行任务",
+      "GEO 异步任务",
+      "GEO 处理工单",
+      "调用监控",
+      "服务商近期运行（原有统计）",
+      "后台任务心跳与队列",
+      "执行与恢复"
+    ],
+    "observed_pending_text": [
+      "调用监控待接入，无法据此判断调用数量为零。",
+      "待接入"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "调用监控",
+      "后台任务心跳与队列"
+    ]
+  },
+  {
+    "area": "supervisor",
+    "page": "security",
+    "headings": [
+      "安全与运维",
+      "完整管理审计",
+      "数据与权限",
+      "授权状态",
+      "运维接入情况",
+      "数据库备份与恢复记录",
+      "最近管理操作"
+    ],
+    "observed_pending_text": [
+      "管理操作审计等待启用，账号最近登录仍可查看。"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "运维接入情况"
+    ]
+  },
+  {
+    "area": "supervisor",
+    "page": "inventory",
+    "headings": [
+      "系统盘点",
+      "当前接入与剩余条件",
+      "系统盘点"
+    ],
+    "observed_pending_text": [
+      "记录待接入",
+      "接口未部署",
+      "经结构审核和发布配置后生效，未启用不代表预算保护生效。",
+      "盘点以当前源码、接口和本页实际接入范围为依据。已接入、部分接入与待接入分别标注。",
+      "逐步补齐尚未接入计量的外部服务。",
+      "管理模块代码已就绪，等待数据库审核启用。",
+      "处理记录等待管理启用；外部告警发送待接入。"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": []
+  },
+  {
+    "area": "platform",
+    "page": "customers",
+    "headings": [
+      "客户与业务"
+    ],
+    "observed_pending_text": [
+      "未开通"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": []
+  },
+  {
+    "area": "platform",
+    "page": "accounts",
+    "headings": [],
+    "observed_pending_text": [],
+    "expected_page_badge": false,
+    "expected_pending_features": []
+  },
+  {
+    "area": "platform",
+    "page": "accounts-tab-1",
+    "headings": [],
+    "observed_pending_text": [],
+    "expected_page_badge": false,
+    "expected_pending_features": []
+  },
+  {
+    "area": "platform",
+    "page": "roles",
+    "headings": [],
+    "observed_pending_text": [],
+    "expected_page_badge": false,
+    "expected_pending_features": []
+  },
+  {
+    "area": "platform",
+    "page": "roles-tab-0",
+    "headings": [],
+    "observed_pending_text": [],
+    "expected_page_badge": false,
+    "expected_pending_features": []
+  },
+  {
+    "area": "platform",
+    "page": "roles-tab-1",
+    "headings": [],
+    "observed_pending_text": [],
+    "expected_page_badge": false,
+    "expected_pending_features": []
+  },
+  {
+    "area": "geo",
+    "page": "workspace",
+    "headings": [
+      "本月站内计划与进度",
+      "GEO 官网与知识建设"
+    ],
+    "observed_pending_text": [
+      "官网自动修改暂未接入，按批准方案人工实施。交付复检与搜索收录、排名和 AI 引用效果分别记录。"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "本月站内计划与进度"
+    ]
+  },
+  {
+    "area": "advisor",
+    "page": "module-seo",
+    "headings": [
+      "我的站内交付任务",
+      "SEO 站内任务",
+      "项目运行与记录",
+      "SEO 项目 · 当前页",
+      "发布与分发",
+      "项目渠道排队配置",
+      "自动入队记录",
+      "发布计划建议",
+      "统一渠道目录",
+      "项目素材交接",
+      "逐稿授权与交接记录 · 最多 100 项（发布授权独立于自动排队开关）",
+      "服务器账号会话 · 顾问介入"
+    ],
+    "observed_pending_text": [
+      "项目控制尚未接入或等待启用。",
+      "已读取。发布由人工完成，自动上传和发文尚未接入。",
+      "AI 计量未启用，采用规则安排 · 尝试 1 / 3 · 下次重试 2026/10/16 09:33:14",
+      "AI 计量未启用，采用规则安排 · 稿件版本 seo-draft-bf40e1ed2bedaf05b74e45561df87aa27cbd33c4cc19f4c91ff81199bd2f2dd3 · 最近复核 2026/10/16 09:31:48",
+      "微信视频号 · 视频 · 待接线",
+      "知乎创作中心 · 文章、回答 · 待接线",
+      "哔哩哔哩创作中心 · 文章、视频 · 待接线",
+      "抖音创作者中心 · 视频 · 待接线",
+      "新浪微博 · 帖子 · 待接线",
+      "LinkedIn 领英 · 文章、帖子 · 待接线",
+      "今日头条创作中心 · 文章、视频 · 待接线",
+      "百家号创作中心 · 文章、视频 · 待接线",
+      "快手创作者服务平台 · 视频 · 待接线",
+      "新闻源接口发布 · 文章 · 待接线",
+      "外链接口发布 · 文章 · 待接线"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "SEO 项目 · 当前页",
+      "发布与分发"
+    ]
+  },
+  {
+    "area": "advisor",
+    "page": "module-geo",
+    "headings": [
+      "我的站内交付任务",
+      "GEO 站内任务",
+      "项目运行与记录",
+      "GEO 项目 · 当前页",
+      "发布与分发",
+      "服务器账号会话 · 顾问介入"
+    ],
+    "observed_pending_text": [
+      "项目控制尚未接入或等待启用。",
+      "已读取。发布由人工完成，自动上传和发文尚未接入。"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "GEO 项目 · 当前页",
+      "发布与分发"
+    ]
+  },
+  {
+    "area": "customer",
+    "page": "data-keywords",
+    "headings": [
+      "数据明细",
+      "百度关键词排名"
+    ],
+    "observed_pending_text": [
+      "SEM · 已开通 · 待接入"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "数据明细"
+    ]
+  },
+  {
+    "area": "customer",
+    "page": "data-pages",
+    "headings": [
+      "数据明细",
+      "网站页面检查"
+    ],
+    "observed_pending_text": [
+      "SEM · 已开通 · 待接入"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "数据明细"
+    ]
+  },
+  {
+    "area": "customer",
+    "page": "data-facts",
+    "headings": [
+      "数据明细",
+      "NORD产品范围（验收公开摘要）"
+    ],
+    "observed_pending_text": [
+      "SEM · 已开通 · 待接入"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "数据明细"
+    ]
+  },
+  {
+    "area": "customer",
+    "page": "seo-evidence-open",
+    "headings": [
+      "SEO工作",
+      "资料与服务计划 · 资料已备齐",
+      "网站检查 · 有事项待处理",
+      "关键词与搜索 · 有事项待处理",
+      "发布核验 · 有事项待处理",
+      "数据报告 · 有事项待处理",
+      "异常与运行 · 有事项待处理"
+    ],
+    "observed_pending_text": [
+      "SEM · 已开通 · 待接入"
+    ],
+    "expected_page_badge": false,
+    "expected_pending_features": [
+      "SEO工作"
+    ]
+  }
+]

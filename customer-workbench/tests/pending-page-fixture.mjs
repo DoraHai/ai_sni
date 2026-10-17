@@ -8,7 +8,7 @@ export function pendingSnapshot(){
  sources.users=source([pendingAdmin]);
  return {schema:1,mode:'read_only_inventory',generated_at:'2026-10-17T08:44:41Z',sources,
   calls:{total:45123,failed:35730,average_latency_ms:90},costs:{actual_amount:null,estimated_amount:null,date:'2026-10-17',usage:[],note:'费用待核对'},
-  coverage:{api:'已有调用台账',backup:'备份结果未接入'},alerts:[{id:'fixture-alert',tenant_id:null,message:'本地示例：接口异常待核对',severity:'error'}],
+  coverage:{api:'已有调用台账',backup:'备份结果未接入',audit:'管理操作审计等待启用，账号最近登录仍可查看。'},alerts:[{id:'fixture-alert',tenant_id:null,message:'本地示例：接口异常待核对',severity:'error'}],
   controls:{state:'schema_pending',connections:[{id:'sem.deepseek',module:'sem',label:'DeepSeek 官方',registered:false,supported:true,revision:0,parameters:{},fields:[],secret_fields:[]}],module_status:[]},
   operations:{state:'schema_pending',suppliers:[],provider_health:[],call_monitor:{state:'schema_pending'}}};
 }
