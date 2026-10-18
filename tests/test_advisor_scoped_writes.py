@@ -315,7 +315,11 @@ def test_every_allowed_mounted_handler_persists_only_manual_content(tmp_path, mo
                 auth=fixture_token(uid=2, native=True) if actor == 'administrator' else None)
             assert response.status_code in {200, 201}, response.text
             after = await env.snapshot()
-            assert any(row[column] == value for row in after[table]), (table, value)
+            expected = value
+            if column == 'profile' and actor == 'administrator':
+                from app.geo.content.business_profile import normalize_profile
+                expected = normalize_profile(value)
+            assert any(row[column] == expected for row in after[table]), (table, expected)
             # Response success alone cannot hide dispatch, publication or changes
             # to the action-ticket table with the colliding task_id.
             for untouched in ('geo_publications', 'geo_async_jobs', 'geo_action_tickets',

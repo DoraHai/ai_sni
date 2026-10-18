@@ -40,3 +40,15 @@ test('save shows the backend reason and keeps the unsaved profile after rejectio
   assert.equal(context.profile.value, profile)
   assert.equal(context.saving.value, false)
 })
+
+test('shared API client passes a backend detail.message to the save handler', async () => {
+  let rejectResponse
+  const client = { interceptors: { request: { use() {} }, response: { use(_ok, fail) { rejectResponse = fail } } } }
+  const apiSource = readFileSync(new URL('../src/api/client.js', import.meta.url), 'utf8')
+    .replace(/^import .*$/gm, '').replace('export default client', '')
+    .replaceAll('import.meta.env', '({})')
+  vm.runInNewContext(apiSource, { axios: { create: () => client }, session: {} })
+  await assert.rejects(rejectResponse({ response: { status: 403, data: {
+    detail: { code: 'ADVISOR_WRITE_FIELD_FORBIDDEN', message: '品牌资料含未开放的字段' },
+  } } }), (error) => error.message === '品牌资料含未开放的字段' && error.status === 403)
+})
