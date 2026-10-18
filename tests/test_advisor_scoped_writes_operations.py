@@ -109,3 +109,16 @@ record({'geo_advisor_actor': (1, 10), 'method': 'POST', 'path': '/api/v1/geo/con
     event = json.loads(result.stderr)
     assert event["advisor_user_id"] == 1 and event["tenant_id"] == 10
     assert event["result"] == "committed" and event["object_ids"] == {"task_id": 10}
+
+
+def test_new_fact_operation_records_the_database_assigned_id(tmp_path, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="geo.advisor.operations")
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch) as env:
+            response = await env.request("POST", "/facts", body={"tenant_id": 10, "business_id": 10,
+                "title": "new audited fact", "statement": "synthetic statement", "source_name": "fixture source"})
+            assert response.status_code == 200, response.text
+            return response.json()["id"]
+    ident = asyncio.run(run())
+    events = [json.loads(r.message) for r in caplog.records if r.name == "geo.advisor.operations"]
+    assert any(e["result"] == "committed" and ident in e["object_ids"].get("geo_facts", []) for e in events)

@@ -24,6 +24,8 @@ def record(scope, result, **extra):
     user_id, tenant_id = actor
     objects = {key: value for key, value in scope.get("path_params", {}).items()
                if key.endswith("_id") and str(value).isascii() and str(value).isdecimal()}
+    for table, ids in scope.get("geo_advisor_created_ids", {}).items():
+        objects[table] = sorted(ids)
     event = {"event": "geo_advisor_operation", "advisor_user_id": user_id,
              "tenant_id": tenant_id, "method": scope["method"], "path": scope["path"],
              "object_ids": objects, "result": result,
