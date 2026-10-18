@@ -11,3 +11,4 @@
 .distribution-task{border:1px solid #dce3ed;border-radius:8px;padding:14px;margin:12px 0;overflow-wrap:anywhere}
 .distribution-panel details{margin:12px 0}
 .advisor-remote{background:#fff;border:1px solid #d8e0eb;border-radius:12px;padding:20px;margin:20px 0;overflow-wrap:anywhere}.advisor-remote-frame{display:block;width:auto;max-width:100%;height:auto;border:1px solid #ccd5e0;margin:12px 0}.advisor-remote input{max-width:100%;min-height:44px}.advisor-remote button{margin:6px}
+.advisor-tenant-picker{background:#fff;border:1px solid #b9c8dc;border-radius:12px;padding:16px;margin-bottom:20px;overflow-wrap:anywhere}.advisor-tenant-picker summary{color:#175bbb;cursor:pointer;min-height:44px;line-height:44px;font-weight:600}.advisor-tenant-picker [role=group]{display:flex;flex-wrap:wrap;gap:8px}.advisor-tenant-picker [role=alert]{color:#923829}

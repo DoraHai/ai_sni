@@ -55,7 +55,7 @@ export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscrib
   async function initialize(){
     const s=sync(),r=revision;identity=null;
     async function read(path){const response=await request(path,{},true);if(!response.ok)fail('PREFLIGHT_FAILED',response.status);return response.json();}
-    const {user}=await read('/api/v1/auth/me');
+      const me=await read('/api/v1/auth/me'),user=s.advisor?{...me?.user,tenant_id:s.tenantId}:me?.user;
     if(user?.id!==s.userId||(user.tenant_id!=null&&user.tenant_id!==s.tenantId)||
       !['geo.assets','geo.content'].every(k=>['view','edit'].includes(user.permissions?.[k])))fail('PERMISSION_DENIED',403);
     const modules=await read('/api/v1/auth/modules');

@@ -7,7 +7,7 @@ import {execFileSync} from 'node:child_process';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const hostRoot=await fs.realpath(path.resolve(root,'../frontend')),output=path.join(root,'dist','customer-workbench');
-const sources=['src/store/session.js','src/store/sessionStorage.js'];
+const sources=['src/store/session.js','src/store/sessionStorage.js','src/store/advisorTenant.js'];
 const sha=data=>createHash('sha256').update(data).digest('hex');
 const upstreamCommit=execFileSync('git',['-C',hostRoot,'rev-parse','HEAD'],{encoding:'utf8'}).trim();
 const sourceTreeClean=!execFileSync('git',['-C',root,'status','--porcelain','--','.'],{encoding:'utf8'}).trim();
