@@ -54,7 +54,8 @@ async def _account_payload(session, user, role, tenant_names, rows=None):
         try:
             rows = await read_grants(session, user.id)
         except HTTPException as error:
-            if error.status_code != 503:
+            if (error.status_code != 503 or not isinstance(error.detail, dict)
+                    or error.detail.get("code") != "ADVISOR_GRANTS_UNAVAILABLE"):
                 raise
             # This is a named/admin-only account projection, never a business
             # authorization fallback. No writable version is issued until the
@@ -64,6 +65,7 @@ async def _account_payload(session, user, role, tenant_names, rows=None):
     result = _payload(user, {user.role_id: role.name if role else "?"}, tenant_names)
     result.update(is_advisor=advisor, tenant_ids=sorted(g.tenant_id for g in active),
                   default_tenant_id=user.tenant_id,
+                  grants_available=not unavailable,
                   grants_version=grants_version(user.tenant_id, rows or []) if advisor and not unavailable else None)
     if unavailable:
         result.update(grants_available=False, grants_error_code="ADVISOR_GRANTS_UNAVAILABLE")

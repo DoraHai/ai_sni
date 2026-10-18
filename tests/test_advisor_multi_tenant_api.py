@@ -37,6 +37,7 @@ def test_versions_account_list_detail_missing_stale_and_default_only(db):
     first = detail(client)
     assert first["is_advisor"] and first["tenant_ids"] == [10, 20]
     assert first["default_tenant_id"] == 10 and first["grants_version"] == expected
+    assert first["grants_available"] is True
     listed = client.get("/api/v1/users", headers=admin()).json()["users"]
     assert listed[0]["grants_version"] == expected
     assert listed[1]["grants_version"] is None and listed[1]["tenant_ids"] == []
@@ -245,3 +246,12 @@ def test_permission_denied_account_projection_does_not_enable_grant_writes(db):
         assert client.get("/api/v1/auth/me", headers=headers(token())).status_code == 503
     finally:
         event.remove(engine, "before_cursor_execute", no_grant_read)
+
+
+def test_account_projection_does_not_swallow_unrelated_service_errors(db, monkeypatch):
+    client, _, _ = db
+    async def unrelated(*args):
+        raise HTTPException(503, {"code": "UNRELATED_SERVICE_ERROR"})
+    monkeypatch.setattr(users, "read_grants", unrelated)
+    response = client.get("/api/v1/users/1", headers=admin())
+    assert response.status_code == 503 and response.json()["detail"]["code"] == "UNRELATED_SERVICE_ERROR"
