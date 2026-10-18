@@ -13,8 +13,8 @@ import {advisorScopedFetch} from './advisor-tenant-switch.mjs';
 const scope=entryScope(location.search),{tenantId,siteId}=scope;
 let mounted;
 const consoleValues=new URLSearchParams(location.search).getAll('console');
-const advisorFetch=advisorScopedFetch({session,fetchImpl:fetch,onDenied:()=>{
-  if(session.token)session.restoreAdvisorIdentity();location.assign('/customer-workbench/?console=advisor');
+const advisorFetch=advisorScopedFetch({session,fetchImpl:fetch,onDenied:code=>{
+  if(session.token)session.restoreAdvisorIdentity();location.assign('/customer-workbench/?console=advisor&advisor_notice='+encodeURIComponent(code));
 }});
 if((consoleValues.length===1&&consoleValues[0]==='advisor')||session.isAdvisorSession&&(!session.tenantId||tenantId&&tenantId!==session.tenantId)){
   mounted=!session.token||scope.login?mountWorkbenchEntry({root:document.querySelector('#app'),session}):mountAdvisorWorkbench({root:document.querySelector('#app'),session,subscribeSession(listener){const stop=watch(()=>[session.token,session.user?.id,session.authRevision,JSON.stringify(session.modules)],listener,{flush:'sync'});window.addEventListener('sem:auth-context-changed',listener);return()=>{stop();window.removeEventListener('sem:auth-context-changed',listener);};}});

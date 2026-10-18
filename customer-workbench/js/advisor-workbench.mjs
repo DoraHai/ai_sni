@@ -22,7 +22,11 @@ export function advisorPageView(module,page){
 }
 export function mountAdvisorWorkbench({root,session,subscribeSession,fetchImpl=fetch,browser=window}){
   root.classList.add('advisor-workbench');
-  let tenantOptions=[],tenantName='',tenantMessage='',tenantBusy=false,multiMode=session.isAdvisorSession===true;
+  // A known display hint survives the connected-page redirect; it never grants scope.
+  const entryUrl=new URL(browser.location.href),noticeCode=entryUrl.searchParams.get('advisor_notice');
+  const noticeMessage=['ADVISOR_TENANT_NOT_GRANTED','ADVISOR_GRANT_REVOKED','ADVISOR_NO_TENANT','ADVISOR_GRANTS_UNAVAILABLE','ADVISOR_TENANT_SESSION_EXPIRED','ADVISOR_IDENTITY_SESSION_EXPIRED','ADVISOR_TENANT_SELECTION_REQUIRED'].includes(noticeCode)?advisorMessages[noticeCode]:'';
+  if(entryUrl.searchParams.has('advisor_notice')){entryUrl.searchParams.delete('advisor_notice');browser.history?.replaceState(null,'',entryUrl.pathname+entryUrl.search+entryUrl.hash);}
+  let tenantOptions=[],tenantName='',tenantMessage=noticeMessage,tenantBusy=false,multiMode=session.isAdvisorSession===true;
   const originalFetch=fetchImpl;
   fetchImpl=advisorScopedFetch({session,fetchImpl:originalFetch,onDenied:denyTenant});
   const tenantSwitch=createAdvisorTenantSwitch({session,fetchImpl});

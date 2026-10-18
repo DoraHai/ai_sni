@@ -14,7 +14,7 @@ const user={id:7,tenant_id:1,is_advisor:true,display_name:'顾问',permissions};
 test('advisor selects authorized customers, clears old data, rejects foreign URLs and survives revocation',async()=>{
   const fixture=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true,args:['--no-sandbox']});
   const origin='https://advisor.test',calls=[],errors=[];
-  let tenantRows=[{id:1,name:'客户甲'},{id:2,name:'客户乙'}],revoked=false,hold=null,tenantsDenied=false,bareExpired=false;
+  let tenantRows=[{id:1,name:'客户甲'},{id:2,name:'客户乙'}],revoked=false,hold=null,tenantsDenied=false,bareExpired=false,connectedDenied=false;
   const shots=process.env.ADVISOR_SHOTS_DIR;
   try{
     const p=await browser.newPage();p.on('pageerror',e=>errors.push(e.message));p.on('dialog',d=>d.accept());
@@ -30,7 +30,7 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
         if(!tenantRows.some(t=>t.id===id))return send({detail:{code:'ADVISOR_TENANT_NOT_GRANTED'}},403);
         return send({access_token:business(id),token_type:'bearer',tenant_id:id,tenant_name:tenantRows.find(t=>t.id===id).name,expires_at:'2099-01-01T00:00:00Z'});
       }
-      if(url.pathname==='/api/v1/auth/me')return send({user});
+      if(url.pathname==='/api/v1/auth/me')return connectedDenied&&token!==identity?send({detail:{code:'ADVISOR_GRANT_REVOKED'}},401):send({user});
       if(url.pathname==='/api/v1/auth/modules')return send({tenant_id:tid,modules:[{module_code:'seo',available:true}]});
       if(url.pathname.endsWith('/advisor-tasks')){
         if(hold)await hold;
@@ -71,6 +71,12 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
     await p.click('.advisor-tenant-picker summary');await p.click('[data-tenant="1"]');
     await p.waitForSelector('.advisor-task').catch(async e=>{e.message+=' '+await p.$eval('body',e=>e.textContent);throw e;});
     assert(!await p.$('.advisor-tenant-picker details'));
+    connectedDenied=true;await p.goto(origin+'/customer-workbench/?tenant_id=1&site_id=19');
+    await p.waitForFunction(()=>document.body.textContent.includes('可能已被收回'));
+    assert(!await p.$('.advisor-task'));
+    assert(!new URL(p.url()).searchParams.has('advisor_notice'));
+    connectedDenied=false;await p.waitForFunction(()=>document.querySelectorAll('[data-tenant]').length===1);
+    await p.click('.advisor-tenant-picker summary');await p.click('[data-tenant="1"]');await p.waitForSelector('.advisor-task');
     await p.goto(origin+'/customer-workbench/?console=advisor&tenant_id=3');await p.waitForFunction(()=>document.body.textContent.includes('可能已被收回'));
     assert(!await p.$('.advisor-task'));
     tenantRows=[];await p.click('[data-advisor=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('你还没有被分配客户'));
