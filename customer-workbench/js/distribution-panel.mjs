@@ -40,6 +40,14 @@ export function distributionPublicationMarkup(task){
 export function distributionMediaHref(value){const s=distributionScope(value);return s.module==='seo'?
   `/api/seo/distribution-media/workspace?tenant_id=${s.tenant_id}&site_id=${s.scope_id}`:
   `/geo/tasks?tenant_id=${s.tenant_id}&project_id=${s.scope_id}`;}
+export function seoOfflineEntryMarkup(session,modules,scope){
+  if(!modules.includes('seo')||scope?.module!=='seo'||session.user?.permissions?.['seo.content']!=='edit')return '';
+  const tenant=scope.tenant_id,site=scope.scope_id;
+  if(!Number.isSafeInteger(tenant)||tenant<=0||!Number.isSafeInteger(site)||site<=0)
+    return '<p>请先选择有效的 SEO 客户和网站，再进入 SEO 分发平台。</p>';
+  if(session.user.tenant_id!=null&&session.user.tenant_id!==tenant)return '';
+  return `<p><a href="/seo/distribution?tenant_id=${tenant}&amp;site_id=${site}" target="_blank" rel="noopener noreferrer">导出发布单 / 导入回执（SEO 分发平台）</a></p><p>在 SEO 工作台的分发平台里导出多号通发布单、导入回执。</p>`;
+}
 export function distributionScheduleMarkup(s){return !s?'<p>发布规则尚未读取，不能判断账号是否可执行。</p>':
   `<p>${esc(reasonLabels[s.reason])}${s.next_allowed_at&&!s.available?' · 下次可执行 '+esc(time(s.next_allowed_at)):''}</p>
   <p>系统今日占用或确认发布 ${s.system_used_today} / ${s.effective_daily_limit??'未配置'}，剩余 ${s.system_remaining??'未配置'}；平台剩余额度尚未核验。</p>
@@ -109,6 +117,7 @@ export function createAdvisorDistributionPanel({session,fetchImpl=fetch,subscrib
       ${!options.length?'<p>本页暂无已分配项目。可读取其他任务页后选择项目。</p>':`<label>项目 <select name="distribution_scope" ${busy?'disabled':''}>
         ${options.map(v=>`<option value="${key(v)}" ${selected===key(v)?'selected':''}>${v.module.toUpperCase()} · ${esc(v.tenant_name||'客户 #'+v.tenant_id)} / ${esc(v.scope_name||'项目 #'+v.scope_id)}</option>`).join('')}</select></label>
         <button type="button" data-distribution="refresh" ${busy?'disabled':''}>刷新分发记录</button>`}
+      ${seoOfflineEntryMarkup(session,modules,s)}
       ${s&&snapshot?`<p>项目分发：${esc({running:'运行中',paused:p.revision?'已暂停':'尚未启动',ended:'已结束'}[p.state])} · 版本 ${p.revision}</p>
         <p><a href="${esc(distributionMediaHref(s))}">${s.module==='seo'?'打开 SEO 配图与审核':'进入 GEO 内容模块选择渠道稿配图'}</a> · 换图后必须重新审核。</p>
         <div class="advisor-tools">${p.state==='paused'?`<button type="button" data-distribution="${p.revision?'resume':'start'}" ${busy||!owned?'disabled':''}>${p.revision?'恢复分发':'开始分发'}</button>`:''}
