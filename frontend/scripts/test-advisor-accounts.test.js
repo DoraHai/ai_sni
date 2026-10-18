@@ -33,7 +33,7 @@ beforeEach(async () => {
   wrapper = mount(Accounts, { attachTo: document.body, global: { plugins: [ElementPlus] } })
   await flushPromises()
 })
-afterEach(() => { wrapper.unmount(); document.body.innerHTML = '' })
+afterEach(() => { if (wrapper.exists()) wrapper.unmount(); document.body.innerHTML = '' })
 
 it('uses the existing advisor permission predicate and validates the complete grant selection', () => {
   expect(isAdvisorRole(fixtures.roles[0])).toBe(false)
@@ -160,5 +160,18 @@ it('closes the platform grant form when route context changes during a save', as
   await flushPromises()
   expect(wrapper.findAllComponents(ElDialog)[0].props('modelValue')).toBe(false)
   expect(fetchUsers).toHaveBeenCalledTimes(1)
+  expect(document.body.textContent).not.toContain('已重新加载，请核对后再保存')
+})
+
+it('discards a conflict reload after the account page unmounts', async () => {
+  await click('编辑')
+  let finishReload
+  fetchUsers.mockImplementationOnce(() => new Promise(resolve => { finishReload = resolve }))
+  updateUser.mockRejectedValueOnce(Object.assign(Error('stale'), { code: 'ADVISOR_GRANTS_CONFLICT', status: 409 }))
+  await click('保存')
+  expect(fetchUsers).toHaveBeenCalledTimes(2)
+  wrapper.unmount()
+  finishReload({ users: fixtures.users, tenant_options: fixtures.tenants })
+  await flushPromises()
   expect(document.body.textContent).not.toContain('已重新加载，请核对后再保存')
 })

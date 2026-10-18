@@ -1,6 +1,6 @@
 <script setup>
 import { roleDescription } from '../../../../integrations/workbench/role-description.mjs'
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { advisorTenantLabel, advisorTenantPatch, isAdvisorRole } from './advisorTenants.mjs'
 import { advisorMessages } from '../../store/advisorTenant.js'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -76,13 +76,15 @@ const userIsAdvisor = computed(() => platformContext.value && (userOriginalRoleI
   ? editingAdvisor.value : isAdvisorRole(roleOptions.value.find(r => r.id === uform.roleId))))
 const multiAdvisor = computed(() => userIsAdvisor.value && !multiTenantDisabled.value)
 const rowIsAdvisor = row => typeof row.is_advisor === 'boolean' ? row.is_advisor : isAdvisorRole(roleOptions.value.find(r => r.id === row.role_id))
-watch(platformContext, () => {
+function discardGrantForm() {
   userFormRevision++
   userDialog.value = false
   userFormError.value = ''
   editingGrantsVersion.value = null
   multiTenantDisabled.value = false
-})
+}
+watch(platformContext, discardGrantForm)
+onBeforeUnmount(discardGrantForm)
 watch(() => uform.tenantIds.slice(), ids => {
   if (!ids.includes(uform.defaultTenantId)) uform.defaultTenantId = ids[0] ?? null
 })
