@@ -25,6 +25,7 @@ import { useObservationPeriod } from '../../composables/useObservationPeriod'
 import { diagnoseEmptyMonitoring } from '../../utils/geoEmptyReason'
 import { useClientPager } from '../../composables/useClientPager'
 import { session } from '../../store/session'
+import { advisorClaims } from '../../utils/geoAdvisorTenant'
 import {
   CITATION_ACCURACY_LABEL,
   CITATION_FORMAT_LABEL,
@@ -41,6 +42,7 @@ import { staleProgressHint } from '../../utils/geoProgressStatus'
 
 const route = useRoute()
 const router = useRouter()
+const isAdvisor = computed(() => !!advisorClaims(session.token) || session.user?.is_advisor === true)
 const {
   days: observationDays,
   start: obsStart,
@@ -363,7 +365,7 @@ async function startCollect() {
   if (!tenantId.value) return
   collecting.value = true
   try {
-    const res = await startVisibilityPatrolRun({
+    const res = await startVisibilityPatrolRun(isAdvisor.value ? { tenant_id: tenantId.value } : {
       tenant_id: tenantId.value,
       auto_persist: collectForm.value.auto_persist !== false,
       prefer_real: collectForm.value.prefer_real !== false,
@@ -651,12 +653,12 @@ onMounted(reloadAll)
   >
     <template #actions>
       <button type="button" class="gd-btn" @click="reloadAll">刷新</button>
-      <button type="button" class="gd-btn" @click="registerOpen = true">登记快照</button>
+      <button v-if="!isAdvisor" type="button" class="gd-btn" @click="registerOpen = true">登记快照</button>
       <button type="button" class="gd-btn" :disabled="!snapshots.length" @click="exportSnapshots">
         导出 CSV
       </button>
       <button type="button" class="gd-btn primary" :disabled="collecting" @click="startCollect">
-        {{ collecting ? '采集中…' : '立即采集' }}
+        {{ collecting ? '采集中…' : (isAdvisor ? '手动检测一次' : '立即采集') }}
       </button>
     </template>
 
@@ -687,10 +689,10 @@ onMounted(reloadAll)
           <p class="hint">
             按已启用引擎提问，自动判断提及、位置和情感。
             定时巡检（只读）：{{ patrolScheduleLabel }}。
-            改定时请到
-            <router-link to="/geo/models">引擎</router-link>。
+            <template v-if="!isAdvisor">改定时请到 <router-link to="/geo/models">引擎</router-link>。</template>
+            <template v-else>手动检测会消耗 AI 额度，最多检测已分配项目的 20 个有效问题，每天默认 1 次。</template>
           </p>
-          <div class="geo-set-row">
+          <div v-if="!isAdvisor" class="geo-set-row">
             <span>采集引擎</span>
             <el-select
               v-model="collectForm.engine_keys"
@@ -708,7 +710,7 @@ onMounted(reloadAll)
               />
             </el-select>
           </div>
-          <div class="geo-set-row">
+          <div v-if="!isAdvisor" class="geo-set-row">
             <span>本次提问上限</span>
             <el-input-number v-model="collectForm.prompt_limit" :min="1" :max="50" />
           </div>
@@ -781,7 +783,7 @@ onMounted(reloadAll)
           }}
         </div>
         <div class="empty-actions">
-          <button type="button" class="gd-btn primary" :disabled="collecting" @click="startCollect">
+          <button v-if="!isAdvisor" type="button" class="gd-btn primary" :disabled="collecting" @click="startCollect">
             {{ collecting ? '采集中…' : (emptyReason?.action || '立即采集') }}
           </button>
           <router-link class="gd-btn" to="/geo/models">检查引擎</router-link>
@@ -823,7 +825,7 @@ onMounted(reloadAll)
                   class="gd-badge"
                   :class="row.mentions_brand ? 'green' : 'red'"
                   style="cursor: pointer"
-                  @click="toggleMention(row)"
+                  @click="!isAdvisor && toggleMention(row)"
                 >
                   {{ row.mentions_brand ? '已提及' : '未提及' }}
                 </span>
@@ -833,6 +835,7 @@ onMounted(reloadAll)
               <template #default="{ row }">
                 <el-select
                   size="small"
+                  :disabled="isAdvisor"
                   :model-value="row.brand_position || 'unknown'"
                   style="width: 116px"
                   @change="(v) => patchSnapField(row, { brand_position: v })"
@@ -850,6 +853,7 @@ onMounted(reloadAll)
               <template #default="{ row }">
                 <el-select
                   size="small"
+                  :disabled="isAdvisor"
                   :model-value="row.sentiment || 'unknown'"
                   style="width: 96px"
                   @change="(v) => patchSnapField(row, { sentiment: v })"
@@ -869,7 +873,7 @@ onMounted(reloadAll)
             <el-table-column label="操作" width="140" align="center">
               <template #default="{ row }">
                 <el-button size="small" text type="primary" @click="showEvidence(row)">证据</el-button>
-                <el-button size="small" text type="danger" @click="removeSnapshot(row)">
+                <el-button v-if="!isAdvisor" size="small" text type="danger" @click="removeSnapshot(row)">
                   删除
                 </el-button>
               </template>

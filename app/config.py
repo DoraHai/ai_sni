@@ -165,6 +165,8 @@ class Settings(BaseSettings):
     # GEO 巡检配额（产品化必做：防一键烧穿 LLM）
     # 单租户自然日（Asia/Shanghai）最多启动次数（手动+定时合计）
     geo_patrol_max_runs_per_day: int = 24
+    # 顾问手动检测：每顾问、每客户、上海自然日；失败也计次。
+    advisor_visibility_max_runs_per_day: int = Field(1, ge=1, le=24)
     # 单次巡检最大探测格数 ≈ 机会词 × 引擎（超出截断并记 summary）
     geo_patrol_max_cells_per_run: int = 200
 

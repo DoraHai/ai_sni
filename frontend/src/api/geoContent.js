@@ -801,6 +801,7 @@ export function getVisibilityPatrolRun(tenantId, runId) {
 
 export function startVisibilityPatrolRun(body) {
   return client.post('/api/v1/geo/visibility-patrol/runs', body, {
+    params: { tenant_id: body.tenant_id },
     timeout: 120000,
   })
 }
