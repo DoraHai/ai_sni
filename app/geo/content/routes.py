@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.security.advisor_write_handlers import check_handler_fields, lock_manual_task
+from app.security.geo_operation_audit import audit_geo_operation
+from app.security.geo_configuration_admin import require_geo_configuration_admin
 from app.permissions import CUSTOMER_ROLE
 from app.geo.read_routes import read_session as geo_read_session
 from app.geo.tenant_scope import ensure_geo_entitlement, require_geo_read_entitlement
@@ -5130,6 +5132,7 @@ async def put_visibility_patrol_settings(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    require_geo_configuration_admin(ctx)
     from app.geo.content.patrol import (
         clamp_hour,
         clamp_interval_hours,
@@ -5352,7 +5355,10 @@ async def create_visibility_patrol_run(
         prompt_limit=int(req.prompt_limit),
         engine_keys=engine_keys,
         created_by=ctx.user_id,
-        summary={"advisor_visibility_prompt_ids": advisor_prompt_ids} if advisor_prompt_ids is not None else None,
+        summary={"advisor_visibility_prompt_ids": advisor_prompt_ids, "advisor_visibility_auth": {
+            "user_id": ctx.user_id, "tenant_id": ctx.tenant_id,
+            "grant_id": ctx.advisor_scope.grant_id, "auth_exp": ctx.auth_exp,
+        }} if advisor_prompt_ids is not None else None,
     )
     session.add(run)
     await session.commit()
@@ -5762,6 +5768,7 @@ async def put_tracking_engines(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    require_geo_configuration_admin(ctx)
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
     # Legacy encrypted keys remain preserved for rollback compatibility, but are
@@ -6833,7 +6840,8 @@ async def preview_article_import_file(
     if len(raw) > MAX_FILE_BYTES:
         raise HTTPException(413, "导入文件不能超过 10 MiB")
     try:
-        return preview_file_document(filename=file.filename or "", raw=raw)
+        from starlette.concurrency import run_in_threadpool
+        return await run_in_threadpool(preview_file_document, filename=file.filename or "", raw=raw)
     except ArticleImportError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -8338,7 +8346,8 @@ async def update_variant(
     if variant is None:
         raise HTTPException(404, f"渠道版本不存在: {channel_key}")
     if getattr(ctx, "advisor_scope", None) is not None and variant.status == "published":
-        raise HTTPException(403, {"code": "ADVISOR_WRITE_STATE_FORBIDDEN"})
+        raise HTTPException(403, {"code": "ADVISOR_WRITE_STATE_FORBIDDEN",
+                                  "message": "已发布渠道稿不能直接修改，请联系管理员处理"})
     changed = (
         req.title is not None and req.title.strip() != variant.title
     ) or (req.body_markdown is not None and req.body_markdown != variant.body_markdown)
@@ -8613,6 +8622,7 @@ async def _write_publication(
 
 
 @router.post("/content-tasks/{task_id}/publications")
+@audit_geo_operation('POST', '/api/v1/geo/content-tasks/{task_id}/publications')
 async def record_publication(
     task_id: int,
     req: PublicationCreate,
@@ -8672,6 +8682,7 @@ async def record_publication(
 
 
 @router.post("/content-tasks/{task_id}/import-receipts")
+@audit_geo_operation('POST', '/api/v1/geo/content-tasks/{task_id}/import-receipts')
 async def import_task_receipts(
     task_id: int,
     tenant_id: int = Query(..., gt=0),

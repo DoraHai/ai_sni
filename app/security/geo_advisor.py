@@ -152,7 +152,7 @@ async def check_scoped_write_objects(session, ctx, request, body, rule):
     await check_manual_execution_scope(session, ctx, rule)
 
 
-async def check_manual_execution_scope(session, ctx, rule):
+async def check_manual_execution_scope(session, ctx, rule, *, lock=True):
     """Conservative isolation from tenant-wide patrol and project cycles.
 
     The existing patrol selects active prompts dynamically, and task creation
@@ -164,7 +164,10 @@ async def check_manual_execution_scope(session, ctx, rule):
     if resource not in {"facts", "prompts", "optimization-businesses", "optimization-units", "content-tasks", "visibility-patrol", "content-imports"}:
         return
     from app.models import Tenant, GeoProject, GeoVisibilityPatrolSettings, GeoOptimizationPeriod
-    await session.scalar(select(Tenant.id).where(Tenant.id == ctx.tenant_id).with_for_update())
+    tenant_query = select(Tenant.id).where(Tenant.id == ctx.tenant_id)
+    if lock:
+        tenant_query = tenant_query.with_for_update()
+    await session.scalar(tenant_query)
     patrol = await session.scalar(select(GeoVisibilityPatrolSettings).where(
         GeoVisibilityPatrolSettings.tenant_id == ctx.tenant_id).execution_options(populate_existing=True))
     projects = list(await session.scalars(select(GeoProject).where(GeoProject.tenant_id == ctx.tenant_id)
