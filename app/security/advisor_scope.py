@@ -19,6 +19,14 @@ def is_advisor(role) -> bool:
     """Identity only: activation, lock and default tenant are separate gates."""
     if role is None or (role.is_system and role.name == "管理员"):
         return False
+    raw = role.permissions
+    # Match the §7.2 backfill: unknown settings keys must still exclude a role.
+    # Normalization drops unregistered menus, so inspect stored JSON first.
+    if not isinstance(raw, dict) or any(
+        isinstance(k, str) and k.startswith("settings.") and v == "edit"
+        for k, v in raw.items()
+    ):
+        return False
     perms = effective_role_permissions(role.name, role.is_system, role.permissions)
     return (not any(k.startswith("settings.") and v == "edit" for k, v in perms.items())
             and ((perms.get("seo.site") == "edit" and perms.get("seo.content") == "edit")
