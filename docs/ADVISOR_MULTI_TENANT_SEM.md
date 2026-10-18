@@ -31,6 +31,8 @@ S1+E1 guard 部署与 0109 建表、回填必须在同一个获批维护窗口�
 
 账号列表、详情、新建/编辑响应包含 is_advisor、tenant_ids、default_tenant_id、grants_version；非顾问列表为空且版本为 null。版本严格按 COMMON-2 的 v1/default/有效 grant ID 字符串排序计算 SHA256 前16位，不存库。
 
+维护窗口缺表/无读权限时，管理员账号列表/详情及只改名字等响应仍可用；顾问投影附 grants_available=false、grants_error_code=ADVISOR_GRANTS_UNAVAILABLE，tenant_ids=[]、grants_version=null 表示授权数据暂不可读，不代表实际撤销。此投影不签发可写版本；名单变更仍428/503拒绝，顾问本人业务仍503。新入口必须等0109与授权核对完成后开放。
+
 顾问新建必须至少勾一个客户，默认取首个；PATCH 只要显式带 tenant_ids/default_tenant_id 就必须提供 expected_grants_version，缺失428，持有 users 行锁后重算不符409。取消当前默认时同时给出新默认。名单去重、严格正整数且所有客户存在、至少有角色可用模块；整批原子授予/撤销，重新授予必新行。旧 tenant_id 字段不能绕开名单/版本校验。只改名字/密码无需版本，clear_tenant 和角色转换仍冻结。
 
 名单变更锁定实名操作者及目标账号（按 ID 顺序），重读启用、锁定、未绑定客户、settings.accounts=edit 条件；API Key 不能代替实名管理员。沿用现有管理审计事务和结构化授予/撤销事件，不创建额外审计表、不增加权限。

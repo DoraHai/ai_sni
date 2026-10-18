@@ -215,3 +215,33 @@ def test_missing_table_create_rolls_back_and_non_advisor_patch_still_works(db):
             return await s.scalar(select(User).where(User.username == "cannot-persist"))
     assert run(count()) is None
     assert client.patch("/api/v1/users/3", headers=admin(), json={"display_name": "正常客户"}).status_code == 200
+    assert client.patch("/api/v1/users/1", headers=admin(), json={"display_name": "维护窗口顾问"}).status_code == 200
+    listed = client.get("/api/v1/users", headers=admin())
+    assert listed.status_code == 200
+    unavailable = detail(client)
+    assert unavailable["is_advisor"] and unavailable["grants_available"] is False
+    assert unavailable["grants_version"] is None and unavailable["tenant_ids"] == []
+    assert unavailable["grants_error_code"] == "ADVISOR_GRANTS_UNAVAILABLE"
+    r = save(client, [10], 10, "cannot-authorize-from-unavailable-projection")
+    assert r.status_code == 503 and r.json()["detail"]["code"] == "ADVISOR_GRANTS_UNAVAILABLE"
+    assert save(client, [10], 10).status_code == 428
+    assert client.get("/api/v1/auth/me", headers=headers(token())).status_code == 503
+
+
+def test_permission_denied_account_projection_does_not_enable_grant_writes(db):
+    client, factory, _ = db
+    from sqlalchemy import event
+    from sqlalchemy.exc import DBAPIError
+    engine = factory.kw["bind"].sync_engine
+    def no_grant_read(conn, cursor, statement, parameters, context, many):
+        if "advisor_tenant_grants" in statement:
+            raise DBAPIError("synthetic grant read", {}, PermissionError("permission denied"), False)
+    event.listen(engine, "before_cursor_execute", no_grant_read)
+    try:
+        assert client.get("/api/v1/users", headers=admin()).status_code == 200
+        unavailable = detail(client)
+        assert unavailable["grants_available"] is False and unavailable["grants_version"] is None
+        assert save(client, [10], 10, "stale-version").status_code == 503
+        assert client.get("/api/v1/auth/me", headers=headers(token())).status_code == 503
+    finally:
+        event.remove(engine, "before_cursor_execute", no_grant_read)
