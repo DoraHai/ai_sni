@@ -112,6 +112,15 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     edit = method not in _READ_METHODS
     p = path
 
+    if p in {"/api/v1/seo/automation-runs", "/api/v1/seo/metrics/snapshot", "/api/v1/seo/metrics/definitions"}:
+        return {"seo.site", "seo.content", "seo.keywords"}, edit
+    if p == "/api/v1/seo/tasks" or p.startswith("/api/v1/seo/tasks/"):
+        return {"seo.site", "seo.content", "seo.keywords", "seo.links"}, edit
+    if p == "/api/v1/seo/workbench/onsite-tasks" or p.startswith("/api/v1/seo/workbench/onsite-tasks/"):
+        return {"seo.site", "seo.content"}, edit
+    if p == "/api/v1/seo/image-verifications" or p.startswith("/api/v1/seo/image-verifications/"):
+        return {"seo.site", "seo.content"}, edit
+
     if p.startswith("/api/v1/dashboard"):
         return {"monitor.dashboard"}, edit
     if p.startswith("/api/v1/alerts"):

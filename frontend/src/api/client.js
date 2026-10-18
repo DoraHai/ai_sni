@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { session } from '../store/session.js'
 import { redirectToLogin } from '../auth/loginRedirect.js'
+import { prepareAdvisorSeoRequest } from './seoAdvisorRequests.js'
 
 // 同源 /api 路径：开发期由 vite proxy 转发，生产由 Nginx 反代
 const client = axios.create({
@@ -9,6 +10,7 @@ const client = axios.create({
 })
 
 client.interceptors.request.use((config) => {
+  prepareAdvisorSeoRequest(config, session)
   config._authRevision = session.authRevision
   if (session.token) {
     config.headers.Authorization = `Bearer ${session.token}`

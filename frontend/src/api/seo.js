@@ -309,8 +309,8 @@ export function fetchSeoBrandAssets({ tenantId, siteId }) {
   return client.get('/api/v1/seo/rank-serp/brand-assets', { params: { tenant_id: tenantId, site_id: siteId || undefined } })
 }
 
-export function fetchSeoBrandProfile({ tenantId }) {
-  return client.get('/api/v1/seo/rank-serp/brand-profile', { params: { tenant_id: tenantId } })
+export function fetchSeoBrandProfile({ tenantId, siteId = null }) {
+  return client.get('/api/v1/seo/rank-serp/brand-profile', { params: { tenant_id: tenantId, site_id: siteId } })
 }
 
 export function updateSeoBrandProfile(payload) {
@@ -397,8 +397,8 @@ export function fetchSeoDistributionCatalog() {
   return client.get('/api/v1/seo/content-distribution/catalog')
 }
 
-export function fetchSeoDistributionConnections({ tenantId }) {
-  return client.get('/api/v1/seo/content-distribution/connections', { params: { tenant_id: tenantId } })
+export function fetchSeoDistributionConnections({ tenantId, siteId = null }) {
+  return client.get('/api/v1/seo/content-distribution/connections', { params: { tenant_id: tenantId, site_id: siteId } })
 }
 
 export function createSeoDistributionConnection(payload) {

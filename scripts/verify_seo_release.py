@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "tests/test_seo_advisor_connections_postgres.py",
     "app/permissions.py",
     "app/security/advisor_seo_scope.py",
     "app/api/auth.py",
@@ -22,6 +23,15 @@ SOURCE_ALLOWED_EXACT = {
     "app/security/advisor_scope.py",
     "app/security/advisor_tenant_auth.py",
     "app/security/advisor_write_routes.py",
+    "app/security/seo_advisor_work.py",
+    "app/security/seo_advisor_audit.py",
+    "app/security/seo_advisor_reads.py",
+    "app/security/seo_advisor_connections.py",
+    "app/security/seo_advisor_uploads.py",
+    "tests/test_seo_advisor_reads.py",
+    "tests/test_seo_advisor_work.py",
+    "frontend/src/api/seoAdvisorRequests.js",
+    "frontend/scripts/test-seo-advisor-requests.mjs",
     "app/security/advisor_write_commit.py",
     "app/security/advisor_write_objects.py",
     "tests/test_advisor_write_rules.py",

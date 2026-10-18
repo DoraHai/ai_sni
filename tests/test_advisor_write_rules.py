@@ -58,7 +58,7 @@ def test_new_flag_defaults_closed_and_old_flag_is_independent():
     assert Settings.model_fields["advisor_scoped_content_writes_enabled"].default is False
 
 
-@pytest.mark.parametrize("rule", WRITE_ROUTES.values())
+@pytest.mark.parametrize("rule", [r for r in WRITE_ROUTES.values() if not r.workflow])
 def test_all_seven_rules_require_new_switch_and_preserve_cached_body(local_db, object_contract, monkeypatch, rule):
     settings = get_settings()
     monkeypatch.setattr(settings, "advisor_high_risk_writes_enabled", True)
@@ -81,7 +81,7 @@ def test_all_seven_rules_require_new_switch_and_preserve_cached_body(local_db, o
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("rule", WRITE_ROUTES.values())
+@pytest.mark.parametrize("rule", [r for r in WRITE_ROUTES.values() if not r.workflow])
 @pytest.mark.parametrize("field", ["owner_user_id", "advisor_user_id", "published_at", "verified", "public_use_allowed", "unknown"])
 def test_forbidden_and_unknown_fields_fail_closed(rule, field):
     with pytest.raises(HTTPException) as denied:
@@ -99,7 +99,7 @@ def test_nested_objects_cannot_hide_inside_flat_fields(value):
         assert denied.value.status_code == 403
 
 
-@pytest.mark.parametrize("status", ["review", "ready", "published", "archived", "retired", None])
+@pytest.mark.parametrize("status", ["review", "ready", "published", None])
 def test_only_manual_draft_states_allowed(status):
     for key in [("POST", "/api/v1/seo/content-assets"), ("POST", "/api/v1/seo/qa/facts")]:
         with pytest.raises(HTTPException) as denied:
@@ -107,7 +107,7 @@ def test_only_manual_draft_states_allowed(status):
         assert denied.value.status_code == 403
 
 
-@pytest.mark.parametrize("rule", [r for r in WRITE_ROUTES.values() if r.method != "POST" and ("version" in r.fields or "version_count" in r.fields)])
+@pytest.mark.parametrize("rule", [r for r in [r for r in WRITE_ROUTES.values() if not r.workflow] if r.method != "POST" and ("version" in r.fields or "version_count" in r.fields)])
 def test_versions_are_unconditionally_required(rule):
     with pytest.raises(HTTPException) as denied:
         check_write_fields(rule, {})
@@ -115,7 +115,7 @@ def test_versions_are_unconditionally_required(rule):
 
 
 def test_no_prefix_or_concrete_url_fallback():
-    rule = next(iter(WRITE_ROUTES.values()))
+    rule = next(iter([r for r in WRITE_ROUTES.values() if not r.workflow]))
     req = request(rule, {})
     req.scope.pop("route")
     assert match_write_rule(req) is None

@@ -20,6 +20,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.advisor_tenant_grant import AdvisorTenantGrant as Grant
 from app.models.module_workspace import TenantModule, SeoSite
+from app.models.seo import SeoSiteAdvisorAssignment
 from app.security import auth
 from app.security.advisor_seo_scope import is_advisor_role
 
@@ -33,6 +34,9 @@ class LocalSession:
     """Awaitable facade over SQLite; statements still execute against real SQL."""
     def __init__(self, session):
         self.sync = session
+
+    async def commit(self):
+        self.sync.commit()
 
     async def get(self, *args, **kwargs):
         return self.sync.get(*args, **kwargs)
@@ -55,7 +59,7 @@ class LocalSession:
 @pytest.fixture
 def local_db(tmp_path):
     engine = create_engine('sqlite:///' + str(tmp_path / 'advisor.sqlite'))
-    models = [Role, Tenant, User, TenantModule, Grant, SeoSite]
+    models = [Role, Tenant, User, TenantModule, Grant, SeoSite, SeoSiteAdvisorAssignment]
     Base.metadata.create_all(engine, tables=[m.__table__ for m in models])
     with Session(engine, expire_on_commit=False) as s:
         s.add_all([Role(id=1, name='advisor', is_system=False,
@@ -442,6 +446,7 @@ def test_advisor_queue_mapping_is_exact_get_only_and_ai_writes_stay_disabled(adv
 def _read_guard_request(route, params):
     from urllib.parse import urlencode
     return Request({'type': 'http', 'method': 'GET', 'path': route,
+                    'headers': [],
                     'query_string': urlencode(params, doseq=True).encode(),
                     'path_params': {}, 'route': SimpleNamespace(path=route)})
 
@@ -518,13 +523,14 @@ def test_read_guard_message_cursor_still_checks_conversation_owner():
 
 def test_read_guard_repeated_object_ids_are_all_checked():
     from app.security.advisor_tenant_auth import check_seo_objects
-    session = SimpleNamespace(scalar=AsyncMock(side_effect=[1, 2]))
+    # Each accepted owner now also checks the assignment-scoped object query.
+    session = SimpleNamespace(scalar=AsyncMock(side_effect=[1, 50, 2]))
     request = _read_guard_request('/api/v1/seo/site-pages/image-evidence',
                                   {'tenant_id': 1, 'snapshot_id': [50, 51]})
     with pytest.raises(HTTPException) as exc:
         asyncio.run(check_seo_objects(request, _read_guard_context(), session))
     assert exc.value.status_code == 403
-    assert session.scalar.await_count == 2
+    assert session.scalar.await_count == 3
 
 def test_read_guard_queue_keeps_selected_nondefault_granted_tenant():
     from app.api import seo_onsite_ai as api

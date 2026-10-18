@@ -526,16 +526,22 @@ def test_protected_existing_content_cannot_be_edited(monkeypatch, complete_contr
 
 
 @pytest.mark.parametrize("status", ["review", "ready", "published", "archived"])
-def test_no_status_escalation_or_archive(monkeypatch, complete_contract, status):
+def test_no_status_escalation_and_explicit_archiving(monkeypatch, complete_contract, status):
     switches(monkeypatch)
     async def run():
         async with store() as sessions, client_for(sessions) as client:
             before = await snapshot(sessions)
-            for case in (CASES[4], CASES[5]):
+            for case in ((CASES[4],) if status == 'archived' else (CASES[4], CASES[5])):
                 assert_denied(await send(client, case, body={**case.body, "status": status}))
-            assert_denied(await send(client, CASES[3], body={"status": "archived"}))
             assert_denied(await send(client, CASES[0], body={**CASES[0].body, "status": "verified"}))
             assert await snapshot(sessions) == before
+            response = await send(client, CASES[3], body={"status": "archived"})
+            assert response.status_code == 200, response.text
+            assert response.json()['status'] == 'archived'
+            if status == 'archived':
+                response = await send(client, CASES[5], body={**CASES[5].body, 'status': 'archived'})
+                assert response.status_code == 200, response.text
+                assert response.json()['status'] == 'archived'
     asyncio.run(run())
 
 
