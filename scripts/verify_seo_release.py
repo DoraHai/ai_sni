@@ -31,6 +31,8 @@ SOURCE_ALLOWED_EXACT = {
     "app/security/seo_advisor_execution.py",
     "app/security/seo_advisor_reviews.py",
     "app/security/seo_advisor_publishing.py",
+    "app/security/seo_advisor_deletion.py",
+    "tests/test_seo_advisor_deletion.py",
     "tests/test_seo_advisor_publishing.py",
     "tests/test_seo_advisor_reviews.py",
     "app/security/seo_advisor_uploads.py",

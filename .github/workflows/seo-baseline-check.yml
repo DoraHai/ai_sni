@@ -184,6 +184,7 @@ jobs:
           tests/test_seo_advisor_quota.py
           tests/test_seo_advisor_reviews.py
           tests/test_seo_advisor_publishing.py
+          tests/test_seo_advisor_deletion.py
           tests/test_advisor_write_rules.py
           tests/test_advisor_switch_auth.py
           tests/test_advisor_account_links_migration.py
