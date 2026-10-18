@@ -130,4 +130,4 @@ async def guard_request(session, ctx, request, claims):
     from app.module_scope import ensure_module_access
     await ensure_module_access(session, ctx, ctx.tenant_id, "geo")
 
-    request.scope["geo_advisor_delivery"] = (ctx.user_id, dict(claims), ctx.tenant_id)
+    request.scope["geo_advisor_delivery"] = (ctx.user_id, dict(claims), ctx.tenant_id, frozenset(keys))

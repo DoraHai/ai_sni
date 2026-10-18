@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from starlette.responses import JSONResponse
 
 
-async def recheck_delivery(user_id, claims, tenant_id):
+async def recheck_delivery(user_id, claims, tenant_id, menu_keys=frozenset()):
     from app.database import async_session_factory
     from app.models.user import User
     from app.module_scope import ensure_module_access
@@ -21,6 +21,8 @@ async def recheck_delivery(user_id, claims, tenant_id):
         if ctx.advisor_scope is None:
             deny(401, "ADVISOR_ROLE_CHANGED", "请重新登录")
         ctx.ensure_tenant(tenant_id)
+        if menu_keys and not ctx.can_view(*menu_keys):
+            deny(403, "ADVISOR_ROLE_CHANGED", "当前角色已无权访问此功能")
         await ensure_module_access(session, ctx, tenant_id, "geo")
 
 

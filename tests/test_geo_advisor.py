@@ -39,6 +39,15 @@ def legacy(uid):
                       _jwt_secret(), algorithm=JWT_ALG)
 
 
+def test_shared_predicate_recognizes_sem_customer_admin_without_changing_geo_rbac():
+    from app.permissions import MENU_KEYS
+    from app.security.advisor_scope import is_advisor
+    role = SimpleNamespace(name="客户管理员", is_system=False, permissions={
+        "geo.assets": "edit", "geo.content": "edit", "settings.customers": "edit"})
+    assert not is_advisor(role)
+    assert "settings.customers" not in MENU_KEYS
+
+
 @asynccontextmanager
 async def sandbox(tmp_path, monkeypatch, *, with_grants=True):
     from app.geo.content.routes import router, geo_read_session
