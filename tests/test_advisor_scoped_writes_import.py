@@ -117,6 +117,19 @@ def test_import_server_derives_owner_state_and_first_version(tmp_path, monkeypat
     asyncio.run(run())
 
 
+def test_import_into_another_explicitly_granted_selected_customer(tmp_path, monkeypatch, backend):
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            response = await env.request('POST', PATH,
+                body={**BODY, 'tenant_id': 20, 'prompt_id': 20},
+                params={'tenant_id': 20}, auth=fixture_token(tid=20, gid=102))
+            assert response.status_code == 200, response.text
+            rows = (await env.snapshot())['geo_content_tasks']
+            assert any(r['tenant_id'] == 20 and r['owner_user_id'] == 1 and
+                       r['title'] == BODY['title'] for r in rows)
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize('change', ['assignment', 'patrol'])
 def test_import_rechecks_scope_at_actual_commit_and_rolls_back(tmp_path, monkeypatch, backend, change):
     from app.geo.content import routes
