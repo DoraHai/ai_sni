@@ -45,6 +45,8 @@ def install_commit_guard(session, ctx, request):
         from app.security.advisor_write_commit import recheck_advisor_before_commit
         await recheck_advisor_before_commit(session, ctx)
         created = list(getattr(session, "new", ()))
+        from app.security.seo_advisor_reviews import prepare_review_evidence
+        await prepare_review_evidence(session, ctx, created + list(getattr(session, 'dirty', ())))
         await original()
         evidence = {**getattr(request.state, "seo_advisor_evidence", {}),
                     "created_objects": [{"table": row.__tablename__, "id": row.id}

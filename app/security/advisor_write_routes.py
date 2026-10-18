@@ -47,6 +47,8 @@ WRITE_ROUTES: dict[tuple[str, str], WriteRule] = {(r.method, r.template): r for 
 
 from app.security.seo_advisor_work import workflow_rules
 WRITE_ROUTES.update({(r.method, r.template): r for r in workflow_rules(WriteRule)})
+from app.security.seo_advisor_reviews import review_rules
+WRITE_ROUTES.update({(r.method, r.template): r for r in review_rules(WriteRule)})
 
 
 def match_write_rule(request) -> WriteRule | None:

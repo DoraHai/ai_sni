@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bindSeoContentSourcePage, createSeoContentAsset, decideSeoContentReview, fetchSeoContentAssets, fetchSeoContentReviewHistory, fetchSeoKeywords, fetchSeoSitePages, submitSeoContentReview, updateSeoContentAsset } from '../../api/seo'
+import { bindSeoContentSourcePage, createSeoContentAsset, decideSeoContentReview, fetchSeoContentAssets, fetchSeoContentReviewHistory, fetchSeoKeywords, fetchSeoSitePages, submitSeoContentReview, updateSeoContentAsset, recordSeoAdvisorConfirmation } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
@@ -267,7 +267,7 @@ async function save({ submit = false } = {}) {
       ? await updateSeoContentAsset({ contentId: editing.value.id, tenantId: currentTenantId.value, payload: { ...payload, version_count: editing.value.version_count } })
       : await createSeoContentAsset({ tenant_id: currentTenantId.value, site_id: siteId.value, ...payload })
     if (submit) {
-      await submitSeoContentReview({ contentId: saved.id, tenantId: currentTenantId.value, note: submitNote.value.trim() || null })
+      await submitSeoContentReview({ contentId: saved.id, tenantId: currentTenantId.value, versionCount: saved.version_count, note: submitNote.value.trim() || null })
       showSuccess('内容已保存并提交审核')
     } else showSuccess('内容资产已保存')
     dialog.value = false
@@ -280,6 +280,22 @@ async function copyContent(row) {
   if (!text) return ElMessage.warning('这条内容还没有正文')
   await navigator.clipboard.writeText(text)
   ElMessage.success('正文已复制')
+}
+
+async function recordCustomerDecision(row, decision) {
+  const tenantId = currentTenantId.value
+  const versionCount = row.version_count
+  const payloadHash = row.payload_hash
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `请确认客户${decision === 'approve' ? '同意' : '退回'}的是第 ${versionCount} 版。填写沟通说明（如“微信确认”，同意时可留空）。`,
+      '记录客户意见', { inputPlaceholder: '沟通说明', confirmButtonText: '确认记录', cancelButtonText: '取消' })
+    await recordSeoAdvisorConfirmation({ contentId: row.id, tenantId, versionCount, payloadHash, decision, note: value?.trim() || null })
+    showSuccess('客户意见已记录，已注明顾问身份和稿件版本')
+    await load()
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '记录没有保存，请刷新后重试')
+  }
 }
 
 async function openSourcePageBinding(row) {
@@ -458,6 +474,8 @@ onMounted(loadSites)
                   <button v-if="canEdit && ['planned', 'drafting'].includes(row.status)" type="button" @click="open(row)">提交审核</button>
                   <button v-if="canEdit && row.status === 'review'" type="button" @click="approveReview(row)">审核通过</button>
                   <button v-if="canEdit && row.status === 'review'" type="button" @click="rejectReview(row)">退回修改</button>
+                  <button v-if="session.isAdvisorSession && canEdit && row.status === 'ready'" type="button" @click="recordCustomerDecision(row, 'approve')">记录客户同意</button>
+                  <button v-if="session.isAdvisorSession && canEdit && row.status === 'ready'" type="button" @click="recordCustomerDecision(row, 'reject')">记录客户退回</button>
                   <button v-if="canBindSourcePage(row)" type="button" @click="openSourcePageBinding(row)">绑定承接页</button>
                   <button v-if="canEdit && row.status === 'ready' && (row.content_type !== 'landing' || row.source_page_id)" type="button" @click="router.push('/seo/distribution')">进入发布</button>
                   <a v-if="row.status === 'published' && row.page_url" :href="row.page_url" target="_blank" rel="noopener">查看内容</a>
