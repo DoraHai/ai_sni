@@ -446,6 +446,7 @@ def test_advisor_queue_mapping_is_exact_get_only_and_ai_writes_stay_disabled(adv
 def _read_guard_request(route, params):
     from urllib.parse import urlencode
     return Request({'type': 'http', 'method': 'GET', 'path': route,
+                    'headers': [],
                     'query_string': urlencode(params, doseq=True).encode(),
                     'path_params': {}, 'route': SimpleNamespace(path=route)})
 
@@ -522,13 +523,14 @@ def test_read_guard_message_cursor_still_checks_conversation_owner():
 
 def test_read_guard_repeated_object_ids_are_all_checked():
     from app.security.advisor_tenant_auth import check_seo_objects
-    session = SimpleNamespace(scalar=AsyncMock(side_effect=[1, 2]))
+    # Each accepted owner now also checks the assignment-scoped object query.
+    session = SimpleNamespace(scalar=AsyncMock(side_effect=[1, 50, 2]))
     request = _read_guard_request('/api/v1/seo/site-pages/image-evidence',
                                   {'tenant_id': 1, 'snapshot_id': [50, 51]})
     with pytest.raises(HTTPException) as exc:
         asyncio.run(check_seo_objects(request, _read_guard_context(), session))
     assert exc.value.status_code == 403
-    assert session.scalar.await_count == 2
+    assert session.scalar.await_count == 3
 
 def test_read_guard_queue_keeps_selected_nondefault_granted_tenant():
     from app.api import seo_onsite_ai as api

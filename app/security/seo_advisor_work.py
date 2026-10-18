@@ -107,8 +107,14 @@ def check_workflow_fields(rule, body):
             for item in value:
                 walk(item, depth + 1)
     walk(body)
-    if rule.template == "/api/v1/seo/rank-serp/collect" and body.get("use_ai"):
-        deny("ADVISOR_AI_QUOTA_NOT_AVAILABLE")
+    if rule.template == "/api/v1/seo/rank-serp/collect":
+        from pydantic import TypeAdapter, ValidationError
+        try:
+            use_ai = TypeAdapter(bool).validate_python(body.get("use_ai", True))
+        except ValidationError:
+            deny("ADVISOR_WRITE_FIELD_FORBIDDEN", 422)
+        if use_ai:
+            deny("ADVISOR_AI_QUOTA_NOT_AVAILABLE")
     if rule.template in {"/api/v1/seo/content-assets", "/api/v1/seo/content-assets/{content_id}"}:
         if body.get("status", "drafting") not in {"planned", "drafting", "archived"}:
             deny("ADVISOR_WRITE_STATE_FORBIDDEN")
