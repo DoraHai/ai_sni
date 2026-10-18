@@ -1168,7 +1168,9 @@ async function resumeActiveJob() {
       persistJobId(job.id)
       generateHint.value = staleProgressHint(job) || job.progress_label || `后台任务 #${job.id} ${job.status}`
       busy.value = job.kind === 'create_variants' ? 'variants' : 'generate'
-      followJob(job.id)
+      // followJob keeps a visible failure hint; resumed polling has no caller
+      // awaiting it, so consume the rejection here as well.
+      followJob(job.id).catch(() => {})
     } else {
       persistJobId(null)
     }
@@ -1208,10 +1210,12 @@ async function followJob(jobId, { maxMs = 12 * 60 * 1000 } = {}) {
     recentTaskJobs.value = [job, ...recentTaskJobs.value.filter((item) => item.id !== job.id)]
     if (['pending', 'running'].includes(job.status)) {
       generateHint.value = staleProgressHint(job)
-        || `后台任务 #${job.id} 仍在跑，完成后刷新即可看到全部渠道稿`
+        || '后台仍在生成。请稍后刷新查看结果，或联系曹总。'
+      activeJob.value = null
       return job
     }
-    if (job.status === 'failed') throw new Error(job.error || '后台任务失败')
+    persistJobId(null)
+    if (job.status === 'failed') throw new Error('后台处理没有完成')
     if (job.status === 'cancelled') {
       generateHint.value = '已取消'
       persistJobId(null)
@@ -1219,6 +1223,17 @@ async function followJob(jobId, { maxMs = 12 * 60 * 1000 } = {}) {
     }
     persistJobId(null)
     return job
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    const subject = activeJob.value?.kind === 'create_variants' ? '渠道稿' : '母稿'
+    const failed = activeJob.value?.status === 'failed'
+    generateHint.value = failed
+      ? `${subject}没有生成成功：后台处理没有完成。请稍后重试，或联系曹总。`
+      : `${subject}生成进度暂时无法读取。请稍后刷新查看结果，或联系曹总。`
+    // Keep the stored job ID on transport failure so a refresh can resume it.
+    // A local polling failure must never masquerade as a running progress bar.
+    if (!failed) activeJob.value = null
+    throw new Error(generateHint.value)
   } finally {
     if (editorRequest.active()) {
     if (busy.value === 'generate' || busy.value === 'variants') busy.value = ''
@@ -1692,6 +1707,7 @@ async function genVariants() {
     return
   }
   busy.value = 'variants'
+  generateHint.value = ''
   try {
     let t = await editorRequest.wait(createGeoVariants(tenantId.value, taskId.value, channelPick.value, {
       useLlm: true,
@@ -1774,7 +1790,11 @@ async function genVariants() {
     }
   } catch (e) {
     if (!editorRequest.active()) return false
-    toastError(e, '生成成稿失败')
+    if (!generateHint.value.startsWith('渠道稿没有生成成功：')
+        && !generateHint.value.startsWith('渠道稿生成进度暂时无法读取。')) {
+      generateHint.value = '渠道稿没有生成成功：暂时无法完成处理。请稍后重试，或联系曹总。'
+    }
+    ElMessage.error(generateHint.value)
   } finally {
     if (editorRequest.active()) {
     busy.value = ''
