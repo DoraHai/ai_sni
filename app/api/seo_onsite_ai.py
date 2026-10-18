@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 from copy import deepcopy
+from dataclasses import replace
 from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
@@ -16,6 +17,7 @@ from app.api import seo_onsite as onsite
 from app.api_controls import ControlDenied
 from app.api_metering import MeteringUnavailable
 from app.models.module_workspace import SeoSite, TenantModule
+from app.models.advisor_tenant_grant import AdvisorTenantGrant
 from app.models.role import Role
 from app.models.seo import SeoSiteAdvisorAssignment
 from app.models.seo_cockpit import SeoTask
@@ -44,12 +46,26 @@ async def fresh_context(session, ctx, *, lock=False):
     role = await session.get(Role, user.role_id, populate_existing=True, **locks) if user else None
     if not user or not user.is_active or not role:
         raise ai.problem(403, "onsite_advisor_identity_expired", "顾问身份已失效")
+    if ctx.is_advisor:
+        from app.security.advisor_scope import account_locked, is_advisor
+        from app.security.advisor_tenant_auth import reject
+        if not is_advisor(role):
+            reject(403, "ADVISOR_ROLE_CHANGED")
+        if account_locked(user):
+            reject(401, "ADVISOR_GRANT_REVOKED")
+        ctx.ensure_tenant(ctx.tenant_id)
+        if user.tenant_id not in ctx.advisor_tenant_ids:
+            reject(403, "ADVISOR_DEFAULT_TENANT_INVALID")
+        # Refresh identity/permissions without replacing the selected grant's
+        # business tenant with the account's default tenant.
+        return replace(ctx, username=user.username, role_name=role.name,
+                       permissions=dict(role.permissions or {}))
     return AuthContext(user.id, user.username, role.name, user.tenant_id, dict(role.permissions or {}))
 
 
-def advisor_query(user_id):
+def advisor_query(user_id, *, advisor_tenant_id=None):
     # All ownership/assignment/entitlement filters precede the cursor and LIMIT.
-    return (select(SeoTask, SeoSite, Tenant.name).join(SeoSite, and_(
+    query = (select(SeoTask, SeoSite, Tenant.name).join(SeoSite, and_(
         SeoTask.site_id == SeoSite.id, SeoTask.tenant_id == SeoSite.tenant_id))
         .join(Tenant, Tenant.id == SeoTask.tenant_id)
         .join(TenantModule, and_(TenantModule.id == SeoSite.tenant_module_id,
@@ -61,10 +77,17 @@ def advisor_query(user_id):
         .join(Role, Role.id == User.role_id)
         .where(SeoTask.action_type == onsite.ACTION_TYPE, SeoTask.module == "seo",
             SeoTask.params["onsite"]["schema"].astext == "1",
-            User.is_active.is_(True), or_(User.tenant_id.is_(None), User.tenant_id == SeoTask.tenant_id),
+            User.is_active.is_(True),
             Role.permissions["seo.site"].astext == "edit", Role.permissions["seo.content"].astext == "edit",
             SeoSite.status == "active", TenantModule.status.in_(["active", "trial"]),
             or_(TenantModule.expires_at.is_(None), TenantModule.expires_at >= date.today())))
+    if advisor_tenant_id is None:
+        return query.where(or_(User.tenant_id.is_(None), User.tenant_id == SeoTask.tenant_id))
+    return query.where(SeoTask.tenant_id == advisor_tenant_id,
+        select(AdvisorTenantGrant.id).where(
+            AdvisorTenantGrant.user_id == user_id,
+            AdvisorTenantGrant.tenant_id == advisor_tenant_id,
+            AdvisorTenantGrant.revoked_at.is_(None)).exists())
 
 
 def summary(row, site, tenant_name, can_ai=True):
@@ -92,7 +115,7 @@ async def advisor_tasks(before_id: PositiveInt | None = None, limit: int = Query
     if tenant_id is not None:
         ctx.ensure_tenant(tenant_id)
         fresh.ensure_tenant(tenant_id)
-    query = advisor_query(fresh.user_id)
+    query = advisor_query(fresh.user_id, advisor_tenant_id=fresh.tenant_id if fresh.is_advisor else None)
     if ctx.tenant_id is not None:
         query = query.where(SeoTask.tenant_id == ctx.tenant_id)
     if tenant_id is not None:
