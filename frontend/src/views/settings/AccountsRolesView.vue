@@ -41,6 +41,7 @@ async function load() {
     usersData.value = users
     rolesData.value = roles
     tenantOptions.value = users.tenant_options || []
+    return users
   } catch (e) {
     error.value = e
   } finally {
@@ -61,6 +62,8 @@ const fmtTime = (v) => formatUtcTimestamp(v, { fallback: '从未登录' })
 const userDialog = ref(false)
 const savingUser = ref(false)
 const editingUserId = ref(null)
+const editingGrantsVersion = ref(null)
+let userFormRevision = 0
 const multiTenantDisabled = ref(false)
 const editingAdvisor = ref(null)
 const userOriginalRoleId = ref(null)
@@ -75,7 +78,9 @@ watch(() => uform.tenantIds.slice(), ids => {
 })
 
 function openCreateUser() {
+  userFormRevision++
   editingUserId.value = null
+  editingGrantsVersion.value = null
   editingAdvisor.value = null
   userOriginalRoleId.value = null
   userFormError.value = ''
@@ -83,7 +88,9 @@ function openCreateUser() {
   userDialog.value = true
 }
 function openEditUser(row) {
+  userFormRevision++
   editingUserId.value = row.id
+  editingGrantsVersion.value = row.grants_version ?? null
   editingAdvisor.value = typeof row.is_advisor === 'boolean' ? row.is_advisor : null
   userOriginalRoleId.value = row.role_id
   userFormError.value = ''
@@ -93,6 +100,7 @@ function openEditUser(row) {
 }
 
 async function submitUser() {
+  if (savingUser.value) return
   if (!editingUserId.value && (!uform.username || uform.password.length < 8)) {
     ElMessage.warning('用户名必填，密码至少 8 位')
     return
@@ -101,13 +109,18 @@ async function submitUser() {
   let scope
   userFormError.value = ''
   try {
-    if (multiAdvisor.value) scope = advisorTenantPatch(uform.tenantIds, uform.defaultTenantId)
+    if (multiAdvisor.value) {
+      scope = advisorTenantPatch(uform.tenantIds, uform.defaultTenantId)
+      if (editingUserId.value) scope.expected_grants_version = editingGrantsVersion.value
+    }
     else {
       if (userIsAdvisor.value && !uform.tenantId) throw Error('至少勾选 1 个客户')
       scope = { tenant_id: uform.tenantId ?? undefined, ...(!userIsAdvisor.value ? { clear_tenant: uform.tenantId == null } : {}) }
     }
   } catch (e) { userFormError.value = e.message; return }
   savingUser.value = true
+  const submittedUserId = editingUserId.value
+  const submittedRevision = userFormRevision
   try {
     if (editingUserId.value) {
       await updateUser(editingUserId.value, {
@@ -120,9 +133,27 @@ async function submitUser() {
       await createUser({ ...uform, ...scope })
       ElMessage.success(`账号「${uform.username}」已创建`)
     }
-    userDialog.value = false
+    if (submittedRevision === userFormRevision) userDialog.value = false
     load()
   } catch (e) {
+    if (submittedRevision !== userFormRevision || !userDialog.value) return
+    if (['ADVISOR_GRANTS_CONFLICT', 'ADVISOR_GRANTS_VERSION_REQUIRED'].includes(e.code)
+        || [409, 428].includes(e.status)) {
+      const message = advisorMessages[e.code] || advisorMessages.ADVISOR_GRANTS_CONFLICT
+      // Discard the stale form/version. Reload before another explicit save.
+      editingGrantsVersion.value = null
+      const users = await load()
+      if (submittedRevision !== userFormRevision || !userDialog.value) return
+      const fresh = users?.users?.find(row => row.id === submittedUserId)
+      if (fresh) {
+        openEditUser(fresh)
+        userFormError.value = `${message}；已重新加载，请核对后再保存`
+      } else {
+        userDialog.value = false
+      }
+      ElMessage.error(fresh ? userFormError.value : `${message}；重新加载失败，请刷新页面`)
+      return
+    }
     if (e.code === 'ADVISOR_MULTI_TENANT_DISABLED') multiTenantDisabled.value = true
     userFormError.value = advisorMessages[e.code] || e.message
     ElMessage.error(userFormError.value)

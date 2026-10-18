@@ -15,6 +15,8 @@ export const advisorMessages = {
   ADVISOR_GRANT_REVOKED: advisorDeniedMessage,
   ADVISOR_TENANT_SELECTION_REQUIRED: '请先选择客户',
   ADVISOR_GRANTS_UNAVAILABLE: '客户授权暂时无法核验，请稍后重试或联系管理员',
+  ADVISOR_GRANTS_CONFLICT: '该账号的客户已被别人修改，请刷新后再改',
+  ADVISOR_GRANTS_VERSION_REQUIRED: '客户授权版本缺失，请刷新后再改',
   TENANT_IDS_ONLY_FOR_ADVISOR: '只有顾问账号可以勾选多个客户',
   ADVISOR_TENANTS_REQUIRED: '至少勾选 1 个客户',
   ADVISOR_DEFAULT_TENANT_INVALID: '默认客户必须在已勾选的客户内',
