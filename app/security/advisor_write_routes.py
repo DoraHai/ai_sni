@@ -106,6 +106,8 @@ def check_advisor_handler(ctx, method, template, body, row=None):
         ):
             raise HTTPException(403, {'code': 'ADVISOR_WRITE_STATE_FORBIDDEN'})
         allowed = ({"active", "retired"} if "/qa/facts" in template else
-                   {"active", "archived"} if "/brand-assets" in template else {"planned", "drafting", "archived"})
+                   {"active", "archived"} if "/brand-assets" in template else
+                   {"planned", "drafting", "ready"} if template.endswith('/source-page') else
+                   {"planned", "drafting", "archived"})
         if row.status not in allowed:
             raise HTTPException(403, {"code": "ADVISOR_WRITE_STATE_FORBIDDEN"})

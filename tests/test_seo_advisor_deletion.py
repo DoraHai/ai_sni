@@ -122,3 +122,20 @@ def test_background_backlink_revoke_blocks_provider_or_result_save(monkeypatch, 
     assert fetch.await_count == (1 if revoke_at == 3 else 0)
     apply.assert_not_called()
     assert all(session.commit.await_count == 0 for session in sessions)
+
+
+def test_ready_landing_content_can_bind_its_site_page_with_version(monkeypatch):
+    from app.api import seo
+    from app.models.seo import SeoContentAsset, SeoSitePage
+    row = SeoContentAsset(id=1, tenant_id=1, site_id=1, title='Reviewed landing',
+                          content_type='landing', status='ready', version_count=2)
+    page = SeoSitePage(id=50, tenant_id=1, site_id=1, url='https://landing.example/')
+    session = SimpleNamespace(get=AsyncMock(return_value=row), commit=AsyncMock(), refresh=AsyncMock())
+    monkeypatch.setattr(seo, '_require_resource_operational_site', AsyncMock())
+    monkeypatch.setattr(seo, '_site_page', AsyncMock(return_value=page))
+    monkeypatch.setattr(seo, '_content_task_for_source_page', AsyncMock(return_value=None))
+    monkeypatch.setattr(seo, 'recheck_advisor_before_commit', AsyncMock())
+    result = asyncio.run(seo.bind_content_source_page(1, 1,
+        seo.ContentSourcePageBinding(source_page_id=50, version_count=2), session, selected()))
+    assert result['source_page_id'] == 50 and row.status == 'ready' and row.version_count == 3
+    session.commit.assert_awaited_once()
