@@ -8,6 +8,13 @@ import json
 import logging
 
 logger = logging.getLogger("geo.advisor.operations")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    # Uvicorn need not configure the root logger. Always emit the audit JSON
+    # to the service's captured stderr even when root defaults to WARNING.
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
 
 
 def record(scope, result, **extra):
