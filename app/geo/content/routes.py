@@ -4714,7 +4714,6 @@ async def get_monitoring_stance(
 
 
 @router.put("/monitoring-stance")
-@checked_call
 async def put_monitoring_stance(
     req: MonitoringStanceUpdate,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -4724,16 +4723,8 @@ async def put_monitoring_stance(
     from app.geo.content.monitoring_stance import normalize_stance, stance_payload
 
     ctx.ensure_tenant(req.tenant_id)
-    if getattr(ctx, 'advisor_scope', None) is not None:
-        projects = session.info['advisor_operation_project_limit']
-        if len(projects) != 1:
-            raise HTTPException(409, '请先选择一个已分配项目')
-        from app.models import GeoProject
-        project = await session.get(GeoProject, next(iter(projects)), with_for_update=True)
-        stance = normalize_stance(req.monitoring_stance)
-        project.project_settings = {**(project.project_settings or {}), 'geo_monitoring_stance': stance}
-        await session.commit()
-        return {'tenant_id': req.tenant_id, 'monitoring_stance': stance, 'info': stance_payload(stance)}
+    from app.security.geo_configuration_admin import require_geo_configuration_admin
+    require_geo_configuration_admin(ctx)
     row = await ensure_ai_setting(session, req.tenant_id)
     row.monitoring_stance = normalize_stance(req.monitoring_stance)
     row.updated_by = ctx.user_id

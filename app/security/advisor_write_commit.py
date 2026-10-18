@@ -42,6 +42,8 @@ async def recheck_advisor_before_commit(session, ctx) -> None:
         deny(401, "ADVISOR_GRANT_REVOKED", "客户凭证已失效")
     # Suppress autoflush: check authority before pending changes are flushed.
     with session.no_autoflush:
+        from app.security.geo_advisor import check_manual_execution_scope
+        await check_manual_execution_scope(session, ctx, rule)
         user = await session.scalar(select(User).options(load_only(
             User.id, User.role_id, User.tenant_id, User.is_active, User.locked_until
         )).where(User.id == ctx.user_id).with_for_update().execution_options(populate_existing=True))

@@ -112,8 +112,14 @@ def test_operational_classification_and_archive_fields_persist(tmp_path, monkeyp
 
 
 def test_manual_account_metadata_and_status_work_without_credentials(tmp_path, monkeypatch, backend):
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+    from app.geo.content import routes
+
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend=backend, extra_tables=('geo_channel_accounts',)) as env:
+            monkeypatch.setattr(routes, 'ensure_geo_entitlement',
+                AsyncMock(return_value=SimpleNamespace(is_demo=False, read_only=False)))
             async with env.factory() as session:
                 session.add(m.GeoPublishingChannel(id=100, tenant_id=10, name='fixture destination',
                     channel_type='website', publish_mode='manual_only', enabled=True))
@@ -140,4 +146,39 @@ def test_malformed_visibility_request_does_not_spend_a_daily_attempt(tmp_path, m
             response = await env.request('POST', '/answer-snapshots/probe', body={'tenant_id': 10})
             assert response.status_code == 422, response.text
             assert await env.snapshot() == before
+    asyncio.run(run())
+
+
+def test_project_restore_only_changes_status_and_keeps_inactive_content_hidden(tmp_path, monkeypatch, backend):
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            from app.geo.project_routes import geo_projects_router
+            env.app.include_router(geo_projects_router)
+            response = await env.request('PATCH', '/projects/10', body={'status': 'paused'})
+            assert response.status_code == 200, response.text
+            assert (await env.request('GET', '/facts')).json()['items'] == []
+            assert (await env.request('PATCH', '/facts/10', body={'title': 'blocked'})).status_code == 403
+            response = await env.request('PATCH', '/projects/10', body={'status': 'active', 'description': 'blocked'})
+            assert response.status_code == 403, response.text
+            response = await env.request('PATCH', '/projects/10', body={'status': 'active'})
+            assert response.status_code == 200, response.text
+            assert (await env.request('GET', '/facts')).json()['items']
+    asyncio.run(run())
+
+
+def test_ticket_cannot_borrow_an_owned_project_for_foreign_content(tmp_path, monkeypatch, backend):
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            await foreign_project(env)
+            from app.geo.integration import router
+            env.app.include_router(router, prefix='/api/v1/geo')
+            async with env.factory() as session:
+                session.add(m.GeoActionTicket(id=99, tenant_id=10, content_task_id=50,
+                    title='inconsistent foreign ticket', advice_code='cockpit:v1:task',
+                    progress={'project_workflow': {'project_id': 10}}, progress_first={'params': {}}))
+                await session.commit()
+            response = await env.request('GET', '/integration/tasks/99')
+            assert response.status_code == 403, response.text
+            response = await env.request('PATCH', '/integration/tasks/99', body={'status': 'in_progress'})
+            assert response.status_code == 403, response.text
     asyncio.run(run())

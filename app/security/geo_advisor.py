@@ -204,7 +204,7 @@ async def guard_scoped_write(session, ctx, request, claims):
         await ensure_module_access(session, ctx, ctx.tenant_id, 'geo')
         await guard_scope(session, ctx, request, body, rule)
         bind_advisor_write_commit(session, ctx, request, body, rule, claims)
-        await bind_read_scope(session, ctx, project_limit=request.state.advisor_operation_projects)
+        await bind_read_scope(session, ctx, request, project_limit=request.state.advisor_operation_projects)
         await bind_pending_scope(session, ctx, request, body)
         from app.security.advisor_operation_call import current_operation
         current_operation.set((session, ctx))

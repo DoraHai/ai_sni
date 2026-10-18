@@ -12,6 +12,8 @@ async def recheck_current():
         session, ctx = binding
         from app.security.advisor_write_commit import recheck_advisor_before_commit
         await recheck_advisor_before_commit(session, ctx)
+        from app.security.advisor_read_scope import recheck_initial_scope
+        await recheck_initial_scope(session, ctx)
         await session.commit()  # release authorization locks before remote work
 
 

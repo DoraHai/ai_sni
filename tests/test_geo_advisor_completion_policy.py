@@ -57,7 +57,7 @@ def test_operational_routes_remain_exact(method, path):
 
 @pytest.mark.parametrize('path', ('/tracking-engines', '/visibility-patrol/settings',
     '/projects/{project_id}/service-plan', '/projects/{project_id}/business-scope',
-    '/oauth/social/start', '/ai-settings'))
+    '/oauth/social/start', '/ai-settings', '/monitoring-stance'))
 def test_system_settings_are_not_operational_grants(path):
     assert not any(template == '/api/v1/geo' + path for _, template in LOOKUP)
 

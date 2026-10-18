@@ -308,17 +308,23 @@ async def _resolve(session, ctx, request, body, rule):
         elif model is GeoActionTicket:
             progress = row.progress or {}
             project = (progress.get('onsite') or progress.get('project_workflow') or {}).get('project_id')
+            identified = False
             if project:
                 await resolve('project_id', project)
-            elif row.content_task_id:
+                identified = True
+            if row.content_task_id:
                 await resolve('content_task_id', row.content_task_id)
-            elif ((row.progress_first or {}).get('params') or {}).get('content_task_id'):
+                identified = True
+            if ((row.progress_first or {}).get('params') or {}).get('content_task_id'):
                 await resolve('content_task_id', row.progress_first['params']['content_task_id'])
-            elif row.audit_id:
+                identified = True
+            if row.audit_id:
                 await resolve('audit_id', row.audit_id)
-            elif row.media_placement_id:
+                identified = True
+            if row.media_placement_id:
                 await resolve('placement_id', row.media_placement_id)
-            else:
+                identified = True
+            if not identified:
                 state.unscoped = True
         elif model is GeoAuditRun:
             from urllib.parse import urlsplit
@@ -437,12 +443,15 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
     transition = (request.method == 'PATCH' and rule.template == _PREFIX + '/projects/{project_id}'
                   and isinstance(body, dict) and body.get('status') in {'paused', 'archived'})
     was_active = bool(project and transition and request.scope.get('advisor_active_project_transition') == project.id)
+    restoring = (request.method == 'PATCH' and rule.template == _PREFIX + '/projects/{project_id}'
+                 and body == {'status': 'active'} and project is not None
+                 and project.status in {'paused', 'archived'})
     if project and project.status == 'active' and transition:
         request.scope['advisor_active_project_transition'] = project.id
     # Manual requests use the selected customer grant, checked by auth and
     # again at commit. The scheduler's native/default-tenant predicate does
     # not describe an explicitly granted second customer.
-    if (project is None or (project.status != "active" and not was_active)
+    if (project is None or (project.status != "active" and not was_active and not restoring)
             or type(plan.get("advisor_user_id")) is not int
             or plan["advisor_user_id"] != ctx.user_id
             or not await advisor_available(session, ctx.tenant_id, ctx.user_id, advisor_scope=ctx.advisor_scope)):

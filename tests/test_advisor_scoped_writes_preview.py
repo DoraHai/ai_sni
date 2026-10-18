@@ -75,10 +75,19 @@ def test_file_preview_rejects_unsupported_types(tmp_path, monkeypatch, backend, 
     asyncio.run(run())
 
 
-def test_url_preview_stays_closed_in_file_stage(tmp_path, monkeypatch, backend):
+def test_url_preview_is_authorized_and_read_only(tmp_path, monkeypatch, backend):
+    from unittest.mock import AsyncMock
+    from app.geo.content import routes
+
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            preview = AsyncMock(return_value={'title': 'Fixture', 'source_type': 'url',
+                'body_markdown': 'Imported article.'})
+            monkeypatch.setattr(routes, 'preview_url_document', preview)
+            before = await env.snapshot()
             response = await env.request('POST', '/content-imports/preview-url',
                 body={'tenant_id': 10, 'url': 'https://example.test/article'})
-            assert response.status_code == 403, response.text
+            assert response.status_code == 200, response.text
+            preview.assert_awaited_once_with('https://example.test/article')
+            assert await env.snapshot() == before
     asyncio.run(run())

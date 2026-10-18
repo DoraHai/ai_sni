@@ -2,6 +2,7 @@
 import { ref, reactive, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { session } from '../store/session'
+import { advisorClaims } from '../utils/geoAdvisorTenant.js'
 import { fetchGeoProjectExecutions, fetchGeoAdvisorCandidates, saveGeoProjectPlan } from '../api/geoProjects'
 import GeoTicketExecution from './GeoTicketExecution.vue'
 
@@ -9,6 +10,7 @@ const props = defineProps({ projectId: { type: Number, required: true }, tenantI
 const data = ref(null), loading = ref(false), saving = ref(false), error = ref('')
 const candidates = ref([])
 const form = reactive({ enabled: false, status: 'paused', prompt_ids: [], interval_days: 7, advisor_user_id: null })
+const isAdvisor = () => !!advisorClaims(session.token) || session.user?.is_advisor === true
 const canAssignAdvisor = () => !!session.user?.id && session.user.tenant_id == null && session.canEdit('settings.accounts')
 const labels = { baseline: '保留修改前证据', content: '准备内容任务', materials: '补齐创作要求与事实',
   article: '制作内容', review: '确认当前内容版本', publication: '发布与回填', retest: '同题复测',
@@ -57,7 +59,7 @@ onBeforeUnmount(() => { generation++ })
       <el-alert v-if="data.effective_pause" title="当前项目或服务计划已暂停" type="warning" :closable="false" />
       <el-alert v-if="data.blocker" title="项目计划需要顾问核对业务归属或分配权限" type="warning" :closable="false" />
       <h3>服务计划</h3>
-      <el-form v-if="session.canEdit('geo.content') && session.canEdit('geo.assets')" label-width="110px">
+      <el-form v-if="canAssignAdvisor() && session.canEdit('geo.content') && session.canEdit('geo.assets')" label-width="110px">
         <el-form-item label="周期待办"><el-switch v-model="form.enabled" :disabled="saving" /></el-form-item>
         <el-form-item label="计划状态"><el-select v-model="form.status" :disabled="saving"><el-option label="运行" value="active" /><el-option label="暂停" value="paused" /></el-select></el-form-item>
         <el-form-item label="目标问题"><el-select v-model="form.prompt_ids" multiple :multiple-limit="20" :disabled="saving" style="width:100%"><el-option v-for="p in data.prompts" :key="p.id" :value="p.id" :label="p.question" /></el-select></el-form-item>
@@ -78,7 +80,7 @@ onBeforeUnmount(() => { generation++ })
         <h4>{{ row.title }}</h4>
         <p>{{ row.status === 'done' ? '已验收' : `下一步：${labels[row.execution.next_step] || '顾问核对'}` }} <strong v-if="row.workflow?.overdue">· 已超时，需关注</strong></p>
         <p v-if="row.workflow">顾问待办 · 截止 {{ row.workflow.due_at?.slice(0, 10) }} · 站内提醒</p>
-        <GeoTicketExecution :key="`${row.id}:${row.ticket.updated_at}`" :tenant-id="tenantId" :project-id="projectId" :ticket="row.ticket" :disabled="saving || data.effective_pause || !session.canEdit('geo.content')" @saved="load" />
+        <GeoTicketExecution :key="`${row.id}:${row.ticket.updated_at}`" :tenant-id="tenantId" :project-id="projectId" :ticket="row.ticket" :disabled="saving || (data.effective_pause && !isAdvisor()) || !session.canEdit('geo.content')" @saved="load" />
       </article>
       <p v-if="data.truncated">显示最近 20 项；历史记录可在执行待办查看。</p>
     </template>

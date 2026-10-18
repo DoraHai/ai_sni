@@ -36,6 +36,18 @@ def predicates(ctx, projects, businesses, domains=(), prompt_ids=(), patrol_ids=
                 base = scheme + host
                 audit_urls += [audit.url == base, audit.url.startswith(base + '/', autoescape=True)]
     audits = select(audit.id).where(audit.tenant_id == tid, or_(false(), *audit_urls))
+    placement = m.GeoMediaPlacement.__table__.c
+    placements = select(placement.id).where(placement.tenant_id == tid, placement.related_prompt_id.in_(prompts))
+    ticket_owner = or_(m.GeoActionTicket.content_task_id.in_(tasks),
+        m.GeoActionTicket.progress_first['params']['content_task_id'].as_integer().in_(tasks),
+        m.GeoActionTicket.progress['onsite']['project_id'].as_integer().in_(projects),
+        m.GeoActionTicket.progress['project_workflow']['project_id'].as_integer().in_(projects),
+        m.GeoActionTicket.audit_id.in_(audits), m.GeoActionTicket.media_placement_id.in_(placements))
+    ticket_parents = ((m.GeoActionTicket.content_task_id, tasks),
+        (m.GeoActionTicket.progress_first['params']['content_task_id'].as_integer(), tasks),
+        (m.GeoActionTicket.progress['onsite']['project_id'].as_integer(), projects),
+        (m.GeoActionTicket.progress['project_workflow']['project_id'].as_integer(), projects),
+        (m.GeoActionTicket.audit_id, audits), (m.GeoActionTicket.media_placement_id, placements))
     result = {
         m.GeoProject: m.GeoProject.id.in_(projects),
         m.GeoOptimizationBusiness: m.GeoOptimizationBusiness.id.in_(businesses),
@@ -57,11 +69,8 @@ def predicates(ctx, projects, businesses, domains=(), prompt_ids=(), patrol_ids=
         m.GeoDailyMetric: m.GeoDailyMetric.business_id.in_(businesses),
         m.GeoMediaPlacement: m.GeoMediaPlacement.related_prompt_id.in_(prompts),
         m.GeoAuditRun: m.GeoAuditRun.id.in_(audits),
-        m.GeoActionTicket: or_(m.GeoActionTicket.content_task_id.in_(tasks),
-            m.GeoActionTicket.progress_first['params']['content_task_id'].as_integer().in_(tasks),
-            m.GeoActionTicket.progress['onsite']['project_id'].as_integer().in_(projects),
-            m.GeoActionTicket.progress['project_workflow']['project_id'].as_integer().in_(projects),
-            m.GeoActionTicket.audit_id.in_(audits)),
+        m.GeoActionTicket: and_(ticket_owner, *(or_(column.is_(None), column.in_(allowed))
+                                                for column, allowed in ticket_parents)),
         m.GeoAsyncJob: or_(and_(m.GeoAsyncJob.ref_type == 'content_task', m.GeoAsyncJob.ref_id.in_(tasks)),
             and_(m.GeoAsyncJob.ref_type == 'geo_project', m.GeoAsyncJob.ref_id.in_(projects))),
         m.GeoVisibilityPatrolRun: m.GeoVisibilityPatrolRun.id.in_(patrol_ids),
@@ -114,6 +123,7 @@ async def bind_read_scope(session, ctx, request=None, project_limit=None):
 
     event.listen(session.sync_session, 'do_orm_execute', restrict)
     session.info['advisor_read_scope'] = (ctx, frozenset(projects), frozenset(businesses), criteria)
+    session.info['advisor_operation_initial_scope'] = (frozenset(projects), frozenset(businesses))
     session.info['advisor_read_domains'] = domains
     session.info['advisor_read_prompt_ids'] = set(prompt_ids)
     session.info['advisor_read_patrol_ids'] = patrol_ids
@@ -147,8 +157,19 @@ async def recheck_read_projects(binding, expected):
     user_id, _claims, tenant_id, _menus = binding
     async with async_session_factory() as session:
         current = await assigned_scope(session, SimpleNamespace(user_id=user_id, tenant_id=tenant_id))
-        if (frozenset(current[0]), frozenset(current[1])) != expected:
+        if not expected[0].issubset(current[0]) or not expected[1].issubset(current[1]):
             deny(403, 'ADVISOR_ASSIGNMENT_REQUIRED', '项目分配已变化，请刷新后重试')
+
+
+async def recheck_initial_scope(session, ctx):
+    from app.security.advisor_write_reads import assigned_scope
+    from app.security.advisor_scope import deny
+    expected = session.info.get('advisor_operation_initial_scope')
+    if expected is None:
+        return
+    projects, businesses = await assigned_scope(session, ctx)
+    if not expected[0].issubset(projects) or not expected[1].issubset(businesses):
+        deny(403, 'ADVISOR_ASSIGNMENT_REQUIRED', '项目资料范围已变化，请刷新后重试')
 
 
 async def check_read_references(session, ctx, request):

@@ -78,7 +78,6 @@ CONTRACTS = [
     ('POST', '/onboarding/sitemap-audit/create-tasks', 'items', 'project_id'),
     ('POST', '/daily-metrics/rebuild', '', 'metric_date date_from date_to include_empty_slices project_id'),
     ('POST', '/attribution/backfill', '', 'limit only_empty cursor_id project_id'),
-    ('PUT', '/monitoring-stance', 'tenant_id monitoring_stance', 'project_id'),
     ('POST', '/deliverables/archives', 'pack title markdown', 'project_id'),
     ('POST', '/integration/tasks', 'module action_type title params status created_by assignee_role', 'project_id'),
     ('PATCH', '/integration/tasks/{task_id}', 'status', ''),
@@ -180,6 +179,14 @@ def check_fields(rule, body):
 async def guard_scope(session, ctx, request, body, rule):
     from app.security.advisor_write_objects import _resolve, _assignment_required
     from app.security.advisor_write_reads import assigned_scope
+    from app.security.geo_advisor import check_manual_execution_scope
+    await check_manual_execution_scope(session, ctx, rule)
+    if session.info.get('advisor_scoped_write'):
+        from app.models import GeoProject
+        from sqlalchemy import select
+        await session.scalars(select(GeoProject).where(GeoProject.tenant_id == ctx.tenant_id)
+            .order_by(GeoProject.id).with_for_update().execution_options(
+                populate_existing=True, advisor_scope_control=True))
     objects = await _resolve(session, ctx, request, body, rule)
     projects, businesses = await assigned_scope(session, ctx)
     if not objects.projects and not objects.businesses and len(projects) == 1:
@@ -197,8 +204,6 @@ async def guard_scope(session, ctx, request, body, rule):
         if objects.businesses & set(binding(row)['business_ids']):
             owners.add(row.id)
     request.state.advisor_operation_projects = owners
-    from app.security.geo_advisor import check_manual_execution_scope
-    await check_manual_execution_scope(session, ctx, rule)
     if rule.template in MANUAL_CHECKS:
         from app.models import GeoTrackingEngine
         enabled = set(await session.scalars(select(GeoTrackingEngine.engine_key).where(
