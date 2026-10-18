@@ -397,8 +397,8 @@ export function fetchSeoDistributionCatalog() {
   return client.get('/api/v1/seo/content-distribution/catalog')
 }
 
-export function fetchSeoDistributionConnections({ tenantId }) {
-  return client.get('/api/v1/seo/content-distribution/connections', { params: { tenant_id: tenantId } })
+export function fetchSeoDistributionConnections({ tenantId, siteId = null }) {
+  return client.get('/api/v1/seo/content-distribution/connections', { params: { tenant_id: tenantId, site_id: siteId } })
 }
 
 export function createSeoDistributionConnection(payload) {

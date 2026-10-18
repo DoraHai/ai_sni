@@ -1,5 +1,5 @@
 """Request-local assignment filters for advisor SEO queries, including totals."""
-from sqlalchemy import and_, event, select
+from sqlalchemy import and_, event, exists, select
 from sqlalchemy.orm import with_loader_criteria
 from sqlalchemy.sql.selectable import Join
 
@@ -35,6 +35,10 @@ def scope_conditions(table, ctx):
             content.c.tenant_id == ctx.tenant_id,
             content.c.site_id.in_(assigned_sites(ctx)),
         )))
+    else:
+        # Customer-wide publishing accounts have no site owner column. They
+        # are usable only in a customer where this advisor has an active site.
+        conditions.append(exists(assigned_sites(ctx)))
     return conditions
 
 
