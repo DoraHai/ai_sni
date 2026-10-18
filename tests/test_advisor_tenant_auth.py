@@ -437,3 +437,143 @@ def test_advisor_queue_mapping_is_exact_get_only_and_ai_writes_stay_disabled(adv
             assert response.status_code == 403
             assert response.json()['detail']['code'] == 'ADVISOR_HIGH_RISK_WRITES_DISABLED'
     asyncio.run(scenario())
+
+
+def _read_guard_request(route, params):
+    from urllib.parse import urlencode
+    return Request({'type': 'http', 'method': 'GET', 'path': route,
+                    'query_string': urlencode(params, doseq=True).encode(),
+                    'path_params': {}, 'route': SimpleNamespace(path=route)})
+
+
+def _read_guard_context():
+    return auth.AuthContext(1, 'synthetic', 'advisor', 1,
+        {'seo.site': 'edit', 'seo.content': 'edit'}, is_advisor=True,
+        scope_kind='advisor_tenant', grant_id=10, advisor_tenant_ids=frozenset({1}))
+
+
+@pytest.mark.parametrize('route,key', [
+    ('/api/v1/seo/workbench/advisor-tasks', 'before_id'),
+    ('/api/v1/seo/site-pages/index-reviews', 'before_id'),
+    ('/api/v1/seo/site-pages/image-remediation-history', 'before_snapshot_id'),
+])
+def test_read_guard_numeric_cursors_do_not_query_unrelated_messages(route, key):
+    from app.security.advisor_tenant_auth import check_seo_objects
+    session = SimpleNamespace(scalar=AsyncMock(return_value=None))
+    request = _read_guard_request(route, {'tenant_id': 1, key: 500})
+    asyncio.run(check_seo_objects(request, _read_guard_context(), session))
+    session.scalar.assert_not_awaited()
+
+
+@pytest.mark.parametrize('route,key,table,extra', [
+    ('/api/v1/seo/site-pages/image-evidence', 'snapshot_id', 'seo_page_snapshots', {}),
+    ('/api/v1/seo/site-pages/image-remediation', 'snapshot_id', 'seo_page_snapshots', {}),
+    ('/api/v1/seo/qa/research/history', 'answer_id', 'seo_qa_answers', {}),
+    ('/api/v1/seo/site/page-captures', 'relation_id', 'seo_site_pages', {'relation_type': 'site_page'}),
+    ('/api/v1/seo/site/page-captures', 'relation_id', 'seo_content_publications', {'relation_type': 'publication'}),
+])
+@pytest.mark.parametrize('owner,status', [(1, None), (2, 403), (None, 404)])
+def test_read_guard_supported_filters_recheck_actual_owner(route, key, table, extra, owner, status):
+    from app.security.advisor_tenant_auth import check_seo_objects
+    session = SimpleNamespace(scalar=AsyncMock(return_value=owner))
+    request = _read_guard_request(route, {'tenant_id': 1, key: 50, **extra})
+    if status is None:
+        asyncio.run(check_seo_objects(request, _read_guard_context(), session))
+    else:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(check_seo_objects(request, _read_guard_context(), session))
+        assert exc.value.status_code == status
+    assert table in str(session.scalar.await_args.args[0])
+
+
+@pytest.mark.parametrize('params', [
+    {'relation_id': 50},
+    {'relation_id': 50, 'relation_type': 'unknown'},
+    {'relation_id': 50, 'relation_type': ['site_page', 'publication']},
+    {'before_id': 50},
+    {'future_id': 50},
+])
+def test_read_guard_unknown_or_ambiguous_selectors_remain_closed(params):
+    from app.security.advisor_tenant_auth import check_seo_objects
+    session = SimpleNamespace(scalar=AsyncMock())
+    request = _read_guard_request('/api/v1/seo/site/page-captures', {'tenant_id': 1, **params})
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(check_seo_objects(request, _read_guard_context(), session))
+    assert exc.value.status_code in {403, 422}
+    session.scalar.assert_not_awaited()
+
+
+def test_read_guard_message_cursor_still_checks_conversation_owner():
+    from app.security.advisor_tenant_auth import check_seo_objects
+    session = SimpleNamespace(scalar=AsyncMock(return_value=2))
+    request = _read_guard_request(
+        '/api/v1/seo/workbench/content-assets/{content_id}/conversation/messages',
+        {'tenant_id': 1, 'before_id': 50})
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(check_seo_objects(request, _read_guard_context(), session))
+    assert exc.value.status_code == 403
+    query = str(session.scalar.await_args.args[0])
+    assert 'seo_content_messages' in query and 'seo_content_conversations' in query
+
+
+def test_read_guard_repeated_object_ids_are_all_checked():
+    from app.security.advisor_tenant_auth import check_seo_objects
+    session = SimpleNamespace(scalar=AsyncMock(side_effect=[1, 2]))
+    request = _read_guard_request('/api/v1/seo/site-pages/image-evidence',
+                                  {'tenant_id': 1, 'snapshot_id': [50, 51]})
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(check_seo_objects(request, _read_guard_context(), session))
+    assert exc.value.status_code == 403
+    assert session.scalar.await_count == 2
+
+def test_read_guard_queue_keeps_selected_nondefault_granted_tenant():
+    from app.api import seo_onsite_ai as api
+    from sqlalchemy.dialects import postgresql
+    ctx = _read_guard_context()
+    ctx.tenant_id, ctx.grant_id, ctx.advisor_tenant_ids = 2, 20, frozenset({1, 2})
+    user = SimpleNamespace(id=1, username='synthetic', role_id=1, tenant_id=1,
+                           is_active=True, locked_until=None)
+    role = SimpleNamespace(id=1, name='advisor', is_system=False,
+                           permissions={'seo.site': 'edit', 'seo.content': 'edit'})
+    session = SimpleNamespace(get=AsyncMock(side_effect=[user, role]),
+                              execute=AsyncMock(return_value=SimpleNamespace(all=lambda: [])))
+    result = asyncio.run(api.advisor_tasks(before_id=500, limit=20, tenant_id=2, session=session, ctx=ctx))
+    assert result['items'] == []
+    query = session.execute.await_args.args[0]
+    sql = str(query.compile(dialect=postgresql.dialect(), compile_kwargs={'literal_binds': True}))
+    assert 'seo_tasks.tenant_id = 2' in sql
+    assert 'advisor_tenant_grants.tenant_id = 2' in sql
+    assert 'advisor_tenant_grants.revoked_at IS NULL' in sql
+    assert 'seo_site_advisor_assignments.active IS true' in sql
+    assert 'users.tenant_id' not in sql
+    assert 'seo_tasks.id < 500' in sql
+
+
+@pytest.mark.parametrize('case,code', [('role_changed', 'ADVISOR_ROLE_CHANGED'),
+    ('locked', 'ADVISOR_GRANT_REVOKED'), ('invalid_default', 'ADVISOR_DEFAULT_TENANT_INVALID')])
+def test_read_guard_queue_fresh_identity_checks_remain_closed(case, code):
+    from app.api import seo_onsite_ai as api
+    ctx = _read_guard_context()
+    user = SimpleNamespace(id=1, username='synthetic', role_id=1, tenant_id=1,
+                           is_active=True, locked_until=None)
+    role = SimpleNamespace(id=1, name='advisor', is_system=False,
+                           permissions={'seo.site': 'edit', 'seo.content': 'edit'})
+    if case == 'role_changed':
+        role.permissions = {'seo.site': 'view'}
+    elif case == 'locked':
+        user.locked_until = datetime.now(timezone.utc) + timedelta(hours=1)
+    else:
+        user.tenant_id = 99
+    session = SimpleNamespace(get=AsyncMock(side_effect=[user, role]))
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(api.fresh_context(session, ctx))
+    assert exc.value.detail['code'] == code
+
+
+def test_read_guard_queue_ordinary_account_keeps_default_tenant_filter():
+    from app.api import seo_onsite_ai as api
+    from sqlalchemy.dialects import postgresql
+    sql = str(api.advisor_query(7).compile(dialect=postgresql.dialect(), compile_kwargs={'literal_binds': True}))
+    assert 'users.tenant_id IS NULL' in sql
+    assert 'users.tenant_id = seo_tasks.tenant_id' in sql
+    assert 'advisor_tenant_grants' not in sql

@@ -107,7 +107,10 @@ def parse_receipts(data: bytes, filename: str) -> list[Receipt]:
     try:
         source = data.decode("utf-8-sig")
         if filename.lower().endswith(".json"):
-            rows = json.loads(source)
+            try:
+                rows = json.loads(source)
+            except (ValueError, RecursionError):
+                raise ValueError("回执JSON内容无效或嵌套过深，请按模板重新导出") from None
         elif filename.lower().endswith(".csv"):
             reader = csv.DictReader(io.StringIO(source, newline=""), strict=True)
             if reader.fieldnames != list(RECEIPT_FIELDS):
