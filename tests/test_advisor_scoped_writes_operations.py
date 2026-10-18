@@ -67,3 +67,29 @@ def test_selected_second_grant_and_read_filter(tmp_path, monkeypatch):
             response = await env.request("GET", "/content-tasks/10")
             assert response.status_code == 403, response.text
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("status", ["generating", "adapting", "ready", "published", "archived"])
+def test_readiness_check_cannot_overwrite_busy_or_protected_state(tmp_path, monkeypatch, status):
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch) as env:
+            await mutate(env, GeoContentTask, 10, status=status)
+            response = await env.request("POST", "/content-tasks/10/check")
+            assert response.status_code == 403, response.text
+            async with env.factory() as session:
+                assert (await session.get(GeoContentTask, 10)).status == status
+    asyncio.run(run())
+
+
+def test_project_metadata_keeps_patrol_guard(tmp_path, monkeypatch):
+    from app.geo.project_routes import geo_projects_router
+    from app.models import GeoVisibilityPatrolSettings
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch) as env:
+            env.app.include_router(geo_projects_router)
+            response = await env.request("PATCH", "/projects/10", body={"description": "advisor daily edit"})
+            assert response.status_code == 200, response.text
+            await mutate(env, GeoVisibilityPatrolSettings, 10, enabled=True)
+            response = await env.request("PATCH", "/projects/10", body={"domain": "changed.example.test"})
+            assert response.status_code == 403, response.text
+    asyncio.run(run())
