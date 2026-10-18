@@ -190,7 +190,7 @@ def test_real_advisor_cannot_read_platform_billing_or_key_state(tmp_path, monkey
     from app.geo.content import search_visibility_routes as routes
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
-            env.app.include_router(routes.router)
+            env.app.include_router(routes.router, prefix='/api/v1/geo')
             billing = AsyncMock()
             monkeypatch.setattr(routes, 'month_usage', billing)
             response = await env.request('GET', '/search-visibility/usage')
