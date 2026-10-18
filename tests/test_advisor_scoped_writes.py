@@ -87,6 +87,14 @@ CASES = (
      'geo_channel_variants', 'title', 'edited variant'),
     ('PATCH', '/optimization-businesses/{business_id}', {'profile': BRAND_PROFILE},
      'geo_optimization_businesses', 'profile', BRAND_PROFILE),
+    ('POST', '/content-imports/create-task', {'tenant_id': 10, 'prompt_id': 10,
+        'title': 'imported manual task', 'body_markdown': 'An existing manual article.',
+        'source_type': 'paste', 'target_channels': ['website']},
+     'geo_content_tasks', 'title', 'imported manual task'),
+    ('POST', '/content-imports/create-task', {'tenant_id': 10, 'prompt_id': 10,
+        'title': 'uploaded manual task', 'body_markdown': 'An uploaded manual article.',
+        'source_type': 'file', 'target_channels': ['website']},
+     'geo_content_tasks', 'title', 'uploaded manual task'),
 )
 CASE_IDS = [f'{method} {path}' for method, path, *_ in CASES]
 BUSINESS_TABLES = ('geo_facts', 'geo_prompts', 'geo_optimization_businesses',
@@ -163,7 +171,7 @@ async def write_sandbox(tmp_path, monkeypatch, *, backend='sqlite', enabled=True
     schema = 'geo_scoped_writes_' + uuid4().hex
     admin = None
     metadata = MetaData()
-    names = set(BUSINESS_TABLES) | {'roles', 'users', 'tenants', 'tenant_modules',
+    names = set(BUSINESS_TABLES) | {'geo_tracking_engines', 'geo_answer_snapshots', 'roles', 'users', 'tenants', 'tenant_modules',
         'advisor_tenant_grants', 'geo_optimization_periods'}
     # Copy only GEO/auth tables and their FK dependencies, no shared/public data.
     pending = list(names)
@@ -451,8 +459,8 @@ def test_missing_or_wrong_project_assignment_rejects(tmp_path, monkeypatch, back
     ('POST', '/content-tasks/10/publications'), ('POST', '/content-tasks/10/submit-review'),
     ('POST', '/content-tasks/10/review'), ('POST', '/facts/10/verify'),
     ('POST', '/content-tasks/10/check'), ('POST', '/content-tasks/10/lint'),
-    ('POST', '/visibility-patrol/runs'),
-    ('POST', '/content-tasks/10/ai-review'), ('POST', '/answer-snapshots/probe'),
+    ('POST', '/content-tasks/10/ai-review'), ('POST', '/content-tasks/10/push'),
+    ('POST', '/content-tasks/10/push-batch'), ('POST', '/answer-snapshots/probe'),
     ('POST', '/answer-snapshots/probe-batch'),
 ])
 def test_outside_exact_write_list_stays_closed(tmp_path, monkeypatch, backend, method, path):
@@ -461,6 +469,25 @@ def test_outside_exact_write_list_stays_closed(tmp_path, monkeypatch, backend, m
             before = await env.snapshot()
             assert_denied(await env.request(method, path, body={'tenant_id': 10}),
                           code='ADVISOR_HIGH_RISK_WRITES_DISABLED')
+            assert await env.snapshot() == before
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('path', ['/api/v1/roles/1', '/api/v1/users/1'])
+def test_advisor_cannot_change_account_or_role_permissions(tmp_path, monkeypatch, backend, path):
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            # Mount an authenticated sentinel: a forbidden permission route must
+            # be rejected by the advisor guard before any handler can run.
+            async def permission_handler(_ctx=Depends(require_auth)):
+                pytest.fail('advisor reached a permission-changing handler')
+
+            env.app.add_api_route(path, permission_handler, methods=['PATCH'])
+            before = await env.snapshot()
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=env.app), base_url='http://fixture') as client:
+                response = await client.patch(path, json={'permissions': {'settings.accounts': 'edit'}},
+                    headers={'Authorization': 'Bearer ' + fixture_token()})
+            assert_denied(response, code='ADVISOR_HIGH_RISK_WRITES_DISABLED')
             assert await env.snapshot() == before
     asyncio.run(run())
 

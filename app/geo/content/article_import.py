@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import re
+import zipfile
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -15,6 +16,10 @@ class ArticleImportError(ValueError):
 
 
 SUPPORTED_FILE_EXTENSIONS = {".docx", ".html", ".htm", ".md", ".pdf", ".txt"}
+MAX_FILE_BYTES = 10 * 1024 * 1024
+MAX_PDF_PAGES = 100
+MAX_DOCX_UNPACKED_BYTES = 32 * 1024 * 1024
+MAX_DOCX_ENTRIES = 2000
 _CJK_OR_WORD = re.compile(r"[\u3400-\u9fff]|[A-Za-z0-9]+")
 _MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
 
@@ -67,10 +72,14 @@ def _read_pdf(raw: bytes) -> tuple[str, str | None]:
         raise ArticleImportError("PDF import support is unavailable") from exc
     try:
         reader = PdfReader(io.BytesIO(raw))
+        if len(reader.pages) > MAX_PDF_PAGES:
+            raise ArticleImportError(f"PDF documents cannot exceed {MAX_PDF_PAGES} pages")
         text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
         metadata = reader.metadata or {}
         title = getattr(metadata, "title", None) or metadata.get("/Title")
         return text, str(title).strip() if title else None
+    except ArticleImportError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise ArticleImportError("Unable to read the PDF document") from exc
 
@@ -81,10 +90,26 @@ def _read_docx(raw: bytes) -> tuple[str, str | None]:
     except ImportError as exc:  # pragma: no cover - dependency is installed in deployments
         raise ArticleImportError("DOCX import support is unavailable") from exc
     try:
+        # Check both declared and actually expanded sizes before python-docx
+        # loads XML/media. The compressed upload is separately bounded.
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            entries = archive.infolist()
+            if (len(entries) > MAX_DOCX_ENTRIES
+                    or sum(entry.file_size for entry in entries) > MAX_DOCX_UNPACKED_BYTES):
+                raise ArticleImportError("DOCX expanded content exceeds the import limit")
+            expanded = 0
+            for entry in entries:
+                with archive.open(entry) as member:
+                    while chunk := member.read(64 * 1024):
+                        expanded += len(chunk)
+                        if expanded > MAX_DOCX_UNPACKED_BYTES:
+                            raise ArticleImportError("DOCX expanded content exceeds the import limit")
         document = Document(io.BytesIO(raw))
         text = "\n\n".join(paragraph.text for paragraph in document.paragraphs if paragraph.text.strip())
         title = (document.core_properties.title or "").strip() or None
         return text, title
+    except ArticleImportError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise ArticleImportError("Unable to read the DOCX document") from exc
 
@@ -134,6 +159,8 @@ def preview_file_document(*, filename: str, raw: bytes) -> dict:
     extension = Path(filename or "").suffix.lower()
     if extension not in SUPPORTED_FILE_EXTENSIONS:
         raise ArticleImportError(f"Unsupported file type: {extension or 'unknown'}")
+    if len(raw) > MAX_FILE_BYTES:
+        raise ArticleImportError("The uploaded file exceeds 10 MiB")
     if not raw:
         raise ArticleImportError("The uploaded file is empty")
     if extension in {".txt", ".md"}:

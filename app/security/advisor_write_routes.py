@@ -61,15 +61,27 @@ _register("PATCH", "/optimization-businesses/{business_id}", _BUSINESS + " profi
 _register("POST", "/optimization-units", "tenant_id business_id " + _UNIT)
 _register("PATCH", "/optimization-units/{unit_id}", _UNIT)
 _register("POST", "/content-tasks", "tenant_id prompt_id title target_channels fact_ids brief")
+_register("POST", "/content-imports/create-task",
+          "tenant_id prompt_id title body_markdown source_type source_url target_channels")
 _register("PATCH", "/content-tasks/{task_id}", "title brief target_channels")
 _register("PUT", "/content-tasks/{task_id}/facts", "fact_ids")
 _register("PUT", "/content-tasks/{task_id}/article", "expected_article_id title body_markdown")
 _register("PATCH", "/content-tasks/{task_id}/variants/{channel}", "title body_markdown")
 
+# A single paid action, separate from the 13 manual-content rules. No client
+# engine, prompt limit, scheduling or execution switches are admitted.
+VISIBILITY_RUN_RULE = WriteRule(
+    "POST", "/api/v1/geo/visibility-patrol/runs", frozenset({"tenant_id"}),
+    FORBIDDEN, ("geo.assets", "geo.content"), "visibility",
+)
+
 
 def match_write_rule(request) -> WriteRule | None:
     # Never fall back to the URL or a prefix when route resolution is missing.
-    return WRITE_ROUTES.get((request.method, getattr(request.scope.get("route"), "path", None)))
+    key = (request.method, getattr(request.scope.get("route"), "path", None))
+    if key == (VISIBILITY_RUN_RULE.method, VISIBILITY_RUN_RULE.template):
+        return VISIBILITY_RUN_RULE
+    return WRITE_ROUTES.get(key)
 
 
 def check_write_fields(rule: WriteRule, body: dict) -> None:
@@ -81,6 +93,8 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
     if "trust_level" in body and body["trust_level"] not in ("draft", "needs_review"):
         forbidden()
     if "source" in body and body["source"] != "manual":
+        forbidden()
+    if rule.template == "/api/v1/geo/content-imports/create-task" and body.get("source_type") not in ("paste", "file"):
         forbidden()
     if rule.template.endswith("/article") and "expected_article_id" not in body:
         forbidden()

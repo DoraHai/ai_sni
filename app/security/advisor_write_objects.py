@@ -278,6 +278,7 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
         _PREFIX + "/facts": "business_id", _PREFIX + "/prompts": "unit_id",
         _PREFIX + "/optimization-units": "business_id",
         _PREFIX + "/content-tasks": "prompt_id",
+        _PREFIX + "/content-imports/create-task": "prompt_id",
     }.get(rule.template)
     if request.method == "POST" and creation_parent:
         if not isinstance(body, dict) or body.get(creation_parent) is None:
@@ -316,10 +317,14 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
         _assignment_required()
     project = next((p for p in projects if p.id in selected), None)
     plan = plans[project.id] if project else {}
+    # Imports use the selected customer grant, checked by auth and again at
+    # commit. The scheduler helper requires a native/default tenant binding,
+    # which would incorrectly exclude another explicitly granted customer.
+    selected_import = rule.template == _PREFIX + "/content-imports/create-task"
     if (project is None or project.status != "active"
             or type(plan.get("advisor_user_id")) is not int
             or plan["advisor_user_id"] != ctx.user_id
-            or not await advisor_available(session, ctx.tenant_id, ctx.user_id)):
+            or (not selected_import and not await advisor_available(session, ctx.tenant_id, ctx.user_id))):
         _assignment_required()
     # A tenant-wide patrol dynamically consumes new prompts. Active project
     # cycles and generation can consume updated facts. Refuse these resources

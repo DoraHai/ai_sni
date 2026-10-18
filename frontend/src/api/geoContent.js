@@ -511,13 +511,15 @@ export function previewGeoArticleImportUrl(tenantId, url) {
   return client.post(
     '/api/v1/geo/content-imports/preview-url',
     { tenant_id: tenantId, url },
-    { timeout: 120000 },
+    { params: { tenant_id: tenantId }, timeout: 120000 },
   )
 }
 
 /** Create a content task from an already-authored article. */
 export function createGeoArticleImportTask(payload) {
-  return client.post('/api/v1/geo/content-imports/create-task', payload)
+  return client.post('/api/v1/geo/content-imports/create-task', payload, {
+    params: { tenant_id: payload.tenant_id },
+  })
 }
 
 /** hard=false archive; hard=true physical delete (cascade article/variants) */
@@ -801,6 +803,7 @@ export function getVisibilityPatrolRun(tenantId, runId) {
 
 export function startVisibilityPatrolRun(body) {
   return client.post('/api/v1/geo/visibility-patrol/runs', body, {
+    params: { tenant_id: body.tenant_id },
     timeout: 120000,
   })
 }
