@@ -219,7 +219,7 @@ def test_patrol_delete_keeps_samples_and_repairs_retest_references(tmp_path, mon
         async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
             async with env.factory() as session:
                 session.add(m.GeoVisibilityPatrolRun(id=100, tenant_id=10, status='completed',
-                    trigger='contract_retest', items=[{'prompt_id': 10}], summary={
+                    trigger='contract_retest', created_by=1, items=[{'prompt_id': 10}], summary={
                         'prompts': 1, 'contract_plan': {'cells': [{'prompt_id': 10}]}}))
                 await session.flush()
                 session.add(m.GeoAnswerSnapshot(id=100, tenant_id=10, prompt_id=10, engine='other',
@@ -241,6 +241,8 @@ def test_patrol_delete_keeps_samples_and_repairs_retest_references(tmp_path, mon
                 ticket = await session.get(m.GeoActionTicket, 100)
                 assert ticket.progress['retest_runs'] == {}
                 assert ticket.progress['deleted_retest_runs']['100']['deleted_by'] == 1
+                from app.geo.content.patrol import count_patrol_runs_today
+                assert await count_patrol_runs_today(session, 10, created_by=1) == 1
     asyncio.run(run())
 
 
