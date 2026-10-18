@@ -36,6 +36,7 @@ export function validateAutomationHealth(data,module){
 }
 
 export function automationReadState(error){
+  if(error?.code==='CONSOLE_AUTOMATION_NOT_LAUNCHED')return 'not_launched';
   if(error?.status===404)return 'not_deployed';
   if(error?.status===401)return 'unauthorized';
   if(error?.status===403)return 'forbidden';

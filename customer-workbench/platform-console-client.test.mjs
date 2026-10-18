@@ -6,6 +6,17 @@ const snapshot={schema:1,mode:'read_only_inventory',sources:{},costs:{actual_amo
 const response=(body,status=200)=>({ok:status===200,status,json:async()=>body});
 const session=user=>({user,token:'test-token',authRevision:0,refreshUser(u){this.user=u;this.authRevision++;},logout(){this.token='';this.user=null;this.authRevision++;}});
 
+test('unlaunched automation skips missing health routes and still checks administrator permission',async()=>{
+ const paths=[],s=session(admin);let permitted=true;
+ const client=createPlatformConsoleClient({session:s,fetchImpl:async path=>{paths.push(path);return response(path.endsWith('/me')?{user:permitted?admin:{...admin,tenant_id:1}}:snapshot);}});
+ await assert.rejects(client.automationHealth('seo'),{code:'CONSOLE_NOT_AUTHORIZED'});assert.deepEqual(paths,[]);
+ await client.initialize();
+ for(const module of ['seo','geo'])await assert.rejects(client.automationHealth(module),{code:'CONSOLE_AUTOMATION_NOT_LAUNCHED'});
+ assert.deepEqual(paths,['/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/auth/me','/api/v1/auth/me']);
+ permitted=false;await assert.rejects(client.automationHealth('seo'),{code:'CONSOLE_FORBIDDEN'});assert.equal(client.getIdentity(),null);
+ assert(!paths.some(path=>path.endsWith('/automation-health')));
+});
+
 test('console requires an unbound named identity with both management permissions',()=>{
   assert(isPlatformAdmin(admin));
   for(const u of [null,{...admin,id:null},{...admin,tenant_id:1},{...admin,tenant_id:undefined},

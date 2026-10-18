@@ -1,4 +1,5 @@
 import {escapeText as esc} from './customer-display.mjs';
+import {projectAutomationAvailable} from './project-automation-availability.mjs';
 
 const count=n=>Number.isSafeInteger(n)&&n>=0?String(n):'未知';
 const states={loading:'正在读取',not_deployed:'接口未部署',schema_pending:'执行结构尚未就绪',
@@ -34,6 +35,7 @@ export function automationNotifications(state){
 }
 
 export function renderAutomationOps({state,card,table,time,tenant=id=>'客户 '+id,now=Date.now()}){
+  if(!projectAutomationAvailable)return card('自动执行运维','<p role="status">项目自动运行功能还没上线，目前没有运行记录可查，也不需要你启用。顾问请到顾问工作台的「我的站内交付任务」处理站内任务。</p>','','',true);
   const modules=state?.modules||{};
   const summary=['seo','geo'].map(module=>{
     const r=modules[module],d=r?.data,ready=r?.state==='available'&&d?.state==='available';

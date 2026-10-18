@@ -2,6 +2,7 @@ import {balanceRoute} from './platform-balances-view.mjs';
 import {governanceRoute} from './platform-ai-governance-view.mjs';
 import {usageReviewRoute} from './platform-usage-review.mjs';
 import {automationHealthPaths,validateAutomationHealth} from './platform-automation-health.mjs';
+import {projectAutomationAvailable} from './project-automation-availability.mjs';
 import {auditRoute,auditPath} from './platform-audit-view.mjs';
 // Separate global-console transport. Customer host allowlists remain unchanged.
 export const platformConsolePath='/customer-workbench/?console=platform';
@@ -92,6 +93,7 @@ export function createPlatformConsoleClient({session,fetchImpl=fetch,onExpired=(
       if(!identity)throw fail('CONSOLE_NOT_AUTHORIZED',403);
       const {user}=await read('/api/v1/auth/me',true);
       if(user?.id!==identity?.id||!isPlatformAdmin(user)){invalidate();throw fail('CONSOLE_FORBIDDEN',403);}
+      if(!projectAutomationAvailable)throw fail('CONSOLE_AUTOMATION_NOT_LAUNCHED');
       return validateAutomationHealth(await read(automationHealthPaths[module]),module);
     },
     async usage(filters){return read(usagePath(filters));},
