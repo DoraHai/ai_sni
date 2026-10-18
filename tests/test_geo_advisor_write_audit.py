@@ -61,3 +61,24 @@ def test_write_records_actor_scope_objects_and_result(tmp_path, monkeypatch, bac
 def test_independent_app_installs_audit_middleware():
     from app.geo_main import app
     assert any(m.cls is AdvisorWriteAuditMiddleware for m in app.user_middleware)
+
+
+def test_savepoint_release_does_not_claim_outer_commit():
+    from types import SimpleNamespace
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from app.security.advisor_write_audit import KEY, bind_write_changes
+    record = {'objects': {}, 'committed': False}
+    request = SimpleNamespace(scope={KEY: record})
+    engine = create_engine('sqlite://')
+    try:
+        with Session(engine) as sync:
+            bind_write_changes(SimpleNamespace(sync_session=sync, info=sync.info), request)
+            with sync.begin_nested():
+                pass
+            sync.rollback()
+            assert not record['committed'], 'SAVEPOINT release is not a durable outer commit'
+            sync.commit()
+            assert record['committed']
+    finally:
+        engine.dispose()

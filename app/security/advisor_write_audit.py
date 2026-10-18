@@ -36,7 +36,10 @@ def bind_write_changes(session, request):
                     ids.append(ident)
 
     def after_commit(_session):
-        record['committed'] = True
+        # SAVEPOINT release also fires after_commit; the outer write may still
+        # be rejected and rolled back by the authority recheck.
+        if not _session.in_nested_transaction():
+            record['committed'] = True
 
     event.listen(session.sync_session, 'after_flush', after_flush)
     event.listen(session.sync_session, 'after_commit', after_commit)
