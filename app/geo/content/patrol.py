@@ -480,7 +480,9 @@ async def execute_patrol_run(
     from app.geo.content.ai_settings import resolve_llm_credentials
     from app.geo.content.engines import default_engine_rows
     from app.models import GeoTrackingEngine
-    from app.security.advisor_visibility import AdvisorVisibilityUnavailable, check_visibility_execution
+    from app.security.advisor_visibility import (
+        AdvisorVisibilityUnavailable, check_visibility_execution, record_visibility_execution,
+    )
 
     from app.geo.tenant_scope import ensure_geo_background_execution_allowed
     ensure_geo_background_execution_allowed(tenant_id)
@@ -517,6 +519,7 @@ async def execute_patrol_run(
         row.finished_at = datetime.utcnow()
         await session.commit()
         await session.refresh(row)
+        record_visibility_execution(row, 'job_failed')
         return row
     contract_plan = (row.summary or {}).get("contract_plan")
     advisor_prompt_ids = (row.summary or {}).get("advisor_visibility_prompt_ids")
@@ -915,6 +918,7 @@ async def execute_patrol_run(
         row.finished_at = datetime.utcnow()
         await session.commit()
         await session.refresh(row)
+        record_visibility_execution(row, 'job_succeeded')
         # 巡检落库后自动重算当日租户/业务/单元指标（失败不拖垮巡检）
         if int(summary.get("snapshots_created") or 0) > 0:
             try:
@@ -948,5 +952,6 @@ async def execute_patrol_run(
             row.finished_at = datetime.utcnow()
             await session.commit()
             await session.refresh(row)
+            record_visibility_execution(row, 'job_failed')
             return row
         raise

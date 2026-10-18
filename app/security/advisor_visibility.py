@@ -31,6 +31,10 @@ async def check_visibility_execution(session, run, prompt_ids, *, lock=False):
                 or auth['auth_exp'] <= datetime.now(timezone.utc).timestamp()
                 or not get_settings().advisor_scoped_content_writes_enabled):
             raise AdvisorVisibilityUnavailable(message)
+        # Match the HTTP admission/commit lock order: tenant -> user -> role.
+        # Starting a worker with the reverse order can deadlock a new request.
+        if lock:
+            await session.scalar(select(Tenant.id).where(Tenant.id == run.tenant_id).with_for_update())
         user_query = select(User).options(load_only(
             User.id, User.role_id, User.tenant_id, User.is_active, User.locked_until
         )).where(User.id == run.created_by).execution_options(populate_existing=True)
@@ -52,15 +56,25 @@ async def check_visibility_execution(session, run, prompt_ids, *, lock=False):
             advisor_scope=AdvisorScope(tenants, run.tenant_id, auth['grant_id']))
         await ensure_module_access(session, ctx, run.tenant_id, 'geo')
         request = SimpleNamespace(state=SimpleNamespace(advisor_visibility_prompt_ids=list(prompt_ids)))
-        await check_visibility_scope(session, ctx, request)
-        await check_manual_execution_scope(session, ctx, VISIBILITY_RUN_RULE)
+        await check_visibility_scope(session, ctx, request, lock=lock)
+        if lock:
+            await check_manual_execution_scope(session, ctx, VISIBILITY_RUN_RULE)
     except AdvisorVisibilityUnavailable:
         raise
     except Exception as exc:
         raise AdvisorVisibilityUnavailable(message) from exc
 
 
-async def check_visibility_scope(session, ctx, request):
+def record_visibility_execution(run, result):
+    from app.security.advisor_write_audit import record
+    auth = (run.summary or {}).get('advisor_visibility_auth')
+    if not isinstance(auth, dict) or auth.get('user_id') != run.created_by:
+        return
+    record({'geo_advisor_actor': (run.created_by, run.tenant_id), 'method': 'POST',
+            'path': '/api/v1/geo/visibility-patrol/runs', 'path_params': {'run_id': run.id}}, result)
+
+
+async def check_visibility_scope(session, ctx, request, *, lock=True):
     """Freeze at most 20 active questions; revalidate that scope before commit.
 
     The tenant lock is also used by scheduler/settings/project binding writers.
@@ -69,10 +83,13 @@ async def check_visibility_scope(session, ctx, request):
     from app.geo.project_scope import binding, project_scope
     from app.geo.project_workflows import advisor_available, plan_for
 
-    await session.scalar(select(Tenant.id).where(Tenant.id == ctx.tenant_id).with_for_update())
-    projects = list(await session.scalars(select(GeoProject).where(
-        GeoProject.tenant_id == ctx.tenant_id).order_by(GeoProject.id)
-        .with_for_update().execution_options(populate_existing=True)))
+    if lock:
+        await session.scalar(select(Tenant.id).where(Tenant.id == ctx.tenant_id).with_for_update())
+    project_query = select(GeoProject).where(GeoProject.tenant_id == ctx.tenant_id).order_by(
+        GeoProject.id).execution_options(populate_existing=True)
+    if lock:
+        project_query = project_query.with_for_update()
+    projects = list(await session.scalars(project_query))
     owned = set()
     for project in projects:
         plan = plan_for(project)
