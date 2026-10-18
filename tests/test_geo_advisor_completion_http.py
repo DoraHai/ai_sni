@@ -264,3 +264,33 @@ def test_onboarding_new_business_questions_keep_their_new_unit(tmp_path, monkeyp
                 project = await session.get(m.GeoProject, 10)
                 assert business.id in project.project_settings['geo_business_scope']['business_ids']
     asyncio.run(run())
+
+
+def test_diagnosis_can_create_scoped_content_with_multiple_businesses_and_units(tmp_path, monkeypatch, backend):
+    from sqlalchemy import select
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            async with env.factory() as session:
+                project = await session.get(m.GeoProject, 10)
+                settings = {**project.project_settings}
+                settings['geo_business_scope'] = {**settings['geo_business_scope'], 'business_ids': [10, 11]}
+                project.project_settings = settings
+                session.add(m.GeoOptimizationBusiness(id=11, tenant_id=10, name='second owned business', status='active'))
+                await session.flush()
+                session.add_all([
+                    m.GeoOptimizationUnit(id=11, tenant_id=10, business_id=11, name='second owned unit', status='active'),
+                    m.GeoOptimizationUnit(id=12, tenant_id=10, business_id=10, name='extra first unit', status='active'),
+                    m.GeoAuditRun(id=100, tenant_id=10, url='https://' + project.canonical_domain,
+                        page_title='fixture diagnosis', status='completed')])
+                await session.commit()
+            response = await env.request('POST', '/content-tasks/from-diagnosis',
+                params={'project_id': 10}, body={'tenant_id': 10, 'audit_id': 100})
+            assert response.status_code == 200, response.text
+            async with env.factory() as session:
+                task = await session.scalar(select(m.GeoContentTask).where(m.GeoContentTask.diagnosis_audit_id == 100))
+                prompt = await session.get(m.GeoPrompt, task.prompt_id)
+                unit = await session.get(m.GeoOptimizationUnit, prompt.unit_id)
+                assert unit.business_id == 10 and unit.id == 10
+            listed = await env.request('GET', '/content-tasks')
+            assert task.id in {item['id'] for item in listed.json()['items']}
+    asyncio.run(run())
