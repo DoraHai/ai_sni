@@ -135,7 +135,7 @@ test('real session mutations revalidate private GEO routes in the current tab', 
   session.setAuth('token', { id: 5, tenant_id: 16, permissions: { 'geo.content': 'view' } })
   assert.deepEqual(destinations, [])
 
-  session.refreshUser({ id: 5, tenant_id: 16, permissions: { 'geo.content': 'none' } })
+  session.refreshUser({ id: 5, tenant_id: 16, permissions: {} })
   assert.deepEqual(destinations, ['portal'])
 
   route = { meta: { public: true } }

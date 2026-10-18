@@ -1,21 +1,22 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { fetchMe } from '../../src/api/auth'
+import { fetchMe, fetchTenants } from '../../src/api/auth'
+import client from '../../src/api/client'
 import { fetchGeoTenants } from '../../src/api/geo'
 import { session } from '../../src/store/session'
+import { bootstrapGeoSession, GEO_ADVISOR_SELECT_URL } from '../../src/utils/geoAdvisorTenant.js'
 
 const ready = ref(false)
+const guidance = ref(null)
 
 async function bootstrapSession() {
   try {
-    const [me, tenants] = await Promise.all([
-      session.isLoggedIn ? fetchMe() : Promise.resolve(null),
-      fetchGeoTenants(),
-    ])
-    if (me?.user) session.refreshUser(me.user)
-    session.setTenants(tenants.tenants || [])
+    guidance.value = await bootstrapGeoSession({
+      session, fetchMe, fetchTenants, fetchGeoTenants,
+      selectTenant: (tenantId) => client.post('/api/v1/auth/select-tenant', { tenant_id: tenantId }),
+    })
   } catch {
-    session.setTenants(session.tenants || [])
+    guidance.value = { message: '暂时无法读取客户信息，请刷新页面重试', selectCustomer: true }
   } finally {
     ready.value = true
   }
@@ -25,7 +26,14 @@ onMounted(bootstrapSession)
 </script>
 
 <template>
-  <router-view v-if="ready" />
+  <div v-if="ready && guidance" class="geo-boot" role="alert">
+    <div class="geo-boot__panel">
+      <div class="geo-boot__title">GEO 增长</div>
+      <p>{{ guidance.message }}</p>
+      <el-button v-if="guidance.selectCustomer" tag="a" :href="GEO_ADVISOR_SELECT_URL" type="primary">去选择客户</el-button>
+    </div>
+  </div>
+  <router-view v-else-if="ready" />
   <div v-else class="geo-boot" role="status" aria-live="polite" aria-label="GEO 工作台加载中">
     <div class="geo-boot__panel">
       <div class="geo-boot__mark" aria-hidden="true">G</div>
