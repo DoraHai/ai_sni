@@ -119,6 +119,18 @@ async def enforce_advisor_request(request, ctx, session):
         if body is None and not rule.fields:
             body = {}
         check_write_fields(rule, body)
+        if rule.template in {
+            '/api/v1/seo/overview/automation-runs/trigger',
+            '/api/v1/seo/overview/task-center/{run_id}/retry',
+        }:
+            from dataclasses import replace
+            from app.seo_task_center import JOB_PERMISSIONS
+            permission = JOB_PERMISSIONS.get(body.get('job_type'))
+            if permission is None:
+                reject(422, 'ADVISOR_INVALID_WRITE_PAYLOAD')
+            # Store the job permission on the rule too, so the fresh role read
+            # before every commit checks it instead of trusting the old context.
+            rule = replace(rule, edit_all=rule.edit_all + (permission,))
         if rule.workflow:
             from pydantic import BaseModel, ValidationError
             fields = getattr(getattr(request.scope.get("route"), "dependant", None), "body_params", ())

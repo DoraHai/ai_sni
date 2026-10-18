@@ -51,6 +51,8 @@ from app.security.seo_advisor_reviews import review_rules
 WRITE_ROUTES.update({(r.method, r.template): r for r in review_rules(WriteRule)})
 from app.security.seo_advisor_publishing import publishing_rules
 WRITE_ROUTES.update({(r.method, r.template): r for r in publishing_rules(WriteRule)})
+from app.security.seo_advisor_deletion import deletion_rules
+WRITE_ROUTES.update({(r.method, r.template): r for r in deletion_rules(WriteRule)})
 
 
 def match_write_rule(request) -> WriteRule | None:
@@ -104,6 +106,8 @@ def check_advisor_handler(ctx, method, template, body, row=None):
         ):
             raise HTTPException(403, {'code': 'ADVISOR_WRITE_STATE_FORBIDDEN'})
         allowed = ({"active", "retired"} if "/qa/facts" in template else
-                   {"active", "archived"} if "/brand-assets" in template else {"planned", "drafting", "archived"})
+                   {"active", "archived"} if "/brand-assets" in template else
+                   {"planned", "drafting", "ready"} if template.endswith('/source-page') else
+                   {"planned", "drafting", "archived"})
         if row.status not in allowed:
             raise HTTPException(403, {"code": "ADVISOR_WRITE_STATE_FORBIDDEN"})

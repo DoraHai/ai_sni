@@ -357,7 +357,10 @@ async def update_seo_site(
     except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(409, "该客户已经维护了这个 SEO 网站") from exc
-    await session.refresh(row)
+    # A just-paused advisor site is intentionally absent from subsequent
+    # active-site reads. Return the already saved object without reloading it.
+    if not getattr(ctx, 'is_advisor', False):
+        await session.refresh(row)
     return _site_payload(row)
 
 

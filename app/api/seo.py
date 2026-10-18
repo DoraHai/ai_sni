@@ -2290,6 +2290,8 @@ async def collect_rank_serp_for_tenant(
         for device in devices
     ]
     provider_requests = [(keyword.keyword, device) for keyword, device in batch_requests]
+    from app.security.seo_advisor_execution import recheck_before_provider
+    await recheck_before_provider(session)
     if engine in {"baidu", "360", "sogou"}:
         domain = str(site.canonical_domain or "").strip() if site else ""
         if not domain:
@@ -3399,7 +3401,12 @@ async def trigger_seo_automation_run(
     except ManualAutomationError as exc:
         headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
         raise HTTPException(exc.status_code, exc.message, headers=headers) from exc
-    background_tasks.add_task(execute_manual_automation_run, int(row.id))
+    from app.security.seo_advisor_execution import capture_manual_automation_scope
+    scope = capture_manual_automation_scope(ctx)
+    if scope is None:
+        background_tasks.add_task(execute_manual_automation_run, int(row.id))
+    else:
+        background_tasks.add_task(execute_manual_automation_run, int(row.id), advisor_scope=scope)
     return {
         "message": "任务已进入后台队列",
         "run": _automation_run_payload(row),
@@ -8050,6 +8057,8 @@ async def test_distribution_connection(
     try:
         credentials = decrypt_credentials(row.credentials_encrypted)
         await require_any_operational_seo_site(session, tenant_id)
+        from app.security.seo_advisor_execution import recheck_before_provider
+        await recheck_before_provider(session)
         result = await test_connection(row.platform_code, row.base_url, credentials)
     except SeoDistributionError as exc:
         row.status = "failed"

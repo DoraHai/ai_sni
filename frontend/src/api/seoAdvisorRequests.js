@@ -12,7 +12,8 @@ export function prepareAdvisorSeoRequest(config, actor, confirmAction = globalTh
   }
   config.params = { ...params, tenant_id: selected }
   const method = (config.method || 'get').toLowerCase()
-  const deleting = method === 'delete'
+  const deleting = method === 'delete' || (method === 'post'
+    && url.pathname === '/api/v1/seo/site-pages/non-html-assets/cleanup' && config.data?.dry_run === false)
   const sending = method === 'post' && (
     /^\/api\/v1\/seo\/content-distribution\/publish$/.test(url.pathname)
     || /^\/api\/v1\/seo\/content-distribution\/video\/upload$/.test(url.pathname)

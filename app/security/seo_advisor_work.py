@@ -163,9 +163,12 @@ TABLES = {
     "suggestion_id": "seo_page_ai_tdk_suggestions", "result_id": "seo_serp_results",
     "verification_id": "seo_image_verifications", "retry_page_id": "seo_site_pages",
     "article_id": "seo_content_assets", "before_snapshot_id": "seo_page_snapshots",
+    'conversation_id': 'seo_content_conversations', 'last_read_message_id': 'seo_content_messages',
 }
 # Stored ownership links are followed even when omitted from a partial update.
 LINKS = {
+    'seo_content_messages': ('conversation_id',),
+    'seo_content_conversations': ('content_asset_id',),
     "seo_content_assets": ("keyword_id", "keyword_ids", "source_page_id"),
     "seo_site_pages": ("target_keyword_id",),
     "seo_qa_answers": ("question_id", "content_id"),
@@ -241,6 +244,10 @@ async def workflow_scope(session, ctx, request, body, rule, *, lock=False):
             continue
         seen.add((table_name, object_id))
         query = select(table).where(table.c.id == object_id)
+        if table_name == 'seo_content_messages':
+            conversations = Base.metadata.tables['seo_content_conversations']
+            query = select(table, conversations.c.tenant_id, conversations.c.site_id).join(
+                conversations, conversations.c.id == table.c.conversation_id).where(table.c.id == object_id)
         if lock:
             query = query.with_for_update(read=True)
         row = (await session.execute(query)).mappings().first()

@@ -19,7 +19,6 @@ from app.models.seo import (
     SeoSitePage,
 )
 from app.models.seo_qa import SeoQaBatch, SeoQaFact
-from app.models.seo_cockpit import SeoTask
 from app.models.tenant import Tenant
 
 
@@ -257,8 +256,8 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
 async def lock_manual_write_scope(session, ctx, request, body, rule):
     """Hold assignment -> site locks, matching plan writers and schedulers.
 
-    A manual edit is admitted only in a provably paused scope with no unfinished
-    system work. Do not pause, cancel, or authorize any existing execution.
+    Advisor operations may run during an active service plan. Keep the scope and
+    object locks; editing content never changes a plan or authorizes its worker.
     """
     if getattr(rule, "workflow", False):
         from app.security.seo_advisor_work import lock_workflow_scope
@@ -280,21 +279,6 @@ async def lock_manual_write_scope(session, ctx, request, body, rule):
     if (site['status'] != 'active' or module is None or module['status'] not in {'active', 'trial'}
             or (module['expires_at'] is not None and module['expires_at'] < date.today())):
         _reject(403, "ADVISOR_OBJECT_UNAVAILABLE")
-    settings = site['site_settings']
-    plan = settings.get('seo_service_plan') if isinstance(settings, dict) else None
-    if (not isinstance(plan, dict) or plan.get('status') != 'paused'
-            or any(value for key, value in plan.items()
-                   if key.endswith('_enabled'))):
-        _reject(403, "ADVISOR_AUTOMATIC_CONSUMER_ACTIVE")
-    task = await session.scalar(select(SeoTask.id).where(
-        SeoTask.tenant_id == ctx.tenant_id, SeoTask.site_id == site_id,
-        SeoTask.status.in_(['open', 'in_progress']),
-        or_(SeoTask.assignee_role == 'system', SeoTask.action_type.in_([
-            'content_delivery', 'site_diagnosis', 'ranking_followup', 'monthly_report',
-        ])),
-    ).limit(1))
-    if task is not None:
-        _reject(403, "ADVISOR_AUTOMATIC_CONSUMER_ACTIVE")
     for model, states in ((SeoQaBatch, ['queued', 'running']),
                           (SeoAiOperation, ['running']), (SeoAutomationRun, ['running'])):
         query = select(model.id, model.status).where(
@@ -307,8 +291,6 @@ async def lock_manual_write_scope(session, ctx, request, body, rule):
             query = query.with_for_update(read=True)
         else:
             query = query.where(model.status.in_(states))
-        rows = (await session.execute(query)).all()
-        if any(row.status in states for row in rows):
-            _reject(403, "ADVISOR_AUTOMATIC_CONSUMER_ACTIVE")
+        await session.execute(query)
     # Lock freshly read linked objects as well; scope cannot migrate before commit.
     await _scope(session, ctx, request, body, rule, lock=True)
