@@ -9029,7 +9029,7 @@ async def push_variant_batch(
             },
             created_by=ctx.user_id,
         )
-        background_tasks.add_task(run_job_in_background, job.id, tenant_id)
+        background_tasks.add_task(run_job_in_background, job.id, req.tenant_id)
         return {
             "async": True,
             "job": job_payload(job),
