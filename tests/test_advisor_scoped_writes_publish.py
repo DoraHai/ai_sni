@@ -52,3 +52,20 @@ def test_actor_rechecked_before_each_external_attempt():
         with pytest.raises(HTTPException):
             asyncio.run(recheck_external(session, "external_attempt"))
     assert check.await_count == 1
+
+
+def test_advisor_records_existing_publication_without_seeding_channels(tmp_path, monkeypatch):
+    from sqlalchemy import select
+    from app.models import GeoPublication, GeoPublishingChannel
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch) as env:
+            monkeypatch.setattr("app.geo.content.routes.ensure_geo_entitlement", AsyncMock())
+            monkeypatch.setattr("app.geo.content.routes.assert_can_publish", lambda *_a, **_kw: None)
+            monkeypatch.setattr("app.geo.content.routes._build_rule_input", AsyncMock(return_value=None))
+            response = await env.request("POST", "/content-tasks/10/publications", body={
+                "tenant_id": 10, "channel": "website", "published_url": "https://published.example.test/article"})
+            assert response.status_code == 200, response.text
+            async with env.factory() as session:
+                assert len(list(await session.scalars(select(GeoPublication)))) == 1
+                assert not list(await session.scalars(select(GeoPublishingChannel)))
+    asyncio.run(run())
