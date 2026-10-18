@@ -1080,9 +1080,9 @@ def test_batch_worker_reloads_live_account_permissions(mode):
     from app.seo_qa_batches import current_actor
     async def scenario():
         user=SimpleNamespace(id=7,username='worker-owner',role_id=1,tenant_id=2 if mode=='other_tenant' else 1,is_active=mode!='inactive')
-        role=SimpleNamespace(name='operator',permissions={'seo.content':'view' if mode=='readonly' else 'edit'})
-        session=SimpleNamespace(get=AsyncMock(side_effect=[user,role]))
-        batch=SimpleNamespace(actor='7',tenant_id=1)
+        role=SimpleNamespace(name='operator',is_system=False,permissions={'seo.content':'view' if mode=='readonly' else 'edit'})
+        session=SimpleNamespace(get=AsyncMock(side_effect=[user,role,role]))
+        batch=SimpleNamespace(actor='7',tenant_id=1,items=[])
         if mode=='allowed': assert (await current_actor(session,batch)).can_edit('seo.content')
         else:
             with pytest.raises(HTTPException) as exc: await current_actor(session,batch)

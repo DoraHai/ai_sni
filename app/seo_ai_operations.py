@@ -55,7 +55,7 @@ async def _module(session, tenant_id):
 def _refund(module, row):
     settings = dict(module.module_settings or {})
     usage = dict(settings.get(SEO_USAGE_KEY) or {})
-    if usage.get("date") == row.charged_on:
+    if usage.get("date") == row.charged_on and not row.kind.startswith("advisor_"):
         resources = (WORKBENCH_CHAT_RESOURCE, workbench_user_resource(row.actor)) if row.kind == WORKBENCH_CHAT_KIND else ("ai_requests",)
         for resource in resources:
             usage[resource] = max(0, int(usage.get(resource) or 0) - 1)
@@ -66,6 +66,9 @@ def _refund(module, row):
 
 
 async def claim_seo_ai_operation(session, tenant_id, *, request_key, payload, actor, kind, limit):
+    advisor_kind = getattr(session, "_seo_advisor_ai_kind", None)
+    if advisor_kind is not None:
+        kind = "advisor_" + kind
     module = await _module(session, tenant_id)
     fingerprint = request_fingerprint(payload)
     row = await session.scalar(select(SeoAiOperation).where(
@@ -89,7 +92,12 @@ async def claim_seo_ai_operation(session, tenant_id, *, request_key, payload, ac
             raise operation_error("operation_refunded", "上次操作未完成，额度已退还，请重新发起操作")
         await session.rollback()
         raise operation_error("operation_running", "上次操作仍在处理中，请稍后重试以取回结果")
-    receipt = await charge_seo_usage(session, tenant_id, "ai_requests", 1, limit, commit=False)
+    if advisor_kind is None:
+        receipt = await charge_seo_usage(session, tenant_id, "ai_requests", 1, limit, commit=False)
+    else:
+        from app.seo_usage_limits import SEO_USAGE_TIMEZONE
+        receipt = getattr(session, "_seo_advisor_quota_receipt", None) or {
+            "date": datetime.now(SEO_USAGE_TIMEZONE).date().isoformat(), "used": 0, "limit": None}
     operation_id = str(uuid4())
     session.add(SeoAiOperation(
         id=operation_id, tenant_id=tenant_id, site_id=payload.get("site_id"), request_key=request_key,

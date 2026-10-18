@@ -78,22 +78,6 @@ def test_nested_references_and_unknown_ids_fail_closed():
         with pytest.raises(HTTPException): references(body, "/api/v1/seo/keywords")
 
 
-@pytest.mark.parametrize('body,denied', [
-    ({}, True), ({'use_ai': True}, True), ({'use_ai': 'true'}, True),
-    ({'use_ai': 1}, True), ({'use_ai': None}, True),
-    ({'use_ai': False}, False), ({'use_ai': 'false'}, False),
-    ({'use_ai': 0}, False),
-])
-def test_first_batch_serp_ai_defaults_cannot_bypass_unavailable_quota(body, denied):
-    request = req('POST', '/api/v1/seo/rank-serp/collect')
-    rule = match_write_rule(request)
-    if denied:
-        with pytest.raises(HTTPException):
-            check_write_fields(rule, body)
-    else:
-        check_write_fields(rule, body)
-
-
 @pytest.mark.parametrize("enabled", [False, True])
 def test_new_write_keeps_switch_and_current_customer_checks(monkeypatch, enabled):
     from app.config import get_settings

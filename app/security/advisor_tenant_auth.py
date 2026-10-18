@@ -119,6 +119,15 @@ async def enforce_advisor_request(request, ctx, session):
         if body is None and not rule.fields:
             body = {}
         check_write_fields(rule, body)
+        if rule.workflow:
+            from pydantic import BaseModel, ValidationError
+            fields = getattr(getattr(request.scope.get("route"), "dependant", None), "body_params", ())
+            for field in fields:
+                if isinstance(field.type_, type) and issubclass(field.type_, BaseModel):
+                    try:
+                        field.type_.model_validate(body)
+                    except ValidationError:
+                        reject(422, "ADVISOR_INVALID_WRITE_PAYLOAD")
         request.state.seo_advisor_evidence = {"requested_object_ids": {
             key: value for key, value in body.items()
             if key != "request_id" and key.endswith(("_id", "_ids"))
@@ -154,7 +163,8 @@ async def enforce_advisor_request(request, ctx, session):
         ctx.advisor_write_scope = (request, body, rule)
         from app.security.seo_advisor_audit import install_commit_guard
         install_commit_guard(session, ctx, request)
-    from app.security.seo_advisor_reads import install_query_scope
+        from app.security.seo_advisor_quota import admit
+        await admit(session, ctx, rule, body)
     install_query_scope(session, ctx)
 
 

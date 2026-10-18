@@ -90,8 +90,8 @@ def advisor_query(user_id, *, advisor_tenant_id=None):
             AdvisorTenantGrant.revoked_at.is_(None)).exists())
 
 
-def summary(row, site, tenant_name, can_ai=True):
-    result = onsite.public(row, True, site.site_settings, can_ai)
+def summary(row, site, tenant_name, can_ai=True, *, advisor=False):
+    result = onsite.public(row, True, site.site_settings, can_ai, advisor=advisor)
     w = result["workflow"]
     next_action = {"draft": "save_proposal", "review": "approve", "implementation": "implement",
                    "recheck": "recheck", "acceptance": "accept"}.get(w["phase"])
@@ -124,7 +124,7 @@ async def advisor_tasks(before_id: PositiveInt | None = None, limit: int = Query
         query = query.where(SeoTask.id < before_id)
     rows = list((await session.execute(query.order_by(SeoTask.id.desc()).limit(limit + 1)
                                       .execution_options(populate_existing=True))).all())
-    return {"schema": 1, "module": "seo", "items": [summary(*r, can_ai=fresh.can_view("seo.keywords")) for r in rows[:limit]],
+    return {"schema": 1, "module": "seo", "items": [summary(*r, can_ai=fresh.can_view("seo.keywords"), advisor=ctx.is_advisor) for r in rows[:limit]],
             "next_before_id": rows[limit - 1][0].id if len(rows) > limit else None}
 
 
@@ -214,7 +214,7 @@ async def ai_proposal(task_id: PositiveInt, req: Request,
                      "error": {"code": "onsite_ai_interrupted", "message": "原调用未完成核实，不会自动重试"}}
             save_run(row, prior)
             await session.commit()
-        return {**onsite.public(row, True, site.site_settings), "replayed": True,
+        return {**onsite.public(row, True, site.site_settings, advisor=ctx.is_advisor), "replayed": True,
                 "request_run": public_run(prior)}
     if w["revision"] != req.expected_revision:
         raise ai.problem(409, "onsite_ai_revision_changed", "任务版本已变化，请重新读取核对")
@@ -237,7 +237,8 @@ async def ai_proposal(task_id: PositiveInt, req: Request,
              "source_revision": w["revision"], "source_hash": work.proposal_hash(facts),
              "provider_metadata": provider_metadata,
              "actor_user_id": fresh.user_id, "started_at": ai.now().isoformat(), "finished_at": None}
-    site.site_settings = ai.reserve(site.site_settings)
+    if not getattr(ctx, "is_advisor", False):
+        site.site_settings = ai.reserve(site.site_settings)
     row.params = {**row.params, "onsite": {**row.params["onsite"], "ai_run": {"request_id": key}}}
     save_run(row, claim)
     await session.commit()  # Durable nonce/quota BEFORE provider; release all row locks.
@@ -290,4 +291,4 @@ async def ai_proposal(task_id: PositiveInt, req: Request,
     await session.commit()
     if cancelled:
         raise asyncio.CancelledError()
-    return {**onsite.public(row, True, site.site_settings), "replayed": False}
+    return {**onsite.public(row, True, site.site_settings, advisor=ctx.is_advisor), "replayed": False}
