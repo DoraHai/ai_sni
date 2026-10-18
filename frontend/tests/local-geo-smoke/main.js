@@ -21,7 +21,7 @@ let delaySave = false
 let releaseSave = null
 window.addEventListener('error', (event) => { fault.value = event.message })
 window.addEventListener('unhandledrejection', (event) => { fault.value = String(event.reason) })
-session.setAuth('LOCAL-FAKE-NO-NETWORK', { id: 9, permissions: { 'geo.content': 'edit' } }, false)
+session.setAuth('LOCAL-FAKE-NO-NETWORK', { id: 9, tenant_id: null, permissions: { 'geo.content': 'edit' } }, false)
 session.setTenants([{ id: 7, name: '测试客户 A' }, { id: 8, name: '测试客户 B' }])
 session.setTenant(7)
 const question = '工业设备应该如何选型？'

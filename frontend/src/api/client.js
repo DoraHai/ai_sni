@@ -82,7 +82,10 @@ client.interceptors.response.use(
           ? '服务内部错误。若刚打开页面就失败，多半是数据库未启动。'
           : error.message ||
             '网络异常，请稍后重试')
-    return Promise.reject(new Error(detail))
+    return Promise.reject(Object.assign(new Error(detail), {
+      code: error.response?.data?.detail?.code,
+      status,
+    }))
   },
 )
 

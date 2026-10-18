@@ -1,4 +1,6 @@
 import { computed, reactive } from 'vue'
+import { advisorClaims } from '../utils/geoAdvisorTenant.js'
+import { selectStoredAuth, writeAuthEnvelope, clearStoredAuth } from './sessionStorage.js'
 
 export const AUTH_CONTEXT_EVENT = 'sem:auth-context-changed'
 
@@ -13,12 +15,19 @@ function notifyAuthContext(kind) {
 // 当前客户(tenantId)持久化 sessionStorage(每个标签页可以看不同客户)。
 // 权限：user.permissions = {菜单key: 'view'|'edit'}（自定义角色 RBAC）。
 // 「记住我」：勾选=localStorage(跨重启)，不勾=sessionStorage(关页即失效)
-const _activeStore = () => (localStorage.getItem('sem_token') ? localStorage : sessionStorage)
+const initialAuth = selectStoredAuth(localStorage, sessionStorage)
+let authStorage = initialAuth?.storage
+const _activeStore = () => (authStorage === 'local' ? localStorage : sessionStorage)
+const advisorTenantId = (token) => {
+  const claims = advisorClaims(token)
+  return claims?.scope_kind === 'advisor_tenant' ? claims.tid : null
+}
 const state = reactive({
-  token: localStorage.getItem('sem_token') || sessionStorage.getItem('sem_token') || '',
-  user: JSON.parse(localStorage.getItem('sem_user') || sessionStorage.getItem('sem_user') || 'null'),
+  token: initialAuth?.token || '',
+  user: initialAuth?.user || null,
   tenants: [],
-  tenantId: Number(sessionStorage.getItem('sem_tenant_id')) || null,
+  tenantId: advisorClaims(initialAuth?.token) ? advisorTenantId(initialAuth.token)
+    : Number(sessionStorage.getItem('sem_tenant_id')) || null,
 })
 
 export const session = {
@@ -42,25 +51,44 @@ export const session = {
     state.user = user
     const store = remember ? localStorage : sessionStorage
     const other = remember ? sessionStorage : localStorage
-    store.setItem('sem_token', token)
-    store.setItem('sem_user', JSON.stringify(user))
-    other.removeItem('sem_token')
-    other.removeItem('sem_user')
+    writeAuthEnvelope(store, token, user)
+    clearStoredAuth(other)
+    authStorage = remember ? 'local' : 'session'
+    sessionStorage.removeItem('sem_advisor_identity_v1')
     // 绑定了单客户的账号锁定该客户
-    if (user?.tenant_id) this.setTenant(user.tenant_id)
+    if (advisorClaims(token)) this.setTenant(advisorTenantId(token))
+    else if (user?.tenant_id) this.setTenant(user.tenant_id)
+    notifyAuthContext('identity')
+  },
+
+  replaceAuthForAdvisorTenant(token, tenantId) {
+    const claims = advisorClaims(token)
+    if (advisorClaims(state.token)?.scope_kind !== 'advisor_identity'
+        || claims?.scope_kind !== 'advisor_tenant' || claims.tid !== tenantId
+        || String(claims.sub) !== String(state.user?.id)
+        || !Number.isSafeInteger(claims.gid) || claims.gid <= 0) {
+      throw new TypeError('INVALID_ADVISOR_TENANT_RESPONSE')
+    }
+    sessionStorage.setItem('sem_advisor_identity_v1', JSON.stringify({ token: state.token, user: state.user }))
+    writeAuthEnvelope(sessionStorage, token, state.user)
+    authStorage = 'session'
+    state.token = token
+    this.setTenant(tenantId)
     notifyAuthContext('identity')
   },
 
   // 登录态校验后用最新 user 刷新（角色权限可能被管理员改过，即时生效）
   refreshUser(user) {
     state.user = user
-    _activeStore().setItem('sem_user', JSON.stringify(user))
-    if (user?.tenant_id) this.setTenant(user.tenant_id)
+    writeAuthEnvelope(_activeStore(), state.token, user)
+    if (advisorClaims(state.token)) this.setTenant(advisorTenantId(state.token))
+    else if (user?.tenant_id) this.setTenant(user.tenant_id)
     notifyAuthContext('permissions')
   },
 
   setTenants(list) {
     state.tenants = list
+    if (advisorClaims(state.token) || state.user?.is_advisor) return
     if (state.tenantId && list.some((t) => t.id === state.tenantId)) return
     const stored = Number(sessionStorage.getItem('sem_tenant_id') || 0)
     if (stored && list.some((t) => t.id === stored)) {
@@ -71,8 +99,10 @@ export const session = {
   },
 
   setTenant(id) {
+    if (advisorClaims(state.token) && id !== advisorTenantId(state.token)) return
     state.tenantId = id
     if (id) sessionStorage.setItem('sem_tenant_id', String(id))
+    else sessionStorage.removeItem('sem_tenant_id')
   },
 
   logout() {
@@ -80,9 +110,9 @@ export const session = {
     state.user = null
     state.tenants = []
     for (const s of [localStorage, sessionStorage]) {
-      s.removeItem('sem_token')
-      s.removeItem('sem_user')
+      clearStoredAuth(s)
     }
+    sessionStorage.removeItem('sem_advisor_identity_v1')
     notifyAuthContext('logout')
   },
 }
