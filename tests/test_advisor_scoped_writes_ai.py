@@ -360,3 +360,50 @@ def test_ai_operations_allow_running_execution_with_own_scope(tmp_path, monkeypa
             async with env.factory() as session:
                 assert len(list(await session.scalars(select(GeoAsyncJob)))) == 1
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('change', ['new-version', 'same-version-edit'])
+def test_ai_review_discards_response_for_changed_article(tmp_path, monkeypatch, change):
+    from app.models import GeoArticleVersion
+    from unittest.mock import AsyncMock
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch) as env:
+            async def review(**_kwargs):
+                async with env.factory() as editor:
+                    if change == 'new-version':
+                        editor.add(GeoArticleVersion(id=70, task_id=10, version_no=2, title='new draft',
+                            body_markdown='New synthetic draft.', kind='master'))
+                    else:
+                        article = await editor.get(GeoArticleVersion, 10)
+                        article.body_markdown = 'Changed same-version draft.'
+                    await editor.commit()
+                return {'summary': 'stale review', 'issues': []}
+            monkeypatch.setattr('app.geo.content.ai_settings.resolve_llm_credentials',
+                AsyncMock(return_value={'api_key': 'fixture', 'model': 'fixture'}))
+            monkeypatch.setattr('app.geo.content.ai_reviewer.run_ai_review', review)
+            response = await env.request('POST', '/content-tasks/10/ai-review', body={'persist': True})
+            assert response.status_code == 409, response.text
+            async with env.factory() as session:
+                assert not (await session.get(GeoContentTask, 10)).rule_result.get('ai_review')
+    asyncio.run(run())
+
+
+def test_ai_review_binds_current_version_and_disappears_after_edit(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch) as env:
+            monkeypatch.setattr('app.geo.content.ai_settings.resolve_llm_credentials',
+                AsyncMock(return_value={'api_key': 'fixture', 'model': 'fixture'}))
+            monkeypatch.setattr('app.geo.content.ai_reviewer.run_ai_review',
+                AsyncMock(return_value={'summary': 'current advice', 'issues': []}))
+            response = await env.request('POST', '/content-tasks/10/ai-review', body={'persist': True})
+            assert response.status_code == 200, response.text
+            review = response.json()['ai_review']
+            assert review['article_id'] == 10 and review['article_version'] == 1
+            assert len(review['content_sha256']) == 64
+            response = await env.request('PUT', '/content-tasks/10/article', body={
+                'expected_article_id': 10, 'title': 'edited title', 'body_markdown': 'Edited synthetic draft.'})
+            assert response.status_code == 200, response.text
+            async with env.factory() as session:
+                assert not (await session.get(GeoContentTask, 10)).rule_result.get('ai_review')
+    asyncio.run(run())
