@@ -1851,6 +1851,17 @@ def _normalize_brand_homepage(value: str) -> tuple[str, str]:
     return homepage, domain
 
 
+def _set_customer_brand_name(ctx, tenant, brand_name):
+    if getattr(ctx, 'is_advisor', False):
+        if brand_name != tenant.name:
+            raise HTTPException(403, '客户品牌名是多个网站共用的资料，顾问只能修改本网站官网')
+        return
+    tenant.name = brand_name
+    terms = [str(item).strip() for item in (tenant.brand_terms or [])
+             if str(item).strip() and str(item).strip() != brand_name]
+    tenant.brand_terms = [brand_name, *terms][:30]
+
+
 async def _brand_profile_payload(
     session: AsyncSession, tenant: Tenant
 ) -> dict[str, Any]:
@@ -1914,13 +1925,7 @@ async def update_brand_profile(
         raise HTTPException(400, "品牌名称不能为空")
     homepage, domain = _normalize_brand_homepage(req.website)
 
-    tenant.name = brand_name
-    brand_terms = [
-        str(item).strip()
-        for item in (tenant.brand_terms or [])
-        if str(item).strip() and str(item).strip() != brand_name
-    ]
-    tenant.brand_terms = [brand_name, *brand_terms][:30]
+    _set_customer_brand_name(ctx, tenant, brand_name)
 
     primary = await session.scalar(
         select(SeoBrandAsset).where(
@@ -5568,6 +5573,7 @@ class ContentSourcePageBinding(BaseModel):
 
 class DistributionConnectionCreate(BaseModel):
     tenant_id: PositiveInt
+    site_id: PositiveInt | None = None
     platform_code: str = Field(min_length=1, max_length=40)
     name: str = Field(min_length=1, max_length=120)
     base_url: str | None = Field(None, max_length=2000)
@@ -5647,6 +5653,7 @@ class SeoServicePlanUpdate(BaseModel):
 
 
 class DistributionConnectionUpdate(BaseModel):
+    site_id: PositiveInt | None = None
     name: str | None = Field(None, min_length=1, max_length=120)
     base_url: str | None = Field(None, max_length=2000)
     credentials: dict[str, str] | None = None
@@ -5752,6 +5759,7 @@ def _connection_payload(row: SeoDistributionConnection) -> dict[str, Any]:
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
+        "site_id": (row.config or {}).get('advisor_site_id') or None,
         "platform_code": row.platform_code,
         "platform_name": definition["name"],
         "name": row.name,
@@ -7960,6 +7968,9 @@ async def create_distribution_connection(
         status="ready" if definition["mode"] == "assisted" else "configured",
         created_by=ctx.user_id,
     )
+    if 'site_id' in req.model_fields_set:
+        from app.security.seo_advisor_connections import set_connection_binding
+        await set_connection_binding(session, ctx, row, req.tenant_id, req.site_id)
     session.add(row)
     try:
         await session.commit()
@@ -7981,6 +7992,9 @@ async def update_distribution_connection(
     ctx.ensure_tenant(tenant_id)
     await require_any_operational_seo_site(session, tenant_id)
     row = await _distribution_connection(session, tenant_id, connection_id)
+    if 'site_id' in req.model_fields_set:
+        from app.security.seo_advisor_connections import set_connection_binding
+        await set_connection_binding(session, ctx, row, tenant_id, req.site_id)
     try:
         definition = platform_definition(row.platform_code)
         connection_changed = False
