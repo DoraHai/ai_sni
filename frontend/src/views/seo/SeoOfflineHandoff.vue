@@ -87,7 +87,7 @@ watch(scope, () => {
     </el-form>
     <template #footer><el-button :loading="busy" :disabled="!selected.length || !form.account.trim()" @click="exportOrders">下载JSON+CSV</el-button></template>
   </el-dialog>
-  <el-dialog v-model="receiptDialog" title="人工回执预检" width="760px">
+  <el-dialog v-model="receiptDialog" title="人工回执预检" width="min(760px, calc(100vw - 32px))">
     <p>整批预检通过后再确认导入；published 仅表示人工报告，failed/unknown 不计为成功。</p>
     <el-table :data="preview?.rows || []" max-height="400">
       <el-table-column prop="article_id" label="稿件ID" /><el-table-column prop="platform" label="平台" />
