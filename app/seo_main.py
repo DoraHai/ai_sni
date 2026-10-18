@@ -582,7 +582,7 @@ async def _check_advisor_grants_structure(conn):
     if (not required.issubset(indexes) or 'UNIQUE INDEX' not in active_index
             or 'revoked_at IS NULL' not in active_index or '(user_id, tenant_id)' not in active_index):
         raise RuntimeError("Advisor grant indexes mismatch")
-    triggers = list(await conn.execute(text("""SELECT t.tgenabled,t.tgtype,p.proname
+    triggers = list(await conn.execute(text("""SELECT t.tgenabled::text,t.tgtype,p.proname
         FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid
         WHERE t.tgrelid=to_regclass('public.advisor_tenant_grants')
           AND NOT t.tgisinternal AND t.tgname='advisor_tenant_grants_immutable'""")))
