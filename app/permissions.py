@@ -92,11 +92,6 @@ def effective_role_permissions(
 ) -> dict[str, str]:
     """Apply non-persistent invariants only to the trusted built-in administrator."""
     out = normalize_permissions(permissions or {})
-    # The independent GEO menu registry predates the SEM customer-admin menu.
-    # The shared identity predicate must still recognize that existing platform
-    # permission. This helper is used only for classification, never GEO RBAC.
-    if isinstance(permissions, dict) and permissions.get("settings.customers") in LEVELS:
-        out["settings.customers"] = permissions["settings.customers"]
     if is_system and role_name == ADMIN_ROLE_NAME:
         for key in PLATFORM_ADMIN_KEYS:
             out[key] = "edit"

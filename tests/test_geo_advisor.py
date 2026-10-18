@@ -39,13 +39,15 @@ def legacy(uid):
                       _jwt_secret(), algorithm=JWT_ALG)
 
 
-def test_shared_predicate_recognizes_sem_customer_admin_without_changing_geo_rbac():
+@pytest.mark.parametrize("settings_key", ["settings.customers", "settings.future"])
+@pytest.mark.parametrize("level, expected", [("edit", False), ("view", True)])
+def test_shared_predicate_excludes_raw_settings_edits_without_changing_geo_rbac(settings_key, level, expected):
     from app.permissions import MENU_KEYS
     from app.security.advisor_scope import is_advisor
     role = SimpleNamespace(name="客户管理员", is_system=False, permissions={
-        "geo.assets": "edit", "geo.content": "edit", "settings.customers": "edit"})
-    assert not is_advisor(role)
-    assert "settings.customers" not in MENU_KEYS
+        "geo.assets": "edit", "geo.content": "edit", settings_key: level})
+    assert is_advisor(role) is expected
+    assert settings_key not in MENU_KEYS
 
 
 @asynccontextmanager
@@ -239,4 +241,36 @@ def test_permission_failure_closed_for_advisor_only(tmp_path, monkeypatch):
             assert (await request("/projects?tenant_id=10")).status_code == 503
             assert (await request("/projects?tenant_id=10", auth=legacy(3))).status_code == 200
             assert (await request("/projects?tenant_id=30", auth=legacy(2))).status_code == 200
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("revoked", [False, True])
+def test_raw_settings_edit_does_not_release_grant_history(tmp_path, monkeypatch, revoked):
+    async def run():
+        async with sandbox(tmp_path, monkeypatch) as (request, factory):
+            async with factory() as s:
+                await s.execute(update(Role).where(Role.id == 1).values(permissions={
+                    "geo.assets": "edit", "geo.content": "edit", "settings.future": "edit"}))
+                await s.execute(update(User).where(User.id == 1).values(tenant_id=None))
+                if revoked:
+                    await s.execute(update(Grant).where(Grant.user_id == 1).values(
+                        revoked_at=datetime.now(timezone.utc), revoked_by=2, revoke_reason="role_changed"))
+                await s.commit()
+            for auth in (legacy(1), token()):
+                response = await request("/projects?tenant_id=30", auth=auth)
+                assert response.status_code == 403, response.text
+                assert response.json()["detail"]["code"] == "ADVISOR_ROLE_CHANGED"
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("with_grants", [False, True])
+def test_raw_settings_edit_native_account_keeps_single_tenant_scope(tmp_path, monkeypatch, with_grants):
+    async def run():
+        async with sandbox(tmp_path, monkeypatch, with_grants=with_grants) as (request, factory):
+            async with factory() as s:
+                await s.execute(update(Role).where(Role.id == 3).values(permissions={
+                    "geo.assets": "edit", "geo.content": "edit", "settings.future": "edit"}))
+                await s.commit()
+            assert (await request("/projects?tenant_id=10", auth=legacy(3))).status_code == 200
+            assert (await request("/projects?tenant_id=30", auth=legacy(3))).status_code == 403
     asyncio.run(run())
