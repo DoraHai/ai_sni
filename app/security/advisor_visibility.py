@@ -15,7 +15,7 @@ async def check_visibility_execution(session, run, prompt_ids, *, lock=False):
     from types import SimpleNamespace
     from sqlalchemy.orm import load_only
     from app.config import get_settings
-    from app.models import User, Role
+    from app.models import User, Role, GeoTrackingEngine
     from app.module_scope import ensure_module_access
     from app.security.advisor_scope import AdvisorScope, account_locked, active_grants, is_advisor, read_grants
     from app.security.auth import AuthContext
@@ -57,6 +57,16 @@ async def check_visibility_execution(session, run, prompt_ids, *, lock=False):
         await ensure_module_access(session, ctx, run.tenant_id, 'geo')
         request = SimpleNamespace(state=SimpleNamespace(advisor_visibility_prompt_ids=list(prompt_ids)))
         await check_visibility_scope(session, ctx, request, lock=lock)
+        keys = run.engine_keys
+        if not isinstance(keys, list) or not keys or any(not isinstance(key, str) for key in keys):
+            raise AdvisorVisibilityUnavailable(message)
+        engines = select(GeoTrackingEngine.engine_key).where(
+            GeoTrackingEngine.tenant_id == run.tenant_id, GeoTrackingEngine.enabled.is_(True),
+            GeoTrackingEngine.engine_key != 'other', GeoTrackingEngine.engine_key.in_(keys))
+        if lock:
+            engines = engines.with_for_update()
+        if set(await session.scalars(engines)) != set(keys):
+            raise AdvisorVisibilityUnavailable(message)
         if lock:
             await check_manual_execution_scope(session, ctx, VISIBILITY_RUN_RULE)
     except AdvisorVisibilityUnavailable:
