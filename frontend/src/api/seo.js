@@ -415,8 +415,8 @@ export function updateSeoDistributionConnection({ connectionId, tenantId, payloa
   return client.patch(`/api/v1/seo/content-distribution/connections/${connectionId}`, payload, { params: { tenant_id: tenantId } })
 }
 
-export function testSeoDistributionConnection({ connectionId, tenantId }) {
-  return client.post(`/api/v1/seo/content-distribution/connections/${connectionId}/test`, null, { params: { tenant_id: tenantId }, timeout: 30000 })
+export function testSeoDistributionConnection({ connectionId, tenantId, siteId = null }) {
+  return client.post(`/api/v1/seo/content-distribution/connections/${connectionId}/test`, null, { params: { tenant_id: tenantId, site_id: siteId }, timeout: 30000 })
 }
 
 export function fetchSeoContentPublications({ tenantId, siteId, contentId, status }) {

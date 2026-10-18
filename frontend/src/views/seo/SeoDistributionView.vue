@@ -421,7 +421,7 @@ async function saveConnection() {
 async function testConnection(connection, options = {}) {
   connectionTestingId.value = connection.id
   try {
-    const result = await testSeoDistributionConnection({ connectionId: connection.id, tenantId: currentTenantId.value })
+    const result = await testSeoDistributionConnection({ connectionId: connection.id, tenantId: currentTenantId.value, siteId: siteId.value })
     if (!options.quietSuccess) ElMessage.success(result.message || '连接测试通过')
   } catch (e) {
     ElMessage.error(e.message)

@@ -51,7 +51,6 @@ CASES = (
 CASE_IDS = [c.method + " " + c.template for c in CASES]
 OUTSIDE = (
     ("PUT", "/workbench/service-plan"),
-    ("POST", "/workbench/service-plan/run"),
     ("POST", "/workbench/content-assets/{content_id}/conversation/messages"),
     ("DELETE", "/content-assets/{content_id}"),
     ("POST", "/future-manual-write"),

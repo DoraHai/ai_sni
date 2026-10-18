@@ -8029,6 +8029,8 @@ async def test_distribution_connection(
     try:
         credentials = decrypt_credentials(row.credentials_encrypted)
         await require_any_operational_seo_site(session, tenant_id)
+        from app.security.seo_advisor_execution import recheck_before_provider
+        await recheck_before_provider(session)
         result = await test_connection(row.platform_code, row.base_url, credentials)
     except SeoDistributionError as exc:
         row.status = "failed"
