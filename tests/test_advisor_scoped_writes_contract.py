@@ -63,7 +63,7 @@ def test_settings_scoped_flag_exists_and_defaults_false():
 def test_write_surface_is_bounded_to_this_task(rules):
     mandatory = {(case[0], PREFIX + case[1]) for case in CASES}
     optional = {('POST', PREFIX + path) for path in ('/facts/import', '/prompts/import', '/prompts/import-csv')}
-    optional |= {('POST', PREFIX + '/content-tasks/{task_id}/' + action) for action in ('generate', 'suggest-brief')}
+    optional |= {('POST', PREFIX + '/content-tasks/{task_id}/' + action) for action in ('generate', 'suggest-brief', 'ai-review')}
     assert mandatory <= rules.WRITE_ROUTES.keys()
     assert rules.WRITE_ROUTES.keys() <= mandatory | optional
 
@@ -83,7 +83,7 @@ def test_mandatory_rule_matches_exact_method_and_mounted_template(rules, case):
 
 @pytest.mark.parametrize('method,template', [
     ('DELETE', '/facts/{fact_id}'),
-    ('POST', '/content-tasks/{task_id}/ai-review'),
+
     ('POST', '/content-tasks/{task_id}/publications'), ('POST', '/facts-extra'),
     ('PATCH', '/content-tasks/{task_id}/variants/{channel}/publish'),
 ])
