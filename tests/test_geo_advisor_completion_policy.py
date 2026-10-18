@@ -188,3 +188,22 @@ def test_patrol_history_delete_retains_answers_and_does_not_replay_deleted_run()
     counter = session.add.call_args.args[0]
     assert counter.created_at == created and counter.created_by == 1
     assert counter.summary == {'reservation_only': True, 'deleted_run_id': 10}
+
+
+def test_completed_delete_does_not_resolve_its_missing_target_again(monkeypatch):
+    from app.security import advisor_operation_call as calls
+    checked = AsyncMock()
+    monkeypatch.setattr(calls, 'recheck_current', checked)
+    session = SimpleNamespace(info={})
+    @calls.checked_call
+    async def endpoint():
+        session.info['advisor_delete_committed'] = True
+        return {'deleted': True}
+    async def run():
+        token = calls.current_operation.set((session, object()))
+        try:
+            assert await endpoint() == {'deleted': True}
+        finally:
+            calls.current_operation.reset(token)
+    asyncio.run(run())
+    assert checked.await_count == 1

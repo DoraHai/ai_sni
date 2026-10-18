@@ -22,7 +22,12 @@ def checked_call(function):
     async def checked(*args, **kwargs):
         await recheck_current()
         result = await function(*args, **kwargs)
-        await recheck_current()
+        binding = current_operation.get()
+        # A committed DELETE was checked with its still-existing target before
+        # flush. Resolving that target again would turn success into a false 403.
+        # Delivery middleware still freshly checks grant/role/project authority.
+        if binding is None or not binding[0].info.get('advisor_delete_committed'):
+            await recheck_current()
         return result
     original = inspect.unwrap(function)
     checked.__signature__ = inspect.signature(original, eval_str=True)
