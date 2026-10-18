@@ -49,7 +49,7 @@ export function advisorScopedFetch({session,fetchImpl,onDenied}){
         if(session.advisorScope==='advisor_tenant')code='ADVISOR_TENANT_SESSION_EXPIRED';
         else if(session.advisorScope==='advisor_identity'){session.logout();code='ADVISOR_IDENTITY_SESSION_EXPIRED';}
       }
-      if(advisorDeniedCodes.has(code)||['ADVISOR_TENANT_SELECTION_REQUIRED','ADVISOR_GRANTS_UNAVAILABLE','ADVISOR_TENANT_SESSION_EXPIRED','ADVISOR_IDENTITY_SESSION_EXPIRED'].includes(code)){
+      if(advisorDeniedCodes.has(code)||['ADVISOR_ROLE_CHANGED','ADVISOR_TENANT_SELECTION_REQUIRED','ADVISOR_GRANTS_UNAVAILABLE','ADVISOR_TENANT_SESSION_EXPIRED','ADVISOR_IDENTITY_SESSION_EXPIRED'].includes(code)){
         onDenied(code);throw fail(code);
       }
     }

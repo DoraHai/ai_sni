@@ -18,13 +18,13 @@ export function advisorPageView(module,page){
   return Object.entries(phases).map(([phase,label])=>{
     const rows=page.items.filter(t=>t.workflow.phase===phase);if(!rows.length)return '';
     return `<section class="advisor-group"><h3>${label} · 本页 ${rows.length} 项</h3>${rows.map(t=>`<article class="advisor-task"><h4>${esc(t.title||'站内任务')} #${t.id}</h4><p>${module.toUpperCase()} · ${esc(t.tenant_name||'客户 #'+t.tenant_id)} / ${esc(t.scope_name||(module==='geo'?'项目 #':'网站 #')+t.scope_id)}</p><p>月份：${esc(t.workflow.month||'不适用')} · 实施负责人：${esc(t.workflow.owner_name||'尚未指定')} · 服务端版本 v${t.workflow.revision}</p><p>下一步人工动作：${esc(nextLabel(t))}</p><p>阻塞原因：${esc(blockerLabel(t))}</p>${phase==='review'?'<strong>方案待人工审核，请核实事实与适用范围。</strong>':''}${t.workflow.ai_proposal?`<p>AI 提案已提供，需人工核实：${esc(t.workflow.ai_proposal.summary||'进入原任务查看提案依据')}</p><p>需补充资料：${esc(Array.isArray(t.workflow.ai_proposal.missing_information)?t.workflow.ai_proposal.missing_information.join('；'):t.workflow.ai_proposal.missing_information||'接口未提供')}</p>`:''}<p><a href="${esc(advisorTaskPath(t))}">进入原模块方案与验收</a></p></article>`).join('')}</section>`;
-  }).join('')||'<p>当前页没有获分配的站内任务。</p>';
+  }).join('')||'<p>这个客户还没有分配给你的站内任务</p>';
 }
 export function mountAdvisorWorkbench({root,session,subscribeSession,fetchImpl=fetch,browser=window}){
   root.classList.add('advisor-workbench');
   // A known display hint survives the connected-page redirect; it never grants scope.
   const entryUrl=new URL(browser.location.href),noticeCode=entryUrl.searchParams.get('advisor_notice');
-  const noticeMessage=['ADVISOR_TENANT_NOT_GRANTED','ADVISOR_GRANT_REVOKED','ADVISOR_NO_TENANT','ADVISOR_GRANTS_UNAVAILABLE','ADVISOR_TENANT_SESSION_EXPIRED','ADVISOR_IDENTITY_SESSION_EXPIRED','ADVISOR_TENANT_SELECTION_REQUIRED'].includes(noticeCode)?advisorMessages[noticeCode]:'';
+  const noticeMessage=['ADVISOR_GRANT_REVOKED','ADVISOR_ROLE_CHANGED'].includes(noticeCode)?'你的客户授权已变化，请重新选择客户':['ADVISOR_TENANT_NOT_GRANTED','ADVISOR_NO_TENANT','ADVISOR_GRANTS_UNAVAILABLE','ADVISOR_TENANT_SESSION_EXPIRED','ADVISOR_IDENTITY_SESSION_EXPIRED','ADVISOR_TENANT_SELECTION_REQUIRED'].includes(noticeCode)?advisorMessages[noticeCode]:'';
   if(entryUrl.searchParams.has('advisor_notice')){entryUrl.searchParams.delete('advisor_notice');browser.history?.replaceState(null,'',entryUrl.pathname+entryUrl.search+entryUrl.hash);}
   let tenantOptions=[],tenantName='',tenantMessage=noticeMessage,tenantBusy=false,multiMode=session.isAdvisorSession===true;
   const originalFetch=fetchImpl;
@@ -32,9 +32,10 @@ export function mountAdvisorWorkbench({root,session,subscribeSession,fetchImpl=f
   const tenantSwitch=createAdvisorTenantSwitch({session,fetchImpl});
   function clearCustomer(){epoch++;identity=null;states={};linkedAccounts=[];selectedAccount=null;filter='all';client.invalidate('tenant_changing');automation.invalidate();distribution.invalidate();remote.invalidate();}
   function denyTenant(code){
-    clearCustomer();tenantSwitch.invalidate();tenantBusy=false;tenantName='';tenantMessage=advisorMessages[code]||'请重新选择客户';message='';
+    clearCustomer();tenantSwitch.invalidate();tenantBusy=false;tenantName='';tenantMessage=['ADVISOR_GRANT_REVOKED','ADVISOR_ROLE_CHANGED'].includes(code)?'你的客户授权已变化，请重新选择客户':advisorMessages[code]||'请重新选择客户';message='';
     if(code==='ADVISOR_NO_TENANT')tenantOptions=[];
-    if(!['ADVISOR_GRANTS_UNAVAILABLE','ADVISOR_IDENTITY_SESSION_EXPIRED'].includes(code))session.restoreAdvisorIdentity();
+    if(code==='ADVISOR_ROLE_CHANGED')session.logout();
+    else if(!['ADVISOR_GRANTS_UNAVAILABLE','ADVISOR_IDENTITY_SESSION_EXPIRED'].includes(code))session.restoreAdvisorIdentity();
     render();
     if(session.token&&!['ADVISOR_GRANTS_UNAVAILABLE','ADVISOR_NO_TENANT'].includes(code))void loadTenants();
   }
@@ -81,7 +82,7 @@ export function mountAdvisorWorkbench({root,session,subscribeSession,fetchImpl=f
     for(const key of openKeys){const details=host.querySelector(`[data-automation-project="${key}"] details`);if(details)details.open=true;}
     if(focusedKey&&['task_ids','operation','max_dispatches','max_external_calls','cycle_mode','cycle_enabled'].includes(field)){const next=host.querySelector(`[data-automation-project="${focusedKey}"] [name="${field}"]`);if(next){next.focus({preventScroll:true});if(selection)next.setSelectionRange(...selection);}}
   }
-  const labels={NOT_INTEGRATED:'未接入：专用顾问接口尚不可用',READ_FAILED:'读取失败，请重试',CONTRACT_MISMATCH:'接口范围或版本未通过核验',PERMISSION_DENIED:'权限已变化，列表已清除',AUTH_EXPIRED:'登录已失效，列表已清除',NOT_AUTHENTICATED:'请先登录',IDENTITY_MISMATCH:'账号身份未通过核验'};
+  const labels={NOT_INTEGRATED:'未接入：专用顾问接口尚不可用',READ_FAILED:'读取失败，请重试',CONTRACT_MISMATCH:'接口范围或版本未通过核验',PERMISSION_DENIED:'当前账号无权读取站内任务',AUTH_EXPIRED:'你的客户授权已变化，请重新选择客户',ADVISOR_GRANT_REVOKED:'你的客户授权已变化，请重新选择客户',ADVISOR_ROLE_CHANGED:'你的客户授权已变化，请重新选择客户',NOT_AUTHENTICATED:'请先登录',IDENTITY_MISMATCH:'账号身份未通过核验'};
   function render(){if(disposed)return;
     root.innerHTML=`<header class="entry-header"><b>G-SNIPERS</b><span>顾问工作台</span><a href="${multiMode?'/customer-workbench/?console=advisor&module=seo':'/customer-workbench/'}">${multiMode?'SEO':'客户工作台'}</a><a href="/customer-workbench/?${multiMode?'console=advisor&':''}module=geo">GEO</a><a href="/workspace/cockpit">平台工作台</a><button data-advisor="logout">退出账号</button></header><main class="advisor-main">${tenantView()}<h1>我的站内交付任务</h1><p>${esc(identity?.user.display_name||identity?.user.username||'')} · 仅显示后端授权并分配给当前顾问的任务。</p><p>AI 提供建议；事实核实、重要发布与最终验收由人工完成。网站修改由维护人员实施。</p><p class="advisor-boundary">SEM 本轮暂不接入 AI 接管，继续人工处理；SEO/GEO 的自动控制范围以项目记录为准。</p><p role="status" aria-live="polite">${esc(message)}</p><div class="advisor-tools"><label>模块 <select id="advisor-module"><option value="all">全部可用模块</option>${(identity?.modules||[]).map(m=>`<option value="${m}" ${filter===m?'selected':''}>${m.toUpperCase()}</option>`).join('')}</select></label><button data-advisor="refresh">重新检查任务权限并刷新</button></div>${!identity&& !session.token?'<a href="/customer-workbench/?console=advisor&login=1">登录顾问工作台</a>':''}${identity&&!identity.modules.length?'<p>当前账号没有可用的顾问模块入口。顾问资格及任务分配由后端核验。</p>':''}${needsTenant()?`<section class="advisor-module"><h2>站内任务</h2><p role="status">${selectionPrompt}</p></section>`:''}${(identity?.modules||[]).filter(m=>filter==='all'||filter===m).map(m=>{const s=states[m];return `<section class="advisor-module" data-module="${m}"><h2>${m.toUpperCase()} 站内任务</h2><p role="status">${esc(s?.error|| (s?.busy?'正在读取…':''))}</p>${s?.page?advisorPageView(m,s.page):''}<div class="advisor-tools"><button data-advisor="latest" data-module="${m}" ${s?.busy?'disabled':''}>返回第一页并刷新</button>${s?.page?.next_before_id?`<button data-advisor="next" data-module="${m}" ${s.busy?'disabled':''}>下一页（最多 25 项）</button>`:''}</div></section>`;}).join('')}<div class="advisor-automation-host">${identity?automation.html(filter):''}</div></main>`;
     if(identity){
@@ -97,7 +98,7 @@ export function mountAdvisorWorkbench({root,session,subscribeSession,fetchImpl=f
       const host=browser.document.createElement('div');host.className='advisor-distribution-host';root.querySelector('.advisor-main').append(host);host.innerHTML=distribution.html();const remoteHost=browser.document.createElement('div');remoteHost.className='advisor-remote-host';root.querySelector('.advisor-main').append(remoteHost);remote.render();
     }
   }
-  async function load(module,beforeId=null){if(needsTenant()){states[module]={error:selectionPrompt};render();return;}const stamp=epoch;states[module]={busy:true};render();try{const page=await client.list(module,{beforeId,tenantId:session.advisorScope==='advisor_tenant'?session.tenantId:null});if(!disposed&&epoch===stamp){states[module]={page,busy:false};render();}}catch(e){if(!disposed&&epoch===stamp){states[module]={error:labels[e.code]||'读取未完成，请重试'};render();}}}
+  async function load(module,beforeId=null){if(needsTenant()){states[module]={error:selectionPrompt};render();return;}const stamp=epoch;states[module]={busy:true};render();try{const page=await client.list(module,{beforeId,tenantId:session.advisorScope==='advisor_tenant'?session.tenantId:null});if(!disposed&&epoch===stamp){states[module]={page,busy:false};render();}}catch(e){if(!disposed&&epoch===stamp){states[module]={error:`${module.toUpperCase()} 站内任务暂时读不到，其他模块不受影响`};render();}}}
   async function initialize(){
     multiMode=session.isAdvisorSession===true;
     if(multiMode){
@@ -109,7 +110,7 @@ export function mountAdvisorWorkbench({root,session,subscribeSession,fetchImpl=f
       if(requested&&Number(requested)!==session.tenantId){denyTenant('ADVISOR_TENANT_NOT_GRANTED');return;}
     }
     const stamp=++epoch;identity=null;states={};linkedAccounts=[];selectedAccount=null;automation.invalidate();distribution.invalidate();remote.invalidate();message='正在核验顾问身份与模块…';render();try{const result=await client.initialize();if(disposed||epoch!==stamp)return;identity=result;if(!multiMode)void accountSwitch.list().then(accounts=>{if(!disposed&&epoch===stamp){linkedAccounts=accounts;render();}}).catch(()=>{});message='按真实阶段分组；数量仅为当前页。';render();await Promise.all([...result.modules.map(m=>load(m)),automation.initialize(result.modules)]);if(!disposed&&epoch===stamp)await distribution.initialize(result.modules.filter(m=>m!=='seo'||result.user.permissions?.['seo.content']==='edit'));}catch(e){if(!disposed&&epoch===stamp){message=labels[e.code]||'核验未完成，请重试';render();}}}
-  const stop=client.subscribe(reason=>{if(reason==='context_changed'||reason==='expired'||reason==='forbidden'){epoch++;identity=null;states={};linkedAccounts=[];selectedAccount=null;automation.invalidate();distribution.invalidate();remote.invalidate();message=reason==='forbidden'?'权限已变化，全部列表已清除。':'会话已变化，全部列表已清除。';render();}});
+  const stop=client.subscribe(reason=>{if(reason==='context_changed'||reason==='expired'||reason==='forbidden'){epoch++;identity=null;states={};linkedAccounts=[];selectedAccount=null;automation.invalidate();distribution.invalidate();remote.invalidate();message='你的客户授权已变化，请重新选择客户';render();}});
   function click(e){automation.click(e);distribution.click(e);const b=e.target.closest('[data-advisor]');if(!b||b.disabled)return;const action=b.dataset.advisor;
     if(action==='select-tenant'){void switchTenant(Number(b.dataset.tenant));return;}
     if(action==='switch-account'&&selectedAccount&&!switching){switching=true;render();void accountSwitch.switchTo(selectedAccount).catch(()=>{switching=false;message='账号切换未完成，请重试。';render();});return;}

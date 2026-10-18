@@ -47,6 +47,16 @@ test('bare business 401 clears business context and recovers only the saved iden
   assert.equal(session.token,'saved-identity');
 });
 
+test('role changes clear the shared customer context while route 403 stays local',async()=>{
+  const session=fixture(),denied=[];
+  for(const code of ['ADVISOR_ROUTE_UNAVAILABLE','ADVISOR_ROLE_CHANGED']){
+    const scoped=advisorScopedFetch({session,onDenied:code=>denied.push(code),fetchImpl:async()=>response({detail:{code}},403)});
+    if(code==='ADVISOR_ROLE_CHANGED')await assert.rejects(scoped('/api/v1/seo/workbench/advisor-tasks'),{code});
+    else assert.equal((await scoped('/api/v1/seo/workbench/advisor-tasks')).status,403);
+  }
+  assert.deepEqual(denied,['ADVISOR_ROLE_CHANGED']);
+});
+
 test('bare identity 401 logs out instead of retrying expired identity credentials',async()=>{
   let logouts=0;
   const session={...fixture(),advisorScope:'advisor_identity',logout(){logouts++;this.token='';this.authRevision++;}},denied=[];
