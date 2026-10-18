@@ -32,6 +32,13 @@ test('SEO offline entry stays in the current tab to retain transient login',()=>
  assert.doesNotMatch(markup,/\btarget\s*=/i);
  assert.doesNotMatch(markup,/\brel\s*=/i);
 });
+test('advisor SEO entry follows the selected tenant while leaving the default unchanged',()=>{
+ const s={...session(),isAdvisorSession:true,tenantId:2},scope={module:'seo',tenant_id:2,scope_id:6};
+ assert.match(seoOfflineEntryMarkup(s,['seo'],scope),/tenant_id=2&amp;site_id=6/);
+ assert.equal(s.user.tenant_id,1);
+ assert.equal(seoOfflineEntryMarkup(s,['seo'],{...scope,tenant_id:1}),'');
+ s.tenantId=null;assert.equal(seoOfflineEntryMarkup(s,['seo'],scope),'');
+});
 
 test('discovery rejects cross-tenant rows and late results after account switches',async()=>{
  const s=session();let data={schema:1,module:'seo',items:[{...row,tenant_id:2}]};

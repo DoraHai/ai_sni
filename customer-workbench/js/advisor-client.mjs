@@ -46,8 +46,8 @@ export function createAdvisorClient({session,fetchImpl=fetch,subscribeSession=()
   }
   const unsubscribe=subscribeSession(()=>sync());
   return {
-    async initialize(){sync();invalidate('initializing');const stamp=generation,context=key();const {user}=await read('/api/v1/auth/me');current(stamp,context);
-      if(user?.id!==session.user?.id||user.tenant_id!==session.user?.tenant_id||!positive(user.id)||!user.permissions)throw fail('IDENTITY_MISMATCH');
+    async initialize(){sync();invalidate('initializing');const stamp=generation,context=key();const data=await read('/api/v1/auth/me');const user=session.isAdvisorSession?{...data.user,tenant_id:session.tenantId}:data.user;current(stamp,context);
+      if(user?.id!==session.user?.id||user.tenant_id!==(session.isAdvisorSession?session.tenantId:session.user?.tenant_id)||!positive(user.id)||!user.permissions)throw fail('IDENTITY_MISMATCH');
       const catalog=await read('/api/v1/auth/modules');
       current(stamp,context);
       if(catalog?.tenant_id!==user.tenant_id||!Array.isArray(catalog.modules))throw fail('CONTRACT_MISMATCH');

@@ -45,7 +45,8 @@ export function seoOfflineEntryMarkup(session,modules,scope){
   const tenant=scope.tenant_id,site=scope.scope_id;
   if(!Number.isSafeInteger(tenant)||tenant<=0||!Number.isSafeInteger(site)||site<=0)
     return '<p>请先选择有效的 SEO 客户和网站，再进入 SEO 分发平台。</p>';
-  if(session.user.tenant_id!=null&&session.user.tenant_id!==tenant)return '';
+  if(session.isAdvisorSession){if(session.tenantId!==tenant)return '';}
+  else if(session.user.tenant_id!=null&&session.user.tenant_id!==tenant)return '';
   return `<p><a href="/seo/distribution?tenant_id=${tenant}&amp;site_id=${site}">导出发布单 / 导入回执（SEO 分发平台）</a></p><p>在 SEO 工作台的分发平台里导出多号通发布单、导入回执。</p>`;
 }
 export function distributionScheduleMarkup(s){return !s?'<p>发布规则尚未读取，不能判断账号是否可执行。</p>':
