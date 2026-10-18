@@ -30,6 +30,7 @@ const agreementNote = ref('')
 const acceptanceStages = computed(() => describeAcceptanceSummary(acceptance.value))
 async function load() {
   const run = ++epoch
+  agreementNote.value = ''
   targets.value = []; linked.value = []; detail.value = null; acceptance.value = null; acceptanceError.value = ''; confirmed.value = false; error.value = ''; busy.value = false
   if (!props.tenantId || !props.task?.id) { loading.value = false; return }
   loading.value = true
