@@ -41,6 +41,20 @@ test('conversation qualification 403 preserves delivery and customer scope and d
     }
     const writes=f.state.calls.filter(c=>c.method==='POST'&&c.path.includes('/conversation/')).length;
     await p.click('[data-chat-action=send]');await p.click('[data-chat-action=read]');assert.equal(f.state.calls.filter(c=>c.method==='POST'&&c.path.includes('/conversation/')).length,writes);
+    // An earlier send may have committed before its response was lost. Keep its key
+    // through qualification denial so restoring access cannot create a duplicate.
+    f.state.messageDenied=false;await p.click('[data-chat-action=refresh]');await idle(p);
+    f.state.messageDropOnce='status';await p.click('[data-chat-action=send]');await idle(p);
+    assert.match(await p.$eval('.conversation-feedback',e=>e.textContent),/结果未确认/);
+    const pendingText=await p.$eval('#conversation-draft',e=>e.value);
+    f.state.messageDenied=true;await p.click('[data-chat-action=refresh]');await idle(p);await denied();
+    assert.equal(await p.$eval('[data-chat-action=send]',e=>e.textContent),'发送消息');
+    assert.match(await p.$eval('.conversation-limit',e=>e.textContent),/恢复沟通资格后请刷新核对/);
+    assert.equal(await p.$eval('#conversation-draft',e=>e.value),pendingText);
+    f.state.messageDenied=false;await p.click('[data-chat-action=refresh]');await idle(p);
+    await p.click('[data-chat-action=send]');await idle(p);
+    assert.equal(f.state.messages.get(1).filter(row=>row.body===pendingText).length,1);
+    assert.equal(await p.$eval('#conversation-draft',e=>e.value),'');
     assert.deepEqual(errors,[]);
   }finally{await b.close();await f.close();}
 });

@@ -12,7 +12,7 @@ export function createConversationPanel({root,host,client}){
     try{await action(()=>stamp===generation);}catch(error){if(stamp!==generation)return;
       if(error.status===403&&error.code==='conversation_forbidden'){
         client.clear();state.items=[];state.unread=0;state.hasMore=false;state.before=null;state.canSend=false;state.canMarkRead=false;
-        state.error='当前账号没有本站沟通资格，请联系管理员分配；稿件可以继续查看。';
+        state.notice='';state.error='当前账号没有本站沟通资格，请联系管理员分配；稿件可以继续查看。';
       }else{if(error.status===422)state.pending=null;state.error=state.notice==='消息已发送。'?'消息已发送，但记录刷新失败，请刷新消息核对。':error.status===503?'消息功能尚未启用，请稍后刷新。':error.status===403?'沟通权限已变化，请重新进入当前客户空间。':error.status===409?'这条消息的重试凭据不一致，请刷新记录核对。':error.code==='INVALID_MESSAGE'||error.status===422?'请填写1–4000字的消息。':state.pending?'发送结果未确认，文字已保留。请重试同一条消息核对结果。':'消息请求未完成，请重试。';}}
     finally{if(stamp===generation){state.busy=false;paint();}}
   }
