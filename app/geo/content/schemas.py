@@ -177,7 +177,7 @@ class TaskCreate(BaseModel):
     target_channels: list[str] = Field(
         default_factory=lambda: ["website", "wechat", "zhihu"]
     )
-    fact_ids: list[int] = Field(default_factory=list)
+    fact_ids: list[int] = Field(default_factory=list, max_length=50)
     brief: dict[str, Any] | None = None
 
 
@@ -221,7 +221,7 @@ class ContentBrief(BaseModel):
 
 
 class TaskFactsUpdate(BaseModel):
-    fact_ids: list[int] = Field(..., min_length=0)
+    fact_ids: list[int] = Field(..., min_length=0, max_length=50)
 
 
 class SuggestBriefRequest(BaseModel):
@@ -248,7 +248,7 @@ class AiReviewRequest(BaseModel):
 class ArticleUpdate(BaseModel):
     expected_article_id: int | None = Field(None, gt=0)
     title: str = Field(..., min_length=1)
-    body_markdown: str = Field(..., min_length=1)
+    body_markdown: str = Field(..., min_length=1, max_length=500_000)
     outline: dict[str, Any] | None = None
 
 
@@ -262,7 +262,7 @@ class VariantsCreate(BaseModel):
 
 class VariantUpdate(BaseModel):
     title: str | None = Field(None, min_length=1)
-    body_markdown: str | None = Field(None, min_length=1)
+    body_markdown: str | None = Field(None, min_length=1, max_length=500_000)
 
 
 class PublicationCreate(BaseModel):
@@ -270,7 +270,7 @@ class PublicationCreate(BaseModel):
     channel: str = Field(..., min_length=1, max_length=32)
     custom_channel_name: str | None = None
     source_variant_id: int | None = Field(None, gt=0)
-    published_url: str = Field(..., min_length=8)
+    published_url: str = Field(..., min_length=8, max_length=2000)
     note: str | None = None
 
     @field_validator("channel", mode="before")
