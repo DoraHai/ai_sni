@@ -82,12 +82,16 @@ def test_commit_recheck_reloads_stale_identity_and_rolls_back_pending_business_c
 
 
 @pytest.mark.parametrize('kind', ['grant', 'permissions', 'user', 'assignment'])
-def test_real_http_revoke_after_guard_before_handler_commit_never_persists(tmp_path, monkeypatch, kind):
+@pytest.mark.parametrize('production_dependency', [False, True], ids=['fixture-cleanup', 'production-session-cleanup'])
+def test_real_http_revoke_after_guard_before_handler_commit_never_persists(tmp_path, monkeypatch, kind, production_dependency):
     importlib.import_module('app.security.advisor_write_commit')
     from app.security import geo_advisor
 
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend='postgres') as env:
+            if production_dependency:
+                from app.database import get_session
+                del env.app.dependency_overrides[get_session]
             checked, release = asyncio.Event(), asyncio.Event()
             writer_pid = None
             original = geo_advisor.guard_request

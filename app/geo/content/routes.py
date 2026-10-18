@@ -1179,7 +1179,7 @@ async def create_optimization_business(
         sort_order=req.sort_order,
     )
     session.add(row)
-    if ctx.advisor_scope is not None:
+    if getattr(ctx, "advisor_scope", None) is not None:
         # The guard verified this explicit project. Persist the new business
         # and its ownership in the same transaction; never leave an orphan.
         from app.geo.project_scope import binding, project_scope, set_binding
@@ -7148,7 +7148,7 @@ async def patch_task(
         data["status"] = st
     for key, value in data.items():
         setattr(task, key, value)
-    if ctx.advisor_scope is not None and set(data) & {"title", "brief", "target_channels"}:
+    if getattr(ctx, "advisor_scope", None) is not None and set(data) & {"title", "brief", "target_channels"}:
         invalidate_review(task)
     if task.status != "archived":
         await _sync_task_pipeline(session, task)
@@ -7696,7 +7696,7 @@ async def update_task_facts(
     task = await _get_task(session, task_id, tenant_id)
     await lock_manual_task(session, ctx, task)
     await _bind_facts(session, task, req.fact_ids)
-    if ctx.advisor_scope is not None:
+    if getattr(ctx, "advisor_scope", None) is not None:
         invalidate_review(task)
     await session.commit()
     await session.refresh(task)
