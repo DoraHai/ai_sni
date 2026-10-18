@@ -164,7 +164,7 @@ async def check_scoped_write_objects(session, ctx, request, body, rule):
         await check_cascade_scope(session, request, rule)
 
 
-async def check_manual_execution_scope(session, ctx, rule):
+async def check_manual_execution_scope(session, ctx, rule, *, lock=True):
     """Serialize operations with scheduling; running plans do not veto edits.
 
     The current policy permits advisor operations during patrols, periods and
@@ -172,7 +172,8 @@ async def check_manual_execution_scope(session, ctx, rule):
     project assignment and commit checks. This never authorizes plan settings.
     """
     from app.models import Tenant
-    await session.scalar(select(Tenant.id).where(Tenant.id == ctx.tenant_id).with_for_update())
+    if lock:
+        await session.scalar(select(Tenant.id).where(Tenant.id == ctx.tenant_id).with_for_update())
 
 
 async def guard_scoped_write(session, ctx, request, claims):

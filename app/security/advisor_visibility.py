@@ -47,7 +47,14 @@ async def check_visibility_execution(session, run, prompt_ids, *, lock=False):
         if not is_advisor(role) or any((role.permissions or {}).get(k) != 'edit'
                 for k in ('geo.assets', 'geo.content')):
             raise AdvisorVisibilityUnavailable(message)
-        grants = await active_grants(session, await read_grants(session, user.id))
+        if lock:
+            from app.models.advisor_tenant_grant import AdvisorTenantGrant
+            rows = list(await session.scalars(select(AdvisorTenantGrant).where(
+                AdvisorTenantGrant.user_id == user.id).order_by(AdvisorTenantGrant.id)
+                .with_for_update().execution_options(populate_existing=True)))
+        else:
+            rows = await read_grants(session, user.id)
+        grants = await active_grants(session, rows)
         tenants = frozenset(g.tenant_id for g in grants)
         if user.tenant_id not in tenants or not any(
                 g.id == auth['grant_id'] and g.tenant_id == run.tenant_id for g in grants):
