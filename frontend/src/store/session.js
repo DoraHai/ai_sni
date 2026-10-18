@@ -7,6 +7,29 @@ import {
   writeAuthEnvelope,
 } from './sessionStorage.js'
 
+// Ported from the SEM advisor session: hints only; APIs authorize every request.
+export function advisorClaims(token) {
+  try {
+    const value = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+    return ['advisor_identity', 'advisor_tenant'].includes(value.scope_kind) ? value : null
+  } catch { return null }
+}
+
+const advisorIdentityKey = 'sem_advisor_identity_v1'
+const isAdvisor = (token, user) => !!advisorClaims(token) || user?.is_advisor === true
+const tenantForAuth = (token, user, fallback = null) => isAdvisor(token, user)
+  ? (advisorClaims(token)?.scope_kind === 'advisor_tenant' ? advisorClaims(token).tid : null)
+  : (user?.tenant_id || fallback)
+
+function clearTenantDrafts() {
+  for (let i = sessionStorage.length - 1; i >= 0; i--) {
+    const key = sessionStorage.key(i)
+    if (key?.startsWith('seo_pending_rewrite_') || key?.startsWith('sem_builder_handoff_') || ['seo_site_tenant_id', 'seo_site_id'].includes(key)) {
+      sessionStorage.removeItem(key)
+    }
+  }
+}
+
 // 轻量会话 store(规模不大,不引 pinia)。token/user 持久化 localStorage,
 // 当前客户(tenantId)持久化 sessionStorage(每个标签页可以看不同客户)。
 // 权限：user.permissions = {菜单key: 'view'|'edit'}（自定义角色 RBAC）。
@@ -19,7 +42,7 @@ const state = reactive({
   token: initialAuth?.token ?? '',
   user: initialAuth?.user ?? null,
   tenants: [],
-  tenantId: initialAuth ? (initialAuth.user.tenant_id || initialTenantId) : null,
+  tenantId: initialAuth ? tenantForAuth(initialAuth.token, initialAuth.user, initialTenantId) : null,
   modules: [],
   tenantListRevision: 0,
   authRevision: 0,
@@ -56,6 +79,8 @@ export const session = {
   get modules() { return state.modules },
   get tenantListRevision() { return state.tenantListRevision },
   get authRevision() { return state.authRevision },
+  get isAdvisorSession() { return isAdvisor(state.token, state.user) },
+  get advisorScope() { return advisorClaims(state.token)?.scope_kind ?? null },
 
   get isLoggedIn() { return !!state.token },
   get permissions() { return state.user?.permissions || {} },
@@ -78,9 +103,34 @@ export const session = {
     authStorage = remember ? 'local' : 'session'
     state.token = token
     state.user = user
+    sessionStorage.removeItem(advisorIdentityKey)
+    if (advisorClaims(token)?.scope_kind === 'advisor_identity') {
+      sessionStorage.setItem(advisorIdentityKey, JSON.stringify({ token, user }))
+    }
     // 绑定了单客户的账号锁定该客户
-    if (user?.tenant_id) this.setTenant(user.tenant_id)
+    if (this.isAdvisorSession) { clearTenantDrafts(); this.setTenant(tenantForAuth(token, user)) }
+    else if (user?.tenant_id) this.setTenant(user.tenant_id)
     else if (previousUserId !== user?.id) this.setTenant(null)
+    notifyAuthContext('identity')
+  },
+
+  replaceAuthForAdvisorTenant(token, tenantId) {
+    const claims = advisorClaims(token)
+    if (this.advisorScope !== 'advisor_identity'
+        || claims?.scope_kind !== 'advisor_tenant' || claims.tid !== tenantId
+        || String(claims.sub) !== String(state.user?.id) || !Number.isSafeInteger(claims.gid) || claims.gid <= 0) {
+      throw new TypeError('INVALID_ADVISOR_TENANT_RESPONSE')
+    }
+    sessionStorage.setItem(advisorIdentityKey, JSON.stringify({ token: state.token, user: state.user }))
+    clearTenantDrafts()
+    // Business context belongs to this tab; never publish it through localStorage.
+    writeAuthEnvelope(sessionStorage, token, state.user)
+    authStorage = 'session'
+    state.token = token
+    state.tenants = []
+    state.modules = []
+    state.tenantListRevision += 1
+    this.setTenant(tenantId)
     notifyAuthContext('identity')
   },
 
@@ -90,12 +140,14 @@ export const session = {
     const changeKind = authContextChangeKind(state.token, previous, state.token, user)
     state.user = user
     writeAuthEnvelope(_activeStore(), state.token, user)
-    if (user?.tenant_id) this.setTenant(user.tenant_id)
+    if (this.isAdvisorSession) this.setTenant(tenantForAuth(state.token, user))
+    else if (user?.tenant_id) this.setTenant(user.tenant_id)
     if (changeKind) notifyAuthContext(changeKind)
   },
 
   setTenants(list) {
     state.tenants = list
+    if (this.isAdvisorSession) return
     if (state.tenantId && list.some((t) => t.id === state.tenantId)) return
     const stored = Number(sessionStorage.getItem('sem_tenant_id') || 0)
     if (stored && list.some((t) => t.id === stored)) {
@@ -114,12 +166,14 @@ export const session = {
   },
 
   setTenant(id) {
+    if (this.isAdvisorSession && id !== tenantForAuth(state.token, state.user)) return
     state.tenantId = id
     if (id) sessionStorage.setItem('sem_tenant_id', String(id))
     else sessionStorage.removeItem('sem_tenant_id')
   },
 
   logout() {
+    const wasAdvisor = this.isAdvisorSession
     authStorage = null
     state.token = ''
     state.user = null
@@ -128,6 +182,8 @@ export const session = {
     state.tenantId = null
     for (const s of [localStorage, sessionStorage]) clearStoredAuth(s)
     sessionStorage.removeItem('sem_tenant_id')
+    sessionStorage.removeItem(advisorIdentityKey)
+    if (wasAdvisor) clearTenantDrafts()
     notifyAuthContext('logout')
   },
 }
@@ -164,8 +220,8 @@ if (typeof window !== 'undefined') {
     if (!changeKind) return
     state.tenants = []
     state.modules = []
-    state.tenantId = next.user.tenant_id
-      || (previousUserId === next.user.id ? previousTenantId : null)
+    state.tenantId = tenantForAuth(next.token, next.user,
+      previousUserId === next.user.id ? previousTenantId : null)
     if (state.tenantId) sessionStorage.setItem('sem_tenant_id', String(state.tenantId))
     else sessionStorage.removeItem('sem_tenant_id')
     state.tenantListRevision += 1

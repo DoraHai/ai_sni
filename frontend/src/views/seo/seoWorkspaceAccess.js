@@ -37,7 +37,7 @@ export function reconcileSeoRouteSite({
   return selected
 }
 
-export function createSeoWorkspaceAccess({ fetchSites, fetchTenants, selectTenant, boundTenantId, reset, ready, noSite, unavailable }) {
+export function createSeoWorkspaceAccess({ fetchSites, fetchTenants, selectTenant, boundTenantId, checkScope, recoverScope, reset, ready, noSite, unavailable }) {
   let generation = 0
 
   async function validate({ tenantId, requestedSiteId = null, urlTenantId = undefined, strictSite = false }) {
@@ -46,10 +46,16 @@ export function createSeoWorkspaceAccess({ fetchSites, fetchTenants, selectTenan
     reset({ tenantId: scopeTenantId })
     let eligibleTenants
     try {
+      // Identity tokens must first obtain a server-authorized business scope.
+      // The normal account path has no extra request.
+      if (checkScope) {
+        await checkScope()
+        if (ticket !== generation) return
+      }
       if (fetchTenants) {
         const response = await fetchTenants()
         if (ticket !== generation) return
-        eligibleTenants = Array.isArray(response?.tenants) ? response.tenants : []
+        eligibleTenants = Array.isArray(response) ? response : Array.isArray(response?.tenants) ? response.tenants : []
         const bound = positiveId(boundTenantId?.())
         const allowed = eligibleTenants.filter((tenant) => !bound || positiveId(tenant.id) === bound)
         const hasUrlTenant = urlTenantId !== undefined
@@ -99,6 +105,19 @@ export function createSeoWorkspaceAccess({ fetchSites, fetchTenants, selectTenan
       else ready(result)
     } catch (error) {
       if (ticket !== generation) return
+      if (recoverScope) {
+        try {
+          const recovered = await recoverScope(error)
+          if (ticket !== generation) return
+          if (recovered) {
+            await validate({ tenantId: recovered.tenantId, requestedSiteId, urlTenantId, strictSite })
+            return
+          }
+        } catch (recoveryError) {
+          error = recoveryError
+        }
+        if (ticket !== generation) return
+      }
       unavailable({
         tenantId: scopeTenantId,
         error,

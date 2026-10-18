@@ -7,12 +7,14 @@ import { fetchSeoWorkbenchSites } from '../../api/moduleAssets'
 import { session } from '../../store/session'
 import { clearSeoSiteId, currentSeoSiteId, seoSitesRevision } from './seoSiteContext'
 import { canRenderSeoRoute, createSeoWorkspaceAccess } from './seoWorkspaceAccess'
+import { advisorAccessGuidance, createSeoAdvisorTenantRecovery } from './seoAdvisorTenant'
 
 const route = useRoute()
 const router = useRouter()
 const mobileOpen = ref(false)
 const accessState = ref('checking')
 const accessError = ref('')
+const needsCustomerSelection = ref(false)
 const validatedSites = ref([])
 const selectableSiteStatuses = ref([])
 const seoTenants = ref([])
@@ -103,9 +105,12 @@ function navigate(path) {
   router.push({ path, query: currentSeoSiteId.value ? { site_id: currentSeoSiteId.value } : {} })
 }
 
+const advisorRecovery = createSeoAdvisorTenantRecovery({ session, client })
 const access = createSeoWorkspaceAccess({
+  checkScope: () => session.advisorScope === 'advisor_identity' ? fetchSeoWorkbenchSites(session.tenantId) : undefined,
+  recoverScope: error => advisorRecovery.recover(error),
   fetchTenants: () => client.get('/api/v1/auth/tenants', { params: { module: 'seo' } }),
-  boundTenantId: () => session.user?.tenant_id,
+  boundTenantId: () => session.isAdvisorSession ? session.tenantId : session.user?.tenant_id,
   selectTenant: (tenantId) => { session.setTenant(tenantId) },
   async fetchSites(tenantId) {
     return fetchSeoWorkbenchSites(tenantId)
@@ -113,6 +118,7 @@ const access = createSeoWorkspaceAccess({
   reset() {
     accessState.value = 'checking'
     accessError.value = ''
+    needsCustomerSelection.value = false
     validatedSites.value = []
     selectableSiteStatuses.value = []
     seoTenants.value = []
@@ -142,7 +148,9 @@ const access = createSeoWorkspaceAccess({
     selectableSiteStatuses.value = []
     seoTenants.value = tenants
     clearSeoSiteId()
-    accessError.value = error?.message || (tenantId ? '当前客户的 SEO 模块未启用或已过期' : '请先选择客户')
+    const guidance = advisorAccessGuidance(error, session.isAdvisorSession)
+    needsCustomerSelection.value = guidance?.selectCustomer || false
+    accessError.value = guidance?.message || error?.message || (tenantId ? '当前客户的 SEO 模块未启用或已过期' : '请先选择客户')
     accessState.value = 'unavailable'
   },
 })
@@ -202,7 +210,7 @@ watch(currentSeoSiteId, (siteId) => {
   else delete query.site_id
   router.replace({ query })
 })
-onBeforeUnmount(access.dispose)
+onBeforeUnmount(() => { access.dispose(); advisorRecovery.dispose() })
 onMounted(refreshCurrentUser)
 </script>
 
@@ -253,7 +261,8 @@ onMounted(refreshCurrentUser)
           <strong>{{ title }}</strong>
         </div>
         <div class="topbar-actions">
-          <label v-if="showTenantSelect" class="tenant-select">
+          <a v-if="session.isAdvisorSession" class="customer-selection" href="/customer-workbench/?console=advisor">去选择客户</a>
+          <label v-else-if="showTenantSelect" class="tenant-select">
             <span>客户</span>
             <select :value="accessState === 'unavailable' ? '' : session.tenantId || ''" @change="onTenantChange(Number($event.target.value))">
               <option v-if="accessState === 'unavailable'" value="" disabled>请手动选择客户</option>
@@ -273,6 +282,7 @@ onMounted(refreshCurrentUser)
         <section v-if="!renderRoute" class="scope-gate" role="status">
           <strong>{{ accessState === 'checking' ? '正在核对 SEO 访问范围' : accessState === 'no-active-site' ? '当前客户没有可用的 SEO 网站' : '当前客户无法显示 SEO 数据' }}</strong>
           <p>{{ accessState === 'checking' ? '完成模块有效期和网站归属校验后再显示数据。' : accessState === 'no-active-site' ? '只有 active 网站可以进入 SEO 数据页。' : accessError }}</p>
+          <a v-if="needsCustomerSelection" class="customer-selection" href="/customer-workbench/?console=advisor">去选择客户</a>
         </section>
         <!-- Child views do not exist before entitlement and site ownership are validated.
              Unmounting them also makes late responses unable to restore old customer data. -->
@@ -382,6 +392,8 @@ onMounted(refreshCurrentUser)
 .scope-gate { margin: 28px; padding: 28px; border: 1px solid #dce3ee; border-radius: 12px; background: #fff; }
 .scope-gate strong { color: #273654; font-size: 16px; }
 .scope-gate p { margin: 10px 0 0; color: #6b7280; font-size: 13px; }
+.customer-selection { display: inline-block; padding: 8px 12px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-size: 13px; text-decoration: none; }
+.scope-gate .customer-selection { margin-top: 16px; }
 .mobile-menu { display: none; }
 @media (max-width: 900px) {
   .seo-rail { transform: translateX(-105%); transition: transform .22s ease; }
