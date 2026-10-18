@@ -62,6 +62,20 @@ def test_failed_advisor_operation_never_refunds_another_customers_legacy_budget(
     assert row.status == "refunded"
 
 
+@pytest.mark.parametrize('value', ['missing', True, False, 'true', 'false', 0, 1])
+@pytest.mark.parametrize('name,path,extra', [
+    ('SerpCollectRequest', '/api/v1/seo/rank-serp/collect', {}),
+    ('DistributionAdaptRequest', '/api/v1/seo/content-distribution/adapt', {'content_id': 1, 'connection_id': 1}),
+    ('DistributionVariantGenerateRequest', '/api/v1/seo/content-distribution/variants/generate', {'pairs': [{'content_id': 1, 'connection_id': 1}]}),
+])
+def test_quota_boolean_defaults_and_coercions_match_the_real_endpoint_schema(name, path, extra, value):
+    from app.api import seo
+    body = {'tenant_id': 1, 'site_id': 1, **extra}
+    if value != 'missing': body['use_ai'] = value
+    validated = getattr(seo, name).model_validate(body)
+    assert request_kind(path, body) == ('suggestion' if validated.use_ai else None)
+
+
 @pytest.mark.parametrize('change', [None, 'grant', 'role', 'assignment', 'switch'])
 def test_queued_generation_uses_selected_customer_and_fresh_authorization(object_db, monkeypatch, change):
     from app.config import get_settings
@@ -94,3 +108,33 @@ def test_queued_generation_uses_selected_customer_and_fresh_authorization(object
         assert ctx.is_advisor and ctx.tenant_id == 2 and ctx.grant_id == grant.id
         assert session._seo_advisor_ai_kind == 'generation'
         assert session._seo_advisor_commit_guard
+
+
+def test_reusing_an_id_for_a_different_onsite_task_is_not_a_free_replay():
+    path = '/api/v1/seo/workbench/onsite-tasks/{task_id}/ai-proposal'
+    body = {'request_id': 'same', 'tenant_id': 1, 'site_id': 1, 'mode': 'initial'}
+    config, _ = reserve({}, 7, path, body, now=NOW, path_params={'task_id': 1})
+    with pytest.raises(HTTPException) as caught:
+        reserve(config, 7, path, body, now=NOW, path_params={'task_id': 2})
+    assert caught.value.status_code == 409
+
+
+def test_a_generation_operation_id_cannot_skip_onsite_suggestion_quota(object_db):
+    from app.database import Base
+    from app.models.seo import SeoAiOperation
+    from app.models.module_workspace import TenantModule
+    from test_advisor_scoped_writes_objects import selected
+    from test_seo_advisor_work import req
+    db, session = object_db
+    Base.metadata.create_all(db.bind, tables=[SeoAiOperation.__table__])
+    db.add(SeoAiOperation(id='00000000-0000-0000-0000-000000000001', tenant_id=1, site_id=1,
+        request_key='shared-request', request_hash='fixture', actor='1', kind='advisor_content_assist',
+        status='succeeded', charged_on='2026-10-18', expires_at=datetime.now(timezone.utc)))
+    db.commit()
+    path = '/api/v1/seo/workbench/onsite-tasks/{task_id}/ai-proposal'
+    body = {'request_id': 'shared-request', 'tenant_id': 1, 'site_id': 1, 'mode': 'initial'}
+    ctx = selected(); request = req('POST', path, body, task_id=1)
+    rule = SimpleNamespace(template=path)
+    ctx.advisor_write_scope = (request, body, rule)
+    asyncio.run(admit(session, ctx, rule, body))
+    assert len(db.get(TenantModule, 1).module_settings[KEY]['actors']['1']) == 1
