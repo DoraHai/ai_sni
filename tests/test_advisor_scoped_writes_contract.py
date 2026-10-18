@@ -64,7 +64,7 @@ def test_write_surface_is_bounded_to_this_task(rules):
     mandatory = {(case[0], PREFIX + case[1]) for case in CASES}
     optional = {('POST', PREFIX + path) for path in ('/facts/import', '/prompts/import', '/prompts/import-csv')}
     assert mandatory <= rules.WRITE_ROUTES.keys()
-    assert rules.WRITE_ROUTES.keys() <= mandatory | optional
+    assert rules.WRITE_ROUTES.keys() <= mandatory | optional | {('POST', PREFIX + '/facts/{fact_id}/verify')}
 
 
 @pytest.mark.parametrize('case', CASES, ids=CASE_IDS)
@@ -81,7 +81,7 @@ def test_mandatory_rule_matches_exact_method_and_mounted_template(rules, case):
 
 
 @pytest.mark.parametrize('method,template', [
-    ('DELETE', '/facts/{fact_id}'), ('POST', '/facts/{fact_id}/verify'),
+    ('DELETE', '/facts/{fact_id}'), ('PATCH', '/facts/{fact_id}/verify'),
     ('POST', '/content-tasks/{task_id}/generate'), ('POST', '/content-tasks/{task_id}/review'),
     ('POST', '/content-tasks/{task_id}/publications'), ('POST', '/facts-extra'),
     ('PATCH', '/content-tasks/{task_id}/variants/{channel}/publish'),

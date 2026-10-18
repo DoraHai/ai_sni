@@ -143,6 +143,8 @@ def test_every_exact_rule_calls_both_contracts_and_commit_rechecks(tmp_path, mon
         body = {"tenant_id": 10} if "tenant_id" in rule.fields else {}
         if template.endswith("/article"):
             body["expected_article_id"] = None
+        if template == "/api/v1/geo/facts/{fact_id}/verify":
+            body.update(source_url="https://source.example.test", expected_source_name="fixture source")
         async with sandbox(tmp_path, monkeypatch) as (request, factory, _, calls):
             r = await request(path, body, method=method)
             assert r.status_code == 200, r.text

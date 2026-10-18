@@ -39,7 +39,7 @@ const verifyForm = ref({
   public_use_allowed: false,
 })
 const canAuthorizePublicUse = computed(() => (
-  session.canEdit('geo.content') && session.user?.role_label !== CUSTOMER_ROLE
+  !isAdvisor.value && session.canEdit('geo.content') && session.user?.role_label !== CUSTOMER_ROLE
 ))
 
 function emptyForm() {
@@ -72,10 +72,13 @@ function fmtExpires(v) {
   return String(v).slice(0, 10)
 }
 
+let loadVersion = 0
 async function load() {
+  const version = ++loadVersion
   if (!tenantId.value) {
     error.value = '请先选择客户或配置本地 API Key'
     items.value = []
+    loading.value = false
     return
   }
   loading.value = true
@@ -87,17 +90,26 @@ async function load() {
         ? Promise.resolve({ items: businesses.value })
         : listGeoBusinesses(tenantId.value, { status: 'active' }).catch(() => ({ items: [] })),
     ])
+    if (version !== loadVersion) return
     businesses.value = b.items || businesses.value
+    if (businesses.value.length === 1 && !form.value.business_id) {
+      form.value.business_id = businesses.value[0].id
+    }
     items.value = data.items || []
   } catch (e) {
+    if (version !== loadVersion) return
     error.value = e.message || '加载失败'
     items.value = []
   } finally {
-    loading.value = false
+    if (version === loadVersion) loading.value = false
   }
 }
 
 async function submitCreate() {
+  if (!form.value.business_id || !businesses.value.some((b) => b.id === form.value.business_id)) {
+    ElMessage.warning('请先选所属业务')
+    return
+  }
   if (!form.value.title.trim() || !form.value.statement.trim() || !form.value.source_name.trim()) {
     ElMessage.warning('标题、陈述与来源名必填')
     return
@@ -166,11 +178,13 @@ async function submitVerify() {
       excerpt: verifyForm.value.excerpt.trim(),
       excerpt_locator: verifyForm.value.excerpt_locator.trim(),
       source_url: row.source_url,
-      verified_translation: verifyForm.value.verified_translation.trim() || null,
       expected_source_statement: String(row.statement || '').trim(),
       expected_source_name: String(row.source_name || '').trim(),
       expected_source_url: String(row.source_url || '').trim(),
-      public_use_allowed: verifyForm.value.public_use_allowed === true,
+      ...(isAdvisor.value ? {} : {
+        verified_translation: verifyForm.value.verified_translation.trim() || null,
+        public_use_allowed: verifyForm.value.public_use_allowed === true,
+      }),
     })
     ElMessage.success(`已核验 #${row.id}`)
     verifyOpen.value = false
@@ -258,6 +272,12 @@ async function importFactCsv(event) {
 }
 
 watch(tenantId, () => {
+  businesses.value = []
+  items.value = []
+  form.value = emptyForm()
+  editOpen.value = false
+  verifyOpen.value = false
+  verifyForm.value.fact = null
   pager.resetPage()
   load()
 })
@@ -375,6 +395,11 @@ onMounted(load)
           <div class="gd-hd"><h3>新建事实卡</h3></div>
           <div class="gd-bd">
             <el-form label-position="top" size="small">
+              <el-form-item label="所属业务" required>
+                <el-select v-model="form.business_id" placeholder="请先选所属业务" clearable style="width: 100%">
+                  <el-option v-for="business in businesses" :key="business.id" :label="business.name" :value="business.id" />
+                </el-select>
+              </el-form-item>
               <el-form-item label="标题" required>
                 <el-input v-model="form.title" placeholder="如：私有化部署" />
               </el-form-item>
@@ -464,8 +489,9 @@ onMounted(load)
       </template>
     </el-dialog>
 
-    <el-dialog v-model="verifyOpen" title="核验事实与译文" width="640px">
+    <el-dialog v-model="verifyOpen" :title="isAdvisor ? '核验事实' : '核验事实与译文'" width="640px">
       <el-alert
+        v-if="!isAdvisor"
         type="info"
         :closable="false"
         title="外文事实需在这里人工确认对应译文；未核验译文不会进入中文正文。"
@@ -478,7 +504,7 @@ onMounted(load)
         <el-form-item label="摘录定位" required>
           <el-input v-model="verifyForm.excerpt_locator" placeholder="如：产品页技术参数段" />
         </el-form-item>
-        <el-form-item label="已核验译文（可选）">
+        <el-form-item v-if="!isAdvisor" label="已核验译文（可选）">
           <el-input
             v-model="verifyForm.verified_translation"
             type="textarea"

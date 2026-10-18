@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 
 from app.security.advisor_scope import deny
+from app.security.advisor_write_fact_verify import FACT_VERIFY_FIELDS, FACT_VERIFY_SUFFIX, check_fact_verify_fields
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,7 @@ _BUSINESS = "name description sort_order"
 _UNIT = "name keyword description sort_order"
 _register("POST", "/facts", "tenant_id business_id " + _FACT)
 _register("PATCH", "/facts/{fact_id}", _FACT)
+_register("POST", FACT_VERIFY_SUFFIX, FACT_VERIFY_FIELDS)
 _register("POST", "/prompts", "tenant_id unit_id language source " + _PROMPT)
 _register("PATCH", "/prompts/{prompt_id}", _PROMPT)
 _register("POST", "/optimization-businesses", "tenant_id " + _BUSINESS)
@@ -78,6 +80,8 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
 
     if not isinstance(body, dict) or set(body) - rule.fields or set(body) & rule.forbidden:
         forbidden()
+    if rule.template == "/api/v1/geo" + FACT_VERIFY_SUFFIX:
+        check_fact_verify_fields(body)
     if "trust_level" in body and body["trust_level"] not in ("draft", "needs_review"):
         forbidden()
     if "source" in body and body["source"] != "manual":

@@ -6744,7 +6744,8 @@ async def verify_fact(
             "authorized_at": now,
             "authorized_by": ctx.user_id,
         }
-    else:
+    elif getattr(ctx, "advisor_scope", None) is None:
+        # A source-only advisor verification cannot change public-use consent.
         meta.pop("public_use", None)
     if translation:
         meta["verified_translations"] = [
