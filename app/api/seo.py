@@ -41,7 +41,7 @@ from app.seo_demo_source import (
     require_seo_scoped_auth as require_scoped_auth,
 )
 from app.config import get_settings, seo_rank_freshness_hours
-from app.security.advisor_write_commit import recheck_advisor_before_commit
+from app.security.advisor_write_commit import recheck_advisor_before_commit, record_advisor_write, record_seo_action
 from app.security.advisor_write_routes import check_advisor_handler
 from app.geo.audit import GeoAuditError, PageDocument, audit_url, normalize_url, safe_fetch
 from app.geo.chinaz import fetch_chinaz_seo_metrics
@@ -2036,6 +2036,7 @@ async def create_brand_asset(
     try:
         await recheck_advisor_before_commit(session, ctx)
         await session.commit()
+        record_advisor_write(ctx, row, "POST", "/api/v1/seo/rank-serp/brand-assets")
     except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(409, "该品牌资产规则已存在") from exc
@@ -2068,6 +2069,7 @@ async def update_brand_asset(
         setattr(row, key, value.strip() or None if isinstance(value, str) else value)
     await recheck_advisor_before_commit(session, ctx)
     await session.commit()
+    record_advisor_write(ctx, row, "PATCH", "/api/v1/seo/rank-serp/brand-assets/{asset_id}")
     await session.refresh(row)
     return _brand_asset_payload(row)
 
@@ -7593,6 +7595,7 @@ async def create_content_asset(req: ContentCreate, session: AsyncSession = Depen
     try:
         await recheck_advisor_before_commit(session, ctx)
         await session.commit()
+        record_advisor_write(ctx, row, "POST", "/api/v1/seo/content-assets")
     except IntegrityError as exc:
         await session.rollback()
         if req.source_page_id is not None and await _content_task_for_source_page(
@@ -7822,9 +7825,12 @@ async def export_offline_orders(
                        "scheduled_at": req.scheduled_at.isoformat() if req.scheduled_at else None})
     if len(json.dumps(orders, ensure_ascii=False).encode("utf-8")) > OFFLINE_MAX_BYTES:
         raise HTTPException(422, "发布单超过2MiB，请减少选稿")
-    return Response(order_package(orders), media_type="application/zip", headers={
+    response = Response(order_package(orders), media_type="application/zip", headers={
         "Content-Disposition": 'attachment; filename="seo-offline-orders.zip"', "Cache-Control": "no-store",
     })
+    record_seo_action(ctx, req.tenant_id, "POST", "/api/v1/seo/content-assets/offline-handoff/export",
+                      "seo_content_assets", [int(item.article_id) for item in req.articles])
+    return response
 
 
 @router.post("/content-assets/offline-handoff/import-receipts")
@@ -7894,7 +7900,8 @@ async def import_offline_receipts(
                 await session.flush()
                 session.add(SeoPublishAttempt(tenant_id=tenant_id, publication_id=publication.id,
                     action="offline_receipt", status=receipt.status, created_by=ctx.user_id,
-                    request_summary={"source": "offline-handoff-v1", "platform": receipt.platform,
+                    request_summary={"source": "offline-handoff-v1", "method": "POST",
+                        "path": "/api/v1/seo/content-assets/offline-handoff/import-receipts", "platform": receipt.platform,
                         "account": receipt.account, "source_version": receipt.source_version,
                         "payload_hash": receipt.payload_hash},
                     response_summary={"human_reported": True, "outcome": receipt.status,
@@ -10227,6 +10234,7 @@ async def bind_content_source_page(
     try:
         await recheck_advisor_before_commit(session, ctx)
         await session.commit()
+        record_advisor_write(ctx, row, "PUT", "/api/v1/seo/content-assets/{content_id}/source-page")
     except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(409, "该站内页面已经关联其他内容任务") from exc
@@ -10333,6 +10341,7 @@ async def update_content_asset(
     try:
         await recheck_advisor_before_commit(session, ctx)
         await session.commit()
+        record_advisor_write(ctx, row, "PATCH", "/api/v1/seo/content-assets/{content_id}")
     except IntegrityError as exc:
         await session.rollback()
         if (

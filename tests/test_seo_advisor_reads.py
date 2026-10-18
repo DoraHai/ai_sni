@@ -126,3 +126,46 @@ def test_admin_binding_uses_existing_config_and_rejects_foreign_customer_site(ch
     assert row.config == {'advisor_site_id': 1}
     asyncio.run(set_connection_binding(session, admin, row, 1, None))
     assert row.config == {'advisor_site_id': 0}
+
+
+@pytest.mark.parametrize('domain', ['changed.example', 'shared.example'])
+def test_brand_profile_handler_does_not_modify_global_or_sibling_homepage(object_db, monkeypatch, domain):
+    """Exercise the real request guard and handler, including existing globals."""
+    from unittest.mock import AsyncMock
+    from app.api.seo import BrandProfileUpdate, update_brand_profile
+    from app.config import get_settings
+    from app.models.role import Role
+    from app.models.seo import SeoBrandAsset, SeoSitePage
+    from app.models.tenant import Tenant
+    from app.security.advisor_tenant_auth import enforce_advisor_request
+    db, session = object_db
+    own, sibling = db.get(SeoBrandAsset, 40), db.get(SeoBrandAsset, 340)
+    for row, value in [(own, 'own.example'), (sibling, 'sibling.example')]:
+        row.asset_type, row.name, row.match_value = 'official_domain', '主官网', value
+    global_asset = SeoBrandAsset(id=80, tenant_id=1, site_id=None,
+        asset_type='official_domain', name='主官网', match_value='shared.example', status='active')
+    db.add_all([global_asset, SeoSiteAdvisorAssignment(id=4, tenant_id=1, site_id=4,
+                                                    advisor_user_id=1, active=True)])
+    db.get(SeoSitePage, 50).url = 'https://' + domain
+    role = db.get(Role, 1)
+    role.permissions = {**role.permissions, 'seo.keywords': 'edit'}
+    db.commit()
+    session.no_autoflush = db.no_autoflush
+    session.rollback = AsyncMock(side_effect=db.rollback)
+    session.refresh = AsyncMock(side_effect=db.refresh)
+    monkeypatch.setattr(get_settings(), 'advisor_scoped_content_writes_enabled', True)
+    body = {'tenant_id': 1, 'site_id': 1, 'brand_name': 'tenant1', 'website': 'https://' + domain}
+    ctx = selected()
+    request = req('PATCH', '/api/v1/seo/rank-serp/brand-profile', body, query='tenant_id=1&site_id=1')
+    async def operation():
+        await enforce_advisor_request(request, ctx, session)
+        return await update_brand_profile(BrandProfileUpdate(**body), session, ctx)
+    response = asyncio.run(operation())
+    # Read the evidence without the request filter; unrelated rows really exist.
+    install_query_scope(session, None)
+    db.expire_all()
+    assert db.get(SeoBrandAsset, 40).match_value == domain
+    assert (db.get(SeoBrandAsset, 80).match_value, db.get(SeoBrandAsset, 80).status) == ('shared.example', 'active')
+    assert (db.get(SeoBrandAsset, 340).match_value, db.get(SeoBrandAsset, 340).status) == ('sibling.example', 'active')
+    assert db.get(Tenant, 1).name == 'tenant1'
+    assert response['official_domains'] == [domain]
