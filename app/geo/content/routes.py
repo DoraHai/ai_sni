@@ -6859,7 +6859,8 @@ async def preview_article_import_file(
     if len(raw) > MAX_FILE_BYTES:
         raise HTTPException(413, "导入文件不能超过 10 MiB")
     try:
-        return preview_file_document(filename=file.filename or "", raw=raw)
+        from starlette.concurrency import run_in_threadpool
+        return await run_in_threadpool(preview_file_document, filename=file.filename or "", raw=raw)
     except ArticleImportError as exc:
         raise HTTPException(400, str(exc)) from exc
 

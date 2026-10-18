@@ -111,9 +111,9 @@ async def check_visibility_scope(session, ctx, request, *, lock=True):
             if sum(business_id in binding(p)["business_ids"] for p in projects) != 1:
                 deny(403, "ADVISOR_ASSIGNMENT_REQUIRED", "项目业务归属有冲突，请由管理员核对")
         owned.update(business_ids)
-    actor = await session.get(User, ctx.user_id, populate_existing=True)
-    if (not owned or actor is None
-            or not await advisor_available(session, actor.tenant_id, ctx.user_id)):
+    # Auth and the commit hook validate the live selected grant and account;
+    # scheduler eligibility for the account's default customer is unrelated.
+    if not owned or not await advisor_available(session, ctx.tenant_id, ctx.user_id, advisor_scope=ctx.advisor_scope):
         deny(403, "ADVISOR_ASSIGNMENT_REQUIRED", "当前客户没有分配给你的有效项目")
     units = select(GeoOptimizationUnit.id).where(
         GeoOptimizationUnit.tenant_id == ctx.tenant_id, GeoOptimizationUnit.business_id.in_(owned))

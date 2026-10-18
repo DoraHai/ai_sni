@@ -197,6 +197,10 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
         or p.startswith("/api/v1/geo/async-jobs")
         or p.startswith("/api/v1/geo/monitoring-stance")
         or p.startswith("/api/v1/geo/attribution")
+        or (method == "GET" and p in {
+            "/api/v1/geo/channel-blueprint",
+            "/api/v1/geo/structure-scan/latest",
+        })
     ):
         return {"geo.content"}, edit
     if p.startswith("/api/v1/geo"):

@@ -332,20 +332,11 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
         _assignment_required()
     project = next((p for p in projects if p.id in selected), None)
     plan = plans[project.id] if project else {}
-    # Imports use the selected customer grant, checked by auth and again at
-    # commit. The scheduler helper requires a native/default tenant binding,
-    # which would incorrectly exclude another explicitly granted customer.
-    # The HTTP guard and commit hook validate the selected grant, account and
-    # permissions. Scheduler's default-tenant helper must not veto another
-    # explicitly granted customer on an interactive advisor request.
-    selected_import = getattr(ctx, "advisor_scope", None) is not None
-    # Keep live account/permission checks without treating the default customer
-    # as the only customer that a valid selected grant can authorize.
-    actor = await session.get(User, ctx.user_id, populate_existing=True) if selected_import else None
-    actor_tenant = actor.tenant_id if actor is not None else ctx.tenant_id
+    # Manual requests use the selected customer grant, checked by auth and
+    # again at commit. The scheduler's native/default-tenant predicate does
+    # not describe an explicitly granted second customer.
     if (project is None or project.status != "active"
             or type(plan.get("advisor_user_id")) is not int
             or plan["advisor_user_id"] != ctx.user_id
-            or (selected_import and actor is None)
-            or not await advisor_available(session, actor_tenant, ctx.user_id)):
+            or not await advisor_available(session, ctx.tenant_id, ctx.user_id, advisor_scope=ctx.advisor_scope)):
         _assignment_required()

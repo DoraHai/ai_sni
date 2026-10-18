@@ -228,7 +228,7 @@ def test_same_tenant_other_project_and_unscoped_objects_rejected(tmp_path, body)
     (GeoProject, 100, {"status": "archived"}),
     (GeoProject, 100, {"project_settings": {"geo_business_scope": {"business_ids": [1]},
                                           "geo_service_plan": {"advisor_user_id": 99}}}),
-    (User, 1, {"is_active": False}),
+    (User, 1, {"is_active": False}), (User, 1, {"tenant_id": 30}),
     (Role, 1, {"permissions": {"geo.assets": "edit", "geo.content": "view"}}),
 ])
 def test_assignment_reloads_after_changes(tmp_path, model, ident, values):
