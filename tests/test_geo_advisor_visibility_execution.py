@@ -102,3 +102,33 @@ def test_revocation_during_provider_discards_response_and_stops_followup(tmp_pat
                 assert 'private fixture provider response' not in str(row.items)
             real_call.assert_awaited_once()
     asyncio.run(run())
+
+
+def test_revocation_discards_uncommitted_prior_cells(tmp_path, monkeypatch, backend):
+    async def run():
+        from app.models import GeoTrackingEngine
+        async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
+            async with env.factory() as session:
+                session.add(GeoTrackingEngine(tenant_id=10, engine_key='qwen', display_name='fixture second engine', enabled=True))
+                await session.commit()
+            response = await env.request('POST', '/visibility-patrol/runs', body={'tenant_id': 10})
+            run_id = response.json()['run']['id']
+            patrol = worker_stubs(monkeypatch)
+            worker_session, calls = None, []
+            async def probe(**kwargs):
+                calls.append(1)
+                if len(calls) == 2:
+                    await worker_session.execute(update(Grant).where(Grant.id == 101).values(
+                        revoked_at=datetime.utcnow(), revoked_by=2, revoke_reason='admin_uncheck'))
+                return {'raw_text': 'uncommitted fixture response', 'simulated': False,
+                    'sample_mode': 'openai_compat', 'suggested_mentions_brand': False,
+                    'analysis_status': 'completed'}
+            monkeypatch.setattr(patrol, 'run_probe_draft', probe)
+            async with env.factory() as session:
+                worker_session = session
+                row = await patrol.execute_patrol_run(session, run_id, tenant_id=10)
+                assert row.status == 'failed' and len(calls) == 2
+                assert not list(await session.scalars(select(GeoAnswerSnapshot)))
+                assert row.summary.get('snapshots_created', 0) == 0
+                assert not row.items
+    asyncio.run(run())
