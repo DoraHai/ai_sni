@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.security.advisor_write_handlers import check_handler_fields, lock_manual_task
+from app.security.geo_configuration_admin import require_geo_configuration_admin
 from app.permissions import CUSTOMER_ROLE
 from app.geo.read_routes import read_session as geo_read_session
 from app.geo.tenant_scope import ensure_geo_entitlement, require_geo_read_entitlement
@@ -5130,6 +5131,7 @@ async def put_visibility_patrol_settings(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    require_geo_configuration_admin(ctx)
     from app.geo.content.patrol import (
         clamp_hour,
         clamp_interval_hours,
@@ -5762,6 +5764,7 @@ async def put_tracking_engines(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    require_geo_configuration_admin(ctx)
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
     # Legacy encrypted keys remain preserved for rollback compatibility, but are
