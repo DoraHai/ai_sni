@@ -24,7 +24,7 @@ from test_seo_advisor_work import req
 def test_publish_admission_keeps_client_assignment_and_switch(object_db, monkeypatch, content_id, tenant, enabled):
     db, session = object_db
     Base.metadata.create_all(db.bind, tables=[SeoDistributionConnection.__table__])
-    db.add(SeoDistributionConnection(id=10, tenant_id=1, platform_code='wordpress', name='fixture', mode='api'))
+    db.add(SeoDistributionConnection(id=10, tenant_id=1, platform_code='wordpress', name='fixture', mode='api', config={'advisor_site_id': 1}))
     db.commit()
     monkeypatch.setattr(get_settings(), 'advisor_scoped_content_writes_enabled', enabled)
     body = {'tenant_id': tenant, 'content_id': content_id, 'connection_id': 10, 'action': 'publish', 'confirm': True}
