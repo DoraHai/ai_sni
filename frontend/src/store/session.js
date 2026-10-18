@@ -109,6 +109,7 @@ export const session = {
     state.token = ''
     state.user = null
     state.tenants = []
+    this.setTenant(null)
     for (const s of [localStorage, sessionStorage]) {
       clearStoredAuth(s)
     }
