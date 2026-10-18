@@ -1211,7 +1211,7 @@ async def update_optimization_business(
         select(GeoOptimizationBusiness).where(
             GeoOptimizationBusiness.id == business_id,
             GeoOptimizationBusiness.tenant_id == tenant_id,
-        )
+        ).with_for_update().execution_options(populate_existing=True)
     )
     if not row:
         raise HTTPException(status_code=404, detail="优化业务不存在")
