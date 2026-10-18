@@ -33,7 +33,7 @@ async function mountEditor(draft, status = 'drafting', saveDraft = value => valu
   const bindings = {
     computed: Vue.computed, nextTick: Vue.nextTick, onMounted: Vue.onMounted, reactive: Vue.reactive, ref: Vue.ref, sanitizeSeoEditorHtml, seoContentWordCount, safeSeoUrl, seoPasteHtml, createSeoTable, editSeoTable, buildSourcePageAssistInstruction, sourcePageRemediationContext,
     useRoute: () => ({ query: { id: '10', site_id: '1', ...options.query } }), useRouter: () => ({ push() {}, replace() {} }),
-    currentTenantId: Vue.ref(1), siteId: Vue.ref(1), session: { user: { name: '测试管理员' } },
+    currentTenantId: Vue.ref(1), siteId: Vue.ref(1), session: { user: { name: '测试管理员' }, isAdvisorSession: Boolean(options.isAdvisor) },
     ElMessage: Object.assign(options => {
       if (options.type === 'warning' || options.type === 'error') errors.push(options.message)
     }, { warning: x => errors.push(x), error: x => errors.push(x), success() {} }),
@@ -57,6 +57,22 @@ async function mountEditor(draft, status = 'drafting', saveDraft = value => valu
   const state = instance.$.setupState, editor = host.querySelector('.article-editor')
   return { host, editor, state, writes, errors, close() { app.unmount(); host.remove() } }
 }
+
+test('advisor manual draft save omits publication fields and retains version and text', async () => {
+  const view = await mountEditor('<p>人工改稿。</p>', 'drafting', value => value, { isAdvisor: true })
+  try {
+    await view.state.save()
+    assert.deepEqual(view.errors, [])
+    assert.equal(view.writes.length, 1)
+    const payload = view.writes[0].payload
+    assert.equal(payload.draft, '<p>人工改稿。</p>')
+    assert.equal(payload.version_count, 1)
+    assert.equal(payload.status, 'drafting')
+    for (const key of ['page_url', 'published_at', 'rewrite_progress', 'originality_score', 'tenant_id', 'site_id']) {
+      assert.equal(Object.hasOwn(payload, key), false, key)
+    }
+  } finally { view.close() }
+})
 
 // Exercise the actual list component and its Continue editing button, not a
 // separately reimplemented routing function.

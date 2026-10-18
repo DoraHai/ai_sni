@@ -74,6 +74,8 @@ class AuthContext:
     grant_id: int | None = None
     auth_exp: int | None = None
     advisor_tenant_ids: frozenset[int] = field(default_factory=frozenset)
+    advisor_write_rule: object | None = None  # Set only by the SEO write guard.
+    advisor_write_scope: tuple | None = None
 
     def can_view(self, *keys: str) -> bool:
         if self.is_superadmin:

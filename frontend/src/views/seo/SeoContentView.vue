@@ -259,6 +259,10 @@ async function save({ submit = false } = {}) {
   saving.value = true
   try {
     const payload = { ...form, keyword_id: form.keyword_ids[0] || null, outline: form.outline || null, draft: form.draft || null, humanized_content: form.humanized_content || null, page_url: form.page_url || null, author: form.author || null, published_at: form.status === 'published' ? new Date().toISOString() : null }
+    if (session.isAdvisorSession) {
+      delete payload.page_url
+      delete payload.published_at
+    }
     const saved = editing.value
       ? await updateSeoContentAsset({ contentId: editing.value.id, tenantId: currentTenantId.value, payload: { ...payload, version_count: editing.value.version_count } })
       : await createSeoContentAsset({ tenant_id: currentTenantId.value, site_id: siteId.value, ...payload })
