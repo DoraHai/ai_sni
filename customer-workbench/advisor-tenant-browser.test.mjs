@@ -59,7 +59,9 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
     await p.waitForFunction(()=>document.body.textContent.includes('可能已被收回'));
     assert(!await p.$('.advisor-task'));assert(!await p.$('.advisor-automation'));assert(!await p.$('.distribution-task'));
     await screenshot('mt-denied');
-    revoked=false;await p.click('[data-tenant="1"]');await p.waitForSelector('.advisor-task');
+    revoked=false;await p.waitForFunction(()=>document.querySelectorAll('[data-tenant]').length===1);
+    await p.click('.advisor-tenant-picker summary');await p.click('[data-tenant="1"]');
+    await p.waitForSelector('.advisor-task').catch(async e=>{e.message+=' '+await p.$eval('body',e=>e.textContent);throw e;});
     assert(!await p.$('.advisor-tenant-picker details'));
     await p.goto(origin+'/customer-workbench/?console=advisor&tenant_id=3');await p.waitForFunction(()=>document.body.textContent.includes('可能已被收回'));
     assert(!await p.$('.advisor-task'));
