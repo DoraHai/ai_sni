@@ -17,7 +17,8 @@ from test_geo_advisor_visibility import visibility_sandbox
 def worker_stubs(monkeypatch):
     from app.geo.content import ai_settings, daily_metrics, patrol
     monkeypatch.setattr(ai_settings, 'resolve_llm_credentials', AsyncMock(return_value={}))
-    monkeypatch.setattr(ai_settings, 'ensure_ai_setting', AsyncMock(return_value=SimpleNamespace(monitoring_stance='hybrid')))
+    monkeypatch.setattr(ai_settings, 'ensure_ai_setting', AsyncMock(side_effect=AssertionError('advisor worker must not create model settings')))
+    monkeypatch.setattr(ai_settings, 'get_ai_setting_row', AsyncMock(return_value=SimpleNamespace(monitoring_stance='hybrid')))
     monkeypatch.setattr(patrol, 'resolve_engine_llm', lambda **kw: (
         {'api_key': 'fixture-only', 'model': 'fixture-model', 'provider': 'fixture'}, 'openai_compat', None))
     monkeypatch.setattr(patrol, 'ensure_geo_entitlement', AsyncMock())
@@ -25,7 +26,7 @@ def worker_stubs(monkeypatch):
     return patrol
 
 
-@pytest.mark.parametrize('change', ['grant', 'regrant', 'assignment', 'prompt', 'account', 'role', 'expired', 'flag', 'legacy'])
+@pytest.mark.parametrize('change', ['grant', 'regrant', 'assignment', 'prompt', 'account', 'role', 'expired', 'flag', 'legacy', 'engine-disabled', 'engine-deleted'])
 def test_queued_detection_rechecks_before_any_provider(tmp_path, monkeypatch, backend, change):
     async def run():
         async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
@@ -52,6 +53,13 @@ def test_queued_detection_rechecks_before_any_provider(tmp_path, monkeypatch, ba
                 elif change == 'role':
                     await session.execute(update(Role).where(Role.id == 1).values(
                         permissions={'geo.assets': 'edit', 'geo.content': 'view'}))
+                elif change in {'engine-disabled', 'engine-deleted'}:
+                    from app.models import GeoTrackingEngine
+                    from sqlalchemy import delete
+                    statement = (delete(GeoTrackingEngine).where(GeoTrackingEngine.tenant_id == 10)
+                        if change == 'engine-deleted' else update(GeoTrackingEngine).where(
+                            GeoTrackingEngine.tenant_id == 10).values(enabled=False))
+                    await session.execute(statement)
                 elif change == 'expired':
                     row = await session.get(GeoVisibilityPatrolRun, run_id)
                     summary = copy.deepcopy(row.summary)
@@ -208,4 +216,29 @@ def test_project_reassignment_can_commit_during_provider_and_discards_reply(tmp_
                 assert not list(await session.scalars(select(GeoAnswerSnapshot)))
                 assert 'stale provider response' not in str(row.items)
             probe.assert_awaited_once()
+    asyncio.run(run())
+
+
+def test_advisor_detection_reads_config_without_creating_defaults(tmp_path, monkeypatch, backend):
+    from app.geo.content import ai_settings
+    from unittest.mock import Mock
+    async def run():
+        async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
+            response = await env.request('POST', '/visibility-patrol/runs', body={'tenant_id': 10})
+            run_id = response.json()['run']['id']
+            patrol = worker_stubs(monkeypatch)
+            read_config = AsyncMock(return_value=None)
+            create_config = AsyncMock(side_effect=AssertionError('configuration creation forbidden'))
+            defaults = Mock(side_effect=AssertionError('engine creation forbidden'))
+            monkeypatch.setattr(ai_settings, 'get_ai_setting_row', read_config)
+            monkeypatch.setattr(ai_settings, 'ensure_ai_setting', create_config)
+            monkeypatch.setattr('app.geo.content.engines.default_engine_rows', defaults)
+            monkeypatch.setattr(patrol, 'run_probe_draft', AsyncMock(return_value={
+                'raw_text': 'synthetic answer', 'sample_mode': 'openai_compat', 'simulated': False}))
+            async with env.factory() as session:
+                row = await patrol.execute_patrol_run(session, run_id, tenant_id=10)
+                assert row.status == 'completed', row.error
+            read_config.assert_awaited()
+            create_config.assert_not_awaited()
+            defaults.assert_not_called()
     asyncio.run(run())
