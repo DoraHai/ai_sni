@@ -18,7 +18,7 @@ BODY = {'tenant_id': 10, 'prompt_id': 10, 'title': 'Imported fixture article',
 
 
 @pytest.mark.parametrize('change', [
-    {'source_type': 'file'}, {'source_type': 'url'}, {'source_type': None},
+    {'source_type': 'url'}, {'source_type': None},
     {'status': 'published'}, {'owner_user_id': 2}, {'version_no': 8},
     {'published': True}, {'review_status': 'approved'}, {'prompt_id': 20},
     {'tenant_id': 20}, {'tenant_id': 30},
@@ -97,11 +97,12 @@ def test_import_cannot_join_enabled_execution_chain(tmp_path, monkeypatch, backe
     asyncio.run(run())
 
 
-def test_import_server_derives_owner_state_and_first_version(tmp_path, monkeypatch, backend):
+@pytest.mark.parametrize('source', ['paste', 'file'])
+def test_import_server_derives_owner_state_and_first_version(tmp_path, monkeypatch, backend, source):
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
             before = await env.snapshot()
-            response = await env.request('POST', PATH, body=BODY)
+            response = await env.request('POST', PATH, body={**BODY, 'source_type': source})
             assert response.status_code == 200, response.text
             after = await env.snapshot()
             task = next(r for r in after['geo_content_tasks'] if r['title'] == BODY['title'])
@@ -111,7 +112,7 @@ def test_import_server_derives_owner_state_and_first_version(tmp_path, monkeypat
             assert task['review_status'] != 'approved'
             assert article['version_no'] == 1 and article['created_by'] == 1
             assert article['body_markdown'] == BODY['body_markdown']
-            assert article['generation_meta']['source_type'] == 'paste'
+            assert article['generation_meta']['source_type'] == source
             for table in ('geo_publications', 'geo_channel_variants', 'geo_async_jobs'):
                 assert after[table] == before[table]
     asyncio.run(run())
@@ -131,7 +132,8 @@ def test_import_into_another_explicitly_granted_selected_customer(tmp_path, monk
 
 
 @pytest.mark.parametrize('change', ['assignment', 'patrol'])
-def test_import_rechecks_scope_at_actual_commit_and_rolls_back(tmp_path, monkeypatch, backend, change):
+@pytest.mark.parametrize('source', ['paste', 'file'])
+def test_import_rechecks_scope_at_actual_commit_and_rolls_back(tmp_path, monkeypatch, backend, change, source):
     from app.geo.content import routes
     original = routes._evaluate_and_store_rules
 
@@ -151,7 +153,7 @@ def test_import_rechecks_scope_at_actual_commit_and_rolls_back(tmp_path, monkeyp
         async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
             monkeypatch.setattr(routes, '_evaluate_and_store_rules', changed_before_commit)
             before = await env.snapshot()
-            response = await env.request('POST', PATH, body=BODY)
+            response = await env.request('POST', PATH, body={**BODY, 'source_type': source})
             assert response.status_code == 403, response.text
             assert await env.snapshot() == before
     asyncio.run(run())

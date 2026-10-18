@@ -85,7 +85,7 @@ def test_commit_recheck_reloads_stale_identity_and_rolls_back_pending_business_c
 @pytest.mark.parametrize('production_dependency', [False, True], ids=['fixture-cleanup', 'production-session-cleanup'])
 @pytest.mark.parametrize('case', [CASES[0], next(c for c in CASES if c[4] == 'profile')] +
                          [c for c in CASES if c[1] == '/content-imports/create-task'],
-                         ids=['manual-fact', 'brand-profile', 'paste-import'])
+                         ids=['manual-fact', 'brand-profile', 'paste-import', 'file-import'])
 def test_real_http_revoke_after_guard_before_handler_commit_never_persists(tmp_path, monkeypatch, kind, production_dependency, case):
     importlib.import_module('app.security.advisor_write_commit')
     from app.security import geo_advisor
