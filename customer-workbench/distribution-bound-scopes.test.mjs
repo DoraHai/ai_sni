@@ -5,6 +5,38 @@ import {createAdvisorDistributionPanel,seoOfflineEntryMarkup} from './js/distrib
 const row={module:'seo',tenant_id:1,scope_id:1,tenant_name:'诺德',scope_name:'诺德网站'};
 const session=()=>({token:'fixture',authRevision:1,user:{id:3,tenant_id:1,permissions:{'seo.site':'edit','seo.content':'edit'}},logout(){this.token='';}});
 
+test('advisor distribution is local text and offline links, without service or session initialization',async()=>{
+ const s={...session(),isAdvisorSession:true,tenantId:1};let rows=[row,{...row,scope_id:6},{...row,tenant_id:2}];
+ const panel=createAdvisorDistributionPanel({session:s,browser:{},scopesForAdvisor:()=>rows,
+   fetchImpl:()=>assert.fail('Advisor must not request distribution'),subscribeSession:()=>assert.fail('No distribution client subscription')});
+ assert.equal(panel.html(),'');
+ await panel.initialize(['seo','geo']);
+ assert.match(panel.html(),/审核通过的稿件由多号通或人工发布，发完在分发记录里回填链接或导入回执。/);
+ for(const site of [1,6])assert.match(panel.html(),new RegExp(`tenant_id=1&amp;site_id=${site}`));
+ assert.doesNotMatch(panel.html(),/tenant_id=2|data-distribution=|<select|<input|会话或权限已变化|本页暂无已分配项目/);
+ panel.click({target:{closest:()=>({dataset:{distribution:'refresh'}})}});
+ panel.change({target:{name:'distribution_scope',value:'seo:1:6'}});
+ panel.filterModule('geo');assert.doesNotMatch(panel.html(),/导出发布单/);
+ panel.filterModule('seo');rows=[];
+ assert.match(panel.html(),/这个客户目前没有待发布的稿件。/);
+ assert.match(panel.html(),/<a href="\/seo\/distribution">导出发布单 \/ 导入回执/);
+ s.user.permissions['seo.content']='view';assert.doesNotMatch(panel.html(),/href=/);
+ panel.invalidate();assert.equal(panel.html(),'');panel.dispose();
+});
+
+for(const tenantId of [null,1])test(`non-advisor distribution keeps discovery and original empty text (${tenantId===null?'admin':'customer'})`,async()=>{
+ const s={...session(),isAdvisorSession:false};s.user.tenant_id=tenantId;const calls=[];
+ const panel=createAdvisorDistributionPanel({session:s,browser:{},fetchImpl:async path=>{
+   calls.push(path);return Response.json({schema:1,module:'seo',items:[]});
+ }});
+ try{
+   await panel.initialize(['seo']);
+   assert.deepEqual(calls,['/api/distribution/v1/bound-scopes?module=seo']);
+   assert.match(panel.html(),/本页暂无已分配项目。可读取其他任务页后选择项目。/);
+   assert.doesNotMatch(panel.html(),/这个客户目前没有待发布的稿件/);
+ }finally{panel.dispose();}
+});
+
 test('reviewing a draft shows the existing warning before unchecked publication authorizations without submitting work',async()=>{
  const content={version:'rev1',title:'审核稿',body:'正文',assets:[]},calls=[];
  const source={schema:1,module:'seo',tenant_id:1,scope_id:1,variant_id:1,platform:'wechat-article',source_revision:'rev1',content,content_digest:await distributionContentDigest(content)};
