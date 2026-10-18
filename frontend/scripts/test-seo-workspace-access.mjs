@@ -345,11 +345,11 @@ async function mountAdvisorShell(options = {}) {
   localStorage.clear(); sessionStorage.clear()
   const user = options.normal ? { ...advisorUser, is_advisor: false } : advisorUser
   const identity = options.normal ? 'fake-normal-session' : fakeJwt({ scope_kind: 'advisor_identity', sub: user.id })
-  session.setAuth(identity, user, true)
+  session.setAuth(options.businessTenantId ? validSelection(options.businessTenantId).access_token : identity, user, true)
   const calls = [], sites = []
   const me = { user: { ...user, default_tenant_id: options.defaultId ?? null } }
   if (options.legacyMe) delete me.user.default_tenant_id
-  const route = Vue.reactive({ path: '/seo/dashboard', query: {}, meta: { immersive: true } })
+  const route = Vue.reactive({ path: '/seo/dashboard', query: {}, meta: { immersive: options.immersive ?? true } })
   const client = {
     async get(path, config) {
       calls.push(['GET', path, config])
@@ -410,6 +410,43 @@ test('advisor default customer wins within grants; business auth stays in this t
     assert.equal(reloaded.tenantId, 17)
     assert.equal(reloaded.advisorScope, 'advisor_tenant')
   } finally { view.close() }
+})
+
+test('advisor business sessions show the customer without selection controls in the topbar', async () => {
+  for (const options of [
+    { defaultId: 17 },
+    { businessTenantId: 17 },
+    { businessTenantId: 17, scopeError: new Error('当前客户尚未开通 SEO 模块') },
+  ]) {
+    const view = await mountAdvisorShell({ ...options, immersive: false })
+    try {
+      assert.equal(session.advisorScope, 'advisor_tenant')
+      assert.equal(session.tenantId, 17)
+      assert.equal(view.host.querySelector('.customer-selection'), null)
+      assert.equal(view.host.querySelector('.tenant-select'), null)
+      assert.equal(view.host.querySelector('.topbar-actions .tenant-chip b').textContent, 'B')
+      if (options.scopeError) assert.equal(view.host.querySelector('.test-seo-data'), null)
+      else assert(view.host.querySelector('.test-seo-data'))
+      assert.equal(view.calls.filter(c => c[0] === 'POST').length, options.defaultId ? 1 : 0)
+    } finally { view.close() }
+  }
+})
+
+test('topbar customer-selection link remains available for advisor identity and recovery failures', async () => {
+  for (const options of [
+    {},
+    { defaultId: 15, selectError: new Error('模拟选客失败') },
+    { businessTenantId: 17, scopeError: Object.assign(new Error('模拟恢复失败'), { code: 'SEO_ADVISOR_SELECTION_FAILED' }) },
+  ]) {
+    const view = await mountAdvisorShell({ ...options, immersive: false })
+    try {
+      const link = view.host.querySelector('.topbar-actions .customer-selection')
+      assert.equal(link?.textContent, '去选择客户')
+      assert.equal(link.getAttribute('href'), '/customer-workbench/?console=advisor')
+      assert.equal(view.host.querySelector('.tenant-select'), null)
+      assert.equal(view.host.querySelector('.test-seo-data'), null)
+    } finally { view.close() }
+  }
 })
 
 test('single authorized customer auto-selects for array/envelope lists and missing/stale defaults', async () => {
@@ -504,7 +541,7 @@ test('malformed selection envelopes and foreign subject/tenant/grant claims neve
 
 test('non-advisor scope validation and errors retain their existing behavior', async () => {
   for (const scopeError of [undefined, new Error('原有 SEO 中文提示')]) {
-    const view = await mountAdvisorShell({ normal: true, scopeError })
+    const view = await mountAdvisorShell({ normal: true, scopeError, immersive: false })
     try {
       assert.equal(view.calls.filter(c => c[0] === 'POST').length, 0)
       assert.equal(view.calls.filter(c => c[1] === '/api/v1/auth/tenants').length, 1)

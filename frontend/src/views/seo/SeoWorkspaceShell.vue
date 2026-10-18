@@ -261,8 +261,8 @@ onMounted(refreshCurrentUser)
           <strong>{{ title }}</strong>
         </div>
         <div class="topbar-actions">
-          <a v-if="session.isAdvisorSession" class="customer-selection" href="/customer-workbench/?console=advisor">去选择客户</a>
-          <label v-else-if="showTenantSelect" class="tenant-select">
+          <a v-if="session.advisorScope === 'advisor_identity' || needsCustomerSelection" class="customer-selection" href="/customer-workbench/?console=advisor">去选择客户</a>
+          <label v-else-if="!session.isAdvisorSession && showTenantSelect" class="tenant-select">
             <span>客户</span>
             <select :value="accessState === 'unavailable' ? '' : session.tenantId || ''" @change="onTenantChange(Number($event.target.value))">
               <option v-if="accessState === 'unavailable'" value="" disabled>请手动选择客户</option>
