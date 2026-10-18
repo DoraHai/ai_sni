@@ -145,9 +145,9 @@ export function listGeoBusinesses(tenantId, params = {}) {
   })
 }
 
-export function createGeoBusiness(body) {
+export function createGeoBusiness(body, projectId = null) {
   return client.post('/api/v1/geo/optimization-businesses', body, {
-    params: { tenant_id: body.tenant_id },
+    params: { tenant_id: body.tenant_id, ...(projectId ? { project_id: projectId } : {}) },
   })
 }
 

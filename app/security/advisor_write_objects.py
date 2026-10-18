@@ -198,8 +198,12 @@ async def _resolve(session, ctx, request, body, rule):
         if marker in seen:
             return
         seen.add(marker)
-        row = await session.scalar(select(model).where(model.id == ident)
-                                   .execution_options(populate_existing=True))
+        stmt = select(model).where(model.id == ident).execution_options(populate_existing=True)
+        if session.info.get("advisor_scoped_write"):
+            # Commit-time validation retains ownership locks until the same
+            # transaction commits, including parents without tenant columns.
+            stmt = stmt.with_for_update()
+        row = await session.scalar(stmt)
         if row is None:
             deny(404, "ADVISOR_OBJECT_NOT_FOUND", "对象不存在")
         if hasattr(row, "tenant_id"):
@@ -266,7 +270,9 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
     from app.models import GeoProject, GeoVisibilityPatrolSettings
 
     objects = await _resolve(session, ctx, request, body, rule)
-    if rule.assignment != "project" or objects.unscoped or not objects.businesses:
+    creating_business = request.method == "POST" and rule.template == _PREFIX + "/optimization-businesses"
+    if (rule.assignment != "project" or objects.unscoped
+            or (not objects.businesses and not creating_business)):
         _assignment_required()
     creation_parent = {
         _PREFIX + "/facts": "business_id", _PREFIX + "/prompts": "unit_id",
@@ -279,13 +285,18 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
     for parent_key in ("business_id", "unit_id"):
         if isinstance(body, dict) and parent_key in body and body[parent_key] is None:
             _assignment_required()
-    # Current create-business/import handlers cannot persist a project binding
-    # or business/unit ownership. A query project_id cannot fix that omission.
-    if ((request.method == "POST" and rule.template == _PREFIX + "/optimization-businesses")
-            or rule.template in _IMPORT_TEMPLATES):
+    # Business creation binds the new row atomically in its handler. Imports do
+    # not persist business/unit ownership and remain unavailable.
+    if creating_business and (objects.businesses or len(request.query_params.getlist("project_id")) != 1
+                              or len(objects.projects) != 1):
         _assignment_required()
-    projects = list(await session.scalars(select(GeoProject).where(
-        GeoProject.tenant_id == ctx.tenant_id).execution_options(populate_existing=True)))
+    if rule.template in _IMPORT_TEMPLATES:
+        _assignment_required()
+    project_stmt = select(GeoProject).where(GeoProject.tenant_id == ctx.tenant_id).order_by(
+        GeoProject.id).execution_options(populate_existing=True)
+    if session.info.get("advisor_scoped_write"):
+        project_stmt = project_stmt.with_for_update()
+    projects = list(await session.scalars(project_stmt))
     scopes, plans = {}, {}
     for project in projects:
         try:

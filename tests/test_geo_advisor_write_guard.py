@@ -35,9 +35,10 @@ async def sandbox(tmp_path, monkeypatch, *, enabled=True):
     monkeypatch.setattr(get_settings(), "advisor_scoped_content_writes_enabled", enabled)
     schema = None
     if os.environ.get("GEO_ADVISOR_WRITE_LOCAL_POSTGRES") == "yes":
-        # Explicit local test cluster only; never read a connection string from
-        # settings, environment, an existing cluster or a credential file.
-        root_engine = create_async_engine("postgresql+asyncpg://geo_a_test@127.0.0.1:55987/postgres")
+        from ops.run_geo_checks import validate_ci_database
+        url = os.environ["GEO_TEST_POSTGRES_URL"]
+        validate_ci_database(url)
+        root_engine = create_async_engine(url)
         schema = "geo_a_write_" + uuid4().hex
         async with root_engine.begin() as conn:
             await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
@@ -146,7 +147,7 @@ def test_every_exact_rule_calls_both_contracts_and_commit_rechecks(tmp_path, mon
             r = await request(path, body, method=method)
             assert r.status_code == 200, r.text
             assert r.json() == {"body": body, "scoped": True}
-            assert calls == ["objects", "assignment", "objects", "assignment"]
+            assert calls == ["objects", "objects", "assignment", "objects", "assignment"]
             async with factory() as s:
                 assert (await s.get(Tenant, 10)).name == "committed"
     asyncio.run(run())
@@ -155,12 +156,12 @@ def test_every_exact_rule_calls_both_contracts_and_commit_rechecks(tmp_path, mon
 @pytest.mark.parametrize("body", [{"status": "published"}, {"owner_user_id": 1},
     {"brief": {"nested": {"owner_user_id": 1}}}, {"brief": {"notes": {"fact_id": 30}}},
     {"outline": {"verified": True}}, {"unexpected": True}])
-def test_forbidden_fields_stop_before_object_checks(tmp_path, monkeypatch, body):
+def test_forbidden_fields_stop_before_assignment_or_commit(tmp_path, monkeypatch, body):
     async def run():
         async with sandbox(tmp_path, monkeypatch) as (request, factory, _, calls):
             r = await request("/content-tasks/1", body, method="PATCH")
             assert r.status_code == 403 and r.json()["detail"]["code"] == "ADVISOR_WRITE_FIELD_FORBIDDEN"
-            assert not calls
+            assert calls == ["objects"] * (2 if "brief" in body else 1)
             async with factory() as s:
                 assert (await s.get(Tenant, 10)).name == "unchanged"
     asyncio.run(run())
@@ -171,7 +172,7 @@ def test_selected_customer_and_query_action_boundaries(tmp_path, monkeypatch, qu
     async def run():
         async with sandbox(tmp_path, monkeypatch) as (request, _, _, calls):
             assert (await request("/facts", {"tenant_id": 10}, query=query)).status_code == 403
-            assert not calls
+            assert "assignment" not in calls
     asyncio.run(run())
 
 
@@ -284,9 +285,10 @@ def test_missing_b_integration_fails_closed(tmp_path, monkeypatch):
     asyncio.run(run())
 
 
-@pytest.mark.skipif(os.environ.get("GEO_ADVISOR_WRITE_LOCAL_POSTGRES") != "yes",
+@pytest.mark.skipif(not os.environ.get("GEO_TEST_POSTGRES_URL"),
                     reason="requires the explicitly owned local PostgreSQL cluster")
 def test_postgres_writer_waits_for_central_user_lock_then_observes_revoke(tmp_path, monkeypatch):
+    monkeypatch.setenv("GEO_ADVISOR_WRITE_LOCAL_POSTGRES", "yes")
     async def run():
         import app.security.advisor_write_commit as commit_policy
         async with sandbox(tmp_path, monkeypatch) as (request, factory, _, _):

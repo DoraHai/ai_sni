@@ -183,8 +183,20 @@ async def guard_scoped_write(session, ctx, request, claims):
         deny(403, "ADVISOR_HIGH_RISK_WRITES_DISABLED", "此顾问写入入口尚未开放")
     if not request.query_params.getlist("tenant_id"):
         deny(403, "ADVISOR_TENANT_REQUIRED", "请求必须指定当前客户")
+    try:
+        from app.security.advisor_write_objects import check_write_objects
+    except ModuleNotFoundError as exc:
+        if exc.name != "app.security.advisor_write_objects":
+            raise
+        deny(403, "ADVISOR_OBJECT_UNAVAILABLE", "受限写入对象核对尚未就绪")
+    # Resolve supplied object references even when an extra query key or an
+    # opaque brief would otherwise fail the field policy first.
+    await check_write_objects(session, ctx, request, {}, rule)
     # Query action switches are not part of any admitted manual-write contract.
     for key, value in request.query_params.multi_items():
+        if key == "project_id" and rule.method == "POST" and rule.template == "/api/v1/geo/optimization-businesses":
+            positive_id(value)
+            continue
         if key != "tenant_id":
             deny(403, "ADVISOR_WRITE_FIELD_FORBIDDEN", "此查询字段未向顾问开放")
         ctx.ensure_tenant(positive_id(value))
@@ -193,6 +205,8 @@ async def guard_scoped_write(session, ctx, request, claims):
         body = await request.json()
     except (ValueError, UnicodeDecodeError):
         deny(403, "ADVISOR_WRITE_FIELD_FORBIDDEN", "顾问写入仅支持 JSON 对象")
+    if isinstance(body, dict) and "brief" in body:
+        await check_write_objects(session, ctx, request, {"brief": body["brief"]}, rule)
     check_write_fields(rule, body)
     if not all(ctx.can_edit(key) for key in rule.edit_all):
         deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "当前角色无编辑权限")

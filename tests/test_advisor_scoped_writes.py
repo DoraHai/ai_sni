@@ -500,7 +500,7 @@ def test_new_material_cannot_feed_enabled_execution_chain(tmp_path, monkeypatch,
     asyncio.run(run())
 
 
-@pytest.mark.parametrize('expected,accepted', [('missing', False), (None, True), (10, False)])
+@pytest.mark.parametrize('expected,accepted', [('missing', False), (None, True), (20, False)])
 def test_first_article_requires_explicit_null_base(tmp_path, monkeypatch, backend, expected, accepted):
     async def run():
         from sqlalchemy import delete
@@ -540,6 +540,12 @@ def test_channel_edit_never_creates_or_overwrites_published_variant(tmp_path, mo
 def test_stale_article_version_cannot_append_or_overwrite(tmp_path, monkeypatch, backend):
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            # A stale version is an existing older version of this task, not
+            # a nonexistent ID (which correctly returns 404 at object lookup).
+            async with env.factory() as session:
+                session.add(GeoArticleVersion(id=9, task_id=10, version_no=0,
+                    title='older article', body_markdown='Older manual version.', outline={}))
+                await session.commit()
             before = await env.snapshot()
             response = await env.request('PUT', '/content-tasks/10/article', body={
                 'expected_article_id': 9, 'title': 'stale edit', 'body_markdown': 'must not persist'})

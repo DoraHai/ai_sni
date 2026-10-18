@@ -5,6 +5,7 @@ HTTP matrix. The writer and revoker always use different actual connections.
 All waits are bounded; no production schema or existing test service is used.
 """
 import asyncio
+import importlib
 import copy
 import os
 from datetime import datetime, timezone
@@ -17,10 +18,20 @@ from app.models import GeoFact, GeoProject, Role, User
 from app.models.advisor_tenant_grant import AdvisorTenantGrant as Grant
 from test_advisor_scoped_writes import (CASES, EDIT, assert_denied, fixture_token,
     mutate, no_external_http_or_background_dispatch, write_sandbox)
-from test_advisor_scoped_writes_contract import context
+from test_advisor_scoped_writes_contract import context, request_for
 
 pytestmark = pytest.mark.skipif(not os.getenv('GEO_TEST_POSTGRES_URL'),
                                 reason='requires explicitly configured isolated PostgreSQL')
+
+
+def bind_writer(commit, writer):
+    from app.security.advisor_write_routes import WRITE_ROUTES
+    ctx = context()
+    rule = WRITE_ROUTES[('PATCH', '/api/v1/geo/facts/{fact_id}')]
+    request = request_for('PATCH', '/facts/{fact_id}', path_params={'fact_id': 10})
+    commit.bind_advisor_write_commit(writer, ctx, request, {'title': 'manual change'}, rule,
+        {'exp': int(datetime.now(timezone.utc).timestamp()) + 600})
+    return ctx
 
 
 async def revoke(env, kind):
@@ -41,7 +52,7 @@ async def revoke(env, kind):
 
 @pytest.mark.parametrize('kind', ['grant', 'permissions', 'user'])
 def test_commit_recheck_reloads_stale_identity_and_rolls_back_pending_business_change(tmp_path, monkeypatch, kind):
-    commit = pytest.importorskip('app.security.advisor_write_commit')
+    commit = importlib.import_module('app.security.advisor_write_commit')
 
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend='postgres') as env:
@@ -60,7 +71,7 @@ def test_commit_recheck_reloads_stale_identity_and_rolls_back_pending_business_c
                     assert await independent.scalar(text('SELECT pg_backend_pid()')) != writer_pid
                 await asyncio.wait_for(revoke(env, kind), 5)
                 with pytest.raises(HTTPException) as denied:
-                    await commit.recheck_advisor_before_commit(writer, context())
+                    await commit.recheck_advisor_before_commit(writer, bind_writer(commit, writer))
                     await writer.commit()
                 assert denied.value.status_code in {401, 403}
                 if kind == 'grant':
@@ -72,8 +83,7 @@ def test_commit_recheck_reloads_stale_identity_and_rolls_back_pending_business_c
 
 @pytest.mark.parametrize('kind', ['grant', 'permissions', 'user', 'assignment'])
 def test_real_http_revoke_after_guard_before_handler_commit_never_persists(tmp_path, monkeypatch, kind):
-    # The contract module's absence is the sole skip condition beyond missing PG.
-    pytest.importorskip('app.security.advisor_write_commit')
+    importlib.import_module('app.security.advisor_write_commit')
     from app.security import geo_advisor
 
     async def run():
@@ -176,7 +186,7 @@ def test_regrant_does_not_revive_old_generation_write(tmp_path, monkeypatch):
     (User, 1, {'is_active': False}),
 ], ids=['grant-lock', 'role-lock', 'user-lock'])
 def test_recheck_holds_identity_locks_through_business_commit(tmp_path, monkeypatch, model, ident, values):
-    commit = pytest.importorskip('app.security.advisor_write_commit')
+    commit = importlib.import_module('app.security.advisor_write_commit')
 
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend='postgres') as env:
@@ -199,7 +209,7 @@ def test_recheck_holds_identity_locks_through_business_commit(tmp_path, monkeypa
                 fact.title = 'authorized before revocation'
                 await writer.flush()
                 pids['writer'] = await writer.scalar(text('SELECT pg_backend_pid()'))
-                await commit.recheck_advisor_before_commit(writer, context())
+                await commit.recheck_advisor_before_commit(writer, bind_writer(commit, writer))
                 revoker = asyncio.create_task(competing_revocation())
                 try:
                     await asyncio.wait_for(started.wait(), 5)

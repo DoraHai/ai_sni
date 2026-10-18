@@ -1151,6 +1151,7 @@ async def list_optimization_businesses(
 @router.post("/optimization-businesses")
 async def create_optimization_business(
     req: OptimizationBusinessCreate,
+    project_id: int | None = Query(None),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -1178,6 +1179,15 @@ async def create_optimization_business(
         sort_order=req.sort_order,
     )
     session.add(row)
+    if ctx.advisor_scope is not None:
+        # The guard verified this explicit project. Persist the new business
+        # and its ownership in the same transaction; never leave an orphan.
+        from app.geo.project_scope import binding, project_scope, set_binding
+        project, _ = await project_scope(session, req.tenant_id, project_id)
+        current = binding(project)
+        await session.flush()
+        await set_binding(session, req.tenant_id, project_id,
+                          [*current["business_ids"], row.id], current["revision"], ctx.user_id)
     await session.commit()
     await session.refresh(row)
     return _business_payload(row, unit_count=0)
@@ -7138,6 +7148,8 @@ async def patch_task(
         data["status"] = st
     for key, value in data.items():
         setattr(task, key, value)
+    if ctx.advisor_scope is not None and set(data) & {"title", "brief", "target_channels"}:
+        invalidate_review(task)
     if task.status != "archived":
         await _sync_task_pipeline(session, task)
     await session.commit()
@@ -7684,6 +7696,8 @@ async def update_task_facts(
     task = await _get_task(session, task_id, tenant_id)
     await lock_manual_task(session, ctx, task)
     await _bind_facts(session, task, req.fact_ids)
+    if ctx.advisor_scope is not None:
+        invalidate_review(task)
     await session.commit()
     await session.refresh(task)
     return await _task_payload(session, task, detail=True)

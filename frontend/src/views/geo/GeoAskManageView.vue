@@ -25,6 +25,7 @@ import {
   importGeoPromptsCsv,
 } from '../../api/geoContent'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
+import GeoAdvisorProjectPicker from '../../components/GeoAdvisorProjectPicker.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { downloadCsv, engineDisplay, engineLabelOf, labelOf, SENTIMENT_LABEL } from '../../utils/geoReportLabels'
@@ -52,6 +53,7 @@ const dialogOpen = ref(false)
 const dialogMode = ref('create')
 const saving = ref(false)
 const editTarget = ref(null)
+const newBusinessProjectId = ref(null)
 const form = ref({
   name: '',
   question: '',
@@ -637,7 +639,11 @@ async function submitDialog() {
         await patchGeoBusiness(tenantId.value, editTarget.value.id, { name })
         ElMessage.success('已保存')
       } else {
-        await createGeoBusiness({ tenant_id: tenantId.value, name })
+        if (isAdvisor.value && !newBusinessProjectId.value) {
+          ElMessage.warning('请选择已分配给你的项目')
+          return
+        }
+        await createGeoBusiness({ tenant_id: tenantId.value, name }, isAdvisor.value ? newBusinessProjectId.value : null)
         ElMessage.success('业务已创建')
       }
     } else if (layer.value === 'keyword') {
@@ -1103,6 +1109,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
           <div v-if="layer === 'business'" class="prompt-field">
             <label>业务名称 <em>*</em></label>
             <input v-model="form.name" placeholder="例如：CRM软件">
+            <GeoAdvisorProjectPicker v-if="isAdvisor && !editTarget" v-model="newBusinessProjectId" :tenant-id="tenantId" />
           </div>
           <template v-else-if="layer === 'keyword'">
             <div class="prompt-field">

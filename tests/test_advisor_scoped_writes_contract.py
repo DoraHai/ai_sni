@@ -1,12 +1,13 @@
 """Pure route/field contract and real-SQL body/assignment contract tests.
 
-Only imports of the three not-yet-implemented modules may skip. HTTP acceptance
-tests in test_advisor_scoped_writes.py remain active on the pre-implementation
-branch and must fail for missing functionality.
+All implementation modules are imported unconditionally; missing modules fail.
+HTTP acceptance tests and contract tests both execute the integrated policy.
 """
 import asyncio
 import copy
 import json
+import importlib
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -43,12 +44,12 @@ def request_for(method, template, *, path_params=None, query='tenant_id=10', bod
 
 @pytest.fixture
 def rules():
-    return pytest.importorskip('app.security.advisor_write_routes')
+    return importlib.import_module('app.security.advisor_write_routes')
 
 
 @pytest.fixture
 def objects():
-    return pytest.importorskip('app.security.advisor_write_objects')
+    return importlib.import_module('app.security.advisor_write_objects')
 
 
 def test_settings_scoped_flag_exists_and_defaults_false():
@@ -209,10 +210,10 @@ def test_guard_requires_all_edit_keys_and_preserves_handler_json(tmp_path, monke
             async with env.factory() as session:
                 if missing:
                     with pytest.raises(HTTPException) as denied:
-                        await guard_request(session, ctx, request, {'scope_kind': 'advisor_tenant', 'tid': 10, 'gid': 101})
+                        await guard_request(session, ctx, request, {'scope_kind': 'advisor_tenant', 'tid': 10, 'gid': 101, 'exp': int(datetime.now(timezone.utc).timestamp()) + 600})
                     assert denied.value.status_code == 403
                 else:
-                    await guard_request(session, ctx, request, {'scope_kind': 'advisor_tenant', 'tid': 10, 'gid': 101})
+                    await guard_request(session, ctx, request, {'scope_kind': 'advisor_tenant', 'tid': 10, 'gid': 101, 'exp': int(datetime.now(timezone.utc).timestamp()) + 600})
                     assert request.state.advisor_scoped_write == rules.WRITE_ROUTES[key]
                     assert await request.json() == body
                     assert json.loads(await request.body()) == body
