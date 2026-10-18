@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
 
 from app.database import Base, get_session
-from app.models import GeoAsyncJob, GeoProject, Role, Tenant, TenantModule, User
+from app.models import GeoAsyncJob, GeoAuditRun, GeoMediaPlacement, GeoProject, Role, Tenant, TenantModule, User
 from app.models.advisor_tenant_grant import AdvisorTenantGrant as Grant
 from app.security.auth import JWT_ALG, _jwt_secret, require_auth
 from app.security.geo_advisor_delivery import AdvisorDeliveryMiddleware
@@ -54,13 +54,14 @@ def test_shared_predicate_excludes_raw_settings_edits_without_changing_geo_rbac(
 async def sandbox(tmp_path, monkeypatch, *, with_grants=True):
     from app.geo.content.routes import router, geo_read_session
     from app.geo.project_routes import geo_projects_router
+    from app.geo.routes import router as diagnosis_router
     import app.geo.tenant_scope as entitlement
     import app.database as database
 
     engine = create_async_engine("sqlite+aiosqlite:///" + str(tmp_path / "geo-advisor.sqlite"))
     factory = async_sessionmaker(engine, expire_on_commit=False)
     tables = [Role.__table__, Tenant.__table__, User.__table__, TenantModule.__table__,
-              GeoProject.__table__, GeoAsyncJob.__table__]
+              GeoProject.__table__, GeoAsyncJob.__table__, GeoAuditRun.__table__, GeoMediaPlacement.__table__]
     if with_grants:
         tables.append(Grant.__table__)
     async with engine.begin() as conn:
@@ -98,6 +99,7 @@ async def sandbox(tmp_path, monkeypatch, *, with_grants=True):
     app.add_middleware(AdvisorDeliveryMiddleware)
     app.include_router(router, prefix="/api/v1/geo")
     app.include_router(geo_projects_router)
+    app.include_router(diagnosis_router)
     # Registered unknown route must stay closed even with a valid context.
     from fastapi import Depends
     @app.get("/api/v1/geo/not-reviewed")
@@ -113,6 +115,80 @@ async def sandbox(tmp_path, monkeypatch, *, with_grants=True):
             yield request, factory
         finally:
             await engine.dispose()
+
+
+@pytest.mark.parametrize("path", ["/channel-blueprint", "/structure-scan/latest"])
+def test_content_reads_keep_selected_grants_and_native_scope(tmp_path, monkeypatch, path):
+    async def run():
+        from app.geo.content.routes import blueprint_payload
+        channel = blueprint_payload()["all_channels"][0]["channel_key"]
+        async with sandbox(tmp_path, monkeypatch) as (request, factory):
+            async with factory() as s:
+                for tid in (10, 20, 30):
+                    s.add(GeoAuditRun(id=tid, tenant_id=tid, url=f"https://{tid}.example",
+                                     snapshot={"kind": "website_structure", "structure": {"score": tid}}))
+                    s.add(GeoMediaPlacement(id=tid, tenant_id=tid, name=f"媒体{tid}", channel_key=channel))
+                await s.commit()
+            for tid, gid in [(10, 101), (20, 102)]:
+                response = await request(f"{path}?tenant_id={tid}", auth=token(tid=tid, gid=gid))
+                assert response.status_code == 200, response.text
+                assert response.headers["cache-control"] == "private, no-store"
+                payload = response.json()
+                if path == "/structure-scan/latest":
+                    assert payload["report"]["audit_id"] == tid
+                    assert payload["report"]["score"] == tid
+                else:
+                    assert {c["placement_id"] for c in payload["all_channels"] if c["placement_id"]} == {tid}
+            # Customer 20 is granted but not selected; 30 has no grant.
+            for query in ("tenant_id=20", "tenant_id=30", "tenant_id=10&tenant_id=30", ""):
+                assert (await request(f"{path}?{query}")).status_code == 403
+            assert (await request(f"{path}?tenant_id=30", auth=token(tid=30, gid=999))).status_code == 401
+            identity = token(scope_kind="advisor_identity", aud="advisor-session")
+            for auth in (identity, legacy(1)):
+                response = await request(f"{path}?tenant_id=10", auth=auth)
+                assert response.status_code == 409
+                assert response.json()["detail"]["code"] == "ADVISOR_TENANT_SELECTION_REQUIRED"
+            # Ordinary customers retain tenant isolation; administrators remain unbound.
+            assert (await request(f"{path}?tenant_id=10", auth=legacy(3))).status_code == 200
+            assert (await request(f"{path}?tenant_id=20", auth=legacy(3))).status_code == 403
+            assert (await request(f"{path}?tenant_id=30", auth=legacy(2))).status_code == 200
+            async with factory() as s:
+                await s.execute(update(Grant).where(Grant.id == 101).values(
+                    revoked_at=datetime.now(timezone.utc), revoked_by=2, revoke_reason="admin_uncheck"))
+                await s.commit()
+            assert (await request(f"{path}?tenant_id=10")).status_code == 401
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_content_read_fix_keeps_high_risk_posts_closed(tmp_path, monkeypatch, enabled):
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "advisor_scoped_content_writes_enabled", enabled)
+    async def run():
+        async with sandbox(tmp_path, monkeypatch) as (request, _factory):
+            for path in ("/structure-scan", "/action-tickets"):
+                response = await request(f"{path}?tenant_id=10", method="POST", json={"title": "test"})
+                assert response.status_code == 403, response.text
+                assert response.json()["detail"]["code"] == "ADVISOR_HIGH_RISK_WRITES_DISABLED"
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("path", ["/api/v1/geo/channel-blueprint", "/api/v1/geo/structure-scan/latest"])
+def test_content_read_mapping_is_exact_and_get_only(path):
+    from app.security.auth import AuthContext, _required, require_scoped_auth
+    from starlette.requests import Request
+    assert _required(path, "GET") == ({"geo.content"}, False)
+    for method in ("HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"):
+        assert _required(path, method) == ({"geo.diagnosis"}, False)
+    for suffix in ("/", "/extra", "-extra"):
+        assert _required(path + suffix, "GET") == ({"geo.diagnosis"}, False)
+    # Existing diagnosis-only POST access for non-advisors keeps its menu contract.
+    ctx = AuthContext(2, "native", "管理员", None, {"geo.diagnosis": "view"})
+    for write_path in ("/api/v1/geo/structure-scan", "/api/v1/geo/action-tickets"):
+        assert _required(write_path, "POST") == ({"geo.diagnosis"}, False)
+        request = Request({"type": "http", "method": "POST", "path": write_path,
+                           "query_string": b"", "headers": []})
+        assert asyncio.run(require_scoped_auth(request, ctx)) is ctx
 
 
 def test_two_grants_context_and_job_idor(tmp_path, monkeypatch):
