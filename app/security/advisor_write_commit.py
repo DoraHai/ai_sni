@@ -106,7 +106,8 @@ def bind_advisor_write_commit(session, ctx, request, body, rule, claims) -> None
 
     def after_commit(sync_session):
         from app.security.advisor_write_audit import record
-        record(session.info["advisor_scoped_write"][1].scope, "committed")
+        if not sync_session.in_nested_transaction():
+            record(session.info["advisor_scoped_write"][1].scope, "committed")
 
     def after_flush(sync_session, _flush_context):
         scope = session.info["advisor_scoped_write"][1].scope

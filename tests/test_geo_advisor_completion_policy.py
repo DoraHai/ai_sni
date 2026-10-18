@@ -149,3 +149,21 @@ def test_dispatched_patrol_does_not_reuse_request_session(monkeypatch):
             calls.current_operation.reset(token)
     asyncio.run(run())
     assert visited == [None]
+
+
+def test_operation_log_does_not_claim_savepoint_is_durable(monkeypatch):
+    from unittest.mock import Mock
+    from app.security import advisor_write_audit as audit
+    from app.security import advisor_write_commit as commits
+    callbacks = {}
+    monkeypatch.setattr(commits.event, 'listen',
+        lambda _session, name, function: callbacks.setdefault(name, function))
+    logged = Mock()
+    monkeypatch.setattr(audit, 'record', logged)
+    request = SimpleNamespace(scope={})
+    session = SimpleNamespace(info={}, sync_session=object())
+    commits.bind_advisor_write_commit(session, object(), request, {}, object(), {'exp': 999})
+    callbacks['after_commit'](SimpleNamespace(in_nested_transaction=lambda: True))
+    logged.assert_not_called()
+    callbacks['after_commit'](SimpleNamespace(in_nested_transaction=lambda: False))
+    logged.assert_called_once_with(request.scope, 'committed')
