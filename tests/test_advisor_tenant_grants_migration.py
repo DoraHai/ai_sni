@@ -123,6 +123,8 @@ def test_native_pg_constraints_irreversible_history_backfill_and_exact_acl():
                     ('settings',False,{'geo.assets':'edit','geo.content':'edit','settings.accounts':'edit'}),
                     ('customer',False,{'seo.site':'view','seo.content':'view'}),
                     ('seo-half',False,{'seo.site':'edit'}),
+                    ('dirty-settings',False,{'seo.site':'edit','seo.content':'edit','settings.future':'edit'}),
+                    ('noisy-seo',False,{'seo.site':'edit','seo.content':'edit','unknown':{'nested':True}}),
                 ]
                 expected=[]
                 for i,(name,system,perms) in enumerate(roles,1):
@@ -131,7 +133,7 @@ def test_native_pg_constraints_irreversible_history_backfill_and_exact_acl():
                     await conn.execute(text('INSERT INTO users VALUES (:id,:id,1,false,CURRENT_TIMESTAMP)'),{'id':i})
                     if is_advisor_role(SimpleNamespace(name=name,is_system=system,permissions=perms)):
                         expected.append(i)
-                await conn.execute(text('INSERT INTO users VALUES (7,1,NULL,true,NULL)'))
+                await conn.execute(text('INSERT INTO users VALUES (20,1,NULL,true,NULL),(21,1,999,true,NULL)'))
                 backfill = BACKFILL.read_text(encoding='utf-8')
                 # asyncpg uses one statement per execute; retain DO as one block.
                 preflight = backfill[backfill.index('DO $$'):backfill.index('WITH eligible')]
@@ -139,7 +141,7 @@ def test_native_pg_constraints_irreversible_history_backfill_and_exact_acl():
                 await conn.execute(text(preflight))
                 await conn.execute(text(insert_sql))
                 assert list(await conn.scalars(text('SELECT user_id FROM advisor_tenant_grants ORDER BY user_id'))) == expected
-                assert len(expected) == 2
+                assert expected == [1,2,8]
                 assert (await conn.execute(text(insert_sql))).rowcount == 0
                 for statement in [
                     "INSERT INTO advisor_tenant_grants(user_id,tenant_id,granted_by,grant_source) VALUES (1,1,99,'admin')",

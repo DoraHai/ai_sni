@@ -19,6 +19,7 @@ NULL/不存在客户不回填，NOT EXISTS 任一用户历史阻止撤销后重�
 仅在经核准首次窗口执行，完成后封存，不能作为定时修复作业。
 
 docs/ADVISOR_TENANT_GRANTS_ACL_AUDIT.sql 包含方案 8.3 两条核对 SQL：
+方案示例的 defaclobjtype 为 PostgreSQL 内部 char，拼接时显式 ::text 消除运算符歧义；只修 SQL 类型转换。
 新表以外权限快照前后差集为空；新表只有 SELECT/INSERT/UPDATE 为 true；owner 不是 sem_runtime。
 身份序列的 USAGE/SELECT/UPDATE 和触发函数 EXECUTE 不得出现 runtime 新授权。
 生产 owner/权限继承/默认 ACL/数据库当前 revision 仍须 DB 负责人按审批窗口核实，本次未连接任何远程库。
