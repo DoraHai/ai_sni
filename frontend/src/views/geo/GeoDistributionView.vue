@@ -11,10 +11,12 @@ import {
   pushGeoVariantWebhook,
 } from '../../api/geoContent'
 import GeoPublicationMonitor from '../../components/GeoPublicationMonitor.vue'
+import GeoReceiptImport from '../../components/GeoReceiptImport.vue'
 import GeoDeliveryRecovery from '../../components/GeoDeliveryRecovery.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { pushBlockLabels } from '../../utils/geoPushBlockers'
+import { BACKFILL_CHANNELS, backfillChannelLabel, customChannelError, isHttpsPublicationUrl } from '../../utils/geoBackfillChannels'
 
 const route = useRoute()
 const router = useRouter()
@@ -29,12 +31,14 @@ const pushTargets = ref([])
 const webhookAccountId = ref(null)
 const webhookUrl = ref('')
 const backfillChannel = ref('')
+const customChannelName = ref('')
+const backfillSourceVariantId = ref(null)
 const backfillUrl = ref('')
 const backfillNote = ref('')
 
 const CHANNEL_CN = {
   website: '官网 CMS', docs: '文档', wechat: '微信公众号', zhihu: '知乎',
-  baijiahao: '百家号', toutiao: '头条', industry_media: '行业媒体',
+  baijiahao: '百家号', toutiao: '今日头条', industry_media: '行业媒体',
 }
 const taskId = computed(() => Number(route.params.taskId || route.query.task_id || 0) || null)
 const focusMode = computed(() => String(route.query.mode || ''))
@@ -44,6 +48,14 @@ function pushBlockText(row) {
 }
 function openChannelSettings() { router.push('/geo/publishing') }
 const variantByChannel = computed(() => new Map((task.value?.variants || []).map((variant) => [variant.channel, variant])))
+const backfillOptions = computed(() => [
+  ...BACKFILL_CHANNELS.filter(item => item.value !== 'other'),
+  ...(task.value?.variants || []).filter(v => !BACKFILL_CHANNELS.some(item => item.value === v.channel))
+    .map(v => ({ value: v.channel, label: channelLabel(v.channel) })),
+  BACKFILL_CHANNELS.find(item => item.value === 'other'),
+])
+const needsBackfillSource = computed(() => backfillChannel.value === 'other' || !variantByChannel.value.has(backfillChannel.value))
+const publicationRevision = computed(() => Math.max(0, ...(task.value?.publications || []).map(p => p.id)))
 const distributionRows = computed(() => {
   if (pushTargets.value.length) {
     return pushTargets.value.map((target) => {
@@ -184,14 +196,20 @@ async function pushWebhook(mode) {
 async function backfill() {
   if (busy.value || loading.value || !task.value) return
   const version = contextVersion
-  if (!backfillChannel.value || !backfillUrl.value.trim().startsWith('http')) {
-    return ElMessage.warning('请选择渠道并填写 http(s) 发布 URL')
+  if (!backfillChannel.value) return ElMessage.warning('请选择回填渠道')
+  if (backfillChannel.value === 'other') {
+    const message = customChannelError(customChannelName.value)
+    if (message) return ElMessage.warning(message)
   }
+  if (needsBackfillSource.value && !backfillSourceVariantId.value) return ElMessage.warning('请选择实际发布的稿件')
+  if (!isHttpsPublicationUrl(backfillUrl.value.trim())) return ElMessage.warning('请填写完整的 https:// 发布链接')
   busy.value = 'backfill'
   try {
     await publishGeoVariant(taskId.value, {
       tenant_id: tenantId.value,
       channel: backfillChannel.value,
+      ...(backfillChannel.value === 'other' ? { custom_channel_name: customChannelName.value.trim() } : {}),
+      ...(needsBackfillSource.value ? { source_variant_id: backfillSourceVariantId.value } : {}),
       published_url: backfillUrl.value.trim(),
       note: backfillNote.value || null,
     })
@@ -210,7 +228,8 @@ watch([tenantId, taskId], () => {
   contextVersion++
   busy.value = ''; error.value = ''
   webhookAccountId.value = null; webhookUrl.value = ''
-  backfillChannel.value = ''; backfillUrl.value = ''; backfillNote.value = ''
+  backfillChannel.value = ''; customChannelName.value = ''; backfillSourceVariantId.value = null
+  backfillUrl.value = ''; backfillNote.value = ''
   load()
 }, { flush: 'sync' })
 onBeforeUnmount(() => { contextVersion++; loadVersion++ })
@@ -268,9 +287,10 @@ onMounted(load)
         </div>
       </section>
       <GeoDeliveryRecovery :tenant-id="tenantId" :task-id="taskId" @resolved="load" />
-      <GeoPublicationMonitor :tenant-id="tenantId" :task-id="taskId" :revision="task?.publications?.length || 0" />
+      <GeoPublicationMonitor :tenant-id="tenantId" :task-id="taskId" :revision="publicationRevision" />
       <section class="gd-card" :class="{ focus: focusMode === 'manual' }">
         <div class="gd-hd"><h3>URL 回填</h3></div>
+        <GeoReceiptImport v-if="task" :tenant-id="tenantId" :task="task" @imported="load" />
         <div class="actions">
           <el-select v-model="webhookAccountId" placeholder="Webhook 账号">
             <el-option v-for="account in webhookAccounts" :key="account.id" :label="account.display_name" :value="account.id" />
@@ -279,7 +299,11 @@ onMounted(load)
           <button class="gd-btn" type="button" :disabled="!webhookAccountId" @click="pushWebhook('draft')">Webhook 草稿</button>
           <button class="gd-btn primary" type="button" :disabled="!webhookAccountId" @click="pushWebhook('publish')">Webhook 发布</button>
           <el-select v-model="backfillChannel" placeholder="回填渠道">
-            <el-option v-for="variant in (task?.variants || [])" :key="variant.channel" :label="channelLabel(variant.channel)" :value="variant.channel" />
+            <el-option v-for="option in backfillOptions" :key="option.value" :label="option.label" :value="option.value" />
+          </el-select>
+          <el-input v-if="backfillChannel === 'other'" v-model="customChannelName" placeholder="请填写渠道名称（必填，最多30字）" aria-label="自定义渠道名称" maxlength="30" show-word-limit />
+          <el-select v-if="backfillChannel && needsBackfillSource" v-model="backfillSourceVariantId" placeholder="请选择实际发布的稿件" aria-label="实际发布的稿件">
+            <el-option v-for="variant in (task?.variants || [])" :key="variant.id" :label="`${backfillChannelLabel(variant.channel)}：${variant.title || '未命名稿件'}`" :value="variant.id" />
           </el-select>
           <el-input v-model="backfillUrl" placeholder="https:// 发布链接" />
           <el-input v-model="backfillNote" placeholder="备注" />

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class VariantExportRequest(BaseModel):
@@ -266,9 +266,23 @@ class VariantUpdate(BaseModel):
 
 class PublicationCreate(BaseModel):
     tenant_id: int
-    channel: str
+    channel: str = Field(..., min_length=1, max_length=32)
+    custom_channel_name: str | None = None
+    source_variant_id: int | None = Field(None, gt=0)
     published_url: str = Field(..., min_length=8)
     note: str | None = None
+
+    @field_validator("channel", mode="before")
+    @classmethod
+    def trim_channel(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def validate_custom_channel(self):
+        if self.channel == "other":
+            from app.geo.content.backfill import validate_custom_name
+            self.custom_channel_name = validate_custom_name(self.custom_channel_name)
+        return self
 
 
 class WebhookPushRequest(BaseModel):
