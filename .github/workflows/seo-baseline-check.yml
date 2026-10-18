@@ -96,7 +96,9 @@ jobs:
         run: |
           expected_branch="codex/production-seo"
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            [[ "$PR_BASE_REF" == "$expected_branch" || "$PR_BASE_REF" == "codex/advisor-mt-seo-guard-20261018" ]]
+            if [[ "$PR_BASE_REF" != "codex/advisor-mt-seo-guard-20261018" ]]; then
+              test "$PR_BASE_REF" = "$expected_branch"
+            fi
           else
             test "$REF_NAME" = "$expected_branch"
           fi
