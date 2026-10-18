@@ -451,6 +451,12 @@ async function save(status = 'drafting', options = {}) {
       author: form.author || null,
       published_at: options.publishedAt ?? publishedAt.value,
     }
+    if (session.isAdvisorSession) {
+      delete payload.page_url
+      delete payload.published_at
+      delete payload.rewrite_progress
+      delete payload.originality_score
+    }
     if(assetId.value){
       // An existing record is not a new template: preserve its original draft
       // when editing the reviewed text, and retain non-editor metadata.

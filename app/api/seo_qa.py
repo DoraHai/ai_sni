@@ -18,6 +18,8 @@ from app.seo_demo_source import (
 from app.api.seo_cockpit import scope
 from app.models.seo import SeoContentAsset, SeoSerpResult
 from app.models.seo_qa import SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement
+from app.security.advisor_write_commit import recheck_advisor_before_commit
+from app.security.advisor_write_routes import check_advisor_handler
 from app.seo_qa import (PLATFORMS, fingerprint, public_url, platform_url, parse_questions_csv,
                         fact_is_current, body_hash, answer_checks, observe_answer, placement_followup, answer_quality)
 
@@ -281,8 +283,10 @@ async def access(db, ctx, tenant_id, site_id, write=False):
     return await scope(db, ctx, tenant_id, site_id, 'seo.content', write)
 
 
-async def record(db, model, row_id, tenant_id, site_id, lock=False):
+async def record(db, model, row_id, tenant_id, site_id, lock=False, refresh=False):
     query = select(model).where(model.id == row_id, model.tenant_id == tenant_id, model.site_id == site_id)
+    if refresh:
+        query = query.execution_options(populate_existing=True)
     row = await db.scalar(query.with_for_update() if lock else query)
     if row is None:
         raise HTTPException(404, '当前网站下未找到此记录')
@@ -562,9 +566,11 @@ async def facts(tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, session=
 
 @router.post('/facts')
 async def create_fact(req: FactInput, ctx=Auth, session=Db):
+    check_advisor_handler(ctx, 'POST', '/qa/facts', req.model_dump(exclude_unset=True))
     await access(session, ctx, req.tenant_id, req.site_id, True)
     row = SeoQaFact(**req.model_dump())
     session.add(row)
+    await recheck_advisor_before_commit(session, ctx)
     await session.commit()
     await session.refresh(row)
     return {**data(row), 'current': fact_is_current(row)}
@@ -573,11 +579,14 @@ async def create_fact(req: FactInput, ctx=Auth, session=Db):
 @router.patch('/facts/{fact_id}')
 async def edit_fact(fact_id: int, req: FactEdit, ctx=Auth, session=Db):
     await access(session, ctx, req.tenant_id, req.site_id, True)
-    row = await record(session, SeoQaFact, fact_id, req.tenant_id, req.site_id, True)
+    row = await record(session, SeoQaFact, fact_id, req.tenant_id, req.site_id, True,
+                       refresh=getattr(ctx, 'is_advisor', False))
+    check_advisor_handler(ctx, 'PATCH', '/qa/facts/{fact_id}', req.model_dump(exclude_unset=True), row)
     check_version(row, req.version)
     for key, value in req.model_dump(exclude={'tenant_id', 'site_id', 'version'}).items():
         setattr(row, key, value)
     row.version += 1
+    await recheck_advisor_before_commit(session, ctx)
     await session.commit()
     await session.refresh(row)
     return {**data(row), 'current': fact_is_current(row)}

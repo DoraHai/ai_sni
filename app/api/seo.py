@@ -41,6 +41,8 @@ from app.seo_demo_source import (
     require_seo_scoped_auth as require_scoped_auth,
 )
 from app.config import get_settings, seo_rank_freshness_hours
+from app.security.advisor_write_commit import recheck_advisor_before_commit
+from app.security.advisor_write_routes import check_advisor_handler
 from app.geo.audit import GeoAuditError, PageDocument, audit_url, normalize_url, safe_fetch
 from app.geo.chinaz import fetch_chinaz_seo_metrics
 from app.models import (
@@ -2002,6 +2004,7 @@ async def create_brand_asset(
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
+    check_advisor_handler(ctx, "POST", "/rank-serp/brand-assets", req.model_dump(exclude_unset=True))
     ctx.ensure_tenant(req.tenant_id)
     await _tenant(session, req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
@@ -2024,6 +2027,7 @@ async def create_brand_asset(
     )
     session.add(row)
     try:
+        await recheck_advisor_before_commit(session, ctx)
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
@@ -2038,10 +2042,12 @@ async def update_brand_asset(
     tenant_id: int,
     req: BrandAssetUpdate,
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
-    row = await session.get(SeoBrandAsset, asset_id)
+    row = await session.get(SeoBrandAsset, asset_id, with_for_update=True, populate_existing=True)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "品牌资产规则不存在")
+    check_advisor_handler(ctx, "PATCH", "/rank-serp/brand-assets/{asset_id}", req.model_dump(exclude_unset=True), row)
     await _require_resource_operational_site(session, tenant_id, row.site_id)
     values = req.model_dump(exclude_unset=True)
     if "match_value" in values:
@@ -2053,6 +2059,7 @@ async def update_brand_asset(
         values["match_value"] = value
     for key, value in values.items():
         setattr(row, key, value.strip() or None if isinstance(value, str) else value)
+    await recheck_advisor_before_commit(session, ctx)
     await session.commit()
     await session.refresh(row)
     return _brand_asset_payload(row)
@@ -7529,6 +7536,7 @@ async def delete_advisor_assignment(
 
 @router.post("/content-assets")
 async def create_content_asset(req: ContentCreate, session: AsyncSession = Depends(get_session), ctx: AuthContext = Depends(require_scoped_auth)) -> dict[str, Any]:
+    check_advisor_handler(ctx, "POST", "/content-assets", req.model_dump(exclude_unset=True))
     ctx.ensure_tenant(req.tenant_id)
     await _tenant(session, req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
@@ -7564,6 +7572,7 @@ async def create_content_asset(req: ContentCreate, session: AsyncSession = Depen
     row = SeoContentAsset(**values, created_by=ctx.user_id)
     session.add(row)
     try:
+        await recheck_advisor_before_commit(session, ctx)
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
@@ -10145,9 +10154,11 @@ async def bind_content_source_page(
 ) -> dict[str, Any]:
     """Bind an audited landing page without reopening approved content text."""
     ctx.ensure_tenant(tenant_id)
-    row = await session.get(SeoContentAsset, content_id, with_for_update=True)
+    refresh = {"populate_existing": True} if getattr(ctx, "is_advisor", False) else {}
+    row = await session.get(SeoContentAsset, content_id, with_for_update=True, **refresh)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
+    check_advisor_handler(ctx, "PUT", "/content-assets/{content_id}/source-page", req.model_dump(exclude_unset=True), row)
     await _require_resource_operational_site(session, tenant_id, row.site_id)
     if row.content_type != "landing":
         raise HTTPException(409, "只有落地页内容可以绑定承接页")
@@ -10174,7 +10185,10 @@ async def bind_content_source_page(
     if existing_content_id is not None:
         raise HTTPException(409, "该站内页面已经关联其他内容任务")
     row.source_page_id = req.source_page_id
+    if getattr(ctx, "is_advisor", False):
+        row.version_count = (row.version_count or 1) + 1
     try:
+        await recheck_advisor_before_commit(session, ctx)
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
@@ -10192,9 +10206,11 @@ async def update_content_asset(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     ctx.ensure_tenant(tenant_id)
-    row = await session.get(SeoContentAsset, content_id, with_for_update=True)
+    refresh = {"populate_existing": True} if getattr(ctx, "is_advisor", False) else {}
+    row = await session.get(SeoContentAsset, content_id, with_for_update=True, **refresh)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
+    check_advisor_handler(ctx, "PATCH", "/content-assets/{content_id}", req.model_dump(exclude_unset=True), row)
     await _require_resource_operational_site(session, tenant_id, row.site_id)
     row_site_id = row.site_id
     values = req.model_dump(exclude_unset=True)
@@ -10275,9 +10291,10 @@ async def update_content_asset(
     )
     for key, value in normalized_values.items():
         setattr(row, key, value)
-    if revision_changed:
+    if revision_changed or (getattr(ctx, "is_advisor", False) and normalized_values):
         row.version_count = (row.version_count or 1) + 1
     try:
+        await recheck_advisor_before_commit(session, ctx)
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()

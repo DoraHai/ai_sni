@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     advisor_multi_tenant_enabled: bool = False
     advisor_legacy_account_switch_enabled: bool = False
     advisor_high_risk_writes_enabled: bool = False
+    advisor_scoped_content_writes_enabled: bool = False
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     app_base_url: str = "https://sem.snipers.com.cn"

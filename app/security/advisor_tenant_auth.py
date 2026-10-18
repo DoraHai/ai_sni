@@ -97,15 +97,29 @@ async def enforce_advisor_request(request, ctx, session):
             reject(403, "ADVISOR_NO_TENANT")
         reject(409, "ADVISOR_TENANT_SELECTION_REQUIRED")
     ctx.ensure_tenant(ctx.tenant_id)
-    # Persisted jobs do not yet bind a grant generation. Do not dispatch writes,
-    # exports, publishing, supplier calls or streaming work for advisors.
+    rule = None
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
-        reject(403, "ADVISOR_HIGH_RISK_WRITES_DISABLED")
+        from app.config import get_settings
+        from app.security.advisor_write_routes import match_write_rule, check_write_fields
+        if not get_settings().advisor_scoped_content_writes_enabled:
+            reject(403, "ADVISOR_HIGH_RISK_WRITES_DISABLED")
+        rule = match_write_rule(request)
+        if rule is None:
+            reject(403, "ADVISOR_HIGH_RISK_WRITES_DISABLED")
+        try:
+            # Starlette caches both bytes and JSON on the same Request used by
+            # dependencies and the handler; subsequent body reads remain valid.
+            body = await request.json()
+        except (ValueError, RuntimeError):
+            reject(403, "ADVISOR_WRITE_FIELD_FORBIDDEN")
+        check_write_fields(rule, body)
+        if not all(ctx.can_edit(key) for key in rule.edit_all):
+            reject(403, "ADVISOR_WRITE_PERMISSION_REQUIRED")
     from app.security.auth import _required, enforce_scoped_request
     keys, _ = _required(request.url.path, request.method)
     if keys is None:
         reject(403, "ADVISOR_ROUTE_UNAVAILABLE")
-    # All SEO business reads require an explicit tenant parameter.
+    # All SEO business requests require an explicit tenant parameter.
     if request.url.path.startswith("/api/v1/seo"):
         if (not request.query_params.getlist("tenant_id")
                 and "tenant_id" not in request.path_params):
@@ -116,8 +130,16 @@ async def enforce_advisor_request(request, ctx, session):
         # GEO has its own production unit. Unknown business areas remain closed
         # here until their object/task matrix is reviewed in that branch.
         reject(403, "ADVISOR_ROUTE_UNAVAILABLE")
+    if rule is not None:
+        from app.security.advisor_write_objects import check_write_objects, ensure_advisor_assignment
+        await check_write_objects(session, ctx, request, body, rule)
+        await ensure_advisor_assignment(session, ctx, request, body, rule)
     await enforce_scoped_request(request, ctx)
-    await check_seo_objects(request, ctx, session)
+    if rule is None:
+        await check_seo_objects(request, ctx, session)
+    else:
+        request.state.advisor_scoped_write = rule
+        ctx.advisor_write_rule = rule
 
 
 async def check_seo_objects(request, ctx, session):
