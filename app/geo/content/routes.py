@@ -5360,7 +5360,7 @@ async def create_visibility_patrol_run(
         created_by=ctx.user_id,
         summary={"advisor_visibility_prompt_ids": advisor_prompt_ids, "advisor_visibility_auth": {
             "user_id": ctx.user_id, "tenant_id": ctx.tenant_id,
-            "grant_id": ctx.advisor_scope.grant_id, "auth_exp": ctx.auth_exp,
+            "grant_id": ctx.advisor_scope.grant_id, "auth_exp": binding[4],
         }} if advisor_prompt_ids is not None else None,
     )
     session.add(run)
