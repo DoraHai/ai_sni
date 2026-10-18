@@ -30,7 +30,7 @@ export function mountAdvisorWorkbench({root,session,subscribeSession,fetchImpl=f
   const originalFetch=fetchImpl;
   fetchImpl=advisorScopedFetch({session,fetchImpl:originalFetch,onDenied:denyTenant});
   const tenantSwitch=createAdvisorTenantSwitch({session,fetchImpl});
-  function clearCustomer(){epoch++;identity=null;states={};linkedAccounts=[];selectedAccount=null;filter='all';client.invalidate('tenant_changing');automation.invalidate();distribution.invalidate();remote.invalidate();}
+  function clearCustomer(){epoch++;identity=null;states={};linkedAccounts=[];selectedAccount=null;filter='all';client.invalidate('tenant_changing');automation.invalidate();distribution.invalidate();remote?.invalidate();}
   function denyTenant(code){
     clearCustomer();tenantSwitch.invalidate();tenantBusy=false;tenantName='';tenantMessage=['ADVISOR_GRANT_REVOKED','ADVISOR_ROLE_CHANGED'].includes(code)?'你的客户授权已变化，请重新选择客户':advisorMessages[code]||'请重新选择客户';message='';
     if(code==='ADVISOR_NO_TENANT')tenantOptions=[];
@@ -70,8 +70,8 @@ export function mountAdvisorWorkbench({root,session,subscribeSession,fetchImpl=f
     scopesForAdvisor:()=>[...new Map([...Object.values(states).flatMap(state=>state.page?.items||[]),...automation.assignedScopes()].map(row=>[
       `${row.module}:${row.tenant_id}:${row.scope_id}`,{module:row.module,tenant_id:row.tenant_id,scope_id:row.scope_id,
         tenant_name:row.tenant_name,scope_name:row.scope_name}])).values()]});
-  function renderDistribution(){const host=root.querySelector('.advisor-distribution-host');if(!disposed&&host){host.innerHTML=identity?distribution.html():'';remote.render();}}
-  const remote=createAdvisorRemotePanel({root,session,subscribeSession,fetchImpl,browser,getContext:()=>identity?distribution.remoteContext():null,getTasks:()=>identity?distribution.remoteTasks():[]});
+  function renderDistribution(){const host=root.querySelector('.advisor-distribution-host');if(!disposed&&host){host.innerHTML=identity?distribution.html():'';remote?.render();}}
+  const remote=session.isAdvisorSession===true?null:createAdvisorRemotePanel({root,session,subscribeSession,fetchImpl,browser,getContext:()=>identity?distribution.remoteContext():null,getTasks:()=>identity?distribution.remoteTasks():[]});
 
   const automation=createAdvisorAutomationPanel({session,subscribeSession,fetchImpl,browser,onChange:()=>{renderAutomation();renderDistribution();},onDenied:reason=>client.invalidate(reason),tasksForProject:project=>(states[project.module]?.page?.items||[]).filter(task=>task.tenant_id===project.tenant_id&&task.scope_id===project.scope_id&&task.workflow.phase==='draft'&&!task.workflow.ai_proposal)});
   function renderAutomation(){if(disposed)return;const host=root.querySelector('.advisor-automation-host');if(!host)return;
@@ -95,7 +95,7 @@ export function mountAdvisorWorkbench({root,session,subscribeSession,fetchImpl=f
         select.value=selectedAccount?String(selectedAccount):'';label.append(select);tools.append(label);
         const button=browser.document.createElement('button');button.dataset.advisor='switch-account';button.textContent='切换账号';button.disabled=!selectedAccount||switching;tools.append(button);
       }
-      const host=browser.document.createElement('div');host.className='advisor-distribution-host';root.querySelector('.advisor-main').append(host);host.innerHTML=distribution.html();const remoteHost=browser.document.createElement('div');remoteHost.className='advisor-remote-host';root.querySelector('.advisor-main').append(remoteHost);remote.render();
+      const host=browser.document.createElement('div');host.className='advisor-distribution-host';root.querySelector('.advisor-main').append(host);host.innerHTML=distribution.html();if(remote){const remoteHost=browser.document.createElement('div');remoteHost.className='advisor-remote-host';root.querySelector('.advisor-main').append(remoteHost);remote.render();}
     }
   }
   async function load(module,beforeId=null){if(needsTenant()){states[module]={error:selectionPrompt};render();return;}const stamp=epoch;states[module]={busy:true};render();try{const page=await client.list(module,{beforeId,tenantId:session.advisorScope==='advisor_tenant'?session.tenantId:null});if(!disposed&&epoch===stamp){states[module]={page,busy:false};render();}}catch(e){if(!disposed&&epoch===stamp){states[module]={error:`${module.toUpperCase()} 站内任务暂时读不到，其他模块不受影响`};render();}}}
@@ -109,16 +109,16 @@ export function mountAdvisorWorkbench({root,session,subscribeSession,fetchImpl=f
       const requested=new URL(browser.location.href).searchParams.get('tenant_id');
       if(requested&&Number(requested)!==session.tenantId){denyTenant('ADVISOR_TENANT_NOT_GRANTED');return;}
     }
-    const stamp=++epoch;identity=null;states={};linkedAccounts=[];selectedAccount=null;automation.invalidate();distribution.invalidate();remote.invalidate();message='正在核验顾问身份与模块…';render();try{const result=await client.initialize();if(disposed||epoch!==stamp)return;identity=result;if(!multiMode)void accountSwitch.list().then(accounts=>{if(!disposed&&epoch===stamp){linkedAccounts=accounts;render();}}).catch(()=>{});message='按真实阶段分组；数量仅为当前页。';render();await Promise.all([...result.modules.map(m=>load(m)),automation.initialize(result.modules)]);if(!disposed&&epoch===stamp)await distribution.initialize(result.modules.filter(m=>m!=='seo'||result.user.permissions?.['seo.content']==='edit'));}catch(e){if(!disposed&&epoch===stamp){message=labels[e.code]||'核验未完成，请重试';render();}}}
-  const stop=client.subscribe(reason=>{if(reason==='context_changed'||reason==='expired'||reason==='forbidden'){epoch++;identity=null;states={};linkedAccounts=[];selectedAccount=null;automation.invalidate();distribution.invalidate();remote.invalidate();message='你的客户授权已变化，请重新选择客户';render();}});
+    const stamp=++epoch;identity=null;states={};linkedAccounts=[];selectedAccount=null;automation.invalidate();distribution.invalidate();remote?.invalidate();message='正在核验顾问身份与模块…';render();try{const result=await client.initialize();if(disposed||epoch!==stamp)return;identity=result;if(!multiMode)void accountSwitch.list().then(accounts=>{if(!disposed&&epoch===stamp){linkedAccounts=accounts;render();}}).catch(()=>{});message='按真实阶段分组；数量仅为当前页。';render();await Promise.all([...result.modules.map(m=>load(m)),automation.initialize(result.modules)]);if(!disposed&&epoch===stamp){if(multiMode)distribution.filterModule(filter);await distribution.initialize(result.modules.filter(m=>m!=='seo'||result.user.permissions?.['seo.content']==='edit'));}}catch(e){if(!disposed&&epoch===stamp){message=labels[e.code]||'核验未完成，请重试';render();}}}
+  const stop=client.subscribe(reason=>{if(reason==='context_changed'||reason==='expired'||reason==='forbidden'){epoch++;identity=null;states={};linkedAccounts=[];selectedAccount=null;automation.invalidate();distribution.invalidate();remote?.invalidate();message='你的客户授权已变化，请重新选择客户';render();}});
   function click(e){automation.click(e);distribution.click(e);const b=e.target.closest('[data-advisor]');if(!b||b.disabled)return;const action=b.dataset.advisor;
     if(action==='select-tenant'){void switchTenant(Number(b.dataset.tenant));return;}
     if(action==='switch-account'&&selectedAccount&&!switching){switching=true;render();void accountSwitch.switchTo(selectedAccount).catch(()=>{switching=false;message='账号切换未完成，请重试。';render();});return;}
-    if(action==='logout'){tenantSwitch.invalidate();tenantOptions=[];tenantName='';tenantMessage='';epoch++;identity=null;states={};linkedAccounts=[];selectedAccount=null;automation.invalidate();distribution.invalidate();remote.invalidate();client.invalidate();session.logout();message='已退出。';render();}
+    if(action==='logout'){tenantSwitch.invalidate();tenantOptions=[];tenantName='';tenantMessage='';epoch++;identity=null;states={};linkedAccounts=[];selectedAccount=null;automation.invalidate();distribution.invalidate();remote?.invalidate();client.invalidate();session.logout();message='已退出。';render();}
     if(action==='refresh')void initialize();
     if(['latest','next'].includes(action)&&identity?.modules.includes(b.dataset.module)){const m=b.dataset.module;void load(m,action==='next'?states[m]?.page?.next_before_id:null);}
   }
-  function change(e){if(e.target.id==='advisor-account'){selectedAccount=Number(e.target.value)||null;render();return;}if(['distribution_scope','distribution_binding'].includes(e.target.name)||e.target.id==='advisor-module')remote.invalidate();distribution.change(e);if(e.target.id==='advisor-module'){filter=e.target.value;distribution.filterModule(filter);render();}}
+  function change(e){if(e.target.id==='advisor-account'){selectedAccount=Number(e.target.value)||null;render();return;}if(['distribution_scope','distribution_binding'].includes(e.target.name)||e.target.id==='advisor-module')remote?.invalidate();distribution.change(e);if(e.target.id==='advisor-module'){filter=e.target.value;distribution.filterModule(filter);render();}}
   root.addEventListener('click',click);root.addEventListener('change',change);root.addEventListener('input',automation.input);root.addEventListener('submit',automation.submit);render();void initialize();
-  return {dispose(){disposed=true;tenantSwitch.invalidate();epoch++;stop();client.dispose();automation.dispose();distribution.dispose();remote.dispose();root.removeEventListener('click',click);root.removeEventListener('change',change);root.removeEventListener('input',automation.input);root.removeEventListener('submit',automation.submit);root.classList.remove('advisor-workbench');root.replaceChildren();}};
+  return {dispose(){disposed=true;tenantSwitch.invalidate();epoch++;stop();client.dispose();automation.dispose();distribution.dispose();remote?.dispose();root.removeEventListener('click',click);root.removeEventListener('change',change);root.removeEventListener('input',automation.input);root.removeEventListener('submit',automation.submit);root.classList.remove('advisor-workbench');root.replaceChildren();}};
 }

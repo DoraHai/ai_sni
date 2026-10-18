@@ -68,6 +68,25 @@ export function distributionTaskMarkup(task){
     ${task.status==='unknown'?'<strong>先核查平台实际结果，不能自动重新发布。</strong>':''}</article>`;
 }
 export function createAdvisorDistributionPanel({session,fetchImpl=fetch,subscribeSession,browser=window,onChange=()=>{},scopesForAdvisor=()=>[]}){
+  // Advisor tokens cannot use the distribution service. Keep only local handoff links.
+  if(session.isAdvisorSession===true){
+    let modules=[],filter='all';
+    return {
+      async initialize(value){modules=value;onChange();},
+      html(){
+        const visible=modules.filter(m=>filter==='all'||filter===m);
+        if(!visible.length)return '';
+        const scopes=[...new Map(scopesForAdvisor().filter(s=>visible.includes(s.module)&&s.tenant_id===session.tenantId).map(s=>[key(s),s])).values()];
+        const seo=scopes.filter(s=>s.module==='seo'&&Number.isSafeInteger(s.scope_id)&&s.scope_id>0);
+        const entry=visible.includes('seo')&&session.user?.permissions?.['seo.content']==='edit'?
+          (seo.length?seo.map(s=>`<p><a href="/seo/distribution?tenant_id=${s.tenant_id}&amp;site_id=${s.scope_id}">导出发布单 / 导入回执（SEO 分发平台）</a></p>`).join(''):
+          '<p><a href="/seo/distribution">导出发布单 / 导入回执（SEO 分发平台）</a></p>'):'';
+        return `<section class="advisor-group distribution-panel" data-distribution-panel><h2>发布与分发</h2><p>审核通过的稿件由多号通或人工发布，发完在分发记录里回填链接或导入回执。</p>${!scopes.length?'<p>这个客户目前没有待发布的稿件。</p>':''}${entry}</section>`;
+      },
+      filterModule(value){filter=value;},
+      invalidate(){modules=[];},dispose(){modules=[];},click(){},change(){},
+    };
+  }
   const client=createDistributionClient({session,fetchImpl,subscribeSession});
   let modules=[],boundScopes=[],filter='all',selected=null,snapshot=null,tasks=[],events=[],sources=[],schedules=[],bindingId=null,variantId=null,preview=null;
   let reviewed=false,manual=false,busy=false,epoch=0,disposed=false,notice='';

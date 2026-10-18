@@ -26,6 +26,8 @@ test('advisor production UI isolates modules, paginates, clears revoked sessions
    try{const r=await fetch(f.origin+url.pathname+url.search,{method:req.method(),headers:req.headers(),body:req.postData()});await req.respond({status:r.status,contentType:r.headers.get('content-type'),body:Buffer.from(await r.arrayBuffer())});}catch{await req.abort().catch(()=>{});}
   });
   await p.goto(origin+'/customer-workbench/?console=advisor');await p.waitForSelector('.advisor-task');
+  assert(await p.$('.advisor-remote-host [data-remote-action="open"]'));
+  assert(await p.$('.advisor-remote-host [data-remote-action="verify"]'));
   await p.waitForFunction(()=>document.body.textContent.includes('GEO 站内任务暂时读不到，其他模块不受影响')).catch(async error=>{error.message+=' · '+JSON.stringify({body:(await p.$eval('body',e=>e.textContent)).slice(0,1800),errors,calls});throw error;});
   await p.waitForFunction(()=>document.querySelector('.advisor-automation-section')?.textContent.includes('项目自动运行功能还没上线'));
   assert.equal(await p.$eval('.advisor-automation-section p',e=>e.textContent),'项目自动运行功能还没上线，目前不需要你操作。站内任务请看上面的「我的站内交付任务」。');

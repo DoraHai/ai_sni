@@ -11,6 +11,12 @@ const identity=jwt({scope_kind:'advisor_identity',aud:'advisor-session'});
 const business=tid=>jwt({scope_kind:'advisor_tenant',aud:'advisor-business',tid,gid:tid+100});
 const permissions={'seo.site':'edit','seo.content':'edit','geo.assets':'edit','geo.content':'edit'};
 const user={id:7,tenant_id:1,is_advisor:true,display_name:'顾问',permissions};
+async function verifyAdvisorDistribution(page,calls){
+  await page.waitForFunction(()=>document.querySelector('.distribution-panel')?.textContent.includes('审核通过的稿件由多号通或人工发布，发完在分发记录里回填链接或导入回执。'));
+  assert(!await page.$('.advisor-remote-host, [data-remote-action], [data-remote-text], [data-distribution]'));
+  assert.doesNotMatch(await page.$eval('body',e=>e.textContent),/服务器账号会话|顾问介入|验证码与账号异常介入|打开当前账号远程登录|会话或权限已变化，请重新核验|账号或客户范围已变化，画面已清除|账号范围或登录状态已变化，画面与输入已清除|本页暂无已分配项目/);
+  assert(!calls.some(c=>c.path.startsWith('/api/distribution/')),'No distribution request, including bound-scopes or remote calls');
+}
 
 test('workspace selection uses the advisor session flag, not customer ID or edit permissions',()=>{
   assert.equal(workspaceSelectionPath({isAdvisorSession:true}),'/customer-workbench/?console=advisor');
@@ -36,6 +42,7 @@ for(const [advisor,tenantId] of [[true,15],[true,17],[false,15]]){
         const send=(data,status=200)=>req.respond({status,contentType:'application/json',body:JSON.stringify(data)}).catch(()=>{});
         if(url.pathname.startsWith('/api/')){
           calls.push({path:url.pathname,query:Object.fromEntries(url.searchParams),method:req.method(),token:req.headers().authorization?.slice(7)});
+          if(url.pathname.startsWith('/api/distribution/'))return send({},401);
           if(url.pathname==='/api/v1/auth/me')return send({user:account});
           if(url.pathname==='/api/v1/auth/modules')return send({tenant_id:tenantId,modules:['seo','geo'].map(module_code=>({module_code,available:true}))});
           if(['/api/v1/auth/tenants','/api/v1/geo/tenants'].includes(url.pathname))return send({module:'seo',tenants:[{id:tenantId,name}]});
@@ -59,6 +66,9 @@ for(const [advisor,tenantId] of [[true,15],[true,17],[false,15]]){
           await p.waitForFunction(name=>document.querySelector('.advisor-tenant-picker')?.textContent.includes('当前客户：'+name),{},name);
           assert.equal(new URL(p.url()).search,'?console=advisor');
           assert(!documents.includes(`/customer-workbench/?tenant_id=${tenantId}&site_id=6`),'No automatic SEO redirect');
+          await verifyAdvisorDistribution(p,calls);
+          assert.match(await p.$eval('.distribution-panel',e=>e.textContent),/这个客户目前没有待发布的稿件。/);
+          assert.equal(await p.$eval('.distribution-panel a',e=>e.getAttribute('href')),'/seo/distribution');
         }else{
           await p.waitForFunction(()=>document.querySelector('#identity')?.textContent.includes('客户网站'));
           assert.equal(new URL(p.url()).search,`?tenant_id=${tenantId}&site_id=6`);
@@ -116,6 +126,7 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
       const token=req.headers().authorization?.slice(7),tid=token===business(2)?2:1;
       const send=(data,status=200)=>req.respond({status,contentType:'application/json',body:JSON.stringify(data)}).catch(()=>{});
       if(url.pathname.startsWith('/api/'))calls.push({path:url.pathname,query:Object.fromEntries(url.searchParams),method:req.method(),token,body:req.postData()});
+      if(url.pathname.startsWith('/api/distribution/'))return send({},401);
       if(roleChanged&&url.pathname.startsWith('/api/'))return send({detail:{code:'ADVISOR_ROLE_CHANGED'}},403);
       if(url.pathname==='/api/v1/auth/tenants')return tenantsDenied?send({detail:{code:'ADVISOR_NO_TENANT'}},403):send(tenantRows);
       if(url.pathname==='/api/v1/auth/select-tenant'){
@@ -162,6 +173,9 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
       assert.equal(new URL(p.url()).searchParams.get('console'),'advisor');
       assert.equal(await p.$eval('#advisor-module',e=>e.value),module);
       assert.equal(await p.$$eval('.advisor-module',es=>es.length),1);
+      await verifyAdvisorDistribution(p,calls);
+      if(module==='seo')assert.equal(await p.$eval('.distribution-panel a',e=>e.getAttribute('href')),'/seo/distribution?tenant_id=1&site_id=19');
+      else assert(!await p.$('.distribution-panel a'));
       assert(!(await p.$eval('body',e=>e.textContent)).includes('当前身份无权进入此客户空间'));
     }
     await p.select('#advisor-module','all');
@@ -209,6 +223,7 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
     assert.equal(calls.filter(c=>c.path==='/api/v1/auth/tenants').length,beforeDenied+1);
     assert(!await p.$('.advisor-task'));assert(!await p.$('.advisor-tenant-picker details'));
     assert(!calls.some(c=>c.path.includes('switch-account')||c.path.includes('linked-accounts')));
+    assert(!calls.some(c=>c.path.startsWith('/api/distribution/')));
     tenantsDenied=false;tenantRows=[{id:1,name:'客户甲'}];await p.locator('[data-advisor=refresh]').click();
     await p.waitForSelector('[data-tenant="1"]');await p.locator('.advisor-tenant-picker summary').click();await p.locator('[data-tenant="1"]').click();await p.waitForFunction(()=>document.querySelectorAll('.advisor-task').length===2);await p.waitForNetworkIdle({idleTime:200});
     roleChanged=true;const beforeRole=calls.length;await p.locator('[data-advisor=latest][data-module=seo]').click();
