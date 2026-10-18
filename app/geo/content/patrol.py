@@ -699,8 +699,10 @@ async def execute_patrol_run(
             for engine in selected_engines:
                 # Recheck for every cell because a long patrol/retest can span a
                 # subscription change between provider calls.
-                await ensure_geo_entitlement(session, row.tenant_id,
-                    lock_binding=advisor_prompt_ids is None)
+                if advisor_prompt_ids is None:
+                    await ensure_geo_entitlement(session, row.tenant_id)
+                else:
+                    await ensure_geo_entitlement(session, row.tenant_id, lock_binding=False)
                 await check_advisor()
                 if contract_plan and datetime.utcnow() >= datetime.fromisoformat(contract_plan['window_end']):
                     raise ValueError('复测已跨出约定自然周，停止采样')
@@ -792,8 +794,10 @@ async def execute_patrol_run(
                         )
                     # A provider response arriving after revocation is not a
                     # valid customer sample and must never be persisted.
-                    await ensure_geo_entitlement(session, row.tenant_id,
-                        lock_binding=advisor_prompt_ids is None)
+                    if advisor_prompt_ids is None:
+                        await ensure_geo_entitlement(session, row.tenant_id)
+                    else:
+                        await ensure_geo_entitlement(session, row.tenant_id, lock_binding=False)
                     await check_advisor()
                     cell.update(
                         {
