@@ -182,6 +182,10 @@ def patrol_read_payload(row: GeoVisibilityPatrolRun) -> dict[str, Any]:
     return payload
 
 
+from app.security.advisor_operation_call import background_call
+
+
+@background_call
 async def run_patrol_in_background(run_id: int, tenant_id: int) -> None:
     """Entry for FastAPI BackgroundTasks / scheduler: never leave runs hanging."""
     from app.database import async_session_factory

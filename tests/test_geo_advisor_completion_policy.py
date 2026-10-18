@@ -123,3 +123,29 @@ def test_manual_account_operations_cannot_configure_credentials(body):
     rule = rules()[('POST', '/api/v1/geo/channel-accounts')]
     with pytest.raises(HTTPException):
         check_fields(rule, body)
+
+
+def test_dispatched_patrol_does_not_reuse_request_session(monkeypatch):
+    from contextlib import asynccontextmanager
+    from app.geo.content import patrol
+    from app.geo import tenant_scope
+    from app.security import advisor_operation_call as calls
+
+    visited = []
+    @asynccontextmanager
+    async def not_acquired(run_id):
+        assert run_id == 10
+        visited.append(calls.current_operation.get())
+        yield False  # No database or real worker is started.
+    monkeypatch.setattr(patrol, 'patrol_execution_lock', not_acquired)
+    monkeypatch.setattr(tenant_scope, 'ensure_geo_background_execution_allowed', lambda _: None)
+    async def run():
+        binding = (object(), object())
+        token = calls.current_operation.set(binding)
+        try:
+            await patrol.run_patrol_in_background(10, 10)
+            assert calls.current_operation.get() is binding
+        finally:
+            calls.current_operation.reset(token)
+    asyncio.run(run())
+    assert visited == [None]
