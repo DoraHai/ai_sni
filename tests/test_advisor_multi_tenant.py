@@ -110,6 +110,28 @@ def test_predicate_excludes_admin_and_preserves_permission_combinations():
                               permissions={"seo.site": "edit", "seo.content": "edit", "settings.accounts": "edit"}))
 
 
+@pytest.mark.parametrize("revoked", [False, True])
+def test_raw_settings_exclusion_keeps_grant_history_restricted(db, revoked):
+    client, factory, _ = db
+    async def mutate():
+        async with factory() as s:
+            role = await s.get(Role, 1)
+            role.permissions = dict(role.permissions, **{"settings.future": "edit"})
+            (await s.get(User, 1)).tenant_id = None
+            if revoked:
+                for grant in (await s.scalars(select(Grant).where(Grant.user_id == 1))).all():
+                    grant.revoked_at = datetime.now(timezone.utc) + timedelta(seconds=1)
+                    grant.revoked_by = 2
+                    grant.revoke_reason = "admin_uncheck"
+            await s.commit()
+    run(mutate())
+    # Even an old unscoped JWT must not turn NULL tenant into all customers.
+    for value in (token(advisor=False), token(), token(tid=10, gid=101)):
+        response = client.get("/api/v1/auth/me", headers=headers(value))
+        assert response.status_code == 403
+        assert response.json()["detail"]["code"] == "ADVISOR_ROLE_CHANGED"
+
+
 def test_two_grants_identity_and_business_boundaries(db):
     client, _, _ = db
     identity = headers(token())
