@@ -47,6 +47,13 @@ def _bigint_sqlite(_type, _compiler, **_kwargs):
 PREFIX = '/api/v1/geo'
 SIGNING_KEY = 'scoped-write-fixture-only-signing-key'
 EDIT = {'geo.assets': 'edit', 'geo.content': 'edit'}
+BRAND_PROFILE = {
+    'product_name': '测试品牌', 'website': 'https://brand.example.test',
+    'summary': '测试品牌简介', 'industry': '测试行业', 'audience': '测试客户', 'cta': '了解产品',
+    'honors': ['测试口号'], 'qualifications': ['测试资质'], 'capabilities': ['测试能力'],
+    'scenarios': ['测试场景'], 'competitors': ['测试竞品'],
+    'recommend_reasons': ['测试理由'], 'banned_claims': ['测试禁用说法'],
+}
 # Every mandatory method/template has a distinct success test and persisted
 # effect assertion. Imports are optional and tested separately below.
 CASES = (
@@ -78,6 +85,8 @@ CASES = (
      'geo_article_versions', 'title', 'edited article'),
     ('PATCH', '/content-tasks/{task_id}/variants/{channel}', {'title': 'edited variant'},
      'geo_channel_variants', 'title', 'edited variant'),
+    ('PATCH', '/optimization-businesses/{business_id}', {'profile': BRAND_PROFILE},
+     'geo_optimization_businesses', 'profile', BRAND_PROFILE),
 )
 CASE_IDS = [f'{method} {path}' for method, path, *_ in CASES]
 BUSINESS_TABLES = ('geo_facts', 'geo_prompts', 'geo_optimization_businesses',
@@ -306,7 +315,11 @@ def test_every_allowed_mounted_handler_persists_only_manual_content(tmp_path, mo
                 auth=fixture_token(uid=2, native=True) if actor == 'administrator' else None)
             assert response.status_code in {200, 201}, response.text
             after = await env.snapshot()
-            assert any(row[column] == value for row in after[table]), (table, value)
+            expected = value
+            if column == 'profile' and actor == 'administrator':
+                from app.geo.content.business_profile import normalize_profile
+                expected = normalize_profile(value)
+            assert any(row[column] == expected for row in after[table]), (table, expected)
             # Response success alone cannot hide dispatch, publication or changes
             # to the action-ticket table with the colliding task_id.
             for untouched in ('geo_publications', 'geo_async_jobs', 'geo_action_tickets',
@@ -438,7 +451,8 @@ def test_missing_or_wrong_project_assignment_rejects(tmp_path, monkeypatch, back
     ('POST', '/content-tasks/10/publications'), ('POST', '/content-tasks/10/submit-review'),
     ('POST', '/content-tasks/10/review'), ('POST', '/facts/10/verify'),
     ('POST', '/content-tasks/10/check'), ('POST', '/content-tasks/10/lint'),
-    ('POST', '/answer-snapshots/probe'), ('POST', '/answer-snapshots/probe-batch'),
+    ('POST', '/content-tasks/10/ai-review'), ('POST', '/answer-snapshots/probe'),
+    ('POST', '/answer-snapshots/probe-batch'),
 ])
 def test_outside_exact_write_list_stays_closed(tmp_path, monkeypatch, backend, method, path):
     async def run():
