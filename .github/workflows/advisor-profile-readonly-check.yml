@@ -1,0 +1,49 @@
+name: Advisor profile read-only checks
+
+on:
+  pull_request:
+    branches: [codex/production-sem-backend]
+    paths:
+      - 'app/api/customer_profile.py'
+      - 'app/ai/customer_profile.py'
+      - 'tests/test_advisor_profile_readonly.py'
+      - '.github/workflows/advisor-profile-readonly-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  profile-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Check GET allowlist and profile caching without a database or provider
+        run: |
+          python - <<'PY'
+          import sys
+          import types
+          import pytest
+          from sqlalchemy.orm import DeclarativeBase
+
+          database = types.ModuleType('app.database')
+          class Base(DeclarativeBase):
+              pass
+          def no_database(*args, **kwargs):
+              raise AssertionError('Database access is forbidden in these mocked tests')
+          async def no_session():
+              raise AssertionError('Real sessions are forbidden in these mocked tests')
+              yield
+          database.Base = Base
+          database.async_session_factory = no_database
+          database.get_session = no_session
+          sys.modules['app.database'] = database
+          raise SystemExit(pytest.main([
+              '-p', 'no:cacheprovider', '-q', 'tests/test_advisor_profile_readonly.py',
+          ]))
+          PY

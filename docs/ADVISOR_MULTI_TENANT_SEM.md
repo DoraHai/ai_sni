@@ -19,6 +19,7 @@ S1+E1 guard 部署与 0109 建表、回填必须在同一个获批维护窗口�
 |manage 账户、计划、单元|账户 PK 和自然计划/单元 ID 反查且客户等于 tid|只读；所有资金/广告写关闭|
 |writeback mode、列表、approvals、queue|显式 tenant 等于 tid，原查询含客户过滤|只读；decision/reconcile 等关闭|
 |reports analysis/monthly/export/available-months|本分支没有报告 ID 下载路由，均以显式 tenant 查询|同步读取/导出；顾问只读 AI 缓存，不生成/写入/外部调用|
+|customer-profile|显式 tenant 等于 tid；模块与 RBAC 沿用同一 guard|顾问仅聚合读取及读取既有 AI 总结；无缓存或 refresh_summary=true 也不生成、不改客户缓存|
 |结构、dashboard、alerts、画像、suggestions、搜索词、否词、操作记录、验证、leads 根列表|精确路由 + 显式 tenant + 模块 + RBAC|只读；未知子路径关闭|
 |异步、流式、后台任务、助手、SEM tasks、持久导出|没有新增任务主体/grant 字段|不开放，403；系统调度身份不受影响|
 |auth me/tenants/password/select-tenant|精确方法和路径白名单；业务凭证进入白名单仍校验 gid|仅本人；身份凭证不能访问 modules 或业务|
