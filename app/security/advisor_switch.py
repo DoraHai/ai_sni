@@ -9,6 +9,7 @@ from app.models.advisor_account import AdvisorAccountLink
 from app.models.role import Role
 from app.models.user import User
 from app.config import get_settings
+from app.security.advisor_scope import is_advisor
 
 
 def _invalid():
@@ -16,13 +17,7 @@ def _invalid():
 
 
 def _advisor_role(role):
-    if role is None or (role.is_system and role.name == "管理员"):
-        return False
-    permissions = role.permissions or {}
-    return (not any(key.startswith("settings.") and level == "edit"
-                    for key, level in permissions.items())
-            and ((permissions.get("seo.site") == "edit" and permissions.get("seo.content") == "edit")
-                 or (permissions.get("geo.assets") == "edit" and permissions.get("geo.content") == "edit")))
+    return is_advisor(role)
 
 
 async def validate_switch_claims(session, payload: dict, target: User) -> None:

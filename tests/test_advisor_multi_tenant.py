@@ -222,6 +222,27 @@ def test_no_table_preserves_unrelated_role_edits_and_unbound_non_advisors(db):
         assert response.json()["detail"]["code"] == "ADVISOR_ROLE_CHANGE_FROZEN"
 
 
+def test_grant_read_permission_denial_is_closed_only_for_advisors(db):
+    client, factory, _ = db
+    from sqlalchemy import event
+    from sqlalchemy.exc import DBAPIError
+    engine = factory.kw["bind"].sync_engine
+    def no_grant_read(conn, cursor, statement, parameters, context, many):
+        if "advisor_tenant_grants" in statement:
+            raise DBAPIError("synthetic grant read", {}, PermissionError("permission denied"), False)
+    event.listen(engine, "before_cursor_execute", no_grant_read)
+    try:
+        response = client.get("/api/v1/auth/me", headers=headers(token()))
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "ADVISOR_GRANTS_UNAVAILABLE"
+        for uid in (2, 3):
+            assert client.get("/api/v1/auth/me", headers=headers(token(advisor=False, user_id=uid))).status_code == 200
+        assert client.patch("/api/v1/roles/3", headers=headers(token(advisor=False, user_id=2)),
+                            json={"permissions": {"optimize.keywords": "edit"}}).status_code == 200
+    finally:
+        event.remove(engine, "before_cursor_execute", no_grant_read)
+
+
 @pytest.mark.parametrize("claims", [
     {"aud": "bad"}, {"scope_kind": "bad"}, {"gid": True}, {"tid": False},
     {"auth_exp": 0}, {"exp": True}, {"sub": "0"}, {"sub": "-1"},
