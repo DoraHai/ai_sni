@@ -1,0 +1,48 @@
+name: Advisor grant permission checks
+
+on:
+  pull_request:
+    branches: [codex/production-sem-backend]
+    paths:
+      - 'app/security/advisor_management.py'
+      - 'app/security/advisor_scope.py'
+      - 'app/permissions.py'
+      - 'tests/test_advisor_grant_admin_guard.py'
+      - 'tests/test_advisor_scope_predicate.py'
+      - '.github/workflows/advisor-grants-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  permissions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Check advisor and administrator boundaries without a database
+        run: |
+          python - <<'PY'
+          import sys
+          import types
+          import pytest
+          from sqlalchemy.orm import DeclarativeBase
+
+          # These are predicate and fake-session tests. Do not initialize
+          # settings, read environment files, or create a database engine.
+          database = types.ModuleType('app.database')
+          class Base(DeclarativeBase):
+              pass
+          database.Base = Base
+          sys.modules['app.database'] = database
+          raise SystemExit(pytest.main([
+              '-p', 'no:cacheprovider', '-q',
+              'tests/test_advisor_grant_admin_guard.py',
+              'tests/test_advisor_scope_predicate.py',
+          ]))
+          PY
