@@ -67,7 +67,7 @@ for(const [advisor,tenantId] of [[true,15],[true,17],[false,15]]){
           assert.equal(new URL(p.url()).search,'?console=advisor');
           assert(!documents.includes(`/customer-workbench/?tenant_id=${tenantId}&site_id=6`),'No automatic SEO redirect');
           await verifyAdvisorDistribution(p,calls);
-          assert.match(await p.$eval('.distribution-panel',e=>e.textContent),/这个客户目前没有待发布的稿件。/);
+          assert.match(await p.$eval('.distribution-panel',e=>e.textContent),/当前任务列表里没有相关项目，稿件情况请到原模块核对。/);
           assert.equal(await p.$eval('.distribution-panel a',e=>e.getAttribute('href')),'/seo/distribution');
         }else{
           await p.waitForFunction(()=>document.querySelector('#identity')?.textContent.includes('客户网站'));
