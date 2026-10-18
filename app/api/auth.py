@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,7 +32,9 @@ from app.security.sem_identity import (
     load_sem_identity_states,
     public_sem_identity_state,
 )
-from app.security.advisor_scope import is_advisor, deny
+from app.security.advisor_scope import is_advisor, deny, account_locked, read_grants, active_grants
+from app.security.advisor_management import TenantId
+from app.security.advisor_session import admit_selection
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +94,9 @@ def _sem_account_payload(account: BaiduAccount) -> dict:
     }
 
 
-async def _user_payload(u: User, session: AsyncSession) -> dict:
+async def _user_payload(u: User, session: AsyncSession, *, advisor_identity: bool = False) -> dict:
     role = await session.get(Role, u.role_id)
-    return {
+    result = {
         "id": u.id,
         "username": u.username,
         "display_name": u.display_name or u.username,
@@ -103,6 +105,10 @@ async def _user_payload(u: User, session: AsyncSession) -> dict:
         "permissions": (role.permissions or {}) if role else {},  # 前端按它渲染菜单/按钮
         "tenant_id": u.tenant_id,
     }
+    if advisor_identity and is_advisor(role):
+        result.update(is_advisor=True, tenant_id=None, default_tenant_id=u.tenant_id,
+                      permissions=effective_role_permissions(role.name, role.is_system, role.permissions))
+    return result
 
 
 class LoginRequest(BaseModel):
@@ -145,7 +151,8 @@ async def login(req: LoginRequest, session: AsyncSession = Depends(get_session))
     user.last_login_at = datetime.utcnow()
     await session.commit()
     role = await session.get(Role, user.role_id)
-    return {"token": issue_token(user, advisor=is_advisor(role)), "user": await _user_payload(user, session)}
+    return {"token": issue_token(user, advisor=is_advisor(role)),
+            "user": await _user_payload(user, session, advisor_identity=is_advisor(role))}
 
 
 @router.get("/me")
@@ -506,6 +513,77 @@ async def list_tenants(
             for tenant in tenants
         ],
     }
+
+
+class SelectTenantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tenant_id: TenantId
+
+
+def _selection_audit(fn):
+    @wraps(fn)
+    async def audited(*args, **kwargs):
+        try:
+            return await fn(*args, **kwargs)
+        except HTTPException as error:
+            req, ctx = kwargs.get("req"), kwargs.get("ctx")
+            code = error.detail.get("code") if isinstance(error.detail, dict) else "selection_denied"
+            logger.info("advisor_tenant_selection actor_user_id=%s tenant_id=%s status=denied reason=%s",
+                        getattr(ctx, "user_id", None), getattr(req, "tenant_id", None), code)
+            raise
+    return audited
+
+
+@router.post("/select-tenant")
+@_selection_audit
+async def select_tenant(
+    req: SelectTenantRequest,
+    ctx: AuthContext = Depends(require_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    if not get_settings().advisor_multi_tenant_enabled:
+        deny(404, "ADVISOR_MULTI_TENANT_DISABLED", "顾问多客户功能尚未开放")
+    if ctx.user_id is None or ctx.advisor_scope is None:
+        deny(403, "ADVISOR_IDENTITY_REQUIRED", "仅顾问本人可以切换客户")
+    admit_selection(ctx.user_id)
+    # Serialize with grant saves. The identity/session expiry comes from the
+    # verified token, never from the selection body or a refreshed TTL.
+    user = await session.get(User, ctx.user_id, with_for_update=True, populate_existing=True)
+    role = await session.get(Role, user.role_id, populate_existing=True) if user else None
+    if not user or not user.is_active or account_locked(user) or not is_advisor(role):
+        deny(401, "ADVISOR_ROLE_CHANGED", "账号或顾问资格已变化，请重新登录")
+    rows = await read_grants(session, user.id)
+    active = await active_grants(session, rows)
+    if not active:
+        deny(403, "ADVISOR_NO_TENANT", "顾问尚未获准访问任何客户")
+    # A business credential revoked since require_auth must not act as an
+    # identity credential while waiting for this users row lock.
+    if ctx.advisor_scope.grant_id is not None and not any(
+            g.id == ctx.advisor_scope.grant_id and g.tenant_id == ctx.tenant_id for g in active):
+        deny(401, "ADVISOR_GRANT_REVOKED", "客户授权已撤销，请重新选择客户")
+    grant = next((g for g in active if g.tenant_id == req.tenant_id), None)
+    if grant is None:
+        deny(403, "ADVISOR_TENANT_NOT_GRANTED", "顾问只能访问勾选的客户")
+    if user.tenant_id not in {g.tenant_id for g in active}:
+        deny(403, "ADVISOR_DEFAULT_TENANT_INVALID", "默认客户与授权不一致，请管理员修复")
+    perms = effective_role_permissions(role.name, role.is_system, role.permissions)
+    modules = list((await session.scalars(select(TenantModule).where(
+        TenantModule.tenant_id == req.tenant_id))).all())
+    if not any(module_is_available(m) and any(perms.get(k) in ("view", "edit")
+            for k in _MODULE_PERMISSION_KEYS.get(m.module_code, ())) for m in modules):
+        deny(403, "ADVISOR_TENANT_MODULE_UNAVAILABLE", "该客户没有当前角色可用的模块")
+    if type(ctx.auth_exp) is not int or ctx.auth_exp <= datetime.now(timezone.utc).timestamp():
+        deny(401, "ADVISOR_SESSION_EXPIRED", "原登录会话已到期，请重新登录")
+    access_token = issue_token(user, advisor=True, tenant_id=req.tenant_id,
+                               grant_id=grant.id, auth_exp=ctx.auth_exp)
+    tenant = await session.get(Tenant, req.tenant_id)
+    expires_at = jwt.decode(access_token, _jwt_secret(), algorithms=[JWT_ALG],
+                            audience="advisor-business")["exp"]
+    await session.commit()
+    logger.info("advisor_tenant_selection actor_user_id=%s tenant_id=%s grant_id=%s status=success",
+                user.id, req.tenant_id, grant.id)
+    return {"access_token": access_token, "token_type": "bearer", "tenant_id": req.tenant_id,
+            "tenant_name": tenant.name, "expires_at": datetime.fromtimestamp(expires_at, timezone.utc).isoformat()}
 
 
 _MODULE_PERMISSION_KEYS = {

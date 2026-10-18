@@ -10,11 +10,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
+from app.config import get_settings
 from app.models import Role, Tenant, User
 from app.permissions import PLATFORM_ADMIN_KEYS, effective_role_permissions
 from app.security.auth import AuthContext, hash_password, require_admin
 from app.platform_operations import audit_business
-from app.security.advisor_scope import is_advisor, deny
+from app.security.advisor_scope import is_advisor, deny, read_grants, active_grants
+from app.security.advisor_management import (TenantId, grants_version, lock_named_admin,
+                                            save_grants, validate_tenants)
 
 logger = logging.getLogger(__name__)
 
@@ -44,19 +47,47 @@ def _payload(u: User, role_names: dict[int, str], tenant_names: dict[int, str]) 
     }
 
 
+async def _account_payload(session, user, role, tenant_names, rows=None):
+    advisor = is_advisor(role)
+    if advisor and rows is None:
+        rows = await read_grants(session, user.id)
+    active = await active_grants(session, rows or []) if advisor else []
+    result = _payload(user, {user.role_id: role.name if role else "?"}, tenant_names)
+    result.update(is_advisor=advisor, tenant_ids=sorted(g.tenant_id for g in active),
+                  default_tenant_id=user.tenant_id,
+                  grants_version=grants_version(user.tenant_id, rows or []) if advisor else None)
+    return result
+
+
+def _require_multi_tenant():
+    if not get_settings().advisor_multi_tenant_enabled:
+        deny(422, "ADVISOR_MULTI_TENANT_DISABLED", "顾问多客户功能尚未开放")
+
+
 @router.get("")
 async def list_users(session: AsyncSession = Depends(get_session)) -> dict:
     users = (await session.scalars(select(User).order_by(User.id))).all()
-    role_names = {r.id: r.name for r in (await session.scalars(select(Role))).all()}
+    roles = {r.id: r for r in (await session.scalars(select(Role))).all()}
+    role_names = {rid: r.name for rid, r in roles.items()}
     tenant_names = {t.id: t.name for t in (await session.scalars(select(Tenant))).all()}
     return {
-        "users": [_payload(u, role_names, tenant_names) for u in users],
+        "users": [await _account_payload(session, u, roles.get(u.role_id), tenant_names) for u in users],
         "role_options": [{"id": rid, "label": name} for rid, name in role_names.items()],
         "tenant_options": [
             {"id": tenant_id, "name": name}
             for tenant_id, name in tenant_names.items()
         ],
     }
+
+
+@router.get("/{user_id}")
+async def get_user(user_id: int, session: AsyncSession = Depends(get_session)) -> dict:
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(404, "用户不存在")
+    role = await session.get(Role, user.role_id)
+    tenant_names = {t.id: t.name for t in (await session.scalars(select(Tenant))).all()}
+    return await _account_payload(session, user, role, tenant_names)
 
 
 async def _check_tenant(session: AsyncSession, tenant_id: int | None) -> None:
@@ -75,6 +106,8 @@ class CreateUserRequest(BaseModel):
     display_name: str | None = Field(None, max_length=50)
     role_id: int
     tenant_id: int | None = None  # 可选：限定单客户
+    tenant_ids: list[TenantId] | None = Field(None, max_length=1000)
+    default_tenant_id: TenantId | None = None
 
 
 @router.post("")
@@ -83,7 +116,24 @@ async def create_user(
     ctx: AuthContext = Depends(require_admin),
 ) -> dict:
     await _check_role(session, req.role_id)
-    await _check_tenant(session, req.tenant_id)
+    role = await session.get(Role, req.role_id)
+    advisor = is_advisor(role)
+    supplied = bool(req.model_fields_set & {"tenant_ids", "default_tenant_id"})
+    if supplied and not advisor:
+        deny(422, "TENANT_IDS_ONLY_FOR_ADVISOR", "只有顾问账号可以设置多个客户")
+    ids = None
+    if advisor:
+        _require_multi_tenant()
+        await lock_named_admin(session, ctx)
+        if not req.tenant_ids:
+            deny(422, "ADVISOR_TENANTS_REQUIRED", "至少勾选 1 个客户")
+        default_id = req.default_tenant_id if req.default_tenant_id is not None else req.tenant_ids[0]
+        ids = await validate_tenants(session, req.tenant_ids, default_id, role)
+        if req.tenant_id is not None and req.tenant_id != default_id:
+            deny(422, "ADVISOR_DEFAULT_TENANT_INVALID", "默认客户字段不一致")
+    else:
+        default_id = req.tenant_id
+        await _check_tenant(session, req.tenant_id)
     if await session.scalar(select(User).where(User.username == req.username.strip())):
         raise HTTPException(409, "用户名已存在")
     user = User(
@@ -91,14 +141,20 @@ async def create_user(
         display_name=req.display_name,
         password_hash=hash_password(req.password),
         role_id=req.role_id,
-        tenant_id=req.tenant_id,
+        tenant_id=default_id,
     )
     session.add(user)
     await session.flush()
-    await audit_business(session, ctx, 'user:' + str(user.id), 'user.create', None, _audit_state(user))
+    rows = await save_grants(session, user, ids, default_id, ctx.user_id, []) if advisor else []
+    created_state = _audit_state(user)
+    if advisor:
+        created_state["tenant_ids"] = ids
+    await audit_business(session, ctx, 'user:' + str(user.id), 'user.create', None, created_state)
     await session.commit()
     await session.refresh(user)
-    return {"status": "ok", "id": user.id}
+    if advisor:
+        logger.info("advisor_grants_created actor_user_id=%s user_id=%s tenant_ids=%s", ctx.user_id, user.id, ids)
+    return {"status": "ok", **await _account_payload(session, user, role, {}, rows)}
 
 
 class UpdateUserRequest(BaseModel):
@@ -108,6 +164,9 @@ class UpdateUserRequest(BaseModel):
     clear_tenant: bool = False  # True=解除单客户绑定（改回全客户）
     display_name: str | None = Field(None, max_length=50)
     new_password: str | None = Field(None, min_length=8, max_length=100)
+    tenant_ids: list[TenantId] | None = Field(None, max_length=1000)
+    default_tenant_id: TenantId | None = None
+    expected_grants_version: str | None = Field(None, max_length=64)
 
 
 @router.patch("/{user_id}")
@@ -117,7 +176,11 @@ async def update_user(
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_admin),
 ) -> dict:
-    user = await session.get(User, user_id, with_for_update=True)
+    supplied = bool(req.model_fields_set & {"tenant_ids", "default_tenant_id"})
+    if supplied:
+        user = await lock_named_admin(session, ctx, user_id)
+    else:
+        user = await session.get(User, user_id, with_for_update=True, populate_existing=True)
     if user is None:
         raise HTTPException(404, "用户不存在")
     if req.is_active is False and user.id == ctx.user_id:
@@ -129,12 +192,36 @@ async def update_user(
         deny(422, "ADVISOR_CLEAR_TENANT_FORBIDDEN", "顾问不能通过清空默认客户获得全部客户")
     if is_advisor(old_role) != is_advisor(new_role):
         deny(409, "ADVISOR_ROLE_CHANGE_FROZEN", "顾问角色转换已冻结，请先核对客户授权")
+    advisor = is_advisor(new_role)
+    if supplied and not advisor:
+        deny(422, "TENANT_IDS_ONLY_FOR_ADVISOR", "只有顾问账号可以设置多个客户")
+    if advisor and "tenant_id" in req.model_fields_set and not supplied:
+        deny(422, "ADVISOR_TENANT_IDS_REQUIRED", "请使用顾问客户名单和默认客户字段")
+    rows = None
+    if advisor and supplied:
+        _require_multi_tenant()
+        if req.expected_grants_version is None:
+            deny(428, "ADVISOR_GRANTS_VERSION_REQUIRED", "请刷新账号后再保存客户名单")
+        rows = await read_grants(session, user.id)
+        if req.expected_grants_version != grants_version(user.tenant_id, rows):
+            deny(409, "ADVISOR_GRANTS_CONFLICT", "该账号的客户已被别人修改，请刷新后再改")
+        ids = req.tenant_ids if "tenant_ids" in req.model_fields_set else [g.tenant_id for g in rows if g.revoked_at is None]
+        if not ids:
+            deny(422, "ADVISOR_TENANTS_REQUIRED", "至少勾选 1 个客户")
+        default_id = req.default_tenant_id if "default_tenant_id" in req.model_fields_set else user.tenant_id
+        if "default_tenant_id" not in req.model_fields_set and default_id not in ids:
+            deny(422, "ADVISOR_DEFAULT_TENANT_REQUIRED", "取消默认客户时请同时选择新的默认客户")
+        ids = await validate_tenants(session, ids, default_id, new_role)
+        if req.tenant_id is not None and req.tenant_id != default_id:
+            deny(422, "ADVISOR_DEFAULT_TENANT_INVALID", "默认客户字段不一致")
+        before["tenant_ids"] = sorted(g.tenant_id for g in rows if g.revoked_at is None)
+        rows = await save_grants(session, user, ids, default_id, ctx.user_id, rows)
     if req.role_id is not None:
         await _check_role(session, req.role_id)
         user.role_id = req.role_id
     if req.clear_tenant:
         user.tenant_id = None
-    elif req.tenant_id is not None:
+    elif req.tenant_id is not None and not advisor:
         await _check_tenant(session, req.tenant_id)
         user.tenant_id = req.tenant_id
     if req.display_name is not None:
@@ -144,11 +231,16 @@ async def update_user(
     if req.new_password:
         user.password_hash = hash_password(req.new_password)
     after = _audit_state(user)
+    if advisor and supplied:
+        after["tenant_ids"] = ids
     if req.new_password:
         after['password_changed'] = True
     await audit_business(session, ctx, 'user:' + str(user.id), 'user.update', before, after)
     await session.commit()
-    return {"status": "ok"}
+    if advisor and supplied:
+        logger.info("advisor_grants_updated actor_user_id=%s user_id=%s tenant_ids=%s default_tenant_id=%s",
+                    ctx.user_id, user.id, ids, user.tenant_id)
+    return {"status": "ok", **await _account_payload(session, user, new_role, {}, rows)}
 
 
 @router.delete("/{user_id}")
