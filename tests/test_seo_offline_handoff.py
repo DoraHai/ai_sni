@@ -116,7 +116,10 @@ def test_package_contains_both_orders_and_reusable_templates():
             assert template.status == 'unknown' and template.public_url is None
 
 
-def test_export_is_read_only_and_binds_visible_snapshot(caplog):
+def test_export_is_read_only_and_binds_visible_snapshot(caplog, monkeypatch):
+    # Earlier offline Alembic tests disable existing loggers via fileConfig.
+    import logging
+    monkeypatch.setattr(logging.getLogger('app.security.advisor_write_commit'), 'disabled', False)
     session = fixture()
     snapshot = {k: receipt()[k] for k in ('article_id', 'source_version', 'payload_hash')}
     req = seo.OfflineOrderExport(tenant_id=1, site_id=2, articles=[snapshot],
