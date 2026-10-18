@@ -215,6 +215,37 @@ def test_two_concurrent_suggestions_cannot_exceed_ten(tmp_path, monkeypatch, use
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("use_llm", [False, True])
+@pytest.mark.parametrize("change", ["assignment", "inactive", "grant"])
+def test_suggestion_rechecks_authority_before_return(tmp_path, monkeypatch, use_llm, change, backend):
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            async def suggestion(**kwargs):
+                if use_llm:
+                    await kwargs["before_model"]()
+                if change == "grant":
+                    await mutate(env, Grant, 101, revoked_at=datetime.now(timezone.utc),
+                                 revoked_by=2, revoke_reason="fixture_revocation")
+                elif change == "inactive":
+                    await mutate(env, GeoProject, 10, status="paused")
+                else:
+                    async with env.factory() as session:
+                        project = await session.get(GeoProject, 10)
+                        settings = copy.deepcopy(project.project_settings)
+                    settings["geo_service_plan"]["advisor_user_id"] = 2
+                    await mutate(env, GeoProject, 10, project_settings=settings)
+                return BRIEF.copy()
+
+            monkeypatch.setattr("app.geo.content.brief_suggest.suggest_brief_for_task", suggestion)
+            response = await env.request("POST", "/content-tasks/10/suggest-brief",
+                                         body={"use_llm": use_llm})
+            assert response.status_code in {401, 403}, response.text
+            assert "suggested_brief" not in response.json()
+            async with env.factory() as session:
+                assert len(list(await session.scalars(select(GeoAsyncJob)))) == 1
+    asyncio.run(run())
+
+
 def test_generate_reserves_one_live_job_with_durable_authority(tmp_path, monkeypatch, backend):
     from starlette.background import BackgroundTasks
     queued = []
