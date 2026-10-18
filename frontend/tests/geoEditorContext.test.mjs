@@ -23,7 +23,7 @@ for (const name of ['runGeoScore', 'runAiReview', 'runOptimize', 'runCheck', 'su
       checkResult: { value: null }, briefSuggestHint: { value: '' }, briefLocalDraft: { value: false },
       brief: {}, briefRequiredEmpty: () => false,
       channelDraftGate: { value: { allowed: true } }, channelPick: { value: ['website'] },
-      jobLive: { value: false },
+      jobLive: { value: false }, generateHint: { value: '' },
       variantEdit: { title: 'A', body_markdown: 'A' }, docTab: { value: 'website' },
       impact: { value: null }, impactLoading: { value: false }, impactWindowDays: { value: 14 },
       pushTargets: { value: [] }, pushSelected: { value: [] }, activeJob: { value: { id: 1 } },
