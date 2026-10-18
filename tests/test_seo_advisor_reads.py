@@ -37,3 +37,14 @@ def test_revoked_assignment_and_inactive_site_disappear_from_reads(object_db):
     assignment.active = False
     db.commit()
     assert list(db.scalars(select(SeoContentAsset.id))) == []
+
+
+@pytest.mark.parametrize('site_id', [None, 1, 4])
+def test_customer_shared_connections_require_an_explicit_assigned_site(object_db, site_id):
+    request = req('GET', '/api/v1/seo/content-distribution/connections',
+                  query='tenant_id=1' + (f'&site_id={site_id}' if site_id else ''))
+    if site_id == 1:
+        asyncio.run(check_seo_objects(request, selected(), object_db[1]))
+    else:
+        with pytest.raises(HTTPException):
+            asyncio.run(check_seo_objects(request, selected(), object_db[1]))
