@@ -132,3 +132,80 @@ def test_revocation_discards_uncommitted_prior_cells(tmp_path, monkeypatch, back
                 assert row.summary.get('snapshots_created', 0) == 0
                 assert not row.items
     asyncio.run(run())
+
+
+def test_visibility_job_keeps_selected_token_expiry(tmp_path, monkeypatch, backend):
+    from datetime import timezone
+    from test_advisor_scoped_writes import fixture_token
+    async def run():
+        async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
+            expiry = int(datetime.now(timezone.utc).timestamp()) + 120
+            response = await env.request('POST', '/visibility-patrol/runs', body={'tenant_id': 10},
+                auth=fixture_token(exp=expiry))
+            assert response.status_code == 200, response.text
+            assert response.json()['run']['summary']['advisor_visibility_auth']['auth_exp'] == expiry
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('tid', [10, 20])
+def test_worker_current_authority_persists_and_audits(tmp_path, monkeypatch, backend, caplog, tid):
+    import json
+    import logging
+    from app.models import GeoTrackingEngine
+    from test_advisor_scoped_writes import fixture_token
+    caplog.set_level(logging.INFO, logger='geo.advisor.operations')
+    async def run():
+        async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
+            if tid == 20:
+                async with env.factory() as session:
+                    session.add(GeoTrackingEngine(tenant_id=20, engine_key='deepseek', display_name='fixture', enabled=True))
+                    await session.commit()
+            response = await env.request('POST', '/visibility-patrol/runs', body={'tenant_id': tid},
+                params={'tenant_id': tid}, auth=fixture_token(tid=tid, gid=101 if tid == 10 else 102))
+            assert response.status_code == 200, response.text
+            run_id = response.json()['run']['id']
+            patrol = worker_stubs(monkeypatch)
+            probe = AsyncMock(return_value={'raw_text': 'synthetic answer', 'sample_mode': 'openai_compat',
+                'simulated': False, 'suggested_mentions_brand': False})
+            monkeypatch.setattr(patrol, 'run_probe_draft', probe)
+            async with env.factory() as session:
+                row = await patrol.execute_patrol_run(session, run_id, tenant_id=tid)
+                assert row.status == 'completed', row.error
+                snapshots = list(await session.scalars(select(GeoAnswerSnapshot)))
+                assert snapshots and all(s.tenant_id == tid for s in snapshots)
+            return run_id
+    ident = asyncio.run(run())
+    events = [json.loads(r.message) for r in caplog.records if r.name == 'geo.advisor.operations']
+    assert any(e['result'] == 'job_succeeded' and e['tenant_id'] == tid and e['advisor_user_id'] == 1
+        and e['object_ids'] == {'run_id': ident} for e in events)
+
+
+def test_project_reassignment_can_commit_during_provider_and_discards_reply(tmp_path, monkeypatch, backend):
+    if backend != 'postgres':
+        pytest.skip('requires real concurrent PostgreSQL transactions')
+    async def run():
+        async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
+            response = await env.request('POST', '/visibility-patrol/runs', body={'tenant_id': 10})
+            run_id = response.json()['run']['id']
+            patrol = worker_stubs(monkeypatch)
+            async def provider(**kwargs):
+                async def reassign():
+                    async with env.factory() as admin:
+                        project = await admin.get(GeoProject, 10, with_for_update=True)
+                        settings = copy.deepcopy(project.project_settings)
+                        settings['geo_service_plan']['advisor_user_id'] = 2
+                        project.project_settings = settings
+                        await admin.commit()
+                # A provider call must not retain the project lock and block
+                # the administrator's reassignment until the sample is stored.
+                await asyncio.wait_for(reassign(), timeout=5)
+                return {'raw_text': 'stale provider response', 'sample_mode': 'openai_compat', 'simulated': False}
+            probe = AsyncMock(side_effect=provider)
+            monkeypatch.setattr(patrol, 'run_probe_draft', probe)
+            async with env.factory() as session:
+                row = await patrol.execute_patrol_run(session, run_id, tenant_id=10)
+                assert row.status == 'failed' and '重新发起' in row.error
+                assert not list(await session.scalars(select(GeoAnswerSnapshot)))
+                assert 'stale provider response' not in str(row.items)
+            probe.assert_awaited_once()
+    asyncio.run(run())
