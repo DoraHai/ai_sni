@@ -1219,7 +1219,14 @@ async def update_optimization_business(
     if "profile" in data:
         from app.geo.content.business_profile import normalize_profile
 
-        data["profile"] = normalize_profile(data.get("profile"))
+        normalized = normalize_profile(data.get("profile"))
+        if getattr(ctx, "advisor_scope", None) is not None:
+            # A scoped profile PATCH must preserve fields the advisor cannot
+            # submit (including geo_scope) and any omitted profile fields.
+            data["profile"] = {**(row.profile or {}), **{
+                key: normalized[key] for key in data["profile"]}}
+        else:
+            data["profile"] = normalized
     for key, value in data.items():
         setattr(row, key, value)
     await session.commit()

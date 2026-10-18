@@ -47,6 +47,13 @@ def _bigint_sqlite(_type, _compiler, **_kwargs):
 PREFIX = '/api/v1/geo'
 SIGNING_KEY = 'scoped-write-fixture-only-signing-key'
 EDIT = {'geo.assets': 'edit', 'geo.content': 'edit'}
+BRAND_PROFILE = {
+    'product_name': '测试品牌', 'website': 'https://brand.example.test',
+    'summary': '测试品牌简介', 'industry': '测试行业', 'audience': '测试客户', 'cta': '了解产品',
+    'honors': ['测试口号'], 'qualifications': ['测试资质'], 'capabilities': ['测试能力'],
+    'scenarios': ['测试场景'], 'competitors': ['测试竞品'],
+    'recommend_reasons': ['测试理由'], 'banned_claims': ['测试禁用说法'],
+}
 # Every mandatory method/template has a distinct success test and persisted
 # effect assertion. Imports are optional and tested separately below.
 CASES = (
@@ -78,6 +85,8 @@ CASES = (
      'geo_article_versions', 'title', 'edited article'),
     ('PATCH', '/content-tasks/{task_id}/variants/{channel}', {'title': 'edited variant'},
      'geo_channel_variants', 'title', 'edited variant'),
+    ('PATCH', '/optimization-businesses/{business_id}', {'profile': BRAND_PROFILE},
+     'geo_optimization_businesses', 'profile', BRAND_PROFILE),
 )
 CASE_IDS = [f'{method} {path}' for method, path, *_ in CASES]
 BUSINESS_TABLES = ('geo_facts', 'geo_prompts', 'geo_optimization_businesses',
@@ -439,6 +448,8 @@ def test_missing_or_wrong_project_assignment_rejects(tmp_path, monkeypatch, back
     ('POST', '/content-tasks/10/review'), ('POST', '/facts/10/verify'),
     ('POST', '/content-tasks/10/check'), ('POST', '/content-tasks/10/lint'),
     ('POST', '/visibility-patrol/runs'),
+    ('POST', '/content-tasks/10/ai-review'), ('POST', '/answer-snapshots/probe'),
+    ('POST', '/answer-snapshots/probe-batch'),
 ])
 def test_outside_exact_write_list_stays_closed(tmp_path, monkeypatch, backend, method, path):
     async def run():
