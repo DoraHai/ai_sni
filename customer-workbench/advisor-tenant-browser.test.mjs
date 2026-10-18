@@ -49,10 +49,11 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
     await p.goto(origin+'/customer-workbench/?console=advisor');await p.waitForSelector('.advisor-tenant-picker details');
     assert(!await p.$('.advisor-task'));assert(!calls.some(c=>c.path.endsWith('/modules')));
     assert.equal(await p.$eval('.advisor-module [role=status]',e=>e.textContent),'请先在上方选择客户，再查看站内任务');
-    await p.click('[data-advisor=refresh]');await p.waitForSelector('.advisor-tenant-picker details');
+    await p.click('[data-advisor=refresh]');await p.waitForNetworkIdle({idleTime:100});
+    await p.waitForFunction(()=>document.querySelector('.advisor-tenant-picker')?.textContent.includes('请先选择客户'));
     assert(!calls.some(c=>c.path.endsWith('/advisor-tasks')));
-    await p.click('.advisor-tenant-picker summary');
-    await p.click('[data-tenant="1"]');await p.waitForSelector('.advisor-task');
+    await p.locator('.advisor-tenant-picker summary').click();
+    await p.locator('[data-tenant="1"]').click();await p.waitForSelector('.advisor-task');
     assert((await p.$eval('.advisor-task',e=>e.textContent)).includes('客户甲专属任务'));
     await p.waitForFunction(()=>document.querySelectorAll('.advisor-task').length===2);
     for(const module of ['seo','geo']){
