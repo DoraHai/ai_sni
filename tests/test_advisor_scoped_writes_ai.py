@@ -40,7 +40,7 @@ def no_credentials(monkeypatch):
 
 
 @pytest.mark.parametrize("action", ["generate", "suggest-brief"])
-@pytest.mark.parametrize("case", ["off", "unselected", "ungranted", "other-advisor", "inactive", "state", "patrol"])
+@pytest.mark.parametrize("case", ["off", "unselected", "ungranted", "other-advisor", "inactive", "state"])
 def test_ai_denies_before_model_or_reservation(tmp_path, monkeypatch, action, case, backend):
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend=backend, enabled=case != "off") as env:
@@ -61,9 +61,6 @@ def test_ai_denies_before_model_or_reservation(tmp_path, monkeypatch, action, ca
                     await mutate(env, GeoProject, 10, status="paused")
             if case == "state":
                 await mutate(env, GeoContentTask, 10, status="ready")
-            if case == "patrol":
-                from app.models import GeoVisibilityPatrolSettings
-                await mutate(env, GeoVisibilityPatrolSettings, 10, enabled=True)
             response = await env.request("POST", f"/content-tasks/10/{action}",
                     body={"overwrite": False, "use_llm": False} if action == "suggest-brief" else None, auth=auth)
             assert response.status_code in {401, 403, 409}, response.text
@@ -333,3 +330,33 @@ def test_generation_rechecks_each_model_attempt_without_swallowing_denial(monkey
             brief=BRIEF, llm={"api_key": "synthetic-unused-key"}, before_model=check))
     assert denied.value.status_code == 403
     assert len(model_calls) == deny_attempt - 1
+
+
+@pytest.mark.parametrize("action", ["generate", "suggest-brief"])
+@pytest.mark.parametrize("chain", ["patrol", "period", "plan"])
+def test_ai_operations_allow_running_execution_with_own_scope(tmp_path, monkeypatch, action, chain):
+    from app.models import GeoOptimizationPeriod, GeoVisibilityPatrolSettings
+    from starlette.background import BackgroundTasks
+    from datetime import timedelta
+    monkeypatch.setattr(BackgroundTasks, "add_task", lambda *_a, **_k: None)
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch) as env:
+            await ready(env)
+            async with env.factory() as session:
+                if chain == "patrol":
+                    (await session.get(GeoVisibilityPatrolSettings, 10)).enabled = True
+                elif chain == "period":
+                    session.add(GeoOptimizationPeriod(tenant_id=10, name="fixture period", status="active",
+                        starts_at=datetime.now(), ends_at=datetime.now() + timedelta(days=7)))
+                else:
+                    project = await session.get(GeoProject, 10)
+                    settings = copy.deepcopy(project.project_settings)
+                    settings["geo_service_plan"]["enabled"] = True
+                    project.project_settings = settings
+                await session.commit()
+            body = {"use_llm": False} if action == "suggest-brief" else None
+            response = await env.request("POST", f"/content-tasks/10/{action}", body=body)
+            assert response.status_code == 200, response.text
+            async with env.factory() as session:
+                assert len(list(await session.scalars(select(GeoAsyncJob)))) == 1
+    asyncio.run(run())
