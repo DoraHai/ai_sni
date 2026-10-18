@@ -19,9 +19,18 @@ vi.mock('../src/api/seo', () => ({
 vi.mock('../src/api/alerts', () => ({ fetchAlerts: vi.fn(async () => ({})) }))
 vi.mock('../src/api/expansion', () => ({ fetchCandidates: vi.fn(async () => ({})) }))
 vi.mock('../src/api/writeback', () => ({ fetchWritebackMode: vi.fn(async () => ({})) }))
+vi.mock('../src/api/customerProfile', () => ({
+  updateCustomerProfile: vi.fn(),
+  fetchCustomerProfile: vi.fn(async () => ({ summary: '客户甲的投放画像摘要', profile: {
+    basics: { name: '合成客户甲', business_desc: '客户甲业务资料', brand_terms: [] },
+    structure: { category_dist: [] }, bid_habits: { avg_price_by_category: [] },
+    performance: {}, adjust_behavior: {}, adoption: { status_counts: {} },
+  } })),
+}))
 
 import App from '../src/App.vue'
 import SeoContentEditorView from '../src/views/seo/SeoContentEditorView.vue'
+import CustomerProfileView from '../src/views/monitor/CustomerProfileView.vue'
 import { session } from '../src/store/session.js'
 import client from '../src/api/client.js'
 
@@ -65,6 +74,34 @@ describe('advisor customer data in mounted routes', () => {
     expect(wrapper.text()).not.toContain('客户甲原文资料')
     expect(wrapper.html()).not.toContain('客户甲未保存的交付稿')
     expect(wrapper.html()).not.toContain('客户甲待交付文章')
+  })
+
+  it('clears the live SEM customer profile after the selected grant is revoked', async () => {
+    fixture.user = { id: 7, username: 'advisor-fixture', tenant_id: 1, is_advisor: true,
+      permissions: { 'seo.site': 'edit', 'seo.content': 'edit', 'monitor.profile': 'view' } }
+    session.setAuth(identity, fixture.user, false)
+    session.replaceAuthForAdvisorTenant(business(1), 1)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{
+      path: '/monitor/profile', component: CustomerProfileView,
+    }] })
+    await router.push('/monitor/profile')
+    await router.isReady()
+    wrapper = mount(App, { global: { plugins: [router], directives: { loading: () => {} }, stubs: {
+      ElConfigProvider: { props: ['locale'], template: '<slot />' },
+      ElButton: { template: '<button><slot /></button>' },
+      ElAlert: true, ElPopover: true, ElDropdown: true, ElDropdownMenu: true, ElDropdownItem: true,
+      ElDialog: true, ElForm: true, ElFormItem: true, ElInput: true, CategoryDrilldownModal: true,
+    } } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('客户甲的投放画像摘要')
+    expect(wrapper.text()).toContain('客户甲业务资料')
+    await expect(client.get('/api/v1/customer-profile?tenant_id=1', {
+      adapter: config => Promise.reject({ config, response: { status: 401, data: { detail: { code: 'ADVISOR_GRANT_REVOKED' } } } }),
+    })).rejects.toMatchObject({ code: 'ADVISOR_GRANT_REVOKED' })
+    await flushPromises()
+    expect(session.tenantId).toBeNull()
+    expect(wrapper.text()).not.toContain('客户甲的投放画像摘要')
+    expect(wrapper.text()).not.toContain('客户甲业务资料')
   })
 
   it('clears the identity backup and customer drafts after logout in another tab', () => {
