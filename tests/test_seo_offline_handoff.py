@@ -134,7 +134,10 @@ def test_package_contains_both_orders_and_reusable_templates():
             assert template.status == 'unknown' and template.public_url is None
 
 
-def test_export_is_read_only_and_binds_visible_snapshot():
+def test_export_is_read_only_and_binds_visible_snapshot(caplog, monkeypatch):
+    # Earlier offline Alembic tests disable existing loggers via fileConfig.
+    import logging
+    monkeypatch.setattr(logging.getLogger('app.security.advisor_write_commit'), 'disabled', False)
     session = fixture()
     snapshot = {k: receipt()[k] for k in ('article_id', 'source_version', 'payload_hash')}
     req = seo.OfflineOrderExport(tenant_id=1, site_id=2, articles=[snapshot],
@@ -146,10 +149,17 @@ def test_export_is_read_only_and_binds_visible_snapshot():
     session.commit.assert_not_awaited()
     session.add.assert_not_called()
     assert response.headers['cache-control'] == 'no-store'
+    event = json.loads(caplog.records[-1].getMessage().split(' ', 1)[1])
+    assert event['user_id'] == 7 and event['tenant_id'] == 1
+    assert event['method'] == 'POST' and event['path'].endswith('/offline-handoff/export')
+    assert event['object_ids'] == [10] and event['result'] == 'succeeded'
+    assert 'payload_hash' not in caplog.text and 'content_markdown' not in caplog.text
+    audit_count = len(caplog.records)
     session = fixture(asset(version_count=4))
     with dependencies(), pytest.raises(HTTPException) as exc:
         asyncio.run(seo.export_offline_orders(req, session, context()))
     assert exc.value.status_code == 409
+    assert len(caplog.records) == audit_count
 
 
 @pytest.mark.parametrize('status', ['published', 'failed', 'unknown'])
@@ -166,6 +176,8 @@ def test_preview_never_writes_and_commit_preserves_three_states(status):
     added = [c.args[0] for c in session.add.call_args_list]
     publication = next(x for x in added if isinstance(x, SeoContentPublication))
     audit = next(x for x in added if isinstance(x, SeoPublishAttempt))
+    assert audit.request_summary['method'] == 'POST'
+    assert audit.request_summary['path'].endswith('/offline-handoff/import-receipts')
     assert publication.status == status
     assert audit.request_summary['account'] == r['account']
     assert audit.response_summary['human_reported'] is True

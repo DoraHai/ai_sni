@@ -1,5 +1,7 @@
 """Revalidate under authorization locks immediately before business commit."""
 from datetime import datetime, timezone
+import json
+import logging
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -9,6 +11,21 @@ from app.models.role import Role
 from app.models.user import User
 from app.security.advisor_scope import account_locked
 from app.security.advisor_seo_scope import is_advisor_role
+
+
+def record_seo_action(ctx, tenant_id, method, path, object_type, object_ids):
+    """Metadata only; the SEO service retains stderr in its configured log file."""
+    event = {"user_id": ctx.user_id, "tenant_id": tenant_id, "method": method,
+             "path": path, "object_type": object_type, "object_ids": object_ids,
+             "result": "succeeded", "time": datetime.now(timezone.utc).isoformat()}
+    # SEO has no root INFO handler; WARNING also reaches the default stderr
+    # handler. Never include bodies, account names, URLs, headers or credentials.
+    logging.getLogger(__name__).warning("SEO_ACTION_AUDIT %s", json.dumps(event, sort_keys=True))
+
+
+def record_advisor_write(ctx, row, method, path):
+    if getattr(ctx, "is_advisor", False):
+        record_seo_action(ctx, row.tenant_id, method, path, row.__tablename__, [row.id])
 
 
 async def recheck_advisor_before_commit(session, ctx) -> None:
