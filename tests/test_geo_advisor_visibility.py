@@ -266,7 +266,7 @@ def test_real_worker_uses_frozen_questions_and_existing_entitlement_checks(tmp_p
             assert response.status_code == 200, response.text
             run_id = response.json()['run']['id']
             monkeypatch.setattr(ai_settings, 'resolve_llm_credentials', AsyncMock(return_value={}))
-            monkeypatch.setattr(ai_settings, 'ensure_ai_setting', AsyncMock(return_value=SimpleNamespace(monitoring_stance='hybrid')))
+            monkeypatch.setattr(ai_settings, 'get_ai_setting_row', AsyncMock(return_value=SimpleNamespace(monitoring_stance='hybrid')))
             monkeypatch.setattr(patrol, 'resolve_engine_llm', lambda **kw: (
                 {'api_key': 'fixture-only', 'model': 'fixture-model', 'provider': 'fixture'}, 'openai_compat', None))
             probe = AsyncMock(return_value={'raw_text': 'synthetic fixture answer', 'simulated': False,
