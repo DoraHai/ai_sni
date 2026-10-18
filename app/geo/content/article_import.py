@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import io
+import json
 import re
+import subprocess
+import sys
+import threading
 import zipfile
 from pathlib import Path
 from urllib.parse import urlparse
@@ -20,6 +24,8 @@ MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_PDF_PAGES = 100
 MAX_DOCX_UNPACKED_BYTES = 32 * 1024 * 1024
 MAX_DOCX_ENTRIES = 2000
+PDF_TIMEOUT_SECONDS = 10
+_PDF_SLOTS = threading.BoundedSemaphore(2)
 _CJK_OR_WORD = re.compile(r"[\u3400-\u9fff]|[A-Za-z0-9]+")
 _MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
 
@@ -66,22 +72,30 @@ def _markdown_title_and_body(text: str, *, fallback_title: str) -> tuple[str, st
 
 
 def _read_pdf(raw: bytes) -> tuple[str, str | None]:
+    # A small compressed stream can expand far beyond the upload/page limit.
+    # The worker is disposable and has CPU/address-space limits on Linux.
+    if not _PDF_SLOTS.acquire(blocking=False):
+        raise ArticleImportError('PDF 预览正忙，请稍后重试')
     try:
-        from pypdf import PdfReader
-    except ImportError as exc:  # pragma: no cover - dependency is installed in deployments
-        raise ArticleImportError("PDF import support is unavailable") from exc
-    try:
-        reader = PdfReader(io.BytesIO(raw))
-        if len(reader.pages) > MAX_PDF_PAGES:
-            raise ArticleImportError(f"PDF documents cannot exceed {MAX_PDF_PAGES} pages")
-        text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
-        metadata = reader.metadata or {}
-        title = getattr(metadata, "title", None) or metadata.get("/Title")
-        return text, str(title).strip() if title else None
+        result = subprocess.run(
+            [sys.executable, '-I', '-B', str(Path(__file__).with_name('pdf_import_worker.py')), str(MAX_PDF_PAGES)],
+            input=raw, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=PDF_TIMEOUT_SECONDS, check=False,
+        )
+        if result.returncode or len(result.stdout) > 4 * 1024 * 1024:
+            raise ArticleImportError('PDF 解析超出资源限制或文件损坏，请拆分或改用文字文件')
+        data = json.loads(result.stdout)
+        if data.get('error'):
+            raise ArticleImportError(data['error'])
+        return data['text'], data['title']
+    except subprocess.TimeoutExpired as exc:
+        raise ArticleImportError('PDF 解析超时，请拆分或改用文字文件') from exc
     except ArticleImportError:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise ArticleImportError("Unable to read the PDF document") from exc
+        raise ArticleImportError('无法读取 PDF 文件，请检查文件是否完整') from exc
+    finally:
+        _PDF_SLOTS.release()
 
 
 def _read_docx(raw: bytes) -> tuple[str, str | None]:
