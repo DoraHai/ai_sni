@@ -145,3 +145,27 @@ def test_profile_commit_rechecks_and_rolls_back(tmp_path, monkeypatch, backend):
             assert checked == [True]
             assert await env.snapshot() == before
     asyncio.run(run())
+
+
+def test_brand_editor_still_cannot_change_role_permissions(tmp_path, monkeypatch, backend):
+    async def run():
+        # Load the real roles router without app.api.__init__, which imports
+        # the unrelated scheduler and its Unix-only fcntl dependency.
+        import runpy
+        from pathlib import Path
+        router = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'app/api/roles.py'))['router']
+        from app.models import Role
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            env.app.include_router(router)
+            before = await env.snapshot()
+            async with env.factory() as session:
+                permissions = copy.deepcopy((await session.get(Role, 1)).permissions)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=env.app), base_url='http://fixture') as client:
+                response = await client.patch('/api/v1/roles/1', params={'tenant_id': 10},
+                    json={'permissions': {'settings.accounts': 'edit'}},
+                    headers={'Authorization': 'Bearer ' + fixture_token()})
+            assert_denied(response, code='ADVISOR_HIGH_RISK_WRITES_DISABLED')
+            async with env.factory() as session:
+                assert (await session.get(Role, 1)).permissions == permissions
+            assert await env.snapshot() == before
+    asyncio.run(run())
