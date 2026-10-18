@@ -179,7 +179,7 @@ export function createDistributionClient({session,fetchImpl=fetch,subscribeSessi
         ...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,credentials:'omit',cache:'no-store',
         redirect:'error',signal:AbortSignal.any([c.signal,AbortSignal.timeout(20000)])});
       sync();if(stamp!==epoch||k!==key())throw fault(method==='POST'?'WRITE_OUTCOME_UNKNOWN':'CONTEXT_CHANGED');
-      if(response.status===401||response.status===403){invalidate();if(response.status===401)session.logout();throw fault('PERMISSION_DENIED',response.status);}
+      if(response.status===401||response.status===403){invalidate();if(response.status===401&&!session.isAdvisorSession)session.logout();throw fault('PERMISSION_DENIED',response.status);}
       if(!response.ok)throw fault(method==='POST'&&response.status>=500?'WRITE_OUTCOME_UNKNOWN':
         [404,405,501,503].includes(response.status)?'NOT_INTEGRATED':response.status===409?'CONFLICT':'REQUEST_FAILED',response.status);
       let value;
