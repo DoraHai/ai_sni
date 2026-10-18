@@ -9,9 +9,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def prepare_environment():
-    for key in list(os.environ):
-        if key.endswith('_API_KEY'):
-            os.environ[key] = ''
+    allowed = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP",
+               "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "LANG", "LC_ALL",
+               "SYSTEMDRIVE", "PROGRAMFILES", "PROGRAMFILES(X86)"}
+    clean = {k: v for k, v in os.environ.items() if k.upper() in allowed}
+    os.environ.clear()
+    os.environ.update(clean)
     os.environ.update(
         DATABASE_URL='postgresql+asyncpg://test:test@127.0.0.1:1/geo_test',
         APP_ENV='test', BAIDU_APP_ID='test', BAIDU_SECRET_KEY='test',
