@@ -10082,7 +10082,11 @@ async def submit_content_review(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     ctx.ensure_tenant(tenant_id)
-    row = await session.get(SeoContentAsset, content_id, with_for_update=True)
+    if getattr(ctx, 'is_advisor', False):
+        from app.security.seo_advisor_reviews import require_review_version
+        require_review_version(req.version_count)
+    refresh = {'populate_existing': True} if getattr(ctx, 'is_advisor', False) else {}
+    row = await session.get(SeoContentAsset, content_id, with_for_update=True, **refresh)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
     await _require_resource_operational_site(session, tenant_id, row.site_id)
@@ -10131,7 +10135,11 @@ async def decide_content_review(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     ctx.ensure_tenant(tenant_id)
-    row = await session.get(SeoContentAsset, content_id, with_for_update=True)
+    if getattr(ctx, 'is_advisor', False):
+        from app.security.seo_advisor_reviews import require_review_version
+        require_review_version(req.version_count)
+    refresh = {'populate_existing': True} if getattr(ctx, 'is_advisor', False) else {}
+    row = await session.get(SeoContentAsset, content_id, with_for_update=True, **refresh)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
     await _require_resource_operational_site(session, tenant_id, row.site_id)
