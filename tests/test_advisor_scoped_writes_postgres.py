@@ -521,7 +521,7 @@ def test_versions_are_required_and_stale_versions_cannot_write(monkeypatch, comp
 
 @pytest.mark.parametrize("case", [CASES[5], CASES[6]])
 @pytest.mark.parametrize("status", ["review", "ready", "published", "archived"])
-def test_protected_existing_content_cannot_be_edited(monkeypatch, complete_contract, case, status):
+def test_protected_text_stays_locked_but_ready_landing_binding_is_allowed(monkeypatch, complete_contract, case, status):
     switches(monkeypatch)
     async def run():
         async with store() as sessions, client_for(sessions) as client:
@@ -531,8 +531,15 @@ def test_protected_existing_content_cannot_be_edited(monkeypatch, complete_contr
                 await session.commit()
             before = await snapshot(sessions)
             response = await send(client, case)
-            assert response.status_code in (403, 409), response.text
-            assert await snapshot(sessions) == before
+            if case == CASES[6] and status == 'ready':
+                assert response.status_code == 200, response.text
+                async with sessions() as session:
+                    row = await session.get(SeoContentAsset, 1)
+                    assert row.source_page_id == 50 and row.version_count == 2
+                    assert row.status == 'ready' and row.draft == 'Original body'
+            else:
+                assert response.status_code in (403, 409), response.text
+                assert await snapshot(sessions) == before
     asyncio.run(run())
 
 
