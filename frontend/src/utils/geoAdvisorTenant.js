@@ -10,10 +10,18 @@ const positiveId = (id) => Number.isSafeInteger(id) && id > 0
 export const GEO_ADVISOR_SELECT_URL = '/customer-workbench/?console=advisor'
 export const GEO_ADVISOR_SELECTION_MESSAGE = '请先选择客户，再查看 GEO 数据'
 export const GEO_ADVISOR_NO_TENANT_MESSAGE = '你还没有被分配客户，请联系管理员'
+export const GEO_ADVISOR_RETRY_MESSAGE = '暂时无法核对客户授权，请刷新重试'
 const guide = (noTenant = false) => ({
   message: noTenant ? GEO_ADVISOR_NO_TENANT_MESSAGE : GEO_ADVISOR_SELECTION_MESSAGE,
   selectCustomer: !noTenant,
 })
+const failureGuide = (error) => {
+  if (error?.code === 'ADVISOR_NO_TENANT') return guide(true)
+  if (!error?.status || error.status >= 500) {
+    return { message: GEO_ADVISOR_RETRY_MESSAGE, selectCustomer: true }
+  }
+  return guide()
+}
 
 // Runs before mounting business pages: no requests carry an inferred customer id.
 // One recovery attempt per bootstrap, even if the retried read returns another 409.
@@ -33,6 +41,7 @@ export async function bootstrapGeoSession({ session, readSession, applySession, 
       return null
     }
     if (error.code === 'ADVISOR_NO_TENANT') return guide(true)
+    if (!error.status || error.status >= 500) return failureGuide(error)
     if (error.code !== 'ADVISOR_TENANT_SELECTION_REQUIRED') throw error
     if (error.status !== 409 || advisorClaims(identityToken)?.scope_kind !== 'advisor_identity') return guide()
     try {
@@ -59,7 +68,7 @@ export async function bootstrapGeoSession({ session, readSession, applySession, 
       expectedToken = selected.access_token
       ;[me, tenants] = await readSession()
     } catch (recoveryError) {
-      return guide(recoveryError.code === 'ADVISOR_NO_TENANT')
+      return failureGuide(recoveryError)
     }
   }
   if (!current()) return isAdvisor ? guide() : null

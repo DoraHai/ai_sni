@@ -2,11 +2,9 @@
 const AUTH_ENVELOPE_KEY = 'sem_auth_v1'
 
 function validUser(user) {
+  // Legacy caches and /auth/me do not enforce a user/permission schema here.
+  // Unknown permission levels grant nothing in canView/canEdit, not a logout.
   return user !== null && typeof user === 'object' && !Array.isArray(user)
-    && Number.isSafeInteger(user.id) && user.id > 0
-    && (user.tenant_id === null || (Number.isSafeInteger(user.tenant_id) && user.tenant_id > 0))
-    && user.permissions !== null && typeof user.permissions === 'object' && !Array.isArray(user.permissions)
-    && Object.values(user.permissions).every((level) => level === 'view' || level === 'edit')
 }
 
 const validToken = (token) => typeof token === 'string' && !!token && !/\s/.test(token)
