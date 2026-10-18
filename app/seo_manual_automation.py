@@ -24,6 +24,9 @@ from app.models.seo import (
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_automation_runs import finish_automation_run, mark_automation_run_running
 from app.seo_service_plan import service_plan_is_paused
+from app.security.seo_advisor_execution import (
+    check_manual_automation_scope, record_manual_automation_result,
+)
 from app.seo_competitor import (
     COMPETITOR_MANUAL_COOLDOWN_SECONDS,
     CompetitorCollectionError,
@@ -227,6 +230,7 @@ async def _run_ranking(row: SeoAutomationRun) -> tuple[int, int, int, str]:
     heartbeat: asyncio.Task | None = None
     try:
         async with async_session_factory() as session:
+            await check_manual_automation_scope(session, row)
             if not await seo_site_is_operational(session, row.tenant_id, int(row.site_id)):
                 raise ManualAutomationError("site_inactive", "SEO 网站已停用，不能运行采集")
             try:
@@ -297,6 +301,7 @@ async def _run_ranking(row: SeoAutomationRun) -> tuple[int, int, int, str]:
 async def _run_competitors(row: SeoAutomationRun) -> tuple[int, int, int, str]:
     _, conditions = _target_conditions(row.tenant_id, int(row.site_id), "competitor")
     async with async_session_factory() as session:
+        await check_manual_automation_scope(session, row)
         candidates = list(
             await session.scalars(
                 select(SeoCompetitor)
@@ -311,6 +316,7 @@ async def _run_competitors(row: SeoAutomationRun) -> tuple[int, int, int, str]:
         try:
             checked_at = datetime.utcnow()
             async with async_session_factory() as session:
+                await check_manual_automation_scope(session, row)
                 if not await seo_site_is_operational(session, row.tenant_id, int(row.site_id)):
                     continue
                 current = await session.get(SeoCompetitor, candidate.id)
@@ -324,8 +330,11 @@ async def _run_competitors(row: SeoAutomationRun) -> tuple[int, int, int, str]:
                     continue
                 current.last_checked_at = checked_at
                 await session.commit()
-            collection = await collect_competitor_content(candidate.domain)
+                from app.security.seo_advisor_execution import recheck_before_provider
+                await recheck_before_provider(session)
+                collection = await collect_competitor_content(candidate.domain)
             async with async_session_factory() as session:
+                await check_manual_automation_scope(session, row)
                 current = await session.get(SeoCompetitor, candidate.id)
                 if (
                     current is None
@@ -378,6 +387,7 @@ async def _run_competitors(row: SeoAutomationRun) -> tuple[int, int, int, str]:
 async def _run_backlinks(row: SeoAutomationRun) -> tuple[int, int, int, str]:
     _, conditions = _target_conditions(row.tenant_id, int(row.site_id), "backlink")
     async with async_session_factory() as session:
+        await check_manual_automation_scope(session, row)
         candidates = list(
             await session.scalars(
                 select(SeoBacklink)
@@ -391,10 +401,12 @@ async def _run_backlinks(row: SeoAutomationRun) -> tuple[int, int, int, str]:
     for candidate in candidates:
         try:
             async with async_session_factory() as session:
+                await check_manual_automation_scope(session, row)
                 if not await seo_site_is_operational(session, row.tenant_id, int(row.site_id)):
                     continue
-            result = await fetch_url(candidate.source_url)
+                result = await fetch_url(candidate.source_url)
             async with async_session_factory() as session:
+                await check_manual_automation_scope(session, row)
                 current = await session.get(SeoBacklink, candidate.id, with_for_update=True)
                 if (
                     current is None
@@ -419,12 +431,21 @@ async def _run_backlinks(row: SeoAutomationRun) -> tuple[int, int, int, str]:
     return success, failed, max(0, row.planned_count - success - failed), "; ".join(errors)
 
 
-async def execute_manual_automation_run(run_id: int) -> None:
+async def execute_manual_automation_run(run_id: int, *, advisor_scope=None) -> None:
     if not await mark_automation_run_running(run_id):
         return
     async with async_session_factory() as session:
         row = await session.get(SeoAutomationRun, run_id)
         if row is None or row.trigger_type != "manual" or row.site_id is None:
+            return
+        row._advisor_scope = advisor_scope
+        try:
+            await check_manual_automation_scope(session, row)
+        except Exception:
+            await finish_automation_run(run_id, planned_count=row.planned_count,
+                success_count=0, failed_count=0, skipped_count=row.planned_count,
+                error_summary='advisor_authorization_changed')
+            record_manual_automation_result(row, 'background_authorization_blocked')
             return
         operational = await seo_site_is_operational(
             session, row.tenant_id, int(row.site_id)
@@ -459,3 +480,5 @@ async def execute_manual_automation_run(run_id: int) -> None:
         skipped_count=skipped,
         error_summary=errors,
     )
+    record_manual_automation_result(row, 'background_finished',
+        success_count=success, failed_count=failed, skipped_count=skipped)

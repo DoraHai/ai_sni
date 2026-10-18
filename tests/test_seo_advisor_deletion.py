@@ -42,3 +42,83 @@ def test_deletion_catalog_does_not_grant_assignment_or_credentials():
     assert len(DELETIONS) == 8
     for path in ['/workbench/advisor-assignments/{assignment_id}', '/site/analytics-sources/{source}']:
         assert ('DELETE', '/api/v1/seo' + path) not in WRITE_ROUTES
+
+
+@pytest.mark.parametrize('change', [None, 'grant', 'role', 'account', 'assignment',
+                                   'switch', 'expired', 'job-permission', 'foreign-site'])
+def test_manual_rerun_captures_selected_customer_and_rechecks_each_step(object_db, monkeypatch, change):
+    from datetime import datetime, timezone
+    from app.database import Base
+    from app.models.advisor_tenant_grant import AdvisorTenantGrant
+    from app.models.role import Role
+    from app.models.user import User
+    from app.models.seo import SeoAutomationRun, SeoSiteAdvisorAssignment
+    from app.security.seo_advisor_execution import capture_manual_automation_scope, check_manual_automation_scope
+    from test_advisor_tenant_auth import authenticate, claims
+    db, session = object_db
+    session.no_autoflush = db.no_autoflush
+    session.rollback = AsyncMock(side_effect=db.rollback)
+    Base.metadata.create_all(db.bind, tables=[SeoAutomationRun.__table__])
+    role = db.get(Role, 1)
+    role.permissions = {**role.permissions, 'seo.dashboard': 'edit', 'seo.links': 'edit'}
+    assignment = SeoSiteAdvisorAssignment(id=2, tenant_id=2, site_id=2, advisor_user_id=1, active=True)
+    db.add(assignment); db.commit()
+    monkeypatch.setattr(get_settings(), 'advisor_scoped_content_writes_enabled', True)
+    ctx = asyncio.run(authenticate(session, claims(tid=2, gid=20)))
+    body = {'tenant_id': 2, 'site_id': 2, 'job_type': 'backlink'}
+    request = req('POST', '/api/v1/seo/overview/automation-runs/trigger', body, query='tenant_id=2&site_id=2')
+    asyncio.run(enforce_advisor_request(request, ctx, session))
+    proof = capture_manual_automation_scope(ctx)
+    row = SeoAutomationRun(id=500, tenant_id=2, site_id=2, job_type='backlink',
+                           requested_by=1, trigger_type='manual')
+    row._advisor_scope = proof
+    if change == 'grant':
+        grant = db.get(AdvisorTenantGrant, 20)
+        grant.revoked_at = datetime.now(timezone.utc); grant.revoked_by = 3
+        grant.revoke_reason = 'admin_uncheck'
+    elif change == 'role': db.get(User, 1).role_id = 2
+    elif change == 'account': db.get(User, 1).is_active = False
+    elif change == 'assignment': assignment.active = False
+    elif change == 'switch': monkeypatch.setattr(get_settings(), 'advisor_scoped_content_writes_enabled', False)
+    elif change == 'expired': proof['auth_exp'] = 1
+    elif change == 'job-permission': role.permissions = {**role.permissions, 'seo.links': 'view'}
+    elif change == 'foreign-site': row.site_id = 1
+    db.commit()
+    if change:
+        with pytest.raises(HTTPException): asyncio.run(check_manual_automation_scope(session, row))
+    else:
+        asyncio.run(check_manual_automation_scope(session, row))
+        assert row._advisor_actor.tenant_id == 2
+        assert 'seo.links' in row._advisor_actor.advisor_write_rule.edit_all
+        # A role change after enforcement is also caught by the fresh commit check.
+        role.permissions = {**role.permissions, 'seo.links': 'view'}; db.commit()
+        session.no_autoflush = db.no_autoflush
+        with pytest.raises(HTTPException):
+            asyncio.run(advisor_write_commit.recheck_advisor_before_commit(session, row._advisor_actor))
+
+
+@pytest.mark.parametrize('revoke_at', [2, 3])
+def test_background_backlink_revoke_blocks_provider_or_result_save(monkeypatch, revoke_at):
+    from contextlib import asynccontextmanager
+    from app import seo_manual_automation as worker
+    candidate = SimpleNamespace(id=5, tenant_id=1, site_id=1, status='active',
+                                source_url='https://source.invalid/', target_url='https://target.invalid/')
+    sessions = []
+    @asynccontextmanager
+    async def factory():
+        session = SimpleNamespace(scalars=AsyncMock(return_value=[candidate]),
+                                  get=AsyncMock(return_value=candidate), commit=AsyncMock())
+        sessions.append(session)
+        yield session
+    checks = AsyncMock(side_effect=[None] * (revoke_at - 1) + [HTTPException(403, 'revoked')])
+    fetch, apply = AsyncMock(return_value=SimpleNamespace()), AsyncMock()
+    monkeypatch.setattr(worker, 'async_session_factory', factory)
+    monkeypatch.setattr(worker, 'check_manual_automation_scope', checks)
+    monkeypatch.setattr(worker, 'seo_site_is_operational', AsyncMock(return_value=True))
+    monkeypatch.setattr(worker, 'fetch_url', fetch)
+    monkeypatch.setattr(worker, 'apply_backlink_evidence', apply)
+    row = SimpleNamespace(tenant_id=1, site_id=1, planned_count=1)
+    assert asyncio.run(worker._run_backlinks(row))[:3] == (0, 1, 0)
+    assert fetch.await_count == (1 if revoke_at == 3 else 0)
+    apply.assert_not_called()
+    assert all(session.commit.await_count == 0 for session in sessions)

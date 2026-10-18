@@ -282,8 +282,8 @@ def test_patch_cannot_migrate_object_ownership(monkeypatch, complete_contract, c
 @pytest.mark.parametrize("case", CASES, ids=CASE_IDS)
 @pytest.mark.parametrize("consumer", ["enabled-plan", "unbound-running-task", "advisor-assigned-workflow", "missing-plan",
                                       "queued-qa-batch", "running-ai-operation", "running-automation"])
-def test_existing_automatic_consumer_cannot_use_advisor_manual_edits(monkeypatch, complete_contract, case, consumer):
-    """Design sections 6.1/7 also cover existing jobs consuming edited data."""
+def test_manual_operations_allow_active_plans_without_changing_workers(monkeypatch, complete_contract, case, consumer):
+    """The latest operations policy permits edits during a service cycle."""
     switches(monkeypatch)
     async def run():
         async with store() as sessions, client_for(sessions) as client:
@@ -310,9 +310,20 @@ def test_existing_automatic_consumer_cannot_use_advisor_manual_edits(monkeypatch
                         assignee_role="seo_advisor" if consumer == "advisor-assigned-workflow" else "system",
                         params={"content_id": 1, "phase": "draft", "plan_revision": 1}))
                 await session.commit()
-            before = await snapshot(sessions)
-            assert_denied(await send(client, case))
-            assert await snapshot(sessions) == before
+            async with sessions() as session:
+                settings_before = (await session.get(SeoSite, 2)).site_settings
+            response = await send(client, case)
+            assert response.status_code in {200, 201}, response.text
+            async with sessions() as session:
+                assert (await session.get(SeoSite, 2)).site_settings == settings_before
+                if consumer in {'unbound-running-task', 'advisor-assigned-workflow'}:
+                    assert (await session.get(api.SeoTask, 500)).status == 'in_progress'
+                elif consumer == 'queued-qa-batch':
+                    assert (await session.get(SeoQaBatch, 500)).status == 'queued'
+                elif consumer == 'running-ai-operation':
+                    assert (await session.get(SeoAiOperation, 'running-test')).status == 'running'
+                elif consumer == 'running-automation':
+                    assert (await session.get(SeoAutomationRun, 500)).status == 'running'
     asyncio.run(run())
 
 

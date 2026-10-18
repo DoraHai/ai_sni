@@ -20,6 +20,8 @@ def deletion_rules(rule_type):
         ('POST', '/workbench/service-cycles/run', 'tenant_id site_id kind expected_revision request_id', 'seo.content seo.site'),
         ('POST', '/workbench/service-plan/run', 'tenant_id site_id expected_revision request_id', 'seo.content seo.site'),
         ('POST', '/workbench/executions/{task_id}/advance', 'tenant_id site_id retry_page_id explanation report_sha256 retry_analytics_source allow_incomplete_analytics', 'seo.content seo.site'),
+        ('POST', '/overview/automation-runs/trigger', 'tenant_id site_id job_type', 'seo.dashboard'),
+        ('POST', '/overview/task-center/{run_id}/retry', 'tenant_id site_id job_type', 'seo.dashboard'),
     )
     return [rule_type(method, '/api/v1/seo' + path, frozenset(fields.split()),
                       frozenset(), tuple(permissions.split()), 'site', True)
