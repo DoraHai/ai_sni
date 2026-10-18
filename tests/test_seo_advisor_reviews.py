@@ -45,3 +45,41 @@ def test_confirmation_audit_uses_actual_saved_version_hash_and_note(object_db):
     assert evidence['reviewed_versions'][0]['version'] == 2
     assert len(evidence['reviewed_versions'][0]['content_hash']) == 64
     assert evidence['consent_note'] == '微信确认' and evidence['actor_mode'] == 'advisor_proxy'
+
+
+@pytest.mark.parametrize('suffix', ['submit-review', 'review'])
+@pytest.mark.parametrize('version', [None, 0, -1, True, '1', 1])
+def test_review_admission_requires_an_explicit_positive_version(suffix, version):
+    path = '/api/v1/seo/content-assets/{content_id}/' + suffix
+    body = {} if version is None else {'version_count': version}
+    if suffix == 'review': body['decision'] = 'approve'
+    if type(version) is int and version > 0:
+        check_write_fields(WRITE_ROUTES[('POST', path)], body)
+    else:
+        with pytest.raises(HTTPException) as caught:
+            check_write_fields(WRITE_ROUTES[('POST', path)], body)
+        assert caught.value.status_code == 422
+
+
+@pytest.mark.parametrize('action', ['submit', 'review'])
+@pytest.mark.parametrize('version', [None, 1])
+def test_review_handler_rejects_missing_or_stale_version_without_writes(monkeypatch, action, version):
+    from types import SimpleNamespace
+    from app.api import seo
+    row = SeoContentAsset(id=1, tenant_id=1, site_id=1, title='newer copy',
+                          draft='updated after the reviewer loaded it', status='review', version_count=2)
+    session = SimpleNamespace(get=AsyncMock(return_value=row), commit=AsyncMock())
+    monkeypatch.setattr(seo, '_require_resource_operational_site', AsyncMock())
+    if action == 'submit':
+        handler, payload = seo.submit_content_review, seo.ContentReviewSubmit(version_count=version)
+    else:
+        handler, payload = seo.decide_content_review, seo.ContentReviewDecision(decision='approve', version_count=version)
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(handler(1, 1, payload, session, selected()))
+    assert caught.value.status_code == (422 if version is None else 409)
+    assert row.status == 'review' and row.version_count == 2
+    session.commit.assert_not_awaited()
+    if version is None:
+        session.get.assert_not_awaited()
+    else:
+        session.get.assert_awaited_once_with(SeoContentAsset, 1, with_for_update=True, populate_existing=True)

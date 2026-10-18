@@ -19,6 +19,13 @@ def review_rules(rule_type):
             for method, path, fields, permissions in REVIEWS]
 
 
+def require_review_version(value):
+    from fastapi import HTTPException
+    if type(value) is not int or value < 1:
+        raise HTTPException(422, {'code': 'ADVISOR_WRITE_VERSION_REQUIRED',
+            'message': '请刷新稿件，携带当前版本号再提交或审核'})
+
+
 def content_evidence(row):
     from app.api.seo import _content_confirmation_hash
     return {'content_id': row.id, 'version': row.version_count or 1,
