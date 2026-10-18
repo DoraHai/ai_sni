@@ -156,27 +156,14 @@ async def check_scoped_write_objects(session, ctx, request, body, rule):
 
 
 async def check_manual_execution_scope(session, ctx, rule):
-    """Conservative isolation from tenant-wide patrol and project cycles.
+    """Serialize operations with scheduling; running plans do not veto edits.
 
-    The existing patrol selects active prompts dynamically, and task creation
-    auto-attaches the active period. There is no inert resource schema flag.
-    Serialize with the existing scheduler/settings tenant lock and reject
-    these resources while any such execution chain is enabled.
+    The current policy permits advisor operations during patrols, periods and
+    service plans. Keep the shared tenant lock and the independent exact route,
+    project assignment and commit checks. This never authorizes plan settings.
     """
-    resource = rule.template.removeprefix("/api/v1/geo/").split("/")[0]
-    if resource not in {"facts", "prompts", "optimization-businesses", "optimization-units", "content-tasks", "visibility-patrol", "content-imports", "projects"}:
-        return
-    from app.models import Tenant, GeoProject, GeoVisibilityPatrolSettings, GeoOptimizationPeriod
+    from app.models import Tenant
     await session.scalar(select(Tenant.id).where(Tenant.id == ctx.tenant_id).with_for_update())
-    patrol = await session.scalar(select(GeoVisibilityPatrolSettings).where(
-        GeoVisibilityPatrolSettings.tenant_id == ctx.tenant_id).execution_options(populate_existing=True))
-    projects = list(await session.scalars(select(GeoProject).where(GeoProject.tenant_id == ctx.tenant_id)
-                                         .order_by(GeoProject.id).execution_options(populate_existing=True)))
-    active_period = await session.scalar(select(GeoOptimizationPeriod.id).where(
-        GeoOptimizationPeriod.tenant_id == ctx.tenant_id, GeoOptimizationPeriod.status == "active").limit(1))
-    if ((patrol is not None and patrol.enabled) or active_period is not None or any(
-            ((p.project_settings or {}).get("geo_service_plan") or {}).get("enabled") for p in projects)):
-        deny(403, "ADVISOR_EXECUTION_CHAIN_ACTIVE", "当前客户已启用巡检、周期或服务计划，顾问手动操作暂未开放")
 
 
 async def guard_scoped_write(session, ctx, request, claims):

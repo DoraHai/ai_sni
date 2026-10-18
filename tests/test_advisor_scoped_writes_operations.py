@@ -81,7 +81,7 @@ def test_readiness_check_cannot_overwrite_busy_or_protected_state(tmp_path, monk
     asyncio.run(run())
 
 
-def test_project_metadata_keeps_patrol_guard(tmp_path, monkeypatch):
+def test_project_metadata_allowed_during_patrol(tmp_path, monkeypatch):
     from app.geo.project_routes import geo_projects_router
     from app.models import GeoVisibilityPatrolSettings
     async def run():
@@ -91,7 +91,7 @@ def test_project_metadata_keeps_patrol_guard(tmp_path, monkeypatch):
             assert response.status_code == 200, response.text
             await mutate(env, GeoVisibilityPatrolSettings, 10, enabled=True)
             response = await env.request("PATCH", "/projects/10", body={"domain": "changed.example.test"})
-            assert response.status_code == 403, response.text
+            assert response.status_code == 200, response.text
     asyncio.run(run())
 
 
@@ -149,5 +149,38 @@ def test_project_visibility_reads_do_not_expose_another_project(tmp_path, monkey
                 assert response.status_code == 403, response.text
             await mutate(env, GeoProject, 10, status="paused")
             response = await env.request("GET", "/projects/10/search-visibility")
+            assert response.status_code == 403, response.text
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("chain", ["patrol", "period", "plan"])
+def test_operation_during_execution_keeps_configuration_and_project_guards(tmp_path, monkeypatch, chain):
+    from app.models import GeoOptimizationPeriod, GeoVisibilityPatrolSettings
+    from datetime import datetime, timedelta
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch) as env:
+            async with env.factory() as session:
+                if chain == "patrol":
+                    (await session.get(GeoVisibilityPatrolSettings, 10)).enabled = True
+                elif chain == "period":
+                    session.add(GeoOptimizationPeriod(tenant_id=10, status="active", name="fixture period",
+                        starts_at=datetime.now(), ends_at=datetime.now() + timedelta(days=7)))
+                else:
+                    import copy
+                    project = await session.get(GeoProject, 10)
+                    settings = copy.deepcopy(project.project_settings)
+                    settings["geo_service_plan"]["enabled"] = True
+                    project.project_settings = settings
+                await session.commit()
+            for path, body in [("/facts/10", {"statement": "Updated while running"}),
+                               ("/prompts/10", {"question": "Updated assigned question?"})]:
+                response = await env.request("PATCH", path, body=body)
+                assert response.status_code == 200, response.text
+            response = await env.request("PUT", "/visibility-patrol/settings", body={"enabled": False})
+            assert response.status_code == 403, response.text
+            response = await env.request("PATCH", "/facts/20", body={"statement": "foreign"})
+            assert response.status_code == 403, response.text
+            await mutate(env, GeoProject, 10, status="paused")
+            response = await env.request("PATCH", "/facts/10", body={"statement": "inactive"})
             assert response.status_code == 403, response.text
     asyncio.run(run())
