@@ -935,6 +935,12 @@ async def execute_patrol_run(
             await rollback()
         row = await session.get(GeoVisibilityPatrolRun, run_id)
         if row:
+            if isinstance(exc, AdvisorVisibilityUnavailable):
+                # Rollback removed this batch's snapshots and tag edits. Keep
+                # only the progress actually committed before authority changed.
+                items = list(row.items or [])
+                summary = dict(row.summary or {})
+                summary.setdefault('snapshots_created', 0)
             row.status = "failed"
             row.error = str(exc)[:2000]
             row.items = items
