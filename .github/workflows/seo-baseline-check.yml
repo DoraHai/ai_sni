@@ -74,7 +74,8 @@ jobs:
               DASHSCOPE_API_KEY='', DEEPSEEK_API_KEY='')
           import xml.etree.ElementTree as ET
           report = os.path.join(os.environ['RUNNER_TEMP'], 'seo-onsite-postgres.xml')
-          result = pytest.main(['-q', 'tests/test_seo_onsite_postgres.py',
+          result = pytest.main(['-q', 'tests/test_seo_advisor_connections_postgres.py',
+              'tests/test_seo_onsite_postgres.py',
               'tests/test_seo_onsite_ai_postgres.py',
               'tests/test_advisor_tenant_auth.py', 'tests/test_advisor_write_rules.py',
               'tests/test_advisor_write_objects.py', 'tests/test_advisor_write_objects_postgres.py',
