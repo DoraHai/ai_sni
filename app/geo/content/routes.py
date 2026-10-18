@@ -6070,6 +6070,7 @@ async def enable_multi_media_auto_pack(
 
     Does not create credentials — ops only fill account tokens after this.
     """
+    require_geo_configuration_admin(ctx)
     from app.geo.content.multi_push import AUTO_PUSH_TYPES
 
     ctx.ensure_tenant(tenant_id)
@@ -6107,6 +6108,8 @@ async def create_publishing_channel(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    if req.publish_mode != 'manual_only':
+        require_geo_configuration_admin(ctx)
     ctx.ensure_tenant(req.tenant_id)
     await ensure_geo_entitlement(session, req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
@@ -6165,6 +6168,8 @@ async def update_publishing_channel(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    if req.publish_mode is not None:
+        require_geo_configuration_admin(ctx)
     ctx.ensure_tenant(tenant_id)
     row = await _get_publishing_channel(session, channel_id, tenant_id)
     for field in ("channel_type", "publish_mode", "base_url", "content_rules", "enabled", "sort_order"):
@@ -6276,6 +6281,7 @@ async def oauth_social_start(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Build OAuth2 authorize URL for a channel account (auth_type=oauth2)."""
+    require_geo_configuration_admin(ctx)
     from app.geo.content.connectors.oauth2 import (
         OAuth2Error,
         build_authorize_url,
@@ -6320,6 +6326,7 @@ async def oauth_social_refresh(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Refresh OAuth2 access_token using stored refresh_token."""
+    require_geo_configuration_admin(ctx)
     from app.geo.content.ai_settings import encrypt_api_key
     from app.geo.content.connectors.oauth2 import OAuth2Error, refresh_access_token
     from app.geo.content.connectors.social import decrypt_credentials_json
@@ -6354,6 +6361,7 @@ async def verify_social_account(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Probe social credentials (WeChat token / OAuth token presence)."""
+    require_geo_configuration_admin(ctx)
     from app.geo.content.ai_settings import encrypt_api_key
     from app.geo.content.connectors.social import (
         decrypt_credentials_json,

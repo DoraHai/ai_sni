@@ -29,6 +29,41 @@ async def foreign_project(env):
         await session.commit()
 
 
+def test_shared_polish_write_cannot_change_another_project(tmp_path, monkeypatch, backend):
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            await foreign_project(env)
+            before = await env.snapshot()
+            response = await env.request('PUT', '/channel-polish-prompts',
+                params={'project_id': 10}, body={'tenant_id': 10, 'system_prompt': 'fixture change'})
+            assert response.status_code == 403, response.text
+            assert await env.snapshot() == before
+    asyncio.run(run())
+
+
+def test_shared_polish_commit_rechecks_new_foreign_project(tmp_path, monkeypatch, backend):
+    from app.geo.content import channel_polish_prompts
+    from sqlalchemy import select
+
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend,
+                extra_tables=('geo_channel_polish_prompts',)) as env:
+            async def changed_scope(session, tenant_id, **kwargs):
+                await foreign_project(env)
+                session.add(m.GeoChannelPolishPrompt(tenant_id=tenant_id,
+                    channel_key='__system__', system_prompt='must roll back'))
+                await session.commit()
+                return {}
+            monkeypatch.setattr(channel_polish_prompts, 'upsert_prompts', changed_scope)
+            response = await env.request('PUT', '/channel-polish-prompts',
+                params={'project_id': 10}, body={'tenant_id': 10, 'system_prompt': 'fixture change'})
+            assert response.status_code == 403, response.text
+            async with env.factory() as session:
+                assert await session.scalar(select(m.GeoChannelPolishPrompt.id).where(
+                    m.GeoChannelPolishPrompt.tenant_id == 10)) is None
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize('path', ('/facts', '/prompts', '/content-tasks', '/answer-snapshots',
                                  '/optimization-businesses', '/optimization-units'))
 def test_list_filters_unselected_customers_and_same_customer_other_project(tmp_path, monkeypatch, backend, path):

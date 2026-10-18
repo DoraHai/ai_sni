@@ -51,9 +51,6 @@ CONTRACTS = [
     ('POST', '/publishing-channels', 'tenant_id name channel_type publish_mode base_url content_rules enabled sort_order', 'project_id'),
     ('PATCH', '/publishing-channels/{channel_id}', 'name channel_type publish_mode base_url content_rules enabled sort_order', 'project_id'),
     ('DELETE', '/publishing-channels/{channel_id}', '', 'hard project_id'),
-    ('POST', '/publishing-channels/enable-multi-media-auto', '', 'project_id'),
-    ('POST', '/oauth/social/refresh', '', 'account_id project_id'),
-    ('POST', '/channel-accounts/{account_id}/verify-social', '', 'project_id'),
     ('POST', '/channel-accounts', 'tenant_id channel_id display_name auth_type', 'project_id'),
     ('PATCH', '/channel-accounts/{account_id}', 'display_name status', 'project_id'),
     ('DELETE', '/channel-accounts/{account_id}', '', 'hard project_id'),
@@ -157,6 +154,12 @@ async def read_contract(request, rule):
 def check_fields(rule, body):
     if not isinstance(body, dict) or set(body) - rule.fields:
         deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '此字段未向顾问开放')
+    if rule.template in {PREFIX + '/publishing-channels', PREFIX + '/publishing-channels/{channel_id}'}:
+        if body.get('publish_mode', 'manual_only') != 'manual_only':
+            deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '自动发布模式只能由平台管理员配置')
+    if rule.template == PREFIX + '/channel-polish-prompts' and (
+            body.get('add_channel_key') or body.get('remove_channel_key')):
+        deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '共享渠道的启停只能由平台管理员配置')
     forbidden = {'api_key', 'clear_api_key', 'credentials', 'credentials_encrypted', 'password',
                  'advisor_user_id', 'permissions', 'role_id', 'interval_days', 'interval_hours',
                  'model', 'api_base_url', 'engine_keys', 'auth_type'}
@@ -176,6 +179,48 @@ def check_fields(rule, body):
     walk(body)
 
 
+async def guard_shared_destinations(session, ctx, request, body, rule, projects):
+    """A tenant-wide edit may not change another advisor's project.
+
+    Shared destinations have no project foreign key. Metadata/manual-account
+    operations remain available only when every affected project is assigned
+    and active. Credential-bearing identities remain administrator managed.
+    This guard runs again under the normal commit-time authority locks.
+    """
+    shared = {PREFIX + path for path in (
+        '/publishing-channels', '/publishing-channels/{channel_id}',
+        '/channel-accounts', '/channel-accounts/{account_id}', '/channel-polish-prompts')}
+    if rule.template not in shared and not (
+            rule.template == PREFIX + '/onboarding/apply' and body.get('create_website_channel')):
+        return
+    from sqlalchemy import select
+    from app.models import GeoProject, GeoChannelAccount, GeoPublishingChannel
+    affected = set(await session.scalars(select(GeoProject.id).where(
+        GeoProject.tenant_id == ctx.tenant_id).execution_options(advisor_scope_control=True)))
+    if not affected or not affected.issubset(projects):
+        deny(403, 'ADVISOR_ASSIGNMENT_REQUIRED', '共享设置影响未分配给你的项目，请由平台管理员处理')
+    account_id = request.path_params.get('account_id')
+    if account_id:
+        account = await session.scalar(select(GeoChannelAccount).where(
+            GeoChannelAccount.id == int(account_id), GeoChannelAccount.tenant_id == ctx.tenant_id)
+            .execution_options(advisor_scope_control=True))
+        if account is None or account.auth_type != 'manual' or account.credentials_encrypted:
+            deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '带凭证的发布账号只能由平台管理员维护')
+    channel_id = request.path_params.get('channel_id')
+    if channel_id:
+        channel = await session.scalar(select(GeoPublishingChannel).where(
+            GeoPublishingChannel.id == int(channel_id), GeoPublishingChannel.tenant_id == ctx.tenant_id)
+            .execution_options(advisor_scope_control=True))
+        if channel is None or channel.publish_mode != 'manual_only':
+            deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '自动发布渠道只能由平台管理员维护')
+        accounts = list(await session.scalars(select(GeoChannelAccount).where(
+            GeoChannelAccount.channel_id == int(channel_id), GeoChannelAccount.tenant_id == ctx.tenant_id)
+            .order_by(GeoChannelAccount.id).with_for_update()
+            .execution_options(advisor_scope_control=True)))
+        if any(a.auth_type != 'manual' or a.credentials_encrypted for a in accounts):
+            deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '带凭证账号的共享渠道只能由平台管理员维护')
+
+
 async def guard_scope(session, ctx, request, body, rule):
     from app.security.advisor_write_objects import _resolve, _assignment_required
     from app.security.advisor_write_reads import assigned_scope
@@ -193,6 +238,7 @@ async def guard_scope(session, ctx, request, body, rule):
                 populate_existing=True, advisor_scope_control=True))
     objects = await _resolve(session, ctx, request, body, rule)
     projects, businesses = await assigned_scope(session, ctx)
+    await guard_shared_destinations(session, ctx, request, body, rule, projects)
     if not objects.projects and not objects.businesses and len(projects) == 1:
         objects.projects.update(projects)
     if objects.unscoped or not objects.projects.issubset(projects) or not objects.businesses.issubset(businesses):
