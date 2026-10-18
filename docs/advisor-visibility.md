@@ -11,7 +11,7 @@
 问题清单在入队时保存，提交前重验授权、项目分配和问题范围。
 客户启用巡检、active 周期或服务计划时，仍由 `check_manual_execution_scope` 拒绝。
 
-新增配置 `ADVISOR_VISIBILITY_MAX_RUNS_PER_DAY`，默认 **1**，范围 1–24。
+新增配置 `ADVISOR_VISIBILITY_MAX_RUNS_PER_DAY`，默认 **10**，范围 1–24。
 按每顾问、每客户、上海自然日计启动次数；失败也计次，重启不清零。
 使用已有运行记录的 `created_by / tenant_id / created_at`，没有新增表或迁移。
 保留客户原有 `GEO_PATROL_MAX_RUNS_PER_DAY`（默认 24）、精确复测预约限制、

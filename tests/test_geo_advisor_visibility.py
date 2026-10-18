@@ -51,7 +51,7 @@ async def visibility_sandbox(tmp_path, monkeypatch, backend='sqlite', **kwargs):
 def test_default_daily_limit_and_exact_rule():
     from types import SimpleNamespace
     from app.security.advisor_write_routes import VISIBILITY_RUN_RULE, match_write_rule
-    assert Settings.model_fields['advisor_visibility_max_runs_per_day'].default == 1
+    assert Settings.model_fields['advisor_visibility_max_runs_per_day'].default == 10
     request = SimpleNamespace(method='POST', scope={'route': SimpleNamespace(path='/api/v1/geo' + PATH)})
     assert match_write_rule(request) == VISIBILITY_RUN_RULE
     request.scope = {}
@@ -157,17 +157,26 @@ def test_automatic_execution_chain_still_rejects(tmp_path, monkeypatch, backend,
 
 
 @pytest.mark.parametrize('status', ['completed', 'failed'])
-def test_daily_limit_counts_attempts_and_can_be_configured(tmp_path, monkeypatch, backend, status):
+@pytest.mark.parametrize('configured_limit', [None, 2])
+def test_daily_limit_counts_attempts_and_can_be_configured(tmp_path, monkeypatch, backend, status, configured_limit):
     async def run():
         async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
+            if configured_limit is not None:
+                monkeypatch.setattr(get_settings(), 'advisor_visibility_max_runs_per_day', configured_limit)
+            limit = configured_limit or 10
             async with env.factory() as session:
-                session.add(GeoVisibilityPatrolRun(tenant_id=10, created_by=1, status=status))
+                session.add_all([
+                    GeoVisibilityPatrolRun(tenant_id=10, created_by=1, status=status)
+                    for _ in range(limit - 1)
+                ])
                 await session.commit()
             response = await env.request('POST', PATH, body={'tenant_id': 10})
-            assert response.status_code == 429 and '1/1' in response.text, response.text
-            assert not env.queued
-            monkeypatch.setattr(get_settings(), 'advisor_visibility_max_runs_per_day', 2)
-            assert (await env.request('POST', PATH, body={'tenant_id': 10})).status_code == 200
+            assert response.status_code == 200, response.text
+            assert len(env.queued) == 1
+            await mutate(env, GeoVisibilityPatrolRun, response.json()['run']['id'], status=status)
+            response = await env.request('POST', PATH, body={'tenant_id': 10})
+            assert response.status_code == 429 and f'{limit}/{limit}' in response.text, response.text
+            assert len(env.queued) == 1
     asyncio.run(run())
 
 

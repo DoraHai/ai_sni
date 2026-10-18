@@ -690,7 +690,7 @@ onMounted(reloadAll)
             按已启用引擎提问，自动判断提及、位置和情感。
             定时巡检（只读）：{{ patrolScheduleLabel }}。
             <template v-if="!isAdvisor">改定时请到 <router-link to="/geo/models">引擎</router-link>。</template>
-            <template v-else>手动检测会消耗 AI 额度，最多检测已分配项目的 20 个有效问题，每天默认 1 次。</template>
+            <template v-else>手动检测会消耗 AI 额度，最多检测已分配项目的 20 个有效问题，每位顾问对每个客户每天默认 10 次。</template>
           </p>
           <div v-if="!isAdvisor" class="geo-set-row">
             <span>采集引擎</span>
