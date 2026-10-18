@@ -105,6 +105,7 @@ jobs:
           tests/test_advisor_tenant_auth.py
           tests/test_advisor_switch_auth.py
           tests/test_advisor_account_links_migration.py
+          tests/test_advisor_tenant_grants_migration.py
           tests/test_seo_local_acceptance.py
           tests/test_seo_messages_postgres.py
           tests/test_seo_migration_readiness.py
@@ -181,7 +182,7 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0108_advisor_account_links (head)'
+          printf '%s\n' "$heads" | grep -F '0109_advisor_tenant_grants (head)'
 
       - working-directory: frontend
         run: npm ci --no-audit
