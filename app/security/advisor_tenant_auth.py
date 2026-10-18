@@ -105,12 +105,10 @@ async def enforce_advisor_request(request, ctx, session):
     keys, _ = _required(request.url.path, request.method)
     if keys is None:
         reject(403, "ADVISOR_ROUTE_UNAVAILABLE")
-    # All SEO business reads require an explicit tenant parameter except the
-    # authenticated site selector, which is filtered by ctx.tenant_id in SQL.
+    # All SEO business reads require an explicit tenant parameter.
     if request.url.path.startswith("/api/v1/seo"):
         if (not request.query_params.getlist("tenant_id")
-                and "tenant_id" not in request.path_params
-                and request.url.path not in {"/api/v1/seo/sites", "/api/v1/seo/workbench/sites"}):
+                and "tenant_id" not in request.path_params):
             reject(403, "ADVISOR_TENANT_REQUIRED")
         from app.module_scope import ensure_module_access
         await ensure_module_access(session, ctx, ctx.tenant_id, "seo")
@@ -135,12 +133,26 @@ async def check_seo_objects(request, ctx, session):
         "placement_id": "seo_qa_placements", "run_id": "seo_automation_runs",
         "connection_id": "seo_distribution_connections", "asset_id": "seo_brand_assets",
         "result_id": "seo_serp_results", "assignment_id": "seo_site_advisor_assignments",
+        "conversation_id": "seo_content_conversations",
     }
     values = list(request.path_params.items())
     values.extend((key, value) for key, value in request.query_params.multi_items()
-                  if key in owners)
+                  if key.endswith("_id"))
     for key, value in values:
         if not key.endswith("_id") or key == "tenant_id":
+            continue
+        if key in {"before_id", "message_id"}:
+            messages = Base.metadata.tables["seo_content_messages"]
+            conversations = Base.metadata.tables["seo_content_conversations"]
+            try:
+                message_id = int(value)
+            except (TypeError, ValueError):
+                reject(422, "ADVISOR_INVALID_OBJECT_ID")
+            owner = await session.scalar(select(conversations.c.tenant_id).join(
+                messages, messages.c.conversation_id == conversations.c.id).where(messages.c.id == message_id))
+            if owner is None:
+                reject(404, "ADVISOR_OBJECT_NOT_FOUND")
+            ctx.ensure_tenant(owner)
             continue
         table_name = owners.get(key)
         if table_name is None or table_name not in Base.metadata.tables:

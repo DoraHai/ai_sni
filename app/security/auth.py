@@ -292,6 +292,8 @@ async def require_auth(
         from app.security.advisor_tenant_auth import (
             apply_advisor_claims, enforce_advisor_request, positive_id, reject,
         )
+        if payload.get("scope_kind") is not None and jwt.get_unverified_header(bearer.credentials).get("typ") != "JWT":
+            reject(401, "ADVISOR_INVALID_TOKEN")
         if payload.get("via") == "advisor_switch":
             reject(401, "LEGACY_ADVISOR_SWITCH_DISABLED")
         user = await session.get(User, positive_id(payload["sub"]), populate_existing=True)

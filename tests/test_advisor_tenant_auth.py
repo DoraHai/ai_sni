@@ -97,6 +97,8 @@ def test_role_predicate_does_not_depend_on_tenant_or_activation():
         permissions={'seo.site':'edit', 'seo.content':'edit'}))
     assert not is_advisor_role(SimpleNamespace(is_system=False, name='advisor',
         permissions={'geo.assets':'edit', 'geo.content':'edit', 'settings.accounts':'edit'}))
+    assert not is_advisor_role(SimpleNamespace(is_system=False, name='dirty',
+        permissions={'seo.site':'edit', 'seo.content':'edit', 'settings.future':'edit'}))
 
 
 def test_two_grants_current_context_and_third_tenant_denied(local_db):
@@ -154,6 +156,26 @@ def test_legacy_switch_rejected_even_with_old_flag_enabled(local_db):
     assert denied.value.status_code == 401
 
 
+def test_legacy_advisor_requires_selection_even_with_backfilled_default(local_db):
+    with pytest.raises(HTTPException) as denied:
+        asyncio.run(authenticate(local_db[1], {'sub':'1','exp':claims()['exp']}))
+    assert denied.value.detail['code'] == 'ADVISOR_TENANT_SELECTION_REQUIRED'
+
+
+def test_identity_tenant_list_reads_latest_intersection_never_all(local_db):
+    from app.api.auth import list_tenants
+    db, session = local_db
+    identity = claims(scope_kind='advisor_identity', aud='advisor-session')
+    async def listing():
+        ctx = await authenticate(session, identity)
+        return await list_tenants(ctx, session)
+    assert [t['id'] for t in asyncio.run(listing())['tenants']] == [1, 2]
+    db.execute(text("UPDATE advisor_tenant_grants SET revoked_at=CURRENT_TIMESTAMP,revoked_by=3,revoke_reason='admin_uncheck'"))
+    db.get(User,1).tenant_id=None
+    db.commit()
+    assert asyncio.run(listing()) == {'tenants': []}
+
+
 def test_missing_table_advisor_503_customer_admin_unchanged(local_db):
     db, session = local_db
     db.execute(text('DROP TABLE advisor_tenant_grants'))
@@ -202,12 +224,18 @@ def test_http_identity_empty_idor_duplicates_module_and_writes(local_db):
             assert (await get('/api/v1/seo/keywords?tenant_id=3&tenant_id=1')).status_code == 422
             assert (await get('/api/v1/seo/sites/3?tenant_id=1')).status_code == 403
             assert (await get('/api/v1/seo/sites/2?tenant_id=1')).status_code == 403
+            assert (await get('/api/v1/seo/keywords?tenant_id=1&unregistered_id=3')).status_code == 403
             assert (await get('/api/v1/seo/keywords')).status_code == 403
             identity = claims(scope_kind='advisor_identity', aud='advisor-session')
             assert (await get('/api/v1/auth/me', identity)).status_code == 200
             assert (await get('/api/v1/seo/keywords?tenant_id=1', identity)).status_code == 409
             assert (await client.post('/api/v1/seo/content-distribution/publish', json={'tenant_id':1},
                 headers={'Authorization':'Bearer '+token(claims())})).status_code == 403
+            db.get(TenantModule,1).expires_at=date.today()-timedelta(days=1)
+            db.commit()
+            assert (await get('/api/v1/seo/keywords?tenant_id=1')).status_code == 403
+            db.get(TenantModule,1).expires_at=None
+            db.commit()
             db.execute(text("UPDATE advisor_tenant_grants SET revoked_at=CURRENT_TIMESTAMP, revoked_by=3, revoke_reason='admin_uncheck'"))
             db.get(User, 1).tenant_id = None
             db.commit()
@@ -226,8 +254,28 @@ def test_old_and_new_revision_keep_all_existing_health_structure_checks(revision
     from contextlib import ExitStack
     with ExitStack() as stack:
         stack.enter_context(patch.object(seo_main, 'engine', _HealthEngine([revision])))
-        mocks = [stack.enter_context(patch.object(seo_main, name, AsyncMock())) for name in checks]
+        # Message inspection uses PostgreSQL's native Inspector; its native test
+        # suite covers shape, while this offline harness proves branch selection.
+        mocks = [stack.enter_context(patch.object(seo_main, name, AsyncMock(
+            wraps=None if name == '_check_content_message_structure' else getattr(seo_main,name)))) for name in checks]
         response = Response()
         result = asyncio.run(seo_main.seo_health(response))
-        assert response.status_code == 200 and result['schema'] == 'ok'
+        assert response.status_code == 200 and result['schema'] == 'ok', result
         assert all(m.await_count == 1 for m in mocks)
+
+
+def test_0109_health_rejects_missing_grant_shape():
+    from app import seo_main
+    from test_seo_deploy_isolation import _HealthEngine, _HealthConnection
+    original = _HealthConnection.execute
+    async def missing_columns(self, statement, parameters=None):
+        if 'advisor_tenant_grants' in str(statement) and 'pg_attribute' in str(statement):
+            return []
+        return await original(self, statement, parameters)
+    with (patch.object(seo_main,'engine',_HealthEngine(['0109_advisor_tenant_grants'])),
+          patch.object(_HealthConnection,'execute',missing_columns),
+          patch.object(seo_main,'_check_content_message_structure',AsyncMock())):
+        response=Response()
+        result=asyncio.run(seo_main.seo_health(response))
+        assert response.status_code==503
+        assert 'Advisor grant table' in result['db_error']

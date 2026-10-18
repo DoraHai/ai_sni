@@ -32,6 +32,16 @@ class _HealthConnection:
 
     async def execute(self, statement, parameters=None):
         sql = str(statement)
+        if 'advisor_tenant_grants' in sql:
+            if 'pg_attribute' in sql:
+                return [(name, kind, required) for name,(kind,required) in seo_main.ADVISOR_GRANT_COLUMNS.items()]
+            if 'pg_indexes' in sql:
+                names = ['pk_advisor_tenant_grants', 'uq_advisor_tenant_grants_active',
+                    'ix_advisor_tenant_grants_tenant', 'ix_advisor_tenant_grants_granted_by',
+                    'ix_advisor_tenant_grants_revoked_by', 'ix_advisor_tenant_grants_user_history']
+                return [(name, 'CREATE UNIQUE INDEX test ON advisor_tenant_grants (user_id, tenant_id) WHERE (revoked_at IS NULL)') for name in names]
+            if 'pg_trigger' in sql:
+                return [('O',19,'advisor_tenant_grants_protect_history')]
         if "demo_tenant_binding_history" in sql and "pg_attribute" in sql:
             return [
                 (table, name, kind, not_null, seo_main.SEO_DEMO_BINDING_DEFAULTS.get((table, name)))
@@ -50,7 +60,7 @@ class _HealthConnection:
                 ("demo_tenant_binding_history", "trg_demo_tenant_binding_history_no_truncate", "before truncate for each statement reject_demo_tenant_binding_history_mutation"),
                 ("demo_tenant_bindings", "trg_demo_tenant_bindings_no_delete", "before delete for each row reject_demo_tenant_binding_delete"),
             ]
-            if self.revisions in (["0098_demo_binding_no_truncate"], ["0099_geo_review_audit"], ["0100_seo_page_captures"], ["0101_seo_site_analytics"], ["0102_seo_monthly_report_template"], ["0103_seo_tdk_review"], ["0104_seo_page_ai_tdk"], ["0105_seo_content_confirmations"], ["0106_seo_content_messages"], ["0107_seo_site_delete"], ["0108_advisor_account_links"]):
+            if self.revisions in (["0098_demo_binding_no_truncate"], ["0099_geo_review_audit"], ["0100_seo_page_captures"], ["0101_seo_site_analytics"], ["0102_seo_monthly_report_template"], ["0103_seo_tdk_review"], ["0104_seo_page_ai_tdk"], ["0105_seo_content_confirmations"], ["0106_seo_content_messages"], ["0107_seo_site_delete"], ["0108_advisor_account_links"], ["0109_advisor_tenant_grants"]):
                 rows.append(("demo_tenant_bindings", "trg_demo_tenant_bindings_no_truncate", "before truncate for each statement reject_demo_tenant_binding_delete"))
             return rows
         if "pg_get_serial_sequence" in sql:

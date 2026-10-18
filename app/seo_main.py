@@ -556,6 +556,39 @@ app.add_middleware(
 app.include_router(seo_router)
 app.include_router(seo_sites_router)
 
+ADVISOR_GRANT_COLUMNS = {
+    "id": ("bigint", True), "user_id": ("bigint", True), "tenant_id": ("bigint", True),
+    "granted_by": ("bigint", False), "grant_source": ("character varying(16)", True),
+    "granted_at": ("timestamp with time zone", True),
+    "revoked_at": ("timestamp with time zone", False), "revoked_by": ("bigint", False),
+    "revoke_reason": ("character varying(80)", False),
+}
+
+
+async def _check_advisor_grants_structure(conn):
+    columns = await conn.execute(text("""SELECT a.attname,
+        pg_catalog.format_type(a.atttypid,a.atttypmod), a.attnotnull
+        FROM pg_catalog.pg_attribute a
+        WHERE a.attrelid=to_regclass('public.advisor_tenant_grants')
+          AND a.attnum>0 AND NOT a.attisdropped"""))
+    if {name: (kind, required) for name, kind, required in columns} != ADVISOR_GRANT_COLUMNS:
+        raise RuntimeError("Advisor grant table structure mismatch")
+    indexes = dict(list(await conn.execute(text("""SELECT indexname,indexdef FROM pg_indexes
+        WHERE schemaname='public' AND tablename='advisor_tenant_grants'"""))))
+    required = {'pk_advisor_tenant_grants', 'uq_advisor_tenant_grants_active',
+        'ix_advisor_tenant_grants_tenant', 'ix_advisor_tenant_grants_granted_by',
+        'ix_advisor_tenant_grants_revoked_by', 'ix_advisor_tenant_grants_user_history'}
+    active_index = indexes.get('uq_advisor_tenant_grants_active', '')
+    if (not required.issubset(indexes) or 'UNIQUE INDEX' not in active_index
+            or 'revoked_at IS NULL' not in active_index or '(user_id, tenant_id)' not in active_index):
+        raise RuntimeError("Advisor grant indexes mismatch")
+    triggers = list(await conn.execute(text("""SELECT t.tgenabled,t.tgtype,p.proname
+        FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid
+        WHERE t.tgrelid=to_regclass('public.advisor_tenant_grants')
+          AND NOT t.tgisinternal AND t.tgname='advisor_tenant_grants_immutable'""")))
+    if len(triggers) != 1 or triggers[0][0] not in ('O','A') or triggers[0][1:] != (19,'advisor_tenant_grants_protect_history'):
+        raise RuntimeError("Advisor grant history protection mismatch")
+
 
 @app.middleware("http")
 async def advisor_private_response(request: Request, call_next):
@@ -606,6 +639,8 @@ async def seo_health(response: Response) -> dict:
                 await _check_content_confirmation_structure(conn)
             if revisions[0] in {"0106_seo_content_messages", "0107_seo_site_delete", "0108_advisor_account_links", "0109_advisor_tenant_grants"}:
                 await _check_content_message_structure(conn)
+            if revisions[0] == "0109_advisor_tenant_grants":
+                await _check_advisor_grants_structure(conn)
             schema_status = "ok"
     except Exception as exc:  # noqa: BLE001 - health must report infra failure
         db_status = "error"

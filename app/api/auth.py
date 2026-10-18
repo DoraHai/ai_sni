@@ -110,7 +110,12 @@ async def list_tenants(
 ) -> dict:
     """多客户切换器数据。绑定了单客户的账号只回该客户；否则全部。"""
     cond = []
-    if ctx.tenant_id is not None:
+    if ctx.is_advisor:
+        from app.models.advisor_tenant_grant import AdvisorTenantGrant
+        cond.append(Tenant.id.in_(select(AdvisorTenantGrant.tenant_id).where(
+            AdvisorTenantGrant.user_id == ctx.user_id,
+            AdvisorTenantGrant.revoked_at.is_(None))))
+    elif ctx.tenant_id is not None:
         cond.append(Tenant.id == ctx.tenant_id)
     tenants = (
         await session.scalars(select(Tenant).where(*cond).order_by(Tenant.id))
