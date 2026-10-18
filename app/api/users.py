@@ -14,6 +14,7 @@ from app.models import Role, Tenant, User
 from app.permissions import PLATFORM_ADMIN_KEYS, effective_role_permissions
 from app.security.auth import AuthContext, hash_password, require_admin
 from app.platform_operations import audit_business
+from app.security.advisor_scope import is_advisor, deny
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,12 @@ async def update_user(
     if req.is_active is False and user.id == ctx.user_id:
         raise HTTPException(400, "不能停用自己的账号")
     before = _audit_state(user)
+    old_role = await session.get(Role, user.role_id)
+    new_role = await session.get(Role, req.role_id) if req.role_id is not None else old_role
+    if is_advisor(old_role) and req.clear_tenant:
+        deny(422, "ADVISOR_CLEAR_TENANT_FORBIDDEN", "顾问不能通过清空默认客户获得全部客户")
+    if is_advisor(old_role) != is_advisor(new_role):
+        deny(409, "ADVISOR_ROLE_CHANGE_FROZEN", "顾问角色转换已冻结，请先核对客户授权")
     if req.role_id is not None:
         await _check_role(session, req.role_id)
         user.role_id = req.role_id

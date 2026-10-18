@@ -1,4 +1,5 @@
 from app.models.tenant import Tenant
+from app.models.advisor_tenant_grant import AdvisorTenantGrant
 from app.models.sem_task import SemTask
 from app.models.baidu_account import BaiduAccount
 from app.models.baidu_oauth import BaiduOAuthGrant, BaiduOAuthState

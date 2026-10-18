@@ -775,7 +775,7 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
             if name.startswith(("seo_", "geo_"))
             # SemTask carries immutable tenant-specific evidence; excluded from
             # reassignment/counting even while its optional schema is absent.
-            or name in {"tenant_modules", "users", "api_audit_logs", "sem_tasks", "advisor_account_links"}
+            or name in {"tenant_modules", "users", "api_audit_logs", "sem_tasks", "advisor_account_links", "advisor_tenant_grants"}
         }
 
         self.assertTrue(table_names)

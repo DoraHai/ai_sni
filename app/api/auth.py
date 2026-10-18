@@ -32,6 +32,7 @@ from app.security.sem_identity import (
     load_sem_identity_states,
     public_sem_identity_state,
 )
+from app.security.advisor_scope import is_advisor, deny
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,8 @@ async def login(req: LoginRequest, session: AsyncSession = Depends(get_session))
     user.locked_until = None
     user.last_login_at = datetime.utcnow()
     await session.commit()
-    return {"token": issue_token(user), "user": await _user_payload(user, session)}
+    role = await session.get(Role, user.role_id)
+    return {"token": issue_token(user, advisor=is_advisor(role)), "user": await _user_payload(user, session)}
 
 
 @router.get("/me")
@@ -169,7 +171,11 @@ async def me(
     user = await session.get(User, ctx.user_id)
     if user is None or not user.is_active:
         raise HTTPException(401, "账号不存在或已停用")
-    return {"user": await _user_payload(user, session)}
+    result = await _user_payload(user, session)
+    if ctx.advisor_scope is not None:
+        result.update(tenant_id=ctx.tenant_id, is_advisor=True,
+                      default_tenant_id=user.tenant_id, permissions=ctx.permissions)
+    return {"user": result}
 
 
 async def _eligible_advisor(session: AsyncSession, user: User | None) -> bool:
@@ -210,6 +216,8 @@ async def link_advisor_accounts(
     request: Request = None,
 ) -> dict:
     """A named platform administrator creates or extends an explicit advisor group."""
+    if not get_settings().advisor_legacy_account_switch_enabled:
+        deny(410, "LEGACY_ADVISOR_SWITCH_DISABLED", "旧账号关联与切换已关闭")
     if ctx.user_id is None or len(set(req.user_ids)) != len(req.user_ids):
         raise HTTPException(403, "需要实名平台管理员且账号不得重复")
     if req.group_id is None and len(req.user_ids) < 2:
@@ -253,6 +261,8 @@ async def unlink_advisor_account(
     session: AsyncSession = Depends(get_session),
     request: Request = None,
 ) -> dict:
+    if not get_settings().advisor_legacy_account_switch_enabled:
+        deny(410, "LEGACY_ADVISOR_SWITCH_DISABLED", "旧账号关联与切换已关闭")
     if ctx.user_id is None:
         raise HTTPException(403, "需要实名平台管理员")
     from app.security.platform_admin import acquire_platform_admin_lock
@@ -280,6 +290,8 @@ async def linked_accounts(
     ctx: AuthContext = Depends(require_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    if not get_settings().advisor_legacy_account_switch_enabled:
+        return {"accounts": []}
     if ctx.user_id is None:
         raise HTTPException(403, "需要实名顾问账号")
     current = await session.get(User, ctx.user_id)
@@ -322,6 +334,8 @@ async def switch_account(
     ctx: AuthContext = Depends(require_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    if not get_settings().advisor_legacy_account_switch_enabled:
+        deny(410, "LEGACY_ADVISOR_SWITCH_DISABLED", "旧账号关联与切换已关闭")
     if ctx.user_id is None:
         raise HTTPException(403, "需要实名顾问账号")
     authorization = request.headers.get("authorization", "")
@@ -355,7 +369,7 @@ async def switch_account(
     if not await _eligible_advisor(session, source) or not link or link.tenant_id != source.tenant_id:
         raise HTTPException(403, "当前账号没有有效关联组")
     now = datetime.now(timezone.utc)
-    async def deny(message: str, reason: str):
+    async def deny_switch(message: str, reason: str):
         session.add(_audit(request, action="switch", actor=ctx.user_id, source=ctx.user_id,
                            target=req.target_user_id, group=link.group_id,
                            status="denied", reason=reason))
@@ -370,12 +384,12 @@ async def switch_account(
     target_link = await session.scalar(select(AdvisorAccountLink).where(
         AdvisorAccountLink.user_id == req.target_user_id).with_for_update(read=True))
     if not target_link or link.group_id != target_link.group_id or source.id == req.target_user_id:
-        await deny("目标账号不在当前关联组", "not_linked")
+        await deny_switch("目标账号不在当前关联组", "not_linked")
     target = await session.get(User, req.target_user_id, with_for_update={"read": True}, populate_existing=True)
     locked = target and target.locked_until and target.locked_until > now.replace(tzinfo=None)
     if (not await _eligible_advisor(session, target) or target.tenant_id == source.tenant_id
             or target_link.tenant_id != target.tenant_id or locked):
-        await deny("目标账号不具备有效顾问资格", "target_ineligible")
+        await deny_switch("目标账号不具备有效顾问资格", "target_ineligible")
     try:
         target_token = issue_token(target, switch_source_id=source.id,
                                    switch_group_id=str(link.group_id),
@@ -419,6 +433,18 @@ async def list_tenants(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """多客户切换器数据。绑定了单客户的账号只回该客户；否则全部。"""
+    if ctx.advisor_scope is not None:
+        from app.models.advisor_tenant_grant import AdvisorTenantGrant
+        if module:
+            if not ctx.can_view(*_MODULE_PERMISSION_KEYS[module]):
+                raise HTTPException(403, "当前账号无权访问该模块的客户列表")
+            tenants = await list_module_tenants(session, ctx, module)
+        else:
+            tenants = list((await session.scalars(select(Tenant).join(
+                AdvisorTenantGrant, AdvisorTenantGrant.tenant_id == Tenant.id
+            ).where(AdvisorTenantGrant.user_id == ctx.user_id,
+                    AdvisorTenantGrant.revoked_at.is_(None)).order_by(Tenant.id))).all())
+        return {"module": module, "tenants": [{"id": t.id, "name": t.name} for t in tenants]}
     if module:
         if not ctx.can_view(*_MODULE_PERMISSION_KEYS[module]):
             raise HTTPException(403, "当前账号无权访问该模块的客户列表")
@@ -506,6 +532,8 @@ async def list_my_modules(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Modules visible in the signed-in user's workspace and module switcher."""
+    if ctx.advisor_scope is not None:
+        ctx.ensure_tenant(ctx.tenant_id)
     rows_by_code: dict[str, TenantModule] = {}
     if ctx.tenant_id is not None:
         rows = list(
