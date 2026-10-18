@@ -272,9 +272,13 @@ class SearchClient:
             retryable = False
             try:
                 async with asyncio.timeout(PROVIDER_TIMEOUT_SECONDS), self.http.stream(
-                    method, path, json=payload if payload else None
+                    method, path, json=payload if payload else None, headers={'Accept-Encoding': 'identity'}
                 ) as response:
                     last_status = response.status_code
+                    if response.headers.get('content-encoding', '').strip().lower() not in {'', 'identity'}:
+                        # Check before aiter_bytes can allocate a decoded gzip
+                        # chunk larger than our entire response budget.
+                        raise StopRun('搜索服务返回格式不受支持，本次已停止，费用保留待核对')
                     raw = bytearray()
                     async for chunk in response.aiter_bytes():
                         if len(raw) + len(chunk) > MAX_PROVIDER_BYTES:
