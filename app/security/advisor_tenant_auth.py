@@ -89,6 +89,7 @@ async def enforce_advisor_request(request, ctx, session):
     """Runs even on routes depending only on require_auth, before any handler."""
     if not ctx.is_advisor:
         return
+    request.state.seo_advisor_actor = ctx
     route = (request.method, request.url.path)
     if route in SESSION_ROUTES:
         return
@@ -109,10 +110,16 @@ async def enforce_advisor_request(request, ctx, session):
         try:
             # Starlette caches both bytes and JSON on the same Request used by
             # dependencies and the handler; subsequent body reads remain valid.
-            body = await request.json()
+            body = await request.json() if await request.body() else {}
         except (ValueError, RuntimeError):
             reject(403, "ADVISOR_WRITE_FIELD_FORBIDDEN")
+        if body is None and not rule.fields:
+            body = {}
         check_write_fields(rule, body)
+        request.state.seo_advisor_evidence = {"requested_object_ids": {
+            key: value for key, value in body.items()
+            if key != "request_id" and key.endswith(("_id", "_ids"))
+        }}
         if not all(ctx.can_edit(key) for key in rule.edit_all):
             reject(403, "ADVISOR_WRITE_PERMISSION_REQUIRED")
     from app.security.auth import _required, enforce_scoped_request
@@ -142,6 +149,8 @@ async def enforce_advisor_request(request, ctx, session):
         request.state.advisor_scoped_write = rule
         ctx.advisor_write_rule = rule
         ctx.advisor_write_scope = (request, body, rule)
+        from app.security.seo_advisor_audit import install_commit_guard
+        install_commit_guard(session, ctx, request)
 
 
 async def check_seo_objects(request, ctx, session):
@@ -158,12 +167,23 @@ async def check_seo_objects(request, ctx, session):
         "connection_id": "seo_distribution_connections", "asset_id": "seo_brand_assets",
         "result_id": "seo_serp_results", "assignment_id": "seo_site_advisor_assignments",
         "conversation_id": "seo_content_conversations",
+        "snapshot_id": "seo_page_snapshots", "answer_id": "seo_qa_answers",
+        "fact_id": "seo_qa_facts", "backlink_id": "seo_backlinks",
+        "competitor_id": "seo_competitors", "verification_id": "seo_image_verifications",
+        "source_snapshot_id": "seo_page_snapshots",
     }
     values = list(request.path_params.items())
     values.extend((key, value) for key, value in request.query_params.multi_items()
                   if key.endswith("_id"))
     for key, value in values:
         if not key.endswith("_id") or key == "tenant_id":
+            continue
+        if key == "before_id" and request.url.path in {
+            "/api/v1/seo/workbench/onsite-tasks", "/api/v1/seo/site-pages/index-reviews",
+            "/api/v1/seo/site-pages/image-remediation-history",
+        }:
+            # A cursor only bounds the already tenant/site-scoped query; it is
+            # not an ID of a conversation message.
             continue
         if key in {"before_id", "message_id"}:
             messages = Base.metadata.tables["seo_content_messages"]

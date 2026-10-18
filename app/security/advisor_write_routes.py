@@ -12,6 +12,7 @@ class WriteRule:
     forbidden: frozenset[str]
     edit_all: tuple[str, ...]
     assignment: str
+    workflow: bool = False
 
 
 _FORBIDDEN = frozenset({
@@ -37,12 +38,15 @@ _RULES = (
     # schema; the handler never assigns them and B checks the object's scope.
     _rule("PATCH", "/qa/facts/{fact_id}", _FACT | {"version"}, "seo.content"),
     _rule("POST", "/rank-serp/brand-assets", frozenset({"tenant_id", "site_id", "asset_type", "name", "match_value", "platform"}), "seo.keywords"),
-    _rule("PATCH", "/rank-serp/brand-assets/{asset_id}", frozenset({"name", "match_value", "platform"}), "seo.keywords"),
+    _rule("PATCH", "/rank-serp/brand-assets/{asset_id}", frozenset({"name", "match_value", "platform", "status"}), "seo.keywords"),
     _rule("POST", "/content-assets", _CONTENT | {"tenant_id", "site_id"}, "seo.content"),
     _rule("PATCH", "/content-assets/{content_id}", _CONTENT | {"version_count"}, "seo.content"),
     _rule("PUT", "/content-assets/{content_id}/source-page", frozenset({"source_page_id", "version_count"}), "seo.content"),
 )
 WRITE_ROUTES: dict[tuple[str, str], WriteRule] = {(r.method, r.template): r for r in _RULES}
+
+from app.security.seo_advisor_work import workflow_rules
+WRITE_ROUTES.update({(r.method, r.template): r for r in workflow_rules(WriteRule)})
 
 
 def match_write_rule(request) -> WriteRule | None:
@@ -51,6 +55,9 @@ def match_write_rule(request) -> WriteRule | None:
 
 
 def check_write_fields(rule: WriteRule, body: dict) -> None:
+    if rule.workflow:
+        from app.security.seo_advisor_work import check_workflow_fields
+        return check_workflow_fields(rule, body)
     def forbidden():
         raise HTTPException(403, {"code": "ADVISOR_WRITE_FIELD_FORBIDDEN"})
 
@@ -65,7 +72,8 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
         elif isinstance(value, (dict, list)):
             forbidden()
     if "status" in body:
-        allowed = {"active"} if "/qa/facts" in rule.template else {"planned", "drafting"}
+        allowed = ({"active", "retired"} if "/qa/facts" in rule.template else
+                   {"active", "archived"} if "/brand-assets" in rule.template else {"planned", "drafting", "archived"})
         if body["status"] not in allowed:
             forbidden()
     version = "version" if "/qa/facts/" in rule.template else "version_count"
@@ -82,7 +90,10 @@ def check_advisor_handler(ctx, method, template, body, row=None):
         return
     rule = WRITE_ROUTES[(method, "/api/v1/seo" + template)]
     check_write_fields(rule, body)
+    if rule.workflow:
+        return
     if row is not None:
-        allowed = {"active"} if "/qa/facts" in template or "/brand-assets" in template else {"planned", "drafting"}
+        allowed = ({"active", "retired"} if "/qa/facts" in template else
+                   {"active", "archived"} if "/brand-assets" in template else {"planned", "drafting", "archived"})
         if row.status not in allowed:
             raise HTTPException(403, {"code": "ADVISOR_WRITE_STATE_FORBIDDEN"})

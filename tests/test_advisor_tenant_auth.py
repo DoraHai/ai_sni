@@ -34,6 +34,9 @@ class LocalSession:
     def __init__(self, session):
         self.sync = session
 
+    async def commit(self):
+        self.sync.commit()
+
     async def get(self, *args, **kwargs):
         return self.sync.get(*args, **kwargs)
 

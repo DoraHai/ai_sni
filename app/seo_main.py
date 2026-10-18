@@ -553,6 +553,8 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+from app.security.seo_advisor_audit import operation_audit
+app.middleware("http")(operation_audit)
 app.include_router(seo_router)
 app.include_router(seo_sites_router)
 

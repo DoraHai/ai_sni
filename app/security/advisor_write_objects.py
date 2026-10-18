@@ -177,6 +177,9 @@ async def _request_references(request, body):
 
 
 async def _scope(session, ctx, request, body, rule, *, lock=False):
+    if getattr(rule, "workflow", False):
+        from app.security.seo_advisor_work import workflow_scope
+        return await workflow_scope(session, ctx, request, body, rule, lock=lock)
     ctx.ensure_tenant(ctx.tenant_id)
     if rule.assignment != "site":
         _reject(403, "ADVISOR_OBJECT_UNAVAILABLE")
@@ -257,6 +260,9 @@ async def lock_manual_write_scope(session, ctx, request, body, rule):
     A manual edit is admitted only in a provably paused scope with no unfinished
     system work. Do not pause, cancel, or authorize any existing execution.
     """
+    if getattr(rule, "workflow", False):
+        from app.security.seo_advisor_work import lock_workflow_scope
+        return await lock_workflow_scope(session, ctx, request, body, rule)
     site_id = await _scope(session, ctx, request, body, rule)
     assignments = list((await session.execute(select(SeoSiteAdvisorAssignment.__table__).where(
         SeoSiteAdvisorAssignment.tenant_id == ctx.tenant_id,
