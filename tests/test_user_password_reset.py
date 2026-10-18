@@ -78,7 +78,7 @@ def test_user_list_exposes_existing_tenants_as_dropdown_options(reset_client):
     client, session, user, *_ = reset_client
     session.scalars.side_effect = [
         SimpleNamespace(all=lambda: [user]),
-        SimpleNamespace(all=lambda: [SimpleNamespace(id=3, name="测试角色")]),
+        SimpleNamespace(all=lambda: [Role(id=3, name="测试角色", is_system=False, permissions={})]),
         SimpleNamespace(all=lambda: [SimpleNamespace(id=5, name="测试客户")]),
     ]
 

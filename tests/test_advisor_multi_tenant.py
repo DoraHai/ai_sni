@@ -39,8 +39,9 @@ def run(coro):
 def db(tmp_path, monkeypatch):
     settings = get_settings().model_copy(update={"advisor_multi_tenant_enabled": True,
         "advisor_legacy_account_switch_enabled": False, "advisor_high_risk_writes_enabled": False})
-    for module in (auth,):
+    for module in (auth, users):
         monkeypatch.setattr(module, "get_settings", lambda: settings)
+    monkeypatch.setattr("app.security.advisor_session._attempts", {})
     monkeypatch.setattr("app.security.advisor_switch.get_settings", lambda: settings)
     engine = create_async_engine("sqlite+aiosqlite:///" + str(tmp_path / "advisor.db"), poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)

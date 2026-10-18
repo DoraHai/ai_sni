@@ -26,3 +26,19 @@ S1+E1 guard 部署与 0109 建表、回填必须在同一个获批维护窗口�
 所有新请求读当前 User/Role、启用/锁定、授权代次。正在返回的同步响应无法收回；没有签出永久下载链接。新高风险路径仍需独立审查，不添加任务列、不扩大本方案 schema。
 
 无表阶段拒绝顾问 clear_tenant 和改变已有用户顾问判定的角色单改/批改，防止回落到 NULL=全部。按 COMMON-2，普通角色编辑仅比较角色权限前后及 users，不读取授权表；非顾问请求及其管理操作不因缺表/无权限 503。顾问请求缺表/无权限仍然 503，表可读时授权历史仍作为受限标记。回滚必须保留受限 guard 和旧 via 拒绝，保留新表历史和 ACL，不得降到任意旧版本或执行 downgrade。
+
+## S2 账号与会话协议
+
+账号列表、详情、新建/编辑响应包含 is_advisor、tenant_ids、default_tenant_id、grants_version；非顾问列表为空且版本为 null。版本严格按 COMMON-2 的 v1/default/有效 grant ID 字符串排序计算 SHA256 前16位，不存库。
+
+维护窗口缺表/无读权限时，管理员账号列表/详情及只改名字等响应仍可用；顾问投影附 grants_available=false、grants_error_code=ADVISOR_GRANTS_UNAVAILABLE，tenant_ids=[]、grants_version=null 表示授权数据暂不可读，不代表实际撤销。此投影不签发可写版本；名单变更仍428/503拒绝，顾问本人业务仍503。新入口必须等0109与授权核对完成后开放。
+
+正常投影显式 grants_available=true。只对503且detail.code=ADVISOR_GRANTS_UNAVAILABLE应用上述只读投影，其他错误照常抛出，不掩盖无关服务故障。
+
+顾问新建必须至少勾一个客户，默认取首个；PATCH 只要显式带 tenant_ids/default_tenant_id 就必须提供 expected_grants_version，缺失428，持有 users 行锁后重算不符409。取消当前默认时同时给出新默认。名单去重、严格正整数且所有客户存在、至少有角色可用模块；整批原子授予/撤销，重新授予必新行。旧 tenant_id 字段不能绕开名单/版本校验。只改名字/密码无需版本，clear_tenant 和角色转换仍冻结。
+
+名单变更锁定实名操作者及目标账号（按 ID 顺序），重读启用、锁定、未绑定客户、settings.accounts=edit 条件；API Key 不能代替实名管理员。沿用现有管理审计事务和结构化授予/撤销事件，不创建额外审计表、不增加权限。
+
+POST /api/v1/auth/select-tenant 只接受 tenant_id，本人身份/有效客户凭证可选择最新授权内客户；再次持有 users 行锁后重验账号/角色/原 gid/有效名单/模块。sub不变、不改默认、不延长原 auth_exp，响应 access_token/token_type/tenant_id/tenant_name/expires_at。成功/拒绝记录结构化业务事件，不复用旧切换审计表，不记录 JWT。限频为每个 worker 每用户每分钟10次（含拒绝），内存状态有上限和过期清理；这是进程内限频，不声称跨 worker 的全局限频。
+
+新入口关闭：选择404、名单写入422，detail.code=ADVISOR_MULTI_TENANT_DISABLED；受限 guard 始终生效。原身份 token 可用于重新选择，已撤销的业务 token 不能借选择接口降级为身份 token。
