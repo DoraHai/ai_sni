@@ -5,6 +5,7 @@ import GeoBusinessProfileForm from '../../components/GeoBusinessProfileForm.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import GeoAdvisorProjectPicker from '../../components/GeoAdvisorProjectPicker.vue'
 import { advisorClaims } from '../../utils/geoAdvisorTenant.js'
+import { advisorBrandProfile } from '../../utils/geoBrandProfile.js'
 import {
   createGeoBusiness,
   fetchGeoCompetitorInsights,
@@ -152,7 +153,8 @@ async function save() {
   }
   saving.value = true
   try {
-    await patchGeoBusiness(tenantId.value, current.value.id, { profile: profile.value })
+    const savedProfile = isAdvisor.value ? advisorBrandProfile(profile.value) : profile.value
+    await patchGeoBusiness(tenantId.value, current.value.id, { profile: savedProfile })
     ElMessage.success('品牌资料已保存')
     await load()
   } catch (e) {

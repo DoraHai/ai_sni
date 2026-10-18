@@ -17,7 +17,7 @@ from sqlalchemy import select, text, update
 from app.models import GeoFact, GeoProject, Role, User
 from app.models.advisor_tenant_grant import AdvisorTenantGrant as Grant
 from test_advisor_scoped_writes import (CASES, EDIT, assert_denied, fixture_token,
-    mutate, no_external_http_or_background_dispatch, write_sandbox)
+    concrete, mutate, no_external_http_or_background_dispatch, write_sandbox)
 from test_advisor_scoped_writes_contract import context, request_for
 
 pytestmark = pytest.mark.skipif(not os.getenv('GEO_TEST_POSTGRES_URL'),
@@ -83,7 +83,8 @@ def test_commit_recheck_reloads_stale_identity_and_rolls_back_pending_business_c
 
 @pytest.mark.parametrize('kind', ['grant', 'permissions', 'user', 'assignment'])
 @pytest.mark.parametrize('production_dependency', [False, True], ids=['fixture-cleanup', 'production-session-cleanup'])
-def test_real_http_revoke_after_guard_before_handler_commit_never_persists(tmp_path, monkeypatch, kind, production_dependency):
+@pytest.mark.parametrize('case', [CASES[0], CASES[-1]], ids=['fact', 'brand-profile'])
+def test_real_http_revoke_after_guard_before_handler_commit_never_persists(tmp_path, monkeypatch, kind, production_dependency, case):
     importlib.import_module('app.security.advisor_write_commit')
     from app.security import geo_advisor
 
@@ -107,7 +108,8 @@ def test_real_http_revoke_after_guard_before_handler_commit_never_persists(tmp_p
 
             monkeypatch.setattr(geo_advisor, 'guard_request', gate)
             before = await env.snapshot()
-            writer = asyncio.create_task(env.request('POST', '/facts', body=CASES[0][2]))
+            method, template, body, table, column, value = case
+            writer = asyncio.create_task(env.request(method, concrete(template), body=body))
             waiter = asyncio.create_task(checked.wait())
             revoker = None
             try:
@@ -142,9 +144,9 @@ def test_real_http_revoke_after_guard_before_handler_commit_never_persists(tmp_p
                     # if revocation wins immediately after that business commit.
                     assert response.status_code in {200, 201, 401, 403}, response.text
                     await asyncio.wait_for(revoker, 5)
-                    assert len((await env.snapshot())['geo_facts']) == len(before['geo_facts']) + 1
+                    assert any(row[column] == value for row in (await env.snapshot())[table])
                     after_revoke = await env.snapshot()
-                    rejected = await env.request('POST', '/facts', body=CASES[0][2])
+                    rejected = await env.request(method, concrete(template), body=body)
                     assert rejected.status_code in {401, 403}, rejected.text
                     assert await env.snapshot() == after_revoke
                 else:
@@ -157,6 +159,7 @@ def test_real_http_revoke_after_guard_before_handler_commit_never_persists(tmp_p
                         assert_denied(response, status=401, code='ADVISOR_GRANT_REVOKED')
                     assert await env.snapshot() == after_revoke
                     assert (await env.snapshot())['geo_facts'] == before['geo_facts']
+                    assert (await env.snapshot())['geo_optimization_businesses'] == before['geo_optimization_businesses']
             finally:
                 release.set()
                 tasks = [writer, waiter, *([revoker] if revoker is not None else [])]
