@@ -470,6 +470,25 @@ def test_outside_exact_write_list_stays_closed(tmp_path, monkeypatch, backend, m
     asyncio.run(run())
 
 
+@pytest.mark.parametrize('path', ['/api/v1/roles/1', '/api/v1/users/1'])
+def test_advisor_cannot_change_account_or_role_permissions(tmp_path, monkeypatch, backend, path):
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            # Mount an authenticated sentinel: a forbidden permission route must
+            # be rejected by the advisor guard before any handler can run.
+            async def permission_handler(_ctx=Depends(require_auth)):
+                pytest.fail('advisor reached a permission-changing handler')
+
+            env.app.add_api_route(path, permission_handler, methods=['PATCH'])
+            before = await env.snapshot()
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=env.app), base_url='http://fixture') as client:
+                response = await client.patch(path, json={'permissions': {'settings.accounts': 'edit'}},
+                    headers={'Authorization': 'Bearer ' + fixture_token()})
+            assert_denied(response, code='ADVISOR_HIGH_RISK_WRITES_DISABLED')
+            assert await env.snapshot() == before
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize('uid', [2, 3], ids=['administrator', 'native-customer-editor'])
 def test_non_advisor_existing_write_behavior_unchanged(tmp_path, monkeypatch, backend, uid):
     async def run():
