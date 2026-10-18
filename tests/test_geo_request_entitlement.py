@@ -1,6 +1,7 @@
 import asyncio
 import json
 from unittest.mock import AsyncMock, Mock
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -238,3 +239,40 @@ def test_public_routes_remain_outside_authenticated_entitlement_router():
         dependency_calls = {item.call for item in route.dependant.dependencies}
         assert require_scoped_auth not in dependency_calls, route.path
         assert require_geo_request_entitlement not in dependency_calls, route.path
+
+
+@pytest.mark.parametrize('path,method,unlocked', [
+    ('/api/v1/geo/async-jobs', 'GET', True),
+    ('/api/v1/geo/async-jobs/{job_id}', 'GET', True),
+    ('/api/v1/geo/async-jobs/{job_id}/cancel', 'POST', False),
+    ('/api/v1/geo/content-tasks/{task_id}/variants', 'POST', False),
+    ('/api/v1/geo/content-tasks/{task_id}', 'GET', False),
+    ('/api/v1/geo/async-jobs/{job_id}', 'POST', False),
+])
+def test_only_progress_gets_avoid_worker_lock(path, method, unlocked):
+    req = request(query='tenant_id=17')
+    req.scope.update(method=method, route=SimpleNamespace(path=path))
+    ctx = Mock()
+    session = Mock(scalar=AsyncMock(return_value={}))
+    asyncio.run(require_geo_request_entitlement(request=req, ctx=ctx, session=session))
+    ctx.ensure_tenant.assert_called_once_with(17)
+    statements = [str(call.args[0]) for call in session.scalar.await_args_list]
+    assert len(statements) == (1 if unlocked else 2)
+    assert any('FOR UPDATE' in sql for sql in statements) is not unlocked
+
+
+@pytest.mark.parametrize('reason', ['expired', 'unauthorized', 'database_error'])
+def test_unlocked_progress_read_still_fails_closed(reason):
+    req = request(query='tenant_id=17')
+    req.scope.update(method='GET', route=SimpleNamespace(path='/api/v1/geo/async-jobs/{job_id}'))
+    ctx = Mock()
+    session = Mock(scalar=AsyncMock(return_value=None))
+    if reason == 'unauthorized':
+        ctx.ensure_tenant.side_effect = HTTPException(403, '无权访问此客户')
+    elif reason == 'database_error':
+        session.scalar.side_effect = RuntimeError('fixture unavailable')
+    with pytest.raises(RuntimeError if reason == 'database_error' else HTTPException):
+        asyncio.run(require_geo_request_entitlement(request=req, ctx=ctx, session=session))
+    ctx.ensure_tenant.assert_called_once_with(17)
+    if reason == 'unauthorized':
+        session.scalar.assert_not_awaited()
