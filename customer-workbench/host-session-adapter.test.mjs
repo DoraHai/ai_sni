@@ -1,6 +1,23 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {createHostSessionAdapter,sameOriginLoginUrl,existingSessionBridge} from './js/host-session-adapter.mjs';
 import {startFixtureServer} from './tests/fixture-server.mjs';
+test('advisor SEO preflight accepts the agreed tenant array and uses the current tenant instead of the default',async()=>{
+  let rows=[{id:2,name:'客户乙'}];
+  const host=createHostSessionAdapter({origin:'https://fixture.invalid',
+    getSession:()=>({token:'fixture-business',userId:7,tenantId:2,siteId:19,advisor:true,revision:1}),
+    fetchImpl:async url=>Response.json(new URL(url).pathname==='/api/v1/auth/me'
+      ?{user:{id:7,tenant_id:1,permissions:{'seo.site':'edit','seo.content':'edit'}}}
+      :new URL(url).pathname==='/api/v1/auth/modules'?{tenant_id:2,modules:[{module_code:'seo',available:true}]}
+      :new URL(url).pathname==='/api/v1/auth/tenants'?rows
+      :{tenant_id:2,sites:[{id:19,status:'active'}],selection_policy:{selectable_statuses:['active']}})});
+  try{
+    assert.equal((await host.initialize()).phase,'connected');
+    assert.equal(host.getContext().tenantId,2);
+    rows=[{id:1,name:'客户甲'}];
+    await assert.rejects(host.initialize(),/TENANT_NOT_ALLOWED/);
+    assert.equal(host.getContext(),null);
+  }finally{host.dispose();}
+});
 test('keyword deletion requires edit permission and both exact tenant and site scope, with no body',async()=>{
   const server=await startFixtureServer();server.state.keywordLevel='view';
   const host=createHostSessionAdapter({origin:server.origin,allowLocalHttp:true,getSession:()=>({token:'fixture-advisor',userId:7,tenantId:1,siteId:9,revision:1})});

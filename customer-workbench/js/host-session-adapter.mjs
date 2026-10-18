@@ -124,7 +124,8 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
       if(!moduleCatalog.some(m=>m.module_code==='seo'&&m.available))throw error('MODULE_UNAVAILABLE');
       if(!['view','edit'].includes(user.permissions['seo.content']))throw error('PERMISSION_DENIED',403);
       const tenants=await read('/api/v1/auth/tenants?module=seo');
-      const tenant=tenants.module==='seo'&&tenants.tenants?.find(t=>t.id===s.tenantId);if(!tenant)throw error('TENANT_NOT_ALLOWED');
+      const tenantRows=s.advisor&&Array.isArray(tenants)?tenants:tenants.module==='seo'?tenants.tenants:[];
+      const tenant=tenantRows?.find(t=>t.id===s.tenantId);if(!tenant)throw error('TENANT_NOT_ALLOWED');
       const sites=await read(`/api/v1/seo/workbench/sites?tenant_id=${s.tenantId}`);
       const site=sites.sites?.find(v=>v.id===s.siteId);
       if(sites.tenant_id!==s.tenantId||!site||site.status!=='active'||!sites.selection_policy?.selectable_statuses?.includes('active'))throw error('SITE_NOT_ALLOWED');
