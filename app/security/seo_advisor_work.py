@@ -113,6 +113,10 @@ _CONTROL = frozenset({
 def check_workflow_fields(rule, body):
     if not isinstance(body, dict) or set(body) - rule.fields:
         deny("ADVISOR_WRITE_FIELD_FORBIDDEN")
+    if rule.template in {'/api/v1/seo/content-assets/{content_id}/submit-review',
+                         '/api/v1/seo/content-assets/{content_id}/review'}:
+        from app.security.seo_advisor_reviews import require_review_version
+        require_review_version(body.get('version_count'))
 
     def walk(value, depth=0):
         if depth > 32:
