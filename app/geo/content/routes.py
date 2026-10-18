@@ -7606,6 +7606,9 @@ async def suggest_task_brief(
         profile_hints=hints,
         **({"before_model": before_suggestion_model} if getattr(ctx, "advisor_scope", None) is not None else {}),
     )
+    # Suggestions are not persisted, so there is no later commit to recheck
+    # assignment or revocation after the model/heuristic has finished.
+    await recheck_request(session, ctx, task)
     return {
         "task_id": task.id,
         "prompt_id": prompt.id,
