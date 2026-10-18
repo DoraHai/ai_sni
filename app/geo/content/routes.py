@@ -2736,6 +2736,11 @@ async def list_answer_snapshots(
         stmt = stmt.where(GeoAnswerSnapshot.simulated.is_(bool(simulated)))
     if sample_mode:
         stmt = stmt.where(GeoAnswerSnapshot.sample_mode == sample_mode)
+    if getattr(ctx, "advisor_scope", None) is not None:
+        from app.security.advisor_write_reads import filter_query
+        prompts = await filter_query(session, ctx, select(GeoPrompt.id).where(
+            GeoPrompt.tenant_id == tenant_id), GeoPrompt)
+        stmt = stmt.where(GeoAnswerSnapshot.prompt_id.in_(prompts))
     stmt = stmt.order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
     rows = list(await session.scalars(stmt))
     prompt_ids = {r.prompt_id for r in rows}
@@ -2898,12 +2903,17 @@ async def delete_answer_snapshot(
     if getattr(row, 'patrol_run_id', None):
         raise HTTPException(409, '巡检快照是指标来源，不能删除；错误引用请标记为 inaccurate')
     captured = row.captured_at
+    advisor = getattr(ctx, "advisor_scope", None) is not None
+    if advisor:
+        from app.security.advisor_write_snapshot_metrics import rebuild_before_delete
+        await rebuild_before_delete(session, ctx, row)
     await session.delete(row)
     await session.commit()
     try:
         from app.geo.content.daily_metrics import safe_rebuild_for_captured_at
 
-        await safe_rebuild_for_captured_at(tenant_id, captured)
+        if not advisor:
+            await safe_rebuild_for_captured_at(tenant_id, captured)
     except Exception:  # noqa: BLE001
         pass
     return {"deleted": True, "id": snapshot_id}
