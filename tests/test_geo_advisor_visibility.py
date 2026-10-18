@@ -151,7 +151,7 @@ def test_other_paid_or_high_risk_operations_stay_403(tmp_path, monkeypatch, meth
 
 
 @pytest.mark.parametrize('kind', ['patrol', 'period', 'plan'])
-def test_automatic_execution_chain_still_rejects(tmp_path, monkeypatch, backend, kind):
+def test_manual_detection_allowed_during_automatic_execution(tmp_path, monkeypatch, backend, kind):
     async def run():
         async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
             async with env.factory() as session:
@@ -165,9 +165,8 @@ def test_automatic_execution_chain_still_rejects(tmp_path, monkeypatch, backend,
                     p.project_settings = {**p.project_settings, 'geo_service_plan': {'enabled': True, 'advisor_user_id': 1}}
                 await session.commit()
             response = await env.request('POST', PATH, body={'tenant_id': 10})
-            assert response.status_code == 403, response.text
-            assert response.json()['detail']['code'] == 'ADVISOR_EXECUTION_CHAIN_ACTIVE'
-            assert not env.queued
+            assert response.status_code == 200, response.text
+            assert len(env.queued) == 1
     asyncio.run(run())
 
 
