@@ -206,18 +206,22 @@ async def guard_scoped_write(session, ctx, request, claims):
     # opaque brief would otherwise fail the field policy first.
     await check_write_objects(session, ctx, request, {}, rule)
     from app.security.advisor_write_operations import rules as operation_rules, read_contract
+    from app.security.advisor_write_ai import TASK_TEMPLATES, GENERATE, read_contract as ai_contract
+    ai_body = await ai_contract(request, rule) if rule.template in TASK_TEMPLATES else None
     operation = rule in operation_rules().values()
     # Query switches are admitted only by an exact action contract.
     for key, value in (() if operation else request.query_params.multi_items()):
         if key == "project_id" and rule.method == "POST" and rule.template == "/api/v1/geo/optimization-businesses":
             positive_id(value)
             continue
+        if key == "run_async" and rule.template == GENERATE:
+            continue
         if key != "tenant_id":
             deny(403, "ADVISOR_WRITE_FIELD_FORBIDDEN", "此查询字段未向顾问开放")
         ctx.ensure_tenant(positive_id(value))
     try:
         # Request.json() caches body bytes for the handler/dependency re-read.
-        body = await read_contract(request, rule) if operation else await request.json()
+        body = ai_body if ai_body is not None else (await read_contract(request, rule) if operation else await request.json())
     except (ValueError, UnicodeDecodeError):
         deny(403, "ADVISOR_WRITE_FIELD_FORBIDDEN", "顾问写入仅支持 JSON 对象")
     if isinstance(body, dict) and "brief" in body:

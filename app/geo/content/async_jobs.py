@@ -710,12 +710,22 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
         getattr(biz_row, "profile", None) if biz_row else None,
         fallback=tenant.name,
     )
+    from app.security.advisor_write_ai import recheck_job
+
+    async def before_model():
+        await recheck_job(session, job)
+        await session.commit()
+
+    advisor_job = "advisor_authority" in (job.request_meta or {})
+    if advisor_job:
+        await before_model()
     payload = await generate_master_article(
         tenant_name=author_name,
         question=prompt.question,
         facts=fact_dicts,
         llm=llm,
         brief=brief_norm,
+        **({"before_model": before_model} if advisor_job else {}),
     )
     # The subscription can change while the remote model is running. Discard
     # the response before any article write when access is no longer valid.
@@ -760,6 +770,8 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
         },
         created_by=job.created_by,
     )
+    # Hold fresh authority/ownership locks through the actual article commit.
+    await recheck_job(session, job)
     session.add(article)
     task.title = payload["title"]
     task.status = "editing"

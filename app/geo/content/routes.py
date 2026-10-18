@@ -7537,6 +7537,9 @@ async def suggest_task_brief(
 
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
+    from app.security.advisor_write_ai import recheck_request, reserve_suggestion
+    await recheck_request(session, ctx, task)
+    await reserve_suggestion(session, ctx, task)
     prompt = await _get_prompt(session, task.prompt_id, tenant_id)
     tenant = await _ensure_tenant_exists(session, tenant_id)
     brand, _ = await _brand_context_for_task(session, task, tenant)
@@ -7570,6 +7573,11 @@ async def suggest_task_brief(
         getattr(biz_row, "profile", None) if biz_row else None,
         fallback=getattr(tenant, "name", None) or f"租户{tenant_id}",
     )
+    async def before_suggestion_model():
+        await recheck_request(session, ctx, task)
+        # Release authorization locks so revocation can take effect during AI.
+        await session.commit()
+
     suggested = await suggest_brief_for_task(
         question=prompt.question,
         brand=brand,
@@ -7578,6 +7586,7 @@ async def suggest_task_brief(
         llm=llm,
         chat_json=chat_json,
         profile_hints=hints,
+        **({"before_model": before_suggestion_model} if getattr(ctx, "advisor_scope", None) is not None else {}),
     )
     return {
         "task_id": task.id,
@@ -8169,6 +8178,8 @@ async def generate_task_article(
         session, task
     ):
         raise HTTPException(409, "母稿正在生成，请等待当前任务完成")
+    from app.security.advisor_write_ai import recheck_request, job_authority
+    await recheck_request(session, ctx, task)
     task.status = "generating"
 
     from app.geo.content.async_jobs import (
@@ -8185,7 +8196,8 @@ async def generate_task_article(
         kind=KIND_GENERATE,
         ref_type="content_task",
         ref_id=task.id,
-        request_meta={"execution_mode": "async" if run_async else "sync"},
+        request_meta={"execution_mode": "async" if run_async else "sync",
+                      **job_authority(session, ctx)},
         created_by=ctx.user_id,
     )
     if run_async:

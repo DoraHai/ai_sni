@@ -14,6 +14,7 @@ from sqlalchemy import select
 from starlette.datastructures import UploadFile
 
 from app.security.advisor_scope import deny
+from app.security.advisor_write_ai import TASK_TEMPLATES as AI_TASK_TEMPLATES
 
 
 _PREFIX = "/api/v1/geo"
@@ -181,7 +182,7 @@ async def _resolve(session, ctx, request, body, rule):
     }
     from app.security.advisor_write_operations import task_templates
     from app.security.advisor_write_reads import TASK_READS
-    task_routes = _TASK_TEMPLATES | task_templates() | TASK_READS
+    task_routes = _TASK_TEMPLATES | task_templates() | TASK_READS | AI_TASK_TEMPLATES
     if template in task_routes:
         models["task_id"] = GeoContentTask
     state = _Objects()
