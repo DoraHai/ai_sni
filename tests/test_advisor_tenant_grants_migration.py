@@ -107,7 +107,7 @@ def test_native_pg_constraints_irreversible_history_backfill_and_exact_acl():
                 assert before == after
                 privileges_sql = audit_sql.split('-- TABLE-BEGIN',1)[1].split('-- TABLE-END',1)[0]
                 # Audit template is schema-neutral for owned test schemas.
-                privileges = dict(await conn.execute(text(privileges_sql.replace('public.advisor_tenant_grants', schema+'.advisor_tenant_grants'))))
+                privileges = dict((await conn.execute(text(privileges_sql.replace('public.advisor_tenant_grants', schema+'.advisor_tenant_grants')))).all())
                 assert privileges == {p:p in ('SELECT','INSERT','UPDATE') for p in
                                       ['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']}
                 assert await conn.scalar(text("SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='advisor_tenant_grants'::regclass")) != 'sem_runtime'
