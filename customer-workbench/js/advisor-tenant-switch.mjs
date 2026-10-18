@@ -38,6 +38,9 @@ export function createAdvisorTenantSwitch({session,fetchImpl=fetch}){
 
 // Shared by all panels, so a rejection also clears drafts, polling and downloads
 // owned by panels other than the one receiving the rejected response.
+function advisorCoreApi(input){
+  try{const raw=typeof input==='string'?input:input?.url||String(input);return new URL(raw,'http://local.invalid').pathname.startsWith('/api/v1/');}catch{return false;}
+}
 export function advisorScopedFetch({session,fetchImpl,onDenied}){
   return async (...args)=>{
     const token=session.token,revision=session.authRevision,response=await fetchImpl(...args);
@@ -45,7 +48,9 @@ export function advisorScopedFetch({session,fetchImpl,onDenied}){
     if(!response.ok&&session.isAdvisorSession){
       let code;try{code=(await response.clone().json())?.detail?.code;}catch{}
       if(token!==session.token||revision!==session.authRevision)throw fail('CONTEXT_CHANGED');
-      if(response.status===401&&!code){
+      // Only the core auth/business API can declare the selected-customer session expired.
+      // Other services (e.g. distribution) may not accept advisor tokens; their bare 401 stays local.
+      if(response.status===401&&!code&&advisorCoreApi(args[0])){
         if(session.advisorScope==='advisor_tenant')code='ADVISOR_TENANT_SESSION_EXPIRED';
         else if(session.advisorScope==='advisor_identity'){session.logout();code='ADVISOR_IDENTITY_SESSION_EXPIRED';}
       }

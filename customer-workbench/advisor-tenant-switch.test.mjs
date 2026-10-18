@@ -65,3 +65,12 @@ test('bare identity 401 logs out instead of retrying expired identity credential
   assert.equal(logouts,1);assert.equal(session.token,'');
   assert.deepEqual(denied,['ADVISOR_IDENTITY_SESSION_EXPIRED']);
 });
+
+test('bare 401 from a non-core service (distribution) never clears the selected customer',async()=>{
+  const session={...fixture(),token:'business',advisorScope:'advisor_tenant',tenantId:15},denied=[];
+  const scoped=advisorScopedFetch({session,fetchImpl:async()=>response({detail:'Not authenticated'},401),onDenied:code=>denied.push(code)});
+  assert.equal((await scoped('/api/distribution/v1/bound-scopes?module=seo')).status,401);
+  assert.deepEqual(denied,[]);assert.equal(session.token,'business');assert.equal(session.tenantId,15);
+  await assert.rejects(scoped('/api/v1/seo/workbench/advisor-tasks?tenant_id=15'),{code:'ADVISOR_TENANT_SESSION_EXPIRED'});
+  assert.deepEqual(denied,['ADVISOR_TENANT_SESSION_EXPIRED']);
+});
