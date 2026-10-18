@@ -12,15 +12,15 @@ const ready=()=>({state:'ready',latest:{id:30,status:'succeeded',created_at:'202
   {kind:'article',url:'https://media.example.org/article',title:'示例制造技术文章',alive:true},
 ]}},weeks:Array.from({length:8},(_,i)=>({week:new Date(Date.UTC(2026,7,24+i*7)).toISOString().slice(0,10),status:'succeeded',summary:{brand_hit:1,core_hit:i%4}}))});
 const base='/api/v1/geo/projects/10/search-visibility';
-test('built GEO feature: role gates, save/run/CSV and twelve desktop/mobile screenshots',{timeout:120000},async()=>{
+test('built GEO feature: role hints, hidden customers, save/run/CSV and desktop/mobile layout',{timeout:120000},async()=>{
   const fixture=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true,args:['--no-sandbox']});
   const shots=process.env.GEO_VISIBILITY_SHOTS;
   if(shots)await fs.mkdir(shots,{recursive:true});
   try{
-    for(const scenario of ['advisor','customer-open','customer-closed','pending','empty','failure']){
-      const customer=scenario.startsWith('customer'),level=customer?'view':'edit';
-      const user={id:customer?12:7,tenant_id:1,display_name:customer?'客户':'顾问',permissions:{'geo.assets':level,'geo.content':level}};
-      const page=await browser.newPage(),errors=[],calls=[];let runs=0,csv=0,config={enabled:true,domains:['example.com'],zh_url:'https://example.com/cn',brand_terms:['示例制造'],core_terms:['工业减速机'],extra_article_urls:[],customer_visible:false};
+    for(const scenario of ['advisor','customer-open','customer-closed','advisor-off','advisor-service','admin-off','admin-service','customer-off','customer-service','empty','failure']){
+      const customer=scenario.startsWith('customer'),admin=scenario.startsWith('admin'),notEnabled=/-off$|-service$/.test(scenario),level=customer||admin?'view':'edit';
+      const user={id:customer?12:7,tenant_id:admin?null:1,display_name:customer?'客户':admin?'超管':'顾问',permissions:{'geo.assets':level,'geo.content':level,...(admin?{'settings.accounts':'edit','settings.customers':'edit'}:{})}};
+      const page=await browser.newPage(),errors=[],calls=[];let runs=0,csv=0,config={enabled:!scenario.endsWith('-off'),domains:['example.com'],zh_url:'https://example.com/cn',brand_terms:['示例制造'],core_terms:['工业减速机'],extra_article_urls:[],customer_visible:customer&&scenario!=='customer-closed'};
       page.on('pageerror',e=>errors.push(e.message));
       await page.evaluateOnNewDocument(user=>{sessionStorage.setItem('sem_auth_v1',JSON.stringify({version:1,token:'synthetic-only',user}));},user);
       await page.setRequestInterception(true);
@@ -29,13 +29,13 @@ test('built GEO feature: role gates, save/run/CSV and twelve desktop/mobile scre
         const send=(data,status=200)=>req.respond({status,contentType:'application/json',body:JSON.stringify(data)});
         if(url.pathname.startsWith('/api/'))calls.push({path:url.pathname,method:req.method(),body:req.postData()});
         if(url.pathname==='/api/v1/auth/me')return send({user});
-        if(url.pathname==='/api/v1/auth/modules')return send({tenant_id:1,modules:[{module_code:'geo',available:true}]});
+        if(url.pathname==='/api/v1/auth/modules')return send({tenant_id:user.tenant_id,modules:[{module_code:'geo',available:true}]});
         if(url.pathname==='/api/v1/geo/tenants')return send({tenants:[{id:1,name:'示例制造'}]});
         if(url.pathname==='/api/v1/geo/projects')return send({projects:[{id:10,tenant_id:1,name:'中文官网项目',status:'active'}]});
         if(url.pathname==='/api/v1/geo/workbench/onsite-tasks')return send({module:'geo',tenant_id:1,scope_id:10,can_create:!customer,items:[],next_before_id:null});
         if(url.pathname===base){
           if(scenario==='customer-closed')return send({state:'not_open',message:'暂未开放'});
-          if(scenario==='pending')return send({state:'not_enabled',message:'待启用'});
+          if(notEnabled)return send({state:'not_enabled',message:'待启用'});
           if(scenario==='empty')return send({state:'ready',latest:null,weeks:[]});
           const data=ready();if(scenario==='failure'){data.latest.status='failed';data.latest.error='余额不足';data.latest.result.summary.stopped_reason='余额不足';}
           return send(data);
@@ -54,13 +54,34 @@ test('built GEO feature: role gates, save/run/CSV and twelve desktop/mobile scre
       await page.waitForFunction(()=>document.body.textContent.includes('示例制造 / 中文官网项目'));
       if(scenario==='customer-closed'){
         await page.waitForFunction(()=>document.querySelector('.onsite-list')||document.body.textContent.includes('GEO 官网'));
-        assert.equal(await page.$('.sv-card'),null);assert(!calls.some(c=>c.path.endsWith('/config')));
+        assert.equal(await page.$('.sv-card'),null);
+        const hidden=await page.$eval('[data-search-visibility]',e=>e.innerHTML);assert.equal(hidden,'');
+        assert.doesNotMatch(await page.$eval('body',e=>e.textContent),/DeepSeek 搜索可见度|想开通请联系你的顾问|每周核对这个项目/);
+        assert(!calls.some(c=>c.path.endsWith('/config')));
       }else{
         await page.waitForSelector('.sv-card');
-        if(scenario==='pending')await page.waitForFunction(()=>document.querySelector('.sv-card')?.textContent.includes('待启用'));
+        if(notEnabled){
+          const expected=customer?'想开通请联系你的顾问':scenario.endsWith('-off')?'还没开启':'项目已开启';
+          await page.waitForFunction(expected=>document.querySelector('.sv-card')?.textContent.includes(expected),{},expected);
+          const text=await page.$eval('.sv-card',e=>e.textContent);
+          assert.doesNotMatch(text,/not_enabled|customer_visible|api_key|[A-Z][A-Z0-9]*_[A-Z_]+|HTTP|待启用/);
+          if(!customer&&scenario.endsWith('-off'))assert.match(text,/项目设置.*每周核对这个项目.*保存项目设置.*每周一北京时间早上 6 点/);
+          if(!customer&&scenario.endsWith('-service'))assert.match(text,admin?/超管联系技术人员在服务器上配置搜索服务/:/需要超管处理，请联系超管/);
+          if(admin)assert.equal(await page.$eval('.sv-card a',e=>e.getAttribute('href')),'/customer-workbench/?console=platform&page=costs');
+          else assert.equal(await page.$('.sv-card a'),null);
+          if(!customer){
+            await page.click('[data-sv=config]');
+            assert.equal(await page.$eval('[data-sv-field=customer_visible]',e=>e.checked),false);
+            assert.match(await page.$eval('.sv-form',e=>e.textContent),/前 4 周先由顾问核对/);
+            await page.click('[data-sv-field=enabled]');
+            await page.click('[data-sv=config]');
+            assert((await page.$eval('.sv-empty',e=>e.textContent)).includes(expected),'unsaved checkbox must not change the diagnosis');
+            assert(!calls.some(c=>c.method!=='GET'),'hint and settings inspection must remain read only');
+          }
+        }
         else if(scenario==='empty')await page.waitForFunction(()=>document.querySelector('.sv-card')?.textContent.includes('还没有检查记录'));
         else await page.waitForSelector('.sv-metrics');
-        if(customer){assert.equal(await page.$('[data-sv=config]'),null);assert.equal(await page.$('[data-sv=run]'),null);}
+        if(customer){assert(!calls.some(c=>c.path.endsWith('/config')));assert.equal(await page.$('[data-sv=config]'),null);assert.equal(await page.$('[data-sv=run]'),null);}
       }
       for(const [name,width,height] of [['desktop',1440,900],['mobile',390,844]]){
         await page.setViewport({width,height});

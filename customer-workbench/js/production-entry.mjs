@@ -5,7 +5,7 @@ import {session} from '@existing-host/session';
 import {watch} from 'vue';
 import {existingSessionBridge,createHostSessionAdapter} from './host-session-adapter.mjs';
 import {mountConnectedWorkbench} from './connected-workbench.mjs';
-import {entryScope,mountWorkbenchEntry,workbenchPath,workbenchLoginPath,geoWorkbenchPath} from './workbench-entry.mjs';
+import {entryScope,mountWorkbenchEntry,workbenchPath,workbenchLoginPath,geoWorkbenchPath,workspaceSelectionPath} from './workbench-entry.mjs';
 import {mountPlatformConsole} from './platform-console-view.mjs';
 import {mountAdvisorWorkbench} from './advisor-workbench.mjs';
 import {advisorScopedFetch} from './advisor-tenant-switch.mjs';
@@ -26,7 +26,7 @@ if((consoleValues.length===1&&consoleValues[0]==='advisor')||session.isAdvisorSe
   const bridge=existingSessionBridge({session,watch,getSiteId:()=>session.tenantId===tenantId?projectId:null});
   const host=createGeoHostAdapter({origin:location.origin,fetchImpl:advisorFetch,getSession:()=>{const s=bridge.getSession();return s?{...s,projectId:s.siteId}:null;},subscribeSession:bridge.subscribeSession,
     logout:()=>session.logout(),redirectToLogin:()=>location.assign(geoWorkbenchPath(tenantId,projectId)+(scope.onsiteTaskId?'&onsite_task_id='+scope.onsiteTaskId:'')+'&login=1')});
-  mounted=mountGeoWorkbench({root:document.querySelector('#app'),host,initialOnsiteTaskId:scope.onsiteTaskId,logout:()=>{session.logout();location.assign(geoWorkbenchPath()+'&login=1');}});
+  mounted=mountGeoWorkbench({root:document.querySelector('#app'),host,selectSpaceHref:workspaceSelectionPath(session),initialOnsiteTaskId:scope.onsiteTaskId,logout:()=>{session.logout();location.assign(geoWorkbenchPath()+'&login=1');}});
 }else if(!session.token||scope.invalid||scope.login||!tenantId||!siteId){
   mounted=mountWorkbenchEntry({root:document.querySelector('#app'),session});
 }else{
@@ -43,7 +43,7 @@ const host=createHostSessionAdapter({
 });
 mounted=mountConnectedWorkbench({root:document.querySelector('#app'),host,environmentLabel:'客户工作台',demoHref:null,
   initialOnsiteTaskId:scope.onsiteTaskId,
-  selectSpace:()=>location.assign('/customer-workbench/'),
+  selectSpace:()=>location.assign(workspaceSelectionPath(session)),
   logout:()=>{session.logout();location.assign(workbenchLoginPath());},
 });
 }
