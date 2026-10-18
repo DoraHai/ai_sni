@@ -43,7 +43,10 @@ WRITE_ROUTES: dict[tuple[str, str], WriteRule] = {}
 
 def _register(method, suffix, fields):
     template = "/api/v1/geo" + suffix
-    rule = WriteRule(method, template, frozenset(fields.split()), FORBIDDEN,
+    archive = method == "PATCH" and suffix in {"/facts/{fact_id}", "/prompts/{prompt_id}"}
+    if archive:
+        fields += " status"
+    rule = WriteRule(method, template, frozenset(fields.split()), FORBIDDEN - {"status"} if archive else FORBIDDEN,
                      ("geo.assets", "geo.content"), "project")
     WRITE_ROUTES[(method, template)] = rule
 
@@ -98,6 +101,10 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
         forbidden()
     from app.security.advisor_write_publish import check_fields as publish_fields
     publish_fields(rule, body)
+    if "status" in body:
+        allowed = {"active", "archived"} if rule.template == "/api/v1/geo/facts/{fact_id}" else {"active", "paused"}
+        if body["status"] not in allowed:
+            forbidden()
     if "trust_level" in body and body["trust_level"] not in ("draft", "needs_review"):
         forbidden()
     if "source" in body and body["source"] != "manual":

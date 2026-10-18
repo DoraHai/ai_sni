@@ -69,11 +69,17 @@ async def recheck_advisor_before_commit(session, ctx) -> None:
         # this still-uncommitted transaction before those reads, so a fresh
         # ownership check cannot silently discard handler changes. Any later
         # object/assignment rejection rolls this flush back along with the rest.
-        await session.flush()
+        deleting = rule.method == "DELETE" and bool(session.deleted)
+        if not deleting:
+            await session.flush()
         from app.module_scope import ensure_module_access
         from app.security.geo_advisor import check_scoped_write_objects
         await ensure_module_access(session, ctx, ctx.tenant_id, "geo")
         await check_scoped_write_objects(session, ctx, request, body, rule)
+        if deleting:
+            # Validate the still-existing target and lock its project before
+            # flushing DELETE. The authority/project locks survive the commit.
+            await session.flush()
 
 
 def bind_advisor_write_commit(session, ctx, request, body, rule, claims) -> None:

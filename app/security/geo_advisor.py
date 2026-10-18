@@ -164,7 +164,7 @@ async def check_manual_execution_scope(session, ctx, rule):
     these resources while any such execution chain is enabled.
     """
     resource = rule.template.removeprefix("/api/v1/geo/").split("/")[0]
-    if resource not in {"facts", "prompts", "optimization-businesses", "optimization-units", "content-tasks", "visibility-patrol", "content-imports"}:
+    if resource not in {"facts", "prompts", "optimization-businesses", "optimization-units", "content-tasks", "visibility-patrol", "content-imports", "answer-snapshots"}:
         return
     from app.models import Tenant, GeoProject, GeoVisibilityPatrolSettings, GeoOptimizationPeriod
     await session.scalar(select(Tenant.id).where(Tenant.id == ctx.tenant_id).with_for_update())

@@ -203,6 +203,23 @@ function handleRowAction(row, command) {
   if (command === 'distribution') return openDistribution(row)
   if (command === 'citations') return openCitations(row)
   if (command === 'archive') return archiveTask(row)
+  if (command === 'delete') return deleteTask(row)
+}
+
+async function deleteTask(row) {
+  const tenant = tenantId.value, id = row.id
+  try {
+    await ElMessageBox.confirm('确定删除这篇文章？母稿和渠道稿都会删除，删除后不能恢复。外部平台已发布的内容需要另行处理。', '删除文章', {
+      type: 'warning', confirmButtonText: '确定删除', cancelButtonText: '取消',
+    })
+    if (tenantId.value !== tenant) return
+    await deleteGeoContentTask(tenant, id, true)
+    if (tenantId.value !== tenant) return
+    ElMessage.success('文章已删除')
+    await load()
+  } catch (e) {
+    if (tenantId.value === tenant && e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '删除失败')
+  }
 }
 
 async function archiveTask(row) {
@@ -318,6 +335,7 @@ onMounted(load)
                         <el-dropdown-item command="distribution">分发记录</el-dropdown-item>
                         <el-dropdown-item command="citations">引用回流</el-dropdown-item>
                         <el-dropdown-item v-if="row.status !== 'archived'" command="archive" divided>归档</el-dropdown-item>
+                        <el-dropdown-item command="delete" divided>删除文章（不能恢复）</el-dropdown-item>
                       </el-dropdown-menu>
                     </template>
                   </el-dropdown>

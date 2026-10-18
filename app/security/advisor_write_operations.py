@@ -21,6 +21,8 @@ def rules():
         for (method, path), fields in DAILY.items()}
     from app.security.advisor_write_publish import rules as publish_rules
     result.update(publish_rules())
+    from app.security.advisor_write_delete import rules as delete_rules
+    result.update(delete_rules())
     return result
 
 
@@ -39,9 +41,11 @@ async def read_contract(request, rule):
         query.add("channel")
     if rule.template in {VARIANTS, PUSH_BATCH}:
         query.add("run_async")
+    if rule.method == "DELETE" and rule.template == PREFIX:
+        query.add("hard")
     seen = set()
     for key, value in request.query_params.multi_items():
-        if key in seen or key not in query or (key in {"require_channels", "run_async"} and value not in {"true", "false"}):
+        if key in seen or key not in query or (key in {"require_channels", "run_async", "hard"} and value not in {"true", "false"}):
             deny(403, "ADVISOR_WRITE_FIELD_FORBIDDEN", "请只提交这个操作支持的参数")
         seen.add(key)
     raw = await request.body()
