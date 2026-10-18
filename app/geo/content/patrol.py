@@ -563,6 +563,8 @@ async def execute_patrol_run(
             )
         )
         if not engine_rows:
+            if advisor_prompt_ids is not None:
+                raise AdvisorVisibilityUnavailable('检测引擎配置已变化，请重新发起检测')
             for item in default_engine_rows(row.tenant_id):
                 eng = GeoTrackingEngine(**item)
                 session.add(eng)
@@ -710,9 +712,10 @@ async def execute_patrol_run(
                     # W3: tenant monitoring_stance constrains persona fallback
                     stance = "hybrid"
                     try:
-                        from app.geo.content.ai_settings import ensure_ai_setting
+                        from app.geo.content.ai_settings import ensure_ai_setting, get_ai_setting_row
 
-                        ai_row = await ensure_ai_setting(session, row.tenant_id)
+                        ai_row = await (get_ai_setting_row(session, row.tenant_id)
+                            if advisor_prompt_ids is not None else ensure_ai_setting(session, row.tenant_id))
                         stance = (
                             getattr(ai_row, "monitoring_stance", None) or "hybrid"
                         )
