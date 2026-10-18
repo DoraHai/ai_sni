@@ -199,6 +199,29 @@ def test_default_flags_and_old_switch_tokens_are_closed(db):
     assert client.get("/api/v1/auth/me", headers=headers(legacy)).status_code == 401
 
 
+def test_no_table_preserves_unrelated_role_edits_and_unbound_non_advisors(db):
+    client, factory, _ = db
+    async def prepare():
+        async with factory() as s:
+            from sqlalchemy import text
+            (await s.get(User, 3)).tenant_id = None
+            await s.execute(text("DROP TABLE advisor_tenant_grants"))
+            await s.commit()
+    run(prepare())
+    admin = headers(token(advisor=False, user_id=2))
+    assert client.get("/api/v1/auth/me", headers=headers(token(advisor=False, user_id=3))).status_code == 200
+    assert client.patch("/api/v1/roles/3", headers=admin, json={
+        "permissions": {"optimize.keywords": "edit"}}).status_code == 200
+    assert client.patch("/api/v1/roles/1", headers=admin, json={
+        "description": "只改说明"}).status_code == 200
+    for rid, permissions in ((3, {"seo.site": "edit", "seo.content": "edit"}),
+                             (1, {"seo.site": "view"})):
+        response = client.patch(f"/api/v1/roles/{rid}", headers=admin,
+                                json={"permissions": permissions})
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "ADVISOR_ROLE_CHANGE_FROZEN"
+
+
 @pytest.mark.parametrize("claims", [
     {"aud": "bad"}, {"scope_kind": "bad"}, {"gid": True}, {"tid": False},
     {"auth_exp": 0}, {"exp": True}, {"sub": "0"}, {"sub": "-1"},

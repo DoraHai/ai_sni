@@ -320,7 +320,7 @@ async def _build_context(user: User, session: AsyncSession, payload: dict | None
         try:
             rows = await read_grants(session, user.id)
         except HTTPException:
-            if advisor or user.tenant_id is None:
+            if advisor:
                 raise
     scope = None
     tenant_id = user.tenant_id
