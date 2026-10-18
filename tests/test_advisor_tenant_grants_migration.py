@@ -176,7 +176,7 @@ def test_native_pg_constraints_irreversible_history_backfill_and_exact_acl():
                 regrant = await conn.scalar(text("INSERT INTO advisor_tenant_grants(user_id,tenant_id,granted_by,grant_source) VALUES (1,1,99,'admin') RETURNING id"))
                 assert regrant != original
                 await conn.execute(text('RESET ROLE'))
-                await conn.execute(text("INSERT INTO roles VALUES (8,'invalid',false,'[]'::jsonb)"))
+                await conn.execute(text("INSERT INTO roles VALUES (100,'invalid',false,'[]'::jsonb)"))
                 with pytest.raises(Exception):
                     async with conn.begin_nested():
                         await conn.execute(text(preflight))
