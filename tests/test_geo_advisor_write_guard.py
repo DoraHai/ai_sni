@@ -103,7 +103,7 @@ async def sandbox(tmp_path, monkeypatch, *, enabled=True):
         return {"body": body, "scoped": hasattr(request.state, "advisor_scoped_write")}
     for method, path in WRITE_ROUTES:
         app.add_api_route(path, endpoint, methods=[method])
-    app.add_api_route("/api/v1/geo/content-tasks/{task_id}/ai-review", endpoint, methods=["POST"])
+    app.add_api_route("/api/v1/geo/content-tasks/{task_id}/not-reviewed", endpoint, methods=["POST"])
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             async def request(path, body, *, method="POST", auth=None, query="tenant_id=10"):
@@ -202,7 +202,7 @@ def test_real_commit_hook_reloads_authority_and_rolls_back(tmp_path, monkeypatch
 def test_unlisted_missing_assignment_and_native_contexts(tmp_path, monkeypatch):
     async def run():
         async with sandbox(tmp_path, monkeypatch) as (request, _, state, calls):
-            r = await request("/content-tasks/1/ai-review", {})
+            r = await request("/content-tasks/1/not-reviewed", {})
             assert r.status_code == 403 and not calls
             state["unassigned"] = True
             assert (await request("/facts", {"tenant_id": 10})).status_code == 403
