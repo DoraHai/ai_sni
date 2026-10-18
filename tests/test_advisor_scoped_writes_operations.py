@@ -93,3 +93,19 @@ def test_project_metadata_keeps_patrol_guard(tmp_path, monkeypatch):
             response = await env.request("PATCH", "/projects/10", body={"domain": "changed.example.test"})
             assert response.status_code == 403, response.text
     asyncio.run(run())
+
+
+def test_audit_emits_with_default_python_warning_logging():
+    import subprocess
+    import sys
+    script = """
+import logging
+from app.security.advisor_write_audit import record
+logging.getLogger().setLevel(logging.WARNING)
+record({'geo_advisor_actor': (1, 10), 'method': 'POST', 'path': '/api/v1/geo/content-tasks/10/check',
+        'path_params': {'task_id': 10}}, 'committed')
+"""
+    result = subprocess.run([sys.executable, "-c", script], env={}, capture_output=True, text=True, check=True)
+    event = json.loads(result.stderr)
+    assert event["advisor_user_id"] == 1 and event["tenant_id"] == 10
+    assert event["result"] == "committed" and event["object_ids"] == {"task_id": 10}
