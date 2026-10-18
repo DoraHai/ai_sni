@@ -1011,7 +1011,7 @@ async def semantic_history(tenant_id: PositiveInt, site_id: PositiveInt, ctx=Aut
     from app.seo_ai_operations import RESULT_RETENTION
     rows = list(await session.scalars(select(SeoAiOperation).where(
         SeoAiOperation.tenant_id == tenant_id, SeoAiOperation.site_id == site_id,
-        SeoAiOperation.actor == actor_key(ctx), SeoAiOperation.kind == 'qa_semantic')
+        SeoAiOperation.actor == actor_key(ctx), SeoAiOperation.kind.in_(['qa_semantic', 'advisor_qa_semantic']))
         .order_by(SeoAiOperation.created_at.desc(), SeoAiOperation.id).limit(20)))
     return {'items':[{'id':r.id, 'status':r.status, 'created_at':r.created_at.replace(tzinfo=timezone.utc).isoformat(),
         'has_result':r.status == 'succeeded' and r.result is not None and r.completed_at is not None
@@ -1026,7 +1026,7 @@ async def semantic_result(operation_id: str, tenant_id: PositiveInt, site_id: Po
     from app.seo_ai_operations import retained_result
     row = await session.scalar(select(SeoAiOperation).where(
         SeoAiOperation.id == operation_id, SeoAiOperation.tenant_id == tenant_id,
-        SeoAiOperation.site_id == site_id, SeoAiOperation.actor == actor_key(ctx), SeoAiOperation.kind == 'qa_semantic'))
+        SeoAiOperation.site_id == site_id, SeoAiOperation.actor == actor_key(ctx), SeoAiOperation.kind.in_(['qa_semantic', 'advisor_qa_semantic'])))
     if row is None:
         raise HTTPException(404, '分析记录不存在或不属于当前范围')
     if row.status != 'succeeded':
@@ -1217,7 +1217,7 @@ async def research_record(session,ctx,tenant_id,site_id,operation_id,lock=False)
     from app.models.seo import SeoAiOperation
     from app.seo_task_center import actor_key
     query=select(SeoAiOperation).where(SeoAiOperation.id==operation_id,SeoAiOperation.tenant_id==tenant_id,
-        SeoAiOperation.site_id==site_id,SeoAiOperation.actor==actor_key(ctx),SeoAiOperation.kind.in_(['qa_extract','qa_quality']))
+        SeoAiOperation.site_id==site_id,SeoAiOperation.actor==actor_key(ctx),SeoAiOperation.kind.in_(['qa_extract','qa_quality','advisor_qa_extract','advisor_qa_quality']))
     if lock: query=query.with_for_update().execution_options(populate_existing=True)
     row=await session.scalar(query)
     if row is None: raise HTTPException(404,'当前账号与站点下未找到分析记录')
@@ -1233,7 +1233,7 @@ async def research_history(tenant_id:PositiveInt,site_id:PositiveInt,kind:Litera
     from app.seo_task_center import actor_key
     from app.seo_ai_operations import RESULT_RETENTION
     query=select(SeoAiOperation).where(SeoAiOperation.tenant_id==tenant_id,SeoAiOperation.site_id==site_id,
-        SeoAiOperation.actor==actor_key(ctx),SeoAiOperation.kind=='qa_'+kind)
+        SeoAiOperation.actor==actor_key(ctx),SeoAiOperation.kind.in_(['qa_'+kind, 'advisor_qa_'+kind]))
     if answer_id is not None: query=query.where(SeoAiOperation.result['answer_id'].as_integer()==answer_id)
     rows=list(await session.scalars(query.order_by(SeoAiOperation.created_at.desc(),SeoAiOperation.id).limit(20)))
     return {'items':[{'id':r.id,'status':r.status,'created_at':r.created_at.replace(tzinfo=timezone.utc).isoformat(),
@@ -1247,7 +1247,7 @@ async def research_result(operation_id:str,tenant_id:PositiveInt,site_id:Positiv
     from app.seo_ai_operations import retained_result
     row=await research_record(session,ctx,tenant_id,site_id,operation_id)
     result=retained_result(row)
-    return {**result,'current':await quality_snapshot_current(session,tenant_id,site_id,result)} if row.kind=='qa_quality' else result
+    return {**result,'current':await quality_snapshot_current(session,tenant_id,site_id,result)} if row.kind in {'qa_quality','advisor_qa_quality'} else result
 
 
 @router.post('/research/{operation_id}/accept')
@@ -1256,7 +1256,7 @@ async def accept_document_candidates(operation_id:str,req:AcceptCandidates,ctx=A
     from app.seo_ai_operations import retained_result, _module
     await _module(session,req.tenant_id)  # Match operation cleanup lock ordering.
     row=await research_record(session,ctx,req.tenant_id,req.site_id,operation_id,True)
-    if row.kind!='qa_extract': raise HTTPException(422,'只有资料提取结果可以入库')
+    if row.kind not in {'qa_extract','advisor_qa_extract'}: raise HTTPException(422,'只有资料提取结果可以入库')
     saved=retained_result(row);candidates=saved['candidates']
     if any(i>=len(candidates) for i in req.indices): raise HTTPException(422,'候选编号不存在')
     accepted=dict(saved.get('accepted') or {})

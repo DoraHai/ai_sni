@@ -44,10 +44,16 @@ async def fresh_context(session, ctx, *, lock=False):
     role = await session.get(Role, user.role_id, populate_existing=True, **locks) if user else None
     if not user or not user.is_active or not role:
         raise ai.problem(403, "onsite_advisor_identity_expired", "顾问身份已失效")
+    if ctx.is_advisor:
+        from dataclasses import replace
+        from app.security.advisor_seo_scope import is_advisor_role
+        if not is_advisor_role(role):
+            raise ai.problem(403, "ADVISOR_ROLE_CHANGED", "顾问权限已变化，请重新登录")
+        return replace(ctx, role_name=role.name, permissions=dict(role.permissions or {}))
     return AuthContext(user.id, user.username, role.name, user.tenant_id, dict(role.permissions or {}))
 
 
-def advisor_query(user_id):
+def advisor_query(user_id, *, advisor=False):
     # All ownership/assignment/entitlement filters precede the cursor and LIMIT.
     return (select(SeoTask, SeoSite, Tenant.name).join(SeoSite, and_(
         SeoTask.site_id == SeoSite.id, SeoTask.tenant_id == SeoSite.tenant_id))
@@ -61,14 +67,14 @@ def advisor_query(user_id):
         .join(Role, Role.id == User.role_id)
         .where(SeoTask.action_type == onsite.ACTION_TYPE, SeoTask.module == "seo",
             SeoTask.params["onsite"]["schema"].astext == "1",
-            User.is_active.is_(True), or_(User.tenant_id.is_(None), User.tenant_id == SeoTask.tenant_id),
+            User.is_active.is_(True), True if advisor else or_(User.tenant_id.is_(None), User.tenant_id == SeoTask.tenant_id),
             Role.permissions["seo.site"].astext == "edit", Role.permissions["seo.content"].astext == "edit",
             SeoSite.status == "active", TenantModule.status.in_(["active", "trial"]),
             or_(TenantModule.expires_at.is_(None), TenantModule.expires_at >= date.today())))
 
 
-def summary(row, site, tenant_name, can_ai=True):
-    result = onsite.public(row, True, site.site_settings, can_ai)
+def summary(row, site, tenant_name, can_ai=True, *, advisor=False):
+    result = onsite.public(row, True, site.site_settings, can_ai, advisor=advisor)
     w = result["workflow"]
     next_action = {"draft": "save_proposal", "review": "approve", "implementation": "implement",
                    "recheck": "recheck", "acceptance": "accept"}.get(w["phase"])
@@ -92,7 +98,7 @@ async def advisor_tasks(before_id: PositiveInt | None = None, limit: int = Query
     if tenant_id is not None:
         ctx.ensure_tenant(tenant_id)
         fresh.ensure_tenant(tenant_id)
-    query = advisor_query(fresh.user_id)
+    query = advisor_query(fresh.user_id, advisor=ctx.is_advisor)
     if ctx.tenant_id is not None:
         query = query.where(SeoTask.tenant_id == ctx.tenant_id)
     if tenant_id is not None:
@@ -101,7 +107,7 @@ async def advisor_tasks(before_id: PositiveInt | None = None, limit: int = Query
         query = query.where(SeoTask.id < before_id)
     rows = list((await session.execute(query.order_by(SeoTask.id.desc()).limit(limit + 1)
                                       .execution_options(populate_existing=True))).all())
-    return {"schema": 1, "module": "seo", "items": [summary(*r, can_ai=fresh.can_view("seo.keywords")) for r in rows[:limit]],
+    return {"schema": 1, "module": "seo", "items": [summary(*r, can_ai=fresh.can_view("seo.keywords"), advisor=ctx.is_advisor) for r in rows[:limit]],
             "next_before_id": rows[limit - 1][0].id if len(rows) > limit else None}
 
 
@@ -191,7 +197,7 @@ async def ai_proposal(task_id: PositiveInt, req: Request,
                      "error": {"code": "onsite_ai_interrupted", "message": "原调用未完成核实，不会自动重试"}}
             save_run(row, prior)
             await session.commit()
-        return {**onsite.public(row, True, site.site_settings), "replayed": True,
+        return {**onsite.public(row, True, site.site_settings, advisor=ctx.is_advisor), "replayed": True,
                 "request_run": public_run(prior)}
     if w["revision"] != req.expected_revision:
         raise ai.problem(409, "onsite_ai_revision_changed", "任务版本已变化，请重新读取核对")
@@ -214,7 +220,8 @@ async def ai_proposal(task_id: PositiveInt, req: Request,
              "source_revision": w["revision"], "source_hash": work.proposal_hash(facts),
              "provider_metadata": provider_metadata,
              "actor_user_id": fresh.user_id, "started_at": ai.now().isoformat(), "finished_at": None}
-    site.site_settings = ai.reserve(site.site_settings)
+    if not getattr(ctx, "is_advisor", False):
+        site.site_settings = ai.reserve(site.site_settings)
     row.params = {**row.params, "onsite": {**row.params["onsite"], "ai_run": {"request_id": key}}}
     save_run(row, claim)
     await session.commit()  # Durable nonce/quota BEFORE provider; release all row locks.
@@ -267,4 +274,4 @@ async def ai_proposal(task_id: PositiveInt, req: Request,
     await session.commit()
     if cancelled:
         raise asyncio.CancelledError()
-    return {**onsite.public(row, True, site.site_settings), "replayed": False}
+    return {**onsite.public(row, True, site.site_settings, advisor=ctx.is_advisor), "replayed": False}

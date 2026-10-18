@@ -72,7 +72,7 @@ def provider_route():
         raise problem(503, "onsite_ai_not_configured", "站内方案 AI 尚未配置可用供应商") from None
 
 
-def capabilities(w, can_write, site_settings=None, request_count=0):
+def capabilities(w, can_write, site_settings=None, request_count=0, *, advisor=False):
     try:
         provider_route()
         enabled = True
@@ -90,12 +90,12 @@ def capabilities(w, can_write, site_settings=None, request_count=0):
         reason = "任务已结束"
     elif run.get("state") == "running":
         reason = "方案正在生成；结果不明时请先核对原请求"
-    elif used >= DAILY_LIMIT:
+    elif not advisor and used >= DAILY_LIMIT:
         reason = "本站今日 AI 方案次数已达上限"
     elif len(w.get("history", [])) >= 100 or request_count >= REQUEST_LIMIT:
         reason = "任务历史已达上限"
     return {"ai_planning": {"enabled": enabled, "can_generate": reason is None,
-                            "reason": reason, "daily_limit": DAILY_LIMIT},
+                            "reason": reason, "daily_limit": 10 if advisor else DAILY_LIMIT},
             "website_execution": {"enabled": False, "status": "reserved",
                                   "reason": "官网自动修改暂未接入，按批准方案人工实施"}}
 

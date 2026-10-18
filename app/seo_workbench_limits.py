@@ -12,7 +12,7 @@ from app.seo_ai_operations import (_module, _refund, retained_result, request_fi
 from app.seo_usage_limits import (SEO_USAGE_KEY, SEO_USAGE_TIMEZONE, WORKBENCH_CHAT_KIND,
                                   WORKBENCH_CHAT_RESOURCE, workbench_user_resource)
 
-CHAT_KINDS = (WORKBENCH_CHAT_KIND, "workbench_chat")
+CHAT_KINDS = (WORKBENCH_CHAT_KIND, "workbench_chat", "advisor_workbench_chat")
 ADMISSION_KEY = "workbench_chat_admission"
 
 
@@ -22,6 +22,7 @@ def limited(code, message, retry_after):
 
 
 async def claim_workbench_chat(session, tenant_id, *, request_key, payload, actor, settings):
+    advisor = getattr(session, "_seo_advisor_ai_kind", None) is not None
     module = await _module(session, tenant_id)
     fingerprint = request_fingerprint(payload)
     now = datetime.utcnow()
@@ -88,21 +89,21 @@ async def claim_workbench_chat(session, tenant_id, *, request_key, payload, acto
     midnight = (utc_now.astimezone(SEO_USAGE_TIMEZONE)
                 + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     retry_daily = midnight.timestamp() - timestamp
-    if user_used >= settings.seo_workbench_chat_requests_per_user_per_day:
+    if not advisor and user_used >= settings.seo_workbench_chat_requests_per_user_per_day:
         await session.rollback()
         raise limited("assistant_user_daily_limit", "今天的账号 AI 对话额度已用完，明天恢复", retry_daily)
-    if tenant_used >= settings.seo_workbench_chat_requests_per_tenant_per_day:
+    if not advisor and tenant_used >= settings.seo_workbench_chat_requests_per_tenant_per_day:
         await session.rollback()
         raise limited("assistant_tenant_daily_limit", "今天的客户 AI 对话额度已用完，明天恢复", retry_daily)
-    usage[WORKBENCH_CHAT_RESOURCE] = tenant_used + 1
-    usage[user_key] = user_used + 1
+    usage[WORKBENCH_CHAT_RESOURCE] = tenant_used + (0 if advisor else 1)
+    usage[user_key] = user_used + (0 if advisor else 1)
     admission[actor] = [*recent, timestamp]
     config[SEO_USAGE_KEY] = usage
     config[ADMISSION_KEY] = admission
     module.module_settings = config
     operation_id = str(uuid4())
     session.add(SeoAiOperation(id=operation_id, tenant_id=tenant_id, site_id=payload.get("site_id"),
-        request_key=request_key, request_hash=fingerprint, actor=actor, kind=WORKBENCH_CHAT_KIND,
+        request_key=request_key, request_hash=fingerprint, actor=actor, kind="advisor_workbench_chat" if advisor else WORKBENCH_CHAT_KIND,
         charged_on=today, status="running", expires_at=now + timedelta(seconds=120)))
     await session.commit()
     return {"date": today, "used": tenant_used + 1, "limit": settings.seo_workbench_chat_requests_per_tenant_per_day,

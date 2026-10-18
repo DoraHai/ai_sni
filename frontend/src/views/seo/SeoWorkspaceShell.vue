@@ -279,6 +279,7 @@ onMounted(refreshCurrentUser)
         </div>
       </header>
       <main class="seo-content">
+        <p v-if="session.isAdvisorSession && renderRoute" class="advisor-quota-note">AI 建议：每位顾问每个客户每天共 10 次，按北京时间零点恢复。生成母稿不限次数。</p>
         <section v-if="!renderRoute" class="scope-gate" role="status">
           <strong>{{ accessState === 'checking' ? '正在核对 SEO 访问范围' : accessState === 'no-active-site' ? '当前客户没有可用的 SEO 网站' : '当前客户无法显示 SEO 数据' }}</strong>
           <p>{{ accessState === 'checking' ? '完成模块有效期和网站归属校验后再显示数据。' : accessState === 'no-active-site' ? '只有 active 网站可以进入 SEO 数据页。' : accessError }}</p>
@@ -293,6 +294,7 @@ onMounted(refreshCurrentUser)
 </template>
 
 <style scoped>
+.advisor-quota-note { margin: 0 0 12px; color: #526078; font-size: 13px; }
 .seo-workspace {
   --accent: #2658d7;
   --accent-soft: #edf3ff;
