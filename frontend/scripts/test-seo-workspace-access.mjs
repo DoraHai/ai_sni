@@ -9,6 +9,57 @@ import {
   selectOwnedSeoSite,
 } from '../src/views/seo/seoWorkspaceAccess.js'
 
+test('URL customer overrides memory only after eligibility and site ownership validation', async () => {
+  const events = [], calls = []
+  const access = createSeoWorkspaceAccess({
+    fetchTenants: async () => ({ tenants: [{ id: 1 }, { id: 15 }] }),
+    fetchSites: async id => { calls.push(id); return { sites: [{ id: 6, status: 'active' }] } },
+    selectTenant: id => events.push(['select', id]), reset() {},
+    ready: value => events.push(['ready', value.tenantId, value.siteId]),
+    noSite() { assert.fail('unexpected no site') }, unavailable() { assert.fail('unexpected denial') },
+  })
+  await access.validate({ tenantId: 1, urlTenantId: '15', requestedSiteId: '6', strictSite: true })
+  assert.deepEqual(events, [['select', 15]])
+  assert.deepEqual(calls, [])
+  await access.validate({ tenantId: 15, urlTenantId: '15', requestedSiteId: '6', strictSite: true })
+  assert.deepEqual(events.at(-1), ['ready', 15, 6])
+  assert.deepEqual(calls, [15])
+})
+
+test('inaccessible, malformed and bound-account URL customers never fall back', async () => {
+  for (const urlTenantId of ['99', '', '0', '-1', '1.5', ['15'], ['1', '15'], '9007199254740993']) {
+    const events = []
+    const access = createSeoWorkspaceAccess({
+      fetchTenants: async () => ({ tenants: [{ id: 1 }, { id: 15 }] }),
+      fetchSites() { assert.fail('must not request sites') }, selectTenant() { assert.fail('must not switch') },
+      reset() {}, ready() { assert.fail('must not mount') }, noSite() {},
+      unavailable: value => events.push(value),
+    })
+    await access.validate({ tenantId: 1, urlTenantId, requestedSiteId: '6', strictSite: true })
+    assert.match(events[0].error.message, /地址里的客户/)
+  }
+  let denied = false
+  const bound = createSeoWorkspaceAccess({
+    fetchTenants: async () => ({ tenants: [{ id: 1 }, { id: 15 }] }), boundTenantId: () => 1,
+    fetchSites() { assert.fail('must not request sites') }, selectTenant() { assert.fail('must not switch') },
+    reset() {}, ready() { assert.fail('must not mount') }, noSite() {}, unavailable() { denied = true },
+  })
+  await bound.validate({ tenantId: 1, urlTenantId: '15' })
+  assert(denied)
+})
+
+test('explicit foreign, inactive and malformed sites block the page, while manual recovery retains defaults', async () => {
+  for (const requestedSiteId of ['999', '7', '', '0', ['6'], ['6', '7']]) {
+    const { access, events } = harness(async () => ({ sites: [{ id: 6, status: 'active' }, { id: 7, status: 'paused' }] }))
+    await access.validate({ tenantId: 15, requestedSiteId, strictSite: true })
+    assert.equal(events.at(-1)[0], 'unavailable')
+    assert.match(events.at(-1)[1].error, /地址里的网站/)
+    await access.validate({ tenantId: 15 })
+    assert.equal(events.at(-1)[0], 'ready')
+    assert.equal(events.at(-1)[1].siteId, 6)
+  }
+})
+
 test('site management remains available before the first active site exists', () => {
   assert.equal(canRenderSeoRoute('no-active-site', '/seo/sites'), true)
   assert.equal(canRenderSeoRoute('no-active-site', '/seo/dashboard'), false)
@@ -186,7 +237,8 @@ test('workspace shell gates child views and uses the workbench site selector', a
   assert.match(source, /<section v-if="!renderRoute"/)
   assert.match(source, /<router-view v-else/)
   assert.match(source, /fetchSeoWorkbenchSites\(tenantId\)/)
-  assert.match(source, /reconcileSeoRouteSite\(\{[\s\S]*selectableStatuses: selectableSiteStatuses\.value/)
+  assert.match(source, /urlTenantId: Object.hasOwn\(route.query, 'tenant_id'\)/)
+  assert.match(source, /strictSite: Object.hasOwn\(route.query, 'site_id'\)/)
   assert.match(source, /clearSeoSiteId\(\)/)
 })
 

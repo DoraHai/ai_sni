@@ -1,6 +1,7 @@
 function positiveId(value) {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !/^\d+$/.test(value))) return null
   const id = Number(value)
-  return Number.isInteger(id) && id > 0 ? id : null
+  return Number.isSafeInteger(id) && id > 0 ? id : null
 }
 
 export function canRenderSeoRoute(accessState, routePath) {
@@ -39,7 +40,7 @@ export function reconcileSeoRouteSite({
 export function createSeoWorkspaceAccess({ fetchSites, fetchTenants, selectTenant, boundTenantId, reset, ready, noSite, unavailable }) {
   let generation = 0
 
-  async function validate({ tenantId, requestedSiteId = null }) {
+  async function validate({ tenantId, requestedSiteId = null, urlTenantId = undefined, strictSite = false }) {
     const scopeTenantId = positiveId(tenantId)
     const ticket = ++generation
     reset({ tenantId: scopeTenantId })
@@ -51,10 +52,15 @@ export function createSeoWorkspaceAccess({ fetchSites, fetchTenants, selectTenan
         eligibleTenants = Array.isArray(response?.tenants) ? response.tenants : []
         const bound = positiveId(boundTenantId?.())
         const allowed = eligibleTenants.filter((tenant) => !bound || positiveId(tenant.id) === bound)
-        const selected = allowed.find((tenant) => positiveId(tenant.id) === scopeTenantId) || allowed[0]
+        const hasUrlTenant = urlTenantId !== undefined
+        const requestedTenant = hasUrlTenant ? positiveId(urlTenantId) : scopeTenantId
+        const selected = allowed.find((tenant) => positiveId(tenant.id) === requestedTenant)
+          || (!hasUrlTenant ? allowed[0] : null)
         const selectedId = positiveId(selected?.id)
         if (!selectedId) {
-          unavailable({ tenantId: scopeTenantId, error: new Error('当前账号没有已开通 SEO 的客户'), tenants: eligibleTenants })
+          unavailable({ tenantId: scopeTenantId, error: new Error(hasUrlTenant
+            ? '地址里的客户无权访问或未开通 SEO，请在右上角手动选择客户'
+            : '当前账号没有已开通 SEO 的客户'), tenants: allowed })
           return
         }
         if (selectedId !== scopeTenantId) {
@@ -78,6 +84,10 @@ export function createSeoWorkspaceAccess({ fetchSites, fetchTenants, selectTenan
         ? response.selection_policy.selectable_statuses
         : ['active']
       const siteId = selectOwnedSeoSite(sites, requestedSiteId, selectableStatuses)
+      if (strictSite && (!positiveId(requestedSiteId) || siteId !== positiveId(requestedSiteId))) {
+        unavailable({ tenantId: scopeTenantId, error: new Error('地址里的网站不属于该客户或不可用，请在右上角手动选择客户后重新选择网站'), tenants })
+        return
+      }
       const result = {
         tenantId: scopeTenantId,
         sites,

@@ -6,7 +6,7 @@ import client from '../../api/client'
 import { fetchSeoWorkbenchSites } from '../../api/moduleAssets'
 import { session } from '../../store/session'
 import { clearSeoSiteId, currentSeoSiteId, seoSitesRevision } from './seoSiteContext'
-import { canRenderSeoRoute, createSeoWorkspaceAccess, reconcileSeoRouteSite } from './seoWorkspaceAccess'
+import { canRenderSeoRoute, createSeoWorkspaceAccess } from './seoWorkspaceAccess'
 
 const route = useRoute()
 const router = useRouter()
@@ -86,6 +86,7 @@ const tenantName = computed(() => (
 ))
 const showTenantSelect = computed(() => session.isLoggedIn && (
   seoTenants.value.length > 1
+  || accessState.value === 'unavailable'
   || (session.tenantId && !seoTenants.value.some((tenant) => tenant.id === session.tenantId))
 ))
 
@@ -100,13 +101,6 @@ function active(path) {
 function navigate(path) {
   mobileOpen.value = false
   router.push({ path, query: currentSeoSiteId.value ? { site_id: currentSeoSiteId.value } : {} })
-}
-
-function removeSiteQuery() {
-  if (!route.query.site_id) return
-  const query = { ...route.query }
-  delete query.site_id
-  void router.replace({ path: route.path, query })
 }
 
 const access = createSeoWorkspaceAccess({
@@ -125,7 +119,6 @@ const access = createSeoWorkspaceAccess({
     clearSeoSiteId()
     sessionStorage.removeItem('seo_pending_rewrite_source')
     sessionStorage.removeItem('seo_pending_rewrite_options')
-    removeSiteQuery()
   },
   ready({ tenantId, sites, tenants, selectableStatuses, siteId }) {
     if (tenantId !== session.tenantId) return
@@ -156,7 +149,12 @@ const access = createSeoWorkspaceAccess({
 
 function validateCurrentScope() {
   const requestedSiteId = Number(route.query.site_id) || currentSeoSiteId.value || null
-  void access.validate({ tenantId: session.tenantId, requestedSiteId })
+  void access.validate({
+    tenantId: session.tenantId,
+    requestedSiteId: Object.hasOwn(route.query, 'site_id') ? route.query.site_id : requestedSiteId,
+    urlTenantId: Object.hasOwn(route.query, 'tenant_id') ? route.query.tenant_id : undefined,
+    strictSite: Object.hasOwn(route.query, 'site_id'),
+  })
 }
 
 async function refreshCurrentUser() {
@@ -168,13 +166,14 @@ async function refreshCurrentUser() {
 }
 
 async function onTenantChange(value) {
-  if (!value || value === session.tenantId) return
+  if (!value || (value === session.tenantId && accessState.value === 'ready')) return
   access.invalidate()
   clearSeoSiteId()
   sessionStorage.removeItem('seo_pending_rewrite_source')
   sessionStorage.removeItem('seo_pending_rewrite_options')
   const query = { ...route.query }
   delete query.site_id
+  delete query.tenant_id
   if (route.path.startsWith('/seo/keywords/')) {
     await router.replace('/seo/keywords')
   } else if (route.path === '/seo/content/editor') {
@@ -185,6 +184,7 @@ async function onTenantChange(value) {
     await router.replace({ path: route.path, query })
   }
   session.setTenant(value)
+  validateCurrentScope()
 }
 
 watch(() => route.path, () => { mobileOpen.value = false })
@@ -192,27 +192,7 @@ watch(() => session.tenantId, validateCurrentScope, { immediate: true })
 watch(seoSitesRevision, validateCurrentScope)
 watch(() => session.authRevision, validateCurrentScope)
 watch(() => session.tenantListRevision, validateCurrentScope)
-watch(() => route.query.site_id, (value, previous) => {
-  const requestedSiteId = Number(value) || null
-  if (requestedSiteId === (Number(previous) || null)) return
-  if (accessState.value === 'ready') {
-    reconcileSeoRouteSite({
-      sites: validatedSites.value,
-      selectableStatuses: selectableSiteStatuses.value,
-      requestedSiteId,
-      selectSite: (siteId) => { currentSeoSiteId.value = siteId },
-      replaceSiteQuery: (siteId) => {
-        void router.replace({ path: route.path, query: { ...route.query, site_id: String(siteId) } })
-      },
-      noSite: () => {
-        clearSeoSiteId()
-        accessState.value = 'no-active-site'
-      },
-    })
-    return
-  }
-  validateCurrentScope()
-})
+watch(() => [route.query.tenant_id, route.query.site_id], validateCurrentScope)
 watch(currentSeoSiteId, (siteId) => {
   if (accessState.value !== 'ready' || (!session.tenantId && !siteId)) return
   const routeSiteId = Number(route.query.site_id) || null
@@ -275,7 +255,8 @@ onMounted(refreshCurrentUser)
         <div class="topbar-actions">
           <label v-if="showTenantSelect" class="tenant-select">
             <span>客户</span>
-            <select :value="session.tenantId || ''" @change="onTenantChange(Number($event.target.value))">
+            <select :value="accessState === 'unavailable' ? '' : session.tenantId || ''" @change="onTenantChange(Number($event.target.value))">
+              <option v-if="accessState === 'unavailable'" value="" disabled>请手动选择客户</option>
               <option
                 v-if="session.tenantId && !seoTenants.some((tenant) => tenant.id === session.tenantId)"
                 :value="session.tenantId"
