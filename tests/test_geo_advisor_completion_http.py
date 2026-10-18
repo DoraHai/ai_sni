@@ -294,3 +294,44 @@ def test_diagnosis_can_create_scoped_content_with_multiple_businesses_and_units(
             listed = await env.request('GET', '/content-tasks')
             assert task.id in {item['id'] for item in listed.json()['items']}
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('missing', ('article', 'credentials'))
+def test_ai_review_preconditions_do_not_burn_suggestion_attempts(tmp_path, monkeypatch, backend, missing):
+    from unittest.mock import AsyncMock
+    from app.geo.content import routes, ai_settings, ai_reviewer
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            reviewer = AsyncMock()
+            monkeypatch.setattr(ai_reviewer, 'run_ai_review', reviewer)
+            if missing == 'article':
+                monkeypatch.setattr(routes, '_latest_article', AsyncMock(return_value=None))
+            else:
+                monkeypatch.setattr(ai_settings, 'resolve_llm_credentials', AsyncMock(return_value=None))
+            before = await env.snapshot()
+            response = await env.request('POST', '/content-tasks/10/ai-review', body={'persist': False})
+            assert response.status_code == (400 if missing == 'article' else 503), response.text
+            reviewer.assert_not_awaited()
+            assert await env.snapshot() == before
+    asyncio.run(run())
+
+
+def test_admitted_ai_review_provider_failure_still_counts(tmp_path, monkeypatch, backend):
+    from unittest.mock import AsyncMock
+    from sqlalchemy import func, select
+    from app.ai.deepseek import DeepSeekError
+    from app.geo.content import ai_settings, ai_reviewer
+    from app.security.advisor_write_ai import SUGGEST_KIND
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            monkeypatch.setattr(ai_settings, 'resolve_llm_credentials',
+                AsyncMock(return_value={'api_key': 'fixture', 'model': 'fixture'}))
+            monkeypatch.setattr(ai_reviewer, 'run_ai_review',
+                AsyncMock(side_effect=DeepSeekError('fixture provider failure')))
+            response = await env.request('POST', '/content-tasks/10/ai-review', body={'persist': False})
+            assert response.status_code == 502, response.text
+            async with env.factory() as session:
+                used = await session.scalar(select(func.count()).select_from(m.GeoAsyncJob).where(
+                    m.GeoAsyncJob.tenant_id == 10, m.GeoAsyncJob.created_by == 1, m.GeoAsyncJob.kind == SUGGEST_KIND))
+                assert used == 1
+    asyncio.run(run())

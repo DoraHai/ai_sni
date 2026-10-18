@@ -207,3 +207,19 @@ def test_completed_delete_does_not_resolve_its_missing_target_again(monkeypatch)
             calls.current_operation.reset(token)
     asyncio.run(run())
     assert checked.await_count == 1
+
+
+def test_import_without_parent_cannot_pick_a_different_assigned_project(monkeypatch):
+    from app.security import advisor_operations as operations
+    from app.security import advisor_write_objects as objects
+    from app.security import advisor_write_reads as reads
+    from app.security import geo_advisor
+    monkeypatch.setattr(objects, '_resolve', AsyncMock(return_value=objects._Objects()))
+    monkeypatch.setattr(reads, 'assigned_scope', AsyncMock(return_value=({10, 20}, {10, 20})))
+    monkeypatch.setattr(geo_advisor, 'check_manual_execution_scope', AsyncMock())
+    rule = operations.rules()[('POST', '/api/v1/geo/facts/import')]
+    async def run():
+        with pytest.raises(HTTPException) as error:
+            await operations.guard_scope(SimpleNamespace(info={}), object(), SimpleNamespace(), {}, rule)
+        assert error.value.status_code == 409
+    asyncio.run(run())
