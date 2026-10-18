@@ -131,15 +131,17 @@ async def enforce_advisor_request(request, ctx, session):
         # here until their object/task matrix is reviewed in that branch.
         reject(403, "ADVISOR_ROUTE_UNAVAILABLE")
     if rule is not None:
-        from app.security.advisor_write_objects import check_write_objects, ensure_advisor_assignment
+        from app.security.advisor_write_objects import check_write_objects, ensure_advisor_assignment, lock_manual_write_scope
         await check_write_objects(session, ctx, request, body, rule)
         await ensure_advisor_assignment(session, ctx, request, body, rule)
+        await lock_manual_write_scope(session, ctx, request, body, rule)
     await enforce_scoped_request(request, ctx)
     if rule is None:
         await check_seo_objects(request, ctx, session)
     else:
         request.state.advisor_scoped_write = rule
         ctx.advisor_write_rule = rule
+        ctx.advisor_write_scope = (request, body, rule)
 
 
 async def check_seo_objects(request, ctx, session):

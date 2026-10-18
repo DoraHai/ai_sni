@@ -71,7 +71,7 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
     version = "version" if "/qa/facts/" in rule.template else "version_count"
     if rule.method in {"PATCH", "PUT"} and version in rule.fields:
         if body.get(version) is None:
-            raise HTTPException(428, {"code": "ADVISOR_WRITE_VERSION_REQUIRED"})
+            raise HTTPException(422, {"code": "ADVISOR_WRITE_VERSION_REQUIRED"})
         if type(body[version]) is not int or body[version] < 1:
             raise HTTPException(422, {"code": "ADVISOR_INVALID_WRITE_VERSION"})
 

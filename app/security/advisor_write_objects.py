@@ -7,17 +7,19 @@ No ORM identity-map values or caller-supplied site can override stored ownership
 import csv
 import io
 import json
+from datetime import date
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from starlette.datastructures import UploadFile
 
-from app.models.module_workspace import SeoSite
+from app.models.module_workspace import SeoSite, TenantModule
 from app.models.seo import (
-    SeoBrandAsset, SeoContentAsset, SeoKeywordAsset, SeoSiteAdvisorAssignment,
+    SeoAiOperation, SeoAutomationRun, SeoBrandAsset, SeoContentAsset, SeoKeywordAsset, SeoSiteAdvisorAssignment,
     SeoSitePage,
 )
-from app.models.seo_qa import SeoQaFact
+from app.models.seo_qa import SeoQaBatch, SeoQaFact
+from app.models.seo_cockpit import SeoTask
 from app.models.tenant import Tenant
 
 
@@ -174,7 +176,7 @@ async def _request_references(request, body):
     return refs
 
 
-async def _scope(session, ctx, request, body, rule):
+async def _scope(session, ctx, request, body, rule, *, lock=False):
     ctx.ensure_tenant(ctx.tenant_id)
     if rule.assignment != "site":
         _reject(403, "ADVISOR_OBJECT_UNAVAILABLE")
@@ -191,7 +193,10 @@ async def _scope(session, ctx, request, body, rule):
         seen.add((kind, object_id))
         model = _MODELS[kind]
         table = model.__table__
-        row = (await session.execute(select(table).where(table.c.id == object_id))).mappings().first()
+        query = select(table).where(table.c.id == object_id)
+        if lock:
+            query = query.with_for_update(read=True)
+        row = (await session.execute(query)).mappings().first()
         if row is None:
             _reject(404, "ADVISOR_OBJECT_NOT_FOUND")
         owner = row["id"] if kind == "tenant_id" else row["tenant_id"]
@@ -244,3 +249,60 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
     ))
     if assignment is None:
         _reject(403, "ADVISOR_ASSIGNMENT_REQUIRED")
+
+
+async def lock_manual_write_scope(session, ctx, request, body, rule):
+    """Hold assignment -> site locks, matching plan writers and schedulers.
+
+    A manual edit is admitted only in a provably paused scope with no unfinished
+    system work. Do not pause, cancel, or authorize any existing execution.
+    """
+    site_id = await _scope(session, ctx, request, body, rule)
+    assignments = list((await session.execute(select(SeoSiteAdvisorAssignment.__table__).where(
+        SeoSiteAdvisorAssignment.tenant_id == ctx.tenant_id,
+        SeoSiteAdvisorAssignment.site_id == site_id,
+    ).order_by(SeoSiteAdvisorAssignment.id).with_for_update())).mappings())
+    if not any(row['advisor_user_id'] == ctx.user_id and row['active'] for row in assignments):
+        _reject(403, "ADVISOR_ASSIGNMENT_REQUIRED")
+    site = (await session.execute(select(SeoSite.__table__).where(
+        SeoSite.id == site_id, SeoSite.tenant_id == ctx.tenant_id).with_for_update())).mappings().first()
+    if site is None:
+        _reject(403, "ADVISOR_TENANT_NOT_GRANTED")
+    module = (await session.execute(select(TenantModule.__table__).where(
+        TenantModule.id == site['tenant_module_id'], TenantModule.tenant_id == ctx.tenant_id,
+        TenantModule.module_code == 'seo').with_for_update(read=True))).mappings().first()
+    if (site['status'] != 'active' or module is None or module['status'] not in {'active', 'trial'}
+            or (module['expires_at'] is not None and module['expires_at'] < date.today())):
+        _reject(403, "ADVISOR_OBJECT_UNAVAILABLE")
+    settings = site['site_settings']
+    plan = settings.get('seo_service_plan') if isinstance(settings, dict) else None
+    if (not isinstance(plan, dict) or plan.get('status') != 'paused'
+            or any(value for key, value in plan.items()
+                   if key.endswith('_enabled'))):
+        _reject(403, "ADVISOR_AUTOMATIC_CONSUMER_ACTIVE")
+    task = await session.scalar(select(SeoTask.id).where(
+        SeoTask.tenant_id == ctx.tenant_id, SeoTask.site_id == site_id,
+        SeoTask.status.in_(['open', 'in_progress']),
+        or_(SeoTask.assignee_role == 'system', SeoTask.action_type.in_([
+            'content_delivery', 'site_diagnosis', 'ranking_followup', 'monthly_report',
+        ])),
+    ).limit(1))
+    if task is not None:
+        _reject(403, "ADVISOR_AUTOMATIC_CONSUMER_ACTIVE")
+    for model, states in ((SeoQaBatch, ['queued', 'running']),
+                          (SeoAiOperation, ['running']), (SeoAutomationRun, ['running'])):
+        query = select(model.id, model.status).where(
+            model.tenant_id == ctx.tenant_id,
+            or_(model.site_id == site_id, model.site_id.is_(None)),
+        ).order_by(model.id)
+        # QA resume/retry locks its batch, while creation locks the site.
+        # Include paused/finished batches so requeue cannot race this edit.
+        if model is SeoQaBatch:
+            query = query.with_for_update(read=True)
+        else:
+            query = query.where(model.status.in_(states))
+        rows = (await session.execute(query)).all()
+        if any(row.status in states for row in rows):
+            _reject(403, "ADVISOR_AUTOMATIC_CONSUMER_ACTIVE")
+    # Lock freshly read linked objects as well; scope cannot migrate before commit.
+    await _scope(session, ctx, request, body, rule, lock=True)

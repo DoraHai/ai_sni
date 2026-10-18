@@ -1,4 +1,4 @@
-"""SEO manual-write contract. Missing A/B modules skip only dependent tests.
+"""SEO manual-write contract. All implementation modules are required.
 
 Run with test settings (disable Settings.env_file before application imports).
 The PostgreSQL companion exercises real mounted handlers and commit races.
@@ -29,7 +29,7 @@ class Case:
 
     @property
     def path(self):
-        return self.template.format(fact_id=30, asset_id=40, content_id=1)
+        return self.template.format(fact_id=30, asset_id=40, content_id=1, task_id=500)
 
 
 PREFIX = "/api/v1/seo"
@@ -77,17 +77,20 @@ FORBIDDEN = {
 
 @pytest.fixture
 def routes_contract():
-    return pytest.importorskip("app.security.advisor_write_routes")
+    from app.security import advisor_write_routes
+    return advisor_write_routes
 
 
 @pytest.fixture
 def objects_contract():
-    return pytest.importorskip("app.security.advisor_write_objects")
+    from app.security import advisor_write_objects
+    return advisor_write_objects
 
 
 @pytest.fixture
 def complete_contract(routes_contract, objects_contract):
-    pytest.importorskip("app.security.advisor_write_commit")
+    from app.security import advisor_write_commit
+    assert callable(advisor_write_commit.recheck_advisor_before_commit)
     return routes_contract
 
 
@@ -240,6 +243,7 @@ def test_guard_pipeline_preserves_body_and_requires_each_edit(monkeypatch, compl
     check_assignment = AsyncMock()
     monkeypatch.setattr(objects_contract, "check_write_objects", check_objects)
     monkeypatch.setattr(objects_contract, "ensure_advisor_assignment", check_assignment)
+    monkeypatch.setattr(objects_contract, "lock_manual_write_scope", AsyncMock())
     # Also replace module-scope aliases, if the implementation uses those.
     for name, replacement in (("check_write_objects", check_objects),
                               ("ensure_advisor_assignment", check_assignment)):

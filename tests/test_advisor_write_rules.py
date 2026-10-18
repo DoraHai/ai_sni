@@ -48,6 +48,7 @@ def object_contract(monkeypatch):
     module = ModuleType("app.security.advisor_write_objects")
     module.check_write_objects = AsyncMock()
     module.ensure_advisor_assignment = AsyncMock()
+    module.lock_manual_write_scope = AsyncMock()
     monkeypatch.setitem(sys.modules, module.__name__, module)
     monkeypatch.setattr("app.module_scope.ensure_module_access", AsyncMock())
     return module
@@ -110,7 +111,7 @@ def test_only_manual_draft_states_allowed(status):
 def test_versions_are_unconditionally_required(rule):
     with pytest.raises(HTTPException) as denied:
         check_write_fields(rule, {})
-    assert denied.value.status_code == 428
+    assert denied.value.status_code == 422
 
 
 def test_no_prefix_or_concrete_url_fallback():

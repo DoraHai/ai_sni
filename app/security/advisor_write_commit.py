@@ -55,3 +55,7 @@ async def _recheck(session, ctx):
             deny(401, "ADVISOR_GRANT_REVOKED")
         if user.tenant_id not in {g.tenant_id for g in grants if g.revoked_at is None}:
             deny(403, "ADVISOR_DEFAULT_TENANT_INVALID")
+        scope = getattr(ctx, "advisor_write_scope", None)
+        if scope is not None:
+            from app.security.advisor_write_objects import lock_manual_write_scope
+            await lock_manual_write_scope(session, ctx, *scope)

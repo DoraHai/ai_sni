@@ -25,9 +25,9 @@ from app.database import get_session
 from app.models.advisor_tenant_grant import AdvisorTenantGrant as Grant
 from app.models.module_workspace import SeoSite, TenantModule
 from app.models.role import Role
-from app.models.seo import (SeoBrandAsset, SeoContentAsset, SeoKeywordAsset,
+from app.models.seo import (SeoAiOperation, SeoAutomationRun, SeoBrandAsset, SeoContentAsset, SeoKeywordAsset,
                             SeoSiteAdvisorAssignment, SeoSitePage)
-from app.models.seo_qa import SeoQaFact
+from app.models.seo_qa import SeoQaBatch, SeoQaFact
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.security import auth
@@ -67,7 +67,7 @@ async def store():
     async with database() as sessions:
         async with sessions() as session:
             connection = await session.connection()
-            for model in (Grant, SeoBrandAsset, SeoSitePage):
+            for model in (Grant, SeoBrandAsset, SeoSitePage, SeoQaBatch, SeoAutomationRun):
                 await connection.execute(CreateTable(model.__table__, include_foreign_key_constraints=[]))
             user = await session.get(User, 7)
             user.tenant_id = 4
@@ -280,7 +280,8 @@ def test_patch_cannot_migrate_object_ownership(monkeypatch, complete_contract, c
 
 
 @pytest.mark.parametrize("case", CASES, ids=CASE_IDS)
-@pytest.mark.parametrize("consumer", ["enabled-plan", "unbound-running-task"])
+@pytest.mark.parametrize("consumer", ["enabled-plan", "unbound-running-task", "advisor-assigned-workflow", "missing-plan",
+                                      "queued-qa-batch", "running-ai-operation", "running-automation"])
 def test_existing_automatic_consumer_cannot_use_advisor_manual_edits(monkeypatch, complete_contract, case, consumer):
     """Design sections 6.1/7 also cover existing jobs consuming edited data."""
     switches(monkeypatch)
@@ -291,14 +292,79 @@ def test_existing_automatic_consumer_cannot_use_advisor_manual_edits(monkeypatch
                     site = await session.get(SeoSite, 2)
                     site.site_settings = {"seo_service_plan": {**site.site_settings["seo_service_plan"],
                         "status": "active", "content_cycle_enabled": True, "content_ai_enabled": True}}
+                elif consumer == "missing-plan":
+                    site = await session.get(SeoSite, 2)
+                    site.site_settings = {}
+                elif consumer == "queued-qa-batch":
+                    session.add(SeoQaBatch(id=500, tenant_id=4, site_id=2, actor="fixture",
+                        request_key="queued", request_hash="test", status="queued", items=[]))
+                elif consumer == "running-ai-operation":
+                    session.add(SeoAiOperation(id="running-test", tenant_id=4, site_id=2, actor="fixture",
+                        request_key="running", request_hash="test", kind="draft", charged_on="2099-01-01",
+                        status="running", expires_at=datetime(2099, 1, 1)))
+                elif consumer == "running-automation":
+                    session.add(SeoAutomationRun(id=500, tenant_id=4, site_id=2, job_type="ranking", status="running"))
                 else:
                     session.add(api.SeoTask(id=500, tenant_id=4, site_id=2, action_type="content_delivery",
-                        title="Preexisting unbound job", status="in_progress", created_by="system", assignee_role="system",
+                        title="Preexisting unbound job", status="in_progress", created_by="system",
+                        assignee_role="seo_advisor" if consumer == "advisor-assigned-workflow" else "system",
                         params={"content_id": 1, "phase": "draft", "plan_revision": 1}))
                 await session.commit()
             before = await snapshot(sessions)
             assert_denied(await send(client, case))
             assert await snapshot(sessions) == before
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("target", ["plan", "assignment", "keyword", "module", "qa-resume"])
+def test_scope_locks_prevent_activation_or_migration_until_commit(monkeypatch, complete_contract, target):
+    """An admitted edit and a scope-changing transaction must serialize."""
+    switches(monkeypatch)
+    async def run():
+        blocked = []
+        async with store() as sessions:
+            if target == "qa-resume":
+                async with sessions() as seed:
+                    seed.add(SeoQaBatch(id=500, tenant_id=4, site_id=2, actor="fixture",
+                        request_key="paused", request_hash="test", status="paused", items=[]))
+                    await seed.commit()
+            async def after_guard(request, ctx):
+                async with sessions() as competitor:
+                    await competitor.execute(text("SET LOCAL lock_timeout = '200ms'"))
+                    try:
+                        if target == "plan":
+                            row = await competitor.get(SeoSite, 2)
+                            row.site_settings = {"seo_service_plan": {"status": "active", "content_cycle_enabled": True}}
+                        elif target == "assignment":
+                            row = await competitor.get(SeoSiteAdvisorAssignment, 3)
+                            row.active = False
+                        elif target == "keyword":
+                            row = await competitor.get(SeoKeywordAsset, 20)
+                            row.site_id = 3
+                        elif target == "module":
+                            row = await competitor.get(TenantModule, 1)
+                            row.status = "paused"
+                        else:
+                            row = await competitor.get(SeoQaBatch, 500)
+                            row.status = "queued"
+                        with pytest.raises(DBAPIError) as caught:
+                            await competitor.commit()
+                        assert getattr(caught.value.orig, "sqlstate", None) == "55P03"
+                        blocked.append(target)
+                    finally:
+                        await competitor.rollback()
+            async with client_for(sessions, after_guard) as client:
+                response = await send(client, CASES[5])
+                assert response.status_code == 200, response.text
+            assert blocked == [target]
+            async with sessions() as verify:
+                assert (await verify.get(SeoContentAsset, 1)).title == CASES[5].body['title']
+                assert (await verify.get(SeoSite, 2)).site_settings['seo_service_plan']['status'] == 'paused'
+                assert (await verify.get(SeoSiteAdvisorAssignment, 3)).active
+                assert (await verify.get(SeoKeywordAsset, 20)).site_id == 2
+                assert (await verify.get(TenantModule, 1)).status == 'active'
+                if target == "qa-resume":
+                    assert (await verify.get(SeoQaBatch, 500)).status == 'paused'
     asyncio.run(run())
 
 
@@ -572,6 +638,7 @@ def test_commit_recheck_waits_for_revoker_and_rolls_back_staged_write(monkeypatc
             before = await snapshot(sessions)
             async with sessions() as writer, sessions() as revoker:
                 ctx = actor()
+                ctx.advisor_write_rule = complete_contract.WRITE_ROUTES[(CASES[5].method, CASES[5].template)]
                 cached = [await writer.get(model, ident) for model, ident in ((User, 7), (Role, 5), (Grant, 10))]
                 assert all(cached)
                 row = await writer.get(SeoContentAsset, 1)
