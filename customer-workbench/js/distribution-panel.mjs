@@ -134,7 +134,8 @@ export function createAdvisorDistributionPanel({session,fetchImpl=fetch,subscrib
             <button type="button" data-distribution="restrict" ${busy||!owned?'disabled':''}>保存项目节奏</button></div></details>`:''}
           <label>已审核渠道稿 <select name="distribution_variant" ${busy||!sources.length?'disabled':''}>${sources.map(v=>`<option value="${v.variant_id}" ${v.variant_id===variantId?'selected':''}>${esc(v.title)} · #${v.variant_id}</option>`).join('')}</select></label>
           ${sources.length?`<button type="button" data-distribution="preview" ${busy?'disabled':''}>核对审核稿</button>`:'<p>当前账号渠道没有可分发的最新审核稿，或渠道尚未接入。</p>'}`}
-        ${preview?`<details open><summary>审核稿预览 · ${esc(preview.source_revision)}</summary><h3>${esc(preview.content.title)}</h3><pre>${esc(preview.content.body)}</pre><p>素材 ${preview.content.assets.length} 项</p></details>
+        ${preview?`<p class="alert" role="alert">这三步会把稿件交出去做真实发布。操作前请先得到负责人同意；在未得到同意前，只看不点。</p>
+          <details open><summary>审核稿预览 · ${esc(preview.source_revision)}</summary><h3>${esc(preview.content.title)}</h3><pre>${esc(preview.content.body)}</pre><p>素材 ${preview.content.assets.length} 项</p></details>
           <label><input type="checkbox" name="distribution_reviewed" ${reviewed?'checked':''} ${busy?'disabled':''}>我已核对本文稿、项目和目标账号</label>
           <label><input type="checkbox" name="distribution_manual" ${manual?'checked':''} ${busy?'disabled':''}>授权在此账号由人工发布本文稿，并回填结果</label>
           <div class="advisor-tools">${['preflight','handoff','publish'].map(action=>`<button type="button" data-distribution="${action}" ${busy||!owned||p.state!=='running'||!reviewed||action==='publish'&&!manual?'disabled':''}>${esc(actionLabels[action])}</button>`).join('')}</div>`:''}

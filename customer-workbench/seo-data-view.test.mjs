@@ -20,6 +20,14 @@ test('publication readback never promotes available evidence into verified or se
   const view=publicationListView({items:[{content:{title:'稿件'},publication:{id:4,status:'published',public_url:'https://example.invalid/article'},page_association:{association_status:'exact_unique'},page_check:{coverage:'available'}}],total:1,coverage:{partial:true}});
   assert.match(view,/已记录发布/);assert.match(view,/已有页面检查记录/);assert.doesNotMatch(view,/页面已核验/);assert.match(view,/范围不完整/);assert.match(view,/data-publication-detail/);
 });
+
+test('publication explanation separates screenshot verification from unmatched page checks without promising automatic work',()=>{
+  const view=publicationListView({items:[{publication:{id:1,status:'published'},page_association:{association_status:'no_match'},page_check:{coverage:'not_applicable'}}],total:1});
+  assert.match(view,/暂无页面检查依据/);assert.match(view,/尚未关联站内页面/);
+  assert.match(view,/成功取得发布页截图的稿件才计入已核验/);
+  assert.match(view,/页面检查还需匹配站内页面并有检查记录，请联系顾问核对/);
+  assert.doesNotMatch(view,/自动检查|自动更新|已核验是 0/);
+});
 test('external content is escaped and links allow neither scripts nor embedded credentials',()=>{
   const view=rankingListView({items:[{id:'1 onclick=alert(1)',keyword:'<img src=x onerror=alert(1)>'}],total:1});
   assert.doesNotMatch(view,/<img/);assert.doesNotMatch(view,/<button/);assert.match(view,/&lt;img/);
