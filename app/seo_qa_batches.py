@@ -21,6 +21,12 @@ async def current_actor(session, batch):
     if user is None or not user.is_active:
         raise HTTPException(403,'创建批次的账号已停用')
     ctx = await _build_context(user,session)
+    from app.models.role import Role
+    from app.security.advisor_seo_scope import is_advisor_role
+    role = await session.get(Role, user.role_id, populate_existing=True)
+    if is_advisor_role(role) or any('_advisor_scope' in item for item in batch.items):
+        from app.security.seo_advisor_execution import check_manual_execution_scope
+        ctx = await check_manual_execution_scope(session, ctx, user, role, batch)
     ctx.ensure_tenant(batch.tenant_id)
     if not ctx.can_edit('seo.content'):
         raise HTTPException(403,'创建批次的账号已失去内容编辑权限')

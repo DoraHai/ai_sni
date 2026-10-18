@@ -1346,6 +1346,8 @@ async def create_batch(req:BatchSubmission,ctx=Auth,session=Db):
             'state':'pending','draft':None,'answer_id':None,'error':None})
     row=SeoQaBatch(tenant_id=req.tenant_id,site_id=req.site_id,actor=actor,request_key=req.request_id,
         request_hash=digest,status='queued',items=items)
+    if getattr(ctx, 'is_advisor', False):
+        row.items = [{**item, '_advisor_scope': {'grant_id': ctx.grant_id, 'auth_exp': ctx.auth_exp}} for item in items]
     session.add(row);await session.commit();await session.refresh(row)
     return batch_data(row,True)
 
@@ -1385,6 +1387,8 @@ async def control_batch(batch_id:int,req:BatchCommand,ctx=Auth,session=Db):
     row=await owned_batch(session,ctx,req.tenant_id,req.site_id,batch_id,True)
     if row.status=='cancelled': raise HTTPException(409,'已取消批次不能恢复，请重新准备')
     items=deepcopy(row.items)
+    if getattr(ctx, 'is_advisor', False):
+        items = [{**item, '_advisor_scope': {'grant_id': ctx.grant_id, 'auth_exp': ctx.auth_exp}} for item in items]
     if req.action=='pause':
         if row.status not in ('queued','running','paused'): raise HTTPException(409,'批次已结束')
         row.status='paused'

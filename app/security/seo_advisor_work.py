@@ -74,6 +74,8 @@ DAILY = (
 
 
 AI = (
+    ('POST', '/qa/batches', 'tenant_id site_id request_id items', 'seo.content'),
+    ('POST', '/qa/batches/{batch_id}/control', 'tenant_id site_id action question_id', 'seo.content'),
     ("POST", '/qa/planning/semantic', 'tenant_id site_id items request_id', 'seo.content'),
     ("POST", '/qa/research/draft', 'tenant_id site_id request_id question facts format', 'seo.content'),
     ("POST", '/qa/research/extract', 'tenant_id site_id request_id text source_name source_url', 'seo.content'),
@@ -277,7 +279,7 @@ async def lock_workflow_scope(session, ctx, request, body, rule):
     module = (await session.execute(select(TenantModule.__table__).where(
         TenantModule.id == site["tenant_module_id"], TenantModule.tenant_id == ctx.tenant_id,
         TenantModule.module_code == "seo",
-    ).with_for_update(read=True))).mappings().first() if site else None
+    ).with_for_update())).mappings().first() if site else None
     if (site is None or site["status"] != "active" or module is None
             or module["status"] not in {"active", "trial"}
             or (module["expires_at"] is not None and module["expires_at"] < date.today())):
