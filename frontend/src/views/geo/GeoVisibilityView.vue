@@ -835,7 +835,7 @@ onMounted(reloadAll)
               <template #default="{ row }">
                 <el-select
                   size="small"
-                  
+
                   :model-value="row.brand_position || 'unknown'"
                   style="width: 116px"
                   @change="(v) => patchSnapField(row, { brand_position: v })"
@@ -853,7 +853,7 @@ onMounted(reloadAll)
               <template #default="{ row }">
                 <el-select
                   size="small"
-                  
+
                   :model-value="row.sentiment || 'unknown'"
                   style="width: 96px"
                   @change="(v) => patchSnapField(row, { sentiment: v })"

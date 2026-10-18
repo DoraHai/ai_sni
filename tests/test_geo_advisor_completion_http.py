@@ -72,8 +72,9 @@ def test_csv_imports_persist_real_project_ownership(tmp_path, monkeypatch, backe
             async with env.factory() as session:
                 from sqlalchemy import select
                 model = m.GeoFact if resource.startswith('facts') else m.GeoPrompt
-                rows = list(await session.scalars(select(model).where(model.tenant_id == 10, model.id > 30)))
-                assert rows
+                content_match = model.title == 'New fact' if model is m.GeoFact else model.question == 'New imported question?'
+                rows = list(await session.scalars(select(model).where(model.tenant_id == 10, content_match)))
+                assert len(rows) == 1
                 assert all(getattr(row, 'business_id' if model is m.GeoFact else 'unit_id') == 10 for row in rows)
     asyncio.run(run())
 
