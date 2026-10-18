@@ -11,6 +11,7 @@ import {
   pushGeoVariantWebhook,
 } from '../../api/geoContent'
 import GeoPublicationMonitor from '../../components/GeoPublicationMonitor.vue'
+import GeoReceiptImport from '../../components/GeoReceiptImport.vue'
 import GeoDeliveryRecovery from '../../components/GeoDeliveryRecovery.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
@@ -289,6 +290,7 @@ onMounted(load)
       <GeoPublicationMonitor :tenant-id="tenantId" :task-id="taskId" :revision="publicationRevision" />
       <section class="gd-card" :class="{ focus: focusMode === 'manual' }">
         <div class="gd-hd"><h3>URL 回填</h3></div>
+        <GeoReceiptImport v-if="task" :tenant-id="tenantId" :task="task" @imported="load" />
         <div class="actions">
           <el-select v-model="webhookAccountId" placeholder="Webhook 账号">
             <el-option v-for="account in webhookAccounts" :key="account.id" :label="account.display_name" :value="account.id" />

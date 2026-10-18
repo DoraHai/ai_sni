@@ -8603,6 +8603,29 @@ async def record_publication(
     return await _task_payload(session, task, detail=True)
 
 
+@router.post("/content-tasks/{task_id}/import-receipts")
+async def import_task_receipts(
+    task_id: int,
+    tenant_id: int = Query(..., gt=0),
+    project_id: int = Query(..., gt=0),
+    dry_run: bool = Query(True),
+    file: UploadFile = File(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from app.geo.content.receipt_import import MAX_BYTES, import_receipts, parse_receipts
+
+    ctx.ensure_tenant(tenant_id)
+    if not ctx.can_edit("geo.content"):
+        raise HTTPException(403, "当前账号不能回填发布链接")
+    try:
+        rows = parse_receipts(await file.read(MAX_BYTES + 1), file.filename or "")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return await import_receipts(session, ctx=ctx, tenant_id=tenant_id, project_id=project_id,
+                                 task_id=task_id, rows=rows, dry_run=dry_run)
+
+
 @router.get(
     "/content-tasks/{task_id}/deliveries",
     dependencies=[Depends(require_geo_read_entitlement)],
