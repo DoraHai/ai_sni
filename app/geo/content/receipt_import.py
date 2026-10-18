@@ -13,12 +13,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.geo.content.gate import PublishGateError
+from app.geo.content.backfill import CHANNEL_ALIASES, resolve_backfill_source
 from app.geo.project_scope import project_scope, prompt_ids_for_businesses
 from app.models import GeoContentTask, GeoChannelVariant, GeoPublication, GeoPublishingChannel
 
 MAX_BYTES = 2 * 1024 * 1024
 MAX_ROWS = 200
-FIELDS = {"article_id", "platform", "public_url", "published_at", "note", "variant_id",
+FIELDS = {"article_id", "platform", "channel_name", "public_url", "published_at", "note", "variant_id",
           "tenant_id", "project_id", "status"}
 SCOPE_ERROR = "这条回执不属于当前客户、项目或文章，请核对后重试"
 
@@ -134,17 +135,16 @@ async def import_receipts(session, *, ctx, tenant_id, project_id, task_id, rows,
     # Read registry only: preview must never seed defaults or write anything.
     registry = routes.registry_row_dicts(list(await session.scalars(select(GeoPublishingChannel).where(
         GeoPublishingChannel.tenant_id == tenant_id))))
-    aliases = {}
+    aliases = {alias: {channel} for alias, channel in CHANNEL_ALIASES.items()}
     for channel, variant in by_channel.items():
-        aliases.setdefault(channel, set()).add(variant.id)
+        aliases.setdefault(channel, set()).add(channel)
         profile = routes.get_profile(channel)
         if profile:
-            aliases.setdefault(profile.display_name, set()).add(variant.id)
-    # New/custom channel values work as soon as the existing backfill has a variant.
-    # Never guess an unknown channel or map it to a different channel's draft.
+            aliases.setdefault(profile.display_name, set()).add(channel)
+    # Keep names of existing channel drafts compatible; never guess unknown names.
     for item in registry:
         if item.get("channel_type") in by_channel and item.get("name"):
-            aliases.setdefault(item["name"], set()).add(by_channel[item["channel_type"]].id)
+            aliases.setdefault(item["name"], set()).add(item["channel_type"])
     existing = list(await session.scalars(select(GeoPublication).join(
         GeoChannelVariant, GeoChannelVariant.id == GeoPublication.variant_id).join(
         GeoContentTask, GeoContentTask.id == GeoChannelVariant.task_id).where(
@@ -156,7 +156,7 @@ async def import_receipts(session, *, ctx, tenant_id, project_id, task_id, rows,
             existing_urls.add(key)
         except ValueError:
             key = publication.published_url
-        existing_records.setdefault(publication.variant_id, set()).add(key)
+        existing_records.setdefault((publication.variant_id, publication.channel), set()).add(key)
     results, pending, seen_urls, seen_records = [], [], set(), {}
     for index, row in enumerate(rows, 1):
         item = {"row_number": index, "platform": "—", "public_url": "", "status": "不能导入", "reason": ""}
@@ -170,14 +170,25 @@ async def import_receipts(session, *, ctx, tenant_id, project_id, task_id, rows,
                     raise ValueError(SCOPE_ERROR)
             platform = row.get("platform")
             if not isinstance(platform, str) or not platform or len(platform) > 120:
-                raise ValueError("请填写本文章已有的渠道名称")
+                raise ValueError("请按模板填写渠道名称或代码；自定义渠道请填“其他”，并在 channel_name 列填写名称")
             item["platform"] = platform
             candidates = aliases.get(platform, set())
             if len(candidates) != 1:
-                raise ValueError("找不到对应渠道稿，请按本页渠道名称填写，或先生成该渠道稿")
-            variant = by_id[next(iter(candidates))]
-            if row.get("variant_id") not in (None, "") and positive_id(row["variant_id"]) != variant.id:
-                raise ValueError(SCOPE_ERROR)
+                raise ValueError("认不出这个渠道，请按模板填写渠道名称或代码；自定义渠道请填“其他”，并在 channel_name 列填写名称")
+            channel = next(iter(candidates))
+            source_id = None
+            if row.get("variant_id") not in (None, ""):
+                source_id = positive_id(row["variant_id"])
+                if source_id not in by_id:
+                    raise ValueError(SCOPE_ERROR)
+            if channel != "other" and row.get("channel_name") not in (None, ""):
+                raise ValueError("只有“其他”渠道需要填写 channel_name 列，请核对渠道")
+            variant, destination, channel_name = resolve_backfill_source(
+                channel=channel, custom_channel_name=row.get("channel_name"),
+                source_variant_id=source_id, variants=variants,
+            )
+            if channel_name:
+                item["platform"] = f"其他：{channel_name}"
             if article is None or variant.article_version_id != article.id:
                 raise ValueError("这条渠道稿已落后母稿，请重新生成并审核")
             url, url_key = https_url(row.get("public_url"))
@@ -190,17 +201,18 @@ async def import_receipts(session, *, ctx, tenant_id, project_id, task_id, rows,
                 raise ValueError("只有已发布的回执能回填链接；未发布或结果不确定的请先核实")
             if gate_reason:
                 raise ValueError(gate_reason)
-            if variant.id in seen_records and seen_records[variant.id] != url_key:
+            record_key = (variant.id, destination)
+            if record_key in seen_records and seen_records[record_key] != url_key:
                 raise ValueError("同一条渠道记录填了不同链接，请核对后只保留一条")
-            if variant.id in existing_records and url_key not in existing_records[variant.id]:
+            if record_key in existing_records and url_key not in existing_records[record_key]:
                 raise ValueError("这条渠道记录已有其他发布链接，请核对；导入不会覆盖原记录")
-            if url_key in existing_urls or url_key in seen_urls or variant.id in seen_records:
+            if url_key in existing_urls or url_key in seen_urls or record_key in seen_records:
                 item.update(status="无需导入", reason="这条链接或渠道记录已经登记，重复行会跳过")
             else:
                 item.update(status="能导入", reason="核对通过，确认后回填")
-                pending.append((item, variant, url, note, when))
+                pending.append((item, variant, channel, destination, channel_name, url, note, when))
             seen_urls.add(url_key)
-            seen_records[variant.id] = url_key
+            seen_records[record_key] = url_key
         except ValueError as exc:
             item["reason"] = str(exc)
         results.append(item)
@@ -208,10 +220,10 @@ async def import_receipts(session, *, ctx, tenant_id, project_id, task_id, rows,
     changed = 0
     if not dry_run and not rejected:
         try:
-            for item, variant, url, note, when in pending:
+            for item, variant, channel, destination, channel_name, url, note, when in pending:
                 created = await routes._write_publication(session, task=task, variant=variant,
-                    channel=variant.channel, published_url=url, note=note, published_at=when,
-                    publish_mode=routes.publication_publish_mode(routes.publish_mode_for_channel(variant.channel, registry)))
+                    channel=destination, channel_name=channel_name, published_url=url, note=note, published_at=when,
+                    publish_mode=routes.publication_publish_mode(routes.publish_mode_for_channel(channel, registry)))
                 item.update(status="已导入" if created else "无需导入", reason="已回填" if created else "已经登记，未重复写入")
                 changed += int(bool(created))
             await session.commit()

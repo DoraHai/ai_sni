@@ -1,14 +1,11 @@
-export const BACKFILL_CHANNELS = [
-  { value: 'website', label: '官网 / 博客' },
-  { value: 'wechat', label: '微信公众号' },
-  { value: 'zhihu', label: '知乎' },
-  { value: 'baijiahao', label: '百家号' },
-  { value: 'news_source', label: '新闻源' },
-  { value: 'baidu_zhidao', label: '百度问答（百度知道）' },
-  { value: 'baidu_tieba', label: '百度贴吧' },
-  { value: 'toutiao', label: '今日头条' },
-  { value: 'other', label: '其他' },
-]
+// Generated from app/geo/content/backfill_channels.json; see scripts/generate_geo_backfill_config.py.
+import config from './geoBackfillConfig.json' with { type: 'json' }
+
+export const BACKFILL_CHANNELS = config.channels
+const nameRules = config.custom_name
+const categoryPattern = categories => new RegExp(`[${categories.map(c => `\\p{${c}}`).join('')}]`, 'u')
+const requiredNameCharacter = categoryPattern(nameRules.required_categories)
+const forbiddenNameCharacter = categoryPattern(nameRules.forbidden_categories)
 
 export function backfillChannelLabel(channel) {
   return BACKFILL_CHANNELS.find(item => item.value === channel)?.label
@@ -16,11 +13,11 @@ export function backfillChannelLabel(channel) {
 }
 
 export function customChannelError(value) {
+  if (forbiddenNameCharacter.test(value)) return nameRules.invisible_message
   const name = value.trim()
-  if (!name || [...name].length > 30 || !/[\p{L}\p{N}]/u.test(name)) {
-    return '请填写渠道名称，最多30个字，不能只填符号'
+  if (!name || [...name].length > nameRules.max_length || !requiredNameCharacter.test(name)) {
+    return nameRules.invalid_message
   }
-  if (/[\p{C}\p{Zl}\p{Zp}]/u.test(name)) return '渠道名称不能包含换行或不可见字符'
   return ''
 }
 

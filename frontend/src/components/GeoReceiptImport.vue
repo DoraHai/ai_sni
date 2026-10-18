@@ -3,17 +3,17 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { fetchGeoProjects } from '../api/geoProjects'
 import { importGeoReceipts } from '../api/geoReceipts'
+import { BACKFILL_CHANNELS, backfillChannelLabel } from '../utils/geoBackfillChannels'
 
 const props = defineProps({ tenantId: Number, task: Object })
 const emit = defineEmits(['imported'])
 const projects = ref([]), projectId = ref(null), input = ref(null)
 const open = ref(false), busy = ref(false), preview = ref(null), error = ref('')
 const scope = computed(() => `${props.tenantId}:${props.task?.id}:${props.task?.article?.id}`)
-const availableChannels = computed(() => (props.task?.variants || []).map(v =>
-  props.task?.channel_profiles?.find(p => p.key === v.channel)?.display_name
-  || props.task?.channel_options?.find(p => p.channel_type === v.channel)?.name
-  || '其他已生成渠道（请核对原渠道名称）',
-).join('、') || '暂无，请先生成渠道稿')
+const availableChannels = computed(() => BACKFILL_CHANNELS.map(item => item.label).join('、'))
+const sourceDrafts = computed(() => (props.task?.variants || []).map(v =>
+  `${v.id}（${backfillChannelLabel(v.channel)}：${v.title || '渠道稿'}）`,
+).join('、') || '暂无，请先生成并审核渠道稿')
 let generation = 0, previewFile = null
 
 function resetPreview() { preview.value = null; previewFile = null; error.value = '' }
@@ -71,11 +71,16 @@ async function confirmReceipts() {
 }
 
 function downloadTemplate(format) {
-  const fields = ['article_id', 'platform', 'public_url', 'published_at', 'note']
-  const example = { article_id: '999999', platform: '官网 / 博客', public_url: 'https://example.com/demo-article',
-    published_at: '2026-10-20T09:30:00+08:00', note: '假数据示例，请替换为本文章和渠道的实际信息' }
-  const content = format === 'json' ? JSON.stringify([example], null, 2)
-    : '\uFEFF' + fields.join(',') + '\r\n' + fields.map(k => `"${example[k].replaceAll('"', '""')}"`).join(',') + '\r\n'
+  const fields = ['article_id', 'platform', 'channel_name', 'variant_id', 'public_url', 'published_at', 'note']
+  const examples = [
+    { platform: '官网 / 博客', channel_name: '', variant_id: '', public_url: 'https://example.com/demo-article' },
+    { platform: '百度贴吧', channel_name: '', variant_id: '888888', public_url: 'https://example.com/demo-tieba' },
+    { platform: '其他', channel_name: '示例科技社区', variant_id: '888888', public_url: 'https://example.com/demo-community' },
+  ].map(item => ({ article_id: '999999', ...item,
+    published_at: '2026-10-20T09:30:00+08:00', note: '假数据示例，请替换文章编号、来源稿件编号和真实发布链接' }))
+  const content = format === 'json' ? JSON.stringify(examples, null, 2)
+    : '\uFEFF' + fields.join(',') + '\r\n' + examples.map(example =>
+      fields.map(k => `"${example[k].replaceAll('"', '""')}"`).join(',')).join('\r\n') + '\r\n'
   const url = URL.createObjectURL(new Blob([content], { type: format === 'json' ? 'application/json' : 'text/csv;charset=utf-8' }))
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = `geo-receipts-template.${format}`; anchor.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
@@ -85,13 +90,15 @@ function downloadTemplate(format) {
 <template>
   <div class="receipt-import">
     <el-button :disabled="!tenantId || !task?.id || busy" @click="open = true">导入回执</el-button>
-    <span>把发布后的链接填进回执，一次上传；先看预览，确认后才回填。</span>
+    <span>把发布后的链接填进回执，一次上传；没有对应渠道稿的渠道也能导，先看预览再确认。</span>
     <el-dialog v-model="open" title="导入回执" width="min(900px, 94vw)" :close-on-click-modal="!busy" :close-on-press-escape="!busy" :show-close="!busy">
       <p>支持 UTF-8 的 CSV 和 JSON，最多 200 行、2 MB。只导入当前文章、当前项目的已发布链接；文章须先通过客户审核。</p>
       <el-select v-model="projectId" placeholder="选择文章所属项目" :disabled="busy" aria-label="文章所属项目">
         <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
       </el-select>
       <p>模板里的文章编号请改为 {{ task?.id }}；渠道可填：{{ availableChannels }}。</p>
+      <p>platform 填渠道中文名或代码；自定义渠道必须填“其他”，名称填在 channel_name 列（最多30个字），不能直接把自填名放在 platform 列。</p>
+      <p>没有对应渠道稿（含“其他”）时，variant_id 必须填本文章中实际发表的来源稿件编号。可选来源：{{ sourceDrafts }}。已有渠道稿的其他渠道也可沿用原渠道代码。</p>
       <p>发布时间可留空，留空按导入时刻登记；填写时请按模板带上时区。有错误行时整批不写入，重复行会跳过。</p>
       <el-button @click="downloadTemplate('csv')">下载 CSV 模板</el-button>
       <el-button @click="downloadTemplate('json')">下载 JSON 模板</el-button>

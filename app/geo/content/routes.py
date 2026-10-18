@@ -8558,21 +8558,14 @@ async def record_publication(
         valid_url = False
     if not valid_url:
         raise HTTPException(400, "请填写完整的 https:// 发布链接")
-    variants = {v.channel: v for v in await _variants(session, task.id)}
-    if req.channel not in variants and req.channel not in {
-        "website", "wechat", "zhihu", "baijiahao", "toutiao",
-        "news_source", "baidu_zhidao", "baidu_tieba", "other",
-    }:
-        raise HTTPException(400, "请选择回填渠道；自定义渠道请选“其他”并填写名称")
-    channel = req.custom_channel_name if req.channel == "other" else req.channel
-    # A manual destination need not support automatic adaptation. Explicitly bind
-    # it to the actual published draft; never create a draft or bypass its gate.
-    if req.source_variant_id is not None:
-        variant = next((v for v in variants.values() if v.id == req.source_variant_id), None)
-    else:
-        variant = variants.get(req.channel) if req.channel != "other" else None
-    if variant is None:
-        raise HTTPException(400, "请选择本任务中实际发布的稿件；没有稿件时请先生成渠道稿")
+    from app.geo.content.backfill import resolve_backfill_source
+    try:
+        variant, channel, channel_name = resolve_backfill_source(
+            channel=req.channel, custom_channel_name=req.custom_channel_name,
+            source_variant_id=req.source_variant_id, variants=await _variants(session, task.id),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
     article = await _latest_article(session, task.id)
     rule_input = await _build_rule_input(session, task, article)
     tenant = await _ensure_tenant_exists(session, task.tenant_id)
@@ -8594,7 +8587,7 @@ async def record_publication(
             published_url=url,
             note=req.note,
             publish_mode=publication_publish_mode(registry_mode),
-            channel_name=channel if req.channel == "other" else None,
+            channel_name=channel_name,
         )
     except PublishGateError as exc:
         raise HTTPException(400, str(exc)) from exc

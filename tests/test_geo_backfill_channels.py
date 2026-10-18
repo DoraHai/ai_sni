@@ -91,7 +91,8 @@ def test_custom_channel_persists_trimmed_name_and_monitor_displays_it(case, name
     assert result['items'][0]['channel'] == name.strip()
 
 
-@pytest.mark.parametrize('name', [None, '', '   ', '!@#！？', '📰', '名' * 31, '日报\n频道'])
+@pytest.mark.parametrize('name', [None, '', '   ', '!@#！？', '📰', '名' * 31, '日报\n频道',
+                                '\n日报', '日报\t', '日报\u200b', '日报\u2028', '日报\u2029'])
 def test_custom_name_is_validated_on_server(case, name):
     with pytest.raises(ValidationError):
         register(case, channel='other', custom_channel_name=name, source_variant_id=3)

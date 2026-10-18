@@ -94,6 +94,42 @@ def test_receipts_real_transactions_concurrency_and_scope():
                     assert (await db.get(GeoChannelVariant, 3)).status == "published"
                     assert (await db.get(GeoContentTask, 13)).status == "ready"
                     assert (await db.get(GeoContentTask, 14)).status == "ready"
+                # One reviewed source can support destinations without their own drafts.
+                new_rows = [
+                    {**row(), "platform": "百度贴吧", "variant_id": 3,
+                     "public_url": "https://example.invalid/tieba"},
+                    {**row(), "platform": "其他", "channel_name": "示例科技社区", "variant_id": 3,
+                     "public_url": "https://example.invalid/community"},
+                ]
+                writer = routes._write_publication
+                writes = 0
+
+                async def fail_second(*args, **kwargs):
+                    nonlocal writes
+                    writes += 1
+                    if writes == 2:
+                        raise HTTPException(400, "synthetic gate change")
+                    return await writer(*args, **kwargs)
+
+                with patch.object(routes, "_write_publication", side_effect=fail_second):
+                    with pytest.raises(HTTPException) as denied:
+                        await call(rows=new_rows)
+                    assert denied.value.status_code == 409
+                async with sessions() as db:
+                    assert await db.scalar(select(func.count()).select_from(GeoPublication)) == 1
+                assert (await call(rows=new_rows))["changed"] == 2
+                assert (await call(rows=new_rows))["changed"] == 0
+                async with sessions() as db:
+                    from app.geo.publication_monitor import state_for
+                    pubs = list(await db.scalars(select(GeoPublication).order_by(GeoPublication.id)))
+                    assert len(pubs) == 3
+                    assert {p.channel for p in pubs} == {"website", "baidu_tieba", "示例科技社区"}
+                    assert all(p.variant_id == 3 for p in pubs)
+                    source = await db.get(GeoChannelVariant, 3)
+                    custom = next(p for p in pubs if p.channel == "示例科技社区")
+                    assert state_for(source, custom)["channel_name"] == "示例科技社区"
+                conflict = [{**new_rows[0], "public_url": "https://example.invalid/different"}]
+                assert not (await call(rows=conflict))["committed"]
                 # A changed project binding after preview cannot authorize later confirmation.
                 async with sessions() as db:
                     project = await db.get(GeoProject, 5)
