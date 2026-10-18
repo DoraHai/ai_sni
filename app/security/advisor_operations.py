@@ -208,6 +208,7 @@ async def guard_scope(session, ctx, request, body, rule):
         if objects.businesses & set(binding(row)['business_ids']):
             owners.add(row.id)
     request.state.advisor_operation_projects = owners
+    request.state.advisor_operation_businesses = frozenset(objects.businesses)
     if rule.template in MANUAL_CHECKS:
         from app.models import GeoTrackingEngine
         enabled = set(await session.scalars(select(GeoTrackingEngine.engine_key).where(
@@ -246,11 +247,19 @@ async def bind_pending_scope(session, ctx, request, body):
     business_id = body.get('business_id') or request.query_params.get('business_id')
     unit_id = body.get('unit_id') or request.query_params.get('unit_id')
     scope = session.info['advisor_read_scope']
+    referenced = request.state.advisor_operation_businesses
+    if business_id is None and len(referenced) == 1:
+        business_id = next(iter(referenced))
     if business_id is None and len(scope[2]) == 1:
         business_id = next(iter(scope[2]))
+    if business_id is None:
+        business_id = await session.scalar(select(m.GeoOptimizationBusiness.id).where(
+            m.GeoOptimizationBusiness.id.in_(scope[2]), m.GeoOptimizationBusiness.status == 'active')
+            .order_by(m.GeoOptimizationBusiness.id).limit(1))
     units = list(await session.scalars(select(m.GeoOptimizationUnit.id).where(
-        m.GeoOptimizationUnit.business_id == int(business_id)))) if business_id else []
-    if unit_id is None and len(units) == 1:
+        m.GeoOptimizationUnit.business_id == int(business_id), m.GeoOptimizationUnit.status == 'active')
+        .order_by(m.GeoOptimizationUnit.id))) if business_id else []
+    if unit_id is None and units:
         unit_id = units[0]
     parent = await session.get(m.GeoProject, project_id) if project_id else None
 
