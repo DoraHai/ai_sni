@@ -5892,6 +5892,10 @@ async def _ensure_default_publishing_channels(
             .order_by(GeoPublishingChannel.sort_order, GeoPublishingChannel.id)
         )
     )
+    if getattr(session, "info", {}).get("advisor_scoped_write"):
+        # Content operations consume configured destinations. Only the
+        # administrator's configuration flow may create channel settings.
+        return rows
     existing_types = {str(r.channel_type or "").lower() for r in rows}
     await _ensure_tenant_exists(session, tenant_id)
     missing = [
