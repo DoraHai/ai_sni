@@ -414,7 +414,7 @@ def test_task_patch_forbidden_fields_are_403_before_handler(tmp_path, monkeypatc
     ('PATCH', '/facts/10', {'trust_level': 'verified'}),
     ('PATCH', '/facts/10', {'meta': {'public_use_allowed': True}}),
     ('PATCH', '/facts/10', {'meta': {'verified_by': 2}}),
-    ('PATCH', '/facts/10', {'status': 'archived'}),
+    ('PATCH', '/facts/10', {'status': 'deleted'}),
     ('PATCH', '/facts/10', {'business_id': 20}),
     ('PATCH', '/prompts/10', {'status': 'archived'}),
     ('PATCH', '/prompts/10', {'is_brand_probe': True}),
