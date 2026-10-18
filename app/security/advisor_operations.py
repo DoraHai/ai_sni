@@ -54,6 +54,9 @@ CONTRACTS = [
     ('POST', '/publishing-channels/enable-multi-media-auto', '', 'project_id'),
     ('POST', '/oauth/social/refresh', '', 'account_id project_id'),
     ('POST', '/channel-accounts/{account_id}/verify-social', '', 'project_id'),
+    ('POST', '/channel-accounts', 'tenant_id channel_id display_name auth_type', 'project_id'),
+    ('PATCH', '/channel-accounts/{account_id}', 'display_name status', 'project_id'),
+    ('DELETE', '/channel-accounts/{account_id}', '', 'hard project_id'),
     ('PUT', '/channel-polish-prompts', 'tenant_id system_prompt reset_system channels add_channel_key remove_channel_key', 'project_id'),
     ('POST', '/audits', 'tenant_id url', 'project_id'),
     ('POST', '/audits/{audit_id}/advice', '', ''),
@@ -139,6 +142,16 @@ async def read_contract(request, rule):
     except (ValueError, UnicodeError):
         deny(422, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '请提交有效JSON对象')
     check_fields(rule, body)
+    # Validate required values before reserving a paid attempt. Keep the raw
+    # object for the recursive reference guard; schema coercion must not hide IDs.
+    from pydantic import BaseModel, ValidationError
+    route = request.scope.get('route')
+    schema = getattr(getattr(route, 'body_field', None), 'type_', None)
+    if isinstance(schema, type) and issubclass(schema, BaseModel):
+        try:
+            schema.model_validate(body)
+        except ValidationError:
+            deny(422, 'ADVISOR_INVALID_OPERATION', '操作参数不完整或格式不正确，请核对后重试')
     return body
 
 
@@ -148,6 +161,10 @@ def check_fields(rule, body):
     forbidden = {'api_key', 'clear_api_key', 'credentials', 'credentials_encrypted', 'password',
                  'advisor_user_id', 'permissions', 'role_id', 'interval_days', 'interval_hours',
                  'model', 'api_base_url', 'engine_keys', 'auth_type'}
+    if rule.method == 'POST' and rule.template == PREFIX + '/channel-accounts':
+        if body.get('auth_type', 'manual') != 'manual':
+            deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '账号凭证和鉴权方式只能由管理员配置')
+        forbidden -= {'auth_type'}
     def walk(value):
         if isinstance(value, dict):
             if set(value) & forbidden:

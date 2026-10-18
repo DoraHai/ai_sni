@@ -434,7 +434,7 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
         _assignment_required()
     project = next((p for p in projects if p.id in selected), None)
     plan = plans[project.id] if project else {}
-    transition = (rule.method == 'PATCH' and rule.template == _PREFIX + '/projects/{project_id}'
+    transition = (request.method == 'PATCH' and rule.template == _PREFIX + '/projects/{project_id}'
                   and isinstance(body, dict) and body.get('status') in {'paused', 'archived'})
     was_active = bool(project and transition and request.scope.get('advisor_active_project_transition') == project.id)
     if project and project.status == 'active' and transition:

@@ -142,18 +142,18 @@ def test_service_plan_route_only_grants_global_account_admin_assignment():
           patch("app.geo.project_workflows.save_plan", new=AsyncMock(return_value={})) as writer):
         editor = AuthContext(7, "advisor", "advisor", 17,
                              {"geo.assets": "edit", "geo.content": "edit"})
-        asyncio.run(update_project_plan(3, 17, req, editor, session))
-        assert writer.call_args.kwargs["allow_advisor_change"] is False
-        asyncio.run(update_project_plan(3, 17, GeoServicePlanUpdate(expected_revision=1), editor, session))
-        assert "advisor_user_id" not in writer.call_args.args[3]
+        with pytest.raises(HTTPException) as denied:
+            asyncio.run(update_project_plan(3, 17, req, editor, session))
+        assert denied.value.status_code == 403
+        writer.assert_not_awaited()
         admin = AuthContext(99, "admin", "admin", None,
                             {"geo.assets": "edit", "geo.content": "edit", "settings.accounts": "edit"})
         asyncio.run(update_project_plan(3, 17, req, admin, session))
         assert writer.call_args.kwargs["allow_advisor_change"] is True
         tenant_admin = AuthContext(98, "admin", "admin", 17,
             {"geo.assets": "edit", "geo.content": "edit", "settings.accounts": "edit"})
-        asyncio.run(update_project_plan(3, 17, req, tenant_admin, session))
-        assert writer.call_args.kwargs["allow_advisor_change"] is False
+        with pytest.raises(HTTPException):
+            asyncio.run(update_project_plan(3, 17, req, tenant_admin, session))
         with pytest.raises(HTTPException) as api_key:
             asyncio.run(update_project_plan(3, 17, req,
                 AuthContext(None, "key", "key", None, {}, True), session))

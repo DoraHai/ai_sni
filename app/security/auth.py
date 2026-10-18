@@ -352,6 +352,15 @@ async def require_scoped_auth(
 ) -> AuthContext:
     """业务路由统一鉴权：菜单权限（view/edit）+ 单客户隔离。"""
     keys, need_edit = _required(request.url.path, request.method)
+    if getattr(ctx, 'advisor_scope', None) is not None:
+        rule = getattr(request.state, 'advisor_scoped_write', None)
+        if rule is not None:
+            keys, need_edit = set(rule.edit_all), True
+        elif request.method == 'GET':
+            from app.security.geo_advisor_routes import READ_ROUTES
+            template = getattr(request.scope.get('route'), 'path', None)
+            if template in READ_ROUTES and keys == {'geo.diagnosis'}:
+                keys = {'geo.assets', 'geo.content'}
     # This GEO feature explicitly admits the existing global account/customer
     # administrator even without GEO edit menus. Keep all other route rules intact.
     visibility_path = request.url.path == "/api/v1/geo/search-visibility/usage" or bool(re.fullmatch(

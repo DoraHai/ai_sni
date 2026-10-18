@@ -95,6 +95,8 @@ async def create_geo_project(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    from app.security.geo_configuration_admin import require_geo_configuration_admin
+    require_geo_configuration_admin(ctx)
     module = await ensure_module_access(session, ctx, req.tenant_id, "geo")
     canonical, default_url = _canonical_domain(req.domain)
     row = GeoProject(
@@ -127,8 +129,6 @@ async def update_geo_project(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    from app.security.geo_configuration_admin import require_geo_configuration_admin
-    require_geo_configuration_admin(ctx)
     await ensure_module_access(session, ctx, tenant_id, "geo")
     row = await session.get(GeoProject, project_id, with_for_update=True)
     if row is None or row.tenant_id != tenant_id:

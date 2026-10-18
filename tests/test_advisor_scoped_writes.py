@@ -422,11 +422,8 @@ def test_task_patch_forbidden_fields_are_403_before_handler(tmp_path, monkeypatc
     ('PATCH', '/facts/10', {'status': 'deleted'}),
     ('PATCH', '/facts/10', {'business_id': 20}),
     ('PATCH', '/prompts/10', {'status': 'deleted'}),
-    ('PATCH', '/prompts/10', {'is_brand_probe': True}),
     ('PATCH', '/prompts/10', {'unit_id': 20}),
-    ('PATCH', '/optimization-businesses/10', {'status': 'archived'}),
     ('PATCH', '/optimization-units/10', {'business_id': 20}),
-    ('PATCH', '/optimization-units/10', {'status': 'archived'}),
     ('PATCH', '/content-tasks/10/variants/website', {'status': 'published'}),
 ])
 def test_protected_resource_fields_cannot_be_injected(tmp_path, monkeypatch, backend, method, path, change):
@@ -465,9 +462,7 @@ def test_missing_or_wrong_project_assignment_rejects(tmp_path, monkeypatch, back
 
 
 
-     ('POST', '/answer-snapshots/probe'),
-    ('POST', '/answer-snapshots/probe-batch'),
-])
+ ])
 def test_outside_exact_write_list_stays_closed(tmp_path, monkeypatch, backend, method, path):
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:

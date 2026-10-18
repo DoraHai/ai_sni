@@ -121,6 +121,8 @@ async def guard_request(session, ctx, request, claims):
         deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "此顾问入口尚未开放")
     from app.security.auth import _required
     keys, edit = _required(request.url.path, request.method)
+    if keys == {'geo.diagnosis'}:
+        keys = {'geo.assets', 'geo.content'}  # Exact reviewed GEO read matrix above.
     if keys is None or not (ctx.can_edit(*keys) if edit else ctx.can_view(*keys)):
         deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "当前角色无权访问此功能")
     await check_objects(session, ctx, request)

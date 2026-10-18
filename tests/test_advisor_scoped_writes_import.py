@@ -18,7 +18,7 @@ BODY = {'tenant_id': 10, 'prompt_id': 10, 'title': 'Imported fixture article',
 
 
 @pytest.mark.parametrize('change', [
-    {'source_type': 'url'}, {'source_type': None},
+    {'source_type': 'unknown'}, {'source_type': None},
     {'status': 'published'}, {'owner_user_id': 2}, {'version_no': 8},
     {'published': True}, {'review_status': 'approved'}, {'prompt_id': 20},
     {'tenant_id': 20}, {'tenant_id': 30},

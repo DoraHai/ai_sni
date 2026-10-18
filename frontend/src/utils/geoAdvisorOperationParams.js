@@ -7,10 +7,10 @@ const PROJECT_PATHS = new Set([
   '/audits', '/structure-scan', '/action-tickets', '/onboarding/preview', '/onboarding/apply',
   '/onboarding/sitemap-audit', '/onboarding/sitemap-audit/create-tasks', '/daily-metrics/rebuild',
   '/attribution/backfill', '/monitoring-stance', '/deliverables/archives', '/content-imports/preview-url',
-  '/integration/tasks',
+  '/integration/tasks', '/channel-accounts',
 ])
 const OBJECT_PATHS = [
-  /^\/publishing-channels\/[1-9]\d*$/, /^\/channel-accounts\/[1-9]\d*\/verify-social$/,
+  /^\/publishing-channels\/[1-9]\d*$/, /^\/channel-accounts\/[1-9]\d*$/, /^\/channel-accounts\/[1-9]\d*\/verify-social$/,
   /^\/action-tickets\/[1-9]\d*(?:\/(?:verify|prepare-content|execution))?$/,
 ]
 

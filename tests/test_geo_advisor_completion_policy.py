@@ -57,7 +57,7 @@ def test_operational_routes_remain_exact(method, path):
 
 @pytest.mark.parametrize('path', ('/tracking-engines', '/visibility-patrol/settings',
     '/projects/{project_id}/service-plan', '/projects/{project_id}/business-scope',
-    '/channel-accounts', '/oauth/social/start', '/ai-settings'))
+    '/oauth/social/start', '/ai-settings'))
 def test_system_settings_are_not_operational_grants(path):
     assert not any(template == '/api/v1/geo' + path for _, template in LOOKUP)
 
@@ -116,3 +116,10 @@ def test_supplier_is_not_called_after_revocation(monkeypatch):
             calls.current_operation.reset(token)
     asyncio.run(run())
     provider.assert_not_awaited()
+
+
+@pytest.mark.parametrize('body', ({'auth_type': 'webhook'}, {'credentials': {}}, {'auth_type': 'oauth2'}))
+def test_manual_account_operations_cannot_configure_credentials(body):
+    rule = rules()[('POST', '/api/v1/geo/channel-accounts')]
+    with pytest.raises(HTTPException):
+        check_fields(rule, body)

@@ -24,9 +24,12 @@ import {
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+import { session } from '../../store/session'
+import { advisorClaims } from '../../utils/geoAdvisorTenant.js'
 import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
 
 const { tenantId } = useGeoTenant()
+const isAdvisor = computed(() => !!advisorClaims(session.token) || session.user?.is_advisor === true)
 const prototypeSurface = getGeoPrototypePageSurface()
 const loading = ref(false)
 const error = ref('')
@@ -453,7 +456,7 @@ function openCreateAccount(prefillChannelId) {
     channels.value[0]?.id ||
     null
   const ch = channelById(cid)
-  const auth = defaultAuthForChannel(cid)
+  const auth = isAdvisor.value ? 'manual' : defaultAuthForChannel(cid)
   accForm.value = {
     channel_id: cid,
     display_name: '',
@@ -471,7 +474,7 @@ function openCreateAccount(prefillChannelId) {
 
 function onAccChannelChange(cid) {
   const ch = channelById(cid)
-  accForm.value.auth_type = defaultAuthForChannel(cid)
+  accForm.value.auth_type = isAdvisor.value ? 'manual' : defaultAuthForChannel(cid)
   if (typeSupportsSocial(ch?.channel_type)) {
     accForm.value.platform = ch.channel_type
     accForm.value.provider = ch.channel_type === 'wechat' ? 'wechat_mp' : 'oauth2'
@@ -517,6 +520,16 @@ async function doRefreshOAuth(row) {
 async function createAccount() {
   if (!accForm.value.channel_id || !accForm.value.display_name.trim()) {
     ElMessage.warning('请选择渠道并填写显示名')
+    return
+  }
+  if (isAdvisor.value) {
+    try {
+      await createGeoChannelAccount({ tenant_id: tenantId.value, channel_id: accForm.value.channel_id,
+        display_name: accForm.value.display_name.trim(), auth_type: 'manual' })
+      createAccOpen.value = false
+      ElMessage.success('已添加人工回填账号')
+      await load()
+    } catch (e) { ElMessage.error(e.message || '添加失败') }
     return
   }
   const ch = channelById(accForm.value.channel_id)
@@ -597,13 +610,13 @@ async function saveEditAccount() {
   try {
     const body = {
       display_name: editForm.value.display_name.trim(),
-      auth_type: editForm.value.auth_type,
+      ...(isAdvisor.value ? {} : { auth_type: editForm.value.auth_type }),
       status: editForm.value.status,
     }
-    if (editForm.value.clear_credentials) {
+    if (!isAdvisor.value && editForm.value.clear_credentials) {
       body.clear_credentials = true
     } else if (
-      editForm.value.auth_type === 'webhook' &&
+      !isAdvisor.value && editForm.value.auth_type === 'webhook' &&
       editForm.value.webhook_url.trim()
     ) {
       body.credentials = buildWebhookCredentials(editForm.value)
@@ -994,7 +1007,7 @@ onMounted(load)
               v-if="row.auth_type === 'oauth2' || row.provider === 'oauth2'"
               link
               type="primary"
-              @click="goOAuth(row)"
+              v-if="!isAdvisor" @click="goOAuth(row)"
             >去授权</el-button>
             <el-button
               v-if="row.auth_type === 'oauth2' || row.provider === 'oauth2'"
@@ -1131,7 +1144,7 @@ onMounted(load)
           <el-input v-model="accForm.display_name" placeholder="如：官网 CMS 生产 Webhook" />
         </el-form-item>
         <el-form-item label="鉴权类型">
-          <el-select v-model="accForm.auth_type" style="width: 100%">
+          <el-select v-model="accForm.auth_type" :disabled="isAdvisor" style="width: 100%">
             <el-option label="webhook · 官网/文档" value="webhook" />
             <el-option label="social_api · 社交直发" value="social_api" />
             <el-option label="manual · 人工回填" value="manual" />
@@ -1288,7 +1301,7 @@ onMounted(load)
           <el-input v-model="editForm.display_name" />
         </el-form-item>
         <el-form-item label="鉴权类型">
-          <el-select v-model="editForm.auth_type" style="width: 100%">
+          <el-select v-model="editForm.auth_type" :disabled="isAdvisor" style="width: 100%">
             <el-option label="webhook" value="webhook" />
             <el-option label="manual" value="manual" />
           </el-select>
@@ -1300,7 +1313,7 @@ onMounted(load)
             <el-option label="已禁用 disabled" value="disabled" />
           </el-select>
         </el-form-item>
-        <template v-if="editForm.auth_type === 'webhook'">
+        <template v-if="!isAdvisor && editForm.auth_type === 'webhook'">
           <el-divider content-position="left">更新 Webhook（留空不改）</el-divider>
           <el-form-item label="新 Webhook URL">
             <el-input v-model="editForm.webhook_url" placeholder="https://…" />

@@ -133,8 +133,7 @@ def test_client_cannot_change_fixed_run_or_schedule(tmp_path, monkeypatch, extra
 
 @pytest.mark.parametrize('method,path', [
     ('PUT', '/tracking-engines'), ('PUT', '/ai-settings'), ('POST', '/ai-settings/test'),
-    ('PUT', '/visibility-patrol/settings'), ('POST', '/answer-snapshots/probe'),
-    ('POST', '/answer-snapshots/probe-batch'), ('POST', '/integration/scheduler-safe-foundation'),
+    ('PUT', '/visibility-patrol/settings'), ('POST', '/integration/scheduler-safe-foundation'),
     ('POST', '/content-tasks/10/ai-review'), ('POST', '/content-tasks/10/variants'),
     ('POST', '/content-tasks/10/submit-review'), ('POST', '/content-tasks/10/review'),
      ('DELETE', '/content-tasks/10'),

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
 
 from app.database import Base, get_session
-from app.models import GeoAsyncJob, GeoAuditRun, GeoMediaPlacement, GeoProject, Role, Tenant, TenantModule, User
+from app.models import GeoAsyncJob, GeoAuditRun, GeoMediaPlacement, GeoProject, GeoOptimizationBusiness, GeoOptimizationUnit, GeoPrompt, GeoAnswerSnapshot, GeoVisibilityPatrolRun, GeoOptimizationPeriod, GeoContentTask, Role, Tenant, TenantModule, User
 from app.models.advisor_tenant_grant import AdvisorTenantGrant as Grant
 from app.security.auth import JWT_ALG, _jwt_secret, require_auth
 from app.security.geo_advisor_delivery import AdvisorDeliveryMiddleware
@@ -61,7 +61,10 @@ async def sandbox(tmp_path, monkeypatch, *, with_grants=True):
     engine = create_async_engine("sqlite+aiosqlite:///" + str(tmp_path / "geo-advisor.sqlite"))
     factory = async_sessionmaker(engine, expire_on_commit=False)
     tables = [Role.__table__, Tenant.__table__, User.__table__, TenantModule.__table__,
-              GeoProject.__table__, GeoAsyncJob.__table__, GeoAuditRun.__table__, GeoMediaPlacement.__table__]
+              GeoProject.__table__, GeoAsyncJob.__table__, GeoAuditRun.__table__, GeoMediaPlacement.__table__,
+              GeoOptimizationBusiness.__table__, GeoOptimizationUnit.__table__, GeoPrompt.__table__,
+              GeoAnswerSnapshot.__table__, GeoVisibilityPatrolRun.__table__, GeoOptimizationPeriod.__table__,
+              GeoContentTask.__table__]
     if with_grants:
         tables.append(Grant.__table__)
     async with engine.begin() as conn:
@@ -75,8 +78,13 @@ async def sandbox(tmp_path, monkeypatch, *, with_grants=True):
             s.add(TenantModule(id=tid, tenant_id=tid, module_code="geo", status="active"))
             s.add(GeoProject(id=tid, tenant_id=tid, tenant_module_id=tid, name=f"项目{tid}",
                              primary_domain=f"{tid}.example", canonical_domain=f"{tid}.example",
-                             project_settings={"geo_service_plan": {"advisor_user_id": 1}}))
-            s.add(GeoAsyncJob(id=tid, tenant_id=tid, kind="generate_article", status="pending", created_by=1))
+                             project_settings={"geo_service_plan": {"advisor_user_id": 1}, "geo_business_scope": {"business_ids": [tid]}}))
+            s.add(GeoOptimizationBusiness(id=tid, tenant_id=tid, name=f"business {tid}"))
+            s.add(GeoOptimizationUnit(id=tid, tenant_id=tid, business_id=tid, name=f"unit {tid}"))
+            s.add(GeoPrompt(id=tid, tenant_id=tid, unit_id=tid, question=f"question {tid}"))
+            s.add(GeoContentTask(id=tid, tenant_id=tid, prompt_id=tid, business_id=tid, title=f"task {tid}"))
+            s.add(GeoAsyncJob(id=tid, tenant_id=tid, kind="generate_article", status="pending", created_by=1,
+                              ref_type="content_task", ref_id=tid))
         s.add_all([User(id=1, username="advisor", role_id=1, tenant_id=10, is_active=True, password_hash="unused"),
                    User(id=2, username="admin", role_id=2, tenant_id=None, is_active=True, password_hash="unused"),
                    User(id=3, username="customer", role_id=3, tenant_id=10, is_active=True, password_hash="unused")])
@@ -128,7 +136,7 @@ def test_content_reads_keep_selected_grants_and_native_scope(tmp_path, monkeypat
                 for tid in (10, 20, 30):
                     s.add(GeoAuditRun(id=tid, tenant_id=tid, url=f"https://{tid}.example",
                                      snapshot={"kind": "website_structure", "structure": {"score": tid}}))
-                    s.add(GeoMediaPlacement(id=tid, tenant_id=tid, name=f"媒体{tid}", channel_key=channel))
+                    s.add(GeoMediaPlacement(id=tid, tenant_id=tid, name=f"媒体{tid}", channel_key=channel, related_prompt_id=tid))
                 await s.commit()
             for tid, gid in [(10, 101), (20, 102)]:
                 response = await request(f"{path}?tenant_id={tid}", auth=token(tid=tid, gid=gid))
@@ -168,9 +176,9 @@ def test_content_read_fix_keeps_high_risk_posts_closed(tmp_path, monkeypatch, en
     async def run():
         async with sandbox(tmp_path, monkeypatch) as (request, _factory):
             for path in ("/structure-scan", "/action-tickets"):
-                response = await request(f"{path}?tenant_id=10", method="POST", json={"title": "test"})
+                response = await request(f"{path}?tenant_id=10", method="POST", json={"title": "test", "permissions": []})
                 assert response.status_code == 403, response.text
-                assert response.json()["detail"]["code"] == "ADVISOR_HIGH_RISK_WRITES_DISABLED"
+                assert response.json()["detail"]["code"] == ("ADVISOR_WRITE_FIELD_FORBIDDEN" if enabled else "ADVISOR_HIGH_RISK_WRITES_DISABLED")
     asyncio.run(run())
 
 

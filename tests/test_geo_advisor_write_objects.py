@@ -305,7 +305,7 @@ def test_content_task_mapping_cannot_be_reused_for_other_routes(tmp_path, templa
         async with sandbox(tmp_path) as factory, factory() as session:
             with pytest.raises(HTTPException) as denied:
                 await validate(session, template, {}, path={"task_id": 1})
-            assert denied.value.detail["code"] == "ADVISOR_OBJECT_UNAVAILABLE"
+            assert denied.value.detail["code"] == "ADVISOR_TENANT_NOT_GRANTED"
     asyncio.run(run())
 
 

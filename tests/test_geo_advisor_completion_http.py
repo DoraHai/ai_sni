@@ -94,3 +94,50 @@ def test_new_import_scope_rejects_every_invalid_owner(tmp_path, monkeypatch, bac
             assert response.status_code == 403, response.text
             assert await env.snapshot() == before
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('path,body', (
+    ('/prompts/10', {'is_brand_probe': True}),
+    ('/optimization-businesses/10', {'status': 'archived'}),
+    ('/optimization-units/10', {'status': 'archived'}),
+))
+def test_operational_classification_and_archive_fields_persist(tmp_path, monkeypatch, backend, path, body):
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            response = await env.request('PATCH', path, body=body)
+            assert response.status_code == 200, response.text
+            for key, value in body.items():
+                assert response.json()[key] == value
+    asyncio.run(run())
+
+
+def test_manual_account_metadata_and_status_work_without_credentials(tmp_path, monkeypatch, backend):
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend, extra_tables=('geo_channel_accounts',)) as env:
+            async with env.factory() as session:
+                session.add(m.GeoPublishingChannel(id=100, tenant_id=10, name='fixture destination',
+                    channel_type='website', publish_mode='manual_only', enabled=True))
+                await session.commit()
+            response = await env.request('POST', '/channel-accounts', body={'tenant_id': 10,
+                'channel_id': 100, 'display_name': 'manual account', 'auth_type': 'manual'})
+            assert response.status_code == 200, response.text
+            ident = response.json()['id']
+            response = await env.request('PATCH', f'/channel-accounts/{ident}',
+                body={'display_name': 'edited manual account', 'status': 'active'})
+            assert response.status_code == 200, response.text
+            before = await env.snapshot()
+            response = await env.request('PATCH', f'/channel-accounts/{ident}', body={'credentials': {'api_key': 'fixture'}})
+            assert response.status_code == 403 and await env.snapshot() == before
+            response = await env.request('DELETE', f'/channel-accounts/{ident}')
+            assert response.status_code == 200, response.text
+    asyncio.run(run())
+
+
+def test_malformed_visibility_request_does_not_spend_a_daily_attempt(tmp_path, monkeypatch, backend):
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            before = await env.snapshot()
+            response = await env.request('POST', '/answer-snapshots/probe', body={'tenant_id': 10})
+            assert response.status_code == 422, response.text
+            assert await env.snapshot() == before
+    asyncio.run(run())

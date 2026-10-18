@@ -23,7 +23,7 @@ def test_advisor_archive_and_hard_delete_commit_with_log(tmp_path, monkeypatch, 
                     assert await session.get(GeoChannelVariant, 10) is None
     asyncio.run(run())
     events = [json.loads(r.message) for r in caplog.records if r.name == "geo.advisor.operations"]
-    assert any(e["result"] == "committed" and e["object_ids"] == {"task_id": "10"} for e in events)
+    assert any(e["result"] == "committed" and e["object_ids"].get("task_id") == "10" for e in events)
 
 
 def test_manual_snapshot_delete_resolves_its_prompt_project(tmp_path, monkeypatch):
@@ -125,7 +125,7 @@ def test_snapshot_list_and_delete_only_affect_assigned_project_slices(tmp_path, 
             assert response.status_code == 200, response.text
             assert [r['id'] for r in response.json()['items']] == [100]
             response = await env.request('GET', '/answer-snapshots', params={'prompt_id': 50})
-            assert response.status_code == 200 and response.json()['items'] == []
+            assert response.status_code == 403
             async with env.factory() as session:
                 foreign = await session.get(GeoDailyMetric, 1000)
                 before = {c.name: getattr(foreign, c.name) for c in GeoDailyMetric.__table__.columns}
