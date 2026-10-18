@@ -84,7 +84,7 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
         forbidden()
     if "source" in body and body["source"] != "manual":
         forbidden()
-    if rule.template == "/api/v1/geo/content-imports/create-task" and body.get("source_type") != "paste":
+    if rule.template == "/api/v1/geo/content-imports/create-task" and body.get("source_type") not in ("paste", "file"):
         forbidden()
     if rule.template.endswith("/article") and "expected_article_id" not in body:
         forbidden()

@@ -178,6 +178,10 @@ async def guard_scoped_write(session, ctx, request, claims):
 
     if not get_settings().advisor_scoped_content_writes_enabled:
         deny(403, "ADVISOR_HIGH_RISK_WRITES_DISABLED", "顾问任务和写入暂未开放")
+    from app.security.advisor_import_preview import PREVIEW_ROUTES, guard_import_preview
+    if (request.method, getattr(request.scope.get("route"), "path", None)) in PREVIEW_ROUTES:
+        await guard_import_preview(session, ctx, request, claims)
+        return
     rule = match_write_rule(request)
     if rule is None:
         deny(403, "ADVISOR_HIGH_RISK_WRITES_DISABLED", "此顾问写入入口尚未开放")
