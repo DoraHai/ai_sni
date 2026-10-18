@@ -495,9 +495,6 @@ async def execute_patrol_run(
     if row.status != "pending":
         await session.commit()
         return row
-    advisor_prompt_ids = (row.summary or {}).get('advisor_visibility_prompt_ids')
-    advisor_auth = (row.summary or {}).get('advisor_visibility_auth')
-
     async def check_advisor(*, lock=False):
         if advisor_prompt_ids is not None:
             await check_visibility_execution(session, row, advisor_prompt_ids, lock=lock)
@@ -510,6 +507,9 @@ async def execute_patrol_run(
 
     try:
         await ensure_geo_entitlement(session, row.tenant_id)
+        # Preserve the existing denial gate before inspecting run metadata.
+        advisor_prompt_ids = (row.summary or {}).get('advisor_visibility_prompt_ids')
+        advisor_auth = (row.summary or {}).get('advisor_visibility_auth')
         await check_advisor(lock=True)
     except (GeoEntitlementUnavailable, AdvisorVisibilityUnavailable) as exc:
         row.status = "failed"
