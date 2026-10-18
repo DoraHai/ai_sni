@@ -24,6 +24,7 @@ from app.api import auth as auth_api, seo as seo_api, seo_workbench_assistant as
 from app.database import get_session
 from app.models.role import Role
 from app.models.user import User
+from app.models.advisor_tenant_grant import AdvisorTenantGrant
 from app.models.module_workspace import SeoSite, TenantModule
 from app.models.seo import SeoContentAsset, SeoKeywordAsset, SeoSitePage, SeoAiOperation
 from app.models.seo_cockpit import SeoTask
@@ -59,7 +60,9 @@ async def harness(monkeypatch, **settings_changes):
         monkeypatch.setattr(module, 'get_settings', lambda:settings)
     async with database() as (sessions, _):
         async with sessions() as session:
-            for model in (Role, User, SeoSite, SeoContentAsset, SeoKeywordAsset, SeoSitePage, SeoTask):
+            # Empty grant history proves this unbound reader is not a former
+            # advisor. Missing-table fail-closed behavior is tested separately.
+            for model in (Role, User, AdvisorTenantGrant, SeoSite, SeoContentAsset, SeoKeywordAsset, SeoSitePage, SeoTask):
                 await session.execute(CreateTable(model.__table__, include_foreign_key_constraints=[]))
             await session.execute(text("UPDATE tenant_modules SET status='active'"))
             password_hash = auth.hash_password(PASSWORD)
