@@ -14,8 +14,6 @@ DAILY = (
     ('POST', '/site/page-captures/upload', 'tenant_id site_id relation_type relation_id', 'seo.site'),
     ('POST', '/tasks', 'tenant_id site_id module action_type title params created_by assignee_role', 'seo.content'),
     ('PATCH', '/tasks/{task_id}', 'tenant_id site_id title status note', 'seo.content'),
-    ('POST', '/qa/batches', 'tenant_id site_id request_id items', 'seo.content'),
-    ('POST', '/qa/batches/{batch_id}/control', 'tenant_id site_id action question_id', 'seo.content'),
     ('POST', '/workbench/notifications/read', 'tenant_id site_id task_id event_id', 'seo.content seo.site'),
     ('POST', '/overview/metric-snapshots', 'tenant_id site_id metric_type dimension numeric_value text_value unit source data_quality status error_message observed_at', 'seo.dashboard'),
     ('POST', '/keywords', 'tenant_id site_id keyword cluster intent monthly_volume difficulty priority landing_page status notes', 'seo.keywords'),
