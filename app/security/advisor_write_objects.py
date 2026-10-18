@@ -271,7 +271,7 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
     """Every referenced business must belong to the same assigned active project."""
     from app.geo.project_scope import binding
     from app.geo.project_workflows import advisor_available, plan_for
-    from app.models import GeoProject, GeoVisibilityPatrolSettings
+    from app.models import GeoProject, GeoVisibilityPatrolSettings, User
 
     objects = await _resolve(session, ctx, request, body, rule)
     creating_business = request.method == "POST" and rule.template == _PREFIX + "/optimization-businesses"
@@ -328,10 +328,15 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
     # permissions. Scheduler's default-tenant helper must not veto another
     # explicitly granted customer on an interactive advisor request.
     selected_import = getattr(ctx, "advisor_scope", None) is not None
+    # Keep live account/permission checks without treating the default customer
+    # as the only customer that a valid selected grant can authorize.
+    actor = await session.get(User, ctx.user_id, populate_existing=True) if selected_import else None
+    actor_tenant = actor.tenant_id if actor is not None else ctx.tenant_id
     if (project is None or project.status != "active"
             or type(plan.get("advisor_user_id")) is not int
             or plan["advisor_user_id"] != ctx.user_id
-            or (not selected_import and not await advisor_available(session, ctx.tenant_id, ctx.user_id))):
+            or (selected_import and actor is None)
+            or not await advisor_available(session, actor_tenant, ctx.user_id)):
         _assignment_required()
     # A tenant-wide patrol dynamically consumes new prompts. Active project
     # cycles and generation can consume updated facts. Refuse these resources

@@ -73,7 +73,8 @@ async def sandbox(tmp_path, monkeypatch, *, with_grants=True):
             s.add(Tenant(id=tid, name=f"客户{tid}"))
             s.add(TenantModule(id=tid, tenant_id=tid, module_code="geo", status="active"))
             s.add(GeoProject(id=tid, tenant_id=tid, tenant_module_id=tid, name=f"项目{tid}",
-                             primary_domain=f"{tid}.example", canonical_domain=f"{tid}.example"))
+                             primary_domain=f"{tid}.example", canonical_domain=f"{tid}.example",
+                             project_settings={"geo_service_plan": {"advisor_user_id": 1}}))
             s.add(GeoAsyncJob(id=tid, tenant_id=tid, kind="generate_article", status="pending", created_by=1))
         s.add_all([User(id=1, username="advisor", role_id=1, tenant_id=10, is_active=True, password_hash="unused"),
                    User(id=2, username="admin", role_id=2, tenant_id=None, is_active=True, password_hash="unused"),
