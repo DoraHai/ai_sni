@@ -43,7 +43,7 @@ def test_manual_snapshot_delete_resolves_its_prompt_project(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize("path,states", [("/facts/10", ("archived", "active")),
-                                        ("/prompts/10", ("paused", "active"))])
+                                        ("/prompts/10", ("archived", "active"))])
 def test_archive_and_restore_stay_on_assigned_project(tmp_path, monkeypatch, path, states):
     async def run():
         async with write_sandbox(tmp_path, monkeypatch) as env:
