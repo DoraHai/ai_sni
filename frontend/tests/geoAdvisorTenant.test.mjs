@@ -206,7 +206,8 @@ test('legacy pairs work, malformed envelopes fail closed, and logout clears all 
   tab.setItem('sem_user', JSON.stringify(user))
   assert.equal(selectStoredAuth(local, tab).token, identity)
   const f = await fixture()
-  f.session.logout()
+  const logout = f.session.logout
+  logout()
   assert.equal(selectStoredAuth(f.local, f.tab), null)
   assert.equal(f.tab.getItem('sem_advisor_identity_v1'), null)
   assert.equal(f.session.tenantId, null)
