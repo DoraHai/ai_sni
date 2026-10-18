@@ -20,7 +20,7 @@ def main():
     reader = PdfReader(io.BytesIO(raw))
     max_pages = int(sys.argv[1])
     if len(reader.pages) > max_pages:
-        print(json.dumps({'error': f'PDF documents cannot exceed {max_pages} pages'}))
+        print(json.dumps({'error': f'PDF 最多支持 {max_pages} 页，请拆分后重试'}))
         return
     parts, size = [], 0
     for page in reader.pages:

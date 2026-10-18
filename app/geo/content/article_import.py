@@ -43,10 +43,10 @@ def _clean_text(text: str) -> str:
 def _preview(*, title: str, body_markdown: str, source_type: str, source_url: str) -> dict:
     body = _clean_text(body_markdown)
     if not body:
-        raise ArticleImportError("No readable article text was extracted")
+        raise ArticleImportError('文件里没有可读取的正文，请换成可复制文字的文件')
     normalized_title = _clean_text(title).split("\n", 1)[0].strip()
     if not normalized_title:
-        raise ArticleImportError("The imported article needs a title")
+        raise ArticleImportError('文章缺少标题，请补充标题后再导入')
     return {
         "title": normalized_title[:300],
         "body_markdown": body,
@@ -102,7 +102,7 @@ def _read_docx(raw: bytes) -> tuple[str, str | None]:
     try:
         from docx import Document
     except ImportError as exc:  # pragma: no cover - dependency is installed in deployments
-        raise ArticleImportError("DOCX import support is unavailable") from exc
+        raise ArticleImportError('暂时无法读取 DOCX 文件，请改用文字文件') from exc
     try:
         # Check both declared and actually expanded sizes before python-docx
         # loads XML/media. The compressed upload is separately bounded.
@@ -110,14 +110,14 @@ def _read_docx(raw: bytes) -> tuple[str, str | None]:
             entries = archive.infolist()
             if (len(entries) > MAX_DOCX_ENTRIES
                     or sum(entry.file_size for entry in entries) > MAX_DOCX_UNPACKED_BYTES):
-                raise ArticleImportError("DOCX expanded content exceeds the import limit")
+                raise ArticleImportError('DOCX 解压内容过大，请拆分后重试')
             expanded = 0
             for entry in entries:
                 with archive.open(entry) as member:
                     while chunk := member.read(64 * 1024):
                         expanded += len(chunk)
                         if expanded > MAX_DOCX_UNPACKED_BYTES:
-                            raise ArticleImportError("DOCX expanded content exceeds the import limit")
+                            raise ArticleImportError('DOCX 解压内容过大，请拆分后重试')
         document = Document(io.BytesIO(raw))
         text = "\n\n".join(paragraph.text for paragraph in document.paragraphs if paragraph.text.strip())
         title = (document.core_properties.title or "").strip() or None
@@ -125,7 +125,7 @@ def _read_docx(raw: bytes) -> tuple[str, str | None]:
     except ArticleImportError:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise ArticleImportError("Unable to read the DOCX document") from exc
+        raise ArticleImportError('无法读取 DOCX 文件，请检查文件是否完整') from exc
 
 
 def preview_html_document(*, html: str, source_url: str) -> dict:
@@ -145,7 +145,7 @@ def preview_html_document(*, html: str, source_url: str) -> dict:
                 blocks.append(text)
     body = "\n\n".join(blocks) if blocks else (content.get_text("\n", strip=True) if content else "")
     return _preview(
-        title=title or "Imported article",
+        title=title or '导入文章',
         body_markdown=body,
         source_type="url",
         source_url=source_url,
@@ -156,11 +156,11 @@ def preview_text_document(*, filename: str, raw: bytes) -> dict:
     """Preview a UTF-8 text or Markdown upload without persisting it."""
     extension = Path(filename or "").suffix.lower()
     if extension not in {".txt", ".md"}:
-        raise ArticleImportError(f"Unsupported file type: {extension or 'unknown'}")
+        raise ArticleImportError('不支持的文件类型，请选择文字或 Markdown 文件')
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
-        raise ArticleImportError("Text uploads must use UTF-8 encoding") from exc
+        raise ArticleImportError('文字文件请使用 UTF-8 编码保存后再上传') from exc
     title = _filename_title(filename)
     body = text
     if extension == ".md":
@@ -172,18 +172,18 @@ def preview_file_document(*, filename: str, raw: bytes) -> dict:
     """Preview a supported uploaded document without saving the raw source."""
     extension = Path(filename or "").suffix.lower()
     if extension not in SUPPORTED_FILE_EXTENSIONS:
-        raise ArticleImportError(f"Unsupported file type: {extension or 'unknown'}")
+        raise ArticleImportError('不支持的文件类型，请选择 PDF、DOCX、文字、Markdown 或 HTML 文件')
     if len(raw) > MAX_FILE_BYTES:
-        raise ArticleImportError("The uploaded file exceeds 10 MiB")
+        raise ArticleImportError('导入文件不能超过 10 MiB，请拆分后上传')
     if not raw:
-        raise ArticleImportError("The uploaded file is empty")
+        raise ArticleImportError('上传文件为空，请重新选择文件')
     if extension in {".txt", ".md"}:
         return preview_text_document(filename=filename, raw=raw)
     if extension in {".html", ".htm"}:
         try:
             html = raw.decode("utf-8-sig")
         except UnicodeDecodeError as exc:
-            raise ArticleImportError("HTML uploads must use UTF-8 encoding") from exc
+            raise ArticleImportError('HTML 文件请使用 UTF-8 编码保存后再上传') from exc
         preview = preview_html_document(html=html, source_url=filename)
         preview["source_type"] = "file"
         return preview
@@ -200,9 +200,9 @@ def _validate_web_url(value: str) -> str:
     url = str(value or "").strip()
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ArticleImportError("A complete http or https URL is required")
+        raise ArticleImportError('请填写完整的 http:// 或 https:// 文章链接')
     if parsed.username or parsed.password:
-        raise ArticleImportError("Article URLs cannot contain credentials")
+        raise ArticleImportError('文章链接不能包含账号或密码')
     return url
 
 
