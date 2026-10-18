@@ -748,10 +748,10 @@ export function enableMultiMediaAutoPack(tenantId) {
   })
 }
 
-export function submitGeoTaskReview(tenantId, taskId, note = null) {
+export function submitGeoTaskReview(tenantId, taskId, note = null, expected = {}) {
   return client.post(
     `/api/v1/geo/content-tasks/${taskId}/submit-review`,
-    { note },
+    { note, ...expected },
     { params: { tenant_id: tenantId } },
   )
 }

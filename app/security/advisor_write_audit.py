@@ -21,4 +21,6 @@ def record(scope, result, **extra):
              "tenant_id": tenant_id, "method": scope["method"], "path": scope["path"],
              "object_ids": objects, "result": result,
              "time": datetime.now(timezone.utc).isoformat(), **extra}
+    if scope.get("geo_advisor_review"):
+        event["review"] = scope["geo_advisor_review"]
     logger.info(json.dumps(event, ensure_ascii=False, sort_keys=True))

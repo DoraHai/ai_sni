@@ -8485,6 +8485,8 @@ async def submit_task_review(
     article = await _latest_article(session, task.id)
     if article is None:
         raise HTTPException(400, "请先生成母稿后再提交审校")
+    from app.security.advisor_write_review import record_review
+    record_review(session, ctx, task, article, req, "submit-review")
     try:
         apply_submit(task, note=req.note, submitter_id=ctx.user_id)
     except ValueError as exc:
@@ -8521,6 +8523,10 @@ async def decide_task_review(
             raise HTTPException(409, "稿件版本已变化，请刷新后重新审核")
     if req.expected_updated_at is not None and req.expected_updated_at != _iso(task.updated_at):
         raise HTTPException(409, "任务或渠道稿已变化，请刷新后重新审核")
+    from app.security.advisor_write_review import record_review
+    if getattr(ctx, "advisor_scope", None) is not None:
+        article = await _latest_article(session, task.id)
+        record_review(session, ctx, task, article, req, req.decision)
     try:
         apply_decision(
             task,

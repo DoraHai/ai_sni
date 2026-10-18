@@ -312,6 +312,8 @@ class PushBatchRequest(BaseModel):
 
 
 class ReviewSubmit(BaseModel):
+    expected_article_id: int | None = Field(None, gt=0)
+    expected_updated_at: str | None = Field(None, max_length=60)
     note: str | None = Field(None, max_length=2000)
 
 

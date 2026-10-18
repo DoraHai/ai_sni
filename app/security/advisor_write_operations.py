@@ -2,6 +2,8 @@
 from app.security.advisor_scope import deny
 
 DAILY = {
+    ("POST", "/content-tasks/{task_id}/submit-review"): "expected_article_id expected_updated_at note",
+    ("POST", "/content-tasks/{task_id}/review"): "expected_article_id expected_updated_at decision note",
     ("PATCH", "/projects/{project_id}"): "name brand_name domain description",
     ("POST", "/facts/{fact_id}/verify"): "excerpt excerpt_locator source_url note expected_source_statement expected_source_name expected_source_url",
     ("POST", "/content-tasks/{task_id}/check"): "",
