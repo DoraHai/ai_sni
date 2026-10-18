@@ -144,6 +144,8 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     if p.startswith("/api/v1/assistant"):
         # 对话/记忆都算"使用助手"(读性质，非编辑配置)，view 即可，POST 也不要求 edit
         return {"assistant"}, False
+    if p == "/api/v1/seo/workbench/advisor-tasks" and method == "GET":
+        return {"seo.content", "seo.site"}, False
     if p == "/api/v1/seo/workbench/sites":
         # The acquisition workbench only needs an authorized site selector.
         # Site administration remains protected by seo.assets below.
