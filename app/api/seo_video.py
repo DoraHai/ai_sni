@@ -43,6 +43,8 @@ async def recover(publication_id:int,req:Recovery,ctx=Depends(require_scoped_aut
     if pub.external_id or pub.status not in {'manual_required','publishing'}:raise HTTPException(409,'仅支持恢复作品 ID 缺失且曾提交的任务')
     attempted=await session.scalar(select(SeoPublishAttempt.id).where(SeoPublishAttempt.tenant_id==req.tenant_id,SeoPublishAttempt.publication_id==pub.id,SeoPublishAttempt.action=='video_publish').limit(1))
     if not attempted:raise HTTPException(409,'该任务尚未尝试发布')
+    from app.security.seo_advisor_execution import recheck_before_provider
+    await recheck_before_provider(session,pub.id)
     try:result=await video.sync(row.platform_code,decrypt_credentials(row.credentials_encrypted),req.item_id)
     except video.VideoError as exc:raise HTTPException(502,str(exc)) from exc
     if not result.get('title') or result['title'].strip()!=pub.adapted_title.strip():raise HTTPException(409,'未查到当前账号下标题一致的作品，不能关联此 ID')
@@ -142,7 +144,10 @@ def publication_info(row):
     return {key:getattr(row,key) for key in ('id','content_asset_id','connection_id','platform_code','status','adapted_title','external_id','page_url','last_error','source_version')}
 
 async def require_publication_operational_before_provider(session,pub,attempt):
-    if await seo_publication_site_is_operational(session,pub.tenant_id,pub.id):return
+    if await seo_publication_site_is_operational(session,pub.tenant_id,pub.id):
+        from app.security.seo_advisor_execution import recheck_before_provider
+        await recheck_before_provider(session,pub.id)
+        return
     error='平台调用前最终核验失败：SEO 网站已暂停、归档或模块已停用'
     pub.status='failed';pub.last_error=error
     attempt.status='failed';attempt.error=error;attempt.completed_at=datetime.utcnow()
@@ -231,6 +236,8 @@ async def publish(publication_id:int,tenant_id:PositiveInt=Form(...),site_id:Pos
 async def sync(publication_id:int,req:Scope,ctx=Depends(require_scoped_auth),session=Depends(get_session)):
     row,pub,content=await publication(req,publication_id,ctx,session,True)
     if not pub.external_id:raise HTTPException(409,'尚无作品 ID，请先到平台核实提交结果')
+    from app.security.seo_advisor_execution import recheck_before_provider
+    await recheck_before_provider(session,pub.id)
     try:result=await video.sync(row.platform_code,decrypt_credentials(row.credentials_encrypted),pub.external_id)
     except video.VideoError as exc:raise HTTPException(502,str(exc)) from exc
     pub.status=result['status'];pub.page_url=result['page_url'];pub.last_synced_at=datetime.utcnow()

@@ -45,13 +45,18 @@ def install_commit_guard(session, ctx, request):
         from app.security.advisor_write_commit import recheck_advisor_before_commit
         await recheck_advisor_before_commit(session, ctx)
         created = list(getattr(session, "new", ()))
+        changed = created + list(getattr(session, 'dirty', ())) + list(getattr(session, 'deleted', ()))
         from app.security.seo_advisor_reviews import prepare_review_evidence
         await prepare_review_evidence(session, ctx, created + list(getattr(session, 'dirty', ())))
         await original()
         evidence = {**getattr(request.state, "seo_advisor_evidence", {}),
+                    'changed_objects': [{'table': row.__tablename__, 'id': row.id}
+                                        for row in changed if hasattr(row, '__tablename__') and hasattr(row, 'id')],
                     "created_objects": [{"table": row.__tablename__, "id": row.id}
                                         for row in created if hasattr(row, "__tablename__") and hasattr(row, "id")]}
         record(request, ctx, "committed", evidence=evidence)
 
     session.commit = commit
     session._seo_advisor_commit_guard = True
+    session._seo_advisor_context = ctx
+    session._seo_advisor_request = request

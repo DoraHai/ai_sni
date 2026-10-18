@@ -6,6 +6,10 @@ UPLOADS = {
     '/api/v1/seo/qa/research/file-preview': ('file', 5 * 1024 * 1024, {'pdf', 'docx'}, set()),
     '/api/v1/seo/backlinks/import': ('file', 2 * 1024 * 1024, {'csv', 'xlsx'}, set()),
     '/api/v1/seo/site/page-captures/upload': ('file', 10 * 1024 * 1024, {'png', 'jpg', 'jpeg', 'webp'}, {'tenant_id', 'site_id', 'relation_type', 'relation_id'}),
+    '/api/v1/seo/content-assets/import-published-links': ('file', 5 * 1024 * 1024, {'xlsx'}, set()),
+    '/api/v1/seo/content-assets/offline-handoff/import-receipts': ('file', 2 * 1024 * 1024, {'csv', 'json'}, set()),
+    '/api/v1/seo/content-distribution/video/upload': ('file', 48 * 1024 * 1024, {'mp4'}, {'tenant_id', 'site_id', 'connection_id', 'content_id', 'source_version', 'request_id', 'title'}),
+    '/api/v1/seo/content-distribution/video/publications/{publication_id}/publish': ('cover', 3 * 1024 * 1024, {'png', 'jpg', 'jpeg'}, {'tenant_id', 'site_id', 'connection_id', 'confirmed'}),
 }
 
 
@@ -18,6 +22,8 @@ async def request_body(request, rule):
     if len(form.multi_items()) != len(form) or set(form) - ({key} | fields):
         deny('ADVISOR_WRITE_FIELD_FORBIDDEN')
     upload = form.get(key)
+    if key == 'cover' and upload is None:
+        return dict(form)
     if not isinstance(upload, UploadFile) or (upload.filename or '').rsplit('.', 1)[-1].lower() not in extensions:
         deny('ADVISOR_INVALID_OBJECT_FILE', 422)
     position = upload.file.tell()

@@ -189,6 +189,8 @@ def references(value, template, parent="", refs=None, depth=0):
                 kind = "index_review_id"
             if key == "request_id" or (key == 'event_id' and template == '/api/v1/seo/workbench/notifications/read') or key == 'opportunity_request_id':
                 continue  # An idempotency key, never a business object.
+            if key == 'item_id' and template == '/api/v1/seo/content-distribution/video/publications/{publication_id}/recover':
+                continue  # Provider's work identifier, validated by the existing recovery handler.
             if key == "relation_id":
                 kind = {"site_page": "page_id", "publication": "publication_id"}.get(value.get("relation_type"))
                 if kind is None:
