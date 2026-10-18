@@ -14,7 +14,7 @@ const user={id:7,tenant_id:1,is_advisor:true,display_name:'顾问',permissions};
 test('advisor selects authorized customers, clears old data, rejects foreign URLs and survives revocation',async()=>{
   const fixture=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true,args:['--no-sandbox']});
   const origin='https://advisor.test',calls=[],errors=[];
-  let tenantRows=[{id:1,name:'客户甲'},{id:2,name:'客户乙'}],revoked=false,hold=null;
+  let tenantRows=[{id:1,name:'客户甲'},{id:2,name:'客户乙'}],revoked=false,hold=null,tenantsDenied=false;
   const shots=process.env.ADVISOR_SHOTS_DIR;
   try{
     const p=await browser.newPage();p.on('pageerror',e=>errors.push(e.message));p.on('dialog',d=>d.accept());
@@ -24,7 +24,7 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
       const token=req.headers().authorization?.slice(7),tid=token===business(2)?2:1;
       const send=(data,status=200)=>req.respond({status,contentType:'application/json',body:JSON.stringify(data)}).catch(()=>{});
       if(url.pathname.startsWith('/api/'))calls.push({path:url.pathname,method:req.method(),token,body:req.postData()});
-      if(url.pathname==='/api/v1/auth/tenants')return send(tenantRows);
+      if(url.pathname==='/api/v1/auth/tenants')return tenantsDenied?send({detail:{code:'ADVISOR_NO_TENANT'}},403):send(tenantRows);
       if(url.pathname==='/api/v1/auth/select-tenant'){
         const id=JSON.parse(req.postData()).tenant_id;
         if(!tenantRows.some(t=>t.id===id))return send({detail:{code:'ADVISOR_TENANT_NOT_GRANTED'}},403);
@@ -67,6 +67,13 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
     await p.goto(origin+'/customer-workbench/?console=advisor&tenant_id=3');await p.waitForFunction(()=>document.body.textContent.includes('可能已被收回'));
     assert(!await p.$('.advisor-task'));
     tenantRows=[];await p.click('[data-advisor=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('你还没有被分配客户'));
+    assert(!await p.$('.advisor-task'));assert(!await p.$('.advisor-tenant-picker details'));
+    tenantsDenied=true;
+    const beforeDenied=calls.filter(c=>c.path==='/api/v1/auth/tenants').length;
+    await p.click('[data-advisor=refresh]');
+    await p.waitForFunction(()=>document.body.textContent.includes('你还没有被分配客户'));
+    await new Promise(r=>setTimeout(r,200));
+    assert.equal(calls.filter(c=>c.path==='/api/v1/auth/tenants').length,beforeDenied+1);
     assert(!await p.$('.advisor-task'));assert(!await p.$('.advisor-tenant-picker details'));
     assert(!calls.some(c=>c.path.includes('switch-account')||c.path.includes('linked-accounts')));
     assert.deepEqual(errors,[]);

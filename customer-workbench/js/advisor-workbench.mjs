@@ -29,9 +29,10 @@ export function mountAdvisorWorkbench({root,session,subscribeSession,fetchImpl=f
   function clearCustomer(){epoch++;identity=null;states={};linkedAccounts=[];selectedAccount=null;filter='all';client.invalidate('tenant_changing');automation.invalidate();distribution.invalidate();remote.invalidate();}
   function denyTenant(code){
     clearCustomer();tenantSwitch.invalidate();tenantBusy=false;tenantName='';tenantMessage=advisorMessages[code]||'请重新选择客户';message='';
+    if(code==='ADVISOR_NO_TENANT')tenantOptions=[];
     if(code!=='ADVISOR_GRANTS_UNAVAILABLE')session.restoreAdvisorIdentity();
     render();
-    if(session.token&&code!=='ADVISOR_GRANTS_UNAVAILABLE')void loadTenants();
+    if(session.token&&!['ADVISOR_GRANTS_UNAVAILABLE','ADVISOR_NO_TENANT'].includes(code))void loadTenants();
   }
   async function loadTenants(){
     const stamp=epoch;
