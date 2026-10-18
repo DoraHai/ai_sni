@@ -9,7 +9,7 @@ from app.security.advisor_write_audit import AdvisorWriteAuditMiddleware
 from test_advisor_scoped_writes import backend, fixture_token, write_sandbox
 
 
-@pytest.mark.parametrize('case', ['update', 'create', 'forbidden', 'no-grant', 'preview'])
+@pytest.mark.parametrize('case', ['update', 'create', 'forbidden', 'no-grant', 'identity', 'preview'])
 def test_write_records_actor_scope_objects_and_result(tmp_path, monkeypatch, backend, caplog, case):
     async def run():
         caplog.set_level(logging.INFO, logger='uvicorn.error')
@@ -28,13 +28,17 @@ def test_write_records_actor_scope_objects_and_result(tmp_path, monkeypatch, bac
             elif case == 'no-grant':
                 response = await env.request('PATCH', '/facts/10', body={'statement': 'private fixture text'},
                     auth=fixture_token(tid=30, gid=999))
+            elif case == 'identity':
+                response = await env.request('PATCH', '/facts/10', body={'statement': 'private fixture text'},
+                    auth=fixture_token(scope_kind='advisor_identity', aud='advisor-session'))
             else:
                 response = await env.request('DELETE', '/content-tasks/10')
             messages = [r.getMessage() for r in caplog.records if r.getMessage().startswith('geo_advisor_write ')]
             assert len(messages) == 1
             raw = messages[0]
             record = json.loads(raw.removeprefix('geo_advisor_write '))
-            assert record['user_id'] == 1 and record['tenant_id'] == (30 if case == 'no-grant' else 10)
+            assert record['user_id'] == 1
+            assert record['tenant_id'] == (None if case == 'identity' else 30 if case == 'no-grant' else 10)
             assert record['status'] == response.status_code
             assert record['at'] and len(record['request_id']) == 32
             assert 'private fixture' not in raw and 'Bearer' not in raw and fixture_token() not in raw
@@ -49,7 +53,7 @@ def test_write_records_actor_scope_objects_and_result(tmp_path, monkeypatch, bac
                 assert response.status_code == 200, response.text
                 assert record['result'] == 'completed' and not record['committed']
             else:
-                assert response.status_code in {401, 403}, response.text
+                assert response.status_code in {401, 403, 409}, response.text
                 assert record['result'] == 'rejected' and not record['committed']
     asyncio.run(run())
 

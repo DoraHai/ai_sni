@@ -304,7 +304,7 @@ async def require_auth(
             raise HTTPException(401, {"code": "LEGACY_ADVISOR_SWITCH_DISABLED"})
         from app.security.advisor_write_audit import bind_write_audit
         if payload.get('scope_kind') in {'advisor_identity', 'advisor_tenant'}:
-            bind_write_audit(request, user.id, payload.get('tid'))
+            bind_write_audit(request, user.id, payload.get('tid') if payload['scope_kind'] == 'advisor_tenant' else None)
         ctx = await _build_context(user, session, payload)
         if ctx.advisor_scope is not None:
             bind_write_audit(request, user.id, ctx.tenant_id)
