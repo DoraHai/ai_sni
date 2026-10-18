@@ -1,7 +1,7 @@
 """Scope and cost checks for the one admitted advisor visibility action."""
 from sqlalchemy import select
 
-from app.models import GeoProject, GeoPrompt, GeoOptimizationUnit, Tenant
+from app.models import GeoProject, GeoPrompt, GeoOptimizationUnit, Tenant, User
 from app.security.advisor_scope import deny
 
 
@@ -29,7 +29,9 @@ async def check_visibility_scope(session, ctx, request):
             if sum(business_id in binding(p)["business_ids"] for p in projects) != 1:
                 deny(403, "ADVISOR_ASSIGNMENT_REQUIRED", "项目业务归属有冲突，请由管理员核对")
         owned.update(business_ids)
-    if not owned or not await advisor_available(session, ctx.tenant_id, ctx.user_id):
+    actor = await session.get(User, ctx.user_id, populate_existing=True)
+    if (not owned or actor is None
+            or not await advisor_available(session, actor.tenant_id, ctx.user_id)):
         deny(403, "ADVISOR_ASSIGNMENT_REQUIRED", "当前客户没有分配给你的有效项目")
     units = select(GeoOptimizationUnit.id).where(
         GeoOptimizationUnit.tenant_id == ctx.tenant_id, GeoOptimizationUnit.business_id.in_(owned))
