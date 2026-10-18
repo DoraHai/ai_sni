@@ -2,7 +2,7 @@ const RELOAD_KEY = 'geo:chunk-reload-at'
 const RELOAD_WINDOW_MS = 30_000
 const UPDATE_MESSAGE = '页面资源加载失败，请按 Ctrl+F5 刷新；仍失败请检查网络'
 const EDIT_MESSAGE = '页面资源加载失败，请先保存或复制未保存内容，再按 Ctrl+F5 刷新；仍失败请检查网络'
-const EDITABLE_ROUTE = /^\/geo\/(?:tasks|brand|knowledge|questions|projects|import|publishing|placements|report|models|channel-polish-prompts|visibility\/snapshots)(?:\/|$)/
+const READONLY_ROUTE = /^\/geo\/(?:overview|demo(?:\/.*)?)$/
 
 function isChunkLoadError(error) {
   const message = typeof error === 'string' ? error : error?.message || ''
@@ -14,7 +14,7 @@ function isChunkLoadError(error) {
 export function installGeoChunkReload(win, router, notify) {
   let pendingRoute
   let reloading = false
-  let notified = false
+  let lastMessage = ''
 
   router.beforeEach((to) => { pendingRoute = to.fullPath })
   router.afterEach(() => { pendingRoute = undefined })
@@ -24,11 +24,12 @@ export function installGeoChunkReload(win, router, notify) {
     // Vite, the router and unhandledrejection can report the same failure.
     if (reloading) return true
 
-    // These pages can hold form or article edits. On a failed lazy navigation
-    // the old page is still mounted, so keep both its state and current URL.
-    if (EDITABLE_ROUTE.test(router.currentRoute?.value?.path || '')) {
-      if (!notified) notify(EDIT_MESSAGE)
-      notified = true
+    // A loaded business page may hold edits, including on future routes. Only
+    // explicit read-only views and initial navigation may reload automatically.
+    const currentPath = router.currentRoute?.value?.path || ''
+    if (currentPath && currentPath !== '/' && !READONLY_ROUTE.test(currentPath)) {
+      if (lastMessage !== EDIT_MESSAGE) notify(EDIT_MESSAGE)
+      lastMessage = EDIT_MESSAGE
       return true
     }
 
@@ -44,8 +45,8 @@ export function installGeoChunkReload(win, router, notify) {
     }
 
     if (!canReload) {
-      if (!notified) notify(UPDATE_MESSAGE)
-      notified = true
+      if (lastMessage !== UPDATE_MESSAGE) notify(UPDATE_MESSAGE)
+      lastMessage = UPDATE_MESSAGE
       return true
     }
 

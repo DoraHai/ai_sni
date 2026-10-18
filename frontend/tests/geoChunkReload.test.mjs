@@ -38,6 +38,7 @@ function harness(storage = new Map(), currentPath = '') {
   return {
     win, calls, storage,
     navigate: (route) => guards.forEach((fn) => fn({ fullPath: route })),
+    showPage: (path) => { router.currentRoute.value.path = path },
     finish: () => after.forEach((fn) => fn()),
     fail: (error, route) => errors.forEach((fn) => fn(error, route && { fullPath: route })),
     emit(type, error) {
@@ -133,7 +134,8 @@ test('unavailable sessionStorage shows the prompt instead of risking a refresh l
 test('failed lazy navigation preserves form and article pages without changing their URL', () => {
   for (const path of ['/geo/tasks/12', '/geo/tasks/12/distribution', '/geo/brand',
     '/geo/knowledge', '/geo/questions', '/geo/projects', '/geo/import', '/geo/publishing',
-    '/geo/placements', '/geo/report', '/geo/models', '/geo/channel-polish-prompts', '/geo/visibility/snapshots']) {
+    '/geo/placements', '/geo/report', '/geo/models', '/geo/channel-polish-prompts', '/geo/visibility/snapshots',
+    '/geo/competitors', '/geo/visibility', '/geo/citations', '/geo/tickets', '/geo/evaluation', '/geo/future-editing-page']) {
     const h = harness(new Map(), path)
     h.navigate('/geo/overview')
     h.fail(chunkError(), '/geo/overview')
@@ -147,6 +149,18 @@ test('failed lazy navigation preserves form and article pages without changing t
   const readonly = harness(new Map(), '/geo/overview')
   readonly.fail(chunkError(), '/geo/structure')
   assert.equal(readonly.calls.reloads, 1)
+})
+
+test('an earlier read-only warning never suppresses the later save-before-refresh warning', () => {
+  const h = harness(new Map([[KEY, String(Date.now())]]), '/geo/overview')
+  h.fail(chunkError(), '/geo/structure')
+  assert.deepEqual(h.calls.messages, [MESSAGE])
+  h.showPage('/geo/competitors')
+  h.fail(chunkError(), '/geo/structure')
+  h.emit('unhandledrejection', chunkError())
+  assert.equal(h.calls.reloads, 0)
+  assert.equal(h.calls.messages.length, 2)
+  assert.match(h.calls.messages[1], /先保存或复制未保存内容/)
 })
 
 test('a history write failure still reloads the current page once', () => {
