@@ -7850,6 +7850,7 @@ async def check_task(
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
     await session.refresh(task, with_for_update=True)
+    await lock_manual_task(session, ctx, task, already_locked=True)
     article = await _latest_article(session, task.id, fresh=True)
     scored = await _evaluate_and_store_rules(
         session, task, article, require_channels=require_channels
