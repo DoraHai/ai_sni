@@ -5,10 +5,10 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { installGeoChunkReload } from '../geo-frontend/src/chunkReload.js'
 
 const KEY = 'geo:chunk-reload-at'
-const MESSAGE = '系统已更新，请按 Ctrl+F5 刷新'
+const MESSAGE = '页面资源加载失败，请按 Ctrl+F5 刷新；仍失败请检查网络'
 const chunkError = () => new TypeError('Failed to fetch dynamically imported module: /assets/GeoFactsView-old.js')
 
-function harness(storage = new Map()) {
+function harness(storage = new Map(), currentPath = '') {
   const win = new EventTarget()
   const calls = { reloads: 0, messages: [], routes: [], order: [] }
   const guards = []
@@ -28,6 +28,7 @@ function harness(storage = new Map()) {
   }
   win.location = { reload: () => { calls.reloads++; calls.order.push('reload') } }
   const router = {
+    currentRoute: { value: { path: currentPath } },
     beforeEach: (fn) => guards.push(fn),
     afterEach: (fn) => after.push(fn),
     onError: (fn) => errors.push(fn),
@@ -37,6 +38,7 @@ function harness(storage = new Map()) {
   return {
     win, calls, storage,
     navigate: (route) => guards.forEach((fn) => fn({ fullPath: route })),
+    showPage: (path) => { router.currentRoute.value.path = path },
     finish: () => after.forEach((fn) => fn()),
     fail: (error, route) => errors.forEach((fn) => fn(error, route && { fullPath: route })),
     emit(type, error) {
@@ -127,6 +129,38 @@ test('unavailable sessionStorage shows the prompt instead of risking a refresh l
     assert.equal(h.calls.reloads, 0)
     assert.deepEqual(h.calls.messages, [MESSAGE])
   }
+})
+
+test('failed lazy navigation preserves form and article pages without changing their URL', () => {
+  for (const path of ['/geo/tasks/12', '/geo/tasks/12/distribution', '/geo/brand',
+    '/geo/knowledge', '/geo/questions', '/geo/projects', '/geo/import', '/geo/publishing',
+    '/geo/placements', '/geo/report', '/geo/models', '/geo/channel-polish-prompts', '/geo/visibility/snapshots',
+    '/geo/competitors', '/geo/visibility', '/geo/citations', '/geo/tickets', '/geo/evaluation', '/geo/future-editing-page']) {
+    const h = harness(new Map(), path)
+    h.navigate('/geo/overview')
+    h.fail(chunkError(), '/geo/overview')
+    h.emit('unhandledrejection', chunkError())
+    assert.equal(h.calls.reloads, 0, path)
+    assert.deepEqual(h.calls.routes, [], path)
+    assert.equal(h.storage.size, 0, path)
+    assert.equal(h.calls.messages.length, 1, path)
+    assert.match(h.calls.messages[0], /先保存或复制未保存内容/)
+  }
+  const readonly = harness(new Map(), '/geo/overview')
+  readonly.fail(chunkError(), '/geo/structure')
+  assert.equal(readonly.calls.reloads, 1)
+})
+
+test('an earlier read-only warning never suppresses the later save-before-refresh warning', () => {
+  const h = harness(new Map([[KEY, String(Date.now())]]), '/geo/overview')
+  h.fail(chunkError(), '/geo/structure')
+  assert.deepEqual(h.calls.messages, [MESSAGE])
+  h.showPage('/geo/competitors')
+  h.fail(chunkError(), '/geo/structure')
+  h.emit('unhandledrejection', chunkError())
+  assert.equal(h.calls.reloads, 0)
+  assert.equal(h.calls.messages.length, 2)
+  assert.match(h.calls.messages[1], /先保存或复制未保存内容/)
 })
 
 test('a history write failure still reloads the current page once', () => {

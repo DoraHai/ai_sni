@@ -1,5 +1,6 @@
 """Exact, intentionally narrow GEO manual-content write policy."""
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from app.security.advisor_scope import deny
 
@@ -90,6 +91,8 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
 
     if not isinstance(body, dict) or set(body) - rule.fields or set(body) & rule.forbidden:
         forbidden()
+    if 'body_markdown' in body and isinstance(body['body_markdown'], str) and len(body['body_markdown']) > 500_000:
+        deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '文章正文不能超过 50 万字，请拆分后保存')
     if "trust_level" in body and body["trust_level"] not in ("draft", "needs_review"):
         forbidden()
     if "source" in body and body["source"] != "manual":
@@ -116,6 +119,17 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
             if key in PROFILE_STRING_FIELDS:
                 if not isinstance(value, str) or len(value) > PROFILE_STRING_MAX:
                     profile_forbidden(f"品牌资料 {key} 必须是文字，最多 {PROFILE_STRING_MAX} 个字符")
+                if key == 'website' and value.strip():
+                    try:
+                        url = urlsplit(value.strip())
+                        valid = (url.scheme in {'http', 'https'} and bool(url.hostname)
+                                 and url.username is None and url.password is None
+                                 and not any(c.isspace() or ord(c) < 32 or c == '\\' for c in value.strip()))
+                        url.port
+                    except ValueError:
+                        valid = False
+                    if not valid:
+                        profile_forbidden('官网请填写完整的 http:// 或 https:// 网址，不能含账号信息')
             else:
                 if isinstance(value, str) and len(value) <= PROFILE_LIST_TEXT_MAX:
                     # Use the same separators as normalize_profile.
@@ -143,5 +157,6 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
         if key not in {"tags", "target_channels", "fact_ids"} and isinstance(value, list):
             forbidden()
     if "fact_ids" in body and (not isinstance(body["fact_ids"], list) or
+            len(body["fact_ids"]) > 50 or
             any(type(item) is not int or item <= 0 for item in body["fact_ids"])):
         forbidden()

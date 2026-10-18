@@ -1,4 +1,5 @@
 <script setup>
+import { safeGeoWebsiteUrl } from '../../utils/geoWebsiteUrl'
 /**
  * 官网结构优化 — 对齐 structure.html。
  * 数据来自品牌信息 + /api/v1/geo/structure-scan，不填原型假数。
@@ -47,6 +48,7 @@ const website = computed(() => {
   }
   return report.value?.website || ''
 })
+const websiteHref = computed(() => safeGeoWebsiteUrl(website.value))
 
 const pages = computed(() => report.value?.pages || [])
 const assessmentUnavailable = computed(
@@ -307,7 +309,7 @@ onMounted(load)
       <section class="gd-card st-summary">
         <div class="st-item">
           <span>官网</span>
-          <b v-if="website"><a :href="website" target="_blank" rel="noopener">{{ website }}</a></b>
+          <b v-if="website"><a v-if="websiteHref" :href="websiteHref" target="_blank" rel="noopener">{{ website }}</a><span v-else>{{ website }}</span></b>
           <b v-else class="muted">尚未填写</b>
           <small>来自 <router-link to="/geo/brand">品牌信息</router-link></small>
         </div>
