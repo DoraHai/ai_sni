@@ -41,11 +41,14 @@ def auth(permissions, tenant_id=10):
 
 
 def test_global_admin_rejects_bound_account_even_with_edit_permission():
+    full_permissions = {"settings.accounts": "edit", "settings.customers": "edit"}
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(require_admin(auth({"settings.accounts": "edit"})))
+        asyncio.run(require_admin(auth(full_permissions)))
     assert exc.value.status_code == 403
-    global_admin = auth({"settings.accounts": "edit"}, None)
+    global_admin = auth(full_permissions, None)
     assert asyncio.run(require_admin(global_admin)) is global_admin
+    with pytest.raises(HTTPException):
+        asyncio.run(require_admin(auth({"settings.accounts": "edit"}, None)))
     with pytest.raises(HTTPException):
         asyncio.run(require_admin(auth({"settings.accounts": "view"}, None)))
 
