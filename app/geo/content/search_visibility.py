@@ -31,6 +31,9 @@ from app.models import (
 from app.module_scope import module_is_available
 
 KIND = "search_visibility"
+MAX_PROVIDER_BYTES = 4 * 1024 * 1024
+MAX_FETCH_CHARS = 3 * 1024 * 1024
+PROVIDER_TIMEOUT_SECONDS = 30
 TZ = ZoneInfo("Asia/Shanghai")
 PRICE = Decimal("0.005")
 NOTICE = "这是 DeepSeek 搜索引擎能不能搜到你，不等于 DeepSeek 回答里会提到你"
@@ -268,17 +271,31 @@ class SearchClient:
             known = False
             retryable = False
             try:
-                response = await self.http.request(method, path, json=payload if payload else None)
-                last_status = response.status_code
+                async with asyncio.timeout(PROVIDER_TIMEOUT_SECONDS), self.http.stream(
+                    method, path, json=payload if payload else None, headers={'Accept-Encoding': 'identity'}
+                ) as response:
+                    last_status = response.status_code
+                    if response.headers.get('content-encoding', '').strip().lower() not in {'', 'identity'}:
+                        # Check before aiter_bytes can allocate a decoded gzip
+                        # chunk larger than our entire response budget.
+                        raise StopRun('搜索服务返回格式不受支持，本次已停止，费用保留待核对')
+                    raw = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        if len(raw) + len(chunk) > MAX_PROVIDER_BYTES:
+                            raise StopRun('搜索服务返回内容过大，本次已停止，费用保留待核对')
+                        raw.extend(chunk)
                 known = True
                 try:
-                    data = response.json()
+                    import json
+                    data = json.loads(raw)
                 except ValueError:
                     data = {}
                 if not isinstance(data, dict):
                     data = {}
                 field = "results" if path.endswith("search") else "content"
                 valid = isinstance(data.get(field), list if field == "results" else str) if chargeable else isinstance(data.get("is_available"), bool)
+                if field == 'content' and isinstance(data.get(field), str) and len(data[field]) > MAX_FETCH_CHARS:
+                    raise StopRun('搜索服务返回正文过长，本次已停止，费用保留待核对')
                 billable = last_status == 200 and valid and bool(data.get(field)) if chargeable else False
                 # Malformed 200 bodies remain reserved: billing outcome is unknown.
                 known = last_status != 200 or valid
@@ -287,7 +304,7 @@ class SearchClient:
                     summary["billable"] += 1
                     summary["cost_cny"] = float(PRICE * summary["billable"])
                 retryable = last_status in {408, 429} or last_status >= 500
-            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
+            except (TimeoutError, httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
                 retryable = True
                 last_status = None
             if chargeable and known:

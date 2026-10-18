@@ -27,6 +27,10 @@ def test_profile_bounds_and_types(key):
         invalid += [['x'] * 21, ['x' * 501], [None], [1], [True], ','.join(['x'] * 21)]
     else:
         invalid += [[], ['x']]
+    if key == 'website':
+        prefix = 'https://brand.example.test/'
+        valid[0] = prefix + 'x' * (500 - len(prefix))
+        invalid += ['x' * 500]
     invalid += ['x' * 501]
     for value in valid:
         check_write_fields(RULE, {'profile': {key: value}})
