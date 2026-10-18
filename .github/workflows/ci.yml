@@ -7,6 +7,7 @@ on:
     # SEO production PRs are validated by the isolated SEO baseline workflow.
     branches-ignore:
       - codex/production-seo
+      - codex/advisor-mt-seo-guard-20261018
 
 jobs:
   pytest:

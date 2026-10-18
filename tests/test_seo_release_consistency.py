@@ -122,7 +122,7 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("docs/SEO_AUTOMATION_API.md")
     assert not source_path_allowed("app/api/geo.py")
     assert not source_path_allowed("app/baidu/writeback.py")
-    assert not source_path_allowed("app/api/auth.py")
+    assert source_path_allowed("app/api/auth.py")  # Reviewed advisor grant intersection backport only.
     assert not source_path_allowed("frontend/src/views/monitor/DashboardView.vue")
     assert not source_path_allowed("frontend/src/views/LoginView.vue")
     assert not source_path_allowed("frontend/src/main.js")

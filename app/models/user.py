@@ -23,4 +23,6 @@ class User(Base):
     tenant_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("tenants.id"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Existing column from 0071_login_lockout; no schema change.
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
