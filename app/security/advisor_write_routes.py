@@ -101,6 +101,8 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
         forbidden()
     from app.security.advisor_write_publish import check_fields as publish_fields
     publish_fields(rule, body)
+    from app.security.advisor_write_publish import VARIANTS, PUSH_BATCH
+    action_lists = {VARIANTS: {"channels"}, PUSH_BATCH: {"targets"}}.get(rule.template, set())
     if "status" in body:
         allowed = {"active", "archived"}
         if body["status"] not in allowed:
@@ -155,7 +157,7 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
     for key, value in body.items():
         if key not in {"brief", "profile"} and isinstance(value, dict):
             forbidden()
-        if key not in {"tags", "target_channels", "fact_ids"} and isinstance(value, list):
+        if key not in {"tags", "target_channels", "fact_ids"} | action_lists and isinstance(value, list):
             forbidden()
     if "fact_ids" in body and (not isinstance(body["fact_ids"], list) or
             any(type(item) is not int or item <= 0 for item in body["fact_ids"])):
