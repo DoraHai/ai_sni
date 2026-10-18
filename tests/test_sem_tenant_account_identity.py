@@ -86,7 +86,7 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
                 side_effect=[_Rows([tenant]), _Rows([account]), _Rows([account])]
             )
         )
-        ctx = SimpleNamespace(tenant_id=7, can_view=lambda *_keys: True)
+        ctx = SimpleNamespace(advisor_scope=None, tenant_id=7, can_view=lambda *_keys: True)
 
         result = await list_tenants(module=None, ctx=ctx, session=session)
 
@@ -107,7 +107,7 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
 
         result = await list_tenants(
             module="seo",
-            ctx=SimpleNamespace(tenant_id=7, can_view=lambda *_keys: True),
+            ctx=SimpleNamespace(advisor_scope=None, tenant_id=7, can_view=lambda *_keys: True),
             session=session,
         )
 
@@ -118,7 +118,7 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as cm:
             await list_tenants(
                 module="sem",
-                ctx=SimpleNamespace(tenant_id=7, can_view=lambda *_keys: False),
+                ctx=SimpleNamespace(advisor_scope=None, tenant_id=7, can_view=lambda *_keys: False),
                 session=SimpleNamespace(),
             )
 
@@ -130,7 +130,7 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
 
         result = await list_tenants(
             module=None,
-            ctx=SimpleNamespace(tenant_id=None, can_view=lambda *_keys: False),
+            ctx=SimpleNamespace(advisor_scope=None, tenant_id=None, can_view=lambda *_keys: False),
             session=session,
         )
 
@@ -164,7 +164,7 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
 
         result = await list_tenants(
             module=None,
-            ctx=SimpleNamespace(tenant_id=7, can_view=lambda *_keys: True),
+            ctx=SimpleNamespace(advisor_scope=None, tenant_id=7, can_view=lambda *_keys: True),
             session=session,
         )
 
@@ -325,7 +325,7 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
             scalars=AsyncMock(return_value=_Rows([account])),
             commit=AsyncMock(),
         )
-        ctx = SimpleNamespace(user_id=5, username="admin")
+        ctx = SimpleNamespace(advisor_scope=None, user_id=5, username="admin")
 
         result = await update_customer(
             7,
@@ -367,7 +367,7 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
             scalar=AsyncMock(return_value=account),
             commit=AsyncMock(),
         )
-        ctx = SimpleNamespace(user_id=5, username="admin")
+        ctx = SimpleNamespace(advisor_scope=None, user_id=5, username="admin")
 
         result = await archive_sem_account(
             4, 4, SemAccountArchive(reason="账户归属核实为其他客户"), ctx, session,
@@ -380,7 +380,7 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
     async def test_archive_sem_account_rejects_wrong_tenant(self):
         account = SimpleNamespace(id=4, tenant_id=4, baidu_ucid=80243027, status="active")
         session = SimpleNamespace(scalar=AsyncMock(return_value=account), commit=AsyncMock())
-        ctx = SimpleNamespace(user_id=5, username="admin")
+        ctx = SimpleNamespace(advisor_scope=None, user_id=5, username="admin")
 
         with self.assertRaises(HTTPException) as cm:
             await archive_sem_account(
@@ -394,7 +394,7 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
     async def test_archive_sem_account_rejects_already_archived(self):
         account = SimpleNamespace(id=4, tenant_id=4, baidu_ucid=80243027, status="archived")
         session = SimpleNamespace(scalar=AsyncMock(return_value=account), commit=AsyncMock())
-        ctx = SimpleNamespace(user_id=5, username="admin")
+        ctx = SimpleNamespace(advisor_scope=None, user_id=5, username="admin")
 
         with self.assertRaises(HTTPException) as cm:
             await archive_sem_account(
