@@ -98,6 +98,9 @@ def invalidate_review(task: Any) -> None:
     task.review_submitted_by = None
     task.reviewed_by = None
     task.reviewed_at = None
+    result = getattr(task, "rule_result", None)
+    if isinstance(result, dict) and "ai_review" in result:
+        task.rule_result = {key: value for key, value in result.items() if key != "ai_review"}
 
 
 def assert_review_approved(task: Any) -> None:

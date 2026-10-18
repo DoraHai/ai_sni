@@ -787,7 +787,8 @@ async def _evaluate_and_store_rules(
         ready = False
 
     prev_rr = task.rule_result if isinstance(task.rule_result, dict) else {}
-    ai_review = prev_rr.get("ai_review") if isinstance(prev_rr.get("ai_review"), dict) else None
+    from app.geo.content.ai_review_scope import current_review
+    ai_review = current_review(prev_rr.get("ai_review"), article)
     task.rule_result = {
         "ready": ready,
         "require_channels": require_channels,
@@ -7886,6 +7887,8 @@ async def ai_review_task(
     article = await _latest_article(session, task.id)
     if article is None:
         raise HTTPException(400, "请先生成或保存母稿")
+    from app.geo.content.ai_review_scope import article_binding
+    reviewed_version = article_binding(article)
     prompt = await _get_prompt(session, task.prompt_id, tenant_id)
     tenant = await _ensure_tenant_exists(session, tenant_id)
     brand, _ = await _brand_context_for_task(session, task, tenant)
@@ -7916,6 +7919,11 @@ async def ai_review_task(
         raise HTTPException(502, str(exc)) from exc
 
     await recheck_request(session, ctx, task)
+    await session.refresh(task, with_for_update=True)
+    current_article = await _latest_article(session, task.id, fresh=True)
+    if current_article is None or article_binding(current_article) != reviewed_version:
+        raise HTTPException(409, "稿件已变化，请对当前版本重新运行 AI 审稿")
+    review = {**review, **reviewed_version}
     if req.persist:
         rr = task.rule_result if isinstance(task.rule_result, dict) else {}
         rr = dict(rr)
@@ -8096,7 +8104,8 @@ async def apply_patch(
     target = next((c for c in check_dicts if c.get("code") == req.code), None)
     target_passed = bool(target and target.get("passed"))
     prev_rr = task.rule_result if isinstance(task.rule_result, dict) else {}
-    ai_review = prev_rr.get("ai_review") if isinstance(prev_rr.get("ai_review"), dict) else None
+    from app.geo.content.ai_review_scope import current_review
+    ai_review = current_review(prev_rr.get("ai_review"), new_article)
 
     task.rule_result = {
         "ready": ready,
