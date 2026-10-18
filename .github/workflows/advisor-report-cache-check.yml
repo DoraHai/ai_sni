@@ -1,0 +1,44 @@
+name: Advisor read-only report checks
+
+on:
+  pull_request:
+    branches: [codex/production-sem-backend]
+    paths:
+      - 'app/ai/monthly_report.py'
+      - 'tests/test_advisor_report_cache.py'
+      - '.github/workflows/advisor-report-cache-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  report-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Check report refresh without a database or provider
+        run: |
+          python - <<'PY'
+          import sys
+          import types
+          import pytest
+          from sqlalchemy.orm import DeclarativeBase
+
+          database = types.ModuleType('app.database')
+          class Base(DeclarativeBase):
+              pass
+          def no_database(*args, **kwargs):
+              raise AssertionError('Database access is forbidden in these mocked tests')
+          database.Base = Base
+          database.async_session_factory = no_database
+          sys.modules['app.database'] = database
+          raise SystemExit(pytest.main([
+              '-p', 'no:cacheprovider', '-q', 'tests/test_advisor_report_cache.py',
+          ]))
+          PY
