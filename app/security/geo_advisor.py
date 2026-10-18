@@ -153,6 +153,9 @@ async def check_scoped_write_objects(session, ctx, request, body, rule):
     await check_write_objects(session, ctx, request, body, rule)
     await ensure_advisor_assignment(session, ctx, request, body, rule)
     await check_manual_execution_scope(session, ctx, rule)
+    if rule.method == "DELETE":
+        from app.security.advisor_write_delete import check_cascade_scope
+        await check_cascade_scope(session, request, rule)
 
 
 async def check_manual_execution_scope(session, ctx, rule):

@@ -4,19 +4,23 @@ import logging
 
 import pytest
 from app.models import GeoContentTask, GeoProject
-from test_advisor_scoped_writes import write_sandbox, mutate, no_external_http_or_background_dispatch
+from test_advisor_scoped_writes import write_sandbox, mutate, no_external_http_or_background_dispatch, backend
 
 
 @pytest.mark.parametrize("hard", [False, True])
-def test_advisor_archive_and_hard_delete_commit_with_log(tmp_path, monkeypatch, caplog, hard):
+def test_advisor_archive_and_hard_delete_commit_with_log(tmp_path, monkeypatch, caplog, hard, backend):
     caplog.set_level(logging.INFO, logger="geo.advisor.operations")
     async def run():
-        async with write_sandbox(tmp_path, monkeypatch) as env:
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
             response = await env.request("DELETE", "/content-tasks/10", params={"hard": str(hard).lower()})
             assert response.status_code == 200, response.text
             async with env.factory() as session:
                 row = await session.get(GeoContentTask, 10)
                 assert row is None if hard else row.status == "archived"
+                if hard and backend == "postgres":
+                    from app.models import GeoArticleVersion, GeoChannelVariant
+                    assert await session.get(GeoArticleVersion, 10) is None
+                    assert await session.get(GeoChannelVariant, 10) is None
     asyncio.run(run())
     events = [json.loads(r.message) for r in caplog.records if r.name == "geo.advisor.operations"]
     assert any(e["result"] == "committed" and e["object_ids"] == {"task_id": "10"} for e in events)
@@ -67,4 +71,21 @@ def test_delete_denied_before_target_disappears(tmp_path, monkeypatch, failure):
             assert response.status_code == 403, response.text
             async with env.factory() as session:
                 assert await session.get(GeoContentTask, 10) is not None
+    asyncio.run(run())
+
+
+def test_hard_delete_cannot_cascade_into_another_task(tmp_path, monkeypatch, backend):
+    from app.models import GeoChannelVariant
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            async with env.factory() as session:
+                session.add(GeoChannelVariant(id=100, task_id=20, article_version_id=10,
+                    channel="website", title="inconsistent fixture", body_markdown="synthetic foreign task"))
+                await session.commit()
+            response = await env.request("DELETE", "/content-tasks/10", params={"hard": "true"})
+            assert response.status_code == 403, response.text
+            assert response.json()["detail"]["code"] == "ADVISOR_DELETE_CASCADE_FORBIDDEN"
+            async with env.factory() as session:
+                assert await session.get(GeoContentTask, 10) is not None
+                assert await session.get(GeoChannelVariant, 100) is not None
     asyncio.run(run())
