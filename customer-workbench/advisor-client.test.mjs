@@ -15,7 +15,34 @@ test('bounded queries and cursor integrity reject invalid or cross-module data',
  for(const value of [{...page(),module:'geo'},page('seo',[{...row(),scope_id:0}]),page('seo',[{...row(),project_id:9}]),page('seo',[{...row(),workflow:{...row().workflow,revision:0}}]),page('seo',[row(),row()]),page('seo',[row()],78),{...page(),schema:2}])assert.throws(()=>validateAdvisorPage(value,'seo'),/CONTRACT_MISMATCH/);
  assert.throws(()=>validateAdvisorPage(page(),'seo',{beforeId:77}),/CONTRACT_MISMATCH/);assert.equal(validateAdvisorPage(page('seo',[row()],77),'seo').next_before_id,77);f.client.dispose();});
 test('account switch rejects late header and JSON responses',async()=>{const f=fixture();await f.client.initialize();let release;f.hold(new Promise(r=>release=r));const pending=f.client.list('seo');f.session.user={...f.session.user,id:8};f.session.authRevision++;release();await assert.rejects(()=>pending,/CONTEXT_CHANGED/);await assert.rejects(()=>f.client.list('seo'),/PERMISSION_DENIED/);f.client.dispose();});
-test('401/403 invalidate all modules and missing interfaces remain unavailable',async()=>{for(const status of [401,403,404,503]){const f=fixture();await f.client.initialize();f.setStatus(status);await assert.rejects(()=>f.client.list('seo'),status===401?/AUTH_EXPIRED/:status===403?/PERMISSION_DENIED/:/NOT_INTEGRATED/);if(status===401)assert.equal(f.session.token,'');if(status===403)await assert.rejects(()=>f.client.list('geo'),/PERMISSION_DENIED/);f.client.dispose();}});
+test('ordinary module failures preserve other modules and permit retry; 401 clears the session',async()=>{for(const status of [401,403,404,503]){const f=fixture();await f.client.initialize();f.setStatus(status);await assert.rejects(()=>f.client.list('seo'),status===401?/AUTH_EXPIRED/:status===403?/PERMISSION_DENIED/:/NOT_INTEGRATED/);if(status===401)assert.equal(f.session.token,'');else{f.setStatus(200);assert.equal((await f.client.list('geo')).module,'geo');assert.equal((await f.client.list('seo')).module,'seo');}f.client.dispose();}});
+
+test('a module 403 does not abort a concurrent successful module request',async()=>{
+ const f=fixture();let release,started;
+ const ready=new Promise(resolve=>started=resolve),held=new Promise(resolve=>release=resolve),invalidations=[];
+ const client=createAdvisorClient({session:f.session,fetchImpl:async path=>{
+  if(path.endsWith('/me'))return new Response(JSON.stringify({user:f.session.user}));
+  if(path.endsWith('/modules'))return new Response(JSON.stringify({tenant_id:null,modules:['seo','geo'].map(module_code=>({module_code,available:true}))}));
+  if(path.includes('/geo/')){started();await held;return new Response(JSON.stringify(page('geo')));}
+  return new Response(JSON.stringify({detail:{code:'ADVISOR_ROUTE_UNAVAILABLE'}}),{status:403});
+ }});
+ await client.initialize();client.subscribe(reason=>invalidations.push(reason));
+ const geo=client.list('geo');await ready;await assert.rejects(()=>client.list('seo'),/PERMISSION_DENIED/);release();
+ assert.equal((await geo).module,'geo');assert.deepEqual(invalidations,[]);assert.equal(f.session.token,'ordinary-token');client.dispose();f.client.dispose();
+});
+
+test('explicit grant revocation and role changes invalidate every module',async()=>{
+ for(const code of ['ADVISOR_GRANT_REVOKED','ADVISOR_ROLE_CHANGED']){
+  const f=fixture();let denied=false;const reasons=[];
+  const client=createAdvisorClient({session:f.session,fetchImpl:async path=>new Response(JSON.stringify(denied?{detail:{code}}:path.endsWith('/me')?{user:f.session.user}:{tenant_id:null,modules:['seo','geo'].map(module_code=>({module_code,available:true}))}),{status:denied?403:200})});
+  await client.initialize();client.subscribe(reason=>reasons.push(reason));denied=true;
+  await assert.rejects(()=>client.list('seo'),new RegExp(code));assert.deepEqual(reasons,['forbidden']);await assert.rejects(()=>client.list('geo'),/PERMISSION_DENIED/);client.dispose();f.client.dispose();
+ }
+});
+
+test('empty task pages explain that the current customer has no assigned onsite tasks',()=>{
+ for(const module of ['seo','geo'])assert.equal(advisorPageView(module,page(module,[])),'<p>这个客户还没有分配给你的站内任务</p>');
+});
 test('deep links retain exact module scope and reread the original scoped record',async()=>{assert.equal(advisorTaskPath(row()),'/customer-workbench/?tenant_id=2&site_id=9&onsite_task_id=77');assert.equal(advisorTaskPath(row('geo')),'/customer-workbench/?module=geo&tenant_id=2&project_id=10&onsite_task_id=77');for(const q of ['?onsite_task_id=0','?onsite_task_id=1&onsite_task_id=2','?onsite_task_id=9007199254740991'])assert.equal(onsiteTaskFromSearch(q),null);const calls=[];const result=await readOnsiteDeepLink({list:async before=>{calls.push(before);return page();}},77);assert.equal(result.selected.workflow.revision,3);assert.deepEqual(calls,[78]);await assert.rejects(()=>readOnsiteDeepLink({list:async()=>page('seo',[])},77),/当前不可见/);});
 test('display escapes real metadata, uses page counts and preserves manual next actions',()=>{const value=page('seo',[{...row(),tenant_name:'<img onerror=x>',scope_name:'网站 & 1'}]);const html=advisorPageView('seo',value);assert(html.includes('&lt;img'));assert(html.includes('本页 1 项'));assert(html.includes('核实事实并审核'));assert(!html.includes('AI 提案已提供'));assert(!html.includes('<img'));});
 test('entry rejects ambiguous or invalid task hints and preserves valid exact IDs',()=>{assert.equal(entryScope('?tenant_id=2&site_id=9&onsite_task_id=77').onsiteTaskId,77);for(const tail of ['0','1&onsite_task_id=2','NaN','9007199254740991'])assert.equal(entryScope('?tenant_id=2&site_id=9&onsite_task_id='+tail).invalid,true);});

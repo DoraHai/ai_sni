@@ -106,7 +106,7 @@ for(const [advisor,tenantId] of [[true,15],[true,17],[false,15]]){
 test('advisor selects authorized customers, clears old data, rejects foreign URLs and survives revocation',async()=>{
   const fixture=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true,args:['--no-sandbox']});
   const origin='https://advisor.test',calls=[],errors=[];
-  let tenantRows=[{id:1,name:'客户甲'},{id:2,name:'客户乙'}],revoked=false,hold=null,tenantsDenied=false,bareExpired=false,connectedDenied=false;
+  let tenantRows=[{id:1,name:'客户甲'},{id:2,name:'客户乙'}],revoked=false,hold=null,tenantsDenied=false,bareExpired=false,connectedDenied=false,roleChanged=false;
   const shots=process.env.ADVISOR_SHOTS_DIR;
   try{
     const p=await browser.newPage();p.on('pageerror',e=>errors.push(e.message));p.on('dialog',d=>d.accept());
@@ -116,6 +116,7 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
       const token=req.headers().authorization?.slice(7),tid=token===business(2)?2:1;
       const send=(data,status=200)=>req.respond({status,contentType:'application/json',body:JSON.stringify(data)}).catch(()=>{});
       if(url.pathname.startsWith('/api/'))calls.push({path:url.pathname,query:Object.fromEntries(url.searchParams),method:req.method(),token,body:req.postData()});
+      if(roleChanged&&url.pathname.startsWith('/api/'))return send({detail:{code:'ADVISOR_ROLE_CHANGED'}},403);
       if(url.pathname==='/api/v1/auth/tenants')return tenantsDenied?send({detail:{code:'ADVISOR_NO_TENANT'}},403):send(tenantRows);
       if(url.pathname==='/api/v1/auth/select-tenant'){
         const id=JSON.parse(req.postData()).tenant_id;
@@ -181,7 +182,7 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
     bareExpired=false;await p.click('.advisor-tenant-picker summary');await p.click('[data-tenant="2"]');
     await p.waitForFunction(()=>document.querySelector('.advisor-task')?.textContent.includes('客户乙专属任务'));
     revoked=true;tenantRows=[{id:1,name:'客户甲'}];await p.click('[data-advisor=refresh]');
-    await p.waitForFunction(()=>document.body.textContent.includes('可能已被收回'));
+    await p.waitForFunction(()=>document.body.textContent.includes('你的客户授权已变化，请重新选择客户'));
     assert(!await p.$('.advisor-task'));assert(!await p.$('.advisor-automation'));assert(!await p.$('.distribution-task'));
     await screenshot('mt-denied');
     revoked=false;await p.waitForFunction(()=>document.querySelectorAll('[data-tenant]').length===1);
@@ -189,7 +190,7 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
     await p.waitForSelector('.advisor-task').catch(async e=>{e.message+=' '+await p.$eval('body',e=>e.textContent);throw e;});
     assert(!await p.$('.advisor-tenant-picker details'));
     connectedDenied=true;await p.goto(origin+'/customer-workbench/?tenant_id=1&site_id=19');
-    await p.waitForFunction(()=>document.body.textContent.includes('可能已被收回'));
+    await p.waitForFunction(()=>document.body.textContent.includes('你的客户授权已变化，请重新选择客户'));
     assert(!await p.$('.advisor-task'));
     assert(!new URL(p.url()).searchParams.has('advisor_notice'));
     connectedDenied=false;await p.waitForFunction(()=>document.querySelectorAll('[data-tenant]').length===1);
@@ -208,6 +209,12 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
     assert.equal(calls.filter(c=>c.path==='/api/v1/auth/tenants').length,beforeDenied+1);
     assert(!await p.$('.advisor-task'));assert(!await p.$('.advisor-tenant-picker details'));
     assert(!calls.some(c=>c.path.includes('switch-account')||c.path.includes('linked-accounts')));
+    tenantsDenied=false;tenantRows=[{id:1,name:'客户甲'}];await p.locator('[data-advisor=refresh]').click();
+    await p.waitForSelector('[data-tenant="1"]');await p.locator('.advisor-tenant-picker summary').click();await p.locator('[data-tenant="1"]').click();await p.waitForFunction(()=>document.querySelectorAll('.advisor-task').length===2);await p.waitForNetworkIdle({idleTime:200});
+    roleChanged=true;const beforeRole=calls.length;await p.locator('[data-advisor=latest][data-module=seo]').click();
+    await p.waitForFunction(()=>document.body.textContent.includes('你的客户授权已变化，请重新选择客户'));
+    assert(!await p.$('.advisor-task'));assert.equal(await p.evaluate(()=>sessionStorage.getItem('sem_auth_v1')),null);
+    await p.waitForNetworkIdle({idleTime:200});assert(calls.length-beforeRole<=2,'Role change must not repeatedly reload the tenant list');
     assert.deepEqual(errors,[]);
   }finally{await browser.close();await fixture.close();}
 });

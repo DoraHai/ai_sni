@@ -39,8 +39,16 @@ export function createAdvisorClient({session,fetchImpl=fetch,subscribeSession=()
     try{
       const r=await fetchImpl(path,{method:'GET',headers:{Authorization:`Bearer ${token}`,Accept:'application/json'},credentials:'omit',cache:'no-store',redirect:'error',signal:AbortSignal.any([c.signal,AbortSignal.timeout(20000)])});
       current(g,k);
-      if(r.status===401||r.status===403){invalidate(r.status===401?'expired':'forbidden');if(r.status===401)session.logout();throw fail(r.status===401?'AUTH_EXPIRED':'PERMISSION_DENIED',r.status);}
-      if(!r.ok)throw fail([404,405,501,503].includes(r.status)?'NOT_INTEGRATED':'READ_FAILED',r.status);
+      if(r.status===401){invalidate('expired');session.logout();throw fail('AUTH_EXPIRED',401);}
+      if(!r.ok){
+        let data;try{data=await r.json();}catch{}
+        current(g,k);
+        const code=data?.detail?.code;
+        if(['ADVISOR_GRANT_REVOKED','ADVISOR_ROLE_CHANGED'].includes(code)){
+          invalidate('forbidden');throw fail(code,r.status);
+        }
+        throw fail(r.status===403?'PERMISSION_DENIED':[404,405,501,503].includes(r.status)?'NOT_INTEGRATED':'READ_FAILED',r.status);
+      }
       const data=await r.json();current(g,k);return data;
     }finally{controllers.delete(c);}
   }
