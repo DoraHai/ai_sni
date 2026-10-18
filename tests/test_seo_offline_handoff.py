@@ -92,6 +92,24 @@ def test_invalid_files(data, name):
         parse_receipts(data, name)
 
 
+@pytest.mark.parametrize('data', [
+    b'[' * 20000 + b'0' + b']' * 20000,
+    b'[{"source_version":' + b'9' * 10000 + b'}]',
+], ids=['excessive-nesting', 'excessive-integer'])
+def test_json_decoder_limits_return_chinese_422_before_any_write(data):
+    assert len(data) < MAX_BYTES
+    session = fixture()
+    upload = UploadFile(filename='receipts.json', file=io.BytesIO(data))
+    with dependencies(), pytest.raises(HTTPException) as exc:
+        asyncio.run(seo.import_offline_receipts(1, 2, False, upload, session, context()))
+    assert exc.value.status_code == 422
+    assert exc.value.detail == '回执JSON内容无效或嵌套过深，请按模板重新导出'
+    session.get.assert_not_awaited()
+    session.scalar.assert_not_awaited()
+    session.add.assert_not_called()
+    session.commit.assert_not_awaited()
+
+
 def test_duplicate_keys_and_urls_and_row_limit():
     for rows in ([receipt(), receipt()], [receipt(), receipt(account='合成账号B')], [receipt()] * 201):
         with pytest.raises(ValueError):
