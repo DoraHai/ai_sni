@@ -29,7 +29,9 @@ async def check_visibility_scope(session, ctx, request):
             if sum(business_id in binding(p)["business_ids"] for p in projects) != 1:
                 deny(403, "ADVISOR_ASSIGNMENT_REQUIRED", "项目业务归属有冲突，请由管理员核对")
         owned.update(business_ids)
-    if not owned or not await advisor_available(session, ctx.tenant_id, ctx.user_id):
+    # Auth and the commit hook validate the live selected grant and account;
+    # scheduler eligibility for the account's default customer is unrelated.
+    if not owned or not await advisor_available(session, ctx.tenant_id, ctx.user_id, advisor_scope=ctx.advisor_scope):
         deny(403, "ADVISOR_ASSIGNMENT_REQUIRED", "当前客户没有分配给你的有效项目")
     units = select(GeoOptimizationUnit.id).where(
         GeoOptimizationUnit.tenant_id == ctx.tenant_id, GeoOptimizationUnit.business_id.in_(owned))
