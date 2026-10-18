@@ -72,10 +72,13 @@ function fmtExpires(v) {
   return String(v).slice(0, 10)
 }
 
+let loadVersion = 0
 async function load() {
+  const version = ++loadVersion
   if (!tenantId.value) {
     error.value = '请先选择客户或配置本地 API Key'
     items.value = []
+    loading.value = false
     return
   }
   loading.value = true
@@ -87,17 +90,24 @@ async function load() {
         ? Promise.resolve({ items: businesses.value })
         : listGeoBusinesses(tenantId.value, { status: 'active' }).catch(() => ({ items: [] })),
     ])
+    if (version !== loadVersion) return
     businesses.value = b.items || businesses.value
+    if (businesses.value.length === 1 && !form.value.business_id) form.value.business_id = businesses.value[0].id
     items.value = data.items || []
   } catch (e) {
+    if (version !== loadVersion) return
     error.value = e.message || '加载失败'
     items.value = []
   } finally {
-    loading.value = false
+    if (version === loadVersion) loading.value = false
   }
 }
 
 async function submitCreate() {
+  if (isAdvisor.value && (!form.value.business_id || !businesses.value.some(b => b.id === form.value.business_id))) {
+    ElMessage.warning('请先选所属业务')
+    return
+  }
   if (!form.value.title.trim() || !form.value.statement.trim() || !form.value.source_name.trim()) {
     ElMessage.warning('标题、陈述与来源名必填')
     return
@@ -258,6 +268,12 @@ async function importFactCsv(event) {
 }
 
 watch(tenantId, () => {
+  businesses.value = []
+  items.value = []
+  form.value = emptyForm()
+  editOpen.value = false
+  verifyOpen.value = false
+  verifyForm.value.fact = null
   pager.resetPage()
   load()
 })
@@ -375,6 +391,11 @@ onMounted(load)
           <div class="gd-hd"><h3>新建事实卡</h3></div>
           <div class="gd-bd">
             <el-form label-position="top" size="small">
+              <el-form-item label="所属业务" :required="isAdvisor">
+                <el-select v-model="form.business_id" placeholder="请先选所属业务" clearable style="width: 100%">
+                  <el-option v-for="business in businesses" :key="business.id" :label="business.name" :value="business.id" />
+                </el-select>
+              </el-form-item>
               <el-form-item label="标题" required>
                 <el-input v-model="form.title" placeholder="如：私有化部署" />
               </el-form-item>
