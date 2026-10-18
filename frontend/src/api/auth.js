@@ -30,11 +30,15 @@ export function fetchUsers() {
   return client.get('/api/v1/users')
 }
 
-export function createUser({ username, password, displayName, roleId, tenantId }) {
+export function createUser({ username, password, displayName, roleId, tenantId, tenant_id = tenantId ?? undefined, tenant_ids, default_tenant_id }) {
   return client.post('/api/v1/users', {
     username, password, display_name: displayName || undefined, role_id: roleId,
-    tenant_id: tenantId ?? undefined,
+    ...(tenant_ids !== undefined ? { tenant_ids, default_tenant_id } : { tenant_id }),
   })
+}
+
+export function selectAdvisorTenant(tenantId) {
+  return client.post('/api/v1/auth/select-tenant', { tenant_id: tenantId })
 }
 
 export function updateUser(userId, patch) {

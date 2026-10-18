@@ -43,9 +43,9 @@ export function createAdvisorAutomationClient({session,fetchImpl=fetch,subscribe
   }
   async function auth(){
     sync();const stamp=generation,context=key();
-    const {user}=await request('/api/v1/auth/me',{preflight:true});
+    const data=await request('/api/v1/auth/me',{preflight:true});const user=session.isAdvisorSession?{...data.user,tenant_id:session.tenantId}:data.user;
     current(stamp,context);
-    if(user?.id!==session.user?.id||user.tenant_id!==session.user?.tenant_id||!positive(user.id)||!user.permissions)throw fail('IDENTITY_MISMATCH');
+    if(user?.id!==session.user?.id||user.tenant_id!==(session.isAdvisorSession?session.tenantId:session.user?.tenant_id)||!positive(user.id)||!user.permissions)throw fail('IDENTITY_MISMATCH');
     const catalog=await request('/api/v1/auth/modules',{preflight:true});
     current(stamp,context);
     if(catalog?.tenant_id!==user.tenant_id||!Array.isArray(catalog.modules))throw fail('AUTOMATION_CONTRACT_MISMATCH');

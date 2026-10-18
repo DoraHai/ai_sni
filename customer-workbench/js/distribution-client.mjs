@@ -147,6 +147,7 @@ export function validateDistributionSource(value,scope,variant,platform){
 }
 export function createDistributionClient({session,fetchImpl=fetch,subscribeSession=()=>()=>{}}){
   let epoch=0;const controllers=new Set(),listeners=new Set();
+  const currentTenant=()=>session.isAdvisorSession?session.tenantId:session.user?.tenant_id;
   const key=()=>JSON.stringify([session.token,session.user?.id,session.user?.tenant_id,session.authRevision,session.user?.permissions,session.modules]);
   let context=key();
   const invalidate=()=>{epoch++;for(const c of controllers)c.abort();controllers.clear();for(const fn of listeners)fn();};
@@ -167,11 +168,11 @@ export function createDistributionClient({session,fetchImpl=fetch,subscribeSessi
       u.pathname===base+'/sources'?['module','tenant_id','scope_id','platform']:['module','tenant_id','scope_id'];
     for(const name of u.searchParams.keys())if(!allowedQuery.includes(name)||u.searchParams.getAll(name).length!==1)throw fault('ROUTE_DENIED');
     const adminRoute=u.pathname===nordPreparationPath||['/devices','/bindings','/account-policies','/account-policy','/account-pause','/admin-events','/channel-catalog','/channel-permission'].some(p=>u.pathname===base+p)||u.pathname.endsWith('/revoke');
-    if(adminRoute){if(session.user.tenant_id!==null||!['settings.accounts','settings.customers'].every(k=>session.user.permissions?.[k]==='edit'))throw fault('PERMISSION_DENIED',403);}
+    if(adminRoute){if(currentTenant()!==null||!['settings.accounts','settings.customers'].every(k=>session.user.permissions?.[k]==='edit'))throw fault('PERMISSION_DENIED',403);}
     else {const module=body?.module??u.searchParams.get('module'),tenant=body?.tenant_id??Number(u.searchParams.get('tenant_id'));
       const permitted=module==='seo'?['seo.site','seo.content'].every(k=>session.user.permissions?.[k]==='edit'):
         module==='geo'&&['geo.assets','geo.content'].every(k=>session.user.permissions?.[k]==='edit');
-      if(!permitted||u.pathname!==base+'/bound-scopes'&&session.user.tenant_id!==null&&session.user.tenant_id!==tenant)throw fault('PERMISSION_DENIED',403);}
+      if(!permitted||u.pathname!==base+'/bound-scopes'&&currentTenant()!==null&&currentTenant()!==tenant)throw fault('PERMISSION_DENIED',403);}
     const c=new AbortController();controllers.add(c);let sent=false;
     try{
       sent=true;const response=await fetchImpl(path,{method,headers:{Authorization:`Bearer ${session.token}`,Accept:'application/json',
@@ -279,7 +280,7 @@ export function createDistributionClient({session,fetchImpl=fetch,subscribeSessi
       if(value.schema!==1||value.module!==module||!Array.isArray(value.items)||value.items.length>100)fail();
       const seen=new Set();
       for(const row of value.items){distributionScope(row);const k=row.tenant_id+':'+row.scope_id;
-        if(row.module!==module||seen.has(k)||session.user.tenant_id!==null&&row.tenant_id!==session.user.tenant_id||
+        if(row.module!==module||seen.has(k)||currentTenant()!==null&&row.tenant_id!==currentTenant()||
           ![row.tenant_name,row.scope_name].every(s=>typeof s==='string'&&s.length<=160))fail();seen.add(k);}
       return structuredClone(value);
     },

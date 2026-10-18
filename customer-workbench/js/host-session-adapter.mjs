@@ -126,7 +126,7 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
     const started=generation;phase='connecting';authorized=null;
     const read=async path=>{const r=await request(path,{method:'GET'},true);if(!r.ok)throw error('PREFLIGHT_FAILED',r.status);return r.json();};
     try{
-      const me=await read('/api/v1/auth/me'),user=me?.user;
+      const me=await read('/api/v1/auth/me'),user=s.advisor?{...me?.user,tenant_id:s.tenantId}:me?.user;
       if(user?.id!==s.userId||!user.permissions||(user.tenant_id!==null&&user.tenant_id!==s.tenantId))throw error('IDENTITY_SCOPE_MISMATCH');
       const modules=await read('/api/v1/auth/modules');
       if(modules.tenant_id!==user.tenant_id||!Array.isArray(modules.modules))throw error('MODULE_UNAVAILABLE');
@@ -135,7 +135,8 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
       if(!moduleCatalog.some(m=>m.module_code==='seo'&&m.available))throw error('MODULE_UNAVAILABLE');
       if(!['view','edit'].includes(user.permissions['seo.content']))throw error('PERMISSION_DENIED',403);
       const tenants=await read('/api/v1/auth/tenants?module=seo');
-      const tenant=tenants.module==='seo'&&tenants.tenants?.find(t=>t.id===s.tenantId);if(!tenant)throw error('TENANT_NOT_ALLOWED');
+      const tenantRows=s.advisor&&Array.isArray(tenants)?tenants:tenants.module==='seo'?tenants.tenants:[];
+      const tenant=tenantRows?.find(t=>t.id===s.tenantId);if(!tenant)throw error('TENANT_NOT_ALLOWED');
       const sites=await read(`/api/v1/seo/workbench/sites?tenant_id=${s.tenantId}`);
       const site=sites.sites?.find(v=>v.id===s.siteId);
       if(sites.tenant_id!==s.tenantId||!site||site.status!=='active'||!sites.selection_policy?.selectable_statuses?.includes('active'))throw error('SITE_NOT_ALLOWED');
@@ -156,7 +157,7 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
 // For an existing Vue host route: pass its existing session and watch, not new storage logic.
 export function existingSessionBridge({session,watch,browser=window,getSiteId}) {
   return {
-    getSession:()=>({token:session.token,userId:session.user?.id,tenantId:session.tenantId,siteId:getSiteId(),revision:JSON.stringify([session.authRevision,session.modules])}),
+    getSession:()=>({token:session.token,userId:session.user?.id,tenantId:session.tenantId,siteId:getSiteId(),advisor:session.isAdvisorSession===true,revision:JSON.stringify([session.authRevision,session.modules])}),
     logout:()=>session.logout(),
     subscribeSession(listener){
       const stop=watch(()=>[session.token,session.user?.id,session.tenantId,getSiteId(),session.authRevision,JSON.stringify(session.modules)],listener,{flush:'sync'});

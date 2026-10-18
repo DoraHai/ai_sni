@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { session } from '../store/session.js'
+import { advisorDeniedCodes, advisorMessages } from '../store/advisorTenant.js'
 import { redirectToLogin } from '../auth/loginRedirect.js'
 
 // 同源 /api 路径：开发期由 vite proxy 转发，生产由 Nginx 反代
@@ -46,6 +47,21 @@ client.interceptors.response.use(
       stale.code = 'AUTH_CONTEXT_CHANGED'
       return Promise.reject(stale)
     }
+    const advisorCode = error.response?.data?.detail?.code
+    if (error.response?.status === 401 && !advisorCode && session.advisorScope === 'advisor_tenant') {
+      session.restoreAdvisorIdentity()
+      const expired = new Error(advisorMessages.ADVISOR_TENANT_SESSION_EXPIRED)
+      expired.code = 'ADVISOR_TENANT_SESSION_EXPIRED'
+      expired.status = 401
+      return Promise.reject(expired)
+    }
+    if (session.isAdvisorSession && advisorDeniedCodes.has(advisorCode)) {
+      session.restoreAdvisorIdentity()
+      const denied = new Error(advisorMessages[advisorCode])
+      denied.code = advisorCode
+      denied.status = error.response.status
+      return Promise.reject(denied)
+    }
     if (error.response?.status === 401 && session.isLoggedIn) {
       session.logout()
       redirectToLogin()
@@ -62,7 +78,7 @@ client.interceptors.response.use(
           ? '请求超过 30 秒未完成，请检查网络或稍后重试'
           : error.message) ||
       '网络异常，请稍后重试'
-    const normalized = new Error(detail)
+    const normalized = new Error(advisorMessages[advisorCode] || detail)
     normalized.status = error.response?.status
     normalized.code = error.response?.data?.detail?.code
       || (error.response?.status === 403 ? 'PERMISSION_DENIED' : error.code === 'ECONNABORTED' ? 'REQUEST_TIMEOUT' : error.code)

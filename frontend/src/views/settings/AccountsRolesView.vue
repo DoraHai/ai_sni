@@ -1,6 +1,8 @@
 <script setup>
 import { roleDescription } from '../../../../integrations/workbench/role-description.mjs'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { advisorTenantLabel, advisorTenantPatch, isAdvisorRole } from './advisorTenants.mjs'
+import { advisorMessages } from '../../store/advisorTenant.js'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { createUser, deleteUser, fetchUsers, resetUserPassword, updateUser } from '../../api/auth'
@@ -10,6 +12,9 @@ import { formatUtcTimestamp } from '../../utils/dateTime'
 
 const route = useRoute()
 const router = useRouter()
+// The same build serves SEM and platform pages. Grant management belongs only
+// to the platform path, even if this component is reused by a legacy SEM route.
+const platformContext = computed(() => /^\/platform(?:\/|$)/.test(route.path))
 const tab = computed({
   get: () => (route.path.endsWith('/roles') ? 'roles' : 'accounts'),
   set: (value) => router.push(`/platform/${value}`),
@@ -39,6 +44,7 @@ async function load() {
     usersData.value = users
     rolesData.value = roles
     tenantOptions.value = users.tenant_options || []
+    return users
   } catch (e) {
     error.value = e
   } finally {
@@ -59,43 +65,111 @@ const fmtTime = (v) => formatUtcTimestamp(v, { fallback: '从未登录' })
 const userDialog = ref(false)
 const savingUser = ref(false)
 const editingUserId = ref(null)
-const uform = reactive({ username: '', password: '', displayName: '', roleId: null, tenantId: null })
+const editingGrantsVersion = ref(null)
+let userFormRevision = 0
+const multiTenantDisabled = ref(false)
+const editingAdvisor = ref(null)
+const userOriginalRoleId = ref(null)
+const userFormError = ref('')
+const uform = reactive({ username: '', password: '', displayName: '', roleId: null, tenantId: null, tenantIds: [], defaultTenantId: null })
+const userIsAdvisor = computed(() => platformContext.value && (userOriginalRoleId.value === uform.roleId && editingAdvisor.value !== null
+  ? editingAdvisor.value : isAdvisorRole(roleOptions.value.find(r => r.id === uform.roleId))))
+const multiAdvisor = computed(() => userIsAdvisor.value && !multiTenantDisabled.value)
+const rowIsAdvisor = row => typeof row.is_advisor === 'boolean' ? row.is_advisor : isAdvisorRole(roleOptions.value.find(r => r.id === row.role_id))
+function discardGrantForm() {
+  userFormRevision++
+  userDialog.value = false
+  userFormError.value = ''
+  editingGrantsVersion.value = null
+  multiTenantDisabled.value = false
+}
+watch(platformContext, discardGrantForm)
+onBeforeUnmount(discardGrantForm)
+watch(() => uform.tenantIds.slice(), ids => {
+  if (!ids.includes(uform.defaultTenantId)) uform.defaultTenantId = ids[0] ?? null
+})
 
 function openCreateUser() {
+  userFormRevision++
   editingUserId.value = null
-  Object.assign(uform, { username: '', password: '', displayName: '', roleId: roleOptions.value[0]?.id ?? null, tenantId: null })
+  editingGrantsVersion.value = null
+  editingAdvisor.value = null
+  userOriginalRoleId.value = null
+  userFormError.value = ''
+  Object.assign(uform, { username: '', password: '', displayName: '', roleId: roleOptions.value[0]?.id ?? null, tenantId: null, tenantIds: [], defaultTenantId: null })
   userDialog.value = true
 }
 function openEditUser(row) {
+  userFormRevision++
   editingUserId.value = row.id
-  Object.assign(uform, { username: row.username, password: '', displayName: row.display_name, roleId: row.role_id, tenantId: row.tenant_id })
+  editingGrantsVersion.value = row.grants_version ?? null
+  editingAdvisor.value = typeof row.is_advisor === 'boolean' ? row.is_advisor : null
+  userOriginalRoleId.value = row.role_id
+  userFormError.value = ''
+  Object.assign(uform, { username: row.username, password: '', displayName: row.display_name, roleId: row.role_id, tenantId: row.tenant_id,
+    tenantIds: [...(row.tenant_ids || [])], defaultTenantId: row.default_tenant_id ?? null })
   userDialog.value = true
 }
 
 async function submitUser() {
+  if (savingUser.value) return
   if (!editingUserId.value && (!uform.username || uform.password.length < 8)) {
     ElMessage.warning('用户名必填，密码至少 8 位')
     return
   }
   if (!uform.roleId) { ElMessage.warning('请选择角色'); return }
+  let scope
+  userFormError.value = ''
+  try {
+    if (multiAdvisor.value) {
+      scope = advisorTenantPatch(uform.tenantIds, uform.defaultTenantId)
+      if (editingUserId.value) scope.expected_grants_version = editingGrantsVersion.value
+    }
+    else {
+      if (userIsAdvisor.value && !uform.tenantId) throw Error('至少勾选 1 个客户')
+      scope = { tenant_id: uform.tenantId ?? undefined, ...(!userIsAdvisor.value ? { clear_tenant: uform.tenantId == null } : {}) }
+    }
+  } catch (e) { userFormError.value = e.message; return }
   savingUser.value = true
+  const submittedUserId = editingUserId.value
+  const submittedRevision = userFormRevision
   try {
     if (editingUserId.value) {
       await updateUser(editingUserId.value, {
         role_id: uform.roleId,
         display_name: uform.displayName || undefined,
-        tenant_id: uform.tenantId ?? undefined,
-        clear_tenant: uform.tenantId == null,
+        ...scope,
       })
       ElMessage.success('账号已更新')
     } else {
-      await createUser(uform)
+      await createUser({ ...uform, ...scope })
       ElMessage.success(`账号「${uform.username}」已创建`)
     }
-    userDialog.value = false
+    if (submittedRevision === userFormRevision) userDialog.value = false
     load()
   } catch (e) {
-    ElMessage.error(e.message)
+    if (submittedRevision !== userFormRevision || !userDialog.value) return
+    if (platformContext.value && (['ADVISOR_GRANTS_CONFLICT', 'ADVISOR_GRANTS_VERSION_REQUIRED'].includes(e.code)
+        || [409, 428].includes(e.status))) {
+      const message = advisorMessages[e.code] || advisorMessages.ADVISOR_GRANTS_CONFLICT
+      // Discard the stale form/version. Reload before another explicit save.
+      editingGrantsVersion.value = null
+      const users = await load()
+      if (submittedRevision !== userFormRevision || !userDialog.value) return
+      const fresh = users?.users?.find(row => row.id === submittedUserId)
+      if (fresh) {
+        openEditUser(fresh)
+        userFormError.value = `${message}；已重新加载，请核对后再保存`
+      } else {
+        userDialog.value = false
+      }
+      ElMessage.error(fresh ? userFormError.value : `${message}；重新加载失败，请刷新页面`)
+      return
+    }
+    if (platformContext.value && e.code === 'ADVISOR_MULTI_TENANT_DISABLED') multiTenantDisabled.value = true
+    userFormError.value = platformContext.value ? advisorMessages[e.code] || e.message
+      : e.code?.startsWith('ADVISOR_') ? '账号保存失败，请稍后重试' : e.message
+    ElMessage.error(userFormError.value)
   } finally {
     savingUser.value = false
   }
@@ -240,7 +314,7 @@ onMounted(load)
     <div class="page-header">
       <div>
         <div class="page-title">{{ tab === 'accounts' ? '账号' : '角色与权限' }}</div>
-        <div class="page-desc">平台级账号和角色管理；单客户绑定用于限制业务数据范围</div>
+        <div class="page-desc">{{ platformContext ? '平台级账号和角色管理；顾问只能看到勾选的客户' : '平台级账号和角色管理；单客户绑定用于限制业务数据范围' }}</div>
       </div>
       <div class="page-actions">
         <el-button v-if="tab === 'accounts'" type="primary" @click="openCreateUser">新建账号</el-button>
@@ -266,7 +340,7 @@ onMounted(load)
               <template #default="{ row }"><span class="role-pill">{{ row.role_label }}</span></template>
             </el-table-column>
             <el-table-column label="可见客户" min-width="120">
-              <template #default="{ row }">{{ row.tenant_name || '全部客户' }}</template>
+              <template #default="{ row }">{{ platformContext ? advisorTenantLabel(row, tenantOptions, rowIsAdvisor(row)) : row.tenant_name || '全部客户' }}</template>
             </el-table-column>
             <el-table-column label="状态" width="90">
               <template #default="{ row }">
@@ -290,7 +364,7 @@ onMounted(load)
             </el-table-column>
             <template #empty>
               <div class="empty-line">
-                当前没有登录账号记录。新建账号时可选择限定到一个客户。
+                当前没有登录账号记录。新建账号时请按角色限定客户。
               </div>
             </template>
           </el-table>
@@ -345,10 +419,21 @@ onMounted(load)
           </el-select>
         </el-form-item>
         <el-form-item label="限定客户">
-          <el-select v-model="uform.tenantId" placeholder="不限=全部客户（可顶栏切换）" clearable style="width: 100%">
+          <el-select v-if="multiAdvisor" v-model="uform.tenantIds" multiple placeholder="至少勾选 1 个客户" style="width: 100%" aria-label="限定客户">
             <el-option v-for="t in tenantOptions" :key="t.id" :label="t.name" :value="t.id" />
           </el-select>
+          <el-select v-else v-model="uform.tenantId" :placeholder="userIsAdvisor ? '请选择客户' : '不限=全部客户（可顶栏切换）'" :clearable="!userIsAdvisor" style="width: 100%">
+            <el-option v-for="t in tenantOptions" :key="t.id" :label="t.name" :value="t.id" />
+          </el-select>
+          <div v-if="userIsAdvisor" class="sub">顾问只能看到勾选的客户；至少勾选 1 个客户</div>
         </el-form-item>
+        <el-form-item v-if="multiAdvisor" label="默认客户" required>
+          <el-select v-model="uform.defaultTenantId" placeholder="从已勾选客户中选择" style="width: 100%" aria-label="默认客户">
+            <el-option v-for="t in tenantOptions.filter(t => uform.tenantIds.includes(t.id))" :key="t.id" :label="t.name" :value="t.id" />
+          </el-select>
+        </el-form-item>
+        <el-alert v-if="multiTenantDisabled && userIsAdvisor" title="顾问多客户功能尚未开放" type="info" :closable="false" />
+        <el-alert v-if="userFormError" :title="userFormError" type="error" :closable="false" role="alert" />
       </el-form>
       <template #footer>
         <el-button @click="userDialog = false">取消</el-button>

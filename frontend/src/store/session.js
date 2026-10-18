@@ -1,4 +1,5 @@
 import { computed, reactive } from 'vue'
+import { advisorClaims } from './advisorTenant.js'
 import {
   AUTH_CONTEXT_EVENT,
   clearStoredAuth,
@@ -15,10 +16,15 @@ const initialAuth = selectStoredAuth(localStorage, sessionStorage)
 let authStorage = initialAuth?.storage ?? null
 const _activeStore = () => (authStorage === 'local' ? localStorage : sessionStorage)
 const initialTenantId = Number(sessionStorage.getItem('sem_tenant_id')) || null
+const advisorIdentityKey = 'sem_advisor_identity_v1'
+const isAdvisor = (token, user) => !!advisorClaims(token) || user?.is_advisor === true
+const tenantForAuth = (token, user, fallback = null) => isAdvisor(token, user)
+  ? (advisorClaims(token)?.scope_kind === 'advisor_tenant' ? advisorClaims(token).tid : null)
+  : (user?.tenant_id || fallback)
 function clearTenantDrafts() {
   for (let i = sessionStorage.length - 1; i >= 0; i--) {
     const key = sessionStorage.key(i)
-    if (key?.startsWith('seo_pending_rewrite_') || key?.startsWith('sem_builder_handoff_')) {
+    if (key?.startsWith('seo_pending_rewrite_') || key?.startsWith('sem_builder_handoff_') || ['seo_site_tenant_id', 'seo_site_id'].includes(key)) {
       sessionStorage.removeItem(key)
     }
   }
@@ -27,7 +33,7 @@ const state = reactive({
   token: initialAuth?.token ?? '',
   user: initialAuth?.user ?? null,
   tenants: [],
-  tenantId: initialAuth ? (initialAuth.user.tenant_id || initialTenantId) : null,
+  tenantId: initialAuth ? tenantForAuth(initialAuth.token, initialAuth.user, initialTenantId) : null,
   modules: [],
   tenantListRevision: 0,
   authRevision: 0,
@@ -64,6 +70,9 @@ export const session = {
   get modules() { return state.modules },
   get tenantListRevision() { return state.tenantListRevision },
   get authRevision() { return state.authRevision },
+  get isAdvisorSession() { return isAdvisor(state.token, state.user) },
+  get advisorScope() { return advisorClaims(state.token)?.scope_kind ?? null },
+  get advisorGrantId() { return advisorClaims(state.token)?.gid ?? null },
 
   get isLoggedIn() { return !!state.token },
   get permissions() { return state.user?.permissions || {} },
@@ -86,10 +95,55 @@ export const session = {
     authStorage = remember ? 'local' : 'session'
     state.token = token
     state.user = user
+    sessionStorage.removeItem(advisorIdentityKey)
+    if (advisorClaims(token)?.scope_kind === 'advisor_identity') {
+      sessionStorage.setItem(advisorIdentityKey, JSON.stringify({ token, user }))
+    }
     // 绑定了单客户的账号锁定该客户
-    if (user?.tenant_id) this.setTenant(user.tenant_id)
+    if (this.isAdvisorSession) { clearTenantDrafts(); this.setTenant(tenantForAuth(token, user)) }
+    else if (user?.tenant_id) this.setTenant(user.tenant_id)
     else if (previousUserId !== user?.id) this.setTenant(null)
     notifyAuthContext('identity')
+  },
+
+  replaceAuthForAdvisorTenant(token, tenantId) {
+    const claims = advisorClaims(token)
+    if (claims?.scope_kind !== 'advisor_tenant' || claims.tid !== tenantId
+        || String(claims.sub) !== String(state.user?.id) || !Number.isSafeInteger(claims.gid) || claims.gid <= 0) {
+      throw new TypeError('INVALID_ADVISOR_TENANT_RESPONSE')
+    }
+    if (this.advisorScope === 'advisor_identity') {
+      sessionStorage.setItem(advisorIdentityKey, JSON.stringify({ token: state.token, user: state.user }))
+    }
+    clearTenantDrafts()
+    // Business context belongs to this tab; never publish it through localStorage.
+    writeAuthEnvelope(sessionStorage, token, state.user)
+    authStorage = 'session'
+    state.token = token
+    state.modules = []
+    state.tenantListRevision += 1
+    this.setTenant(tenantId)
+    notifyAuthContext('identity')
+  },
+
+  restoreAdvisorIdentity() {
+    let identity
+    try { identity = JSON.parse(sessionStorage.getItem(advisorIdentityKey)) } catch {}
+    clearTenantDrafts()
+    state.modules = []
+    state.tenants = []
+    if (identity?.user?.id !== state.user?.id || advisorClaims(identity?.token)?.scope_kind !== 'advisor_identity') {
+      this.logout()
+      return false
+    }
+    writeAuthEnvelope(sessionStorage, identity.token, identity.user)
+    authStorage = 'session'
+    state.token = identity.token
+    state.user = identity.user
+    this.setTenant(null)
+    state.tenantListRevision += 1
+    notifyAuthContext('identity')
+    return true
   },
 
   replaceAuthForAdvisorSwitch(token, user) {
@@ -109,12 +163,14 @@ export const session = {
     const changeKind = authContextChangeKind(state.token, previous, state.token, user)
     state.user = user
     writeAuthEnvelope(_activeStore(), state.token, user)
-    if (user?.tenant_id) this.setTenant(user.tenant_id)
+    if (this.isAdvisorSession) this.setTenant(tenantForAuth(state.token, user))
+    else if (user?.tenant_id) this.setTenant(user.tenant_id)
     if (changeKind) notifyAuthContext(changeKind)
   },
 
   setTenants(list) {
     state.tenants = list
+    if (this.isAdvisorSession) return
     if (!state.tenantId || !list.some((t) => t.id === state.tenantId)) {
       this.setTenant(list[0]?.id ?? null)
     }
@@ -129,6 +185,7 @@ export const session = {
   },
 
   setTenant(id) {
+    if (this.isAdvisorSession && id !== tenantForAuth(state.token, state.user)) return
     state.tenantId = id
     if (id) sessionStorage.setItem('sem_tenant_id', String(id))
     else sessionStorage.removeItem('sem_tenant_id')
@@ -143,6 +200,8 @@ export const session = {
     state.tenantId = null
     for (const s of [localStorage, sessionStorage]) clearStoredAuth(s)
     sessionStorage.removeItem('sem_tenant_id')
+    sessionStorage.removeItem(advisorIdentityKey)
+    clearTenantDrafts()
     notifyAuthContext('logout')
   },
 }
@@ -180,8 +239,8 @@ if (typeof window !== 'undefined') {
     if (changeKind === 'identity') clearTenantDrafts()
     state.tenants = []
     state.modules = []
-    state.tenantId = next.user.tenant_id
-      || (previousUserId === next.user.id ? previousTenantId : null)
+    state.tenantId = tenantForAuth(next.token, next.user,
+      previousUserId === next.user.id ? previousTenantId : null)
     if (state.tenantId) sessionStorage.setItem('sem_tenant_id', String(state.tenantId))
     else sessionStorage.removeItem('sem_tenant_id')
     state.tenantListRevision += 1
