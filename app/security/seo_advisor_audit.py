@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger("seo.advisor.operations")
 logger.setLevel(logging.INFO)
+if not logger.handlers:
+    logger.addHandler(logging.StreamHandler())
 
 
 def record(request, ctx, result, *, evidence=None):
