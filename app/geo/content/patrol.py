@@ -480,6 +480,7 @@ async def execute_patrol_run(
     from app.geo.content.ai_settings import resolve_llm_credentials
     from app.geo.content.engines import default_engine_rows
     from app.models import GeoTrackingEngine
+    from app.security.advisor_visibility import AdvisorVisibilityUnavailable, check_visibility_execution
 
     from app.geo.tenant_scope import ensure_geo_background_execution_allowed
     ensure_geo_background_execution_allowed(tenant_id)
@@ -494,9 +495,23 @@ async def execute_patrol_run(
     if row.status != "pending":
         await session.commit()
         return row
+    advisor_prompt_ids = (row.summary or {}).get('advisor_visibility_prompt_ids')
+    advisor_auth = (row.summary or {}).get('advisor_visibility_auth')
+
+    async def check_advisor(*, lock=False):
+        if advisor_prompt_ids is not None:
+            await check_visibility_execution(session, row, advisor_prompt_ids, lock=lock)
+
+    async def guarded_chat_json(*args, **kwargs):
+        await check_advisor()
+        result = await chat_json(*args, **kwargs)
+        await check_advisor()
+        return result
+
     try:
         await ensure_geo_entitlement(session, row.tenant_id)
-    except GeoEntitlementUnavailable as exc:
+        await check_advisor(lock=True)
+    except (GeoEntitlementUnavailable, AdvisorVisibilityUnavailable) as exc:
         row.status = "failed"
         row.error = str(exc)
         row.finished_at = datetime.utcnow()
@@ -530,6 +545,7 @@ async def execute_patrol_run(
         summary["contract_plan"] = contract_plan
     if advisor_prompt_ids is not None:
         summary["advisor_visibility_prompt_ids"] = advisor_prompt_ids
+        summary['advisor_visibility_auth'] = advisor_auth
 
     try:
         tenant = await session.get(Tenant, row.tenant_id)
@@ -664,6 +680,7 @@ async def execute_patrol_run(
                 # Recheck for every cell because a long patrol/retest can span a
                 # subscription change between provider calls.
                 await ensure_geo_entitlement(session, row.tenant_id)
+                await check_advisor()
                 if contract_plan and datetime.utcnow() >= datetime.fromisoformat(contract_plan['window_end']):
                     raise ValueError('复测已跨出约定自然周，停止采样')
                 if cells_planned >= max_cells:
@@ -748,13 +765,14 @@ async def execute_patrol_run(
                             brand_names=cell_names,
                             engine=engine,
                             llm=llm,
-                            chat_json=chat_json,
+                            chat_json=guarded_chat_json if advisor_prompt_ids is not None else chat_json,
                             sample_mode=sample_mode,
                             fallback_reason=fallback_reason,
                         )
                     # A provider response arriving after revocation is not a
                     # valid customer sample and must never be persisted.
                     await ensure_geo_entitlement(session, row.tenant_id)
+                    await check_advisor()
                     cell.update(
                         {
                             "ok": True,
@@ -852,7 +870,7 @@ async def execute_patrol_run(
                         await session.flush()
                         cell["snapshot_id"] = snap.id
                         summary["snapshots_created"] += 1
-                except GeoEntitlementUnavailable:
+                except (GeoEntitlementUnavailable, AdvisorVisibilityUnavailable):
                     raise
                 except (DeepSeekError, ValueError) as exc:
                     from app.ai.deepseek import safe_ai_error_detail, safe_ai_error_message
@@ -879,6 +897,7 @@ async def execute_patrol_run(
                 # periodic commit so long runs don't hold huge txn
                 if len(items) % 5 == 0:
                     await ensure_geo_entitlement(session, row.tenant_id)
+                    await check_advisor(lock=True)
                     row.items = list(items)
                     row.summary = dict(summary)
                     await session.commit()
@@ -889,6 +908,7 @@ async def execute_patrol_run(
             from app.geo.retest import validate_run_result
             summary["retest_result"] = validate_run_result(contract_plan, items)
         await ensure_geo_entitlement(session, row.tenant_id)
+        await check_advisor(lock=True)
         row.items = items
         row.summary = summary
         row.status = "completed"
