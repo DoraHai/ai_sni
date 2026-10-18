@@ -457,8 +457,8 @@ def test_missing_or_wrong_project_assignment_rejects(tmp_path, monkeypatch, back
     ('POST', '/not-reviewed'), ('DELETE', '/content-tasks/10'),
      ('POST', '/content-tasks/10/variants'),
     ('POST', '/content-tasks/10/publications'), ('POST', '/content-tasks/10/submit-review'),
-    ('POST', '/content-tasks/10/review'), 
-     
+    ('POST', '/content-tasks/10/review'),
+
      ('POST', '/content-tasks/10/push'),
     ('POST', '/content-tasks/10/push-batch'), ('POST', '/answer-snapshots/probe'),
     ('POST', '/answer-snapshots/probe-batch'),
