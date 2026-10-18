@@ -139,6 +139,8 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
         return {"assistant"}, False
     if p.startswith("/api/v1/geo/integration/"):
         return {"geo.content"}, edit
+    if p == "/api/v1/geo/content-imports/create-task":
+        return {"geo.content"}, edit
     if p == "/api/v1/geo/tenants":
         # GEO 顶部客户切换器是所有 GEO 工作台的公共只读数据源。
         return {"geo.assets", "geo.content", "geo.diagnosis"}, False

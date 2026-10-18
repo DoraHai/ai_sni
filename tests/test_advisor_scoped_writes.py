@@ -87,6 +87,10 @@ CASES = (
      'geo_channel_variants', 'title', 'edited variant'),
     ('PATCH', '/optimization-businesses/{business_id}', {'profile': BRAND_PROFILE},
      'geo_optimization_businesses', 'profile', BRAND_PROFILE),
+    ('POST', '/content-imports/create-task', {'tenant_id': 10, 'prompt_id': 10,
+        'title': 'imported manual task', 'body_markdown': 'An existing manual article.',
+        'source_type': 'paste', 'target_channels': ['website']},
+     'geo_content_tasks', 'title', 'imported manual task'),
 )
 CASE_IDS = [f'{method} {path}' for method, path, *_ in CASES]
 BUSINESS_TABLES = ('geo_facts', 'geo_prompts', 'geo_optimization_businesses',
@@ -452,7 +456,8 @@ def test_missing_or_wrong_project_assignment_rejects(tmp_path, monkeypatch, back
     ('POST', '/content-tasks/10/review'), ('POST', '/facts/10/verify'),
     ('POST', '/content-tasks/10/check'), ('POST', '/content-tasks/10/lint'),
     ('POST', '/visibility-patrol/runs'),
-    ('POST', '/content-tasks/10/ai-review'), ('POST', '/answer-snapshots/probe'),
+    ('POST', '/content-tasks/10/ai-review'), ('POST', '/content-tasks/10/push'),
+    ('POST', '/content-tasks/10/push-batch'), ('POST', '/answer-snapshots/probe'),
     ('POST', '/answer-snapshots/probe-batch'),
 ])
 def test_outside_exact_write_list_stays_closed(tmp_path, monkeypatch, backend, method, path):

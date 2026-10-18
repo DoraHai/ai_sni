@@ -278,6 +278,7 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
         _PREFIX + "/facts": "business_id", _PREFIX + "/prompts": "unit_id",
         _PREFIX + "/optimization-units": "business_id",
         _PREFIX + "/content-tasks": "prompt_id",
+        _PREFIX + "/content-imports/create-task": "prompt_id",
     }.get(rule.template)
     if request.method == "POST" and creation_parent:
         if not isinstance(body, dict) or body.get(creation_parent) is None:

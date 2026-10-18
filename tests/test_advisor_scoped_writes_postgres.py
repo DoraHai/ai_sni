@@ -83,7 +83,9 @@ def test_commit_recheck_reloads_stale_identity_and_rolls_back_pending_business_c
 
 @pytest.mark.parametrize('kind', ['grant', 'permissions', 'user', 'assignment'])
 @pytest.mark.parametrize('production_dependency', [False, True], ids=['fixture-cleanup', 'production-session-cleanup'])
-@pytest.mark.parametrize('case', [CASES[0], CASES[-1]], ids=['fact', 'brand-profile'])
+@pytest.mark.parametrize('case', [CASES[0], next(c for c in CASES if c[4] == 'profile')] +
+                         [c for c in CASES if c[1] == '/content-imports/create-task'],
+                         ids=['manual-fact', 'brand-profile', 'paste-import'])
 def test_real_http_revoke_after_guard_before_handler_commit_never_persists(tmp_path, monkeypatch, kind, production_dependency, case):
     importlib.import_module('app.security.advisor_write_commit')
     from app.security import geo_advisor
@@ -145,6 +147,8 @@ def test_real_http_revoke_after_guard_before_handler_commit_never_persists(tmp_p
                     assert response.status_code in {200, 201, 401, 403}, response.text
                     await asyncio.wait_for(revoker, 5)
                     assert any(row[column] == value for row in (await env.snapshot())[table])
+                    if template == '/content-imports/create-task':
+                        assert len((await env.snapshot())[table]) == len(before[table]) + 1
                     after_revoke = await env.snapshot()
                     rejected = await env.request(method, concrete(template), body=body)
                     assert rejected.status_code in {401, 403}, rejected.text
@@ -160,6 +164,7 @@ def test_real_http_revoke_after_guard_before_handler_commit_never_persists(tmp_p
                     assert await env.snapshot() == after_revoke
                     assert (await env.snapshot())['geo_facts'] == before['geo_facts']
                     assert (await env.snapshot())['geo_optimization_businesses'] == before['geo_optimization_businesses']
+                    assert (await env.snapshot())[table] == before[table]
             finally:
                 release.set()
                 tasks = [writer, waiter, *([revoker] if revoker is not None else [])]

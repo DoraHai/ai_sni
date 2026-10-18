@@ -6830,6 +6830,7 @@ async def create_task_from_article_import(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Persist an operator-confirmed import as a task with its first master draft."""
+    check_handler_fields(ctx, "POST", "/content-imports/create-task", req)
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
     prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
