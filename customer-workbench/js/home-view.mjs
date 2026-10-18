@@ -4,7 +4,7 @@ const action=(text,kind,id)=>`<button data-action="${kind}" data-id="${id}">${te
 const ask=text=>`<button data-assistant-prompt="${esc(text)}">问这项工作</button>`;
 const count=v=>typeof v==='number'&&Number.isFinite(v)&&v>=0?v:null;
 function metric(label,value,note,page,kind=''){return `<button class="home-metric" data-action="home-data" data-page="${page}" ${kind?`data-kind="${kind}"`:''}><span>${label}</span><strong>${esc(formatMetric(count(value)))}</strong><small>${esc(note)}</small></button>`;}
-function publicationMetric(published,verified){return `<button class="home-metric home-publication-metric" data-action="home-data" data-page="交付记录"><strong>已发布 ${esc(formatMetric(count(published)))} 篇，其中已核验 ${esc(formatMetric(count(verified)))} 篇</strong><small>同一稿件多渠道发布计为一篇</small></button>`;}
+function publicationMetric(published,verified){return `<button class="home-metric home-publication-metric" data-action="home-data" data-page="交付记录"><strong>已发布 ${esc(formatMetric(count(published)))} 篇，其中已核验 ${esc(formatMetric(count(verified)))} 篇</strong><small>同一稿件多渠道发布计为一篇</small><small>已发布不等于已核验：成功取得发布页截图的稿件才计入已核验；页面检查还需匹配站内页面并有检查记录，请联系顾问核对。</small></button>`;}
 function bars(items){const maximum=Math.max(1,...items.map(v=>v[1]));return items.map(([label,n])=>`<div class="home-bar"><span>${esc(label)}</span><div><i style="width:${n/maximum*100}%"></i></div><b>${n}</b></div>`).join('');}
 export function homeView(data){
  if(!data)return '<h2>本期要点</h2><p>正在读取当前网站的稿件、关键词、页面检查与服务进度。</p>';

@@ -47,6 +47,9 @@ test('home publication summary uses distinct content assets rather than publicat
   assert.doesNotMatch(html,/已发布 9 篇/);
   assert.doesNotMatch(html,/已发布 4 篇/);
   assert.match(html,/同一稿件多渠道发布计为一篇/);
+  assert.match(html,/成功取得发布页截图的稿件才计入已核验/);
+  assert.match(html,/页面检查还需匹配站内页面并有检查记录，请联系顾问核对/);
+  assert.doesNotMatch(html,/自动检查|自动更新|已核验是 0/);
 });
 
 test('home does not substitute legacy record counts when distinct counts are unavailable',()=>{
