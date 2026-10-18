@@ -8285,6 +8285,7 @@ async def create_variants(
         session, task
     ):
         raise HTTPException(409, "渠道稿正在生成，请等待当前任务完成")
+    from app.security.advisor_write_ai import job_authority
     task.status = "adapting"
 
     job = await create_job(
@@ -8297,6 +8298,7 @@ async def create_variants(
             "channels": channels,
             "use_llm": bool(req.use_llm),
             "execution_mode": "async" if run_async else "sync",
+            **job_authority(session, ctx),
         },
         created_by=ctx.user_id,
     )
@@ -8649,6 +8651,8 @@ async def _write_publication(
     variant.status = "published"
     task.status = "published"
     await _sync_task_pipeline(session, task)
+    from app.security.advisor_write_publish import recheck_external
+    await recheck_external(session, "publication_commit_checked", task_id=task.id, variant_id=variant.id)
     return True
 
 
@@ -8978,6 +8982,7 @@ async def push_variant_batch(
         )
 
     if run_async:
+        from app.security.advisor_write_ai import job_authority
         from app.geo.content.async_jobs import (
             KIND_PUSH_BATCH,
             create_job,
@@ -9003,6 +9008,7 @@ async def push_variant_batch(
                 "mode": req.mode,
                 "create_publication": req.create_publication,
                 "note": req.note,
+                **job_authority(session, ctx),
             },
             created_by=ctx.user_id,
         )

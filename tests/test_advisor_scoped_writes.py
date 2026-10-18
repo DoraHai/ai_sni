@@ -455,12 +455,12 @@ def test_missing_or_wrong_project_assignment_rejects(tmp_path, monkeypatch, back
 
 @pytest.mark.parametrize('method,path', [
     ('POST', '/not-reviewed'), ('DELETE', '/content-tasks/10'),
-     ('POST', '/content-tasks/10/variants'),
-    ('POST', '/content-tasks/10/publications'),
 
 
-     ('POST', '/content-tasks/10/push'),
-    ('POST', '/content-tasks/10/push-batch'), ('POST', '/answer-snapshots/probe'),
+
+
+
+     ('POST', '/answer-snapshots/probe'),
     ('POST', '/answer-snapshots/probe-batch'),
 ])
 def test_outside_exact_write_list_stays_closed(tmp_path, monkeypatch, backend, method, path):

@@ -168,6 +168,7 @@ async def _resolve(session, ctx, request, body, rule):
     from app.models import (GeoArticleVersion, GeoChannelVariant, GeoContentTask,
                             GeoFact, GeoOptimizationBusiness, GeoOptimizationUnit,
                             GeoProject, GeoPrompt)
+    from app.models import GeoChannelAccount, GeoPublishingChannel
 
     ctx.ensure_tenant(ctx.tenant_id)
     template = getattr(request.scope.get("route"), "path", None)
@@ -179,6 +180,8 @@ async def _resolve(session, ctx, request, body, rule):
         "content_task_id": GeoContentTask, "article_id": GeoArticleVersion,
         "expected_article_id": GeoArticleVersion, "article_version_id": GeoArticleVersion,
         "variant_id": GeoChannelVariant,
+        "source_variant_id": GeoChannelVariant,
+        "account_id": GeoChannelAccount, "channel_id": GeoPublishingChannel,
     }
     from app.security.advisor_write_operations import task_templates
     from app.security.advisor_write_reads import TASK_READS
@@ -233,6 +236,10 @@ async def _resolve(session, ctx, request, body, rule):
             await resolve("prompt_id", row.prompt_id)
             if row.business_id is not None:
                 await resolve("business_id", row.business_id)
+        elif model is GeoChannelAccount:
+            await resolve("channel_id", row.channel_id)
+        elif model is GeoPublishingChannel:
+            pass  # Read-only destination for the already scoped content task.
         else:
             # Articles and variants have no tenant column: their real owner is
             # the content task, never an action ticket with the same numeric ID.

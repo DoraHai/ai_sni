@@ -591,8 +591,16 @@ async def _run_owned_job(job_id: int, *, tenant_id: int, connection=None) -> dic
                     else:
                         raise ValueError(f"未知作业类型: {job_kind}")
                 await mark_job(session, job_id, status="succeeded", result_meta=result)
+                binding = getattr(session, "info", {}).get("advisor_scoped_write")
+                if binding:
+                    from app.security.advisor_write_audit import record
+                    record(binding[1].scope, "job_succeeded", job_id=job_id)
                 return {"status": "succeeded", "error": None, "result_meta": result}
             except Exception as exc:  # noqa: BLE001
+                binding = getattr(session, "info", {}).get("advisor_scoped_write")
+                if binding:
+                    from app.security.advisor_write_audit import record
+                    record(binding[1].scope, "job_failed", job_id=job_id, error_type=type(exc).__name__)
                 rollback = getattr(session, "rollback", None)
                 if rollback is not None:
                     await rollback()
@@ -796,6 +804,8 @@ async def _execute_variants(session: AsyncSession, job: GeoAsyncJob) -> dict[str
     use_llm = bool(meta.get("use_llm", True))
     if not job.ref_id:
         raise ValueError("缺少 task_id")
+    from app.security.advisor_write_ai import recheck_job
+    await recheck_job(session, job)
     return await execute_variants_for_task(
         session,
         task_id=int(job.ref_id),
@@ -820,6 +830,8 @@ async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[s
     )
 
     ensure_geo_background_execution_allowed(job.tenant_id)
+    from app.security.advisor_write_ai import recheck_job
+    await recheck_job(session, job)
     meta = job.request_meta or {}
     task = await session.get(GeoContentTask, job.ref_id)
     if task is None or task.tenant_id != job.tenant_id:

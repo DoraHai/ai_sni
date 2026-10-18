@@ -96,6 +96,8 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
 
     if not isinstance(body, dict) or set(body) - rule.fields or set(body) & rule.forbidden:
         forbidden()
+    from app.security.advisor_write_publish import check_fields as publish_fields
+    publish_fields(rule, body)
     if "trust_level" in body and body["trust_level"] not in ("draft", "needs_review"):
         forbidden()
     if "source" in body and body["source"] != "manual":

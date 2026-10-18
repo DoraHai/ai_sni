@@ -507,6 +507,9 @@ async def execute_single_push(session, *, task, variant, channel_row, account, m
         await session.commit()
         raise
     for attempt in range(1, 4):
+        from app.security.advisor_write_publish import recheck_external
+        await recheck_external(session, "external_attempt", account_id=account_id,
+                               variant_id=variant_id, attempt=attempt)
         try:
             # A reservation can wait while another transaction revokes access.
             # Recheck immediately before every external attempt, including retries.
@@ -524,6 +527,8 @@ async def execute_single_push(session, *, task, variant, channel_row, account, m
                 channel_row=channel_row, account=account, mode=mode, article=article)
             # Store only delivery metadata, never remote response bodies or tokens.
             result = delivery_audit_result(result)
+            await recheck_external(session, "external_returned", account_id=account_id,
+                                   variant_id=variant_id, attempt=attempt)
             try:
                 # The connector may have published while the request was in flight.
                 # If access was revoked, retain a minimal, sanitized audit trail but

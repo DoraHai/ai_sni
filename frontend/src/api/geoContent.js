@@ -714,12 +714,13 @@ export function exportGeoVariant(tenantId, taskId, channel = 'website', expected
 }
 
 export function publishGeoVariant(taskId, body) {
-  return client.post(`/api/v1/geo/content-tasks/${taskId}/publications`, body)
+  return client.post(`/api/v1/geo/content-tasks/${taskId}/publications`, body, { params: { tenant_id: body.tenant_id } })
 }
 
 export function pushGeoVariantWebhook(taskId, body) {
   return client.post(`/api/v1/geo/content-tasks/${taskId}/push`, body, {
     timeout: 60000,
+    params: { tenant_id: body.tenant_id },
   })
 }
 
@@ -731,7 +732,7 @@ export function fetchTaskPushTargets(tenantId, taskId) {
 
 export function pushGeoVariantBatch(taskId, body, { runAsync = true } = {}) {
   return client.post(`/api/v1/geo/content-tasks/${taskId}/push-batch`, body, {
-    params: { run_async: !!runAsync },
+    params: { tenant_id: body.tenant_id, run_async: !!runAsync },
     timeout: runAsync ? 30000 : 300000,
   })
 }

@@ -2203,6 +2203,7 @@ async function pushWebhook() {
   }
   busy.value = 'push'
   try {
+    await editorRequest.wait(ElMessageBox.confirm('确定把这篇稿件正式发布到外部平台？发布后别人可以看到。', '确认发布', { type: 'warning', confirmButtonText: '确定发布', cancelButtonText: '取消' }))
     const res = await editorRequest.wait(pushGeoVariantWebhook(taskId.value, {
       tenant_id: tenantId.value,
       channel: docTab.value,
@@ -2243,6 +2244,7 @@ async function pushBatchSelected() {
   }
   pushBatchBusy.value = true
   try {
+    await editorRequest.wait(ElMessageBox.confirm('确定把这篇稿件发布到所有已选账号？发布后别人可以看到。', '确认批量发布', { type: 'warning', confirmButtonText: '确定发布', cancelButtonText: '取消' }))
     const targets = pushSelected.value.map((key) => {
       const [channel, accountId] = String(key).split(':')
       return { channel, account_id: Number(accountId) }

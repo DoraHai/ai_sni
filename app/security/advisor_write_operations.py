@@ -5,7 +5,7 @@ DAILY = {
     ("POST", "/content-tasks/{task_id}/submit-review"): "expected_article_id expected_updated_at note",
     ("POST", "/content-tasks/{task_id}/review"): "expected_article_id expected_updated_at decision note",
     ("PATCH", "/projects/{project_id}"): "name brand_name domain description",
-    ("POST", "/facts/{fact_id}/verify"): "excerpt excerpt_locator source_url note expected_source_statement expected_source_name expected_source_url",
+    ("POST", "/facts/{fact_id}/verify"): "excerpt excerpt_locator source_url note expected_source_statement expected_source_name expected_source_url public_use_allowed verified_translation",
     ("POST", "/content-tasks/{task_id}/check"): "",
     ("POST", "/content-tasks/{task_id}/lint"): "",
     ("POST", "/content-tasks/{task_id}/retrieve-facts/apply"): "fact_ids",
@@ -14,10 +14,14 @@ DAILY = {
 
 def rules():
     from app.security.advisor_write_routes import FORBIDDEN, WriteRule
-    return {(method, "/api/v1/geo" + path): WriteRule(
-        method, "/api/v1/geo" + path, frozenset(fields.split()), FORBIDDEN,
+    result = {(method, "/api/v1/geo" + path): WriteRule(
+        method, "/api/v1/geo" + path, frozenset(fields.split()),
+        FORBIDDEN - ({"public_use_allowed", "verified_translation"} if path == "/facts/{fact_id}/verify" else set()),
         ("geo.assets", "geo.content"), "project")
         for (method, path), fields in DAILY.items()}
+    from app.security.advisor_write_publish import rules as publish_rules
+    result.update(publish_rules())
+    return result
 
 
 def task_templates():
@@ -30,9 +34,14 @@ async def read_contract(request, rule):
     query = {"tenant_id"}
     if rule.template == "/api/v1/geo/content-tasks/{task_id}/check":
         query.add("require_channels")
+    from app.security.advisor_write_publish import PREFIX, VARIANTS, PUSH_BATCH
+    if rule.template == PREFIX + "/export":
+        query.add("channel")
+    if rule.template in {VARIANTS, PUSH_BATCH}:
+        query.add("run_async")
     seen = set()
     for key, value in request.query_params.multi_items():
-        if key in seen or key not in query or (key == "require_channels" and value not in {"true", "false"}):
+        if key in seen or key not in query or (key in {"require_channels", "run_async"} and value not in {"true", "false"}):
             deny(403, "ADVISOR_WRITE_FIELD_FORBIDDEN", "请只提交这个操作支持的参数")
         seen.add(key)
     raw = await request.body()

@@ -84,7 +84,7 @@ def test_mandatory_rule_matches_exact_method_and_mounted_template(rules, case):
 @pytest.mark.parametrize('method,template', [
     ('DELETE', '/facts/{fact_id}'),
     ('POST', '/content-tasks/{task_id}/ai-review'),
-    ('POST', '/content-tasks/{task_id}/publications'), ('POST', '/facts-extra'),
+     ('POST', '/facts-extra'),
     ('PATCH', '/content-tasks/{task_id}/variants/{channel}/publish'),
 ])
 def test_unknown_methods_or_adjacent_templates_do_not_match(rules, method, template):

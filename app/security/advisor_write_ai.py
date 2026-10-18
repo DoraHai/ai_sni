@@ -91,7 +91,8 @@ def job_authority(session, ctx):
     binding = session.info["advisor_scoped_write"]
     return {"advisor_authority": {"user_id": ctx.user_id,
             "tenant_id": ctx.tenant_id, "grant_id": ctx.advisor_scope.grant_id,
-            "expires_at": binding[4]}}
+            "expires_at": binding[4], "operation": binding[3].template,
+            "body": binding[2]}}
 
 
 async def recheck_job(session, job):
@@ -113,16 +114,30 @@ async def recheck_job(session, job):
                       {"geo.assets": "edit", "geo.content": "edit"},
                       advisor_scope=AdvisorScope(frozenset({job.tenant_id}), job.tenant_id,
                                                  authority["grant_id"]))
-    request = Request({"type": "http", "method": "POST", "path": GENERATE,
+    from app.security.advisor_write_publish import VARIANTS, PUSH_BATCH
+    from app.security.advisor_write_operations import rules as operation_rules
+    operation = authority.get("operation", GENERATE)
+    all_rules = {**rules(), **operation_rules()}
+    rule = all_rules.get(("POST", operation))
+    if rule is None or operation not in {GENERATE, VARIANTS, PUSH_BATCH}:
+        deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "顾问作业操作未授权")
+    body = authority.get("body", {})
+    from app.security.advisor_write_routes import check_write_fields
+    check_write_fields(rule, body)
+    request = Request({"type": "http", "method": "POST", "path": operation.replace("{task_id}", str(job.ref_id)),
                        "headers": [], "query_string": f"tenant_id={job.tenant_id}".encode(),
                        "path_params": {"task_id": job.ref_id},
-                       "route": SimpleNamespace(path=GENERATE)})
-    session.info["advisor_scoped_write"] = (ctx, request, {}, rules()[("POST", GENERATE)], authority["expires_at"])
+                       "route": SimpleNamespace(path=operation)})
+    request.scope["geo_advisor_actor"] = (ctx.user_id, ctx.tenant_id)
+    # Workers explicitly recheck before business commits. Do not install the
+    # HTTP session hook on their failure-cleanup/status-only transactions.
+    session.info["advisor_scoped_write"] = (ctx, request, body, rule, authority["expires_at"])
     from app.security.geo_advisor import check_manual_execution_scope
-    await check_manual_execution_scope(session, ctx, rules()[("POST", GENERATE)])
+    await check_manual_execution_scope(session, ctx, rule)
     await recheck_advisor_before_commit(session, ctx)
     task = await session.get(GeoContentTask, job.ref_id)
-    if task is None or task.status != "generating":
+    expected = "adapting" if operation == VARIANTS else "generating" if operation == GENERATE else None
+    if task is None or (expected is not None and task.status != expected):
         deny(403, "ADVISOR_WRITE_STATE_FORBIDDEN", "当前任务状态不允许生成母稿")
 
 
