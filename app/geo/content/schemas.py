@@ -269,7 +269,7 @@ class PublicationCreate(BaseModel):
     channel: str = Field(..., min_length=1, max_length=32)
     custom_channel_name: str | None = None
     source_variant_id: int | None = Field(None, gt=0)
-    published_url: str = Field(..., min_length=8)
+    published_url: str = Field(..., min_length=8, max_length=2000)
     note: str | None = None
 
     @field_validator("channel", mode="before")

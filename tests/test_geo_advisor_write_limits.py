@@ -4,7 +4,7 @@ import asyncio
 import pytest
 from pydantic import ValidationError
 
-from app.geo.content.schemas import ArticleUpdate, TaskCreate, TaskFactsUpdate, VariantUpdate
+from app.geo.content.schemas import ArticleUpdate, PublicationCreate, TaskCreate, TaskFactsUpdate, VariantUpdate
 from app.models import GeoChannelVariant
 from app.security.advisor_write_routes import WRITE_ROUTES, check_write_fields
 from test_advisor_scoped_writes import backend, mutate, write_sandbox
@@ -15,6 +15,8 @@ from test_advisor_scoped_writes import backend, mutate, write_sandbox
     (TaskFactsUpdate, {'fact_ids': [10] * 51}),
     (ArticleUpdate, {'title': 'fixture', 'body_markdown': 'x' * 500_001}),
     (VariantUpdate, {'body_markdown': 'x' * 500_001}),
+    (PublicationCreate, {'tenant_id': 10, 'channel': 'website',
+                         'published_url': 'https://example.test/' + 'x' * 2000}),
 ])
 def test_schemas_reject_oversize(schema, body):
     with pytest.raises(ValidationError):
