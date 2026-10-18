@@ -282,7 +282,7 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
     """Every referenced business must belong to the same assigned active project."""
     from app.geo.project_scope import binding
     from app.geo.project_workflows import advisor_available, plan_for
-    from app.models import GeoProject, GeoVisibilityPatrolSettings, User
+    from app.models import GeoProject, User
 
     objects = await _resolve(session, ctx, request, body, rule)
     creating_business = request.method == "POST" and rule.template == _PREFIX + "/optimization-businesses"
@@ -349,13 +349,3 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
             or (selected_import and actor is None)
             or not await advisor_available(session, actor_tenant, ctx.user_id)):
         _assignment_required()
-    # A tenant-wide patrol dynamically consumes new prompts. Active project
-    # cycles and generation can consume updated facts. Refuse these resources
-    # while either execution chain is enabled rather than silently enrolling
-    # manual preparation into background work.
-    if rule.template in {_PREFIX + "/facts", _PREFIX + "/facts/{fact_id}",
-                         _PREFIX + "/prompts", _PREFIX + "/prompts/{prompt_id}"}:
-        patrol = await session.scalar(select(GeoVisibilityPatrolSettings.enabled).where(
-            GeoVisibilityPatrolSettings.tenant_id == ctx.tenant_id))
-        if patrol or any(p.get("enabled") for p in plans.values()):
-            _unavailable()
