@@ -21,7 +21,7 @@ from app.models.user import User
 from app.models.advisor_tenant_grant import AdvisorTenantGrant as Grant
 from app.models.module_workspace import TenantModule, SeoSite
 from app.security import auth
-from app.security.advisor_scope import is_advisor_role
+from app.security.advisor_seo_scope import is_advisor_role
 
 
 @compiles(JSONB, 'sqlite')
@@ -124,8 +124,6 @@ def test_revocation_regrant_and_fresh_role_account_reads(local_db):
         asyncio.run(authenticate(session, claims()))
     assert denied.value.detail['code'] == 'ADVISOR_GRANT_REVOKED'
     db.add(Grant(id=30, user_id=1, tenant_id=1, granted_by=3, grant_source='admin'))
-    # SQLite does not support the PostgreSQL partial index on this test fixture.
-    db.execute(text('DROP INDEX uq_advisor_tenant_grants_active'))
     db.commit()
     with pytest.raises(HTTPException):
         asyncio.run(authenticate(session, claims()))
@@ -195,6 +193,26 @@ def test_permission_failure_is_closed(local_db):
         with pytest.raises(HTTPException) as denied:
             asyncio.run(authenticate(session, claims()))
     assert denied.value.detail['code'] == 'ADVISOR_GRANTS_UNAVAILABLE'
+
+
+@pytest.mark.parametrize('failure', ['missing_table', 'permission'])
+@pytest.mark.parametrize('tenant_id', [1, None])
+def test_no_table_phase_non_advisor_scope_is_unchanged(local_db, failure, tenant_id):
+    from sqlalchemy.exc import DBAPIError
+    db, session = local_db
+    db.get(User, 2).tenant_id = tenant_id
+    db.commit()
+    if failure == 'missing_table':
+        db.execute(text('DROP TABLE advisor_tenant_grants'))
+        db.commit()
+        ctx = asyncio.run(authenticate(session, {'sub':'2', 'exp':claims()['exp']}))
+    else:
+        with patch.object(session, 'scalars', AsyncMock(side_effect=DBAPIError(
+                'SELECT', {}, Exception('denied')))):
+            ctx = asyncio.run(authenticate(session, {'sub':'2', 'exp':claims()['exp']}))
+    assert not ctx.is_advisor and ctx.tenant_id == tenant_id
+    # Failed grants reads must leave the ordinary request transaction usable.
+    assert asyncio.run(session.scalar(select(User.id).where(User.id == 2))) == 2
 
 
 def test_http_identity_empty_idor_duplicates_module_and_writes(local_db):
