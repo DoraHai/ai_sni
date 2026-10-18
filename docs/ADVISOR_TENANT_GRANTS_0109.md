@@ -6,6 +6,11 @@ E2 基于 E1，PR base 为 codex/advisor-mt-seo-guard-20261018。
 必须先由用户批准 E1 合并并发布，再将本 PR base 改为 codex/production-seo。
 production-seo-deploy.yml 仍只打包 migrations，MANIFEST migration=not-run；head 断言改为 0109。
 
+COMMON-2 规定：S1+E1 部署与 0109 建表+回填必须在同一个获批维护窗口里紧接执行。
+先部署能识别 0109 的 S1/E1，再立即由 DB 负责人执行 0109 与回填，再做方案 §8.3 核对。
+提前通知顾问该窗口内会短暂不可用；缺表时顾问 503 是方案要求的设计取舍，待用户确认窗口。
+E2 文件/head 发布须在这个窗口协调完成，不能把部署和建表拆成相隔很久的步骤。
+
 只新增方案 3.2 的 advisor_tenant_grants。Identity 不需序列授权，默认 ACL 在同事务撤回；
 sem_runtime 只授 SELECT/INSERT/UPDATE，无 DELETE/DDL/角色/其他表权限增量。
 新表触发器只允许活动行撤销，授予字段不可改、已撤销行不可再更新；重授予必须新行。

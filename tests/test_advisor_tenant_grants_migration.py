@@ -17,7 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.security.advisor_scope import is_advisor_role
+from app.security.advisor_seo_scope import is_advisor_role
 from types import SimpleNamespace
 
 ROOT = Path(__file__).parents[1]
