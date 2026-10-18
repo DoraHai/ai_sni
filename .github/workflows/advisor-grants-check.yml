@@ -6,6 +6,7 @@ on:
     paths:
       - 'app/security/advisor_management.py'
       - 'app/security/advisor_scope.py'
+      - 'app/security/auth.py'
       - 'app/permissions.py'
       - 'tests/test_advisor_grant_admin_guard.py'
       - 'tests/test_advisor_scope_predicate.py'
@@ -39,6 +40,13 @@ jobs:
           class Base(DeclarativeBase):
               pass
           database.Base = Base
+          def no_database(*args, **kwargs):
+              raise AssertionError('Database access is forbidden in these mocked tests')
+          async def no_session():
+              raise AssertionError('Real sessions are forbidden in these mocked tests')
+              yield
+          database.async_session_factory = no_database
+          database.get_session = no_session
           sys.modules['app.database'] = database
           raise SystemExit(pytest.main([
               '-p', 'no:cacheprovider', '-q',
