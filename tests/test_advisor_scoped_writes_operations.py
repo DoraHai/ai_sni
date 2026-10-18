@@ -12,6 +12,8 @@ from test_advisor_scoped_writes import write_sandbox, mutate, fixture_token
     ("/facts/10/verify", {"excerpt": "synthetic evidence", "excerpt_locator": "paragraph 1",
                            "source_url": "https://evidence.example.test/page"}),
     ("/content-tasks/10/retrieve-facts/apply", {"fact_ids": [11]}),
+    ("/content-tasks/10/check", None),
+    ("/content-tasks/10/lint", None),
 ])
 def test_daily_actions_commit_and_record(tmp_path, monkeypatch, caplog, path, body):
     caplog.set_level(logging.INFO, logger="geo.advisor.operations")
@@ -21,8 +23,8 @@ def test_daily_actions_commit_and_record(tmp_path, monkeypatch, caplog, path, bo
             assert response.status_code == 200, response.text
     asyncio.run(run())
     events = [json.loads(r.message) for r in caplog.records if r.name == "geo.advisor.operations"]
-    assert any(e["result"] == "committed" and e["advisor_user_id"] == 1
-               and e["tenant_id"] == 10 and e["object_ids"] for e in events)
+    assert any(e["result"] == ("http_completed" if path.endswith("/lint") else "committed")
+               and e["advisor_user_id"] == 1 and e["tenant_id"] == 10 and e["object_ids"] for e in events)
     assert any(e.get("status_code") == 200 for e in events)
     assert "synthetic evidence" not in "".join(r.message for r in caplog.records)
 
