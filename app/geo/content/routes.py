@@ -8338,7 +8338,8 @@ async def update_variant(
     if variant is None:
         raise HTTPException(404, f"渠道版本不存在: {channel_key}")
     if getattr(ctx, "advisor_scope", None) is not None and variant.status == "published":
-        raise HTTPException(403, {"code": "ADVISOR_WRITE_STATE_FORBIDDEN"})
+        raise HTTPException(403, {"code": "ADVISOR_WRITE_STATE_FORBIDDEN",
+                                  "message": "已发布渠道稿不能直接修改，请联系管理员处理"})
     changed = (
         req.title is not None and req.title.strip() != variant.title
     ) or (req.body_markdown is not None and req.body_markdown != variant.body_markdown)
