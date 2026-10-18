@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { readFileSync } from 'node:fs'
 import { ref, computed, reactive, watch, effectScope } from 'vue'
+import { BACKFILL_CHANNELS, backfillChannelLabel } from '../src/utils/geoBackfillChannels.js'
 
 const source = readFileSync(new URL('../src/components/GeoReceiptImport.vue', import.meta.url), 'utf8')
 const script = source.slice(source.indexOf('const props ='), source.indexOf('</script>'))
@@ -13,7 +14,7 @@ function fixture() {
   const props = reactive({ tenantId: 7, task: { id: 12, business_id: 20, article: { id: 16 }, variants: [{ channel: 'website' }] } })
   const notices = [], events = [], downloads = []
   let unmount
-  const ctx = vm.createContext({ ref, computed, watch, defineProps: () => props,
+  const ctx = vm.createContext({ ref, computed, watch, BACKFILL_CHANNELS, backfillChannelLabel, defineProps: () => props,
     defineEmits: () => name => events.push(name), onBeforeUnmount: fn => { unmount = fn },
     fetchGeoProjects: async () => ({ projects: [{ id: 5, name: '合成项目', business_scope: { business_ids: [20] } }] }),
     importGeoReceipts: async () => ready, ElMessage: { success: value => notices.push(value) },
@@ -78,6 +79,9 @@ test('downloaded CSV and JSON templates contain only fake example data', async (
   const f = fixture(); f.ctx.downloadTemplate('json'); f.ctx.downloadTemplate('csv')
   const json = await f.downloads[0].text(), csv = await f.downloads[1].text()
   assert.equal(JSON.parse(json)[0].article_id, '999999'); assert.match(json, /example.com/)
-  assert.match(csv, /article_id,platform,public_url,published_at,note/)
+  assert.match(csv, /article_id,platform,channel_name,variant_id,public_url,published_at,note/)
+  const examples = JSON.parse(json)
+  assert.equal(examples[1].platform, '百度贴吧'); assert.equal(examples[1].variant_id, '888888')
+  assert.equal(examples[2].platform, '其他'); assert.equal(examples[2].channel_name, '示例科技社区')
   assert.match(csv, /假数据示例/); f.stop()
 })

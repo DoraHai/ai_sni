@@ -97,7 +97,7 @@ test('custom registration trims its name, sends the source, and clears on custom
 })
 
 test('invalid custom names, missing source, and non-HTTPS URLs never send a write',async()=>{
- for (const name of ['', '   ', '！？---', '📰', '名'.repeat(31), '日报\n频道']) {
+ for (const name of ['', '   ', '！？---', '📰', '名'.repeat(31), '日报\n频道', '\n日报', '日报\t', '日报\u200b', '日报\u2028']) {
    const f=fixture();let calls=0
    f.ctx.backfillChannel.value='other';f.ctx.customChannelName.value=name
    f.ctx.publishGeoVariant=async()=>{calls++}

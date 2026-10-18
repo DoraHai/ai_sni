@@ -85,7 +85,7 @@ def test_customer_review_blocks_entire_batch(fixture, status, dry_run):
     ({"public_url": "https://example.invalid:0/a"}, "https://"),
     ({"article_id": "999"}, "当前客户"), ({"tenant_id": "99"}, "当前客户"),
     ({"project_id": "99"}, "当前客户"), ({"variant_id": "999"}, "当前客户"),
-    ({"platform": "不存在的渠道"}, "渠道稿"), ({"published_at": "2026-10-20 09:30"}, "时区"),
+    ({"platform": "不存在的渠道"}, "认不出"), ({"published_at": "2026-10-20 09:30"}, "时区"),
     ({"status": "unknown"}, "核实"), ({"note": "x" * 1001}, "1000"),
 ])
 def test_invalid_rows_block_whole_batch_with_plain_reason(fixture, changes, reason):
@@ -110,7 +110,7 @@ def test_duplicate_rows_and_duplicate_link_across_channels_only_written_once(fix
 
 def test_repeat_upload_uses_normalized_url_identity_and_keeps_query(fixture):
     f = fixture
-    f.session.scalars.side_effect = [[], [NS(variant_id=3, published_url="https://EXAMPLE.invalid:443/a#heading")]]
+    f.session.scalars.side_effect = [[], [NS(variant_id=3, channel="website", published_url="https://EXAMPLE.invalid:443/a#heading")]]
     result = run(f, dry_run=False)
     assert result["committed"] and result["changed"] == 0
     f._write_publication.assert_not_awaited()
@@ -118,7 +118,7 @@ def test_repeat_upload_uses_normalized_url_identity_and_keeps_query(fixture):
 
 
 def test_existing_record_with_other_link_is_not_overwritten(fixture):
-    f = fixture; f.session.scalars.side_effect = [[], [NS(variant_id=3, published_url="https://example.invalid/old")]]
+    f = fixture; f.session.scalars.side_effect = [[], [NS(variant_id=3, channel="website", published_url="https://example.invalid/old")]]
     result = run(f, dry_run=False)
     assert not result["committed"] and "不会覆盖" in result["rows"][0]["reason"]
 
@@ -213,3 +213,131 @@ def test_multipart_http_preview_then_confirmation(fixture):
     assert response.status_code == 200 and response.json()["changed"] == 1
     response = client.post(path, files={"file": ("broken.json", b"{", "application/json")})
     assert response.status_code == 400 and "文件" in response.json()["detail"]
+
+
+@pytest.mark.parametrize('platform,channel', [
+    ('news_source', 'news_source'), ('新闻源', 'news_source'),
+    ('baidu_zhidao', 'baidu_zhidao'), ('百度问答（百度知道）', 'baidu_zhidao'),
+    ('百度问答', 'baidu_zhidao'), ('百度知道', 'baidu_zhidao'),
+    ('baidu_tieba', 'baidu_tieba'), ('百度贴吧', 'baidu_tieba'),
+    ('toutiao', 'toutiao'), ('今日头条', 'toutiao'),
+    ('zhihu', 'zhihu'), ('知乎', 'zhihu'), ('百家号', 'baijiahao'),
+])
+def test_destination_without_own_draft_uses_explicit_source(fixture, platform, channel):
+    f = fixture
+    result = run(f, [row(platform=platform, variant_id='3')], False)
+    assert result['committed'] and result['changed'] == 1
+    args = f._write_publication.await_args.kwargs
+    assert args['variant'] is f.variants[0] and args['channel'] == channel
+    assert args['channel_name'] is None and len(f.variants) == 2
+
+
+@pytest.mark.parametrize('platform', ['other', '其他'])
+def test_custom_name_uses_same_writer_metadata_as_single_backfill(fixture, platform):
+    f = fixture
+    result = run(f, [row(platform=platform, channel_name='  示例科技社区  ', variant_id=3)], False)
+    assert result['committed'] and result['rows'][0]['platform'] == '其他：示例科技社区'
+    args = f._write_publication.await_args.kwargs
+    assert args['channel'] == args['channel_name'] == '示例科技社区'
+    assert args['variant'] is f.variants[0]
+
+
+@pytest.mark.parametrize('name', [None, '', '   ', '!?---', '📰', '名' * 31,
+    '日报\n频道', '\n日报', '日报\t', '日报\u200b', '日报\u2028', '日报\u2029'])
+def test_invalid_custom_name_rejects_entire_import(fixture, name):
+    f = fixture
+    result = run(f, [row(), row(platform='其他', channel_name=name, variant_id=3,
+        public_url='https://example.invalid/custom')], False)
+    assert not result['committed'] and '渠道名称' in result['rows'][1]['reason']
+    f._write_publication.assert_not_awaited()
+
+
+@pytest.mark.parametrize('changes,reason', [
+    ({'platform': '百度贴吧'}, 'variant_id'),
+    ({'platform': '其他', 'channel_name': '社区'}, 'variant_id'),
+    ({'platform': '百度贴吧', 'variant_id': 999}, receipts.SCOPE_ERROR),
+    ({'platform': '自定义社区', 'variant_id': 3}, '认不出'),
+    ({'platform': 'website', 'channel_name': '社区'}, '只有'),
+])
+def test_missing_or_foreign_source_and_ambiguous_format_rejected(fixture, changes, reason):
+    f = fixture
+    result = run(f, [row(**changes)], False)
+    assert not result['committed'] and reason in result['rows'][0]['reason']
+    f._write_publication.assert_not_awaited()
+
+
+def test_same_source_can_register_multiple_destinations_and_custom_names(fixture):
+    f = fixture
+    result = run(f, [row(),
+        row(platform='百度贴吧', variant_id=3, public_url='https://example.invalid/tieba'),
+        row(platform='其他', channel_name='社区甲', variant_id=3, public_url='https://example.invalid/custom-a'),
+        row(platform='other', channel_name='社区乙', variant_id=3, public_url='https://example.invalid/custom-b'),
+    ], False)
+    assert result['committed'] and result['changed'] == 4
+    assert [call.kwargs['channel'] for call in f._write_publication.await_args_list] == [
+        'website', 'baidu_tieba', '社区甲', '社区乙']
+
+
+@pytest.mark.parametrize('custom', [False, True])
+def test_new_destination_existing_link_never_overwritten(fixture, custom):
+    f = fixture
+    destination = '社区甲' if custom else 'baidu_tieba'
+    f.session.scalars.side_effect = [[], [NS(variant_id=3, channel=destination,
+        published_url='https://example.invalid/old')]]
+    result = run(f, [row(platform='其他' if custom else '百度贴吧', channel_name='社区甲' if custom else '',
+        variant_id=3)], False)
+    assert not result['committed'] and '不会覆盖' in result['rows'][0]['reason']
+    f._write_publication.assert_not_awaited()
+
+
+def test_aliases_and_custom_trim_share_destination_identity(fixture):
+    f = fixture
+    result = run(f, [row(platform='百度贴吧', variant_id=3), row(platform='baidu_tieba', variant_id=3),
+        row(platform='其他', channel_name=' 社区 ', variant_id=3, public_url='https://example.invalid/custom'),
+        row(platform='other', channel_name='社区', variant_id=3, public_url='https://example.invalid/custom'),
+    ], False)
+    assert result['committed'] and result['changed'] == 2
+
+
+def test_new_destinations_cannot_bypass_review_or_stale_source(fixture):
+    f = fixture; f.task.review_status = 'pending'
+    assert not run(f, [row(platform='百度贴吧', variant_id=3)], False)['committed']
+    f.session.scalars.side_effect = [[], []]; f.task.review_status = 'approved'
+    f.variants[0].article_version_id = 15
+    assert '落后母稿' in run(f, [row(platform='百度贴吧', variant_id=3)], False)['rows'][0]['reason']
+    f._write_publication.assert_not_awaited()
+
+
+def test_failure_between_new_destinations_rolls_back(fixture):
+    f = fixture; f._write_publication.side_effect = [True, PublishGateError('changed')]
+    with pytest.raises(HTTPException) as denied:
+        run(f, [row(platform='百度贴吧', variant_id=3),
+            row(platform='其他', channel_name='社区', variant_id=3, public_url='https://example.invalid/custom')], False)
+    assert denied.value.status_code == 409
+    f.session.rollback.assert_awaited_once(); f.session.commit.assert_not_awaited()
+
+
+def test_csv_and_json_accept_new_template_columns():
+    data = 'article_id,platform,channel_name,variant_id,public_url\n12,其他,社区,3,https://example.invalid/a\n'
+    assert receipts.parse_receipts(data.encode(), 'x.csv')[0]['channel_name'] == '社区'
+    assert receipts.parse_receipts(json.dumps([row(platform='other', channel_name='社区', variant_id=3)]).encode(), 'x.json')[0]['variant_id'] == 3
+
+
+def test_browser_config_is_generated_from_single_source():
+    from pathlib import Path
+    from app.geo.content.backfill import CONFIG
+    root = Path(__file__).resolve().parents[1]
+    browser = json.loads((root / 'frontend/src/utils/geoBackfillConfig.json').read_text(encoding='utf-8'))
+    assert browser == CONFIG, 'Run python scripts/generate_geo_backfill_config.py'
+
+
+@pytest.mark.parametrize('channel', ['website', 'wechat', 'zhihu', 'baijiahao', 'news_source',
+                                   'baidu_zhidao', 'baidu_tieba', 'toutiao'])
+def test_every_standard_backfill_channel_can_use_another_reviewed_source(fixture, channel):
+    f = fixture
+    f.variants[:] = [v for v in f.variants if v.channel != channel]
+    source = f.variants[0]
+    result = run(f, [row(platform=channel, variant_id=source.id)], False)
+    assert result['committed'] and result['changed'] == 1
+    args = f._write_publication.await_args.kwargs
+    assert args['variant'] is source and args['channel'] == channel
