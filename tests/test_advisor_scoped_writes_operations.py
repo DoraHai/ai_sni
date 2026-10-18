@@ -122,3 +122,32 @@ def test_new_fact_operation_records_the_database_assigned_id(tmp_path, monkeypat
     ident = asyncio.run(run())
     events = [json.loads(r.message) for r in caplog.records if r.name == "geo.advisor.operations"]
     assert any(e["result"] == "committed" and ident in e["object_ids"].get("geo_facts", []) for e in events)
+
+
+def test_project_visibility_reads_do_not_expose_another_project(tmp_path, monkeypatch):
+    from app.geo.content.search_visibility_routes import router
+    from app.geo.content.search_visibility import KIND
+    from app.models import GeoAsyncJob, GeoOptimizationBusiness, GeoOptimizationUnit
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch) as env:
+            env.app.include_router(router, prefix="/api/v1/geo")
+            async with env.factory() as session:
+                (await session.get(GeoOptimizationUnit, 10)).keyword = "own term"
+                session.add(GeoOptimizationBusiness(id=50, tenant_id=10, name="foreign business"))
+                await session.flush()
+                session.add(GeoOptimizationUnit(id=50, tenant_id=10, business_id=50, name="foreign unit", keyword="foreign term"))
+                session.add(GeoProject(id=50, tenant_id=10, tenant_module_id=10, name="foreign project",
+                    primary_domain="foreign.example.test", canonical_domain="foreign.example.test", status="active",
+                    project_settings={"geo_business_scope": {"business_ids": [50]}, "geo_service_plan": {"advisor_user_id": 3}}))
+                session.add(GeoAsyncJob(id=100, tenant_id=10, kind=KIND, status="succeeded", ref_type="geo_project", ref_id=50))
+                await session.commit()
+            response = await env.request("GET", "/projects/10/search-visibility/config")
+            assert response.status_code == 200, response.text
+            assert response.json()["suggested_core_terms"] == ["own term"]
+            for suffix in ("", "/config", "/runs/100", "/runs/100/csv"):
+                response = await env.request("GET", "/projects/50/search-visibility" + suffix)
+                assert response.status_code == 403, response.text
+            await mutate(env, GeoProject, 10, status="paused")
+            response = await env.request("GET", "/projects/10/search-visibility")
+            assert response.status_code == 403, response.text
+    asyncio.run(run())
