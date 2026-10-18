@@ -48,6 +48,13 @@ client.interceptors.response.use(
       return Promise.reject(stale)
     }
     const advisorCode = error.response?.data?.detail?.code
+    if (error.response?.status === 401 && !advisorCode && session.advisorScope === 'advisor_tenant') {
+      session.restoreAdvisorIdentity()
+      const expired = new Error(advisorMessages.ADVISOR_TENANT_SESSION_EXPIRED)
+      expired.code = 'ADVISOR_TENANT_SESSION_EXPIRED'
+      expired.status = 401
+      return Promise.reject(expired)
+    }
     if (session.isAdvisorSession && advisorDeniedCodes.has(advisorCode)) {
       session.restoreAdvisorIdentity()
       const denied = new Error(advisorMessages[advisorCode])

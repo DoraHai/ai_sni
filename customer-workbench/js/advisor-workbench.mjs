@@ -30,7 +30,7 @@ export function mountAdvisorWorkbench({root,session,subscribeSession,fetchImpl=f
   function denyTenant(code){
     clearCustomer();tenantSwitch.invalidate();tenantBusy=false;tenantName='';tenantMessage=advisorMessages[code]||'请重新选择客户';message='';
     if(code==='ADVISOR_NO_TENANT')tenantOptions=[];
-    if(code!=='ADVISOR_GRANTS_UNAVAILABLE')session.restoreAdvisorIdentity();
+    if(!['ADVISOR_GRANTS_UNAVAILABLE','ADVISOR_IDENTITY_SESSION_EXPIRED'].includes(code))session.restoreAdvisorIdentity();
     render();
     if(session.token&&!['ADVISOR_GRANTS_UNAVAILABLE','ADVISOR_NO_TENANT'].includes(code))void loadTenants();
   }

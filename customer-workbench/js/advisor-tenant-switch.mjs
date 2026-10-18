@@ -1,6 +1,6 @@
 import {advisorDeniedCodes,advisorMessages} from '../../frontend/src/store/advisorTenant.js';
 const positive=n=>Number.isSafeInteger(n)&&n>0;
-const fail=code=>Object.assign(Error(advisorMessages[code]||code),{code});
+const fail=code=>Object.assign(Error(advisorMessages[code]||'客户请求未完成，请重试'),{code});
 
 export function createAdvisorTenantSwitch({session,fetchImpl=fetch}){
   let generation=0;const pending=new Set();
@@ -45,7 +45,11 @@ export function advisorScopedFetch({session,fetchImpl,onDenied}){
     if(!response.ok&&session.isAdvisorSession){
       let code;try{code=(await response.clone().json())?.detail?.code;}catch{}
       if(token!==session.token||revision!==session.authRevision)throw fail('CONTEXT_CHANGED');
-      if(advisorDeniedCodes.has(code)||code==='ADVISOR_TENANT_SELECTION_REQUIRED'||code==='ADVISOR_GRANTS_UNAVAILABLE'){
+      if(response.status===401&&!code){
+        if(session.advisorScope==='advisor_tenant')code='ADVISOR_TENANT_SESSION_EXPIRED';
+        else if(session.advisorScope==='advisor_identity'){session.logout();code='ADVISOR_IDENTITY_SESSION_EXPIRED';}
+      }
+      if(advisorDeniedCodes.has(code)||['ADVISOR_TENANT_SELECTION_REQUIRED','ADVISOR_GRANTS_UNAVAILABLE','ADVISOR_TENANT_SESSION_EXPIRED','ADVISOR_IDENTITY_SESSION_EXPIRED'].includes(code)){
         onDenied(code);throw fail(code);
       }
     }

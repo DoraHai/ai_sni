@@ -36,3 +36,22 @@ test('panel rejections notify the workbench and late business responses are disc
   session.authRevision++;finish(response({items:[{tenant_id:1}]}));
   await assert.rejects(late,{code:'CONTEXT_CHANGED'});
 });
+
+test('bare business 401 clears business context and recovers only the saved identity',async()=>{
+  const session={...fixture(),token:'business',advisorScope:'advisor_tenant'},denied=[];
+  const scoped=advisorScopedFetch({session,fetchImpl:async()=>new Response('',{status:401}),onDenied:code=>{
+    denied.push(code);session.token='saved-identity';session.authRevision++;
+  }});
+  await assert.rejects(scoped('/api/v1/seo/workbench/advisor-tasks'),{code:'ADVISOR_TENANT_SESSION_EXPIRED'});
+  assert.deepEqual(denied,['ADVISOR_TENANT_SESSION_EXPIRED']);
+  assert.equal(session.token,'saved-identity');
+});
+
+test('bare identity 401 logs out instead of retrying expired identity credentials',async()=>{
+  let logouts=0;
+  const session={...fixture(),advisorScope:'advisor_identity',logout(){logouts++;this.token='';this.authRevision++;}},denied=[];
+  const scoped=advisorScopedFetch({session,fetchImpl:async()=>response({},401),onDenied:code=>denied.push(code)});
+  await assert.rejects(scoped('/api/v1/auth/tenants'),{code:'ADVISOR_IDENTITY_SESSION_EXPIRED'});
+  assert.equal(logouts,1);assert.equal(session.token,'');
+  assert.deepEqual(denied,['ADVISOR_IDENTITY_SESSION_EXPIRED']);
+});

@@ -58,6 +58,13 @@ rejectOld(new Error('stale failed request'))
 await oldTenantRequest
 assert.equal(tenantContext.bootstrapError.value, '', 'old failure cannot overwrite a newer successful load')
 
+let advisorRows
+tenantContext.session.isAdvisorSession = true
+tenantContext.session.setTenants = rows => { advisorRows = rows }
+tenantContext.fetchTenants = async () => [{ id: 2, name: '客户乙' }]
+await vm.runInContext('loadTenants()', tenantContext)
+assert.equal(advisorRows[0].id, 2, 'advisor shell accepts the agreed tenant array')
+
 const offlineBadge = badgeHarness({ permissions: ['monitor.alerts', 'optimize.expand'], alerts: successAlerts, candidates: successCandidates })
 offlineBadge.context.insecureCockpitPreview.value = true
 await offlineBadge.load()

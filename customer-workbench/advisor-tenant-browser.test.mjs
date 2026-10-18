@@ -14,7 +14,7 @@ const user={id:7,tenant_id:1,is_advisor:true,display_name:'顾问',permissions};
 test('advisor selects authorized customers, clears old data, rejects foreign URLs and survives revocation',async()=>{
   const fixture=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true,args:['--no-sandbox']});
   const origin='https://advisor.test',calls=[],errors=[];
-  let tenantRows=[{id:1,name:'客户甲'},{id:2,name:'客户乙'}],revoked=false,hold=null,tenantsDenied=false;
+  let tenantRows=[{id:1,name:'客户甲'},{id:2,name:'客户乙'}],revoked=false,hold=null,tenantsDenied=false,bareExpired=false;
   const shots=process.env.ADVISOR_SHOTS_DIR;
   try{
     const p=await browser.newPage();p.on('pageerror',e=>errors.push(e.message));p.on('dialog',d=>d.accept());
@@ -34,6 +34,7 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
       if(url.pathname==='/api/v1/auth/modules')return send({tenant_id:tid,modules:[{module_code:'seo',available:true}]});
       if(url.pathname.endsWith('/advisor-tasks')){
         if(hold)await hold;
+        if(bareExpired)return send({},401);
         if(revoked)return send({detail:{code:'ADVISOR_GRANT_REVOKED'}},401);
         return send({schema:1,module:'seo',items:[{id:77,module:'seo',tenant_id:tid,scope_id:19,title:`客户${tid===1?'甲':'乙'}专属任务`,workflow:{module:'seo',revision:1,phase:'draft',items:[]},allowed_actions:[]}],next_before_id:null});
       }
@@ -56,6 +57,12 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
     assert.equal(await p.evaluate(()=>sessionStorage.getItem('sem_builder_handoff_1')),null);
     assert(!(await p.$eval('body',e=>e.textContent)).includes('客户甲专属任务'));
     assert(!await p.$('#advisor-account'));
+    bareExpired=true;await p.click('[data-advisor=latest]');
+    await p.waitForFunction(()=>document.body.textContent.includes('当前客户会话已过期'));
+    assert(!await p.$('.advisor-task'));
+    await p.waitForFunction(()=>document.querySelectorAll('[data-tenant]').length===2);
+    bareExpired=false;await p.click('.advisor-tenant-picker summary');await p.click('[data-tenant="2"]');
+    await p.waitForFunction(()=>document.querySelector('.advisor-task')?.textContent.includes('客户乙专属任务'));
     revoked=true;tenantRows=[{id:1,name:'客户甲'}];await p.click('[data-advisor=refresh]');
     await p.waitForFunction(()=>document.body.textContent.includes('可能已被收回'));
     assert(!await p.$('.advisor-task'));assert(!await p.$('.advisor-automation'));assert(!await p.$('.distribution-task'));

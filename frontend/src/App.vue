@@ -293,7 +293,7 @@ async function loadTenants() {
   try {
     const t = await fetchTenants(moduleScope)
     if (generation !== tenantLoadGeneration || moduleScope !== tenantModuleScope.value) return
-    session.setTenants(t.tenants)
+    session.setTenants(session.isAdvisorSession && Array.isArray(t) ? t : t.tenants || [])
     loadBadges()
     loadWritebackMode()
     bootstrapError.value = ''
@@ -314,6 +314,7 @@ async function refreshMe() {
 }
 
 function onTenantChange(id) {
+  if (session.isAdvisorSession) return
   // Vue watch 在下一轮调度才执行，先同步清空，避免旧租户数字残留一帧。
   badgeLoadGeneration += 1
   resetBadges()
@@ -460,14 +461,19 @@ onBeforeUnmount(() => {
           </button>
           <template v-if="session.isLoggedIn">
             <button
-              v-if="tenantPopoverOpen"
+              v-if="tenantPopoverOpen && !session.isAdvisorSession"
               class="tenant-popover-backdrop"
               type="button"
               aria-label="关闭客户切换"
               @click="tenantPopoverOpen = false"
             />
+            <a
+              v-if="session.isAdvisorSession && (session.tenants.length > 1 || !session.tenantId)"
+              class="tenant-trigger"
+              href="/customer-workbench/?console=advisor"
+            >当前客户：{{ tenantName }} · {{ session.tenantId ? '切换客户' : '选择客户' }}</a>
             <el-popover
-              v-if="session.tenants.length > 1"
+              v-else-if="!session.isAdvisorSession && session.tenants.length > 1"
               v-model:visible="tenantPopoverOpen"
               placement="bottom-end"
               :width="286"
