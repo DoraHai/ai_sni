@@ -1,5 +1,6 @@
 """Exact, intentionally narrow GEO manual-content write policy."""
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from app.security.advisor_scope import deny
 
@@ -68,10 +69,20 @@ _register("PUT", "/content-tasks/{task_id}/facts", "fact_ids")
 _register("PUT", "/content-tasks/{task_id}/article", "expected_article_id title body_markdown")
 _register("PATCH", "/content-tasks/{task_id}/variants/{channel}", "title body_markdown")
 
+# A single paid action, separate from the 13 manual-content rules. No client
+# engine, prompt limit, scheduling or execution switches are admitted.
+VISIBILITY_RUN_RULE = WriteRule(
+    "POST", "/api/v1/geo/visibility-patrol/runs", frozenset({"tenant_id"}),
+    FORBIDDEN, ("geo.assets", "geo.content"), "visibility",
+)
+
 
 def match_write_rule(request) -> WriteRule | None:
     # Never fall back to the URL or a prefix when route resolution is missing.
-    return WRITE_ROUTES.get((request.method, getattr(request.scope.get("route"), "path", None)))
+    key = (request.method, getattr(request.scope.get("route"), "path", None))
+    if key == (VISIBILITY_RUN_RULE.method, VISIBILITY_RUN_RULE.template):
+        return VISIBILITY_RUN_RULE
+    return WRITE_ROUTES.get(key)
 
 
 def check_write_fields(rule: WriteRule, body: dict) -> None:
@@ -80,6 +91,8 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
 
     if not isinstance(body, dict) or set(body) - rule.fields or set(body) & rule.forbidden:
         forbidden()
+    if 'body_markdown' in body and isinstance(body['body_markdown'], str) and len(body['body_markdown']) > 500_000:
+        deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '文章正文不能超过 50 万字，请拆分后保存')
     if "trust_level" in body and body["trust_level"] not in ("draft", "needs_review"):
         forbidden()
     if "source" in body and body["source"] != "manual":
@@ -106,6 +119,17 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
             if key in PROFILE_STRING_FIELDS:
                 if not isinstance(value, str) or len(value) > PROFILE_STRING_MAX:
                     profile_forbidden(f"品牌资料 {key} 必须是文字，最多 {PROFILE_STRING_MAX} 个字符")
+                if key == 'website' and value.strip():
+                    try:
+                        url = urlsplit(value.strip())
+                        valid = (url.scheme in {'http', 'https'} and bool(url.hostname)
+                                 and url.username is None and url.password is None
+                                 and not any(c.isspace() or ord(c) < 32 or c == '\\' for c in value.strip()))
+                        url.port
+                    except ValueError:
+                        valid = False
+                    if not valid:
+                        profile_forbidden('官网请填写完整的 http:// 或 https:// 网址，不能含账号信息')
             else:
                 if isinstance(value, str) and len(value) <= PROFILE_LIST_TEXT_MAX:
                     # Use the same separators as normalize_profile.
@@ -133,5 +157,6 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
         if key not in {"tags", "target_channels", "fact_ids"} and isinstance(value, list):
             forbidden()
     if "fact_ids" in body and (not isinstance(body["fact_ids"], list) or
+            len(body["fact_ids"]) > 50 or
             any(type(item) is not int or item <= 0 for item in body["fact_ids"])):
         forbidden()

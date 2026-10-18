@@ -133,6 +133,12 @@ async def guard_request(session, ctx, request, claims):
 
 
 async def check_scoped_write_objects(session, ctx, request, body, rule):
+    from app.security.advisor_write_routes import VISIBILITY_RUN_RULE
+    if rule == VISIBILITY_RUN_RULE:
+        from app.security.advisor_visibility import check_visibility_scope
+        await check_visibility_scope(session, ctx, request)
+        await check_manual_execution_scope(session, ctx, rule)
+        return
     # B owns this contract. An incomplete integration remains closed even if
     # someone enables the new flag before the object-policy module is merged.
     try:
@@ -146,7 +152,7 @@ async def check_scoped_write_objects(session, ctx, request, body, rule):
     await check_manual_execution_scope(session, ctx, rule)
 
 
-async def check_manual_execution_scope(session, ctx, rule):
+async def check_manual_execution_scope(session, ctx, rule, *, lock=True):
     """Conservative isolation from tenant-wide patrol and project cycles.
 
     The existing patrol selects active prompts dynamically, and task creation
@@ -155,10 +161,13 @@ async def check_manual_execution_scope(session, ctx, rule):
     these resources while any such execution chain is enabled.
     """
     resource = rule.template.removeprefix("/api/v1/geo/").split("/")[0]
-    if resource not in {"facts", "prompts", "optimization-businesses", "optimization-units", "content-tasks", "content-imports"}:
+    if resource not in {"facts", "prompts", "optimization-businesses", "optimization-units", "content-tasks", "visibility-patrol", "content-imports"}:
         return
     from app.models import Tenant, GeoProject, GeoVisibilityPatrolSettings, GeoOptimizationPeriod
-    await session.scalar(select(Tenant.id).where(Tenant.id == ctx.tenant_id).with_for_update())
+    tenant_query = select(Tenant.id).where(Tenant.id == ctx.tenant_id)
+    if lock:
+        tenant_query = tenant_query.with_for_update()
+    await session.scalar(tenant_query)
     patrol = await session.scalar(select(GeoVisibilityPatrolSettings).where(
         GeoVisibilityPatrolSettings.tenant_id == ctx.tenant_id).execution_options(populate_existing=True))
     projects = list(await session.scalars(select(GeoProject).where(GeoProject.tenant_id == ctx.tenant_id)
@@ -167,7 +176,7 @@ async def check_manual_execution_scope(session, ctx, rule):
         GeoOptimizationPeriod.tenant_id == ctx.tenant_id, GeoOptimizationPeriod.status == "active").limit(1))
     if ((patrol is not None and patrol.enabled) or active_period is not None or any(
             ((p.project_settings or {}).get("geo_service_plan") or {}).get("enabled") for p in projects)):
-        deny(403, "ADVISOR_EXECUTION_CHAIN_ACTIVE", "当前客户已启用巡检或周期计划，资料和手工改稿暂未开放")
+        deny(403, "ADVISOR_EXECUTION_CHAIN_ACTIVE", "当前客户已启用巡检、周期或服务计划，顾问手动操作暂未开放")
 
 
 async def guard_scoped_write(session, ctx, request, claims):

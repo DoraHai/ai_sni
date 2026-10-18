@@ -313,7 +313,7 @@ async def recover_patrol_runs_on_startup() -> dict[str, int]:
     return stats
 
 
-async def count_patrol_runs_today(session: AsyncSession, tenant_id: int) -> int:
+async def count_patrol_runs_today(session: AsyncSession, tenant_id: int, *, created_by: int | None = None) -> int:
     """Count patrol runs created today in Asia/Shanghai for quota."""
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
@@ -327,15 +327,16 @@ async def count_patrol_runs_today(session: AsyncSession, tenant_id: int) -> int:
     # DB timestamps are naive UTC-ish (utcnow); convert window to naive UTC
     start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None)
     end_utc = end_local.astimezone(timezone.utc).replace(tzinfo=None)
-    n = await session.scalar(
-        select(func.count())
+    query = (select(func.count())
         .select_from(GeoVisibilityPatrolRun)
         .where(
             GeoVisibilityPatrolRun.tenant_id == tenant_id,
             GeoVisibilityPatrolRun.created_at >= start_utc,
             GeoVisibilityPatrolRun.created_at < end_utc,
-        )
-    )
+        ))
+    if created_by is not None:
+        query = query.where(GeoVisibilityPatrolRun.created_by == created_by)
+    n = await session.scalar(query)
     return int(n or 0)
 
 
@@ -479,6 +480,7 @@ async def execute_patrol_run(
     from app.geo.content.ai_settings import resolve_llm_credentials
     from app.geo.content.engines import default_engine_rows
     from app.models import GeoTrackingEngine
+    from app.security.advisor_visibility import AdvisorVisibilityUnavailable, check_visibility_execution
 
     from app.geo.tenant_scope import ensure_geo_background_execution_allowed
     ensure_geo_background_execution_allowed(tenant_id)
@@ -493,9 +495,23 @@ async def execute_patrol_run(
     if row.status != "pending":
         await session.commit()
         return row
+    async def check_advisor(*, lock=False):
+        if advisor_prompt_ids is not None:
+            await check_visibility_execution(session, row, advisor_prompt_ids, lock=lock)
+
+    async def guarded_chat_json(*args, **kwargs):
+        await check_advisor()
+        result = await chat_json(*args, **kwargs)
+        await check_advisor()
+        return result
+
     try:
         await ensure_geo_entitlement(session, row.tenant_id)
-    except GeoEntitlementUnavailable as exc:
+        # Preserve the existing denial gate before inspecting run metadata.
+        advisor_prompt_ids = (row.summary or {}).get('advisor_visibility_prompt_ids')
+        advisor_auth = (row.summary or {}).get('advisor_visibility_auth')
+        await check_advisor(lock=True)
+    except (GeoEntitlementUnavailable, AdvisorVisibilityUnavailable) as exc:
         row.status = "failed"
         row.error = str(exc)
         row.finished_at = datetime.utcnow()
@@ -503,6 +519,7 @@ async def execute_patrol_run(
         await session.refresh(row)
         return row
     contract_plan = (row.summary or {}).get("contract_plan")
+    advisor_prompt_ids = (row.summary or {}).get("advisor_visibility_prompt_ids")
     row.status = "running"
     row.started_at = datetime.utcnow()
     row.error = None
@@ -526,6 +543,23 @@ async def execute_patrol_run(
 
     if contract_plan:
         summary["contract_plan"] = contract_plan
+    if advisor_prompt_ids is not None:
+        summary["advisor_visibility_prompt_ids"] = advisor_prompt_ids
+        summary['advisor_visibility_auth'] = advisor_auth
+
+    pending_snapshots = []
+
+    async def persist_advisor_batch():
+        # Never hold snapshot FK or prompt write locks across a provider call.
+        # The caller has just rechecked authority with locks until commit.
+        for snap, prompt, cell, mentions in pending_snapshots:
+            session.add(snap)
+            prompt.tags = apply_brand_mention_tags(list(prompt.tags or []), mentions_brand=mentions)
+        if pending_snapshots:
+            await session.flush()
+            for snap, prompt, cell, mentions in pending_snapshots:
+                cell["snapshot_id"] = snap.id
+            pending_snapshots.clear()
 
     try:
         tenant = await session.get(Tenant, row.tenant_id)
@@ -578,6 +612,14 @@ async def execute_patrol_run(
             prompts = list(await session.scalars(select(GeoPrompt).where(
                 GeoPrompt.tenant_id == row.tenant_id, GeoPrompt.id.in_(ids)).order_by(GeoPrompt.id)))
             validate_plan_prompts(contract_plan, prompts)
+        elif advisor_prompt_ids is not None:
+            # A paid advisor request never falls back to tenant-wide questions.
+            prompts = list(await session.scalars(select(GeoPrompt).where(
+                GeoPrompt.tenant_id == row.tenant_id, GeoPrompt.status == "active",
+                GeoPrompt.id.in_(advisor_prompt_ids)).order_by(
+                    GeoPrompt.priority.desc(), GeoPrompt.id.desc())))
+            if {p.id for p in prompts} != set(advisor_prompt_ids):
+                raise ValueError("顾问检测问题已变化，请刷新后重试")
         else:
             prompts = list(
                 await session.scalars(
@@ -642,6 +684,12 @@ async def execute_patrol_run(
                 )
             return brand, list(brand_names)
 
+        if advisor_prompt_ids is not None:
+            # Release any bootstrap configuration FK locks before external work.
+            await ensure_geo_entitlement(session, row.tenant_id)
+            await check_advisor(lock=True)
+            await session.commit()
+
         cells_planned = 0
         for prompt in prompts:
             selected_engines = engines
@@ -651,7 +699,11 @@ async def execute_patrol_run(
             for engine in selected_engines:
                 # Recheck for every cell because a long patrol/retest can span a
                 # subscription change between provider calls.
-                await ensure_geo_entitlement(session, row.tenant_id)
+                if advisor_prompt_ids is None:
+                    await ensure_geo_entitlement(session, row.tenant_id)
+                else:
+                    await ensure_geo_entitlement(session, row.tenant_id, lock_binding=False)
+                await check_advisor()
                 if contract_plan and datetime.utcnow() >= datetime.fromisoformat(contract_plan['window_end']):
                     raise ValueError('复测已跨出约定自然周，停止采样')
                 if cells_planned >= max_cells:
@@ -736,13 +788,17 @@ async def execute_patrol_run(
                             brand_names=cell_names,
                             engine=engine,
                             llm=llm,
-                            chat_json=chat_json,
+                            chat_json=guarded_chat_json if advisor_prompt_ids is not None else chat_json,
                             sample_mode=sample_mode,
                             fallback_reason=fallback_reason,
                         )
                     # A provider response arriving after revocation is not a
                     # valid customer sample and must never be persisted.
-                    await ensure_geo_entitlement(session, row.tenant_id)
+                    if advisor_prompt_ids is None:
+                        await ensure_geo_entitlement(session, row.tenant_id)
+                    else:
+                        await ensure_geo_entitlement(session, row.tenant_id, lock_binding=False)
+                    await check_advisor()
                     cell.update(
                         {
                             "ok": True,
@@ -833,14 +889,17 @@ async def execute_patrol_run(
                             note=note,
                             created_by=row.created_by,
                         )
-                        session.add(snap)
-                        # brand mention tags on prompt
-                        tags = list(prompt.tags or [])
-                        prompt.tags = apply_brand_mention_tags(tags, mentions_brand=mentions)
-                        await session.flush()
-                        cell["snapshot_id"] = snap.id
+                        if advisor_prompt_ids is not None:
+                            pending_snapshots.append((snap, prompt, cell, mentions))
+                        else:
+                            session.add(snap)
+                            # brand mention tags on prompt
+                            tags = list(prompt.tags or [])
+                            prompt.tags = apply_brand_mention_tags(tags, mentions_brand=mentions)
+                            await session.flush()
+                            cell["snapshot_id"] = snap.id
                         summary["snapshots_created"] += 1
-                except GeoEntitlementUnavailable:
+                except (GeoEntitlementUnavailable, AdvisorVisibilityUnavailable):
                     raise
                 except (DeepSeekError, ValueError) as exc:
                     from app.ai.deepseek import safe_ai_error_detail, safe_ai_error_message
@@ -867,6 +926,8 @@ async def execute_patrol_run(
                 # periodic commit so long runs don't hold huge txn
                 if len(items) % 5 == 0:
                     await ensure_geo_entitlement(session, row.tenant_id)
+                    await check_advisor(lock=True)
+                    await persist_advisor_batch()
                     row.items = list(items)
                     row.summary = dict(summary)
                     await session.commit()
@@ -877,6 +938,8 @@ async def execute_patrol_run(
             from app.geo.retest import validate_run_result
             summary["retest_result"] = validate_run_result(contract_plan, items)
         await ensure_geo_entitlement(session, row.tenant_id)
+        await check_advisor(lock=True)
+        await persist_advisor_batch()
         row.items = items
         row.summary = summary
         row.status = "completed"
@@ -903,6 +966,12 @@ async def execute_patrol_run(
             await rollback()
         row = await session.get(GeoVisibilityPatrolRun, run_id)
         if row:
+            if isinstance(exc, (AdvisorVisibilityUnavailable, GeoEntitlementUnavailable)):
+                # Rollback removed this batch's snapshots and tag edits. Keep
+                # only progress committed before authority or entitlement changed.
+                items = list(row.items or [])
+                summary = dict(row.summary or {})
+                summary.setdefault('snapshots_created', 0)
             row.status = "failed"
             row.error = str(exc)[:2000]
             row.items = items

@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.security.advisor_write_handlers import check_handler_fields, lock_manual_task
+from app.security.geo_operation_audit import audit_geo_operation
+from app.security.geo_configuration_admin import require_geo_configuration_admin
 from app.permissions import CUSTOMER_ROLE
 from app.geo.read_routes import read_session as geo_read_session
 from app.geo.tenant_scope import ensure_geo_entitlement, require_geo_read_entitlement
@@ -1210,7 +1212,7 @@ async def update_optimization_business(
         select(GeoOptimizationBusiness).where(
             GeoOptimizationBusiness.id == business_id,
             GeoOptimizationBusiness.tenant_id == tenant_id,
-        )
+        ).with_for_update().execution_options(populate_existing=True)
     )
     if not row:
         raise HTTPException(status_code=404, detail="优化业务不存在")
@@ -5131,6 +5133,7 @@ async def put_visibility_patrol_settings(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    require_geo_configuration_admin(ctx)
     from app.geo.content.patrol import (
         clamp_hour,
         clamp_interval_hours,
@@ -5309,6 +5312,30 @@ async def create_visibility_patrol_run(
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
     await session.execute(select(Tenant.id).where(Tenant.id == req.tenant_id).with_for_update())
+    advisor_prompt_ids = None
+    engine_keys = req.engine_keys
+    if ctx.advisor_scope is not None:
+        await ensure_geo_entitlement(session, req.tenant_id)
+        from app.security.advisor_scope import deny
+        from app.security.advisor_write_routes import VISIBILITY_RUN_RULE, check_write_fields
+        from app.security.advisor_visibility import check_visibility_quota
+        check_write_fields(VISIBILITY_RUN_RULE, req.model_dump(exclude_unset=True))
+        binding = session.info.get("advisor_scoped_write")
+        if binding is None or binding[0] is not ctx or binding[3] != VISIBILITY_RUN_RULE:
+            deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "缺少顾问手动检测的授权范围")
+        advisor_prompt_ids = binding[1].state.advisor_visibility_prompt_ids
+        await check_visibility_quota(session, ctx)
+        from app.models import GeoTrackingEngine
+        engine_keys = list(await session.scalars(select(GeoTrackingEngine.engine_key).where(
+            GeoTrackingEngine.tenant_id == req.tenant_id, GeoTrackingEngine.enabled.is_(True),
+            GeoTrackingEngine.engine_key != "other").order_by(GeoTrackingEngine.sort_order, GeoTrackingEngine.id)))
+        if not engine_keys:
+            deny(409, "ADVISOR_VISIBILITY_NO_ENGINES", "此客户没有已启用的检测引擎，请由管理员配置")
+    inflight = await session.scalar(select(GeoVisibilityPatrolRun.id).where(
+        GeoVisibilityPatrolRun.tenant_id == req.tenant_id,
+        GeoVisibilityPatrolRun.status.in_(("pending", "running"))).limit(1))
+    if inflight is not None:
+        raise HTTPException(409, "此客户已有检测正在排队或运行，请等完成后再试")
     from app.geo.retest import reserved_week
     if await reserved_week(session, req.tenant_id):
         raise HTTPException(409, '本周已有精确复测预约，不能追加普通巡检改变采样分布')
@@ -5327,8 +5354,12 @@ async def create_visibility_patrol_run(
         auto_persist=bool(req.auto_persist),
         prefer_real=bool(req.prefer_real),
         prompt_limit=int(req.prompt_limit),
-        engine_keys=req.engine_keys,
+        engine_keys=engine_keys,
         created_by=ctx.user_id,
+        summary={"advisor_visibility_prompt_ids": advisor_prompt_ids, "advisor_visibility_auth": {
+            "user_id": ctx.user_id, "tenant_id": ctx.tenant_id,
+            "grant_id": ctx.advisor_scope.grant_id, "auth_exp": ctx.auth_exp,
+        }} if advisor_prompt_ids is not None else None,
     )
     session.add(run)
     await session.commit()
@@ -5738,6 +5769,7 @@ async def put_tracking_engines(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    require_geo_configuration_admin(ctx)
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
     # Legacy encrypted keys remain preserved for rollback compatibility, but are
@@ -6809,7 +6841,8 @@ async def preview_article_import_file(
     if len(raw) > MAX_FILE_BYTES:
         raise HTTPException(413, "导入文件不能超过 10 MiB")
     try:
-        return preview_file_document(filename=file.filename or "", raw=raw)
+        from starlette.concurrency import run_in_threadpool
+        return await run_in_threadpool(preview_file_document, filename=file.filename or "", raw=raw)
     except ArticleImportError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -8315,7 +8348,8 @@ async def update_variant(
     if variant is None:
         raise HTTPException(404, f"渠道版本不存在: {channel_key}")
     if getattr(ctx, "advisor_scope", None) is not None and variant.status == "published":
-        raise HTTPException(403, {"code": "ADVISOR_WRITE_STATE_FORBIDDEN"})
+        raise HTTPException(403, {"code": "ADVISOR_WRITE_STATE_FORBIDDEN",
+                                  "message": "已发布渠道稿不能直接修改，请联系管理员处理"})
     changed = (
         req.title is not None and req.title.strip() != variant.title
     ) or (req.body_markdown is not None and req.body_markdown != variant.body_markdown)
@@ -8590,6 +8624,7 @@ async def _write_publication(
 
 
 @router.post("/content-tasks/{task_id}/publications")
+@audit_geo_operation('POST', '/api/v1/geo/content-tasks/{task_id}/publications')
 async def record_publication(
     task_id: int,
     req: PublicationCreate,
@@ -8649,6 +8684,7 @@ async def record_publication(
 
 
 @router.post("/content-tasks/{task_id}/import-receipts")
+@audit_geo_operation('POST', '/api/v1/geo/content-tasks/{task_id}/import-receipts')
 async def import_task_receipts(
     task_id: int,
     tenant_id: int = Query(..., gt=0),

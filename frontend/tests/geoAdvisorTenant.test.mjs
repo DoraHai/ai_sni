@@ -206,9 +206,15 @@ test('legacy pairs work, malformed envelopes fail closed, and logout clears all 
   tab.setItem('sem_user', JSON.stringify(user))
   assert.equal(selectStoredAuth(local, tab).token, identity)
   const f = await fixture()
-  f.session.logout()
+  const logout = f.session.logout
+  logout()
   assert.equal(selectStoredAuth(f.local, f.tab), null)
   assert.equal(f.tab.getItem('sem_advisor_identity_v1'), null)
+  assert.equal(f.session.tenantId, null)
+  assert.equal(f.tab.getItem('sem_tenant_id'), null)
+  f.session.setAuth('fake-ordinary-token', { id: 99, tenant_id: null, permissions: {} }, false)
+  f.session.setTenants([{ id: 17 }, { id: 15 }])
+  assert.equal(f.session.tenantId, 17, 'a new login must not reuse the previous customer')
 })
 
 test('legacy and envelope caches retain unknown permission levels without granting access', async () => {

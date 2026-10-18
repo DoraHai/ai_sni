@@ -10,6 +10,8 @@ import {
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { engineColor } from '../../utils/geoSnapshotSummary'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+import { session } from '../../store/session'
+import { advisorClaims } from '../../utils/geoAdvisorTenant'
 import {
   SAMPLE_MODE_LABEL,
   engineDisplay,
@@ -17,6 +19,7 @@ import {
 } from '../../utils/geoReportLabels'
 
 const { tenantId } = useGeoTenant()
+const isAdvisor = computed(() => !!advisorClaims(session.token) || session.user?.is_advisor === true)
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
@@ -185,7 +188,7 @@ onMounted(load)
     <template #actions>
       <span class="more">AI 能力由平台统一提供</span>
       <button class="gd-btn" type="button" @click="load">刷新</button>
-      <button class="gd-btn primary" type="button" :disabled="saving" @click="saveTable">保存</button>
+      <button v-if="!isAdvisor" class="gd-btn primary" type="button" :disabled="saving" @click="saveTable">保存</button>
     </template>
     <div class="geo-dash">
       <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
@@ -199,7 +202,7 @@ onMounted(load)
           <el-table :data="items" empty-text="暂无引擎" size="small">
             <el-table-column label="启用" width="80">
               <template #default="{ row }">
-                <el-switch v-model="row.enabled" size="small" />
+                <el-switch v-model="row.enabled" :disabled="isAdvisor" size="small" />
               </template>
             </el-table-column>
             <el-table-column label="引擎 key" min-width="120">
@@ -209,17 +212,17 @@ onMounted(load)
             </el-table-column>
             <el-table-column label="展示名" min-width="160">
               <template #default="{ row }">
-                <el-input v-model="row.display_name" size="small" />
+                <el-input v-model="row.display_name" :disabled="isAdvisor" size="small" />
               </template>
             </el-table-column>
             <el-table-column label="排序" width="110">
               <template #default="{ row }">
-                <el-input-number v-model="row.sort_order" size="small" :min="0" :max="9999" controls-position="right" />
+                <el-input-number v-model="row.sort_order" :disabled="isAdvisor" size="small" :min="0" :max="9999" controls-position="right" />
               </template>
             </el-table-column>
             <el-table-column label="备注" min-width="180">
               <template #default="{ row }">
-                <el-input v-model="row.note" size="small" />
+                <el-input v-model="row.note" :disabled="isAdvisor" size="small" />
               </template>
             </el-table-column>
             <el-table-column label="操作" width="100" fixed="right">
@@ -256,7 +259,7 @@ onMounted(load)
             </button>
           </div>
 
-          <div class="gd-card" style="margin-top:16px">
+          <div v-if="!isAdvisor" class="gd-card" style="margin-top:16px">
             <div class="gd-hd"><h3>巡检设置</h3></div>
             <div class="gd-bd" style="max-width:560px;display:flex;flex-direction:column;gap:14px">
               <div class="geo-set-row">
@@ -333,7 +336,7 @@ onMounted(load)
       >
         <el-form v-if="editing" label-width="96px" label-position="right">
           <el-form-item label="监测">
-            <el-switch v-model="editing.enabled" />
+            <el-switch v-model="editing.enabled" :disabled="isAdvisor" />
           </el-form-item>
           <el-alert
             :type="editing.api_key_configured ? 'success' : 'warning'"
@@ -350,7 +353,7 @@ onMounted(load)
         </el-form>
         <template #footer>
           <el-button @click="closeConfig">取消</el-button>
-          <el-button type="primary" :loading="saving" @click="saveConfig">保存</el-button>
+          <el-button v-if="!isAdvisor" type="primary" :loading="saving" @click="saveConfig">保存</el-button>
         </template>
       </el-dialog>
     </div>

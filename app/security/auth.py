@@ -196,6 +196,10 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
         or p.startswith("/api/v1/geo/async-jobs")
         or p.startswith("/api/v1/geo/monitoring-stance")
         or p.startswith("/api/v1/geo/attribution")
+        or (method == "GET" and p in {
+            "/api/v1/geo/channel-blueprint",
+            "/api/v1/geo/structure-scan/latest",
+        })
     ):
         return {"geo.content"}, edit
     if p.startswith("/api/v1/geo"):
@@ -299,8 +303,12 @@ async def require_auth(
             raise HTTPException(401, "账号不存在或已停用")
         if "via" in payload:
             raise HTTPException(401, {"code": "LEGACY_ADVISOR_SWITCH_DISABLED"})
+        from app.security.advisor_write_audit import bind_write_audit
+        if payload.get('scope_kind') in {'advisor_identity', 'advisor_tenant'}:
+            bind_write_audit(request, user.id, payload.get('tid') if payload['scope_kind'] == 'advisor_tenant' else None)
         ctx = await _build_context(user, session, payload)
         if ctx.advisor_scope is not None:
+            bind_write_audit(request, user.id, ctx.tenant_id)
             from app.security.geo_advisor import guard_request
             await guard_request(session, ctx, request, payload)
         return ctx

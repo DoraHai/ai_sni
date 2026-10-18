@@ -332,6 +332,10 @@ def test_scheduler_safe_foundation_is_atomic_idempotent_and_keeps_patrol_disable
             # transaction-window exclusion.
             foundation_locked = asyncio.Event()
             release_foundation = asyncio.Event()
+            settings_admin = AuthContext(
+                user_id=99, username='fixture-platform-admin', role_name='platform-admin',
+                tenant_id=None, permissions={'geo.content': 'edit', 'settings.accounts': 'edit'},
+            )
 
             async def pause_after_foundation_lock(session, tenant_id):
                 row = await current_patrol_settings(session, tenant_id)
@@ -353,7 +357,7 @@ def test_scheduler_safe_foundation_is_atomic_idempotent_and_keeps_patrol_disable
                     settings_task = asyncio.create_task(
                         put_visibility_patrol_settings(
                             VisibilityPatrolSettingsUpdate(tenant_id=4, enabled=True),
-                            ctx,
+                            settings_admin,
                             settings_session,
                         )
                     )
