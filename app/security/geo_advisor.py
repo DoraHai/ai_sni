@@ -110,10 +110,9 @@ async def guard_request(session, ctx, request, claims):
             deny(403, "ADVISOR_NO_TENANT", "顾问尚未获准访问任何客户")
         deny(409, "ADVISOR_TENANT_SELECTION_REQUIRED", "请先切换客户")
     ctx.ensure_tenant(ctx.tenant_id)
-    # No existing GEO job persists a grant generation. Even setting the future
-    # high-risk flag cannot bypass the unreviewed task/schema boundary.
     if request.method != "GET":
-        deny(403, "ADVISOR_HIGH_RISK_WRITES_DISABLED", "顾问任务和写入暂未开放")
+        await guard_scoped_write(session, ctx, request, claims)
+        return
     from app.security.geo_advisor_routes import READ_ROUTES, STATIC_ROUTES
     route = request.scope.get("route")
     template = getattr(route, "path", request.url.path)
@@ -131,3 +130,74 @@ async def guard_request(session, ctx, request, claims):
     await ensure_module_access(session, ctx, ctx.tenant_id, "geo")
 
     request.scope["geo_advisor_delivery"] = (ctx.user_id, dict(claims), ctx.tenant_id, frozenset(keys))
+
+
+async def check_scoped_write_objects(session, ctx, request, body, rule):
+    # B owns this contract. An incomplete integration remains closed even if
+    # someone enables the new flag before the object-policy module is merged.
+    try:
+        from app.security.advisor_write_objects import check_write_objects, ensure_advisor_assignment
+    except ModuleNotFoundError as exc:
+        if exc.name != "app.security.advisor_write_objects":
+            raise
+        deny(403, "ADVISOR_OBJECT_UNAVAILABLE", "受限写入对象核对尚未就绪")
+    await check_write_objects(session, ctx, request, body, rule)
+    await ensure_advisor_assignment(session, ctx, request, body, rule)
+    await check_manual_execution_scope(session, ctx, rule)
+
+
+async def check_manual_execution_scope(session, ctx, rule):
+    """Conservative isolation from tenant-wide patrol and project cycles.
+
+    The existing patrol selects active prompts dynamically, and task creation
+    auto-attaches the active period. There is no inert resource schema flag.
+    Serialize with the existing scheduler/settings tenant lock and reject
+    these resources while any such execution chain is enabled.
+    """
+    resource = rule.template.removeprefix("/api/v1/geo/").split("/")[0]
+    if resource not in {"facts", "prompts", "optimization-businesses", "optimization-units", "content-tasks"}:
+        return
+    from app.models import Tenant, GeoProject, GeoVisibilityPatrolSettings, GeoOptimizationPeriod
+    await session.scalar(select(Tenant.id).where(Tenant.id == ctx.tenant_id).with_for_update())
+    patrol = await session.scalar(select(GeoVisibilityPatrolSettings).where(
+        GeoVisibilityPatrolSettings.tenant_id == ctx.tenant_id).execution_options(populate_existing=True))
+    projects = list(await session.scalars(select(GeoProject).where(GeoProject.tenant_id == ctx.tenant_id)
+                                         .order_by(GeoProject.id).execution_options(populate_existing=True)))
+    active_period = await session.scalar(select(GeoOptimizationPeriod.id).where(
+        GeoOptimizationPeriod.tenant_id == ctx.tenant_id, GeoOptimizationPeriod.status == "active").limit(1))
+    if ((patrol is not None and patrol.enabled) or active_period is not None or any(
+            ((p.project_settings or {}).get("geo_service_plan") or {}).get("enabled") for p in projects)):
+        deny(403, "ADVISOR_EXECUTION_CHAIN_ACTIVE", "当前客户已启用巡检或周期计划，资料和手工改稿暂未开放")
+
+
+async def guard_scoped_write(session, ctx, request, claims):
+    from app.config import get_settings
+    from app.module_scope import ensure_module_access
+    from app.security.advisor_write_routes import match_write_rule, check_write_fields
+    from app.security.advisor_write_commit import bind_advisor_write_commit
+
+    if not get_settings().advisor_scoped_content_writes_enabled:
+        deny(403, "ADVISOR_HIGH_RISK_WRITES_DISABLED", "顾问任务和写入暂未开放")
+    rule = match_write_rule(request)
+    if rule is None:
+        deny(403, "ADVISOR_HIGH_RISK_WRITES_DISABLED", "此顾问写入入口尚未开放")
+    if not request.query_params.getlist("tenant_id"):
+        deny(403, "ADVISOR_TENANT_REQUIRED", "请求必须指定当前客户")
+    # Query action switches are not part of any admitted manual-write contract.
+    for key, value in request.query_params.multi_items():
+        if key != "tenant_id":
+            deny(403, "ADVISOR_WRITE_FIELD_FORBIDDEN", "此查询字段未向顾问开放")
+        ctx.ensure_tenant(positive_id(value))
+    try:
+        # Request.json() caches body bytes for the handler/dependency re-read.
+        body = await request.json()
+    except (ValueError, UnicodeDecodeError):
+        deny(403, "ADVISOR_WRITE_FIELD_FORBIDDEN", "顾问写入仅支持 JSON 对象")
+    check_write_fields(rule, body)
+    if not all(ctx.can_edit(key) for key in rule.edit_all):
+        deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "当前角色无编辑权限")
+    await ensure_module_access(session, ctx, ctx.tenant_id, "geo")
+    await check_scoped_write_objects(session, ctx, request, body, rule)
+    bind_advisor_write_commit(session, ctx, request, body, rule, claims)
+    request.state.advisor_scoped_write = rule
+    request.scope["geo_advisor_delivery"] = (ctx.user_id, dict(claims), ctx.tenant_id, frozenset(rule.edit_all))

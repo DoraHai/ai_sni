@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
+from app.security.advisor_write_handlers import check_handler_fields, lock_manual_task
 from app.permissions import CUSTOMER_ROLE
 from app.geo.read_routes import read_session as geo_read_session
 from app.geo.tenant_scope import ensure_geo_entitlement, require_geo_read_entitlement
@@ -1153,6 +1154,7 @@ async def create_optimization_business(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    check_handler_fields(ctx, "POST", "/optimization-businesses", req)
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
     name = req.name.strip()
@@ -1189,6 +1191,7 @@ async def update_optimization_business(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    check_handler_fields(ctx, "PATCH", "/optimization-businesses/{business_id}", req)
     ctx.ensure_tenant(tenant_id)
     row = await session.scalar(
         select(GeoOptimizationBusiness).where(
@@ -1248,6 +1251,7 @@ async def create_optimization_unit(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    check_handler_fields(ctx, "POST", "/optimization-units", req)
     ctx.ensure_tenant(req.tenant_id)
     biz = await session.scalar(
         select(GeoOptimizationBusiness).where(
@@ -1282,6 +1286,7 @@ async def update_optimization_unit(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    check_handler_fields(ctx, "PATCH", "/optimization-units/{unit_id}", req)
     ctx.ensure_tenant(tenant_id)
     row = await session.scalar(
         select(GeoOptimizationUnit).where(
@@ -2238,6 +2243,7 @@ async def create_prompt(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    check_handler_fields(ctx, "POST", "/prompts", req)
     ctx.ensure_tenant(req.tenant_id)
     tenant = await _ensure_tenant_exists(session, req.tenant_id)
     q_group = normalize_question_group(req.question_group)
@@ -2527,6 +2533,7 @@ async def update_prompt(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    check_handler_fields(ctx, "PATCH", "/prompts/{prompt_id}", req)
     ctx.ensure_tenant(tenant_id)
     row = await _get_prompt(session, prompt_id, tenant_id)
     tenant = await _ensure_tenant_exists(session, tenant_id)
@@ -6565,6 +6572,7 @@ async def create_fact(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    check_handler_fields(ctx, "POST", "/facts", req)
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
     if req.trust_level == "verified":
@@ -6599,6 +6607,7 @@ async def update_fact(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    check_handler_fields(ctx, "PATCH", "/facts/{fact_id}", req)
     ctx.ensure_tenant(tenant_id)
     row = await _get_fact(session, fact_id, tenant_id)
     await session.refresh(row, with_for_update=True)
@@ -7001,6 +7010,7 @@ async def create_task(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    check_handler_fields(ctx, "POST", "/content-tasks", req)
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
     prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
@@ -7094,8 +7104,10 @@ async def patch_task(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    check_handler_fields(ctx, "PATCH", "/content-tasks/{task_id}", req)
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
+    await lock_manual_task(session, ctx, task)
     data = req.model_dump(exclude_unset=True)
     if "title" in data and data["title"] is not None:
         data["title"] = data["title"].strip()
@@ -7667,8 +7679,10 @@ async def update_task_facts(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    check_handler_fields(ctx, "PUT", "/content-tasks/{task_id}/facts", req)
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
+    await lock_manual_task(session, ctx, task)
     await _bind_facts(session, task, req.fact_ids)
     await session.commit()
     await session.refresh(task)
@@ -7686,10 +7700,12 @@ async def save_article(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    check_handler_fields(ctx, "PUT", "/content-tasks/{task_id}/article", req)
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
     # Serialize manual saves of this task before reading its current version.
     await session.refresh(task, with_for_update=True)
+    await lock_manual_task(session, ctx, task, already_locked=True)
     latest = await _latest_article(session, task.id)
     version_no = (latest.version_no + 1) if latest else 1
     from app.geo.content.evidence_cite import strip_citation_appendix
@@ -7699,6 +7715,9 @@ async def save_article(
     # Author identity is stored in the dedicated server-controlled column.
     # Client-supplied outline metadata must never create an evidence exemption.
     outline.pop("author_name", None)
+    if (getattr(ctx, "advisor_scope", None) is not None
+            and req.expected_article_id != (latest.id if latest else None)):
+        raise HTTPException(409, '正文已有新版本，请保留本地修改并刷新核对后再保存')
     if (latest and latest.title == req.title.strip() and strip_citation_appendix(latest.body_markdown) == body
             and (latest.outline or {}) == outline):
         await session.commit()
@@ -8256,14 +8275,18 @@ async def update_variant(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    check_handler_fields(ctx, "PATCH", "/content-tasks/{task_id}/variants/{channel}", req)
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
     await session.refresh(task, with_for_update=True)
+    await lock_manual_task(session, ctx, task, already_locked=True)
     channel_key = str(channel or "").strip().lower()
     existing = {v.channel: v for v in await _variants(session, task.id)}
     variant = existing.get(channel_key)
     if variant is None:
         raise HTTPException(404, f"渠道版本不存在: {channel_key}")
+    if getattr(ctx, "advisor_scope", None) is not None and variant.status == "published":
+        raise HTTPException(403, {"code": "ADVISOR_WRITE_STATE_FORBIDDEN"})
     changed = (
         req.title is not None and req.title.strip() != variant.title
     ) or (req.body_markdown is not None and req.body_markdown != variant.body_markdown)

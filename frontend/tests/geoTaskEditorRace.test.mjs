@@ -96,6 +96,7 @@ test('current brief save applies response and clears the local draft', async () 
 function articleFixture() {
   const requests = [], events = []
   const context = testContext({
+    isAdvisor: { value: false },
     tenantId: { value: 7 }, taskId: { value: 100 }, loadGeneration: 1,
     task: { value: { id: 100, article: {} } },
     article: { title: 'A title', body_markdown: 'A private body' },
@@ -112,6 +113,17 @@ function articleFixture() {
   vm.runInContext(source.slice(source.indexOf('async function saveArticleBody('), source.indexOf('async function runGeoScore(')), context)
   return { context, requests, events }
 }
+
+test('advisor saves an explicit base version and preserves server outline metadata', async () => {
+  const { context: c, requests } = articleFixture()
+  c.isAdvisor.value = true
+  c.task.value.article = { id: 11, outline: { sentence_citations: [{ fact_id: 7 }] } }
+  const pending = c.saveArticleBody()
+  assert.equal(requests[0].body.expected_article_id, 11)
+  assert.equal(Object.hasOwn(requests[0].body, 'outline'), false)
+  requests[0].resolve({ id: 100, article: requests[0].body })
+  assert.equal(await pending, true)
+})
 
 for (const silent of [false, true]) {
   test(`late article save cannot copy customer A into B (silent=${silent})`, async () => {

@@ -14,7 +14,10 @@ import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
 import { session } from '../../store/session'
+import { advisorClaims } from '../../utils/geoAdvisorTenant.js'
 import { CUSTOMER_ROLE } from '../../constants/roles.js'
+
+const isAdvisor = computed(() => !!advisorClaims(session.token) || session.user?.is_advisor === true)
 
 const prototypeSurface = getGeoPrototypePageSurface()
 const { tenantId } = useGeoTenant()
@@ -210,8 +213,10 @@ async function submitEdit() {
       source_url: editForm.value.source_url.trim() || null,
       expires_at: editForm.value.expires_at || null,
       author_name: editForm.value.author_name.trim() || null,
-      trust_level: editForm.value.trust_level || null,
-      business_id: editForm.value.business_id || null,
+      ...(isAdvisor.value ? {} : {
+        trust_level: editForm.value.trust_level || null,
+        business_id: editForm.value.business_id || null,
+      }),
     })
     ElMessage.success('已保存')
     editOpen.value = false
@@ -443,7 +448,7 @@ onMounted(load)
           <el-input v-model="editForm.author_name" />
         </el-form-item>
         <el-form-item label="可信度">
-          <el-select v-model="editForm.trust_level" style="width: 100%">
+          <el-select v-model="editForm.trust_level" :disabled="isAdvisor" style="width: 100%">
             <el-option label="verified" value="verified" />
             <el-option label="needs_review" value="needs_review" />
             <el-option label="draft" value="draft" />
