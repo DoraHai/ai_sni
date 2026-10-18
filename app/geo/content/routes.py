@@ -34,6 +34,8 @@ from app.geo.content.generate_article import (
 from app.geo.content.imports import import_facts_csv, import_prompts_csv
 from app.geo.content.article_import import (
     ArticleImportError,
+    MAX_FILE_BYTES,
+    SUPPORTED_FILE_EXTENSIONS,
     preview_file_document,
     preview_url_document,
 )
@@ -6824,8 +6826,11 @@ async def preview_article_import_file(
     """Extract a supported upload so the operator can edit it before import."""
     ctx.ensure_tenant(tenant_id)
     await _ensure_tenant_exists(session, tenant_id)
-    raw = await file.read()
-    if len(raw) > 10 * 1024 * 1024:
+    from pathlib import Path
+    if Path(file.filename or "").suffix.lower() not in SUPPORTED_FILE_EXTENSIONS:
+        raise HTTPException(400, "不支持的导入文件类型")
+    raw = await file.read(MAX_FILE_BYTES + 1)
+    if len(raw) > MAX_FILE_BYTES:
         raise HTTPException(413, "导入文件不能超过 10 MiB")
     try:
         return preview_file_document(filename=file.filename or "", raw=raw)
@@ -6855,6 +6860,7 @@ async def create_task_from_article_import(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Persist an operator-confirmed import as a task with its first master draft."""
+    check_handler_fields(ctx, "POST", "/content-imports/create-task", req)
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
     prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
