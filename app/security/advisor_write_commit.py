@@ -96,6 +96,8 @@ def bind_advisor_write_commit(session, ctx, request, body, rule, claims) -> None
     factories still reject the commit and their dependency cleanup rolls back.
     """
     session.info["advisor_scoped_write"] = (ctx, request, body, rule, claims["exp"])
+    from app.security.advisor_write_audit import bind_write_changes
+    bind_write_changes(session, request)
     if session.info.get("advisor_write_commit_hook"):
         return
 
