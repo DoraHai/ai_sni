@@ -47,6 +47,10 @@ class Settings(BaseSettings):
 
     # 登录态 JWT 签名密钥；不配则退化复用 admin_api_key（本地冒烟方便），生产必须单独配
     jwt_secret: str = ""
+
+    advisor_multi_tenant_enabled: bool = False
+    advisor_legacy_account_switch_enabled: bool = False
+    advisor_high_risk_writes_enabled: bool = False
     jwt_expire_hours: int = 12
 
     # GEO：是否允许同一人提交审校又审批通过（默认禁止）

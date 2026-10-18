@@ -189,3 +189,5 @@ __all__ = [
     "SeoCompetitor",
     "SeoCompetitorEvent",
 ]
+
+from app.models.advisor_tenant_grant import AdvisorTenantGrant  # noqa: F401

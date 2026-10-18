@@ -24,6 +24,7 @@ from app.database import get_session
 from app.models.role import Role
 from app.models.user import User
 from app.permissions import OPERATOR_PERMS
+from app.security.advisor_scope import AdvisorScope, account_locked
 
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _bearer = HTTPBearer(auto_error=False)
@@ -70,6 +71,9 @@ class AuthContext:
     permissions: dict[str, str] = field(default_factory=dict)  # {菜单key: view|edit}
     is_superadmin: bool = False  # API Key 兜底
 
+    advisor_scope: AdvisorScope | None = None
+    auth_exp: int | None = None
+
     def can_view(self, *keys: str) -> bool:
         if self.is_superadmin:
             return True
@@ -82,6 +86,8 @@ class AuthContext:
 
     def ensure_tenant(self, tenant_id: int) -> None:
         """绑定了单客户的账号只能访问该客户的数据。"""
+        if self.advisor_scope is not None:
+            self.advisor_scope.ensure_tenant(tenant_id)
         if self.tenant_id is not None and self.tenant_id != tenant_id:
             raise HTTPException(403, "无权访问该客户的数据")
         bind_tenant(tenant_id)
@@ -234,16 +240,16 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     return None, edit  # 未登记路径（如 /auth/*）：不做菜单校验，仅需登录
 
 
-async def _build_context(user: User, session: AsyncSession) -> AuthContext:
-    role = await session.get(Role, user.role_id)
+async def _build_context(user: User, session: AsyncSession, payload: dict | None = None) -> AuthContext:
+    role = await session.get(Role, user.role_id, populate_existing=True)
+    # Keep GEO's existing RBAC behavior for admins and ordinary customers.
     perms = dict(role.permissions or {}) if role else {}
-    return bind_identity(AuthContext(
-        user_id=user.id,
-        username=user.username,
-        role_name=role.name if role else "?",
-        tenant_id=user.tenant_id,
-        permissions=perms,
-    ))
+    ctx = AuthContext(user_id=user.id, username=user.username,
+                      role_name=role.name if role else "?", tenant_id=user.tenant_id,
+                      permissions=perms)
+    from app.security.geo_advisor import apply_claims
+    await apply_claims(ctx, user, role, payload or {}, session)
+    return bind_identity(ctx)
 
 
 async def require_auth(
@@ -251,21 +257,50 @@ async def require_auth(
     header_key: str | None = Security(_api_key_header),
     key: str | None = Query(None, description="API Key，与 X-API-Key 等价（脚本用）"),
     session: AsyncSession = Depends(get_session),
+    request: Request = None,
 ) -> AuthContext:
     # 1) JWT（前端登录态）
     if bearer and bearer.credentials:
         try:
-            payload = jwt.decode(bearer.credentials, _jwt_secret(), algorithms=[JWT_ALG])
+            # Verify signature/time first, then explicitly validate the audience
+            # for every new scope; legacy non-advisor tokens have no audience.
+            payload = jwt.decode(bearer.credentials, _jwt_secret(), algorithms=[JWT_ALG],
+                                 options={"verify_aud": False})
+            kind = payload.get("scope_kind")
+            expected = {"advisor_identity": "advisor-session", "advisor_tenant": "advisor-business"}
+            if kind is not None:
+                if kind not in expected:
+                    raise jwt.InvalidTokenError()
+                payload = jwt.decode(bearer.credentials, _jwt_secret(), algorithms=[JWT_ALG],
+                                     audience=expected[kind], options={"require": ["exp", "iat", "sub", "aud"]})
+                if type(payload["exp"]) is not int or type(payload["iat"]) is not int:
+                    raise jwt.InvalidTokenError()
+                if kind == "advisor_tenant" and (type(payload.get("auth_exp")) is not int
+                        or payload["exp"] > payload["auth_exp"]):
+                    raise jwt.InvalidTokenError()
+            elif "aud" in payload:
+                raise jwt.InvalidTokenError()
         except jwt.ExpiredSignatureError:
             raise HTTPException(401, "登录已过期，请重新登录")
         except jwt.InvalidTokenError:
             raise HTTPException(401, "登录凭证无效，请重新登录")
-        user = await session.get(User, int(payload["sub"]))
-        if user is None or not user.is_active:
+        try:
+            sub = payload["sub"]
+            if not isinstance(sub, str) or not sub.isascii() or not sub.isdecimal() or int(sub) <= 0:
+                raise ValueError()
+            user_id = int(sub)
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(401, "登录凭证无效，请重新登录")
+        user = await session.get(User, user_id, populate_existing=True)
+        if user is None or not user.is_active or account_locked(user):
             raise HTTPException(401, "账号不存在或已停用")
-        from app.security.advisor_switch import validate_switch_claims
-        await validate_switch_claims(session, payload, user)
-        return await _build_context(user, session)
+        if "via" in payload:
+            raise HTTPException(401, {"code": "LEGACY_ADVISOR_SWITCH_DISABLED"})
+        ctx = await _build_context(user, session, payload)
+        if ctx.advisor_scope is not None:
+            from app.security.geo_advisor import guard_request
+            await guard_request(session, ctx, request, payload)
+        return ctx
 
     # 2) admin API Key 兜底（curl / 冒烟 / 调度）
     #    - 优先 X-API-Key 请求头

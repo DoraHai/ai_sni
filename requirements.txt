@@ -27,3 +27,6 @@ bcrypt==4.0.1
 apscheduler==3.10.4
 
 python-multipart==0.0.20
+
+# Local isolated advisor scope fixtures (no remote database).
+aiosqlite==0.22.1

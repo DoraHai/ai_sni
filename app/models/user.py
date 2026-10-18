@@ -22,5 +22,6 @@ class User(Base):
     # 限定单客户（独立于角色）；NULL=全客户（顶栏可切换）
     tenant_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("tenants.id"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

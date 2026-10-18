@@ -79,3 +79,20 @@ def normalize_permissions(perms: dict) -> dict[str, str]:
         if k in MENU_KEYS and v in LEVELS:
             out[k] = v
     return out
+
+
+ADMIN_ROLE_NAME = "管理员"
+PLATFORM_ADMIN_KEYS = frozenset({"settings.accounts", "settings.customers"})
+
+
+def effective_role_permissions(
+    role_name: str,
+    is_system: bool,
+    permissions: dict | None,
+) -> dict[str, str]:
+    """Apply non-persistent invariants only to the trusted built-in administrator."""
+    out = normalize_permissions(permissions or {})
+    if is_system and role_name == ADMIN_ROLE_NAME:
+        for key in PLATFORM_ADMIN_KEYS:
+            out[key] = "edit"
+    return out
