@@ -141,6 +141,8 @@ def test_every_exact_rule_calls_both_contracts_and_commit_rechecks(tmp_path, mon
         path = template.removeprefix("/api/v1/geo").replace("{fact_id}", "1").replace("{prompt_id}", "1")
         path = path.replace("{unit_id}", "1").replace("{business_id}", "1").replace("{task_id}", "1").replace("{channel}", "website")
         body = {"tenant_id": 10} if "tenant_id" in rule.fields else {}
+        if template == "/api/v1/geo/content-imports/create-task":
+            body["source_type"] = "paste"
         if template.endswith("/article"):
             body["expected_article_id"] = None
         async with sandbox(tmp_path, monkeypatch) as (request, factory, _, calls):
