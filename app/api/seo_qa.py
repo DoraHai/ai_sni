@@ -18,7 +18,7 @@ from app.seo_demo_source import (
 from app.api.seo_cockpit import scope
 from app.models.seo import SeoContentAsset, SeoSerpResult
 from app.models.seo_qa import SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement
-from app.security.advisor_write_commit import recheck_advisor_before_commit
+from app.security.advisor_write_commit import recheck_advisor_before_commit, record_advisor_write
 from app.security.advisor_write_routes import check_advisor_handler
 from app.seo_qa import (PLATFORMS, fingerprint, public_url, platform_url, parse_questions_csv,
                         fact_is_current, body_hash, answer_checks, observe_answer, placement_followup, answer_quality)
@@ -572,6 +572,7 @@ async def create_fact(req: FactInput, ctx=Auth, session=Db):
     session.add(row)
     await recheck_advisor_before_commit(session, ctx)
     await session.commit()
+    record_advisor_write(ctx, row, "POST", "/api/v1/seo/qa/facts")
     await session.refresh(row)
     return {**data(row), 'current': fact_is_current(row)}
 
@@ -588,6 +589,7 @@ async def edit_fact(fact_id: int, req: FactEdit, ctx=Auth, session=Db):
     row.version += 1
     await recheck_advisor_before_commit(session, ctx)
     await session.commit()
+    record_advisor_write(ctx, row, "PATCH", "/api/v1/seo/qa/facts/{fact_id}")
     await session.refresh(row)
     return {**data(row), 'current': fact_is_current(row)}
 
