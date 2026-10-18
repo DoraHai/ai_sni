@@ -8,6 +8,16 @@ from sqlalchemy import select
 # Each entry is reviewed as a method, mounted route template and body fields.
 # Separate batches append entries here; no URL-prefix admission is permitted.
 DAILY = (
+    ('PATCH', '/rank-serp/brand-profile', 'tenant_id site_id brand_name website', 'seo.keywords'),
+    ('POST', '/qa/research/file-preview', '', 'seo.content'),
+    ('POST', '/backlinks/import', '', 'seo.links'),
+    ('POST', '/site/page-captures/upload', 'tenant_id site_id relation_type relation_id', 'seo.site'),
+    ('POST', '/tasks', 'tenant_id site_id module action_type title params created_by assignee_role', 'seo.content'),
+    ('PATCH', '/tasks/{task_id}', 'tenant_id site_id title status note', 'seo.content'),
+    ('POST', '/qa/batches', 'tenant_id site_id request_id items', 'seo.content'),
+    ('POST', '/qa/batches/{batch_id}/control', 'tenant_id site_id action question_id', 'seo.content'),
+    ('POST', '/workbench/notifications/read', 'tenant_id site_id task_id event_id', 'seo.content seo.site'),
+    ('POST', '/overview/metric-snapshots', 'tenant_id site_id metric_type dimension numeric_value text_value unit source data_quality status error_message observed_at', 'seo.dashboard'),
     ('POST', '/keywords', 'tenant_id site_id keyword cluster intent monthly_volume difficulty priority landing_page status notes', 'seo.keywords'),
     ('POST', '/keywords/import', 'tenant_id site_id items', 'seo.keywords'),
     ('PATCH', '/keywords/{keyword_id}', 'site_id cluster intent monthly_volume difficulty priority landing_page status notes', 'seo.keywords'),
@@ -110,6 +120,8 @@ def check_workflow_fields(rule, body):
             deny("ADVISOR_WRITE_VERSION_REQUIRED", 422)
     if body.get("actor_mode") not in {None, "advisor_proxy"}:
         deny("ADVISOR_WRITE_FIELD_FORBIDDEN")
+    if rule.template == '/api/v1/seo/tasks' and body.get('assignee_role', 'advisor') != 'advisor':
+        deny('ADVISOR_WRITE_FIELD_FORBIDDEN')
 
 
 TABLES = {
@@ -131,6 +143,7 @@ TABLES = {
     "index_review_id": "seo_page_index_reviews",
     "suggestion_id": "seo_page_ai_tdk_suggestions", "result_id": "seo_serp_results",
     "verification_id": "seo_image_verifications", "retry_page_id": "seo_site_pages",
+    "article_id": "seo_content_assets", "before_snapshot_id": "seo_page_snapshots",
 }
 # Stored ownership links are followed even when omitted from a partial update.
 LINKS = {
@@ -155,7 +168,7 @@ def references(value, template, parent="", refs=None, depth=0):
             kind = key[:-1] if key.endswith("_ids") else key
             if key == "expected_review_id" and template == "/api/v1/seo/site-pages/index-reviews":
                 kind = "index_review_id"
-            if key == "request_id":
+            if key == "request_id" or (key == 'event_id' and template == '/api/v1/seo/workbench/notifications/read') or key == 'opportunity_request_id':
                 continue  # An idempotency key, never a business object.
             if key == "relation_id":
                 kind = {"site_page": "page_id", "publication": "publication_id"}.get(value.get("relation_type"))
@@ -164,7 +177,7 @@ def references(value, template, parent="", refs=None, depth=0):
             if key == "id":
                 if parent in {"facts", "expected_facts"}:
                     kind = "fact_id"
-                elif template in {"/api/v1/seo/qa/questions/batch", "/api/v1/seo/qa/planning/semantic"}:
+                elif parent == 'question' or template in {"/api/v1/seo/qa/questions/batch", "/api/v1/seo/qa/planning/semantic", "/api/v1/seo/qa/batches"}:
                     kind = "question_id"
                 elif template == "/api/v1/seo/workbench/onsite-tasks/{task_id}/actions":
                     continue  # Workflow item labels such as title-15, not row IDs.

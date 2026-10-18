@@ -76,6 +76,8 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
                    {"active", "archived"} if "/brand-assets" in rule.template else {"planned", "drafting", "archived"})
         if body["status"] not in allowed:
             forbidden()
+        if rule.method == 'POST' and '/content-assets' in rule.template and body['status'] == 'archived':
+            forbidden()
     version = "version" if "/qa/facts/" in rule.template else "version_count"
     if rule.method in {"PATCH", "PUT"} and version in rule.fields:
         if body.get(version) is None:
@@ -93,6 +95,10 @@ def check_advisor_handler(ctx, method, template, body, row=None):
     if rule.workflow:
         return
     if row is not None:
+        if '/content-assets/' in template and row.status == 'archived' and (
+            set(body) - {'status', 'version_count'} or body.get('status') not in {'planned', 'drafting'}
+        ):
+            raise HTTPException(403, {'code': 'ADVISOR_WRITE_STATE_FORBIDDEN'})
         allowed = ({"active", "retired"} if "/qa/facts" in template else
                    {"active", "archived"} if "/brand-assets" in template else {"planned", "drafting", "archived"})
         if row.status not in allowed:

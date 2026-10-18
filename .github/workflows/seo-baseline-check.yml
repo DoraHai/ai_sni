@@ -179,6 +179,7 @@ jobs:
           tests/test_seo_content_confirmations.py
           tests/test_advisor_tenant_auth.py
           tests/test_seo_advisor_work.py
+          tests/test_seo_advisor_reads.py
           tests/test_advisor_write_rules.py
           tests/test_advisor_switch_auth.py
           tests/test_advisor_account_links_migration.py

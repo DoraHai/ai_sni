@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 
 logger = logging.getLogger("seo.advisor.operations")
+logger.setLevel(logging.INFO)
 
 
 def record(request, ctx, result, *, evidence=None):

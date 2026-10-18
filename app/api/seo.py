@@ -1948,6 +1948,7 @@ async def update_brand_profile(
         session.add(
             SeoBrandAsset(
                 tenant_id=req.tenant_id,
+                **({'site_id': req.site_id} if ctx.is_advisor else {}),
                 asset_type="official_domain",
                 name="主官网",
                 match_value=domain,
@@ -1966,6 +1967,7 @@ async def update_brand_profile(
         session.add(
             SeoSitePage(
                 tenant_id=req.tenant_id,
+                **({'site_id': req.site_id} if ctx.is_advisor else {}),
                 url=homepage,
                 page_type="homepage",
                 status="pending",

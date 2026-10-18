@@ -50,7 +50,6 @@ CASES = (
 )
 CASE_IDS = [c.method + " " + c.template for c in CASES]
 OUTSIDE = (
-    ("PATCH", "/rank-serp/brand-profile"),
     ("POST", "/content-assets/{content_id}/submit-review"),
     ("POST", "/content-assets/{content_id}/review"),
     ("POST", "/content-ai/assist"),

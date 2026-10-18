@@ -87,6 +87,8 @@ async def apply_advisor_claims(ctx, user, role, payload, session):
 
 async def enforce_advisor_request(request, ctx, session):
     """Runs even on routes depending only on require_auth, before any handler."""
+    from app.security.seo_advisor_reads import install_query_scope
+    install_query_scope(session, None)
     if not ctx.is_advisor:
         return
     request.state.seo_advisor_actor = ctx
@@ -110,7 +112,8 @@ async def enforce_advisor_request(request, ctx, session):
         try:
             # Starlette caches both bytes and JSON on the same Request used by
             # dependencies and the handler; subsequent body reads remain valid.
-            body = await request.json() if await request.body() else {}
+            from app.security.seo_advisor_uploads import request_body
+            body = await request_body(request, rule)
         except (ValueError, RuntimeError):
             reject(403, "ADVISOR_WRITE_FIELD_FORBIDDEN")
         if body is None and not rule.fields:
@@ -151,6 +154,8 @@ async def enforce_advisor_request(request, ctx, session):
         ctx.advisor_write_scope = (request, body, rule)
         from app.security.seo_advisor_audit import install_commit_guard
         install_commit_guard(session, ctx, request)
+    from app.security.seo_advisor_reads import install_query_scope
+    install_query_scope(session, ctx)
 
 
 async def check_seo_objects(request, ctx, session):
@@ -171,6 +176,7 @@ async def check_seo_objects(request, ctx, session):
         "fact_id": "seo_qa_facts", "backlink_id": "seo_backlinks",
         "competitor_id": "seo_competitors", "verification_id": "seo_image_verifications",
         "source_snapshot_id": "seo_page_snapshots",
+        "before_snapshot_id": "seo_page_snapshots",
     }
     values = list(request.path_params.items())
     values.extend((key, value) for key, value in request.query_params.multi_items()
@@ -181,6 +187,7 @@ async def check_seo_objects(request, ctx, session):
         if key == "before_id" and request.url.path in {
             "/api/v1/seo/workbench/onsite-tasks", "/api/v1/seo/site-pages/index-reviews",
             "/api/v1/seo/site-pages/image-remediation-history",
+            "/api/v1/seo/workbench/advisor-tasks", "/api/v1/seo/tasks",
         }:
             # A cursor only bounds the already tenant/site-scoped query; it is
             # not an ID of a conversation message.
@@ -211,3 +218,7 @@ async def check_seo_objects(request, ctx, session):
         if owner is None:
             reject(404, "ADVISOR_OBJECT_NOT_FOUND")
         ctx.ensure_tenant(owner)
+        from app.security.seo_advisor_reads import scope_conditions
+        conditions = scope_conditions(table, ctx)
+        if conditions and await session.scalar(select(table.c.id).where(table.c.id == value, *conditions)) is None:
+            reject(403, "ADVISOR_ASSIGNMENT_REQUIRED")

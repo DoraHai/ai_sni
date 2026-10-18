@@ -20,6 +20,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.advisor_tenant_grant import AdvisorTenantGrant as Grant
 from app.models.module_workspace import TenantModule, SeoSite
+from app.models.seo import SeoSiteAdvisorAssignment
 from app.security import auth
 from app.security.advisor_seo_scope import is_advisor_role
 
@@ -58,7 +59,7 @@ class LocalSession:
 @pytest.fixture
 def local_db(tmp_path):
     engine = create_engine('sqlite:///' + str(tmp_path / 'advisor.sqlite'))
-    models = [Role, Tenant, User, TenantModule, Grant, SeoSite]
+    models = [Role, Tenant, User, TenantModule, Grant, SeoSite, SeoSiteAdvisorAssignment]
     Base.metadata.create_all(engine, tables=[m.__table__ for m in models])
     with Session(engine, expire_on_commit=False) as s:
         s.add_all([Role(id=1, name='advisor', is_system=False,
