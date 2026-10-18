@@ -8,6 +8,7 @@ on:
   pull_request:
     branches:
       - codex/production-seo
+      - codex/advisor-mt-seo-guard-20261018
 
 permissions:
   contents: read
@@ -95,7 +96,7 @@ jobs:
         run: |
           expected_branch="codex/production-seo"
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            test "$PR_BASE_REF" = "$expected_branch"
+            [[ "$PR_BASE_REF" == "$expected_branch" || "$PR_BASE_REF" == "codex/advisor-mt-seo-guard-20261018" ]]
           else
             test "$REF_NAME" = "$expected_branch"
           fi
@@ -153,6 +154,7 @@ jobs:
           tests/test_seo_competitors.py
           tests/test_seo_deploy_isolation.py
           tests/test_seo_content_confirmations.py
+          tests/test_advisor_tenant_auth.py
           tests/test_advisor_switch_auth.py
           tests/test_advisor_account_links_migration.py
           tests/test_seo_local_acceptance.py

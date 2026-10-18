@@ -69,6 +69,11 @@ class AuthContext:
     tenant_id: int | None  # 绑定的单客户；None=全客户
     permissions: dict[str, str] = field(default_factory=dict)  # {菜单key: view|edit}
     is_superadmin: bool = False  # API Key 兜底
+    is_advisor: bool = False
+    scope_kind: str | None = None
+    grant_id: int | None = None
+    auth_exp: int | None = None
+    advisor_tenant_ids: frozenset[int] = field(default_factory=frozenset)
 
     def can_view(self, *keys: str) -> bool:
         if self.is_superadmin:
@@ -82,6 +87,15 @@ class AuthContext:
 
     def ensure_tenant(self, tenant_id: int) -> None:
         """绑定了单客户的账号只能访问该客户的数据。"""
+        if self.is_advisor:
+            from app.security.advisor_tenant_auth import reject
+            if not self.advisor_tenant_ids:
+                reject(403, "ADVISOR_NO_TENANT")
+            if self.scope_kind != "advisor_tenant" or self.grant_id is None:
+                reject(409, "ADVISOR_TENANT_SELECTION_REQUIRED")
+            if (type(tenant_id) is not int or tenant_id != self.tenant_id
+                    or tenant_id not in self.advisor_tenant_ids):
+                reject(403, "ADVISOR_TENANT_NOT_GRANTED")
         if self.tenant_id is not None and self.tenant_id != tenant_id:
             raise HTTPException(403, "无权访问该客户的数据")
         bind_tenant(tenant_id)
@@ -246,7 +260,7 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
 
 
 async def _build_context(user: User, session: AsyncSession) -> AuthContext:
-    role = await session.get(Role, user.role_id)
+    role = await session.get(Role, user.role_id, populate_existing=True)
     perms = dict(role.permissions or {}) if role else {}
     return bind_identity(AuthContext(
         user_id=user.id,
@@ -262,21 +276,44 @@ async def require_auth(
     header_key: str | None = Security(_api_key_header),
     key: str | None = Query(None, description="API Key，与 X-API-Key 等价（脚本用）"),
     session: AsyncSession = Depends(get_session),
+    request: Request = None,
 ) -> AuthContext:
     # 1) JWT（前端登录态）
     if bearer and bearer.credentials:
         try:
-            payload = jwt.decode(bearer.credentials, _jwt_secret(), algorithms=[JWT_ALG])
+            # Signature/time are verified first. New audiences are checked below
+            # against the database identity; old non-advisor JWTs keep no aud.
+            payload = jwt.decode(bearer.credentials, _jwt_secret(), algorithms=[JWT_ALG],
+                                 options={"verify_aud": False, "require": ["sub", "exp"]})
         except jwt.ExpiredSignatureError:
             raise HTTPException(401, "登录已过期，请重新登录")
         except jwt.InvalidTokenError:
             raise HTTPException(401, "登录凭证无效，请重新登录")
-        user = await session.get(User, int(payload["sub"]))
+        from app.security.advisor_tenant_auth import (
+            apply_advisor_claims, enforce_advisor_request, positive_id, reject,
+        )
+        if payload.get("via") == "advisor_switch":
+            reject(401, "LEGACY_ADVISOR_SWITCH_DISABLED")
+        user = await session.get(User, positive_id(payload["sub"]), populate_existing=True)
         if user is None or not user.is_active:
             raise HTTPException(401, "账号不存在或已停用")
+        locked_until = user.locked_until
+        if locked_until is not None:
+            if locked_until.tzinfo is None:
+                locked_until = locked_until.replace(tzinfo=timezone.utc)
+            if locked_until > datetime.now(timezone.utc):
+                raise HTTPException(401, "账号已锁定")
         from app.security.advisor_switch import validate_switch_claims
         await validate_switch_claims(session, payload, user)
-        return await _build_context(user, session)
+        ctx = await _build_context(user, session)
+        role = await session.get(Role, user.role_id, populate_existing=True)
+        ctx = await apply_advisor_claims(ctx, user, role, payload, session)
+        if not ctx.is_advisor and "aud" in payload:
+            reject(401, "ADVISOR_INVALID_TOKEN")
+        if request is not None:
+            request.state.advisor_restricted = ctx.is_advisor
+            await enforce_advisor_request(request, ctx, session)
+        return ctx
 
     # 2) admin API Key 兜底（curl / 冒烟 / 调度）
     #    - 优先 X-API-Key 请求头
@@ -331,7 +368,7 @@ async def enforce_scoped_request(request: Request, ctx: AuthContext) -> AuthCont
     query_tid = request.query_params.get("tenant_id")
     path_tid = request.path_params.get("tenant_id")
     if query_tid is not None:
-        tenant_id_values.append(query_tid)
+        tenant_id_values.extend(request.query_params.getlist("tenant_id"))
     if path_tid is not None:
         tenant_id_values.append(path_tid)
     if request.method not in _READ_METHODS:
@@ -341,6 +378,20 @@ async def enforce_scoped_request(request: Request, ctx: AuthContext) -> AuthCont
             payload = None
         if isinstance(payload, dict) and "tenant_id" in payload:
             tenant_id_values.append(payload["tenant_id"])
+        if ctx.is_advisor:
+            def nested_tenants(value):
+                if isinstance(value, dict):
+                    for k, v in value.items():
+                        if k == "tenant_id":
+                            yield v
+                        elif k == "tenant_ids" and isinstance(v, list):
+                            yield from v
+                        else:
+                            yield from nested_tenants(v)
+                elif isinstance(value, list):
+                    for item in value:
+                        yield from nested_tenants(item)
+            tenant_id_values.extend(nested_tenants(payload))
 
     parsed_tenant_ids: list[int] = []
     for tid in tenant_id_values:

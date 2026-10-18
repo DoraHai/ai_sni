@@ -11,6 +11,12 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "app/security/advisor_scope.py",
+    "app/security/advisor_tenant_auth.py",
+    "app/models/advisor_tenant_grant.py",
+    "app/models/user.py",
+    "tests/test_advisor_tenant_auth.py",
+    "docs/ADVISOR_TENANT_SEO_MATRIX.md",
     "app/seo_offline_handoff.py",
     "tests/test_seo_offline_handoff.py",
     "frontend/scripts/test-seo-offline-handoff.mjs",

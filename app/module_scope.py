@@ -198,7 +198,13 @@ async def list_module_tenants(
         )
         .order_by(Tenant.id)
     )
-    if ctx.tenant_id is not None:
+    if ctx.is_advisor:
+        # Identity sessions may list their current grants, never all tenants.
+        from app.models.advisor_tenant_grant import AdvisorTenantGrant
+        stmt = stmt.where(Tenant.id.in_(select(AdvisorTenantGrant.tenant_id).where(
+            AdvisorTenantGrant.user_id == ctx.user_id,
+            AdvisorTenantGrant.revoked_at.is_(None))))
+    elif ctx.tenant_id is not None:
         stmt = stmt.where(Tenant.id == ctx.tenant_id)
     rows = list((await session.scalars(stmt)).all())
     return rows

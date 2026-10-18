@@ -51,11 +51,11 @@ async def scope(session, ctx, tenant_id, site_id, content_id, *, write=False):
         raise error(403, "conversation_forbidden", "需要获授权的实名客户或站点顾问")
     await ensure_module_access(session, ctx, tenant_id, "seo")
     revisions = list((await session.execute(text("SELECT version_num FROM alembic_version"))).scalars())
-    if len(revisions) != 1 or revisions[0] not in {SCHEMA, "0107_seo_site_delete", "0108_advisor_account_links"}:
+    if len(revisions) != 1 or revisions[0] not in {SCHEMA, "0107_seo_site_delete", "0108_advisor_account_links", "0109_advisor_tenant_grants"}:
         raise error(503, "conversation_schema_unavailable", "站内沟通结构尚未就绪")
     # Shared locks keep account activation and assignment stable through this request.
     user = await session.scalar(select(User).where(User.id == ctx.user_id).with_for_update(read=True))
-    if not user or not user.is_active or (user.tenant_id is not None and user.tenant_id != tenant_id):
+    if not user or not user.is_active or (not ctx.is_advisor and user.tenant_id is not None and user.tenant_id != tenant_id):
         raise error(403, "conversation_forbidden", "账号无权参与当前会话")
     site = await session.get(SeoSite, site_id)
     content = await session.scalar(select(SeoContentAsset).where(SeoContentAsset.id == content_id,

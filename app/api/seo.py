@@ -6717,7 +6717,7 @@ async def _content_confirmation_schema_ready(session: AsyncSession) -> bool:
         # treating it as pre-0105 preserves the real code-first rollout path.
         revision = await revision
     return revision in {"0105_seo_content_confirmations", "0106_seo_content_messages", "0107_seo_site_delete",
-                        "0108_advisor_account_links"}
+                        "0108_advisor_account_links", "0109_advisor_tenant_grants"}
 
 
 async def _advisor_assignment(
