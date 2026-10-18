@@ -15,6 +15,7 @@ import {renderAutomationOps,automationNotifications} from './platform-automation
 import {renderReadiness,balanceNotifications} from './platform-readiness-view.mjs';
 import {renderAudit} from './platform-audit-view.mjs';
 import {createAdvisorLinksPanel} from './platform-advisor-links.mjs';
+import {visibilityServiceHelp} from './search-visibility-client.mjs';
 
 const tabs=[['overview','平台总览'],['customers','客户与服务'],['accounts','账号与权限'],['apis','API 与调用'],
   ['ai-governance','AI 自动化治理'],['automation-ops','自动执行运维'],['distribution','多号通分发接入'],['balances','实时余额与预警'],['costs','成本与用量'],['controls','API 与预算管理'],['config','系统配置'],['alerts','告警与处理'],['tasks','任务与调度'],['security','安全与运维'],['inventory','系统盘点']];
@@ -44,7 +45,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   const advisorLinks=createAdvisorLinksPanel({session,fetchImpl,onChange:()=>render()});
   root.classList.add('platform-console');browser.document.title='超级管理员工作台 · G-SNIPERS';
   let distributionMount=null;
-  let page=new URLSearchParams(browser.location?.search||'').get('setup')==='nord'?'distribution':'overview',snapshot=null,identity=null,busy=false,disposed=false,ownChange=false,query='',revision=0;
+  let page=new URLSearchParams(browser.location?.search||'').get('setup')==='nord'?'distribution':new URLSearchParams(browser.location?.search||'').get('page')==='costs'?'costs':'overview',snapshot=null,identity=null,busy=false,disposed=false,ownChange=false,query='',revision=0;
   let loginController=null,notice='',saving=false,connectionId=null,alertId=null,supplierHost=null;
   const today=()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai'}).format(new Date());
   const blankHistory=()=>({filters:{from:today().slice(0,7)+'-01',to:today()},data:null,cursors:[],busy:false,error:''});
@@ -55,9 +56,9 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   function searchUsageText(){return searchVisibilityUsage?`DeepSeek 搜索可见度 · 本月 ${value(searchVisibilityUsage.requests)} 次请求 / ${value(searchVisibilityUsage.billable)} 次计费 · 估算 ${Number(searchVisibilityUsage.cost_cny).toFixed(3)} 元 / 上限 ${Number(searchVisibilityUsage.limit_cny).toFixed(2)} 元${searchVisibilityUsage.reserved_cny?' · 另有 '+Number(searchVisibilityUsage.reserved_cny).toFixed(3)+' 元待确认预留':''}`:'DeepSeek 搜索可见度 · '+searchVisibilityUsageNote;}
   async function querySearchUsage(){
     const started=revision;searchVisibilityUsage=null;searchVisibilityUsageNote='正在读取本月用量…';
-    try{const data=await client.searchVisibilityUsage();if(disposed||started!==revision)return;searchVisibilityUsage=data.state==='ready'?data:null;searchVisibilityUsageNote='待启用';}
+    try{const data=await client.searchVisibilityUsage();if(disposed||started!==revision)return;searchVisibilityUsage=data.state==='ready'?data:null;searchVisibilityUsageNote=data.state==='not_enabled'?visibilityServiceHelp:'本月用量暂时查不到，请超管联系技术人员核对服务器上的搜索服务配置。';}
     catch(e){if(disposed||started!==revision)return;if(e.status===401||e.status===403){revision++;client.invalidate();snapshot=null;identity=null;gate('无法读取搜索可见度用量','管理员权限已变化，请重新登录。');return;}
-      searchVisibilityUsageNote=e.status===404?'待启用':'本月用量暂时无法读取，请刷新重试。';}
+      searchVisibilityUsageNote=e.status===404?'本月用量暂时查不到，请超管联系技术人员核对服务器上的搜索服务配置。':'本月用量暂时无法读取，请刷新重试。';}
     const line=root.querySelector('[data-sv-usage]');if(line)line.textContent=searchUsageText();
   }
   const blankAutomation=()=>({busy:false,modules:{seo:{state:'unknown',data:null},geo:{state:'unknown',data:null}}});

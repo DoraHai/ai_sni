@@ -1,4 +1,6 @@
 import {escapeText as esc} from './customer-display.mjs';
+import {visibilityNotEnabled} from './search-visibility-client.mjs';
+import {platformConsolePath} from './platform-console-client.mjs';
 export const visibilityNotice='这是 DeepSeek 搜索引擎能不能搜到你，不等于 DeepSeek 回答里会提到你';
 export function visibilityTime(value){
   if(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(value||''))return value;
@@ -28,7 +30,7 @@ function configForm(state){
   const d=state.draft,textarea=(key,label,max,hint)=>`<label>${label}<small>${hint}，最多 ${max} 条，每行一条</small><textarea data-sv-field="${key}" rows="${key==='extra_article_urls'?3:2}">${esc(Array.isArray(d[key])?d[key].join('\n'):d[key]||'')}</textarea></label>`;
   return `<form class="sv-form"><h3>GEO 项目设置 · DeepSeek 搜索可见度</h3>
     <label class="sv-check"><input type="checkbox" data-sv-field="enabled" ${d.enabled?'checked':''}>每周核对这个项目</label>
-    <p class="sv-muted">每周一北京时间 06:00 检查；没有配置服务密钥时显示“待启用”。密钥由服务器管理。</p>
+    <p class="sv-muted">开启并保存后，搜索服务接通时，每周一北京时间早上 6 点会自动检查一次。若项目已开启仍无法检查，请超管联系技术人员在服务器上配置搜索服务。</p>
     ${textarea('domains','网站域名',3,'例如 example.com，不带协议或路径')}
     <label>中文首页地址<small>填写中文页面的完整链接，减少被跳到外语版的情况</small><input data-sv-field="zh_url" type="url" maxlength="2048" value="${esc(d.zh_url||'')}"></label>
     ${textarea('brand_terms','品牌词',5,'填写客户品牌或常用叫法，每个词最多 128 字')}
@@ -39,7 +41,7 @@ function configForm(state){
     <p class="sv-muted">默认关闭。前 4 周先由顾问核对，确认数字可靠后再开放给客户。</p>
     <button type="submit" ${state.busy?'disabled':''}>保存项目设置</button></form>`;
 }
-export function renderSearchVisibility(state,{advisor=false}={}){
+export function renderSearchVisibility(state,{advisor=false,admin=false}={}){
   const data=state.data;
   if(!advisor&&(!data||data.state==='not_open'))return '';
   const job=data?.latest,summary=job?.result?.summary,waiting=['pending','running'].includes(job?.status);
@@ -48,7 +50,7 @@ export function renderSearchVisibility(state,{advisor=false}={}){
   const form=advisor?configForm(state):'';
   const feedback=state.message?`<p role="status" class="sv-feedback">${esc(state.message)}</p>`:'';
   if(!data)return `<section class="sv-card">${header}<p class="sv-empty">${state.message?'检查结果暂时无法读取，请刷新核对。':'正在读取检查结果…'}</p>${feedback}${form}</section>`;
-  if(data.state==='not_enabled')return `<section class="sv-card">${header}<p class="sv-empty"><span class="pending-badge">待启用</span> ${advisor?'开启项目开关并开通搜索服务后，这里会显示检查结果。':'顾问开通后，这里会显示检查结果。'}</p>${feedback}${form}</section>`;
+  if(data.state==='not_enabled')return `<section class="sv-card">${header}<p class="sv-empty">${esc(visibilityNotEnabled({advisor,admin,enabled:state.enabled}))}</p>${advisor&&admin?`<p><a href="${platformConsolePath}&page=costs">查看平台成本与用量</a></p>`:''}${feedback}${form}</section>`;
   if(!job)return `<section class="sv-card">${header}<p class="sv-empty">还没有检查记录。${advisor?'保存设置后，可以立即跑一次。':'顾问完成首次检查后，结果会显示在这里。'}</p>${feedback}${advisor?control('run','立即跑一次',state.busy):''}${form}</section>`;
   const metric=(label,value,explain)=>`<div><small>${label}</small><strong>${waiting?'检查中':value}</strong><p>${explain}</p></div>`;
   const items=job.result?.items||[],wordRows=items.filter(i=>['brand','core'].includes(i.kind)),pages=items.filter(i=>['homepage','article'].includes(i.kind));

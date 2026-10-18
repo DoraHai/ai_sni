@@ -100,6 +100,9 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
     assert.equal(await p.title(),'超级管理员工作台 · G-SNIPERS');assert(!await p.$('.chat'));assert(!await p.$('.composer'));assert.match(await body(),/本月 API 估算待接入/);
     await p.waitForFunction(()=>document.querySelector('[data-sv-usage]')?.textContent.includes('3 次请求 / 1 次计费'));
     assert.match(await p.$eval('[data-sv-usage]',e=>e.textContent),/估算 0.005 元 \/ 上限 30.00 元/);
+    await p.goto(origin+'/customer-workbench/?console=platform&page=costs');
+    await p.waitForFunction(()=>document.querySelector('.pc-title h1')?.textContent==='成本与用量');
+    assert.equal(await p.$eval('.pc-sidebar [aria-current=page]',e=>e.dataset.pcPage),'costs');
     const originalUsage={...usageData};
     for(const scenario of ['not_enabled','zero-ready','missing-state','404']){
       stage='search-usage-'+scenario;
@@ -107,10 +110,10 @@ test('built superadmin console uses real-shaped data, all tabs and strict identi
       usageData=scenario==='zero-ready'?{...originalUsage,requests:0,billable:0,cost_cny:0}:scenario==='not_enabled'?{...originalUsage,state:'not_enabled'}:{...originalUsage};
       if(scenario==='missing-state')delete usageData.state;
       await p.click('[data-pc=refresh]');
-      await p.waitForFunction(expected=>document.querySelector('[data-sv-usage]')?.textContent.includes(expected),{},scenario==='zero-ready'?'0 次请求 / 0 次计费':'待启用');
+      await p.waitForFunction(expected=>document.querySelector('[data-sv-usage]')?.textContent.includes(expected),{},scenario==='zero-ready'?'0 次请求 / 0 次计费':scenario==='not_enabled'?'平台的搜索服务还没接通':'本月用量暂时查不到');
       const text=await p.$eval('[data-sv-usage]',e=>e.textContent);
       if(scenario==='zero-ready')assert.doesNotMatch(text,/待启用/);
-      else assert.doesNotMatch(text,/次请求|估算/);
+      else {assert.doesNotMatch(text,/次请求|估算|待启用|not_enabled|api_key|[A-Z][A-Z0-9]*_[A-Z_]+/);assert.match(text,/超管联系技术人员.*服务器/);}
     }
     usageStatus=200;usageData=originalUsage;await p.click('[data-pc=refresh]');
     await p.waitForFunction(()=>document.querySelector('[data-sv-usage]')?.textContent.includes('3 次请求 / 1 次计费'));
