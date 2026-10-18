@@ -101,6 +101,17 @@ async def list_module_tenants(
     module_code: str,
 ) -> list[Tenant]:
     code = normalize_module_code(module_code)
+    if ctx.advisor_scope is not None:
+        from app.models.advisor_tenant_grant import AdvisorTenantGrant
+        return list((await session.scalars(select(Tenant).join(
+            TenantModule, TenantModule.tenant_id == Tenant.id
+        ).join(AdvisorTenantGrant, AdvisorTenantGrant.tenant_id == Tenant.id).where(
+            AdvisorTenantGrant.user_id == ctx.user_id,
+            AdvisorTenantGrant.revoked_at.is_(None),
+            TenantModule.module_code == code,
+            TenantModule.status.in_(ACTIVE_MODULE_STATUSES),
+            or_(TenantModule.expires_at.is_(None), TenantModule.expires_at >= date.today()),
+        ).order_by(Tenant.id))).all())
     rows = await list_active_module_tenants(session, code)
     if ctx.tenant_id is None:
         return rows

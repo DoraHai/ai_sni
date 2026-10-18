@@ -227,7 +227,8 @@ async def analysis_report(
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
     ctx.ensure_tenant(tenant_id)
     report = await get_analysis_report(
-        session, tenant, start_date, end_date, force=force
+        session, tenant, start_date, end_date, force=force,
+        **({"read_only": True} if ctx.advisor_scope is not None else {})
     )
     return _report_view(report, version, ctx)
 
@@ -251,7 +252,8 @@ async def export_analysis_report(
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
     ctx.ensure_tenant(tenant_id)
     report = await get_analysis_report(
-        session, tenant, start_date, end_date, force=False
+        session, tenant, start_date, end_date, force=False,
+        **({"read_only": True} if ctx.advisor_scope is not None else {})
     )
     rows = _rows_from_report(_report_view(report, version, ctx))
     filename = _download_period_filename(
@@ -302,7 +304,8 @@ async def monthly_report(
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
     ctx.ensure_tenant(tenant_id)
-    report = await get_monthly_report(session, tenant, year, month, force=force)
+    report = await get_monthly_report(session, tenant, year, month, force=force,
+        **({"read_only": True} if ctx.advisor_scope is not None else {}))
     return _report_view(report, version, ctx)
 
 
@@ -321,7 +324,8 @@ async def export_monthly_report(
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
     ctx.ensure_tenant(tenant_id)
-    report = await get_monthly_report(session, tenant, year, month, force=False)
+    report = await get_monthly_report(session, tenant, year, month, force=False,
+        **({"read_only": True} if ctx.advisor_scope is not None else {}))
     rows = _rows_from_report(_report_view(report, version, ctx))
 
     if format == "xls":

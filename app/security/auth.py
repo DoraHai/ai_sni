@@ -27,6 +27,8 @@ from app.models.user import User
 from app.security.api_key import resolve_api_key
 from app.security.sem_identity import ensure_sem_identity_access
 from app.permissions import OPERATOR_PERMS, effective_role_permissions
+from app.security.advisor_scope import (AdvisorScope, account_locked, active_grants, deny,
+                                        is_advisor, read_grants)
 
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _bearer = HTTPBearer(auto_error=False)
@@ -84,11 +86,23 @@ def _jwt_secret() -> str:
 
 def issue_token(user: User, *, switch_source_id: int | None = None,
                 switch_group_id: str | None = None, root_source_id: int | None = None,
-                auth_exp: int | None = None) -> str:
+                auth_exp: int | None = None, advisor: bool = False,
+                tenant_id: int | None = None, grant_id: int | None = None) -> str:
     """token 只放 user id + 过期（角色/权限运行时从库读，便于即时生效）。"""
     s = get_settings()
     now = datetime.now(timezone.utc)
-    payload = {"sub": str(user.id), "exp": now + timedelta(hours=s.jwt_expire_hours)}
+    payload = {"sub": str(user.id), "exp": now + timedelta(hours=s.jwt_expire_hours),
+               "iat": int(now.timestamp())}
+    if advisor:
+        expires = int((now + timedelta(hours=s.jwt_expire_hours)).timestamp())
+        if tenant_id is None:
+            payload.update(scope_kind="advisor_identity", aud="advisor-session", exp=expires)
+        else:
+            if (type(tenant_id) is not int or tenant_id <= 0 or type(grant_id) is not int
+                    or grant_id <= 0 or type(auth_exp) is not int or auth_exp <= now.timestamp()):
+                raise ValueError("无效的顾问客户会话")
+            payload.update(scope_kind="advisor_tenant", aud="advisor-business", tid=tenant_id,
+                           gid=grant_id, auth_exp=auth_exp, exp=min(expires, auth_exp))
     if switch_source_id is not None:
         if root_source_id is None or auth_exp is None or auth_exp <= now.timestamp():
             raise ValueError("切换会话缺少有效的原登录信息")
@@ -108,6 +122,8 @@ class AuthContext:
     tenant_id: int | None  # 绑定的单客户；None=全客户
     permissions: dict[str, str] = field(default_factory=dict)  # {菜单key: view|edit}
     is_superadmin: bool = False  # API Key 兜底
+    advisor_scope: AdvisorScope | None = None
+    auth_exp: int | None = None
 
     def can_view(self, *keys: str) -> bool:
         if self.is_superadmin:
@@ -121,6 +137,8 @@ class AuthContext:
 
     def ensure_tenant(self, tenant_id: int) -> None:
         """绑定了单客户的账号只能访问该客户的数据。"""
+        if self.advisor_scope is not None:
+            self.advisor_scope.ensure_tenant(tenant_id)
         if self.tenant_id is not None and self.tenant_id != tenant_id:
             raise HTTPException(403, "无权访问该客户的数据")
         bind_tenant(tenant_id)
@@ -288,18 +306,55 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     return None, edit  # 未登记路径（如 /auth/*）：不做菜单校验，仅需登录
 
 
-async def _build_context(user: User, session: AsyncSession) -> AuthContext:
-    role = await session.get(Role, user.role_id)
+async def _build_context(user: User, session: AsyncSession, payload: dict | None = None) -> AuthContext:
+    role = await session.get(Role, user.role_id, populate_existing=True)
     perms = (
         effective_role_permissions(role.name, role.is_system, role.permissions)
         if role else {}
     )
+    advisor = is_advisor(role)
+    rows = []
+    # Trusted existing platform admins retain their branch. Fixed customers
+    # retain their old bound restriction when the new table is not yet present.
+    if advisor or not any(k.startswith("settings.") and v == "edit" for k, v in perms.items()):
+        try:
+            rows = await read_grants(session, user.id)
+        except HTTPException:
+            if advisor or user.tenant_id is None:
+                raise
+    scope = None
+    tenant_id = user.tenant_id
+    if advisor or rows:
+        if not advisor:
+            deny(403, "ADVISOR_ROLE_CHANGED", "顾问角色已变化，请管理员核对客户授权")
+        active = await active_grants(session, rows)
+        scope = AdvisorScope(frozenset(g.tenant_id for g in active))
+        tenant_id = None
+        claims = payload or {}
+        kind = claims.get("scope_kind")
+        if kind == "advisor_tenant":
+            tid, gid = claims.get("tid"), claims.get("gid")
+            if type(tid) is not int or tid <= 0 or type(gid) is not int or gid <= 0:
+                deny(401, "ADVISOR_INVALID_TOKEN", "无效的客户凭证")
+            grant = next((g for g in active if g.id == gid and g.tenant_id == tid), None)
+            if grant is None:
+                deny(401, "ADVISOR_GRANT_REVOKED", "客户授权已撤销，请重新选择客户")
+            if user.tenant_id not in scope.tenant_ids:
+                deny(403, "ADVISOR_DEFAULT_TENANT_INVALID", "默认客户与授权不一致，请管理员修复")
+            scope = AdvisorScope(scope.tenant_ids, tid, gid)
+            tenant_id = tid
+        elif kind not in (None, "advisor_identity"):
+            deny(401, "ADVISOR_INVALID_TOKEN", "无效的顾问凭证类型")
+    elif payload and payload.get("scope_kind") is not None:
+        deny(401, "ADVISOR_ROLE_CHANGED", "顾问角色已变化，请重新登录")
     return bind_identity(AuthContext(
         user_id=user.id,
         username=user.username,
         role_name=role.name if role else "?",
-        tenant_id=user.tenant_id,
+        tenant_id=tenant_id,
         permissions=perms,
+        advisor_scope=scope,
+        auth_exp=(payload or {}).get("auth_exp", (payload or {}).get("exp")),
     ))
 
 
@@ -308,25 +363,50 @@ async def require_auth(
     header_key: str | None = Security(_api_key_header),
     key: str | None = Query(None, description="旧版 API Key 查询参数；需服务端显式开启"),
     session: AsyncSession = Depends(get_session),
+    request: Request = None,
 ) -> AuthContext:
     # 1) JWT（前端登录态）
     if bearer and bearer.credentials:
         try:
-            payload = jwt.decode(bearer.credentials, _jwt_secret(), algorithms=[JWT_ALG])
+            # Verify signature/time first, then explicitly validate the audience
+            # for every new scope; legacy non-advisor tokens have no audience.
+            payload = jwt.decode(bearer.credentials, _jwt_secret(), algorithms=[JWT_ALG],
+                                 options={"verify_aud": False})
+            kind = payload.get("scope_kind")
+            expected = {"advisor_identity": "advisor-session", "advisor_tenant": "advisor-business"}
+            if kind is not None:
+                if kind not in expected:
+                    raise jwt.InvalidTokenError()
+                payload = jwt.decode(bearer.credentials, _jwt_secret(), algorithms=[JWT_ALG],
+                                     audience=expected[kind], options={"require": ["exp", "iat", "sub", "aud"]})
+                if type(payload["exp"]) is not int or type(payload["iat"]) is not int:
+                    raise jwt.InvalidTokenError()
+                if kind == "advisor_tenant" and (type(payload.get("auth_exp")) is not int
+                        or payload["exp"] > payload["auth_exp"]):
+                    raise jwt.InvalidTokenError()
+            elif "aud" in payload:
+                raise jwt.InvalidTokenError()
         except jwt.ExpiredSignatureError:
             raise HTTPException(401, "登录已过期，请重新登录")
         except jwt.InvalidTokenError:
             raise HTTPException(401, "登录凭证无效，请重新登录")
         try:
-            user_id = int(payload["sub"])
+            sub = payload["sub"]
+            if not isinstance(sub, str) or not sub.isascii() or not sub.isdecimal() or int(sub) <= 0:
+                raise ValueError()
+            user_id = int(sub)
         except (KeyError, TypeError, ValueError):
             raise HTTPException(401, "登录凭证无效，请重新登录")
-        user = await session.get(User, user_id)
-        if user is None or not user.is_active:
+        user = await session.get(User, user_id, populate_existing=True)
+        if user is None or not user.is_active or account_locked(user):
             raise HTTPException(401, "账号不存在或已停用")
         from app.security.advisor_switch import validate_switch_claims
         await validate_switch_claims(session, payload, user)
-        return await _build_context(user, session)
+        ctx = await _build_context(user, session, payload)
+        if ctx.advisor_scope is not None:
+            from app.security.advisor_request import guard_advisor_request
+            await guard_advisor_request(session, ctx, request, payload)
+        return ctx
 
     # 2) admin API Key 兜底（curl / 冒烟 / 调度）
     settings = get_settings()
@@ -370,7 +450,7 @@ async def require_scoped_auth(
     query_tid = request.query_params.get("tenant_id")
     path_tid = request.path_params.get("tenant_id")
     if query_tid is not None:
-        tenant_id_values.append(query_tid)
+        tenant_id_values.extend(request.query_params.getlist("tenant_id"))
     if path_tid is not None:
         tenant_id_values.append(path_tid)
     if request.method not in _READ_METHODS:

@@ -33,6 +33,21 @@ from app.security.auth import AuthContext
 from app.security.auth import issue_token, require_auth
 
 
+@pytest.fixture(autouse=True)
+def legacy_validator_compatibility(monkeypatch):
+    """Keep testing the retained legacy implementation with its gate explicit.
+
+    Production defaults and rejection of old tokens are tested using real SQL
+    and the full new guard in test_advisor_multi_tenant.py.
+    """
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "advisor_legacy_account_switch_enabled", True)
+    async def legacy_context(user, session, payload=None):
+        return AuthContext(user.id, user.username, "advisor", user.tenant_id,
+                           {"seo.site": "edit", "seo.content": "edit"})
+    monkeypatch.setattr("app.security.auth._build_context", legacy_context)
+
+
 def actor(user_id=1):
     return AuthContext(user_id, "advisor", "advisor", 10 if user_id else None,
                        {"seo.site": "edit", "seo.content": "edit"})

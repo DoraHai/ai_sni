@@ -241,6 +241,9 @@ class Settings(BaseSettings):
     # 登录态 JWT 签名密钥；不配则退化复用 admin_api_key（本地冒烟方便），生产必须单独配
     jwt_secret: str = ""
     jwt_expire_hours: int = 12
+    advisor_multi_tenant_enabled: bool = False
+    advisor_legacy_account_switch_enabled: bool = False
+    advisor_high_risk_writes_enabled: bool = False
 
     # 登录防护：失败次数在一个时间窗内累计，达到阈值后临时锁定账号。
     login_max_failed_attempts: int = Field(default=5, ge=3, le=20)

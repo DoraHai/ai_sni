@@ -8,6 +8,7 @@ from sqlalchemy.exc import DBAPIError
 from app.models.advisor_account import AdvisorAccountLink
 from app.models.role import Role
 from app.models.user import User
+from app.config import get_settings
 
 
 def _invalid():
@@ -28,6 +29,8 @@ async def validate_switch_claims(session, payload: dict, target: User) -> None:
     """Fail closed for malformed, expired or revoked derived sessions."""
     if "via" not in payload:
         return
+    if not get_settings().advisor_legacy_account_switch_enabled:
+        _invalid()
     if payload.get("via") != "advisor_switch":
         _invalid()
     try:

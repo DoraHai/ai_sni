@@ -13,6 +13,8 @@ from app.models import Role, User
 from app.permissions import MENUS, normalize_permissions
 from app.security.auth import AuthContext, require_admin
 from app.platform_operations import audit_business
+from types import SimpleNamespace
+from app.security.advisor_scope import is_advisor, read_grants, deny
 
 router = APIRouter(
     prefix="/api/v1/roles",
@@ -94,6 +96,26 @@ async def update_role(
     if role is None:
         raise HTTPException(404, "角色不存在")
     before = _audit_state(role)
+    candidate = SimpleNamespace(name=req.name.strip() if req.name is not None else role.name,
+                                is_system=role.is_system,
+                                permissions=req.permissions if req.permissions is not None else role.permissions)
+    if is_advisor(role) != is_advisor(candidate):
+        affected = list((await session.scalars(select(User).where(User.role_id == role.id))).all())
+        if affected:
+            deny(409, "ADVISOR_ROLE_CHANGE_FROZEN", "批量改变顾问身份已冻结，请逐个核对客户授权")
+    # A formerly managed role must not remove its historical restriction by
+    # adding settings permissions through a bulk role edit.
+    if req.permissions is not None and not is_advisor(candidate):
+        affected = list((await session.scalars(select(User).where(User.role_id == role.id))).all())
+        for user in affected:
+            try:
+                history = await read_grants(session, user.id)
+            except HTTPException as exc:
+                if exc.status_code != 503 or user.tenant_id is None:
+                    raise
+                history = []
+            if history:
+                deny(409, "ADVISOR_ROLE_CHANGE_FROZEN", "角色含有受限历史账号，请逐个核对客户授权")
     if req.name is not None and req.name.strip() != role.name:
         if role.is_system:
             raise HTTPException(400, "内置角色不可改名")

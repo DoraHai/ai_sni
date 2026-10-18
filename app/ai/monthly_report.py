@@ -586,6 +586,7 @@ async def get_analysis_report(
     start: date,
     end: date,
     force: bool = False,
+    *, read_only: bool = False,
 ) -> dict:
     """组装自定义日期区间报告，并按租户+区间缓存 AI 叙述。"""
     data = await gather_report_data(session, tenant, start, end)
@@ -607,7 +608,7 @@ async def get_analysis_report(
             ),
         }
         generated_at = cached.generated_at
-    elif is_enabled():
+    elif not read_only and is_enabled():
         try:
             narrative = await generate_narrative(data)
         except DeepSeekError as exc:
@@ -659,6 +660,7 @@ async def get_monthly_report(
     year: int,
     month: int,
     force: bool = False,
+    *, read_only: bool = False,
 ) -> dict:
     """组装月报：实时数据模块 + 缓存/新生成的 AI 叙述。
 
@@ -688,7 +690,7 @@ async def get_monthly_report(
             ),
         }
         generated_at = cached.generated_at
-    elif is_enabled():
+    elif not read_only and is_enabled():
         try:
             narrative = await generate_narrative(data)
         except DeepSeekError as e:
