@@ -295,8 +295,16 @@ async def require_geo_request_entitlement(
             ):
                 continue
             raise GeoDemoExecutionBlocked()
+        # Progress reads must remain available while a worker owns the tenant
+        # lock across its model call. Keep the same scope, entitlement and demo
+        # checks; only these two read-only routes use an unlocked observation.
+        route_path = getattr(request.scope.get("route"), "path", "")
+        progress_read = request.method.upper() == "GET" and route_path in {
+            "/api/v1/geo/async-jobs",
+            "/api/v1/geo/async-jobs/{job_id}",
+        }
         policy = await ensure_geo_entitlement(
-            session, tenant_id, allow_demo_read=True, lock_binding=True
+            session, tenant_id, allow_demo_read=True, lock_binding=not progress_read
         )
         enforce_demo_request(policy, request)
     return ctx

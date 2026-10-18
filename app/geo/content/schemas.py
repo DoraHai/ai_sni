@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class VariantExportRequest(BaseModel):
@@ -266,9 +266,26 @@ class VariantUpdate(BaseModel):
 
 class PublicationCreate(BaseModel):
     tenant_id: int
-    channel: str
+    channel: str = Field(..., min_length=1, max_length=32)
+    custom_channel_name: str | None = None
+    source_variant_id: int | None = Field(None, gt=0)
     published_url: str = Field(..., min_length=8)
     note: str | None = None
+
+    @field_validator("channel", "custom_channel_name", mode="before")
+    @classmethod
+    def trim_channel(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def validate_custom_channel(self):
+        if self.channel == "other":
+            name = self.custom_channel_name or ""
+            if not 1 <= len(name) <= 30 or not any(c.isalnum() for c in name):
+                raise ValueError("请填写渠道名称，最多30个字，不能只填符号")
+            if any(not c.isprintable() for c in name):
+                raise ValueError("渠道名称不能包含换行或不可见字符")
+        return self
 
 
 class WebhookPushRequest(BaseModel):

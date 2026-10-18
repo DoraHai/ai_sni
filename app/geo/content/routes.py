@@ -8469,6 +8469,7 @@ async def _write_publication(
     note: str | None,
     publish_mode: str,
     published_at: datetime | None = None,
+    channel_name: str | None = None,
 ) -> bool:
     from app.geo.content.attribution import normalize_url_for_match
     await session.refresh(task, with_for_update=True)
@@ -8497,6 +8498,7 @@ async def _write_publication(
     assert_can_publish(rule_input, task=task, brand=brand)
     existing = await session.scalar(select(GeoPublication).where(
         GeoPublication.variant_id == variant.id,
+        GeoPublication.channel == channel,
         GeoPublication.published_url == published_url,
     ).limit(1))
     if existing is not None:
@@ -8525,7 +8527,10 @@ async def _write_publication(
     session.add(pub)
     await session.flush()
     from app.geo.publication_monitor import initial_state, store_state
-    store_state(variant, pub, {**initial_state(variant), 'baseline_source': 'publication_registration'})
+    state = {**initial_state(variant), 'baseline_source': 'publication_registration'}
+    if channel_name is not None:
+        state['channel_name'] = channel_name
+    store_state(variant, pub, state)
     variant.status = "published"
     task.status = "published"
     await _sync_task_pipeline(session, task)
@@ -8543,12 +8548,31 @@ async def record_publication(
     await ensure_geo_entitlement(session, req.tenant_id)
     task = await _get_task(session, task_id, req.tenant_id)
     url = req.published_url.strip()
-    if not url.startswith(("http://", "https://")):
-        raise HTTPException(400, "URL 无效，需以 http:// 或 https:// 开头")
+    from urllib.parse import urlsplit
+    try:
+        parsed = urlsplit(url)
+        valid_url = (parsed.scheme == "https" and parsed.hostname and parsed.port != 0
+                     and not parsed.username and not parsed.password
+                     and not any(c.isspace() or not c.isprintable() for c in url))
+    except ValueError:
+        valid_url = False
+    if not valid_url:
+        raise HTTPException(400, "请填写完整的 https:// 发布链接")
     variants = {v.channel: v for v in await _variants(session, task.id)}
-    variant = variants.get(req.channel)
+    if req.channel not in variants and req.channel not in {
+        "website", "wechat", "zhihu", "baijiahao", "toutiao",
+        "news_source", "baidu_zhidao", "baidu_tieba", "other",
+    }:
+        raise HTTPException(400, "请选择回填渠道；自定义渠道请选“其他”并填写名称")
+    channel = req.custom_channel_name if req.channel == "other" else req.channel
+    # A manual destination need not support automatic adaptation. Explicitly bind
+    # it to the actual published draft; never create a draft or bypass its gate.
+    if req.source_variant_id is not None:
+        variant = next((v for v in variants.values() if v.id == req.source_variant_id), None)
+    else:
+        variant = variants.get(req.channel) if req.channel != "other" else None
     if variant is None:
-        raise HTTPException(400, "请先生成该渠道版本")
+        raise HTTPException(400, "请选择本任务中实际发布的稿件；没有稿件时请先生成渠道稿")
     article = await _latest_article(session, task.id)
     rule_input = await _build_rule_input(session, task, article)
     tenant = await _ensure_tenant_exists(session, task.tenant_id)
@@ -8561,15 +8585,19 @@ async def record_publication(
         await _ensure_default_publishing_channels(session, req.tenant_id)
     )
     registry_mode = publish_mode_for_channel(req.channel, registry_rows)
-    await _write_publication(
-        session,
-        task=task,
-        variant=variant,
-        channel=req.channel,
-        published_url=url,
-        note=req.note,
-        publish_mode=publication_publish_mode(registry_mode),
-    )
+    try:
+        await _write_publication(
+            session,
+            task=task,
+            variant=variant,
+            channel=channel,
+            published_url=url,
+            note=req.note,
+            publish_mode=publication_publish_mode(registry_mode),
+            channel_name=channel if req.channel == "other" else None,
+        )
+    except PublishGateError as exc:
+        raise HTTPException(400, str(exc)) from exc
     await session.commit()
     await session.refresh(task)
     return await _task_payload(session, task, detail=True)

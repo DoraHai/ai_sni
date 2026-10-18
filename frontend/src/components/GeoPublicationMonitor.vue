@@ -1,6 +1,7 @@
 <script setup>
 import { ref, watch, onBeforeUnmount } from 'vue'
 import { listGeoPublicationMonitor, checkGeoPublicationMonitor } from '../api/geoContent'
+import { backfillChannelLabel } from '../utils/geoBackfillChannels'
 const props = defineProps({ tenantId: Number, taskId: Number, revision: Number })
 const rows = ref([])
 const error = ref('')
@@ -43,7 +44,7 @@ onBeforeUnmount(() => { epoch++ })
     <p v-if="loading">正在读取发布监测记录…</p>
     <p v-if="monitoringActive && !loading && !rows.length && !error">真实发布登记后，自动开始监测。</p>
     <article v-for="row in rows" :key="row.publication_id">
-      <strong>#{{ row.publication_id }} · {{ labels[row.state] || row.state }}</strong>
+      <strong>#{{ row.publication_id }} · {{ row.channel_name || backfillChannelLabel(row.channel) }} · {{ labels[row.state] || row.state }}</strong>
       <p>{{ row.url || '发布记录缺少网址，无法检查' }}</p>
       <small v-if="row.checked_at">最近检查：{{ new Date(row.checked_at).toLocaleString() }}；连续异常 {{ row.failures || 0 }} 次</small>
       <p v-if="row.state === 'version_changed'">请核对原稿版本；新稿实际发布后重新登记。系统不会把草稿变化误判为网站改动。</p>
