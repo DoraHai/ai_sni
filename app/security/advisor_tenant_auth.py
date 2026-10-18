@@ -160,9 +160,11 @@ async def enforce_advisor_request(request, ctx, session):
 
 async def check_seo_objects(request, ctx, session):
     """Resolve actual owners rather than trusting a caller's extra tenant_id."""
+    ctx.advisor_read_site_id = positive_id(request.query_params['site_id']) if request.query_params.get('site_id') else None
     if request.url.path in {
         '/api/v1/seo/content-distribution/connections',
         '/api/v1/seo/content-distribution/video/connections',
+        '/api/v1/seo/rank-serp/brand-profile',
     } and not request.query_params.getlist('site_id'):
         reject(403, 'ADVISOR_ASSIGNMENT_REQUIRED')
     from app.database import Base

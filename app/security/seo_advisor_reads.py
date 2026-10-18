@@ -8,11 +8,15 @@ def assigned_sites(ctx):
     from app.models.module_workspace import SeoSite
     from app.models.seo import SeoSiteAdvisorAssignment as Assignment
     sites, assignments = SeoSite.__table__, Assignment.__table__
-    return select(sites.c.id).join(assignments, assignments.c.site_id == sites.c.id).where(
+    query = select(sites.c.id).join(assignments, assignments.c.site_id == sites.c.id).where(
         sites.c.tenant_id == ctx.tenant_id, sites.c.status == "active",
         assignments.c.tenant_id == ctx.tenant_id, assignments.c.advisor_user_id == ctx.user_id,
         assignments.c.active.is_(True),
     )
+    scope = getattr(ctx, 'advisor_write_scope', None)
+    site_id = getattr(scope[0].state, 'seo_advisor_site_id', None) if scope else None
+    site_id = site_id or getattr(ctx, 'advisor_read_site_id', None)
+    return query.where(sites.c.id == site_id) if site_id is not None else query
 
 
 def scope_conditions(table, ctx):
@@ -23,6 +27,9 @@ def scope_conditions(table, ctx):
     conditions = [table.c.tenant_id == ctx.tenant_id]
     if name == "seo_sites":
         conditions.append(table.c.id.in_(assigned_sites(ctx)))
+    elif name == 'seo_distribution_connections':
+        from app.security.seo_advisor_connections import connection_condition
+        conditions.append(connection_condition(table, ctx))
     elif "site_id" in table.c:
         conditions.append(table.c.site_id.in_(assigned_sites(ctx)))
     elif "content_asset_id" in table.c or "content_id" in table.c:
