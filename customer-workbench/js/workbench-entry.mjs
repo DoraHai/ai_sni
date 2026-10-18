@@ -15,6 +15,7 @@ export function entryScope(search){
 export const workbenchPath=(tenantId,siteId)=>base+(positive(tenantId)&&positive(siteId)?'?'+new URLSearchParams({tenant_id:tenantId,site_id:siteId}):'');
 export const geoWorkbenchPath=(tenantId,projectId)=>base+'?'+new URLSearchParams({module:'geo',...(positive(tenantId)&&positive(projectId)?{tenant_id:tenantId,project_id:projectId}:{})});
 export const workbenchLoginPath=(tenantId,siteId)=>workbenchPath(tenantId,siteId)+(positive(tenantId)&&positive(siteId)?'&':'?')+'login=1';
+export const workspaceSelectionPath=session=>base+(session.isAdvisorSession===true?'?console=advisor':'');
 
 // Dedicated customer entry, using the existing auth API and canonical session store.
 // No business writes, credential persistence, fallback tenant, or authority from URL.
@@ -22,7 +23,7 @@ export function mountWorkbenchEntry({root,session,search=location.search,fetchIm
   const scope=entryScope(search);
   const params=new URLSearchParams(search),advisor=params.getAll('console').length===1&&params.get('console')==='advisor';
   let module=scope.module||'seo',availableModules=[];
-  const selectedPath=()=>{const path=advisor?base+'?console=advisor':module==='geo'?geoWorkbenchPath(scope.tenantId,scope.projectId):workbenchPath(scope.tenantId,scope.siteId);return path+(!advisor&&scope.onsiteTaskId?'&onsite_task_id='+scope.onsiteTaskId:'');};
+  const selectedPath=()=>{if(advisor||session.isAdvisorSession===true)return base+'?console=advisor';const path=module==='geo'?geoWorkbenchPath(scope.tenantId,scope.projectId):workbenchPath(scope.tenantId,scope.siteId);return path+(scope.onsiteTaskId?'&onsite_task_id='+scope.onsiteTaskId:'');};
   let generation=0,disposed=false,ownSessionChange=false,tenants=[],sites=[],tenantId=null,siteId=null,controllers=new Set();
   const frame=body=>{root.innerHTML=`<header class="entry-header"><b>G-SNIPERS</b><span>客户工作台</span></header><main class="entry-layout"><section class="entry-intro"><small>你的推广工作，在这里继续</small><h1>看进展，确认稿件，<br>与顾问一起推进。</h1><p>使用已有账号登录，无需先进入运营模块。</p></section><section class="entry-card">${body}</section></main>`;};
   const invalidate=()=>{generation++;for(const c of controllers)c.abort();controllers.clear();};
@@ -58,6 +59,8 @@ export function mountWorkbenchEntry({root,session,search=location.search,fetchIm
   }
   function enter(){if(!tenants.some(t=>t.id===tenantId)||!sites.some(s=>s.id===siteId))return;setSession(()=>session.setTenant(tenantId));navigate(module==='geo'?geoWorkbenchPath(tenantId,siteId):workbenchPath(tenantId,siteId));}
   async function spaces(){
+    // Returning to the advisor console must preserve this tab's selected business session.
+    if(session.isAdvisorSession===true){navigate(workspaceSelectionPath(session));return;}
     invalidate();const g=generation;tenants=[];sites=[];tenantId=null;siteId=null;
     frame('<h2>正在打开工作台</h2><p role="status">核对账号与可用工作空间…</p>');
     try{
@@ -112,7 +115,7 @@ export function mountWorkbenchEntry({root,session,search=location.search,fetchIm
     if(a==='logout'){invalidate();setSession(()=>session.logout());login('已退出。');}
     if(a==='continue')navigate(selectedPath());
     if(a==='enter')enter();
-    if(a==='choose')navigate(base);
+    if(a==='choose')navigate(workspaceSelectionPath(session));
   }
   function change(event){
     if(event.target.id==='entry-tenant'){const id=Number(event.target.value);if(tenants.some(t=>t.id===id))void loadSites(id);else{invalidate();tenantId=null;siteId=null;sites=[];selector();}}

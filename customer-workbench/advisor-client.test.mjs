@@ -21,6 +21,17 @@ test('display escapes real metadata, uses page counts and preserves manual next 
 test('entry rejects ambiguous or invalid task hints and preserves valid exact IDs',()=>{assert.equal(entryScope('?tenant_id=2&site_id=9&onsite_task_id=77').onsiteTaskId,77);for(const tail of ['0','1&onsite_task_id=2','NaN','9007199254740991'])assert.equal(entryScope('?tenant_id=2&site_id=9&onsite_task_id='+tail).invalid,true);});
 test('server action codes and structured blockers show clear advisor next steps',()=>{const html=advisorPageView('seo',page('seo',[{...row(),next_action:'save_proposal',blocker:{code:'proposal_evidence_missing',message:'补齐本轮公开依据'}}]));assert.match(html,/顾问完善并提交当前方案/);assert.match(html,/补齐本轮公开依据/);assert(!html.includes('[object Object]'));});
 test('bound advisor cannot receive another customer through the aggregate contract',async()=>{const f=fixture();f.session.user.tenant_id=1;await f.client.initialize();await assert.rejects(()=>f.client.list('seo'),/CONTRACT_MISMATCH/);f.client.dispose();});
+test('explicit customer queries retain module and cursor bounds and reject foreign rows',async()=>{
+ const f=fixture();await f.client.initialize();
+ for(const module of ['seo','geo']){
+  await f.client.list(module,{tenantId:2,beforeId:78});
+  const url=new URL(f.calls.at(-1).path,'https://advisor.test');
+  assert.equal(url.pathname,`/api/v1/${module}/workbench/advisor-tasks`);
+  assert.deepEqual(Object.fromEntries(url.searchParams),{limit:'25',before_id:'78',tenant_id:'2'});
+  await assert.rejects(()=>f.client.list(module,{tenantId:1}),/CONTRACT_MISMATCH/);
+ }
+ f.client.dispose();
+});
 test('late JSON body cannot survive a changed canonical auth revision',async()=>{const f=fixture();let release,bodyStarted;const started=new Promise(r=>bodyStarted=r),held=new Promise(r=>release=r);const client=createAdvisorClient({session:f.session,fetchImpl:async path=>({ok:true,status:200,json:async()=>{if(path.endsWith('/me'))return {user:f.session.user};if(path.endsWith('/modules'))return {tenant_id:null,modules:[{module_code:'seo',available:true}]};bodyStarted();await held;return page();}})});await client.initialize();const pending=client.list('seo');await started;f.session.authRevision++;release();await assert.rejects(()=>pending,/CONTEXT_CHANGED/);client.dispose();f.client.dispose();});
 test('a tenant scope change with the same login ID invalidates pending advisor reads',async()=>{const f=fixture();await f.client.initialize();let release;f.hold(new Promise(resolve=>release=resolve));const pending=f.client.list('seo');f.session.user.tenant_id=2;release();await assert.rejects(()=>pending,/CONTEXT_CHANGED/);await assert.rejects(()=>f.client.list('seo'),/PERMISSION_DENIED/);f.client.dispose();});
 test('an account change between advisor identity and module reads rejects the old identity',async()=>{const f=fixture();let release,ready;const started=new Promise(resolve=>ready=resolve),held=new Promise(resolve=>release=resolve);const client=createAdvisorClient({session:f.session,fetchImpl:async path=>({ok:true,status:200,json:async()=>{if(path.endsWith('/me'))return {user:structuredClone(f.session.user)};ready();await held;return {tenant_id:null,modules:[{module_code:'seo',available:true}]};}})});const pending=client.initialize();await started;f.session.user={...f.session.user,id:8};release();await assert.rejects(()=>pending,/CONTEXT_CHANGED/);await assert.rejects(()=>client.list('seo'),/PERMISSION_DENIED/);client.dispose();f.client.dispose();});
