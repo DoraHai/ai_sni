@@ -23,6 +23,12 @@ async def load_project(session, ctx, tenant_id, project_id):
     project = await session.get(GeoProject, project_id)
     if project is None or project.tenant_id != tenant_id:
         raise HTTPException(404, "GEO 项目不存在")
+    if getattr(ctx, "advisor_scope", None) is not None:
+        from app.security.advisor_write_reads import assigned_scope
+        from app.security.advisor_scope import deny
+        owned, _ = await assigned_scope(session, ctx)
+        if project_id not in owned:
+            deny(403, "ADVISOR_ASSIGNMENT_REQUIRED", "需要这个项目的有效顾问分配")
     tenant = await session.get(Tenant, tenant_id)
     return project, resolve_config(project, tenant)
 
@@ -38,13 +44,16 @@ async def get_config(project_id: int, tenant_id: int = Query(...),
                      session: AsyncSession = Depends(get_session)):
     require_advisor(ctx)
     project, config = await load_project(session, ctx, tenant_id, project_id)
-    keywords = await session.scalars(select(GeoOptimizationUnit.keyword).where(
+    query = select(GeoOptimizationUnit.keyword).where(
         GeoOptimizationUnit.tenant_id == tenant_id, GeoOptimizationUnit.status == "active",
         GeoOptimizationUnit.keyword.is_not(None),
-    ).order_by(GeoOptimizationUnit.sort_order, GeoOptimizationUnit.id).limit(100))
+    ).order_by(GeoOptimizationUnit.sort_order, GeoOptimizationUnit.id).limit(100)
+    from app.security.advisor_write_reads import filter_query
+    query = await filter_query(session, ctx, query, GeoOptimizationUnit)
+    keywords = await session.scalars(query)
     suggested = list(dict.fromkeys(k.strip() for k in keywords if k and 0 < len(k.strip()) <= 128))[:20]
     return {**access_state(config, ctx), "config": config.model_dump(), "notice": NOTICE,
-            "suggested_core_terms": suggested, "suggested_core_terms_scope": "tenant"}
+            "suggested_core_terms": suggested, "suggested_core_terms_scope": "assigned_projects" if getattr(ctx, "advisor_scope", None) is not None else "tenant"}
 
 
 @router.put("/projects/{project_id}/search-visibility/config")
