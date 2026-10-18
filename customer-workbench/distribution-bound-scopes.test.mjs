@@ -1,9 +1,38 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createDistributionClient} from './js/distribution-client.mjs';
+import {createDistributionClient,distributionContentDigest} from './js/distribution-client.mjs';
 import {createAdvisorDistributionPanel,seoOfflineEntryMarkup} from './js/distribution-panel.mjs';
 const row={module:'seo',tenant_id:1,scope_id:1,tenant_name:'诺德',scope_name:'诺德网站'};
 const session=()=>({token:'fixture',authRevision:1,user:{id:3,tenant_id:1,permissions:{'seo.site':'edit','seo.content':'edit'}},logout(){this.token='';}});
+
+test('reviewing a draft shows the existing warning before unchecked publication authorizations without submitting work',async()=>{
+ const content={version:'rev1',title:'审核稿',body:'正文',assets:[]},calls=[];
+ const source={schema:1,module:'seo',tenant_id:1,scope_id:1,variant_id:1,platform:'wechat-article',source_revision:'rev1',content,content_digest:await distributionContentDigest(content)};
+ const scope={schema:1,...row,project:{module:'seo',tenant_id:1,scope_id:1,state:'running',revision:3,owner_user_id:3},bindings:[{id:'12345678-1234-4567-8123-123456789abc',device_id:'device1',account_id:'account1',platform:'wechat-article',active:true,device_label:'测试设备',last_seen_at:null}],as_of:1,capabilities:{automated_publish:false,human_handoff:true,real_channel_verified:false}};
+ let changed=()=>{};
+ const panel=createAdvisorDistributionPanel({session:session(),browser:{},onChange:()=>changed(),fetchImpl:async(path,options)=>{
+   calls.push({path,method:options.method});
+   if(path.includes('/bound-scopes?'))return Response.json({schema:1,module:'seo',items:[row]});
+   if(path.includes('/scope?'))return Response.json(scope);
+   if(path.includes('/sources?'))return Response.json({...source,items:[{variant_id:1,source_revision:'rev1',platform:'wechat-article',title:'审核稿'}]});
+   if(path.includes('/source?'))return Response.json(source);
+   return Response.json({detail:{code:'not_integrated'}},{status:404});
+ }});
+ try{
+   await panel.initialize(['seo']);
+   assert.doesNotMatch(panel.html(),/只看不点/);
+   const completed=new Promise(resolve=>{changed=()=>{if(panel.html().includes('name="distribution_reviewed"'))resolve();};});
+   panel.click({target:{closest:()=>({dataset:{distribution:'preview'},disabled:false})}});
+   await completed;
+   const html=panel.html(),warning='这三步会把稿件交出去做真实发布。操作前请先得到负责人同意；在未得到同意前，只看不点。';
+   assert(html.includes(`<p class="alert" role="alert">${warning}</p>`));
+   assert(html.indexOf(warning)<html.indexOf('name="distribution_reviewed"'));
+   for(const name of ['distribution_reviewed','distribution_manual'])assert.match(html,new RegExp(`name="${name}"(?![^>]*checked)`));
+   for(const action of ['preflight','handoff','publish'])assert.match(html,new RegExp(`data-distribution="${action}" disabled`));
+   assert(calls.every(call=>call.method==='GET'));
+   panel.invalidate();assert.doesNotMatch(panel.html(),/只看不点/);
+ }finally{panel.dispose();}
+});
 test('bound projects remain selectable with no onsite tasks or automation projects',async()=>{
  const calls=[],s=session(),scope={schema:1,...row,project:{module:'seo',tenant_id:1,scope_id:1,state:'paused',revision:3,owner_user_id:3},bindings:[],as_of:1,capabilities:{automated_publish:false,human_handoff:true,real_channel_verified:false}};
  const panel=createAdvisorDistributionPanel({session:s,browser:{},scopesForAdvisor:()=>[],fetchImpl:async path=>{calls.push(path);return Response.json(path.includes('/bound-scopes?')?{schema:1,module:'seo',items:[row]}:path.includes('/scope?')?scope:{detail:{code:'not_integrated'}},{status:path.includes('/bound-scopes?')||path.includes('/scope?')?200:404});}});

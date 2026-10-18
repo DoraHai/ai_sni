@@ -52,7 +52,7 @@ export function pageListView(payload) {
 export function publicationListView(payload) {
   const associations={publication_url_missing:'尚未登记发布地址',no_match:'尚未关联站内页面',page_inventory_incomplete:'页面关联范围不完整',multiple_matches:'有多个候选页面，待顾问核对',exact_unique:'已关联页面'};
   const coverage={not_applicable:'暂无页面检查依据',no_data:'尚无页面检查记录',stale:'检查早于发布，待复查',failed:'页面检查失败',available:'已有页面检查记录'};
-  const note = `发布记录与页面检查分别展示；有检查记录不等于全部检查通过，更不代表搜索效果提升。${(payload?.coverage?.partial === true || payload?.coverage?.state === 'partial') ? '本次页面关联范围不完整，请顾问核对。' : ''}`;
+  const note = `已发布不等于已核验：成功取得发布页截图的稿件才计入已核验；页面检查还需匹配站内页面并有检查记录，请联系顾问核对。发布记录与页面检查分别展示；有检查记录不等于全部检查通过，更不代表搜索效果提升。${(payload?.coverage?.partial === true || payload?.coverage?.state === 'partial') ? '本次页面关联范围不完整，请顾问核对。' : ''}`;
   return table(payload, '发布与交付记录', ['稿件 / 平台', '发布情况', '页面检查', '发布时间', '操作'], row => {
     const publication=row.publication??{},content=row.content??{},check=row.page_check??{},association=row.page_association??{};
     const associationText=Object.hasOwn(associations,association.association_status)?associations[association.association_status]:'关联状态待核对';
