@@ -7736,7 +7736,10 @@ async def apply_retrieved_facts(
     """Bind selected fact ids (same as PUT facts, dedicated apply path)."""
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
+    await lock_manual_task(session, ctx, task)
     await _bind_facts(session, task, req.fact_ids)
+    if getattr(ctx, "advisor_scope", None) is not None:
+        invalidate_review(task)
     await session.commit()
     await session.refresh(task)
     return await _task_payload(session, task, detail=True)

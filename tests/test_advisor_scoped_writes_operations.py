@@ -21,6 +21,9 @@ def test_daily_actions_commit_and_record(tmp_path, monkeypatch, caplog, path, bo
         async with write_sandbox(tmp_path, monkeypatch) as env:
             response = await env.request("POST", path, body=body)
             assert response.status_code == 200, response.text
+            if path.endswith("/retrieve-facts/apply"):
+                async with env.factory() as session:
+                    assert (await session.get(GeoContentTask, 10)).review_status == "none"
     asyncio.run(run())
     events = [json.loads(r.message) for r in caplog.records if r.name == "geo.advisor.operations"]
     assert any(e["result"] == ("http_completed" if path.endswith("/lint") else "committed")
