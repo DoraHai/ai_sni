@@ -44,6 +44,8 @@ def check_fields(rule, body):
             invalid()
     if "mode" in body and body["mode"] not in {"draft", "publish"}:
         invalid()
+    if rule.template == PUSH_BATCH and (not isinstance(body.get("targets"), list) or not body["targets"]):
+        deny(403, "ADVISOR_WRITE_FIELD_FORBIDDEN", "请至少选择一个要外发的账号")
     if body.get("targets") is not None:
         targets = body["targets"]
         if not isinstance(targets, list) or len(targets) > 100:
