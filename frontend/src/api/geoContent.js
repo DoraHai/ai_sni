@@ -102,11 +102,11 @@ export function createGeoPrompt(body) {
 }
 
 /** Import prompt rows in one server-validated CSV batch. */
-export function importGeoPromptsCsv(tenantId, file) {
+export function importGeoPromptsCsv(tenantId, file, unitId = null) {
   const form = new FormData()
   form.append('file', file)
   return client.post('/api/v1/geo/prompts/import-csv', form, {
-    params: { tenant_id: tenantId },
+    params: { tenant_id: tenantId, ...(unitId ? { unit_id: unitId } : {}) },
     timeout: 120000,
   })
 }
@@ -235,11 +235,11 @@ export function createGeoFact(body) {
 }
 
 /** Import fact rows in one server-validated CSV batch. */
-export function importGeoFactsCsv(tenantId, file) {
+export function importGeoFactsCsv(tenantId, file, businessId = null) {
   const form = new FormData()
   form.append('file', file)
   return client.post('/api/v1/geo/facts/import', form, {
-    params: { tenant_id: tenantId },
+    params: { tenant_id: tenantId, ...(businessId ? { business_id: businessId } : {}) },
     timeout: 120000,
   })
 }

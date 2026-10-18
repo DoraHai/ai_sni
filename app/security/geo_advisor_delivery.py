@@ -37,6 +37,8 @@ class AdvisorDeliveryMiddleware:
         started = False
         successful = False
         status = 500
+        from app.security.advisor_operation_call import current_operation
+        operation_token = current_operation.set(None)
 
         async def checked_send(message):
             nonlocal suppressed, started, successful, status
@@ -47,6 +49,9 @@ class AdvisorDeliveryMiddleware:
                             or message["type"] == "http.response.body" and successful and message.get("body")):
                 try:
                     await recheck_delivery(*binding)
+                    if scope.get('geo_advisor_read_projects') is not None:
+                        from app.security.advisor_read_scope import recheck_read_projects
+                        await recheck_read_projects(binding, scope['geo_advisor_read_projects'])
                 except HTTPException as exc:
                     suppressed = True
                     if not started:
@@ -68,5 +73,6 @@ class AdvisorDeliveryMiddleware:
         try:
             await self.app(scope, receive, checked_send)
         finally:
+            current_operation.reset(operation_token)
             from app.security.advisor_write_audit import record
             record(scope, "http_completed", status_code=status)

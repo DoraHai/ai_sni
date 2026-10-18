@@ -483,6 +483,13 @@ async def mark_job(
     if result_meta is not None:
         row.result_meta = result_meta
     await session.commit()
+    authority = (row.request_meta or {}).get('advisor_authority')
+    if (status in {'succeeded', 'failed', 'cancelled'} and isinstance(authority, dict)
+            and authority.get('user_id') == row.created_by and authority.get('tenant_id') == row.tenant_id):
+        from app.security.advisor_write_audit import record
+        record({'geo_advisor_actor': (row.created_by, row.tenant_id), 'method': 'POST',
+            'path': authority.get('operation', '/api/v1/geo/content-tasks/{task_id}/generate').replace('{task_id}', str(row.ref_id)),
+            'path_params': {'task_id': row.ref_id, 'job_id': row.id}}, 'job_' + status)
 
 
 async def run_job_in_background(job_id: int, tenant_id: int) -> None:
@@ -855,6 +862,11 @@ async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[s
     )
     ready = [t for t in targets_all if t.get("ready")]
     wanted = meta.get("targets")  # list of {channel, account_id}
+    authority = meta.get('advisor_authority')
+    if isinstance(authority, dict):
+        wanted = (authority.get('body') or {}).get('targets')
+        if not isinstance(wanted, list) or not wanted or wanted != meta.get('targets'):
+            raise ValueError('顾问外发目标已变化，请重新选择明确的目标')
     if wanted:
         pairs = {
             (

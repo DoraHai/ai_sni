@@ -1,5 +1,8 @@
 import axios from 'axios'
 import { session } from '../store/session'
+import { geoAdvisorProject } from '../store/geoAdvisorProject.js'
+import { advisorClaims } from '../utils/geoAdvisorTenant.js'
+import { advisorOperationParams } from '../utils/geoAdvisorOperationParams.js'
 
 // 同源 /api 路径：开发期由 vite proxy 转发，生产由 Nginx 反代
 const client = axios.create({
@@ -8,6 +11,12 @@ const client = axios.create({
 })
 
 client.interceptors.request.use((config) => {
+  const claims = advisorClaims(session.token)
+  config = advisorOperationParams(config, {
+    advisor: claims?.scope_kind === 'advisor_tenant', tenantId: claims?.tid,
+    projectId: geoAdvisorProject.token === session.token && geoAdvisorProject.tenantId === claims?.tid
+      ? geoAdvisorProject.projectId : null,
+  })
   if (session.token) {
     config.headers.Authorization = `Bearer ${session.token}`
   } else if (import.meta.env.VITE_API_KEY) {

@@ -101,7 +101,7 @@ BUSINESS_TABLES = ('geo_facts', 'geo_prompts', 'geo_optimization_businesses',
                    'geo_optimization_units', 'geo_content_tasks', 'geo_task_facts',
                    'geo_article_versions', 'geo_channel_variants', 'geo_publications',
                    'geo_projects', 'geo_async_jobs', 'geo_action_tickets',
-                   'geo_visibility_patrol_settings', 'geo_visibility_patrol_runs',
+                   'geo_visibility_patrol_settings', 'geo_visibility_patrol_runs', 'geo_answer_snapshots',
                    'geo_publishing_channels')
 
 
@@ -274,7 +274,12 @@ async def write_sandbox(tmp_path, monkeypatch, *, backend='sqlite', enabled=True
             pytest.fail('unknown write handler must never execute')
 
         app.dependency_overrides[get_session] = session_dependency
-        app.dependency_overrides[geo_read_session] = session_dependency
+        async def read_dependency(ctx=Depends(require_auth)):
+            from app.security.advisor_read_scope import bind_read_scope
+            async with factory() as session:
+                await bind_read_scope(session, ctx)
+                yield session
+        app.dependency_overrides[geo_read_session] = read_dependency
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://fixture') as client:
             async def request(method, path, *, body=None, auth=None, params=None, **kwargs):
                 return await client.request(method, PREFIX + path,

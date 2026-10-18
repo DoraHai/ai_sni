@@ -223,9 +223,9 @@ async function submitEdit() {
       source_url: editForm.value.source_url.trim() || null,
       expires_at: editForm.value.expires_at || null,
       author_name: editForm.value.author_name.trim() || null,
+      business_id: editForm.value.business_id || null,
       ...(isAdvisor.value ? {} : {
         trust_level: editForm.value.trust_level || null,
-        business_id: editForm.value.business_id || null,
       }),
     })
     ElMessage.success('已保存')
@@ -254,7 +254,9 @@ async function importFactCsv(event) {
   if (!file || !tenantId.value) return
   importingCsv.value = true
   try {
-    const result = await importGeoFactsCsv(tenantId.value, file)
+    const businessId = form.value.business_id || (businesses.value.length === 1 ? businesses.value[0].id : null)
+    if (isAdvisor.value && !businessId) { ElMessage.warning('请先在新建表单选择导入所属业务'); return }
+    const result = await importGeoFactsCsv(tenantId.value, file, isAdvisor.value ? businessId : null)
     const count = Number(result.ok_count ?? 0)
     const errors = result.errors || []
     ElMessage.success(`CSV 导入完成：${count} 条`)

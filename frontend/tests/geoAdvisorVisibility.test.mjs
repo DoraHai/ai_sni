@@ -63,7 +63,7 @@ function buttons(advisor) {
   visit(tree)
   return found
 }
-test('advisor action slot exposes one manual detection button and no snapshot registration', () => {
-  assert.deepEqual(buttons(true), ['刷新', '导出 CSV', '手动检测一次'])
+test('advisor action slot exposes manual detection and snapshot registration', () => {
+  assert.deepEqual(buttons(true), ['刷新', '登记快照', '导出 CSV', '手动检测一次'])
   assert.ok(buttons(false).includes('登记快照'))
 })

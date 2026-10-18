@@ -336,7 +336,7 @@ async def count_patrol_runs_today(session: AsyncSession, tenant_id: int, *, crea
         ))
     if created_by is not None:
         query = query.where(GeoVisibilityPatrolRun.created_by == created_by)
-    n = await session.scalar(query)
+    n = await session.scalar(query.execution_options(advisor_scope_control=True))
     return int(n or 0)
 
 

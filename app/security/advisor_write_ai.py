@@ -164,7 +164,7 @@ async def reserve_suggestion(session, ctx, task):
     used = await session.scalar(select(func.count()).select_from(GeoAsyncJob).where(
         GeoAsyncJob.tenant_id == ctx.tenant_id, GeoAsyncJob.created_by == ctx.user_id,
         GeoAsyncJob.kind == SUGGEST_KIND,
-        GeoAsyncJob.created_at >= start, GeoAsyncJob.created_at < end))
+        GeoAsyncJob.created_at >= start, GeoAsyncJob.created_at < end).execution_options(advisor_scope_control=True))
     if used >= 10:
         deny(429, "ADVISOR_SUGGEST_DAILY_LIMIT", QUOTA_MESSAGE)
     stamp = now.replace(tzinfo=None)

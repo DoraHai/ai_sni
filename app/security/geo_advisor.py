@@ -124,6 +124,9 @@ async def guard_request(session, ctx, request, claims):
     if keys is None or not (ctx.can_edit(*keys) if edit else ctx.can_view(*keys)):
         deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "当前角色无权访问此功能")
     await check_objects(session, ctx, request)
+    from app.security.advisor_read_scope import bind_read_scope, check_read_references
+    await bind_read_scope(session, ctx, request)
+    await check_read_references(session, ctx, request)
     from app.security.advisor_write_reads import check_read_assignment
     await check_read_assignment(session, ctx, request)
     if (template not in STATIC_ROUTES and template != "/api/v1/geo/tenants"
@@ -136,6 +139,9 @@ async def guard_request(session, ctx, request, claims):
 
 
 async def check_scoped_write_objects(session, ctx, request, body, rule):
+    if rule.assignment == 'operations':
+        from app.security.advisor_operations import guard_scope
+        return await guard_scope(session, ctx, request, body, rule)
     from app.security.advisor_write_routes import VISIBILITY_RUN_RULE
     if rule == VISIBILITY_RUN_RULE:
         from app.security.advisor_visibility import check_visibility_scope
@@ -184,6 +190,25 @@ async def guard_scoped_write(session, ctx, request, claims):
     rule = match_write_rule(request)
     if rule is None:
         deny(403, "ADVISOR_HIGH_RISK_WRITES_DISABLED", "此顾问写入入口尚未开放")
+    if rule.assignment == 'operations':
+        from app.security.advisor_operations import guard_scope, read_contract, reserve_quota, bind_pending_scope
+        from app.security.advisor_read_scope import bind_read_scope
+        body = await read_contract(request, rule)
+        if not request.query_params.getlist('tenant_id') and body.get('tenant_id') != ctx.tenant_id:
+            deny(403, 'ADVISOR_TENANT_REQUIRED', '请求必须指定当前客户')
+        if not all(ctx.can_edit(key) for key in rule.edit_all):
+            deny(403, 'ADVISOR_ROUTE_UNAVAILABLE', '当前角色无编辑权限')
+        await ensure_module_access(session, ctx, ctx.tenant_id, 'geo')
+        await guard_scope(session, ctx, request, body, rule)
+        bind_advisor_write_commit(session, ctx, request, body, rule, claims)
+        await bind_read_scope(session, ctx, project_limit=request.state.advisor_operation_projects)
+        await bind_pending_scope(session, ctx, request, body)
+        from app.security.advisor_operation_call import current_operation
+        current_operation.set((session, ctx))
+        request.state.advisor_scoped_write = rule
+        request.scope['geo_advisor_delivery'] = (ctx.user_id, dict(claims), ctx.tenant_id, frozenset(rule.edit_all))
+        await reserve_quota(session, ctx, rule)
+        return
     if not request.query_params.getlist("tenant_id"):
         deny(403, "ADVISOR_TENANT_REQUIRED", "请求必须指定当前客户")
     try:

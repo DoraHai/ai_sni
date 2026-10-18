@@ -145,6 +145,10 @@ def is_enabled() -> bool:
     )
 
 
+from app.security.advisor_operation_call import checked_call
+
+
+@checked_call
 async def chat_json(
     system: str,
     user: str,

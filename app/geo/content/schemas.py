@@ -84,6 +84,7 @@ class PromptImportItem(BaseModel):
 
 class PromptImportRequest(BaseModel):
     tenant_id: int
+    unit_id: int | None = None
     items: list[PromptImportItem] = Field(..., min_length=1)
 
 

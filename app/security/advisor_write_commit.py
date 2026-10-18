@@ -76,6 +76,9 @@ async def recheck_advisor_before_commit(session, ctx) -> None:
         from app.security.geo_advisor import check_scoped_write_objects
         await ensure_module_access(session, ctx, ctx.tenant_id, "geo")
         await check_scoped_write_objects(session, ctx, request, body, rule)
+        if rule.assignment == 'operations':
+            from app.security.advisor_operations import verify_pending_scope
+            await verify_pending_scope(session, ctx)
         if deleting:
             # Validate the still-existing target and lock its project before
             # flushing DELETE. The authority/project locks survive the commit.
@@ -104,7 +107,7 @@ def bind_advisor_write_commit(session, ctx, request, body, rule, claims) -> None
     def after_flush(sync_session, _flush_context):
         scope = session.info["advisor_scoped_write"][1].scope
         created = scope.setdefault("geo_advisor_created_ids", {})
-        for row in sync_session.new:
+        for row in set(sync_session.new) | set(sync_session.dirty) | set(sync_session.deleted):
             ident = getattr(row, "id", None)
             table = getattr(type(row), "__tablename__", None)
             if table and type(ident) is int and ident > 0:

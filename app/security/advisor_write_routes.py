@@ -43,7 +43,8 @@ WRITE_ROUTES: dict[tuple[str, str], WriteRule] = {}
 
 def _register(method, suffix, fields):
     template = "/api/v1/geo" + suffix
-    archive = method == "PATCH" and suffix in {"/facts/{fact_id}", "/prompts/{prompt_id}"}
+    archive = method == "PATCH" and suffix in {"/facts/{fact_id}", "/prompts/{prompt_id}",
+        "/optimization-businesses/{business_id}", "/optimization-units/{unit_id}"}
     if archive:
         fields += " status"
     rule = WriteRule(method, template, frozenset(fields.split()), FORBIDDEN - {"status"} if archive else FORBIDDEN,
@@ -52,17 +53,17 @@ def _register(method, suffix, fields):
 
 
 _FACT = "title statement fact_type source_name source_url observed_at expires_at author_name trust_level"
-_PROMPT = "question priority tags demand_note question_group market"
+_PROMPT = "question priority tags demand_note question_group market is_brand_probe"
 _BUSINESS = "name description sort_order"
 _UNIT = "name keyword description sort_order"
 _register("POST", "/facts", "tenant_id business_id " + _FACT)
-_register("PATCH", "/facts/{fact_id}", _FACT)
+_register("PATCH", "/facts/{fact_id}", _FACT + " business_id")
 _register("POST", "/prompts", "tenant_id unit_id language source " + _PROMPT)
-_register("PATCH", "/prompts/{prompt_id}", _PROMPT)
+_register("PATCH", "/prompts/{prompt_id}", _PROMPT + " unit_id")
 _register("POST", "/optimization-businesses", "tenant_id " + _BUSINESS)
 _register("PATCH", "/optimization-businesses/{business_id}", _BUSINESS + " profile")
 _register("POST", "/optimization-units", "tenant_id business_id " + _UNIT)
-_register("PATCH", "/optimization-units/{unit_id}", _UNIT)
+_register("PATCH", "/optimization-units/{unit_id}", _UNIT + " business_id")
 _register("POST", "/content-tasks", "tenant_id prompt_id title target_channels fact_ids brief")
 _register("POST", "/content-imports/create-task",
           "tenant_id prompt_id title body_markdown source_type source_url target_channels")
@@ -90,10 +91,14 @@ def match_write_rule(request) -> WriteRule | None:
     if key == (VISIBILITY_RUN_RULE.method, VISIBILITY_RUN_RULE.template):
         return VISIBILITY_RUN_RULE
     from app.security.advisor_write_operations import rules
-    return WRITE_ROUTES.get(key) or rules().get(key)
+    from app.security.advisor_operations import rules as remaining_rules
+    return WRITE_ROUTES.get(key) or rules().get(key) or remaining_rules().get(key)
 
 
 def check_write_fields(rule: WriteRule, body: dict) -> None:
+    if rule.assignment == 'operations':
+        from app.security.advisor_operations import check_fields
+        return check_fields(rule, body)
     def forbidden():
         deny(403, "ADVISOR_WRITE_FIELD_FORBIDDEN", "此字段或操作未向顾问开放")
 
@@ -104,14 +109,14 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
     from app.security.advisor_write_publish import VARIANTS, PUSH_BATCH
     action_lists = {VARIANTS: {"channels"}, PUSH_BATCH: {"targets"}}.get(rule.template, set())
     if "status" in body:
-        allowed = {"active", "archived"}
+        allowed = {"active", "archived", "paused"} if rule.template == '/api/v1/geo/projects/{project_id}' else {"active", "archived"}
         if body["status"] not in allowed:
             forbidden()
     if "trust_level" in body and body["trust_level"] not in ("draft", "needs_review"):
         forbidden()
     if "source" in body and body["source"] != "manual":
         forbidden()
-    if rule.template == "/api/v1/geo/content-imports/create-task" and body.get("source_type") not in ("paste", "file"):
+    if rule.template == "/api/v1/geo/content-imports/create-task" and body.get("source_type") not in ("paste", "file", "url"):
         forbidden()
     if rule.template.endswith("/article") and "expected_article_id" not in body:
         forbidden()

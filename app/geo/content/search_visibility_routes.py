@@ -1,3 +1,4 @@
+from app.security.advisor_operation_call import checked_call
 """Project-scoped search visibility API, mounted only under existing GEO routes."""
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -57,6 +58,7 @@ async def get_config(project_id: int, tenant_id: int = Query(...),
 
 
 @router.put("/projects/{project_id}/search-visibility/config")
+@checked_call
 async def put_config(project_id: int, req: VisibilityConfig, tenant_id: int = Query(...),
                      ctx: AuthContext = Depends(require_scoped_auth),
                      session: AsyncSession = Depends(get_session)):
@@ -64,12 +66,17 @@ async def put_config(project_id: int, req: VisibilityConfig, tenant_id: int = Qu
     project, _ = await load_project(session, ctx, tenant_id, project_id)
     # Serialize with task admission and preserve unrelated project settings.
     project = await session.scalar(select(GeoProject).where(GeoProject.id == project.id).with_for_update().execution_options(populate_existing=True))
-    project.project_settings = {**(project.project_settings or {}), "deepseek_visibility": req.model_dump()}
+    values = req.model_dump()
+    if getattr(ctx, 'advisor_scope', None) is not None:
+        current = (project.project_settings or {}).get('deepseek_visibility') or {}
+        values = VisibilityConfig.model_validate({**current, **req.model_dump(exclude_unset=True)}).model_dump()
+    project.project_settings = {**(project.project_settings or {}), "deepseek_visibility": values}
     await session.commit()
-    return {**access_state(req, ctx), "config": req.model_dump(), "notice": NOTICE}
+    return {**access_state(VisibilityConfig.model_validate(values), ctx), "config": values, "notice": NOTICE}
 
 
 @router.post("/projects/{project_id}/search-visibility/run", status_code=202)
+@checked_call
 async def run_now(project_id: int, background: BackgroundTasks, tenant_id: int = Query(...),
                   ctx: AuthContext = Depends(require_scoped_auth),
                   session: AsyncSession = Depends(get_session)):
@@ -150,7 +157,7 @@ async def download(project_id: int, job_id: int, tenant_id: int = Query(...),
 @router.get("/search-visibility/usage")
 async def usage(ctx: AuthContext = Depends(require_scoped_auth),
                 session: AsyncSession = Depends(get_session)):
-    if not is_admin(ctx):
+    if not is_admin(ctx) and getattr(ctx, 'advisor_scope', None) is None:
         raise HTTPException(403, "仅超管可查看全平台用量")
     settings = get_settings()
     return {**await month_usage(session), "limit_cny": settings.deepseek_search_monthly_limit_cny,

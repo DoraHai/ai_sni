@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.security.advisor_operation_call import checked_call
+
 import json
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -1506,6 +1508,7 @@ async def gap_workbench(
 
 
 @router.post("/gap-workbench/create-tasks")
+@checked_call
 async def gap_workbench_create_tasks(
     req: GapCreateTasksRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -1623,6 +1626,7 @@ async def list_optimization_periods(
 
 
 @router.post("/optimization-periods")
+@checked_call
 async def create_optimization_period(
     req: OptimizationPeriodCreate,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -1764,6 +1768,7 @@ async def get_optimization_period(
 
 
 @router.post("/optimization-periods/{period_id}/close")
+@checked_call
 async def close_optimization_period(
     period_id: int,
     tenant_id: int = Query(...),
@@ -2136,6 +2141,7 @@ async def list_daily_metrics(
 
 
 @router.post("/daily-metrics/rebuild")
+@checked_call
 async def rebuild_daily_metrics(
     tenant_id: int = Query(...),
     metric_date: date | None = Query(
@@ -2315,6 +2321,7 @@ async def create_prompt(
 
 
 @router.post("/prompts/expand-candidates")
+@checked_call
 async def expand_prompt_candidates(
     req: PromptExpandRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -2474,6 +2481,7 @@ async def expand_prompt_candidates(
 
 
 @router.post("/prompts/promote-candidates")
+@checked_call
 async def promote_prompt_candidates(
     req: PromptPromoteRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -2603,6 +2611,7 @@ async def update_prompt(
 
 
 @router.post("/prompts/import")
+@checked_call
 async def import_prompts(
     req: PromptImportRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -2765,6 +2774,7 @@ async def list_answer_snapshots(
 
 
 @router.post("/answer-snapshots")
+@checked_call
 async def create_answer_snapshot(
     req: AnswerSnapshotCreate,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -2814,13 +2824,18 @@ async def create_answer_snapshot(
     try:
         from app.geo.content.daily_metrics import safe_rebuild_for_captured_at
 
-        await safe_rebuild_for_captured_at(req.tenant_id, row.captured_at)
+        if getattr(ctx, 'advisor_scope', None) is not None:
+            from app.geo.content.daily_metrics import rebuild_day, _metric_day_from_captured
+            await rebuild_day(session, req.tenant_id, _metric_day_from_captured(row.captured_at))
+        else:
+            await safe_rebuild_for_captured_at(req.tenant_id, row.captured_at)
     except Exception:  # noqa: BLE001
         pass
     return _snapshot_payload(row, prompt_question=prompt.question)
 
 
 @router.patch("/answer-snapshots/{snapshot_id}")
+@checked_call
 async def update_answer_snapshot(
     snapshot_id: int,
     req: AnswerSnapshotUpdate,
@@ -2885,7 +2900,11 @@ async def update_answer_snapshot(
     try:
         from app.geo.content.daily_metrics import safe_rebuild_for_captured_at
 
-        await safe_rebuild_for_captured_at(tenant_id, row.captured_at)
+        if getattr(ctx, 'advisor_scope', None) is not None:
+            from app.geo.content.daily_metrics import rebuild_day, _metric_day_from_captured
+            await rebuild_day(session, tenant_id, _metric_day_from_captured(row.captured_at))
+        else:
+            await safe_rebuild_for_captured_at(tenant_id, row.captured_at)
     except Exception:  # noqa: BLE001
         pass
     return _snapshot_payload(row, prompt_question=prompt.question)
@@ -2901,7 +2920,7 @@ async def delete_answer_snapshot(
     """Hard-delete one answer snapshot (test data / wrong paste cleanup)."""
     ctx.ensure_tenant(tenant_id)
     row = await _get_snapshot(session, snapshot_id, tenant_id)
-    if getattr(row, 'patrol_run_id', None):
+    if getattr(row, 'patrol_run_id', None) and getattr(ctx, 'advisor_scope', None) is None:
         raise HTTPException(409, '巡检快照是指标来源，不能删除；错误引用请标记为 inaccurate')
     captured = row.captured_at
     advisor = getattr(ctx, "advisor_scope", None) is not None
@@ -3224,6 +3243,7 @@ async def competitor_insights_trace(
 
 
 @router.post("/competitor-insights/web-search")
+@checked_call
 async def competitor_web_search(
     tenant_id: int = Query(...),
     name: str = Query(..., min_length=1, max_length=120),
@@ -3240,6 +3260,7 @@ async def competitor_web_search(
 
 
 @router.post("/competitor-insights/report")
+@checked_call
 async def competitor_insights_report(
     req: CompetitorTraceReportRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -3290,6 +3311,7 @@ async def competitor_insights_report(
 
 
 @router.post("/competitor-insights/create-tasks")
+@checked_call
 async def competitor_insights_create_tasks(
     req: CompetitorCreateTasksRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -3805,6 +3827,7 @@ async def citation_insights(
 
 
 @router.post("/answer-snapshots/probe")
+@checked_call
 async def probe_answer_snapshot(
     req: AnswerSnapshotProbeRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -3854,6 +3877,7 @@ async def probe_answer_snapshot(
 
 
 @router.post("/answer-snapshots/probe-batch")
+@checked_call
 async def probe_answer_snapshot_batch(
     req: AnswerSnapshotProbeBatchRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -3946,6 +3970,7 @@ async def probe_answer_snapshot_batch(
 
 
 @router.post("/onboarding/preview")
+@checked_call
 async def geo_onboarding_preview(
     req: GeoOnboardingPreviewRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -3978,6 +4003,7 @@ async def geo_onboarding_preview(
 
 
 @router.post("/onboarding/apply")
+@checked_call
 async def geo_onboarding_apply(
     req: GeoOnboardingApplyRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -4688,6 +4714,7 @@ async def get_monitoring_stance(
 
 
 @router.put("/monitoring-stance")
+@checked_call
 async def put_monitoring_stance(
     req: MonitoringStanceUpdate,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -4697,6 +4724,16 @@ async def put_monitoring_stance(
     from app.geo.content.monitoring_stance import normalize_stance, stance_payload
 
     ctx.ensure_tenant(req.tenant_id)
+    if getattr(ctx, 'advisor_scope', None) is not None:
+        projects = session.info['advisor_operation_project_limit']
+        if len(projects) != 1:
+            raise HTTPException(409, '请先选择一个已分配项目')
+        from app.models import GeoProject
+        project = await session.get(GeoProject, next(iter(projects)), with_for_update=True)
+        stance = normalize_stance(req.monitoring_stance)
+        project.project_settings = {**(project.project_settings or {}), 'geo_monitoring_stance': stance}
+        await session.commit()
+        return {'tenant_id': req.tenant_id, 'monitoring_stance': stance, 'info': stance_payload(stance)}
     row = await ensure_ai_setting(session, req.tenant_id)
     row.monitoring_stance = normalize_stance(req.monitoring_stance)
     row.updated_by = ctx.user_id
@@ -4710,6 +4747,7 @@ async def put_monitoring_stance(
 
 
 @router.post("/attribution/backfill")
+@checked_call
 async def attribution_backfill(
     tenant_id: int = Query(...),
     limit: int = Query(2000, ge=1, le=10000, description="本批最多处理条数"),
@@ -4828,6 +4866,7 @@ async def list_async_jobs(
 
 
 @router.post("/async-jobs/{job_id}/cancel")
+@checked_call
 async def cancel_async_job(
     job_id: int,
     tenant_id: int = Query(...),
@@ -5394,6 +5433,7 @@ async def create_visibility_patrol_run(
 
 
 @router.delete("/visibility-patrol/runs/{run_id}")
+@checked_call
 async def delete_visibility_patrol_run(
     run_id: int,
     tenant_id: int = Query(...),
@@ -5412,7 +5452,7 @@ async def delete_visibility_patrol_run(
             "进行中的巡检不可删除；请等待结束，避免破坏正在执行的采样",
         )
     has_samples = await session.scalar(select(GeoAnswerSnapshot.id).where(GeoAnswerSnapshot.patrol_run_id == run_id).limit(1))
-    if has_samples or (row.summary or {}).get('contract_plan'):
+    if (has_samples or (row.summary or {}).get('contract_plan')) and getattr(ctx, 'advisor_scope', None) is None:
         raise HTTPException(409, '巡检包含指标证据或复测计划，不能删除来源记录')
     await session.delete(row)
     await session.commit()
@@ -5420,6 +5460,7 @@ async def delete_visibility_patrol_run(
 
 
 @router.post("/visibility-patrol/runs/cleanup")
+@checked_call
 async def cleanup_visibility_patrol_runs(
     tenant_id: int = Query(...),
     keep_latest: int = Query(20, ge=0, le=200),
@@ -5451,7 +5492,7 @@ async def cleanup_visibility_patrol_runs(
         if r.status in ("pending", "running"):
             continue
         has_samples = await session.scalar(select(GeoAnswerSnapshot.id).where(GeoAnswerSnapshot.patrol_run_id == r.id).limit(1))
-        if has_samples or (r.summary or {}).get('contract_plan'):
+        if (has_samples or (r.summary or {}).get('contract_plan')) and getattr(ctx, 'advisor_scope', None) is None:
             keep_ids.add(r.id)
             continue
         await session.delete(r)
@@ -5461,6 +5502,7 @@ async def cleanup_visibility_patrol_runs(
 
 
 @router.post("/answer-snapshots/extract-urls")
+@checked_call
 async def extract_answer_snapshot_urls(
     req: AnswerSnapshotExtractUrlsRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -5475,6 +5517,7 @@ async def extract_answer_snapshot_urls(
 
 
 @router.post("/answer-snapshots/suggest-fields")
+@checked_call
 async def suggest_answer_snapshot_fields(
     req: AnswerSnapshotSuggestFieldsRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -5536,6 +5579,7 @@ async def suggest_answer_snapshot_fields(
 
 
 @router.post("/answer-snapshots/check-citations")
+@checked_call
 async def check_answer_snapshot_citations(
     req: AnswerSnapshotCitationCheckRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -5629,6 +5673,7 @@ async def get_channel_polish_prompts(
 
 
 @router.put("/channel-polish-prompts")
+@checked_call
 async def put_channel_polish_prompts(
     req: ChannelPolishPromptsUpdate,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -5709,6 +5754,8 @@ async def _ensure_default_engines(
         )
     )
     existing = {str(r.engine_key) for r in rows}
+    if getattr(session, 'info', {}).get('advisor_scoped_write') or getattr(session, 'info', {}).get('advisor_read_scope'):
+        return rows
     missing = [
         item
         for item in default_engine_rows(tenant_id)
@@ -6017,6 +6064,7 @@ async def publishing_auto_push_status(
     "/publishing-channels/enable-multi-media-auto",
     dependencies=[Depends(require_geo_read_entitlement)],
 )
+@checked_call
 async def enable_multi_media_auto_pack(
     tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -6057,6 +6105,7 @@ async def enable_multi_media_auto_pack(
 
 
 @router.post("/publishing-channels")
+@checked_call
 async def create_publishing_channel(
     req: PublishingChannelCreate,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -6086,6 +6135,7 @@ async def create_publishing_channel(
     "/publishing-channels/{channel_id}",
     dependencies=[Depends(require_geo_read_entitlement)],
 )
+@checked_call
 async def delete_publishing_channel(
     channel_id: int,
     tenant_id: int = Query(...),
@@ -6111,6 +6161,7 @@ async def delete_publishing_channel(
     "/publishing-channels/{channel_id}",
     dependencies=[Depends(require_geo_read_entitlement)],
 )
+@checked_call
 async def update_publishing_channel(
     channel_id: int,
     req: PublishingChannelUpdate,
@@ -6265,6 +6316,7 @@ async def oauth_social_start(
     "/oauth/social/refresh",
     dependencies=[Depends(require_geo_read_entitlement)],
 )
+@checked_call
 async def oauth_social_refresh(
     tenant_id: int = Query(...),
     account_id: int = Query(...),
@@ -6298,6 +6350,7 @@ async def oauth_social_refresh(
     "/channel-accounts/{account_id}/verify-social",
     dependencies=[Depends(require_geo_read_entitlement)],
 )
+@checked_call
 async def verify_social_account(
     account_id: int,
     tenant_id: int = Query(...),
@@ -6524,6 +6577,7 @@ async def get_channel_blueprint(
 
 
 @router.post("/media-placements")
+@checked_call
 async def create_media_placement(
     req: MediaPlacementCreate,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -6556,6 +6610,7 @@ async def create_media_placement(
 
 
 @router.patch("/media-placements/{placement_id}")
+@checked_call
 async def update_media_placement(
     placement_id: int,
     req: MediaPlacementUpdate,
@@ -6597,6 +6652,7 @@ async def update_media_placement(
 
 
 @router.delete("/media-placements/{placement_id}")
+@checked_call
 async def delete_media_placement(
     placement_id: int,
     tenant_id: int = Query(...),
@@ -6827,6 +6883,7 @@ async def verify_fact(
 
 
 @router.post("/facts/import")
+@checked_call
 async def import_facts_file(
     tenant_id: int = Query(...),
     file: UploadFile = File(...),
@@ -6869,6 +6926,7 @@ async def preview_article_import_file(
 
 
 @router.post("/content-imports/preview-url")
+@checked_call
 async def preview_article_import_url(
     req: ArticleImportPreviewUrlRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -6941,6 +6999,7 @@ async def create_task_from_article_import(
 
 
 @router.post("/prompts/import-csv")
+@checked_call
 async def import_prompts_csv_file(
     tenant_id: int = Query(...),
     file: UploadFile = File(...),
@@ -7027,6 +7086,7 @@ async def list_tasks(
 
 
 @router.post("/content-tasks/from-source-opportunity")
+@checked_call
 async def create_task_from_source_opportunity(
     req: SourceOpportunityTaskCreate,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -7139,6 +7199,7 @@ async def create_task(
 
 
 @router.post("/content-tasks/from-diagnosis")
+@checked_call
 async def create_task_from_diagnosis_route(
     req: TaskFromDiagnosis,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -7161,6 +7222,7 @@ async def create_task_from_diagnosis_route(
 
 
 @router.post("/content-tasks/{task_id}/seed-diagnosis-facts")
+@checked_call
 async def seed_diagnosis_facts_route(
     task_id: int,
     tenant_id: int = Query(...),
@@ -7625,6 +7687,7 @@ async def suggest_task_brief(
 
 
 @router.post("/content-tasks/{task_id}/retrieve-facts")
+@checked_call
 async def retrieve_task_facts(
     task_id: int,
     req: RetrieveFactsRequest,
@@ -7990,6 +8053,7 @@ async def lint_task_article(
 
 
 @router.post("/content-tasks/{task_id}/apply-patch")
+@checked_call
 async def apply_patch(
     task_id: int,
     req: ApplyPatchRequest,
@@ -8750,6 +8814,7 @@ async def record_publication(
 
 
 @router.post("/content-tasks/{task_id}/import-receipts")
+@checked_call
 async def import_task_receipts(
     task_id: int,
     tenant_id: int = Query(..., gt=0),
@@ -8801,6 +8866,7 @@ async def list_task_deliveries(task_id: int, tenant_id: int = Query(...),
 
 
 @router.post("/content-tasks/{task_id}/deliveries/{variant_id}/{delivery_id}/resolve")
+@checked_call
 async def resolve_task_delivery(task_id: int, variant_id: int, delivery_id: str, req: DeliveryResolution,
     ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session)) -> dict:
     ctx.ensure_tenant(req.tenant_id)
@@ -9894,6 +9960,7 @@ async def list_competitor_reports(
 
 
 @router.post("/competitor-reports")
+@checked_call
 async def upsert_competitor_report(
     req: CompetitorReportUpsert,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -9956,6 +10023,7 @@ async def get_competitor_report(
 
 
 @router.patch("/competitor-reports/{report_id}")
+@checked_call
 async def patch_competitor_report(
     report_id: int,
     req: CompetitorReportPatch,
@@ -9990,6 +10058,7 @@ async def patch_competitor_report(
 
 
 @router.post("/competitor-reports/{report_id}/confirm")
+@checked_call
 async def confirm_competitor_report(
     report_id: int,
     tenant_id: int = Query(...),
@@ -10014,6 +10083,7 @@ async def confirm_competitor_report(
 
 
 @router.post("/competitor-reports/{report_id}/archive")
+@checked_call
 async def archive_competitor_report(
     report_id: int,
     tenant_id: int = Query(...),
@@ -10061,6 +10131,7 @@ async def export_competitor_report(
 
 
 @router.post("/competitor-reports/{report_id}/restore")
+@checked_call
 async def restore_competitor_report_version(
     report_id: int,
     tenant_id: int = Query(...),
@@ -10103,6 +10174,7 @@ async def restore_competitor_report_version(
 
 
 @router.post("/competitor-reports/{report_id}/create-task")
+@checked_call
 async def create_task_from_competitor_report(
     report_id: int,
     tenant_id: int = Query(...),
@@ -10219,6 +10291,7 @@ async def create_task_from_competitor_report(
 
 
 @router.post("/onboarding/sitemap-audit")
+@checked_call
 async def geo_sitemap_audit(
     tenant_id: int = Query(...),
     website_url: str = Query(..., min_length=8),
@@ -10236,6 +10309,7 @@ async def geo_sitemap_audit(
 
 
 @router.post("/onboarding/sitemap-audit/create-tasks")
+@checked_call
 async def geo_sitemap_create_tasks(
     tenant_id: int = Query(...),
     body: dict = Body(default_factory=dict),
@@ -10377,6 +10451,7 @@ async def list_competitor_aliases(
 
 
 @router.put("/competitor-aliases")
+@checked_call
 async def put_competitor_aliases(
     tenant_id: int = Query(...),
     body: dict = Body(default_factory=dict),
@@ -10469,6 +10544,7 @@ async def list_deliverable_archives(
 
 
 @router.post("/deliverables/archives")
+@checked_call
 async def create_deliverable_archive(
     tenant_id: int = Query(...),
     body: dict = Body(default_factory=dict),
@@ -10575,6 +10651,7 @@ async def publication_monitor_list(task_id: int, tenant_id: int = Query(...),
     '/content-tasks/{task_id}/publication-monitor/{publication_id}/check',
     dependencies=[Depends(require_geo_read_entitlement)],
 )
+@checked_call
 async def publication_monitor_check(task_id: int, publication_id: int, tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session)):
     from app.geo.publication_monitor import check_publication

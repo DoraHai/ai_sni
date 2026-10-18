@@ -127,6 +127,8 @@ async def update_geo_project(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    from app.security.geo_configuration_admin import require_geo_configuration_admin
+    require_geo_configuration_admin(ctx)
     await ensure_module_access(session, ctx, tenant_id, "geo")
     row = await session.get(GeoProject, project_id, with_for_update=True)
     if row is None or row.tenant_id != tenant_id:
@@ -157,6 +159,8 @@ class GeoProjectBusinessScope(BaseModel):
 async def update_business_scope(project_id: int, tenant_id: int, req: GeoProjectBusinessScope,
                                 ctx: AuthContext = Depends(require_scoped_auth),
                                 session: AsyncSession = Depends(get_session)):
+    from app.security.geo_configuration_admin import require_geo_configuration_admin
+    require_geo_configuration_admin(ctx)
     await ensure_module_access(session, ctx, tenant_id, "geo")
     if ctx.user_id is None or not ctx.can_edit("geo.assets"):
         raise HTTPException(403, "设置项目归属需要已登录顾问的项目编辑权限")
@@ -179,6 +183,8 @@ class GeoServicePlanUpdate(BaseModel):
 async def update_project_plan(project_id: int, tenant_id: int, req: GeoServicePlanUpdate,
                               ctx: AuthContext = Depends(require_scoped_auth),
                               session: AsyncSession = Depends(get_session)):
+    from app.security.geo_configuration_admin import require_geo_configuration_admin
+    require_geo_configuration_admin(ctx)
     await ensure_module_access(session, ctx, tenant_id, "geo")
     if ctx.user_id is None or not (ctx.can_edit("geo.assets") and ctx.can_edit("geo.content")):
         raise HTTPException(403, "配置服务计划需要项目与内容编辑权限")

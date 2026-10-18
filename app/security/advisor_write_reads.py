@@ -10,7 +10,7 @@ async def assigned_scope(session, ctx):
     from app.geo.project_workflows import plan_for
     from app.models import GeoProject
     projects = list(await session.scalars(select(GeoProject).where(
-        GeoProject.tenant_id == ctx.tenant_id).execution_options(populate_existing=True)))
+        GeoProject.tenant_id == ctx.tenant_id).execution_options(populate_existing=True, advisor_scope_control=True)))
     scopes = {p.id: set(binding(p)["business_ids"]) for p in projects}
     owned = {p.id for p in projects if p.status == "active"
              and type(plan_for(p).get("advisor_user_id")) is int

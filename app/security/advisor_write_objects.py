@@ -110,10 +110,26 @@ async def _upload_rows(upload):
         if not isinstance(value, (dict, list)):
             _unavailable()
         return value
-    if not name.endswith(".csv"):
+    if name.endswith('.xlsx'):
+        from openpyxl import load_workbook
+        try:
+            book = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+            rows = list(book.active.iter_rows(max_row=502, values_only=True))
+            book.close()
+            if not rows or len(rows) > 501:
+                _unavailable()
+            headers = [str(h or '').strip() for h in rows[0]]
+            if not all(headers) or len(set(headers)) != len(headers):
+                _unavailable()
+            return [{key: value for key, value in zip(headers, row) if value is not None}
+                    for row in rows[1:]]
+        except (ValueError, KeyError, OSError):
+            _unavailable()
+    if not name.endswith((".csv", '.tsv')):
         _unavailable()
     try:
-        reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")), strict=True)
+        reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")), strict=True,
+                                delimiter='\t' if name.endswith('.tsv') else ',')
         headers = reader.fieldnames
         if not headers or len({_key(h.strip()) for h in headers}) != len(headers):
             _unavailable()
@@ -142,7 +158,11 @@ async def _inputs(request, body):
         if _key(key).endswith("_ids"):
             value = _json(value) if isinstance(value, str) and value.startswith("[") else [value]
         refs.extend(_references({key: value}))
-    refs.extend(_references(body))
+    # Archive packs are operator-authored documents, never database lookup
+    # instructions. Their project is supplied separately and stamped server-side.
+    archive = getattr(request.scope.get('route'), 'path', None) == '/api/v1/geo/deliverables/archives'
+    scanned_body = {k: v for k, v in body.items() if k != 'pack'} if archive and isinstance(body, dict) else body
+    refs.extend(_references(scanned_body))
     content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if content_type in {"multipart/form-data", "application/x-www-form-urlencoded"}:
         form = await request.form()
@@ -169,7 +189,9 @@ async def _resolve(session, ctx, request, body, rule):
                             GeoFact, GeoOptimizationBusiness, GeoOptimizationUnit,
                             GeoProject, GeoPrompt)
     from app.models import GeoChannelAccount, GeoPublishingChannel
-    from app.models import GeoAnswerSnapshot
+    from app.models import (GeoAnswerSnapshot, GeoActionTicket, GeoAsyncJob, GeoAuditRun,
+        GeoCompetitorReport, GeoOptimizationPeriod, GeoPublication, GeoMediaPlacement,
+        GeoVisibilityPatrolRun, GeoDeliverableArchive)
 
     ctx.ensure_tenant(ctx.tenant_id)
     template = getattr(request.scope.get("route"), "path", None)
@@ -184,16 +206,35 @@ async def _resolve(session, ctx, request, body, rule):
         "source_variant_id": GeoChannelVariant,
         "account_id": GeoChannelAccount, "channel_id": GeoPublishingChannel,
         "snapshot_id": GeoAnswerSnapshot,
+        "related_prompt_id": GeoPrompt, "before_snapshot_id": GeoAnswerSnapshot,
+        "after_snapshot_id": GeoAnswerSnapshot, "report_id": GeoCompetitorReport,
+        "period_id": GeoOptimizationPeriod, "publication_id": GeoPublication,
+        "placement_id": GeoMediaPlacement, "media_placement_id": GeoMediaPlacement,
+        "run_id": GeoVisibilityPatrolRun, "job_id": GeoAsyncJob,
+        "audit_id": GeoAuditRun, "ticket_id": GeoActionTicket,
+        "archive_id": GeoDeliverableArchive,
+        "task_id": GeoContentTask,
     }
     from app.security.advisor_write_operations import task_templates
     from app.security.advisor_write_reads import TASK_READS
     task_routes = _TASK_TEMPLATES | task_templates() | TASK_READS | AI_TASK_TEMPLATES
+    from app.security.advisor_operations import LOOKUP
+    task_routes |= {path for _, path in LOOKUP if '/content-tasks/{task_id}' in path}
     if template in task_routes:
         models["task_id"] = GeoContentTask
+    elif '/workbench/onsite-tasks/{task_id}' in template or '/integration/tasks/{task_id}' in template:
+        models['task_id'] = GeoActionTicket
     state = _Objects()
     seen = set()
 
     async def resolve(key, value):
+        if key in {'request_id', 'delivery_id', 'cursor_id'}:
+            return  # Idempotency UUID, delivery string and pagination cursor, not object authority.
+        if key == 'task_id' and value == '' and template == '/api/v1/geo/reports/publication-links/preview':
+            return  # The scoped handler resolves title-only preview rows.
+        if key == 'id' and template in {'/api/v1/geo/workbench/onsite-tasks/{task_id}/actions',
+                                      '/api/v1/geo/reports/template'}:
+            return  # Schema-checked section/item keys, not database identifiers.
         if key == "tenant_id":
             ctx.ensure_tenant(_positive_id(value))
             return
@@ -207,7 +248,7 @@ async def _resolve(session, ctx, request, body, rule):
         if marker in seen:
             return
         seen.add(marker)
-        stmt = select(model).where(model.id == ident).execution_options(populate_existing=True)
+        stmt = select(model).where(model.id == ident).execution_options(populate_existing=True, advisor_scope_control=True)
         if session.info.get("advisor_scoped_write"):
             # Commit-time validation retains ownership locks until the same
             # transaction commits, including parents without tenant columns.
@@ -244,6 +285,67 @@ async def _resolve(session, ctx, request, body, rule):
             pass  # Read-only destination for the already scoped content task.
         elif model is GeoAnswerSnapshot:
             await resolve("prompt_id", row.prompt_id)
+        elif model is GeoPublication:
+            await resolve('variant_id', row.variant_id)
+        elif model in {GeoOptimizationPeriod, GeoCompetitorReport}:
+            if row.business_id is None:
+                state.unscoped = True
+            else:
+                await resolve('business_id', row.business_id)
+            if model is GeoCompetitorReport and row.period_id is not None:
+                await resolve('period_id', row.period_id)
+        elif model is GeoMediaPlacement:
+            if row.related_prompt_id is None:
+                state.unscoped = True
+            else:
+                await resolve('prompt_id', row.related_prompt_id)
+        elif model is GeoAsyncJob:
+            parent = {'content_task': 'content_task_id', 'geo_project': 'project_id'}.get(row.ref_type)
+            if parent is None:
+                state.unscoped = True
+            else:
+                await resolve(parent, row.ref_id)
+        elif model is GeoActionTicket:
+            progress = row.progress or {}
+            project = (progress.get('onsite') or progress.get('project_workflow') or {}).get('project_id')
+            if project:
+                await resolve('project_id', project)
+            elif row.content_task_id:
+                await resolve('content_task_id', row.content_task_id)
+            elif ((row.progress_first or {}).get('params') or {}).get('content_task_id'):
+                await resolve('content_task_id', row.progress_first['params']['content_task_id'])
+            elif row.audit_id:
+                await resolve('audit_id', row.audit_id)
+            elif row.media_placement_id:
+                await resolve('placement_id', row.media_placement_id)
+            else:
+                state.unscoped = True
+        elif model is GeoAuditRun:
+            from urllib.parse import urlsplit
+            host = (urlsplit(row.url).hostname or '').lower().removeprefix('www.')
+            projects = list(await session.scalars(select(GeoProject).where(GeoProject.tenant_id == ctx.tenant_id)
+                .execution_options(advisor_scope_control=True)))
+            owners = [p.id for p in projects if p.canonical_domain == host]
+            if len(owners) != 1:
+                state.unscoped = True
+            else:
+                await resolve('project_id', owners[0])
+        elif model is GeoVisibilityPatrolRun:
+            prompts = (row.summary or {}).get('advisor_visibility_prompt_ids')
+            if not isinstance(prompts, list) or not prompts:
+                prompts = list(await session.scalars(select(GeoAnswerSnapshot.prompt_id).where(
+                    GeoAnswerSnapshot.tenant_id == ctx.tenant_id, GeoAnswerSnapshot.patrol_run_id == row.id)
+                    .execution_options(advisor_scope_control=True)))
+            if not prompts:
+                state.unscoped = True
+            for prompt_id in prompts or []:
+                await resolve('prompt_id', prompt_id)
+        elif model is GeoDeliverableArchive:
+            project = ((row.pack_json or {}).get('data_scope') or {}).get('project_id')
+            if project:
+                await resolve('project_id', project)
+            else:
+                state.unscoped = True
         else:
             # Articles and variants have no tenant column: their real owner is
             # the content task, never an action ticket with the same numeric ID.
@@ -309,7 +411,7 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
     if rule.template in _IMPORT_TEMPLATES:
         _assignment_required()
     project_stmt = select(GeoProject).where(GeoProject.tenant_id == ctx.tenant_id).order_by(
-        GeoProject.id).execution_options(populate_existing=True)
+        GeoProject.id).execution_options(populate_existing=True, advisor_scope_control=True)
     if session.info.get("advisor_scoped_write"):
         project_stmt = project_stmt.with_for_update()
     projects = list(await session.scalars(project_stmt))
@@ -332,10 +434,15 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
         _assignment_required()
     project = next((p for p in projects if p.id in selected), None)
     plan = plans[project.id] if project else {}
+    transition = (rule.method == 'PATCH' and rule.template == _PREFIX + '/projects/{project_id}'
+                  and isinstance(body, dict) and body.get('status') in {'paused', 'archived'})
+    was_active = bool(project and transition and request.scope.get('advisor_active_project_transition') == project.id)
+    if project and project.status == 'active' and transition:
+        request.scope['advisor_active_project_transition'] = project.id
     # Manual requests use the selected customer grant, checked by auth and
     # again at commit. The scheduler's native/default-tenant predicate does
     # not describe an explicitly granted second customer.
-    if (project is None or project.status != "active"
+    if (project is None or (project.status != "active" and not was_active)
             or type(plan.get("advisor_user_id")) is not int
             or plan["advisor_user_id"] != ctx.user_id
             or not await advisor_available(session, ctx.tenant_id, ctx.user_id, advisor_scope=ctx.advisor_scope)):

@@ -4,7 +4,7 @@ from app.security.advisor_scope import deny
 DAILY = {
     ("POST", "/content-tasks/{task_id}/submit-review"): "expected_article_id expected_updated_at note",
     ("POST", "/content-tasks/{task_id}/review"): "expected_article_id expected_updated_at decision note",
-    ("PATCH", "/projects/{project_id}"): "name brand_name domain description",
+    ("PATCH", "/projects/{project_id}"): "name brand_name domain description status",
     ("POST", "/facts/{fact_id}/verify"): "excerpt excerpt_locator source_url note expected_source_statement expected_source_name expected_source_url public_use_allowed verified_translation",
     ("POST", "/content-tasks/{task_id}/check"): "",
     ("POST", "/content-tasks/{task_id}/lint"): "",
@@ -16,7 +16,8 @@ def rules():
     from app.security.advisor_write_routes import FORBIDDEN, WriteRule
     result = {(method, "/api/v1/geo" + path): WriteRule(
         method, "/api/v1/geo" + path, frozenset(fields.split()),
-        FORBIDDEN - ({"public_use_allowed", "verified_translation"} if path == "/facts/{fact_id}/verify" else set()),
+        FORBIDDEN - ({"public_use_allowed", "verified_translation"} if path == "/facts/{fact_id}/verify"
+                     else {"status"} if path == "/projects/{project_id}" else set()),
         ("geo.assets", "geo.content"), "project")
         for (method, path), fields in DAILY.items()}
     from app.security.advisor_write_publish import rules as publish_rules
