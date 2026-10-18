@@ -167,3 +167,17 @@ def test_operation_log_does_not_claim_savepoint_is_durable(monkeypatch):
     logged.assert_not_called()
     callbacks['after_commit'](SimpleNamespace(in_nested_transaction=lambda: False))
     logged.assert_called_once_with(request.scope, 'committed')
+
+
+def test_patrol_history_delete_retains_answers_and_does_not_replay_deleted_run():
+    from app.security.advisor_patrol_delete import detach_run_evidence
+    snapshot = SimpleNamespace(patrol_run_id=10, raw_text='fixture evidence',
+        sample_mode='openai_compat', simulated=False, note='original note')
+    ticket = SimpleNamespace(progress={'retest_runs': {'old-week': 99, 'this-week': 10}})
+    session = SimpleNamespace(scalars=AsyncMock(side_effect=[[snapshot], [ticket]]))
+    ctx = SimpleNamespace(advisor_scope=object(), tenant_id=10, user_id=1)
+    asyncio.run(detach_run_evidence(session, ctx, SimpleNamespace(id=10, status='completed')))
+    assert snapshot.patrol_run_id is None and '#10' in snapshot.note and 'original note' in snapshot.note
+    assert (snapshot.raw_text, snapshot.sample_mode, snapshot.simulated) == ('fixture evidence', 'openai_compat', False)
+    assert ticket.progress['retest_runs'] == {'old-week': 99}
+    assert ticket.progress['deleted_retest_runs']['10']['window_starts'] == ['this-week']

@@ -183,3 +183,82 @@ def test_ticket_cannot_borrow_an_owned_project_for_foreign_content(tmp_path, mon
             response = await env.request('PATCH', '/integration/tasks/99', body={'status': 'in_progress'})
             assert response.status_code == 403, response.text
     asyncio.run(run())
+
+
+def test_real_advisor_cannot_read_platform_billing_or_key_state(tmp_path, monkeypatch, backend):
+    from unittest.mock import AsyncMock
+    from app.geo.content import search_visibility_routes as routes
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            env.app.include_router(routes.router)
+            billing = AsyncMock()
+            monkeypatch.setattr(routes, 'month_usage', billing)
+            response = await env.request('GET', '/search-visibility/usage')
+            assert response.status_code == 403, response.text
+            billing.assert_not_awaited()
+    asyncio.run(run())
+
+
+def test_null_business_tasks_follow_prompt_ownership_in_lists(tmp_path, monkeypatch, backend):
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            await foreign_project(env)
+            for ident in (10, 50):
+                await mutate(env, m.GeoContentTask, ident, business_id=None)
+            response = await env.request('GET', '/content-tasks')
+            assert response.status_code == 200, response.text
+            ids = {row['id'] for row in response.json()['items']}
+            assert 10 in ids and not ids & {20, 30, 50}
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('cleanup', (False, True))
+def test_patrol_delete_keeps_samples_and_repairs_retest_references(tmp_path, monkeypatch, backend, cleanup):
+    from sqlalchemy import select
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            async with env.factory() as session:
+                session.add(m.GeoVisibilityPatrolRun(id=100, tenant_id=10, status='completed',
+                    trigger='contract_retest', items=[{'prompt_id': 10}], summary={
+                        'prompts': 1, 'contract_plan': {'cells': [{'prompt_id': 10}]}}))
+                await session.flush()
+                session.add(m.GeoAnswerSnapshot(id=100, tenant_id=10, prompt_id=10, engine='other',
+                    raw_text='retained answer', captured_at=datetime(2026, 10, 19),
+                    patrol_run_id=100, sample_mode='openai_compat', simulated=False))
+                session.add(m.GeoActionTicket(id=100, tenant_id=10, title='retest ticket',
+                    progress={'project_workflow': {'project_id': 10}, 'retest_runs': {'fixture-week': 100}}))
+                await session.commit()
+            response = await env.request('POST', '/visibility-patrol/runs/cleanup',
+                params={'keep_latest': 0, 'project_id': 10}) if cleanup else await env.request(
+                    'DELETE', '/visibility-patrol/runs/100')
+            assert response.status_code == 200, response.text
+            async with env.factory() as session:
+                assert await session.get(m.GeoVisibilityPatrolRun, 100) is None
+                snapshot = await session.get(m.GeoAnswerSnapshot, 100)
+                assert snapshot.patrol_run_id is None and snapshot.raw_text == 'retained answer'
+                assert snapshot.sample_mode == 'openai_compat' and not snapshot.simulated
+                assert '#100' in snapshot.note
+                ticket = await session.get(m.GeoActionTicket, 100)
+                assert ticket.progress['retest_runs'] == {}
+                assert ticket.progress['deleted_retest_runs']['100']['deleted_by'] == 1
+    asyncio.run(run())
+
+
+def test_onboarding_new_business_questions_keep_their_new_unit(tmp_path, monkeypatch, backend):
+    from sqlalchemy import select
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            response = await env.request('POST', '/onboarding/apply', params={'project_id': 10}, body={
+                'tenant_id': 10, 'businesses': [{'name': 'new owned business'}],
+                'prompts': [{'question': 'Which new business fits?', 'business_name': 'new owned business'}],
+                'create_website_channel': False})
+            assert response.status_code == 200, response.text
+            async with env.factory() as session:
+                business = await session.scalar(select(m.GeoOptimizationBusiness).where(
+                    m.GeoOptimizationBusiness.name == 'new owned business'))
+                prompt = await session.scalar(select(m.GeoPrompt).where(m.GeoPrompt.question == 'Which new business fits?'))
+                unit = await session.get(m.GeoOptimizationUnit, prompt.unit_id)
+                assert unit.business_id == business.id and business.id != 10
+                project = await session.get(m.GeoProject, 10)
+                assert business.id in project.project_settings['geo_business_scope']['business_ids']
+    asyncio.run(run())

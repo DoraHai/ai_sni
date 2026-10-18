@@ -13,7 +13,6 @@ READ_ROUTES = frozenset({
     '/api/v1/geo/content-health',
     '/api/v1/geo/deliverables/archives',
     '/api/v1/geo/deliverables/archives/{archive_id}',
-    '/api/v1/geo/search-visibility/usage',
     '/api/v1/geo/action-tickets',
     '/api/v1/geo/action-tickets/{ticket_id}/execution-plan',
     '/api/v1/geo/action-tickets/{ticket_id}/implementation-plan',

@@ -181,6 +181,10 @@ async def guard_scope(session, ctx, request, body, rule):
     from app.security.advisor_write_reads import assigned_scope
     from app.security.geo_advisor import check_manual_execution_scope
     await check_manual_execution_scope(session, ctx, rule)
+    if session.info.pop('advisor_pending_business_binding', False):
+        # The flush callback binds newly-created businesses to their project.
+        # Persist it before populate_existing reloads the project authority.
+        await session.flush()
     if session.info.get('advisor_scoped_write'):
         from app.models import GeoProject
         from sqlalchemy import select
@@ -311,6 +315,16 @@ async def bind_pending_scope(session, ctx, request, body):
             settings['geo_business_scope'] = {**current, 'business_ids': sorted(
                 set(current['business_ids']) | {r.id for r in new}), 'revision': current.get('revision', 0) + 1}
             parent.project_settings = settings
+            session.info['advisor_pending_business_binding'] = True
+            # Later queries in this same import must see the new business/unit,
+            # rather than accidentally attach its questions to the old default.
+            from app.security.advisor_read_scope import predicates
+            _, project_ids, business_ids, _ = session.info['advisor_read_scope']
+            business_ids = business_ids | frozenset(r.id for r in new)
+            criteria = predicates(ctx, project_ids, business_ids, session.info['advisor_read_domains'],
+                session.info['advisor_read_prompt_ids'], session.info['advisor_read_patrol_ids'])
+            session.info['advisor_read_scope'] = (ctx, project_ids, business_ids, criteria)
+            request.scope['geo_advisor_read_projects'] = (project_ids, business_ids)
 
     event.listen(session.sync_session, 'before_flush', before_flush)
     event.listen(session.sync_session, 'after_flush_postexec', after_flush)

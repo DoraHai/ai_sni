@@ -157,7 +157,7 @@ async def download(project_id: int, job_id: int, tenant_id: int = Query(...),
 @router.get("/search-visibility/usage")
 async def usage(ctx: AuthContext = Depends(require_scoped_auth),
                 session: AsyncSession = Depends(get_session)):
-    if not is_admin(ctx) and getattr(ctx, 'advisor_scope', None) is None:
+    if not is_admin(ctx):
         raise HTTPException(403, "仅超管可查看全平台用量")
     settings = get_settings()
     return {**await month_usage(session), "limit_cny": settings.deepseek_search_monthly_limit_cny,

@@ -5445,6 +5445,8 @@ async def delete_visibility_patrol_run(
     has_samples = await session.scalar(select(GeoAnswerSnapshot.id).where(GeoAnswerSnapshot.patrol_run_id == run_id).limit(1))
     if (has_samples or (row.summary or {}).get('contract_plan')) and getattr(ctx, 'advisor_scope', None) is None:
         raise HTTPException(409, '巡检包含指标证据或复测计划，不能删除来源记录')
+    from app.security.advisor_patrol_delete import detach_run_evidence
+    await detach_run_evidence(session, ctx, row)
     await session.delete(row)
     await session.commit()
     return {"deleted": True, "id": run_id}
@@ -5486,6 +5488,8 @@ async def cleanup_visibility_patrol_runs(
         if (has_samples or (r.summary or {}).get('contract_plan')) and getattr(ctx, 'advisor_scope', None) is None:
             keep_ids.add(r.id)
             continue
+        from app.security.advisor_patrol_delete import detach_run_evidence
+        await detach_run_evidence(session, ctx, r)
         await session.delete(r)
         deleted += 1
     await session.commit()
@@ -7035,7 +7039,12 @@ async def list_tasks(
     if getattr(ctx, "advisor_scope", None) is not None:
         from app.security.advisor_write_reads import assigned_scope
         _, businesses = await assigned_scope(session, ctx)
-        filters.append(GeoContentTask.business_id.in_(businesses))
+        owned_prompts = select(GeoPrompt.id).where(GeoPrompt.tenant_id == tenant_id,
+            GeoPrompt.unit_id.in_(select(GeoOptimizationUnit.id).where(
+                GeoOptimizationUnit.tenant_id == tenant_id,
+                GeoOptimizationUnit.business_id.in_(businesses))))
+        filters.append(GeoContentTask.prompt_id.in_(owned_prompts))
+        filters.append(or_(GeoContentTask.business_id.is_(None), GeoContentTask.business_id.in_(businesses)))
     if status:
         filters.append(GeoContentTask.status == status)
     elif not include_archived:
