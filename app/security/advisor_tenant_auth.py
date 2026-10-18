@@ -182,6 +182,14 @@ async def check_seo_objects(request, ctx, session):
     } and not request.query_params.getlist('site_id'):
         reject(403, 'ADVISOR_ASSIGNMENT_REQUIRED')
     from app.database import Base
+    route = getattr(request.scope.get("route"), "path", None)
+    # These values are numeric pagination boundaries, not message/object IDs.
+    # Keep the exception tied to the exact GET route and parameter name.
+    cursors = {
+        ("/api/v1/seo/workbench/advisor-tasks", "before_id"),
+        ("/api/v1/seo/site-pages/index-reviews", "before_id"),
+        ("/api/v1/seo/site-pages/image-remediation-history", "before_snapshot_id"),
+    }
     owners = {
         "site_id": "seo_sites", "keyword_id": "seo_keyword_assets",
         "content_id": "seo_content_assets", "page_id": "seo_site_pages",
@@ -205,14 +213,10 @@ async def check_seo_objects(request, ctx, session):
     for key, value in values:
         if not key.endswith("_id") or key == "tenant_id":
             continue
-        if key == "before_id" and request.url.path in {
-            "/api/v1/seo/workbench/onsite-tasks", "/api/v1/seo/site-pages/index-reviews",
-            "/api/v1/seo/site-pages/image-remediation-history",
-            "/api/v1/seo/workbench/advisor-tasks", "/api/v1/seo/tasks",
-        }:
-            # A cursor only bounds the already tenant/site-scoped query; it is
-            # not an ID of a conversation message.
-            continue
+        if request.method == "GET" and (route, key) in cursors:
+            continue  # The handler validates PositiveInt and scopes its query.
+        if key == "before_id" and route != "/api/v1/seo/workbench/content-assets/{content_id}/conversation/messages":
+            reject(403, "ADVISOR_OBJECT_UNAVAILABLE")
         if key in {"before_id", "message_id"}:
             messages = Base.metadata.tables["seo_content_messages"]
             conversations = Base.metadata.tables["seo_content_conversations"]
@@ -227,6 +231,12 @@ async def check_seo_objects(request, ctx, session):
             ctx.ensure_tenant(owner)
             continue
         table_name = owners.get(key)
+        if (key == "relation_id" and request.method == "GET"
+                and route == "/api/v1/seo/site/page-captures"):
+            kinds = request.query_params.getlist("relation_type")
+            if len(set(kinds)) != 1:
+                reject(422, "ADVISOR_INVALID_OBJECT_ID")
+            table_name = {"site_page": "seo_site_pages", "publication": "seo_content_publications"}.get(kinds[0])
         if table_name is None or table_name not in Base.metadata.tables:
             reject(403, "ADVISOR_OBJECT_UNAVAILABLE")
         table = Base.metadata.tables[table_name]
