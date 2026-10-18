@@ -32,6 +32,7 @@ HEAD = "0105_seo_content_confirmations"
 MESSAGE_HEAD = "0106_seo_content_messages"
 SITE_DELETE_HEAD = "0107_seo_site_delete"
 ADVISOR_LINKS_HEAD = "0108_advisor_account_links"
+ADVISOR_GRANTS_HEAD = "0109_advisor_tenant_grants"
 PORT = 8031
 
 
@@ -178,13 +179,14 @@ def graph():
     cfg = Config(str(ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(ROOT / "migrations"))
     scripts = ScriptDirectory.from_config(cfg)
-    if (scripts.get_heads() != [ADVISOR_LINKS_HEAD] or scripts.get_revision(HEAD).down_revision != BASE
+    if (scripts.get_heads() != [ADVISOR_GRANTS_HEAD] or scripts.get_revision(HEAD).down_revision != BASE
             or scripts.get_revision(MESSAGE_HEAD).down_revision != HEAD
             or scripts.get_revision(SITE_DELETE_HEAD).down_revision != MESSAGE_HEAD
-            or scripts.get_revision(ADVISOR_LINKS_HEAD).down_revision != SITE_DELETE_HEAD):
+            or scripts.get_revision(ADVISOR_LINKS_HEAD).down_revision != SITE_DELETE_HEAD
+            or scripts.get_revision(ADVISOR_GRANTS_HEAD).down_revision != ADVISOR_LINKS_HEAD):
         raise ValueError("Unexpected migration graph")
-    return {"head": ADVISOR_LINKS_HEAD, "parent": SITE_DELETE_HEAD,
-            "revisions": len(list(scripts.walk_revisions(base="base", head=ADVISOR_LINKS_HEAD)))}
+    return {"head": ADVISOR_GRANTS_HEAD, "parent": ADVISOR_LINKS_HEAD,
+            "revisions": len(list(scripts.walk_revisions(base="base", head=ADVISOR_GRANTS_HEAD)))}
 
 
 def upgrade(target):

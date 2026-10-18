@@ -26,7 +26,7 @@ UNION ALL
 SELECT 'member_of', r.rolname, CASE WHEN m.admin_option THEN 'ADMIN' ELSE 'MEMBER' END
 FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid, me WHERE m.member = me.oid
 UNION ALL
-SELECT 'default_acl', pg_get_userbyid(d.defaclrole) || ':' || d.defaclobjtype, a.privilege_type
+SELECT 'default_acl', pg_get_userbyid(d.defaclrole) || ':' || d.defaclobjtype::text, a.privilege_type
 FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) a, me WHERE a.grantee = me.oid
 UNION ALL
 SELECT 'role_attr', 'sem_runtime',
