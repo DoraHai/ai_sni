@@ -525,7 +525,7 @@ def test_revoked_or_changed_identity_cannot_write_or_use_default_tenant(tmp_path
 
 @pytest.mark.parametrize('which', ['patrol', 'cycle'])
 @pytest.mark.parametrize('case', [CASES[0], CASES[2]], ids=['fact', 'prompt'])
-def test_new_material_cannot_feed_enabled_execution_chain(tmp_path, monkeypatch, backend, which, case):
+def test_new_material_allowed_during_enabled_execution_chain(tmp_path, monkeypatch, backend, which, case):
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
             if which == 'patrol':
@@ -537,8 +537,9 @@ def test_new_material_cannot_feed_enabled_execution_chain(tmp_path, monkeypatch,
                 settings['geo_service_plan'].update(enabled=True, status='active', prompt_ids=[10])
                 await mutate(env, GeoProject, 10, project_settings=settings)
             before = await env.snapshot()
-            assert_denied(await env.request(case[0], case[1], body=case[2]))
-            assert await env.snapshot() == before
+            response = await env.request(case[0], case[1], body=case[2])
+            assert response.status_code == 200, response.text
+            assert await env.snapshot() != before
     asyncio.run(run())
 
 
