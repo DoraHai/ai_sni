@@ -154,7 +154,7 @@ const connectionEditingId = ref(null)
 const connectionCredentialsChanged = ref(false)
 const connectionTestingId = ref(null)
 const connectionTogglingId = ref(null)
-const connectionForm = reactive({ platform_code: '', name: '', base_url: '', credentials: {}, clear_credentials: false, enabled: true, test_after_save: true })
+const connectionForm = reactive({ platform_code: '', name: '', base_url: '', credentials: {}, clear_credentials: false, enabled: true, test_after_save: true, site_id: null })
 const selectedPlatform = computed(() => catalog.value.find(item => item.code === connectionForm.platform_code))
 const editingConnection = computed(() => connections.value.find(item => item.id === connectionEditingId.value))
 
@@ -338,6 +338,7 @@ function openConnection(platform) {
   if (!platform.available) return ElMessage.info(platform.help || '该平台仍在规划中')
   Object.assign(connectionForm, {
     platform_code: platform.code,
+    site_id: siteId.value,
     name: platform.name,
     base_url: '',
     credentials: Object.fromEntries((platform.credential_fields || []).map(item => [item.key, ''])),
@@ -355,6 +356,7 @@ function editConnection(connection) {
   if (!platform) return ElMessage.error('平台定义不存在，请刷新后重试')
   Object.assign(connectionForm, {
     platform_code: connection.platform_code,
+    site_id: connection.site_id || null,
     name: connection.name,
     base_url: connection.base_url || '',
     credentials: Object.fromEntries((platform.credential_fields || []).map(item => [item.key, ''])),
@@ -391,6 +393,7 @@ async function saveConnection() {
         base_url: connectionForm.base_url.trim() || null,
         enabled: connectionForm.enabled,
         clear_credentials: connectionForm.clear_credentials,
+        ...(session.canEdit('settings.accounts') ? { site_id: connectionForm.site_id } : {}),
       }
       if (connectionCredentialsChanged.value && !connectionForm.clear_credentials) payload.credentials = connectionForm.credentials
       saved = await updateSeoDistributionConnection({ connectionId: connectionEditingId.value, tenantId: currentTenantId.value, payload })
@@ -398,6 +401,7 @@ async function saveConnection() {
       saved = await createSeoDistributionConnection({
         tenant_id: currentTenantId.value,
         platform_code: connectionForm.platform_code,
+        ...(session.canEdit('settings.accounts') ? { site_id: connectionForm.site_id } : {}),
         name: connectionForm.name.trim(),
         base_url: connectionForm.base_url.trim() || null,
         credentials: connectionForm.credentials,
@@ -1140,6 +1144,7 @@ onMounted(loadSites)
         <el-alert v-if="connectionEditingId && editingConnection?.has_credentials" title="授权信息已加密保存且不会回显；所有字段留空即可保持原值。" type="info" :closable="false" show-icon />
         <el-form-item v-if="connectionEditingId && editingConnection?.has_credentials" label="授权信息"><el-checkbox v-model="connectionForm.clear_credentials" @change="markCredentialsCleared">清除现有授权信息</el-checkbox></el-form-item>
         <el-form-item label="连接状态"><el-switch v-model="connectionForm.enabled" active-text="启用" inactive-text="停用" /></el-form-item>
+        <el-form-item v-if="session.canEdit('settings.accounts')" label="顾问可用网站"><el-select v-model="connectionForm.site_id" clearable placeholder="不授权顾问"><el-option v-for="site in sites" :key="site.id" :value="site.id" :label="site.name" /></el-select><small>只供所选网站的已分配顾问使用；清空则撤销。</small></el-form-item>
         <el-form-item v-if="selectedPlatform?.mode === 'api'" label="保存后操作"><el-checkbox v-model="connectionForm.test_after_save">保存后立即测试连接</el-checkbox></el-form-item>
         <el-alert v-if="selectedPlatform?.mode === 'assisted'" title="登记账号备注不代表已登录。无需填写账号密码；发布时在自己的浏览器登录，使用填稿助手或复制专属稿。" type="info" :closable="false" show-icon />
       </el-form>

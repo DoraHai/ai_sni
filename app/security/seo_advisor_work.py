@@ -221,7 +221,7 @@ async def workflow_scope(session, ctx, request, body, rule, *, lock=False):
     for key, value in request.query_params.multi_items():
         references({key: value}, rule.template, refs=refs)
     references(body, rule.template, refs=refs)
-    seen, sites = set(), set()
+    seen, sites, connections = set(), set(), []
     index = 0
     while index < len(refs):
         kind, value = refs[index]
@@ -241,6 +241,8 @@ async def workflow_scope(session, ctx, request, body, rule, *, lock=False):
         if row is None:
             deny("ADVISOR_OBJECT_NOT_FOUND", 404)
         ctx.ensure_tenant(row["id"] if kind == "tenant_id" else row["tenant_id"])
+        if table_name == 'seo_distribution_connections':
+            connections.append(row)
         if kind == "site_id":
             sites.add(row["id"])
         elif "site_id" in row:
@@ -258,7 +260,11 @@ async def workflow_scope(session, ctx, request, body, rule, *, lock=False):
         **getattr(request.state, "seo_advisor_evidence", {}),
         "objects": sorted([list(item) for item in seen], key=str),
     }
-    return sites.pop()
+    site_id = sites.pop()
+    request.state.seo_advisor_site_id = site_id
+    from app.security.seo_advisor_connections import ensure_connection_binding
+    await ensure_connection_binding(session, ctx, connections, site_id)
+    return site_id
 
 
 async def lock_workflow_scope(session, ctx, request, body, rule):

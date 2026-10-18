@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { fetchSeoBrandProfile, updateSeoBrandProfile } from '../../api/seo'
 import { currentTenantId, session } from '../../store/session'
+import { currentSeoSiteId as siteId } from './seoSiteContext'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -20,13 +21,17 @@ const hostPreview = computed(() => {
 })
 
 async function load() {
+  if (session.isAdvisorSession && !siteId.value) {
+    error.value = '请先选择已分配的网站'
+    return
+  }
   if (!currentTenantId.value) {
     error.value = '请先选择客户'
     return
   }
   loading.value = true
   try {
-    profile.value = await fetchSeoBrandProfile({ tenantId: currentTenantId.value })
+    profile.value = await fetchSeoBrandProfile({ tenantId: currentTenantId.value, siteId: siteId.value })
     form.brand_name = profile.value.brand_name || ''
     form.website = profile.value.website || ''
     error.value = ''
@@ -44,6 +49,7 @@ async function save() {
   try {
     profile.value = await updateSeoBrandProfile({
       tenant_id: currentTenantId.value,
+      site_id: siteId.value,
       brand_name: form.brand_name.trim(),
       website: form.website.trim(),
     })
@@ -60,7 +66,7 @@ async function save() {
   }
 }
 
-watch(currentTenantId, load)
+watch([currentTenantId, siteId], load)
 onMounted(load)
 </script>
 
@@ -89,7 +95,7 @@ onMounted(load)
       <div class="identity-grid">
         <label>
           <span>品牌名称</span>
-          <input v-model="form.brand_name" :disabled="!canEdit" maxlength="100" placeholder="例如：苏尔寿" @keyup.enter="save">
+          <input v-model="form.brand_name" :disabled="!canEdit || session.isAdvisorSession" maxlength="100" placeholder="例如：苏尔寿" @keyup.enter="save">
           <small>用于识别标题、摘要及品牌推文中的品牌主体</small>
         </label>
         <label>
