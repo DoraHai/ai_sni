@@ -139,3 +139,72 @@ def test_revocation_discards_uncommitted_prior_cells(tmp_path, monkeypatch, back
                 assert row.summary.get('snapshots_created', 0) == 0
                 assert not row.items
     asyncio.run(run())
+
+
+def test_reassignment_during_second_provider_commits_and_discards_batch(tmp_path, monkeypatch, backend):
+    async def run():
+        from app.models import GeoTrackingEngine, Tenant
+        async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
+            async with env.factory() as session:
+                session.add(GeoTrackingEngine(tenant_id=10, engine_key='qwen',
+                    display_name='second fixture engine', enabled=True))
+                await session.commit()
+            response = await env.request('POST', '/visibility-patrol/runs', body={'tenant_id': 10})
+            assert response.status_code == 200, response.text
+            run_id = response.json()['run']['id']
+            patrol = worker_stubs(monkeypatch)
+            calls, reassigned = [], []
+
+            async def reassign():
+                async with env.factory() as admin:
+                    # Same tenant/project lock order used by project writers.
+                    await admin.scalar(select(Tenant.id).where(Tenant.id == 10).with_for_update())
+                    project = await admin.get(GeoProject, 10, with_for_update=True)
+                    settings = copy.deepcopy(project.project_settings)
+                    settings['geo_service_plan']['advisor_user_id'] = 2
+                    project.project_settings = settings
+                    await admin.commit()
+                    reassigned.append(True)
+
+            async def probe(**kwargs):
+                calls.append(1)
+                if len(calls) == 2:
+                    await asyncio.wait_for(reassign(), timeout=3)
+                return {'raw_text': 'uncommitted fixture response', 'simulated': False,
+                    'sample_mode': 'openai_compat', 'suggested_mentions_brand': False,
+                    'analysis_status': 'completed'}
+
+            monkeypatch.setattr(patrol, 'run_probe_draft', probe)
+            async with env.factory() as session:
+                row = await patrol.execute_patrol_run(session, run_id, tenant_id=10)
+                assert reassigned == [True], 'provider must not hold locks blocking project reassignment'
+                assert row.status == 'failed' and '重新发起' in row.error
+                assert not list(await session.scalars(select(GeoAnswerSnapshot)))
+                assert row.summary.get('snapshots_created', 0) == 0
+                assert not row.items
+    asyncio.run(run())
+
+
+def test_unchanged_detection_persists_periodic_and_final_advisor_batches(tmp_path, monkeypatch, backend):
+    async def run():
+        async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
+            async with env.factory() as session:
+                session.add_all([GeoPrompt(id=100+i, tenant_id=10, unit_id=10,
+                    question=f'fixture question {i}', status='active') for i in range(5)])
+                await session.commit()
+            response = await env.request('POST', '/visibility-patrol/runs', body={'tenant_id': 10})
+            assert response.status_code == 200, response.text
+            run_id = response.json()['run']['id']
+            patrol = worker_stubs(monkeypatch)
+            probe = AsyncMock(return_value={'raw_text': 'authorized fixture response', 'simulated': False,
+                'sample_mode': 'openai_compat', 'suggested_mentions_brand': False,
+                'analysis_status': 'completed'})
+            monkeypatch.setattr(patrol, 'run_probe_draft', probe)
+            async with env.factory() as session:
+                row = await patrol.execute_patrol_run(session, run_id, tenant_id=10)
+                assert row.status == 'completed', row.error
+                snapshots = list(await session.scalars(select(GeoAnswerSnapshot)))
+                assert len(snapshots) == 6 and probe.await_count == 6
+                assert row.summary['snapshots_created'] == 6
+                assert {cell['snapshot_id'] for cell in row.items} == {s.id for s in snapshots}
+    asyncio.run(run())

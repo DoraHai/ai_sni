@@ -43,7 +43,14 @@ async def check_visibility_execution(session, run, prompt_ids, *, lock=False):
         if not is_advisor(role) or any((role.permissions or {}).get(k) != 'edit'
                 for k in ('geo.assets', 'geo.content')):
             raise AdvisorVisibilityUnavailable(message)
-        grants = await active_grants(session, await read_grants(session, user.id))
+        if lock:
+            from app.models.advisor_tenant_grant import AdvisorTenantGrant
+            rows = list(await session.scalars(select(AdvisorTenantGrant).where(
+                AdvisorTenantGrant.user_id == user.id).order_by(AdvisorTenantGrant.id)
+                .with_for_update().execution_options(populate_existing=True)))
+        else:
+            rows = await read_grants(session, user.id)
+        grants = await active_grants(session, rows)
         tenants = frozenset(g.tenant_id for g in grants)
         if user.tenant_id not in tenants or not any(
                 g.id == auth['grant_id'] and g.tenant_id == run.tenant_id for g in grants):
@@ -52,15 +59,15 @@ async def check_visibility_execution(session, run, prompt_ids, *, lock=False):
             advisor_scope=AdvisorScope(tenants, run.tenant_id, auth['grant_id']))
         await ensure_module_access(session, ctx, run.tenant_id, 'geo')
         request = SimpleNamespace(state=SimpleNamespace(advisor_visibility_prompt_ids=list(prompt_ids)))
-        await check_visibility_scope(session, ctx, request)
-        await check_manual_execution_scope(session, ctx, VISIBILITY_RUN_RULE)
+        await check_visibility_scope(session, ctx, request, lock=lock)
+        await check_manual_execution_scope(session, ctx, VISIBILITY_RUN_RULE, lock=lock)
     except AdvisorVisibilityUnavailable:
         raise
     except Exception as exc:
         raise AdvisorVisibilityUnavailable(message) from exc
 
 
-async def check_visibility_scope(session, ctx, request):
+async def check_visibility_scope(session, ctx, request, *, lock=True):
     """Freeze at most 20 active questions; revalidate that scope before commit.
 
     The tenant lock is also used by scheduler/settings/project binding writers.
@@ -69,10 +76,14 @@ async def check_visibility_scope(session, ctx, request):
     from app.geo.project_scope import binding, project_scope
     from app.geo.project_workflows import advisor_available, plan_for
 
-    await session.scalar(select(Tenant.id).where(Tenant.id == ctx.tenant_id).with_for_update())
-    projects = list(await session.scalars(select(GeoProject).where(
+    tenant_query = select(Tenant.id).where(Tenant.id == ctx.tenant_id)
+    project_query = select(GeoProject).where(
         GeoProject.tenant_id == ctx.tenant_id).order_by(GeoProject.id)
-        .with_for_update().execution_options(populate_existing=True)))
+    if lock:
+        tenant_query = tenant_query.with_for_update()
+        project_query = project_query.with_for_update()
+    await session.scalar(tenant_query)
+    projects = list(await session.scalars(project_query.execution_options(populate_existing=True)))
     owned = set()
     for project in projects:
         plan = plan_for(project)
