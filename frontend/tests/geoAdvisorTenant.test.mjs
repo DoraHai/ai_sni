@@ -41,6 +41,11 @@ async function fixture({ rows = [{ id: 15, name: '甲' }, { id: 17, name: '乙' 
   const calls = { reads: 0, profiles: 0, lists: 0, selects: [] }
   const deps = {
     session,
+    readSession: () => Promise.all([deps.fetchMe(), deps.fetchGeoTenants()]),
+    applySession: (me, tenants) => {
+      if (me?.user) session.refreshUser(me.user)
+      session.setTenants(tenants.tenants || [])
+    },
     fetchMe: async () => {
       calls.profiles++
       return { user: { ...initialUser, default_tenant_id: defaultId,
@@ -52,7 +57,7 @@ async function fixture({ rows = [{ id: 15, name: '甲' }, { id: 17, name: '乙' 
       if (retryError) throw retryError
       return { tenants: rows }
     },
-    fetchTenants: async () => {
+    listAuthorizedCustomers: async () => {
       calls.lists++
       assert.equal(session.token, identity)
       if (listError) throw listError
@@ -205,8 +210,8 @@ test('legacy pairs work, malformed envelopes fail closed, and logout clears all 
 test('Vue entry gates business pages behind bootstrap and renders the customer button', () => {
   const app = readFileSync(new URL('../geo-frontend/src/App.vue', import.meta.url), 'utf8')
   assert.match(app, /await bootstrapGeoSession/)
-  assert.match(app, /ready && guidance/)
-  assert.match(app, /router-view v-else-if="ready"/)
+  assert.match(app, /<template v-if="!guidance">/)
+  assert.match(app, /router-view v-if="ready"/)
   assert.match(app, /:href="GEO_ADVISOR_SELECT_URL"/)
   assert.match(app, /去选择客户/)
 })

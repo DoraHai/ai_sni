@@ -17,7 +17,7 @@ const guide = (noTenant = false) => ({
 
 // Runs before mounting business pages: no requests carry an inferred customer id.
 // One recovery attempt per bootstrap, even if the retried read returns another 409.
-export async function bootstrapGeoSession({ session, fetchMe, fetchGeoTenants, fetchTenants, selectTenant }) {
+export async function bootstrapGeoSession({ session, readSession, applySession, fetchMe, listAuthorizedCustomers, selectTenant }) {
   const identityToken = session.token
   let expectedToken = identityToken
   const isAdvisor = !!advisorClaims(identityToken) || session.user?.is_advisor === true
@@ -25,10 +25,7 @@ export async function bootstrapGeoSession({ session, fetchMe, fetchGeoTenants, f
   let me
   let tenants
   try {
-    ;[me, tenants] = await Promise.all([
-      session.isLoggedIn ? fetchMe() : Promise.resolve(null),
-      fetchGeoTenants(),
-    ])
+    ;[me, tenants] = await readSession()
   } catch (error) {
     if (!current()) return isAdvisor ? guide() : null
     if (!isAdvisor) {
@@ -39,7 +36,7 @@ export async function bootstrapGeoSession({ session, fetchMe, fetchGeoTenants, f
     if (error.code !== 'ADVISOR_TENANT_SELECTION_REQUIRED') throw error
     if (error.status !== 409 || advisorClaims(identityToken)?.scope_kind !== 'advisor_identity') return guide()
     try {
-      const [profile, data] = await Promise.all([fetchMe(), fetchTenants()])
+      const [profile, data] = await Promise.all([fetchMe(), listAuthorizedCustomers()])
       if (!current()) return guide()
       const rows = Array.isArray(data) ? data : data?.tenants
       if (!Array.isArray(rows) || rows.some((row) => !positiveId(row?.id))
@@ -60,13 +57,12 @@ export async function bootstrapGeoSession({ session, fetchMe, fetchGeoTenants, f
           || !positiveId(claims.gid) || String(claims.sub) !== String(session.user?.id)) return guide()
       session.replaceAuthForAdvisorTenant(selected.access_token, tenantId)
       expectedToken = selected.access_token
-      ;[me, tenants] = await Promise.all([fetchMe(), fetchGeoTenants()])
+      ;[me, tenants] = await readSession()
     } catch (recoveryError) {
       return guide(recoveryError.code === 'ADVISOR_NO_TENANT')
     }
   }
   if (!current()) return isAdvisor ? guide() : null
-  if (me?.user) session.refreshUser(me.user)
-  session.setTenants(tenants.tenants || [])
+  applySession(me, tenants)
   return null
 }
