@@ -3,6 +3,65 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import * as Vue from 'vue'
+
+// Exercise the real API wrappers without a browser session or network access.
+async function contentWriteApi(isAdvisorSession) {
+  const source = await readFile(new URL('../src/api/seo.js', import.meta.url), 'utf8')
+  const calls = []
+  const client = Object.fromEntries(['post', 'patch', 'put'].map(method => [method,
+    (...args) => { calls.push({ method, args }); return Promise.resolve({}) },
+  ]))
+  const names = ['seoQaPost', 'seoQaPatch', 'createSeoBrandAsset', 'updateSeoBrandAsset',
+    'createSeoContentAsset', 'updateSeoContentAsset', 'bindSeoContentSourcePage', 'updateSeoBrandProfile']
+  const code = source.replace(/^import .*$/gm, '').replace(/^export /gm, '')
+  const session = { isAdvisorSession, tenantId: 999 }
+  const api = new Function('client', 'session', 'createSeoAiRequester',
+    `${code}; return {${names.join(',')}}`)(client, session, () => () => { throw Error('Unexpected AI call') })
+  return { api, calls, session }
+}
+
+test('all seven content write wrappers send the captured advisor tenant in query', async () => {
+  const { api, calls, session } = await contentWriteApi(true)
+  const payload = { tenant_id: 12, site_id: 34, title: '手工资料', version: 2, version_count: 3 }
+  const original = { ...payload }
+  await api.seoQaPost('facts', payload)
+  await api.seoQaPatch('facts/5', payload)
+  await api.createSeoBrandAsset(payload)
+  await api.updateSeoBrandAsset({ assetId: 6, tenantId: 12, payload })
+  await api.createSeoContentAsset(payload)
+  await api.updateSeoContentAsset({ contentId: 7, tenantId: 12, payload })
+  await api.bindSeoContentSourcePage({ contentId: 7, tenantId: 12, sourcePageId: 8, versionCount: 3 })
+  assert.equal(calls.length, 7)
+  for (const { args } of calls) assert.deepEqual(args[2].params, { tenant_id: 12 })
+  assert.equal(calls[0].args[2].timeout, 35000)
+  assert.equal(calls[1].args[1].version, 2)
+  assert.deepEqual(calls[6].args[1], { source_page_id: 8, version_count: 3 })
+  assert.deepEqual(payload, original)
+  session.tenantId = 56
+  await api.createSeoContentAsset(payload)
+  assert.equal(calls.at(-1).args[2].params.tenant_id, 12)
+  await api.createSeoContentAsset({ title: '缺客户' })
+  assert.equal(calls.at(-1).args[2].params.tenant_id, undefined)
+})
+
+test('ordinary users and adjacent QA or brand profile writes keep their request scope', async () => {
+  const { api, calls } = await contentWriteApi(false)
+  const payload = { tenant_id: 12 }
+  await api.seoQaPost('facts', payload)
+  await api.seoQaPatch('facts/5', payload)
+  await api.createSeoBrandAsset(payload)
+  await api.createSeoContentAsset(payload)
+  for (const { args } of calls) assert.equal(args[2]?.params, undefined)
+
+  const advisor = await contentWriteApi(true)
+  await advisor.api.seoQaPost('facts/import', payload)
+  await advisor.api.seoQaPost('answers', payload)
+  await advisor.api.seoQaPatch('facts/5/verify', payload)
+  await advisor.api.seoQaPatch('questions/5', payload)
+  await advisor.api.updateSeoBrandProfile(payload)
+  for (const { args } of advisor.calls) assert.equal(args[2]?.params, undefined)
+})
+
 const renderer = Vue.createRenderer({ createElement:()=>({}), createText:()=>({}), createComment:()=>({}), setText(){}, setElementText(){}, patchProp(){}, insert(){}, remove(){}, parentNode:()=>null, nextSibling:()=>null })
 const flush = async()=>{ for(let i=0;i<10;i++) await Vue.nextTick() }
 async function mount(api={},canEdit=true) {

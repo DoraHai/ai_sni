@@ -58,8 +58,11 @@ export function fetchSeoPageCaptureImage({ captureId, tenantId }) {
   })
 }
 export const seoQaGet = (path, params) => client.get(`/api/v1/seo/qa/${path}`, { params })
-export const seoQaPost = (path, payload) => client.post(`/api/v1/seo/qa/${path}`, payload, { timeout: 35000 })
-export const seoQaPatch = (path, payload) => client.patch(`/api/v1/seo/qa/${path}`, payload)
+export const seoQaPost = (path, payload) => client.post(`/api/v1/seo/qa/${path}`, payload, {
+  timeout: 35000, ...(path === 'facts' ? advisorContentWriteConfig(payload) : {}),
+})
+export const seoQaPatch = (path, payload) => client.patch(`/api/v1/seo/qa/${path}`, payload,
+  /^facts\/[1-9]\d*$/.test(path) ? advisorContentWriteConfig(payload) : undefined)
 export const fetchSeoWorkOrders = params => client.get('/api/v1/seo/tasks', {params})
 export const createSeoWorkOrder = payload => client.post('/api/v1/seo/tasks', payload)
 export const updateSeoWorkOrder = (id,payload) => client.patch(`/api/v1/seo/tasks/${id}`,payload)
@@ -69,6 +72,12 @@ export const seoVideoGet = (path,params) => client.get(`/api/v1/seo/content-dist
 export const seoVideoPost = (path,payload) => client.post(`/api/v1/seo/content-distribution/video/${path}`,payload,{timeout:120000})
 import { session } from '../store/session'
 import { createSeoAiRequester } from './seoAiRequests'
+
+// Keep the caller's captured customer scope in both body and query. Never
+// substitute the current session customer for a draft from another workspace.
+function advisorContentWriteConfig(payload) {
+  return session.isAdvisorSession ? { params: { tenant_id: payload.tenant_id } } : {}
+}
 
 const requestSeoAi = createSeoAiRequester(
   (path, payload, config) => client.post(path, payload, config),
@@ -309,7 +318,7 @@ export function updateSeoBrandProfile(payload) {
 }
 
 export function createSeoBrandAsset(payload) {
-  return client.post('/api/v1/seo/rank-serp/brand-assets', payload)
+  return client.post('/api/v1/seo/rank-serp/brand-assets', payload, advisorContentWriteConfig(payload))
 }
 
 export function updateSeoBrandAsset({ assetId, tenantId, payload }) {
@@ -338,7 +347,7 @@ export function fetchSeoContentReviewHistory({ contentId, tenantId }) {
 }
 
 export function createSeoContentAsset(payload) {
-  return client.post('/api/v1/seo/content-assets', payload)
+  return client.post('/api/v1/seo/content-assets', payload, advisorContentWriteConfig(payload))
 }
 
 export function updateSeoContentAsset({ contentId, tenantId, payload }) {
