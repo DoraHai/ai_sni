@@ -1,4 +1,6 @@
 <script setup>
+import { session } from '../../store/session'
+import { advisorClaims } from '../../utils/geoAdvisorTenant.js'
 /**
  * AI 提问管理：业务 → 关键词（优化单元）→ AI 提问。对齐原型 prompts.html。
  */
@@ -23,10 +25,13 @@ import {
   importGeoPromptsCsv,
 } from '../../api/geoContent'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
+import GeoAdvisorProjectPicker from '../../components/GeoAdvisorProjectPicker.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { downloadCsv, engineDisplay, engineLabelOf, labelOf, SENTIMENT_LABEL } from '../../utils/geoReportLabels'
 import { groupSnapshotsByPrompt, positionRank, sentimentShare, splitByMidpoint, summarizeSnapshots } from '../../utils/geoSnapshotSummary'
+
+const isAdvisor = computed(() => !!advisorClaims(session.token) || session.user?.is_advisor === true)
 
 const LAYERS = ['business', 'keyword', 'question']
 const router = useRouter()
@@ -48,6 +53,7 @@ const dialogOpen = ref(false)
 const dialogMode = ref('create')
 const saving = ref(false)
 const editTarget = ref(null)
+const newBusinessProjectId = ref(null)
 const form = ref({
   name: '',
   question: '',
@@ -633,7 +639,11 @@ async function submitDialog() {
         await patchGeoBusiness(tenantId.value, editTarget.value.id, { name })
         ElMessage.success('已保存')
       } else {
-        await createGeoBusiness({ tenant_id: tenantId.value, name })
+        if (isAdvisor.value && !newBusinessProjectId.value) {
+          ElMessage.warning('请选择已分配给你的项目')
+          return
+        }
+        await createGeoBusiness({ tenant_id: tenantId.value, name }, isAdvisor.value ? newBusinessProjectId.value : null)
         ElMessage.success('业务已创建')
       }
     } else if (layer.value === 'keyword') {
@@ -644,7 +654,7 @@ async function submitDialog() {
         return
       }
       if (editTarget.value) {
-        await patchGeoUnit(tenantId.value, editTarget.value.id, { name, keyword: name, business_id: businessId })
+        await patchGeoUnit(tenantId.value, editTarget.value.id, { name, keyword: name, ...(isAdvisor.value ? {} : { business_id: businessId }) })
         ElMessage.success('已保存')
       } else {
         await createGeoUnit({
@@ -689,7 +699,7 @@ async function submitDialog() {
           return
         }
         if (editTarget.value) {
-          await patchGeoPrompt(tenantId.value, editTarget.value.id, { question, unit_id: unitId })
+          await patchGeoPrompt(tenantId.value, editTarget.value.id, { question, ...(isAdvisor.value ? {} : { unit_id: unitId }) })
           ElMessage.success('已保存')
         } else {
           await createGeoPrompt({
@@ -1099,11 +1109,12 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
           <div v-if="layer === 'business'" class="prompt-field">
             <label>业务名称 <em>*</em></label>
             <input v-model="form.name" placeholder="例如：CRM软件">
+            <GeoAdvisorProjectPicker v-if="isAdvisor && !editTarget" v-model="newBusinessProjectId" :tenant-id="tenantId" />
           </div>
           <template v-else-if="layer === 'keyword'">
             <div class="prompt-field">
               <label>所属业务</label>
-              <select v-model="form.business_id" :disabled="dialogMode === 'create' && !!selectedBusinessId">
+              <select v-model="form.business_id" :disabled="(dialogMode === 'create' && !!selectedBusinessId) || (isAdvisor && !!editTarget)">
                 <option v-for="b in businesses" :key="b.id" :value="b.id">{{ b.name }}</option>
               </select>
             </div>
@@ -1120,11 +1131,11 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
             <div class="create-ctx">
               <div>
                 <span>当前业务：</span>
-                <select v-model="form.business_id" @change="onFormUnitChange">
+                <select v-model="form.business_id" :disabled="isAdvisor && !!editTarget" @change="onFormUnitChange">
                   <option v-for="b in businesses" :key="b.id" :value="b.id">{{ b.name }}</option>
                 </select>
                 <span>当前关键词：</span>
-                <select v-model="form.unit_id" @change="createTab === 'ai' && dialogMode === 'create' && runRecommend()">
+                <select v-model="form.unit_id" :disabled="isAdvisor && !!editTarget" @change="createTab === 'ai' && dialogMode === 'create' && runRecommend()">
                   <option v-for="u in unitsForForm" :key="u.id" :value="u.id">{{ unitLabel(u) }}</option>
                 </select>
               </div>

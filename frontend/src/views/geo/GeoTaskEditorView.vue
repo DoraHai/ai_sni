@@ -1,4 +1,6 @@
 <script setup>
+import { session } from '../../store/session'
+import { advisorClaims } from '../../utils/geoAdvisorTenant.js'
 import GeoGenerationEvidence from '../../components/GeoGenerationEvidence.vue'
 import { articleVersionLabel, latestGenerationFailure, mergeTaskJobLists } from '../../utils/geoArticleVersion'
 import { geoSnapshotLink } from '../../utils/geoRoutes'
@@ -63,6 +65,8 @@ import RichTextMarkdownEditor from '../../components/RichTextMarkdownEditor.vue'
 
 import { createEditorContext } from '../../utils/geoEditorContext'
 import { staleProgressHint } from '../../utils/geoProgressStatus'
+
+const isAdvisor = computed(() => !!advisorClaims(session.token) || session.user?.is_advisor === true)
 
 let editorEpoch = 0
 let editorDisposed = false
@@ -1364,7 +1368,7 @@ async function saveArticleBody({ silent = false } = {}) {
       title: submittedTitle.trim(),
       body_markdown: stripCiteAppendix(submittedBody),
       expected_article_id: task.value?.article?.id ?? null,
-      outline,
+      ...(isAdvisor.value ? {} : { outline }),
     }))
     // A stale save must also stop callers from scoring or optimizing the new task.
     if (!stillCurrent()) return false

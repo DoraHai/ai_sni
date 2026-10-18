@@ -3,6 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import GeoBusinessProfileForm from '../../components/GeoBusinessProfileForm.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
+import GeoAdvisorProjectPicker from '../../components/GeoAdvisorProjectPicker.vue'
+import { advisorClaims } from '../../utils/geoAdvisorTenant.js'
 import {
   createGeoBusiness,
   fetchGeoCompetitorInsights,
@@ -12,6 +14,8 @@ import {
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
 const { tenantId, session } = useGeoTenant()
+const isAdvisor = computed(() => !!advisorClaims(session.token) || session.user?.is_advisor === true)
+const newBusinessProjectId = ref(null)
 const loading = ref(false)
 const saving = ref(false)
 const creating = ref(false)
@@ -170,7 +174,11 @@ async function createBusiness() {
   }
   creating.value = true
   try {
-    const row = await createGeoBusiness({ tenant_id: tenantId.value, name })
+    if (isAdvisor.value && !newBusinessProjectId.value) {
+      ElMessage.warning('请选择已分配给你的项目')
+      return
+    }
+    const row = await createGeoBusiness({ tenant_id: tenantId.value, name }, isAdvisor.value ? newBusinessProjectId.value : null)
     ElMessage.success('已创建')
     newBizName.value = ''
     await load()
@@ -193,6 +201,7 @@ onMounted(load)
     :sub="`维护品牌名称、官网、行业、介绍与资质信息 · 已填写 ${completeness}`"
     :loading="loading"
   >
+    <GeoAdvisorProjectPicker v-if="isAdvisor" v-model="newBusinessProjectId" :tenant-id="tenantId" />
     <template #actions>
       <button class="gd-btn" :disabled="loading" @click="load">刷新</button>
       <button class="gd-btn primary" :disabled="saving || !current" @click="save">保存</button>

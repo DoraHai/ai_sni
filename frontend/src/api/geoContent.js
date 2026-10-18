@@ -93,7 +93,9 @@ export function listGeoPrompts(tenantId, statusOrParams, maybeParams) {
 }
 
 export function createGeoPrompt(body) {
-  return client.post('/api/v1/geo/prompts', body)
+  return client.post('/api/v1/geo/prompts', body, {
+    params: { tenant_id: body.tenant_id },
+  })
 }
 
 /** Import prompt rows in one server-validated CSV batch. */
@@ -143,8 +145,10 @@ export function listGeoBusinesses(tenantId, params = {}) {
   })
 }
 
-export function createGeoBusiness(body) {
-  return client.post('/api/v1/geo/optimization-businesses', body)
+export function createGeoBusiness(body, projectId = null) {
+  return client.post('/api/v1/geo/optimization-businesses', body, {
+    params: { tenant_id: body.tenant_id, ...(projectId ? { project_id: projectId } : {}) },
+  })
 }
 
 export function patchGeoBusiness(tenantId, businessId, body) {
@@ -161,7 +165,9 @@ export function listGeoUnits(tenantId, params = {}) {
 }
 
 export function createGeoUnit(body) {
-  return client.post('/api/v1/geo/optimization-units', body)
+  return client.post('/api/v1/geo/optimization-units', body, {
+    params: { tenant_id: body.tenant_id },
+  })
 }
 
 export function patchGeoUnit(tenantId, unitId, body) {
@@ -220,7 +226,9 @@ export function listGeoFacts(tenantId, params = {}) {
 }
 
 export function createGeoFact(body) {
-  return client.post('/api/v1/geo/facts', body)
+  return client.post('/api/v1/geo/facts', body, {
+    params: { tenant_id: body.tenant_id },
+  })
 }
 
 /** Import fact rows in one server-validated CSV batch. */
@@ -483,7 +491,9 @@ export function createGeoSourceOpportunityTask(body) {
 }
 
 export function createGeoContentTask(body) {
-  return client.post('/api/v1/geo/content-tasks', body)
+  return client.post('/api/v1/geo/content-tasks', body, {
+    params: { tenant_id: body.tenant_id },
+  })
 }
 
 /** Preview an uploaded article before associating it with a GEO question. */

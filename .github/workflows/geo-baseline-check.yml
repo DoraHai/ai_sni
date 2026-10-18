@@ -9,6 +9,8 @@ on:
     paths:
       - "app/geo/**"
       - "app/security/auth.py"
+      - "app/security/advisor_write*.py"
+      - "app/security/geo_advisor.py"
       - "requirements.txt"
       - "scripts/generate_geo_report_sample.py"
       - "app/geo_main.py"
@@ -24,6 +26,7 @@ on:
       - "ops/platform-deploy/modules/geo"
       - ".github/workflows/production-geo-deploy.yml"
       - "tests/test_geo*.py"
+      - "tests/test_advisor_scoped_writes*.py"
       - "ops/run_geo_checks.py"
       - "tests/test_metric_service.py"
       - "tests/test_md_to_html_tables.py"
