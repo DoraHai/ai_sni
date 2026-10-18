@@ -22,13 +22,20 @@ def plan_for(project):
         "status": "paused", "prompt_ids": [], "interval_days": 7, "advisor_user_id": None}
 
 
-async def advisor_available(session, tenant_id, user_id, *, lock=False):
+async def advisor_available(session, tenant_id, user_id, *, lock=False, advisor_scope=None):
     load_options = {"populate_existing": True}
     if lock:
         load_options["with_for_update"] = {"read": True}
     user = await session.get(User, user_id, **load_options) if user_id else None
-    if user is None or not user.is_active or user.tenant_id not in {None, tenant_id}:
+    if user is None or not user.is_active:
         return False
+    if advisor_scope is None:
+        if user.tenant_id not in {None, tenant_id}:
+            return False
+    else:
+        advisor_scope.ensure_tenant(tenant_id)
+        if user.tenant_id not in advisor_scope.tenant_ids:
+            return False
     role = await session.get(Role, user.role_id, **load_options)
     perms = role.permissions or {} if role else {}
     return perms.get("geo.content") == "edit" and perms.get("geo.assets") == "edit"

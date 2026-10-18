@@ -33,7 +33,7 @@ def test_pdf_page_limit_precedes_text_extraction():
         writer.add_blank_page(width=100, height=100)
     raw = io.BytesIO()
     writer.write(raw)
-    with pytest.raises(imports.ArticleImportError, match='cannot exceed 100 pages'):
+    with pytest.raises(imports.ArticleImportError, match='PDF 最多支持 100 页'):
         imports.preview_file_document(filename='fixture.pdf', raw=raw.getvalue())
 
 
@@ -46,7 +46,7 @@ def test_compressed_docx_limits_before_document_parser(monkeypatch, limit):
     assert len(raw.getvalue()) < 1000
     monkeypatch.setattr(imports, 'MAX_DOCX_UNPACKED_BYTES' if limit == 'expanded' else 'MAX_DOCX_ENTRIES',
                         1000 if limit == 'expanded' else 2)
-    with pytest.raises(imports.ArticleImportError, match='expanded content exceeds'):
+    with pytest.raises(imports.ArticleImportError, match='解压内容过大'):
         imports.preview_file_document(filename='fixture.docx', raw=raw.getvalue())
 
 
