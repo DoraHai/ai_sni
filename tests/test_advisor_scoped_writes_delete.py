@@ -28,13 +28,10 @@ def test_advisor_archive_and_hard_delete_commit_with_log(tmp_path, monkeypatch, 
 
 def test_manual_snapshot_delete_resolves_its_prompt_project(tmp_path, monkeypatch):
     from datetime import datetime
-    from app.models import GeoAnswerSnapshot, GeoDailyMetric
+    from app.models import GeoAnswerSnapshot
     from unittest.mock import AsyncMock
     async def run():
-        async with write_sandbox(tmp_path, monkeypatch) as env:
-            async with env.engine.begin() as conn:
-                await conn.run_sync(lambda c: GeoAnswerSnapshot.__table__.create(c, checkfirst=True))
-                await conn.run_sync(lambda c: GeoDailyMetric.__table__.create(c, checkfirst=True))
+        async with write_sandbox(tmp_path, monkeypatch, extra_tables=("geo_daily_metrics",)) as env:
             async with env.factory() as session:
                 session.add(GeoAnswerSnapshot(id=100, tenant_id=10, prompt_id=10,
                     raw_text="synthetic manual answer", captured_at=datetime(2026, 10, 18)))
@@ -96,9 +93,6 @@ async def seed_snapshot_project_slices(env):
     from datetime import datetime, date
     from app.models import (GeoAnswerSnapshot, GeoDailyMetric, GeoOptimizationBusiness,
         GeoOptimizationUnit, GeoPrompt)
-    async with env.engine.begin() as conn:
-        await conn.run_sync(lambda c: GeoAnswerSnapshot.__table__.create(c, checkfirst=True))
-        await conn.run_sync(lambda c: GeoDailyMetric.__table__.create(c, checkfirst=True))
     async with env.factory() as session:
         session.add(GeoOptimizationBusiness(id=50, tenant_id=10, name='foreign assigned business'))
         await session.flush()
@@ -123,7 +117,7 @@ def test_snapshot_list_and_delete_only_affect_assigned_project_slices(tmp_path, 
     from app.models import GeoAnswerSnapshot, GeoDailyMetric
     from unittest.mock import AsyncMock
     async def run():
-        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend, extra_tables=("geo_daily_metrics",)) as env:
             await seed_snapshot_project_slices(env)
             rebuild = AsyncMock(side_effect=AssertionError('advisor delete must not rebuild tenant-wide metrics'))
             monkeypatch.setattr('app.geo.content.daily_metrics.safe_rebuild_for_captured_at', rebuild)
@@ -159,7 +153,7 @@ def test_snapshot_delete_and_derived_metrics_roll_back_when_grant_changes(tmp_pa
         await original(session, *args)
         await session.execute(update(Grant).where(Grant.id == 101).values(revoked_at=datetime.utcnow(), revoked_by=2, revoke_reason="admin_uncheck"))
     async def run():
-        async with write_sandbox(tmp_path, monkeypatch) as env:
+        async with write_sandbox(tmp_path, monkeypatch, extra_tables=("geo_daily_metrics",)) as env:
             await seed_snapshot_project_slices(env)
             monkeypatch.setattr(advisor_write_snapshot_metrics, 'rebuild_before_delete', revoke)
             response = await env.request('DELETE', '/answer-snapshots/100')

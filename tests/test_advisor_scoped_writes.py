@@ -155,7 +155,7 @@ def backend(request):
 
 
 @asynccontextmanager
-async def write_sandbox(tmp_path, monkeypatch, *, backend='sqlite', enabled=True):
+async def write_sandbox(tmp_path, monkeypatch, *, backend='sqlite', enabled=True, extra_tables=()):
     from app.config import get_settings
     from app.geo.content.routes import router, geo_read_session
     import app.database as database
@@ -171,7 +171,7 @@ async def write_sandbox(tmp_path, monkeypatch, *, backend='sqlite', enabled=True
     schema = 'geo_scoped_writes_' + uuid4().hex
     admin = None
     metadata = MetaData()
-    names = set(BUSINESS_TABLES) | {'geo_tracking_engines', 'geo_answer_snapshots', 'roles', 'users', 'tenants', 'tenant_modules',
+    names = set(BUSINESS_TABLES) | set(extra_tables) | {'geo_tracking_engines', 'geo_answer_snapshots', 'roles', 'users', 'tenants', 'tenant_modules',
         'advisor_tenant_grants', 'geo_optimization_periods'}
     # Copy only GEO/auth tables and their FK dependencies, no shared/public data.
     pending = list(names)
