@@ -13,13 +13,16 @@ from app.ai import customer_profile as profile
 from app.api import customer_profile as endpoint
 from app.database import get_session
 from app.security import advisor_request
-from app.security.advisor_scope import AdvisorScope
+from app.security.advisor_scope import AdvisorScope, is_advisor
 from app.security.auth import AuthContext, require_scoped_auth
 
 
 def context(advisor=True):
+    permissions = {'monitor.profile': 'view'}
+    if advisor:
+        permissions.update({'seo.site': 'edit', 'seo.content': 'edit'})
     return AuthContext(user_id=7, username='advisor-fixture', role_name='fixture', tenant_id=1,
-        permissions={'monitor.profile': 'view'},
+        permissions=permissions,
         advisor_scope=AdvisorScope(frozenset({1}), 1, 11) if advisor else None)
 
 
@@ -44,6 +47,7 @@ def test_actual_advisor_get_is_read_only_even_on_cache_miss_or_refresh(fixture, 
     tenant.profile_summary = cached
     tenant.profile_generated_at = datetime(2026, 10, 18) if cached else None
     ctx = context()
+    assert is_advisor(SimpleNamespace(name='advisor fixture', is_system=False, permissions=ctx.permissions))
     request = Request({'type': 'http', 'method': 'GET', 'scheme': 'https',
         'server': ('testserver', 443), 'path': '/api/v1/customer-profile',
         'query_string': b'tenant_id=1&refresh_summary=true', 'headers': []})
