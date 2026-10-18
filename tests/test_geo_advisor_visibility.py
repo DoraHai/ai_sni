@@ -158,12 +158,12 @@ def test_automatic_execution_chain_still_rejects(tmp_path, monkeypatch, backend,
 
 @pytest.mark.parametrize('status', ['completed', 'failed'])
 @pytest.mark.parametrize('configured_limit', [None, 2])
-def test_daily_limit_counts_attempts_and_can_be_configured(tmp_path, monkeypatch, backend, status, configured_limit):
+def test_daily_limit_counts_attempts_and_stays_ten(tmp_path, monkeypatch, backend, status, configured_limit):
     async def run():
         async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
             if configured_limit is not None:
                 monkeypatch.setattr(get_settings(), 'advisor_visibility_max_runs_per_day', configured_limit)
-            limit = configured_limit or 10
+            limit = 10
             async with env.factory() as session:
                 session.add_all([
                     GeoVisibilityPatrolRun(tenant_id=10, created_by=1, status=status)

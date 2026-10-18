@@ -1,4 +1,7 @@
 import client from './client'
+import { session } from '../store/session'
+import { advisorClaims } from '../utils/geoAdvisorTenant.js'
+import { advisorVisibilityBody } from '../utils/geoAdvisorRequests.js'
 
 export function previewGeoPublicationLinks(tenantId, businessId, file, pasted = '', projectId = null) {
   const form = new FormData()
@@ -802,7 +805,8 @@ export function getVisibilityPatrolRun(tenantId, runId) {
 }
 
 export function startVisibilityPatrolRun(body) {
-  return client.post('/api/v1/geo/visibility-patrol/runs', body, {
+  const payload = advisorVisibilityBody(body, !!advisorClaims(session.token) || session.user?.is_advisor === true)
+  return client.post('/api/v1/geo/visibility-patrol/runs', payload, {
     params: { tenant_id: body.tenant_id },
     timeout: 120000,
   })

@@ -136,6 +136,26 @@ def test_shanghai_day_changes_at_1600_utc():
     assert after == (datetime(2026, 1, 2, 16), datetime(2026, 1, 3, 16))
 
 
+def test_ai_review_and_brief_share_ten_attempts(tmp_path, monkeypatch):
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch) as env:
+            async def credentials(*_a, **_kw):
+                return {"api_key": "synthetic-unused-key", "model": "fixture"}
+            async def review(**_kw):
+                return {"summary": "fixture review", "issues": []}
+            monkeypatch.setattr("app.geo.content.ai_settings.resolve_llm_credentials", credentials)
+            monkeypatch.setattr("app.geo.content.ai_reviewer.run_ai_review", review)
+            async with env.factory() as session:
+                session.add_all([GeoAsyncJob(tenant_id=10, created_by=1, kind=policy.SUGGEST_KIND,
+                    status="succeeded") for _ in range(9)])
+                await session.commit()
+            response = await env.request("POST", "/content-tasks/10/ai-review", body={"persist": True})
+            assert response.status_code == 200, response.text
+            response = await env.request("POST", "/content-tasks/10/suggest-brief", body={"use_llm": False})
+            assert response.status_code == 429, response.text
+    asyncio.run(run())
+
+
 def test_previous_day_attempts_do_not_consume_today(tmp_path, monkeypatch):
     async def run():
         async with write_sandbox(tmp_path, monkeypatch) as env:

@@ -53,8 +53,8 @@ async def check_visibility_quota(session, ctx):
     from app.config import get_settings
     from app.geo.content.patrol import count_patrol_runs_today
 
-    limit = get_settings().advisor_visibility_max_runs_per_day
+    limit = 10
     used = await count_patrol_runs_today(session, ctx.tenant_id, created_by=ctx.user_id)
     if used >= limit:
         deny(429, "ADVISOR_VISIBILITY_DAILY_LIMIT",
-             f"你今天为此客户的手动检测已达上限（{used}/{limit}），请明天再试；失败也计次")
+             f"今天这个客户的 AI 可见度手动检测已用完 10 次（{used}/{limit}），明天再试；失败也计次")

@@ -7873,6 +7873,9 @@ async def ai_review_task(
 
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
+    from app.security.advisor_write_ai import recheck_request, reserve_suggestion
+    await recheck_request(session, ctx, task)
+    await reserve_suggestion(session, ctx, task)
     article = await _latest_article(session, task.id)
     if article is None:
         raise HTTPException(400, "请先生成或保存母稿")
@@ -7888,6 +7891,9 @@ async def ai_review_task(
     from app.ai.deepseek import DeepSeekError, chat_json
 
     rule_input = await _build_rule_input(session, task, article)
+    if getattr(ctx, "advisor_scope", None) is not None:
+        await recheck_request(session, ctx, task)
+        await session.commit()
     try:
         review = await run_ai_review(
             brand=brand,
@@ -7902,6 +7908,7 @@ async def ai_review_task(
     except ValueError as exc:
         raise HTTPException(502, str(exc)) from exc
 
+    await recheck_request(session, ctx, task)
     if req.persist:
         rr = task.rule_result if isinstance(task.rule_result, dict) else {}
         rr = dict(rr)

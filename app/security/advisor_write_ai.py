@@ -10,15 +10,18 @@ from app.security.advisor_scope import AdvisorScope, deny
 
 GENERATE = "/api/v1/geo/content-tasks/{task_id}/generate"
 SUGGEST = "/api/v1/geo/content-tasks/{task_id}/suggest-brief"
-TASK_TEMPLATES = {GENERATE, SUGGEST}
+AI_REVIEW = "/api/v1/geo/content-tasks/{task_id}/ai-review"
+TASK_TEMPLATES = {GENERATE, SUGGEST, AI_REVIEW}
 SUGGEST_KIND = "advisor_suggest_brief"
-QUOTA_MESSAGE = "今天的 AI 建议次数已用完（10 次），明天再试"
+QUOTA_MESSAGE = "今天这个客户的 AI 建议已用完 10 次，明天再试"
 
 
 def rules():
     from app.security.advisor_write_routes import FORBIDDEN, WriteRule
 
     return {
+        ("POST", AI_REVIEW): WriteRule("POST", AI_REVIEW, frozenset({"persist"}), FORBIDDEN,
+                                        ("geo.assets", "geo.content"), "project"),
         ("POST", GENERATE): WriteRule("POST", GENERATE, frozenset(), FORBIDDEN,
                                       ("geo.assets", "geo.content"), "project"),
         ("POST", SUGGEST): WriteRule("POST", SUGGEST, frozenset({"overwrite", "use_llm"}),
@@ -59,7 +62,8 @@ async def read_contract(request, rule):
         body = json.loads(raw, object_pairs_hook=unique)
     except (ValueError, UnicodeError):
         invalid()
-    if not isinstance(body, dict) or set(body) - {"overwrite", "use_llm"}:
+    fields = {"persist"} if rule.template == AI_REVIEW else {"overwrite", "use_llm"}
+    if not isinstance(body, dict) or set(body) - fields:
         invalid()
     if any(type(value) is not bool for value in body.values()):
         invalid()
