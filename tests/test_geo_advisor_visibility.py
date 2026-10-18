@@ -76,6 +76,21 @@ def test_advisor_can_read_and_start_only_assigned_questions(tmp_path, monkeypatc
     asyncio.run(run())
 
 
+def test_selected_second_customer_can_start_detection_without_changing_default(tmp_path, monkeypatch, backend):
+    async def run():
+        async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
+            async with env.factory() as session:
+                session.add(GeoTrackingEngine(tenant_id=20, engine_key='deepseek', display_name='test', enabled=True))
+                session.add_all([GeoVisibilityPatrolRun(tenant_id=10, created_by=1, status='failed') for _ in range(10)])
+                await session.commit()
+            response = await env.request('POST', PATH, body={'tenant_id': 20}, params={'tenant_id': 20},
+                auth=fixture_token(tid=20, gid=102))
+            assert response.status_code == 200, response.text
+            assert response.json()['run']['summary']['advisor_visibility_prompt_ids'] == [20]
+            assert len(env.queued) == 1 and env.queued[0][1][-1] == 20
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize('case', ['off', 'query-missing', 'wrong-tenant', 'ungranted', 'identity', 'unassigned', 'inactive', 'module'])
 def test_all_authority_boundaries_reject_without_dispatch(tmp_path, monkeypatch, backend, case):
     async def run():
