@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import jwt
 import pytest
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
@@ -42,6 +42,9 @@ class LocalSession:
 
     async def scalars(self, *args, **kwargs):
         return self.sync.scalars(*args, **kwargs)
+
+    async def execute(self, *args, **kwargs):
+        return self.sync.execute(*args, **kwargs)
 
     @asynccontextmanager
     async def begin_nested(self):
@@ -297,3 +300,140 @@ def test_0109_health_rejects_missing_grant_shape():
         result=asyncio.run(seo_main.seo_health(response))
         assert response.status_code==503
         assert 'Advisor grant table' in result['db_error']
+
+
+@pytest.fixture
+def advisor_queue(local_db):
+    """Real queue + grant SQL; only credential verification is supplied locally.
+
+    No signed tokens, external database or provider calls are needed.
+    """
+    from app.api import seo_onsite_ai as api
+    from app.models.seo import SeoSiteAdvisorAssignment
+    from app.models.seo_cockpit import SeoTask
+    from app.security.advisor_tenant_auth import apply_advisor_claims, enforce_advisor_request
+    from sqlalchemy.dialects.sqlite.base import SQLiteCompiler
+
+    class QueueCompiler(SQLiteCompiler):
+        def visit_custom_op_binary(self, binary, operator, **kw):
+            sql = super().visit_custom_op_binary(binary, operator, **kw)
+            # PostgreSQL ->> always returns text; SQLite returns an int for 1.
+            return f'CAST({sql} AS TEXT)' if operator.opstring == '->>' else sql
+
+    db, session = local_db
+    db.get_bind().dialect.statement_compiler = QueueCompiler
+    Base.metadata.create_all(db.get_bind(), tables=[
+        SeoSiteAdvisorAssignment.__table__, SeoTask.__table__])
+    db.add_all([
+        Tenant(id=15, name='local customer 15'),
+        TenantModule(id=15, tenant_id=15, module_code='seo', status='active'),
+        SeoSite(id=15, tenant_id=15, tenant_module_id=15, name='local site',
+                domain='example.test', canonical_domain='example.test', status='active'),
+        Grant(id=30, user_id=1, tenant_id=15, granted_by=3, grant_source='admin'),
+        SeoSiteAdvisorAssignment(id=15, tenant_id=15, site_id=15, advisor_user_id=1, active=True),
+        SeoTask(id=15, tenant_id=15, site_id=15, module='seo', action_type='onsite_optimization',
+                title='local onsite task', created_by='1', assignee_role='seo_advisor',
+                params={'onsite': {'schema': 1, 'module': 'seo', 'revision': 1,
+                                  'phase': 'draft', 'items': [], 'history': []}}),
+    ])
+    db.get(User, 1).tenant_id = 15
+    db.commit()
+    identity = {'user_id': 1, 'claims': claims(tid=15, gid=30)}
+    app = FastAPI()
+    app.include_router(api.router, prefix='/api/v1/seo')
+
+    async def guarded(request: Request):
+        user = await session.get(User, identity['user_id'])
+        role = await session.get(Role, user.role_id)
+        ctx = auth.AuthContext(user.id, user.username, role.name, user.tenant_id, role.permissions,
+                               is_superadmin=role.is_system and role.name == '管理员')
+        await apply_advisor_claims(ctx, user, role, identity['claims'], session)
+        await enforce_advisor_request(request, ctx, session)
+        return await auth.enforce_scoped_request(request, ctx)
+
+    app.dependency_overrides[api.get_seo_session] = lambda: session
+    app.dependency_overrides[api.require_seo_scoped_auth] = guarded
+    return app, db, identity
+
+
+def test_advisor_queue_selected_tenant15_assignment_and_non_advisors(advisor_queue):
+    app, db, identity = advisor_queue
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://local.test') as client:
+            path = '/api/v1/seo/workbench/advisor-tasks?limit=25&tenant_id=15'
+            response = await client.get(path)
+            assert response.status_code == 200
+            assert [row['id'] for row in response.json()['items']] == [15]
+            assert response.json()['items'][0]['tenant_id'] == 15
+            # Assignment removal still hides all tasks, even with a tenant grant.
+            from app.models.seo import SeoSiteAdvisorAssignment
+            db.get(SeoSiteAdvisorAssignment, 15).active = False
+            db.commit()
+            assert (await client.get(path)).json()['items'] == []
+            for uid, tid in [(2, 1), (3, 15)]:
+                identity.update(user_id=uid, claims={})
+                response = await client.get(f'/api/v1/seo/workbench/advisor-tasks?tenant_id={tid}')
+                assert response.status_code == 200 and response.json()['items'] == []
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('case,status,code', [
+    ('no_grants', 403, 'ADVISOR_NO_TENANT'),
+    ('not_selected', 409, 'ADVISOR_TENANT_SELECTION_REQUIRED'),
+    ('missing_tenant', 403, 'ADVISOR_TENANT_REQUIRED'),
+    ('foreign_tenant', 403, 'ADVISOR_TENANT_NOT_GRANTED'),
+    ('other_granted_tenant', 403, 'ADVISOR_TENANT_NOT_GRANTED'),
+    ('revoked', 401, 'ADVISOR_GRANT_REVOKED'),
+    ('role_changed', 403, 'ADVISOR_ROLE_CHANGED'),
+    ('module_expired', 403, None),
+])
+def test_advisor_queue_denials_remain_closed(advisor_queue, case, status, code):
+    app, db, identity = advisor_queue
+    path = '/api/v1/seo/workbench/advisor-tasks?tenant_id=15'
+    if case in {'no_grants', 'not_selected'}:
+        identity['claims'] = claims(scope_kind='advisor_identity', aud='advisor-session')
+        if case == 'no_grants':
+            for grant in db.scalars(select(Grant)):
+                grant.revoked_at = datetime.now(timezone.utc)
+                grant.revoked_by, grant.revoke_reason = 3, 'admin_uncheck'
+    elif case == 'missing_tenant':
+        path = path.split('?')[0]
+    elif case in {'foreign_tenant', 'other_granted_tenant'}:
+        path = path.replace('tenant_id=15', 'tenant_id=3' if case == 'foreign_tenant' else 'tenant_id=2')
+    elif case == 'revoked':
+        grant = db.get(Grant, 30)
+        grant.revoked_at = datetime.now(timezone.utc)
+        grant.revoked_by, grant.revoke_reason = 3, 'admin_uncheck'
+    elif case == 'role_changed':
+        db.get(User, 1).role_id = 2
+    elif case == 'module_expired':
+        db.get(TenantModule, 15).expires_at = date.today() - timedelta(days=1)
+    db.commit()
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://local.test') as client:
+            response = await client.get(path)
+            assert response.status_code == status
+            if code:
+                assert response.json()['detail']['code'] == code
+    asyncio.run(scenario())
+
+
+def test_advisor_queue_mapping_is_exact_get_only_and_ai_writes_stay_disabled(advisor_queue):
+    app, _, _ = advisor_queue
+    path = '/api/v1/seo/workbench/advisor-tasks'
+    assert auth._required(path, 'GET') == ({'seo.content', 'seo.site'}, False)
+    for method in ['POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']:
+        assert auth._required(path, method)[0] is None
+    for suffix in ['/', '/extra', '-extra']:
+        assert auth._required(path + suffix, 'GET')[0] is None
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://local.test') as client:
+            response = await client.post('/api/v1/seo/workbench/onsite-tasks/15/ai-proposal', json={
+                'tenant_id': 15, 'site_id': 15, 'expected_revision': 1,
+                'request_id': '00000000-0000-4000-8000-000000000001', 'mode': 'initial'})
+            assert response.status_code == 403
+            assert response.json()['detail']['code'] == 'ADVISOR_HIGH_RISK_WRITES_DISABLED'
+    asyncio.run(scenario())
