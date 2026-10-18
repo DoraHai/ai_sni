@@ -393,6 +393,7 @@ def test_queued_patrol_expired_before_claim_is_closed_without_probe():
             id=10,
             tenant_id=7,
             status="pending",
+            summary=None,
             error=None,
             finished_at=None,
         )
