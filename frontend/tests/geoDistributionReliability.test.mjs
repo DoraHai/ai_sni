@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import {readFileSync} from 'node:fs'
+import {BACKFILL_CHANNELS, backfillChannelLabel, customChannelError, isHttpsPublicationUrl} from '../src/utils/geoBackfillChannels.js'
 const source=readFileSync(new URL('../src/views/geo/GeoDistributionView.vue',import.meta.url),'utf8')
 const code=source.slice(source.indexOf('let contextVersion'),source.indexOf('onMounted(load)'))
 function fixture() {
@@ -9,6 +10,7 @@ function fixture() {
  const ctx=vm.createContext({tenantId:{value:7},taskId:{value:12},error:{value:''},loading:{value:false},busy:{value:''},
  channels:{value:[]},accounts:{value:[]},task:{value:{id:12}},pushTargets:{value:[]},webhookAccounts:{value:[]},
  webhookAccountId:{value:null},webhookUrl:{value:''},backfillChannel:{value:'website'},backfillUrl:{value:'https://example.invalid/a'},backfillNote:{value:'test'},
+ customChannelName:{value:''},backfillSourceVariantId:{value:null},needsBackfillSource:{value:false},customChannelError,isHttpsPublicationUrl,
  listGeoPublishingChannels:async()=>({items:[]}),listGeoChannelAccounts:async()=>({items:[]}),getGeoContentTask:async()=>({id:12}),fetchTaskPushTargets:async()=>({targets:[]}),
  pushGeoVariantWebhook:async()=>({}),publishGeoVariant:async()=>({}),
  ElMessage:{success:x=>notices.push(x),error:x=>notices.push(x),warning:x=>notices.push(x)},
@@ -60,4 +62,53 @@ test('failed backfill preserves entered URL and does not retry itself',async()=>
  f.ctx.publishGeoVariant=async()=>{calls++;throw new Error('timeout')}
  await f.ctx.backfill()
  assert.equal(calls,1);assert.equal(f.ctx.busy.value,'');assert.equal(f.ctx.backfillUrl.value,'https://example.invalid/a')
+})
+
+test('all manual destinations have Chinese labels and custom input is conditional',()=>{
+ for (const label of ['官网 / 博客','微信公众号','知乎','百家号','新闻源','百度问答（百度知道）','百度贴吧','今日头条','其他']) {
+   assert.ok(BACKFILL_CHANNELS.some(item=>item.label===label))
+ }
+ assert.match(source,/v-if="backfillChannel === 'other'" v-model="customChannelName"/)
+ assert.match(source,/v-for="option in backfillOptions"/)
+ assert.equal(backfillChannelLabel('baidu_tieba'),'百度贴吧')
+})
+
+test('new and original destinations reach registration with the chosen source when needed',async()=>{
+ for (const {value} of BACKFILL_CHANNELS.filter(item=>item.value!=='other')) {
+   const f=fixture();let payload
+   f.ctx.backfillChannel.value=value
+   f.ctx.needsBackfillSource.value=['news_source','baidu_zhidao','baidu_tieba','toutiao'].includes(value)
+   f.ctx.backfillSourceVariantId.value=3
+   f.ctx.publishGeoVariant=async(id,body)=>{assert.equal(id,12);payload=body}
+   await f.ctx.backfill()
+   assert.equal(payload.channel,value);assert.equal(payload.tenant_id,7)
+   assert.equal(payload.source_variant_id,f.ctx.needsBackfillSource.value?3:undefined)
+ }
+})
+
+test('custom registration trims its name, sends the source, and clears on customer switch',async()=>{
+ const f=fixture();let payload
+ f.ctx.backfillChannel.value='other';f.ctx.customChannelName.value='  科技日报  '
+ f.ctx.needsBackfillSource.value=true;f.ctx.backfillSourceVariantId.value=3
+ f.ctx.publishGeoVariant=async(id,body)=>{payload=body}
+ await f.ctx.backfill()
+ assert.equal(payload.custom_channel_name,'科技日报');assert.equal(payload.source_variant_id,3)
+ f.change();assert.equal(f.ctx.customChannelName.value,'');assert.equal(f.ctx.backfillSourceVariantId.value,null)
+})
+
+test('invalid custom names, missing source, and non-HTTPS URLs never send a write',async()=>{
+ for (const name of ['', '   ', '！？---', '📰', '名'.repeat(31), '日报\n频道']) {
+   const f=fixture();let calls=0
+   f.ctx.backfillChannel.value='other';f.ctx.customChannelName.value=name
+   f.ctx.publishGeoVariant=async()=>{calls++}
+   await f.ctx.backfill();assert.equal(calls,0);assert.ok(f.notices.length)
+ }
+ const f=fixture();let calls=0
+ f.ctx.publishGeoVariant=async()=>{calls++};f.ctx.needsBackfillSource.value=true
+ await f.ctx.backfill();assert.equal(calls,0)
+ f.ctx.needsBackfillSource.value=false
+ for (const url of ['http://example.invalid/a','https://','https://example.invalid:bad/a','https://user:pass@example.invalid/a']) {
+   f.ctx.backfillUrl.value=url;await f.ctx.backfill();assert.equal(calls,0)
+ }
+ assert.equal(customChannelError('名'.repeat(30)), '')
 })
