@@ -12,6 +12,9 @@ import { formatUtcTimestamp } from '../../utils/dateTime'
 
 const route = useRoute()
 const router = useRouter()
+// The same build serves SEM and platform pages. Grant management belongs only
+// to the platform path, even if this component is reused by a legacy SEM route.
+const platformContext = computed(() => /^\/platform(?:\/|$)/.test(route.path))
 const tab = computed({
   get: () => (route.path.endsWith('/roles') ? 'roles' : 'accounts'),
   set: (value) => router.push(`/platform/${value}`),
@@ -69,10 +72,17 @@ const editingAdvisor = ref(null)
 const userOriginalRoleId = ref(null)
 const userFormError = ref('')
 const uform = reactive({ username: '', password: '', displayName: '', roleId: null, tenantId: null, tenantIds: [], defaultTenantId: null })
-const userIsAdvisor = computed(() => userOriginalRoleId.value === uform.roleId && editingAdvisor.value !== null
-  ? editingAdvisor.value : isAdvisorRole(roleOptions.value.find(r => r.id === uform.roleId)))
+const userIsAdvisor = computed(() => platformContext.value && (userOriginalRoleId.value === uform.roleId && editingAdvisor.value !== null
+  ? editingAdvisor.value : isAdvisorRole(roleOptions.value.find(r => r.id === uform.roleId))))
 const multiAdvisor = computed(() => userIsAdvisor.value && !multiTenantDisabled.value)
 const rowIsAdvisor = row => typeof row.is_advisor === 'boolean' ? row.is_advisor : isAdvisorRole(roleOptions.value.find(r => r.id === row.role_id))
+watch(platformContext, () => {
+  userFormRevision++
+  userDialog.value = false
+  userFormError.value = ''
+  editingGrantsVersion.value = null
+  multiTenantDisabled.value = false
+})
 watch(() => uform.tenantIds.slice(), ids => {
   if (!ids.includes(uform.defaultTenantId)) uform.defaultTenantId = ids[0] ?? null
 })
@@ -137,8 +147,8 @@ async function submitUser() {
     load()
   } catch (e) {
     if (submittedRevision !== userFormRevision || !userDialog.value) return
-    if (['ADVISOR_GRANTS_CONFLICT', 'ADVISOR_GRANTS_VERSION_REQUIRED'].includes(e.code)
-        || [409, 428].includes(e.status)) {
+    if (platformContext.value && (['ADVISOR_GRANTS_CONFLICT', 'ADVISOR_GRANTS_VERSION_REQUIRED'].includes(e.code)
+        || [409, 428].includes(e.status))) {
       const message = advisorMessages[e.code] || advisorMessages.ADVISOR_GRANTS_CONFLICT
       // Discard the stale form/version. Reload before another explicit save.
       editingGrantsVersion.value = null
@@ -154,8 +164,9 @@ async function submitUser() {
       ElMessage.error(fresh ? userFormError.value : `${message}；重新加载失败，请刷新页面`)
       return
     }
-    if (e.code === 'ADVISOR_MULTI_TENANT_DISABLED') multiTenantDisabled.value = true
-    userFormError.value = advisorMessages[e.code] || e.message
+    if (platformContext.value && e.code === 'ADVISOR_MULTI_TENANT_DISABLED') multiTenantDisabled.value = true
+    userFormError.value = platformContext.value ? advisorMessages[e.code] || e.message
+      : e.code?.startsWith('ADVISOR_') ? '账号保存失败，请稍后重试' : e.message
     ElMessage.error(userFormError.value)
   } finally {
     savingUser.value = false
@@ -301,7 +312,7 @@ onMounted(load)
     <div class="page-header">
       <div>
         <div class="page-title">{{ tab === 'accounts' ? '账号' : '角色与权限' }}</div>
-        <div class="page-desc">平台级账号和角色管理；顾问只能看到勾选的客户</div>
+        <div class="page-desc">{{ platformContext ? '平台级账号和角色管理；顾问只能看到勾选的客户' : '平台级账号和角色管理；单客户绑定用于限制业务数据范围' }}</div>
       </div>
       <div class="page-actions">
         <el-button v-if="tab === 'accounts'" type="primary" @click="openCreateUser">新建账号</el-button>
@@ -327,7 +338,7 @@ onMounted(load)
               <template #default="{ row }"><span class="role-pill">{{ row.role_label }}</span></template>
             </el-table-column>
             <el-table-column label="可见客户" min-width="120">
-              <template #default="{ row }">{{ advisorTenantLabel(row, tenantOptions, rowIsAdvisor(row)) }}</template>
+              <template #default="{ row }">{{ platformContext ? advisorTenantLabel(row, tenantOptions, rowIsAdvisor(row)) : row.tenant_name || '全部客户' }}</template>
             </el-table-column>
             <el-table-column label="状态" width="90">
               <template #default="{ row }">

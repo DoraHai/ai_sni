@@ -467,13 +467,8 @@ onBeforeUnmount(() => {
               aria-label="关闭客户切换"
               @click="tenantPopoverOpen = false"
             />
-            <a
-              v-if="session.isAdvisorSession && (session.tenants.length > 1 || !session.tenantId)"
-              class="tenant-trigger"
-              href="/customer-workbench/?console=advisor"
-            >当前客户：{{ tenantName }} · {{ session.tenantId ? '切换客户' : '选择客户' }}</a>
             <el-popover
-              v-else-if="!session.isAdvisorSession && session.tenants.length > 1"
+              v-if="!session.isAdvisorSession && session.tenants.length > 1"
               v-model:visible="tenantPopoverOpen"
               placement="bottom-end"
               :width="286"
