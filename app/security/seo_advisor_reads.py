@@ -8,11 +8,14 @@ def assigned_sites(ctx):
     from app.models.module_workspace import SeoSite
     from app.models.seo import SeoSiteAdvisorAssignment as Assignment
     sites, assignments = SeoSite.__table__, Assignment.__table__
-    return select(sites.c.id).join(assignments, assignments.c.site_id == sites.c.id).where(
+    query = select(sites.c.id).join(assignments, assignments.c.site_id == sites.c.id).where(
         sites.c.tenant_id == ctx.tenant_id, sites.c.status == "active",
         assignments.c.tenant_id == ctx.tenant_id, assignments.c.advisor_user_id == ctx.user_id,
         assignments.c.active.is_(True),
     )
+    scope = getattr(ctx, 'advisor_write_scope', None)
+    site_id = getattr(scope[0].state, 'seo_advisor_site_id', None) if scope else None
+    return query.where(sites.c.id == site_id) if site_id is not None else query
 
 
 def scope_conditions(table, ctx):

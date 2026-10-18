@@ -935,7 +935,7 @@ async function previewImport(event) {
   importFile.value = file
   importing.value = true
   try {
-    importResult.value = await importSeoPublishedLinks({ tenantId: currentTenantId.value, file, dryRun: true })
+    importResult.value = await importSeoPublishedLinks({ tenantId: currentTenantId.value, siteId: siteId.value, file, dryRun: true })
     importDialog.value = true
   } catch (e) {
     ElMessage.error(e.message)
@@ -948,7 +948,7 @@ async function commitImport() {
   if (!importFile.value || !importResult.value || importResult.value.failed) return
   importing.value = true
   try {
-    const result = await importSeoPublishedLinks({ tenantId: currentTenantId.value, file: importFile.value, dryRun: false })
+    const result = await importSeoPublishedLinks({ tenantId: currentTenantId.value, siteId: siteId.value, file: importFile.value, dryRun: false })
     if (result.committed) {
       ElMessage.success(`已批量登记 ${result.imported} 条多平台发布记录`)
       importDialog.value = false
@@ -1046,14 +1046,14 @@ onMounted(loadSites)
             <div v-for="connection in item.connections" :key="connection.id">
               <span><b>{{ connection.name }}</b><small>{{ connection.base_url || '无需站点地址' }} · {{ connection.last_tested_at ? `最近测试 ${date(connection.last_tested_at)}` : connection.mode === 'api' ? '尚未测试' : '无需测试' }}</small><small v-if="connection.last_error" class="connection-error">{{ connection.last_error }}</small></span>
               <el-tag size="small" :type="connection.status === 'failed' ? 'danger' : ['connected', 'ready'].includes(connection.status) ? 'success' : 'warning'">{{ connection.account_binding === 'browser_session_required' || connection.mode === 'assisted' ? '无系统账号 · 发布时浏览器登录' : ({ connected: '已连接', configured: '待测试', failed: '连接失败' })[connection.status] || connection.status }}</el-tag>
-              <el-button v-if="canEdit" link type="primary" @click="editConnection(connection)">编辑</el-button>
+              <el-button v-if="canEdit && !session.isAdvisorSession" link type="primary" @click="editConnection(connection)">编辑</el-button>
               <el-button v-if="canEdit && connection.mode === 'api'" link type="primary" :loading="connectionTestingId === connection.id" @click="testConnection(connection)">测试</el-button>
-              <el-switch v-if="canEdit" :model-value="connection.enabled" :loading="connectionTogglingId === connection.id" @change="value => toggleConnection(connection, value)" />
+              <el-switch v-if="canEdit && !session.isAdvisorSession" :model-value="connection.enabled" :loading="connectionTogglingId === connection.id" @change="value => toggleConnection(connection, value)" />
             </div>
           </div>
           <footer>
             <span>发布记录 {{ item.published }} 条</span>
-            <el-button v-if="canEdit && item.available" type="primary" plain @click="openConnection(item)">添加渠道</el-button>
+            <el-button v-if="canEdit && item.available && !session.isAdvisorSession" type="primary" plain @click="openConnection(item)">添加渠道</el-button>
             <el-button v-else-if="!item.available" disabled>暂未接入</el-button>
           </footer>
         </article>

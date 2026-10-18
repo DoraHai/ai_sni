@@ -21,3 +21,18 @@ async def check_manual_execution_scope(session, ctx, user, role, batch):
     await enforce_advisor_request(request, ctx, session)
     session._seo_advisor_ai_kind = 'generation'
     return ctx
+
+
+async def recheck_before_provider(session, publication_id=None):
+    ctx = vars(session).get('_seo_advisor_context')
+    if ctx is None:
+        return
+    from app.security.advisor_write_commit import recheck_advisor_before_commit
+    from app.security.seo_advisor_audit import record
+    request = session._seo_advisor_request
+    try:
+        await recheck_advisor_before_commit(session, ctx)
+    except Exception:
+        record(request, ctx, 'external_call_blocked', evidence={'publication_id': publication_id})
+        raise
+    record(request, ctx, 'external_call_authorized', evidence={'publication_id': publication_id})

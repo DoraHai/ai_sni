@@ -30,6 +30,8 @@ SOURCE_ALLOWED_EXACT = {
     "app/security/seo_advisor_reads.py",
     "app/security/seo_advisor_execution.py",
     "app/security/seo_advisor_reviews.py",
+    "app/security/seo_advisor_publishing.py",
+    "tests/test_seo_advisor_publishing.py",
     "tests/test_seo_advisor_reviews.py",
     "app/security/seo_advisor_uploads.py",
     "tests/test_seo_advisor_reads.py",

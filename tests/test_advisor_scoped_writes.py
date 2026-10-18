@@ -50,9 +50,6 @@ CASES = (
 )
 CASE_IDS = [c.method + " " + c.template for c in CASES]
 OUTSIDE = (
-    ("POST", "/content-distribution/publish"),
-    ("POST", "/content-assets/offline-handoff/export"),
-    ("POST", "/content-assets/offline-handoff/import-receipts"),
     ("PUT", "/workbench/service-plan"),
     ("POST", "/workbench/service-plan/run"),
     ("POST", "/workbench/content-assets/{content_id}/conversation/messages"),

@@ -20,6 +20,7 @@ test('deleting and publishing require a confirmation and support cancel', () => 
   for (const config of [
     { url: '/api/v1/seo/keywords/1', method: 'delete' },
     { url: '/api/v1/seo/content-distribution/publish', method: 'post' },
+    { url: '/api/v1/seo/content-distribution/video/upload', method: 'post', data: new FormData() },
   ]) {
     let prompt
     assert.throws(() => prepareAdvisorSeoRequest(config, advisor, text => { prompt = text; return false }), /已取消/)

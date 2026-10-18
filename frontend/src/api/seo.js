@@ -375,11 +375,11 @@ export function decideSeoContentReview({ contentId, tenantId, decision, note = n
   return client.post(`/api/v1/seo/content-assets/${contentId}/review`, { decision, note }, { params: { tenant_id: tenantId } })
 }
 
-export function importSeoPublishedLinks({ tenantId, file, dryRun = true }) {
+export function importSeoPublishedLinks({ tenantId, siteId = null, file, dryRun = true }) {
   const form = new FormData()
   form.append('file', file)
   return client.post('/api/v1/seo/content-assets/import-published-links', form, {
-    params: { tenant_id: tenantId, dry_run: dryRun },
+    params: { tenant_id: tenantId, site_id: siteId, dry_run: dryRun },
     timeout: 60000,
   })
 }

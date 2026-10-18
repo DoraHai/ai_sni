@@ -6304,6 +6304,8 @@ async def _require_publication_operational_before_provider(
 ) -> None:
     """Close a durable claim if its persisted site was disabled before publish."""
     if await seo_publication_site_is_operational(session, row.tenant_id, row.id):
+        from app.security.seo_advisor_execution import recheck_before_provider
+        await recheck_before_provider(session, row.id)
         return
     error = "发布前最终核验失败：SEO 网站已暂停、归档或模块已停用"
     row.status = "failed"
@@ -9753,6 +9755,8 @@ async def sync_content_publication(
     # state transition commit together. Committing here would release the lock
     # while status is still ``publishing`` and allow duplicate sync attempts.
     await session.flush()
+    from app.security.seo_advisor_execution import recheck_before_provider
+    await recheck_before_provider(session, row.id)
     try:
         remote = await sync_publish_status(
             row.platform_code,

@@ -15,6 +15,8 @@ export function prepareAdvisorSeoRequest(config, actor, confirmAction = globalTh
   const deleting = method === 'delete'
   const sending = method === 'post' && (
     /^\/api\/v1\/seo\/content-distribution\/publish$/.test(url.pathname)
+    || /^\/api\/v1\/seo\/content-distribution\/video\/upload$/.test(url.pathname)
+    || /^\/api\/v1\/seo\/content-distribution\/publications\/manual$/.test(url.pathname)
     || /^\/api\/v1\/seo\/content-distribution\/publications\/\d+\/(retry|complete)$/.test(url.pathname)
     || /^\/api\/v1\/seo\/content-distribution\/video\/publications\/\d+\/publish$/.test(url.pathname)
     || /^\/api\/v1\/seo\/content-assets\/offline-handoff\/(export|import-receipts)$/.test(url.pathname)
