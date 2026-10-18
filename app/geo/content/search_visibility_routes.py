@@ -15,6 +15,7 @@ from app.geo.content.search_visibility import (
 from app.models import GeoAsyncJob, GeoOptimizationUnit, GeoProject, Tenant
 from app.module_scope import ensure_module_access
 from app.security.auth import AuthContext, require_scoped_auth
+from app.security.geo_operation_audit import audit_geo_operation
 
 router = APIRouter(tags=["GEO 搜索可见度"])
 
@@ -58,6 +59,7 @@ async def get_config(project_id: int, tenant_id: int = Query(...),
 
 
 @router.put("/projects/{project_id}/search-visibility/config")
+@audit_geo_operation('PUT', '/api/v1/geo/projects/{project_id}/search-visibility/config')
 @checked_call
 async def put_config(project_id: int, req: VisibilityConfig, tenant_id: int = Query(...),
                      ctx: AuthContext = Depends(require_scoped_auth),
@@ -76,6 +78,7 @@ async def put_config(project_id: int, req: VisibilityConfig, tenant_id: int = Qu
 
 
 @router.post("/projects/{project_id}/search-visibility/run", status_code=202)
+@audit_geo_operation('POST', '/api/v1/geo/projects/{project_id}/search-visibility/run', success_status=202)
 @checked_call
 async def run_now(project_id: int, background: BackgroundTasks, tenant_id: int = Query(...),
                   ctx: AuthContext = Depends(require_scoped_auth),

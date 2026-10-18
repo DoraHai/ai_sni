@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.security.advisor_write_handlers import check_handler_fields, lock_manual_task
+from app.security.geo_operation_audit import audit_geo_operation
 from app.security.geo_configuration_admin import require_geo_configuration_admin
 from app.permissions import CUSTOMER_ROLE
 from app.geo.read_routes import read_session as geo_read_session
@@ -8756,6 +8757,7 @@ async def _write_publication(
 
 
 @router.post("/content-tasks/{task_id}/publications")
+@audit_geo_operation('POST', '/api/v1/geo/content-tasks/{task_id}/publications')
 async def record_publication(
     task_id: int,
     req: PublicationCreate,
@@ -8815,6 +8817,7 @@ async def record_publication(
 
 
 @router.post("/content-tasks/{task_id}/import-receipts")
+@audit_geo_operation('POST', '/api/v1/geo/content-tasks/{task_id}/import-receipts')
 @checked_call
 async def import_task_receipts(
     task_id: int,
