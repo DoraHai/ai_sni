@@ -5,6 +5,7 @@ import {automationEventsCsv,automationWindowCsv,downloadAutomationEvents} from '
 import {escapeText as esc} from './customer-display.mjs';
 import {automationTargetKey,validateAutomationConfiguration} from './advisor-automation-contract.mjs';
 import {automationOperations,automationObjects} from './advisor-automation-labels.mjs';
+import {projectAutomationAvailable} from './project-automation-availability.mjs';
 const labels={visibility_patrol:'AI 引用巡检',periodic_project_workflow:'GEO 项目周期',manual_onsite_ai:'人工单独发起的 AI',content_cycle:'内容生产周期',service_diagnosis_cycle:'诊断周期',monitoring_cycle:'监测周期',monthly_report_cycle:'月报周期',qa_batches:'问答批次',image_verification:'图片核验',page_capture:'页面截图',ai_patrol:'AI 引用巡检',distribution:'内容分发',patrol_collection:'AI 引用巡检',configured_onsite_ai:'已配置站内 AI 草稿',ranking_collection:'排名采集',competitor_collection:'竞品采集',backlink_collection:'外链采集',platform_publication:'渠道发布',website_mutation:'官网修改',approval:'方案审批',acceptance:'业务验收'};
 const aiOperations=new Set(['onsite_ai','content_draft','content_master_draft']);
 const fees={not_called:'尚未发起调用',recorded:'已记录调用计量',unknown_charge:'供应商扣费结果待核实',unverified:'费用尚未核实'};
@@ -161,13 +162,14 @@ export function createAdvisorAutomationPanel({session,subscribeSession,fetchImpl
   return {
     assignedScopes(){return Object.values(pages).flatMap(value=>value.page?.items||[]).map(row=>({
       module:row.module,tenant_id:row.tenant_id,scope_id:row.scope_id,tenant_name:row.tenant_name,scope_name:row.scope_name}));},
-    async initialize(availableModules){clear();modules=availableModules;const stamp=epoch;changed();try{identity=await client.initialize();if(disposed||stamp!==epoch)return;modules=modules.filter(module=>identity.modules.includes(module));await Promise.all(modules.map(module=>list(module)));}catch(error){if(!disposed&&stamp===epoch){for(const module of modules)pages[module]={message:errors[error.code]||'项目身份核验未完成。'};changed();}}},
+    async initialize(availableModules){clear();const stamp=epoch;changed();try{identity=await client.initialize();if(disposed||stamp!==epoch)return;modules=availableModules.filter(module=>identity.modules.includes(module));changed();if(!projectAutomationAvailable)return;await Promise.all(modules.map(module=>list(module)));}catch(error){if(!disposed&&stamp===epoch){for(const module of modules)pages[module]={message:errors[error.code]||'项目身份核验未完成。'};changed();}}},
     html(filter='all'){
       visibleFilter=filter;
       if(!modules.length)return '';
+      if(!projectAutomationAvailable)return modules.some(module=>filter==='all'||filter===module)?'<section class="advisor-automation-section"><h2>项目运行与记录</h2><p role="status">项目自动运行功能还没上线，目前不需要你操作。站内任务请看上面的「我的站内交付任务」。</p></section>':'';
       return `<section class="advisor-automation-section"><h2>项目运行与记录</h2><p>仅控制每个项目明确列出的能力。进入页面、读取状态和日志不会开启 AI；保存配置后还需明确开启。</p>${modules.filter(module=>filter==='all'||filter===module).map(module=>{const state=pages[module];return `<section class="advisor-automation-module" data-automation-module="${module}"><h3>${module.toUpperCase()} 项目 · 当前页${state?.message===errors.AUTOMATION_NOT_INTEGRATED?' '+pendingBadge():''}</h3>${state?.busy?'<p role="status">正在读取项目…</p>':''}${state?.message?`<p role="status">${esc(state.message)}</p>`:''}${(state?.page?.items||[]).map(row=>{const record=records[projectKey(row)];return advisorRunView({project:normalizeProject(record.project),run:record.run?normalizeRun(record.run):null,events:record.events?normalizeEvents(record.events):null,history:record.history,historical:record.historical,busy:record.busy,blocked:record.blocked,message:record.message,canConfigure:record.project.capabilities.can_configure,draft:record.draft,actorId:identity?.user.id,availableTasks:tasksForProject(record.project),basis:record.basis,basisOperation:record.basisOperation,exportWindow:record.exportWindow});}).join('')}${state?.page&&!state.page.items.length?'<p>当前页没有分配给你的项目。</p>':''}<div class="advisor-tools"><button data-automation-list="${module}" ${state?.busy?'disabled':''}>返回第一页并刷新项目</button>${state?.page?.next_before_scope_id?`<button data-automation-next="${module}" ${state?.busy?'disabled':''}>下一页项目</button>`:''}</div></section>`;}).join('')}</section>`;
     },
-    click(event){const button=event.target.closest('button');if(!button||button.disabled)return;
+    click(event){if(!projectAutomationAvailable)return;const button=event.target.closest('button');if(!button||button.disabled)return;
       if(button.dataset.automationList)void list(button.dataset.automationList);
       if(button.dataset.automationNext){const module=button.dataset.automationNext;void list(module,pages[module]?.page?.next_before_scope_id);}
       const key=button.dataset.automationKey,action=button.dataset.automationAction,record=records[key];if(!record)return;

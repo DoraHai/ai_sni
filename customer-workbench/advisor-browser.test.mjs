@@ -4,6 +4,7 @@ import puppeteer from 'puppeteer-core';
 import {startFixtureServer} from './tests/fixture-server.mjs';
 import os from 'node:os';
 import path from 'node:path';
+import {createAdvisorAutomationPanel} from './js/advisor-automation-panel.mjs';
 const edge=process.env.EDGE_BINARY||'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 test('advisor production UI isolates modules, paginates, clears revoked sessions and renders on desktop/mobile',async()=>{
  const f=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true});
@@ -26,7 +27,9 @@ test('advisor production UI isolates modules, paginates, clears revoked sessions
   });
   await p.goto(origin+'/customer-workbench/?console=advisor');await p.waitForSelector('.advisor-task');
   await p.waitForFunction(()=>document.body.textContent.includes('未接入')).catch(async error=>{error.message+=' · '+JSON.stringify({body:(await p.$eval('body',e=>e.textContent)).slice(0,1800),errors,calls});throw error;});
-  await p.waitForFunction(()=>document.querySelectorAll('.advisor-automation-module .pending-badge').length===2);
+  await p.waitForFunction(()=>document.querySelector('.advisor-automation-section')?.textContent.includes('项目自动运行功能还没上线'));
+  assert.equal(await p.$eval('.advisor-automation-section p',e=>e.textContent),'项目自动运行功能还没上线，目前不需要你操作。站内任务请看上面的「我的站内交付任务」。');
+  assert(!await p.$('.advisor-automation-section button'));assert(!await p.$('.advisor-automation-section a'));
   assert.equal(await p.$$eval('.pc-pending',es=>es.length),0);
   assert.equal(await p.$$eval('.advisor-task',v=>v.length),1);assert(!calls.some(c=>c.path.includes('/tenants')));
   assert.equal(await p.$eval('.advisor-task a',v=>v.getAttribute('href')),'/customer-workbench/?tenant_id=2&site_id=19&onsite_task_id=77');
@@ -36,13 +39,32 @@ test('advisor production UI isolates modules, paginates, clears revoked sessions
   await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await p.screenshot({path:path.join(os.tmpdir(),'advisor-workbench-mobile-20261010.png'),fullPage:true});
   moduleStatus.geo=200;await p.click('[data-advisor=refresh]');await p.waitForFunction(()=>document.querySelectorAll('.advisor-task').length===2);
-  await p.select('#advisor-module','geo');assert.equal(await p.$$eval('.pc-pending',es=>es.length),0);assert.equal(await p.$$eval('.advisor-automation-module .pending-badge',es=>es.length),1);assert.equal(await p.$$eval('.advisor-module',e=>e.length),1);assert.equal(await p.$eval('.advisor-task a',e=>e.getAttribute('href')),'/customer-workbench/?module=geo&tenant_id=2&project_id=10&onsite_task_id=77');
-  await p.select('#advisor-module','all');moduleStatus.geo=403;await p.click('[data-advisor=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('全部列表已清除'));assert(!await p.$('.advisor-task'));
+  await p.select('#advisor-module','geo');assert.equal(await p.$$eval('.pc-pending',es=>es.length),0);assert.equal(await p.$$eval('.advisor-automation-section',es=>es.length),1);assert.equal(await p.$$eval('.advisor-module',e=>e.length),1);assert.equal(await p.$eval('.advisor-task a',e=>e.getAttribute('href')),'/customer-workbench/?module=geo&tenant_id=2&project_id=10&onsite_task_id=77');
+  await p.select('#advisor-module','all');moduleStatus.geo=403;await p.click('[data-advisor=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('全部列表已清除'));assert(!await p.$('.advisor-task'));assert(!await p.$('.advisor-automation-section'));
   moduleStatus.geo=200;await p.click('[data-advisor=refresh]');await p.waitForSelector('.advisor-task');
   let release;held=new Promise(r=>release=r);await p.click('[data-advisor=latest][data-module=seo]');await p.click('[data-advisor=logout]');release();held=null;
   await p.waitForFunction(()=>document.body.textContent.includes('已退出'));assert(!await p.$('.advisor-task'));assert.equal(await p.evaluate(()=>sessionStorage.getItem('sem_auth_v1')),null);
   assert(calls.every(c=>c.method==='GET'));
   await p.goto(origin+'/customer-workbench/?console=advisor&login=1');await p.waitForSelector('#entry-login');await p.type('#entry-username','advisor');await p.type('#entry-password','fixture-only');await p.$eval('#entry-captcha',e=>e.value=document.querySelector('[data-entry=captcha]').textContent);await p.click('#entry-login [type=submit]');await p.waitForSelector('.advisor-task');assert.equal(new URL(p.url()).searchParams.get('console'),'advisor');
   permissions['seo.site']='view';permissions['geo.assets']='view';await p.reload();await p.waitForFunction(()=>document.body.textContent.includes('没有可用的顾问模块入口'));assert(!await p.$('.advisor-module'));assert(!calls.some(c=>c.method!=='GET'&&c.path!=='/api/v1/auth/login'));assert.deepEqual(errors,[]);
+  assert(!await p.$('.advisor-automation-section'));assert(!calls.some(c=>c.path.includes('/automation-projects')));
  }finally{await browser.close();await f.close();}
+});
+
+test('automation notice waits for verified module access and clears on context change',async()=>{
+ const paths=[],user={id:7,tenant_id:null,permissions:{'seo.site':'edit','seo.content':'edit','seo.keywords':'edit','geo.assets':'edit','geo.content':'edit'}};
+ const session={user,token:'fixture-only',authRevision:0,logout(){}},listeners=[];
+ let release,denied=0;
+ const panel=createAdvisorAutomationPanel({session,subscribeSession:fn=>{listeners.push(fn);return()=>{};},browser:{clearTimeout(){}},onChange(){},onDenied(){denied++;},fetchImpl:async path=>{
+  paths.push(path);
+  if(path.endsWith('/me'))await new Promise(r=>release=r);
+  return {ok:true,status:200,json:async()=>path.endsWith('/me')?{user}:{tenant_id:null,modules:[{module_code:'seo',available:true}]}};
+ }});
+ try{
+  const loading=panel.initialize(['seo','geo']);assert.equal(panel.html(),'');release();await loading;
+  assert.match(panel.html('seo'),/项目自动运行功能还没上线/);assert.equal(panel.html('geo'),'');assert.deepEqual(panel.assignedScopes(),[]);
+  panel.click({target:{closest:()=>({dataset:{automationList:'seo'}})}});
+  assert.deepEqual(paths,['/api/v1/auth/me','/api/v1/auth/modules']);
+  session.authRevision++;listeners.forEach(fn=>fn());assert.equal(panel.html(),'');assert.equal(denied,1);
+ }finally{panel.dispose();}
 });
