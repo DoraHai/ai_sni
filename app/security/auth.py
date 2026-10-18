@@ -104,6 +104,8 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     """返回 (可接受的菜单键集合 或 None=不限菜单, 是否需要 edit)。命中集合满足其一即可。"""
     edit = method not in _READ_METHODS
     p = path
+    if method == "GET" and p in {"/api/v1/geo/channel-blueprint", "/api/v1/geo/structure-scan/latest"}:
+        return {"geo.content"}, False
 
     if p.startswith("/api/v1/dashboard"):
         return {"monitor.dashboard"}, edit

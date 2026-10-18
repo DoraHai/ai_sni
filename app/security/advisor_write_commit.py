@@ -91,5 +91,10 @@ def bind_advisor_write_commit(session, ctx, request, body, rule, claims) -> None
     def before_commit(sync_session):
         await_only(recheck_advisor_before_commit(session, session.info["advisor_scoped_write"][0]))
 
+    def after_commit(sync_session):
+        from app.security.advisor_write_audit import record
+        record(session.info["advisor_scoped_write"][1].scope, "committed")
+
     event.listen(session.sync_session, "before_commit", before_commit)
+    event.listen(session.sync_session, "after_commit", after_commit)
     session.info["advisor_write_commit_hook"] = True

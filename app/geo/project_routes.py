@@ -82,6 +82,10 @@ async def list_geo_projects(
             )
         ).all()
     )
+    if getattr(ctx, "advisor_scope", None) is not None:
+        from app.security.advisor_write_reads import assigned_scope
+        owned, _ = await assigned_scope(session, ctx)
+        rows = [row for row in rows if row.id in owned]
     return {"projects": [_project_payload(row) for row in rows]}
 
 

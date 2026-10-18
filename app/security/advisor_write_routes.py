@@ -81,7 +81,8 @@ def match_write_rule(request) -> WriteRule | None:
     key = (request.method, getattr(request.scope.get("route"), "path", None))
     if key == (VISIBILITY_RUN_RULE.method, VISIBILITY_RUN_RULE.template):
         return VISIBILITY_RUN_RULE
-    return WRITE_ROUTES.get(key)
+    from app.security.advisor_write_operations import rules
+    return WRITE_ROUTES.get(key) or rules().get(key)
 
 
 def check_write_fields(rule: WriteRule, body: dict) -> None:

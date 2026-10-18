@@ -1132,6 +1132,8 @@ async def list_optimization_businesses(
     """优化业务列表。"""
     ctx.ensure_tenant(tenant_id)
     stmt = select(GeoOptimizationBusiness).where(GeoOptimizationBusiness.tenant_id == tenant_id)
+    from app.security.advisor_write_reads import filter_query
+    stmt = await filter_query(session, ctx, stmt, GeoOptimizationBusiness)
     if status:
         stmt = stmt.where(GeoOptimizationBusiness.status == status)
     stmt = stmt.order_by(GeoOptimizationBusiness.sort_order.asc(), GeoOptimizationBusiness.id.desc())
@@ -1247,6 +1249,8 @@ async def list_optimization_units(
     """优化单元（关键词）列表。"""
     ctx.ensure_tenant(tenant_id)
     stmt = select(GeoOptimizationUnit).where(GeoOptimizationUnit.tenant_id == tenant_id)
+    from app.security.advisor_write_reads import filter_query
+    stmt = await filter_query(session, ctx, stmt, GeoOptimizationUnit)
     if business_id is not None:
         stmt = stmt.where(GeoOptimizationUnit.business_id == business_id)
     if status:
@@ -2192,6 +2196,8 @@ async def list_prompts(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     stmt = select(GeoPrompt).where(GeoPrompt.tenant_id == tenant_id)
+    from app.security.advisor_write_reads import filter_query
+    stmt = await filter_query(session, ctx, stmt, GeoPrompt)
     if active_inventory_only:
         stmt = (
             stmt.join(
@@ -6597,6 +6603,8 @@ async def list_facts(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     stmt = select(GeoFact).where(GeoFact.tenant_id == tenant_id)
+    from app.security.advisor_write_reads import filter_query
+    stmt = await filter_query(session, ctx, stmt, GeoFact)
     if status:
         stmt = stmt.where(GeoFact.status == status)
     if trust_level:
@@ -6952,6 +6960,10 @@ async def list_tasks(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     filters = [GeoContentTask.tenant_id == tenant_id]
+    if getattr(ctx, "advisor_scope", None) is not None:
+        from app.security.advisor_write_reads import assigned_scope
+        _, businesses = await assigned_scope(session, ctx)
+        filters.append(GeoContentTask.business_id.in_(businesses))
     if status:
         filters.append(GeoContentTask.status == status)
     elif not include_archived:

@@ -105,6 +105,7 @@ async def check_objects(session, ctx, request):
 async def guard_request(session, ctx, request, claims):
     if request is None:
         deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "缺少请求范围")
+    request.scope["geo_advisor_actor"] = (ctx.user_id, ctx.tenant_id)
     if claims.get("scope_kind") != "advisor_tenant":
         if not ctx.advisor_scope.tenant_ids:
             deny(403, "ADVISOR_NO_TENANT", "顾问尚未获准访问任何客户")
@@ -123,6 +124,8 @@ async def guard_request(session, ctx, request, claims):
     if keys is None or not (ctx.can_edit(*keys) if edit else ctx.can_view(*keys)):
         deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "当前角色无权访问此功能")
     await check_objects(session, ctx, request)
+    from app.security.advisor_write_reads import check_read_assignment
+    await check_read_assignment(session, ctx, request)
     if (template not in STATIC_ROUTES and template != "/api/v1/geo/tenants"
             and not request.query_params.getlist("tenant_id")):
         deny(403, "ADVISOR_TENANT_REQUIRED", "请求必须指定当前客户")
@@ -202,8 +205,10 @@ async def guard_scoped_write(session, ctx, request, claims):
     # Resolve supplied object references even when an extra query key or an
     # opaque brief would otherwise fail the field policy first.
     await check_write_objects(session, ctx, request, {}, rule)
-    # Query action switches are not part of any admitted manual-write contract.
-    for key, value in request.query_params.multi_items():
+    from app.security.advisor_write_operations import rules as operation_rules, read_contract
+    operation = rule in operation_rules().values()
+    # Query switches are admitted only by an exact action contract.
+    for key, value in (() if operation else request.query_params.multi_items()):
         if key == "project_id" and rule.method == "POST" and rule.template == "/api/v1/geo/optimization-businesses":
             positive_id(value)
             continue
@@ -212,7 +217,7 @@ async def guard_scoped_write(session, ctx, request, claims):
         ctx.ensure_tenant(positive_id(value))
     try:
         # Request.json() caches body bytes for the handler/dependency re-read.
-        body = await request.json()
+        body = await read_contract(request, rule) if operation else await request.json()
     except (ValueError, UnicodeDecodeError):
         deny(403, "ADVISOR_WRITE_FIELD_FORBIDDEN", "顾问写入仅支持 JSON 对象")
     if isinstance(body, dict) and "brief" in body:

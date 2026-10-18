@@ -179,7 +179,10 @@ async def _resolve(session, ctx, request, body, rule):
         "expected_article_id": GeoArticleVersion, "article_version_id": GeoArticleVersion,
         "variant_id": GeoChannelVariant,
     }
-    if template in _TASK_TEMPLATES:
+    from app.security.advisor_write_operations import task_templates
+    from app.security.advisor_write_reads import TASK_READS
+    task_routes = _TASK_TEMPLATES | task_templates() | TASK_READS
+    if template in task_routes:
         models["task_id"] = GeoContentTask
     state = _Objects()
     seen = set()
@@ -243,7 +246,7 @@ async def _resolve(session, ctx, request, body, rule):
 
     for key, value in await _inputs(request, body):
         await resolve(key, value)
-    if template in _TASK_TEMPLATES:
+    if template in task_routes:
         target = _positive_id(request.path_params["task_id"])
         if state.tasks != {target}:
             _unavailable()
@@ -272,7 +275,7 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
     objects = await _resolve(session, ctx, request, body, rule)
     creating_business = request.method == "POST" and rule.template == _PREFIX + "/optimization-businesses"
     if (rule.assignment != "project" or objects.unscoped
-            or (not objects.businesses and not creating_business)):
+            or (not objects.businesses and not objects.projects and not creating_business)):
         _assignment_required()
     creation_parent = {
         _PREFIX + "/facts": "business_id", _PREFIX + "/prompts": "unit_id",
@@ -320,7 +323,10 @@ async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
     # Imports use the selected customer grant, checked by auth and again at
     # commit. The scheduler helper requires a native/default tenant binding,
     # which would incorrectly exclude another explicitly granted customer.
-    selected_import = rule.template == _PREFIX + "/content-imports/create-task"
+    # The HTTP guard and commit hook validate the selected grant, account and
+    # permissions. Scheduler's default-tenant helper must not veto another
+    # explicitly granted customer on an interactive advisor request.
+    selected_import = getattr(ctx, "advisor_scope", None) is not None
     if (project is None or project.status != "active"
             or type(plan.get("advisor_user_id")) is not int
             or plan["advisor_user_id"] != ctx.user_id
