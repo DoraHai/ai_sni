@@ -109,7 +109,7 @@ def test_cleanup_plan_does_not_drop_database_schema_extensions_or_cascade():
 
 
 def test_real_alembic_graph_has_expected_head_without_running_env():
-    assert runner.graph() == {"head": runner.ADVISOR_LINKS_HEAD, "parent": runner.SITE_DELETE_HEAD, "revisions": 125}
+    assert runner.graph() == {"head": runner.ADVISOR_GRANTS_HEAD, "parent": runner.ADVISOR_LINKS_HEAD, "revisions": 126}
 
 
 @pytest.mark.parametrize("method,suffix,allowed", [
