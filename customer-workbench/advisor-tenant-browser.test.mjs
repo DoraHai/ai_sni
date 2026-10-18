@@ -43,9 +43,10 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
     const screenshot=async(name)=>{if(!shots)return;await fs.mkdir(shots,{recursive:true});for(const [suffix,width,height] of [['desktop',1440,900],['mobile',390,844]]){await p.setViewport({width,height});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await p.screenshot({path:path.join(shots,`${name}-${suffix}.png`)});}};
     await p.goto(origin+'/customer-workbench/?console=advisor');await p.waitForSelector('.advisor-tenant-picker details');
     assert(!await p.$('.advisor-task'));assert(!calls.some(c=>c.path.endsWith('/modules')));
-    await p.click('.advisor-tenant-picker summary');await screenshot('mt-switch');
+    await p.click('.advisor-tenant-picker summary');
     await p.click('[data-tenant="1"]');await p.waitForSelector('.advisor-task');
     assert((await p.$eval('.advisor-task',e=>e.textContent)).includes('客户甲专属任务'));
+    await p.click('.advisor-tenant-picker summary');await screenshot('mt-switch');
     await p.evaluate(()=>{sessionStorage.setItem('seo_pending_rewrite_source','客户甲草稿');sessionStorage.setItem('sem_builder_handoff_1','客户甲筛选');});
     let release;hold=new Promise(r=>release=r);await p.click('[data-advisor=latest]');
     await p.click('.advisor-tenant-picker summary');await p.click('[data-tenant="2"]');
