@@ -41,20 +41,22 @@ async def reserve(session, tenant_id, *, units: int = 1):
     if module is None:
         raise HTTPException(403, "SEO 模块未开通")
     now = now_cst()
+    advisor = getattr(session, "_seo_advisor_ai_kind", None) is not None
     settings = dict(module.module_settings or {})
     state = dict(settings.get(USAGE_KEY) or {})
     if state.get("date") != now.date().isoformat():
         state = {"date": now.date().isoformat(), "used": 0, "attempts": 0}
     if state.get("expires", 0) > now.timestamp():
         raise HTTPException(429, "该客户已有 AI 整改请求进行中，请稍后重试")
-    if (
+    if not advisor and (
         state.get("used", 0) + units > DAILY_LIMIT
         or state.get("attempts", 0) >= 100
     ):
         raise HTTPException(429, "今日 AI 整改额度或请求保护上限已达到，请明天再试")
     token = uuid4().hex
-    state.update(used=state.get("used", 0) + units, attempts=state.get("attempts", 0) + 1,
+    state.update(used=state.get("used", 0) + (0 if advisor else units), attempts=state.get("attempts", 0) + (0 if advisor else 1),
                  token=token, reserved_units=units, expires=now.timestamp() + 120)
+    state["advisor_request"] = advisor
     settings[USAGE_KEY] = state
     module.module_settings = settings
     await session.commit()
@@ -72,7 +74,7 @@ async def settle(session, tenant_id, reservation, *, success):
     state = dict(settings.get(USAGE_KEY) or {})
     if (state.get("date"), state.get("token")) != reservation:
         return False
-    if not success:
+    if not success and not state.get("advisor_request"):
         reserved_units = max(1, int(state.get("reserved_units", 1)))
         state["used"] = max(0, state.get("used", 0) - reserved_units)
     state.pop("token", None)

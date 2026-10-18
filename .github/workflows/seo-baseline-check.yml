@@ -80,6 +80,7 @@ jobs:
               'tests/test_advisor_write_objects.py', 'tests/test_advisor_write_objects_postgres.py',
               'tests/test_advisor_scoped_writes.py', 'tests/test_advisor_scoped_writes_objects.py',
               'tests/test_advisor_scoped_writes_postgres.py', 'tests/test_seo_workflow_postgres.py',
+              'tests/test_seo_advisor_quota_postgres.py',
               '--junitxml=' + report])
           if result:
               raise SystemExit(result)
@@ -179,6 +180,7 @@ jobs:
           tests/test_seo_content_confirmations.py
           tests/test_advisor_tenant_auth.py
           tests/test_seo_advisor_work.py
+          tests/test_seo_advisor_quota.py
           tests/test_advisor_write_rules.py
           tests/test_advisor_switch_auth.py
           tests/test_advisor_account_links_migration.py

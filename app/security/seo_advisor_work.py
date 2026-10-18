@@ -65,10 +65,27 @@ DAILY = (
 )
 
 
+AI = (
+    ("POST", '/qa/planning/semantic', 'tenant_id site_id items request_id', 'seo.content'),
+    ("POST", '/qa/research/draft', 'tenant_id site_id request_id question facts format', 'seo.content'),
+    ("POST", '/qa/research/extract', 'tenant_id site_id request_id text source_name source_url', 'seo.content'),
+    ("POST", '/qa/research/quality', 'tenant_id site_id request_id answer_id content_version', 'seo.content'),
+    ("POST", '/site/pages/ai-tdk/generate', 'tenant_id site_id page_ids force', 'seo.site seo.content'),
+    ("POST", '/content-ai/assist', 'request_id tenant_id site_id source_page_id action mode keyword_id keyword_ids title outline draft source_text instruction template engine qa_question_id qa_fact_ids qa_format', 'seo.content'),
+    ("POST", '/content-distribution/adapt', 'request_id tenant_id site_id content_id connection_id use_ai instruction', 'seo.content'),
+    ("POST", '/content-distribution/variants/generate', 'tenant_id site_id pairs use_ai instruction submit_for_review', 'seo.content'),
+)
+AI += (
+    ("POST", '/site-pages/image-remediation/ai-drafts', 'tenant_id site_id items', 'seo.site seo.content'),
+    ("POST", '/site-pages/ai-remediation', 'tenant_id site_id page_id', 'seo.site seo.content'),
+    ("POST", '/workbench/assistant/chat', 'tenant_id site_id request_id message history content_id', 'seo.site seo.content'),
+    ("POST", '/workbench/onsite-tasks/{task_id}/ai-proposal', 'tenant_id site_id expected_revision request_id mode', 'seo.site seo.content'),
+)
+
 def workflow_rules(rule_type):
     return [rule_type(method, "/api/v1/seo" + path, frozenset(fields.split()),
                       frozenset(), tuple(permissions.split()), "site", True)
-            for method, path, fields, permissions in DAILY]
+            for method, path, fields, permissions in DAILY + AI]
 
 
 def deny(code="ADVISOR_OBJECT_UNAVAILABLE", status=403):
@@ -99,8 +116,6 @@ def check_workflow_fields(rule, body):
             for item in value:
                 walk(item, depth + 1)
     walk(body)
-    if rule.template == "/api/v1/seo/rank-serp/collect" and body.get("use_ai"):
-        deny("ADVISOR_AI_QUOTA_NOT_AVAILABLE")
     if rule.template in {"/api/v1/seo/content-assets", "/api/v1/seo/content-assets/{content_id}"}:
         if body.get("status", "drafting") not in {"planned", "drafting", "archived"}:
             deny("ADVISOR_WRITE_STATE_FORBIDDEN")
@@ -164,6 +179,8 @@ def references(value, template, parent="", refs=None, depth=0):
             if key == "id":
                 if parent in {"facts", "expected_facts"}:
                     kind = "fact_id"
+                elif parent == "question":
+                    kind = "question_id"
                 elif template in {"/api/v1/seo/qa/questions/batch", "/api/v1/seo/qa/planning/semantic"}:
                     kind = "question_id"
                 elif template == "/api/v1/seo/workbench/onsite-tasks/{task_id}/actions":
