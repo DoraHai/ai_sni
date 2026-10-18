@@ -90,6 +90,8 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
 
     if not isinstance(body, dict) or set(body) - rule.fields or set(body) & rule.forbidden:
         forbidden()
+    if 'body_markdown' in body and isinstance(body['body_markdown'], str) and len(body['body_markdown']) > 500_000:
+        deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '文章正文不能超过 50 万字，请拆分后保存')
     if "trust_level" in body and body["trust_level"] not in ("draft", "needs_review"):
         forbidden()
     if "source" in body and body["source"] != "manual":
@@ -143,5 +145,6 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
         if key not in {"tags", "target_channels", "fact_ids"} and isinstance(value, list):
             forbidden()
     if "fact_ids" in body and (not isinstance(body["fact_ids"], list) or
+            len(body["fact_ids"]) > 50 or
             any(type(item) is not int or item <= 0 for item in body["fact_ids"])):
         forbidden()
