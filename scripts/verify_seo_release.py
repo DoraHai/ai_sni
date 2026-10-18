@@ -11,6 +11,8 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "app/permissions.py",
+    "app/security/advisor_seo_scope.py",
     "app/api/auth.py",
     "app/security/advisor_scope.py",
     "app/security/advisor_tenant_auth.py",

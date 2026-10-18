@@ -10,7 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.advisor_tenant_grant import AdvisorTenantGrant
 from app.models.tenant import Tenant
-from app.security.advisor_scope import is_advisor_role
+from app.security.advisor_seo_scope import is_advisor_role
 
 SESSION_ROUTES = frozenset({
     ("GET", "/api/v1/auth/me"), ("GET", "/api/v1/auth/tenants"),
@@ -45,9 +45,9 @@ async def apply_advisor_claims(ctx, user, role, payload, session):
             grants = list(await session.scalars(select(AdvisorTenantGrant).where(
                 AdvisorTenantGrant.user_id == user.id).execution_options(populate_existing=True)))
     except SQLAlchemyError:
-        if advisor or user.tenant_id is None or payload.get("scope_kind") is not None:
+        if advisor or payload.get("scope_kind") is not None:
             reject(503, "ADVISOR_GRANTS_UNAVAILABLE")
-        return ctx  # Ordinary fixed-tenant customer: original single-tenant guard.
+        return ctx  # COMMON-2: ordinary non-advisors keep their existing scope.
     if not advisor:
         if grants or payload.get("scope_kind") is not None:
             reject(403, "ADVISOR_ROLE_CHANGED")
