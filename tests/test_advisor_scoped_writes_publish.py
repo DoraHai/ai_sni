@@ -133,3 +133,15 @@ def test_action_arrays_still_reject_unreviewed_nested_fields(tmp_path, monkeypat
             response = await env.request('POST', '/content-tasks/10/' + suffix, body=body)
             assert response.status_code == 403, response.text
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('body', [{'tenant_id': 10}, {'tenant_id': 10, 'targets': None}, {'tenant_id': 10, 'targets': []}])
+def test_advisor_batch_send_requires_explicit_nonempty_targets(tmp_path, monkeypatch, body):
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch) as env:
+            before = await env.snapshot()
+            response = await env.request('POST', '/content-tasks/10/push-batch', body=body)
+            assert response.status_code == 403, response.text
+            assert '选择一个' in response.text
+            assert await env.snapshot() == before
+    asyncio.run(run())
