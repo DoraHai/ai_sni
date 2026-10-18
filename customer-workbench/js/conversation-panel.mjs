@@ -3,13 +3,17 @@ import {conversationView} from './conversation-view.mjs';
 // Text and retry keys belong only to this authenticated, mounted content scope.
 export function createConversationPanel({root,host,client}){
   let generation=0,key=null,state=fresh(),scrollIntent='latest',savedScroll=0,historyHeight=0;
-  function fresh(){return {context:null,open:true,busy:false,draft:'',pending:null,error:'',notice:'',items:[],unread:0,hasMore:false,before:null,canSend:false};}
+  function fresh(){return {context:null,open:true,busy:false,draft:'',pending:null,error:'',notice:'',items:[],unread:0,hasMore:false,before:null,canSend:false,canMarkRead:false};}
   function clear(){generation++;key=null;state=fresh();scrollIntent='latest';savedScroll=0;client.clear();paint();}
   function position(){const list=root.querySelector('.conversation-messages');if(!state.open||!list)return;list.scrollTop=scrollIntent==='latest'?list.scrollHeight:scrollIntent==='older'?Math.max(0,list.scrollHeight-historyHeight)+savedScroll:savedScroll;savedScroll=list.scrollTop;scrollIntent='keep';}
   function paint(){const target=root.querySelector('#conversation-panel');if(target){const previous=target.querySelector('.conversation-messages');if(previous&&state.open&&scrollIntent==='keep')savedScroll=previous.scrollTop;target.innerHTML=conversationView(state);position();}}
   async function run(action){
     if(state.busy||!state.context)return;const stamp=generation;state.busy=true;state.error='';state.notice='';paint();
-    try{await action(()=>stamp===generation);}catch(error){if(stamp!==generation)return;if(error.status===422)state.pending=null;state.error=state.notice==='消息已发送。'?'消息已发送，但记录刷新失败，请刷新消息核对。':error.status===503?'消息功能尚未启用，请稍后刷新。':error.status===403?'沟通权限已变化，请重新进入当前客户空间。':error.status===409?'这条消息的重试凭据不一致，请刷新记录核对。':error.code==='INVALID_MESSAGE'||error.status===422?'请填写1–4000字的消息。':state.pending?'发送结果未确认，文字已保留。请重试同一条消息核对结果。':'消息请求未完成，请重试。';}
+    try{await action(()=>stamp===generation);}catch(error){if(stamp!==generation)return;
+      if(error.status===403&&error.code==='conversation_forbidden'){
+        client.clear();state.items=[];state.unread=0;state.hasMore=false;state.before=null;state.canSend=false;state.canMarkRead=false;
+        state.error='当前账号没有本站沟通资格，请联系管理员分配；稿件可以继续查看。';
+      }else{if(error.status===422)state.pending=null;state.error=state.notice==='消息已发送。'?'消息已发送，但记录刷新失败，请刷新消息核对。':error.status===503?'消息功能尚未启用，请稍后刷新。':error.status===403?'沟通权限已变化，请重新进入当前客户空间。':error.status===409?'这条消息的重试凭据不一致，请刷新记录核对。':error.code==='INVALID_MESSAGE'||error.status===422?'请填写1–4000字的消息。':state.pending?'发送结果未确认，文字已保留。请重试同一条消息核对结果。':'消息请求未完成，请重试。';}}
     finally{if(stamp===generation){state.busy=false;paint();}}
   }
   function accept(data,older=false){if(older){const list=root.querySelector('.conversation-messages');historyHeight=list?.scrollHeight||0;savedScroll=list?.scrollTop||0;}state.items=older?[...data.items,...state.items].filter((item,i,all)=>all.findIndex(other=>other.id===item.id)===i):data.items;state.unread=data.unread;state.hasMore=data.hasMore;state.before=data.before;state.canSend=data.canSend;state.canMarkRead=data.canMarkRead;scrollIntent=older?'older':'latest';}
@@ -19,7 +23,7 @@ export function createConversationPanel({root,host,client}){
     const action=button.dataset.chatAction;
     if(action==='refresh'||action==='older'){await load(action==='older');return;}
     if(action==='read'){
-      if(!state.open||!state.items.length)return;
+      if(!state.open||!state.canMarkRead||!state.items.length)return;
       const through=Math.max(...state.items.map(item=>item.id));
       await run(async current=>{await client.markRead(state.context.contentId,through);if(!current())return;const data=await client.list(state.context.contentId);if(current()){accept(data);state.notice='已更新本人已读位置。';}});return;
     }

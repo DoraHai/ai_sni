@@ -2,6 +2,24 @@ import test from 'node:test';import assert from 'node:assert/strict';
 import {createConversationClient} from './js/conversation-client.mjs';
 import {createHostSessionAdapter} from './js/host-session-adapter.mjs';
 import {startFixtureServer} from './tests/fixture-server.mjs';
+import {createConversationPanel} from './js/conversation-panel.mjs';
+
+test('local qualification denial keeps the mounted content and disables conversation actions',async()=>{
+  const handlers=new Map(),target={innerHTML:'',querySelector:()=>null};
+  const root={querySelector:selector=>selector==='#conversation-panel'?target:null,addEventListener:(name,fn)=>handlers.set(name,fn),removeEventListener(){}};
+  const previousWindow=globalThis.window;globalThis.window={addEventListener(){},removeEventListener(){}};
+  const context={connected:true,tenantId:1,siteId:9,userId:12,revision:1};let denied=false,clears=0;
+  const client={clear(){clears++;},async list(){if(denied)throw Object.assign(Error('denied'),{status:403,code:'conversation_forbidden'});return {items:[{id:1,text:'原有消息',senderName:'顾问',senderRole:'顾问'}],unread:1,hasMore:true,before:1,canSend:true,canMarkRead:true};}};
+  let panel;
+  try{
+    panel=createConversationPanel({root,host:{getContext:()=>context},client});panel.render({contentId:88,title:'仍然挂载的稿件'});await new Promise(resolve=>setImmediate(resolve));
+    assert.match(target.innerHTML,/原有消息/);denied=true;
+    await handlers.get('click')({target:{closest:()=>({dataset:{chatAction:'refresh'},disabled:false})}});
+    assert.match(target.innerHTML,/当前账号没有本站沟通资格，请联系管理员分配；稿件可以继续查看/);
+    assert.match(target.innerHTML,/仍然挂载的稿件/);assert.doesNotMatch(target.innerHTML,/原有消息/);
+    assert.match(target.innerHTML,/data-chat-action="send" disabled/);assert.match(target.innerHTML,/data-chat-action="read" disabled/);assert.equal(clears,2);assert.equal(context.tenantId,1);
+  }finally{panel?.dispose();globalThis.window=previousWindow;}
+});
 
 test('human conversation uses authorized scope, explicit read and same-key recovery after committed response loss',async()=>{
   const f=await startFixtureServer();let session={token:'fixture-customer',userId:12,tenantId:1,siteId:9,revision:1};

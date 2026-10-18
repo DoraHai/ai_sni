@@ -14,6 +14,33 @@ test('visible content conversation preserves failed text, pages history, explici
     await p.type('#conversation-draft','切换身份必须清除');await p.evaluate(()=>WORKBENCH_TEST_HOST.setIdentity('advisor'));await p.waitForSelector('.summary-grid');assert(!await p.$('#conversation-draft'));await p.click('[data-action=delivery]');await idle(p);assert.equal(await p.$eval('#conversation-draft',e=>e.value),'');
     await p.type('#conversation-draft','切客户必须清除');await p.evaluate(()=>WORKBENCH_TEST_HOST.selectTenant(2));await p.waitForFunction(()=>document.querySelector('#identity')?.textContent.includes('契约客户2'));assert(!await p.$('#conversation-draft'));await p.waitForSelector('[data-action=delivery]');await p.click('[data-action=delivery]');await idle(p);assert.equal(await p.$eval('#conversation-draft',e=>e.value),'');
     await p.setViewport({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-    await p.type('#conversation-draft','撤权必须清除');f.state.messageDenied=true;await p.click('[data-chat-action=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('权限已失效'));assert(!await p.$('#conversation-draft'));assert(!await p.$('.conversation-message'));assert.deepEqual(errors,[]);
+    await p.type('#conversation-draft','撤权必须清除');f.state.forceError={path:'/conversation',status:403,detail:{code:'tenant_forbidden'}};await p.click('[data-chat-action=refresh]');await p.waitForFunction(()=>document.body.textContent.includes('权限已失效'));assert(!await p.$('#conversation-draft'));assert(!await p.$('.conversation-message'));assert.deepEqual(errors,[]);
+  }finally{await b.close();await f.close();}
+});
+
+test('conversation qualification 403 preserves delivery and customer scope and disables message writes',async()=>{
+  const f=await startFixtureServer(),b=await puppeteer.launch({executablePath:edge,headless:true});
+  f.state.messageDenied=true;
+  f.state.messages=new Map([[1,[{id:1,conversation_id:1,body:'原有消息',sender:{id:7,name:'顾问实名',kind:'advisor'},created_at:'2026-10-08T12:00:00Z'}]]]);
+  try{
+    const p=await b.newPage(),errors=[];p.on('pageerror',e=>errors.push(e.message));await p.goto(f.origin+'/fixture.html');await p.waitForSelector('.summary-grid');
+    const identity=await p.$eval('#identity',e=>e.textContent);await p.click('[data-action=delivery]');await idle(p);
+    const body=await p.$eval('#delivery-body',e=>e.textContent);assert.match(body,/客户1的正文/);
+    const denied=async()=>{
+      assert.equal(await p.$eval('#identity',e=>e.textContent),identity);assert.equal(await p.$eval('#delivery-body',e=>e.textContent),body);
+      assert.match(await p.$eval('.conversation-feedback',e=>e.textContent),/当前账号没有本站沟通资格.*稿件可以继续查看/);
+      for(const action of ['send','read'])assert.equal(await p.$eval(`[data-chat-action=${action}]`,e=>e.disabled),true);
+      assert.equal(await p.$eval('#conversation-draft',e=>e.readOnly),true);assert.equal(await p.$$('.conversation-message').then(rows=>rows.length),0);
+    };
+    await denied();
+    // Exercise the same local denial after actions have already been authorized.
+    for(const action of ['refresh','send','read']){
+      f.state.messageDenied=false;await p.click('[data-chat-action=refresh]');await idle(p);
+      assert.equal(await p.$eval('[data-chat-action=read]',e=>e.disabled),false);await p.type('#conversation-draft','保留的沟通文字');
+      f.state.messageDenied=true;await p.click(`[data-chat-action=${action}]`);await idle(p);await denied();
+    }
+    const writes=f.state.calls.filter(c=>c.method==='POST'&&c.path.includes('/conversation/')).length;
+    await p.click('[data-chat-action=send]');await p.click('[data-chat-action=read]');assert.equal(f.state.calls.filter(c=>c.method==='POST'&&c.path.includes('/conversation/')).length,writes);
+    assert.deepEqual(errors,[]);
   }finally{await b.close();await f.close();}
 });

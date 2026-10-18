@@ -102,7 +102,18 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
       const response=await fetchImpl(url.href,{method,body:options.body,headers:{Authorization:`Bearer ${s.token}`,Accept:'application/json',...(method==='GET'?{}:{'Content-Type':'application/json'}),...(onsiteAi?{'X-Snipers-Onsite-Protocol':'durable-v1'}:{})},cache:'no-store',credentials:'omit',redirect:'error',signal:options.signal?AbortSignal.any([controller.signal,options.signal]):controller.signal});
       assertCurrent(s,started);
       if(response.status===401){invalidate('expired');logout?.();login();throw error('AUTH_EXPIRED',401);}
-      if(response.status===403){let reason='forbidden';if(url.pathname==='/api/v1/seo/workbench/assistant/chat'){try{const data=await response.json();if(data?.detail?.code==='assistant_customer_binding_required')reason='customer_binding_required';}catch{}assertCurrent(s,started);}invalidate(reason);throw error('PERMISSION_DENIED',403);}
+      if(response.status===403){
+        let localConversation=false,reason='forbidden';
+        if(['GET','POST'].includes(method)&&/^\/api\/v1\/seo\/workbench\/content-assets\/[1-9]\d*\/conversation(?:\/(?:messages|read))?$/.test(url.pathname)){
+          // Inspect a clone so callers can still read the original status and detail.
+          try{const data=await response.clone().json();localConversation=data?.detail?.code==='conversation_forbidden';}catch{}
+          assertCurrent(s,started);
+        }
+        if(!localConversation){
+          if(url.pathname==='/api/v1/seo/workbench/assistant/chat'){try{const data=await response.json();if(data?.detail?.code==='assistant_customer_binding_required')reason='customer_binding_required';}catch{}assertCurrent(s,started);}
+          invalidate(reason);throw error('PERMISSION_DENIED',403);
+        }
+      }
       return {ok:response.ok,status:response.status,headers:response.headers,
         async json(){assertCurrent(s,started);const data=await response.json();assertCurrent(s,started);return data;},
         async arrayBuffer(){assertCurrent(s,started);const data=await response.arrayBuffer();assertCurrent(s,started);return data;}};
