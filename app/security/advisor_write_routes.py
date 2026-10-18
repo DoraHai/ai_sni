@@ -69,6 +69,11 @@ _register("PUT", "/content-tasks/{task_id}/article", "expected_article_id title 
 _register("PATCH", "/content-tasks/{task_id}/variants/{channel}", "title body_markdown")
 
 
+# AI contracts stay separate from the manual field policy.
+from app.security.advisor_write_ai import rules as _ai_rules
+WRITE_ROUTES.update(_ai_rules())
+
+
 def match_write_rule(request) -> WriteRule | None:
     # Never fall back to the URL or a prefix when route resolution is missing.
     return WRITE_ROUTES.get((request.method, getattr(request.scope.get("route"), "path", None)))

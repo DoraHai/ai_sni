@@ -14,6 +14,7 @@ from sqlalchemy import select
 from starlette.datastructures import UploadFile
 
 from app.security.advisor_scope import deny
+from app.security.advisor_write_ai import TASK_TEMPLATES as AI_TASK_TEMPLATES
 
 
 _PREFIX = "/api/v1/geo"
@@ -179,7 +180,7 @@ async def _resolve(session, ctx, request, body, rule):
         "expected_article_id": GeoArticleVersion, "article_version_id": GeoArticleVersion,
         "variant_id": GeoChannelVariant,
     }
-    if template in _TASK_TEMPLATES:
+    if template in _TASK_TEMPLATES | AI_TASK_TEMPLATES:
         models["task_id"] = GeoContentTask
     state = _Objects()
     seen = set()
@@ -243,7 +244,7 @@ async def _resolve(session, ctx, request, body, rule):
 
     for key, value in await _inputs(request, body):
         await resolve(key, value)
-    if template in _TASK_TEMPLATES:
+    if template in _TASK_TEMPLATES | AI_TASK_TEMPLATES:
         target = _positive_id(request.path_params["task_id"])
         if state.tasks != {target}:
             _unavailable()

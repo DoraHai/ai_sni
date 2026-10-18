@@ -451,7 +451,7 @@ def test_missing_or_wrong_project_assignment_rejects(tmp_path, monkeypatch, back
 
 @pytest.mark.parametrize('method,path', [
     ('POST', '/not-reviewed'), ('DELETE', '/content-tasks/10'),
-    ('POST', '/content-tasks/10/generate'), ('POST', '/content-tasks/10/variants'),
+    ('POST', '/content-tasks/10/ai-review'), ('POST', '/content-tasks/10/variants'),
     ('POST', '/content-tasks/10/publications'), ('POST', '/content-tasks/10/submit-review'),
     ('POST', '/content-tasks/10/review'), ('POST', '/facts/10/verify'),
     ('POST', '/content-tasks/10/check'), ('POST', '/content-tasks/10/lint'),
