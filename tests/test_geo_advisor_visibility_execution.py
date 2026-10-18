@@ -104,7 +104,8 @@ def test_revocation_during_provider_discards_response_and_stops_followup(tmp_pat
     asyncio.run(run())
 
 
-def test_revocation_discards_uncommitted_prior_cells(tmp_path, monkeypatch, backend):
+@pytest.mark.parametrize('change', ['grant', 'entitlement'])
+def test_revocation_discards_uncommitted_prior_cells(tmp_path, monkeypatch, backend, change):
     async def run():
         from app.models import GeoTrackingEngine
         async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
@@ -115,9 +116,15 @@ def test_revocation_discards_uncommitted_prior_cells(tmp_path, monkeypatch, back
             run_id = response.json()['run']['id']
             patrol = worker_stubs(monkeypatch)
             worker_session, calls = None, []
+            if change == 'entitlement':
+                from app.geo.tenant_scope import GeoEntitlementUnavailable
+                async def check_entitlement(*args, **kwargs):
+                    if len(calls) >= 2:
+                        raise GeoEntitlementUnavailable()
+                monkeypatch.setattr(patrol, 'ensure_geo_entitlement', check_entitlement)
             async def probe(**kwargs):
                 calls.append(1)
-                if len(calls) == 2:
+                if len(calls) == 2 and change == 'grant':
                     await worker_session.execute(update(Grant).where(Grant.id == 101).values(
                         revoked_at=datetime.utcnow(), revoked_by=2, revoke_reason='admin_uncheck'))
                 return {'raw_text': 'uncommitted fixture response', 'simulated': False,
