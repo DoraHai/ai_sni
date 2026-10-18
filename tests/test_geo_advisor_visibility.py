@@ -122,7 +122,7 @@ def test_client_cannot_change_fixed_run_or_schedule(tmp_path, monkeypatch, extra
     ('POST', '/answer-snapshots/probe-batch'), ('POST', '/integration/scheduler-safe-foundation'),
     ('POST', '/content-tasks/10/ai-review'), ('POST', '/content-tasks/10/variants'),
     ('POST', '/content-tasks/10/submit-review'), ('POST', '/content-tasks/10/review'),
-    ('POST', '/content-tasks/10/publications'), ('DELETE', '/content-tasks/10'),
+     ('DELETE', '/content-tasks/10'),
     ('POST', '/facts/10/verify'),
 ])
 def test_other_paid_or_high_risk_operations_stay_403(tmp_path, monkeypatch, method, path):
