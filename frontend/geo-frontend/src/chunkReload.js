@@ -1,6 +1,8 @@
 const RELOAD_KEY = 'geo:chunk-reload-at'
 const RELOAD_WINDOW_MS = 30_000
-const UPDATE_MESSAGE = '系统已更新，请按 Ctrl+F5 刷新'
+const UPDATE_MESSAGE = '页面资源加载失败，请按 Ctrl+F5 刷新；仍失败请检查网络'
+const EDIT_MESSAGE = '页面资源加载失败，请先保存或复制未保存内容，再按 Ctrl+F5 刷新；仍失败请检查网络'
+const EDITABLE_ROUTE = /^\/geo\/(?:tasks|brand|knowledge|questions|projects|import|publishing|placements|report|models|channel-polish-prompts|visibility\/snapshots)(?:\/|$)/
 
 function isChunkLoadError(error) {
   const message = typeof error === 'string' ? error : error?.message || ''
@@ -21,6 +23,14 @@ export function installGeoChunkReload(win, router, notify) {
     if (!isChunkLoadError(error)) return false
     // Vite, the router and unhandledrejection can report the same failure.
     if (reloading) return true
+
+    // These pages can hold form or article edits. On a failed lazy navigation
+    // the old page is still mounted, so keep both its state and current URL.
+    if (EDITABLE_ROUTE.test(router.currentRoute?.value?.path || '')) {
+      if (!notified) notify(EDIT_MESSAGE)
+      notified = true
+      return true
+    }
 
     let canReload = false
     try {
