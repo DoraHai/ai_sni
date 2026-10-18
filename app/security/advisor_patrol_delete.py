@@ -20,6 +20,10 @@ async def detach_run_evidence(session, ctx, run):
     # These queries use the request's project scope; no other project is updated.
     snapshots = list(await session.scalars(select(GeoAnswerSnapshot).where(
         GeoAnswerSnapshot.tenant_id == ctx.tenant_id, GeoAnswerSnapshot.patrol_run_id == run.id)))
+    summary = dict(run.summary or {})
+    summary['advisor_visibility_prompt_ids'] = sorted(set(summary.get('advisor_visibility_prompt_ids') or [])
+        | {snapshot.prompt_id for snapshot in snapshots})
+    run.summary = summary  # Preserve checked ownership until the final DELETE flush.
     for snapshot in snapshots:
         snapshot.patrol_run_id = None
         snapshot.note = '\n'.join(part for part in (snapshot.note, note) if part)

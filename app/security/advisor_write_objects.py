@@ -337,11 +337,17 @@ async def _resolve(session, ctx, request, body, rule):
             else:
                 await resolve('project_id', owners[0])
         elif model is GeoVisibilityPatrolRun:
-            prompts = (row.summary or {}).get('advisor_visibility_prompt_ids')
-            if not isinstance(prompts, list) or not prompts:
-                prompts = list(await session.scalars(select(GeoAnswerSnapshot.prompt_id).where(
-                    GeoAnswerSnapshot.tenant_id == ctx.tenant_id, GeoAnswerSnapshot.patrol_run_id == row.id)
-                    .execution_options(advisor_scope_control=True)))
+            summary = row.summary or {}
+            prompts = set(summary.get('advisor_visibility_prompt_ids') or [])
+            cells = (summary.get('contract_plan') or {}).get('cells') or []
+            for item in list(row.items or []) + list(cells):
+                if not isinstance(item, dict) or type(item.get('prompt_id')) is not int:
+                    state.unscoped = True
+                else:
+                    prompts.add(item['prompt_id'])
+            prompts.update(await session.scalars(select(GeoAnswerSnapshot.prompt_id).where(
+                GeoAnswerSnapshot.tenant_id == ctx.tenant_id, GeoAnswerSnapshot.patrol_run_id == row.id)
+                .execution_options(advisor_scope_control=True)))
             if not prompts:
                 state.unscoped = True
             for prompt_id in prompts or []:
