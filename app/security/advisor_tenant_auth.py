@@ -132,6 +132,10 @@ async def enforce_advisor_request(request, ctx, session):
             key: value for key, value in body.items()
             if key != "request_id" and key.endswith(("_id", "_ids"))
         }}
+        if rule.template == '/api/v1/seo/workbench/content-assets/{content_id}/confirmations':
+            request.state.seo_advisor_evidence.update(
+                requested_version=body.get('version_count'), requested_content_hash=body.get('payload_hash'),
+                actor_mode='advisor_proxy', consent_note=(body.get('note') or '')[:2000] if isinstance(body.get('note'), str) else None)
         if not all(ctx.can_edit(key) for key in rule.edit_all):
             reject(403, "ADVISOR_WRITE_PERMISSION_REQUIRED")
     from app.security.auth import _required, enforce_scoped_request

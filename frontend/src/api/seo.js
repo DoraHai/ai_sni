@@ -361,8 +361,14 @@ export function bindSeoContentSourcePage({ contentId, tenantId, sourcePageId, ve
   }, { params: { tenant_id: tenantId } })
 }
 
-export function submitSeoContentReview({ contentId, tenantId, note = null }) {
-  return client.post(`/api/v1/seo/content-assets/${contentId}/submit-review`, { note }, { params: { tenant_id: tenantId } })
+export function submitSeoContentReview({ contentId, tenantId, note = null, versionCount = null }) {
+  return client.post(`/api/v1/seo/content-assets/${contentId}/submit-review`, { note, version_count: versionCount }, { params: { tenant_id: tenantId } })
+}
+
+export function recordSeoAdvisorConfirmation({ contentId, tenantId, versionCount, payloadHash, decision, note = null }) {
+  return client.post(`/api/v1/seo/workbench/content-assets/${contentId}/confirmations`, {
+    version_count: versionCount, payload_hash: payloadHash, decision, actor_mode: 'advisor_proxy', note,
+  }, { params: { tenant_id: tenantId } })
 }
 
 export function decideSeoContentReview({ contentId, tenantId, decision, note = null }) {
