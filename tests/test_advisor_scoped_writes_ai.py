@@ -27,6 +27,7 @@ async def ready(env):
             fact.trust_level = "verified"
         session.add(GeoFact(id=12, tenant_id=10, business_id=10, title="fact three",
                     statement="第三条合成事实", source_name="测试来源", trust_level="verified"))
+        await session.flush()
         session.add_all([GeoTaskFact(task_id=10, fact_id=i) for i in (11, 12)])
         await session.commit()
 
