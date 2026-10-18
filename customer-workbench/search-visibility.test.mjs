@@ -72,7 +72,7 @@ test('view shows plain-language three metrics, trend, exact rank and raw links',
 });
 test('customer hidden, pending, empty and failed views remain honest',()=>{
   assert.equal(renderSearchVisibility({data:{state:'not_open'}}), '');
-  assert.match(renderSearchVisibility({data:{state:'not_enabled'}},{advisor:true}),/待启用/);
+  assert.match(renderSearchVisibility({data:{state:'not_enabled'}},{advisor:true}),/这项检查还没开始/);
   assert.match(renderSearchVisibility({data:{state:'ready',latest:null,weeks:[]}},{advisor:true}),/还没有检查记录/);
   const failed=structuredClone(data);failed.latest.status='failed';failed.latest.error='仅顾问错误细节';
   failed.latest.result.items[1].error='仅顾问错误细节';
@@ -125,4 +125,79 @@ test('global usage requires initialized admin and rejects delayed data after ide
   await client.initialize();assert.equal((await client.searchVisibilityUsage()).requests,3);
   assert.equal(calls.at(-1),'/api/v1/geo/search-visibility/usage');
   delay=true;await assert.rejects(client.searchVisibilityUsage(),/STALE/);
+});
+
+const adminUser={id:7,tenant_id:null,permissions:{'geo.assets':'view','geo.content':'view','settings.accounts':'edit','settings.customers':'edit'}};
+const customerUser={...user,permissions:{'geo.assets':'view','geo.content':'view'}};
+for(const [role,identity] of [['customer',customerUser],['advisor',user],['admin',adminUser]]){
+  for(const enabled of [false,true])test(`${role}: saved enabled=${enabled} explains who acts and where without exposing codes`,async()=>{
+    const calls=[],node={innerHTML:''};
+    const panel=createSearchVisibilityPanel({host:{getContext:()=>context,transport:async path=>{
+      calls.push(path);return response(path.includes('/config?')?{config:{enabled,customer_visible:false}}:{state:'not_enabled'});
+    }},getUser:()=>identity,document:{visibilityState:'visible'}});
+    try{
+      panel.renderInto(node);await panel.refresh();
+      const html=node.innerHTML;
+      assert.doesNotMatch(html,/>[^<]*(?:not_enabled|customer_visible|api_key|[A-Z][A-Z0-9]*_[A-Z_]+|HTTP|待启用)/);
+      if(role==='customer'){
+        assert.match(html,/每周会显示你的品牌在 DeepSeek 搜索里能不能被找到。想开通请联系你的顾问/);
+        assert.equal(calls.length,1);assert.doesNotMatch(html,/项目设置|服务器|超管|data-sv="config"/);
+      }else{
+        assert.equal(calls.length,2);
+        assert.match(html,enabled?/项目已开启，但平台的搜索服务还没接通/:/还没开启。点击本块右上方「项目设置」，打开「每周核对这个项目」并点击「保存项目设置」。搜索服务接通后，每周一北京时间早上 6 点会自动检查一次/);
+        if(enabled)assert.match(html,role==='admin'?/超管联系技术人员在服务器上配置搜索服务/:/需要超管处理，请联系超管/);
+        assert.equal(html.includes('console=platform&amp;page=costs')||html.includes('console=platform&page=costs'),role==='admin');
+      }
+    }finally{panel.dispose();}
+  });
+}
+
+test('not-open customer panel has no residual markup, message or settings request',async()=>{
+  const calls=[],node={innerHTML:''};
+  const panel=createSearchVisibilityPanel({host:{getContext:()=>context,transport:async path=>{
+    calls.push(path);return response({state:'not_open',message:'暂未开放'});
+  }},getUser:()=>customerUser,document:{visibilityState:'visible'}});
+  panel.renderInto(node);await panel.refresh();assert.equal(node.innerHTML,'');assert.equal(calls.length,1);panel.dispose();
+});
+
+test('configuration unavailable gives both instructions; refresh clears stale saved state',async()=>{
+  const node={innerHTML:''};let enabled=false,denied=false;
+  const panel=createSearchVisibilityPanel({host:{getContext:()=>context,transport:async path=>
+    path.includes('/config?')?denied?response({},403):response({config:{enabled,customer_visible:false}}):response({state:'not_enabled'})},
+    getUser:()=>user,document:{visibilityState:'visible'}});
+  try{
+    panel.renderInto(node);await panel.refresh();assert.match(node.innerHTML,/还没开启/);
+    enabled=true;await panel.refresh();assert.match(node.innerHTML,/项目已开启/);
+    denied=true;await panel.refresh();
+    assert.match(node.innerHTML,/点击本块右上方「项目设置」.*保存项目设置.*若已经开启，平台的搜索服务还没接通.*联系超管/);
+    assert.doesNotMatch(node.innerHTML,/项目已开启|还没开启/);
+  }finally{panel.dispose();}
+});
+
+test('run returning not-enabled reloads saved settings once and restores controls',async()=>{
+  let overviewState='ready',runs=0;
+  const node={innerHTML:''};
+  const panel=createSearchVisibilityPanel({host:{getContext:()=>context,transport:async(path,options)=>{
+    if(options.method==='POST'){runs++;overviewState='not_enabled';return response({state:'not_enabled'});}
+    return response(path.includes('/config?')?{config:{enabled:true,customer_visible:false}}:{state:overviewState,latest:null,weeks:[]});
+  }},getUser:()=>adminUser,document:{visibilityState:'visible'}});
+  try{
+    panel.renderInto(node);await panel.refresh();
+    await node.onclick({target:{closest:()=>({dataset:{sv:'run'}})}});
+    assert.equal(runs,1);assert.match(node.innerHTML,/项目已开启.*超管联系技术人员在服务器上配置搜索服务/);
+    assert.doesNotMatch(node.innerHTML,/data-sv="refresh" disabled|待启用/);
+  }finally{panel.dispose();}
+});
+
+test('404 and CSV state messages use role-specific plain language and never server detail',async()=>{
+  for(const [identity,expected] of [[customerUser,/联系你的顾问/],[user,/项目设置.*保存项目设置.*联系超管/],[adminUser,/项目设置.*服务器上配置搜索服务/]]){
+    const node={innerHTML:''};
+    const panel=createSearchVisibilityPanel({host:{getContext:()=>context,transport:async()=>response({detail:'INTERNAL_CODE_FAKE'},404)},getUser:()=>identity,document:{visibilityState:'visible'}});
+    panel.renderInto(node);await panel.refresh();
+    if(identity!==customerUser){assert.match(node.innerHTML,expected);assert.doesNotMatch(node.innerHTML,/INTERNAL_CODE_FAKE|待启用/);}
+    else assert.equal(node.innerHTML,'');
+    panel.dispose();
+  }
+  const client=createSearchVisibilityClient({getContext:()=>context,transport:async()=>response({state:'not_enabled'})});
+  await assert.rejects(client.csv(3),/这项检查还没开始.*联系你的顾问/);
 });

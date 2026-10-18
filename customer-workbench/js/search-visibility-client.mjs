@@ -3,6 +3,15 @@ const positive=n=>Number.isSafeInteger(n)&&n>0;
 const fail=(message,code)=>Object.assign(Error(message),{code});
 export const visibilityAdvisor=user=>user?.tenant_id===null&&user?.permissions?.['settings.accounts']==='edit'&&user?.permissions?.['settings.customers']==='edit'||
   ['geo.assets','geo.content'].every(k=>user?.permissions?.[k]==='edit');
+export const visibilityServiceHelp='平台的搜索服务还没接通，需要超管联系技术人员在服务器上配置搜索服务。';
+export function visibilityNotEnabled({advisor=false,admin=false,enabled}={}){
+  if(!advisor)return '这项检查还没开始。开通后，这里每周会显示你的品牌在 DeepSeek 搜索里能不能被找到。想开通请联系你的顾问。';
+  const setup='点击本块右上方「项目设置」，打开「每周核对这个项目」并点击「保存项目设置」。';
+  const service=admin?visibilityServiceHelp:'平台的搜索服务还没接通，需要超管处理，请联系超管。';
+  if(enabled===true)return '项目已开启，但'+service;
+  if(enabled===false)return '还没开启。'+setup+'搜索服务接通后，每周一北京时间早上 6 点会自动检查一次。';
+  return '这项检查还没开始。'+setup+'若已经开启，'+service;
+}
 export function visibilityConfig(input){
   const list=(name,max)=>{
     const values=Array.isArray(input[name])?input[name]:String(input[name]||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
@@ -21,7 +30,7 @@ export function visibilityConfig(input){
   }
   return config;
 }
-export function createSearchVisibilityClient({transport,getContext}){
+export function createSearchVisibilityClient({transport,getContext,getNotEnabledMessage=()=>visibilityNotEnabled()}){
   const context=()=>{const c=getContext();if(!c?.connected||!positive(c.tenantId)||!positive(c.projectId))throw fail('请先选择并核验 GEO 项目。','CONTEXT_CHANGED');return {...c};};
   const stamp=c=>JSON.stringify([c.tenantId,c.projectId,c.userId,c.revision]);
   async function request(suffix='',method='GET',body,download=false){
@@ -39,10 +48,10 @@ export function createSearchVisibilityClient({transport,getContext}){
     current();
     if(!response.ok){
       const detail=typeof data?.detail==='string'?data.detail:'';
-      throw fail(response.status===404?(suffix.startsWith('/runs/')?'本次检查记录不存在，请刷新后重新选择。':'搜索可见度待启用，请联系顾问。'):response.status===422?'设置未通过校验，请检查填写数量、词长度和网页链接。':
+      throw fail(response.status===404?(suffix.startsWith('/runs/')?'本次检查记录不存在，请刷新后重新选择。':getNotEnabledMessage()):response.status===422?'设置未通过校验，请检查填写数量、词长度和网页链接。':
         response.status===409?detail||'已有任务在运行或今天已运行，请刷新核对。':'暂时无法完成，请联系顾问核对权限或服务状态。');
     }
-    if(download)throw fail(data?.state==='not_open'?'暂未开放':'搜索可见度待启用。');
+    if(download)throw fail(data?.state==='not_open'?'暂未开放':getNotEnabledMessage());
     return data;
   }
   const id=value=>{if(!positive(value))throw fail('请选择有效的检查记录。');return value;};
