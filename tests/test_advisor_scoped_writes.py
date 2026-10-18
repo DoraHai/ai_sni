@@ -171,7 +171,7 @@ async def write_sandbox(tmp_path, monkeypatch, *, backend='sqlite', enabled=True
     schema = 'geo_scoped_writes_' + uuid4().hex
     admin = None
     metadata = MetaData()
-    names = set(BUSINESS_TABLES) | {'roles', 'users', 'tenants', 'tenant_modules',
+    names = set(BUSINESS_TABLES) | {'geo_tracking_engines', 'geo_answer_snapshots', 'roles', 'users', 'tenants', 'tenant_modules',
         'advisor_tenant_grants', 'geo_optimization_periods'}
     # Copy only GEO/auth tables and their FK dependencies, no shared/public data.
     pending = list(names)
@@ -459,7 +459,6 @@ def test_missing_or_wrong_project_assignment_rejects(tmp_path, monkeypatch, back
     ('POST', '/content-tasks/10/publications'), ('POST', '/content-tasks/10/submit-review'),
     ('POST', '/content-tasks/10/review'), ('POST', '/facts/10/verify'),
     ('POST', '/content-tasks/10/check'), ('POST', '/content-tasks/10/lint'),
-    ('POST', '/visibility-patrol/runs'),
     ('POST', '/content-tasks/10/ai-review'), ('POST', '/content-tasks/10/push'),
     ('POST', '/content-tasks/10/push-batch'), ('POST', '/answer-snapshots/probe'),
     ('POST', '/answer-snapshots/probe-batch'),

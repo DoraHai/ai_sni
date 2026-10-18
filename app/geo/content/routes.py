@@ -5308,6 +5308,30 @@ async def create_visibility_patrol_run(
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
     await session.execute(select(Tenant.id).where(Tenant.id == req.tenant_id).with_for_update())
+    advisor_prompt_ids = None
+    engine_keys = req.engine_keys
+    if ctx.advisor_scope is not None:
+        await ensure_geo_entitlement(session, req.tenant_id)
+        from app.security.advisor_scope import deny
+        from app.security.advisor_write_routes import VISIBILITY_RUN_RULE, check_write_fields
+        from app.security.advisor_visibility import check_visibility_quota
+        check_write_fields(VISIBILITY_RUN_RULE, req.model_dump(exclude_unset=True))
+        binding = session.info.get("advisor_scoped_write")
+        if binding is None or binding[0] is not ctx or binding[3] != VISIBILITY_RUN_RULE:
+            deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "缺少顾问手动检测的授权范围")
+        advisor_prompt_ids = binding[1].state.advisor_visibility_prompt_ids
+        await check_visibility_quota(session, ctx)
+        from app.models import GeoTrackingEngine
+        engine_keys = list(await session.scalars(select(GeoTrackingEngine.engine_key).where(
+            GeoTrackingEngine.tenant_id == req.tenant_id, GeoTrackingEngine.enabled.is_(True),
+            GeoTrackingEngine.engine_key != "other").order_by(GeoTrackingEngine.sort_order, GeoTrackingEngine.id)))
+        if not engine_keys:
+            deny(409, "ADVISOR_VISIBILITY_NO_ENGINES", "此客户没有已启用的检测引擎，请由管理员配置")
+    inflight = await session.scalar(select(GeoVisibilityPatrolRun.id).where(
+        GeoVisibilityPatrolRun.tenant_id == req.tenant_id,
+        GeoVisibilityPatrolRun.status.in_(("pending", "running"))).limit(1))
+    if inflight is not None:
+        raise HTTPException(409, "此客户已有检测正在排队或运行，请等完成后再试")
     from app.geo.retest import reserved_week
     if await reserved_week(session, req.tenant_id):
         raise HTTPException(409, '本周已有精确复测预约，不能追加普通巡检改变采样分布')
@@ -5326,8 +5350,9 @@ async def create_visibility_patrol_run(
         auto_persist=bool(req.auto_persist),
         prefer_real=bool(req.prefer_real),
         prompt_limit=int(req.prompt_limit),
-        engine_keys=req.engine_keys,
+        engine_keys=engine_keys,
         created_by=ctx.user_id,
+        summary={"advisor_visibility_prompt_ids": advisor_prompt_ids} if advisor_prompt_ids is not None else None,
     )
     session.add(run)
     await session.commit()

@@ -213,7 +213,6 @@ async def run_geo_visibility_patrols() -> None:
                 select(GeoVisibilityPatrolRun.id)
                 .where(
                     GeoVisibilityPatrolRun.tenant_id == tenant_id,
-                    GeoVisibilityPatrolRun.trigger == "schedule",
                     GeoVisibilityPatrolRun.status.in_(("pending", "running")),
                 )
                 .limit(1)

@@ -313,7 +313,7 @@ async def recover_patrol_runs_on_startup() -> dict[str, int]:
     return stats
 
 
-async def count_patrol_runs_today(session: AsyncSession, tenant_id: int) -> int:
+async def count_patrol_runs_today(session: AsyncSession, tenant_id: int, *, created_by: int | None = None) -> int:
     """Count patrol runs created today in Asia/Shanghai for quota."""
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
@@ -327,15 +327,16 @@ async def count_patrol_runs_today(session: AsyncSession, tenant_id: int) -> int:
     # DB timestamps are naive UTC-ish (utcnow); convert window to naive UTC
     start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None)
     end_utc = end_local.astimezone(timezone.utc).replace(tzinfo=None)
-    n = await session.scalar(
-        select(func.count())
+    query = (select(func.count())
         .select_from(GeoVisibilityPatrolRun)
         .where(
             GeoVisibilityPatrolRun.tenant_id == tenant_id,
             GeoVisibilityPatrolRun.created_at >= start_utc,
             GeoVisibilityPatrolRun.created_at < end_utc,
-        )
-    )
+        ))
+    if created_by is not None:
+        query = query.where(GeoVisibilityPatrolRun.created_by == created_by)
+    n = await session.scalar(query)
     return int(n or 0)
 
 
@@ -503,6 +504,7 @@ async def execute_patrol_run(
         await session.refresh(row)
         return row
     contract_plan = (row.summary or {}).get("contract_plan")
+    advisor_prompt_ids = (row.summary or {}).get("advisor_visibility_prompt_ids")
     row.status = "running"
     row.started_at = datetime.utcnow()
     row.error = None
@@ -526,6 +528,8 @@ async def execute_patrol_run(
 
     if contract_plan:
         summary["contract_plan"] = contract_plan
+    if advisor_prompt_ids is not None:
+        summary["advisor_visibility_prompt_ids"] = advisor_prompt_ids
 
     try:
         tenant = await session.get(Tenant, row.tenant_id)
@@ -578,6 +582,14 @@ async def execute_patrol_run(
             prompts = list(await session.scalars(select(GeoPrompt).where(
                 GeoPrompt.tenant_id == row.tenant_id, GeoPrompt.id.in_(ids)).order_by(GeoPrompt.id)))
             validate_plan_prompts(contract_plan, prompts)
+        elif advisor_prompt_ids is not None:
+            # A paid advisor request never falls back to tenant-wide questions.
+            prompts = list(await session.scalars(select(GeoPrompt).where(
+                GeoPrompt.tenant_id == row.tenant_id, GeoPrompt.status == "active",
+                GeoPrompt.id.in_(advisor_prompt_ids)).order_by(
+                    GeoPrompt.priority.desc(), GeoPrompt.id.desc())))
+            if {p.id for p in prompts} != set(advisor_prompt_ids):
+                raise ValueError("顾问检测问题已变化，请刷新后重试")
         else:
             prompts = list(
                 await session.scalars(

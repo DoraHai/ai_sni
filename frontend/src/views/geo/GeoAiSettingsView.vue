@@ -1,12 +1,15 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { fetchGeoAiSettings, putGeoAiSettings, testGeoAiSettings } from '../../api/geoContent'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+import { session } from '../../store/session'
+import { advisorClaims } from '../../utils/geoAdvisorTenant'
 
 const { tenantId } = useGeoTenant()
+const isAdvisor = computed(() => !!advisorClaims(session.token) || session.user?.is_advisor === true)
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
@@ -109,9 +112,9 @@ onMounted(load)
     :loading="loading"
   >
     <template #actions>
-      <button class="gd-btn" :disabled="testing" @click="test">{{ testing ? '测试中…' : '测试连通' }}</button>
+      <button v-if="!isAdvisor" class="gd-btn" :disabled="testing" @click="test">{{ testing ? '测试中…' : '测试连通' }}</button>
       <button class="gd-btn" @click="load">刷新</button>
-      <button class="gd-btn primary" :disabled="saving" @click="save">保存</button>
+      <button v-if="!isAdvisor" class="gd-btn primary" :disabled="saving" @click="save">保存</button>
     </template>
     <div class="geo-dash">
 
@@ -120,7 +123,7 @@ onMounted(load)
 
     <div class="geo-form-panel">
       <div class="form-section-title">模型与密钥</div>
-      <el-form label-width="120px" label-position="right">
+      <el-form :disabled="isAdvisor" label-width="120px" label-position="right">
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
           <span class="form-hint inline">关闭后渠道润色/母稿生成将无法调用 LLM</span>

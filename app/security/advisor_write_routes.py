@@ -68,10 +68,20 @@ _register("PUT", "/content-tasks/{task_id}/facts", "fact_ids")
 _register("PUT", "/content-tasks/{task_id}/article", "expected_article_id title body_markdown")
 _register("PATCH", "/content-tasks/{task_id}/variants/{channel}", "title body_markdown")
 
+# A single paid action, separate from the 13 manual-content rules. No client
+# engine, prompt limit, scheduling or execution switches are admitted.
+VISIBILITY_RUN_RULE = WriteRule(
+    "POST", "/api/v1/geo/visibility-patrol/runs", frozenset({"tenant_id"}),
+    FORBIDDEN, ("geo.assets", "geo.content"), "visibility",
+)
+
 
 def match_write_rule(request) -> WriteRule | None:
     # Never fall back to the URL or a prefix when route resolution is missing.
-    return WRITE_ROUTES.get((request.method, getattr(request.scope.get("route"), "path", None)))
+    key = (request.method, getattr(request.scope.get("route"), "path", None))
+    if key == (VISIBILITY_RUN_RULE.method, VISIBILITY_RUN_RULE.template):
+        return VISIBILITY_RUN_RULE
+    return WRITE_ROUTES.get(key)
 
 
 def check_write_fields(rule: WriteRule, body: dict) -> None:
