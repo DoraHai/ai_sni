@@ -95,6 +95,16 @@ def bind_advisor_write_commit(session, ctx, request, body, rule, claims) -> None
         from app.security.advisor_write_audit import record
         record(session.info["advisor_scoped_write"][1].scope, "committed")
 
+    def after_flush(sync_session, _flush_context):
+        scope = session.info["advisor_scoped_write"][1].scope
+        created = scope.setdefault("geo_advisor_created_ids", {})
+        for row in sync_session.new:
+            ident = getattr(row, "id", None)
+            table = getattr(type(row), "__tablename__", None)
+            if table and type(ident) is int and ident > 0:
+                created.setdefault(table, set()).add(ident)
+
     event.listen(session.sync_session, "before_commit", before_commit)
     event.listen(session.sync_session, "after_commit", after_commit)
+    event.listen(session.sync_session, "after_flush", after_flush)
     session.info["advisor_write_commit_hook"] = True
