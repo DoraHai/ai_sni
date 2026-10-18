@@ -184,7 +184,11 @@ def preview_file_document(*, filename: str, raw: bytes) -> dict:
 
 def _validate_web_url(value: str) -> str:
     url = str(value or "").strip()
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+        parsed.port  # Validate malformed/out-of-range explicit ports as input errors.
+    except ValueError as exc:
+        raise ArticleImportError("A complete http or https URL is required") from exc
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ArticleImportError("A complete http or https URL is required")
     if parsed.username or parsed.password:
@@ -198,7 +202,7 @@ async def preview_url_document(url: str) -> dict:
     try:
         from app.geo.audit import GeoAuditError, safe_fetch
 
-        document = await safe_fetch(source_url)
+        document = await safe_fetch(source_url, article_import=True)
     except GeoAuditError as exc:
         raise ArticleImportError(str(exc)) from exc
     return preview_html_document(html=document.html, source_url=document.final_url)

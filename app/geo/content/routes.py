@@ -39,6 +39,7 @@ from app.geo.content.article_import import (
     preview_file_document,
     preview_url_document,
 )
+from app.geo.content.article_import_throttle import advisor_url_preview_slot
 from app.geo.content.pipeline import blocked_reason_from_checks, sync_pipeline_fields
 from app.geo.content.rules import RuleInput, build_fix_patches, is_ready, run_checks
 from app.geo.content.channel_profiles import get_profile, list_profiles
@@ -6823,7 +6824,8 @@ async def preview_article_import_url(
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
     try:
-        return await preview_url_document(req.url)
+        async with advisor_url_preview_slot(ctx, req.tenant_id):
+            return await preview_url_document(req.url)
     except ArticleImportError as exc:
         raise HTTPException(400, str(exc)) from exc
 

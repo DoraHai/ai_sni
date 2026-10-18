@@ -18,7 +18,7 @@ BODY = {'tenant_id': 10, 'prompt_id': 10, 'title': 'Imported fixture article',
 
 
 @pytest.mark.parametrize('change', [
-    {'source_type': 'url'}, {'source_type': None},
+    {'source_type': 'unknown'}, {'source_type': None},
     {'status': 'published'}, {'owner_user_id': 2}, {'version_no': 8},
     {'published': True}, {'review_status': 'approved'}, {'prompt_id': 20},
     {'tenant_id': 20}, {'tenant_id': 30},
@@ -97,7 +97,7 @@ def test_import_cannot_join_enabled_execution_chain(tmp_path, monkeypatch, backe
     asyncio.run(run())
 
 
-@pytest.mark.parametrize('source', ['paste', 'file'])
+@pytest.mark.parametrize('source', ['paste', 'file', 'url'])
 def test_import_server_derives_owner_state_and_first_version(tmp_path, monkeypatch, backend, source):
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
@@ -132,7 +132,7 @@ def test_import_into_another_explicitly_granted_selected_customer(tmp_path, monk
 
 
 @pytest.mark.parametrize('change', ['assignment', 'patrol'])
-@pytest.mark.parametrize('source', ['paste', 'file'])
+@pytest.mark.parametrize('source', ['paste', 'file', 'url'])
 def test_import_rechecks_scope_at_actual_commit_and_rolls_back(tmp_path, monkeypatch, backend, change, source):
     from app.geo.content import routes
     original = routes._evaluate_and_store_rules

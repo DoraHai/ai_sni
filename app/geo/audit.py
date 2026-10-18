@@ -17,6 +17,7 @@ from bs4 import BeautifulSoup
 MAX_HTML_BYTES = 3 * 1024 * 1024
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT = 18.0
+ARTICLE_IMPORT_TIMEOUT = 25.0
 USER_AGENT = "Mozilla/5.0 (compatible; GrowthSniper-GEO/1.0)"
 RULE_VERSION = "1.2.0"
 
@@ -219,7 +220,25 @@ async def _ensure_public_host(url: str) -> list[str]:
 
 async def safe_fetch(
     url: str, *, allow_text: bool = False, allow_xml: bool = False,
-    allowed_hosts: frozenset[str] | None = None
+    allowed_hosts: frozenset[str] | None = None, article_import: bool = False,
+) -> PageDocument:
+    """Keep legacy callers unchanged; imports get one deadline including DNS/redirects."""
+    options = dict(allow_text=allow_text, allow_xml=allow_xml,
+                   allowed_hosts=allowed_hosts, article_import=article_import)
+    if not article_import:
+        return await _safe_fetch(url, **options)
+    try:
+        async with asyncio.timeout(ARTICLE_IMPORT_TIMEOUT):
+            return await _safe_fetch(url, **options)
+    except TimeoutError as exc:
+        raise GeoAuditError("文章抓取超过总时长上限，已停止") from exc
+    except (ValueError, httpx.InvalidURL) as exc:
+        raise GeoAuditError("文章网址无效") from exc
+
+
+async def _safe_fetch(
+    url: str, *, allow_text: bool, allow_xml: bool,
+    allowed_hosts: frozenset[str] | None, article_import: bool,
 ) -> PageDocument:
     """逐跳校验重定向目标，阻止 SSRF，并限制响应类型和体积。"""
     current = normalize_url(url)
@@ -231,11 +250,19 @@ async def safe_fetch(
         headers={
             "User-Agent": USER_AGENT,
             "Accept": "text/html,application/xml,text/xml;q=0.9,text/plain;q=0.8",
+            **({"Accept-Encoding": "identity"} if article_import else {}),
         },
     ) as client:
         for _ in range(MAX_REDIRECTS + 1):
             current = normalize_url(current)
             target = urlparse(current)
+            if article_import:
+                try:
+                    port = target.port
+                except ValueError as exc:
+                    raise GeoAuditError("文章网址端口无效") from exc
+                if port not in {None, 80, 443}:
+                    raise GeoAuditError("文章导入只允许 80/443 端口")
             if allowed_hosts is not None and ((target.hostname or '').lower().rstrip('.') not in allowed_hosts
                     or target.port not in {None, 80, 443}):
                 raise GeoAuditError('目标或跳转地址超出授权网站范围')
@@ -245,6 +272,19 @@ async def safe_fetch(
             try:
                 async with client.stream("GET", pinned, headers={"Host": original.netloc.decode("ascii")},
                                          extensions={"sni_hostname": original.raw_host.decode("ascii")}) as response:
+                    if article_import:
+                        length = response.headers.get("content-length")
+                        if length is not None:
+                            try:
+                                declared = int(length)
+                            except ValueError as exc:
+                                raise GeoAuditError("页面长度无效") from exc
+                            if declared < 0 or declared > MAX_HTML_BYTES:
+                                raise GeoAuditError("页面超过 3MB 或长度无效，已停止抓取")
+                        # Identity avoids compressed expansion before the byte
+                        # limit can run. Servers ignoring it fail closed here.
+                        if response.headers.get("content-encoding", "identity").strip().lower() != "identity":
+                            raise GeoAuditError("文章导入不接受压缩响应")
                     if response.status_code in {301, 302, 303, 307, 308}:
                         location = response.headers.get("location")
                         if not location:
@@ -263,7 +303,8 @@ async def safe_fetch(
                         raise GeoAuditError(f"不支持的页面类型：{content_type or '未知'}")
                     chunks: list[bytes] = []
                     size = 0
-                    async for chunk in response.aiter_bytes():
+                    stream = response.aiter_bytes(chunk_size=64 * 1024) if article_import else response.aiter_bytes()
+                    async for chunk in stream:
                         size += len(chunk)
                         if size > MAX_HTML_BYTES:
                             raise GeoAuditError("页面超过 3MB，已停止抓取")
