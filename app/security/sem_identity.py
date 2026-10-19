@@ -32,11 +32,14 @@ def public_sem_identity_state(state: dict[str, Any] | None) -> dict[str, Any] | 
     """返回前台安全状态，不暴露内部用于归属判定的 UCID。"""
     if state is None:
         return None
-    return {
+    public = {
         "status": state.get("status"),
         "code": state.get("code"),
         "message": state.get("message"),
     }
+    if state.get("status") == "blocked":
+        public["reason"] = state.get("reason")
+    return public
 
 
 def filter_identity_safe_active_accounts(
@@ -96,6 +99,7 @@ def evaluate_sem_identity_states(
             states[tenant_id] = {
                 "status": "blocked",
                 "code": SEM_IDENTITY_BLOCKED_CODE,
+                "reason": "conflict" if conflict_ucids else "archived_only",
                 "message": SEM_IDENTITY_BLOCKED_MESSAGE if conflict_ucids else SEM_ARCHIVED_ONLY_MESSAGE,
                 "ucids": [str(ucid) for ucid in blocked_ucids],
             }
@@ -159,5 +163,6 @@ async def ensure_sem_identity_access(session: AsyncSession, tenant_id: int) -> N
             detail={
                 "code": state["code"],
                 "msg": state["message"],
+                "reason": state["reason"],
             },
         )

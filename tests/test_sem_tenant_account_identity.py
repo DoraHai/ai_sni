@@ -178,6 +178,7 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
             {
                 "status": "blocked",
                 "code": SEM_IDENTITY_BLOCKED_CODE,
+                "reason": "conflict",
                 "message": "推广账户归属冲突，已暂停展示该客户的 SEM 数据，请联系超级管理员处理",
             },
         )
@@ -218,6 +219,7 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
             {
                 "code": SEM_IDENTITY_BLOCKED_CODE,
                 "msg": "推广账户归属冲突，已暂停展示该客户的 SEM 数据，请联系超级管理员处理",
+                "reason": "conflict",
             },
         )
 
