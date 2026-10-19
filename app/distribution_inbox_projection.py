@@ -28,6 +28,7 @@ def _assignment(row):
         'tenantId': row.get('tenant_id'), 'module': row.get('module'),
         'scopeId': row.get('scope_id'), 'articleId': row.get('article_id'),
         'articleVersion': row.get('article_version'),
+        'articleDigest': row.get('article_digest'),
         'publishedAccount': row.get('published_account'),
     }
 

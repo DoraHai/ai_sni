@@ -122,7 +122,7 @@ test('identity reset clears visible records/code immediately and ignores late pa
     model.clear()
     delayed.resolve(operation === 'pair' ? { pairingCode: 'old-private-code' } : { items: [{ id: 'old-private-record' }] })
     await result
-    assert.deepEqual(model.state, { items: [], devices: [], count: 0, pairing: null, busy: false, error: '' })
+    assert.deepEqual(model.state, { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '' })
   }
 })
 

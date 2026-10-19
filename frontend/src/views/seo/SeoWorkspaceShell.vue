@@ -55,6 +55,7 @@ const groups = [
       { label: '文章改写', path: '/seo/content/rewrites', perm: 'seo.content', mark: '↻' },
       { label: '问答运营', path: '/seo/content/qa', perm: 'seo.content', mark: 'Q' },
       { label: '分发平台', path: '/seo/distribution', perm: 'seo.content', mark: '⇧' },
+      { label: '多号通回传', path: '/seo/distribution-inbox', perm: 'seo.content', mark: '回' },
     ],
   },
   {

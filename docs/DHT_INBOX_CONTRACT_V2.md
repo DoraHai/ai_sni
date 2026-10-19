@@ -54,6 +54,7 @@ person=已验证人员JWT、user_id存在、当前active且未锁定。admin=当
 | GET | /receipts/count | (None,false) |
 | GET | /receipts/{uuid} | (None,false) |
 | GET | /devices | (None,false) |
+| GET | /targets | (None,false) |
 | POST | /devices/{uuid}/revoke | (None,true) |
 | POST | /receipts/{uuid}/archive | (None,true) |
 | POST | /receipts/{uuid}/delete | (None,true) |
@@ -107,3 +108,5 @@ owner未标（含archived未标）1000行/10MiB硬上限；总保留5000行/50Mi
 - 2026-10-19 v2.0 冻结；DHT2-遵循seoV2 task，SCOPE覆盖原方案域名粗检/80%预警，事件摘要采用固定数组。通知在progress中向geoV2/clientV2发布。
 - 2026-10-19 v2.0 勘误：事件键数量文字13更正12，字段列表和vectors未变。
 - 2026-10-19 v2.0.1 修复向量生成时PowerShell文本管道将中文/emoji替换问号的问题：改UTF-8源码文件直接Node生成，向量中文和emoji及相应摘要更新；线协议/摘要算法/字段不变。下游须重新同步vectors-v2.json，新增断言禁止中文样例退化成问号。
+
+- 2026-10-19 v2.0.2 第二阶段：新增精确身份 GET I/targets，无query，返回 {schema:2,items:[{tenantId,name,modules,scopes:[{id,name,module,articles:[{id,title,version,digest}]}]}],owners:[{id,displayName,active}],inboxAdmin}。items仅当前grant/有效模块/已分配范围；owners仅人员管理员可得。SEO可选稿件清单仅当前确认通过版本，GEO业务写与可选稿件由GEO服务最终复核；个人assignment增加articleDigest供同目标修改保持固定引用。新增409 URL_HASH_COLLISION「链接标识冲突，请联系超管核对」。设备三接口/摘要/ACK/旧v1不变。通知geoV2/clientV2以此版本更新独立API；客户端设备协议无需改动。

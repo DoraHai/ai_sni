@@ -40,6 +40,7 @@ import SeoVideoPublishing from './SeoVideoPublishing.vue'
 import SeoPageCapturePanel from './SeoPageCapturePanel.vue'
 import SeoOfflineHandoff from './SeoOfflineHandoff.vue'
 import SeoDistributionReport from './SeoDistributionReport.vue'
+import DistributionExternalPublications from './DistributionExternalPublications.vue'
 import { createPublisherPackage, publisherZip } from './seoPublisher'
 const publisherFiles = import.meta.glob('./publisher/*', { query: '?raw', import: 'default', eager: true })
 const runnerFiles = import.meta.glob('./publisher-runner/*', { query: '?raw', import: 'default', eager: true })
@@ -1011,7 +1012,8 @@ onMounted(loadSites)
     </section>
 
     <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon />
-    <SeoDistributionReport :tenant-id="currentTenantId" :site-id="siteId" :identity="`${session.user?.id}:${session.authRevision}`" :can-edit="canEdit" :connections="connections" :publications="publications" :contents="contents" @paired="load" />
+    <p><router-link to="/seo/distribution-inbox">多号通回传：生成通用配对码、待标客户和设备停用</router-link></p>
+    <details><summary>旧版稿件派发（0.3.5 / 0.3.6 兼容区）</summary><SeoDistributionReport :tenant-id="currentTenantId" :site-id="siteId" :identity="`${session.user?.id}:${session.authRevision}`" :can-edit="canEdit" :connections="connections" :publications="publications" :contents="contents" @paired="load" /></details>
 
     <section class="summary-grid">
       <article><span>可用渠道配置</span><strong>{{ connectedCount }}</strong><small>已配置，可准备分发任务</small></article>
@@ -1109,6 +1111,7 @@ onMounted(loadSites)
     </template>
 
     <template v-else>
+      <DistributionExternalPublications :tenant-id="currentTenantId" :scope-id="siteId" />
       <section class="table-panel">
         <header><div><h2>发布成功记录</h2><p>包含人工确认和平台接口返回，均不代表页面正文、外链或搜索收录已核验。核验结果请查看问答跟进或外链模块。</p></div><div class="task-toolbar"><el-date-picker v-if="canViewCapture" v-model="exportMonth" type="month" value-format="YYYY-MM" placeholder="选择月份" /><el-button v-if="canViewCapture" :disabled="!siteId || exportBusy" @click="exportPublicationList">{{ exportBusy ? '导出中…' : '导出发布清单' }}</el-button><el-button v-if="canViewCapture" :disabled="!siteId || reportBusy" :loading="reportBusy" @click="downloadMonthlyReport">生成月报</el-button><el-button @click="selectImport">批量登记</el-button></div></header>
         <el-table :data="published" empty-text="暂无已发布记录">

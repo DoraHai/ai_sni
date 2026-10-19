@@ -76,6 +76,7 @@ jobs:
           report = os.path.join(os.environ['RUNNER_TEMP'], 'seo-onsite-postgres.xml')
           result = pytest.main(['-q', 'tests/test_seo_advisor_connections_postgres.py',
               'tests/test_seo_distribution_report_postgres.py',
+              'tests/test_distribution_inbox_postgres.py',
               'tests/test_seo_distribution_protocol.py',
               'tests/test_seo_onsite_postgres.py',
               'tests/test_seo_onsite_ai_postgres.py',
@@ -290,7 +291,7 @@ jobs:
         run: npm ci --no-audit
       - name: Build isolated SEO frontend
         working-directory: frontend
-        run: npm run test:session-storage && node --test scripts/test-distribution-inbox.mjs scripts/test-distribution-inbox-view.mjs scripts/test-seo-distribution-report.mjs scripts/test-seo-manual-publication.mjs scripts/test-seo-advisor-requests.mjs scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs scripts/test-seo-offline-handoff.mjs scripts/test-seo-backlinks.mjs scripts/test-seo-video-workflow.mjs scripts/test-seo-qa.mjs scripts/test-seo-workspace-access.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run test:seo-editor && npm run test:seo-page-capture && npm run test:seo-publication-export && npm run test:seo-site-analytics && npm run test:seo-monthly-report && npm run test:seo-tdk-review && npm run test:seo-ai-tdk && node --test scripts/test-seo-keyword-delete.mjs scripts/test-seo-site-delete.mjs scripts/test-seo-image-review.mjs && npm run build:seo
+        run: npm run test:session-storage && node --test scripts/test-distribution-inbox.mjs scripts/test-distribution-inbox-view.mjs scripts/test-distribution-inbox-page.mjs scripts/test-seo-distribution-report.mjs scripts/test-seo-manual-publication.mjs scripts/test-seo-advisor-requests.mjs scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs scripts/test-seo-offline-handoff.mjs scripts/test-seo-backlinks.mjs scripts/test-seo-video-workflow.mjs scripts/test-seo-qa.mjs scripts/test-seo-workspace-access.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run test:seo-editor && npm run test:seo-page-capture && npm run test:seo-publication-export && npm run test:seo-site-analytics && npm run test:seo-monthly-report && npm run test:seo-tdk-review && npm run test:seo-ai-tdk && node --test scripts/test-seo-keyword-delete.mjs scripts/test-seo-site-delete.mjs scripts/test-seo-image-review.mjs && npm run build:seo
       - name: Verify isolated SEO frontend
         working-directory: frontend
         run: npm run verify:seo-build
@@ -338,8 +339,8 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0109_advisor_tenant_grants (head)'
-          python -m pytest -q tests/test_advisor_tenant_grants_migration.py tests/test_seo_site_delete_postgres.py tests/test_geo_ticket_adoption_migration.py tests/test_sem_task_migration.py tests/test_demo_tenant_binding_migration.py tests/test_demo_binding_no_truncate_migration.py tests/test_geo_review_audit_migration.py tests/test_seo_migration_merge.py tests/test_seo_qa.py tests/test_seo_video_platforms.py tests/test_seo_backlink_workflow.py tests/test_seo_cockpit.py tests/test_seo_cockpit_auth.py tests/test_seo_usage_limits.py tests/test_seo_ai_operations.py tests/test_seo_workbench_limits.py tests/test_seo_workbench_auth_postgres.py tests/test_seo_task_center.py tests/test_seo_site_onboarding_contract.py tests/test_seo_analytics_cycles.py tests/test_seo_incremental_crawl.py
+          printf '%s\n' "$heads" | grep -F '0110_distribution_inbox (head)'
+          python -m pytest -q tests/test_distribution_inbox_migration.py tests/test_advisor_tenant_grants_migration.py tests/test_seo_site_delete_postgres.py tests/test_geo_ticket_adoption_migration.py tests/test_sem_task_migration.py tests/test_demo_tenant_binding_migration.py tests/test_demo_binding_no_truncate_migration.py tests/test_geo_review_audit_migration.py tests/test_seo_migration_merge.py tests/test_seo_qa.py tests/test_seo_video_platforms.py tests/test_seo_backlink_workflow.py tests/test_seo_cockpit.py tests/test_seo_cockpit_auth.py tests/test_seo_usage_limits.py tests/test_seo_ai_operations.py tests/test_seo_workbench_limits.py tests/test_seo_workbench_auth_postgres.py tests/test_seo_task_center.py tests/test_seo_site_onboarding_contract.py tests/test_seo_analytics_cycles.py tests/test_seo_incremental_crawl.py
 
       # Reuse the disposable service, but never run review guards as its superuser.
       # Match the test's fixed localhost/database/role guard without weakening it.

@@ -11,6 +11,13 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    'app/api/distribution_inbox.py',
+    'app/distribution_inbox_service.py',
+    'app/models/distribution_inbox.py',
+    'migrations/versions/20261019_0110_distribution_inbox.py',
+    'tests/test_distribution_inbox_postgres.py',
+    'tests/test_distribution_inbox_migration.py',
+    'docs/DHT_INBOX_IMPLEMENTATION.md',
     'app/distribution_inbox_protocol.py',
     'scripts/generate_distribution_inbox_vectors.mjs',
     'app/distribution_inbox_projection.py',
@@ -22,6 +29,7 @@ SOURCE_ALLOWED_EXACT = {
     'frontend/src/api/distributionInbox.js',
     'frontend/scripts/test-distribution-inbox.mjs',
     'frontend/scripts/test-distribution-inbox-view.mjs',
+    'frontend/scripts/test-distribution-inbox-page.mjs',
     'docs/DHT_INBOX_CONTRACT_V2.md',
     'docs/DHT_INBOX_PREPARATION.md',
     'app/security/seo_advisor_site_creation.py',

@@ -38,6 +38,7 @@ MESSAGES = {
     'REVISION_CONFLICT': '记录已更新，请刷新后重试',
     'CROSS_TARGET_REQUIRES_UNLABEL': '请先在原客户撤销标注，再选择新客户或模块',
     'DUPLICATE_LINK': '已有相同链接，请核对',
+    'URL_HASH_COLLISION': '链接标识冲突，请联系超管核对',
     'INBOX_CAPACITY_EXCEEDED': '待标记录已满，结果仍留在本机，请先标注或清理再重试',
     'RATE_LIMITED': '操作过于频繁或设备数量已满，请稍后重试',
     'DEVICE_LIMIT_REACHED': '操作过于频繁或设备数量已满，请稍后重试',
@@ -253,7 +254,7 @@ def validate_label(value):
 
 
 _IDENTITY_FIXED = {
-    ('POST', '/pairings'), ('GET', '/receipts'), ('GET', '/receipts/count'), ('GET', '/devices'),
+    ('POST', '/pairings'), ('GET', '/receipts'), ('GET', '/receipts/count'), ('GET', '/devices'), ('GET', '/targets'),
 }
 _IDENTITY_DYNAMIC = (
     ('POST', r'/pairings/UUID/cancel'), ('POST', r'/devices/UUID/revoke'),

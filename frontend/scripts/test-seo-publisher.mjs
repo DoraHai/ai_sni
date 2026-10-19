@@ -112,6 +112,7 @@ test('distribution view clears old scope before export and ignores stale loads',
     .replace(/import SeoPageCapturePanel from '[^']+'/, 'const SeoPageCapturePanel = {}')
     .replace(/import SeoOfflineHandoff from '[^']+'/, 'const SeoOfflineHandoff = {}')
     .replace(/import SeoDistributionReport from '[^']+'/, 'const SeoDistributionReport = {}')
+    .replace(/import DistributionExternalPublications from '[^']+'/, 'const DistributionExternalPublications = {}')
     .replace(/const (publisherFiles|runnerFiles) = import\.meta\.glob\([^\n]+\)/g,'const $1 = {}')
   const tenant=Vue.ref(1),site=Vue.ref(10),reads=[]
   const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}}

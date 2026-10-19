@@ -28,7 +28,7 @@ function selectors(values = {}, count = false) {
  * getIdentity() => {token, revision}; getBusiness(module, tenant) => {token, revision}.
  * Shell owns session verification/selection; neither getter may mutate selection.
  */
-export function createDistributionInboxApi({ getIdentity, getBusiness, fetchImpl = globalThis.fetch }) {
+export function createDistributionInboxApi({ getIdentity, getBusiness, prepareBusiness, fetchImpl = globalThis.fetch }) {
   async function request(path, { method = 'GET', body, business, signal } = {}) {
     const getter = business ? () => getBusiness?.(business.module, business.tenant) : getIdentity
     const context = getter?.()
@@ -58,17 +58,30 @@ export function createDistributionInboxApi({ getIdentity, getBusiness, fetchImpl
   const mutation = (suffix, body, signal) => request(INBOX_PREFIX + suffix, { method: 'POST', body, signal })
   function businessMutation(module, tenant, receiptId, action, body, signal) {
     if (!modules.has(module) || !Number.isSafeInteger(tenant) || tenant < 1) throw new TypeError('INVALID_BUSINESS_TARGET')
-    return request(`/api/v1/${module}/distribution/v2/receipts/${id(receiptId)}/${action}?tenant_id=${tenant}`, {
+    const path = `/api/v1/${module}/distribution/v2/receipts/${id(receiptId)}/${action}?tenant_id=${tenant}`
+    const send = () => request(path, {
       method: 'POST', body, business: { module, tenant }, signal,
     })
+    return prepareBusiness ? Promise.resolve(prepareBusiness(module, tenant, signal)).then(send) : send()
   }
   return {
+    publications: (module, tenant, scope, signal) => {
+      if (!modules.has(module) || !Number.isSafeInteger(tenant) || tenant < 1
+          || (scope != null && (!Number.isSafeInteger(scope) || scope < 1))) throw new TypeError('INVALID_BUSINESS_TARGET')
+      return request(`/api/v1/${module}/distribution/v2/publications?tenant_id=${tenant}${scope == null ? '' : `&scope_id=${scope}`}`,
+        { business: { module, tenant }, signal })
+    },
+    targets: (signal) => request(INBOX_PREFIX + '/targets', { signal }),
     createPairing: (signal) => mutation('/pairings', {}, signal),
     cancelPairing: (pairingId, expectedRevision, signal) => mutation(`/pairings/${id(pairingId)}/cancel`, { expectedRevision }, signal),
     receipts: (params, signal) => request(INBOX_PREFIX + '/receipts' + selectors(params), { signal }),
     count: (params, signal) => request(INBOX_PREFIX + '/receipts/count' + selectors(params, true), { signal }),
     receipt: (receiptId, signal) => request(INBOX_PREFIX + '/receipts/' + id(receiptId), { signal }),
     devices: (signal) => request(INBOX_PREFIX + '/devices', { signal }),
+    devicesFor: (ownerUserId, signal) => {
+      if (!Number.isSafeInteger(ownerUserId) || ownerUserId < 1) throw new TypeError('INVALID_INBOX_OWNER')
+      return request(INBOX_PREFIX + '/devices?ownerUserId=' + ownerUserId, { signal })
+    },
     revoke: (deviceId, expectedRevision, signal) => mutation(`/devices/${id(deviceId)}/revoke`, { expectedRevision }, signal),
     archive: (receiptId, expectedRevision, signal) => mutation(`/receipts/${id(receiptId)}/archive`, { expectedRevision }, signal),
     delete: (receiptId, expectedRevision, signal) => mutation(`/receipts/${id(receiptId)}/delete`, { expectedRevision }, signal),

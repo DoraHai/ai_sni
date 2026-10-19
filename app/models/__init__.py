@@ -216,3 +216,4 @@ __all__ = [
     "SeoCompetitor",
     "SeoCompetitorEvent",
 ]
+from app.models.distribution_inbox import DistributionInboxDevice, DistributionInboxReceipt

@@ -107,6 +107,7 @@ const seoChildren = [
 const router = createRouter({
   history: createWebHistory(),
   routes: [
+    { path: '/seo/distribution-inbox', component: () => import('./views/seo/DistributionInboxPage.vue'), meta: { title: '多号通回传' } },
     { path: '/', redirect: '/seo/dashboard' },
     {
       path: '/seo',
