@@ -3,11 +3,11 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
-const fixture = vi.hoisted(() => ({ user: null }))
+const fixture = vi.hoisted(() => ({ user: null, tenants: null }))
 vi.mock('../src/api/auth', () => ({
   changePassword: vi.fn(),
   fetchMe: vi.fn(async () => ({ user: fixture.user })),
-  fetchTenants: vi.fn(async () => ({ tenants: [{ id: 1, name: '客户甲' }, { id: 2, name: '客户乙' }] })),
+  fetchTenants: vi.fn(async () => ({ tenants: fixture.tenants || [{ id: 1, name: '客户甲' }, { id: 2, name: '客户乙' }] })),
 }))
 vi.mock('../src/api/seo', () => ({
   assistSeoContent: vi.fn(), createSeoContentAsset: vi.fn(), updateSeoContentAsset: vi.fn(),
@@ -40,7 +40,7 @@ const displayToken = claims => `e30.${btoa(JSON.stringify({ sub: '7', ...claims 
 const identity = displayToken({ scope_kind: 'advisor_identity' })
 const business = tid => displayToken({ scope_kind: 'advisor_tenant', tid, gid: tid + 100 })
 let wrapper
-afterEach(() => { wrapper?.unmount(); wrapper = null; session.logout(); vi.clearAllMocks() })
+afterEach(() => { wrapper?.unmount(); wrapper = null; session.logout(); fixture.tenants = null; vi.clearAllMocks() })
 
 async function openEditor(bare = true) {
   fixture.user = { id: 7, username: 'advisor-fixture', tenant_id: 1, is_advisor: true,
@@ -64,6 +64,44 @@ async function openEditor(bare = true) {
 }
 
 describe('advisor customer data in mounted routes', () => {
+  it.each([
+    ['archived_only', '已归档'], ['conflict', '归属冲突'],
+    [undefined, '归属冲突'], ['future_reason', '归属冲突'],
+  ])('renders blocked identity reason %s with compatible copy', async (reason, label) => {
+    fixture.user = { id: 8, username: 'ordinary-fixture', tenant_id: null,
+      permissions: { 'monitor.profile': 'view' } }
+    fixture.tenants = [{ id: 1, name: '合成客户', sem_accounts: [],
+      sem_identity: { status: 'blocked', reason, message: '后端提供的封锁说明' } }]
+    session.setAuth('ordinary-local-fixture', fixture.user, false)
+    session.setTenant(1)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{
+      path: '/monitor/profile', component: { template: '<div>SEM business view</div>' },
+    }] })
+    await router.push('/monitor/profile')
+    await router.isReady()
+    wrapper = mount(App, { global: { plugins: [router], stubs: {
+      ElConfigProvider: { props: ['locale'], template: '<slot />' },
+      ElAlert: { props: ['title', 'description'], template: '<div class="test-alert">{{ title }} {{ description }}</div>' },
+      ElPopover: true, ElDropdown: true, ElDropdownMenu: true, ElDropdownItem: true,
+    } } })
+    await flushPromises()
+    expect(wrapper.text()).toContain(`推广账户：${label}`)
+    expect(wrapper.get('.test-alert').text()).toContain(`推广账户${label}，已暂停展示该客户的 SEM 数据`)
+    expect(wrapper.get('.test-alert').text()).toContain('后端提供的封锁说明')
+    expect(wrapper.text()).not.toContain('SEM business view')
+    expect(fetchCustomerProfile).not.toHaveBeenCalled()
+    // A subsequent customer state must restore normal onboarding/business views.
+    session.setTenants([{ ...fixture.tenants[0], sem_identity: { status: 'unbound' } }])
+    await flushPromises()
+    expect(wrapper.text()).toContain('推广账户：未绑定')
+    expect(wrapper.text()).toContain('SEM business view')
+    expect(wrapper.find('.test-alert').exists()).toBe(false)
+    session.setTenants([{ ...fixture.tenants[0], sem_identity: null }])
+    await flushPromises()
+    expect(wrapper.text()).toContain('SEM business view')
+    expect(wrapper.find('.test-alert').exists()).toBe(false)
+  })
+
   it('clears an ordinary user profile when the new customer is identity-blocked', async () => {
     fixture.user = { id: 8, username: 'ordinary-fixture', tenant_id: null,
       permissions: { 'monitor.profile': 'view' } }

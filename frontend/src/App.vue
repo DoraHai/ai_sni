@@ -236,6 +236,10 @@ const tenantName = computed(
 const currentTenant = computed(() => session.tenants.find((t) => t.id === session.tenantId))
 const currentSemIdentity = computed(() => currentTenant.value?.sem_identity || { status: 'unbound' })
 const semIdentityBlocked = computed(() => currentSemIdentity.value.status === 'blocked')
+const semIdentityArchivedOnly = computed(() => currentSemIdentity.value.reason === 'archived_only')
+const semIdentityBlockTitle = computed(() => semIdentityArchivedOnly.value
+  ? '推广账户已归档，已暂停展示该客户的 SEM 数据'
+  : '推广账户归属冲突，已暂停展示该客户的 SEM 数据')
 const showSemIdentityBlock = computed(() => (
   showSemAccountContext.value
   && semIdentityBlocked.value
@@ -265,7 +269,8 @@ function fmtAccountSync(value) {
 }
 
 function tenantAccountMeta(tenant) {
-  if (tenant?.sem_identity?.status === 'blocked') return '推广账户归属冲突 · 已暂停数据访问'
+  if (tenant?.sem_identity?.status === 'blocked') return tenant.sem_identity.reason === 'archived_only'
+    ? '推广账户已归档 · 已暂停数据访问' : '推广账户归属冲突 · 已暂停数据访问'
   const rows = (tenant?.sem_accounts || []).filter((row) => row.status !== 'archived')
   const account = rows.find((row) => row.status === 'active') || rows[0]
   if (!account) return `未绑定推广账户 · 客户 ID ${tenant.id}`
@@ -526,7 +531,7 @@ onBeforeUnmount(() => {
               :title="accountContextTitle"
             >
               <span v-if="semIdentityBlocked" class="account-context-main">
-                推广账户：归属冲突
+                推广账户：{{ semIdentityArchivedOnly ? '已归档' : '归属冲突' }}
               </span>
               <span v-else class="account-context-main">
                 推广账户：{{ primarySemAccount?.username || '未绑定' }}
@@ -556,7 +561,7 @@ onBeforeUnmount(() => {
         <el-alert v-if="bootstrapError" :title="bootstrapError" type="error" :closable="false" show-icon style="margin:0 18px 12px"><el-button size="small" @click="loadTenants">重试</el-button></el-alert>
         <el-alert
           v-if="showSemIdentityBlock"
-          title="推广账户归属冲突，已暂停展示该客户的 SEM 数据"
+          :title="semIdentityBlockTitle"
           :description="currentSemIdentity.message || '请联系平台管理员在“平台管理 → 客户与业务”中处理账户归属后重试。'"
           type="error"
           :closable="false"
