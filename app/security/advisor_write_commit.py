@@ -80,6 +80,11 @@ async def recheck_advisor_before_commit(session, ctx) -> None:
         from app.security.geo_advisor import check_scoped_write_objects
         await ensure_module_access(session, ctx, ctx.tenant_id, "geo")
         await check_scoped_write_objects(session, ctx, request, body, rule)
+        # Supplier inputs may include more than the target object. Quota and
+        # business commits must preserve that whole initially-read assignment,
+        # using the same authority locks as the commit's object checks.
+        from app.security.advisor_read_scope import recheck_initial_scope
+        await recheck_initial_scope(session, ctx)
         if rule.assignment == 'operations':
             from app.security.advisor_operations import verify_pending_scope
             await verify_pending_scope(session, ctx)

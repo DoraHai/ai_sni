@@ -9,7 +9,6 @@ from sqlalchemy import select
 
 from app import models as m
 from app.security import advisor_quota as quota
-from app.security.advisor_operation_call import checked_call
 from test_advisor_scoped_writes import backend, mutate, write_sandbox
 
 
@@ -54,7 +53,6 @@ def test_real_revocation_during_probe_rejects_result_and_refunds(tmp_path, monke
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
             routes = await configure_probes(env, monkeypatch)
-            @checked_call
             async def supplier(**_kw):
                 if change == 'grant':
                     await mutate(env, Grant, 101, revoked_at=datetime.utcnow(), revoked_by=2,
@@ -73,6 +71,39 @@ def test_real_revocation_during_probe_rejects_result_and_refunds(tmp_path, monke
             async with env.factory() as session:
                 assert await count_patrol_runs_today(session, 10, created_by=1) == 0
                 assert await session.scalar(select(m.GeoAnswerSnapshot.id)) is None
+    asyncio.run(run())
+
+
+def test_initial_business_scope_drift_before_consume_refunds(tmp_path, monkeypatch, backend):
+    """Target prompt stays assigned; another initially-read business is removed.
+
+    A plain supplier mock matches run_probe_draft's production call order.
+    Without commit-time initial-scope recheck the response is denied only after
+    consume has committed, leaving an incorrect consumed quota reservation.
+    """
+    from app.geo.content.patrol import count_patrol_runs_today
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            routes = await configure_probes(env, monkeypatch)
+            async with env.factory() as session:
+                session.add(m.GeoOptimizationBusiness(id=11, tenant_id=10, name='initially assigned'))
+                project = await session.get(m.GeoProject, 10)
+                project.project_settings = {'geo_business_scope': {'business_ids': [10, 11]},
+                    'geo_service_plan': {'advisor_user_id': 1}}
+                await session.commit()
+            async def supplier(**_kw):
+                await mutate(env, m.GeoProject, 10, project_settings={
+                    'geo_business_scope': {'business_ids': [10]}, 'geo_service_plan': {'advisor_user_id': 1}})
+                return {'raw_text': 'must be discarded after initial scope drift'}
+            monkeypatch.setattr(routes, 'run_probe_draft', supplier)
+            response = await env.request('POST', '/answer-snapshots/probe',
+                body={'tenant_id': 10, 'prompt_id': 10, 'engine': 'deepseek'})
+            assert response.status_code == 403, response.text
+            assert 'must be discarded' not in response.text
+            async with env.factory() as session:
+                assert await count_patrol_runs_today(session, 10, created_by=1) == 0
+                row = await session.scalar(select(m.GeoVisibilityPatrolRun))
+                assert row.summary[quota.STATE] == 'refunded'
     asyncio.run(run())
 
 
