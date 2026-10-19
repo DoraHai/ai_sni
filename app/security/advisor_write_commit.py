@@ -32,6 +32,8 @@ async def recheck_advisor_before_commit(session, ctx) -> None:
     from app.models import Role, Tenant, User
     from app.models.advisor_tenant_grant import AdvisorTenantGrant as Grant
 
+    if session.info.get('advisor_operation_denied'):
+        deny(403, 'ADVISOR_GRANT_REVOKED', '本次操作授权已变化，请重新发起')
     if not get_settings().advisor_scoped_content_writes_enabled:
         deny(403, "ADVISOR_HIGH_RISK_WRITES_DISABLED", "顾问写入暂未开放")
     binding = session.info.get("advisor_scoped_write")

@@ -103,7 +103,7 @@ def test_supplier_is_not_called_after_revocation(monkeypatch):
     from app.security import advisor_operation_call as calls
     from app.security import advisor_write_commit as commits
     provider = AsyncMock(return_value={'candidate': 'fixture'})
-    session = SimpleNamespace(commit=AsyncMock())
+    session = SimpleNamespace(info={}, commit=AsyncMock(), rollback=AsyncMock())
     async def revoked(*args):
         raise HTTPException(403, 'fixture revoked')
     monkeypatch.setattr(commits, 'recheck_advisor_before_commit', revoked)
