@@ -96,6 +96,7 @@ def test_project_metadata_allowed_during_patrol(tmp_path, monkeypatch):
 
 
 def test_audit_emits_with_default_python_warning_logging():
+    import os
     import subprocess
     import sys
     script = """
@@ -105,7 +106,10 @@ logging.getLogger().setLevel(logging.WARNING)
 record({'geo_advisor_actor': (1, 10), 'method': 'POST', 'path': '/api/v1/geo/content-tasks/10/check',
         'path_params': {'task_id': 10}}, 'committed')
 """
-    result = subprocess.run([sys.executable, "-c", script], env={}, capture_output=True, text=True, check=True)
+    # Windows' asyncio socket provider needs SystemRoot even for this isolated
+    # import. Keep the child otherwise empty, with no application configuration.
+    child_env = {'SystemRoot': os.environ['SystemRoot']} if os.name == 'nt' else {}
+    result = subprocess.run([sys.executable, "-c", script], env=child_env, capture_output=True, text=True, check=True)
     event = json.loads(result.stderr)
     assert event["advisor_user_id"] == 1 and event["tenant_id"] == 10
     assert event["result"] == "committed" and event["object_ids"] == {"task_id": 10}

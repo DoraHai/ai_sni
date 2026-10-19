@@ -58,6 +58,15 @@ test('business prepare validates exact tenant, user and audience without mutatin
   auth.clear(); assert.equal(auth.business('geo',7),null)
 })
 
+test('personnel administrator prepares selected business operations with the original unscoped JWT', async () => {
+  const token=makeToken({}), session={...sessionFor(token),user:{id:11,role_label:'管理员'}}
+  let calls=0
+  const auth=createGeoInboxSession({session,storage:storage(null),fetchImpl:()=>{calls++;throw new Error('admin must not select-tenant')}})
+  await auth.prepare(7)
+  assert.equal(calls,0)
+  assert.equal(auth.business('geo',7).token,token)
+})
+
 test('late business selection and receipt responses cannot restore data after identity or tenant changes', async () => {
   const session=sessionFor(identity), delay=deferred()
   const auth=createGeoInboxSession({session,storage:storage(null),fetchImpl:()=>delay.promise})

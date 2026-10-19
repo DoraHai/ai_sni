@@ -32,6 +32,9 @@ async def schema_ready(session):
 
 
 async def locked_receipt(session, ctx, receipt_id):
+    # Reject ineligible roles uniformly before locating any supplied receipt.
+    # This admission read holds no actor lock ahead of the ordered people locks.
+    await fresh_actor(session, ctx, write=True, lock=False)
     owner = await session.scalar(select(Receipt.owner_user_id).where(Receipt.id == receipt_id))
     if owner is None:
         fail('RECEIPT_NOT_FOUND', 404)

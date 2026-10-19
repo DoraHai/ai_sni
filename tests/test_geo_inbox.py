@@ -132,10 +132,12 @@ async def sandbox(*, schema_ready=True):
                 Role(id=1, name='管理员', is_system=True, permissions={}),
                 Role(id=2, name='synthetic GEO advisor', is_system=False, permissions={'geo.assets':'edit','geo.content':'edit'}),
                 Role(id=3, name='synthetic account editor', is_system=False, permissions={'settings.accounts':'edit','geo.content':'edit'}),
+                Role(id=4, name='synthetic customer', is_system=False, permissions={'geo.content':'view'}),
                 User(id=10, username='synthetic-system', password_hash='unusable', role_id=1, is_active=True),
                 User(id=11, username='synthetic-owner', password_hash='unusable', role_id=2, tenant_id=7, is_active=True),
                 User(id=12, username='synthetic-colleague', password_hash='unusable', role_id=2, tenant_id=7, is_active=True),
                 User(id=13, username='synthetic-editor', password_hash='unusable', role_id=3, is_active=True),
+                User(id=14, username='synthetic-customer', password_hash='unusable', role_id=4, tenant_id=7, is_active=True),
                 TenantModule(id=1, tenant_id=7, module_code='geo', status='active'),
                 TenantModule(id=2, tenant_id=8, module_code='geo', status='active'),
                 Grant(id=1, user_id=11, tenant_id=7, granted_by=10, grant_source='admin'),
@@ -347,4 +349,45 @@ def test_unlabel_capacity_and_lost_old_scope_do_not_move_facts(monkeypatch):
             assert response.status_code==403
             response=await env.request('POST',f'/receipts/{rid}/unlabel?tenant_id=7',uid=10,kind=None,body={'expectedRevision':1,'reason':None})
             assert response.status_code==200, response.text
+    asyncio.run(run())
+
+
+@pg
+@pytest.mark.parametrize('uid', [13,14])
+def test_ineligible_roles_cannot_distinguish_receipt_existence(monkeypatch,uid):
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(),'advisor_scoped_content_writes_enabled',True)
+    async def run():
+        async with sandbox() as env:
+            for rid in (env.ids[0],str(uuid4())):
+                response=await env.request('POST',f'/receipts/{rid}/label?tenant_id=7',uid=uid,kind=None,
+                    body={'expectedRevision':0,'targetTenant':7})
+                assert response.status_code==403 and response.json()['detail']['code']=='INBOX_FORBIDDEN'
+    asyncio.run(run())
+
+
+@pg
+def test_selected_second_grant_and_current_project_reader(monkeypatch):
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(),'advisor_scoped_content_writes_enabled',True)
+    async def run():
+        async with sandbox() as env:
+            async with env.factory() as db:
+                db.add(Grant(id=3,user_id=11,tenant_id=8,granted_by=10,grant_source='admin'))
+                await db.commit()
+            response=await env.request('POST',f'/receipts/{env.ids[0]}/label?tenant_id=8',tenant=8,grant=3,
+                body={'expectedRevision':0,'targetTenant':8})
+            assert response.status_code==200, response.text
+            response=await env.request('POST',f'/receipts/{env.ids[2]}/label?tenant_id=7',
+                body={'expectedRevision':0,'targetTenant':7,'scopeId':5})
+            assert response.status_code==200, response.text
+            async with env.factory() as db:
+                project=await db.get(GeoProject,5)
+                project.project_settings={**project.project_settings,'geo_service_plan':{'advisor_user_id':12}}
+                await db.commit()
+            response=await env.request('GET','/publications?tenant_id=7&scope_id=5',uid=12,grant=2)
+            assert response.status_code==200 and response.json()['total']==1, response.text
+            item=response.json()['items'][0]
+            assert not ({'owner_user_id','device_id','event_id','history','attemptId'} & item.keys())
+            assert (await env.request('GET','/publications?tenant_id=7&scope_id=5')).status_code==403
     asyncio.run(run())

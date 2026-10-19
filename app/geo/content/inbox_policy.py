@@ -13,18 +13,19 @@ from app.models.advisor_tenant_grant import AdvisorTenantGrant as Grant
 from app.security.advisor_scope import account_locked, is_advisor
 
 
-async def fresh_actor(session, ctx, *, write=False):
+async def fresh_actor(session, ctx, *, write=False, lock=True):
     if not ctx.user_id or ctx.is_superadmin:
         fail('INBOX_FORBIDDEN', 403)
     if getattr(ctx, 'inbox_exp', float('inf')) <= datetime.now(timezone.utc).timestamp():
         fail('INBOX_FORBIDDEN', 403)
-    user = await session.scalar(select(User).options(load_only(
+    query = (select(User).options(load_only(
         User.id, User.role_id, User.tenant_id, User.is_active, User.locked_until))
-        .where(User.id == ctx.user_id).with_for_update().execution_options(populate_existing=True))
+        .where(User.id == ctx.user_id).execution_options(populate_existing=True))
+    user = await session.scalar(query.with_for_update() if lock else query)
     if user is None or not user.is_active or account_locked(user):
         fail('INBOX_FORBIDDEN', 403)
-    role = await session.scalar(select(Role).where(Role.id == user.role_id)
-        .with_for_update().execution_options(populate_existing=True))
+    query = select(Role).where(Role.id == user.role_id).execution_options(populate_existing=True)
+    role = await session.scalar(query.with_for_update() if lock else query)
     admin = bool(role and role.is_system and role.name == '管理员')
     if admin:
         if ctx.advisor_scope is not None:
