@@ -7,6 +7,7 @@ FIELDS = {
     ('POST', PREFIX + '/device-pairings'): {'label', 'platform', 'account_id', 'expected_revision'},
     ('POST', PREFIX + '/devices/{deviceId}/revoke'): {'expected_revision'},
     ('POST', PREFIX + '/tasks'): {'content_task_id', 'variant_id', 'article_version_id', 'payload_hash', 'device_id', 'request_id'},
+    ('POST', PREFIX + '/tasks/{taskId}/publish-account'): {'name', 'expected_revision'},
 }
 RULES = {key: WriteRule(key[0], key[1], frozenset(fields), frozenset(),
                         ('geo.assets', 'geo.content'), 'project') for key, fields in FIELDS.items()}
@@ -30,6 +31,9 @@ async def check_objects(session, ctx, request, body, rule):
     tenant, project = scope(request)
     ctx.ensure_tenant(tenant)
     store = await s.management_store(session, ctx, tenant, project, write=True)
+    if rule.template == PREFIX + '/tasks/{taskId}/publish-account':
+        task_id = p.ident(request.path_params.get('taskId'))
+        await s.management_task(store, project, task_id)
     if rule.template.endswith('/tasks'):
         for k in ('content_task_id', 'variant_id', 'article_version_id'):
             p.integer(body[k])
