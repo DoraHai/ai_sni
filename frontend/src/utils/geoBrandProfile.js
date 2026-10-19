@@ -13,6 +13,14 @@ export const brandTextMax = 500
 const count = (value) => Array.from(value).length
 const splitItems = (value) => value.split(/[,，；\n]/).map((item) => item.trim()).filter(Boolean)
 
+// This page edits six brand fields and the separate competitor section.
+// Hidden legacy fields must neither block saving nor overwrite stored values.
+export function brandProfilePatch(profile = {}) {
+  return Object.fromEntries(['product_name', 'website', 'industry', 'summary',
+    'honors', 'qualifications', 'competitors']
+    .filter((key) => Object.hasOwn(profile, key)).map((key) => [key, profile[key]]))
+}
+
 // Validate the unmodified form, before splitting lists or sending a request.
 export function brandProfileError(profile = {}) {
   for (const [key, value] of Object.entries(profile)) {

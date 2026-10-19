@@ -5,7 +5,7 @@ import GeoBusinessProfileForm from '../../components/GeoBusinessProfileForm.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import GeoAdvisorProjectPicker from '../../components/GeoAdvisorProjectPicker.vue'
 import { advisorClaims } from '../../utils/geoAdvisorTenant.js'
-import { advisorBrandProfile, brandProfileError } from '../../utils/geoBrandProfile.js'
+import { advisorBrandProfile, brandProfileError, brandProfilePatch } from '../../utils/geoBrandProfile.js'
 import {
   createGeoBusiness,
   fetchGeoCompetitorInsights,
@@ -151,14 +151,15 @@ async function save() {
     ElMessage.warning('请先选择或创建一条业务')
     return
   }
-  const validationError = brandProfileError(profile.value)
+  const submittedProfile = brandProfilePatch(profile.value)
+  const validationError = brandProfileError(submittedProfile)
   if (validationError) {
     ElMessage.error(validationError)
     return
   }
   saving.value = true
   try {
-    const savedProfile = isAdvisor.value ? advisorBrandProfile(profile.value) : profile.value
+    const savedProfile = isAdvisor.value ? advisorBrandProfile(submittedProfile) : submittedProfile
     await patchGeoBusiness(tenantId.value, current.value.id, { profile: savedProfile })
     ElMessage.success('品牌资料已保存')
     await load()

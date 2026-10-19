@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
-import { advisorBrandProfile, brandProfileError } from '../src/utils/geoBrandProfile.js'
+import { advisorBrandProfile, brandProfileError, brandProfilePatch } from '../src/utils/geoBrandProfile.js'
 
 const source = readFileSync(new URL('../src/views/geo/GeoBrandSettingsView.vue', import.meta.url), 'utf8')
 const handler = source.slice(source.indexOf('async function save()'), source.indexOf('async function createBusiness()'))
@@ -27,7 +27,7 @@ test('save shows the backend reason and keeps the unsaved profile after rejectio
   const profile = { product_name: '品牌', geo_scope: '原区域' }
   const context = vm.createContext({
     current: { value: { id: 10 } }, tenantId: { value: 7 }, isAdvisor: { value: true },
-    profile: { value: profile }, saving: { value: false }, advisorBrandProfile, brandProfileError,
+    profile: { value: profile }, saving: { value: false }, advisorBrandProfile, brandProfileError, brandProfilePatch,
     patchGeoBusiness: async (...args) => { calls.push(args); throw new Error('品牌资料 summary 必须是文字，最多 500 个字符') },
     ElMessage: { error: (text) => errors.push(text), success: () => assert.fail('must not report success') },
     load: () => assert.fail('must not reload unsaved edits'),
@@ -50,7 +50,7 @@ test('invalid websites and overlong text are blocked before saving for both role
       const profile = { industry: '保留编辑', ...bad }
       const context = vm.createContext({
         current: { value: { id: 10 } }, tenantId: { value: 15 }, isAdvisor: { value: advisor },
-        profile: { value: profile }, saving: { value: false }, advisorBrandProfile, brandProfileError,
+        profile: { value: profile }, saving: { value: false }, advisorBrandProfile, brandProfileError, brandProfilePatch,
         patchGeoBusiness: () => assert.fail('invalid fields must never be sent'),
         ElMessage: { error: (text) => errors.push(text), success: () => assert.fail('must not report success') },
         load: () => assert.fail('must not reload unsaved edits'),
@@ -106,7 +106,7 @@ test('six legal fields are sent and survive save plus reload for both roles', as
       summary: '????', honors: '??', qualifications: '???????' }
     const context = vm.createContext({
       current: { value: { id: 10 } }, tenantId: { value: 15 }, isAdvisor: { value: advisor },
-      profile: { value: edits }, saving: { value: false }, advisorBrandProfile, brandProfileError,
+      profile: { value: edits }, saving: { value: false }, advisorBrandProfile, brandProfileError, brandProfilePatch,
       patchGeoBusiness: async (tenantId, businessId, body) => {
         assert.deepEqual([tenantId, businessId], [15, 10])
         stored = JSON.parse(JSON.stringify(body.profile))
@@ -119,5 +119,24 @@ test('six legal fields are sent and survive save plus reload for both roles', as
     for (const key of ['product_name', 'website', 'industry', 'summary']) assert.equal(stored[key], edits[key])
     assert.deepEqual(context.profile.value, stored)
     assert.equal(context.saving.value, false)
+  }
+})
+
+
+test('hidden legacy fields cannot block or overwrite a legal brand edit for either role', async () => {
+  for (const advisor of [true, false]) {
+    let sent
+    const profile = { product_name: 'brand', summary: 'new summary', geo_scope: 'x'.repeat(501),
+      capabilities: ['x'.repeat(501)], audience: 'x'.repeat(501), cta: 'x'.repeat(501) }
+    const context = vm.createContext({
+      current: { value: { id: 10 } }, tenantId: { value: 15 }, isAdvisor: { value: advisor },
+      profile: { value: profile }, saving: { value: false }, advisorBrandProfile, brandProfileError, brandProfilePatch,
+      patchGeoBusiness: async (_tid, _bid, body) => { sent = body.profile },
+      ElMessage: { error: (message) => assert.fail(message), success() {} }, load: async () => {},
+    })
+    vm.runInContext(handler, context)
+    await context.save()
+    assert.deepEqual({ ...sent }, { product_name: 'brand', summary: 'new summary' })
+    assert.equal(profile.geo_scope.length, 501)
   }
 })
