@@ -105,8 +105,10 @@ describe('advisor customer data in mounted routes', () => {
     finish()
     await expect(pending).rejects.toMatchObject({ code: 'AUTH_CONTEXT_CHANGED' })
     const revision = session.authRevision
+    sessionStorage.removeItem('sem_tenant_id')
     session.setTenant(1)
     expect(session.authRevision).toBe(revision)
+    expect(sessionStorage.getItem('sem_tenant_id')).toBe('1')
   })
 
   it.each([true, false])('removes loaded content and editor DOM after grant revocation (bare=%s)', async bare => {
