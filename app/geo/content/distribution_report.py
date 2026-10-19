@@ -9,6 +9,7 @@ import re
 import secrets
 import time
 from dataclasses import dataclass
+from datetime import timezone
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -218,8 +219,12 @@ async def account_binding(store, account_id):
         GeoPublishingChannel.tenant_id == store.tenant_id).with_for_update().execution_options(populate_existing=True))
     if channel is None or channel.channel_type != 'wechat' or not channel.enabled:
         p.fail('SCOPE_FORBIDDEN', 403)
-    if account.expires_at and account.expires_at.timestamp() * 1000 < now_ms():
-        p.fail('SCOPE_FORBIDDEN', 403)
+    if account.expires_at:
+        expiry = account.expires_at
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        if expiry.timestamp() * 1000 < now_ms():
+            p.fail('SCOPE_FORBIDDEN', 403)
     return account
 
 
