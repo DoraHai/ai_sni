@@ -5,6 +5,7 @@ from copy import deepcopy
 import hashlib
 import json
 import re
+import unicodedata
 
 from fastapi import HTTPException
 
@@ -90,7 +91,12 @@ def enabled(state, scope):
 def validate_event(event, stream):
     id_key = 'receiptId' if stream == 'receipt' else 'observationId'
     fields = EVENT_FIELDS | {id_key} | ({'contractVersion', 'deviceId'} if stream == 'receipt' else set())
-    shape(event, fields)
+    has_account = type(event) is dict and 'reportedAccount' in event
+    shape(event, fields | ({'reportedAccount'} if has_account else set()))
+    if has_account:
+        if stream != 'receipt' or event.get('code') != 'HUMAN_PUBLISHED' or event.get('status') != 'succeeded':
+            deny('REPORTED_ACCOUNT_NOT_ALLOWED', 422)
+        reported_account(event['reportedAccount'])
     for key in (id_key, 'taskId', 'leaseId', 'customerId', 'projectId', 'accountId', 'contentVersion'):
         if not identifier(event[key]):
             deny('INVALID_SHAPE', 422)
@@ -112,6 +118,17 @@ def validate_event(event, stream):
     elif event['publicUrl'] is not None or event['evidence'] not in {'none', 'human-reported'}:
         deny('INVALID_STATE', 422)
     return id_key
+
+
+def reported_account(value):
+    """Clean display metadata without mutating the event used for replay hashes."""
+    if type(value) is not dict or set(value) != {'name'} or not isinstance(value['name'], str):
+        deny('INVALID_REPORTED_ACCOUNT', 422)
+    name = re.sub(r'\s+', ' ', ''.join(c for c in value['name']
+        if not unicodedata.category(c).startswith('C'))).strip()
+    if not 1 <= len(name) <= 60:
+        deny('INVALID_REPORTED_ACCOUNT', 422)
+    return {'name': name}
 
 
 def admit_event(state, task, event, stream):
@@ -151,6 +168,7 @@ def admit_event(state, task, event, stream):
         ack_keys.append('code')
     ack = {k: event[k] for k in ack_keys + ['at']}
     ledger['high'] = sequence
-    ledger['events'][str(sequence)] = {'id': event_id, 'hash': event_hash, 'ack': ack}
+    ledger['events'][str(sequence)] = {'id': event_id, 'hash': event_hash, 'ack': ack,
+        **({'reportedAccount': reported_account(event['reportedAccount'])} if 'reportedAccount' in event else {})}
     state['events'][event_id] = {'hash': event_hash, 'task': task_id, 'stream': stream}
     return ack, True

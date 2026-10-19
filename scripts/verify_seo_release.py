@@ -21,6 +21,7 @@ SOURCE_ALLOWED_EXACT = {
     'tests/test_seo_distribution_protocol.py',
     'tests/test_seo_distribution_report_postgres.py',
     'tests/fixtures/distribution_report_vectors.json',
+    'tests/fixtures/distribution_report_vectors_b.json',
     'frontend/src/api/seoDistributionReport.js',
     'frontend/scripts/test-seo-distribution-report.mjs',
     'docs/SEO_DEVICE_REPORT.md',

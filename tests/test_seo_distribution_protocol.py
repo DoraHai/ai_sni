@@ -6,7 +6,52 @@ import pytest
 from fastapi import HTTPException
 
 from app.seo_distribution_protocol import (KEY, admit_event, content_digest, enabled,
-    public_url, registry, validate_event)
+    public_url, registry, validate_event, digest, reported_account)
+
+
+def test_reported_account_cross_language_vectors_and_original_event_hash():
+    vectors = json.loads((Path(__file__).parent / 'fixtures/distribution_report_vectors_b.json').read_text(encoding='utf-8'))
+    for vector in vectors['vectors']:
+        event = vector['event']
+        before = deepcopy(event)
+        assert digest(event) == vector['sha256']
+        assert bytes.fromhex(vector['utf8Hex']).decode() == vector['input']
+        if vector['valid']:
+            validate_event(event, 'receipt')
+            if 'reportedAccount' in event:
+                assert reported_account(event['reportedAccount'])['name'] == vector['normalizedName']
+        else:
+            with pytest.raises(HTTPException) as exc:
+                validate_event(event, 'receipt')
+            assert exc.value.detail['code'] == vector['error']
+        assert event == before
+
+
+def test_reported_account_is_immutable_replay_metadata_and_ack_is_unchanged():
+    state, task, event = synthetic()
+    event['reportedAccount'] = {'name':'  合成\u200b公众号  '}
+    ack, fresh = admit_event(state, task, event, 'receipt')
+    assert fresh and len(ack) == 6
+    assert task['streams']['receipt']['events']['3']['reportedAccount'] == {'name':'合成公众号'}
+    assert admit_event(state, task, event, 'receipt') == (ack, False)
+    for account in ({'name':'合成公众号'}, {'name':'另一合成号'}):
+        with pytest.raises(HTTPException) as exc:
+            admit_event(state, task, {**event, 'reportedAccount':account}, 'receipt')
+        assert exc.value.detail['code'] == 'IDEMPOTENCY_CONFLICT'
+    without = {k:v for k,v in event.items() if k != 'reportedAccount'}
+    with pytest.raises(HTTPException) as exc:
+        admit_event(state, task, without, 'receipt')
+    assert exc.value.detail['code'] == 'IDEMPOTENCY_CONFLICT'
+
+
+def test_observation_cannot_report_an_account():
+    _, _, event = synthetic()
+    event = {k:v for k,v in event.items() if k not in {'deviceId','contractVersion','receiptId'}}
+    event.update(observationId='synthetic-observation', code='HUMAN_FAILED', status='failed',
+        publicUrl=None, reportedAccount={'name':'合成号'})
+    with pytest.raises(HTTPException) as exc:
+        validate_event(event, 'observation')
+    assert exc.value.detail['code'] == 'REPORTED_ACCOUNT_NOT_ALLOWED'
 
 
 def synthetic():

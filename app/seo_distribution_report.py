@@ -26,7 +26,7 @@ from app.models.module_workspace import TenantModule, SeoSite
 from app.models.seo import SeoContentPublication, SeoDistributionConnection, SeoDistributionVariant, SeoPublishAttempt
 from app.module_scope import module_is_available
 from app.seo_distribution_protocol import (KEY, PREFIX, TARGET, admit_event, canonical,
-    content_digest, deny, digest, enabled, positive, registry)
+    content_digest, deny, digest, enabled, positive, registry, reported_account)
 
 
 def now_ms():
@@ -138,15 +138,47 @@ def settings_payload(state, site_id):
         'devices': [{'id': d['id'], 'label': d['label'], 'active': not d['revoked'] and d['expires'] > now_ms(),
                      'expires_at': d['expires'], 'account_id': d['account_id'], 'platform': 'wechat-article'}
                     for d in state['devices'].values() if d['site_id'] == site_id],
-        'tasks': [task_payload(t) for t in state['tasks'].values() if t['site_id'] == site_id]}
+        'tasks': [task_payload(t, include_account=True) for t in state['tasks'].values() if t['site_id'] == site_id]}
 
 
-def task_payload(task):
+def task_payload(task, *, include_account=False):
     return {'taskId': task['wire']['id'], 'nativePublicationId': task['publication_id'],
         'deviceId': task['target']['deviceId'], 'reportedOutcome': task['outcome'],
         'delivery': 'received' if any(t['events'] for t in task['streams'].values()) else 'pending',
         'last_code': task.get('last_code'), 'verification': deepcopy(task['verification']),
-        'publicationVerified': task['verification']['state'] == 'verified'}
+        'publicationVerified': task['verification']['state'] == 'verified',
+        **({'reportedAccount': deepcopy(task.get('reportedAccount'))} if include_account else {})}
+
+
+async def placeholder_connection(session, module, state, site_id, ctx):
+    """Caller holds the tenant module lock; select no existing secret columns."""
+    table = SeoDistributionConnection.__table__
+    rows = (await session.execute(select(table.c.id, table.c.config, table.c.enabled)
+        .where(table.c.tenant_id == module.tenant_id, table.c.platform_code == 'wechat_browser',
+            table.c.config['duohaotong_placeholder'].as_integer() == 1,
+            table.c.config['advisor_site_id'].as_integer() == site_id)
+        .order_by(table.c.id).with_for_update())).mappings().all()
+    if rows:
+        if not rows[0]['enabled']:
+            deny('PLACEHOLDER_DISABLED')
+        return f"seo-connection-{rows[0]['id']}"
+    name = '多号通公众号（发布时上报）'
+    names = set((await session.scalars(select(table.c.name).where(table.c.tenant_id == module.tenant_id))).all())
+    if name in names:
+        name += f'· 网站 {site_id}'
+    while name in names:
+        name = f'多号通公众号（发布时上报）· 网站 {site_id} · {uuid4().hex[:12]}'
+    from app.seo_distribution import PLATFORM_CATALOG
+    definition = PLATFORM_CATALOG['wechat_browser']
+    connection = SeoDistributionConnection(tenant_id=module.tenant_id, platform_code='wechat_browser',
+        name=name, mode=definition['mode'], capabilities=definition['capabilities'],
+        enabled=True, status='ready', has_credentials=False,
+        config={'advisor_site_id': site_id, 'duohaotong_placeholder': 1}, created_by=ctx.user_id)
+    session.add(connection)
+    await session.flush()
+    audit(state, 'placeholder_connection_created_for_pairing', actor=ctx.user_id)
+    state['audit'][-1].update(tenant_id=module.tenant_id, site_id=site_id, connection_id=connection.id)
+    return f'seo-connection-{connection.id}'
 
 
 async def set_settings(session, module, state, site_id, body, ctx):
@@ -174,14 +206,17 @@ async def create_pairing(session, module, state, site_id, body, ctx):
         deny('INVALID_SHAPE', 422)
     if body['expected_revision'] != state['revision']:
         deny('SOURCE_CHANGED')
-    await connection_scope(session, module.tenant_id, site_id, body['account_id'])
     now = now_ms()
     if (sum(not d['revoked'] and d['expires'] > now for d in state['devices'].values()) >= 20
             or sum(not p['consumed'] and p['expires'] > now for p in state['pairings'].values()) >= 20):
         deny('REPORT_LEDGER_CAPACITY', 429)
+    account_id = body.get('account_id')
+    if account_id is None:
+        account_id = await placeholder_connection(session, module, state, site_id, ctx)
+    await connection_scope(session, module.tenant_id, site_id, account_id)
     code, pairing_id, device_id = secrets.token_urlsafe(24), str(uuid4()), str(uuid4())
     state['pairings'][sha(code)] = {'id': pairing_id, 'device_id': device_id, 'site_id': site_id,
-        'label': label.strip(), 'account_id': body['account_id'], 'expires': now + 600000,
+        'label': label.strip(), 'account_id': account_id, 'expires': now + 600000,
         'consumed': False, 'actor': proof_for(ctx)}
     state['revision'] += 1
     audit(state, 'pairing_created', actor=ctx.user_id, device=device_id)
@@ -493,6 +528,17 @@ async def apply_events(session, module, state, device, events, stream):
                 await complete_manual_publication_in_transaction(session, row, content,
                     page_url=event['publicUrl'], published_at=datetime.utcfromtimestamp(event['at'] / 1000),
                     actor_id=ctx.user_id, action='device_report')
+                if 'reportedAccount' in event:
+                    task['reportedAccount'] = reported_account(event['reportedAccount'])
+                    # Existing publish-attempt JSON is a display/audit copy only.
+                    attempt = await session.scalar(select(SeoPublishAttempt).where(
+                        SeoPublishAttempt.tenant_id == module.tenant_id,
+                        SeoPublishAttempt.publication_id == row.id,
+                        SeoPublishAttempt.action == 'device_report')
+                        .order_by(SeoPublishAttempt.id.desc()).limit(1))
+                    if attempt is not None:
+                        attempt.response_summary = {**(attempt.response_summary or {}),
+                            'reportedAccount': deepcopy(task['reportedAccount'])}
                 task['outcome'] = 'human-reported-published'
                 task['page_url'] = event['publicUrl']
                 task['verification'] = {'state': 'pending', 'reason': 'not_checked', 'checkedAt': None}
