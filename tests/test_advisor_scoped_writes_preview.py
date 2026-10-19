@@ -99,7 +99,7 @@ def test_url_preview_is_read_only_and_uses_bounded_fetch(tmp_path, monkeypatch, 
 
 
 @pytest.mark.parametrize('problem', ['disabled', 'not-selected', 'not-granted', 'no-query',
-    'identity-only', 'inactive-project', 'unassigned', 'extra-body', 'body-tenant'])
+    'identity-only', 'inactive-project', 'unassigned', 'extra-query', 'extra-body', 'body-tenant'])
 def test_url_preview_rejects_before_any_fetch(tmp_path, monkeypatch, backend, problem):
     from unittest.mock import AsyncMock
     from app.geo import audit
@@ -115,6 +115,8 @@ def test_url_preview_rejects_before_any_fetch(tmp_path, monkeypatch, backend, pr
             before = await env.snapshot()
             body = {'tenant_id': 20 if problem == 'body-tenant' else 10, 'url': 'https://public.test/article'}
             params = {'tenant_id': 20 if problem == 'not-selected' else 30 if problem == 'not-granted' else 10}
+            if problem == 'extra-query':
+                params['project_id'] = 10
             if problem == 'extra-body':
                 body['prompt_id'] = 10
             if problem == 'no-query':

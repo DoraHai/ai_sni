@@ -109,3 +109,37 @@ def test_backfill_only_matches_publications_in_selected_project(tmp_path, monkey
                 assert (await session.get(m.GeoAnswerSnapshot, 10)).matched_publication_ids == [10]
                 assert (await session.get(m.GeoAnswerSnapshot, 50)).matched_publication_ids is None
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('creator', ('advisor', 'admin'))
+def test_advisor_archives_do_not_mint_or_expose_public_share_tokens(tmp_path, monkeypatch, backend, creator):
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend,
+                extra_tables=('geo_deliverable_archives',)) as env:
+            from app.geo.content.oauth_public import router
+            env.app.include_router(router)
+            response = await env.request('POST', '/deliverables/archives', params={'project_id': 10},
+                body={'pack': {'data_scope': {'project_id': 10}}, 'title': 'fixture archive'},
+                auth=fixture_token(uid=2, native=True) if creator == 'admin' else None)
+            assert response.status_code == 200, response.text
+            ident = response.json()['id']
+            async with env.factory() as session:
+                row = await session.get(m.GeoDeliverableArchive, ident)
+                token = row.share_token
+                assert bool(token) is (creator == 'admin')
+                assert row.pack_json['data_scope']['project_id'] == 10
+            if creator == 'advisor':
+                assert response.json()['share_token'] is None
+            for path in ('/deliverables/archives', f'/deliverables/archives/{ident}'):
+                read = await env.request('GET', path)
+                assert read.status_code == 200, read.text
+                items = read.json().get('items', [read.json()])
+                assert all(item['share_token'] is None for item in items)
+            # Preserve the existing administrator public-sharing contract.
+            if creator == 'admin':
+                import httpx
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=env.app),
+                        base_url='http://fixture') as client:
+                    public = await client.get('/api/v1/geo/deliverables/share/' + token)
+                    assert public.status_code == 200, public.text
+    asyncio.run(run())

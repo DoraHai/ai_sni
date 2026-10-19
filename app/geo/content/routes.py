@@ -1015,12 +1015,12 @@ async def content_health(
         try:
             await session.execute(text(sql))
             return "ok", None
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             try:
                 await session.rollback()
             except Exception:  # noqa: BLE001
                 pass
-            return "missing", str(exc)[:160]
+            return "missing", "schema_unavailable"
 
     checks: dict[str, Any] = {}
     status = "ok"
@@ -10546,7 +10546,7 @@ async def list_deliverable_archives(
                 "title": r.title,
                 "period_from": _iso(r.period_from),
                 "period_to": _iso(r.period_to),
-                "share_token": r.share_token,
+                "share_token": r.share_token if getattr(ctx, 'advisor_scope', None) is None else None,
                 "has_simulated": bool(
                     (r.pack_json or {}).get("has_simulated_samples")
                 ),
@@ -10602,7 +10602,9 @@ async def create_deliverable_archive(
             md = render_deliverables_markdown(pack)
         except Exception:  # noqa: BLE001
             md = None
-    token = secrets.token_urlsafe(24)
+    # Advisor archives remain authenticated project records. Creating or
+    # exposing a permanent public capability is not part of that operation.
+    token = secrets.token_urlsafe(24) if getattr(ctx, 'advisor_scope', None) is None else None
     row = GeoDeliverableArchive(
         tenant_id=tenant_id,
         title=title[:200],
@@ -10619,7 +10621,7 @@ async def create_deliverable_archive(
     return {
         "id": row.id,
         "title": row.title,
-        "share_token": row.share_token,
+        "share_token": row.share_token if getattr(ctx, 'advisor_scope', None) is None else None,
         "created_at": _iso(row.created_at),
         "has_simulated": bool(pack.get("has_simulated_samples")),
     }
@@ -10643,7 +10645,7 @@ async def get_deliverable_archive(
         "title": row.title,
         "period_from": _iso(row.period_from),
         "period_to": _iso(row.period_to),
-        "share_token": row.share_token,
+        "share_token": row.share_token if getattr(ctx, 'advisor_scope', None) is None else None,
         "pack": row.pack_json,
         "markdown": row.markdown,
         "created_at": _iso(row.created_at),
