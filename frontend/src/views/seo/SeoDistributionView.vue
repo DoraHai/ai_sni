@@ -1011,7 +1011,7 @@ onMounted(loadSites)
     </section>
 
     <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon />
-    <SeoDistributionReport :tenant-id="currentTenantId" :site-id="siteId" :identity="`${session.user?.id}:${session.authRevision}`" :can-edit="canEdit" :connections="connections" :publications="publications" :contents="contents" />
+    <SeoDistributionReport :tenant-id="currentTenantId" :site-id="siteId" :identity="`${session.user?.id}:${session.authRevision}`" :can-edit="canEdit" :connections="connections" :publications="publications" :contents="contents" @paired="load" />
 
     <section class="summary-grid">
       <article><span>可用渠道配置</span><strong>{{ connectedCount }}</strong><small>已配置，可准备分发任务</small></article>

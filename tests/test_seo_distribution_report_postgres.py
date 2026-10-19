@@ -104,6 +104,174 @@ async def claim_code(client, code):
         json={'pairing_code':code,'request_id':str(uuid4())})
 
 
+async def unbound_pair(client, bearer, revision=0, *, scope=SCOPE, explicit_null=False):
+    body = {'label':'Synthetic unbound computer','platform':'wechat-article','expected_revision':revision}
+    if explicit_null:
+        body['account_id'] = None
+    return await client.post(PREFIX+'/device-pairings'+scope, headers=management_headers(bearer), json=body)
+
+
+@pytest.mark.parametrize('explicit_null', [False, True])
+def test_unbound_pairing_builds_and_reuses_bound_placeholder_with_audit(explicit_null):
+    async def scenario():
+        async with fixture() as (sessions,client,admin,_):
+            advisor = advisor_bearer()
+            response = await unbound_pair(client,advisor,explicit_null=explicit_null)
+            assert response.status_code == 201, response.status_code
+            assert (await unbound_pair(client,advisor,1)).status_code == 201
+            async with sessions() as session:
+                table = SeoDistributionConnection.__table__
+                rows = (await session.execute(select(table.c.id,table.c.name,table.c.mode,table.c.enabled,table.c.has_credentials,table.c.config)
+                    .where(table.c.config['duohaotong_placeholder'].as_integer() == 1))).mappings().all()
+                assert len(rows) == 1
+                row = rows[0]
+                assert row['enabled'] and not row['has_credentials']
+                assert row['mode'] == 'assisted'
+                assert row['config'] == {'advisor_site_id':2,'duohaotong_placeholder':1}
+                assert row['name'] == '多号通公众号（发布时上报）'
+                state = registry((await session.get(TenantModule,1)).module_settings)
+                assert not state['enabled'] and not state['scopes']
+                assert {p['account_id'] for p in state['pairings'].values()} == {f"seo-connection-{row['id']}"}
+                created = [a for a in state['audit'] if a['action'] == 'placeholder_connection_created_for_pairing']
+                assert len(created) == 1 and created[0]['actor'] == 7
+                assert (created[0]['tenant_id'],created[0]['site_id'],created[0]['connection_id']) == (4,2,row['id'])
+            claim = (await claim_code(client,response.json()['pairing_code'])).json()
+            assert set(claim) == {'schema','pairing_id','claimed_at','device','bindings_configured','automatic_submit'}
+            device = claim['device']
+            profile = (await client.get(PREFIX+'/device/profile',headers=management_headers('Bearer '+device['credential']))).json()
+            assert set(profile) == {'schema','device_id','customer_name','scope_name','account_name','label'}
+            assert profile['account_name'] == '多号通公众号（发布时上报）'
+            bindings = await client.post(PREFIX+'/device/bindings',headers=device_headers(device,1),json={'device_id':device['id']})
+            assert bindings.status_code == 200
+            assert set(bindings.json()) == {'schema','device_id','as_of','automatic_submit','items'}
+            assert bindings.json()['items'][0]['account_id'] == f"seo-connection-{row['id']}"
+    asyncio.run(scenario())
+
+
+def test_placeholder_can_prepare_official_account_specific_variant():
+    async def scenario():
+        async with fixture() as (sessions,client,admin,_):
+            assert (await unbound_pair(client,admin)).status_code == 201
+            async with sessions() as session:
+                cid = await session.scalar(select(SeoDistributionConnection.id).where(
+                    SeoDistributionConnection.config['duohaotong_placeholder'].as_integer() == 1))
+                ctx = await auth._build_context(await session.get(User,9),session)
+                result = await api.save_distribution_variant(api.DistributionVariantSaveRequest(
+                    tenant_id=4,site_id=2,content_id=1000,connection_id=cid,source_version=1,
+                    title='Synthetic official account title',content='<p>Synthetic account specific article.</p>'),session,ctx)
+                assert result['connection_id'] == cid and result['platform_code'] == 'wechat_browser'
+                assert result['status'] == 'draft'
+    asyncio.run(scenario())
+
+
+def test_concurrent_unbound_pairings_do_not_duplicate_placeholder_and_sites_are_separate():
+    async def scenario():
+        async with fixture() as (sessions,client,admin,_):
+            responses = await asyncio.gather(*(unbound_pair(client,admin) for _ in range(8)))
+            assert sum(r.status_code == 201 for r in responses) == 1
+            assert sum(r.status_code == 409 for r in responses) == 7
+            assert (await unbound_pair(client,admin,1)).status_code == 201
+            assert (await unbound_pair(client,admin,2,scope='?tenant_id=4&site_id=3')).status_code == 201
+            async with sessions() as session:
+                table = SeoDistributionConnection.__table__
+                rows = (await session.execute(select(table.c.name,table.c.config)
+                    .where(table.c.config['duohaotong_placeholder'].as_integer() == 1))).mappings().all()
+                assert len(rows) == 2 and len({r['name'] for r in rows}) == 2
+                assert {r['config']['advisor_site_id'] for r in rows} == {2,3}
+    asyncio.run(scenario())
+
+
+def test_unbound_advisor_denials_create_nothing_and_disabled_placeholder_is_not_reopened():
+    async def scenario():
+        from sqlalchemy import update
+        async with fixture() as (sessions,client,admin,_):
+            for scope in ('?tenant_id=4&site_id=3','?tenant_id=6&site_id=2'):
+                assert (await unbound_pair(client,advisor_bearer(),scope=scope)).status_code == 403
+            async with sessions() as session:
+                assert await session.scalar(select(func.count()).select_from(SeoDistributionConnection)) == 2
+            assert (await unbound_pair(client,admin)).status_code == 201
+            async with sessions() as session:
+                await session.execute(update(SeoDistributionConnection).where(
+                    SeoDistributionConnection.config['duohaotong_placeholder'].as_integer() == 1).values(enabled=False))
+                await session.commit()
+            response = await unbound_pair(client,admin,1)
+            assert response.status_code == 409 and response.json()['detail']['code'] == 'PLACEHOLDER_DISABLED'
+            async with sessions() as session:
+                assert await session.scalar(select(func.count()).select_from(SeoDistributionConnection)) == 3
+                assert len(registry((await session.get(TenantModule,1)).module_settings)['pairings']) == 1
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('with_account', [False, True])
+def test_placeholder_dispatch_and_reported_account_success_replay_and_native_copy(with_account, monkeypatch):
+    async def scenario():
+        from app import seo_distribution_verification as verification
+        monkeypatch.setattr(verification,'recover_report_verification',AsyncMock())
+        async with fixture() as (sessions,client,admin,payload_hash):
+            pairing = await unbound_pair(client,advisor_bearer())
+            assert pairing.status_code == 201
+            device = (await claim_code(client,pairing.json()['pairing_code'])).json()['device']
+            async with sessions() as session:
+                cid = await session.scalar(select(SeoDistributionConnection.id).where(
+                    SeoDistributionConnection.config['duohaotong_placeholder'].as_integer() == 1))
+                (await session.get(SeoContentPublication,1001)).connection_id = cid
+                await session.commit()
+            response = await client.put(PREFIX+'/settings'+SCOPE,headers=management_headers(admin),json={
+                'enabled':True,'scope_enabled':True,'expected_revision':1,'expected_scope_revision':0})
+            assert response.status_code == 200
+            response = await client.post(PREFIX+'/tasks'+SCOPE,headers=management_headers(advisor_bearer()),json={
+                'publication_id':1001,'source_version':1,'payload_hash':payload_hash,'device_id':device['id'],'request_id':str(uuid4())})
+            assert response.status_code == 201, response.status_code
+            task_id = response.json()['taskId']
+            envelope = await client.post(PREFIX+'/device/exchange',headers=device_headers(device,1),json={
+                'contractVersion':1,'deviceId':device['id'],'receipts':[]})
+            task = envelope.json()['tasks'][0]
+            event = event_for(device,task)
+            if with_account:
+                event['reportedAccount'] = {'name':'  合成\u200b公众号　 测试😀 '}
+            body = {'contractVersion':1,'deviceId':device['id'],'receipts':[event]}
+            response = await client.post(PREFIX+'/device/exchange',headers=device_headers(device,2),json=body)
+            assert response.status_code == 200, response.status_code
+            assert set(response.json()) == {'contractVersion','deviceAuthorized','receiptAcks','pausedTaskIds','binding','paused','grants','tasks'}
+            assert len(response.json()['receiptAcks'][0]) == 6
+            replay = await client.post(PREFIX+'/device/exchange',headers=device_headers(device,3),json=body)
+            assert replay.status_code == 200 and replay.json()['receiptAcks'] == response.json()['receiptAcks']
+            detail = (await client.get(PREFIX+'/tasks/'+task_id+SCOPE,headers=management_headers(admin))).json()
+            assert detail['reportedAccount'] == ({'name':'合成公众号 测试😀'} if with_account else None)
+            verification = await client.get(PREFIX+'/device/tasks/'+task_id+'/verification',
+                headers=management_headers('Bearer '+device['credential']))
+            assert verification.status_code == 200
+            assert set(verification.json()) == {'taskId','nativePublicationId','deviceId','reportedOutcome',
+                'delivery','last_code','verification','publicationVerified'}
+            async with sessions() as session:
+                assert (await session.get(SeoContentPublication,1001)).status == 'published'
+                assert await session.scalar(select(func.count()).select_from(SeoPublishAttempt)) == 1
+                summary = await session.scalar(select(SeoPublishAttempt.response_summary))
+                assert summary.get('reportedAccount') == detail['reportedAccount']
+                state = registry((await session.get(TenantModule,1)).module_settings)
+                assert state['tasks'][task_id]['target']['accountId'] == f'seo-connection-{cid}'
+            changed = {**event,'reportedAccount':{'name':'另一合成号'}}
+            conflict = await client.post(PREFIX+'/device/exchange',headers=device_headers(device,4),json={**body,'receipts':[changed]})
+            assert conflict.status_code == 409 and conflict.json()['detail']['code'] == 'IDEMPOTENCY_CONFLICT'
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('account', [None, {}, {'name':''}, {'name':'x'*61}, {'name':1}, {'name':'合成','extra':True}])
+def test_invalid_reported_account_is_atomic(account):
+    async def scenario():
+        async with fixture() as (sessions,client,admin,payload_hash):
+            device,task,task_id = await ready(client,admin,payload_hash)
+            event = event_for(device,task,reportedAccount=account)
+            response = await client.post(PREFIX+'/device/exchange',headers=device_headers(device,2),json={
+                'contractVersion':1,'deviceId':device['id'],'receipts':[event]})
+            assert response.status_code == 422 and response.json()['detail']['code'] == 'INVALID_REPORTED_ACCOUNT'
+            async with sessions() as session:
+                assert (await session.get(SeoContentPublication,1001)).status == 'manual_required'
+                assert await session.scalar(select(func.count()).select_from(SeoPublishAttempt)) == 0
+                assert not registry((await session.get(TenantModule,1)).module_settings)['tasks'][task_id]['streams']['receipt']['events']
+    asyncio.run(scenario())
+
+
 def test_twenty_pending_codes_and_twenty_active_devices_are_tenant_wide():
     async def scenario():
         async with fixture() as (sessions,client,admin,_):

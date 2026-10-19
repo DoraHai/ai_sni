@@ -74,14 +74,14 @@ def unique_object(pairs):
     return value
 
 
-async def body_for(request, fields):
+async def body_for(request, fields, *, optional=()):
     if request.headers.get('content-type', '').split(';')[0] != 'application/json':
         deny('INVALID_SHAPE', 422)
     raw = await request.body()
     if len(raw) > 512 * 1024:
         deny('INVALID_SHAPE', 413)
     value = json.loads(raw, object_pairs_hook=unique_object, parse_constant=lambda _: deny('INVALID_SHAPE', 422))
-    shape(value, fields)
+    shape(value, set(fields) | (set(value).intersection(optional) if type(value) is dict else set()))
     return raw, value
 
 
@@ -136,7 +136,7 @@ async def update_settings(request: Request, session=Depends(get_session), ctx=De
 
 @router.post('/device-pairings', status_code=201)
 async def pairing(request: Request, session=Depends(get_session), ctx=Depends(require_scoped_auth)):
-    _, body = await body_for(request, {'label', 'platform', 'account_id', 'expected_revision'})
+    _, body = await body_for(request, {'label', 'platform', 'expected_revision'}, optional={'account_id'})
     if (not isinstance(body['label'], str) or not body['label'].strip() or len(body['label']) > 80
             or re.search(r'[\x00-\x1f\x7f]', body['label']) or body['platform'] != 'wechat-article'
             or type(body['expected_revision']) is not int):
@@ -183,7 +183,7 @@ async def task_detail(taskId: str, request: Request, session=Depends(get_session
     task = state['tasks'].get(taskId)
     if task is None or task['site_id'] != site_id:
         deny('TASK_NOT_FOUND', 404)
-    return service.task_payload(task)
+    return service.task_payload(task, include_account=True)
 
 
 def native_device_request(request):

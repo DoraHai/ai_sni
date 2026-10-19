@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { fetchReportSettings, saveReportSettings, createReportPairing, revokeReportDevice, createReportTask } from '../../api/seoDistributionReport.js'
 
 const props = defineProps({ tenantId: Number, siteId: Number, identity: String, canEdit: Boolean, connections: Array, publications: Array, contents: Array })
+const emit = defineEmits(['paired'])
 const state = ref(null), busy = ref(false), error = ref(''), pairingCode = ref('')
 const form = reactive({ label: '', account: '', device: '', publication: '' })
 const scope = computed(() => `${props.tenantId}:${props.siteId}:${props.identity}`)
@@ -47,10 +48,10 @@ async function toggle() {
 }
 
 async function pair() {
-  if (!canOperate.value || !form.account || !form.label.trim()) return
-  const body = { label: form.label.trim(), platform: 'wechat-article', account_id: `seo-connection-${form.account}`, expected_revision: state.value.revision }
+  if (!canOperate.value || !form.label.trim()) return
+  const body = { label: form.label.trim(), platform: 'wechat-article', account_id: form.account ? `seo-connection-${form.account}` : null, expected_revision: state.value.revision }
   pairingCode.value = ''
-  await run(params => createReportPairing(params, body), result => { pairingCode.value = result.pairing_code })
+  await run(params => createReportPairing(params, body), result => { pairingCode.value = result.pairing_code; emit('paired') })
   await refresh()
 }
 
@@ -93,10 +94,10 @@ watch(scope, () => { resetScope(); refresh() }, { immediate: true, flush: 'sync'
       <p v-if="!state.can_operate">当前权限只允许查看，请使用已有授权的顾问或超管账号处理。</p>
       <div class="report-form">
         <el-input v-model="form.label" placeholder="设备备注（必填，如团队电脑与用途）" aria-label="设备备注（必填）" maxlength="80" :disabled="!canOperate" />
-        <el-select v-model="form.account" placeholder="选择已绑定本站的公众号" :disabled="!canOperate"><el-option v-for="account in accounts" :key="account.id" :label="account.name" :value="account.id" /></el-select>
-        <el-button :disabled="!canOperate || !form.account || !form.label.trim()" @click="pair">生成配对码</el-button>
+        <el-select v-model="form.account" placeholder="不指定（由多号通发布时上报）" :disabled="!canOperate"><el-option label="不指定（由多号通发布时上报）" value="" /><el-option v-for="account in accounts" :key="account.id" :label="account.name" :value="account.id" /></el-select>
+        <el-button :disabled="!canOperate || !form.label.trim()" @click="pair">生成配对码</el-button>
       </div>
-      <p>请填写团队代发电脑的备注，方便区分配对。每个客户最多保留 20 个在用配对和 20 个未用配对码；同一台电脑可分别配对多个客户。</p>
+      <p>可以不选公众号，直接生成配对码；本网站会自动准备一个发布连接，实际使用的公众号在多号通发布时填写。请填写团队代发电脑的备注，方便区分配对。每个客户最多保留 20 个在用配对和 20 个未用配对码；同一台电脑可分别配对多个客户。</p>
       <div v-if="pairingCode" role="status"><p>配对码仅显示本次，10 分钟内在多号通选择 SEO 模块后输入：</p><code>{{ pairingCode }}</code><el-button text @click="pairingCode = ''">隐藏</el-button></div>
       <ul><li v-for="device in state.devices" :key="device.id">{{ device.label }} · {{ device.active ? '已绑定' : '已停用' }} · 账号身份待核对 <el-button text :disabled="!canOperate || !device.active" @click="revoke(device)">吊销</el-button></li></ul>
       <div class="report-form">
@@ -105,7 +106,7 @@ watch(scope, () => { resetScope(); refresh() }, { immediate: true, flush: 'sync'
         <el-button :disabled="!canOperate || !state.enabled || !state.scope_enabled || !form.device || !form.publication" @click="dispatch">派给执行电脑</el-button>
       </div>
       <p>请先按原流程准备并审核发布任务。有图片的稿件需待素材传输接通后再派发。</p>
-      <table v-if="state.tasks.length"><thead><tr><th>发布任务</th><th>回执送达</th><th>人工结果</th><th>页面核验</th></tr></thead><tbody><tr v-for="task in state.tasks" :key="task.taskId"><td>{{ task.nativePublicationId }}</td><td>{{ task.delivery === 'received' ? '已收到回报' : '待回报' }}</td><td>{{ outcomeText(task.reportedOutcome) }}<span v-if="task.last_code">（{{ codeText(task.last_code) }}）</span></td><td>{{ verificationText(task.verification.state) }}<small v-if="task.verification.reason"> · {{ reasonText(task.verification.reason) }}</small></td></tr></tbody></table>
+      <table v-if="state.tasks.length"><thead><tr><th>发布任务</th><th>回执送达</th><th>人工结果</th><th>页面核验</th></tr></thead><tbody><tr v-for="task in state.tasks" :key="task.taskId"><td>{{ task.nativePublicationId }}</td><td>{{ task.delivery === 'received' ? '已收到回报' : '待回报' }}</td><td>{{ outcomeText(task.reportedOutcome) }}<span v-if="task.last_code">（{{ codeText(task.last_code) }}）</span><div>回传公众号：{{ task.reportedAccount?.name || '未上报' }}</div></td><td>{{ verificationText(task.verification.state) }}<small v-if="task.verification.reason"> · {{ reasonText(task.verification.reason) }}</small></td></tr></tbody></table>
     </template>
   </section>
 </template>

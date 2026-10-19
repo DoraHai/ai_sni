@@ -10,7 +10,7 @@ function fixture() {
   const calls = []
   const state = {
     props: { tenantId: 4, siteId: 2, identity: '7:1', canEdit: true, connections: [], publications: [], contents: [] },
-    defineProps: () => state.props, ref: value => ({ value }), reactive: value => value,
+    defineProps: () => state.props, defineEmits: () => (...args) => calls.push(['emit',...args]), ref: value => ({ value }), reactive: value => value,
     computed: fn => ({ get value() { return fn() } }), watch: (_, callback) => { scopeWatcher = callback },
     crypto: { randomUUID: () => 'synthetic-request' },
     fetchReportSettings: async params => { calls.push(['read', params]); return { can_operate:true, enabled:false, scope_enabled:false, revision:0, scope_revision:0, devices:[], tasks:[] } },
@@ -70,6 +70,20 @@ test('team device note is mandatory and trimmed before pairing', async () => {
   assert.equal(calls.find(c => c[0] === 'pair')[2].label, 'Synthetic team computer')
   assert.match(source, /设备备注（必填/)
   assert.match(source, /同一台电脑可分别配对多个客户/)
+})
+
+test('empty account list can pair by default and explicit legacy account remains available', async () => {
+  const { handlers, calls } = fixture()
+  await handlers.refresh()
+  handlers.form.label = 'Synthetic team computer'
+  await handlers.pair()
+  assert.equal(calls.find(c => c[0] === 'pair')[2].account_id, null)
+  handlers.form.account = 40
+  await handlers.pair()
+  assert.equal(calls.filter(c => c[0] === 'pair')[1][2].account_id, 'seo-connection-40')
+  assert.match(source, /不指定（由多号通发布时上报）/)
+  assert.match(source, /回传公众号：/)
+  assert.match(source, /task\.reportedAccount\?\.name \|\| '未上报'/)
 })
 
 test('settings write narrows to explicit selected customer/site and both revisions', async () => {

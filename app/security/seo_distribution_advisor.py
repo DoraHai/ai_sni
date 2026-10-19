@@ -40,7 +40,7 @@ async def scope(session, ctx, request, body, rule, *, lock=False):
         device = state.get('devices', {}).get(device_id)
         if not device or device['site_id'] != site_id:
             deny('SCOPE_FORBIDDEN', 403)
-    if rule.template.endswith('/device-pairings'):
+    if rule.template.endswith('/device-pairings') and body.get('account_id') is not None:
         await connection_scope(session, ctx.tenant_id, site_id, body.get('account_id'))
     if rule.template.endswith('/tasks') and body.get('publication_id') is not None:
         owner = await session.scalar(select(SeoContentAsset.site_id).join(SeoContentPublication,
