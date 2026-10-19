@@ -16,7 +16,7 @@ from app.models import (Tenant, TenantModule, GeoProject, GeoOptimizationBusines
     GeoPrompt, GeoContentTask, GeoArticleVersion, GeoChannelVariant, GeoPublication,
     GeoPublishingChannel, GeoChannelAccount, User, Role)
 from app.models.advisor_tenant_grant import AdvisorTenantGrant
-from app.geo.content import distribution_report as s, distribution_protocol as p, routes
+from app.geo.content import distribution_report as s, distribution_protocol as p, distribution_routes as dr, routes
 
 pytestmark = pytest.mark.skipif(not os.getenv('GEO_TEST_POSTGRES_URL'), reason='requires dedicated PostgreSQL; mandatory in GEO CI')
 
@@ -71,6 +71,11 @@ def test_pairing_claim_race_publication_race_rollback_and_scope():
                 with pytest.raises(HTTPException) as denied:
                     await s.authenticate(db, req, reporting=True)
                 assert denied.value.detail['code'] == 'DEVICE_CREDENTIAL_INVALID'
+                req.scope['path'] = p.PREFIX + '/device/profile'
+                req.scope['method'] = 'GET'
+                with pytest.raises(HTTPException) as denied:
+                    await dr.profile(req, db)
+                assert denied.value.status_code == 401
             async with sessions() as db:
                 store = await s.open_store(db, 7)
                 pair = await s.create_pairing(store, 5, actor,
@@ -87,6 +92,66 @@ def test_pairing_claim_race_publication_race_rollback_and_scope():
             assert sum(c is not None for c in claims) == 1
             credential = next(c for c in claims if c)['device']['credential']
             device_id = next(c for c in claims if c)['device']['id']
+            # A fresh HTTP session must commit known-code failures even when
+            # the response is an error; clearing process memory cannot reset it.
+            for _ in range(5):  # The losing direct-service race rolled back its failure metadata.
+                async with sessions() as db:
+                    req = Request({'type':'http', 'method':'POST', 'path':p.PREFIX+'/device-pairings/claim',
+                        'query_string':b'', 'headers':[], 'client':('127.0.0.1', 1234)})
+                    req._body = __import__('json').dumps({'pairing_code':pair['pairing_code'], 'request_id':str(uuid4())}).encode()
+                    with pytest.raises(HTTPException):
+                        await dr.claim(req, db)
+                dr._claim_failures.clear()
+            async with sessions() as db:
+                module = await db.get(TenantModule, 1)
+                assert module.module_settings[p.KEY]['pairings'][pair['pairing_id']]['claim_failures']['count'] == 5
+            # Profile is available with reporting off and does not mutate seq.
+            async with sessions() as db:
+                store = await s.open_store(db, 7)
+                store.book['enabled'] = False
+                await store.save(); await db.commit()
+            async with sessions() as db:
+                req = Request({'type':'http', 'method':'GET', 'path':p.PREFIX+'/device/profile',
+                    'query_string':b'', 'headers':[(b'authorization', ('Bearer '+credential).encode())]})
+                response = await dr.profile(req, db)
+                import json
+                profile = json.loads(response.body)
+                assert profile == {'schema':1, 'device_id':device_id, 'customer_name':'synthetic seven',
+                    'scope_name':'synthetic project', 'account_name':'synthetic manual account', 'label':'synthetic device'}
+                module = await db.get(TenantModule, 1)
+                assert module.module_settings[p.KEY]['devices'][device_id]['request_seq'] == 0
+            async with sessions() as db:
+                store = await s.open_store(db, 7)
+                store.book['enabled'] = True
+                await store.save(); await db.commit()
+            # Twenty unused codes across both projects, then twenty concurrently
+            # online registrations. Each success bypasses anonymous failure limits.
+            pending_pairs = []
+            for i in range(20):
+                async with sessions() as db:
+                    store = await s.open_store(db, 7)
+                    pending_pairs.append(await s.create_pairing(store, 5 if i % 2 else 6, actor,
+                        {'label':'synthetic team', 'platform':'wechat-article', 'account_id':'1',
+                         'expected_revision':store.book['revision']}))
+                    await db.commit()
+            async with sessions() as db:
+                store = await s.open_store(db, 7)
+                with pytest.raises(HTTPException) as denied:
+                    await s.create_pairing(store, 5, actor, {'label':'over limit', 'platform':'wechat-article',
+                        'account_id':'1', 'expected_revision':store.book['revision']})
+                assert denied.value.status_code == 429
+            for pending in pending_pairs[:19]:
+                async with sessions() as db:
+                    req = Request({'type':'http', 'method':'POST', 'path':p.PREFIX+'/device-pairings/claim',
+                        'query_string':b'', 'headers':[], 'client':('127.0.0.1', 1234)})
+                    req._body = json.dumps({'pairing_code':pending['pairing_code'], 'request_id':str(uuid4())}).encode()
+                    assert (await dr.claim(req, db)).status_code == 200
+            async with sessions() as db:
+                store = await s.open_store(db, 7)
+                assert len(store.book['devices']) == 20
+                with pytest.raises(HTTPException) as denied:
+                    await s.claim(db, {'pairing_code':pending_pairs[19]['pairing_code'], 'request_id':str(uuid4())})
+                assert denied.value.status_code == 429
             with patch.object(routes, '_build_rule_input', AsyncMock(return_value=None)), \
                  patch.object(routes, '_brand_context_for_task', AsyncMock(return_value=('synthetic', []))), \
                  patch.object(routes, 'assert_can_publish'), patch.object(routes, '_sync_task_pipeline', AsyncMock()):

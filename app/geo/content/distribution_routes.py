@@ -1,7 +1,7 @@
 """Native device endpoints and exact human management routes, GEO only."""
 import json
 import time
-from collections import deque
+from collections import OrderedDict, deque
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.exc import DBAPIError
@@ -14,7 +14,23 @@ from app.geo.content import distribution_protocol as p, distribution_report as s
 
 router = APIRouter(prefix=p.PREFIX, tags=['GEO 多号通结果回传'],
                    dependencies=[Depends(require_geo_demo_safe_request)])
-_claims = deque(maxlen=120)
+_claim_failures = OrderedDict()
+
+
+def claim_failure_bucket(request, data):
+    # A successful claim never consumes this budget. No IP-wide success limit.
+    # Unknown codes have no tenant row; this bounded fallback is process-local.
+    peer = request.client.host if request.client else 'unknown'
+    code = data.get('pairing_code')
+    key = s.sha(peer + '\0' + (code if isinstance(code, str) else 'invalid'))
+    now = time.monotonic()
+    bucket = _claim_failures.setdefault(key, deque(maxlen=s.PAIRING_FAILURE_LIMIT))
+    while bucket and bucket[0] <= now - 60:
+        bucket.popleft()
+    _claim_failures.move_to_end(key)
+    while len(_claim_failures) > 2048:
+        _claim_failures.popitem(last=False)
+    return bucket, now
 
 
 async def safe_session(session=Depends(get_session)):
@@ -152,16 +168,29 @@ async def task_status(taskId: str, request: Request, ctx=Depends(require_scoped_
 @router.post('/device-pairings/claim')
 async def claim(request: Request, session=Depends(safe_session)):
     s.native_headers(request)
-    now = time.monotonic()
-    while _claims and _claims[0] < now - 60:
-        _claims.popleft()
-    if len(_claims) >= 60:
-        p.fail('DEVICE_RATE_LIMITED', 429)
-    _claims.append(now)
     data, _ = await body(request)
-    result = await s.claim(session, data)
+    bucket, now = claim_failure_bucket(request, data)
+    if len(bucket) >= s.PAIRING_FAILURE_LIMIT:
+        p.fail('DEVICE_RATE_LIMITED', 429)
+    try:
+        result = await s.claim(session, data)
+    except s.PairingRejected:
+        # Preserve only the failed known-code count despite an HTTP error.
+        await session.commit()
+        raise
+    except HTTPException as error:
+        # Known-code throttling is governed solely by its durable window.
+        if not isinstance(error.detail, dict) or error.detail.get('code') != 'DEVICE_RATE_LIMITED':
+            bucket.append(now)
+        raise
     await session.commit()
     return respond(result)
+
+
+@router.get('/device/profile')
+async def profile(request: Request, session=Depends(safe_session)):
+    store, device = await s.authenticate(session, request, reporting=False)
+    return respond(await s.device_profile(store, device))
 
 
 @router.post('/device/bindings')

@@ -8,6 +8,7 @@ import hmac
 import re
 import secrets
 import time
+import unicodedata
 from dataclasses import dataclass
 from datetime import timezone
 from types import SimpleNamespace
@@ -16,6 +17,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select, cast, func
 from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
 from sqlalchemy.orm import load_only
+from fastapi import HTTPException
 
 from app.models import (Tenant, TenantModule, GeoProject, GeoContentTask, GeoChannelVariant,
                         GeoArticleVersion, GeoChannelAccount, GeoPublishingChannel, GeoPublication,
@@ -24,6 +26,21 @@ from app.geo.content import distribution_protocol as p
 from app.geo.project_scope import project_scope, prompt_ids_for_businesses
 from app.geo.tenant_scope import ensure_geo_entitlement
 from app.security.advisor_scope import account_locked, is_advisor
+
+MAX_ACTIVE_DEVICES = 20
+MAX_UNUSED_PAIRINGS = 20
+PAIRING_FAILURE_LIMIT = 6
+PAIRING_FAILURE_WINDOW_MS = 60_000
+
+
+class PairingRejected(HTTPException):
+    """Known-code failure ledger was flushed; the claim route must commit it."""
+
+
+def display_name(value):
+    if not isinstance(value, str):
+        return ''
+    return ' '.join(''.join(c for c in value if not unicodedata.category(c).startswith('C')).split())[:120]
 
 
 def now_ms():
@@ -231,7 +248,7 @@ async def account_binding(store, account_id):
 async def create_pairing(store, project_id, actor, body):
     p.exact(body, {'label', 'platform', 'account_id', 'expected_revision'})
     if (body['platform'] != 'wechat-article' or not isinstance(body['label'], str)
-            or not 1 <= len(body['label']) <= 80 or not body['label'].isprintable()):
+            or not 1 <= len(body['label'].strip()) <= 80 or not body['label'].isprintable()):
         p.fail('INVALID_SHAPE', 422)
     p.integer(body['expected_revision'], 0)
     account_id = p.integer(int(body['account_id'])) if isinstance(body['account_id'], str) and body['account_id'].isdecimal() else p.integer(body['account_id'])
@@ -239,13 +256,13 @@ async def create_pairing(store, project_id, actor, body):
     if store.book['revision'] != body['expected_revision']:
         p.fail('SOURCE_CHANGED')
     now = now_ms()
-    if (sum(not d['revoked'] and d['expires_at'] > now for d in store.book['devices'].values()) >= 5
-            or sum(not d['consumed'] and d['expires_at'] > now for d in store.book['pairings'].values()) >= 5):
+    if (sum(not d['revoked'] and d['expires_at'] > now for d in store.book['devices'].values()) >= MAX_ACTIVE_DEVICES
+            or sum(not d['consumed'] and d['expires_at'] > now for d in store.book['pairings'].values()) >= MAX_UNUSED_PAIRINGS):
         p.fail('REPORT_LEDGER_CAPACITY', 429)
     code = secrets.token_urlsafe(24)
     key = uuid()
     store.book['pairings'][key] = {'id': key, 'code_hash': sha(code), 'scope_id': project_id,
-        'account_id': account_id, 'label': body['label'], 'actor': actor, 'expires_at': now + 600_000, 'consumed': False}
+        'account_id': account_id, 'label': body['label'].strip(), 'actor': actor, 'expires_at': now + 600_000, 'consumed': False}
     store.book['revision'] += 1
     store.audit('PAIRING_CREATED', actor=actor['user_id'])
     await store.save()
@@ -271,12 +288,26 @@ async def claim(session, body):
     store = await open_store(session, locator)
     pairing = next((r for r in store.book['pairings'].values() if hmac.compare_digest(r['code_hash'], code_hash)), None)
     now = now_ms()
-    if pairing is None or pairing['consumed'] or pairing['expires_at'] < now:
+    if pairing is None:
         p.fail('PAIRING_CODE_UNAVAILABLE')
-    await actor_authorized(store, pairing['scope_id'], pairing['actor'])
-    await account_binding(store, pairing['account_id'])
-    if sum(not d['revoked'] and d['expires_at'] > now for d in store.book['devices'].values()) >= 5:
-        p.fail('REPORT_LEDGER_CAPACITY', 429)
+    failures = pairing.get('claim_failures') or {}
+    count = failures.get('count', 0) if now < failures.get('until', 0) else 0
+    if count >= PAIRING_FAILURE_LIMIT:
+        p.fail('DEVICE_RATE_LIMITED', 429)
+    try:
+        if pairing['consumed'] or pairing['expires_at'] <= now:
+            p.fail('PAIRING_CODE_UNAVAILABLE')
+        await actor_authorized(store, pairing['scope_id'], pairing['actor'])
+        await account_binding(store, pairing['account_id'])
+        if sum(not d['revoked'] and d['expires_at'] > now for d in store.book['devices'].values()) >= MAX_ACTIVE_DEVICES:
+            p.fail('REPORT_LEDGER_CAPACITY', 429)
+    except HTTPException as error:
+        # Row serialization makes failures durable across workers/restarts.
+        # Only the failure metadata changes; no device/grant is created here.
+        pairing['claim_failures'] = {'count': count + 1,
+            'until': failures['until'] if count else now + PAIRING_FAILURE_WINDOW_MS}
+        await store.save()
+        raise PairingRejected(error.status_code, error.detail, headers=error.headers) from None
     device_id = uuid()
     # Keep the frozen pairing schema: exactly 64 base64url characters. The
     # optional dr1 locator proposed in the design is incompatible with that
@@ -328,6 +359,19 @@ async def authenticate(session, request, *, reporting):
     if reporting and not p.enabled(store.book, device['scope_id']):
         p.fail('REPORTING_DISABLED', 403)
     return store, device
+
+
+async def device_profile(store, device):
+    # Explicit display-only columns: never load account secrets or client selectors.
+    customer = await store.session.scalar(select(Tenant.name).where(Tenant.id == store.tenant_id))
+    project = await store.session.scalar(select(GeoProject.name).where(
+        GeoProject.id == device['scope_id'], GeoProject.tenant_id == store.tenant_id,
+        GeoProject.tenant_module_id == store.row.id))
+    account = await store.session.scalar(select(GeoChannelAccount.display_name).where(
+        GeoChannelAccount.id == device['account_id'], GeoChannelAccount.tenant_id == store.tenant_id))
+    return {'schema': 1, 'device_id': device['id'], 'customer_name': display_name(customer),
+            'scope_name': display_name(project), 'account_name': display_name(account),
+            'label': display_name(device['label'])}
 
 
 def transport(device, request, raw):

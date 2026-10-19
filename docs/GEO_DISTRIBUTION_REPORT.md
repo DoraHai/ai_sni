@@ -17,7 +17,7 @@
 
 ## 契约和存储
 
-`TenantModule(module_code='geo').module_settings.distribution_report_v1` 保存带 schema 的开关、配对摘要、设备摘要、固定任务引用和双流账本。按 Tenant → TenantModule 取行锁，刷新 ORM 后保留其他设置命名空间。native 发布在同一事务内；异常整批回滚，无部分 ACK。此 JSON 试点的容量为 5 个活跃设备/未用码、100 个活跃任务、1000 个累计任务、每任务每流 64 个事件、8 MiB 总账本；满后拒收，不删去重历史。
+`TenantModule(module_code='geo').module_settings.distribution_report_v1` 保存带 schema 的开关、配对摘要、设备摘要、固定任务引用和双流账本。按 Tenant → TenantModule 取行锁，刷新 ORM 后保留其他设置命名空间。native 发布在同一事务内；异常整批回滚，无部分 ACK。此 JSON 试点的容量为 20 个活跃设备/未用码、100 个活跃任务、1000 个累计任务、每任务每流 64 个事件、8 MiB 总账本；满后拒收，不删去重历史。
 
 凭据使用既有配对 JSON schema 要求的 **64 字符 base64url opaque 值**，服务端仅保存 SHA-256；使用 GEO module 行内精确 JSONPath 摘要查找与常量时间比较，不扫描 SEO。设计 5.3 的 `dr1...` 是建议定位格式，不能通过既有冻结 schema 的 64 字符校验，因此没有采用。bindings 保留冻结 schema 必填的 `schema:1`。这些是对现有配对协议的兼容，不向已有 JSON 添加未定义键。
 
@@ -32,3 +32,10 @@
 后端测试：`python ops/run_geo_checks.py --postgres`（仅专有 loopback `geo_ci` 空库）。新增原生 Postgres 测试实际竞争单次 claim、竞争回执、在 native 写后中断并验证全事务回滚、跨项目拒绝、无关 JSON 命名空间保留和 monitor pending。无本地 PostgreSQL 时的 skip 不是通过证据，合并必须看 GEO CI 的 PostgreSQL 结果。
 
 前端：`node --test tests/geo*.test.mjs`（frontend），`npm run build`（frontend/geo-frontend）。启用须等后端、客户端相同契约审核及 CI 通过；遇生产 schema/权限缺口另列方案并停止，不在应用内自动补表或改 env。
+# 团队电脑多客户代发（0.3.5）
+
+同一团队电脑可给多个客户分别配对；每个配对仍固定一个客户、GEO项目和公众号，凭据与结果互不通用。每客户最多20个有效设备、20个未用且未过期配对码，按客户汇总而非每项目重复计算；过期/吊销设备不计在用额度。设备备注必填，去首尾空格后1–80字符，拒绝控制字符。顾问在已有授权项目的「分发平台」选择公众号、填写团队电脑/用途备注，再生成配对码。原有默认关闭和人工确认链接步骤不变。
+
+新增 `GET /api/v1/geo/distribution/v1/device/profile`：仅携带该配对设备的 Bearer 凭据，无body、无query，不需要序号/时间戳头。精确返回 `{schema:1, device_id, customer_name, scope_name, account_name, label}`；名字移除Unicode C类字符、归一空白，最多120码点。只查设备自己的客户/项目/公众号显示列，保持原认证与归属检查，可在回传关闭时读取，不写设备序号或账本；`Cache-Control: private, no-store`。旧claim/bindings/exchange/ACK格式不变。
+
+已知配对码领取失败在现有 `tenant_modules.module_settings.distribution_report_v1.pairings` 内记录固定60秒窗口的失败次数；同一码6次失败后限流，锁行后计算，跨进程/重启有效。错误响应前仅提交失败计数，无设备或稿件写入；成功领取不增加计数。未知/格式错误码无客户归属，使用进程内按来源与码摘要组合的60秒失败桶兜底（最多2048桶、每桶6次）；该兜底重启清零、随机轮换未知码仍可绕过单桶限制，不能当作分布式防攻击。没有按来源IP限制成功领取，团队电脑连续给多个客户成功配对不会消耗失败额度。无需迁移或新env。

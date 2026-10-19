@@ -115,13 +115,13 @@ async function refreshResult() {
       <p>当前项目：{{ settings.enabled && settings.scope_enabled ? '已打开' : '已关闭' }}。{{ canManage ? '' : '当前只读，请由获授权顾问或超管核对现有写入权限。' }}</p>
       <el-button v-if="mode === 'settings'" :disabled="busy || !canManage" @click="toggle">{{ settings.scope_enabled ? '关闭当前项目回传' : '打开当前项目回传' }}</el-button>
       <template v-if="mode === 'devices'">
-        <el-input v-model="label" maxlength="80" placeholder="设备显示名称" aria-label="设备显示名称" :disabled="busy || !canManage" />
+        <el-input v-model="label" maxlength="80" placeholder="设备备注（必填，如团队电脑/用途）" aria-label="设备备注（必填）" :disabled="busy || !canManage" />
         <el-select v-model="account" placeholder="选择已有公众号人工账号" aria-label="设备绑定账号" :disabled="busy || !canManage">
           <el-option v-for="a in accounts || []" :key="a.id" :value="a.id" :label="a.display_name" />
         </el-select>
         <el-button :disabled="busy || !canManage || !account || !label.trim()" @click="pair">生成配对码</el-button>
         <el-alert v-if="pairing" :title="`一次性配对码（10分钟内有效）：${pairing.pairing_code}`" type="info" :closable="true" @close="pairing = null" />
-        <p>在多号通选择 GEO 并输入配对码；外部账号身份仍需人工核对。</p>
+        <p>在团队电脑的多号通选择 GEO 并输入配对码，可同时为多个客户代发。每个客户最多保留20个有效配对和20个未用配对码；发布前请核对客户、项目和公众号。</p>
         <p v-for="d in settings.devices" :key="d.id">{{ d.label }} · {{ d.revoked ? '已吊销' : '已配对，账号身份未核验' }}
           <el-button :disabled="busy || !canManage || d.revoked" @click="revoke(d.id)">吊销</el-button>
         </p>
