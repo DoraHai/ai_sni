@@ -148,4 +148,4 @@ async def check_visibility_quota(session, ctx):
     used = await count_patrol_runs_today(session, ctx.tenant_id, created_by=ctx.user_id)
     if used >= limit:
         deny(429, "ADVISOR_VISIBILITY_DAILY_LIMIT",
-             f"今天这个客户的 AI 可见度手动检测已用完 10 次（{used}/{limit}），明天再试；失败也计次")
+             f"今天这个客户的 AI 可见度手动检测已用完 10 次（{used}/{limit}），明天再试；失败且无结果会退回次数")

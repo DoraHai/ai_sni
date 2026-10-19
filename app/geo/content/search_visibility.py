@@ -503,6 +503,8 @@ async def create_run(session, project: GeoProject, config: VisibilityConfig, *, 
         from app.security.advisor_write_ai import job_authority
         ctx = session.info['advisor_scoped_write'][0]
         row.request_meta = {**row.request_meta, **job_authority(session, ctx)}
+        from app.security.advisor_quota import queue_search_reservation
+        await queue_search_reservation(session, row)
     await session.commit()
     await session.refresh(row)
     return row
@@ -621,6 +623,8 @@ async def execute_run(job_id: int):
                 final.setdefault("summary", {})["stopped_reason"] = job.error
             job.result_meta = final
             job.finished_at = now_utc()
+            from app.security.advisor_quota import settle_search_reservation
+            await settle_search_reservation(session, job)
             await session.commit()
             binding = session.info.get('advisor_scoped_write')
             if binding:

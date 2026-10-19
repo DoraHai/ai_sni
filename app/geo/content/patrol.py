@@ -110,6 +110,8 @@ async def mark_patrol_run_failed(
         row.summary = {}
     if row.items is None:
         row.items = []
+    from app.security.advisor_quota import settle_patrol_quota
+    settle_patrol_quota(row)
     await session.commit()
     await session.refresh(row)
     logger.warning("patrol run %s marked failed: %s", run_id, row.error)
@@ -323,6 +325,7 @@ async def count_patrol_runs_today(session: AsyncSession, tenant_id: int, *, crea
     from zoneinfo import ZoneInfo
 
     from sqlalchemy import func
+    from app.security.advisor_quota import STATE
 
     tz = ZoneInfo("Asia/Shanghai")
     now = datetime.now(tz)
@@ -337,6 +340,7 @@ async def count_patrol_runs_today(session: AsyncSession, tenant_id: int, *, crea
             GeoVisibilityPatrolRun.tenant_id == tenant_id,
             GeoVisibilityPatrolRun.created_at >= start_utc,
             GeoVisibilityPatrolRun.created_at < end_utc,
+            func.coalesce(GeoVisibilityPatrolRun.summary[STATE].as_string(), '') != 'refunded',
         ))
     if created_by is not None:
         query = query.where(GeoVisibilityPatrolRun.created_by == created_by)
@@ -521,6 +525,8 @@ async def execute_patrol_run(
         row.status = "failed"
         row.error = str(exc)
         row.finished_at = datetime.utcnow()
+        from app.security.advisor_quota import settle_patrol_quota
+        settle_patrol_quota(row)
         await session.commit()
         await session.refresh(row)
         record_visibility_execution(row, 'job_failed')
@@ -954,6 +960,8 @@ async def execute_patrol_run(
         row.summary = summary
         row.status = "completed"
         row.finished_at = datetime.utcnow()
+        from app.security.advisor_quota import settle_patrol_quota
+        settle_patrol_quota(row)
         await session.commit()
         await session.refresh(row)
         record_visibility_execution(row, 'job_succeeded')
@@ -988,6 +996,8 @@ async def execute_patrol_run(
             row.items = items
             row.summary = summary
             row.finished_at = datetime.utcnow()
+            from app.security.advisor_quota import settle_patrol_quota
+            settle_patrol_quota(row)
             await session.commit()
             await session.refresh(row)
             record_visibility_execution(row, 'job_failed')

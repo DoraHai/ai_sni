@@ -279,10 +279,13 @@ async def reserve_quota(session, ctx, rule):
         # A terminal reservation is not an executable patrol or a new table.
         if rule.template == PREFIX + '/integration/tasks/{task_id}/retest':
             return  # Its durable patrol row is itself the reservation.
-        session.add(GeoVisibilityPatrolRun(tenant_id=ctx.tenant_id, created_by=ctx.user_id,
+        from app.security.advisor_quota import KEY, STATE
+        reservation = GeoVisibilityPatrolRun(tenant_id=ctx.tenant_id, created_by=ctx.user_id,
             status='completed', trigger='manual', auto_persist=False, prefer_real=True,
-            prompt_limit=1, summary={'reservation_only': True}))
+            prompt_limit=1, summary={'reservation_only': True, STATE: 'reserved'})
+        session.add(reservation)
         await session.commit()
+        session.info[KEY] = (reservation.id, ctx.tenant_id, ctx.user_id)
 
 
 async def bind_pending_scope(session, ctx, request, body):
