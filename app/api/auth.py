@@ -467,19 +467,27 @@ async def list_tenants(
         module is None and ctx.can_view("settings.customers")
     )
     tenant_ids = [tenant.id for tenant in tenants]
+    # The SEM workspace list is already module-filtered. The global customer
+    # list also includes SEO/GEO-only customers, who must not appear blocked.
+    sem_tenant_ids = tenant_ids if module == "sem" else []
+    if tenant_ids and include_sem_context and module is None:
+        sem_modules = (await session.scalars(select(TenantModule).where(
+            TenantModule.tenant_id.in_(tenant_ids), TenantModule.module_code == "sem",
+        ))).all()
+        sem_tenant_ids = [row.tenant_id for row in sem_modules if module_is_available(row)]
     accounts = (
         list(
             (
                 await session.scalars(
                     select(BaiduAccount)
                     .where(
-                        BaiduAccount.tenant_id.in_(tenant_ids),
+                        BaiduAccount.tenant_id.in_(sem_tenant_ids),
                     )
                     .order_by(BaiduAccount.tenant_id, BaiduAccount.id)
                 )
             ).all()
         )
-        if tenant_ids and include_sem_context
+        if sem_tenant_ids and include_sem_context
         else []
     )
     accounts_by_tenant: dict[int, list[dict]] = {}
@@ -492,7 +500,7 @@ async def list_tenants(
             _sem_account_payload(account)
         )
     identity_states = await load_sem_identity_states(
-        session, tenant_ids, tenant_accounts=accounts
+        session, sem_tenant_ids, tenant_accounts=accounts
     )
     return {
         "module": module,
