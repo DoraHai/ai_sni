@@ -27,6 +27,17 @@ test('a late selection response cannot replace a changed session',async()=>{
   finish(response({access_token:'late',token_type:'bearer',tenant_id:2,tenant_name:'客户乙',expires_at:'2099'}));
   await assert.rejects(pending,{code:'CONTEXT_CHANGED'});assert.equal(session.token,'identity');
 });
+test('selection cannot restore a discarded customer after the response JSON check',async()=>{
+  const session=fixture();let client;
+  client=createAdvisorTenantSwitch({session,fetchImpl:async()=>({ok:true,json:async()=>{
+    // Another completed request may revoke the context between the request
+    // helper resolving and the selecting method continuing.
+    queueMicrotask(()=>queueMicrotask(()=>client.invalidate()));
+    return {access_token:'late',token_type:'bearer',tenant_id:2,tenant_name:'客户乙',expires_at:'2099'};
+  }})});
+  await assert.rejects(client.select(2),{code:'CONTEXT_CHANGED'});
+  assert.equal(session.token,'identity');
+});
 test('panel rejections notify the workbench and late business responses are discarded',async()=>{
   const session=fixture(),denied=[];let finish;
   const fetchImpl=advisorScopedFetch({session,onDenied:code=>denied.push(code),fetchImpl:async()=>response({detail:{code:'ADVISOR_GRANT_REVOKED'}},401)});
