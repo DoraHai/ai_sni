@@ -5,7 +5,7 @@ export function fetchGeoTenants() {
 }
 
 export function runGeoAudit({ tenantId, url, scope = 'single' }) {
-  return client.post('/api/v1/geo/audits', { tenant_id: tenantId, url, scope }, {
+  return client.post('/api/v1/geo/audits', { tenant_id: tenantId, url }, {
     timeout: scope === 'site' ? 120000 : 45000,
   })
 }

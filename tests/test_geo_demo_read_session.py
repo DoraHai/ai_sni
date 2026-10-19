@@ -64,7 +64,7 @@ def test_demo_session_never_falls_back_when_target_open_fails():
 
 
 def test_demo_session_yields_verified_read_only_source_and_translated_tenant():
-    ctx = Mock()
+    ctx = Mock(advisor_scope=None)
     control = Mock(scalar=AsyncMock(return_value=binding()))
     target = SimpleNamespace(database_url="redacted", database="gsnipers_demo")
     demo = SimpleNamespace(info={}, execute=AsyncMock(), rollback=AsyncMock())

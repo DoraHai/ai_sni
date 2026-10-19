@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.security.advisor_operation_call import checked_call
+
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -52,6 +54,11 @@ async def get_geo_tenants(
 
     payload = []
     for tenant in tenants:
+        if getattr(ctx, 'advisor_scope', None) is not None:
+            from app.security.advisor_write_reads import assigned_scope
+            projects, _ = await assigned_scope(session, ctx)
+            if not projects:
+                continue
         policy = await ensure_geo_entitlement(
             session, tenant.id, allow_demo_read=True, lock_binding=False
         )
@@ -207,6 +214,7 @@ async def build_ticket_execution_plan(session, row, tenant_id, content_task_id=N
 
 
 @router.post('/action-tickets/{ticket_id}/prepare-content')
+@checked_call
 async def prepare_ticket_content(
     ticket_id: int, req: TicketPrepareContent, tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session),
@@ -281,6 +289,7 @@ async def prepare_ticket_content(
 
 
 @router.post('/action-tickets/{ticket_id}/execution')
+@checked_call
 async def save_ticket_execution(
     ticket_id: int, req: TicketExecution, tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session),
@@ -483,6 +492,7 @@ def _apply_check_result(
 
 
 @router.post("/audits")
+@checked_call
 async def create_audit(
     req: AuditCreate,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -603,6 +613,7 @@ async def latest_structure_scan(
 
 
 @router.post("/structure-scan")
+@checked_call
 async def run_structure_scan(
     tenant_id: int = Query(...),
     website_url: str | None = Query(None),
@@ -685,6 +696,7 @@ async def get_audit(
 
 
 @router.post("/audits/{audit_id}/advice")
+@checked_call
 async def create_advice(
     audit_id: int,
     tenant_id: int = Query(...),
@@ -710,6 +722,7 @@ async def create_advice(
 
 
 @router.post("/audits/{audit_id}/assets")
+@checked_call
 async def create_assets(
     audit_id: int,
     tenant_id: int = Query(...),
@@ -740,6 +753,7 @@ async def create_assets(
 
 
 @router.post("/audits/{audit_id}/tickets")
+@checked_call
 async def materialize_tickets(
     audit_id: int,
     tenant_id: int = Query(...),
@@ -790,6 +804,7 @@ async def materialize_tickets(
 
 
 @router.post("/audits/{audit_id}/verify")
+@checked_call
 async def verify_audit_tickets(
     audit_id: int,
     tenant_id: int = Query(...),
@@ -918,6 +933,7 @@ async def list_action_tickets(
 
 
 @router.post("/action-tickets")
+@checked_call
 async def create_action_ticket(
     req: TicketCreate,
     tenant_id: int = Query(...),
@@ -975,6 +991,7 @@ async def create_action_ticket(
 
 
 @router.patch("/action-tickets/{ticket_id}")
+@checked_call
 async def patch_action_ticket(
     ticket_id: int,
     req: TicketUpdate,
@@ -1091,6 +1108,7 @@ async def patch_action_ticket(
 
 
 @router.post("/action-tickets/{ticket_id}/verify")
+@checked_call
 async def verify_one_ticket(
     ticket_id: int,
     tenant_id: int = Query(...),

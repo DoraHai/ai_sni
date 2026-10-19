@@ -653,7 +653,7 @@ onMounted(reloadAll)
   >
     <template #actions>
       <button type="button" class="gd-btn" @click="reloadAll">刷新</button>
-      <button v-if="!isAdvisor" type="button" class="gd-btn" @click="registerOpen = true">登记快照</button>
+      <button type="button" class="gd-btn" @click="registerOpen = true">登记快照</button>
       <button type="button" class="gd-btn" :disabled="!snapshots.length" @click="exportSnapshots">
         导出 CSV
       </button>
@@ -825,7 +825,7 @@ onMounted(reloadAll)
                   class="gd-badge"
                   :class="row.mentions_brand ? 'green' : 'red'"
                   style="cursor: pointer"
-                  @click="!isAdvisor && toggleMention(row)"
+                  @click="toggleMention(row)"
                 >
                   {{ row.mentions_brand ? '已提及' : '未提及' }}
                 </span>
@@ -835,7 +835,7 @@ onMounted(reloadAll)
               <template #default="{ row }">
                 <el-select
                   size="small"
-                  :disabled="isAdvisor"
+
                   :model-value="row.brand_position || 'unknown'"
                   style="width: 116px"
                   @change="(v) => patchSnapField(row, { brand_position: v })"
@@ -853,7 +853,7 @@ onMounted(reloadAll)
               <template #default="{ row }">
                 <el-select
                   size="small"
-                  :disabled="isAdvisor"
+
                   :model-value="row.sentiment || 'unknown'"
                   style="width: 96px"
                   @change="(v) => patchSnapField(row, { sentiment: v })"
@@ -873,7 +873,7 @@ onMounted(reloadAll)
             <el-table-column label="操作" width="140" align="center">
               <template #default="{ row }">
                 <el-button size="small" text type="primary" @click="showEvidence(row)">证据</el-button>
-                <el-button v-if="!isAdvisor" size="small" text type="danger" @click="removeSnapshot(row)">
+                <el-button size="small" text type="danger" @click="removeSnapshot(row)">
                   删除
                 </el-button>
               </template>

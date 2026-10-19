@@ -448,6 +448,9 @@ async def rebuild_day(
 
     scopes_written: list[str] = []
     for sk, bucket in buckets.items():
+        advisor_scope = getattr(session, 'info', {}).get('advisor_read_scope')
+        if advisor_scope and bucket.business_id not in advisor_scope[2]:
+            continue  # Never overwrite whole-customer caches with a project slice.
         await upsert_metric_row(
             session, tenant_id=tenant_id, day=day, scope_key=sk, bucket=bucket
         )

@@ -194,12 +194,14 @@ async def validate_demo_session(session, policy, target: GeoDemoDatabaseTarget) 
         raise GeoDemoBindingUnavailable("演示回答不是完整的全虚拟数据集")
 
 
-async def production_read_session() -> AsyncIterator[AsyncSession]:
+async def production_read_session(ctx: AuthContext = Depends(require_scoped_auth)) -> AsyncIterator[AsyncSession]:
     async with async_session_factory(autoflush=False) as session:
         try:
             await session.execute(
                 text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
             )
+            from app.security.advisor_read_scope import bind_read_scope
+            await bind_read_scope(session, ctx)
             yield session
         finally:
             await session.rollback()
@@ -226,7 +228,7 @@ async def tenant_read_session(
         lock_binding=True,
     )
     if not policy.is_demo:
-        async for session in production_read_session():
+        async for session in production_read_session(ctx):
             session.info["geo_control_tenant_id"] = tenant_id
             session.info["geo_data_tenant_id"] = tenant_id
             yield session
@@ -240,6 +242,8 @@ async def tenant_read_session(
                     text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
                 )
                 await validate_demo_session(session, policy, target)
+                if getattr(ctx, 'advisor_scope', None) is not None:
+                    raise HTTPException(403, '顾问只能读取已分配的正式客户项目')
                 session.info["geo_control_tenant_id"] = tenant_id
                 session.info["geo_data_tenant_id"] = policy.demo_tenant_id
                 session.info["geo_demo_policy"] = policy

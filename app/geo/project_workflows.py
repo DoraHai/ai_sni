@@ -61,7 +61,10 @@ async def ensure_ticket_project(session, row, tenant_id, prompt_id, project_id=N
     if project_id is None:
         return
     project, business_ids = await project_scope(session, tenant_id, project_id)
-    if project.status != "active" or (plan_for(project).get("revision") and plan_for(project).get("status") != "active"):
+    info = getattr(session, 'info', {})
+    operational = isinstance(info, dict) and isinstance(info.get('advisor_scoped_write'), tuple)
+    if project.status != "active" or (not operational
+            and plan_for(project).get("revision") and plan_for(project).get("status") != "active"):
         raise HTTPException(409, "项目或服务计划已暂停")
     if (business_id is not None and business_id not in business_ids) or prompt_id not in await prompt_ids_for_businesses(session, tenant_id, business_ids):
         raise HTTPException(404, "目标问题不属于当前项目")

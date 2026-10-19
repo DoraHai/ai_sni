@@ -246,6 +246,7 @@ async def generate_master_article(
     today: date | None = None,
     min_eligible: int = 3,
     brief: dict[str, Any] | None = None,
+    before_model=None,
 ) -> dict[str, Any]:
     """Generate master article using only publishable evidence facts.
 
@@ -375,6 +376,8 @@ async def generate_master_article(
                     "model": llm.get("model"),
                 }
             )
+        if before_model is not None:
+            await before_model()
         data = await chat_json(
             system, json.dumps(base_user, ensure_ascii=False), **kwargs
         )
@@ -394,6 +397,8 @@ async def generate_master_article(
                 ),
             }
             try:
+                if before_model is not None:
+                    await before_model()
                 data2 = await chat_json(
                     system, json.dumps(fix_user, ensure_ascii=False), **kwargs
                 )
@@ -423,6 +428,8 @@ async def generate_master_article(
                         "外文事实没有已核验译文时，直接保留官方原句并标明来源，不要自行翻译或解释其功效。"
                     ),
                 }
+                if before_model is not None:
+                    await before_model()
                 data3 = await chat_json(
                     system, json.dumps(fix_claims, ensure_ascii=False), **kwargs
                 )

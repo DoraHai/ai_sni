@@ -72,10 +72,13 @@ function fmtExpires(v) {
   return String(v).slice(0, 10)
 }
 
+let loadVersion = 0
 async function load() {
+  const version = ++loadVersion
   if (!tenantId.value) {
     error.value = '请先选择客户或配置本地 API Key'
     items.value = []
+    loading.value = false
     return
   }
   loading.value = true
@@ -87,17 +90,24 @@ async function load() {
         ? Promise.resolve({ items: businesses.value })
         : listGeoBusinesses(tenantId.value, { status: 'active' }).catch(() => ({ items: [] })),
     ])
+    if (version !== loadVersion) return
     businesses.value = b.items || businesses.value
+    if (businesses.value.length === 1 && !form.value.business_id) form.value.business_id = businesses.value[0].id
     items.value = data.items || []
   } catch (e) {
+    if (version !== loadVersion) return
     error.value = e.message || '加载失败'
     items.value = []
   } finally {
-    loading.value = false
+    if (version === loadVersion) loading.value = false
   }
 }
 
 async function submitCreate() {
+  if (isAdvisor.value && (!form.value.business_id || !businesses.value.some(b => b.id === form.value.business_id))) {
+    ElMessage.warning('请先选所属业务')
+    return
+  }
   if (!form.value.title.trim() || !form.value.statement.trim() || !form.value.source_name.trim()) {
     ElMessage.warning('标题、陈述与来源名必填')
     return
@@ -213,9 +223,9 @@ async function submitEdit() {
       source_url: editForm.value.source_url.trim() || null,
       expires_at: editForm.value.expires_at || null,
       author_name: editForm.value.author_name.trim() || null,
+      business_id: editForm.value.business_id || null,
       ...(isAdvisor.value ? {} : {
         trust_level: editForm.value.trust_level || null,
-        business_id: editForm.value.business_id || null,
       }),
     })
     ElMessage.success('已保存')
@@ -244,7 +254,9 @@ async function importFactCsv(event) {
   if (!file || !tenantId.value) return
   importingCsv.value = true
   try {
-    const result = await importGeoFactsCsv(tenantId.value, file)
+    const businessId = form.value.business_id || (businesses.value.length === 1 ? businesses.value[0].id : null)
+    if (isAdvisor.value && !businessId) { ElMessage.warning('请先在新建表单选择导入所属业务'); return }
+    const result = await importGeoFactsCsv(tenantId.value, file, isAdvisor.value ? businessId : null)
     const count = Number(result.ok_count ?? 0)
     const errors = result.errors || []
     ElMessage.success(`CSV 导入完成：${count} 条`)
@@ -258,6 +270,12 @@ async function importFactCsv(event) {
 }
 
 watch(tenantId, () => {
+  businesses.value = []
+  items.value = []
+  form.value = emptyForm()
+  editOpen.value = false
+  verifyOpen.value = false
+  verifyForm.value.fact = null
   pager.resetPage()
   load()
 })
@@ -375,6 +393,11 @@ onMounted(load)
           <div class="gd-hd"><h3>新建事实卡</h3></div>
           <div class="gd-bd">
             <el-form label-position="top" size="small">
+              <el-form-item label="所属业务" :required="isAdvisor">
+                <el-select v-model="form.business_id" placeholder="请先选所属业务" clearable style="width: 100%">
+                  <el-option v-for="business in businesses" :key="business.id" :label="business.name" :value="business.id" />
+                </el-select>
+              </el-form-item>
               <el-form-item label="标题" required>
                 <el-input v-model="form.title" placeholder="如：私有化部署" />
               </el-form-item>

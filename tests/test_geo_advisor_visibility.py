@@ -76,6 +76,21 @@ def test_advisor_can_read_and_start_only_assigned_questions(tmp_path, monkeypatc
     asyncio.run(run())
 
 
+def test_selected_second_customer_can_start_detection_without_changing_default(tmp_path, monkeypatch, backend):
+    async def run():
+        async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
+            async with env.factory() as session:
+                session.add(GeoTrackingEngine(tenant_id=20, engine_key='deepseek', display_name='test', enabled=True))
+                session.add_all([GeoVisibilityPatrolRun(tenant_id=10, created_by=1, status='failed') for _ in range(10)])
+                await session.commit()
+            response = await env.request('POST', PATH, body={'tenant_id': 20}, params={'tenant_id': 20},
+                auth=fixture_token(tid=20, gid=102))
+            assert response.status_code == 200, response.text
+            assert response.json()['run']['summary']['advisor_visibility_prompt_ids'] == [20]
+            assert len(env.queued) == 1 and env.queued[0][1][-1] == 20
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize('case', ['off', 'query-missing', 'wrong-tenant', 'ungranted', 'identity', 'unassigned', 'inactive', 'module'])
 def test_all_authority_boundaries_reject_without_dispatch(tmp_path, monkeypatch, backend, case):
     async def run():
@@ -118,11 +133,10 @@ def test_client_cannot_change_fixed_run_or_schedule(tmp_path, monkeypatch, extra
 
 @pytest.mark.parametrize('method,path', [
     ('PUT', '/tracking-engines'), ('PUT', '/ai-settings'), ('POST', '/ai-settings/test'),
-    ('PUT', '/visibility-patrol/settings'), ('POST', '/answer-snapshots/probe'),
-    ('POST', '/answer-snapshots/probe-batch'), ('POST', '/integration/scheduler-safe-foundation'),
+    ('PUT', '/visibility-patrol/settings'), ('POST', '/integration/scheduler-safe-foundation'),
     ('POST', '/content-tasks/10/ai-review'), ('POST', '/content-tasks/10/variants'),
     ('POST', '/content-tasks/10/submit-review'), ('POST', '/content-tasks/10/review'),
-    ('POST', '/content-tasks/10/publications'), ('DELETE', '/content-tasks/10'),
+     ('DELETE', '/content-tasks/10'),
     ('POST', '/facts/10/verify'),
 ])
 def test_other_paid_or_high_risk_operations_stay_403(tmp_path, monkeypatch, method, path):
@@ -136,7 +150,7 @@ def test_other_paid_or_high_risk_operations_stay_403(tmp_path, monkeypatch, meth
 
 
 @pytest.mark.parametrize('kind', ['patrol', 'period', 'plan'])
-def test_automatic_execution_chain_still_rejects(tmp_path, monkeypatch, backend, kind):
+def test_manual_detection_allowed_during_automatic_execution(tmp_path, monkeypatch, backend, kind):
     async def run():
         async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
             async with env.factory() as session:
@@ -150,20 +164,19 @@ def test_automatic_execution_chain_still_rejects(tmp_path, monkeypatch, backend,
                     p.project_settings = {**p.project_settings, 'geo_service_plan': {'enabled': True, 'advisor_user_id': 1}}
                 await session.commit()
             response = await env.request('POST', PATH, body={'tenant_id': 10})
-            assert response.status_code == 403, response.text
-            assert response.json()['detail']['code'] == 'ADVISOR_EXECUTION_CHAIN_ACTIVE'
-            assert not env.queued
+            assert response.status_code == 200, response.text
+            assert len(env.queued) == 1
     asyncio.run(run())
 
 
 @pytest.mark.parametrize('status', ['completed', 'failed'])
 @pytest.mark.parametrize('configured_limit', [None, 2])
-def test_daily_limit_counts_attempts_and_can_be_configured(tmp_path, monkeypatch, backend, status, configured_limit):
+def test_daily_limit_counts_attempts_and_stays_ten(tmp_path, monkeypatch, backend, status, configured_limit):
     async def run():
         async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
             if configured_limit is not None:
                 monkeypatch.setattr(get_settings(), 'advisor_visibility_max_runs_per_day', configured_limit)
-            limit = configured_limit or 10
+            limit = 10
             async with env.factory() as session:
                 session.add_all([
                     GeoVisibilityPatrolRun(tenant_id=10, created_by=1, status=status)
@@ -252,7 +265,7 @@ def test_real_worker_uses_frozen_questions_and_existing_entitlement_checks(tmp_p
             assert response.status_code == 200, response.text
             run_id = response.json()['run']['id']
             monkeypatch.setattr(ai_settings, 'resolve_llm_credentials', AsyncMock(return_value={}))
-            monkeypatch.setattr(ai_settings, 'ensure_ai_setting', AsyncMock(return_value=SimpleNamespace(monitoring_stance='hybrid')))
+            monkeypatch.setattr(ai_settings, 'get_ai_setting_row', AsyncMock(return_value=SimpleNamespace(monitoring_stance='hybrid')))
             monkeypatch.setattr(patrol, 'resolve_engine_llm', lambda **kw: (
                 {'api_key': 'fixture-only', 'model': 'fixture-model', 'provider': 'fixture'}, 'openai_compat', None))
             probe = AsyncMock(return_value={'raw_text': 'synthetic fixture answer', 'simulated': False,

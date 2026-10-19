@@ -82,6 +82,10 @@ async def list_geo_projects(
             )
         ).all()
     )
+    if getattr(ctx, "advisor_scope", None) is not None:
+        from app.security.advisor_write_reads import assigned_scope
+        owned, _ = await assigned_scope(session, ctx)
+        rows = [row for row in rows if row.id in owned]
     return {"projects": [_project_payload(row) for row in rows]}
 
 
@@ -91,6 +95,8 @@ async def create_geo_project(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    from app.security.geo_configuration_admin import require_geo_configuration_admin
+    require_geo_configuration_admin(ctx)
     module = await ensure_module_access(session, ctx, req.tenant_id, "geo")
     canonical, default_url = _canonical_domain(req.domain)
     row = GeoProject(
@@ -153,6 +159,8 @@ class GeoProjectBusinessScope(BaseModel):
 async def update_business_scope(project_id: int, tenant_id: int, req: GeoProjectBusinessScope,
                                 ctx: AuthContext = Depends(require_scoped_auth),
                                 session: AsyncSession = Depends(get_session)):
+    from app.security.geo_configuration_admin import require_geo_configuration_admin
+    require_geo_configuration_admin(ctx)
     await ensure_module_access(session, ctx, tenant_id, "geo")
     if ctx.user_id is None or not ctx.can_edit("geo.assets"):
         raise HTTPException(403, "设置项目归属需要已登录顾问的项目编辑权限")
@@ -175,6 +183,8 @@ class GeoServicePlanUpdate(BaseModel):
 async def update_project_plan(project_id: int, tenant_id: int, req: GeoServicePlanUpdate,
                               ctx: AuthContext = Depends(require_scoped_auth),
                               session: AsyncSession = Depends(get_session)):
+    from app.security.geo_configuration_admin import require_geo_configuration_admin
+    require_geo_configuration_admin(ctx)
     await ensure_module_access(session, ctx, tenant_id, "geo")
     if ctx.user_id is None or not (ctx.can_edit("geo.assets") and ctx.can_edit("geo.content")):
         raise HTTPException(403, "配置服务计划需要项目与内容编辑权限")

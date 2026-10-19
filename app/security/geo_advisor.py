@@ -105,6 +105,7 @@ async def check_objects(session, ctx, request):
 async def guard_request(session, ctx, request, claims):
     if request is None:
         deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "缺少请求范围")
+    request.scope["geo_advisor_actor"] = (ctx.user_id, ctx.tenant_id)
     if claims.get("scope_kind") != "advisor_tenant":
         if not ctx.advisor_scope.tenant_ids:
             deny(403, "ADVISOR_NO_TENANT", "顾问尚未获准访问任何客户")
@@ -120,9 +121,16 @@ async def guard_request(session, ctx, request, claims):
         deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "此顾问入口尚未开放")
     from app.security.auth import _required
     keys, edit = _required(request.url.path, request.method)
+    if keys == {'geo.diagnosis'}:
+        keys = {'geo.assets', 'geo.content'}  # Exact reviewed GEO read matrix above.
     if keys is None or not (ctx.can_edit(*keys) if edit else ctx.can_view(*keys)):
         deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "当前角色无权访问此功能")
     await check_objects(session, ctx, request)
+    from app.security.advisor_read_scope import bind_read_scope, check_read_references
+    await bind_read_scope(session, ctx, request)
+    await check_read_references(session, ctx, request)
+    from app.security.advisor_write_reads import check_read_assignment
+    await check_read_assignment(session, ctx, request)
     if (template not in STATIC_ROUTES and template != "/api/v1/geo/tenants"
             and not request.query_params.getlist("tenant_id")):
         deny(403, "ADVISOR_TENANT_REQUIRED", "请求必须指定当前客户")
@@ -133,6 +141,9 @@ async def guard_request(session, ctx, request, claims):
 
 
 async def check_scoped_write_objects(session, ctx, request, body, rule):
+    if rule.assignment == 'operations':
+        from app.security.advisor_operations import guard_scope
+        return await guard_scope(session, ctx, request, body, rule)
     from app.security.advisor_write_routes import VISIBILITY_RUN_RULE
     if rule == VISIBILITY_RUN_RULE:
         from app.security.advisor_visibility import check_visibility_scope
@@ -150,33 +161,21 @@ async def check_scoped_write_objects(session, ctx, request, body, rule):
     await check_write_objects(session, ctx, request, body, rule)
     await ensure_advisor_assignment(session, ctx, request, body, rule)
     await check_manual_execution_scope(session, ctx, rule)
+    if rule.method == "DELETE":
+        from app.security.advisor_write_delete import check_cascade_scope
+        await check_cascade_scope(session, request, rule)
 
 
 async def check_manual_execution_scope(session, ctx, rule, *, lock=True):
-    """Conservative isolation from tenant-wide patrol and project cycles.
+    """Serialize operations with scheduling; running plans do not veto edits.
 
-    The existing patrol selects active prompts dynamically, and task creation
-    auto-attaches the active period. There is no inert resource schema flag.
-    Serialize with the existing scheduler/settings tenant lock and reject
-    these resources while any such execution chain is enabled.
+    The current policy permits advisor operations during patrols, periods and
+    service plans. Keep the shared tenant lock and the independent exact route,
+    project assignment and commit checks. This never authorizes plan settings.
     """
-    resource = rule.template.removeprefix("/api/v1/geo/").split("/")[0]
-    if resource not in {"facts", "prompts", "optimization-businesses", "optimization-units", "content-tasks", "visibility-patrol", "content-imports"}:
-        return
-    from app.models import Tenant, GeoProject, GeoVisibilityPatrolSettings, GeoOptimizationPeriod
-    tenant_query = select(Tenant.id).where(Tenant.id == ctx.tenant_id)
+    from app.models import Tenant
     if lock:
-        tenant_query = tenant_query.with_for_update()
-    await session.scalar(tenant_query)
-    patrol = await session.scalar(select(GeoVisibilityPatrolSettings).where(
-        GeoVisibilityPatrolSettings.tenant_id == ctx.tenant_id).execution_options(populate_existing=True))
-    projects = list(await session.scalars(select(GeoProject).where(GeoProject.tenant_id == ctx.tenant_id)
-                                         .order_by(GeoProject.id).execution_options(populate_existing=True)))
-    active_period = await session.scalar(select(GeoOptimizationPeriod.id).where(
-        GeoOptimizationPeriod.tenant_id == ctx.tenant_id, GeoOptimizationPeriod.status == "active").limit(1))
-    if ((patrol is not None and patrol.enabled) or active_period is not None or any(
-            ((p.project_settings or {}).get("geo_service_plan") or {}).get("enabled") for p in projects)):
-        deny(403, "ADVISOR_EXECUTION_CHAIN_ACTIVE", "当前客户已启用巡检、周期或服务计划，顾问手动操作暂未开放")
+        await session.scalar(select(Tenant.id).where(Tenant.id == ctx.tenant_id).with_for_update())
 
 
 async def guard_scoped_write(session, ctx, request, claims):
@@ -194,6 +193,25 @@ async def guard_scoped_write(session, ctx, request, claims):
     rule = match_write_rule(request)
     if rule is None:
         deny(403, "ADVISOR_HIGH_RISK_WRITES_DISABLED", "此顾问写入入口尚未开放")
+    if rule.assignment == 'operations':
+        from app.security.advisor_operations import guard_scope, read_contract, reserve_quota, bind_pending_scope
+        from app.security.advisor_read_scope import bind_read_scope
+        body = await read_contract(request, rule)
+        if not request.query_params.getlist('tenant_id') and body.get('tenant_id') != ctx.tenant_id:
+            deny(403, 'ADVISOR_TENANT_REQUIRED', '请求必须指定当前客户')
+        if not all(ctx.can_edit(key) for key in rule.edit_all):
+            deny(403, 'ADVISOR_ROUTE_UNAVAILABLE', '当前角色无编辑权限')
+        await ensure_module_access(session, ctx, ctx.tenant_id, 'geo')
+        await guard_scope(session, ctx, request, body, rule)
+        bind_advisor_write_commit(session, ctx, request, body, rule, claims)
+        await bind_read_scope(session, ctx, request, project_limit=request.state.advisor_operation_projects)
+        await bind_pending_scope(session, ctx, request, body)
+        from app.security.advisor_operation_call import current_operation
+        current_operation.set((session, ctx))
+        request.state.advisor_scoped_write = rule
+        request.scope['geo_advisor_delivery'] = (ctx.user_id, dict(claims), ctx.tenant_id, frozenset(rule.edit_all))
+        await reserve_quota(session, ctx, rule)
+        return
     if not request.query_params.getlist("tenant_id"):
         deny(403, "ADVISOR_TENANT_REQUIRED", "请求必须指定当前客户")
     try:
@@ -205,17 +223,23 @@ async def guard_scoped_write(session, ctx, request, claims):
     # Resolve supplied object references even when an extra query key or an
     # opaque brief would otherwise fail the field policy first.
     await check_write_objects(session, ctx, request, {}, rule)
-    # Query action switches are not part of any admitted manual-write contract.
-    for key, value in request.query_params.multi_items():
+    from app.security.advisor_write_operations import rules as operation_rules, read_contract
+    from app.security.advisor_write_ai import TASK_TEMPLATES, GENERATE, read_contract as ai_contract
+    ai_body = await ai_contract(request, rule) if rule.template in TASK_TEMPLATES else None
+    operation = rule in operation_rules().values()
+    # Query switches are admitted only by an exact action contract.
+    for key, value in (() if operation else request.query_params.multi_items()):
         if key == "project_id" and rule.method == "POST" and rule.template == "/api/v1/geo/optimization-businesses":
             positive_id(value)
+            continue
+        if key == "run_async" and rule.template == GENERATE:
             continue
         if key != "tenant_id":
             deny(403, "ADVISOR_WRITE_FIELD_FORBIDDEN", "此查询字段未向顾问开放")
         ctx.ensure_tenant(positive_id(value))
     try:
         # Request.json() caches body bytes for the handler/dependency re-read.
-        body = await request.json()
+        body = ai_body if ai_body is not None else (await read_contract(request, rule) if operation else await request.json())
     except (ValueError, UnicodeDecodeError):
         deny(403, "ADVISOR_WRITE_FIELD_FORBIDDEN", "顾问写入仅支持 JSON 对象")
     if isinstance(body, dict) and "brief" in body:

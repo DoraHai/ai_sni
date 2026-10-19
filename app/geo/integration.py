@@ -1,3 +1,4 @@
+from app.security.advisor_operation_call import checked_call
 """GEO contract adapter; no outbound cockpit connection or schema migration."""
 import json
 from datetime import date, datetime, timezone
@@ -173,6 +174,7 @@ async def metrics_dictionary(tenant_id: int = Query(...), week_end: date | None 
 
 
 @router.post('/tasks', status_code=201, response_model=TaskContract)
+@checked_call
 async def create_task(req: TaskCreate, tenant_id: int = Query(...),
                       ctx=Depends(require_scoped_auth), session=Depends(get_session)):
     ctx.ensure_tenant(tenant_id)
@@ -283,6 +285,7 @@ def completion_evidence(row, current, publication_proof=None, *, require_target=
 
 
 @router.patch('/tasks/{task_id}', response_model=TaskContract)
+@checked_call
 async def update_task(task_id: int, req: TaskUpdate, tenant_id: int = Query(...),
                       ctx=Depends(require_scoped_auth), session=Depends(get_session)):
     ctx.ensure_tenant(tenant_id)
@@ -319,6 +322,7 @@ async def update_task(task_id: int, req: TaskUpdate, tenant_id: int = Query(...)
 
 
 @router.post('/tasks/{task_id}/baseline', response_model=TaskContract)
+@checked_call
 async def capture_baseline(task_id: int, tenant_id: int = Query(...),
                            ctx=Depends(require_scoped_auth), session=Depends(get_session)):
     ctx.ensure_tenant(tenant_id)
@@ -350,6 +354,7 @@ async def get_retest_plan(task_id: int, tenant_id: int = Query(...),
 
 
 @router.post('/tasks/{task_id}/retest', status_code=202)
+@checked_call
 async def start_retest(task_id: int, background_tasks: BackgroundTasks, tenant_id: int = Query(...),
                        ctx=Depends(require_scoped_auth), session=Depends(get_session)):
     from app.models import GeoVisibilityPatrolRun
@@ -392,6 +397,7 @@ class PublicationCheck(BaseModel):
 
 
 @router.post('/tasks/{task_id}/publication-check', response_model=TaskContract)
+@checked_call
 async def check_publication(task_id: int, req: PublicationCheck, tenant_id: int = Query(...),
                             ctx=Depends(require_scoped_auth), session=Depends(get_session)):
     from app.geo.publication_evidence import verify_publication

@@ -1,14 +1,18 @@
 """Reviewed GEO GET matrix. New routes stay closed until explicitly reviewed.
 
-Archives expose permanent public share capabilities and remain closed for
-advisors. Public OAuth/share routes retain their existing independent contract;
-advisors cannot mint states/shares because all originating writes are closed.
+Advisor archives are authenticated project records; their writes do not mint
+public share tokens and their reads omit existing public capabilities. Public
+OAuth/share routes retain their existing independent administrator contract.
 """
 STATIC_ROUTES = frozenset({
+    '/api/v1/geo/content-health',
     "/api/v1/geo/content-brief-catalog", "/api/v1/geo/channel-profiles",
     "/api/v1/geo/metric-dictionary",
 })
 READ_ROUTES = frozenset({
+    '/api/v1/geo/content-health',
+    '/api/v1/geo/deliverables/archives',
+    '/api/v1/geo/deliverables/archives/{archive_id}',
     '/api/v1/geo/action-tickets',
     '/api/v1/geo/action-tickets/{ticket_id}/execution-plan',
     '/api/v1/geo/action-tickets/{ticket_id}/implementation-plan',

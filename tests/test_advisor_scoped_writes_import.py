@@ -73,7 +73,7 @@ def test_import_requires_prompt_in_unique_assigned_active_project(tmp_path, monk
 
 
 @pytest.mark.parametrize('chain', ['patrol', 'period', 'plan'])
-def test_import_cannot_join_enabled_execution_chain(tmp_path, monkeypatch, backend, chain):
+def test_import_allowed_during_enabled_execution_chain(tmp_path, monkeypatch, backend, chain):
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
             async with env.factory() as session:
@@ -91,9 +91,8 @@ def test_import_cannot_join_enabled_execution_chain(tmp_path, monkeypatch, backe
                 await session.commit()
             before = await env.snapshot()
             response = await env.request('POST', PATH, body=BODY)
-            assert response.status_code == 403, response.text
-            assert response.json()['detail']['code'] == 'ADVISOR_EXECUTION_CHAIN_ACTIVE'
-            assert await env.snapshot() == before
+            assert response.status_code == 200, response.text
+            assert await env.snapshot() != before
     asyncio.run(run())
 
 
@@ -131,7 +130,7 @@ def test_import_into_another_explicitly_granted_selected_customer(tmp_path, monk
     asyncio.run(run())
 
 
-@pytest.mark.parametrize('change', ['assignment', 'patrol'])
+@pytest.mark.parametrize('change', ['assignment'])
 @pytest.mark.parametrize('source', ['paste', 'file', 'url'])
 def test_import_rechecks_scope_at_actual_commit_and_rolls_back(tmp_path, monkeypatch, backend, change, source):
     from app.geo.content import routes

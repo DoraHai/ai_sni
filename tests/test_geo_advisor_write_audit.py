@@ -32,7 +32,8 @@ def test_write_records_actor_scope_objects_and_result(tmp_path, monkeypatch, bac
                 response = await env.request('PATCH', '/facts/10', body={'statement': 'private fixture text'},
                     auth=fixture_token(scope_kind='advisor_identity', aud='advisor-session'))
             else:
-                response = await env.request('DELETE', '/content-tasks/10')
+                response = await env.request('PUT', '/ai-settings',
+                    body={'tenant_id': 10, 'model': 'fixture-protected-model'})
             messages = [r.getMessage() for r in caplog.records if r.getMessage().startswith('geo_advisor_write ')]
             assert len(messages) == 1
             raw = messages[0]

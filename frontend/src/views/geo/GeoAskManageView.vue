@@ -654,7 +654,7 @@ async function submitDialog() {
         return
       }
       if (editTarget.value) {
-        await patchGeoUnit(tenantId.value, editTarget.value.id, { name, keyword: name, ...(isAdvisor.value ? {} : { business_id: businessId }) })
+        await patchGeoUnit(tenantId.value, editTarget.value.id, { name, keyword: name, business_id: businessId })
         ElMessage.success('已保存')
       } else {
         await createGeoUnit({
@@ -699,7 +699,7 @@ async function submitDialog() {
           return
         }
         if (editTarget.value) {
-          await patchGeoPrompt(tenantId.value, editTarget.value.id, { question, ...(isAdvisor.value ? {} : { unit_id: unitId }) })
+          await patchGeoPrompt(tenantId.value, editTarget.value.id, { question, unit_id: unitId })
           ElMessage.success('已保存')
         } else {
           await createGeoPrompt({
@@ -1114,7 +1114,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
           <template v-else-if="layer === 'keyword'">
             <div class="prompt-field">
               <label>所属业务</label>
-              <select v-model="form.business_id" :disabled="(dialogMode === 'create' && !!selectedBusinessId) || (isAdvisor && !!editTarget)">
+              <select v-model="form.business_id" :disabled="(dialogMode === 'create' && !!selectedBusinessId)">
                 <option v-for="b in businesses" :key="b.id" :value="b.id">{{ b.name }}</option>
               </select>
             </div>
@@ -1131,11 +1131,11 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
             <div class="create-ctx">
               <div>
                 <span>当前业务：</span>
-                <select v-model="form.business_id" :disabled="isAdvisor && !!editTarget" @change="onFormUnitChange">
+                <select v-model="form.business_id"  @change="onFormUnitChange">
                   <option v-for="b in businesses" :key="b.id" :value="b.id">{{ b.name }}</option>
                 </select>
                 <span>当前关键词：</span>
-                <select v-model="form.unit_id" :disabled="isAdvisor && !!editTarget" @change="createTab === 'ai' && dialogMode === 'create' && runRecommend()">
+                <select v-model="form.unit_id"  @change="createTab === 'ai' && dialogMode === 'create' && runRecommend()">
                   <option v-for="u in unitsForForm" :key="u.id" :value="u.id">{{ unitLabel(u) }}</option>
                 </select>
               </div>

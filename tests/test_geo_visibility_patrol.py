@@ -195,6 +195,7 @@ class ExecutePatrolRunTests(unittest.IsolatedAsyncioTestCase):
         )
 
         session = AsyncMock()
+        session.info = {}  # Match AsyncSession: this native patrol has no advisor read scope.
         session.get = AsyncMock(side_effect=lambda model, pk: {
             # GeoVisibilityPatrolRun lookups by id
             99: run,

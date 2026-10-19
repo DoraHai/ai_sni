@@ -1,12 +1,44 @@
-"""Structured advisor write records without request bodies or credentials."""
+"""No schema change: operation, commit and background records.
+
+Only declared identifiers and review fingerprints are logged. Never bodies,
+headers, credentials, URLs supplied by a customer, or exception text.
+"""
+from datetime import datetime, timezone
 import json
 import logging
-from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import event
 
-logger = logging.getLogger('uvicorn.error')
+logger = logging.getLogger("geo.advisor.operations")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    # Uvicorn need not configure the root logger. Always emit the audit JSON
+    # to the service's captured stderr even when root defaults to WARNING.
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
+
+
+def record(scope, result, **extra):
+    actor = scope.get("geo_advisor_actor")
+    if not actor:
+        return
+    user_id, tenant_id = actor
+    objects = {key: value for key, value in scope.get("path_params", {}).items()
+               if key.endswith("_id") and str(value).isascii() and str(value).isdecimal()}
+    for table, ids in scope.get("geo_advisor_created_ids", {}).items():
+        objects[table] = sorted(ids)
+    event = {"event": "geo_advisor_operation", "advisor_user_id": user_id,
+             "tenant_id": tenant_id, "method": scope["method"], "path": scope["path"],
+             "object_ids": objects, "result": result,
+             "time": datetime.now(timezone.utc).isoformat(), **extra}
+    if scope.get("geo_advisor_review"):
+        event["review"] = scope["geo_advisor_review"]
+    logger.info(json.dumps(event, ensure_ascii=False, sort_keys=True))
+
+
+write_logger = logging.getLogger('uvicorn.error')
 KEY = 'geo_advisor_write_audit'
 
 
@@ -79,4 +111,4 @@ class AdvisorWriteAuditMiddleware:
                     'status': status, 'response_failed': failed,
                     'result': 'committed' if record['committed'] else
                               'rejected' if status >= 400 or failed else 'completed'}
-                logger.info('geo_advisor_write %s', json.dumps(result, ensure_ascii=True, sort_keys=True))
+                write_logger.info('geo_advisor_write %s', json.dumps(result, ensure_ascii=True, sort_keys=True))

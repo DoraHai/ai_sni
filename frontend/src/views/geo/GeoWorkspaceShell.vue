@@ -2,10 +2,21 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GeoAccountBar from '../../components/GeoAccountBar.vue'
+import GeoAdvisorProjectPicker from '../../components/GeoAdvisorProjectPicker.vue'
+import { geoAdvisorProject } from '../../store/geoAdvisorProject.js'
+import { advisorClaims } from '../../utils/geoAdvisorTenant.js'
 import { session } from '../../store/session'
 import { canViewCockpit } from '../../utils/cockpitAccess'
 import { GEO_WORKBENCH_NAV } from '../../utils/geoPrototypeNavigation'
 import { GEO_DEMO_HOME, isGeoDemoIdentity } from '../../utils/geoDemoIdentity'
+
+const isAdvisor = computed(() => !!advisorClaims(session.token) || session.user?.is_advisor === true)
+const advisorProjectId = ref(null)
+watch([() => session.token, () => session.tenantId], () => {
+  advisorProjectId.value = null
+  Object.assign(geoAdvisorProject, { token: session.token, tenantId: session.tenantId, projectId: null })
+}, { immediate: true })
+watch(advisorProjectId, (id) => { geoAdvisorProject.projectId = id })
 
 const route = useRoute()
 const router = useRouter()
@@ -160,6 +171,7 @@ onUnmounted(() => {
     </aside>
     <main class="geo-shell-main">
       <GeoAccountBar />
+      <div v-if="isAdvisor" style="padding: 8px 20px"><GeoAdvisorProjectPicker :key="session.token" v-model="advisorProjectId" :tenant-id="session.tenantId" /></div>
       <div class="geo-shell-content"><router-view /></div>
     </main>
   </div>

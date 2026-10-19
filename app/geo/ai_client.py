@@ -119,6 +119,10 @@ def _chat_json_payload(system: str, user: str, model: str, *,
     return payload
 
 
+from app.security.advisor_operation_call import checked_call
+
+
+@checked_call
 @managed_runtime('geo')
 async def chat_json(
     system: str,

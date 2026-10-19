@@ -84,6 +84,7 @@ class PromptImportItem(BaseModel):
 
 class PromptImportRequest(BaseModel):
     tenant_id: int
+    unit_id: int | None = None
     items: list[PromptImportItem] = Field(..., min_length=1)
 
 
@@ -312,6 +313,8 @@ class PushBatchRequest(BaseModel):
 
 
 class ReviewSubmit(BaseModel):
+    expected_article_id: int | None = Field(None, gt=0)
+    expected_updated_at: str | None = Field(None, max_length=60)
     note: str | None = Field(None, max_length=2000)
 
 

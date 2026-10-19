@@ -1,7 +1,7 @@
 """Scope and cost checks for the one admitted advisor visibility action."""
 from sqlalchemy import select
 
-from app.models import GeoProject, GeoPrompt, GeoOptimizationUnit, Tenant
+from app.models import GeoProject, GeoPrompt, GeoOptimizationUnit, Tenant, User
 from app.security.advisor_scope import deny
 
 
@@ -15,7 +15,7 @@ async def check_visibility_execution(session, run, prompt_ids, *, lock=False):
     from types import SimpleNamespace
     from sqlalchemy.orm import load_only
     from app.config import get_settings
-    from app.models import User, Role
+    from app.models import User, Role, GeoTrackingEngine
     from app.module_scope import ensure_module_access
     from app.security.advisor_scope import AdvisorScope, account_locked, active_grants, is_advisor, read_grants
     from app.security.auth import AuthContext
@@ -31,6 +31,10 @@ async def check_visibility_execution(session, run, prompt_ids, *, lock=False):
                 or auth['auth_exp'] <= datetime.now(timezone.utc).timestamp()
                 or not get_settings().advisor_scoped_content_writes_enabled):
             raise AdvisorVisibilityUnavailable(message)
+        # Match the HTTP admission/commit lock order: tenant -> user -> role.
+        # Starting a worker with the reverse order can deadlock a new request.
+        if lock:
+            await session.scalar(select(Tenant.id).where(Tenant.id == run.tenant_id).with_for_update())
         user_query = select(User).options(load_only(
             User.id, User.role_id, User.tenant_id, User.is_active, User.locked_until
         )).where(User.id == run.created_by).execution_options(populate_existing=True)
@@ -60,11 +64,31 @@ async def check_visibility_execution(session, run, prompt_ids, *, lock=False):
         await ensure_module_access(session, ctx, run.tenant_id, 'geo')
         request = SimpleNamespace(state=SimpleNamespace(advisor_visibility_prompt_ids=list(prompt_ids)))
         await check_visibility_scope(session, ctx, request, lock=lock)
-        await check_manual_execution_scope(session, ctx, VISIBILITY_RUN_RULE, lock=lock)
+        keys = run.engine_keys
+        if not isinstance(keys, list) or not keys or any(not isinstance(key, str) for key in keys):
+            raise AdvisorVisibilityUnavailable(message)
+        engines = select(GeoTrackingEngine.engine_key).where(
+            GeoTrackingEngine.tenant_id == run.tenant_id, GeoTrackingEngine.enabled.is_(True),
+            GeoTrackingEngine.engine_key != 'other', GeoTrackingEngine.engine_key.in_(keys))
+        if lock:
+            engines = engines.with_for_update()
+        if set(await session.scalars(engines)) != set(keys):
+            raise AdvisorVisibilityUnavailable(message)
+        if lock:
+            await check_manual_execution_scope(session, ctx, VISIBILITY_RUN_RULE)
     except AdvisorVisibilityUnavailable:
         raise
     except Exception as exc:
         raise AdvisorVisibilityUnavailable(message) from exc
+
+
+def record_visibility_execution(run, result):
+    from app.security.advisor_write_audit import record
+    auth = (run.summary or {}).get('advisor_visibility_auth')
+    if not isinstance(auth, dict) or auth.get('user_id') != run.created_by:
+        return
+    record({'geo_advisor_actor': (run.created_by, run.tenant_id), 'method': 'POST',
+            'path': '/api/v1/geo/visibility-patrol/runs', 'path_params': {'run_id': run.id}}, result)
 
 
 async def check_visibility_scope(session, ctx, request, *, lock=True):
@@ -76,14 +100,13 @@ async def check_visibility_scope(session, ctx, request, *, lock=True):
     from app.geo.project_scope import binding, project_scope
     from app.geo.project_workflows import advisor_available, plan_for
 
-    tenant_query = select(Tenant.id).where(Tenant.id == ctx.tenant_id)
-    project_query = select(GeoProject).where(
-        GeoProject.tenant_id == ctx.tenant_id).order_by(GeoProject.id)
     if lock:
-        tenant_query = tenant_query.with_for_update()
+        await session.scalar(select(Tenant.id).where(Tenant.id == ctx.tenant_id).with_for_update())
+    project_query = select(GeoProject).where(GeoProject.tenant_id == ctx.tenant_id).order_by(
+        GeoProject.id).execution_options(populate_existing=True)
+    if lock:
         project_query = project_query.with_for_update()
-    await session.scalar(tenant_query)
-    projects = list(await session.scalars(project_query.execution_options(populate_existing=True)))
+    projects = list(await session.scalars(project_query))
     owned = set()
     for project in projects:
         plan = plan_for(project)
@@ -121,8 +144,8 @@ async def check_visibility_quota(session, ctx):
     from app.config import get_settings
     from app.geo.content.patrol import count_patrol_runs_today
 
-    limit = get_settings().advisor_visibility_max_runs_per_day
+    limit = 10
     used = await count_patrol_runs_today(session, ctx.tenant_id, created_by=ctx.user_id)
     if used >= limit:
         deny(429, "ADVISOR_VISIBILITY_DAILY_LIMIT",
-             f"你今天为此客户的手动检测已达上限（{used}/{limit}），请明天再试；失败也计次")
+             f"今天这个客户的 AI 可见度手动检测已用完 10 次（{used}/{limit}），明天再试；失败也计次")

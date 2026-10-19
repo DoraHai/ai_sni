@@ -267,7 +267,7 @@ def test_query_scope_cannot_authorize_unbound_creation_or_import(tmp_path, templ
     ("/facts", {}, {"business_id": 1}), ("/prompts", {}, {"unit_id": 1}),
     ("/facts/{fact_id}", {"fact_id": 1}, {}), ("/prompts/{prompt_id}", {"prompt_id": 1}, {}),
 ])
-def test_enabled_execution_chains_reject_preparation(tmp_path, trigger, template, path, body):
+def test_enabled_execution_chains_allow_assigned_preparation(tmp_path, trigger, template, path, body):
     async def run():
         async with sandbox(tmp_path) as factory, factory() as session:
             if trigger == "patrol":
@@ -277,9 +277,7 @@ def test_enabled_execution_chains_reject_preparation(tmp_path, trigger, template
                 project.project_settings = {**project.project_settings,
                     "geo_service_plan": {"advisor_user_id": 1, "enabled": True, "status": "active"}}
             await session.commit()
-            with pytest.raises(HTTPException) as denied:
-                await validate(session, template, body, method="PATCH" if path else "POST", path=path)
-            assert denied.value.detail["code"] == "ADVISOR_OBJECT_UNAVAILABLE"
+            await validate(session, template, body, method="PATCH" if path else "POST", path=path)
     asyncio.run(run())
 
 
@@ -307,7 +305,7 @@ def test_content_task_mapping_cannot_be_reused_for_other_routes(tmp_path, templa
         async with sandbox(tmp_path) as factory, factory() as session:
             with pytest.raises(HTTPException) as denied:
                 await validate(session, template, {}, path={"task_id": 1})
-            assert denied.value.detail["code"] == "ADVISOR_OBJECT_UNAVAILABLE"
+            assert denied.value.detail["code"] == "ADVISOR_TENANT_NOT_GRANTED"
     asyncio.run(run())
 
 

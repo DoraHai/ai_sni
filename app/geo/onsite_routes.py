@@ -1,3 +1,4 @@
+from app.security.advisor_operation_call import checked_call
 """Project-scoped website delivery, independent of article publication and AI visibility."""
 import asyncio
 import hashlib
@@ -56,7 +57,8 @@ async def can_operate(session, ctx, project, *, lock_advisor=False):
     return bool(ctx.user_id and ctx.can_edit("geo.assets") and ctx.can_edit("geo.content")
         and project.status == "active" and plan_for(project).get("advisor_user_id") == ctx.user_id
         and await advisor_available(
-            session, project.tenant_id, ctx.user_id, lock=lock_advisor))
+            session, project.tenant_id, ctx.user_id, lock=lock_advisor,
+            advisor_scope=getattr(ctx, 'advisor_scope', None)))
 
 async def scope(session, ctx, tenant_id, project_id, write=False):
     ctx.ensure_tenant(tenant_id)
@@ -170,7 +172,8 @@ async def advisor_tasks(tenant_id: PositiveInt | None = None, before_id: Positiv
         try:
             await ensure_geo_entitlement(session, project.tenant_id, allow_demo_read=False, lock_binding=False)
             await project_scope(session, project.tenant_id, project.id)
-            if await advisor_available(session, project.tenant_id, ctx.user_id):
+            if await advisor_available(session, project.tenant_id, ctx.user_id,
+                                       advisor_scope=getattr(ctx, 'advisor_scope', None)):
                 projects[project.id] = project
         except HTTPException:
             continue
@@ -300,6 +303,7 @@ async def _finish_run(session, task_id: int, request_id: str, *, state: str,
 
 
 @router.post("/workbench/onsite-tasks/{task_id}/ai-proposal")
+@checked_call
 async def ai_proposal(task_id: PositiveInt, req: AiProposal, session=Depends(get_session),
                       ctx=Depends(require_scoped_auth)):
     """Reserve, draft and save an AI proposal with save_proposal semantics."""
@@ -339,7 +343,8 @@ async def ai_proposal(task_id: PositiveInt, req: AiProposal, session=Depends(get
     system_prompt, user_prompt = onsite_ai.prompt_text(snapshot, req.mode)
     generation_options = onsite_ai.generation_options(credentials, snapshot)
     project.project_settings = onsite_ai.reserve_daily(
-        project.project_settings, request_id, request_digest=digest)
+        project.project_settings, request_id, request_digest=digest,
+        limit=None if getattr(ctx, 'advisor_scope', None) is not None else onsite_ai.DAILY_LIMIT)
     started = onsite_ai.now_iso()
     value["ai_run"] = {
         "request_id": request_id,
@@ -434,6 +439,7 @@ async def ai_proposal(task_id: PositiveInt, req: AiProposal, session=Depends(get
         raise
 
 @router.post("/workbench/onsite-tasks")
+@checked_call
 async def create(req: Create, session=Depends(get_session), ctx=Depends(require_scoped_auth)):
     project = await scope(session, ctx, req.tenant_id, req.project_id, True)
     code = PREFIX + str(req.request_id)
@@ -472,6 +478,7 @@ async def create(req: Create, session=Depends(get_session), ctx=Depends(require_
     return await _public(session, row, project, True)
 
 @router.post("/workbench/onsite-tasks/{task_id}/actions")
+@checked_call
 async def act(task_id: PositiveInt, req: Update, session=Depends(get_session), ctx=Depends(require_scoped_auth)):
     project = await scope(session, ctx, req.tenant_id, req.project_id, True)
     row = await session.get(GeoActionTicket, task_id, with_for_update=True, populate_existing=True)
