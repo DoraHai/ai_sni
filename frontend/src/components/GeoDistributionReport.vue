@@ -3,7 +3,7 @@ import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { session } from '../store/session'
 import { fetchGeoProjects } from '../api/geoProjects'
 import { reportSettings, setReportSettings, pairReportDevice, revokeReportDevice, dispatchReportTask, fetchReportTask } from '../api/geoDistributionReport'
-import { reportContext, reportDigest, reportOutcomes, reportCodes } from '../utils/geoDistributionReport'
+import { reportContext, reportDigest, reportToggle, reportOutcomes, reportCodes } from '../utils/geoDistributionReport'
 
 const props = defineProps({ tenantId: Number, projectId: Number, task: Object, accounts: Array, mode: { type: String, default: 'settings' } })
 const emit = defineEmits(['changed'])
@@ -58,8 +58,7 @@ async function action(operation) {
 }
 function toggle() {
   action(async ({ tenant, scope, current }) => {
-    const data = await setReportSettings(tenant, scope, { enabled: true, scope_enabled: !settings.value.scope_enabled,
-      expected_revision: settings.value.revision, expected_scope_revision: settings.value.scope_revision })
+    const data = await setReportSettings(tenant, scope, reportToggle(settings.value))
     if (current()) settings.value = { ...data, can_manage: true }
   })
 }

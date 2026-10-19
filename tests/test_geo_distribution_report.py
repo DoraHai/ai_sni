@@ -223,3 +223,16 @@ def test_credential_errors_do_not_echo_or_log_input(caplog):
         db.rollback.assert_awaited_once()
     asyncio.run(run())
     assert marker not in caplog.text
+
+
+def test_opening_project_cannot_reactivate_another_project_via_tenant_switch():
+    book = p.registry({})
+    book['scopes'] = {'5':{'enabled':False, 'revision':0}, '6':{'enabled':True, 'revision':1}}
+    original = copy.deepcopy(book)
+    store = NS(book=book, save=AsyncMock(), audit=Mock())
+    with pytest.raises(HTTPException) as denied:
+        asyncio.run(s.change_settings(store, 5, {'user_id':9}, {'enabled':True, 'scope_enabled':True,
+            'expected_revision':0, 'expected_scope_revision':0}))
+    assert denied.value.detail['code'] == 'SOURCE_CHANGED'
+    assert store.book == original
+    store.save.assert_not_awaited()

@@ -182,6 +182,12 @@ async def change_settings(store, project_id, actor, body):
     scope = store.book['scopes'].get(str(project_id)) or {'enabled': False, 'revision': 0}
     if body['expected_revision'] != store.book['revision'] or body['expected_scope_revision'] != scope['revision']:
         p.fail('SOURCE_CHANGED')
+    # Re-arming a previously disabled tenant must not implicitly reactivate
+    # another project's saved switch. Close those scopes explicitly first.
+    if (body['enabled'] and not store.book['enabled'] and any(
+            key != str(project_id) and value.get('enabled') is True
+            for key, value in store.book['scopes'].items())):
+        p.fail('SOURCE_CHANGED')
     store.book['enabled'] = body['enabled']
     store.book['revision'] += 1
     store.book['scopes'][str(project_id)] = {'enabled': body['scope_enabled'], 'revision': scope['revision'] + 1}
