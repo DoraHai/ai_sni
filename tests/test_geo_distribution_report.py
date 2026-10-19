@@ -189,3 +189,37 @@ def test_settings_and_task_projection_never_expose_registry_values(caplog):
     task['credential_hash'] = 'synthetic-sensitive-marker'
     assert 'synthetic-sensitive-marker' not in json.dumps(s.task_projection(task))
     assert not caplog.text
+
+
+def test_project_status_is_refreshed_under_lock_before_admission():
+    async def run():
+        project = NS(status='active', tenant_module_id=1)
+        async def pause_during_refresh(row, **kwargs):
+            assert row is project and kwargs == {'with_for_update': True}
+            row.status = 'paused'
+        db = NS(refresh=AsyncMock(side_effect=pause_during_refresh))
+        store = NS(session=db, tenant_id=7, row=NS(id=1))
+        with patch.object(s, 'project_scope', AsyncMock(return_value=(project, [20]))):
+            with pytest.raises(HTTPException) as denied:
+                await s.selected_project(store, 5)
+        assert denied.value.detail['code'] == 'SCOPE_FORBIDDEN'
+        db.refresh.assert_awaited_once()
+    asyncio.run(run())
+
+
+def test_credential_errors_do_not_echo_or_log_input(caplog):
+    from app.geo.content.distribution_routes import safe_session
+    from sqlalchemy.exc import DBAPIError
+    marker = 'sensitive-synthetic-marker'
+    async def run():
+        db = NS(rollback=AsyncMock())
+        dependency = safe_session(db)
+        await anext(dependency)
+        with pytest.raises(HTTPException) as denied:
+            await dependency.athrow(DBAPIError('synthetic statement', {'credential': marker}, Exception(marker)))
+        assert marker not in json.dumps(denied.value.detail)
+        assert denied.value.detail['code'] == 'REPORT_STORAGE_UNAVAILABLE'
+        assert denied.value.headers['Cache-Control'] == 'private, no-store'
+        db.rollback.assert_awaited_once()
+    asyncio.run(run())
+    assert marker not in caplog.text

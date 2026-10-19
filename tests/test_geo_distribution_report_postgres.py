@@ -6,9 +6,10 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select, text, func
+from sqlalchemy import select, text, func, update
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.schema import CreateTable
+from starlette.requests import Request
 
 from app.models import (Tenant, TenantModule, GeoProject, GeoOptimizationBusiness, GeoOptimizationUnit,
     GeoPrompt, GeoContentTask, GeoArticleVersion, GeoChannelVariant, GeoPublication,
@@ -43,6 +44,8 @@ def test_pairing_claim_race_publication_race_rollback_and_scope():
                 book = p.registry({}); book['enabled'] = True; book['scopes']['5'] = {'enabled': True, 'revision': 1}
                 db.add_all([Tenant(id=7, name='synthetic seven'), Tenant(id=8, name='synthetic eight'),
                     TenantModule(id=1, tenant_id=7, module_code='geo', status='active', module_settings={p.KEY: book, 'unrelated': {'limit': 20}}),
+                    TenantModule(id=2, tenant_id=7, module_code='seo', status='active',
+                        module_settings={p.KEY:{'devices':{'foreign-device':{'credential_hash':s.sha('z'*64)}}}}),
                     Role(id=1, name='synthetic admin', is_system=False, permissions={'settings.accounts': 'edit'}),
                     User(id=9, username='synthetic-operator', password_hash='unusable-synthetic-value', role_id=1, is_active=True),
                     GeoPublishingChannel(id=1, tenant_id=7, name='synthetic wechat', channel_type='wechat', enabled=True),
@@ -61,6 +64,12 @@ def test_pairing_claim_race_publication_race_rollback_and_scope():
                         GeoChannelVariant(id=variant, task_id=task, article_version_id=task+100, channel='wechat',
                             title='synthetic article', body_markdown='synthetic body', adapt_meta={}, status='draft')])
                 await db.commit()
+            async with sessions() as db:
+                req = Request({'type':'http', 'method':'POST', 'path':p.PREFIX+'/device/exchange',
+                    'query_string':b'', 'headers':[(b'authorization', ('Bearer '+'z'*64).encode())]})
+                with pytest.raises(HTTPException) as denied:
+                    await s.authenticate(db, req, reporting=True)
+                assert denied.value.detail['code'] == 'DEVICE_CREDENTIAL_INVALID'
             async with sessions() as db:
                 store = await s.open_store(db, 7)
                 pair = await s.create_pairing(store, 5, actor,
@@ -132,6 +141,42 @@ def test_pairing_claim_race_publication_race_rollback_and_scope():
                     store = await s.open_store(db, 7)
                     with pytest.raises(HTTPException) as denied: await s.actor_authorized(store, 5, actor)
                     assert denied.value.detail['code'] == 'ACTOR_AUTHORIZATION_REVOKED'
+                # A stale ORM identity must not overwrite an unrelated JSON
+                # namespace committed by another connection.
+                async with sessions() as stale:
+                    old = await stale.get(TenantModule, 1)
+                    assert old.module_settings['unrelated'] == {'limit':20}
+                    async with sessions() as fresh:
+                        module = await fresh.get(TenantModule, 1, with_for_update=True)
+                        module.module_settings = {**module.module_settings, 'unrelated':{'limit':21}}
+                        await fresh.commit()
+                    store = await s.open_store(stale, 7)
+                    store.book['revision'] += 1
+                    await store.save(); await stale.commit()
+                async with sessions() as db:
+                    module = await db.get(TenantModule, 1)
+                    assert module.module_settings['unrelated'] == {'limit':21}
+                    assert len(module.module_settings[p.KEY]['tasks'][report['taskId']]['events']['receipt']) == 1
+                # Project-only pause writers cannot cross an admitted report's
+                # project check. A committed pause is observed by the next check.
+                async with sessions() as owner:
+                    store = await s.open_store(owner, 7)
+                    await s.selected_project(store, 5)
+                    started = asyncio.Event()
+                    async def pause_project():
+                        async with sessions() as updater:
+                            started.set()
+                            await updater.execute(update(GeoProject).where(GeoProject.id == 5).values(status='paused'))
+                            await updater.commit()
+                    pending = asyncio.create_task(pause_project())
+                    await started.wait(); await asyncio.sleep(0.05)
+                    assert not pending.done()
+                    await owner.rollback()
+                    await pending
+                async with sessions() as db:
+                    store = await s.open_store(db, 7)
+                    with pytest.raises(HTTPException) as denied: await s.selected_project(store, 5)
+                    assert denied.value.detail['code'] == 'SCOPE_FORBIDDEN'
         finally:
             if created:
                 async with engine.begin() as conn:

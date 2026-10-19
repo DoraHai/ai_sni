@@ -77,6 +77,10 @@ async def open_store(session, tenant_id):
 
 async def selected_project(store, project_id):
     project, businesses = await project_scope(store.session, store.tenant_id, project_id)
+    # Project metadata/status updates need not acquire the tenant lock. Retain
+    # the project row lock too, so pause/archive cannot commit between our
+    # current-scope check and the publication/registry transaction.
+    await store.session.refresh(project, with_for_update=True)
     if project.status != 'active' or project.tenant_module_id != store.row.id:
         p.fail('SCOPE_FORBIDDEN', 403)
     return project, businesses
