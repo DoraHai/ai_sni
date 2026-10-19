@@ -122,6 +122,8 @@ app.include_router(geo_oauth_public_router)
 app.include_router(geo_projects_router)
 from app.geo.content.distribution_routes import router as geo_distribution_router
 app.include_router(geo_distribution_router)
+from app.geo.content.inbox_routes import router as geo_inbox_router
+app.include_router(geo_inbox_router)
 
 
 @app.get("/health/geo")

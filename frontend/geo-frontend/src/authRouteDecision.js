@@ -1,3 +1,5 @@
+import { canOpenInbox } from '../../src/utils/geoInboxSession.js'
+
 export function geoSessionRouteDecision({
   route,
   session,
@@ -10,6 +12,7 @@ export function geoSessionRouteDecision({
     redirectToLogin()
     return false
   }
+  if (route?.meta?.inboxIdentity) return canOpenInbox(session) || leaveWorkspace()
   if (devBypass || !route?.meta?.perm || session.canView(route.meta.perm)) return true
   return leaveWorkspace()
 }

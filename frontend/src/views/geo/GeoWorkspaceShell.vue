@@ -9,6 +9,7 @@ import { session } from '../../store/session'
 import { canViewCockpit } from '../../utils/cockpitAccess'
 import { GEO_WORKBENCH_NAV } from '../../utils/geoPrototypeNavigation'
 import { GEO_DEMO_HOME, isGeoDemoIdentity } from '../../utils/geoDemoIdentity'
+import { canOpenInbox } from '../../utils/geoInboxSession.js'
 
 const isAdvisor = computed(() => !!advisorClaims(session.token) || session.user?.is_advisor === true)
 const advisorProjectId = ref(null)
@@ -125,6 +126,8 @@ onUnmounted(() => {
         <button class="geo-mobile-close" type="button" aria-label="关闭 GEO 导航" @click.stop="mobileOpen = false">×</button>
       </div>
       <nav class="geo-shell-nav">
+        <router-link v-if="canOpenInbox(session)" to="/distribution-inbox">多号通回传</router-link>
+        <router-link v-if="session.canView('geo.content')" to="/geo/external-publications">外部发布记录</router-link>
         <div class="geo-nav-section-title">GEO 增长工作流</div>
         <section v-for="(group, groupIndex) in visibleNavigation" :key="group.label" class="geo-nav-group">
           <button

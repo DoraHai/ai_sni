@@ -163,7 +163,9 @@ async function refreshResult() {
 </script>
 
 <template>
+  <p><a href="#/distribution-inbox">多号通回传：任意平台、无需稿件，生成通用配对码</a></p>
   <section class="report-panel">
+    <h3>旧版稿件派发（0.3.5 / 0.3.6）</h3>
     <strong>多号通结果回传</strong>
     <p>默认关闭。生成配对码会同时开启当前客户和项目回传；每次成功仍需操作人在多号通确认公开链接，送达后继续核验页面。</p>
     <el-select v-if="!projectId" v-model="selected" placeholder="选择项目" aria-label="回传项目" :disabled="busy">

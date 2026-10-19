@@ -191,3 +191,4 @@ __all__ = [
 ]
 
 from app.models.advisor_tenant_grant import AdvisorTenantGrant  # noqa: F401
+from .distribution_inbox import DistributionInboxDevice, DistributionInboxReceipt

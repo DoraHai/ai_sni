@@ -106,6 +106,17 @@ async def guard_request(session, ctx, request, claims):
     if request is None:
         deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "缺少请求范围")
     request.scope["geo_advisor_actor"] = (ctx.user_id, ctx.tenant_id)
+    from app.distribution_inbox_protocol import match_inbox_business_route
+    if match_inbox_business_route(request.method, request.url.path, 'geo'):
+        # These handlers own a separate owner/receipt transaction and live
+        # target checks; the identity JWT never acquires a business bypass.
+        if claims.get('scope_kind') != 'advisor_tenant':
+            deny(403, 'INBOX_FORBIDDEN', '当前身份无权操作此记录')
+        from app.geo.content.inbox_routes import request_scope
+        tenant, _ = request_scope(request)
+        ctx.ensure_tenant(tenant)
+        ctx.inbox_exp = claims['exp']
+        return
     if claims.get("scope_kind") != "advisor_tenant":
         if not ctx.advisor_scope.tenant_ids:
             deny(403, "ADVISOR_NO_TENANT", "顾问尚未获准访问任何客户")

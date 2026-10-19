@@ -21,4 +21,6 @@ installGeoAuthContextRouting(window, {
   reload: () => window.location.reload(),
 })
 
-createApp(App).use(ElementPlus, { locale: zhCn }).use(router).mount('#app')
+const app = createApp(App).use(ElementPlus, { locale: zhCn }).use(router)
+// Resolve the identity route before App can start customer bootstrap requests.
+void router.isReady().then(() => app.mount('#app'))

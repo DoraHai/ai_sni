@@ -29,8 +29,9 @@ def record(scope, result, **extra):
                if key.endswith("_id") and str(value).isascii() and str(value).isdecimal()}
     for table, ids in scope.get("geo_advisor_created_ids", {}).items():
         objects[table] = sorted(ids)
+    from app.distribution_inbox_protocol import audit_endpoint
     event = {"event": "geo_advisor_operation", "advisor_user_id": user_id,
-             "tenant_id": tenant_id, "method": scope["method"], "path": scope["path"],
+             "tenant_id": tenant_id, "method": scope["method"], "path": audit_endpoint(scope['method'], scope['path']),
              "object_ids": objects, "result": result,
              "time": datetime.now(timezone.utc).isoformat(), **extra}
     if scope.get("geo_advisor_review"):
