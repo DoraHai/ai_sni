@@ -96,7 +96,7 @@ def test_import_allowed_during_enabled_execution_chain(tmp_path, monkeypatch, ba
     asyncio.run(run())
 
 
-@pytest.mark.parametrize('source', ['paste', 'file'])
+@pytest.mark.parametrize('source', ['paste', 'file', 'url'])
 def test_import_server_derives_owner_state_and_first_version(tmp_path, monkeypatch, backend, source):
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
@@ -131,7 +131,7 @@ def test_import_into_another_explicitly_granted_selected_customer(tmp_path, monk
 
 
 @pytest.mark.parametrize('change', ['assignment'])
-@pytest.mark.parametrize('source', ['paste', 'file'])
+@pytest.mark.parametrize('source', ['paste', 'file', 'url'])
 def test_import_rechecks_scope_at_actual_commit_and_rolls_back(tmp_path, monkeypatch, backend, change, source):
     from app.geo.content import routes
     original = routes._evaluate_and_store_rules
