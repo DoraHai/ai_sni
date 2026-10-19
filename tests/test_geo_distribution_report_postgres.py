@@ -213,6 +213,55 @@ def test_pairing_claim_race_publication_race_rollback_and_scope(reported):
                     else:
                         assert 'reportedAccount' not in entry
                     assert state_for(await db.get(GeoChannelVariant, 3), pub)['state'] == 'pending'
+                    # The real management route persists only ledger metadata;
+                    # exact legacy device output and immutable events survive.
+                    from app.security.auth import AuthContext
+                    admin_ctx = AuthContext(9, 'synthetic-admin', '管理员', None, {'settings.accounts': 'edit'})
+                    store = await s.open_store(db, 7)
+                    current = store.book['tasks'][report['taskId']]
+                    device_before = await s.verification(store, current)
+                    events_before = json_string(current['events'])
+                    meta_before = json_string((await db.get(GeoChannelVariant, 3)).adapt_meta)
+                    req = Request({'type':'http', 'method':'POST',
+                        'path':p.PREFIX+'/tasks/'+report['taskId']+'/publish-account',
+                        'query_string':b'tenant_id=7&project_id=5', 'headers':[]})
+                    req._body = p.encode({'name':' 合成\u200b顾问号 ', 'expected_revision':store.book['revision']})
+                    response = json.loads((await dr.publish_account(report['taskId'], req, admin_ctx, db)).body)
+                    assert response['advisorAccount']['name'] == '合成顾问号'
+                    annotation_revision = response['revision']
+                    store = await s.open_store(db, 7)
+                    current = store.book['tasks'][report['taskId']]
+                    assert await s.verification(store, current) == device_before
+                    assert json_string(current['events']) == events_before
+                    assert json_string((await db.get(GeoChannelVariant, 3)).adapt_meta) == meta_before
+                    assert current.get('reportedAccount') == entry.get('reportedAccount')
+                    await db.rollback()
+                async def annotate(name):
+                    async with sessions() as db:
+                        try:
+                            store = await s.management_store(db, admin_ctx, 7, 5, write=True)
+                            result = await s.change_publish_account(store, 5, report['taskId'], actor,
+                                {'name':name, 'expected_revision':annotation_revision})
+                            await db.commit(); return result
+                        except HTTPException as denied:
+                            await db.rollback(); return denied.detail['code']
+                annotations = await asyncio.gather(annotate('合成并发甲'), annotate('合成并发乙'))
+                assert sum(isinstance(value, dict) for value in annotations) == 1
+                assert 'SOURCE_CHANGED' in annotations
+                async with sessions() as db:
+                    store = await s.management_store(db, admin_ctx, 7, 5, write=True)
+                    updated = store.book['tasks'][report['taskId']]
+                    assert updated['advisorAccount']['name'] in {'合成并发甲', '合成并发乙'}
+                    assert sum(a['code'] == 'PUBLISH_ACCOUNT_UPDATED' for a in store.book['audit']) == 2
+                    await s.change_publish_account(store, 5, report['taskId'], actor,
+                        {'name':None, 'expected_revision':store.book['revision']})
+                    await db.commit()
+                async with sessions() as db:
+                    store = await s.open_store(db, 7)
+                    current = store.book['tasks'][report['taskId']]
+                    assert 'advisorAccount' not in current
+                    assert await s.verification(store, current) == device_before
+                    assert json_string(current['events']) == events_before
                     # Disable the signing human: device authorization is immediately invalid.
                     (await db.get(User, 9)).is_active = False
                     await db.commit()
@@ -258,7 +307,29 @@ def test_pairing_claim_race_publication_race_rollback_and_scope(reported):
                     async with sessions() as db:
                         store = await s.open_store(db, 7)
                         await s.actor_authorized(store, 5, advisor)
+                        await s.change_publish_account(store, 5, report['taskId'], advisor,
+                            {'name':'合成顾问标注', 'expected_revision':store.book['revision']})
+                        await db.commit()
+                    async with sessions() as db:
+                        store = await s.open_store(db, 7)
+                        assert store.book['tasks'][report['taskId']]['advisorAccount']['actor'] == advisor
+                        with pytest.raises(HTTPException):
+                            await s.change_publish_account(store, 6, report['taskId'], advisor,
+                                {'name':'未分配项目', 'expected_revision':store.book['revision']})
                         await db.rollback()
+                    async with sessions() as db:
+                        role = await db.get(Role, 2)
+                        role.permissions = {'geo.assets':'view', 'geo.content':'view'}
+                        await db.commit()
+                    async with sessions() as db:
+                        store = await s.open_store(db, 7)
+                        with pytest.raises(HTTPException):
+                            await s.change_publish_account(store, 5, report['taskId'], advisor,
+                                {'name':None, 'expected_revision':store.book['revision']})
+                        await db.rollback()
+                    async with sessions() as db:
+                        (await db.get(Role, 2)).permissions = {'geo.assets':'edit', 'geo.content':'edit'}
+                        await db.commit()
                     async with sessions() as db:
                         project = await db.get(GeoProject, 5)
                         project.project_settings = {**project.project_settings, PLAN_KEY:{'advisor_user_id':11}}

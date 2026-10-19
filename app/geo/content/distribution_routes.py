@@ -158,11 +158,17 @@ async def dispatch(request: Request, ctx=Depends(require_scoped_auth), session=D
 @router.get('/tasks/{taskId}')
 async def task_status(taskId: str, request: Request, ctx=Depends(require_scoped_auth), session=Depends(safe_session)):
     store, project = await managed(request, session, ctx)
-    task = store.book['tasks'].get(taskId)
-    if task is None or task['scope_id'] != project:
-        p.fail('TASK_NOT_FOUND', 404)
-    await s.native_task(store, project, task['native_task_id'], task['variant_id'], task['article_id'], publish=False)
-    return respond(await s.verification(store, task, management=True))
+    task, _ = await s.management_task(store, project, taskId)
+    return respond({**await s.verification(store, task, management=True), 'revision': store.book['revision']})
+
+
+@router.post('/tasks/{taskId}/publish-account')
+async def publish_account(taskId: str, request: Request, ctx=Depends(require_scoped_auth), session=Depends(safe_session)):
+    store, project = await managed(request, session, ctx, write=True)
+    data, _ = await body(request)
+    result = await s.change_publish_account(store, project, taskId, s.actor_from_context(ctx), data)
+    await session.commit()
+    return respond(result)
 
 
 @router.post('/device-pairings/claim')

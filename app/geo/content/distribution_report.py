@@ -556,6 +556,44 @@ def task_projection(task):
             **({'reportedAccount': task['reportedAccount']} if 'reportedAccount' in task else {})}
 
 
+async def management_task(store, project_id, task_id):
+    task = store.book['tasks'].get(task_id)
+    if task is None or task['scope_id'] != project_id:
+        p.fail('TASK_NOT_FOUND', 404)
+    _, variant, _ = await native_task(store, project_id, task['native_task_id'],
+        task['variant_id'], task['article_id'], publish=False)
+    return task, variant
+
+
+async def change_publish_account(store, project_id, task_id, actor, body):
+    p.exact(body, {'name', 'expected_revision'})
+    p.integer(body['expected_revision'], 0)
+    await actor_authorized(store, project_id, actor)
+    name = body['name']
+    if name is not None:
+        if not isinstance(name, str):
+            p.fail('INVALID_PUBLISH_ACCOUNT', 422)
+        name = ' '.join(''.join(c for c in name if not unicodedata.category(c).startswith('C')).split())
+        if not 1 <= len(name) <= 60:
+            p.fail('INVALID_PUBLISH_ACCOUNT', 422)
+    if body['expected_revision'] != store.book['revision']:
+        p.fail('SOURCE_CHANGED')
+    task, _ = await management_task(store, project_id, task_id)
+    before = task.get('advisorAccount')
+    after = {'name': name, 'actor': dict(actor), 'at': now_ms()} if name is not None else None
+    if after is None:
+        task.pop('advisorAccount', None)
+    else:
+        task['advisorAccount'] = after
+    store.book['revision'] += 1
+    store.audit('PUBLISH_ACCOUNT_UPDATED', actor=actor['user_id'], task=task_id,
+                before=before, after=after)
+    # This annotation is ledger-only: variant metadata also participates in
+    # asset checks and must not be changed by a display name or an old task.
+    await store.save()
+    return {**await verification(store, task, management=True), 'revision': store.book['revision']}
+
+
 async def task_authorized(store, device, task_id, *, publish):
     task = store.book['tasks'].get(task_id)
     if task is None or task['device_id'] != device['id'] or task['scope_id'] != device['scope_id']:
@@ -666,6 +704,8 @@ async def verification(store, task, *, management=False):
             state = {'state': {'healthy': 'verified', 'mismatch': 'failed', 'unreachable': 'unavailable'}.get(status, status),
                      'reason': status, 'checkedAt': monitor.get('checked_at')}
     projection = task_projection(task)
+    if management and 'advisorAccount' in task:
+        projection['advisorAccount'] = task['advisorAccount']
     if not management:
         # 0.3.4/0.3.5 device readers keep their exact legacy response shape.
         projection.pop('reportedAccount', None)
