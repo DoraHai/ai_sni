@@ -1790,7 +1790,9 @@ async function genVariants() {
     }
   } catch (e) {
     if (!editorRequest.active()) return false
-    if (!generateHint.value.startsWith('渠道稿没有生成成功：')
+    if ([403, 409].includes(e.status) && e.message) {
+      generateHint.value = `渠道稿没有生成成功：${e.message}`
+    } else if (!generateHint.value.startsWith('渠道稿没有生成成功：')
         && !generateHint.value.startsWith('渠道稿生成进度暂时无法读取。')) {
       generateHint.value = '渠道稿没有生成成功：暂时无法完成处理。请稍后重试，或联系曹总。'
     }

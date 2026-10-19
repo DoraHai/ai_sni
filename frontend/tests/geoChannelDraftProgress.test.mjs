@@ -7,6 +7,25 @@ import { createEditorContext } from '../src/utils/geoEditorContext.js'
 const source = readFileSync(new URL('../src/views/geo/GeoTaskEditorView.vue', import.meta.url), 'utf8')
 const follow = source.slice(source.indexOf('async function followJob('), source.indexOf('async function cancelActiveJob('))
 
+for (const status of [403, 409]) {
+  test(`channel generation preserves the server's ${status} authorization guidance`, async () => {
+    const reason = '当前内容未归属你负责的唯一有效项目，请让超管在项目管理核对项目顾问。'
+    const c = vm.createContext({
+      channelDraftGate: { value: { allowed: true } }, channelPick: { value: ['website'] },
+      jobLive: { value: false }, activeJob: { value: null }, busy: { value: '' },
+      generateHint: { value: '' }, tenantId: { value: 17 }, taskId: { value: 16 },
+      ElMessage: { error: () => {} },
+      createGeoVariants: async () => { throw Object.assign(new Error(reason), { status }) },
+    })
+    c.captureEditorContext = () => createEditorContext(() => [17, 16])
+    const gen = source.slice(source.indexOf('async function genVariants('), source.indexOf('const currentVariantMeta'))
+    vm.runInContext(gen, c)
+    await c.genVariants()
+    assert.equal(c.generateHint.value, `渠道稿没有生成成功：${reason}`)
+    assert.equal(c.busy.value, '')
+  })
+}
+
 function fixture() {
   const stored = new Map(), calls = []
   let finish, fail, tick

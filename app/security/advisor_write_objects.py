@@ -46,7 +46,7 @@ def _unavailable():
 
 
 def _assignment_required():
-    deny(403, "ADVISOR_ASSIGNMENT_REQUIRED", "需要当前对象所属项目的有效顾问分配")
+    deny(403, "ADVISOR_ASSIGNMENT_REQUIRED", "当前内容未归属你负责的唯一有效项目。请让超管在「GEO → 项目管理」核对「关联业务」和项目状态，并在「计划与待办 → 项目顾问」分配给你。")
 
 
 def _key(value):

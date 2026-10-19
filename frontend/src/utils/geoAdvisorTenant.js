@@ -42,6 +42,13 @@ export async function bootstrapGeoSession({ session, readSession, applySession, 
     }
     if (error.code === 'ADVISOR_NO_TENANT') return guide(true)
     if (!error.status || error.status >= 500) return failureGuide(error)
+    if (error.status === 403 && (error.code === 'geo_not_available'
+        || /当前客户.*GEO 模块/.test(error.message || ''))) {
+      return {
+        message: '当前客户的 GEO 未开通、已停用或已到期。请让超管在「客户管理」核对 GEO 模块和有效期。',
+        selectCustomer: true,
+      }
+    }
     if (error.code !== 'ADVISOR_TENANT_SELECTION_REQUIRED') throw error
     if (error.status !== 409 || advisorClaims(identityToken)?.scope_kind !== 'advisor_identity') return guide()
     try {
@@ -73,5 +80,12 @@ export async function bootstrapGeoSession({ session, readSession, applySession, 
   }
   if (!current()) return isAdvisor ? guide() : null
   applySession(me, tenants)
+  if (isAdvisor && session.tenantId
+      && !(tenants?.tenants || []).some((tenant) => tenant.id === session.tenantId)) {
+    return {
+      message: tenants?.unavailable_reason || '当前客户暂不可使用 GEO。请让超管核对 GEO 模块及有效期，并在「GEO → 项目管理 → 计划与待办」分配有效项目。',
+      selectCustomer: true,
+    }
+  }
   return null
 }

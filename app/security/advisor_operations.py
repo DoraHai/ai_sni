@@ -200,7 +200,7 @@ async def guard_shared_destinations(session, ctx, request, body, rule, projects)
     affected = set(await session.scalars(select(GeoProject.id).where(
         GeoProject.tenant_id == ctx.tenant_id).execution_options(advisor_scope_control=True)))
     if not affected or not affected.issubset(projects):
-        deny(403, 'ADVISOR_ASSIGNMENT_REQUIRED', '共享设置影响未分配给你的项目，请由平台管理员处理')
+        deny(403, 'ADVISOR_ASSIGNMENT_REQUIRED', '此操作会修改客户共享设置，需要你负责该客户的全部有效项目。请让超管在「GEO → 项目管理」核对全部项目状态和「计划与待办 → 项目顾问」，或由超管处理。')
     account_id = request.path_params.get('account_id')
     if account_id:
         account = await session.scalar(select(GeoChannelAccount).where(

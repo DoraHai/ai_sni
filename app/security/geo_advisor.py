@@ -189,7 +189,7 @@ async def guard_scoped_write(session, ctx, request, claims):
     from app.security.advisor_write_commit import bind_advisor_write_commit
 
     if not get_settings().advisor_scoped_content_writes_enabled:
-        deny(403, "ADVISOR_HIGH_RISK_WRITES_DISABLED", "顾问任务和写入暂未开放")
+        deny(403, "ADVISOR_HIGH_RISK_WRITES_DISABLED", "平台尚未开放顾问写入，暂时不能生成渠道稿或回填链接。请让超管核对顾问运营功能的开放状态。")
     from app.security.geo_distribution_advisor import match as distribution_rule, guard as guard_distribution
     report_rule = distribution_rule(request)
     if report_rule is not None:
@@ -209,7 +209,7 @@ async def guard_scoped_write(session, ctx, request, claims):
         if not request.query_params.getlist('tenant_id') and body.get('tenant_id') != ctx.tenant_id:
             deny(403, 'ADVISOR_TENANT_REQUIRED', '请求必须指定当前客户')
         if not all(ctx.can_edit(key) for key in rule.edit_all):
-            deny(403, 'ADVISOR_ROUTE_UNAVAILABLE', '当前角色无编辑权限')
+            deny(403, 'ADVISOR_ROUTE_UNAVAILABLE', '当前角色缺少 GEO 资产或内容编辑权限，请让超管在「账号与权限」核对这两项权限。')
         await ensure_module_access(session, ctx, ctx.tenant_id, 'geo')
         await guard_scope(session, ctx, request, body, rule)
         bind_advisor_write_commit(session, ctx, request, body, rule, claims)
@@ -255,7 +255,7 @@ async def guard_scoped_write(session, ctx, request, claims):
         await check_write_objects(session, ctx, request, {"brief": body["brief"]}, rule)
     check_write_fields(rule, body)
     if not all(ctx.can_edit(key) for key in rule.edit_all):
-        deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "当前角色无编辑权限")
+        deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "当前角色缺少 GEO 资产或内容编辑权限，请让超管在「账号与权限」核对这两项权限。")
     await ensure_module_access(session, ctx, ctx.tenant_id, "geo")
     await check_scoped_write_objects(session, ctx, request, body, rule)
     bind_advisor_write_commit(session, ctx, request, body, rule, claims)

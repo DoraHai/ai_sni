@@ -70,7 +70,15 @@ async def get_geo_tenants(
             "fixture_namespace": policy.fixture_namespace,
             "dataset_version": policy.dataset_version,
         })
-    return {"tenants": payload}
+    result = {"tenants": payload}
+    if getattr(ctx, 'advisor_scope', None) is not None and not payload:
+        result["unavailable_reason"] = (
+            '当前客户没有分配给你的有效 GEO 项目。请让超管在「GEO → 项目管理」核对项目状态，'
+            '并在「计划与待办 → 项目顾问」分配给你。'
+            if tenants else
+            '当前客户的 GEO 未开通、已停用或已到期。请让超管在「客户管理」核对 GEO 模块和有效期。'
+        )
+    return result
 
 
 class AuditCreate(BaseModel):
