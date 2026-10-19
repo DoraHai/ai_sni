@@ -385,7 +385,7 @@ onBeforeUnmount(() => {
 
 <template>
   <el-config-provider :locale="zhCn">
-    <router-view v-if="bare" />
+    <router-view v-if="bare" :key="session.authRevision" />
     <el-container v-else :class="consoleClasses" style="height: 100vh">
     <el-aside width="220px" class="side">
       <div class="brand">
@@ -581,7 +581,7 @@ onBeforeUnmount(() => {
           </span>
         </div>
         <div class="main-inner">
-          <router-view v-if="!showSemIdentityBlock" />
+          <router-view v-if="!showSemIdentityBlock" :key="session.authRevision" />
           <div v-else class="identity-block-panel">
             <strong>为了避免跨客户数据泄露，本页已安全锁定。</strong>
             <span>平台管理员可前往“平台管理 → 客户与业务”查看冲突 UCID；处理前不要执行授权、同步或回写。</span>

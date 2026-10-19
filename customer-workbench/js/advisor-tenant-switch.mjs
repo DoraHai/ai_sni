@@ -27,7 +27,9 @@ export function createAdvisorTenantSwitch({session,fetchImpl=fetch}){
     },
     async select(tenantId){
       if(!positive(tenantId))throw fail('INVALID_TENANT');
+      const stamp=generation,context=key();
       const data=await request('/api/v1/auth/select-tenant',{tenant_id:tenantId});
+      if(stamp!==generation||context!==key())throw fail('CONTEXT_CHANGED');
       if(data.tenant_id!==tenantId||typeof data.tenant_name!=='string'||data.token_type!=='bearer'||typeof data.access_token!=='string'||!data.access_token||!data.expires_at)throw fail('INVALID_TENANT_RESPONSE');
       session.replaceAuthForAdvisorTenant(data.access_token,tenantId);
       return data;

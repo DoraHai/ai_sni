@@ -224,6 +224,8 @@ if (typeof window !== 'undefined') {
       state.modules = []
       state.tenantId = null
       sessionStorage.removeItem('sem_tenant_id')
+      sessionStorage.removeItem(advisorIdentityKey)
+      clearTenantDrafts()
       notifyAuthContext('logout')
       return
     }
