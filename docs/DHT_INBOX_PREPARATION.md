@@ -6,6 +6,7 @@
 
 - 冻结 DHT2- 配对、固定数组 SHA256、camelCase 单事件、精确 ACK、容量拒收及跨模块两步标注契约，见 DHT_INBOX_CONTRACT_V2.md 和 tests/fixtures/inbox_vectors_v2.json；向量由 Node 生成、Python 复核。
 - 严格事件/JSON/URL/修订/标注形状验证；平台原文存储建议和other显示类别分离；没有域名规则/抓取/平台认证推断。
+- 无存储字段投影器：只接受显式目标授权结论，默认拒绝；失权owner只能看自己的原始上报，其他顾问无范围记录不可见，客户发布视图不带owner/device/event/attempt/history，核验没有实际证据适配时绝不声明verified。尚未接入生产查询，不能代替实时授权/分页/计数过滤。
 - 精确身份路由匹配与人员依赖，在现有菜单/顾问门禁中只匹配列出的路径；真实 JWT + 隔离本地 SQL 验证 GEO-only 零grant顾问、人员系统管理员、停用/锁定/角色变化及API key/客户/settings编辑者拒绝。尚未注册新的生产 handler，因此没有开放可用的收件箱 API。
 - 独立 API 工厂，显式身份/目标业务上下文，固定端点、无tenant/project注入、omit cookies、no-store、拒重定向及迟到结果隔离。
 - 未挂载的Vue组件和请求状态器，只有配对/待标箱/停用三组界面；零目标授权文案、模块选择、安全纯文本链接、撤销后再标、失败留箱。目标/业务会话由后续壳适配提供，不自动借用当前客户JWT。不改变现有v1 UI/接口。

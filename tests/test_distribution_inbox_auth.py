@@ -97,4 +97,19 @@ def test_only_exact_routes_get_menu_bypass():
         assert not match_inbox_identity_route('POST', PREFIX+suffix)
     assert auth._required(f'/api/v1/seo/distribution/v2/receipts/{ID}/label', 'POST') == ({'seo.content'}, True)
     assert auth._required(f'/api/v1/seo/distribution/v2/receipts/{ID}/unlabel', 'POST') == ({'seo.content'}, True)
+    assert auth._required(f'/api/v1/geo/distribution/v2/receipts/{ID}/label', 'POST') == ({'geo.content'}, True)
+    assert auth._required(f'/api/v1/geo/distribution/v2/receipts/{ID}/unlabel', 'POST') == ({'geo.content'}, True)
+    assert auth._required('/api/v1/geo/distribution/v2/publications', 'GET') == ({'geo.content'}, False)
     assert auth._required('/api/v1/seo/distribution/v1/settings', 'PUT') == ({'seo.content'}, True)
+
+
+@pytest.mark.parametrize('suffix', ['/receipts?tenant_id=1', '/receipts?project_id=2',
+    '/receipts?ownerUserId=1', '/receipts?state=pending&state=active',
+    '/receipts/'+ID.replace('1', '%31', 1), '/devices?ownerUserId=1'])
+def test_real_http_extra_selectors_duplicate_queries_and_encoded_aliases_are_rejected(local_db, suffix):
+    assert asyncio.run(call(local_db, identity(), suffix=suffix)).status_code == 403
+
+
+def test_only_personnel_admin_can_explicitly_filter_owner(local_db):
+    assert asyncio.run(call(local_db, bearer(3), suffix='/receipts?ownerUserId=1')).status_code == 200
+    assert asyncio.run(call(local_db, identity(), suffix='/receipts?q=synthetic&limit=50&offset=0')).status_code == 200

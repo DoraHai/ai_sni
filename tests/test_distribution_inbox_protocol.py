@@ -32,7 +32,9 @@ def test_cross_language_vectors_and_immutable_digest(vector):
     assert payload_digest(value) == value['payloadDigest']
     parsed = validate_event(strict_json(json.dumps(value, ensure_ascii=False).encode()), now=NOW)
     assert value == original
-    if value['platform'] == '新平台':
+    if value['eventId'] == ID:
+        assert value['platform'] == '新平台'
+        assert value['title'] == '合成标题 😀'
         assert parsed['platform'] == '新平台' and parsed['platform_kind'] == 'other'
     if value['publicUrl']:
         assert parsed['canonical_url'] == normalize_url(value['publicUrl'])
@@ -49,6 +51,9 @@ def test_scoped_simple_url_vectors(vector):
     ('http://127.0.0.1/path', 'http://127.0.0.1/path'),
     ('https://未知.invalid/路径?业务=是', 'https://未知.invalid/路径?业务=是'),
     ('https://Example.invalid:443/a%2Fb?X=Y&b=2', 'https://example.invalid:443/a%2Fb?X=Y&b=2'),
+    ('https://EXAMPLE.invalid/a?#f', 'https://example.invalid/a?'),
+    ('HTTP://EXAMPLE.invalid/a?X=1', 'HTTP://example.invalid/a?X=1'),
+    ('https://EXAMPLE.invalid/\ue000', 'https://example.invalid/\ue000'),
 ])
 def test_scope_allows_any_host_and_port_without_fetching(url, expected):
     assert normalize_url(url) == expected

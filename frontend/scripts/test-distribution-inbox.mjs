@@ -19,6 +19,8 @@ const fixture = () => {
 
 test('vectors use Node JSON.stringify + SHA256 exactly', async () => {
   const vectors = JSON.parse(await readFile(new URL('../../tests/fixtures/inbox_vectors_v2.json', import.meta.url), 'utf8'))
+  assert.equal(vectors.events[0].event.platform, '新平台')
+  assert.equal(vectors.events[0].event.title, '合成标题 😀')
   const keys = ['schema','eventId','attemptId','occurredAt','platform','title','reportedAccount','result','reasonCode','publicUrl','reviewed']
   for (const vector of vectors.events) {
     const encoded = JSON.stringify(keys.map(key => vector.event[key]))

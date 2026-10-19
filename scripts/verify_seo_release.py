@@ -12,8 +12,11 @@ from pathlib import Path
 
 SOURCE_ALLOWED_EXACT = {
     'app/distribution_inbox_protocol.py',
+    'scripts/generate_distribution_inbox_vectors.mjs',
+    'app/distribution_inbox_projection.py',
     'app/security/distribution_inbox_auth.py',
     'tests/test_distribution_inbox_protocol.py',
+    'tests/test_distribution_inbox_projection.py',
     'tests/test_distribution_inbox_auth.py',
     'tests/fixtures/inbox_vectors_v2.json',
     'frontend/src/api/distributionInbox.js',

@@ -6,7 +6,7 @@ import json
 import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 PREFIX = '/api/v1/seo/distribution/v2/inbox'
 UUID_PATTERN = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
@@ -127,7 +127,7 @@ def normalize_url(value):
     """
     if type(value) is not str or not value or len(value) > 2048:
         fail('INVALID_PUBLIC_URL')
-    if any(c.isspace() or unicodedata.category(c).startswith('C') for c in value):
+    if any(c.isspace() or unicodedata.category(c) in {'Cc', 'Cf', 'Cs'} for c in value):
         fail('INVALID_PUBLIC_URL')
     try:
         parts = urlsplit(value)
@@ -142,7 +142,10 @@ def normalize_url(value):
             netloc = '[' + host.lower() + ']' + parts.netloc[end + 1:]
         else:
             netloc = host.lower() + parts.netloc[len(host):]
-        canonical = urlunsplit((parts.scheme, netloc, parts.path, parts.query, ''))
+        without_fragment = value.split('#', 1)[0]
+        authority_start = value.index('://') + 3
+        canonical = (without_fragment[:authority_start] + netloc
+                     + without_fragment[authority_start + len(parts.netloc):])
         canonical.encode('utf-8')
         return canonical
     except (ValueError, UnicodeError):
@@ -266,6 +269,20 @@ def match_inbox_identity_route(method, path):
     return (method, suffix) in _IDENTITY_FIXED or any(
         method == verb and re.fullmatch(pattern.replace('UUID', UUID_PATTERN), suffix)
         for verb, pattern in _IDENTITY_DYNAMIC)
+
+
+def valid_inbox_identity_request(request):
+    if not match_inbox_identity_route(request.method, request.url.path):
+        return False
+    # ASGI path is decoded. An encoded alias must not gain the exact-route bypass.
+    if request.scope.get('raw_path', b'') != request.url.path.encode('ascii'):
+        return False
+    suffix = request.url.path[len(PREFIX):]
+    allowed = ({'state', 'q', 'ownerUserId', 'limit', 'offset'} if suffix == '/receipts' else
+               {'state', 'q', 'ownerUserId'} if suffix == '/receipts/count' else
+               {'ownerUserId'} if suffix == '/devices' else set())
+    pairs = request.query_params.multi_items()
+    return len(pairs) == len(request.query_params) and set(request.query_params) <= allowed
 
 
 def match_inbox_business_route(method, path, module='seo'):

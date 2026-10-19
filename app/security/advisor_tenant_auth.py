@@ -95,9 +95,9 @@ async def enforce_advisor_request(request, ctx, session):
     route = (request.method, request.url.path)
     if route in SESSION_ROUTES:
         return
-    from app.distribution_inbox_protocol import match_inbox_identity_route
+    from app.distribution_inbox_protocol import match_inbox_identity_route, valid_inbox_identity_request
     if match_inbox_identity_route(*route):
-        if ctx.scope_kind != 'advisor_identity':
+        if ctx.scope_kind != 'advisor_identity' or not valid_inbox_identity_request(request):
             reject(403, 'INBOX_FORBIDDEN')
         # Exact identity paths only. Their handlers must additionally depend on
         # require_inbox_identity; no tenant/module grant is inferred here.

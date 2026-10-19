@@ -172,6 +172,7 @@ jobs:
         run: >-
           pytest -q
           tests/test_distribution_inbox_protocol.py
+          tests/test_distribution_inbox_projection.py
           tests/test_distribution_inbox_auth.py
           tests/test_keyword_refresh.py
           tests/test_module_workspaces.py
