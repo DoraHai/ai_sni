@@ -545,3 +545,29 @@ def test_claim_map_saturation_and_forged_credentials_do_not_poison_device_budget
                 json={'contractVersion':1,'deviceId':device['id'],'receipts':[]})
             assert valid.status_code == 200
     asyncio.run(scenario())
+
+
+def test_late_observation_never_reopens_closed_failed_task():
+    async def scenario():
+        async with fixture() as (sessions,client,admin,payload_hash):
+            device,task,task_id = await ready(client,admin,payload_hash)
+            failure = event_for(device,task,code='HUMAN_FAILED',status='failed',publicUrl=None)
+            result = await client.post(PREFIX+'/device/exchange',headers=device_headers(device,2),
+                json={'contractVersion':1,'deviceId':device['id'],'receipts':[failure]})
+            assert result.status_code == 200
+            observation = {k:v for k,v in failure.items() if k not in {'deviceId','contractVersion','receiptId'}}
+            observation.update(observationId=str(uuid4()),sequence=1,code='RISK_CONTROL',status='awaiting-human',evidence='none')
+            result = await client.post(PREFIX+'/device/observations',headers=device_headers(device,3),
+                json={'observationVersion':1,'deviceId':device['id'],'items':[observation]})
+            assert result.status_code == 200
+            async with sessions() as session:
+                state = registry((await session.get(TenantModule,1)).module_settings)
+                assert state['tasks'][task_id]['outcome'] == 'failed'
+                assert (await session.get(SeoContentPublication,1001)).status == 'failed'
+            result = await client.post(PREFIX+'/device/exchange',headers=device_headers(device,4),
+                json={'contractVersion':1,'deviceId':device['id'],'receipts':[]})
+            assert result.status_code == 200 and not result.json()['grants']
+            result = await client.post(PREFIX+'/device/exchange',headers=device_headers(device,5),
+                json={'contractVersion':1,'deviceId':device['id'],'receipts':[event_for(device,task,sequence=4)]})
+            assert result.status_code == 409 and 'receiptAcks' not in result.json()
+    asyncio.run(scenario())

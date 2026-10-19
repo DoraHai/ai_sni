@@ -399,6 +399,7 @@ async def apply_events(session, module, state, device, events, stream):
             deny('CLOCK_SKEW', 422)
         ack, fresh = admit_event(state, task, event, stream)
         if fresh:
+            terminal = task['outcome'] in {'human-reported-published', 'failed'}
             # Non-success events on an old version are immutable historical
             # observations; do not mutate current native publication state.
             row = content = None
@@ -417,9 +418,9 @@ async def apply_events(session, module, state, device, events, stream):
                 task['page_url'] = event['publicUrl']
                 task['verification'] = {'state': 'pending', 'reason': 'not_checked', 'checkedAt': None}
             elif event['code'] not in {'ACCEPTED', 'DISPATCHED', 'PREFLIGHT_OK'}:
-                if task['outcome'] != 'human-reported-published':
+                if not terminal:
                     task['outcome'] = event['status']
-                if row is not None and row.status != 'published':
+                if row is not None and row.status != 'published' and not terminal:
                     row.status = 'failed' if event['status'] == 'failed' else 'manual_required'
                     row.last_error = event['code']
             if row is not None and not is_success:
