@@ -15,7 +15,8 @@ from sqlalchemy import text
 FIELDS = ('id', 'tenant_id', 'user_id', 'origin', 'module', 'operation', 'job_ref',
           'provider', 'model', 'endpoint', 'state', 'status_code', 'latency_ms',
           'prompt_tokens', 'cached_tokens', 'completion_tokens', 'currency',
-          'estimated_amount', 'pricing_version', 'provider_request_id', 'started_at')
+          'estimated_amount', 'pricing_version', 'provider_request_id', 'started_at',
+          'review_version','verified_amount','verified_currency','reviewed_at')
 FILTERS = {'from', 'to', 'tenant_id', 'user_id', 'module', 'provider', 'endpoint',
            'model', 'state', 'unpriced', 'page_size', 'cursor'}
 EXPORT_LIMIT = 50000
@@ -88,6 +89,8 @@ def public_row(raw):
     from app.api.platform_console import safe_endpoint
     row['endpoint'] = safe_endpoint(row['endpoint'])
     row['estimated_amount'] = str(row['estimated_amount']) if row['estimated_amount'] is not None else None
+    if 'verified_amount' in row:
+        row['verified_amount'] = str(row['verified_amount']) if row['verified_amount'] is not None else None
     # No credential references, rate quotes, prompts or provider bodies.
     return row
 
@@ -97,12 +100,26 @@ async def read_history(session, spec, *, export=False):
     if not exists:
         return {'state': 'schema_pending', 'rows': [], 'total': None, 'unpriced': None,
                 'known_amount': None, 'estimated_amount': None, 'next_cursor': None}
+    from app.api_usage_review_basis import accounted_amount, review_projection
+    amount = await accounted_amount(session)
+    projection = await review_projection(session)
+    verified = 'NULL::numeric' if amount=='estimated_amount' else 'verified_amount'
+    estimate = 'estimated_amount' if amount=='estimated_amount' else 'CASE WHEN review_version=0 THEN estimated_amount END'
+    spec = {**spec,'where':spec['where'].replace('estimated_amount IS ',amount+' IS ')}
     summary = dict((await session.execute(text(f"""SELECT count(*) AS total,
-        count(*) FILTER (WHERE estimated_amount IS NULL) AS unpriced,
-        coalesce(sum(estimated_amount),0) AS known_amount
+        count(*) FILTER (WHERE {amount} IS NULL) AS unpriced,
+        coalesce(sum({amount}),0) AS known_amount,
+        coalesce(sum({verified}),0) AS verified_amount,
+        coalesce(sum({estimate}),0) AS estimated_known_amount,
+        count(*) FILTER (WHERE estimated_amount IS NULL) AS estimate_unknown,
+        coalesce(sum(estimated_amount),0) AS original_estimate_total
         FROM api_usage_events WHERE {spec['where']}"""), spec['params'])).mappings().one())
     summary['known_amount'] = str(summary['known_amount'])
-    summary['estimated_amount'] = summary['known_amount'] if not summary['unpriced'] else None
+    summary['verified_amount'] = str(summary['verified_amount'])
+    summary['estimated_known_amount'] = str(summary['estimated_known_amount'])
+    original,unknown = summary.pop('original_estimate_total'),summary.pop('estimate_unknown')
+    summary['estimated_amount'] = str(original) if not unknown else None
+    summary['known_amount_basis'] = 'mixed_estimate_and_human_attestation'
     if export and (spec['cursor'] or summary['total'] > EXPORT_LIMIT):
         raise ValueError('导出最多 50000 条，请缩小日期或筛选范围；导出不会截断记录')
     where = spec['where']
@@ -110,7 +127,7 @@ async def read_history(session, spec, *, export=False):
         where += ' AND (started_at,id) < (:boundary,CAST(:boundary_id AS uuid))'
     limit = EXPORT_LIMIT if export else spec['page_size'] + 1
     rows = [public_row(r) for r in (await session.execute(text(
-        f"SELECT {','.join(FIELDS)} FROM api_usage_events WHERE {where} ORDER BY started_at DESC,id DESC LIMIT :limit"
+        f"SELECT {','.join(FIELDS[:-4])},{projection} FROM api_usage_events WHERE {where} ORDER BY started_at DESC,id DESC LIMIT :limit"
     ), {**spec['params'], 'limit': limit})).mappings()]
     next_cursor = None
     if not export and len(rows) > spec['page_size']:

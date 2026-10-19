@@ -50,15 +50,8 @@ def alert_identity(alert, source, signal):
 
 
 async def provider_health(session):
-    exists = await session.scalar(text("SELECT to_regclass(current_schema() || '.api_usage_events') IS NOT NULL"))
-    if not exists:
-        return []
-    return [dict(r) for r in (await session.execute(text('''SELECT module,provider,
-        count(*) AS calls,count(*) FILTER (WHERE state IN ('error','unknown')) AS failed,
-        avg(latency_ms) AS average_latency_ms,
-        max(started_at) FILTER (WHERE state IN ('error','unknown')) AS last_failure
-        FROM api_usage_events WHERE started_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'
-        GROUP BY module,provider ORDER BY module,provider'''))).mappings()]
+    from app.platform_call_monitor import read_call_monitor
+    return (await read_call_monitor(session))['providers']
 
 
 async def attach_alert_states(session, alerts):

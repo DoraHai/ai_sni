@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Keyword, KwReportSnapshot, Suggestion, Tenant
 from app.database import async_session_factory
+from app.api_metering import business_scope
 from app.module_scope import list_active_module_tenants
 from app.suggestions.base import KeywordProfile, SuggestionContext
 from app.suggestions.guardrails import apply_guardrails
@@ -98,6 +99,7 @@ async def _persist_suggestions(
         raise
 
 
+@business_scope('sem', 'tenant')
 async def run_suggestions_for_tenant(
     session: AsyncSession, tenant: Tenant, window_days: int = WINDOW_DAYS
 ) -> int:

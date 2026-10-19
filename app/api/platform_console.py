@@ -23,7 +23,8 @@ from app.security.auth import AuthContext, require_auth
 from app.api_cost_summary import read_api_costs
 from app.api_controls import read_controls, mutate, enabled as controls_enabled, ControlConflict
 from app.platform_history import parse_query, read_history, export_csv
-from app.platform_operations import (alert_identity, attach_alert_states, provider_health,
+from app.platform_call_monitor import read_call_monitor, monitor_alerts
+from app.platform_operations import (alert_identity, attach_alert_states,
     read_suppliers, read_backup_status, mutate_operation)
 
 
@@ -130,7 +131,8 @@ async def read_usage(session: AsyncSession, catalog: dict, today: str) -> list[d
             for row in rows]
 
 
-async def build_snapshot(session: AsyncSession) -> dict:
+async def build_snapshot(session: AsyncSession, workers=None) -> dict:
+    from app.platform_usage_review import status as review_status
     catalog = await table_catalog(session)
     now = datetime.now(timezone.utc)
     today = now.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
@@ -163,8 +165,9 @@ async def build_snapshot(session: AsyncSession) -> dict:
             target = budget['target']
             alerts.append(alert_identity({'kind': 'api_budget', 'severity': 'warning',
                            'tenant_id': int(target.split(':')[1]) if target.startswith('tenant:') else None,
-                           'message': f"API 预算 {target}：" + {'warning': '接近上限', 'blocked': '已达到上限，新请求暂停',
-                                                               'unknown': '存在未知费用，金额预算暂停新请求'}[budget['status']]},
+                           'message': f"API 预算 {target}：" + ({'warning': '接近上限', 'blocked': '已达到上限，新请求暂停',
+                                                               'unknown': '存在未知费用，金额预算暂停新请求'}[budget['status']]
+                                if controls['state'] == 'enabled' else '配置尚未启用，不会拦截请求')},
                 'budget:' + target, [budget['status'], budget['revision'], budget['usage']]))
     for row in sources["baidu_oauth_grants"]["rows"]:
         expiry = row["expires_at"]
@@ -184,7 +187,13 @@ async def build_snapshot(session: AsyncSession) -> dict:
                 alerts.append(alert_identity({"kind": "task_failed", "severity": "error", "tenant_id": row["tenant_id"],
                                "message": "GEO 异步任务失败" if name == "geo_async_jobs" else "SEO AI 操作失败"},
                                name + ':' + str(row['id']), str(row['created_at'])))
-    health = await provider_health(session)
+    monitor = await read_call_monitor(session)
+    if workers is not None:
+        from app.platform_worker_health import worker_alerts
+        monitor['workers'] = workers
+        alerts.extend(worker_alerts(workers,alert_identity,now))
+    health = monitor['providers']
+    alerts.extend(monitor_alerts(monitor, alert_identity))
     if calls["failed"]:
         failures = [r['last_failure'] for r in health if r['last_failure']]
         if not failures:
@@ -194,7 +203,7 @@ async def build_snapshot(session: AsyncSession) -> dict:
                        "message": f'近 24 小时已记录 {calls["failed"]} 次接口异常'},
                        'api-errors:' + today, str(max(failures)) if failures else 'recorded-errors'))
     for row in health:
-        if row['failed'] >= 3 and row['failed'] / row['calls'] >= .2:
+        if row['calls'] and row['failed'] >= 3 and row['failed'] / row['calls'] >= .2:
             alerts.append(alert_identity({'kind': 'provider_errors', 'severity': 'error', 'tenant_id': None,
                 'message': f"{row['module'].upper()} / {row['provider']} 近 24 小时 {row['calls']} 次调用中 {row['failed']} 次异常"},
                 f"provider:{row['module']}:{row['provider']}", str(row['last_failure'])))
@@ -219,8 +228,8 @@ async def build_snapshot(session: AsyncSession) -> dict:
     return {
         "schema": 1, "generated_at": now.isoformat(), "mode": "read_only_inventory",
         "sources": sources, "calls": calls, "alerts": alerts,
-        "operations": {"state": handling_state, "provider_health": health, "suppliers": suppliers, "backup": backup},
-        "api_costs": api_costs, "controls": controls,
+        "operations": {"state": handling_state, "provider_health": health, "call_monitor": monitor, "suppliers": suppliers, "backup": backup},
+        "api_costs": api_costs, "controls": controls, "usage_reviews": await review_status(session),
         "costs": {"state": "metering_incomplete", "date": today, "currency": "CNY",
                   "actual_amount": None, "estimated_amount": None,
                   "usage": await read_usage(session, catalog, today),
@@ -234,16 +243,19 @@ async def build_snapshot(session: AsyncSession) -> dict:
 
 
 @router.get("/snapshot")
-async def console_snapshot(response: Response) -> dict:
+async def console_snapshot(response: Response, request: Request = None) -> dict:
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Vary"] = "Authorization"
     # Separate bounded read-only transaction; auth dependency has its own session.
     try:
         async with asyncio.timeout(12):
+            from app.platform_worker_health import read_workers
+            workers = await read_workers(request.headers.get('authorization') if request is not None else None)
             async with _read_slots, async_session_factory() as session:
                 await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
                 await session.execute(text("SET LOCAL statement_timeout = '3000ms'"))
-                return await build_snapshot(session)
+                result = await build_snapshot(session,workers)
+            return result
     except TimeoutError:
         raise HTTPException(503, "平台盘点读取超时，请稍后重试") from None
 
@@ -320,6 +332,55 @@ async def console_usage_export(request: Request):
         'Content-Disposition': 'attachment; filename="api-usage.csv"', 'X-Content-Type-Options': 'nosniff'})
 
 
+@router.get('/usage/{event_id}/review')
+async def console_usage_review_read(event_id: UUID, response: Response):
+    from app.platform_usage_review import read_review
+    response.headers['Cache-Control'] = 'no-store, private'
+    response.headers['Vary'] = 'Authorization'
+    try:
+        async with asyncio.timeout(8), _read_slots, async_session_factory() as session:
+            await session.execute(text('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY'))
+            await session.execute(text("SET LOCAL statement_timeout='3000ms'"))
+            result = await read_review(session,event_id)
+            if result['state']=='available' and result['row'] is None:
+                raise HTTPException(404,'调用记录不存在',headers={'Cache-Control':'no-store, private','Vary':'Authorization'})
+            return result
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503,'核实记录暂时无法读取',headers={'Cache-Control':'no-store, private','Vary':'Authorization'}) from None
+
+
+@router.post('/usage/review')
+async def console_usage_review(request: Request, response: Response, ctx: AuthContext = Depends(require_console_admin)):
+    from app.platform_usage_review import enabled_review, mutate_review
+    response.headers['Cache-Control'] = 'no-store, private'
+    response.headers['Vary'] = 'Authorization'
+    if not enabled_review():
+        raise HTTPException(503,'调用核实等待数据库审核与三服务准入口径对齐',headers={'Cache-Control':'no-store, private','Vary':'Authorization'})
+    try:
+        import json
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw)>16384:
+                raise ValueError
+        data = json.loads(raw)
+    except Exception:
+        raise HTTPException(422,'核实请求格式无效',headers={'Cache-Control':'no-store, private','Vary':'Authorization'}) from None
+    try:
+        async with asyncio.timeout(8), async_session_factory() as session:
+            return await mutate_review(session,ctx.user_id,data)
+    except ControlConflict as exc:
+        raise HTTPException(409,str(exc),headers={'Cache-Control':'no-store, private','Vary':'Authorization'}) from None
+    except (ValueError,KeyError,TypeError):
+        raise HTTPException(422,'核实证据、金额或记录字段无效，请重新核对',headers={'Cache-Control':'no-store, private','Vary':'Authorization'}) from None
+    except Exception:
+        # A timeout does not prove rollback. Stable UUID makes a later explicit
+        # read/replay safe; the UI must not retry a changed payload automatically.
+        raise HTTPException(503,'核实结果未能确认，请重新读取台账核对后再操作',headers={'Cache-Control':'no-store, private','Vary':'Authorization'}) from None
+
+
 @router.post('/operations')
 async def console_operation(request: Request, response: Response, ctx: AuthContext = Depends(require_console_admin)):
     response.headers['Cache-Control'] = 'no-store, private'
@@ -337,8 +398,10 @@ async def console_operation(request: Request, response: Response, ctx: AuthConte
     except Exception:
         raise HTTPException(422, '操作请求格式无效') from None
     try:
+        from app.platform_worker_health import read_workers
+        workers = await read_workers(request.headers.get('authorization'))
         async with asyncio.timeout(10), async_session_factory() as session:
-            snapshot = await build_snapshot(session)
+            snapshot = await build_snapshot(session,workers)
             return await mutate_operation(session, ctx.user_id, data, snapshot['alerts'])
     except ControlConflict as exc:
         raise HTTPException(409, str(exc)) from None

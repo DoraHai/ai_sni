@@ -146,6 +146,8 @@ async def _fetch_account_realtime(
         client = BaiduAPIClient(
             username=acc.baidu_username,
             access_token=decrypt(acc.access_token_encrypted),
+            tenant_id=acc.tenant_id,
+            baidu_account_id=acc.id,
         )
         data = await AccountService(client).get_account_info(
             fields=["userId", "balance", "cost", "budget", "budgetType"]
