@@ -95,6 +95,10 @@ CASES = (
         'title': 'uploaded manual task', 'body_markdown': 'An uploaded manual article.',
         'source_type': 'file', 'target_channels': ['website']},
      'geo_content_tasks', 'title', 'uploaded manual task'),
+    ('POST', '/content-imports/create-task', {'tenant_id': 10, 'prompt_id': 10,
+        'title': 'url manual task', 'body_markdown': 'A manually confirmed URL article.',
+        'source_type': 'url', 'source_url': 'https://public.test/article', 'target_channels': ['website']},
+     'geo_content_tasks', 'title', 'url manual task'),
 )
 CASE_IDS = [f'{method} {path}' for method, path, *_ in CASES]
 BUSINESS_TABLES = ('geo_facts', 'geo_prompts', 'geo_optimization_businesses',

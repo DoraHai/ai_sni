@@ -6,7 +6,8 @@ from app.security.advisor_scope import deny
 
 
 FILE_PREVIEW = '/api/v1/geo/content-imports/preview-file'
-PREVIEW_ROUTES = frozenset({('POST', FILE_PREVIEW)})
+URL_PREVIEW = '/api/v1/geo/content-imports/preview-url'
+PREVIEW_ROUTES = frozenset({('POST', FILE_PREVIEW), ('POST', URL_PREVIEW)})
 EDIT_KEYS = ('geo.assets', 'geo.content')
 
 
@@ -46,12 +47,22 @@ async def guard_import_preview(session, ctx, request, claims):
             break
     if not assigned:
         deny(403, 'ADVISOR_ASSIGNMENT_REQUIRED', '需要当前客户下的有效项目分配')
-    if request.headers.get('content-type', '').split(';', 1)[0].lower() != 'multipart/form-data':
-        deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '文件预览仅支持单个上传文件')
-    form = await request.form()
-    items = list(form.multi_items())
-    if len(items) != 1 or items[0][0] != 'file' or not isinstance(items[0][1], UploadFile):
-        deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '文件预览仅支持单个上传文件')
+    if template == FILE_PREVIEW:
+        if request.headers.get('content-type', '').split(';', 1)[0].lower() != 'multipart/form-data':
+            deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '文件预览仅支持单个上传文件')
+        form = await request.form()
+        items = list(form.multi_items())
+        if len(items) != 1 or items[0][0] != 'file' or not isinstance(items[0][1], UploadFile):
+            deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '文件预览仅支持单个上传文件')
+    else:
+        try:
+            body = await request.json()
+        except (ValueError, UnicodeError):
+            deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '网址预览仅支持客户和网址字段')
+        if (not isinstance(body, dict) or set(body) != {'tenant_id', 'url'}
+                or not isinstance(body['url'], str)):
+            deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '网址预览仅支持客户和网址字段')
+        ctx.ensure_tenant(positive_id(body['tenant_id']))
     # No commit hook: extraction is read-only. Delivery still rechecks live
     # account/grant/module/menu authority using the existing middleware.
     request.scope['geo_advisor_delivery'] = (ctx.user_id, dict(claims), ctx.tenant_id, frozenset(EDIT_KEYS))

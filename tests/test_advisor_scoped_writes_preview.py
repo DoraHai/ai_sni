@@ -75,10 +75,79 @@ def test_file_preview_rejects_unsupported_types(tmp_path, monkeypatch, backend, 
     asyncio.run(run())
 
 
-def test_url_preview_stays_closed_in_file_stage(tmp_path, monkeypatch, backend):
+@pytest.mark.parametrize('tid', [10, 20])
+def test_url_preview_is_read_only_and_uses_bounded_fetch(tmp_path, monkeypatch, backend, tid):
+    from unittest.mock import AsyncMock
+    from app.geo import audit
+    from app.geo.content import article_import_throttle as throttle
+    fetch = AsyncMock(return_value=audit.PageDocument('https://public.test/article',
+        'https://public.test/article', '<title>Fixture</title><article><p>Fixture body</p></article>', 'text/html'))
+
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            monkeypatch.setattr(audit, 'safe_fetch', fetch)
+            monkeypatch.setattr(throttle, '_limiter', throttle.UrlPreviewLimiter())
+            before = await env.snapshot()
             response = await env.request('POST', '/content-imports/preview-url',
-                body={'tenant_id': 10, 'url': 'https://example.test/article'})
-            assert response.status_code == 403, response.text
+                body={'tenant_id': tid, 'url': 'https://public.test/article'}, params={'tenant_id': tid},
+                auth=fixture_token(tid=tid, gid=101 if tid == 10 else 102))
+            assert response.status_code == 200, response.text
+            assert response.json()['source_type'] == 'url'
+            fetch.assert_awaited_once_with('https://public.test/article', article_import=True)
+            assert await env.snapshot() == before
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('problem', ['disabled', 'not-selected', 'not-granted', 'no-query',
+    'identity-only', 'inactive-project', 'unassigned', 'extra-query', 'extra-body', 'body-tenant'])
+def test_url_preview_rejects_before_any_fetch(tmp_path, monkeypatch, backend, problem):
+    from unittest.mock import AsyncMock
+    from app.geo import audit
+    fetch = AsyncMock(side_effect=AssertionError('denied preview reached network'))
+
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend, enabled=problem != 'disabled') as env:
+            monkeypatch.setattr(audit, 'safe_fetch', fetch)
+            if problem == 'inactive-project':
+                await mutate(env, GeoProject, 10, status='archived')
+            elif problem == 'unassigned':
+                await mutate(env, GeoProject, 10, project_settings={})
+            before = await env.snapshot()
+            body = {'tenant_id': 20 if problem == 'body-tenant' else 10, 'url': 'https://public.test/article'}
+            params = {'tenant_id': 20 if problem == 'not-selected' else 30 if problem == 'not-granted' else 10}
+            if problem == 'extra-query':
+                params['project_id'] = 10
+            if problem == 'extra-body':
+                body['prompt_id'] = 10
+            if problem == 'no-query':
+                import httpx
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=env.app), base_url='http://fixture') as client:
+                    response = await client.post('/api/v1/geo/content-imports/preview-url', json=body,
+                        headers={'Authorization': 'Bearer ' + fixture_token()})
+            else:
+                response = await env.request('POST', '/content-imports/preview-url', body=body, params=params,
+                    auth=fixture_token(scope_kind='advisor_identity', aud='advisor-session') if problem == 'identity-only' else None)
+            assert response.status_code == (409 if problem == 'identity-only' else 403), response.text
+            fetch.assert_not_awaited()
+            assert await env.snapshot() == before
+    asyncio.run(run())
+
+
+def test_url_preview_returns_429_before_second_fetch(tmp_path, monkeypatch, backend):
+    from unittest.mock import AsyncMock
+    from app.geo import audit
+    from app.geo.content import article_import_throttle as throttle
+    fetch = AsyncMock(return_value=audit.PageDocument('https://public.test/article',
+        'https://public.test/article', '<title>Fixture</title><p>Fixture body</p>', 'text/html'))
+
+    async def run():
+        async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            monkeypatch.setattr(audit, 'safe_fetch', fetch)
+            monkeypatch.setattr(throttle, '_limiter', throttle.UrlPreviewLimiter())
+            monkeypatch.setattr(throttle, 'ADVISOR_STARTS', 1)
+            body = {'tenant_id': 10, 'url': 'https://public.test/article'}
+            assert (await env.request('POST', '/content-imports/preview-url', body=body)).status_code == 200
+            response = await env.request('POST', '/content-imports/preview-url', body=body)
+            assert response.status_code == 429, response.text
+            assert fetch.await_count == 1
     asyncio.run(run())
