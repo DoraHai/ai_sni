@@ -474,7 +474,6 @@ async def list_tenants(
                     select(BaiduAccount)
                     .where(
                         BaiduAccount.tenant_id.in_(tenant_ids),
-                        BaiduAccount.status != "archived",
                     )
                     .order_by(BaiduAccount.tenant_id, BaiduAccount.id)
                 )
@@ -485,6 +484,10 @@ async def list_tenants(
     )
     accounts_by_tenant: dict[int, list[dict]] = {}
     for account in accounts:
+        # Archived bindings stay invisible in the switcher, but must still be
+        # included in identity evaluation: archiving does not clean old assets.
+        if account.status == "archived":
+            continue
         accounts_by_tenant.setdefault(account.tenant_id, []).append(
             _sem_account_payload(account)
         )

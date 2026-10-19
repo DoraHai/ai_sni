@@ -3,6 +3,7 @@
 当一个生效 UCID 同时出现在多个客户下时，宁可暂停访问，也不能继续返回可能属于
 其他客户的投放数据。历史错误绑定不会直接删除；管理员可将错误账户标记为
 ``identity_conflict``，在保留审计线索的同时持续封锁该客户的旧数据。
+``archived`` 只归档绑定，不清理按 tenant_id 保存的资产和派生缓存，因此也必须隔离。
 """
 
 from __future__ import annotations
@@ -72,7 +73,7 @@ def evaluate_sem_identity_states(
         quarantined_ucids = {
             account.baidu_ucid
             for account in rows
-            if account.status == SEM_IDENTITY_CONFLICT_STATUS
+            if account.status in {SEM_IDENTITY_CONFLICT_STATUS, "archived"}
         }
         active_ucids = {
             account.baidu_ucid for account in rows if account.status == "active"
