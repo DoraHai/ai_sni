@@ -93,6 +93,140 @@ def management_headers(bearer):
 SCOPE = '?tenant_id=4&site_id=2'
 
 
+async def new_pair(client, bearer, revision, scope=SCOPE):
+    return await client.post(PREFIX+'/device-pairings'+scope,
+        headers=management_headers(bearer), json={'label':'Synthetic team computer',
+        'platform':'wechat-article','account_id':'seo-connection-40','expected_revision':revision})
+
+
+async def claim_code(client, code):
+    return await client.post(PREFIX+'/device-pairings/claim',
+        json={'pairing_code':code,'request_id':str(uuid4())})
+
+
+def test_twenty_pending_codes_and_twenty_active_devices_are_tenant_wide():
+    async def scenario():
+        async with fixture() as (sessions,client,admin,_):
+            codes = []
+            for revision in range(20):
+                response = await new_pair(client,admin,revision)
+                assert response.status_code == 201
+                codes.append(response.json()['pairing_code'])
+            assert (await new_pair(client,admin,20)).status_code == 429
+            # Twenty simultaneous claims serialize without exceeding capacity.
+            results = await asyncio.gather(*(claim_code(client,code) for code in codes))
+            assert all(r.status_code == 200 for r in results)
+            assert (await new_pair(client,admin,20)).status_code == 429
+            async with sessions() as session:
+                state = registry((await session.get(TenantModule,1)).module_settings)
+                assert len(state['devices']) == 20
+                assert all(p['consumed'] for p in state['pairings'].values())
+                assert all(not p.get('claim_failures') for p in state['pairings'].values())
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('label', ['', '   ', '\t', 'a'*81, 'team\x00', '\u200b'])
+def test_device_note_is_required_and_safe_on_server(label):
+    async def scenario():
+        async with fixture() as (sessions,client,admin,_):
+            response = await client.post(PREFIX+'/device-pairings'+SCOPE,
+                headers=management_headers(admin),json={'label':label,'platform':'wechat-article',
+                'account_id':'seo-connection-40','expected_revision':0})
+            assert response.status_code == 422
+            async with sessions() as session:
+                assert not registry((await session.get(TenantModule,1)).module_settings,initialize=True)['pairings']
+    asyncio.run(scenario())
+
+
+def test_known_code_failure_limit_survives_new_worker_and_time_window(monkeypatch):
+    async def scenario():
+        async with fixture() as (sessions,client,admin,_):
+            pairing = await pair(client,admin)
+            assert (await claim_code(client,pairing['pairing_code'])).status_code == 200
+            for _ in range(10):
+                assert (await claim_code(client,pairing['pairing_code'])).status_code == 409
+            # A new ASGI application and empty process-local caches simulate a
+            # restart; only JSONB committed in distinct sessions can block it.
+            _claim_rates.clear(); _rates.clear()
+            restarted = FastAPI(); restarted.include_router(router)
+            async def local_session():
+                async with sessions() as session:
+                    yield session
+            restarted.dependency_overrides[get_session] = local_session
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=restarted),base_url='http://synthetic.test') as fresh:
+                response = await claim_code(fresh,pairing['pairing_code'])
+                assert response.status_code == 429 and response.headers['retry-after'] == '60'
+                async with sessions() as session:
+                    state = registry((await session.get(TenantModule,1)).module_settings)
+                    assert len(state['pairings'][report.sha(pairing['pairing_code'])]['claim_failures']) == 10
+                tick = report.now_ms()
+                monkeypatch.setattr(report,'now_ms',lambda:tick+60001)
+                assert (await claim_code(fresh,pairing['pairing_code'])).status_code == 409
+    asyncio.run(scenario())
+
+
+def test_same_source_can_claim_many_customers_without_success_budget():
+    async def scenario():
+        from app.models.tenant import Tenant
+        async with fixture() as (sessions,client,admin,_):
+            for index in range(35):
+                tid,sid,cid = 100+index,200+index,300+index
+                async with sessions() as session:
+                    session.add(Tenant(id=tid,name='Synthetic customer'))
+                    session.add(TenantModule(id=100+index,tenant_id=tid,module_code='seo',status='active'))
+                    session.add(SeoSite(id=sid,tenant_id=tid,tenant_module_id=100+index,
+                        name='Synthetic site',domain=f'customer-{index}.test',canonical_domain=f'customer-{index}.test',status='active'))
+                    session.add(SeoDistributionConnection(id=cid,tenant_id=tid,platform_code='wechat_browser',
+                        name='Synthetic account',enabled=True,config={'advisor_site_id':sid},mode='manual'))
+                    await session.commit()
+                response = await client.post(PREFIX+f'/device-pairings?tenant_id={tid}&site_id={sid}',
+                    headers=management_headers(admin),json={'label':'Team computer','platform':'wechat-article',
+                    'account_id':f'seo-connection-{cid}','expected_revision':0})
+                assert response.status_code == 201
+                assert (await claim_code(client,response.json()['pairing_code'])).status_code == 200
+            assert not _claim_rates
+    asyncio.run(scenario())
+
+
+def test_profile_is_own_safe_metadata_without_changing_old_wire_shapes():
+    async def scenario():
+        from app.models.tenant import Tenant
+        async with fixture() as (sessions,client,admin,_):
+            first = (await claim_code(client,(await pair(client,admin))['pairing_code'])).json()
+            second = (await claim_code(client,(await new_pair(client,admin,1)).json()['pairing_code'])).json()
+            assert set(first) == {'schema','pairing_id','claimed_at','device','bindings_configured','automatic_submit'}
+            assert set(first['device']) == {'id','label','active','credential','credential_once'}
+            async with sessions() as session:
+                (await session.get(Tenant,4)).name = '客户\u200b\n  名称'
+                (await session.get(SeoSite,2)).name = '站'*120
+                (await session.get(SeoDistributionConnection,40)).name = '  公众号\x01测试  '
+                await session.commit()
+            device = first['device']; headers = {'Authorization':'Bearer '+device['credential']}
+            response = await client.get(PREFIX+'/device/profile',headers=headers)
+            assert response.status_code == 200 and response.headers['cache-control'] == 'private, no-store'
+            value = response.json()
+            assert set(value) == {'schema','device_id','customer_name','scope_name','account_name','label'}
+            assert value == {'schema':1,'device_id':device['id'],'customer_name':'客户 名称',
+                'scope_name':'站'*120,'account_name':'公众号测试','label':'Synthetic computer'}
+            assert value['device_id'] != second['device']['id']
+            for query in ('?device_id='+second['device']['id'],'?tenant_id=6','?site_id=3'):
+                assert (await client.get(PREFIX+'/device/profile'+query,headers=headers)).status_code == 422
+            assert (await client.get(PREFIX+'/device/profile')).status_code == 401
+            assert (await client.get(PREFIX+'/device/profile',headers={'Authorization':'Bearer '+'A'*64})).status_code == 401
+            for key in ('Cookie','Origin','Sec-Fetch-Site'):
+                assert (await client.get(PREFIX+'/device/profile',headers={**headers,key:'synthetic'})).status_code == 403
+            # GET did not consume a transport sequence. Frozen 0.3.4 POST
+            # still works with seq=1 and exactly the original five keys.
+            response = await client.post(PREFIX+'/device/bindings',headers=device_headers(device,1),json={'device_id':device['id']})
+            assert response.status_code == 200
+            assert set(response.json()) == {'schema','device_id','as_of','automatic_submit','items'}
+            revoked = await client.post(PREFIX+f"/devices/{device['id']}/revoke"+SCOPE,
+                headers=management_headers(admin),json={'expected_revision':2})
+            assert revoked.status_code == 200
+            assert (await client.get(PREFIX+'/device/profile',headers=headers)).status_code == 403
+    asyncio.run(scenario())
+
+
 async def pair(client, bearer):
     response = await client.post(PREFIX + '/device-pairings' + SCOPE,
         headers=management_headers(bearer), json={'label':'Synthetic computer','platform':'wechat-article',
@@ -410,6 +544,15 @@ def test_claim_rate_limit_one_peer_cannot_exhaust_other_tenants():
             limited = await client.post(PREFIX+'/device-pairings/claim',json={
                 'pairing_code':uuid4().hex,'request_id':str(uuid4())})
             assert limited.status_code == 429 and limited.headers['retry-after'] == '60'
+            # Even after this source's failed guesses, a valid claim succeeds.
+            result = await client.post(PREFIX+'/device-pairings/claim',json={
+                'pairing_code':pairing['pairing_code'],'request_id':str(uuid4())})
+            assert result.status_code == 200
+            _claim_rates.clear()
+            pairing = await client.post(PREFIX+'/device-pairings'+SCOPE,
+                headers=management_headers(admin),json={'label':'Synthetic second computer',
+                'platform':'wechat-article','account_id':'seo-connection-40','expected_revision':1})
+            pairing = pairing.json()
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=client._transport.app,
                 client=('198.51.100.2',50000)),base_url='http://synthetic.test') as other:
                 result = await other.post(PREFIX+'/device-pairings/claim',json={
