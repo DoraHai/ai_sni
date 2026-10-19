@@ -185,6 +185,20 @@ test('second selected customer mounts only when GEO eligibility is satisfied', a
   assert.equal(fallback.session.tenantId, 17, 'an unavailable second customer cannot fall back to the first')
 })
 
+test('module rejection before the tenant handler still explains the missing GEO access', async () => {
+  for (const error of [
+    Object.assign(new Error('当前客户尚未开通 GEO 模块'), { status: 403 }),
+    Object.assign(new Error('当前客户的 GEO 模块未启用或已过期'), { status: 403 }),
+    Object.assign(new Error('该客户未开通 GEO、已停用或已到期'), { status: 403, code: 'geo_not_available' }),
+  ]) {
+    const f = await fixture({ token: business(17), readError: error })
+    assert.match(f.result.message, /未开通.*客户管理.*GEO 模块和有效期/)
+    assert.equal(f.result.selectCustomer, true)
+    assert.equal(f.session.tenantId, 17)
+    assert.deepEqual(f.calls.selects, [])
+  }
+})
+
 test('malformed grant lists and selection responses never persist business auth', async () => {
   for (const rows of [null, [{ id: -1 }], [{ id: 15 }, { id: 15 }]]) {
     const f = await fixture({ rows })

@@ -60,7 +60,7 @@ def test_denied_operations_leave_content_unchanged(tmp_path, monkeypatch, backen
                     'geo_service_plan': {'advisor_user_id': 3}})
             before = await env.snapshot()
             params = {'tenant_id': tid}
-            kw = {'params': params}
+            kw = {'params': params, 'auth': fixture_token(tid=10, gid=101)}
             if action == 'variants':
                 kw['body'] = {'channels': ['website'], 'use_llm': False}
             elif action == 'publications':
