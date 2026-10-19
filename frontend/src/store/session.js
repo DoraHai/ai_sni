@@ -186,9 +186,14 @@ export const session = {
 
   setTenant(id) {
     if (this.isAdvisorSession && id !== tenantForAuth(state.token, state.user)) return
+    const changed = state.tenantId !== id
+    if (changed) clearTenantDrafts()
     state.tenantId = id
     if (id) sessionStorage.setItem('sem_tenant_id', String(id))
     else sessionStorage.removeItem('sem_tenant_id')
+    // Ordinary multi-customer switches also invalidate mounted pages and late
+    // responses. Reuse the same revision boundary as advisor/auth changes.
+    if (changed) notifyAuthContext('tenant')
   },
 
   logout() {
