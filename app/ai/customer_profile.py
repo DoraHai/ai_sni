@@ -266,8 +266,11 @@ SUMMARY_SYSTEM = """你是资深 SEM 优化师。根据给你的某客户的账�
 只返回 JSON：{"summary": "..."}"""
 
 
-async def generate_summary(session: AsyncSession, tenant: Tenant, profile: dict, force: bool = False) -> str | None:
+async def generate_summary(session: AsyncSession, tenant: Tenant, profile: dict, force: bool = False,
+                           *, read_only: bool = False) -> str | None:
     """AI 画像总结，缓存在 tenants.profile_summary。未配 key 返回 None。"""
+    if read_only:
+        return tenant.profile_summary
     if not is_enabled():
         return None
     if tenant.profile_summary and not force:
