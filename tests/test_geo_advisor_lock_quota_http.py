@@ -57,7 +57,8 @@ def test_real_revocation_during_probe_rejects_result_and_refunds(tmp_path, monke
             @checked_call
             async def supplier(**_kw):
                 if change == 'grant':
-                    await mutate(env, Grant, 101, revoked_at=datetime.utcnow())
+                    await mutate(env, Grant, 101, revoked_at=datetime.utcnow(), revoked_by=2,
+                                 revoke_reason='admin_uncheck')
                 elif change == 'role':
                     await mutate(env, m.Role, 1, permissions={'geo.assets': 'view', 'geo.content': 'view'})
                 else:
