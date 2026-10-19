@@ -8,6 +8,7 @@ RULES = (
     ('POST', '/device-pairings', 'label platform account_id expected_revision'),
     ('POST', '/devices/{deviceId}/revoke', 'expected_revision'),
     ('POST', '/tasks', 'publication_id source_version payload_hash device_id request_id'),
+    ('POST', '/tasks/{taskId}/publish-account', 'name expected_revision'),
 )
 
 
@@ -30,6 +31,13 @@ async def scope(session, ctx, request, body, rule, *, lock=False):
         deny('SCOPE_FORBIDDEN', 403)
     await site_scope(session, ctx.tenant_id, site_id, lock=False)
     request.state.seo_advisor_site_id = site_id
+    if rule.template.endswith('/publish-account'):
+        settings = await session.scalar(select(TenantModule.module_settings).where(
+            TenantModule.tenant_id == ctx.tenant_id, TenantModule.module_code == 'seo'))
+        state = settings.get(KEY) if isinstance(settings, dict) else {}
+        task = state.get('tasks', {}).get(request.path_params.get('taskId')) if isinstance(state, dict) else None
+        if not task or task['site_id'] != site_id:
+            deny('SCOPE_FORBIDDEN', 403)
     # UUIDs are registry references, never user-supplied native object grants.
     if '/devices/' in rule.template or rule.template.endswith('/tasks') and body.get('device_id'):
         settings = await session.scalar(select(TenantModule.module_settings).where(

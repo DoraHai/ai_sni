@@ -147,7 +147,28 @@ def task_payload(task, *, include_account=False):
         'delivery': 'received' if any(t['events'] for t in task['streams'].values()) else 'pending',
         'last_code': task.get('last_code'), 'verification': deepcopy(task['verification']),
         'publicationVerified': task['verification']['state'] == 'verified',
-        **({'reportedAccount': deepcopy(task.get('reportedAccount'))} if include_account else {})}
+        **({'reportedAccount': deepcopy(task.get('reportedAccount')),
+            'advisorAccount': deepcopy(task.get('advisorAccount'))} if include_account else {})}
+
+
+def set_publish_account(module, state, site_id, task_id, body, ctx):
+    task = state['tasks'].get(task_id)
+    if task is None or task['site_id'] != site_id:
+        deny('TASK_NOT_FOUND', 404)
+    if type(body['expected_revision']) is not int or body['expected_revision'] < 0:
+        deny('INVALID_SHAPE', 422)
+    if body['expected_revision'] != state['revision']:
+        deny('SOURCE_CHANGED')
+    name = None if body['name'] is None else reported_account({'name': body['name']})['name']
+    previous = deepcopy(task.get('advisorAccount'))
+    at = now_ms()
+    task['advisorAccount'] = {'name': name, 'actor': ctx.user_id, 'at': at}
+    audit(state, 'publish_account_updated', actor=ctx.user_id, task=task_id)
+    state['audit'][-1].update(at=at, old=previous, new=deepcopy(task['advisorAccount']),
+        tenant_id=module.tenant_id, site_id=site_id)
+    state['revision'] += 1
+    store(module, state)
+    return settings_payload(state, site_id)
 
 
 async def placeholder_connection(session, module, state, site_id, ctx):

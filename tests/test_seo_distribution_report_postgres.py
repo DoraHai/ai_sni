@@ -1,6 +1,7 @@
 """Required native PostgreSQL races; absent dedicated PG is a failure, not skip."""
 import asyncio
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import json
 import re
@@ -91,6 +92,156 @@ def management_headers(bearer):
 
 
 SCOPE = '?tenant_id=4&site_id=2'
+
+
+@pytest.mark.parametrize('actor', ['admin', 'advisor'])
+def test_publish_account_annotation_is_audited_and_never_changes_report_or_device_payload(actor, monkeypatch):
+    async def scenario():
+        from app import seo_distribution_verification as verification
+        monkeypatch.setattr(verification, 'recover_report_verification', AsyncMock())
+        async with fixture() as (sessions, client, admin, payload_hash):
+            device, task, task_id = await ready(client, admin, payload_hash)
+            event = event_for(device, task, reportedAccount={'name':'合成上报号'})
+            exchange = {'contractVersion':1,'deviceId':device['id'],'receipts':[event]}
+            assert (await client.post(PREFIX+'/device/exchange',headers=device_headers(device,2),json=exchange)).status_code == 200
+            async with sessions() as session:
+                before = registry((await session.get(TenantModule,1)).module_settings)
+                old_task = deepcopy(before['tasks'][task_id])
+                revision = before['revision']
+                native_attempt = deepcopy(await session.scalar(select(SeoPublishAttempt.response_summary)))
+            device_path = PREFIX+'/device/tasks/'+task_id+'/verification'
+            device_before = await client.get(device_path,headers=management_headers('Bearer '+device['credential']))
+            bearer = admin if actor == 'admin' else advisor_bearer()
+            path = PREFIX+'/tasks/'+task_id+'/publish-account'+SCOPE
+            response = await client.post(path,headers=management_headers(bearer),json={
+                'name':'  合成\u200b标注号　 测试😀  ', 'expected_revision':revision})
+            assert response.status_code == 200, response.status_code
+            assert response.json()['revision'] == revision + 1
+            detail = (await client.get(PREFIX+'/tasks/'+task_id+SCOPE,headers=management_headers(admin))).json()
+            annotation = detail['advisorAccount']
+            assert annotation['name'] == '合成标注号 测试😀'
+            assert annotation['actor'] == (9 if actor == 'admin' else 7) and type(annotation['at']) is int
+            assert detail['reportedAccount'] == {'name':'合成上报号'}
+            device_after = await client.get(device_path,headers=management_headers('Bearer '+device['credential']))
+            assert device_after.json() == device_before.json()
+            assert set(device_after.json()) == {'taskId','nativePublicationId','deviceId','reportedOutcome',
+                'delivery','last_code','verification','publicationVerified'}
+            # Clear keeps attribution for the operation, with a null display override.
+            response = await client.post(path,headers=management_headers(bearer),json={
+                'name':None, 'expected_revision':revision+1})
+            assert response.status_code == 200
+            async with sessions() as session:
+                state = registry((await session.get(TenantModule,1)).module_settings)
+                saved = deepcopy(state['tasks'][task_id])
+                assert saved.pop('advisorAccount')['name'] is None
+                assert saved == old_task
+                logs = [a for a in state['audit'] if a['action'] == 'publish_account_updated']
+                assert len(logs) == 2
+                assert logs[0]['old'] is None and logs[0]['new'] == annotation
+                assert logs[1]['old'] == annotation and logs[1]['new']['name'] is None
+                assert all(a['actor'] == annotation['actor'] and a['tenant_id'] == 4 and a['site_id'] == 2
+                    and a['task'] == task_id and a['at'] == a['new']['at'] for a in logs)
+                assert await session.scalar(select(SeoPublishAttempt.response_summary)) == native_attempt
+                assert await session.scalar(select(func.count()).select_from(SeoPublishAttempt)) == 1
+            # Exact event replay still works after advisor metadata changes.
+            replay = await client.post(PREFIX+'/device/exchange',headers=device_headers(device,3),json=exchange)
+            assert replay.status_code == 200
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('name', ['', '   ', '\u200b\x00', '😀'*61, 5, {}, []])
+def test_publish_account_invalid_name_is_atomic(name):
+    async def scenario():
+        async with fixture() as (sessions, client, admin, payload_hash):
+            _, _, task_id = await ready(client,admin,payload_hash)
+            async with sessions() as session:
+                before = registry((await session.get(TenantModule,1)).module_settings)
+            response = await client.post(PREFIX+'/tasks/'+task_id+'/publish-account'+SCOPE,
+                headers=management_headers(advisor_bearer()),json={'name':name,'expected_revision':before['revision']})
+            assert response.status_code == 422
+            assert response.json()['detail']['code'] == 'INVALID_REPORTED_ACCOUNT'
+            async with sessions() as session:
+                assert registry((await session.get(TenantModule,1)).module_settings) == before
+    asyncio.run(scenario())
+
+
+def test_publish_account_revision_race_and_unicode_codepoint_limit():
+    async def scenario():
+        async with fixture() as (sessions, client, admin, payload_hash):
+            _, _, task_id = await ready(client,admin,payload_hash)
+            settings = (await client.get(PREFIX+'/settings'+SCOPE,headers=management_headers(admin))).json()
+            path = PREFIX+'/tasks/'+task_id+'/publish-account'+SCOPE
+            responses = await asyncio.gather(*(client.post(path,headers=management_headers(admin),json={
+                'name':'😀'*60,'expected_revision':settings['revision']}) for _ in range(5)))
+            assert sum(r.status_code == 200 for r in responses) == 1
+            assert sum(r.status_code == 409 and r.json()['detail']['code'] == 'SOURCE_CHANGED' for r in responses) == 4
+            async with sessions() as session:
+                state = registry((await session.get(TenantModule,1)).module_settings)
+                assert state['tasks'][task_id]['advisorAccount']['name'] == '😀'*60
+                assert len([a for a in state['audit'] if a['action'] == 'publish_account_updated']) == 1
+            for revision in (True, -1, '4', None):
+                response = await client.post(path,headers=management_headers(admin),json={'name':None,'expected_revision':revision})
+                assert response.status_code == 422
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('denial', ['tenant','site','task_site','readonly','admin_readonly','grant','switch'])
+def test_publish_account_permission_denials_preserve_ledger(denial, monkeypatch):
+    async def scenario():
+        async with fixture() as (sessions, client, admin, payload_hash):
+            _, _, task_id = await ready(client,admin,payload_hash)
+            async with sessions() as session:
+                before = registry((await session.get(TenantModule,1)).module_settings)
+                if denial in {'readonly','admin_readonly'}:
+                    role = await session.get(Role,5 if denial == 'readonly' else 9)
+                    role.permissions = {**role.permissions, 'seo.content':'view'}
+                elif denial == 'grant':
+                    grant = await session.get(AdvisorTenantGrant,10)
+                    grant.revoked_at = datetime.now(timezone.utc)
+                    grant.revoked_by, grant.revoke_reason = 9, 'manual'
+                elif denial == 'task_site':
+                    # Even assigning the selected site cannot admit another site's task.
+                    session.add(SeoSiteAdvisorAssignment(id=4,tenant_id=4,site_id=3,advisor_user_id=7,active=True))
+                await session.commit()
+            if denial == 'switch':
+                monkeypatch.setattr(auth.get_settings(),'advisor_scoped_content_writes_enabled',False)
+            scope = '?tenant_id=6&site_id=2' if denial == 'tenant' else '?tenant_id=4&site_id=3' if denial in {'site','task_site'} else SCOPE
+            bearer = admin if denial == 'admin_readonly' else advisor_bearer()
+            response = await client.post(PREFIX+'/tasks/'+task_id+'/publish-account'+scope,
+                headers=management_headers(bearer),json={'name':'合成号','expected_revision':before['revision']})
+            assert response.status_code in {401,403}, response.status_code
+            async with sessions() as session:
+                assert registry((await session.get(TenantModule,1)).module_settings) == before
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('revocation', ['assignment','grant','permission'])
+def test_publish_account_guard_rejects_inflight_revocation(revocation):
+    async def scenario():
+        async with fixture() as (sessions, client, admin, payload_hash):
+            _, _, task_id = await ready(client,admin,payload_hash)
+            async with sessions() as session:
+                before = registry((await session.get(TenantModule,1)).module_settings)
+            async with sessions() as revoker:
+                if revocation == 'assignment':
+                    (await revoker.get(SeoSiteAdvisorAssignment,3,with_for_update=True)).active = False
+                elif revocation == 'grant':
+                    grant = await revoker.get(AdvisorTenantGrant,10,with_for_update=True)
+                    grant.revoked_at = datetime.now(timezone.utc)
+                    grant.revoked_by, grant.revoke_reason = 9, 'manual'
+                else:
+                    role = await revoker.get(Role,5,with_for_update=True)
+                    role.permissions = {**role.permissions,'seo.content':'view'}
+                await revoker.flush()
+                pending = asyncio.create_task(client.post(PREFIX+'/tasks/'+task_id+'/publish-account'+SCOPE,
+                    headers=management_headers(advisor_bearer()),json={'name':'合成号','expected_revision':before['revision']}))
+                await asyncio.sleep(0.05)
+                await revoker.commit()
+                response = await asyncio.wait_for(pending, timeout=10)
+            assert response.status_code in {401,403}, response.status_code
+            async with sessions() as session:
+                assert registry((await session.get(TenantModule,1)).module_settings) == before
+    asyncio.run(scenario())
 
 
 async def new_pair(client, bearer, revision, scope=SCOPE):
