@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from app.geo.content import distribution_protocol as p, distribution_report as s
 
@@ -111,6 +112,29 @@ def test_legacy_selected_account_does_not_create_placeholder():
                 {'label': '合成电脑', 'platform': 'wechat-article', 'account_id': '12', 'expected_revision': 0})
             binding.assert_awaited_once_with(store, 12)
             placeholder.assert_not_awaited()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('account', ['missing', None, '12'])
+def test_advisor_pairing_guard_accepts_omitted_or_null_account_without_expanding_fields(account):
+    async def run():
+        from app.security import geo_distribution_advisor as guard
+        body = {'label': '合成电脑', 'platform': 'wechat-article', 'expected_revision': 0}
+        if account != 'missing': body['account_id'] = account
+        request = Request({'type': 'http', 'method': 'POST', 'path': p.PREFIX + '/device-pairings',
+            'query_string': b'tenant_id=7&project_id=5', 'headers': []})
+        ctx = NS(ensure_tenant=lambda tenant: None)
+        rule = guard.RULES[('POST', p.PREFIX + '/device-pairings')]
+        with patch.object(s, 'management_store', AsyncMock()) as management:
+            await guard.check_objects(NS(), ctx, request, body, rule)
+            assert management.call_args.args[2:] == (7, 5)
+            assert management.call_args.kwargs == {'write': True}
+            with pytest.raises(HTTPException):
+                await guard.check_objects(NS(), ctx, request, {**body, 'enabled': True}, rule)
+            assert management.await_count == 1
+        with patch.object(s, 'management_store', AsyncMock(side_effect=HTTPException(403))):
+            with pytest.raises(HTTPException):
+                await guard.check_objects(NS(), ctx, request, body, rule)
     asyncio.run(run())
 
 
