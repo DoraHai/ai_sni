@@ -121,6 +121,11 @@ def cancel_requested(job: GeoAsyncJob) -> bool:
 
 
 async def request_cancel(session: AsyncSession, job: GeoAsyncJob) -> GeoAsyncJob:
+    if job.kind == 'search_visibility':
+        # Serialize pending cancellation with the worker's pending -> running
+        # transition. A stale pending object must not refund an in-flight job.
+        job = await session.scalar(select(GeoAsyncJob).where(GeoAsyncJob.id == job.id)
+            .with_for_update().execution_options(populate_existing=True))
     if job.status in {"succeeded", "failed", "cancelled"}:
         return job
     meta = dict(job.request_meta or {})

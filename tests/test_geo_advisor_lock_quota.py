@@ -161,3 +161,17 @@ def test_refunded_attempt_is_excluded_but_legacy_and_other_actors_are_counted():
     compiled = session.scalar.call_args.args[0].compile(dialect=dialect())
     assert 'coalesce' in str(compiled) and 'created_by =' in str(compiled)
     assert 'refunded' in compiled.params.values() and quota.STATE in compiled.params.values()
+
+
+def test_stale_pending_cancel_reloads_running_job_before_refunding():
+    from app.geo.content.async_jobs import request_cancel
+    stale = SimpleNamespace(id=7, kind='search_visibility', status='pending')
+    live = SimpleNamespace(kind='search_visibility', status='running', tenant_id=10, created_by=1,
+        request_meta={quota.KEY: [9, 10, 1]})
+    session = SimpleNamespace(scalar=AsyncMock(return_value=live), execute=AsyncMock(),
+        commit=AsyncMock(), refresh=AsyncMock())
+    assert asyncio.run(request_cancel(session, stale)) is live
+    assert live.status == 'running' and live.request_meta['cancel_requested'] is True
+    session.execute.assert_not_awaited()
+    sql = str(session.scalar.call_args.args[0].compile(dialect=dialect()))
+    assert 'FOR UPDATE' in sql
