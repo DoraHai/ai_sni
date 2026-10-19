@@ -48,7 +48,7 @@ test('advisor production UI isolates modules, paginates, clears revoked sessions
   moduleStatus.seo=200;empty=true;await p.locator('[data-advisor=refresh]').click();await p.waitForFunction(()=>document.querySelectorAll('.advisor-module').length===2&&[...document.querySelectorAll('.advisor-module')].every(e=>e.textContent.includes('这个客户还没有分配给你的站内任务')));assert(!await p.$('.advisor-task'));empty=false;
   for(const [status,code] of [[403,'ADVISOR_GRANT_REVOKED'],[403,'ADVISOR_ROLE_CHANGED'],[401,null]]){
    moduleStatus.geo=200;await p.locator('[data-advisor=refresh]').click();await p.waitForFunction(()=>document.querySelectorAll('.advisor-task').length===2);
-   moduleStatus.geo=status;moduleCode.geo=code;await p.locator('[data-advisor=latest][data-module=geo]').click();await p.waitForFunction(()=>document.body.textContent.includes('你的客户授权已变化，请重新选择客户'));assert(!await p.$('.advisor-task'));assert(!await p.$('.advisor-automation-section'));
+   moduleStatus.geo=status;moduleCode.geo=code;await p.locator('[data-advisor=latest][data-module=geo]').click();await p.waitForFunction(expected=>document.body.textContent.includes(expected),{},status===401?'登录已过期，请重新登录':'你的客户授权已变化，请重新选择客户');assert(!await p.$('.advisor-task'));assert(!await p.$('.advisor-automation-section'));
    // Restore only the isolated browser fixture after the expired-session case.
    if(status===401)await p.evaluate(permissions=>sessionStorage.setItem('sem_auth_v1',JSON.stringify({version:1,token:'fixture-advisor',user:{id:7,tenant_id:null,display_name:'顾问',permissions}})),permissions);
   }

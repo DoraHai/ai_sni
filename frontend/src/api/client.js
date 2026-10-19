@@ -28,7 +28,7 @@ function normalizeDetail(detail) {
   if (Array.isArray(detail)) {
     return detail.map((d) => d?.msg || JSON.stringify(d)).join('; ')
   }
-  if (typeof detail === 'object') return detail.msg || JSON.stringify(detail)
+  if (typeof detail === 'object') return detail.msg || detail.message || JSON.stringify(detail)
   return String(detail)
 }
 

@@ -18,7 +18,7 @@ test('advisor distribution is local text and offline links, without service or s
  panel.change({target:{name:'distribution_scope',value:'seo:1:6'}});
  panel.filterModule('geo');assert.doesNotMatch(panel.html(),/导出发布单/);
  panel.filterModule('seo');rows=[];
- assert.match(panel.html(),/这个客户目前没有待发布的稿件。/);
+ assert.match(panel.html(),/当前任务列表里没有相关项目，稿件情况请到原模块核对。/);
  assert.match(panel.html(),/<a href="\/seo\/distribution">导出发布单 \/ 导入回执/);
  s.user.permissions['seo.content']='view';assert.doesNotMatch(panel.html(),/href=/);
  panel.invalidate();assert.equal(panel.html(),'');panel.dispose();
@@ -33,7 +33,7 @@ for(const tenantId of [null,1])test(`non-advisor distribution keeps discovery an
    await panel.initialize(['seo']);
    assert.deepEqual(calls,['/api/distribution/v1/bound-scopes?module=seo']);
    assert.match(panel.html(),/本页暂无已分配项目。可读取其他任务页后选择项目。/);
-   assert.doesNotMatch(panel.html(),/这个客户目前没有待发布的稿件/);
+   assert.doesNotMatch(panel.html(),/当前任务列表里没有相关项目/);
  }finally{panel.dispose();}
 });
 

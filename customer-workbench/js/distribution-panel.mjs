@@ -81,7 +81,7 @@ export function createAdvisorDistributionPanel({session,fetchImpl=fetch,subscrib
         const entry=visible.includes('seo')&&session.user?.permissions?.['seo.content']==='edit'?
           (seo.length?seo.map(s=>`<p><a href="/seo/distribution?tenant_id=${s.tenant_id}&amp;site_id=${s.scope_id}">导出发布单 / 导入回执（SEO 分发平台）</a></p>`).join(''):
           '<p><a href="/seo/distribution">导出发布单 / 导入回执（SEO 分发平台）</a></p>'):'';
-        return `<section class="advisor-group distribution-panel" data-distribution-panel><h2>发布与分发</h2><p>审核通过的稿件由多号通或人工发布，发完在分发记录里回填链接或导入回执。</p>${!scopes.length?'<p>这个客户目前没有待发布的稿件。</p>':''}${entry}</section>`;
+        return `<section class="advisor-group distribution-panel" data-distribution-panel><h2>发布与分发</h2><p>审核通过的稿件由多号通或人工发布，发完在分发记录里回填链接或导入回执。</p>${!scopes.length?'<p>当前任务列表里没有相关项目，稿件情况请到原模块核对。</p>':''}${entry}</section>`;
       },
       filterModule(value){filter=value;},
       invalidate(){modules=[];},dispose(){modules=[];},click(){},change(){},
