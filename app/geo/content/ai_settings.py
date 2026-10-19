@@ -71,6 +71,8 @@ async def ensure_ai_setting(
         api_key_encrypted=None,
         enabled=True,
     )
+    if getattr(session, 'info', {}).get('advisor_read_scope') or getattr(session, 'info', {}).get('advisor_scoped_write'):
+        return row  # Transient defaults; operational consumers never seed provider settings.
     session.add(row)
     await session.commit()
     await session.refresh(row)

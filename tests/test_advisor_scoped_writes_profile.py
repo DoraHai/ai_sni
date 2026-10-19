@@ -87,7 +87,7 @@ def test_profile_patch_preserves_omitted_and_unwritable_fields(tmp_path, monkeyp
 
 @pytest.mark.parametrize('which', ['missing-query', 'identity-only', 'inactive-project',
     'unassigned', 'outside-project', 'patrol', 'period', 'service-plan', 'post-profile'])
-def test_profile_keeps_scope_and_execution_restrictions(tmp_path, monkeypatch, backend, which):
+def test_profile_keeps_scope_while_allowing_running_plans(tmp_path, monkeypatch, backend, which):
     async def run():
         async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
             if which == 'inactive-project':
@@ -124,8 +124,12 @@ def test_profile_keeps_scope_and_execution_restrictions(tmp_path, monkeypatch, b
                          else {'profile': BRAND_PROFILE},
                     params={'project_id': 10} if which == 'post-profile' else {},
                     auth=fixture_token(native=True) if which == 'identity-only' else None)
-            assert response.status_code in {403, 409}, response.text
-            assert await env.snapshot() == before
+            if which in {"patrol", "period", "service-plan"}:
+                assert response.status_code == 200, response.text
+                assert await env.snapshot() != before
+            else:
+                assert response.status_code in {403, 409}, response.text
+                assert await env.snapshot() == before
     asyncio.run(run())
 
 

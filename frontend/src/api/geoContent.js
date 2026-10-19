@@ -1,4 +1,7 @@
 import client from './client'
+import { session } from '../store/session'
+import { advisorClaims } from '../utils/geoAdvisorTenant.js'
+import { advisorVisibilityBody } from '../utils/geoAdvisorRequests.js'
 
 export function previewGeoPublicationLinks(tenantId, businessId, file, pasted = '', projectId = null) {
   const form = new FormData()
@@ -99,11 +102,11 @@ export function createGeoPrompt(body) {
 }
 
 /** Import prompt rows in one server-validated CSV batch. */
-export function importGeoPromptsCsv(tenantId, file) {
+export function importGeoPromptsCsv(tenantId, file, unitId = null) {
   const form = new FormData()
   form.append('file', file)
   return client.post('/api/v1/geo/prompts/import-csv', form, {
-    params: { tenant_id: tenantId },
+    params: { tenant_id: tenantId, ...(unitId ? { unit_id: unitId } : {}) },
     timeout: 120000,
   })
 }
@@ -232,11 +235,11 @@ export function createGeoFact(body) {
 }
 
 /** Import fact rows in one server-validated CSV batch. */
-export function importGeoFactsCsv(tenantId, file) {
+export function importGeoFactsCsv(tenantId, file, businessId = null) {
   const form = new FormData()
   form.append('file', file)
   return client.post('/api/v1/geo/facts/import', form, {
-    params: { tenant_id: tenantId },
+    params: { tenant_id: tenantId, ...(businessId ? { business_id: businessId } : {}) },
     timeout: 120000,
   })
 }
@@ -711,12 +714,13 @@ export function exportGeoVariant(tenantId, taskId, channel = 'website', expected
 }
 
 export function publishGeoVariant(taskId, body) {
-  return client.post(`/api/v1/geo/content-tasks/${taskId}/publications`, body)
+  return client.post(`/api/v1/geo/content-tasks/${taskId}/publications`, body, { params: { tenant_id: body.tenant_id } })
 }
 
 export function pushGeoVariantWebhook(taskId, body) {
   return client.post(`/api/v1/geo/content-tasks/${taskId}/push`, body, {
     timeout: 60000,
+    params: { tenant_id: body.tenant_id },
   })
 }
 
@@ -728,7 +732,7 @@ export function fetchTaskPushTargets(tenantId, taskId) {
 
 export function pushGeoVariantBatch(taskId, body, { runAsync = true } = {}) {
   return client.post(`/api/v1/geo/content-tasks/${taskId}/push-batch`, body, {
-    params: { run_async: !!runAsync },
+    params: { tenant_id: body.tenant_id, run_async: !!runAsync },
     timeout: runAsync ? 30000 : 300000,
   })
 }
@@ -745,10 +749,10 @@ export function enableMultiMediaAutoPack(tenantId) {
   })
 }
 
-export function submitGeoTaskReview(tenantId, taskId, note = null) {
+export function submitGeoTaskReview(tenantId, taskId, note = null, expected = {}) {
   return client.post(
     `/api/v1/geo/content-tasks/${taskId}/submit-review`,
-    { note },
+    { note, ...expected },
     { params: { tenant_id: tenantId } },
   )
 }
@@ -802,7 +806,8 @@ export function getVisibilityPatrolRun(tenantId, runId) {
 }
 
 export function startVisibilityPatrolRun(body) {
-  return client.post('/api/v1/geo/visibility-patrol/runs', body, {
+  const payload = advisorVisibilityBody(body, !!advisorClaims(session.token) || session.user?.is_advisor === true)
+  return client.post('/api/v1/geo/visibility-patrol/runs', payload, {
     params: { tenant_id: body.tenant_id },
     timeout: 120000,
   })

@@ -44,23 +44,27 @@ WRITE_ROUTES: dict[tuple[str, str], WriteRule] = {}
 
 def _register(method, suffix, fields):
     template = "/api/v1/geo" + suffix
-    rule = WriteRule(method, template, frozenset(fields.split()), FORBIDDEN,
+    archive = method == "PATCH" and suffix in {"/facts/{fact_id}", "/prompts/{prompt_id}",
+        "/optimization-businesses/{business_id}", "/optimization-units/{unit_id}"}
+    if archive:
+        fields += " status"
+    rule = WriteRule(method, template, frozenset(fields.split()), FORBIDDEN - {"status"} if archive else FORBIDDEN,
                      ("geo.assets", "geo.content"), "project")
     WRITE_ROUTES[(method, template)] = rule
 
 
 _FACT = "title statement fact_type source_name source_url observed_at expires_at author_name trust_level"
-_PROMPT = "question priority tags demand_note question_group market"
+_PROMPT = "question priority tags demand_note question_group market is_brand_probe"
 _BUSINESS = "name description sort_order"
 _UNIT = "name keyword description sort_order"
 _register("POST", "/facts", "tenant_id business_id " + _FACT)
-_register("PATCH", "/facts/{fact_id}", _FACT)
+_register("PATCH", "/facts/{fact_id}", _FACT + " business_id")
 _register("POST", "/prompts", "tenant_id unit_id language source " + _PROMPT)
-_register("PATCH", "/prompts/{prompt_id}", _PROMPT)
+_register("PATCH", "/prompts/{prompt_id}", _PROMPT + " unit_id")
 _register("POST", "/optimization-businesses", "tenant_id " + _BUSINESS)
 _register("PATCH", "/optimization-businesses/{business_id}", _BUSINESS + " profile")
 _register("POST", "/optimization-units", "tenant_id business_id " + _UNIT)
-_register("PATCH", "/optimization-units/{unit_id}", _UNIT)
+_register("PATCH", "/optimization-units/{unit_id}", _UNIT + " business_id")
 _register("POST", "/content-tasks", "tenant_id prompt_id title target_channels fact_ids brief")
 _register("POST", "/content-imports/create-task",
           "tenant_id prompt_id title body_markdown source_type source_url target_channels")
@@ -77,20 +81,38 @@ VISIBILITY_RUN_RULE = WriteRule(
 )
 
 
+# AI contracts stay separate from the manual field policy.
+from app.security.advisor_write_ai import rules as _ai_rules
+WRITE_ROUTES.update(_ai_rules())
+
+
 def match_write_rule(request) -> WriteRule | None:
     # Never fall back to the URL or a prefix when route resolution is missing.
     key = (request.method, getattr(request.scope.get("route"), "path", None))
     if key == (VISIBILITY_RUN_RULE.method, VISIBILITY_RUN_RULE.template):
         return VISIBILITY_RUN_RULE
-    return WRITE_ROUTES.get(key)
+    from app.security.advisor_write_operations import rules
+    from app.security.advisor_operations import rules as remaining_rules
+    return WRITE_ROUTES.get(key) or rules().get(key) or remaining_rules().get(key)
 
 
 def check_write_fields(rule: WriteRule, body: dict) -> None:
+    if rule.assignment == 'operations':
+        from app.security.advisor_operations import check_fields
+        return check_fields(rule, body)
     def forbidden():
         deny(403, "ADVISOR_WRITE_FIELD_FORBIDDEN", "此字段或操作未向顾问开放")
 
     if not isinstance(body, dict) or set(body) - rule.fields or set(body) & rule.forbidden:
         forbidden()
+    from app.security.advisor_write_publish import check_fields as publish_fields
+    publish_fields(rule, body)
+    from app.security.advisor_write_publish import VARIANTS, PUSH_BATCH
+    action_lists = {VARIANTS: {"channels"}, PUSH_BATCH: {"targets"}}.get(rule.template, set())
+    if "status" in body:
+        allowed = {"active", "archived", "paused"} if rule.template == '/api/v1/geo/projects/{project_id}' else {"active", "archived"}
+        if body["status"] not in allowed:
+            forbidden()
     if 'body_markdown' in body and isinstance(body['body_markdown'], str) and len(body['body_markdown']) > 500_000:
         deny(403, 'ADVISOR_WRITE_FIELD_FORBIDDEN', '文章正文不能超过 50 万字，请拆分后保存')
     if "trust_level" in body and body["trust_level"] not in ("draft", "needs_review"):
@@ -154,7 +176,7 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
     for key, value in body.items():
         if key not in {"brief", "profile"} and isinstance(value, dict):
             forbidden()
-        if key not in {"tags", "target_channels", "fact_ids"} and isinstance(value, list):
+        if key not in {"tags", "target_channels", "fact_ids"} | action_lists and isinstance(value, list):
             forbidden()
     if "fact_ids" in body and (not isinstance(body["fact_ids"], list) or
             len(body["fact_ids"]) > 50 or

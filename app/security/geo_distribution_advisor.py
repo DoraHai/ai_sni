@@ -44,6 +44,10 @@ async def guard(session, ctx, request, claims, rule):
     # Starlette stream() alone does not cache bytes for the later endpoint.
     # read_body uses Request.body() when the guard has populated this cache.
     await check_objects(session, ctx, request, data, rule)
+    from app.security.advisor_read_scope import bind_read_scope
+    from app.geo.content.distribution_routes import scope
+    _, project_id = scope(request)
+    await bind_read_scope(session, ctx, request, project_limit={project_id})
     bind_advisor_write_commit(session, ctx, request, data, rule, claims)
     request.state.advisor_scoped_write = rule
     request.scope['geo_advisor_delivery'] = (ctx.user_id, dict(claims), ctx.tenant_id, frozenset(rule.edit_all))

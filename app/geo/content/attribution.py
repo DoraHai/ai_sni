@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any, Iterable, Sequence
 from urllib.parse import urlparse, urlunparse
 
-from sqlalchemy import select
+from sqlalchemy import false, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.geo.content.snapshots import extract_cited_domain, normalize_cited_urls
@@ -87,7 +87,7 @@ class PubRef:
 async def load_tenant_publications(
     session: AsyncSession, tenant_id: int
 ) -> list[PubRef]:
-    """All publications with URL for a tenant (via variant → task)."""
+    """Publications with URL, restricted to the advisor's bound task scope."""
     stmt = (
         select(
             GeoPublication.id,
@@ -105,6 +105,12 @@ async def load_tenant_publications(
             GeoPublication.published_url != "",
         )
     )
+    scope = getattr(session, 'info', {}).get('advisor_read_scope')
+    if scope is not None:
+        # Apply the task predicate explicitly to this column projection too.
+        # Matching must never persist another project's publication IDs, even
+        # when this query is executed without ORM loader criteria.
+        stmt = stmt.where(scope[3].get(GeoContentTask, false()))
     rows = (await session.execute(stmt)).all()
     out: list[PubRef] = []
     for r in rows:

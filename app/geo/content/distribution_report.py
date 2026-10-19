@@ -127,12 +127,17 @@ async def actor_authorized(store, project_id, actor, *, write=True):
             or grant.revoked_at is not None or user.tenant_id not in all_ids):
         p.fail('ACTOR_AUTHORIZATION_REVOKED', 403)
     scope = AdvisorScope(frozenset(all_ids), store.tenant_id, grant.id)
+    from app.security.advisor_write_reads import assigned_scope
+    assigned_projects, assigned_businesses = await assigned_scope(session,
+        SimpleNamespace(tenant_id=store.tenant_id, user_id=user.id))
+    if project_id not in assigned_projects or not set(businesses).issubset(assigned_businesses):
+        p.fail('ACTOR_AUTHORIZATION_REVOKED', 403)
     plan = plan_for(project)
     if (type(plan.get('advisor_user_id')) is not int or plan['advisor_user_id'] != user.id
             or not await advisor_available(session, store.tenant_id, user.id, advisor_scope=scope)):
         p.fail('ACTOR_AUTHORIZATION_REVOKED', 403)
-    # Treat distribution as a content write for the existing execution-chain
-    # restriction; a new route prefix must not silently skip that guard.
+    # Reuse the current content execution-chain serialization/authority rule;
+    # a new route prefix must not silently skip or change that guard.
     if write:
         await check_manual_execution_scope(session, SimpleNamespace(tenant_id=store.tenant_id),
             SimpleNamespace(template='/api/v1/geo/content-tasks'))
@@ -496,6 +501,12 @@ async def apply_events(store, device, events, stream):
                     published_url=event['publicUrl'], note='多号通人工确认链接；页面待核验', publish_mode='manual_export')
             except PublishGateError:
                 p.fail('REVIEW_REQUIRED')
+            # The existing writer's HTTP-advisor hook has no human session
+            # binding on an opaque-device request. Explicitly recheck its saved
+            # authority on this same locked transaction, rather than relying on
+            # that hook becoming a no-op or impersonating an administrator.
+            await actor_authorized(store, device['scope_id'], task['actor'])
+            await account_binding(store, device['account_id'])
             pub = await store.session.scalar(select(GeoPublication).where(
                 GeoPublication.variant_id == variant.id, GeoPublication.channel == 'wechat',
                 GeoPublication.published_url == event['publicUrl']))

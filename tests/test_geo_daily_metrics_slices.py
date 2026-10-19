@@ -242,6 +242,7 @@ def test_rebuild_clears_obsolete_cached_slices():
     from unittest.mock import AsyncMock, patch
     from app.geo.content import daily_metrics as dm
     session = AsyncMock()
+    session.info = {}
     session.scalars.return_value = [SimpleNamespace(scope_key='b3@deepseek', business_id=3, unit_id=None)]
     async def run():
         with patch.object(dm, 'load_day_snapshots', new=AsyncMock(return_value=[])), patch.object(dm, 'load_prompt_unit_maps', new=AsyncMock(return_value=({}, {}, {}))), patch.object(dm, 'upsert_metric_row', new=AsyncMock()) as upsert:

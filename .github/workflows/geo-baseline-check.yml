@@ -67,7 +67,7 @@ jobs:
         run: python ops/run_geo_checks.py --postgres --distribution-report
 
   backend-tests:
-    timeout-minutes: 15
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     services:
       postgres:

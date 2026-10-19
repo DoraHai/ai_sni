@@ -488,7 +488,8 @@ async def create_run(session, project: GeoProject, config: VisibilityConfig, *, 
     ).order_by(GeoAsyncJob.id.desc())))
     if any(r.status in {"pending", "running"} for r in rows):
         raise StopRun("该项目已有任务正在运行")
-    if trigger == "manual" and any(r.created_at >= today and (r.request_meta or {}).get("trigger") == "manual" for r in rows):
+    advisor_request = bool(getattr(session, 'info', {}).get('advisor_scoped_write'))
+    if trigger == "manual" and not advisor_request and any(r.created_at >= today and (r.request_meta or {}).get("trigger") == "manual" for r in rows):
         raise StopRun("每个项目每天最多立即运行一次")
     if trigger == "schedule" and any(r.status == "succeeded" and r.created_at >= week_start() for r in rows):
         return None
@@ -498,6 +499,10 @@ async def create_run(session, project: GeoProject, config: VisibilityConfig, *, 
                       request_meta={"config": config.model_dump(), "trigger": trigger, "article_urls": articles},
                       result_meta=empty_result(config, len(articles)))
     session.add(row)
+    if advisor_request:
+        from app.security.advisor_write_ai import job_authority
+        ctx = session.info['advisor_scoped_write'][0]
+        row.request_meta = {**row.request_meta, **job_authority(session, ctx)}
     await session.commit()
     await session.refresh(row)
     return row
@@ -527,6 +532,10 @@ async def execution_lock():
         await asyncio.sleep(1)
 
 
+from app.security.advisor_operation_call import background_call
+
+
+@background_call
 async def execute_run(job_id: int):
     """Dedicated session advisory lock serializes budget + retries across GEO processes.
 
@@ -545,6 +554,8 @@ async def execute_run(job_id: int):
             project = await session.get(GeoProject, job.ref_id)
             module = await session.get(TenantModule, project.tenant_module_id) if project else None
             try:
+                from app.security.advisor_operations import recheck_search_job
+                await recheck_search_job(session, job)
                 ensure_geo_background_execution_allowed(job.tenant_id)
                 await ensure_geo_entitlement(session, job.tenant_id)
                 if job.status == "running":
@@ -570,6 +581,7 @@ async def execute_run(job_id: int):
                     if owner_connection.invalidated:
                         raise RuntimeError("execution owner unavailable")
                     await owner_connection.execute(text("SELECT 1"))
+                    await recheck_search_job(session, job)
                     job.result_meta = deepcopy(result)
                     await session.commit()
                     ensure_geo_background_execution_allowed(job.tenant_id)
@@ -610,6 +622,10 @@ async def execute_run(job_id: int):
             job.result_meta = final
             job.finished_at = now_utc()
             await session.commit()
+            binding = session.info.get('advisor_scoped_write')
+            if binding:
+                from app.security.advisor_write_audit import record
+                record(binding[1].scope, 'job_' + job.status, job_id=job.id)
 
 
 def run_payload(job, *, advisor: bool) -> dict:

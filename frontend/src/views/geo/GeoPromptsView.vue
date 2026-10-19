@@ -227,10 +227,8 @@ async function submitEdit() {
         ? editForm.value.tags.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
         : [],
       question_group: editForm.value.question_group || null,
-      ...(isAdvisor.value ? {} : {
-        is_brand_probe: !!editForm.value.is_brand_probe,
-        unit_id: editForm.value.unit_id || null,
-      }),
+      is_brand_probe: !!editForm.value.is_brand_probe,
+      unit_id: editForm.value.unit_id || null,
     })
     ElMessage.success('已保存')
     editOpen.value = false
@@ -338,7 +336,9 @@ async function importPromptCsv(event) {
   if (!file || !tenantId.value) return
   importingCsv.value = true
   try {
-    const result = await importGeoPromptsCsv(tenantId.value, file)
+    const unitId = filterUnitId.value || (units.value.length === 1 ? units.value[0].id : null)
+    if (isAdvisor.value && !unitId) { ElMessage.warning('请先选择导入所属关键词'); return }
+    const result = await importGeoPromptsCsv(tenantId.value, file, isAdvisor.value ? unitId : null)
     const count = Number(result.count ?? result.items?.length ?? 0)
     const errors = result.errors || []
     ElMessage.success(`CSV 导入完成：${count} 条`)
@@ -623,7 +623,7 @@ const analysisRows = computed(() =>
           <el-input v-model="editForm.question" type="textarea" :rows="3" placeholder="用户/AI 会问的完整问句" />
         </el-form-item>
         <el-form-item label="优化单元">
-          <el-select v-model="editForm.unit_id" :disabled="isAdvisor" clearable filterable style="width: 100%" placeholder="可选">
+          <el-select v-model="editForm.unit_id"  clearable filterable style="width: 100%" placeholder="可选">
             <el-option
               v-for="u in units"
               :key="u.id"
@@ -642,7 +642,7 @@ const analysisRows = computed(() =>
           <el-input v-model="editForm.tags" placeholder="逗号分隔" />
         </el-form-item>
         <el-form-item label="品牌探测">
-          <el-switch v-model="editForm.is_brand_probe" :disabled="isAdvisor" />
+          <el-switch v-model="editForm.is_brand_probe"  />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -676,7 +676,7 @@ const analysisRows = computed(() =>
           <el-input v-model="form.tags" placeholder="逗号分隔" />
         </el-form-item>
         <el-form-item label="品牌探测">
-          <el-switch v-model="form.is_brand_probe" :disabled="isAdvisor" />
+          <el-switch v-model="form.is_brand_probe"  />
         </el-form-item>
       </el-form>
       <template #footer>

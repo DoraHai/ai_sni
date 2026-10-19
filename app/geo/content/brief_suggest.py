@@ -141,6 +141,7 @@ async def suggest_brief_for_task(
     overwrite: bool = False,
     llm: dict[str, str] | None = None,
     chat_json=None,
+    before_model=None,
     profile_hints: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return suggested brief; merge onto existing unless overwrite.
@@ -158,6 +159,8 @@ async def suggest_brief_for_task(
     suggested = heuristic
 
     if llm and chat_json is not None:
+        if before_model is not None:
+            await before_model()
         try:
             system = (
                 "你是 GEO 内容策略助手。根据用户问题与品牌，输出 JSON brief 草稿。"

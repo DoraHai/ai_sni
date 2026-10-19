@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   fetchTaskPushTargets,
   getGeoContentTask,
@@ -151,6 +151,8 @@ async function pushRow(row, mode) {
   if (!row.ready || !row.accountId) return ElMessage.warning(row.blockReasons.join('；') || '当前渠道不可推送')
   busy.value = `${mode}-${row.key}`
   try {
+    await ElMessageBox.confirm(mode === 'draft' ? '确定把这篇稿件发送到外部平台的草稿箱？' : '确定把这篇稿件正式发布到外部平台？发布后别人可以看到。', '确认发送', { type: 'warning', confirmButtonText: '确定发送', cancelButtonText: '取消' })
+    if (!sameContext(version)) return
     await pushGeoVariantWebhook(taskId.value, {
       tenant_id: tenantId.value,
       channel: row.key,
@@ -162,7 +164,7 @@ async function pushRow(row, mode) {
     ElMessage.success(mode === 'draft' ? '已推送草稿' : '已推送发布')
     await load()
   } catch (e) {
-    if (sameContext(version)) ElMessage.error(e.message || '推送失败')
+    if (sameContext(version) && e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '推送失败')
   } finally {
     if (sameContext(version)) busy.value = ''
   }
@@ -176,6 +178,8 @@ async function pushWebhook(mode) {
   if (!account || !channel) return ElMessage.warning('请选择 Webhook 账号')
   busy.value = `webhook-${mode}`
   try {
+    await ElMessageBox.confirm(mode === 'draft' ? '确定把这篇稿件发送到外部平台的草稿箱？' : '确定把这篇稿件正式发布到外部平台？发布后别人可以看到。', '确认发送', { type: 'warning', confirmButtonText: '确定发送', cancelButtonText: '取消' })
+    if (!sameContext(version)) return
     await pushGeoVariantWebhook(taskId.value, {
       tenant_id: tenantId.value,
       channel: channel.channel_type,
@@ -188,7 +192,7 @@ async function pushWebhook(mode) {
     ElMessage.success(mode === 'draft' ? '已推送草稿' : '已推送发布')
     await load()
   } catch (e) {
-    if (sameContext(version)) ElMessage.error(e.message || '推送失败')
+    if (sameContext(version) && e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '推送失败')
   } finally {
     if (sameContext(version)) busy.value = ''
   }

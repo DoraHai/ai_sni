@@ -483,6 +483,13 @@ async def mark_job(
     if result_meta is not None:
         row.result_meta = result_meta
     await session.commit()
+    authority = (row.request_meta or {}).get('advisor_authority')
+    if (status in {'succeeded', 'failed', 'cancelled'} and isinstance(authority, dict)
+            and authority.get('user_id') == row.created_by and authority.get('tenant_id') == row.tenant_id):
+        from app.security.advisor_write_audit import record
+        record({'geo_advisor_actor': (row.created_by, row.tenant_id), 'method': 'POST',
+            'path': authority.get('operation', '/api/v1/geo/content-tasks/{task_id}/generate').replace('{task_id}', str(row.ref_id)),
+            'path_params': {'task_id': row.ref_id, 'job_id': row.id}}, 'job_' + status)
 
 
 async def run_job_in_background(job_id: int, tenant_id: int) -> None:
@@ -591,8 +598,16 @@ async def _run_owned_job(job_id: int, *, tenant_id: int, connection=None) -> dic
                     else:
                         raise ValueError(f"未知作业类型: {job_kind}")
                 await mark_job(session, job_id, status="succeeded", result_meta=result)
+                binding = getattr(session, "info", {}).get("advisor_scoped_write")
+                if binding:
+                    from app.security.advisor_write_audit import record
+                    record(binding[1].scope, "job_succeeded", job_id=job_id)
                 return {"status": "succeeded", "error": None, "result_meta": result}
             except Exception as exc:  # noqa: BLE001
+                binding = getattr(session, "info", {}).get("advisor_scoped_write")
+                if binding:
+                    from app.security.advisor_write_audit import record
+                    record(binding[1].scope, "job_failed", job_id=job_id, error_type=type(exc).__name__)
                 rollback = getattr(session, "rollback", None)
                 if rollback is not None:
                     await rollback()
@@ -710,12 +725,22 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
         getattr(biz_row, "profile", None) if biz_row else None,
         fallback=tenant.name,
     )
+    from app.security.advisor_write_ai import recheck_job
+
+    async def before_model():
+        await recheck_job(session, job)
+        await session.commit()
+
+    advisor_job = "advisor_authority" in (job.request_meta or {})
+    if advisor_job:
+        await before_model()
     payload = await generate_master_article(
         tenant_name=author_name,
         question=prompt.question,
         facts=fact_dicts,
         llm=llm,
         brief=brief_norm,
+        **({"before_model": before_model} if advisor_job else {}),
     )
     # The subscription can change while the remote model is running. Discard
     # the response before any article write when access is no longer valid.
@@ -760,6 +785,8 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
         },
         created_by=job.created_by,
     )
+    # Hold fresh authority/ownership locks through the actual article commit.
+    await recheck_job(session, job)
     session.add(article)
     task.title = payload["title"]
     task.status = "editing"
@@ -784,6 +811,8 @@ async def _execute_variants(session: AsyncSession, job: GeoAsyncJob) -> dict[str
     use_llm = bool(meta.get("use_llm", True))
     if not job.ref_id:
         raise ValueError("缺少 task_id")
+    from app.security.advisor_write_ai import recheck_job
+    await recheck_job(session, job)
     return await execute_variants_for_task(
         session,
         task_id=int(job.ref_id),
@@ -808,6 +837,8 @@ async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[s
     )
 
     ensure_geo_background_execution_allowed(job.tenant_id)
+    from app.security.advisor_write_ai import recheck_job
+    await recheck_job(session, job)
     meta = job.request_meta or {}
     task = await session.get(GeoContentTask, job.ref_id)
     if task is None or task.tenant_id != job.tenant_id:
@@ -831,6 +862,11 @@ async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[s
     )
     ready = [t for t in targets_all if t.get("ready")]
     wanted = meta.get("targets")  # list of {channel, account_id}
+    authority = meta.get('advisor_authority')
+    if isinstance(authority, dict):
+        wanted = (authority.get('body') or {}).get('targets')
+        if not isinstance(wanted, list) or not wanted or wanted != meta.get('targets'):
+            raise ValueError('顾问外发目标已变化，请重新选择明确的目标')
     if wanted:
         pairs = {
             (

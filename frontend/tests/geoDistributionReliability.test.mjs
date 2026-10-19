@@ -14,6 +14,7 @@ function fixture() {
  listGeoPublishingChannels:async()=>({items:[]}),listGeoChannelAccounts:async()=>({items:[]}),getGeoContentTask:async()=>({id:12}),fetchTaskPushTargets:async()=>({targets:[]}),
  pushGeoVariantWebhook:async()=>({}),publishGeoVariant:async()=>({}),
  ElMessage:{success:x=>notices.push(x),error:x=>notices.push(x),warning:x=>notices.push(x)},
+ ElMessageBox:{confirm:async()=>true},
  watch:(_,fn)=>{changed=fn},onBeforeUnmount:fn=>{unmount=fn}})
  vm.runInContext(code,ctx)
  return {ctx,notices,change:()=>changed(),unmount:()=>unmount()}
@@ -54,6 +55,7 @@ test('late failure after unmount does not show a toast or mutate state',async()=
  const f=fixture();let reject
  f.ctx.pushGeoVariantWebhook=()=>new Promise((_,r)=>{reject=r})
  const pending=f.ctx.pushRow({ready:true,accountId:3,key:'website'},'publish')
+ await new Promise(resolve=>setImmediate(resolve))
  f.unmount();reject(new Error('old failure'));await pending
  assert.deepEqual(f.notices,[])
 })

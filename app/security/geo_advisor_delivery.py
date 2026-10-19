@@ -36,9 +36,12 @@ class AdvisorDeliveryMiddleware:
         suppressed = False
         started = False
         successful = False
+        status = 500
+        from app.security.advisor_operation_call import current_operation
+        operation_token = current_operation.set(None)
 
         async def checked_send(message):
-            nonlocal suppressed, started, successful
+            nonlocal suppressed, started, successful, status
             if suppressed:
                 return
             binding = scope.get("geo_advisor_delivery")
@@ -46,15 +49,20 @@ class AdvisorDeliveryMiddleware:
                             or message["type"] == "http.response.body" and successful and message.get("body")):
                 try:
                     await recheck_delivery(*binding)
+                    if scope.get('geo_advisor_read_projects') is not None:
+                        from app.security.advisor_read_scope import recheck_read_projects
+                        await recheck_read_projects(binding, scope['geo_advisor_read_projects'])
                 except HTTPException as exc:
                     suppressed = True
                     if not started:
+                        status = exc.status_code
                         await JSONResponse({"detail": exc.detail}, status_code=exc.status_code,
                                            headers={"Cache-Control": "private, no-store"})(scope, receive, send)
                     else:
                         await send({"type": "http.response.body", "body": b"", "more_body": False})
                     return
             if message["type"] == "http.response.start":
+                status = message["status"]
                 started = True
                 successful = message["status"] < 400
                 if binding:
@@ -62,4 +70,9 @@ class AdvisorDeliveryMiddleware:
                                           if k.lower() != b"cache-control"] + [(b"cache-control", b"private, no-store")]
             await send(message)
 
-        await self.app(scope, receive, checked_send)
+        try:
+            await self.app(scope, receive, checked_send)
+        finally:
+            current_operation.reset(operation_token)
+            from app.security.advisor_write_audit import record
+            record(scope, "http_completed", status_code=status)

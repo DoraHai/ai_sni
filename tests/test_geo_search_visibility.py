@@ -278,6 +278,7 @@ def test_csv_bom_chinese_and_formula_injection():
 ])
 def test_admission_dedup(trigger, status, created, expected):
     session = AsyncMock()
+    session.info = {}
     session.add = MagicMock()
     session.scalars.return_value = [job(status=status, created_at=created, request_meta={"trigger": "manual"})]
     config = sv.VisibilityConfig(enabled=True)

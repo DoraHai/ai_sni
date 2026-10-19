@@ -1,5 +1,6 @@
 <script setup>
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { advisorClaims } from '../../utils/geoAdvisorTenant.js'
 import { ElMessage } from 'element-plus'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import GeoProjectExecution from '../../components/GeoProjectExecution.vue'
@@ -9,6 +10,9 @@ import { listGeoBusinesses } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
 const { tenantId, session } = useGeoTenant()
+const isAdvisor = computed(() => !!advisorClaims(session.token) || session.user?.is_advisor === true)
+const recentStoppedProject = ref(null)
+watch([() => session.token, tenantId], () => { recentStoppedProject.value = null })
 const loading = ref(false)
 const saving = ref(false)
 const dialogOpen = ref(false)
@@ -60,6 +64,8 @@ function openEditor(project = null) {
 }
 
 async function save() {
+  const targetTenant = tenantId.value
+  const identity = session.token
   if (!form.name.trim() || !form.domain.trim()) {
     ElMessage.warning('请填写项目名称和网站域名')
     return
@@ -74,10 +80,13 @@ async function save() {
       ...(editing.value ? { status: form.status } : { tenant_id: tenantId.value }),
     }
     if (editing.value) {
-      await updateGeoProject(editing.value.id, tenantId.value, body)
+      await updateGeoProject(editing.value.id, targetTenant, body)
+      if (targetTenant !== tenantId.value || identity !== session.token) return
+      if (body.status !== 'active') recentStoppedProject.value = { id: editing.value.id, tenantId: targetTenant }
     } else {
       await createGeoProject(body)
     }
+    if (targetTenant !== tenantId.value || identity !== session.token) return
     dialogOpen.value = false
     ElMessage.success('GEO 项目已保存')
     await load()
@@ -86,6 +95,19 @@ async function save() {
   } finally {
     saving.value = false
   }
+}
+
+async function restoreRecentProject() {
+  const target = recentStoppedProject.value
+  const identity = session.token
+  if (!target || target.tenantId !== tenantId.value) return
+  try {
+    await updateGeoProject(target.id, target.tenantId, { status: 'active' })
+    if (identity !== session.token || target.tenantId !== tenantId.value) return
+    recentStoppedProject.value = null
+    ElMessage.success('项目已恢复')
+    await load()
+  } catch (e) { ElMessage.error(e.message || '恢复失败') }
 }
 
 function openScope(project) {
@@ -124,8 +146,9 @@ onMounted(load)
   >
     <template #actions>
       <button class="gd-btn" :disabled="loading" @click="load">刷新</button>
+        <button v-if="recentStoppedProject" class="gd-btn" @click="restoreRecentProject">恢复刚暂停或归档的项目</button>
       <button
-        v-if="session.canEdit('geo.assets')"
+        v-if="!isAdvisor && session.canEdit('geo.assets')"
         class="gd-btn primary"
         :disabled="!tenantId"
         @click="openEditor()"
@@ -144,7 +167,7 @@ onMounted(load)
         <el-table-column v-if="session.canEdit('geo.assets')" label="操作" width="180">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEditor(row)">编辑</el-button>
-            <el-button link type="primary" @click="openScope(row)">关联业务</el-button>
+            <el-button v-if="!isAdvisor" link type="primary" @click="openScope(row)">关联业务</el-button>
           </template>
         </el-table-column>
       </el-table>

@@ -42,6 +42,8 @@ async def recheck_advisor_before_commit(session, ctx) -> None:
         deny(401, "ADVISOR_GRANT_REVOKED", "客户凭证已失效")
     # Suppress autoflush: check authority before pending changes are flushed.
     with session.no_autoflush:
+        from app.security.geo_advisor import check_manual_execution_scope
+        await check_manual_execution_scope(session, ctx, rule)
         user = await session.scalar(select(User).options(load_only(
             User.id, User.role_id, User.tenant_id, User.is_active, User.locked_until
         )).where(User.id == ctx.user_id).with_for_update().execution_options(populate_existing=True))
@@ -69,11 +71,20 @@ async def recheck_advisor_before_commit(session, ctx) -> None:
         # this still-uncommitted transaction before those reads, so a fresh
         # ownership check cannot silently discard handler changes. Any later
         # object/assignment rejection rolls this flush back along with the rest.
-        await session.flush()
+        deleting = rule.method == "DELETE" and bool(session.deleted)
+        if not deleting:
+            await session.flush()
         from app.module_scope import ensure_module_access
         from app.security.geo_advisor import check_scoped_write_objects
         await ensure_module_access(session, ctx, ctx.tenant_id, "geo")
         await check_scoped_write_objects(session, ctx, request, body, rule)
+        if rule.assignment == 'operations':
+            from app.security.advisor_operations import verify_pending_scope
+            await verify_pending_scope(session, ctx)
+        if deleting:
+            # Validate the still-existing target and lock its project before
+            # flushing DELETE. The authority/project locks survive the commit.
+            await session.flush()
 
 
 def bind_advisor_write_commit(session, ctx, request, body, rule, claims) -> None:
@@ -93,5 +104,25 @@ def bind_advisor_write_commit(session, ctx, request, body, rule, claims) -> None
     def before_commit(sync_session):
         await_only(recheck_advisor_before_commit(session, session.info["advisor_scoped_write"][0]))
 
+    def after_commit(sync_session):
+        from app.security.advisor_write_audit import record
+        if not sync_session.in_nested_transaction():
+            if session.info.pop('advisor_delete_pending', False):
+                session.info['advisor_delete_committed'] = True
+            record(session.info["advisor_scoped_write"][1].scope, "committed")
+
+    def after_flush(sync_session, _flush_context):
+        if sync_session.deleted and session.info['advisor_scoped_write'][3].method == 'DELETE':
+            session.info['advisor_delete_pending'] = True
+        scope = session.info["advisor_scoped_write"][1].scope
+        created = scope.setdefault("geo_advisor_created_ids", {})
+        for row in set(sync_session.new) | set(sync_session.dirty) | set(sync_session.deleted):
+            ident = getattr(row, "id", None)
+            table = getattr(type(row), "__tablename__", None)
+            if table and type(ident) is int and ident > 0:
+                created.setdefault(table, set()).add(ident)
+
     event.listen(session.sync_session, "before_commit", before_commit)
+    event.listen(session.sync_session, "after_commit", after_commit)
+    event.listen(session.sync_session, "after_flush", after_flush)
     session.info["advisor_write_commit_hook"] = True

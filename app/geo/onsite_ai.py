@@ -203,7 +203,7 @@ def reserve_daily(settings: dict | None, request_id: str, *, request_digest: str
         "day": today, "count": 0
     }
     count = int(quota.get("count") or 0)
-    if count >= limit:
+    if limit is not None and count >= limit:
         raise HTTPException(429, f"今日 AI 站内方案调用已达上限（{limit} 次）")
     result["onsite_ai_requests"] = [*requests, {"id": request_id, "hash": request_digest}]
     result["onsite_ai_quota"] = {"day": today, "count": count + 1}

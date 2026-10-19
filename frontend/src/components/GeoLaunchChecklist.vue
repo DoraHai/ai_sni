@@ -8,6 +8,7 @@ import { executionNext } from '../utils/geoExecutionOverview'
 import { describeAcceptanceSummary } from '../utils/geoAcceptanceSummary'
 import { canDecideGeoReview, canSubmitGeoReview } from '../utils/geoReviewAccess'
 import { session } from '../store/session'
+import { advisorClaims } from '../utils/geoAdvisorTenant.js'
 import GeoCreateEvidenceTask from './GeoCreateEvidenceTask.vue'
 const props = defineProps({ tenantId: [Number, String], task: Object, disabled: Boolean })
 const emit = defineEmits(['changed'])
@@ -24,9 +25,12 @@ const next = computed(() => selected.value ? executionNext(selected.value, detai
 const currentProof = computed(() => detail.value?.publication_evidence?.article_id === props.task?.article?.id ? detail.value.publication_evidence : null)
 const canSubmit = computed(() => canSubmitGeoReview(session.user))
 const canDecide = computed(() => canDecideGeoReview(session.user))
+const isAdvisor = computed(() => !!advisorClaims(session.token) || session.user?.is_advisor === true)
+const agreementNote = ref('')
 const acceptanceStages = computed(() => describeAcceptanceSummary(acceptance.value))
 async function load() {
   const run = ++epoch
+  agreementNote.value = ''
   targets.value = []; linked.value = []; detail.value = null; acceptance.value = null; acceptanceError.value = ''; confirmed.value = false; error.value = ''; busy.value = false
   if (!props.tenantId || !props.task?.id) { loading.value = false; return }
   loading.value = true
@@ -57,8 +61,9 @@ async function review(decision) {
   const run = epoch, tenant = props.tenantId, id = props.task.id
   busy.value = true; error.value = ''
   try {
-    if (decision === 'submit') await submitGeoTaskReview(tenant, id)
-    else await decideGeoTaskReview(tenant, id, decision, decision === 'approved' ? '客户确认已保存稿件可发布' : '客户要求修改', { expected_article_id: props.task.article?.id, expected_updated_at: props.task.updated_at })
+    const expected = { expected_article_id: props.task.article?.id, expected_updated_at: props.task.updated_at }
+    if (decision === 'submit') await submitGeoTaskReview(tenant, id, null, expected)
+    else await decideGeoTaskReview(tenant, id, decision, isAdvisor.value ? agreementNote.value : (decision === 'approved' ? '客户确认已保存稿件可发布' : '客户要求修改'), expected)
     if (run !== epoch) return
     confirmed.value = false; emit('changed')
   } catch (e) { if (run === epoch) error.value = e.message || '审核操作失败' }
@@ -85,6 +90,7 @@ onBeforeUnmount(() => { epoch++ })
       <p v-if="disabled">请先保存当前修改或等待当前操作结束，再进行客户审核。</p>
       <el-button v-if="canSubmit && ['none','rejected'].includes(task.review_status || 'none')" :disabled="disabled || busy || !task.article" @click="review('submit')">提交客户审核</el-button>
       <div v-if="task.review_status === 'pending' && canDecide">
+        <el-input v-if="isAdvisor" v-model="agreementNote" :maxlength="2000" placeholder="可选：客户怎么同意的，例如微信确认" :disabled="disabled || busy" />
         <el-checkbox v-model="confirmed" :disabled="disabled || busy">我已审核当前已保存的母稿及渠道稿，确认可以发布</el-checkbox>
         <el-button :disabled="disabled || busy || !confirmed" @click="review('approved')">客户确认通过</el-button>
         <el-button :disabled="disabled || busy" @click="review('rejected')">需要修改</el-button>

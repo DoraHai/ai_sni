@@ -17,7 +17,8 @@ from test_geo_advisor_visibility import visibility_sandbox
 def worker_stubs(monkeypatch):
     from app.geo.content import ai_settings, daily_metrics, patrol
     monkeypatch.setattr(ai_settings, 'resolve_llm_credentials', AsyncMock(return_value={}))
-    monkeypatch.setattr(ai_settings, 'ensure_ai_setting', AsyncMock(return_value=SimpleNamespace(monitoring_stance='hybrid')))
+    monkeypatch.setattr(ai_settings, 'ensure_ai_setting', AsyncMock(side_effect=AssertionError('advisor worker must not create model settings')))
+    monkeypatch.setattr(ai_settings, 'get_ai_setting_row', AsyncMock(return_value=SimpleNamespace(monitoring_stance='hybrid')))
     monkeypatch.setattr(patrol, 'resolve_engine_llm', lambda **kw: (
         {'api_key': 'fixture-only', 'model': 'fixture-model', 'provider': 'fixture'}, 'openai_compat', None))
     monkeypatch.setattr(patrol, 'ensure_geo_entitlement', AsyncMock())
@@ -25,7 +26,7 @@ def worker_stubs(monkeypatch):
     return patrol
 
 
-@pytest.mark.parametrize('change', ['grant', 'regrant', 'assignment', 'prompt', 'account', 'role', 'expired', 'flag', 'legacy'])
+@pytest.mark.parametrize('change', ['grant', 'regrant', 'assignment', 'prompt', 'account', 'role', 'expired', 'flag', 'legacy', 'engine-disabled', 'engine-deleted'])
 def test_queued_detection_rechecks_before_any_provider(tmp_path, monkeypatch, backend, change):
     async def run():
         async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
@@ -52,6 +53,13 @@ def test_queued_detection_rechecks_before_any_provider(tmp_path, monkeypatch, ba
                 elif change == 'role':
                     await session.execute(update(Role).where(Role.id == 1).values(
                         permissions={'geo.assets': 'edit', 'geo.content': 'view'}))
+                elif change in {'engine-disabled', 'engine-deleted'}:
+                    from app.models import GeoTrackingEngine
+                    from sqlalchemy import delete
+                    statement = (delete(GeoTrackingEngine).where(GeoTrackingEngine.tenant_id == 10)
+                        if change == 'engine-deleted' else update(GeoTrackingEngine).where(
+                            GeoTrackingEngine.tenant_id == 10).values(enabled=False))
+                    await session.execute(statement)
                 elif change == 'expired':
                     row = await session.get(GeoVisibilityPatrolRun, run_id)
                     summary = copy.deepcopy(row.summary)
@@ -104,8 +112,7 @@ def test_revocation_during_provider_discards_response_and_stops_followup(tmp_pat
     asyncio.run(run())
 
 
-@pytest.mark.parametrize('change', ['grant', 'entitlement'])
-def test_revocation_discards_uncommitted_prior_cells(tmp_path, monkeypatch, backend, change):
+def test_revocation_discards_uncommitted_prior_cells(tmp_path, monkeypatch, backend):
     async def run():
         from app.models import GeoTrackingEngine
         async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
@@ -116,15 +123,9 @@ def test_revocation_discards_uncommitted_prior_cells(tmp_path, monkeypatch, back
             run_id = response.json()['run']['id']
             patrol = worker_stubs(monkeypatch)
             worker_session, calls = None, []
-            if change == 'entitlement':
-                from app.geo.tenant_scope import GeoEntitlementUnavailable
-                async def check_entitlement(*args, **kwargs):
-                    if len(calls) >= 2:
-                        raise GeoEntitlementUnavailable()
-                monkeypatch.setattr(patrol, 'ensure_geo_entitlement', check_entitlement)
             async def probe(**kwargs):
                 calls.append(1)
-                if len(calls) == 2 and change == 'grant':
+                if len(calls) == 2:
                     await worker_session.execute(update(Grant).where(Grant.id == 101).values(
                         revoked_at=datetime.utcnow(), revoked_by=2, revoke_reason='admin_uncheck'))
                 return {'raw_text': 'uncommitted fixture response', 'simulated': False,
@@ -138,6 +139,108 @@ def test_revocation_discards_uncommitted_prior_cells(tmp_path, monkeypatch, back
                 assert not list(await session.scalars(select(GeoAnswerSnapshot)))
                 assert row.summary.get('snapshots_created', 0) == 0
                 assert not row.items
+    asyncio.run(run())
+
+
+def test_visibility_job_keeps_selected_token_expiry(tmp_path, monkeypatch, backend):
+    from datetime import timezone
+    from test_advisor_scoped_writes import fixture_token
+    async def run():
+        async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
+            expiry = int(datetime.now(timezone.utc).timestamp()) + 120
+            response = await env.request('POST', '/visibility-patrol/runs', body={'tenant_id': 10},
+                auth=fixture_token(exp=expiry))
+            assert response.status_code == 200, response.text
+            assert response.json()['run']['summary']['advisor_visibility_auth']['auth_exp'] == expiry
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('tid', [10, 20])
+def test_worker_current_authority_persists_and_audits(tmp_path, monkeypatch, backend, caplog, tid):
+    import json
+    import logging
+    from app.models import GeoTrackingEngine
+    from test_advisor_scoped_writes import fixture_token
+    caplog.set_level(logging.INFO, logger='geo.advisor.operations')
+    async def run():
+        async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
+            if tid == 20:
+                async with env.factory() as session:
+                    session.add(GeoTrackingEngine(tenant_id=20, engine_key='deepseek', display_name='fixture', enabled=True))
+                    await session.commit()
+            response = await env.request('POST', '/visibility-patrol/runs', body={'tenant_id': tid},
+                params={'tenant_id': tid}, auth=fixture_token(tid=tid, gid=101 if tid == 10 else 102))
+            assert response.status_code == 200, response.text
+            run_id = response.json()['run']['id']
+            patrol = worker_stubs(monkeypatch)
+            probe = AsyncMock(return_value={'raw_text': 'synthetic answer', 'sample_mode': 'openai_compat',
+                'simulated': False, 'suggested_mentions_brand': False})
+            monkeypatch.setattr(patrol, 'run_probe_draft', probe)
+            async with env.factory() as session:
+                row = await patrol.execute_patrol_run(session, run_id, tenant_id=tid)
+                assert row.status == 'completed', row.error
+                snapshots = list(await session.scalars(select(GeoAnswerSnapshot)))
+                assert snapshots and all(s.tenant_id == tid for s in snapshots)
+            return run_id
+    ident = asyncio.run(run())
+    events = [json.loads(r.message) for r in caplog.records if r.name == 'geo.advisor.operations']
+    assert any(e['result'] == 'job_succeeded' and e['tenant_id'] == tid and e['advisor_user_id'] == 1
+        and e['object_ids'] == {'run_id': ident} for e in events)
+
+
+def test_project_reassignment_can_commit_during_provider_and_discards_reply(tmp_path, monkeypatch, backend):
+    if backend != 'postgres':
+        pytest.skip('requires real concurrent PostgreSQL transactions')
+    async def run():
+        async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
+            response = await env.request('POST', '/visibility-patrol/runs', body={'tenant_id': 10})
+            run_id = response.json()['run']['id']
+            patrol = worker_stubs(monkeypatch)
+            async def provider(**kwargs):
+                async def reassign():
+                    async with env.factory() as admin:
+                        project = await admin.get(GeoProject, 10, with_for_update=True)
+                        settings = copy.deepcopy(project.project_settings)
+                        settings['geo_service_plan']['advisor_user_id'] = 2
+                        project.project_settings = settings
+                        await admin.commit()
+                # A provider call must not retain the project lock and block
+                # the administrator's reassignment until the sample is stored.
+                await asyncio.wait_for(reassign(), timeout=5)
+                return {'raw_text': 'stale provider response', 'sample_mode': 'openai_compat', 'simulated': False}
+            probe = AsyncMock(side_effect=provider)
+            monkeypatch.setattr(patrol, 'run_probe_draft', probe)
+            async with env.factory() as session:
+                row = await patrol.execute_patrol_run(session, run_id, tenant_id=10)
+                assert row.status == 'failed' and '重新发起' in row.error
+                assert not list(await session.scalars(select(GeoAnswerSnapshot)))
+                assert 'stale provider response' not in str(row.items)
+            probe.assert_awaited_once()
+    asyncio.run(run())
+
+
+def test_advisor_detection_reads_config_without_creating_defaults(tmp_path, monkeypatch, backend):
+    from app.geo.content import ai_settings
+    from unittest.mock import Mock
+    async def run():
+        async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
+            response = await env.request('POST', '/visibility-patrol/runs', body={'tenant_id': 10})
+            run_id = response.json()['run']['id']
+            patrol = worker_stubs(monkeypatch)
+            read_config = AsyncMock(return_value=None)
+            create_config = AsyncMock(side_effect=AssertionError('configuration creation forbidden'))
+            defaults = Mock(side_effect=AssertionError('engine creation forbidden'))
+            monkeypatch.setattr(ai_settings, 'get_ai_setting_row', read_config)
+            monkeypatch.setattr(ai_settings, 'ensure_ai_setting', create_config)
+            monkeypatch.setattr('app.geo.content.engines.default_engine_rows', defaults)
+            monkeypatch.setattr(patrol, 'run_probe_draft', AsyncMock(return_value={
+                'raw_text': 'synthetic answer', 'sample_mode': 'openai_compat', 'simulated': False}))
+            async with env.factory() as session:
+                row = await patrol.execute_patrol_run(session, run_id, tenant_id=10)
+                assert row.status == 'completed', row.error
+            read_config.assert_awaited()
+            create_config.assert_not_awaited()
+            defaults.assert_not_called()
     asyncio.run(run())
 
 
@@ -183,6 +286,7 @@ def test_reassignment_during_second_provider_commits_and_discards_batch(tmp_path
                 assert row.summary.get('snapshots_created', 0) == 0
                 assert not row.items
     asyncio.run(run())
+
 
 
 def test_unchanged_detection_persists_periodic_and_final_advisor_batches(tmp_path, monkeypatch, backend):

@@ -1,6 +1,7 @@
 """Native PostgreSQL row-lock/rollback tests; isolated loopback CI schema only."""
 import asyncio
 import os
+from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -157,6 +158,48 @@ def test_pairing_claim_race_publication_race_rollback_and_scope():
                     module = await db.get(TenantModule, 1)
                     assert module.module_settings['unrelated'] == {'limit':21}
                     assert len(module.module_settings[p.KEY]['tasks'][report['taskId']]['events']['receipt']) == 1
+                # The saved advisor authority is live, including default tenant,
+                # grant generation, assignment and the existing global flag.
+                from app.geo.project_workflows import PLAN_KEY
+                async with sessions() as db:
+                    db.add_all([
+                        Role(id=2, name='synthetic advisor', is_system=False,
+                             permissions={'geo.assets':'edit', 'geo.content':'edit'}),
+                        User(id=10, username='synthetic-advisor', password_hash='unusable-synthetic-value',
+                             role_id=2, tenant_id=7, is_active=True),
+                        AdvisorTenantGrant(id=1, user_id=10, tenant_id=7, grant_source='admin', granted_by=9)])
+                    project = await db.get(GeoProject, 5)
+                    project.project_settings = {**project.project_settings, PLAN_KEY:{'advisor_user_id':10}}
+                    await db.commit()
+                advisor = {'kind':'advisor', 'user_id':10, 'grant_id':1}
+                with patch('app.config.get_settings', return_value=NS(advisor_scoped_content_writes_enabled=False)):
+                    async with sessions() as db:
+                        store = await s.open_store(db, 7)
+                        with pytest.raises(HTTPException): await s.actor_authorized(store, 5, advisor)
+                with patch('app.config.get_settings', return_value=NS(advisor_scoped_content_writes_enabled=True)):
+                    async with sessions() as db:
+                        store = await s.open_store(db, 7)
+                        await s.actor_authorized(store, 5, advisor)
+                        await db.rollback()
+                    async with sessions() as db:
+                        project = await db.get(GeoProject, 5)
+                        project.project_settings = {**project.project_settings, PLAN_KEY:{'advisor_user_id':11}}
+                        await db.commit()
+                    async with sessions() as db:
+                        store = await s.open_store(db, 7)
+                        with pytest.raises(HTTPException): await s.actor_authorized(store, 5, advisor)
+                    async with sessions() as db:
+                        from datetime import datetime, timezone
+                        project = await db.get(GeoProject, 5)
+                        project.project_settings = {**project.project_settings, PLAN_KEY:{'advisor_user_id':10}}
+                        grant = await db.get(AdvisorTenantGrant, 1)
+                        grant.revoked_at = datetime.now(timezone.utc)
+                        grant.revoked_by, grant.revoke_reason = 9, 'synthetic revocation'
+                        await db.commit()
+                    async with sessions() as db:
+                        store = await s.open_store(db, 7)
+                        with pytest.raises(HTTPException) as denied: await s.actor_authorized(store, 5, advisor)
+                        assert denied.value.detail['code'] == 'ACTOR_AUTHORIZATION_REVOKED'
                 # Project-only pause writers cannot cross an admitted report's
                 # project check. A committed pause is observed by the next check.
                 async with sessions() as owner:

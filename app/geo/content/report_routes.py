@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.security.advisor_operation_call import checked_call
+
 from datetime import date, datetime, timezone
 from urllib.parse import quote
 
@@ -153,6 +155,7 @@ async def _tasks_pubs(session, tenant_id, project_id=None, business_id=None):
 
 
 @router.post("/reports/publication-links/preview")
+@checked_call
 async def preview_publication_links(tenant_id: int = Query(...), business_id: int | None = Query(None),
                                     project_id: int | None = Query(None),
                                     file: UploadFile | None = File(None), pasted: str = Form(""),
@@ -173,6 +176,7 @@ async def preview_publication_links(tenant_id: int = Query(...), business_id: in
 
 
 @router.post("/reports/publication-links/confirm")
+@checked_call
 async def confirm_publication_links(req: ImportConfirm, ctx: AuthContext = Depends(require_scoped_auth),
                                     session: AsyncSession = Depends(get_session)):
     from app.geo.content.routes import _get_task, _variants, _write_publication, _ensure_default_publishing_channels
@@ -240,6 +244,7 @@ class TemplateUpdate(BaseModel):
 
 
 @router.put("/reports/template")
+@checked_call
 async def put_report_template(req: TemplateUpdate, ctx: AuthContext = Depends(require_scoped_auth),
                               session: AsyncSession = Depends(get_session)):
     ctx.ensure_tenant(req.tenant_id)

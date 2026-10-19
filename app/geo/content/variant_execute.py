@@ -171,6 +171,8 @@ async def execute_variants_for_task(
         except (ArticleQualityError, GeoContentError) as exc:
             return channel, None, exc
 
+    from app.security.advisor_write_publish import recheck_external
+    await recheck_external(session, "variant_generation_started", task_id=task_id)
     polished = await asyncio.gather(
         *[_polish_one(ch, pr) for ch, pr in prepared],
         return_exceptions=False,
@@ -458,6 +460,7 @@ async def execute_variants_for_task(
         pass
 
     await ensure_geo_entitlement(session, tenant_id)
+    await recheck_external(session, "variant_commit_checked", task_id=task_id)
     await session.commit()
     await session.refresh(task)
     return {

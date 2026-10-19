@@ -182,6 +182,10 @@ def patrol_read_payload(row: GeoVisibilityPatrolRun) -> dict[str, Any]:
     return payload
 
 
+from app.security.advisor_operation_call import background_call
+
+
+@background_call
 async def run_patrol_in_background(run_id: int, tenant_id: int) -> None:
     """Entry for FastAPI BackgroundTasks / scheduler: never leave runs hanging."""
     from app.database import async_session_factory
@@ -336,7 +340,7 @@ async def count_patrol_runs_today(session: AsyncSession, tenant_id: int, *, crea
         ))
     if created_by is not None:
         query = query.where(GeoVisibilityPatrolRun.created_by == created_by)
-    n = await session.scalar(query)
+    n = await session.scalar(query.execution_options(advisor_scope_control=True))
     return int(n or 0)
 
 
@@ -480,7 +484,9 @@ async def execute_patrol_run(
     from app.geo.content.ai_settings import resolve_llm_credentials
     from app.geo.content.engines import default_engine_rows
     from app.models import GeoTrackingEngine
-    from app.security.advisor_visibility import AdvisorVisibilityUnavailable, check_visibility_execution
+    from app.security.advisor_visibility import (
+        AdvisorVisibilityUnavailable, check_visibility_execution, record_visibility_execution,
+    )
 
     from app.geo.tenant_scope import ensure_geo_background_execution_allowed
     ensure_geo_background_execution_allowed(tenant_id)
@@ -517,6 +523,7 @@ async def execute_patrol_run(
         row.finished_at = datetime.utcnow()
         await session.commit()
         await session.refresh(row)
+        record_visibility_execution(row, 'job_failed')
         return row
     contract_plan = (row.summary or {}).get("contract_plan")
     advisor_prompt_ids = (row.summary or {}).get("advisor_visibility_prompt_ids")
@@ -574,6 +581,8 @@ async def execute_patrol_run(
             )
         )
         if not engine_rows:
+            if advisor_prompt_ids is not None:
+                raise AdvisorVisibilityUnavailable('检测引擎配置已变化，请重新发起检测')
             for item in default_engine_rows(row.tenant_id):
                 eng = GeoTrackingEngine(**item)
                 session.add(eng)
@@ -730,9 +739,10 @@ async def execute_patrol_run(
                     # W3: tenant monitoring_stance constrains persona fallback
                     stance = "hybrid"
                     try:
-                        from app.geo.content.ai_settings import ensure_ai_setting
+                        from app.geo.content.ai_settings import ensure_ai_setting, get_ai_setting_row
 
-                        ai_row = await ensure_ai_setting(session, row.tenant_id)
+                        ai_row = await (get_ai_setting_row(session, row.tenant_id)
+                            if advisor_prompt_ids is not None else ensure_ai_setting(session, row.tenant_id))
                         stance = (
                             getattr(ai_row, "monitoring_stance", None) or "hybrid"
                         )
@@ -946,6 +956,7 @@ async def execute_patrol_run(
         row.finished_at = datetime.utcnow()
         await session.commit()
         await session.refresh(row)
+        record_visibility_execution(row, 'job_succeeded')
         # 巡检落库后自动重算当日租户/业务/单元指标（失败不拖垮巡检）
         if int(summary.get("snapshots_created") or 0) > 0:
             try:
@@ -979,5 +990,6 @@ async def execute_patrol_run(
             row.finished_at = datetime.utcnow()
             await session.commit()
             await session.refresh(row)
+            record_visibility_execution(row, 'job_failed')
             return row
         raise

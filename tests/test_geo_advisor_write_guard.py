@@ -103,12 +103,13 @@ async def sandbox(tmp_path, monkeypatch, *, enabled=True):
         return {"body": body, "scoped": hasattr(request.state, "advisor_scoped_write")}
     for method, path in WRITE_ROUTES:
         app.add_api_route(path, endpoint, methods=[method])
-    app.add_api_route("/api/v1/geo/content-tasks/{task_id}/generate", endpoint, methods=["POST"])
+    app.add_api_route("/api/v1/geo/content-tasks/{task_id}/not-reviewed", endpoint, methods=["POST"])
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             async def request(path, body, *, method="POST", auth=None, query="tenant_id=10"):
-                return await client.request(method, "/api/v1/geo" + path + "?" + query, json=body,
-                    headers={"Authorization": "Bearer " + (auth or token())})
+                return await client.request(method, "/api/v1/geo" + path + "?" + query,
+                    headers={"Authorization": "Bearer " + (auth or token())},
+                    **({"content": b"null"} if body is None else {"json": body}))
             yield request, factory, state, calls
     finally:
         if schema:
@@ -143,6 +144,8 @@ def test_every_exact_rule_calls_both_contracts_and_commit_rechecks(tmp_path, mon
         body = {"tenant_id": 10} if "tenant_id" in rule.fields else {}
         if template == "/api/v1/geo/content-imports/create-task":
             body["source_type"] = "paste"
+        if template.endswith("/generate"):
+            body = None
         if template.endswith("/article"):
             body["expected_article_id"] = None
         async with sandbox(tmp_path, monkeypatch) as (request, factory, _, calls):
@@ -199,7 +202,7 @@ def test_real_commit_hook_reloads_authority_and_rolls_back(tmp_path, monkeypatch
 def test_unlisted_missing_assignment_and_native_contexts(tmp_path, monkeypatch):
     async def run():
         async with sandbox(tmp_path, monkeypatch) as (request, _, state, calls):
-            r = await request("/content-tasks/1/generate", {})
+            r = await request("/content-tasks/1/not-reviewed", {})
             assert r.status_code == 403 and not calls
             state["unassigned"] = True
             assert (await request("/facts", {"tenant_id": 10})).status_code == 403
@@ -210,7 +213,7 @@ def test_unlisted_missing_assignment_and_native_contexts(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("kind", ["patrol", "plan", "period"])
-def test_enabled_execution_chain_denied_without_committing(tmp_path, monkeypatch, kind):
+def test_enabled_execution_chain_allows_scoped_commit(tmp_path, monkeypatch, kind):
     async def run():
         async with sandbox(tmp_path, monkeypatch) as (request, factory, _, _):
             async with factory() as s:
@@ -224,9 +227,9 @@ def test_enabled_execution_chain_denied_without_committing(tmp_path, monkeypatch
                         starts_at=datetime(2026, 1, 1), ends_at=datetime(2027, 1, 1)))
                 await s.commit()
             r = await request("/facts", {"tenant_id": 10})
-            assert r.status_code == 403 and r.json()["detail"]["code"] == "ADVISOR_EXECUTION_CHAIN_ACTIVE"
+            assert r.status_code == 200, r.text
             async with factory() as s:
-                assert (await s.get(Tenant, 10)).name == "unchanged"
+                assert (await s.get(Tenant, 10)).name == "committed"
     asyncio.run(run())
 
 

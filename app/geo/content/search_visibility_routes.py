@@ -1,3 +1,4 @@
+from app.security.advisor_operation_call import checked_call
 """Project-scoped search visibility API, mounted only under existing GEO routes."""
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -24,6 +25,12 @@ async def load_project(session, ctx, tenant_id, project_id):
     project = await session.get(GeoProject, project_id)
     if project is None or project.tenant_id != tenant_id:
         raise HTTPException(404, "GEO 项目不存在")
+    if getattr(ctx, "advisor_scope", None) is not None:
+        from app.security.advisor_write_reads import assigned_scope
+        from app.security.advisor_scope import deny
+        owned, _ = await assigned_scope(session, ctx)
+        if project_id not in owned:
+            deny(403, "ADVISOR_ASSIGNMENT_REQUIRED", "需要这个项目的有效顾问分配")
     tenant = await session.get(Tenant, tenant_id)
     return project, resolve_config(project, tenant)
 
@@ -39,17 +46,21 @@ async def get_config(project_id: int, tenant_id: int = Query(...),
                      session: AsyncSession = Depends(get_session)):
     require_advisor(ctx)
     project, config = await load_project(session, ctx, tenant_id, project_id)
-    keywords = await session.scalars(select(GeoOptimizationUnit.keyword).where(
+    query = select(GeoOptimizationUnit.keyword).where(
         GeoOptimizationUnit.tenant_id == tenant_id, GeoOptimizationUnit.status == "active",
         GeoOptimizationUnit.keyword.is_not(None),
-    ).order_by(GeoOptimizationUnit.sort_order, GeoOptimizationUnit.id).limit(100))
+    ).order_by(GeoOptimizationUnit.sort_order, GeoOptimizationUnit.id).limit(100)
+    from app.security.advisor_write_reads import filter_query
+    query = await filter_query(session, ctx, query, GeoOptimizationUnit)
+    keywords = await session.scalars(query)
     suggested = list(dict.fromkeys(k.strip() for k in keywords if k and 0 < len(k.strip()) <= 128))[:20]
     return {**access_state(config, ctx), "config": config.model_dump(), "notice": NOTICE,
-            "suggested_core_terms": suggested, "suggested_core_terms_scope": "tenant"}
+            "suggested_core_terms": suggested, "suggested_core_terms_scope": "assigned_projects" if getattr(ctx, "advisor_scope", None) is not None else "tenant"}
 
 
 @router.put("/projects/{project_id}/search-visibility/config")
 @audit_geo_operation('PUT', '/api/v1/geo/projects/{project_id}/search-visibility/config')
+@checked_call
 async def put_config(project_id: int, req: VisibilityConfig, tenant_id: int = Query(...),
                      ctx: AuthContext = Depends(require_scoped_auth),
                      session: AsyncSession = Depends(get_session)):
@@ -57,13 +68,18 @@ async def put_config(project_id: int, req: VisibilityConfig, tenant_id: int = Qu
     project, _ = await load_project(session, ctx, tenant_id, project_id)
     # Serialize with task admission and preserve unrelated project settings.
     project = await session.scalar(select(GeoProject).where(GeoProject.id == project.id).with_for_update().execution_options(populate_existing=True))
-    project.project_settings = {**(project.project_settings or {}), "deepseek_visibility": req.model_dump()}
+    values = req.model_dump()
+    if getattr(ctx, 'advisor_scope', None) is not None:
+        current = (project.project_settings or {}).get('deepseek_visibility') or {}
+        values = VisibilityConfig.model_validate({**current, **req.model_dump(exclude_unset=True)}).model_dump()
+    project.project_settings = {**(project.project_settings or {}), "deepseek_visibility": values}
     await session.commit()
-    return {**access_state(req, ctx), "config": req.model_dump(), "notice": NOTICE}
+    return {**access_state(VisibilityConfig.model_validate(values), ctx), "config": values, "notice": NOTICE}
 
 
 @router.post("/projects/{project_id}/search-visibility/run", status_code=202)
 @audit_geo_operation('POST', '/api/v1/geo/projects/{project_id}/search-visibility/run', success_status=202)
+@checked_call
 async def run_now(project_id: int, background: BackgroundTasks, tenant_id: int = Query(...),
                   ctx: AuthContext = Depends(require_scoped_auth),
                   session: AsyncSession = Depends(get_session)):

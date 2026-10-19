@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.security.advisor_operation_call import checked_call
+
 import json
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -790,7 +792,8 @@ async def _evaluate_and_store_rules(
         ready = False
 
     prev_rr = task.rule_result if isinstance(task.rule_result, dict) else {}
-    ai_review = prev_rr.get("ai_review") if isinstance(prev_rr.get("ai_review"), dict) else None
+    from app.geo.content.ai_review_scope import current_review
+    ai_review = current_review(prev_rr.get("ai_review"), article)
     task.rule_result = {
         "ready": ready,
         "require_channels": require_channels,
@@ -1012,12 +1015,12 @@ async def content_health(
         try:
             await session.execute(text(sql))
             return "ok", None
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             try:
                 await session.rollback()
             except Exception:  # noqa: BLE001
                 pass
-            return "missing", str(exc)[:160]
+            return "missing", "schema_unavailable"
 
     checks: dict[str, Any] = {}
     status = "ok"
@@ -1135,6 +1138,8 @@ async def list_optimization_businesses(
     """优化业务列表。"""
     ctx.ensure_tenant(tenant_id)
     stmt = select(GeoOptimizationBusiness).where(GeoOptimizationBusiness.tenant_id == tenant_id)
+    from app.security.advisor_write_reads import filter_query
+    stmt = await filter_query(session, ctx, stmt, GeoOptimizationBusiness)
     if status:
         stmt = stmt.where(GeoOptimizationBusiness.status == status)
     stmt = stmt.order_by(GeoOptimizationBusiness.sort_order.asc(), GeoOptimizationBusiness.id.desc())
@@ -1250,6 +1255,8 @@ async def list_optimization_units(
     """优化单元（关键词）列表。"""
     ctx.ensure_tenant(tenant_id)
     stmt = select(GeoOptimizationUnit).where(GeoOptimizationUnit.tenant_id == tenant_id)
+    from app.security.advisor_write_reads import filter_query
+    stmt = await filter_query(session, ctx, stmt, GeoOptimizationUnit)
     if business_id is not None:
         stmt = stmt.where(GeoOptimizationUnit.business_id == business_id)
     if status:
@@ -1503,6 +1510,7 @@ async def gap_workbench(
 
 
 @router.post("/gap-workbench/create-tasks")
+@checked_call
 async def gap_workbench_create_tasks(
     req: GapCreateTasksRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -1620,6 +1628,7 @@ async def list_optimization_periods(
 
 
 @router.post("/optimization-periods")
+@checked_call
 async def create_optimization_period(
     req: OptimizationPeriodCreate,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -1761,6 +1770,7 @@ async def get_optimization_period(
 
 
 @router.post("/optimization-periods/{period_id}/close")
+@checked_call
 async def close_optimization_period(
     period_id: int,
     tenant_id: int = Query(...),
@@ -2133,6 +2143,7 @@ async def list_daily_metrics(
 
 
 @router.post("/daily-metrics/rebuild")
+@checked_call
 async def rebuild_daily_metrics(
     tenant_id: int = Query(...),
     metric_date: date | None = Query(
@@ -2195,6 +2206,8 @@ async def list_prompts(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     stmt = select(GeoPrompt).where(GeoPrompt.tenant_id == tenant_id)
+    from app.security.advisor_write_reads import filter_query
+    stmt = await filter_query(session, ctx, stmt, GeoPrompt)
     if active_inventory_only:
         stmt = (
             stmt.join(
@@ -2310,6 +2323,7 @@ async def create_prompt(
 
 
 @router.post("/prompts/expand-candidates")
+@checked_call
 async def expand_prompt_candidates(
     req: PromptExpandRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -2469,6 +2483,7 @@ async def expand_prompt_candidates(
 
 
 @router.post("/prompts/promote-candidates")
+@checked_call
 async def promote_prompt_candidates(
     req: PromptPromoteRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -2598,6 +2613,7 @@ async def update_prompt(
 
 
 @router.post("/prompts/import")
+@checked_call
 async def import_prompts(
     req: PromptImportRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -2732,6 +2748,11 @@ async def list_answer_snapshots(
         stmt = stmt.where(GeoAnswerSnapshot.simulated.is_(bool(simulated)))
     if sample_mode:
         stmt = stmt.where(GeoAnswerSnapshot.sample_mode == sample_mode)
+    if getattr(ctx, "advisor_scope", None) is not None:
+        from app.security.advisor_write_reads import filter_query
+        prompts = await filter_query(session, ctx, select(GeoPrompt.id).where(
+            GeoPrompt.tenant_id == tenant_id), GeoPrompt)
+        stmt = stmt.where(GeoAnswerSnapshot.prompt_id.in_(prompts))
     stmt = stmt.order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
     rows = list(await session.scalars(stmt))
     prompt_ids = {r.prompt_id for r in rows}
@@ -2755,6 +2776,7 @@ async def list_answer_snapshots(
 
 
 @router.post("/answer-snapshots")
+@checked_call
 async def create_answer_snapshot(
     req: AnswerSnapshotCreate,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -2804,13 +2826,18 @@ async def create_answer_snapshot(
     try:
         from app.geo.content.daily_metrics import safe_rebuild_for_captured_at
 
-        await safe_rebuild_for_captured_at(req.tenant_id, row.captured_at)
+        if getattr(ctx, 'advisor_scope', None) is not None:
+            from app.geo.content.daily_metrics import rebuild_day, _metric_day_from_captured
+            await rebuild_day(session, req.tenant_id, _metric_day_from_captured(row.captured_at))
+        else:
+            await safe_rebuild_for_captured_at(req.tenant_id, row.captured_at)
     except Exception:  # noqa: BLE001
         pass
     return _snapshot_payload(row, prompt_question=prompt.question)
 
 
 @router.patch("/answer-snapshots/{snapshot_id}")
+@checked_call
 async def update_answer_snapshot(
     snapshot_id: int,
     req: AnswerSnapshotUpdate,
@@ -2875,7 +2902,11 @@ async def update_answer_snapshot(
     try:
         from app.geo.content.daily_metrics import safe_rebuild_for_captured_at
 
-        await safe_rebuild_for_captured_at(tenant_id, row.captured_at)
+        if getattr(ctx, 'advisor_scope', None) is not None:
+            from app.geo.content.daily_metrics import rebuild_day, _metric_day_from_captured
+            await rebuild_day(session, tenant_id, _metric_day_from_captured(row.captured_at))
+        else:
+            await safe_rebuild_for_captured_at(tenant_id, row.captured_at)
     except Exception:  # noqa: BLE001
         pass
     return _snapshot_payload(row, prompt_question=prompt.question)
@@ -2891,15 +2922,20 @@ async def delete_answer_snapshot(
     """Hard-delete one answer snapshot (test data / wrong paste cleanup)."""
     ctx.ensure_tenant(tenant_id)
     row = await _get_snapshot(session, snapshot_id, tenant_id)
-    if getattr(row, 'patrol_run_id', None):
+    if getattr(row, 'patrol_run_id', None) and getattr(ctx, 'advisor_scope', None) is None:
         raise HTTPException(409, '巡检快照是指标来源，不能删除；错误引用请标记为 inaccurate')
     captured = row.captured_at
+    advisor = getattr(ctx, "advisor_scope", None) is not None
+    if advisor:
+        from app.security.advisor_write_snapshot_metrics import rebuild_before_delete
+        await rebuild_before_delete(session, ctx, row)
     await session.delete(row)
     await session.commit()
     try:
         from app.geo.content.daily_metrics import safe_rebuild_for_captured_at
 
-        await safe_rebuild_for_captured_at(tenant_id, captured)
+        if not advisor:
+            await safe_rebuild_for_captured_at(tenant_id, captured)
     except Exception:  # noqa: BLE001
         pass
     return {"deleted": True, "id": snapshot_id}
@@ -3209,6 +3245,7 @@ async def competitor_insights_trace(
 
 
 @router.post("/competitor-insights/web-search")
+@checked_call
 async def competitor_web_search(
     tenant_id: int = Query(...),
     name: str = Query(..., min_length=1, max_length=120),
@@ -3225,6 +3262,7 @@ async def competitor_web_search(
 
 
 @router.post("/competitor-insights/report")
+@checked_call
 async def competitor_insights_report(
     req: CompetitorTraceReportRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -3275,6 +3313,7 @@ async def competitor_insights_report(
 
 
 @router.post("/competitor-insights/create-tasks")
+@checked_call
 async def competitor_insights_create_tasks(
     req: CompetitorCreateTasksRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -3790,6 +3829,7 @@ async def citation_insights(
 
 
 @router.post("/answer-snapshots/probe")
+@checked_call
 async def probe_answer_snapshot(
     req: AnswerSnapshotProbeRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -3839,6 +3879,7 @@ async def probe_answer_snapshot(
 
 
 @router.post("/answer-snapshots/probe-batch")
+@checked_call
 async def probe_answer_snapshot_batch(
     req: AnswerSnapshotProbeBatchRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -3931,6 +3972,7 @@ async def probe_answer_snapshot_batch(
 
 
 @router.post("/onboarding/preview")
+@checked_call
 async def geo_onboarding_preview(
     req: GeoOnboardingPreviewRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -3963,6 +4005,7 @@ async def geo_onboarding_preview(
 
 
 @router.post("/onboarding/apply")
+@checked_call
 async def geo_onboarding_apply(
     req: GeoOnboardingApplyRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -4682,6 +4725,8 @@ async def put_monitoring_stance(
     from app.geo.content.monitoring_stance import normalize_stance, stance_payload
 
     ctx.ensure_tenant(req.tenant_id)
+    from app.security.geo_configuration_admin import require_geo_configuration_admin
+    require_geo_configuration_admin(ctx)
     row = await ensure_ai_setting(session, req.tenant_id)
     row.monitoring_stance = normalize_stance(req.monitoring_stance)
     row.updated_by = ctx.user_id
@@ -4695,6 +4740,7 @@ async def put_monitoring_stance(
 
 
 @router.post("/attribution/backfill")
+@checked_call
 async def attribution_backfill(
     tenant_id: int = Query(...),
     limit: int = Query(2000, ge=1, le=10000, description="本批最多处理条数"),
@@ -4813,6 +4859,7 @@ async def list_async_jobs(
 
 
 @router.post("/async-jobs/{job_id}/cancel")
+@checked_call
 async def cancel_async_job(
     job_id: int,
     tenant_id: int = Query(...),
@@ -5358,7 +5405,7 @@ async def create_visibility_patrol_run(
         created_by=ctx.user_id,
         summary={"advisor_visibility_prompt_ids": advisor_prompt_ids, "advisor_visibility_auth": {
             "user_id": ctx.user_id, "tenant_id": ctx.tenant_id,
-            "grant_id": ctx.advisor_scope.grant_id, "auth_exp": ctx.auth_exp,
+            "grant_id": ctx.advisor_scope.grant_id, "auth_exp": binding[4],
         }} if advisor_prompt_ids is not None else None,
     )
     session.add(run)
@@ -5379,6 +5426,7 @@ async def create_visibility_patrol_run(
 
 
 @router.delete("/visibility-patrol/runs/{run_id}")
+@checked_call
 async def delete_visibility_patrol_run(
     run_id: int,
     tenant_id: int = Query(...),
@@ -5397,14 +5445,17 @@ async def delete_visibility_patrol_run(
             "进行中的巡检不可删除；请等待结束，避免破坏正在执行的采样",
         )
     has_samples = await session.scalar(select(GeoAnswerSnapshot.id).where(GeoAnswerSnapshot.patrol_run_id == run_id).limit(1))
-    if has_samples or (row.summary or {}).get('contract_plan'):
+    if (has_samples or (row.summary or {}).get('contract_plan')) and getattr(ctx, 'advisor_scope', None) is None:
         raise HTTPException(409, '巡检包含指标证据或复测计划，不能删除来源记录')
+    from app.security.advisor_patrol_delete import detach_run_evidence
+    await detach_run_evidence(session, ctx, row)
     await session.delete(row)
     await session.commit()
     return {"deleted": True, "id": run_id}
 
 
 @router.post("/visibility-patrol/runs/cleanup")
+@checked_call
 async def cleanup_visibility_patrol_runs(
     tenant_id: int = Query(...),
     keep_latest: int = Query(20, ge=0, le=200),
@@ -5436,9 +5487,11 @@ async def cleanup_visibility_patrol_runs(
         if r.status in ("pending", "running"):
             continue
         has_samples = await session.scalar(select(GeoAnswerSnapshot.id).where(GeoAnswerSnapshot.patrol_run_id == r.id).limit(1))
-        if has_samples or (r.summary or {}).get('contract_plan'):
+        if (has_samples or (r.summary or {}).get('contract_plan')) and getattr(ctx, 'advisor_scope', None) is None:
             keep_ids.add(r.id)
             continue
+        from app.security.advisor_patrol_delete import detach_run_evidence
+        await detach_run_evidence(session, ctx, r)
         await session.delete(r)
         deleted += 1
     await session.commit()
@@ -5446,6 +5499,7 @@ async def cleanup_visibility_patrol_runs(
 
 
 @router.post("/answer-snapshots/extract-urls")
+@checked_call
 async def extract_answer_snapshot_urls(
     req: AnswerSnapshotExtractUrlsRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -5460,6 +5514,7 @@ async def extract_answer_snapshot_urls(
 
 
 @router.post("/answer-snapshots/suggest-fields")
+@checked_call
 async def suggest_answer_snapshot_fields(
     req: AnswerSnapshotSuggestFieldsRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -5521,6 +5576,7 @@ async def suggest_answer_snapshot_fields(
 
 
 @router.post("/answer-snapshots/check-citations")
+@checked_call
 async def check_answer_snapshot_citations(
     req: AnswerSnapshotCitationCheckRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -5614,6 +5670,7 @@ async def get_channel_polish_prompts(
 
 
 @router.put("/channel-polish-prompts")
+@checked_call
 async def put_channel_polish_prompts(
     req: ChannelPolishPromptsUpdate,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -5694,6 +5751,8 @@ async def _ensure_default_engines(
         )
     )
     existing = {str(r.engine_key) for r in rows}
+    if getattr(session, 'info', {}).get('advisor_scoped_write') or getattr(session, 'info', {}).get('advisor_read_scope'):
+        return rows
     missing = [
         item
         for item in default_engine_rows(tenant_id)
@@ -5894,6 +5953,10 @@ async def _ensure_default_publishing_channels(
             .order_by(GeoPublishingChannel.sort_order, GeoPublishingChannel.id)
         )
     )
+    if getattr(session, "info", {}).get("advisor_scoped_write"):
+        # Content operations consume configured destinations. Only the
+        # administrator's configuration flow may create channel settings.
+        return rows
     existing_types = {str(r.channel_type or "").lower() for r in rows}
     await _ensure_tenant_exists(session, tenant_id)
     missing = [
@@ -5998,6 +6061,7 @@ async def publishing_auto_push_status(
     "/publishing-channels/enable-multi-media-auto",
     dependencies=[Depends(require_geo_read_entitlement)],
 )
+@checked_call
 async def enable_multi_media_auto_pack(
     tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -6007,6 +6071,7 @@ async def enable_multi_media_auto_pack(
 
     Does not create credentials — ops only fill account tokens after this.
     """
+    require_geo_configuration_admin(ctx)
     from app.geo.content.multi_push import AUTO_PUSH_TYPES
 
     ctx.ensure_tenant(tenant_id)
@@ -6038,11 +6103,14 @@ async def enable_multi_media_auto_pack(
 
 
 @router.post("/publishing-channels")
+@checked_call
 async def create_publishing_channel(
     req: PublishingChannelCreate,
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    if req.publish_mode != 'manual_only':
+        require_geo_configuration_admin(ctx)
     ctx.ensure_tenant(req.tenant_id)
     await ensure_geo_entitlement(session, req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
@@ -6067,6 +6135,7 @@ async def create_publishing_channel(
     "/publishing-channels/{channel_id}",
     dependencies=[Depends(require_geo_read_entitlement)],
 )
+@checked_call
 async def delete_publishing_channel(
     channel_id: int,
     tenant_id: int = Query(...),
@@ -6092,6 +6161,7 @@ async def delete_publishing_channel(
     "/publishing-channels/{channel_id}",
     dependencies=[Depends(require_geo_read_entitlement)],
 )
+@checked_call
 async def update_publishing_channel(
     channel_id: int,
     req: PublishingChannelUpdate,
@@ -6099,6 +6169,8 @@ async def update_publishing_channel(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    if req.publish_mode is not None:
+        require_geo_configuration_admin(ctx)
     ctx.ensure_tenant(tenant_id)
     row = await _get_publishing_channel(session, channel_id, tenant_id)
     for field in ("channel_type", "publish_mode", "base_url", "content_rules", "enabled", "sort_order"):
@@ -6210,6 +6282,7 @@ async def oauth_social_start(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Build OAuth2 authorize URL for a channel account (auth_type=oauth2)."""
+    require_geo_configuration_admin(ctx)
     from app.geo.content.connectors.oauth2 import (
         OAuth2Error,
         build_authorize_url,
@@ -6246,6 +6319,7 @@ async def oauth_social_start(
     "/oauth/social/refresh",
     dependencies=[Depends(require_geo_read_entitlement)],
 )
+@checked_call
 async def oauth_social_refresh(
     tenant_id: int = Query(...),
     account_id: int = Query(...),
@@ -6253,6 +6327,7 @@ async def oauth_social_refresh(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Refresh OAuth2 access_token using stored refresh_token."""
+    require_geo_configuration_admin(ctx)
     from app.geo.content.ai_settings import encrypt_api_key
     from app.geo.content.connectors.oauth2 import OAuth2Error, refresh_access_token
     from app.geo.content.connectors.social import decrypt_credentials_json
@@ -6279,6 +6354,7 @@ async def oauth_social_refresh(
     "/channel-accounts/{account_id}/verify-social",
     dependencies=[Depends(require_geo_read_entitlement)],
 )
+@checked_call
 async def verify_social_account(
     account_id: int,
     tenant_id: int = Query(...),
@@ -6286,6 +6362,7 @@ async def verify_social_account(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Probe social credentials (WeChat token / OAuth token presence)."""
+    require_geo_configuration_admin(ctx)
     from app.geo.content.ai_settings import encrypt_api_key
     from app.geo.content.connectors.social import (
         decrypt_credentials_json,
@@ -6505,6 +6582,7 @@ async def get_channel_blueprint(
 
 
 @router.post("/media-placements")
+@checked_call
 async def create_media_placement(
     req: MediaPlacementCreate,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -6537,6 +6615,7 @@ async def create_media_placement(
 
 
 @router.patch("/media-placements/{placement_id}")
+@checked_call
 async def update_media_placement(
     placement_id: int,
     req: MediaPlacementUpdate,
@@ -6578,6 +6657,7 @@ async def update_media_placement(
 
 
 @router.delete("/media-placements/{placement_id}")
+@checked_call
 async def delete_media_placement(
     placement_id: int,
     tenant_id: int = Query(...),
@@ -6605,6 +6685,8 @@ async def list_facts(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     stmt = select(GeoFact).where(GeoFact.tenant_id == tenant_id)
+    from app.security.advisor_write_reads import filter_query
+    stmt = await filter_query(session, ctx, stmt, GeoFact)
     if status:
         stmt = stmt.where(GeoFact.status == status)
     if trust_level:
@@ -6806,6 +6888,7 @@ async def verify_fact(
 
 
 @router.post("/facts/import")
+@checked_call
 async def import_facts_file(
     tenant_id: int = Query(...),
     file: UploadFile = File(...),
@@ -6848,6 +6931,7 @@ async def preview_article_import_file(
 
 
 @router.post("/content-imports/preview-url")
+@checked_call
 async def preview_article_import_url(
     req: ArticleImportPreviewUrlRequest,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -6921,6 +7005,7 @@ async def create_task_from_article_import(
 
 
 @router.post("/prompts/import-csv")
+@checked_call
 async def import_prompts_csv_file(
     tenant_id: int = Query(...),
     file: UploadFile = File(...),
@@ -6962,6 +7047,15 @@ async def list_tasks(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     filters = [GeoContentTask.tenant_id == tenant_id]
+    if getattr(ctx, "advisor_scope", None) is not None:
+        from app.security.advisor_write_reads import assigned_scope
+        _, businesses = await assigned_scope(session, ctx)
+        owned_prompts = select(GeoPrompt.id).where(GeoPrompt.tenant_id == tenant_id,
+            GeoPrompt.unit_id.in_(select(GeoOptimizationUnit.id).where(
+                GeoOptimizationUnit.tenant_id == tenant_id,
+                GeoOptimizationUnit.business_id.in_(businesses))))
+        filters.append(GeoContentTask.prompt_id.in_(owned_prompts))
+        filters.append(or_(GeoContentTask.business_id.is_(None), GeoContentTask.business_id.in_(businesses)))
     if status:
         filters.append(GeoContentTask.status == status)
     elif not include_archived:
@@ -7003,6 +7097,7 @@ async def list_tasks(
 
 
 @router.post("/content-tasks/from-source-opportunity")
+@checked_call
 async def create_task_from_source_opportunity(
     req: SourceOpportunityTaskCreate,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -7115,6 +7210,7 @@ async def create_task(
 
 
 @router.post("/content-tasks/from-diagnosis")
+@checked_call
 async def create_task_from_diagnosis_route(
     req: TaskFromDiagnosis,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -7137,6 +7233,7 @@ async def create_task_from_diagnosis_route(
 
 
 @router.post("/content-tasks/{task_id}/seed-diagnosis-facts")
+@checked_call
 async def seed_diagnosis_facts_route(
     task_id: int,
     tenant_id: int = Query(...),
@@ -7535,6 +7632,9 @@ async def suggest_task_brief(
 
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
+    from app.security.advisor_write_ai import recheck_request, reserve_suggestion
+    await recheck_request(session, ctx, task)
+    await reserve_suggestion(session, ctx, task)
     prompt = await _get_prompt(session, task.prompt_id, tenant_id)
     tenant = await _ensure_tenant_exists(session, tenant_id)
     brand, _ = await _brand_context_for_task(session, task, tenant)
@@ -7568,6 +7668,11 @@ async def suggest_task_brief(
         getattr(biz_row, "profile", None) if biz_row else None,
         fallback=getattr(tenant, "name", None) or f"租户{tenant_id}",
     )
+    async def before_suggestion_model():
+        await recheck_request(session, ctx, task)
+        # Release authorization locks so revocation can take effect during AI.
+        await session.commit()
+
     suggested = await suggest_brief_for_task(
         question=prompt.question,
         brand=brand,
@@ -7576,7 +7681,11 @@ async def suggest_task_brief(
         llm=llm,
         chat_json=chat_json,
         profile_hints=hints,
+        **({"before_model": before_suggestion_model} if getattr(ctx, "advisor_scope", None) is not None else {}),
     )
+    # Suggestions are not persisted, so there is no later commit to recheck
+    # assignment or revocation after the model/heuristic has finished.
+    await recheck_request(session, ctx, task)
     return {
         "task_id": task.id,
         "prompt_id": prompt.id,
@@ -7589,6 +7698,7 @@ async def suggest_task_brief(
 
 
 @router.post("/content-tasks/{task_id}/retrieve-facts")
+@checked_call
 async def retrieve_task_facts(
     task_id: int,
     req: RetrieveFactsRequest,
@@ -7725,7 +7835,10 @@ async def apply_retrieved_facts(
     """Bind selected fact ids (same as PUT facts, dedicated apply path)."""
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
+    await lock_manual_task(session, ctx, task)
     await _bind_facts(session, task, req.fact_ids)
+    if getattr(ctx, "advisor_scope", None) is not None:
+        invalidate_review(task)
     await session.commit()
     await session.refresh(task)
     return await _task_payload(session, task, detail=True)
@@ -7836,6 +7949,7 @@ async def check_task(
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
     await session.refresh(task, with_for_update=True)
+    await lock_manual_task(session, ctx, task, already_locked=True)
     article = await _latest_article(session, task.id, fresh=True)
     scored = await _evaluate_and_store_rules(
         session, task, article, require_channels=require_channels
@@ -7862,9 +7976,13 @@ async def ai_review_task(
 
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
+    from app.security.advisor_write_ai import recheck_request, reserve_suggestion
+    await recheck_request(session, ctx, task)
     article = await _latest_article(session, task.id)
     if article is None:
         raise HTTPException(400, "请先生成或保存母稿")
+    from app.geo.content.ai_review_scope import article_binding
+    reviewed_version = article_binding(article)
     prompt = await _get_prompt(session, task.prompt_id, tenant_id)
     tenant = await _ensure_tenant_exists(session, tenant_id)
     brand, _ = await _brand_context_for_task(session, task, tenant)
@@ -7877,6 +7995,10 @@ async def ai_review_task(
     from app.ai.deepseek import DeepSeekError, chat_json
 
     rule_input = await _build_rule_input(session, task, article)
+    await reserve_suggestion(session, ctx, task)
+    if getattr(ctx, "advisor_scope", None) is not None:
+        await recheck_request(session, ctx, task)
+        await session.commit()
     try:
         review = await run_ai_review(
             brand=brand,
@@ -7891,6 +8013,12 @@ async def ai_review_task(
     except ValueError as exc:
         raise HTTPException(502, str(exc)) from exc
 
+    await recheck_request(session, ctx, task)
+    await session.refresh(task, with_for_update=True)
+    current_article = await _latest_article(session, task.id, fresh=True)
+    if current_article is None or article_binding(current_article) != reviewed_version:
+        raise HTTPException(409, "稿件已变化，请对当前版本重新运行 AI 审稿")
+    review = {**review, **reviewed_version}
     if req.persist:
         rr = task.rule_result if isinstance(task.rule_result, dict) else {}
         rr = dict(rr)
@@ -7936,6 +8064,7 @@ async def lint_task_article(
 
 
 @router.post("/content-tasks/{task_id}/apply-patch")
+@checked_call
 async def apply_patch(
     task_id: int,
     req: ApplyPatchRequest,
@@ -8071,7 +8200,8 @@ async def apply_patch(
     target = next((c for c in check_dicts if c.get("code") == req.code), None)
     target_passed = bool(target and target.get("passed"))
     prev_rr = task.rule_result if isinstance(task.rule_result, dict) else {}
-    ai_review = prev_rr.get("ai_review") if isinstance(prev_rr.get("ai_review"), dict) else None
+    from app.geo.content.ai_review_scope import current_review
+    ai_review = current_review(prev_rr.get("ai_review"), new_article)
 
     task.rule_result = {
         "ready": ready,
@@ -8167,6 +8297,8 @@ async def generate_task_article(
         session, task
     ):
         raise HTTPException(409, "母稿正在生成，请等待当前任务完成")
+    from app.security.advisor_write_ai import recheck_request, job_authority
+    await recheck_request(session, ctx, task)
     task.status = "generating"
 
     from app.geo.content.async_jobs import (
@@ -8183,7 +8315,8 @@ async def generate_task_article(
         kind=KIND_GENERATE,
         ref_type="content_task",
         ref_id=task.id,
-        request_meta={"execution_mode": "async" if run_async else "sync"},
+        request_meta={"execution_mode": "async" if run_async else "sync",
+                      **job_authority(session, ctx)},
         created_by=ctx.user_id,
     )
     if run_async:
@@ -8261,6 +8394,7 @@ async def create_variants(
         session, task
     ):
         raise HTTPException(409, "渠道稿正在生成，请等待当前任务完成")
+    from app.security.advisor_write_ai import job_authority
     task.status = "adapting"
 
     job = await create_job(
@@ -8273,6 +8407,7 @@ async def create_variants(
             "channels": channels,
             "use_llm": bool(req.use_llm),
             "execution_mode": "async" if run_async else "sync",
+            **job_authority(session, ctx),
         },
         created_by=ctx.user_id,
     )
@@ -8349,7 +8484,7 @@ async def update_variant(
         raise HTTPException(404, f"渠道版本不存在: {channel_key}")
     if getattr(ctx, "advisor_scope", None) is not None and variant.status == "published":
         raise HTTPException(403, {"code": "ADVISOR_WRITE_STATE_FORBIDDEN",
-                                  "message": "已发布渠道稿不能直接修改，请联系管理员处理"})
+                                  "message": "已发布渠道稿请先重新生成渠道版本，再编辑新稿"})
     changed = (
         req.title is not None and req.title.strip() != variant.title
     ) or (req.body_markdown is not None and req.body_markdown != variant.body_markdown)
@@ -8465,6 +8600,8 @@ async def submit_task_review(
     article = await _latest_article(session, task.id)
     if article is None:
         raise HTTPException(400, "请先生成母稿后再提交审校")
+    from app.security.advisor_write_review import record_review
+    record_review(session, ctx, task, article, req, "submit-review")
     try:
         apply_submit(task, note=req.note, submitter_id=ctx.user_id)
     except ValueError as exc:
@@ -8501,6 +8638,10 @@ async def decide_task_review(
             raise HTTPException(409, "稿件版本已变化，请刷新后重新审核")
     if req.expected_updated_at is not None and req.expected_updated_at != _iso(task.updated_at):
         raise HTTPException(409, "任务或渠道稿已变化，请刷新后重新审核")
+    from app.security.advisor_write_review import record_review
+    if getattr(ctx, "advisor_scope", None) is not None:
+        article = await _latest_article(session, task.id)
+        record_review(session, ctx, task, article, req, req.decision)
     try:
         apply_decision(
             task,
@@ -8620,6 +8761,8 @@ async def _write_publication(
     variant.status = "published"
     task.status = "published"
     await _sync_task_pipeline(session, task)
+    from app.security.advisor_write_publish import recheck_external
+    await recheck_external(session, "publication_commit_checked", task_id=task.id, variant_id=variant.id)
     return True
 
 
@@ -8685,6 +8828,7 @@ async def record_publication(
 
 @router.post("/content-tasks/{task_id}/import-receipts")
 @audit_geo_operation('POST', '/api/v1/geo/content-tasks/{task_id}/import-receipts')
+@checked_call
 async def import_task_receipts(
     task_id: int,
     tenant_id: int = Query(..., gt=0),
@@ -8736,6 +8880,7 @@ async def list_task_deliveries(task_id: int, tenant_id: int = Query(...),
 
 
 @router.post("/content-tasks/{task_id}/deliveries/{variant_id}/{delivery_id}/resolve")
+@checked_call
 async def resolve_task_delivery(task_id: int, variant_id: int, delivery_id: str, req: DeliveryResolution,
     ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session)) -> dict:
     ctx.ensure_tenant(req.tenant_id)
@@ -8951,6 +9096,7 @@ async def push_variant_batch(
         )
 
     if run_async:
+        from app.security.advisor_write_ai import job_authority
         from app.geo.content.async_jobs import (
             KIND_PUSH_BATCH,
             create_job,
@@ -8976,10 +9122,11 @@ async def push_variant_batch(
                 "mode": req.mode,
                 "create_publication": req.create_publication,
                 "note": req.note,
+                **job_authority(session, ctx),
             },
             created_by=ctx.user_id,
         )
-        background_tasks.add_task(run_job_in_background, job.id, tenant_id)
+        background_tasks.add_task(run_job_in_background, job.id, req.tenant_id)
         return {
             "async": True,
             "job": job_payload(job),
@@ -9827,6 +9974,7 @@ async def list_competitor_reports(
 
 
 @router.post("/competitor-reports")
+@checked_call
 async def upsert_competitor_report(
     req: CompetitorReportUpsert,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -9889,6 +10037,7 @@ async def get_competitor_report(
 
 
 @router.patch("/competitor-reports/{report_id}")
+@checked_call
 async def patch_competitor_report(
     report_id: int,
     req: CompetitorReportPatch,
@@ -9923,6 +10072,7 @@ async def patch_competitor_report(
 
 
 @router.post("/competitor-reports/{report_id}/confirm")
+@checked_call
 async def confirm_competitor_report(
     report_id: int,
     tenant_id: int = Query(...),
@@ -9947,6 +10097,7 @@ async def confirm_competitor_report(
 
 
 @router.post("/competitor-reports/{report_id}/archive")
+@checked_call
 async def archive_competitor_report(
     report_id: int,
     tenant_id: int = Query(...),
@@ -9994,6 +10145,7 @@ async def export_competitor_report(
 
 
 @router.post("/competitor-reports/{report_id}/restore")
+@checked_call
 async def restore_competitor_report_version(
     report_id: int,
     tenant_id: int = Query(...),
@@ -10036,6 +10188,7 @@ async def restore_competitor_report_version(
 
 
 @router.post("/competitor-reports/{report_id}/create-task")
+@checked_call
 async def create_task_from_competitor_report(
     report_id: int,
     tenant_id: int = Query(...),
@@ -10152,6 +10305,7 @@ async def create_task_from_competitor_report(
 
 
 @router.post("/onboarding/sitemap-audit")
+@checked_call
 async def geo_sitemap_audit(
     tenant_id: int = Query(...),
     website_url: str = Query(..., min_length=8),
@@ -10169,6 +10323,7 @@ async def geo_sitemap_audit(
 
 
 @router.post("/onboarding/sitemap-audit/create-tasks")
+@checked_call
 async def geo_sitemap_create_tasks(
     tenant_id: int = Query(...),
     body: dict = Body(default_factory=dict),
@@ -10310,6 +10465,7 @@ async def list_competitor_aliases(
 
 
 @router.put("/competitor-aliases")
+@checked_call
 async def put_competitor_aliases(
     tenant_id: int = Query(...),
     body: dict = Body(default_factory=dict),
@@ -10390,7 +10546,7 @@ async def list_deliverable_archives(
                 "title": r.title,
                 "period_from": _iso(r.period_from),
                 "period_to": _iso(r.period_to),
-                "share_token": r.share_token,
+                "share_token": r.share_token if getattr(ctx, 'advisor_scope', None) is None else None,
                 "has_simulated": bool(
                     (r.pack_json or {}).get("has_simulated_samples")
                 ),
@@ -10402,6 +10558,7 @@ async def list_deliverable_archives(
 
 
 @router.post("/deliverables/archives")
+@checked_call
 async def create_deliverable_archive(
     tenant_id: int = Query(...),
     body: dict = Body(default_factory=dict),
@@ -10445,7 +10602,9 @@ async def create_deliverable_archive(
             md = render_deliverables_markdown(pack)
         except Exception:  # noqa: BLE001
             md = None
-    token = secrets.token_urlsafe(24)
+    # Advisor archives remain authenticated project records. Creating or
+    # exposing a permanent public capability is not part of that operation.
+    token = secrets.token_urlsafe(24) if getattr(ctx, 'advisor_scope', None) is None else None
     row = GeoDeliverableArchive(
         tenant_id=tenant_id,
         title=title[:200],
@@ -10462,7 +10621,7 @@ async def create_deliverable_archive(
     return {
         "id": row.id,
         "title": row.title,
-        "share_token": row.share_token,
+        "share_token": row.share_token if getattr(ctx, 'advisor_scope', None) is None else None,
         "created_at": _iso(row.created_at),
         "has_simulated": bool(pack.get("has_simulated_samples")),
     }
@@ -10486,7 +10645,7 @@ async def get_deliverable_archive(
         "title": row.title,
         "period_from": _iso(row.period_from),
         "period_to": _iso(row.period_to),
-        "share_token": row.share_token,
+        "share_token": row.share_token if getattr(ctx, 'advisor_scope', None) is None else None,
         "pack": row.pack_json,
         "markdown": row.markdown,
         "created_at": _iso(row.created_at),
@@ -10508,6 +10667,7 @@ async def publication_monitor_list(task_id: int, tenant_id: int = Query(...),
     '/content-tasks/{task_id}/publication-monitor/{publication_id}/check',
     dependencies=[Depends(require_geo_read_entitlement)],
 )
+@checked_call
 async def publication_monitor_check(task_id: int, publication_id: int, tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session)):
     from app.geo.publication_monitor import check_publication
