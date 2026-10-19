@@ -73,5 +73,12 @@ export async function bootstrapGeoSession({ session, readSession, applySession, 
   }
   if (!current()) return isAdvisor ? guide() : null
   applySession(me, tenants)
+  if (isAdvisor && session.tenantId
+      && !(tenants?.tenants || []).some((tenant) => tenant.id === session.tenantId)) {
+    return {
+      message: tenants?.unavailable_reason || '当前客户暂不可使用 GEO。请让超管核对 GEO 模块及有效期，并在「GEO → 项目管理 → 计划与待办」分配有效项目。',
+      selectCustomer: true,
+    }
+  }
   return null
 }

@@ -30,7 +30,7 @@ const memoryStorage = () => {
 let revision = 0
 async function fixture({ rows = [{ id: 15, name: '甲' }, { id: 17, name: '乙' }], defaultId = 15,
   token = identity, initialUser = user, readError, profileError, listError, selectError, response, retryError,
-  beforeSelectReturn, initialSuccess = false } = {}) {
+  beforeSelectReturn, initialSuccess = false, geoRows = rows, unavailableReason } = {}) {
   const local = memoryStorage()
   const tab = memoryStorage()
   writeAuthEnvelope(local, token, initialUser)
@@ -57,7 +57,7 @@ async function fixture({ rows = [{ id: 15, name: '甲' }, { id: 17, name: '乙' 
       calls.reads++
       if (calls.reads === 1 && !initialSuccess) throw readError || selectionError()
       if (retryError) throw retryError
-      return { tenants: rows }
+      return { tenants: geoRows, unavailable_reason: unavailableReason }
     },
     listAuthorizedCustomers: async () => {
       calls.lists++
@@ -166,6 +166,23 @@ test('successful advisor reads and non-409 errors never auto-select a customer',
   assert.equal(wrongStatus.result.message, GEO_ADVISOR_SELECTION_MESSAGE)
   assert.equal(wrongStatus.calls.lists, 0)
   assert.deepEqual(wrongStatus.calls.selects, [])
+})
+
+test('second selected customer mounts only when GEO eligibility is satisfied', async () => {
+  const available = await fixture({ token: business(17), initialSuccess: true, geoRows: [{ id: 17, name: '乙' }] })
+  assert.equal(available.result, null)
+  assert.equal(available.session.tenantId, 17)
+  for (const reason of ['当前客户没有分配给你的有效 GEO 项目，请让超管核对项目顾问。',
+    '当前客户的 GEO 未开通、已停用或已到期，请让超管核对有效期。']) {
+    const f = await fixture({ token: business(17), initialSuccess: true, geoRows: [], unavailableReason: reason })
+    assert.deepEqual(f.result, { message: reason, selectCustomer: true })
+    assert.equal(f.session.tenantId, 17)
+    assert.deepEqual(f.session.tenants, [])
+    assert.deepEqual(f.calls.selects, [])
+  }
+  const fallback = await fixture({ token: business(17), initialSuccess: true, geoRows: [{ id: 15 }] })
+  assert.match(fallback.result.message, /GEO 模块.*有效期.*项目管理/)
+  assert.equal(fallback.session.tenantId, 17, 'an unavailable second customer cannot fall back to the first')
 })
 
 test('malformed grant lists and selection responses never persist business auth', async () => {
