@@ -186,6 +186,15 @@ async def task_detail(taskId: str, request: Request, session=Depends(get_session
     return service.task_payload(task, include_account=True)
 
 
+@router.post('/tasks/{taskId}/publish-account')
+async def publish_account(taskId: str, request: Request, session=Depends(get_session), ctx=Depends(require_scoped_auth)):
+    _, body = await body_for(request, {'name', 'expected_revision'})
+    module, state, site_id = await management(request, session, ctx)
+    result = service.set_publish_account(module, state, site_id, taskId, body, ctx)
+    await session.commit()
+    return result
+
+
 def native_device_request(request):
     if any(h in request.headers for h in ('origin', 'cookie', 'sec-fetch-site', 'sec-fetch-mode', 'sec-fetch-dest')):
         deny('SCOPE_FORBIDDEN', 403)
