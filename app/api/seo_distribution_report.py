@@ -228,15 +228,30 @@ async def claim(request: Request, session=Depends(get_session)):
     # Use the ASGI peer identity, never caller-supplied forwarding headers.
     # Uvicorn resolves trusted proxy peers before constructing this Request.
     peer = request.client.host if request.client else 'unknown-peer'
-    limit('claim-peer-' + service.sha(peer), 30, claim=True)
-    limit('claim-global', 3000, claim=True)
     _, body = await body_for(request, {'pairing_code', 'request_id'})
     if (not isinstance(body['pairing_code'], str) or not re.fullmatch('[A-Za-z0-9_-]{32}', body['pairing_code'])
             or not isinstance(body['request_id'], str)
             or not re.fullmatch('[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}', body['request_id'])):
         deny('INVALID_SHAPE', 422)
-    limit('claim-code-' + service.sha(body['pairing_code']), 10, claim=True)
-    return await service.claim_pairing(session, body['pairing_code'])
+    try:
+        return await service.claim_pairing(session, body['pairing_code'])
+    except HTTPException:
+        await session.rollback()
+        known = await service.record_claim_failure(session, body['pairing_code'])
+        if not known:
+            # Only unknown-code failures use process-local fallback. Successful
+            # claims never consume, or get rejected by, another customer's IP
+            # budget. Known-code limits survive worker/server restarts in JSONB.
+            limit('claim-peer-' + service.sha(peer), 30, claim=True)
+            limit('claim-code-' + service.sha(body['pairing_code']), 10, claim=True)
+            limit('claim-global', 3000, claim=True)
+        raise
+
+
+@router.get('/device/profile')
+async def profile(request: Request, session=Depends(get_session)):
+    module, state, device = await authenticated_device(session, credential_for(request), require_enabled=False)
+    return await service.device_profile(session, module, device)
 
 
 @router.post('/device/bindings')

@@ -12,6 +12,7 @@ import hmac
 import re
 import secrets
 import time
+import unicodedata
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -167,16 +168,20 @@ async def set_settings(session, module, state, site_id, body, ctx):
 
 
 async def create_pairing(session, module, state, site_id, body, ctx):
+    label = body.get('label')
+    if (not isinstance(label, str) or not label.strip() or len(label) > 80
+            or any(unicodedata.category(c).startswith('C') for c in label)):
+        deny('INVALID_SHAPE', 422)
     if body['expected_revision'] != state['revision']:
         deny('SOURCE_CHANGED')
     await connection_scope(session, module.tenant_id, site_id, body['account_id'])
     now = now_ms()
-    if (sum(not d['revoked'] and d['expires'] > now for d in state['devices'].values()) >= 5
-            or sum(not p['consumed'] and p['expires'] > now for p in state['pairings'].values()) >= 5):
+    if (sum(not d['revoked'] and d['expires'] > now for d in state['devices'].values()) >= 20
+            or sum(not p['consumed'] and p['expires'] > now for p in state['pairings'].values()) >= 20):
         deny('REPORT_LEDGER_CAPACITY', 429)
     code, pairing_id, device_id = secrets.token_urlsafe(24), str(uuid4()), str(uuid4())
     state['pairings'][sha(code)] = {'id': pairing_id, 'device_id': device_id, 'site_id': site_id,
-        'label': body['label'], 'account_id': body['account_id'], 'expires': now + 600000,
+        'label': label.strip(), 'account_id': body['account_id'], 'expires': now + 600000,
         'consumed': False, 'actor': proof_for(ctx)}
     state['revision'] += 1
     audit(state, 'pairing_created', actor=ctx.user_id, device=device_id)
@@ -194,15 +199,23 @@ async def claim_pairing(session, code):
     hint = registry(locator.module_settings)['pairings'].get(code_hash)
     if not hint:
         deny('PAIRING_CODE_UNAVAILABLE')
+    if len([at for at in hint.get('claim_failures', []) if at > now_ms() - 60000]) >= 10:
+        deny('DEVICE_RATE_LIMITED', 429)
     await site_scope(session, locator.tenant_id, hint['site_id'])
     module = await locked_module(session, locator.tenant_id)
     state = registry(module.module_settings)
     pairing = state['pairings'].get(code_hash)
     now = now_ms()
+    if pairing and len([at for at in pairing.get('claim_failures', []) if at > now - 60000]) >= 10:
+        deny('DEVICE_RATE_LIMITED', 429)
     if not pairing or pairing['consumed'] or pairing['expires'] <= now:
         deny('PAIRING_CODE_UNAVAILABLE')
     await authorize_actor(session, pairing['actor'], module.tenant_id, pairing['site_id'])
     await connection_scope(session, module.tenant_id, pairing['site_id'], pairing['account_id'])
+    # Pending codes cannot reserve device capacity forever. Recheck under the
+    # same module lock at consumption, including codes issued before this release.
+    if sum(not d['revoked'] and d['expires'] > now for d in state['devices'].values()) >= 20:
+        deny('REPORT_LEDGER_CAPACITY', 429)
     device_id = pairing['device_id']
     # Preserve the frozen client schema: 64 base64url characters, no locator.
     credential = secrets.token_urlsafe(48)
@@ -220,6 +233,54 @@ async def claim_pairing(session, code):
         'device': {'id': device_id, 'label': pairing['label'], 'active': True,
                    'credential': credential, 'credential_once': True},
         'bindings_configured': False, 'automatic_submit': False}
+
+
+async def record_claim_failure(session, code):
+    """Persist only failures of a known code, after rolling back failed work.
+
+    Lock only the module and never acquire other locks here. This separate
+    transaction cannot accidentally commit partial authorization/claim work.
+    """
+    code_hash = sha(code)
+    tenant_id = await session.scalar(select(TenantModule.tenant_id).where(
+        TenantModule.module_code == 'seo',
+        TenantModule.module_settings[KEY]['pairings'].has_key(code_hash)))  # noqa: W601
+    if tenant_id is None:
+        return False
+    module = await session.scalar(select(TenantModule).where(
+        TenantModule.tenant_id == tenant_id, TenantModule.module_code == 'seo')
+        .with_for_update().execution_options(populate_existing=True))
+    state = registry(module.module_settings)
+    pairing = state['pairings'].get(code_hash)
+    if pairing is None:
+        return False
+    now = now_ms()
+    failures = [at for at in pairing.get('claim_failures', []) if at > now - 60000]
+    pairing['claim_failures'] = (failures + [now])[-10:]
+    store(module, state)
+    await session.commit()
+    return True
+
+
+def profile_name(value):
+    if not isinstance(value, str):
+        return ''
+    return ' '.join(''.join(c for c in value if not unicodedata.category(c).startswith('C')).split())[:120]
+
+
+async def device_profile(session, module, device):
+    from app.models.tenant import Tenant
+    # Explicit safe columns: do not load the tenant/account ORM objects, which
+    # include credentials or unrelated customer information.
+    customer = await session.scalar(select(Tenant.name).where(Tenant.id == module.tenant_id))
+    scope = await session.scalar(select(SeoSite.name).where(
+        SeoSite.id == device['site_id'], SeoSite.tenant_id == module.tenant_id))
+    account = await session.scalar(select(SeoDistributionConnection.name).where(
+        SeoDistributionConnection.id == int(device['account_id'].removeprefix('seo-connection-')),
+        SeoDistributionConnection.tenant_id == module.tenant_id))
+    return {'schema': 1, 'device_id': device['id'], 'customer_name': profile_name(customer),
+            'scope_name': profile_name(scope), 'account_name': profile_name(account),
+            'label': profile_name(device['label'])}
 
 
 def credential_locator(value):

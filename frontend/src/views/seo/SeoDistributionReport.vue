@@ -92,10 +92,11 @@ watch(scope, () => { resetScope(); refresh() }, { immediate: true, flush: 'sync'
       <el-button :disabled="!canOperate" @click="toggle">{{ state.enabled && state.scope_enabled ? '关闭当前客户与网站回传' : '开启当前客户与网站回传' }}</el-button>
       <p v-if="!state.can_operate">当前权限只允许查看，请使用已有授权的顾问或超管账号处理。</p>
       <div class="report-form">
-        <el-input v-model="form.label" placeholder="执行电脑备注" maxlength="80" :disabled="!canOperate" />
+        <el-input v-model="form.label" placeholder="设备备注（必填，如团队电脑与用途）" aria-label="设备备注（必填）" maxlength="80" :disabled="!canOperate" />
         <el-select v-model="form.account" placeholder="选择已绑定本站的公众号" :disabled="!canOperate"><el-option v-for="account in accounts" :key="account.id" :label="account.name" :value="account.id" /></el-select>
         <el-button :disabled="!canOperate || !form.account || !form.label.trim()" @click="pair">生成配对码</el-button>
       </div>
+      <p>请填写团队代发电脑的备注，方便区分配对。每个客户最多保留 20 个在用配对和 20 个未用配对码；同一台电脑可分别配对多个客户。</p>
       <div v-if="pairingCode" role="status"><p>配对码仅显示本次，10 分钟内在多号通选择 SEO 模块后输入：</p><code>{{ pairingCode }}</code><el-button text @click="pairingCode = ''">隐藏</el-button></div>
       <ul><li v-for="device in state.devices" :key="device.id">{{ device.label }} · {{ device.active ? '已绑定' : '已停用' }} · 账号身份待核对 <el-button text :disabled="!canOperate || !device.active" @click="revoke(device)">吊销</el-button></li></ul>
       <div class="report-form">

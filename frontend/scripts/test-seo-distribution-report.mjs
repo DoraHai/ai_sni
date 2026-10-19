@@ -59,6 +59,19 @@ test('read-only and disabled controls do not send writes', async () => {
   assert.deepEqual(calls.map(c => c[0]), ['read'])
 })
 
+test('team device note is mandatory and trimmed before pairing', async () => {
+  const { handlers, calls } = fixture()
+  await handlers.refresh()
+  Object.assign(handlers.form, { label:'   ', account:40 })
+  await handlers.pair()
+  assert.equal(calls.filter(c => c[0] === 'pair').length, 0)
+  handlers.form.label = '  Synthetic team computer  '
+  await handlers.pair()
+  assert.equal(calls.find(c => c[0] === 'pair')[2].label, 'Synthetic team computer')
+  assert.match(source, /设备备注（必填/)
+  assert.match(source, /同一台电脑可分别配对多个客户/)
+})
+
 test('settings write narrows to explicit selected customer/site and both revisions', async () => {
   const { handlers, calls } = fixture()
   await handlers.refresh(); await handlers.toggle()
