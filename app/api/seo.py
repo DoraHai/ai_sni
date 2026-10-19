@@ -9652,6 +9652,37 @@ async def publish_content_distribution(
     return result
 
 
+async def complete_manual_publication_in_transaction(
+    session, row, content, *, page_url, published_at, actor_id, action="manual_complete",
+):
+    """Shared native transition. Caller owns authorization, locks and commit."""
+    if row.status == "published" and row.page_url == page_url.strip():
+        return row.page_url
+    if row.status not in {"manual_required", "failed", "preparing"}:
+        raise HTTPException(409, "当前任务状态不能人工完成")
+    try:
+        page_url, host = normalize_publication_url(page_url)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    duplicate = await session.scalar(select(SeoContentPublication).where(
+        SeoContentPublication.tenant_id == row.tenant_id,
+        SeoContentPublication.content_asset_id == row.content_asset_id,
+        SeoContentPublication.page_url == page_url, SeoContentPublication.id != row.id,
+    ))
+    if duplicate:
+        raise HTTPException(409, "该文章的发布链接已经登记")
+    row.page_url, row.status, row.published_at, row.last_error = page_url, "published", published_at, None
+    content.status = "published"
+    content.published_at = content.published_at or row.published_at
+    if not content.page_url:
+        content.page_url = page_url
+    await _mark_distribution_variant_published(session, row)
+    session.add(SeoPublishAttempt(tenant_id=row.tenant_id, publication_id=row.id,
+        action=action, status="succeeded", response_summary={"page_url_host": host},
+        completed_at=datetime.utcnow(), created_by=actor_id))
+    return page_url
+
+
 @router.post("/content-distribution/publications/{publication_id}/complete")
 async def complete_manual_publication(
     publication_id: int,
@@ -9694,35 +9725,9 @@ async def complete_manual_publication(
         page_url, host = normalize_publication_url(req.page_url)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    duplicate = await session.scalar(
-        select(SeoContentPublication).where(
-            SeoContentPublication.tenant_id == req.tenant_id,
-            SeoContentPublication.content_asset_id == row.content_asset_id,
-            SeoContentPublication.page_url == page_url,
-            SeoContentPublication.id != row.id,
-        )
-    )
-    if duplicate:
-        raise HTTPException(409, "该文章的发布链接已经登记")
-    row.page_url = page_url
-    row.status = "published"
-    row.published_at = _publication_time(req.published_at)
-    row.last_error = None
-    content.status = "published"
-    content.published_at = content.published_at or row.published_at
-    if not content.page_url:
-        content.page_url = page_url
-    await _mark_distribution_variant_published(session, row)
-    session.add(
-        SeoPublishAttempt(
-            tenant_id=req.tenant_id,
-            publication_id=row.id,
-            action="manual_complete",
-            status="succeeded",
-            response_summary={"page_url_host": host},
-            completed_at=datetime.utcnow(),
-            created_by=ctx.user_id,
-        )
+    page_url = await complete_manual_publication_in_transaction(
+        session, row, content, page_url=page_url,
+        published_at=_publication_time(req.published_at), actor_id=ctx.user_id,
     )
     try:
         await session.commit()

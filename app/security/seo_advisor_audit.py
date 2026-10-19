@@ -10,10 +10,14 @@ if not logger.handlers:
 
 
 def record(request, ctx, result, *, evidence=None):
+    path, object_ids = request.url.path, dict(request.path_params)
+    if path.startswith('/api/v1/seo/distribution/v1/'):
+        path = getattr(request.scope.get('route'), 'path', '/api/v1/seo/distribution/v1')
+        object_ids = {}  # Registry UUIDs already have safe business-ledger audit.
     logger.info(json.dumps({
         "event": "seo_advisor_operation", "user_id": ctx.user_id,
         "tenant_id": ctx.tenant_id, "method": request.method,
-        "path": request.url.path, "object_ids": dict(request.path_params),
+        "path": path, "object_ids": object_ids,
         "result": result, "time": datetime.now(timezone.utc).isoformat(),
         **(evidence or {}),
     }, ensure_ascii=False, sort_keys=True))

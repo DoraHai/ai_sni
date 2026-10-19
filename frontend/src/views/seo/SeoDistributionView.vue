@@ -39,6 +39,7 @@ import { validateResults } from './publisher/core.js'
 import SeoVideoPublishing from './SeoVideoPublishing.vue'
 import SeoPageCapturePanel from './SeoPageCapturePanel.vue'
 import SeoOfflineHandoff from './SeoOfflineHandoff.vue'
+import SeoDistributionReport from './SeoDistributionReport.vue'
 import { createPublisherPackage, publisherZip } from './seoPublisher'
 const publisherFiles = import.meta.glob('./publisher/*', { query: '?raw', import: 'default', eager: true })
 const runnerFiles = import.meta.glob('./publisher-runner/*', { query: '?raw', import: 'default', eager: true })
@@ -1010,6 +1011,7 @@ onMounted(loadSites)
     </section>
 
     <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon />
+    <SeoDistributionReport :tenant-id="currentTenantId" :site-id="siteId" :identity="`${session.user?.id}:${session.authRevision}`" :can-edit="canEdit" :connections="connections" :publications="publications" :contents="contents" />
 
     <section class="summary-grid">
       <article><span>可用渠道配置</span><strong>{{ connectedCount }}</strong><small>已配置，可准备分发任务</small></article>

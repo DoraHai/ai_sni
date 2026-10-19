@@ -11,6 +11,17 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    'app/seo_distribution_protocol.py',
+    'app/seo_distribution_report.py',
+    'app/seo_distribution_verification.py',
+    'app/api/seo_distribution_report.py',
+    'app/security/seo_distribution_advisor.py',
+    'tests/test_seo_distribution_protocol.py',
+    'tests/test_seo_distribution_report_postgres.py',
+    'tests/fixtures/distribution_report_vectors.json',
+    'frontend/src/api/seoDistributionReport.js',
+    'frontend/scripts/test-seo-distribution-report.mjs',
+    'docs/SEO_DEVICE_REPORT.md',
     "tests/test_seo_advisor_connections_postgres.py",
     "app/permissions.py",
     "app/security/advisor_seo_scope.py",

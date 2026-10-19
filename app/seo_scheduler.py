@@ -133,6 +133,10 @@ def _start_seo_scheduler() -> None:
     seo_scheduler.add_job(run_qa_batches,IntervalTrigger(seconds=10),id='run_seo_qa_batches',replace_existing=True,max_instances=1,coalesce=True,misfire_grace_time=60)
     seo_scheduler.add_job(run_content_workflows, IntervalTrigger(minutes=1), id='run_seo_content_workflows', replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=60)
     seo_scheduler.add_job(run_service_workflows, IntervalTrigger(minutes=1), id='run_seo_service_workflows', replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=60)
+    from app.seo_distribution_verification import recover_report_verification
+    seo_scheduler.add_job(recover_report_verification, IntervalTrigger(minutes=1),
+        id='recover_seo_distribution_verification', replace_existing=True,
+        max_instances=1, coalesce=True, misfire_grace_time=60)
     seo_scheduler.start()
     logger.info("[scheduler][SEO] 独立调度器已启动")
 

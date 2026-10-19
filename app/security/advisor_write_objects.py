@@ -176,6 +176,10 @@ async def _request_references(request, body):
 
 
 async def _scope(session, ctx, request, body, rule, *, lock=False):
+    from app.seo_distribution_protocol import PREFIX
+    if rule.template.startswith(PREFIX + '/'):
+        from app.security.seo_distribution_advisor import scope
+        return await scope(session, ctx, request, body, rule, lock=lock)
     if getattr(rule, "workflow", False):
         from app.security.seo_advisor_work import workflow_scope
         return await workflow_scope(session, ctx, request, body, rule, lock=lock)
@@ -259,6 +263,10 @@ async def lock_manual_write_scope(session, ctx, request, body, rule):
     Advisor operations may run during an active service plan. Keep the scope and
     object locks; editing content never changes a plan or authorizes its worker.
     """
+    from app.seo_distribution_protocol import PREFIX
+    if rule.template.startswith(PREFIX + '/'):
+        from app.security.seo_distribution_advisor import lock_scope
+        return await lock_scope(session, ctx, request, body, rule)
     if getattr(rule, "workflow", False):
         from app.security.seo_advisor_work import lock_workflow_scope
         return await lock_workflow_scope(session, ctx, request, body, rule)

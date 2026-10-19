@@ -144,6 +144,11 @@ async def enforce_advisor_request(request, ctx, session):
             key: value for key, value in body.items()
             if key != "request_id" and key.endswith(("_id", "_ids"))
         }}
+        if rule.template.startswith('/api/v1/seo/distribution/v1/'):
+            # Registry references/account aliases are untrusted strings until
+            # admission. Never echo a malformed credential-like value to audit.
+            request.state.seo_advisor_evidence = {'requested_object_ids': {
+                k: v for k, v in body.items() if k == 'publication_id' and type(v) is int and v > 0}}
         if rule.template == '/api/v1/seo/workbench/content-assets/{content_id}/confirmations':
             request.state.seo_advisor_evidence.update(
                 requested_version=body.get('version_count'), requested_content_hash=body.get('payload_hash'),

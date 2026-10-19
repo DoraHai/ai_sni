@@ -53,6 +53,8 @@ from app.security.seo_advisor_publishing import publishing_rules
 WRITE_ROUTES.update({(r.method, r.template): r for r in publishing_rules(WriteRule)})
 from app.security.seo_advisor_deletion import deletion_rules
 WRITE_ROUTES.update({(r.method, r.template): r for r in deletion_rules(WriteRule)})
+from app.security.seo_distribution_advisor import rules as distribution_rules
+WRITE_ROUTES.update({(r.method, r.template): r for r in distribution_rules(WriteRule)})
 
 
 def match_write_rule(request) -> WriteRule | None:
