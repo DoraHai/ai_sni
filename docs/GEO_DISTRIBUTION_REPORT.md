@@ -32,3 +32,11 @@
 后端测试：`python ops/run_geo_checks.py --postgres`（仅专有 loopback `geo_ci` 空库）。新增原生 Postgres 测试实际竞争单次 claim、竞争回执、在 native 写后中断并验证全事务回滚、跨项目拒绝、无关 JSON 命名空间保留和 monitor pending。无本地 PostgreSQL 时的 skip 不是通过证据，合并必须看 GEO CI 的 PostgreSQL 结果。
 
 前端：`node --test tests/geo*.test.mjs`（frontend），`npm run build`（frontend/geo-frontend）。启用须等后端、客户端相同契约审核及 CI 通过；遇生产 schema/权限缺口另列方案并停止，不在应用内自动补表或改 env。
+# 团队电脑多客户代发（0.3.5）
+
+同一团队电脑可给多个客户分别配对；每个配对仍固定一个客户、GEO项目和公众号，凭据与结果互不通用。每客户最多20个有效设备、20个未用且未过期配对码，按客户汇总而非每项目重复计算；过期/吊销设备不计在用额度。设备备注必填，去首尾空格后1–80字符，拒绝控制字符。顾问在已有授权项目的「分发平台」选择公众号、填写团队电脑/用途备注，再生成配对码。原有默认关闭和人工确认链接步骤不变。
+
+新增 `GET /api/v1/geo/distribution/v1/device/profile`：仅携带该配对设备的 Bearer 凭据，无body、无query，不需要序号/时间戳头。精确返回 `{schema:1, device_id, customer_name, scope_name, account_name, label}`；名字移除Unicode C类字符、归一空白，最多120码点。只查设备自己的客户/项目/公众号显示列，保持原认证与归属检查，可在回传关闭时读取，不写设备序号或账本；`Cache-Control: private, no-store`。旧claim/bindings/exchange/ACK格式不变。
+
+已知配对码领取失败在现有 `tenant_modules.module_settings.distribution_report_v1.pairings` 内记录固定60秒窗口的失败次数；同一码6次失败后限流，锁行后计算，跨进程/重启有效。错误响应前仅提交失败计数，无设备或稿件写入；成功领取不增加计数。未知/格式错误码无客户归属，使用进程内按来源与码摘要组合的60秒失败桶兜底（最多2048桶、每桶6次）；该兜底重启清零、随机轮换未知码仍可绕过单桶限制，不能当作分布式防攻击。没有按来源IP限制成功领取，团队电脑连续给多个客户成功配对不会消耗失败额度。无需迁移或新env。
+

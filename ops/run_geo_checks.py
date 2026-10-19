@@ -103,7 +103,8 @@ def main():
     if args.distribution_report:
         import pytest
         return pytest.main(['-q', '--tb=short', '--disable-warnings',
-                            'tests/test_geo_distribution_report.py', 'tests/test_geo_distribution_report_postgres.py'])
+                            'tests/test_geo_distribution_report.py', 'tests/test_geo_distribution_team.py',
+                            'tests/test_geo_distribution_report_postgres.py'])
     files = sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'tests').glob('test_geo*.py'))
     files += sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'tests').glob('test_advisor_scoped_writes*.py'))
     files += ['tests/test_metric_service.py', 'tests/test_md_to_html_tables.py', 'tests/test_channel_article_quality.py',
