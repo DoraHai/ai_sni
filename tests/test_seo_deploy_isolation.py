@@ -60,7 +60,7 @@ class _HealthConnection:
                 ("demo_tenant_binding_history", "trg_demo_tenant_binding_history_no_truncate", "before truncate for each statement reject_demo_tenant_binding_history_mutation"),
                 ("demo_tenant_bindings", "trg_demo_tenant_bindings_no_delete", "before delete for each row reject_demo_tenant_binding_delete"),
             ]
-            if self.revisions in (["0098_demo_binding_no_truncate"], ["0099_geo_review_audit"], ["0100_seo_page_captures"], ["0101_seo_site_analytics"], ["0102_seo_monthly_report_template"], ["0103_seo_tdk_review"], ["0104_seo_page_ai_tdk"], ["0105_seo_content_confirmations"], ["0106_seo_content_messages"], ["0107_seo_site_delete"], ["0108_advisor_account_links"], ["0109_advisor_tenant_grants"]):
+            if self.revisions in (["0098_demo_binding_no_truncate"], ["0099_geo_review_audit"], ["0100_seo_page_captures"], ["0101_seo_site_analytics"], ["0102_seo_monthly_report_template"], ["0103_seo_tdk_review"], ["0104_seo_page_ai_tdk"], ["0105_seo_content_confirmations"], ["0106_seo_content_messages"], ["0107_seo_site_delete"], ["0108_advisor_account_links"], ["0109_advisor_tenant_grants"], ["0110_distribution_inbox"]):
                 rows.append(("demo_tenant_bindings", "trg_demo_tenant_bindings_no_truncate", "before truncate for each statement reject_demo_tenant_binding_delete"))
             return rows
         if "pg_get_serial_sequence" in sql:
@@ -316,7 +316,7 @@ def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
     assert result['db'] == 'ok' and result['db_error'] is None
     assert result['schema_revision'] == revision
     assert result['required_schema_revision'] == '0099_geo_review_audit'
-    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations', '0106_seo_content_messages', '0107_seo_site_delete', '0108_advisor_account_links', '0109_advisor_tenant_grants']
+    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations', '0106_seo_content_messages', '0107_seo_site_delete', '0108_advisor_account_links', '0109_advisor_tenant_grants', '0110_distribution_inbox']
 
 
 def test_0105_health_rejects_missing_content_confirmation_structure() -> None:
@@ -500,8 +500,8 @@ def test_structure_contract_preserves_smallint_fields():
 
 
 def test_runtime_allowlist_contains_only_exact_reviewed_versions():
-    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations', '0106_seo_content_messages', '0107_seo_site_delete', '0108_advisor_account_links', '0109_advisor_tenant_grants'})
-    assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations', '0106_seo_content_messages', '0107_seo_site_delete', '0108_advisor_account_links', '0109_advisor_tenant_grants'})
+    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations', '0106_seo_content_messages', '0107_seo_site_delete', '0108_advisor_account_links', '0109_advisor_tenant_grants', '0110_distribution_inbox'})
+    assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations', '0106_seo_content_messages', '0107_seo_site_delete', '0108_advisor_account_links', '0109_advisor_tenant_grants', '0110_distribution_inbox'})
     assert (
         seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS - {'0094_seo_qa_batches'}
     ) <= seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS
