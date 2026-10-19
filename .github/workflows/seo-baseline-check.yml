@@ -183,6 +183,7 @@ jobs:
           tests/test_seo_content_confirmations.py
           tests/test_advisor_tenant_auth.py
           tests/test_seo_advisor_work.py
+          tests/test_seo_advisor_site_creation.py
           tests/test_seo_advisor_reads.py
           tests/test_seo_advisor_quota.py
           tests/test_seo_advisor_reviews.py
