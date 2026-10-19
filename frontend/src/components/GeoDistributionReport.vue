@@ -63,10 +63,10 @@ function toggle() {
   })
 }
 function pair() {
-  if (!account.value || !label.value.trim()) return
+  if (!label.value.trim()) return
   action(async ({ tenant, scope, current }) => {
     const data = await pairReportDevice(tenant, scope, { label: label.value.trim(), platform: 'wechat-article',
-      account_id: String(account.value), expected_revision: settings.value.revision })
+      account_id: account.value == null ? null : String(account.value), expected_revision: settings.value.revision })
     if (!current()) return
     pairing.value = data
     const updated = await reportSettings(tenant, scope)
@@ -116,10 +116,11 @@ async function refreshResult() {
       <el-button v-if="mode === 'settings'" :disabled="busy || !canManage" @click="toggle">{{ settings.scope_enabled ? '关闭当前项目回传' : '打开当前项目回传' }}</el-button>
       <template v-if="mode === 'devices'">
         <el-input v-model="label" maxlength="80" placeholder="设备备注（必填，如团队电脑/用途）" aria-label="设备备注（必填）" :disabled="busy || !canManage" />
-        <el-select v-model="account" placeholder="选择已有公众号人工账号" aria-label="设备绑定账号" :disabled="busy || !canManage">
+        <el-select v-model="account" clearable placeholder="不指定（由多号通发布时上报）" aria-label="设备绑定账号（可选）" :disabled="busy || !canManage">
           <el-option v-for="a in accounts || []" :key="a.id" :value="a.id" :label="a.display_name" />
         </el-select>
-        <el-button :disabled="busy || !canManage || !account || !label.trim()" @click="pair">生成配对码</el-button>
+        <el-button :disabled="busy || !canManage || !label.trim()" @click="pair">生成配对码</el-button>
+        <p>公众号可不选，没有公众号也能生成配对码；本次发布用的公众号名称由操作人在多号通回传时填写。</p>
         <el-alert v-if="pairing" :title="`一次性配对码（10分钟内有效）：${pairing.pairing_code}`" type="info" :closable="true" @close="pairing = null" />
         <p>在团队电脑的多号通选择 GEO 并输入配对码，可同时为多个客户代发。每个客户最多保留20个有效配对和20个未用配对码；发布前请核对客户、项目和公众号。</p>
         <p v-for="d in settings.devices" :key="d.id">{{ d.label }} · {{ d.revoked ? '已吊销' : '已配对，账号身份未核验' }}
@@ -132,6 +133,7 @@ async function refreshResult() {
         </el-select>
         <el-button :disabled="busy || !canManage || !settings.enabled || !settings.scope_enabled || !device || !wechat" @click="dispatch">派发当前已审核公众号稿</el-button>
         <p v-if="status">{{ status.delivered ? '已送达服务端' : '尚无回执' }} · {{ reportOutcomes[status.reportedOutcome] || '待回报' }} {{ reportCodes[status.code] || '' }} · {{ verificationLabel }}</p>
+        <p v-if="status">回传公众号：{{ status.reportedAccount?.name || '未上报' }}</p>
         <el-button :disabled="busy || !status?.taskId" @click="refreshResult">刷新回执与核验</el-button>
       </template>
     </template>

@@ -39,3 +39,13 @@
 新增 `GET /api/v1/geo/distribution/v1/device/profile`：仅携带该配对设备的 Bearer 凭据，无body、无query，不需要序号/时间戳头。精确返回 `{schema:1, device_id, customer_name, scope_name, account_name, label}`；名字移除Unicode C类字符、归一空白，最多120码点。只查设备自己的客户/项目/公众号显示列，保持原认证与归属检查，可在回传关闭时读取，不写设备序号或账本；`Cache-Control: private, no-store`。旧claim/bindings/exchange/ACK格式不变。
 
 已知配对码领取失败在现有 `tenant_modules.module_settings.distribution_report_v1.pairings` 内记录固定60秒窗口的失败次数；同一码6次失败后限流，锁行后计算，跨进程/重启有效。错误响应前仅提交失败计数，无设备或稿件写入；成功领取不增加计数。未知/格式错误码无客户归属，使用进程内按来源与码摘要组合的60秒失败桶兜底（最多2048桶、每桶6次）；该兜底重启清零、随机轮换未知码仍可绕过单桶限制，不能当作分布式防攻击。没有按来源IP限制成功领取，团队电脑连续给多个客户成功配对不会消耗失败额度。无需迁移或新env。
+# 配对可不指定公众号（0.3.6，兼容 0.3.4/0.3.5）
+
+在「分发平台 → 多号通结果回传」选客户和项目，填写设备备注，公众号默认“不指定（由多号通发布时上报）”。没有公众号也能直接生成配对码；已有公众号仍可选择。先配对不会自动打开回传。
+
+省略或传 null 的 account_id 会在同一客户/模块行锁和配对事务内创建或复用本客户的「多号通公众号」微信分发平台，以及「多号通公众号（发布时上报）」manual/active 人工账号，不保存平台凭据。平台使用已有 content_rules.duohaotong_placeholder=1 标记，账号通过该标记平台内的固定名称+manual 组合识别；同客户跨项目复用。创建操作在原回传账本审计中记录操作者、客户、项目、对象和 device_pairing 原因。不认领同名用户平台（PLACEHOLDER_CONFLICT），不自动重开停用平台或账号（PLACEHOLDER_DISABLED），由原管理流程处理。权限仍按当前客户授权、项目分配及原顾问写门禁检查。
+
+HUMAN_PUBLISHED/succeeded receipt 可选 reportedAccount:{name:string}，只允许一个 name 子键；移除 Unicode C 类字符、归一空白、trim 后须 1–60 Unicode 码点。非法名称返回 422 INVALID_REPORTED_ACCOUNT，其他状态或 observations 带该字段返回 422 REPORTED_ACCOUNT_NOT_ALLOWED。事件摘要使用完整原始事件，不改变原事件；重放仅改空白也会冲突。清洗副本保存在既有事件账本、任务结果、variant JSON 和新发布记录备注，回传卡片显示“回传公众号”，缺省显示“未上报”。名称只用于记录与展示，客户/项目/稿件授权始终来自设备配对，不依据名称决定。
+
+claim、bindings、profile、exchange 和 ACK 的原响应结构不变；只在管理任务结果/核验投影增加可选 reportedAccount。旧客户端缺省该字段可继续使用，旧的选定账号路径仍保留。人工确认、默认关闭、原发布门禁和后续页面核验保持原规则，无数据库迁移、新服务器环境变量或部署配置变更。
+

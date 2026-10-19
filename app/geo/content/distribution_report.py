@@ -70,9 +70,9 @@ class Store:
     row: object
     book: dict
 
-    def audit(self, code, *, actor=None, device=None, task=None):
+    def audit(self, code, *, actor=None, device=None, task=None, **details):
         self.book['audit'].append({'code': code, 'at': now_ms(), 'actor_id': actor,
-                                   'device_id': device, 'task_id': task})
+                                   'device_id': device, 'task_id': task, **details})
 
     async def save(self):
         if len(p.encode(self.book)) > p.MAX_BYTES:
@@ -245,20 +245,62 @@ async def account_binding(store, account_id):
     return account
 
 
+async def placeholder_account(store, project_id, actor):
+    # open_store holds the tenant + module locks until the pairing commits.
+    # The existing channel JSON marks ownership; never adopt a same-name user channel.
+    session = store.session
+    channel = await session.scalar(select(GeoPublishingChannel).options(load_only(
+        GeoPublishingChannel.id, GeoPublishingChannel.channel_type, GeoPublishingChannel.enabled,
+        GeoPublishingChannel.content_rules)).where(GeoPublishingChannel.tenant_id == store.tenant_id,
+        GeoPublishingChannel.name == '多号通公众号').with_for_update().execution_options(populate_existing=True))
+    if channel is None:
+        channel = GeoPublishingChannel(tenant_id=store.tenant_id, name='多号通公众号', channel_type='wechat',
+            publish_mode='manual_only', enabled=True, content_rules={'duohaotong_placeholder': 1}, created_by=actor['user_id'])
+        session.add(channel)
+        await session.flush()
+        store.audit('PLACEHOLDER_CHANNEL_CREATED', actor=actor['user_id'], tenant_id=store.tenant_id,
+            project_id=project_id, channel_id=channel.id, reason='device_pairing')
+    elif channel.channel_type != 'wechat' or (channel.content_rules or {}).get('duohaotong_placeholder') != 1:
+        p.fail('PLACEHOLDER_CONFLICT')
+    elif not channel.enabled:
+        p.fail('PLACEHOLDER_DISABLED')
+    account = await session.scalar(select(GeoChannelAccount).options(load_only(
+        GeoChannelAccount.id, GeoChannelAccount.auth_type, GeoChannelAccount.status, GeoChannelAccount.expires_at))
+        .where(GeoChannelAccount.tenant_id == store.tenant_id, GeoChannelAccount.channel_id == channel.id,
+               GeoChannelAccount.display_name == '多号通公众号（发布时上报）')
+        .with_for_update().execution_options(populate_existing=True))
+    if account is None:
+        account = GeoChannelAccount(tenant_id=store.tenant_id, channel_id=channel.id,
+            display_name='多号通公众号（发布时上报）', auth_type='manual', status='active', created_by=actor['user_id'])
+        session.add(account)
+        await session.flush()
+        store.audit('PLACEHOLDER_ACCOUNT_CREATED', actor=actor['user_id'], tenant_id=store.tenant_id,
+            project_id=project_id, channel_id=channel.id, account_id=account.id, reason='device_pairing')
+    elif account.auth_type != 'manual' or account.status != 'active':
+        p.fail('PLACEHOLDER_DISABLED')
+    await account_binding(store, account.id)
+    return account.id
+
+
 async def create_pairing(store, project_id, actor, body):
-    p.exact(body, {'label', 'platform', 'account_id', 'expected_revision'})
+    p.exact(body, {'label', 'platform', 'expected_revision'} | ({'account_id'} if 'account_id' in body else set()))
     if (body['platform'] != 'wechat-article' or not isinstance(body['label'], str)
             or not 1 <= len(body['label'].strip()) <= 80 or not body['label'].isprintable()):
         p.fail('INVALID_SHAPE', 422)
     p.integer(body['expected_revision'], 0)
-    account_id = p.integer(int(body['account_id'])) if isinstance(body['account_id'], str) and body['account_id'].isdecimal() else p.integer(body['account_id'])
-    await account_binding(store, account_id)
+    account_id = body.get('account_id')
+    if account_id is not None:
+        account_id = p.integer(int(account_id)) if isinstance(account_id, str) and account_id.isdecimal() else p.integer(account_id)
+        await account_binding(store, account_id)
     if store.book['revision'] != body['expected_revision']:
         p.fail('SOURCE_CHANGED')
     now = now_ms()
     if (sum(not d['revoked'] and d['expires_at'] > now for d in store.book['devices'].values()) >= MAX_ACTIVE_DEVICES
             or sum(not d['consumed'] and d['expires_at'] > now for d in store.book['pairings'].values()) >= MAX_UNUSED_PAIRINGS):
         p.fail('REPORT_LEDGER_CAPACITY', 429)
+    if account_id is None:
+        await actor_authorized(store, project_id, actor)
+        account_id = await placeholder_account(store, project_id, actor)
     code = secrets.token_urlsafe(24)
     key = uuid()
     store.book['pairings'][key] = {'id': key, 'code_hash': sha(code), 'scope_id': project_id,
@@ -510,7 +552,8 @@ def task_projection(task):
             'contentDigest': task['target']['contentDigest'], 'manual_only': True,
             'reportedOutcome': task['outcome'], 'code': task['last_code'],
             'delivered': bool(task['events']['receipt'] or task['events']['observation']),
-            'nativePublicationId': task['publication_id']}
+            'nativePublicationId': task['publication_id'],
+            **({'reportedAccount': task['reportedAccount']} if 'reportedAccount' in task else {})}
 
 
 async def task_authorized(store, device, task_id, *, publish):
@@ -545,9 +588,13 @@ async def apply_events(store, device, events, stream):
             p.fail('CLOCK_SKEW', 422)
         ack, new = p.admit_event(store.book, task, event, stream, ack)
         if new and success:
+            account = p.reported_account(event, stream)
+            note = '多号通人工确认链接；页面待核验'
+            if account is not None:
+                note += '；回传公众号：' + account['name']
             try:
                 await routes._write_publication(store.session, task=native, variant=variant, channel='wechat',
-                    published_url=event['publicUrl'], note='多号通人工确认链接；页面待核验', publish_mode='manual_export')
+                    published_url=event['publicUrl'], note=note, publish_mode='manual_export')
             except PublishGateError:
                 p.fail('REVIEW_REQUIRED')
             # The existing writer's HTTP-advisor hook has no human session
@@ -563,6 +610,8 @@ async def apply_events(store, device, events, stream):
                 p.fail('REPORT_STORAGE_UNAVAILABLE', 503)
             task['publication_id'] = pub.id
             task['reported_url'] = event['publicUrl']
+            if account is not None:
+                task['reportedAccount'] = account
         if new:
             store.audit('RESULT_RECEIVED', device=device['id'], task=task['wire']['id'])
             variant.adapt_meta = {**(variant.adapt_meta or {}), p.KEY: {'project_id': task['scope_id'], **task_projection(task)}}
