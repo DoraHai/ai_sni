@@ -11,6 +11,10 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    'app/seo_visibility_policy.py',
+    'tests/test_seo_visibility_policy.py',
+    'docs/SEO_AI_VISIBILITY_DESIGN.md',
+    'docs/SEO_AI_VISIBILITY_PLAN.md',
     'app/seo_distribution_protocol.py',
     'app/seo_distribution_report.py',
     'app/seo_distribution_verification.py',
