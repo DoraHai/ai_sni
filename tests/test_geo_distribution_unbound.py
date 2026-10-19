@@ -62,6 +62,18 @@ def test_observations_reject_reported_account_even_with_valid_name():
     assert denied.value.detail['code'] == 'REPORTED_ACCOUNT_NOT_ALLOWED'
 
 
+def test_reported_account_is_only_added_to_management_projection_not_device_verification():
+    async def run():
+        task = {'wire': {'id': 'task', 'leaseId': 'lease'}, 'target': {'contentVersion': 'v1', 'contentDigest': 'a'*64},
+            'native_task_id': 1, 'variant_id': 2, 'article_id': 3, 'outcome': 'queued', 'last_code': 'QUEUED',
+            'events': {'receipt': {}, 'observation': {}}, 'publication_id': None, 'reportedAccount': {'name': '合成公众号'}}
+        legacy = await s.verification(fixture(), task)
+        management = await s.verification(fixture(), task, management=True)
+        assert 'reportedAccount' not in legacy
+        assert management == {**legacy, 'reportedAccount': {'name': '合成公众号'}}
+    asyncio.run(run())
+
+
 def fixture():
     return s.Store(NS(flush=AsyncMock(), scalar=AsyncMock(), add=lambda _: None), 7,
         NS(module_settings={}), p.registry({}))

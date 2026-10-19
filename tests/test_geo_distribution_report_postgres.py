@@ -207,7 +207,9 @@ def test_pairing_claim_race_publication_race_rollback_and_scope(reported):
                         assert entry['reportedAccount'] == {'name': '合成公众号 测试😀'}
                         assert entry['events']['receipt']['synthetic-receipt']['reportedAccount'] == entry['reportedAccount']
                         assert '回传公众号：合成公众号 测试😀' in pub.note
-                        assert (await s.verification(await s.open_store(db, 7), entry))['reportedAccount'] == entry['reportedAccount']
+                        store = await s.open_store(db, 7)
+                        assert (await s.verification(store, entry, management=True))['reportedAccount'] == entry['reportedAccount']
+                        assert 'reportedAccount' not in await s.verification(store, entry)
                     else:
                         assert 'reportedAccount' not in entry
                     assert state_for(await db.get(GeoChannelVariant, 3), pub)['state'] == 'pending'

@@ -643,7 +643,7 @@ async def envelope(store, device, acks):
             'grants': grants, 'tasks': tasks}
 
 
-async def verification(store, task):
+async def verification(store, task, *, management=False):
     state = {'state': 'pending', 'reason': 'not_checked', 'checkedAt': None}
     if task['publication_id']:
         from app.geo.publication_monitor import state_for, report_check
@@ -665,4 +665,8 @@ async def verification(store, task):
                 status = 'pending'
             state = {'state': {'healthy': 'verified', 'mismatch': 'failed', 'unreachable': 'unavailable'}.get(status, status),
                      'reason': status, 'checkedAt': monitor.get('checked_at')}
-    return {**task_projection(task), 'verification': state, 'publicationVerified': state['state'] == 'verified'}
+    projection = task_projection(task)
+    if not management:
+        # 0.3.4/0.3.5 device readers keep their exact legacy response shape.
+        projection.pop('reportedAccount', None)
+    return {**projection, 'verification': state, 'publicationVerified': state['state'] == 'verified'}
