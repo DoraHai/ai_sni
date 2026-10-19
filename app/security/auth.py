@@ -105,6 +105,9 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     edit = method not in _READ_METHODS
     p = path
 
+    if re.fullmatch(r'/api/v1/geo/distribution/v1/(?:settings|device-pairings|tasks(?:/[A-Za-z0-9_-]+)?|devices/[A-Za-z0-9_-]+/revoke)', p):
+        return {'geo.content', 'settings.accounts'}, edit
+
     if p.startswith("/api/v1/dashboard"):
         return {"monitor.dashboard"}, edit
     if p.startswith("/api/v1/alerts"):

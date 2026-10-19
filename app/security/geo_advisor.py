@@ -133,6 +133,10 @@ async def guard_request(session, ctx, request, claims):
 
 
 async def check_scoped_write_objects(session, ctx, request, body, rule):
+    from app.security.geo_distribution_advisor import RULES, check_objects as check_distribution
+    if (rule.method, rule.template) in RULES:
+        await check_distribution(session, ctx, request, body, rule)
+        return
     from app.security.advisor_write_routes import VISIBILITY_RUN_RULE
     if rule == VISIBILITY_RUN_RULE:
         from app.security.advisor_visibility import check_visibility_scope
@@ -187,6 +191,11 @@ async def guard_scoped_write(session, ctx, request, claims):
 
     if not get_settings().advisor_scoped_content_writes_enabled:
         deny(403, "ADVISOR_HIGH_RISK_WRITES_DISABLED", "顾问任务和写入暂未开放")
+    from app.security.geo_distribution_advisor import match as distribution_rule, guard as guard_distribution
+    report_rule = distribution_rule(request)
+    if report_rule is not None:
+        await guard_distribution(session, ctx, request, claims, report_rule)
+        return
     from app.security.advisor_import_preview import PREVIEW_ROUTES, guard_import_preview
     if (request.method, getattr(request.scope.get("route"), "path", None)) in PREVIEW_ROUTES:
         await guard_import_preview(session, ctx, request, claims)
