@@ -86,6 +86,19 @@ def test_site_creation_route_match_is_exact():
     assert match_write_rule(request(method='PUT')) is None
 
 
+def test_legacy_scope_rule_without_route_metadata_preserves_scope_rejection():
+    # Existing object helpers also accept minimal assignment-only rule objects.
+    # They must keep checking tenant scope instead of failing on new metadata.
+    ctx = actor(advisor_tenant_ids=frozenset({5}))
+    session = session_for_create()
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(check_write_objects(session, ctx, request(), BODY,
+                                        SimpleNamespace(assignment='site')))
+    assert error.value.status_code == 403
+    assert error.value.detail['code'] == 'ADVISOR_TENANT_NOT_GRANTED'
+    session.scalar.assert_not_called()
+
+
 @pytest.mark.parametrize('body,query,updates,status', [
     (BODY | {'tenant_id': 6}, 'tenant_id=4', {}, 403),  # ungranted
     (BODY | {'tenant_id': 5}, 'tenant_id=5', {}, 403),  # granted, unselected

@@ -7,7 +7,8 @@ from app.module_scope import module_is_available
 
 
 def is_site_creation(rule):
-    return (rule.method, rule.template, rule.assignment) == (
+    return (getattr(rule, "method", None), getattr(rule, "template", None),
+            getattr(rule, "assignment", None)) == (
         "POST", "/api/v1/seo/sites", "tenant_create_site")
 
 
