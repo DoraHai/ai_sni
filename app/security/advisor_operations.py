@@ -182,16 +182,18 @@ def check_fields(rule, body):
 async def guard_shared_destinations(session, ctx, request, body, rule, projects):
     """A tenant-wide edit may not change another advisor's project.
 
-    Shared destinations have no project foreign key. Metadata/manual-account
+    Shared customer data has no project foreign key. Metadata/manual-account
     operations remain available only when every affected project is assigned
     and active. Credential-bearing identities remain administrator managed.
     This guard runs again under the normal commit-time authority locks.
     """
     shared = {PREFIX + path for path in (
         '/publishing-channels', '/publishing-channels/{channel_id}',
-        '/channel-accounts', '/channel-accounts/{account_id}', '/channel-polish-prompts')}
+        '/channel-accounts', '/channel-accounts/{account_id}', '/channel-polish-prompts',
+        '/competitor-aliases')}
     if rule.template not in shared and not (
-            rule.template == PREFIX + '/onboarding/apply' and body.get('create_website_channel')):
+            rule.template == PREFIX + '/onboarding/apply' and (
+                body.get('create_website_channel') or body.get('brand_terms'))):
         return
     from sqlalchemy import select
     from app.models import GeoProject, GeoChannelAccount, GeoPublishingChannel

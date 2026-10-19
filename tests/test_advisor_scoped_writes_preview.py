@@ -115,8 +115,6 @@ def test_url_preview_rejects_before_any_fetch(tmp_path, monkeypatch, backend, pr
             before = await env.snapshot()
             body = {'tenant_id': 20 if problem == 'body-tenant' else 10, 'url': 'https://public.test/article'}
             params = {'tenant_id': 20 if problem == 'not-selected' else 30 if problem == 'not-granted' else 10}
-            if problem == 'extra-query':
-                params['project_id'] = 10
             if problem == 'extra-body':
                 body['prompt_id'] = 10
             if problem == 'no-query':

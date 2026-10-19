@@ -38,7 +38,9 @@ def test_indirect_global_auto_configuration_is_rejected(path, body):
     ('/channel-accounts/{account_id}', 'PATCH', {}),
     ('/channel-accounts/{account_id}', 'DELETE', {}),
     ('/channel-polish-prompts', 'PUT', {}),
-    ('/onboarding/apply', 'POST', {'create_website_channel': True})))
+    ('/competitor-aliases', 'PUT', {'alias_map': {}}),
+    ('/onboarding/apply', 'POST', {'create_website_channel': True}),
+    ('/onboarding/apply', 'POST', {'brand_terms': ['shared brand']})))
 def test_shared_writes_cannot_affect_an_unassigned_project(path, method, body):
     session = SimpleNamespace(scalars=AsyncMock(return_value=[10, 50]), scalar=AsyncMock())
     ctx = SimpleNamespace(tenant_id=10)
@@ -52,7 +54,7 @@ def test_shared_writes_cannot_affect_an_unassigned_project(path, method, body):
 
 @pytest.mark.parametrize('path,method', (
     ('/publishing-channels', 'POST'), ('/channel-accounts', 'POST'),
-    ('/channel-polish-prompts', 'PUT')))
+    ('/channel-polish-prompts', 'PUT'), ('/competitor-aliases', 'PUT')))
 def test_shared_operational_edits_remain_available_when_all_projects_are_owned(path, method):
     session = SimpleNamespace(scalars=AsyncMock(return_value=[10, 11]))
     rule = operations.rules()[(method, operations.PREFIX + path)]
