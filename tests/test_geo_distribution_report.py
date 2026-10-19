@@ -3,6 +3,7 @@ import asyncio
 import copy
 import hashlib
 import json
+from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -104,6 +105,18 @@ def test_digest_is_utf8_json_stringify_compatible():
     content = {'version': 'v1', 'title': '中文😀', 'body': '换行\n"\\', 'assets': []}
     expected = hashlib.sha256('["v1","中文😀","换行\\n\\"\\\\",[]]'.encode()).hexdigest()
     assert p.content_digest(content) == expected
+
+
+@pytest.mark.parametrize('index', [0, 1, 2])
+def test_shared_cross_language_digest_vectors(index):
+    fixture = json.loads((Path(__file__).parent / 'fixtures' / 'geo_distribution_digest_vectors.json').read_text(encoding='utf-8'))
+    vector = fixture['vectors'][index]
+    content = vector['content']
+    raw = p.encode([content['version'], content['title'], content['body'],
+                    [[a['id'], a['sha256'], a['mediaType'], a['bytes']] for a in content['assets']]])
+    assert raw.hex() == vector['utf8Hex']
+    assert raw.decode('utf-8') == vector['input']
+    assert p.content_digest(content) == vector['sha256']
 
 
 def request(path='/device/exchange', seq=1, sent=None, extra=None):

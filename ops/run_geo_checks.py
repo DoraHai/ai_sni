@@ -86,6 +86,7 @@ async def initialize_postgres(url):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--postgres', action='store_true')
+    parser.add_argument('--distribution-report', action='store_true', help='Run focused distribution wire and PostgreSQL regressions')
     args = parser.parse_args()
     postgres_url = os.environ.pop('GEO_TEST_POSTGRES_URL', None)
     prepare_environment()
@@ -99,6 +100,10 @@ def main():
         asyncio.run(initialize_postgres(postgres_url))
         os.environ['GEO_TEST_POSTGRES_URL'] = postgres_url
     import pytest
+    if args.distribution_report:
+        import pytest
+        return pytest.main(['-q', '--tb=short', '--disable-warnings',
+                            'tests/test_geo_distribution_report.py', 'tests/test_geo_distribution_report_postgres.py'])
     files = sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'tests').glob('test_geo*.py'))
     files += sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'tests').glob('test_advisor_scoped_writes*.py'))
     files += ['tests/test_metric_service.py', 'tests/test_md_to_html_tables.py', 'tests/test_channel_article_quality.py',

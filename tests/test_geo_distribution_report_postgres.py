@@ -55,7 +55,7 @@ def test_pairing_claim_race_publication_race_rollback_and_scope():
                         GeoProject(id=project, tenant_id=7, tenant_module_id=1, name='synthetic project',
                             primary_domain=f'p{project}.example.invalid', canonical_domain=f'p{project}.example.invalid',
                             status='active', project_settings={'geo_business_scope': {'revision': 1, 'business_ids': [business]}}),
-                        GeoOptimizationBusiness(id=business, tenant_id=7, name='synthetic business'),
+                        GeoOptimizationBusiness(id=business, tenant_id=7, name=f'synthetic business {business}'),
                         GeoOptimizationUnit(id=business, tenant_id=7, business_id=business, name='synthetic unit'),
                         GeoPrompt(id=prompt, tenant_id=7, unit_id=business, question='synthetic question'),
                         GeoContentTask(id=task, tenant_id=7, prompt_id=prompt, business_id=business, period_id=100,
