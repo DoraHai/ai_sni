@@ -171,6 +171,8 @@ jobs:
           TZ: UTC
         run: >-
           pytest -q
+          tests/test_distribution_inbox_protocol.py
+          tests/test_distribution_inbox_auth.py
           tests/test_keyword_refresh.py
           tests/test_module_workspaces.py
           tests/test_process_lock.py
@@ -287,7 +289,7 @@ jobs:
         run: npm ci --no-audit
       - name: Build isolated SEO frontend
         working-directory: frontend
-        run: npm run test:session-storage && node --test scripts/test-seo-distribution-report.mjs scripts/test-seo-manual-publication.mjs scripts/test-seo-advisor-requests.mjs scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs scripts/test-seo-offline-handoff.mjs scripts/test-seo-backlinks.mjs scripts/test-seo-video-workflow.mjs scripts/test-seo-qa.mjs scripts/test-seo-workspace-access.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run test:seo-editor && npm run test:seo-page-capture && npm run test:seo-publication-export && npm run test:seo-site-analytics && npm run test:seo-monthly-report && npm run test:seo-tdk-review && npm run test:seo-ai-tdk && node --test scripts/test-seo-keyword-delete.mjs scripts/test-seo-site-delete.mjs scripts/test-seo-image-review.mjs && npm run build:seo
+        run: npm run test:session-storage && node --test scripts/test-distribution-inbox.mjs scripts/test-distribution-inbox-view.mjs scripts/test-seo-distribution-report.mjs scripts/test-seo-manual-publication.mjs scripts/test-seo-advisor-requests.mjs scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs scripts/test-seo-offline-handoff.mjs scripts/test-seo-backlinks.mjs scripts/test-seo-video-workflow.mjs scripts/test-seo-qa.mjs scripts/test-seo-workspace-access.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run test:seo-editor && npm run test:seo-page-capture && npm run test:seo-publication-export && npm run test:seo-site-analytics && npm run test:seo-monthly-report && npm run test:seo-tdk-review && npm run test:seo-ai-tdk && node --test scripts/test-seo-keyword-delete.mjs scripts/test-seo-site-delete.mjs scripts/test-seo-image-review.mjs && npm run build:seo
       - name: Verify isolated SEO frontend
         working-directory: frontend
         run: npm run verify:seo-build

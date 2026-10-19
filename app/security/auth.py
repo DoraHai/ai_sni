@@ -112,6 +112,12 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     edit = method not in _READ_METHODS
     p = path
 
+    from app.distribution_inbox_protocol import match_inbox_identity_route, match_inbox_business_route
+    if match_inbox_identity_route(method, p):
+        return None, edit
+    if match_inbox_business_route(method, p):
+        return {'seo.content'}, edit
+
     if p.startswith('/api/v1/seo/distribution/v1/'):
         return {'seo.content'}, edit
 
