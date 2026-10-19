@@ -15,7 +15,7 @@ def test_advisor_rejects_unsafe_website(tmp_path, monkeypatch, backend, website)
             before = await env.snapshot()
             response = await env.request('PATCH', '/optimization-businesses/10', body={'profile': {'website': website}})
             assert response.status_code == 403, response.text
-            assert '官网请填写完整' in response.json()['detail']['message']
+            assert '官网地址要以 http:// 或 https:// 开头' in response.json()['detail']['message']
             assert await env.snapshot() == before
     asyncio.run(run())
 

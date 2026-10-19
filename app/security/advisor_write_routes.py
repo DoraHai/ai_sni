@@ -1,6 +1,5 @@
 """Exact, intentionally narrow GEO manual-content write policy."""
 from dataclasses import dataclass
-from urllib.parse import urlsplit
 
 from app.security.advisor_scope import deny
 
@@ -26,19 +25,12 @@ BRIEF_FIELDS = frozenset({
     "ai_question", "not_recommended_reasons", "info_gaps", "recommend_when",
     "competitors", "must_cover", "source_bar", "strategy_notes", "schema_version",
 })
-# Match business_profile.normalize_profile: scalar strings stay within its
-# 500-character storage limit; list fields accept form text or string lists.
-PROFILE_STRING_FIELDS = frozenset({
-    "product_name", "website", "summary", "industry", "audience", "cta",
-})
-PROFILE_LIST_FIELDS = frozenset({
-    "honors", "qualifications", "capabilities", "scenarios", "competitors",
-    "recommend_reasons", "banned_claims",
-})
-PROFILE_STRING_MAX = 500
-PROFILE_LIST_MAX = 20
-PROFILE_ITEM_MAX = 500
-PROFILE_LIST_TEXT_MAX = PROFILE_LIST_MAX * (PROFILE_ITEM_MAX + 1) - 1
+# Limits and validation match the admin schema and frontend form.
+from app.geo.content.business_profile import (
+    PROFILE_LIST_FIELDS, PROFILE_STRING_MAX, PROFILE_LIST_MAX, PROFILE_ITEM_MAX,
+    PROFILE_LIST_TEXT_MAX, PROFILE_LABELS, validate_profile,
+)
+PROFILE_STRING_FIELDS = frozenset(PROFILE_LABELS) - PROFILE_LIST_FIELDS - {'geo_scope'}
 WRITE_ROUTES: dict[tuple[str, str], WriteRule] = {}
 
 
@@ -137,28 +129,10 @@ def check_write_fields(rule: WriteRule, body: dict) -> None:
             profile_forbidden("品牌资料必须按字段填写，不能提交空值、列表或嵌套对象")
         if set(profile) - (PROFILE_STRING_FIELDS | PROFILE_LIST_FIELDS):
             profile_forbidden("品牌资料含未开放的字段，请只保存品牌名称、官网、简介等已开放资料")
-        for key, value in profile.items():
-            if key in PROFILE_STRING_FIELDS:
-                if not isinstance(value, str) or len(value) > PROFILE_STRING_MAX:
-                    profile_forbidden(f"品牌资料 {key} 必须是文字，最多 {PROFILE_STRING_MAX} 个字符")
-                if key == 'website' and value.strip():
-                    try:
-                        url = urlsplit(value.strip())
-                        valid = (url.scheme in {'http', 'https'} and bool(url.hostname)
-                                 and url.username is None and url.password is None
-                                 and not any(c.isspace() or ord(c) < 32 or c == '\\' for c in value.strip()))
-                        url.port
-                    except ValueError:
-                        valid = False
-                    if not valid:
-                        profile_forbidden('官网请填写完整的 http:// 或 https:// 网址，不能含账号信息')
-            else:
-                if isinstance(value, str) and len(value) <= PROFILE_LIST_TEXT_MAX:
-                    # Use the same separators as normalize_profile.
-                    value = [p.strip() for p in value.replace("；", ",").replace("\n", ",").split(",") if p.strip()]
-                if (not isinstance(value, list) or len(value) > PROFILE_LIST_MAX or
-                        any(not isinstance(item, str) or len(item) > PROFILE_ITEM_MAX for item in value)):
-                    profile_forbidden(f"品牌资料 {key} 请填写文字或文字列表，最多 {PROFILE_LIST_MAX} 条，每条最多 {PROFILE_ITEM_MAX} 个字符")
+        try:
+            validate_profile(profile)
+        except ValueError as exc:
+            profile_forbidden('品牌资料：' + str(exc))
     # Other supported containers also have a defined shape; opaque metadata/
     # outline remain excluded instead of silently dropping their keys.
     brief = body.get("brief")
