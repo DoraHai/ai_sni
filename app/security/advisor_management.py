@@ -10,7 +10,7 @@ from sqlalchemy.exc import DBAPIError
 from app.models import Role, Tenant, TenantModule, User
 from app.models.advisor_tenant_grant import AdvisorTenantGrant
 from app.module_scope import module_is_available
-from app.permissions import effective_role_permissions
+from app.permissions import PLATFORM_ADMIN_KEYS, effective_role_permissions
 from app.security.advisor_scope import account_locked, deny, read_grants
 
 TenantId = Annotated[int, Field(strict=True, gt=0, le=2**63 - 1)]
@@ -35,8 +35,9 @@ async def lock_named_admin(session, ctx, target_id=None):
     role = await session.get(Role, actor.role_id, populate_existing=True) if actor else None
     perms = effective_role_permissions(role.name, role.is_system, role.permissions) if role else {}
     if (not actor or not actor.is_active or account_locked(actor)
-            or actor.tenant_id is not None or perms.get("settings.accounts") != "edit"):
-        deny(403, "ADVISOR_NAMED_ADMIN_REQUIRED", "需要未绑定客户的实名平台账号管理员")
+            or actor.tenant_id is not None
+            or not all(perms.get(key) == "edit" for key in PLATFORM_ADMIN_KEYS)):
+        deny(403, "ADVISOR_NAMED_ADMIN_REQUIRED", "需要未绑定客户的实名超级管理员")
     return next((u for u in locked if u.id == target_id), None)
 
 

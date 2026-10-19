@@ -20,7 +20,7 @@ def reset_client():
                 is_active=True, password_hash=hash_password("old-test-password"))
     session = AsyncMock()
     session.scalar.return_value = user
-    ctx = AuthContext(1, "admin-test", "admin", None, {"settings.accounts": "edit"})
+    ctx = AuthContext(1, "admin-test", "admin", None, {"settings.accounts": "edit", "settings.customers": "edit"})
     app.dependency_overrides[get_session] = lambda: session
     app.dependency_overrides[require_auth] = lambda: ctx
     with TestClient(app) as client:

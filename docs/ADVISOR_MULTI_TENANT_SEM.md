@@ -19,6 +19,7 @@ S1+E1 guard 部署与 0109 建表、回填必须在同一个获批维护窗口�
 |manage 账户、计划、单元|账户 PK 和自然计划/单元 ID 反查且客户等于 tid|只读；所有资金/广告写关闭|
 |writeback mode、列表、approvals、queue|显式 tenant 等于 tid，原查询含客户过滤|只读；decision/reconcile 等关闭|
 |reports analysis/monthly/export/available-months|本分支没有报告 ID 下载路由，均以显式 tenant 查询|同步读取/导出；顾问只读 AI 缓存，不生成/写入/外部调用|
+|customer-profile|显式 tenant 等于 tid；模块与 RBAC 沿用同一 guard|顾问仅聚合读取及读取既有 AI 总结；无缓存或 refresh_summary=true 也不生成、不改客户缓存|
 |结构、dashboard、alerts、画像、suggestions、搜索词、否词、操作记录、验证、leads 根列表|精确路由 + 显式 tenant + 模块 + RBAC|只读；未知子路径关闭|
 |异步、流式、后台任务、助手、SEM tasks、持久导出|没有新增任务主体/grant 字段|不开放，403；系统调度身份不受影响|
 |auth me/tenants/password/select-tenant|精确方法和路径白名单；业务凭证进入白名单仍校验 gid|仅本人；身份凭证不能访问 modules 或业务|
@@ -37,7 +38,7 @@ S1+E1 guard 部署与 0109 建表、回填必须在同一个获批维护窗口�
 
 顾问新建必须至少勾一个客户，默认取首个；PATCH 只要显式带 tenant_ids/default_tenant_id 就必须提供 expected_grants_version，缺失428，持有 users 行锁后重算不符409。取消当前默认时同时给出新默认。名单去重、严格正整数且所有客户存在、至少有角色可用模块；整批原子授予/撤销，重新授予必新行。旧 tenant_id 字段不能绕开名单/版本校验。只改名字/密码无需版本，clear_tenant 和角色转换仍冻结。
 
-名单变更锁定实名操作者及目标账号（按 ID 顺序），重读启用、锁定、未绑定客户、settings.accounts=edit 条件；API Key 不能代替实名管理员。沿用现有管理审计事务和结构化授予/撤销事件，不创建额外审计表、不增加权限。
+全局账号/角色管理和顾问名单变更统一要求 settings.accounts=edit 且 settings.customers=edit，避免仅有账号维护权的角色先给自己加权再变更授权。名单变更另锁定实名操作者及目标账号（按 ID 顺序），重读启用、锁定、未绑定客户与双权限；API Key 不能代替实名超级管理员。内置管理员沿用有效权限补齐规则。沿用现有管理审计事务和结构化授予/撤销事件，不创建额外审计表、不增加权限。
 
 POST /api/v1/auth/select-tenant 只接受 tenant_id，本人身份/有效客户凭证可选择最新授权内客户；再次持有 users 行锁后重验账号/角色/原 gid/有效名单/模块。sub不变、不改默认、不延长原 auth_exp，响应 access_token/token_type/tenant_id/tenant_name/expires_at。成功/拒绝记录结构化业务事件，不复用旧切换审计表，不记录 JWT。限频为每个 worker 每用户每分钟10次（含拒绝），内存状态有上限和过期清理；这是进程内限频，不声称跨 worker 的全局限频。
 

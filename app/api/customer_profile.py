@@ -11,7 +11,7 @@ from app.ai.customer_profile import gather_profile, generate_summary
 from app.ai.deepseek import is_enabled as ai_enabled
 from app.database import get_session
 from app.models import Tenant
-from app.security.auth import require_scoped_auth
+from app.security.auth import AuthContext, require_scoped_auth
 
 router = APIRouter(
     prefix="/api/v1/customer-profile",
@@ -25,12 +25,15 @@ async def get_profile(
     tenant_id: int = Query(..., description="本地租户 ID"),
     refresh_summary: bool = Query(False, description="true=强制重新生成 AI 总结"),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
+    ctx.ensure_tenant(tenant_id)
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
     profile = await gather_profile(session, tenant)
-    summary = await generate_summary(session, tenant, profile, force=refresh_summary)
+    summary = await generate_summary(session, tenant, profile, force=refresh_summary,
+        **({"read_only": True} if ctx.advisor_scope is not None else {}))
     return {
         "ai_enabled": ai_enabled(),
         "profile": profile,

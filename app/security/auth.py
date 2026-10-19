@@ -26,7 +26,7 @@ from app.models.role import Role
 from app.models.user import User
 from app.security.api_key import resolve_api_key
 from app.security.sem_identity import ensure_sem_identity_access
-from app.permissions import OPERATOR_PERMS, effective_role_permissions
+from app.permissions import OPERATOR_PERMS, PLATFORM_ADMIN_KEYS, effective_role_permissions
 from app.security.advisor_scope import (AdvisorScope, account_locked, active_grants, deny,
                                         is_advisor, read_grants)
 
@@ -488,9 +488,9 @@ async def require_scoped_auth(
 
 
 async def require_admin(ctx: AuthContext = Depends(require_auth)) -> AuthContext:
-    """全局账号/角色管理：仅未绑定客户的账号管理员可访问。"""
+    """全局账号/角色管理：仅未绑定客户的完整平台超管可访问。"""
     if ctx.tenant_id is not None:
         raise HTTPException(403, "单客户账号不能管理全局账号与角色")
-    if not ctx.can_edit("settings.accounts"):
-        raise HTTPException(403, "仅有账号与权限管理权的角色可执行此操作")
+    if not all(ctx.can_edit(key) for key in PLATFORM_ADMIN_KEYS):
+        raise HTTPException(403, "仅全局超级管理员可管理账号、角色和权限")
     return ctx
