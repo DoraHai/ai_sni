@@ -21,14 +21,16 @@ def test_account_surfaces_share_all_tenant_baidu_accounts():
     assert "sync_search_terms_for_account" in _read("app/scheduler.py")
 
 
-def test_sem_business_surfaces_hide_archived_account_history():
-    auth_api = _read("app/api/auth.py")
+def test_sem_account_assets_and_oauth_hide_archived_bindings():
     oauth_status = _read("app/api/oauth_baidu.py")
     account_assets = _read("app/api/customer_modules.py")
     account_view = _read("frontend/src/views/manage/SemAccountsView.vue")
     onboarding = _read("frontend/src/views/onboarding/AuthorizationSyncView.vue")
 
-    for source in (auth_api, oauth_status, account_assets):
+    # The switcher must evaluate archived bindings before hiding their payload.
+    # Its behavior is covered by test_switcher_evaluates_archived_rows_without_displaying_them
+    # in test_sem_archived_history_access.py, rather than a SQL-string requirement.
+    for source in (oauth_status, account_assets):
         assert 'BaiduAccount.status != "archived"' in source
     assert "filter((item) => item.status !== 'archived')" in account_view
     assert "filter((item) => item.status !== 'archived')" in onboarding
