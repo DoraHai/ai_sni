@@ -2,6 +2,8 @@
 /**
  * 品牌资料：与原型一致的 6 个字段，标签在上、控件通栏。
  */
+import { brandProfileError, brandTextMax } from '../utils/geoBrandProfile.js'
+
 defineProps({
   disabled: { type: Boolean, default: false },
 })
@@ -40,6 +42,7 @@ const fields = [
   <div class="brand-fields" :class="{ disabled }">
     <label v-for="f in fields" :key="f.key" class="brand-field">
       <span class="brand-label">{{ f.label }}</span>
+      <small class="brand-hint">{{ ['honors', 'qualifications'].includes(f.key) ? `最多 20 条，每条 ${brandTextMax} 字` : `最多 ${brandTextMax} 字` }}</small>
       <el-input
         v-if="f.type === 'textarea'"
         v-model="form[f.key]"
@@ -54,6 +57,9 @@ const fields = [
         :placeholder="f.placeholder"
         :disabled="disabled"
       />
+      <small v-if="brandProfileError({ [f.key]: form[f.key] || '' })" class="brand-error" role="alert">
+        {{ brandProfileError({ [f.key]: form[f.key] || '' }) }}
+      </small>
     </label>
   </div>
 </template>
@@ -66,6 +72,8 @@ const fields = [
   max-width: 760px;
 }
 .brand-field { display: block; }
+.brand-hint { display: block; color: #6b7280; margin-bottom: 6px; }
+.brand-error { display: block; color: #b91c1c; margin-top: 6px; }
 .brand-label {
   display: block;
   margin-bottom: 8px;

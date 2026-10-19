@@ -38,7 +38,15 @@ class PromptUpdate(BaseModel):
     unit_id: int | None = None
 
 
-class OptimizationBusinessCreate(BaseModel):
+class BusinessProfileInput(BaseModel):
+    @field_validator('profile', mode='before', check_fields=False)
+    @classmethod
+    def validate_brand_profile(cls, value):
+        from app.geo.content.business_profile import validate_profile
+        return validate_profile(value)
+
+
+class OptimizationBusinessCreate(BusinessProfileInput):
     tenant_id: int
     name: str = Field(..., min_length=1, max_length=120)
     description: str | None = None
@@ -46,7 +54,7 @@ class OptimizationBusinessCreate(BaseModel):
     profile: dict[str, Any] | None = None
 
 
-class OptimizationBusinessUpdate(BaseModel):
+class OptimizationBusinessUpdate(BusinessProfileInput):
     name: str | None = Field(None, min_length=1, max_length=120)
     description: str | None = None
     status: Literal["active", "archived"] | None = None

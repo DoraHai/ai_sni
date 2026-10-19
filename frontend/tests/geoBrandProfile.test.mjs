@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
-import { advisorBrandProfile } from '../src/utils/geoBrandProfile.js'
+import { advisorBrandProfile, brandProfileError } from '../src/utils/geoBrandProfile.js'
 
 const source = readFileSync(new URL('../src/views/geo/GeoBrandSettingsView.vue', import.meta.url), 'utf8')
 const handler = source.slice(source.indexOf('async function save()'), source.indexOf('async function createBusiness()'))
@@ -27,7 +27,7 @@ test('save shows the backend reason and keeps the unsaved profile after rejectio
   const profile = { product_name: '品牌', geo_scope: '原区域' }
   const context = vm.createContext({
     current: { value: { id: 10 } }, tenantId: { value: 7 }, isAdvisor: { value: true },
-    profile: { value: profile }, saving: { value: false }, advisorBrandProfile,
+    profile: { value: profile }, saving: { value: false }, advisorBrandProfile, brandProfileError,
     patchGeoBusiness: async (...args) => { calls.push(args); throw new Error('品牌资料 summary 必须是文字，最多 500 个字符') },
     ElMessage: { error: (text) => errors.push(text), success: () => assert.fail('must not report success') },
     load: () => assert.fail('must not reload unsaved edits'),
@@ -41,6 +41,51 @@ test('save shows the backend reason and keeps the unsaved profile after rejectio
   assert.equal(context.saving.value, false)
 })
 
+test('invalid websites and overlong text are blocked before saving for both roles', async () => {
+  for (const advisor of [true, false]) {
+    for (const bad of [{ website: 'javascript:alert(1)' }, { website: 'data:text/html,x' },
+      { website: 'ftp://example.test' }, { website: 'example.test' }, { summary: '字'.repeat(501) },
+      { honors: '字'.repeat(501) }, { qualifications: Array(21).fill('证书') }]) {
+      const errors = []
+      const profile = { industry: '保留编辑', ...bad }
+      const context = vm.createContext({
+        current: { value: { id: 10 } }, tenantId: { value: 15 }, isAdvisor: { value: advisor },
+        profile: { value: profile }, saving: { value: false }, advisorBrandProfile, brandProfileError,
+        patchGeoBusiness: () => assert.fail('invalid fields must never be sent'),
+        ElMessage: { error: (text) => errors.push(text), success: () => assert.fail('must not report success') },
+        load: () => assert.fail('must not reload unsaved edits'),
+      })
+      vm.runInContext(handler, context)
+      await context.save()
+      assert.deepEqual(errors, [brandProfileError(profile)])
+      assert.equal(context.profile.value, profile)
+      assert.equal(context.saving.value, false)
+    }
+  }
+})
+
+test('limits count Unicode characters and all form fields accept empty values', () => {
+  assert.equal(brandProfileError({ summary: '😀'.repeat(500) }), '')
+  assert.equal(brandProfileError({ summary: '😀'.repeat(501) }), '品牌简介 最多 500 字，现在 501 字')
+  for (const field of ['product_name', 'website', 'industry', 'summary', 'honors', 'qualifications']) {
+    assert.equal(brandProfileError({ [field]: '' }), '')
+    assert.match(brandProfileError({ [field]: '字'.repeat(501) }), /500 字，现在 501 字/)
+  }
+  assert.equal(brandProfileError({ website: 'https://brand.example.test/path' }), '')
+  assert.equal(brandProfileError({ qualifications: '甲，乙；丙\n丁' }), '')
+})
+
+test('refresh preserves explicitly cleared text instead of restoring fallback descriptions', () => {
+  const functions = source.slice(source.indexOf('function emptyProfile()'), source.indexOf('function setCompetitors'))
+  const context = vm.createContext({})
+  vm.runInContext(functions, context)
+  const profile = context.profileFromRow({ name: '旧业务名', description: '旧简介',
+    profile: { product_name: '', website: '', website_url: 'https://old.example.test', summary: '' } })
+  assert.equal(profile.product_name, '')
+  assert.equal(profile.website, '')
+  assert.equal(profile.summary, '')
+})
+
 test('shared API client passes a backend detail.message to the save handler', async () => {
   let rejectResponse
   const client = { interceptors: { request: { use() {} }, response: { use(_ok, fail) { rejectResponse = fail } } } }
@@ -51,4 +96,28 @@ test('shared API client passes a backend detail.message to the save handler', as
   await assert.rejects(rejectResponse({ response: { status: 403, data: {
     detail: { code: 'ADVISOR_WRITE_FIELD_FORBIDDEN', message: '品牌资料含未开放的字段' },
   } } }), (error) => error.message === '品牌资料含未开放的字段' && error.status === 403)
+})
+
+
+test('six legal fields are sent and survive save plus reload for both roles', async () => {
+  for (const advisor of [true, false]) {
+    let stored
+    const edits = { product_name: '??', website: 'https://brand.example.test', industry: '???',
+      summary: '????', honors: '??', qualifications: '???????' }
+    const context = vm.createContext({
+      current: { value: { id: 10 } }, tenantId: { value: 15 }, isAdvisor: { value: advisor },
+      profile: { value: edits }, saving: { value: false }, advisorBrandProfile, brandProfileError,
+      patchGeoBusiness: async (tenantId, businessId, body) => {
+        assert.deepEqual([tenantId, businessId], [15, 10])
+        stored = JSON.parse(JSON.stringify(body.profile))
+      },
+      ElMessage: { error: (message) => assert.fail(message), success() {} },
+      load: async () => { context.profile.value = stored },
+    })
+    vm.runInContext(handler, context)
+    await context.save()
+    for (const key of ['product_name', 'website', 'industry', 'summary']) assert.equal(stored[key], edits[key])
+    assert.deepEqual(context.profile.value, stored)
+    assert.equal(context.saving.value, false)
+  }
 })

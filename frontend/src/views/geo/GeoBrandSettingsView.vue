@@ -5,7 +5,7 @@ import GeoBusinessProfileForm from '../../components/GeoBusinessProfileForm.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import GeoAdvisorProjectPicker from '../../components/GeoAdvisorProjectPicker.vue'
 import { advisorClaims } from '../../utils/geoAdvisorTenant.js'
-import { advisorBrandProfile } from '../../utils/geoBrandProfile.js'
+import { advisorBrandProfile, brandProfileError } from '../../utils/geoBrandProfile.js'
 import {
   createGeoBusiness,
   fetchGeoCompetitorInsights,
@@ -81,9 +81,9 @@ function profileFromRow(row) {
   return {
     ...emptyProfile(),
     ...p,
-    product_name: p.product_name || row?.name || '',
-    website: p.website || p.website_url || p.official_url || '',
-    summary: p.summary || row?.description || '',
+    product_name: p.product_name ?? row?.name ?? '',
+    website: p.website ?? p.website_url ?? p.official_url ?? '',
+    summary: p.summary ?? row?.description ?? '',
     honors: join(p.honors),
     qualifications: join(p.qualifications),
     capabilities: join(p.capabilities),
@@ -149,6 +149,11 @@ watch(selectedId, () => {
 async function save() {
   if (!current.value) {
     ElMessage.warning('请先选择或创建一条业务')
+    return
+  }
+  const validationError = brandProfileError(profile.value)
+  if (validationError) {
+    ElMessage.error(validationError)
     return
   }
   saving.value = true
