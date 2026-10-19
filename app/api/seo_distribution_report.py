@@ -247,7 +247,7 @@ async def bindings(request: Request, session=Depends(get_session)):
     if body['device_id'] != device['id']:
         deny('SCOPE_FORBIDDEN', 403)
     replay_headers(request, device, raw, 'bindings')
-    result = {'device_id': device['id'], 'as_of': service.now_ms(), 'automatic_submit': False,
+    result = {'schema': 1, 'device_id': device['id'], 'as_of': service.now_ms(), 'automatic_submit': False,
         'items': [{'binding_id': device['binding_id'], 'device_id': device['id'], 'module': 'seo',
             'tenant_id': module.tenant_id, 'scope_id': device['site_id'], 'account_id': device['account_id'],
             'external_account_id': device['account_id'], 'platform': 'wechat-article', 'login_state': 'unverified'}]}

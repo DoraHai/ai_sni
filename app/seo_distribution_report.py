@@ -17,7 +17,8 @@ from uuid import uuid4
 
 from bs4 import BeautifulSoup
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import cast, func, select
+from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
 from starlette.requests import Request
 
 from app.models.module_workspace import TenantModule, SeoSite
@@ -151,6 +152,12 @@ async def set_settings(session, module, state, site_id, body, ctx):
     scope = state['scopes'].get(str(site_id), {'enabled': False, 'revision': 0})
     if body['expected_revision'] != state['revision'] or body['expected_scope_revision'] != scope['revision']:
         deny('SOURCE_CHANGED')
+    if body['enabled'] and not state['enabled']:
+        # Reopening the tenant for this site must not reactivate older sites,
+        # including sites outside this advisor's current assignment.
+        for key, other in state['scopes'].items():
+            if key != str(site_id) and other.get('enabled') is True:
+                state['scopes'][key] = {**other, 'enabled': False, 'revision': other['revision'] + 1}
     state['enabled'] = body['enabled']
     state['revision'] += 1
     state['scopes'][str(site_id)] = {'enabled': body['scope_enabled'], 'revision': scope['revision'] + 1}
@@ -197,7 +204,8 @@ async def claim_pairing(session, code):
     await authorize_actor(session, pairing['actor'], module.tenant_id, pairing['site_id'])
     await connection_scope(session, module.tenant_id, pairing['site_id'], pairing['account_id'])
     device_id = pairing['device_id']
-    credential = f'dr1.seo.{module.tenant_id}.{device_id}.{secrets.token_urlsafe(32)}'
+    # Preserve the frozen client schema: 64 base64url characters, no locator.
+    credential = secrets.token_urlsafe(48)
     state['devices'][device_id] = {'id': device_id, 'site_id': pairing['site_id'],
         'binding_id': str(uuid4()), 'label': pairing['label'], 'account_id': pairing['account_id'],
         'credential_hash': sha(credential), 'expires': now + 90 * 86400000,
@@ -215,14 +223,22 @@ async def claim_pairing(session, code):
 
 
 def credential_locator(value):
-    match = re.fullmatch(r'dr1\.seo\.([1-9][0-9]{0,17})\.([a-f0-9-]{36})\.([A-Za-z0-9_-]{43})', value or '')
-    if match is None:
+    if not isinstance(value, str) or re.fullmatch(r'[A-Za-z0-9_-]{64}', value) is None:
         deny('DEVICE_CREDENTIAL_INVALID', 401)
-    return int(match[1]), match[2]
+    return sha(value)
 
 
 async def authenticate(session, credential, *, require_enabled=True):
-    tenant_id, device_id = credential_locator(credential)
+    credential_hash = credential_locator(credential)
+    # Only the exact hash security field can locate a device, never labels or
+    # untrusted tenant/device identifiers. The lookup is restricted to SEO.
+    tenant_id = await session.scalar(select(TenantModule.tenant_id).where(
+        TenantModule.module_code == 'seo',
+        func.jsonb_path_exists(TenantModule.module_settings,
+            cast(f'$.{KEY}.devices.* ? (@.credential_hash == $h)', JSONPATH),
+            cast({'h': credential_hash}, JSONB))).limit(1))
+    if tenant_id is None:
+        deny('DEVICE_CREDENTIAL_INVALID', 401)
     # Lock site before module, matching existing advisor/workflow lock order.
     # The first read is only an untrusted locator. Recheck the fresh locked row.
     locator = await session.scalar(select(TenantModule.module_settings).where(
@@ -230,14 +246,16 @@ async def authenticate(session, credential, *, require_enabled=True):
     if locator is None:
         deny('DEVICE_CREDENTIAL_INVALID', 401)
     state_hint = registry(locator)
-    hint = state_hint['devices'].get(device_id)
-    if hint is None or not hmac.compare_digest(hint['credential_hash'], sha(credential)):
+    hint = next((d for d in state_hint['devices'].values()
+                 if hmac.compare_digest(d['credential_hash'], credential_hash)), None)
+    if hint is None:
         deny('DEVICE_CREDENTIAL_INVALID', 401)
+    device_id = hint['id']
     await site_scope(session, tenant_id, hint['site_id'])
     module = await locked_module(session, tenant_id)
     state = registry(module.module_settings)
     device = state['devices'].get(device_id)
-    if device is None or not hmac.compare_digest(device['credential_hash'], sha(credential)):
+    if device is None or not hmac.compare_digest(device['credential_hash'], credential_hash):
         deny('DEVICE_CREDENTIAL_INVALID', 401)
     if device['revoked']:
         deny('DEVICE_REVOKED', 403)

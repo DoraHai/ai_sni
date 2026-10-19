@@ -3,6 +3,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import json
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -147,6 +148,7 @@ def test_claim_competition_issues_exactly_one_credential_and_stores_only_hash():
             assert sum(r.status_code == 200 for r in responses) == 1
             assert sum(r.status_code == 409 for r in responses) == 7
             winner = next(r.json() for r in responses if r.status_code == 200)
+            assert re.fullmatch(r'[A-Za-z0-9_-]{64}', winner['device']['credential'])
             async with sessions() as session:
                 module = await session.get(TenantModule, 1)
                 encoded = json.dumps(module.module_settings)
@@ -536,7 +538,7 @@ def test_claim_map_saturation_and_forged_credentials_do_not_poison_device_budget
                 limit('synthetic-new-peer',1,claim=True)
             before = dict((k,len(v)) for k,v in _rates.items())
             for _ in range(3):
-                invalid = {**device,'credential':device['credential'][:-43] + report.secrets.token_urlsafe(32)}
+                invalid = {**device,'credential':report.secrets.token_urlsafe(48)}
                 response = await client.post(PREFIX+'/device/exchange',headers=device_headers(invalid,2),
                     json={'contractVersion':1,'deviceId':device['id'],'receipts':[]})
                 assert response.status_code == 401
@@ -544,6 +546,46 @@ def test_claim_map_saturation_and_forged_credentials_do_not_poison_device_budget
             valid = await client.post(PREFIX+'/device/exchange',headers=device_headers(device,2),
                 json={'contractVersion':1,'deviceId':device['id'],'receipts':[]})
             assert valid.status_code == 200
+    asyncio.run(scenario())
+
+
+def test_frozen_pairing_bindings_schema_and_module_hash_isolation():
+    async def scenario():
+        async with fixture() as (sessions,client,admin,payload_hash):
+            pairing = await pair(client,admin)
+            response = await client.post(PREFIX+'/device-pairings/claim',json={
+                'pairing_code':pairing['pairing_code'],'request_id':str(uuid4())})
+            assert response.status_code == 200
+            claim = response.json()
+            assert set(claim) == {'schema','pairing_id','claimed_at','device','bindings_configured','automatic_submit'}
+            assert claim['schema'] == 1 and claim['automatic_submit'] is False
+            device = claim['device']
+            assert re.fullmatch(r'[A-Za-z0-9_-]{64}',device['credential'])
+            # Bindings are available before enabling reports, but never grants.
+            response = await client.post(PREFIX+'/device/bindings',headers=device_headers(device,1),
+                json={'device_id':device['id']})
+            assert response.status_code == 200
+            binding = response.json()
+            assert set(binding) == {'schema','device_id','as_of','items','automatic_submit'}
+            assert binding['schema'] == 1 and binding['device_id'] == device['id']
+            assert binding['items'][0]['module'] == 'seo'
+            assert binding['items'][0]['tenant_id'] == 4 and binding['items'][0]['scope_id'] == 2
+            foreign = report.secrets.token_urlsafe(48)
+            async with sessions() as session:
+                session.add(TenantModule(id=2,tenant_id=4,module_code='geo',status='active',
+                    module_settings={KEY:{'devices':{'foreign':{'credential_hash':report.sha(foreign)}}}}))
+                module = await report.locked_module(session,4)
+                state = registry(module.module_settings)
+                # An operator-controlled label is never a credential locator.
+                state['devices'][device['id']]['label'] = report.sha(foreign)
+                report.store(module,state)
+                await session.commit()
+            response = await client.post(PREFIX+'/device/bindings',
+                headers=device_headers({**device,'credential':foreign},2),json={'device_id':device['id']})
+            assert response.status_code == 401
+            response = await client.post(PREFIX+'/device/bindings',headers=device_headers(device,2),
+                json={'device_id':device['id']})
+            assert response.status_code == 200
     asyncio.run(scenario())
 
 
@@ -570,4 +612,24 @@ def test_late_observation_never_reopens_closed_failed_task():
             result = await client.post(PREFIX+'/device/exchange',headers=device_headers(device,5),
                 json={'contractVersion':1,'deviceId':device['id'],'receipts':[event_for(device,task,sequence=4)]})
             assert result.status_code == 409 and 'receiptAcks' not in result.json()
+    asyncio.run(scenario())
+
+
+def test_reopening_tenant_does_not_reactivate_another_site():
+    async def scenario():
+        async with fixture() as (sessions,client,admin,payload_hash):
+            await ready(client,admin,payload_hash)
+            other_scope = '?tenant_id=4&site_id=3'
+            response = await client.put(PREFIX+'/settings'+other_scope,headers=management_headers(admin),
+                json={'enabled':True,'scope_enabled':True,'expected_revision':2,'expected_scope_revision':0})
+            assert response.status_code == 200
+            response = await client.put(PREFIX+'/settings'+SCOPE,headers=management_headers(admin),
+                json={'enabled':False,'scope_enabled':False,'expected_revision':3,'expected_scope_revision':1})
+            assert response.status_code == 200
+            response = await client.put(PREFIX+'/settings'+SCOPE,headers=management_headers(advisor_bearer()),
+                json={'enabled':True,'scope_enabled':True,'expected_revision':4,'expected_scope_revision':2})
+            assert response.status_code == 200 and response.json()['scope_enabled'] is True
+            response = await client.get(PREFIX+'/settings'+other_scope,headers=management_headers(admin))
+            assert response.status_code == 200 and response.json()['scope_enabled'] is False
+            assert response.json()['scope_revision'] == 2
     asyncio.run(scenario())
