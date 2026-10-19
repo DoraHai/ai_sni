@@ -12,6 +12,7 @@ on:
       - "app/security/advisor_write*.py"
       - "app/security/advisor_import_preview.py"
       - "app/security/geo_advisor.py"
+      - "app/security/geo_distribution_advisor.py"
       - "requirements.txt"
       - "scripts/generate_geo_report_sample.py"
       - "app/geo_main.py"
