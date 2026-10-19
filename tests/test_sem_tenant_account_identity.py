@@ -83,7 +83,9 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
         )
         session = SimpleNamespace(
             scalars=AsyncMock(
-                side_effect=[_Rows([tenant]), _Rows([account]), _Rows([account])]
+                side_effect=[_Rows([tenant]),
+                    _Rows([SimpleNamespace(tenant_id=7, status="active", expires_at=None)]),
+                    _Rows([account]), _Rows([account])]
             )
         )
         ctx = SimpleNamespace(advisor_scope=None, tenant_id=7, can_view=lambda *_keys: True)
@@ -97,7 +99,7 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
         )
         self.assertEqual(result["tenants"][0]["sem_identity"]["status"], "ok")
         first_query = str(session.scalars.await_args_list[0].args[0])
-        second_query = str(session.scalars.await_args_list[1].args[0])
+        second_query = str(session.scalars.await_args_list[2].args[0])
         self.assertIn("tenants.id", first_query)
         self.assertIn("baidu_accounts.tenant_id", second_query)
 
@@ -158,7 +160,9 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
         )
         session = SimpleNamespace(
             scalars=AsyncMock(
-                side_effect=[_Rows([tenant]), _Rows([local]), _Rows([local, rightful])]
+                side_effect=[_Rows([tenant]),
+                    _Rows([SimpleNamespace(tenant_id=7, status="active", expires_at=None)]),
+                    _Rows([local]), _Rows([local, rightful])]
             )
         )
 

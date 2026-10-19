@@ -13,6 +13,7 @@ from app.database import get_session
 from app.models.sem_task import SemTask
 from app.module_scope import ensure_module_access
 from app.security.auth import AuthContext, require_auth
+from app.security.sem_identity import ensure_sem_identity_access
 
 MAX_ID = 2**63 - 1
 TaskId = Annotated[int, Path(gt=0, le=MAX_ID)]
@@ -104,6 +105,7 @@ async def access(request: Request, tenant_id: TenantId,
         if not ctx.can_edit("verify.adjustments") or not ctx.user_id or ctx.user_id <= 0:
             raise HTTPException(403, "任务变更需要实名用户及效果验证编辑权限")
     await ensure_module_access(session, ctx, tenant_id, "sem")
+    await ensure_sem_identity_access(session, tenant_id)
     return ctx
 
 

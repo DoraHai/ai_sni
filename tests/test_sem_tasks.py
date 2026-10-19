@@ -50,6 +50,9 @@ def setup(monkeypatch):
     db.refresh.side_effect = refresh
     monkeypatch.setattr(api, "get_settings", lambda: SimpleNamespace(sem_tasks_enabled=True))
     monkeypatch.setattr(api, "ensure_module_access", AsyncMock())
+    # Identity itself is exercised with real account rows in
+    # test_sem_archived_history_access; these task lifecycle fixtures have no accounts.
+    monkeypatch.setattr(api, "ensure_sem_identity_access", AsyncMock())
     monkeypatch.setattr(api, "snapshot", AsyncMock(return_value={"tenant_id": 3, "items": [metric()]}))
     app = FastAPI()
     app.include_router(api.router)
@@ -120,6 +123,15 @@ def test_unauthenticated_and_module_denied(setup):
     api.ensure_module_access.side_effect = HTTPException(403, "disabled")
     assert client.get("/api/v1/sem/tasks?tenant_id=3").status_code == 403
     db.scalars.assert_not_awaited()
+
+
+def test_identity_denied_before_task_access(setup):
+    client, _, db = setup
+    api.ensure_sem_identity_access.side_effect = HTTPException(409, "identity blocked")
+    assert client.get("/api/v1/sem/tasks?tenant_id=3").status_code == 409
+    api.ensure_sem_identity_access.assert_awaited_once_with(db, 3)
+    db.scalars.assert_not_awaited()
+    db.scalar.assert_not_awaited()
 
 
 def test_verify_changes_status_with_embedded_evidence_and_is_idempotent(setup):

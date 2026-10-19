@@ -3,6 +3,7 @@
 当一个生效 UCID 同时出现在多个客户下时，宁可暂停访问，也不能继续返回可能属于
 其他客户的投放数据。历史错误绑定不会直接删除；管理员可将错误账户标记为
 ``identity_conflict``，在保留审计线索的同时持续封锁该客户的旧数据。
+``archived`` 只归档绑定；按用户决定，仅在客户没有任何 active 账户时暂停历史读取。
 """
 
 from __future__ import annotations
@@ -20,6 +21,10 @@ SEM_IDENTITY_CONFLICT_STATUS = "identity_conflict"
 SEM_IDENTITY_BLOCKED_CODE = "SEM_ACCOUNT_IDENTITY_CONFLICT"
 SEM_IDENTITY_BLOCKED_MESSAGE = (
     "推广账户归属冲突，已暂停展示该客户的 SEM 数据，请联系超级管理员处理"
+)
+SEM_ARCHIVED_ONLY_MESSAGE = (
+    "该客户的推广账户已归档，暂无可用账户，历史 SEM 数据已暂停展示；"
+    "请超级管理员重新绑定账户或处理历史数据"
 )
 
 
@@ -82,12 +87,16 @@ def evaluate_sem_identity_states(
             for ucid in active_ucids
             if len(active_tenants_by_ucid.get(ucid, set())) > 1
         }
-        blocked_ucids = sorted(quarantined_ucids | cross_tenant_ucids)
+        archived_only_ucids = {
+            account.baidu_ucid for account in rows if account.status == "archived"
+        } if not active_ucids else set()
+        conflict_ucids = quarantined_ucids | cross_tenant_ucids
+        blocked_ucids = sorted(conflict_ucids | archived_only_ucids)
         if blocked_ucids:
             states[tenant_id] = {
                 "status": "blocked",
                 "code": SEM_IDENTITY_BLOCKED_CODE,
-                "message": SEM_IDENTITY_BLOCKED_MESSAGE,
+                "message": SEM_IDENTITY_BLOCKED_MESSAGE if conflict_ucids else SEM_ARCHIVED_ONLY_MESSAGE,
                 "ucids": [str(ucid) for ucid in blocked_ucids],
             }
         elif active_ucids:
