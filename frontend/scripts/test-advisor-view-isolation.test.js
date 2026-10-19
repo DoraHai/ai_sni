@@ -33,6 +33,7 @@ import SeoContentEditorView from '../src/views/seo/SeoContentEditorView.vue'
 import CustomerProfileView from '../src/views/monitor/CustomerProfileView.vue'
 import { session } from '../src/store/session.js'
 import client from '../src/api/client.js'
+import { fetchCustomerProfile } from '../src/api/customerProfile'
 
 // Unsigned, local display fixtures only. No backend accepts these strings.
 const displayToken = claims => `e30.${btoa(JSON.stringify({ sub: '7', ...claims }))}.fixture`
@@ -63,6 +64,51 @@ async function openEditor(bare = true) {
 }
 
 describe('advisor customer data in mounted routes', () => {
+  it('clears an ordinary user profile when the new customer is identity-blocked', async () => {
+    fixture.user = { id: 8, username: 'ordinary-fixture', tenant_id: null,
+      permissions: { 'monitor.profile': 'view' } }
+    session.setAuth('ordinary-local-fixture', fixture.user, false)
+    session.setTenant(1)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{
+      path: '/monitor/profile', component: CustomerProfileView,
+    }] })
+    await router.push('/monitor/profile')
+    await router.isReady()
+    wrapper = mount(App, { global: { plugins: [router], directives: { loading: () => {} }, stubs: {
+      ElConfigProvider: { props: ['locale'], template: '<slot />' },
+      ElButton: { template: '<button><slot /></button>' },
+      ElAlert: true, ElPopover: true, ElDropdown: true, ElDropdownMenu: true, ElDropdownItem: true,
+      ElDialog: true, ElForm: true, ElFormItem: true, ElInput: true, CategoryDrilldownModal: true,
+    } } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('客户甲业务资料')
+    fetchCustomerProfile.mockRejectedValueOnce(Object.assign(new Error('synthetic identity blocked'), { status: 409 }))
+    session.setTenant(2)
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('客户甲的投放画像摘要')
+    expect(wrapper.text()).not.toContain('客户甲业务资料')
+  })
+
+  it('rejects a late response after an ordinary tenant switch, including a round trip', async () => {
+    fixture.user = { id: 8, tenant_id: null, permissions: { 'monitor.profile': 'view' } }
+    session.setAuth('ordinary-local-fixture', fixture.user, false)
+    session.setTenant(1)
+    let finish
+    const pending = client.get('/api/v1/customer-profile?tenant_id=1', {
+      adapter: config => new Promise(resolve => {
+        finish = () => resolve({ data: { summary: 'stale customer A' }, status: 200, headers: {}, config })
+      }),
+    })
+    await flushPromises()
+    session.setTenant(2)
+    session.setTenant(1)
+    finish()
+    await expect(pending).rejects.toMatchObject({ code: 'AUTH_CONTEXT_CHANGED' })
+    const revision = session.authRevision
+    session.setTenant(1)
+    expect(session.authRevision).toBe(revision)
+  })
+
   it.each([true, false])('removes loaded content and editor DOM after grant revocation (bare=%s)', async bare => {
     await openEditor(bare)
     await expect(client.get('/api/v1/seo/content-assets?tenant_id=1', {
