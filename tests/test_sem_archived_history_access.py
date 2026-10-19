@@ -120,6 +120,7 @@ def test_archived_history_is_blocked_before_keyword_or_report_reads(monkeypatch,
         response = client.get(path, params={"tenant_id": 1})
     assert response.status_code == 409, response.text
     assert response.json()["detail"]["code"] == "SEM_ACCOUNT_IDENTITY_CONFLICT"
+    assert response.json()["detail"]["reason"] == "archived_only"
     assert session.business_reads == []
 
 
@@ -185,6 +186,7 @@ def test_switcher_evaluates_archived_rows_without_displaying_them():
     assert result["tenants"][0]["sem_accounts"] == []
     assert result["tenants"][0]["sem_identity"]["code"] == SEM_IDENTITY_BLOCKED_CODE
     assert result["tenants"][0]["sem_identity"]["status"] == "blocked"
+    assert result["tenants"][0]["sem_identity"]["reason"] == "archived_only"
     query = str(session.scalars.await_args_list[2].args[0])
     assert "baidu_accounts.status !=" not in query
 
@@ -253,3 +255,46 @@ def test_identity_decision_and_distinct_messages(rows, expected):
     if expected == "blocked":
         assert state["message"] == (SEM_IDENTITY_BLOCKED_MESSAGE if "identity_conflict" in rows
                                     else SEM_ARCHIVED_ONLY_MESSAGE)
+
+
+@pytest.mark.parametrize("statuses,cross_tenant,reason", [
+    (["archived"], False, "archived_only"),
+    (["identity_conflict"], False, "conflict"),
+    (["active"], True, "conflict"),
+    (["archived", "identity_conflict"], False, "conflict"),
+    (["archived", "active"], True, "conflict"),
+    (["active"], False, None),
+    (["archived", "active"], False, None),
+    ([], False, None),
+])
+def test_identity_reason_public_and_access_contract(statuses, cross_tenant, reason):
+    import asyncio
+    from fastapi import HTTPException
+    from app.security.sem_identity import (
+        ensure_sem_identity_access, public_sem_identity_state,
+        SEM_IDENTITY_BLOCKED_CODE,
+    )
+    accounts = [SimpleNamespace(tenant_id=1, baidu_ucid=i, status=status)
+                for i, status in enumerate(statuses, 1)]
+    active = [row for row in accounts if row.status == "active"]
+    if cross_tenant:
+        active.append(SimpleNamespace(tenant_id=2, baidu_ucid=active[0].baidu_ucid,
+                                      status="active"))
+    state = evaluate_sem_identity_states([1], accounts, active)[1]
+    public = public_sem_identity_state(state)
+    assert state.get("reason") == reason
+    assert public.get("reason") == reason
+    assert "ucids" not in public
+    session = SimpleNamespace(scalars=AsyncMock(side_effect=[Rows(accounts), Rows(active)]))
+    if reason is not None:
+        assert state["status"] == "blocked"
+        with pytest.raises(HTTPException) as error:
+            asyncio.run(ensure_sem_identity_access(session, 1))
+        assert error.value.status_code == 409
+        assert error.value.detail == {
+            "code": SEM_IDENTITY_BLOCKED_CODE, "msg": state["message"], "reason": reason,
+        }
+    else:
+        assert state["status"] in {"ok", "unbound"}
+        assert "reason" not in public
+        asyncio.run(ensure_sem_identity_access(session, 1))
