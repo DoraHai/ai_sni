@@ -326,6 +326,8 @@ def test_every_allowed_mounted_handler_persists_only_manual_content(tmp_path, mo
     async def run():
         method, template, body, table, column, value = case
         async with write_sandbox(tmp_path, monkeypatch, backend=backend) as env:
+            if column == 'profile':
+                await mutate(env, GeoOptimizationBusiness, 10, profile={'geo_scope': '原区域'})
             before = await env.snapshot()
             params = {'project_id': 10} if template == '/optimization-businesses' else {}
             response = await env.request(method, concrete(template), body=body, params=params,
@@ -333,9 +335,9 @@ def test_every_allowed_mounted_handler_persists_only_manual_content(tmp_path, mo
             assert response.status_code in {200, 201}, response.text
             after = await env.snapshot()
             expected = value
-            if column == 'profile' and actor == 'administrator':
-                from app.geo.content.business_profile import normalize_profile
-                expected = normalize_profile(value)
+            if column == 'profile':
+                # Both roles PATCH submitted fields; omitted region is preserved.
+                expected = {'geo_scope': '原区域', **value}
             assert any(row[column] == expected for row in after[table]), (table, expected)
             # Response success alone cannot hide dispatch, publication or changes
             # to the action-ticket table with the colliding task_id.
