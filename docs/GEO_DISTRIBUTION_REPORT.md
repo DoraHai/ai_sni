@@ -48,4 +48,3 @@
 HUMAN_PUBLISHED/succeeded receipt 可选 reportedAccount:{name:string}，只允许一个 name 子键；移除 Unicode C 类字符、归一空白、trim 后须 1–60 Unicode 码点。非法名称返回 422 INVALID_REPORTED_ACCOUNT，其他状态或 observations 带该字段返回 422 REPORTED_ACCOUNT_NOT_ALLOWED。事件摘要使用完整原始事件，不改变原事件；重放仅改空白也会冲突。清洗副本保存在既有事件账本、任务结果、variant JSON 和新发布记录备注，回传卡片显示“回传公众号”，缺省显示“未上报”。名称只用于记录与展示，客户/项目/稿件授权始终来自设备配对，不依据名称决定。
 
 claim、bindings、profile、exchange 和 ACK 的原响应结构不变；只在管理任务结果/核验投影增加可选 reportedAccount。旧客户端缺省该字段可继续使用，旧的选定账号路径仍保留。人工确认、默认关闭、原发布门禁和后续页面核验保持原规则，无数据库迁移、新服务器环境变量或部署配置变更。
-
