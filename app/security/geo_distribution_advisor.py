@@ -23,7 +23,10 @@ async def check_objects(session, ctx, request, body, rule):
     from app.geo.content import distribution_protocol as p
     if RULES.get((rule.method, rule.template)) != rule:
         p.fail('SCOPE_FORBIDDEN', 403)
-    exact(body, rule.fields)
+    fields = rule.fields
+    if rule.template == PREFIX + '/device-pairings':
+        fields = (fields - {'account_id'}) | ({'account_id'} if 'account_id' in body else set())
+    exact(body, fields)
     tenant, project = scope(request)
     ctx.ensure_tenant(tenant)
     store = await s.management_store(session, ctx, tenant, project, write=True)

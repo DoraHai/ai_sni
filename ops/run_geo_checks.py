@@ -104,6 +104,7 @@ def main():
         import pytest
         return pytest.main(['-q', '--tb=short', '--disable-warnings',
                             'tests/test_geo_distribution_report.py', 'tests/test_geo_distribution_team.py',
+                            'tests/test_geo_distribution_unbound.py',
                             'tests/test_geo_distribution_report_postgres.py'])
     files = sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'tests').glob('test_geo*.py'))
     files += sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'tests').glob('test_advisor_scoped_writes*.py'))

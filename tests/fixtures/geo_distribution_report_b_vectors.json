@@ -1,0 +1,313 @@
+{
+  "schema": 1,
+  "algorithm": "sha256(JSON.stringify(event))",
+  "normalization": "remove Unicode C, normalize whitespace, trim; 1-60 codepoints; hash original event without mutation",
+  "vectors": [
+    {
+      "id": "legacy",
+      "event": {
+        "customerId": "101",
+        "projectId": "seo-11",
+        "deviceId": "synthetic-device",
+        "accountId": "synthetic-account",
+        "platform": "wechat-article",
+        "receiptId": "synthetic-receipt",
+        "sequence": 3,
+        "contractVersion": 1,
+        "taskId": "synthetic-task",
+        "leaseId": "synthetic-lease",
+        "contentVersion": "v2",
+        "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "succeeded",
+        "code": "HUMAN_PUBLISHED",
+        "at": 1792375200000,
+        "evidence": "human-reported",
+        "publicUrl": "https://mp.weixin.qq.com/s/synthetic_article"
+      },
+      "input": "{\"customerId\":\"101\",\"projectId\":\"seo-11\",\"deviceId\":\"synthetic-device\",\"accountId\":\"synthetic-account\",\"platform\":\"wechat-article\",\"receiptId\":\"synthetic-receipt\",\"sequence\":3,\"contractVersion\":1,\"taskId\":\"synthetic-task\",\"leaseId\":\"synthetic-lease\",\"contentVersion\":\"v2\",\"contentDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"status\":\"succeeded\",\"code\":\"HUMAN_PUBLISHED\",\"at\":1792375200000,\"evidence\":\"human-reported\",\"publicUrl\":\"https://mp.weixin.qq.com/s/synthetic_article\"}",
+      "utf8Hex": "7b22637573746f6d65724964223a22313031222c2270726f6a6563744964223a2273656f2d3131222c226465766963654964223a2273796e7468657469632d646576696365222c226163636f756e744964223a2273796e7468657469632d6163636f756e74222c22706c6174666f726d223a227765636861742d61727469636c65222c22726563656970744964223a2273796e7468657469632d72656365697074222c2273657175656e6365223a332c22636f6e747261637456657273696f6e223a312c227461736b4964223a2273796e7468657469632d7461736b222c226c656173654964223a2273796e7468657469632d6c65617365222c22636f6e74656e7456657273696f6e223a227632222c22636f6e74656e74446967657374223a2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c22737461747573223a22737563636565646564222c22636f6465223a2248554d414e5f5055424c4953484544222c226174223a313739323337353230303030302c2265766964656e6365223a2268756d616e2d7265706f72746564222c227075626c696355726c223a2268747470733a2f2f6d702e77656978696e2e71712e636f6d2f732f73796e7468657469635f61727469636c65227d",
+      "sha256": "8695518b4320b0b57b3a6d46161ca7157311c3fbeeb99e036aa60830e014ca2c",
+      "valid": true,
+      "normalizedName": null,
+      "error": null
+    },
+    {
+      "id": "simple",
+      "event": {
+        "customerId": "101",
+        "projectId": "seo-11",
+        "deviceId": "synthetic-device",
+        "accountId": "synthetic-account",
+        "platform": "wechat-article",
+        "receiptId": "synthetic-receipt",
+        "sequence": 3,
+        "contractVersion": 1,
+        "taskId": "synthetic-task",
+        "leaseId": "synthetic-lease",
+        "contentVersion": "v2",
+        "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "succeeded",
+        "code": "HUMAN_PUBLISHED",
+        "at": 1792375200000,
+        "evidence": "human-reported",
+        "publicUrl": "https://mp.weixin.qq.com/s/synthetic_article",
+        "reportedAccount": {
+          "name": "合成公众号"
+        }
+      },
+      "input": "{\"customerId\":\"101\",\"projectId\":\"seo-11\",\"deviceId\":\"synthetic-device\",\"accountId\":\"synthetic-account\",\"platform\":\"wechat-article\",\"receiptId\":\"synthetic-receipt\",\"sequence\":3,\"contractVersion\":1,\"taskId\":\"synthetic-task\",\"leaseId\":\"synthetic-lease\",\"contentVersion\":\"v2\",\"contentDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"status\":\"succeeded\",\"code\":\"HUMAN_PUBLISHED\",\"at\":1792375200000,\"evidence\":\"human-reported\",\"publicUrl\":\"https://mp.weixin.qq.com/s/synthetic_article\",\"reportedAccount\":{\"name\":\"合成公众号\"}}",
+      "utf8Hex": "7b22637573746f6d65724964223a22313031222c2270726f6a6563744964223a2273656f2d3131222c226465766963654964223a2273796e7468657469632d646576696365222c226163636f756e744964223a2273796e7468657469632d6163636f756e74222c22706c6174666f726d223a227765636861742d61727469636c65222c22726563656970744964223a2273796e7468657469632d72656365697074222c2273657175656e6365223a332c22636f6e747261637456657273696f6e223a312c227461736b4964223a2273796e7468657469632d7461736b222c226c656173654964223a2273796e7468657469632d6c65617365222c22636f6e74656e7456657273696f6e223a227632222c22636f6e74656e74446967657374223a2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c22737461747573223a22737563636565646564222c22636f6465223a2248554d414e5f5055424c4953484544222c226174223a313739323337353230303030302c2265766964656e6365223a2268756d616e2d7265706f72746564222c227075626c696355726c223a2268747470733a2f2f6d702e77656978696e2e71712e636f6d2f732f73796e7468657469635f61727469636c65222c227265706f727465644163636f756e74223a7b226e616d65223a22e59088e68890e585ace4bc97e58fb7227d7d",
+      "sha256": "007f36fb877bf0646f00d13a193a66855d517d09353812018156ce3e80ded0f1",
+      "valid": true,
+      "normalizedName": "合成公众号",
+      "error": null
+    },
+    {
+      "id": "unicode-cleaning",
+      "event": {
+        "customerId": "101",
+        "projectId": "seo-11",
+        "deviceId": "synthetic-device",
+        "accountId": "synthetic-account",
+        "platform": "wechat-article",
+        "receiptId": "synthetic-receipt",
+        "sequence": 3,
+        "contractVersion": 1,
+        "taskId": "synthetic-task",
+        "leaseId": "synthetic-lease",
+        "contentVersion": "v2",
+        "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "succeeded",
+        "code": "HUMAN_PUBLISHED",
+        "at": 1792375200000,
+        "evidence": "human-reported",
+        "publicUrl": "https://mp.weixin.qq.com/s/synthetic_article",
+        "reportedAccount": {
+          "name": "  合成​公众号\n\t　 测试😀  "
+        }
+      },
+      "input": "{\"customerId\":\"101\",\"projectId\":\"seo-11\",\"deviceId\":\"synthetic-device\",\"accountId\":\"synthetic-account\",\"platform\":\"wechat-article\",\"receiptId\":\"synthetic-receipt\",\"sequence\":3,\"contractVersion\":1,\"taskId\":\"synthetic-task\",\"leaseId\":\"synthetic-lease\",\"contentVersion\":\"v2\",\"contentDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"status\":\"succeeded\",\"code\":\"HUMAN_PUBLISHED\",\"at\":1792375200000,\"evidence\":\"human-reported\",\"publicUrl\":\"https://mp.weixin.qq.com/s/synthetic_article\",\"reportedAccount\":{\"name\":\"  合成​公众号\\n\\t　 测试😀  \"}}",
+      "utf8Hex": "7b22637573746f6d65724964223a22313031222c2270726f6a6563744964223a2273656f2d3131222c226465766963654964223a2273796e7468657469632d646576696365222c226163636f756e744964223a2273796e7468657469632d6163636f756e74222c22706c6174666f726d223a227765636861742d61727469636c65222c22726563656970744964223a2273796e7468657469632d72656365697074222c2273657175656e6365223a332c22636f6e747261637456657273696f6e223a312c227461736b4964223a2273796e7468657469632d7461736b222c226c656173654964223a2273796e7468657469632d6c65617365222c22636f6e74656e7456657273696f6e223a227632222c22636f6e74656e74446967657374223a2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c22737461747573223a22737563636565646564222c22636f6465223a2248554d414e5f5055424c4953484544222c226174223a313739323337353230303030302c2265766964656e6365223a2268756d616e2d7265706f72746564222c227075626c696355726c223a2268747470733a2f2f6d702e77656978696e2e71712e636f6d2f732f73796e7468657469635f61727469636c65222c227265706f727465644163636f756e74223a7b226e616d65223a222020e59088e68890e2808be585ace4bc97e58fb75c6e5c74e3808020e6b58be8af95f09f98802020227d7d",
+      "sha256": "13246517e9844c5f66c1114db0dce38aa4e2736105a93f6d088ab3232c5bb1cd",
+      "valid": true,
+      "normalizedName": "合成公众号 测试😀",
+      "error": null
+    },
+    {
+      "id": "sixty-codepoints",
+      "event": {
+        "customerId": "101",
+        "projectId": "seo-11",
+        "deviceId": "synthetic-device",
+        "accountId": "synthetic-account",
+        "platform": "wechat-article",
+        "receiptId": "synthetic-receipt",
+        "sequence": 3,
+        "contractVersion": 1,
+        "taskId": "synthetic-task",
+        "leaseId": "synthetic-lease",
+        "contentVersion": "v2",
+        "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "succeeded",
+        "code": "HUMAN_PUBLISHED",
+        "at": 1792375200000,
+        "evidence": "human-reported",
+        "publicUrl": "https://mp.weixin.qq.com/s/synthetic_article",
+        "reportedAccount": {
+          "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+        }
+      },
+      "input": "{\"customerId\":\"101\",\"projectId\":\"seo-11\",\"deviceId\":\"synthetic-device\",\"accountId\":\"synthetic-account\",\"platform\":\"wechat-article\",\"receiptId\":\"synthetic-receipt\",\"sequence\":3,\"contractVersion\":1,\"taskId\":\"synthetic-task\",\"leaseId\":\"synthetic-lease\",\"contentVersion\":\"v2\",\"contentDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"status\":\"succeeded\",\"code\":\"HUMAN_PUBLISHED\",\"at\":1792375200000,\"evidence\":\"human-reported\",\"publicUrl\":\"https://mp.weixin.qq.com/s/synthetic_article\",\"reportedAccount\":{\"name\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"}}",
+      "utf8Hex": "7b22637573746f6d65724964223a22313031222c2270726f6a6563744964223a2273656f2d3131222c226465766963654964223a2273796e7468657469632d646576696365222c226163636f756e744964223a2273796e7468657469632d6163636f756e74222c22706c6174666f726d223a227765636861742d61727469636c65222c22726563656970744964223a2273796e7468657469632d72656365697074222c2273657175656e6365223a332c22636f6e747261637456657273696f6e223a312c227461736b4964223a2273796e7468657469632d7461736b222c226c656173654964223a2273796e7468657469632d6c65617365222c22636f6e74656e7456657273696f6e223a227632222c22636f6e74656e74446967657374223a2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c22737461747573223a22737563636565646564222c22636f6465223a2248554d414e5f5055424c4953484544222c226174223a313739323337353230303030302c2265766964656e6365223a2268756d616e2d7265706f72746564222c227075626c696355726c223a2268747470733a2f2f6d702e77656978696e2e71712e636f6d2f732f73796e7468657469635f61727469636c65222c227265706f727465644163636f756e74223a7b226e616d65223a22f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880227d7d",
+      "sha256": "7288948dec04e0b86270bb956a9095bd81a569f2bb4b10e8409cb1dd6828f6b3",
+      "valid": true,
+      "normalizedName": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "error": null
+    },
+    {
+      "id": "empty",
+      "event": {
+        "customerId": "101",
+        "projectId": "seo-11",
+        "deviceId": "synthetic-device",
+        "accountId": "synthetic-account",
+        "platform": "wechat-article",
+        "receiptId": "synthetic-receipt",
+        "sequence": 3,
+        "contractVersion": 1,
+        "taskId": "synthetic-task",
+        "leaseId": "synthetic-lease",
+        "contentVersion": "v2",
+        "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "succeeded",
+        "code": "HUMAN_PUBLISHED",
+        "at": 1792375200000,
+        "evidence": "human-reported",
+        "publicUrl": "https://mp.weixin.qq.com/s/synthetic_article",
+        "reportedAccount": {
+          "name": " ​\n"
+        }
+      },
+      "input": "{\"customerId\":\"101\",\"projectId\":\"seo-11\",\"deviceId\":\"synthetic-device\",\"accountId\":\"synthetic-account\",\"platform\":\"wechat-article\",\"receiptId\":\"synthetic-receipt\",\"sequence\":3,\"contractVersion\":1,\"taskId\":\"synthetic-task\",\"leaseId\":\"synthetic-lease\",\"contentVersion\":\"v2\",\"contentDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"status\":\"succeeded\",\"code\":\"HUMAN_PUBLISHED\",\"at\":1792375200000,\"evidence\":\"human-reported\",\"publicUrl\":\"https://mp.weixin.qq.com/s/synthetic_article\",\"reportedAccount\":{\"name\":\" ​\\n\"}}",
+      "utf8Hex": "7b22637573746f6d65724964223a22313031222c2270726f6a6563744964223a2273656f2d3131222c226465766963654964223a2273796e7468657469632d646576696365222c226163636f756e744964223a2273796e7468657469632d6163636f756e74222c22706c6174666f726d223a227765636861742d61727469636c65222c22726563656970744964223a2273796e7468657469632d72656365697074222c2273657175656e6365223a332c22636f6e747261637456657273696f6e223a312c227461736b4964223a2273796e7468657469632d7461736b222c226c656173654964223a2273796e7468657469632d6c65617365222c22636f6e74656e7456657273696f6e223a227632222c22636f6e74656e74446967657374223a2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c22737461747573223a22737563636565646564222c22636f6465223a2248554d414e5f5055424c4953484544222c226174223a313739323337353230303030302c2265766964656e6365223a2268756d616e2d7265706f72746564222c227075626c696355726c223a2268747470733a2f2f6d702e77656978696e2e71712e636f6d2f732f73796e7468657469635f61727469636c65222c227265706f727465644163636f756e74223a7b226e616d65223a2220e2808b5c6e227d7d",
+      "sha256": "04fb27f4c3223614742fa76301a4d9a31eb06bd6a4f997cddcf12167e432106e",
+      "valid": false,
+      "normalizedName": null,
+      "error": "INVALID_REPORTED_ACCOUNT"
+    },
+    {
+      "id": "too-long",
+      "event": {
+        "customerId": "101",
+        "projectId": "seo-11",
+        "deviceId": "synthetic-device",
+        "accountId": "synthetic-account",
+        "platform": "wechat-article",
+        "receiptId": "synthetic-receipt",
+        "sequence": 3,
+        "contractVersion": 1,
+        "taskId": "synthetic-task",
+        "leaseId": "synthetic-lease",
+        "contentVersion": "v2",
+        "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "succeeded",
+        "code": "HUMAN_PUBLISHED",
+        "at": 1792375200000,
+        "evidence": "human-reported",
+        "publicUrl": "https://mp.weixin.qq.com/s/synthetic_article",
+        "reportedAccount": {
+          "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+        }
+      },
+      "input": "{\"customerId\":\"101\",\"projectId\":\"seo-11\",\"deviceId\":\"synthetic-device\",\"accountId\":\"synthetic-account\",\"platform\":\"wechat-article\",\"receiptId\":\"synthetic-receipt\",\"sequence\":3,\"contractVersion\":1,\"taskId\":\"synthetic-task\",\"leaseId\":\"synthetic-lease\",\"contentVersion\":\"v2\",\"contentDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"status\":\"succeeded\",\"code\":\"HUMAN_PUBLISHED\",\"at\":1792375200000,\"evidence\":\"human-reported\",\"publicUrl\":\"https://mp.weixin.qq.com/s/synthetic_article\",\"reportedAccount\":{\"name\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"}}",
+      "utf8Hex": "7b22637573746f6d65724964223a22313031222c2270726f6a6563744964223a2273656f2d3131222c226465766963654964223a2273796e7468657469632d646576696365222c226163636f756e744964223a2273796e7468657469632d6163636f756e74222c22706c6174666f726d223a227765636861742d61727469636c65222c22726563656970744964223a2273796e7468657469632d72656365697074222c2273657175656e6365223a332c22636f6e747261637456657273696f6e223a312c227461736b4964223a2273796e7468657469632d7461736b222c226c656173654964223a2273796e7468657469632d6c65617365222c22636f6e74656e7456657273696f6e223a227632222c22636f6e74656e74446967657374223a2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c22737461747573223a22737563636565646564222c22636f6465223a2248554d414e5f5055424c4953484544222c226174223a313739323337353230303030302c2265766964656e6365223a2268756d616e2d7265706f72746564222c227075626c696355726c223a2268747470733a2f2f6d702e77656978696e2e71712e636f6d2f732f73796e7468657469635f61727469636c65222c227265706f727465644163636f756e74223a7b226e616d65223a22f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880227d7d",
+      "sha256": "d56bae65bb0f2419b4603101f868dce0f149a8f5803450e4033c35f689f79c38",
+      "valid": false,
+      "normalizedName": null,
+      "error": "INVALID_REPORTED_ACCOUNT"
+    },
+    {
+      "id": "wrong-type",
+      "event": {
+        "customerId": "101",
+        "projectId": "seo-11",
+        "deviceId": "synthetic-device",
+        "accountId": "synthetic-account",
+        "platform": "wechat-article",
+        "receiptId": "synthetic-receipt",
+        "sequence": 3,
+        "contractVersion": 1,
+        "taskId": "synthetic-task",
+        "leaseId": "synthetic-lease",
+        "contentVersion": "v2",
+        "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "succeeded",
+        "code": "HUMAN_PUBLISHED",
+        "at": 1792375200000,
+        "evidence": "human-reported",
+        "publicUrl": "https://mp.weixin.qq.com/s/synthetic_article",
+        "reportedAccount": {
+          "name": 12
+        }
+      },
+      "input": "{\"customerId\":\"101\",\"projectId\":\"seo-11\",\"deviceId\":\"synthetic-device\",\"accountId\":\"synthetic-account\",\"platform\":\"wechat-article\",\"receiptId\":\"synthetic-receipt\",\"sequence\":3,\"contractVersion\":1,\"taskId\":\"synthetic-task\",\"leaseId\":\"synthetic-lease\",\"contentVersion\":\"v2\",\"contentDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"status\":\"succeeded\",\"code\":\"HUMAN_PUBLISHED\",\"at\":1792375200000,\"evidence\":\"human-reported\",\"publicUrl\":\"https://mp.weixin.qq.com/s/synthetic_article\",\"reportedAccount\":{\"name\":12}}",
+      "utf8Hex": "7b22637573746f6d65724964223a22313031222c2270726f6a6563744964223a2273656f2d3131222c226465766963654964223a2273796e7468657469632d646576696365222c226163636f756e744964223a2273796e7468657469632d6163636f756e74222c22706c6174666f726d223a227765636861742d61727469636c65222c22726563656970744964223a2273796e7468657469632d72656365697074222c2273657175656e6365223a332c22636f6e747261637456657273696f6e223a312c227461736b4964223a2273796e7468657469632d7461736b222c226c656173654964223a2273796e7468657469632d6c65617365222c22636f6e74656e7456657273696f6e223a227632222c22636f6e74656e74446967657374223a2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c22737461747573223a22737563636565646564222c22636f6465223a2248554d414e5f5055424c4953484544222c226174223a313739323337353230303030302c2265766964656e6365223a2268756d616e2d7265706f72746564222c227075626c696355726c223a2268747470733a2f2f6d702e77656978696e2e71712e636f6d2f732f73796e7468657469635f61727469636c65222c227265706f727465644163636f756e74223a7b226e616d65223a31327d7d",
+      "sha256": "c3094eb1dc87c501510a65175469ca402c1285c88ef956e5ebbd783fce631e6e",
+      "valid": false,
+      "normalizedName": null,
+      "error": "INVALID_REPORTED_ACCOUNT"
+    },
+    {
+      "id": "extra-key",
+      "event": {
+        "customerId": "101",
+        "projectId": "seo-11",
+        "deviceId": "synthetic-device",
+        "accountId": "synthetic-account",
+        "platform": "wechat-article",
+        "receiptId": "synthetic-receipt",
+        "sequence": 3,
+        "contractVersion": 1,
+        "taskId": "synthetic-task",
+        "leaseId": "synthetic-lease",
+        "contentVersion": "v2",
+        "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "succeeded",
+        "code": "HUMAN_PUBLISHED",
+        "at": 1792375200000,
+        "evidence": "human-reported",
+        "publicUrl": "https://mp.weixin.qq.com/s/synthetic_article",
+        "reportedAccount": {
+          "name": "合成公众号",
+          "id": "synthetic"
+        }
+      },
+      "input": "{\"customerId\":\"101\",\"projectId\":\"seo-11\",\"deviceId\":\"synthetic-device\",\"accountId\":\"synthetic-account\",\"platform\":\"wechat-article\",\"receiptId\":\"synthetic-receipt\",\"sequence\":3,\"contractVersion\":1,\"taskId\":\"synthetic-task\",\"leaseId\":\"synthetic-lease\",\"contentVersion\":\"v2\",\"contentDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"status\":\"succeeded\",\"code\":\"HUMAN_PUBLISHED\",\"at\":1792375200000,\"evidence\":\"human-reported\",\"publicUrl\":\"https://mp.weixin.qq.com/s/synthetic_article\",\"reportedAccount\":{\"name\":\"合成公众号\",\"id\":\"synthetic\"}}",
+      "utf8Hex": "7b22637573746f6d65724964223a22313031222c2270726f6a6563744964223a2273656f2d3131222c226465766963654964223a2273796e7468657469632d646576696365222c226163636f756e744964223a2273796e7468657469632d6163636f756e74222c22706c6174666f726d223a227765636861742d61727469636c65222c22726563656970744964223a2273796e7468657469632d72656365697074222c2273657175656e6365223a332c22636f6e747261637456657273696f6e223a312c227461736b4964223a2273796e7468657469632d7461736b222c226c656173654964223a2273796e7468657469632d6c65617365222c22636f6e74656e7456657273696f6e223a227632222c22636f6e74656e74446967657374223a2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c22737461747573223a22737563636565646564222c22636f6465223a2248554d414e5f5055424c4953484544222c226174223a313739323337353230303030302c2265766964656e6365223a2268756d616e2d7265706f72746564222c227075626c696355726c223a2268747470733a2f2f6d702e77656978696e2e71712e636f6d2f732f73796e7468657469635f61727469636c65222c227265706f727465644163636f756e74223a7b226e616d65223a22e59088e68890e585ace4bc97e58fb7222c226964223a2273796e746865746963227d7d",
+      "sha256": "d47e1d969a21fd875da5220b6429a986908c73422e5aa01bad48f659245e26b8",
+      "valid": false,
+      "normalizedName": null,
+      "error": "INVALID_REPORTED_ACCOUNT"
+    },
+    {
+      "id": "null",
+      "event": {
+        "customerId": "101",
+        "projectId": "seo-11",
+        "deviceId": "synthetic-device",
+        "accountId": "synthetic-account",
+        "platform": "wechat-article",
+        "receiptId": "synthetic-receipt",
+        "sequence": 3,
+        "contractVersion": 1,
+        "taskId": "synthetic-task",
+        "leaseId": "synthetic-lease",
+        "contentVersion": "v2",
+        "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "succeeded",
+        "code": "HUMAN_PUBLISHED",
+        "at": 1792375200000,
+        "evidence": "human-reported",
+        "publicUrl": "https://mp.weixin.qq.com/s/synthetic_article",
+        "reportedAccount": null
+      },
+      "input": "{\"customerId\":\"101\",\"projectId\":\"seo-11\",\"deviceId\":\"synthetic-device\",\"accountId\":\"synthetic-account\",\"platform\":\"wechat-article\",\"receiptId\":\"synthetic-receipt\",\"sequence\":3,\"contractVersion\":1,\"taskId\":\"synthetic-task\",\"leaseId\":\"synthetic-lease\",\"contentVersion\":\"v2\",\"contentDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"status\":\"succeeded\",\"code\":\"HUMAN_PUBLISHED\",\"at\":1792375200000,\"evidence\":\"human-reported\",\"publicUrl\":\"https://mp.weixin.qq.com/s/synthetic_article\",\"reportedAccount\":null}",
+      "utf8Hex": "7b22637573746f6d65724964223a22313031222c2270726f6a6563744964223a2273656f2d3131222c226465766963654964223a2273796e7468657469632d646576696365222c226163636f756e744964223a2273796e7468657469632d6163636f756e74222c22706c6174666f726d223a227765636861742d61727469636c65222c22726563656970744964223a2273796e7468657469632d72656365697074222c2273657175656e6365223a332c22636f6e747261637456657273696f6e223a312c227461736b4964223a2273796e7468657469632d7461736b222c226c656173654964223a2273796e7468657469632d6c65617365222c22636f6e74656e7456657273696f6e223a227632222c22636f6e74656e74446967657374223a2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c22737461747573223a22737563636565646564222c22636f6465223a2248554d414e5f5055424c4953484544222c226174223a313739323337353230303030302c2265766964656e6365223a2268756d616e2d7265706f72746564222c227075626c696355726c223a2268747470733a2f2f6d702e77656978696e2e71712e636f6d2f732f73796e7468657469635f61727469636c65222c227265706f727465644163636f756e74223a6e756c6c7d",
+      "sha256": "953f721908b49a0519a27bf0a26c3ac40024f17e17f2e9fbaa4db3a876a75103",
+      "valid": false,
+      "normalizedName": null,
+      "error": "INVALID_REPORTED_ACCOUNT"
+    },
+    {
+      "id": "non-success",
+      "event": {
+        "customerId": "101",
+        "projectId": "seo-11",
+        "deviceId": "synthetic-device",
+        "accountId": "synthetic-account",
+        "platform": "wechat-article",
+        "receiptId": "synthetic-receipt",
+        "sequence": 3,
+        "contractVersion": 1,
+        "taskId": "synthetic-task",
+        "leaseId": "synthetic-lease",
+        "contentVersion": "v2",
+        "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "failed",
+        "code": "HUMAN_FAILED",
+        "at": 1792375200000,
+        "evidence": "human-reported",
+        "publicUrl": null,
+        "reportedAccount": {
+          "name": "合成公众号"
+        }
+      },
+      "input": "{\"customerId\":\"101\",\"projectId\":\"seo-11\",\"deviceId\":\"synthetic-device\",\"accountId\":\"synthetic-account\",\"platform\":\"wechat-article\",\"receiptId\":\"synthetic-receipt\",\"sequence\":3,\"contractVersion\":1,\"taskId\":\"synthetic-task\",\"leaseId\":\"synthetic-lease\",\"contentVersion\":\"v2\",\"contentDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"status\":\"failed\",\"code\":\"HUMAN_FAILED\",\"at\":1792375200000,\"evidence\":\"human-reported\",\"publicUrl\":null,\"reportedAccount\":{\"name\":\"合成公众号\"}}",
+      "utf8Hex": "7b22637573746f6d65724964223a22313031222c2270726f6a6563744964223a2273656f2d3131222c226465766963654964223a2273796e7468657469632d646576696365222c226163636f756e744964223a2273796e7468657469632d6163636f756e74222c22706c6174666f726d223a227765636861742d61727469636c65222c22726563656970744964223a2273796e7468657469632d72656365697074222c2273657175656e6365223a332c22636f6e747261637456657273696f6e223a312c227461736b4964223a2273796e7468657469632d7461736b222c226c656173654964223a2273796e7468657469632d6c65617365222c22636f6e74656e7456657273696f6e223a227632222c22636f6e74656e74446967657374223a2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c22737461747573223a226661696c6564222c22636f6465223a2248554d414e5f4641494c4544222c226174223a313739323337353230303030302c2265766964656e6365223a2268756d616e2d7265706f72746564222c227075626c696355726c223a6e756c6c2c227265706f727465644163636f756e74223a7b226e616d65223a22e59088e68890e585ace4bc97e58fb7227d7d",
+      "sha256": "b97352feb94564b83b876ad9a6ad5524e7cbce2ab4bab067ba98b4142b2a2f3d",
+      "valid": false,
+      "normalizedName": null,
+      "error": "REPORTED_ACCOUNT_NOT_ALLOWED"
+    }
+  ]
+}

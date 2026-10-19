@@ -2,6 +2,7 @@
 import hashlib
 import json
 import re
+import unicodedata
 
 from fastapi import HTTPException
 
@@ -97,10 +98,26 @@ def public_url(value):
     return value
 
 
+def reported_account(event, stream='receipt'):
+    if 'reportedAccount' not in event:
+        return None
+    if stream != 'receipt' or event.get('code') != 'HUMAN_PUBLISHED' or event.get('status') != 'succeeded':
+        fail('REPORTED_ACCOUNT_NOT_ALLOWED', 422)
+    value = event['reportedAccount']
+    if not isinstance(value, dict) or set(value) != {'name'} or not isinstance(value['name'], str):
+        fail('INVALID_REPORTED_ACCOUNT', 422)
+    name = ' '.join(''.join(c for c in value['name'] if not unicodedata.category(c).startswith('C')).split())
+    if not 1 <= len(name) <= 60:
+        fail('INVALID_REPORTED_ACCOUNT', 422)
+    return {'name': name}
+
+
 def validate_event(event, task, device_id, stream):
     observation = stream == 'observation'
     event_id = 'observationId' if observation else 'receiptId'
-    exact(event, EVENT | {event_id} | (set() if observation else {'contractVersion', 'deviceId'}))
+    reported_account(event, stream)
+    exact(event, EVENT | {event_id} | (set() if observation else {'contractVersion', 'deviceId'})
+          | ({'reportedAccount'} if 'reportedAccount' in event else set()))
     ident(event[event_id]); integer(event['sequence']); integer(event['at'])
     if not observation and (type(event['contractVersion']) is not int or event['contractVersion'] != 1
                             or event['deviceId'] != device_id):
@@ -146,6 +163,9 @@ def admit_event(book, task, event, stream, ack):
             and event['status'] == 'queued'):
         fail('INVALID_STATE', 422)
     entries[event_id] = {'digest': fingerprint, 'ack': ack}
+    account = reported_account(event, stream)
+    if account is not None:
+        entries[event_id]['reportedAccount'] = account
     task['sequence'][stream] = event['sequence']
     if task['outcome'] not in {'succeeded', 'canceled', 'failed'}:
         task['outcome'] = event['status']

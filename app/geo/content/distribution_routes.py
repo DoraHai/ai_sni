@@ -162,7 +162,7 @@ async def task_status(taskId: str, request: Request, ctx=Depends(require_scoped_
     if task is None or task['scope_id'] != project:
         p.fail('TASK_NOT_FOUND', 404)
     await s.native_task(store, project, task['native_task_id'], task['variant_id'], task['article_id'], publish=False)
-    return respond(await s.verification(store, task))
+    return respond(await s.verification(store, task, management=True))
 
 
 @router.post('/device-pairings/claim')

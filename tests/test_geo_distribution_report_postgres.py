@@ -21,7 +21,8 @@ from app.geo.content import distribution_report as s, distribution_protocol as p
 pytestmark = pytest.mark.skipif(not os.getenv('GEO_TEST_POSTGRES_URL'), reason='requires dedicated PostgreSQL; mandatory in GEO CI')
 
 
-def test_pairing_claim_race_publication_race_rollback_and_scope():
+@pytest.mark.parametrize('reported', [False, True], ids=['legacy-client', 'reported-account'])
+def test_pairing_claim_race_publication_race_rollback_and_scope(reported):
     async def run():
         from ops.run_geo_checks import validate_ci_database
         url = os.environ['GEO_TEST_POSTGRES_URL']; validate_ci_database(url)
@@ -178,6 +179,8 @@ def test_pairing_claim_race_publication_race_rollback_and_scope():
                             event = {**entry['target'], 'receiptId':'synthetic-receipt', 'sequence':3, 'contractVersion':1,
                                 'deviceId':device_id, 'taskId':report['taskId'], 'status':'succeeded', 'code':'HUMAN_PUBLISHED',
                                 'at':stamp, 'evidence':'human-reported', 'publicUrl':'https://mp.weixin.qq.com/s/synthetic'}
+                            if reported:
+                                event['reportedAccount'] = {'name': '  合成\u200b公众号\u3000 测试😀 '}
                             ack = await s.apply_events(store, device, [event], 'receipt')
                             await store.save()
                             if fail_after_write: raise RuntimeError('synthetic transaction interruption')
@@ -199,6 +202,16 @@ def test_pairing_claim_race_publication_race_rollback_and_scope():
                     assert credential not in json_string(module.module_settings)
                     from app.geo.publication_monitor import state_for
                     pub = await db.scalar(select(GeoPublication))
+                    entry = module.module_settings[p.KEY]['tasks'][report['taskId']]
+                    if reported:
+                        assert entry['reportedAccount'] == {'name': '合成公众号 测试😀'}
+                        assert entry['events']['receipt']['synthetic-receipt']['reportedAccount'] == entry['reportedAccount']
+                        assert '回传公众号：合成公众号 测试😀' in pub.note
+                        store = await s.open_store(db, 7)
+                        assert (await s.verification(store, entry, management=True))['reportedAccount'] == entry['reportedAccount']
+                        assert 'reportedAccount' not in await s.verification(store, entry)
+                    else:
+                        assert 'reportedAccount' not in entry
                     assert state_for(await db.get(GeoChannelVariant, 3), pub)['state'] == 'pending'
                     # Disable the signing human: device authorization is immediately invalid.
                     (await db.get(User, 9)).is_active = False
@@ -296,3 +309,112 @@ def test_pairing_claim_race_publication_race_rollback_and_scope():
 def json_string(value):
     import json
     return json.dumps(value)
+
+
+def test_unbound_placeholder_races_rollback_audit_and_old_client_metadata():
+    async def run():
+        import json
+        from ops.run_geo_checks import validate_ci_database
+        url = os.environ['GEO_TEST_POSTGRES_URL']; validate_ci_database(url)
+        schema = 'geo_unbound_' + uuid4().hex
+        engine = create_async_engine(url, connect_args={'server_settings': {
+            'search_path': schema, 'lock_timeout': '10000', 'statement_timeout': '15000'}},
+            execution_options={'schema_translate_map': {'public': schema}})
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        actor = {'kind': 'admin', 'user_id': 9, 'grant_id': None}
+        created = False
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(f'CREATE SCHEMA "{schema}"')); created = True
+                for model in (Tenant, TenantModule, GeoProject, GeoOptimizationBusiness,
+                              GeoPublishingChannel, GeoChannelAccount, User, Role):
+                    await conn.execute(CreateTable(model.__table__, include_foreign_key_constraints=[]))
+            async with sessions() as db:
+                db.add_all([Tenant(id=7, name='synthetic tenant'), Tenant(id=8, name='synthetic other'),
+                    TenantModule(id=1, tenant_id=7, module_code='geo', status='active', module_settings={}),
+                    Role(id=1, name='synthetic admin', is_system=False, permissions={'settings.accounts': 'edit'}),
+                    User(id=9, username='synthetic operator', password_hash='synthetic unusable', role_id=1, is_active=True)])
+                for project in (5, 6):
+                    db.add(GeoProject(id=project, tenant_id=7, tenant_module_id=1, name='synthetic project',
+                        primary_domain=f'p{project}.example.invalid', canonical_domain=f'p{project}.example.invalid',
+                        status='active', project_settings={}))
+                await db.commit()
+            body = {'label': 'synthetic team', 'platform': 'wechat-article', 'expected_revision': 0}
+            # Authorization must precede any auto-creation, even on the no-account path.
+            async with sessions() as db:
+                store = await s.open_store(db, 7)
+                with pytest.raises(HTTPException):
+                    await s.create_pairing(store, 5, {**actor, 'user_id': 999}, body)
+                with pytest.raises(HTTPException):
+                    await s.create_pairing(store, 88, actor, body)
+                assert await db.scalar(select(func.count()).select_from(GeoPublishingChannel)) == 0
+                await db.rollback()
+            # Flush is not a commit: pairing, channel/account and audit all roll back.
+            async with sessions() as db:
+                store = await s.open_store(db, 7)
+                await s.create_pairing(store, 5, actor, body)
+                await db.rollback()
+            async with sessions() as db:
+                assert await db.scalar(select(func.count()).select_from(GeoPublishingChannel)) == 0
+                assert await db.scalar(select(func.count()).select_from(GeoChannelAccount)) == 0
+                assert (await db.get(TenantModule, 1)).module_settings == {}
+            async def pair(project):
+                async with sessions() as db:
+                    store = await s.open_store(db, 7)
+                    value = await s.create_pairing(store, project, actor,
+                        {**body, 'account_id': None, 'expected_revision': store.book['revision']})
+                    await db.commit()
+                    return value
+            pairs = await asyncio.gather(pair(5), pair(6))
+            async with sessions() as db:
+                assert await db.scalar(select(func.count()).select_from(GeoPublishingChannel)) == 1
+                assert await db.scalar(select(func.count()).select_from(GeoChannelAccount)) == 1
+                channel = await db.scalar(select(GeoPublishingChannel))
+                account = await db.scalar(select(GeoChannelAccount))
+                assert channel.name == '多号通公众号' and channel.enabled and channel.channel_type == 'wechat'
+                assert channel.content_rules == {'duohaotong_placeholder': 1}
+                assert account.display_name == '多号通公众号（发布时上报）'
+                assert account.auth_type == 'manual' and account.status == 'active'
+                assert account.credentials_encrypted is None
+                book = (await db.get(TenantModule, 1)).module_settings[p.KEY]
+                assert {x['account_id'] for x in book['pairings'].values()} == {account.id}
+                assert not book['enabled'] and book['scopes'] == {}
+                audit = [x for x in book['audit'] if x['code'].startswith('PLACEHOLDER_')]
+                assert len(audit) == 2
+                assert all(x['actor_id'] == 9 and x['tenant_id'] == 7 and x['project_id'] in {5, 6}
+                           and x['reason'] == 'device_pairing' for x in audit)
+            async with sessions() as db:
+                claimed = await s.claim(db, {'pairing_code': pairs[0]['pairing_code'], 'request_id': str(uuid4())})
+                await db.commit()
+                assert set(claimed) == {'schema', 'pairing_id', 'claimed_at', 'device', 'bindings_configured', 'automatic_submit'}
+                credential, device_id = claimed['device']['credential'], claimed['device']['id']
+            def req(path, data=None):
+                headers = {'authorization': 'Bearer ' + credential}
+                if data is not None:
+                    headers.update({'x-distribution-request-seq': '1', 'x-distribution-sent-at': str(s.now_ms())})
+                request = Request({'type': 'http', 'method': 'POST' if data else 'GET', 'path': p.PREFIX + path,
+                    'query_string': b'', 'headers': [(k.encode(), v.encode()) for k, v in headers.items()]})
+                if data is not None: request._body = p.encode(data)
+                return request
+            async with sessions() as db:
+                profile = json.loads((await dr.profile(req('/device/profile'), db)).body)
+                assert set(profile) == {'schema', 'device_id', 'customer_name', 'scope_name', 'account_name', 'label'}
+                assert profile['account_name'] == '多号通公众号（发布时上报）'
+            async with sessions() as db:
+                bindings = json.loads((await dr.bindings(req('/device/bindings', {'device_id': device_id}), db)).body)
+                assert set(bindings) == {'schema', 'device_id', 'as_of', 'automatic_submit', 'items'}
+                assert len(bindings['items']) == 1 and bindings['items'][0]['account_id'] == str(account.id)
+            async with sessions() as db:
+                (await db.scalar(select(GeoPublishingChannel))).enabled = False
+                await db.commit()
+            async with sessions() as db:
+                store = await s.open_store(db, 7)
+                with pytest.raises(HTTPException) as denied:
+                    await s.create_pairing(store, 5, actor, {**body, 'expected_revision': store.book['revision']})
+                assert denied.value.detail['code'] == 'PLACEHOLDER_DISABLED'
+        finally:
+            if created:
+                async with engine.begin() as conn:
+                    await conn.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+            await engine.dispose()
+    asyncio.run(run())
