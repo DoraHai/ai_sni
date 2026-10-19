@@ -51,6 +51,8 @@ class SafeRoute(APIRoute):
                 if not isinstance(code, str) or not re.fullmatch('[A-Za-z0-9_]{1,80}', code):
                     code = 'REPORT_REQUEST_REJECTED'
                 response = JSONResponse({'detail': {'code': code, 'message': '结果回传未获受理，请核对当前权限和任务'}}, status_code=exc.status_code)
+                if exc.status_code == 429:
+                    response.headers['Retry-After'] = '60'
             except SQLAlchemyError:
                 response = JSONResponse({'detail': {'code': 'REPORT_STORAGE_UNAVAILABLE', 'message': '结果回传存储暂不可用'}}, status_code=503)
             response.headers['Cache-Control'] = 'private, no-store'
@@ -210,10 +212,17 @@ def replay_headers(request, device, raw, stream):
 @router.post('/device-pairings/claim')
 async def claim(request: Request, session=Depends(get_session)):
     native_device_request(request)
-    limit('claim-global', 30)
+    # Use the ASGI peer identity, never caller-supplied forwarding headers.
+    # Uvicorn resolves trusted proxy peers before constructing this Request.
+    peer = request.client.host if request.client else 'unknown-peer'
+    limit('claim-peer-' + service.sha(peer), 30)
+    limit('claim-global', 3000)
     _, body = await body_for(request, {'pairing_code', 'request_id'})
-    if not isinstance(body['pairing_code'], str) or not re.fullmatch('[A-Za-z0-9_-]{32}', body['pairing_code']) or not identifier(body['request_id']):
+    if (not isinstance(body['pairing_code'], str) or not re.fullmatch('[A-Za-z0-9_-]{32}', body['pairing_code'])
+            or not isinstance(body['request_id'], str)
+            or not re.fullmatch('[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}', body['request_id'])):
         deny('INVALID_SHAPE', 422)
+    limit('claim-code-' + service.sha(body['pairing_code']), 10)
     return await service.claim_pairing(session, body['pairing_code'])
 
 

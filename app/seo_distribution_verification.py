@@ -1,6 +1,6 @@
 """Recover durable verification intents; never publish or replay device events."""
 from bs4 import BeautifulSoup
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy import select
 
 from app.database import async_session_factory
@@ -26,6 +26,19 @@ def verification_result(body, capture):
             'meaning': '公开页面正文及截图证据；不证明账号归属、平台审核结论或阅读量'}
 
 
+async def current_snapshot(session, module, state, task):
+    try:
+        return await report.native_snapshot(session, module.tenant_id, task['site_id'], task['publication_id'], task=task)
+    except HTTPException as exc:
+        if exc.status_code not in {404, 409}:
+            raise
+        task['verification'] = {'state': 'version_changed', 'reason': 'source_or_review_changed', 'checkedAt': report.now_ms()}
+        task['verify_claim_until'] = 0
+        report.store(module, state)
+        await session.commit()
+        return None
+
+
 async def verify_one(tenant_id, task_id):
     from app.api import seo as api
     from app.seo_backlinks import fetch_backlink_page, discover_backlinks
@@ -46,7 +59,10 @@ async def verify_one(tenant_id, task_id):
         if not device or device['revoked']:
             return
         await report.live_task(session, module, device, task, success=False)
-        row, content, snapshot, _ = await report.native_snapshot(session, tenant_id, task['site_id'], task['publication_id'], task=task)
+        current = await current_snapshot(session, module, state, task)
+        if current is None:
+            return
+        row, content, snapshot, _ = current
         if row.page_url != task['page_url']:
             task['verification'] = {'state': 'version_changed', 'reason': 'publication_url_changed', 'checkedAt': report.now_ms()}
             report.store(module, state)
@@ -77,7 +93,10 @@ async def verify_one(tenant_id, task_id):
         if not device or device['revoked']:
             return
         await report.live_task(session, module, device, task, success=False)
-        row, _, _, _ = await report.native_snapshot(session, tenant_id, site_id, publication_id, task=task)
+        current = await current_snapshot(session, module, state, task)
+        if current is None:
+            return
+        row, _, _, _ = current
         if row.page_url != url:
             task['verification'] = {'state': 'version_changed', 'reason': 'publication_url_changed', 'checkedAt': report.now_ms()}
         else:

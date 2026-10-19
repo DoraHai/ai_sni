@@ -394,3 +394,58 @@ def test_verification_recovers_after_ack_and_keeps_capture_gap(body,monkeypatch)
                 assert result['capture']['state'] == 'capture_disabled'
                 assert (await session.get(SeoContentPublication,1001)).status == 'published'
     asyncio.run(scenario())
+
+
+def test_claim_rate_limit_one_peer_cannot_exhaust_other_tenants():
+    async def scenario():
+        async with fixture() as (sessions,client,admin,payload_hash):
+            pairing = await pair(client,admin)
+            for _ in range(30):
+                response = await client.post(PREFIX+'/device-pairings/claim',json={
+                    'pairing_code':uuid4().hex,'request_id':str(uuid4())})
+                assert response.status_code == 409
+            limited = await client.post(PREFIX+'/device-pairings/claim',json={
+                'pairing_code':uuid4().hex,'request_id':str(uuid4())})
+            assert limited.status_code == 429 and limited.headers['retry-after'] == '60'
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=client._transport.app,
+                client=('198.51.100.2',50000)),base_url='http://synthetic.test') as other:
+                result = await other.post(PREFIX+'/device-pairings/claim',json={
+                    'pairing_code':pairing['pairing_code'],'request_id':str(uuid4())})
+                assert result.status_code == 200
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('change_during_fetch',[False,True])
+def test_verification_version_change_is_recorded_before_and_after_fetch(change_during_fetch,monkeypatch):
+    async def scenario():
+        from app import seo_distribution_verification as verification
+        from app import seo_backlinks
+        monkeypatch.setattr(verification,'recover_report_verification',AsyncMock())
+        async with fixture() as (sessions,client,admin,payload_hash):
+            device,task,task_id = await ready(client,admin,payload_hash)
+            event = event_for(device,task)
+            response = await client.post(PREFIX+'/device/exchange',headers=device_headers(device,2),
+                json={'contractVersion':1,'deviceId':device['id'],'receipts':[event]})
+            assert response.status_code == 200
+            async def change():
+                async with sessions() as session:
+                    asset = await session.get(SeoContentAsset,1000,with_for_update=True)
+                    asset.draft, asset.version_count = '<p>Changed synthetic article.</p>', 2
+                    await session.commit()
+            async def fetched(url):
+                await change()
+                return SimpleNamespace(body='<p>Approved synthetic article containing enough uniquely identifiable text.</p>',
+                    final_url=url,status_code=200,error_type=None)
+            monkeypatch.setattr(verification,'async_session_factory',sessions)
+            monkeypatch.setattr(api,'_queue_published_page_verification',AsyncMock(return_value={
+                'state':'not_queued','capture_id':None,'reason':'capture_disabled'}))
+            probe = AsyncMock(side_effect=fetched)
+            monkeypatch.setattr(seo_backlinks,'fetch_backlink_page',probe)
+            if not change_during_fetch:
+                await change()
+            await verification.verify_one(4,task_id)
+            async with sessions() as session:
+                state = registry((await session.get(TenantModule,1)).module_settings)
+                assert state['tasks'][task_id]['verification']['state'] == 'version_changed'
+            assert probe.await_count == int(change_during_fetch)
+    asyncio.run(scenario())
