@@ -27,6 +27,8 @@ async def fresh_actor(session, ctx, *, write=False):
         .with_for_update().execution_options(populate_existing=True))
     admin = bool(role and role.is_system and role.name == '管理员')
     if admin:
+        if ctx.advisor_scope is not None:
+            fail('INBOX_FORBIDDEN', 403)
         return SimpleNamespace(user=user, role=role, admin=True, ctx=ctx)
     if not is_advisor(role) or ctx.advisor_scope is None or ctx.advisor_scope.grant_id is None:
         fail('INBOX_FORBIDDEN', 403)

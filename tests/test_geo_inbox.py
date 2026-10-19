@@ -59,6 +59,36 @@ def test_audit_paths_hide_real_and_malformed_uuid_values():
     assert audit_endpoint('POST', inbox_routes.PREFIX+'/receipts/private-input/label').endswith('/{unmatched}')
 
 
+def test_frozen_unicode_vectors_preserve_cross_language_bytes():
+    from app.distribution_inbox_protocol import canonical_json, payload_digest
+    vectors = json.loads((Path(__file__).parent/'fixtures/distribution_inbox_v2_vectors.json').read_text(encoding='utf8'))
+    assert vectors['events'][0]['event']['platform'] == '新平台'
+    assert '😀' in vectors['events'][0]['event']['title']
+    for value in vectors['events']:
+        assert canonical_json(value['event']) == value['canonicalJson']
+        assert payload_digest(value['event']) == value['event']['payloadDigest']
+
+
+@pytest.mark.parametrize('sqlstate,constraint,status,code', [
+    ('23505','uq_inbox_active_link',409,'DUPLICATE_LINK'),
+    ('23503','synthetic_foreign_key',503,'INBOX_SCHEMA_NOT_READY'),
+    ('23514','synthetic_check',503,'INBOX_SCHEMA_NOT_READY'),
+])
+def test_storage_errors_are_sanitized_without_misreporting_unrelated_failures(sqlstate,constraint,status,code):
+    from sqlalchemy.exc import IntegrityError
+    from unittest.mock import AsyncMock
+    from fastapi import HTTPException
+    async def run():
+        session=NS(rollback=AsyncMock())
+        dependency=inbox_routes.safe_session(session)
+        await anext(dependency)
+        with pytest.raises(HTTPException) as denied:
+            await dependency.athrow(IntegrityError('private SQL',{},NS(sqlstate=sqlstate,constraint_name=constraint)))
+        assert denied.value.status_code==status and denied.value.detail['code']==code
+        assert 'private SQL' not in str(denied.value.detail)
+    asyncio.run(run())
+
+
 def token(uid=11, *, kind='advisor_tenant', tenant=7, grant=1):
     now = int(datetime.now(timezone.utc).timestamp())
     claims = {'sub': str(uid), 'iat': now, 'exp': now+3600}
@@ -79,6 +109,7 @@ async def sandbox(*, schema_ready=True):
         execution_options={'schema_translate_map': {'public': schema}})
     factory = async_sessionmaker(engine, expire_on_commit=False)
     app = FastAPI(); app.include_router(inbox_routes.router)
+    app.add_middleware(inbox_routes.GeoInboxBoundaryMiddleware)
     async def dependency():
         async with factory() as db:
             yield db
@@ -260,6 +291,9 @@ def test_missing_schema_and_malformed_http_are_safe(monkeypatch):
             response=await env.client.post(inbox_routes.PREFIX+f'/receipts/{rid}/label?tenant_id=7',
                 headers={'Authorization':'Bearer '+token()}, content=b'{"expectedRevision":0,"targetTenant":7,"targetTenant":8}')
             assert response.status_code==422 and response.json()['detail']['code']=='INVALID_SHAPE'
+            for path in ('/publications/?tenant_id=7','/publications/extra?tenant_id=7','/%70ublications?tenant_id=7'):
+                response=await env.request('GET',path)
+                assert response.status_code==404 and response.headers['cache-control']=='no-store'
     asyncio.run(run())
 
 

@@ -105,10 +105,12 @@ app = FastAPI(title="Growth Sniper GEO API", version="0.1.0", lifespan=_lifespan
 from app.security.geo_advisor_delivery import AdvisorDeliveryMiddleware
 from app.security.article_upload_limit import ArticleUploadLimitMiddleware
 from app.security.advisor_write_audit import AdvisorWriteAuditMiddleware
+from app.geo.content.inbox_routes import GeoInboxBoundaryMiddleware
 
 app.add_middleware(AdvisorDeliveryMiddleware)
 app.add_middleware(ArticleUploadLimitMiddleware)
 app.add_middleware(AdvisorWriteAuditMiddleware)
+app.add_middleware(GeoInboxBoundaryMiddleware)
 app.add_middleware(MeteringScopeMiddleware, module="geo")
 register_infra_handlers(app)
 app.add_middleware(

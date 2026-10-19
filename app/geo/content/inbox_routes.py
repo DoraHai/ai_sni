@@ -1,5 +1,6 @@
 """Exact GEO business routes for external inbox labels and publications."""
 import re
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -9,7 +10,7 @@ from starlette.responses import JSONResponse
 
 from app.database import get_session
 from app.distribution_inbox_protocol import (ProtocolError, fail, strict_json, validate_label,
-    validate_revision, exact_object, clean_text, match_inbox_business_route)
+    validate_revision, exact_object, clean_text, match_inbox_business_route, audit_endpoint)
 from app.security.auth import require_auth
 from app.geo.content import inbox as service
 
@@ -30,11 +31,29 @@ class SafeRoute(APIRoute):
             except HTTPException as error:
                 response = JSONResponse({'detail': error.detail}, status_code=error.status_code)
             response.headers['Cache-Control'] = 'no-store'
+            logging.getLogger('uvicorn.error').info('geo_inbox_operation %s %s %s',
+                request.method, audit_endpoint(request.method, request.url.path), response.status_code)
             return response
         return handle
 
 
 router = APIRouter(prefix=PREFIX, tags=['GEO 外部回传'], route_class=SafeRoute)
+
+
+class GeoInboxBoundaryMiddleware:
+    """Reject path aliases before Starlette can redirect to a business route."""
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] == 'http' and scope.get('path', '').startswith(PREFIX):
+            path = scope['path']
+            if (not match_inbox_business_route(scope['method'], path, 'geo')
+                    or scope.get('raw_path') != path.encode('ascii', errors='replace')):
+                error = ProtocolError('RECEIPT_NOT_FOUND', 404)
+                return await JSONResponse({'detail': error.detail}, status_code=404,
+                    headers={'Cache-Control':'no-store'})(scope, receive, send)
+        return await self.app(scope, receive, send)
 
 
 def request_scope(request):
@@ -61,9 +80,13 @@ async def safe_session(session=Depends(get_session)):
     except ProtocolError as error:
         await session.rollback()
         raise HTTPException(error.status, error.detail) from None
-    except IntegrityError:
+    except IntegrityError as exc:
         await session.rollback()
-        error = ProtocolError('DUPLICATE_LINK', 409)
+        original = exc.orig
+        cause = getattr(original, '__cause__', None)
+        constraint = getattr(original, 'constraint_name', None) or getattr(cause, 'constraint_name', None)
+        duplicate = getattr(original, 'sqlstate', None) == '23505' and constraint == 'uq_inbox_active_link'
+        error = ProtocolError('DUPLICATE_LINK', 409) if duplicate else ProtocolError('INBOX_SCHEMA_NOT_READY', 503)
         raise HTTPException(error.status, error.detail) from None
     except DBAPIError:
         await session.rollback()
