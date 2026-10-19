@@ -180,7 +180,7 @@ async def claim(request: Request, session=Depends(safe_session)):
         raise
     except HTTPException as error:
         # Known-code throttling is governed solely by its durable window.
-        if error.detail.get('code') != 'DEVICE_RATE_LIMITED':
+        if not isinstance(error.detail, dict) or error.detail.get('code') != 'DEVICE_RATE_LIMITED':
             bucket.append(now)
         raise
     await session.commit()
