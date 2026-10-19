@@ -120,6 +120,8 @@ app.add_middleware(
 app.include_router(geo_router)
 app.include_router(geo_oauth_public_router)
 app.include_router(geo_projects_router)
+from app.geo.content.distribution_routes import router as geo_distribution_router
+app.include_router(geo_distribution_router)
 
 
 @app.get("/health/geo")

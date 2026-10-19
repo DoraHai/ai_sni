@@ -10,6 +10,8 @@ STATIC_ROUTES = frozenset({
     "/api/v1/geo/metric-dictionary",
 })
 READ_ROUTES = frozenset({
+    '/api/v1/geo/distribution/v1/settings',
+    '/api/v1/geo/distribution/v1/tasks/{taskId}',
     '/api/v1/geo/content-health',
     '/api/v1/geo/deliverables/archives',
     '/api/v1/geo/deliverables/archives/{archive_id}',

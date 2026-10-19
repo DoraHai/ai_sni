@@ -107,6 +107,9 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     if method == "GET" and p in {"/api/v1/geo/channel-blueprint", "/api/v1/geo/structure-scan/latest"}:
         return {"geo.content"}, False
 
+    if re.fullmatch(r'/api/v1/geo/distribution/v1/(?:settings|device-pairings|tasks(?:/[A-Za-z0-9_-]+)?|devices/[A-Za-z0-9_-]+/revoke)', p):
+        return {'geo.content', 'settings.accounts'}, edit
+
     if p.startswith("/api/v1/dashboard"):
         return {"monitor.dashboard"}, edit
     if p.startswith("/api/v1/alerts"):

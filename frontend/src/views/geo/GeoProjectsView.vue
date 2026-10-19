@@ -4,6 +4,7 @@ import { advisorClaims } from '../../utils/geoAdvisorTenant.js'
 import { ElMessage } from 'element-plus'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import GeoProjectExecution from '../../components/GeoProjectExecution.vue'
+import GeoDistributionReport from '../../components/GeoDistributionReport.vue'
 import { createGeoProject, fetchGeoProjects, updateGeoProject, updateGeoBusinessScope } from '../../api/geoProjects'
 import { listGeoBusinesses } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
@@ -22,6 +23,7 @@ const scopeOpen = ref(false)
 const scopeProject = ref(null)
 const scopeIds = ref([])
 const executionProject = ref(null)
+const reportProject = ref(null)
 const form = reactive({
   name: '',
   brand_name: '',
@@ -131,7 +133,7 @@ async function saveScope() {
   finally { saving.value = false }
 }
 
-watch(tenantId, () => { dialogOpen.value = false; scopeOpen.value = false; executionProject.value = null; projects.value = []; businesses.value = []; load() })
+watch(tenantId, () => { reportProject.value = null; dialogOpen.value = false; scopeOpen.value = false; executionProject.value = null; projects.value = []; businesses.value = []; load() })
 onMounted(load)
 </script>
 
@@ -155,7 +157,7 @@ onMounted(load)
 
     <div class="geo-projects">
       <el-empty v-if="!loading && !projects.length" description="尚未添加 GEO 项目" />
-      <el-table v-else :data="projects" border>
+      <el-table v-else :data="projects" border highlight-current-row @current-change="reportProject = $event">
         <el-table-column prop="name" label="项目名称" min-width="180" />
         <el-table-column prop="brand_name" label="品牌" min-width="140" />
         <el-table-column prop="canonical_domain" label="主域名" min-width="220" />
@@ -170,6 +172,8 @@ onMounted(load)
         </el-table-column>
       </el-table>
     </div>
+
+    <GeoDistributionReport v-if="reportProject" :key="reportProject.id" :tenant-id="tenantId" :project-id="reportProject.id" />
 
     <el-drawer :model-value="!!executionProject" :title="`计划与执行 · ${executionProject?.name || ''}`" size="75%" destroy-on-close @close="executionProject = null">
       <GeoProjectExecution v-if="executionProject" :project-id="executionProject.id" :tenant-id="tenantId" />

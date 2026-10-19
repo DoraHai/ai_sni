@@ -11,6 +11,7 @@ import {
   pushGeoVariantWebhook,
 } from '../../api/geoContent'
 import GeoPublicationMonitor from '../../components/GeoPublicationMonitor.vue'
+import GeoDistributionReport from '../../components/GeoDistributionReport.vue'
 import GeoReceiptImport from '../../components/GeoReceiptImport.vue'
 import GeoDeliveryRecovery from '../../components/GeoDeliveryRecovery.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
@@ -315,6 +316,7 @@ onMounted(load)
         </div>
       </section>
     </div>
+    <GeoDistributionReport v-if="task" :tenant-id="tenantId" :task="task" mode="task" />
   </GeoWorkbenchPage>
 </template>
 
