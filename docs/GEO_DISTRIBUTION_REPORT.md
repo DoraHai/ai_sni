@@ -39,4 +39,3 @@
 新增 `GET /api/v1/geo/distribution/v1/device/profile`：仅携带该配对设备的 Bearer 凭据，无body、无query，不需要序号/时间戳头。精确返回 `{schema:1, device_id, customer_name, scope_name, account_name, label}`；名字移除Unicode C类字符、归一空白，最多120码点。只查设备自己的客户/项目/公众号显示列，保持原认证与归属检查，可在回传关闭时读取，不写设备序号或账本；`Cache-Control: private, no-store`。旧claim/bindings/exchange/ACK格式不变。
 
 已知配对码领取失败在现有 `tenant_modules.module_settings.distribution_report_v1.pairings` 内记录固定60秒窗口的失败次数；同一码6次失败后限流，锁行后计算，跨进程/重启有效。错误响应前仅提交失败计数，无设备或稿件写入；成功领取不增加计数。未知/格式错误码无客户归属，使用进程内按来源与码摘要组合的60秒失败桶兜底（最多2048桶、每桶6次）；该兜底重启清零、随机轮换未知码仍可绕过单桶限制，不能当作分布式防攻击。没有按来源IP限制成功领取，团队电脑连续给多个客户成功配对不会消耗失败额度。无需迁移或新env。
-
