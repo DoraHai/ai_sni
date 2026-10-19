@@ -599,7 +599,7 @@ async def get_analysis_report(
     )
     narrative = None
     generated_at = None
-    if cached and not force:
+    if cached and (read_only or not force):
         narrative = {
             "summary": cached.summary or "",
             "module_comments": (cached.narrative or {}).get("module_comments", {}),
@@ -681,7 +681,7 @@ async def get_monthly_report(
     )
     narrative = None
     generated_at = None
-    if cached and not force:
+    if cached and (read_only or not force):
         narrative = {
             "summary": cached.summary or "",
             "module_comments": (cached.narrative or {}).get("module_comments", {}),
