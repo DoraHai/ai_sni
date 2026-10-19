@@ -24,4 +24,8 @@ class Base(DeclarativeBase):
 
 async def get_session() -> AsyncIterator[AsyncSession]:
     async with async_session_factory() as session:
-        yield session
+        try:
+            yield session
+        finally:
+            from app.security.advisor_quota import refund_unused_reservation
+            await refund_unused_reservation(session)

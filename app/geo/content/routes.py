@@ -3871,6 +3871,8 @@ async def probe_answer_snapshot(
         raise HTTPException(502, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(502, str(exc)) from exc
+    from app.security.advisor_quota import consume_manual_result
+    await consume_manual_result(session)
     return {
         "prompt_id": prompt.id,
         "prompt_question": prompt.question,
@@ -3935,6 +3937,8 @@ async def probe_answer_snapshot_batch(
                 sample_mode=sample_mode,
                 fallback_reason=fallback_reason,
             )
+            from app.security.advisor_quota import consume_manual_result
+            await consume_manual_result(session)
             items.append(
                 {
                     "prompt_id": prompt.id,

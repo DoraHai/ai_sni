@@ -121,6 +121,11 @@ def cancel_requested(job: GeoAsyncJob) -> bool:
 
 
 async def request_cancel(session: AsyncSession, job: GeoAsyncJob) -> GeoAsyncJob:
+    if job.kind == 'search_visibility':
+        # Serialize pending cancellation with the worker's pending -> running
+        # transition. A stale pending object must not refund an in-flight job.
+        job = await session.scalar(select(GeoAsyncJob).where(GeoAsyncJob.id == job.id)
+            .with_for_update().execution_options(populate_existing=True))
     if job.status in {"succeeded", "failed", "cancelled"}:
         return job
     meta = dict(job.request_meta or {})
@@ -131,6 +136,8 @@ async def request_cancel(session: AsyncSession, job: GeoAsyncJob) -> GeoAsyncJob
         job.error = "已取消"
         job.finished_at = datetime.utcnow()
         await _release_task_lock(session, job, reason="user_cancel")
+    from app.security.advisor_quota import settle_search_reservation
+    await settle_search_reservation(session, job)
     await session.commit()
     await session.refresh(job)
     return job
@@ -482,6 +489,8 @@ async def mark_job(
         row.error = error[:2000]
     if result_meta is not None:
         row.result_meta = result_meta
+    from app.security.advisor_quota import settle_search_reservation
+    await settle_search_reservation(session, row)
     await session.commit()
     authority = (row.request_meta or {}).get('advisor_authority')
     if (status in {'succeeded', 'failed', 'cancelled'} and isinstance(authority, dict)
