@@ -310,6 +310,8 @@ async def create_seo_site(
     session: AsyncSession = Depends(get_seo_session),
 ) -> dict:
     _require_seo_asset_permission(ctx, edit=True)
+    from app.security.advisor_write_routes import check_advisor_handler
+    check_advisor_handler(ctx, "POST", "/sites", req.model_dump())
     module = await ensure_module_access(session, ctx, req.tenant_id, "seo")
     canonical, default_url = _canonical_domain(req.domain)
     row = SeoSite(
@@ -326,7 +328,10 @@ async def create_seo_site(
     except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(409, "该客户已经维护了这个 SEO 网站") from exc
-    await session.refresh(row)
+    # New sites have no admin-issued advisor assignment yet. The request's
+    # assignment filter intentionally hides them from subsequent advisor reads.
+    if not getattr(ctx, "is_advisor", False):
+        await session.refresh(row)
     return _site_payload(row)
 
 

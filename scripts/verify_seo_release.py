@@ -11,6 +11,8 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    'app/security/seo_advisor_site_creation.py',
+    'tests/test_seo_advisor_site_creation.py',
     'app/seo_distribution_protocol.py',
     'app/seo_distribution_report.py',
     'app/seo_distribution_verification.py',

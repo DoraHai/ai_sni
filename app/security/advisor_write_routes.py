@@ -33,6 +33,8 @@ def _rule(method, template, fields, permission):
 
 
 _RULES = (
+    WriteRule("POST", "/api/v1/seo/sites", frozenset({"tenant_id", "name", "domain"}),
+              _FORBIDDEN, ("seo.assets", "seo.site"), "tenant_create_site", True),
     _rule("POST", "/qa/facts", _FACT, "seo.content"),
     # tenant/site here are required scope selectors in the existing FactEdit
     # schema; the handler never assigns them and B checks the object's scope.

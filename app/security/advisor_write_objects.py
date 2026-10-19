@@ -176,6 +176,9 @@ async def _request_references(request, body):
 
 
 async def _scope(session, ctx, request, body, rule, *, lock=False):
+    from app.security.seo_advisor_site_creation import is_site_creation, check_scope
+    if is_site_creation(rule):
+        return await check_scope(session, ctx, request, body, lock=lock)
     from app.seo_distribution_protocol import PREFIX
     if getattr(rule, 'template', '').startswith(PREFIX + '/'):
         from app.security.seo_distribution_advisor import scope
@@ -243,6 +246,10 @@ async def check_write_objects(session, ctx, request, body: dict | list | None, r
 async def ensure_advisor_assignment(session, ctx, request, body, rule) -> None:
     if not ctx.is_advisor:
         return
+    from app.security.seo_advisor_site_creation import is_site_creation
+    if is_site_creation(rule):
+        await _scope(session, ctx, request, body, rule)
+        return
     site_id = await _scope(session, ctx, request, body, rule)
     if ctx.user_id is None:
         _reject(403, "ADVISOR_ASSIGNMENT_REQUIRED")
@@ -263,6 +270,9 @@ async def lock_manual_write_scope(session, ctx, request, body, rule):
     Advisor operations may run during an active service plan. Keep the scope and
     object locks; editing content never changes a plan or authorizes its worker.
     """
+    from app.security.seo_advisor_site_creation import is_site_creation
+    if is_site_creation(rule):
+        return await _scope(session, ctx, request, body, rule, lock=True)
     from app.seo_distribution_protocol import PREFIX
     if getattr(rule, 'template', '').startswith(PREFIX + '/'):
         from app.security.seo_distribution_advisor import lock_scope
