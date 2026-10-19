@@ -14,7 +14,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.schema import CreateTable
 
 from app.api import seo as api
-from app.api.seo_distribution_report import router, _rates
+from app.api.seo_distribution_report import router, _rates, _claim_rates, limit
 from app.database import get_session
 from app.models.advisor_tenant_grant import AdvisorTenantGrant
 from app.models.module_workspace import TenantModule, SeoSite
@@ -46,6 +46,7 @@ def advisor_bearer():
 @asynccontextmanager
 async def fixture():
     _rates.clear()
+    _claim_rates.clear()
     async with database() as sessions:
         async with sessions() as session:
             connection = await session.connection()
@@ -448,4 +449,99 @@ def test_verification_version_change_is_recorded_before_and_after_fetch(change_d
                 state = registry((await session.get(TenantModule,1)).module_settings)
                 assert state['tasks'][task_id]['verification']['state'] == 'version_changed'
             assert probe.await_count == int(change_during_fetch)
+    asyncio.run(scenario())
+
+
+def test_native_write_flushed_then_failure_rolls_back_fact_and_ledger(monkeypatch):
+    async def scenario():
+        original = api.complete_manual_publication_in_transaction
+        async def fail_after_native_flush(session,*args,**kwargs):
+            await original(session,*args,**kwargs)
+            await session.flush()
+            raise HTTPException(503,{'code':'REPORT_STORAGE_UNAVAILABLE'})
+        monkeypatch.setattr(api,'complete_manual_publication_in_transaction',fail_after_native_flush)
+        async with fixture() as (sessions,client,admin,payload_hash):
+            device,task,task_id = await ready(client,admin,payload_hash)
+            response = await client.post(PREFIX+'/device/exchange',headers=device_headers(device,2),
+                json={'contractVersion':1,'deviceId':device['id'],'receipts':[event_for(device,task)]})
+            assert response.status_code == 503 and 'receiptAcks' not in response.json()
+            async with sessions() as session:
+                assert (await session.get(SeoContentPublication,1001)).status == 'manual_required'
+                assert (await session.get(SeoContentAsset,1000)).status == 'ready'
+                assert await session.scalar(select(func.count()).select_from(SeoPublishAttempt)) == 0
+                state = registry((await session.get(TenantModule,1)).module_settings)
+                assert not state['tasks'][task_id]['streams']['receipt']['events']
+                assert state['devices'][device['id']]['transport_seq'] == 1
+    asyncio.run(scenario())
+
+
+def test_old_manual_completion_and_device_report_share_native_serialization(monkeypatch):
+    async def scenario():
+        from app import seo_distribution_verification as verification
+        monkeypatch.setattr(verification,'recover_report_verification',AsyncMock())
+        monkeypatch.setattr(api,'_queue_published_page_verification',AsyncMock(return_value={'state':'not_queued'}))
+        async with fixture() as (sessions,client,admin,payload_hash):
+            device,task,_ = await ready(client,admin,payload_hash)
+            event = event_for(device,task)
+            async def manual():
+                async with sessions() as session:
+                    actor = await auth._build_context(await session.get(User,9),session)
+                    return await api.complete_manual_publication(1001,api.DistributionManualComplete(
+                        tenant_id=4,site_id=2,source_version=1,page_url=event['publicUrl']),session,actor,None)
+            manual_result, device_result = await asyncio.wait_for(asyncio.gather(manual(),
+                client.post(PREFIX+'/device/exchange',headers=device_headers(device,2),
+                    json={'contractVersion':1,'deviceId':device['id'],'receipts':[event]})),timeout=10)
+            assert manual_result['status'] == 'published' and device_result.status_code == 200
+            async with sessions() as session:
+                assert await session.scalar(select(func.count()).select_from(SeoPublishAttempt)) == 1
+                assert (await session.get(SeoContentPublication,1001)).page_url == event['publicUrl']
+    asyncio.run(scenario())
+
+
+def test_inflight_admin_disable_prevents_pairing_despite_admitted_jwt(monkeypatch):
+    async def scenario():
+        from app.api import seo_distribution_report as routes
+        admitted = asyncio.Event()
+        original = routes.management
+        async def observed(request,session,ctx,**kwargs):
+            admitted.set()
+            return await original(request,session,ctx,**kwargs)
+        monkeypatch.setattr(routes,'management',observed)
+        async with fixture() as (sessions,client,admin,payload_hash):
+            async with sessions() as revoker:
+                user = await revoker.get(User,9,with_for_update=True)
+                user.is_active = False
+                await revoker.flush()
+                pending = asyncio.create_task(client.post(PREFIX+'/device-pairings'+SCOPE,
+                    headers=management_headers(admin),json={'label':'Synthetic computer','platform':'wechat-article',
+                        'account_id':'seo-connection-40','expected_revision':0}))
+                await asyncio.wait_for(admitted.wait(),timeout=5)
+                await revoker.commit()
+                response = await asyncio.wait_for(pending,timeout=10)
+                assert response.status_code == 403
+            async with sessions() as session:
+                module = await session.get(TenantModule,1)
+                assert not registry(module.module_settings,initialize=True)['pairings']
+    asyncio.run(scenario())
+
+
+def test_claim_map_saturation_and_forged_credentials_do_not_poison_device_budget():
+    async def scenario():
+        async with fixture() as (sessions,client,admin,payload_hash):
+            device,task,_ = await ready(client,admin,payload_hash)
+            _claim_rates.clear()
+            for i in range(2048):
+                limit('synthetic-probing-code-'+str(i),1,claim=True)
+            with pytest.raises(HTTPException):
+                limit('synthetic-new-peer',1,claim=True)
+            before = dict((k,len(v)) for k,v in _rates.items())
+            for _ in range(3):
+                invalid = {**device,'credential':device['credential'][:-43] + report.secrets.token_urlsafe(32)}
+                response = await client.post(PREFIX+'/device/exchange',headers=device_headers(invalid,2),
+                    json={'contractVersion':1,'deviceId':device['id'],'receipts':[]})
+                assert response.status_code == 401
+            assert before == {k:len(v) for k,v in _rates.items()}
+            valid = await client.post(PREFIX+'/device/exchange',headers=device_headers(device,2),
+                json={'contractVersion':1,'deviceId':device['id'],'receipts':[]})
+            assert valid.status_code == 200
     asyncio.run(scenario())

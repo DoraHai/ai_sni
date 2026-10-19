@@ -17,23 +17,25 @@ from app import seo_distribution_report as service
 from app.config import get_settings
 
 _rates = OrderedDict()
+_claim_rates = OrderedDict()
 
 
-def limit(key, maximum):
+def limit(key, maximum, *, claim=False):
     now = service.now_ms()
-    bucket = _rates.setdefault(key, deque())
-    _rates.move_to_end(key)
+    table = _claim_rates if claim else _rates
+    bucket = table.setdefault(key, deque())
+    table.move_to_end(key)
     while bucket and bucket[0] <= now - 60000:
         bucket.popleft()
     if len(bucket) >= maximum:
         deny('DEVICE_RATE_LIMITED', 429)
-    if len(_rates) > 2048:
+    if len(table) > 2048:
         # Reject new identities rather than evicting an active limit.
-        old = next(iter(_rates))
-        if _rates[old] and _rates[old][-1] > now - 60000:
-            _rates.pop(key, None)
+        old = next(iter(table))
+        if table[old] and table[old][-1] > now - 60000:
+            table.pop(key, None)
             deny('DEVICE_RATE_LIMITED', 429)
-        _rates.popitem(last=False)
+        table.popitem(last=False)
     bucket.append(now)
 
 
@@ -104,6 +106,10 @@ async def management(request, session, ctx, *, initialize=False):
         deny('SCOPE_FORBIDDEN', 403)
     await service.site_scope(session, tenant_id, site_id)
     module = await service.locked_module(session, tenant_id)
+    if request.method != 'GET' and not ctx.is_advisor:
+        # Human JWT admission is a snapshot. Hold fresh account/role locks for
+        # administrators too, so an in-flight disable/permission revoke wins.
+        await service.authorize_actor(session, service.proof_for(ctx), tenant_id, site_id)
     state = registry(module.module_settings, initialize=initialize)
     return module, state, site_id
 
@@ -194,8 +200,15 @@ def credential_for(request):
         deny('DEVICE_CREDENTIAL_INVALID', 401)
     value = auth[7:]
     service.credential_locator(value)
-    limit(service.sha(value), 120)
     return value
+
+
+async def authenticated_device(session, credential, **kwargs):
+    result = await service.authenticate(session, credential, **kwargs)
+    # Only a fully authenticated device can allocate or consume a credential
+    # bucket. Anonymous claims and forged random credentials cannot fill it.
+    limit(result[2]['id'], 120)
+    return result
 
 
 def replay_headers(request, device, raw, stream):
@@ -215,14 +228,14 @@ async def claim(request: Request, session=Depends(get_session)):
     # Use the ASGI peer identity, never caller-supplied forwarding headers.
     # Uvicorn resolves trusted proxy peers before constructing this Request.
     peer = request.client.host if request.client else 'unknown-peer'
-    limit('claim-peer-' + service.sha(peer), 30)
-    limit('claim-global', 3000)
+    limit('claim-peer-' + service.sha(peer), 30, claim=True)
+    limit('claim-global', 3000, claim=True)
     _, body = await body_for(request, {'pairing_code', 'request_id'})
     if (not isinstance(body['pairing_code'], str) or not re.fullmatch('[A-Za-z0-9_-]{32}', body['pairing_code'])
             or not isinstance(body['request_id'], str)
             or not re.fullmatch('[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}', body['request_id'])):
         deny('INVALID_SHAPE', 422)
-    limit('claim-code-' + service.sha(body['pairing_code']), 10)
+    limit('claim-code-' + service.sha(body['pairing_code']), 10, claim=True)
     return await service.claim_pairing(session, body['pairing_code'])
 
 
@@ -230,7 +243,7 @@ async def claim(request: Request, session=Depends(get_session)):
 async def bindings(request: Request, session=Depends(get_session)):
     credential = credential_for(request)
     raw, body = await body_for(request, {'device_id'})
-    module, state, device = await service.authenticate(session, credential, require_enabled=False)
+    module, state, device = await authenticated_device(session, credential, require_enabled=False)
     if body['device_id'] != device['id']:
         deny('SCOPE_FORBIDDEN', 403)
     replay_headers(request, device, raw, 'bindings')
@@ -253,7 +266,7 @@ async def receive_events(request, session, background_tasks, stream):
         deny('INVALID_SHAPE', 422)
     for event in events:
         validate_event(event, stream)
-    module, state, device = await service.authenticate(session, credential)
+    module, state, device = await authenticated_device(session, credential)
     if body['deviceId'] != device['id']:
         deny('SCOPE_FORBIDDEN', 403)
     replay = replay_headers(request, device, raw, stream)
@@ -284,7 +297,7 @@ async def observations(request: Request, background_tasks: BackgroundTasks, sess
 
 @router.get('/device/tasks/{taskId}/verification')
 async def verification(taskId: str, request: Request, session=Depends(get_session)):
-    module, state, device = await service.authenticate(session, credential_for(request))
+    module, state, device = await authenticated_device(session, credential_for(request))
     task = state['tasks'].get(taskId)
     await service.live_task(session, module, device, task, success=False)
     return service.task_payload(task)
@@ -296,7 +309,7 @@ async def resolution(request: Request, session=Depends(get_session)):
               'customerId', 'projectId', 'accountId', 'platform', 'contentVersion', 'contentDigest'}
     credential = credential_for(request)
     raw, body = await body_for(request, fields)
-    module, state, device = await service.authenticate(session, credential)
+    module, state, device = await authenticated_device(session, credential)
     task = state['tasks'].get(body['taskId'])
     await service.live_task(session, module, device, task)
     if (body['resolutionVersion'] != 1 or type(body['resolutionVersion']) is not int

@@ -77,6 +77,8 @@ async function dispatch() {
 
 const outcomeText = value => ({queued:'待执行', 'awaiting-human':'待人工处理', unknown:'结果未知', failed:'失败', 'human-reported-published':'人工报告已发布'}[value] || value)
 const verificationText = value => ({pending:'待核验', verified:'已通过', failed:'未通过', unavailable:'暂无法核验', version_changed:'稿件已变化'}[value] || '待核验')
+const codeText = value => ({HUMAN_PUBLISHED:'已人工确认发布', HUMAN_REQUIRED:'等待人工确认', HUMAN_FAILED:'人工确认失败', HUMAN_UNKNOWN:'人工确认结果未知', LOGIN_REQUIRED:'需登录', CAPTCHA:'需验证码', RISK_CONTROL:'平台风控', PAGE_UNVERIFIED:'页面待核对', OFFLINE:'执行电脑离线', PLATFORM_REVIEW_PENDING:'平台审核中', PLATFORM_PUBLISH_FAILED:'平台发布失败', UPLOAD_RESULT_UNKNOWN:'上传结果未知', SUBMISSION_RESULT_UNKNOWN:'提交结果未知', ACCEPTED:'执行电脑已接单', DISPATCHED:'已交接执行', PREFLIGHT_OK:'预检完成'}[value] || '请核对执行结果')
+const reasonText = value => ({not_reported:'尚无成功链接', not_checked:'等待检查', text_not_found:'未匹配审核正文', capture_unavailable:'截图证据暂不可用', source_or_review_changed:'稿件版本或审核已变化', publication_url_changed:'登记链接已变化', full_body_and_capture_observed:'正文与截图证据均满足'}[value] || '请查看页面证据')
 watch(scope, () => { resetScope(); refresh() }, { immediate: true, flush: 'sync' })
 </script>
 
@@ -102,7 +104,7 @@ watch(scope, () => { resetScope(); refresh() }, { immediate: true, flush: 'sync'
         <el-button :disabled="!canOperate || !state.enabled || !state.scope_enabled || !form.device || !form.publication" @click="dispatch">派给执行电脑</el-button>
       </div>
       <p>请先按原流程准备并审核发布任务。有图片的稿件需待素材传输接通后再派发。</p>
-      <table v-if="state.tasks.length"><thead><tr><th>发布任务</th><th>回执送达</th><th>人工结果</th><th>页面核验</th></tr></thead><tbody><tr v-for="task in state.tasks" :key="task.taskId"><td>{{ task.nativePublicationId }}</td><td>{{ task.delivery === 'received' ? '已收到回报' : '待回报' }}</td><td>{{ outcomeText(task.reportedOutcome) }}<span v-if="task.last_code">（{{ task.last_code }}）</span></td><td>{{ verificationText(task.verification.state) }}<small v-if="task.verification.reason"> · {{ task.verification.reason }}</small></td></tr></tbody></table>
+      <table v-if="state.tasks.length"><thead><tr><th>发布任务</th><th>回执送达</th><th>人工结果</th><th>页面核验</th></tr></thead><tbody><tr v-for="task in state.tasks" :key="task.taskId"><td>{{ task.nativePublicationId }}</td><td>{{ task.delivery === 'received' ? '已收到回报' : '待回报' }}</td><td>{{ outcomeText(task.reportedOutcome) }}<span v-if="task.last_code">（{{ codeText(task.last_code) }}）</span></td><td>{{ verificationText(task.verification.state) }}<small v-if="task.verification.reason"> · {{ reasonText(task.verification.reason) }}</small></td></tr></tbody></table>
     </template>
   </section>
 </template>
