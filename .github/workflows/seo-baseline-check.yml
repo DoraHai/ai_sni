@@ -75,6 +75,8 @@ jobs:
           import xml.etree.ElementTree as ET
           report = os.path.join(os.environ['RUNNER_TEMP'], 'seo-onsite-postgres.xml')
           result = pytest.main(['-q', 'tests/test_seo_advisor_connections_postgres.py',
+              'tests/test_seo_distribution_report_postgres.py',
+              'tests/test_seo_distribution_protocol.py',
               'tests/test_seo_onsite_postgres.py',
               'tests/test_seo_onsite_ai_postgres.py',
               'tests/test_advisor_tenant_auth.py', 'tests/test_advisor_write_rules.py',
@@ -284,7 +286,7 @@ jobs:
         run: npm ci --no-audit
       - name: Build isolated SEO frontend
         working-directory: frontend
-        run: npm run test:session-storage && node --test scripts/test-seo-advisor-requests.mjs scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs scripts/test-seo-offline-handoff.mjs scripts/test-seo-backlinks.mjs scripts/test-seo-video-workflow.mjs scripts/test-seo-qa.mjs scripts/test-seo-workspace-access.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run test:seo-editor && npm run test:seo-page-capture && npm run test:seo-publication-export && npm run test:seo-site-analytics && npm run test:seo-monthly-report && npm run test:seo-tdk-review && npm run test:seo-ai-tdk && node --test scripts/test-seo-keyword-delete.mjs scripts/test-seo-site-delete.mjs scripts/test-seo-image-review.mjs && npm run build:seo
+        run: npm run test:session-storage && node --test scripts/test-seo-distribution-report.mjs scripts/test-seo-manual-publication.mjs scripts/test-seo-advisor-requests.mjs scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs scripts/test-seo-offline-handoff.mjs scripts/test-seo-backlinks.mjs scripts/test-seo-video-workflow.mjs scripts/test-seo-qa.mjs scripts/test-seo-workspace-access.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run test:seo-editor && npm run test:seo-page-capture && npm run test:seo-publication-export && npm run test:seo-site-analytics && npm run test:seo-monthly-report && npm run test:seo-tdk-review && npm run test:seo-ai-tdk && node --test scripts/test-seo-keyword-delete.mjs scripts/test-seo-site-delete.mjs scripts/test-seo-image-review.mjs && npm run build:seo
       - name: Verify isolated SEO frontend
         working-directory: frontend
         run: npm run verify:seo-build

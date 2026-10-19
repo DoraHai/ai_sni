@@ -557,6 +557,8 @@ from app.security.seo_advisor_audit import operation_audit
 app.middleware("http")(operation_audit)
 app.include_router(seo_router)
 app.include_router(seo_sites_router)
+from app.api.seo_distribution_report import router as seo_distribution_report_router
+app.include_router(seo_distribution_report_router)
 
 ADVISOR_GRANT_COLUMNS = {
     "id": ("bigint", True), "user_id": ("bigint", True), "tenant_id": ("bigint", True),

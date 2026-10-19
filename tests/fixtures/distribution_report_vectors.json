@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "algorithm": "sha256(JSON.stringify([version,title,body,assets.map(a=>[id,sha256,mediaType,bytes])]))",
+  "vectors": [
+    {
+      "content": {
+        "version": "reviewed-v2-test",
+        "title": "合成稿件：中文😀",
+        "body": "<p>第一行\n第二行\r\n引号\"与反斜杠\\</p>",
+        "assets": []
+      },
+      "input": "[\"reviewed-v2-test\",\"合成稿件：中文😀\",\"<p>第一行\\n第二行\\r\\n引号\\\"与反斜杠\\\\</p>\",[]]",
+      "utf8Hex": "5b2272657669657765642d76322d74657374222c22e59088e68890e7a8bfe4bbb6efbc9ae4b8ade69687f09f9880222c223c703ee7acace4b880e8a18c5c6ee7acace4ba8ce8a18c5c725c6ee5bc95e58fb75c22e4b88ee58f8de6969ce69da05c5c3c2f703e222c5b5d5d",
+      "sha256": "529057a394c2fcd80442fd2bdf51a8e1599231e69f5c276a7e35c166cf663e8c"
+    },
+    {
+      "content": {
+        "version": "v3",
+        "title": "素材顺序",
+        "body": "转义\t\b\f\u0000与分隔符  ",
+        "assets": [
+          {
+            "id": "asset-b",
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "mediaType": "image/png",
+            "bytes": 2048
+          },
+          {
+            "id": "asset-a",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "mediaType": "image/jpeg",
+            "bytes": 1234
+          }
+        ]
+      },
+      "input": "[\"v3\",\"素材顺序\",\"转义\\t\\b\\f\\u0000与分隔符  \",[[\"asset-b\",\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"image/png\",2048],[\"asset-a\",\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"image/jpeg\",1234]]]",
+      "utf8Hex": "5b227633222c22e7b4a0e69d90e9a1bae5ba8f222c22e8bdace4b9895c745c625c665c7530303030e4b88ee58886e99a94e7aca6e280a8e280a9222c5b5b2261737365742d62222c2262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262222c22696d6167652f706e67222c323034385d2c5b2261737365742d61222c2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c22696d6167652f6a706567222c313233345d5d5d",
+      "sha256": "e9ecd3d8dcaf551ba5fc5efae85e656ed58579ef7246d6683f149ff04e68c3f2"
+    },
+    {
+      "content": {
+        "version": "v1",
+        "title": "组合字符é é",
+        "body": "空素材数组与末尾换行\n",
+        "assets": []
+      },
+      "input": "[\"v1\",\"组合字符é é\",\"空素材数组与末尾换行\\n\",[]]",
+      "utf8Hex": "5b227631222c22e7bb84e59088e5ad97e7aca6c3a92065cc81222c22e7a9bae7b4a0e69d90e695b0e7bb84e4b88ee69cabe5b0bee68da2e8a18c5c6e222c5b5d5d",
+      "sha256": "53862e048fbad64e1ff938831b82b0667b3d8af7ad44442dc53c00aac67a21eb"
+    }
+  ]
+}
