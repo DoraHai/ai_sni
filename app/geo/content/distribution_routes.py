@@ -177,10 +177,11 @@ async def claim(request: Request, session=Depends(safe_session)):
     except s.PairingRejected:
         # Preserve only the failed known-code count despite an HTTP error.
         await session.commit()
-        bucket.append(now)
         raise
-    except HTTPException:
-        bucket.append(now)
+    except HTTPException as error:
+        # Known-code throttling is governed solely by its durable window.
+        if error.detail.get('code') != 'DEVICE_RATE_LIMITED':
+            bucket.append(now)
         raise
     await session.commit()
     return respond(result)

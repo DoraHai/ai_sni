@@ -77,6 +77,7 @@ def test_known_failure_survives_reload_and_http_error_commit_success_is_free():
                     await r.claim(native_request(data={'pairing_code': code, 'request_id': str(uuid4())}), store.session)
                 # Reload what save flushed, simulating a fresh worker/process.
                 store.book = p.registry(copy.deepcopy(store.row.module_settings))
+                assert all(not value for value in r._claim_failures.values())
                 r._claim_failures.clear()
             assert store.book['pairings']['pair']['claim_failures']['count'] == 6
             assert store.session.commit.await_count == 6
@@ -84,6 +85,7 @@ def test_known_failure_survives_reload_and_http_error_commit_success_is_free():
             with pytest.raises(HTTPException) as denied:
                 await r.claim(native_request(data={'pairing_code': code, 'request_id': str(uuid4())}), store.session)
             assert denied.value.status_code == 429
+            assert all(not value for value in r._claim_failures.values())
             store.book['pairings']['pair']['claim_failures']['until'] = 0
         with patch.object(s, 'hash_locator', AsyncMock(return_value=7)), patch.object(s, 'open_store', AsyncMock(return_value=store)), \
              patch.object(s, 'actor_authorized', AsyncMock()), patch.object(s, 'account_binding', AsyncMock()):

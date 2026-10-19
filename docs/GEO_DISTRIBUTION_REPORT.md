@@ -17,7 +17,7 @@
 
 ## 契约和存储
 
-`TenantModule(module_code='geo').module_settings.distribution_report_v1` 保存带 schema 的开关、配对摘要、设备摘要、固定任务引用和双流账本。按 Tenant → TenantModule 取行锁，刷新 ORM 后保留其他设置命名空间。native 发布在同一事务内；异常整批回滚，无部分 ACK。此 JSON 试点的容量为 5 个活跃设备/未用码、100 个活跃任务、1000 个累计任务、每任务每流 64 个事件、8 MiB 总账本；满后拒收，不删去重历史。
+`TenantModule(module_code='geo').module_settings.distribution_report_v1` 保存带 schema 的开关、配对摘要、设备摘要、固定任务引用和双流账本。按 Tenant → TenantModule 取行锁，刷新 ORM 后保留其他设置命名空间。native 发布在同一事务内；异常整批回滚，无部分 ACK。此 JSON 试点的容量为 20 个活跃设备/未用码、100 个活跃任务、1000 个累计任务、每任务每流 64 个事件、8 MiB 总账本；满后拒收，不删去重历史。
 
 凭据使用既有配对 JSON schema 要求的 **64 字符 base64url opaque 值**，服务端仅保存 SHA-256；使用 GEO module 行内精确 JSONPath 摘要查找与常量时间比较，不扫描 SEO。设计 5.3 的 `dr1...` 是建议定位格式，不能通过既有冻结 schema 的 64 字符校验，因此没有采用。bindings 保留冻结 schema 必填的 `schema:1`。这些是对现有配对协议的兼容，不向已有 JSON 添加未定义键。
 
