@@ -11,7 +11,7 @@ from app.geo.content.time_windows import TENANT_TZ, shanghai_day_bounds_utc_naiv
 from app.geo.integration_metrics import (
     MENTIONS, RATE, SCORE, build_weekly_snapshot, domain, patrol_evidence_reasons, verified_patrol_rows,
 )
-from app.geo.project_client_protocol import digest, path, public_host, safe_url
+from app.geo.project_client_protocol import digest, path, public_host, safe_url, url_domain
 from app.geo.read_model import MINIMUM, insufficient, iso, period_context
 
 METRICS = (MENTIONS, RATE, SCORE)
@@ -243,7 +243,7 @@ def answer_row(row, records, end, weekly):
         # A suppressed query must not turn a valid own-domain citation into an
         # apparent foreign citation; the original URL is never serialized.
         host = public_host(domain(normalized))
-        citations.append({'url': safe, 'url_state': state, 'is_own_domain': bool(host and any(
+        citations.append({'url': safe, 'domain': url_domain(normalized), 'url_state': state, 'is_own_domain': bool(host and any(
             host == own or host.endswith('.' + own) for own in records.own_domains))})
     return item, {'item': item, 'raw_text': text, 'citations': citations,
                   'comparison_metadata': {'complete': complete, 'reason_codes': [] if complete else ['model_metadata_missing'],
@@ -395,7 +395,7 @@ def publication_rows(records, publications):
                         'is_current_master': current, 'title': variant.title or '', 'channel': publication.channel or '',
                         'publish_mode': enum(publication.publish_mode, {'manual_export', 'api', 'browser'}),
                         'stored_status': enum(publication.status, {'pending', 'published', 'failed'}),
-                        'published_url': url, 'url_state': url_state, 'published_at': iso(publication.published_at),
+                        'published_url': url, 'domain': url_domain(publication.published_url), 'url_state': url_state, 'published_at': iso(publication.published_at),
                         'updated_at': iso(publication.updated_at),
                         'verification': {'state': state, 'checked_at': checked_at, 'evidence_valid': valid, 'reason_codes': reasons},
                         'task_path': link(records, f'/content/{variant.task_id}'),

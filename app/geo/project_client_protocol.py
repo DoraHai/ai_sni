@@ -8,7 +8,7 @@ import ipaddress
 import json
 import re
 from datetime import date
-from urllib.parse import urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import HTTPException
 
@@ -157,11 +157,29 @@ def public_host(host):
         pass
     except UnicodeError:
         return ''
-    if (len(host) > 253 or '.' not in host or host.endswith(('.localhost', '.local', '.internal', '.lan', '.home', '.test', '.invalid'))
-            or re.fullmatch(r'[0-9.]+', host) or re.fullmatch(r'0x[0-9a-f]+', host)):
+    if (len(host) > 253 or '.' not in host or host.endswith(('.localhost', '.local', '.internal', '.lan', '.home', '.test', '.invalid', '.localdomain', '.intranet', '.corp', '.private', '.onion'))
+            or re.fullmatch(r'(?:[0-9]+|0x[0-9a-f]+)', host.split('.')[-1]) or re.fullmatch(r'[0-9.]+', host) or re.fullmatch(r'0x[0-9a-f]+', host)):
         return ''
     labels = host.split('.')
     return host if all(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label) for label in labels) else ''
+
+
+# Decode names before checking; scan all pairs before dropping tracking parameters.
+SENSITIVE_QUERY = re.compile(
+    r'(?:^|[^a-z0-9])(?:token|access_token|accesstoken|key|apikey|api_key|secret|password|passwd|pwd|'
+    r'sig|signature|auth|authorization|session|sessionid|session_id|code|credential|credentials|jwt)(?:$|[^a-z0-9])', re.I)
+TRACKING_QUERY = {'gclid', 'dclid', 'fbclid', 'msclkid', 'spm', 'yclid', '_ga', '_gl'}
+
+
+def url_domain(value):
+    """Only a validated public hostname; never serialize userinfo/path/query."""
+    if not isinstance(value, str) or any(ord(c) <= 32 or ord(c) == 127 for c in value) or '\\' in value:
+        return None
+    try:
+        parsed = urlsplit(value)
+        return (public_host(parsed.hostname) or None) if parsed.scheme in {'http', 'https'} else None
+    except (ValueError, UnicodeError):
+        return None
 
 
 def safe_url(value):
@@ -174,12 +192,17 @@ def safe_url(value):
         if parsed.scheme not in {'https', 'http'} or not parsed.hostname:
             return None, 'invalid'
         port = parsed.port
-        if (parsed.username is not None or parsed.password is not None or parsed.query or '?' in value.split('#', 1)[0]
+        if (parsed.username is not None or parsed.password is not None
                 or not public_host(parsed.hostname) or port not in {None, 80, 443}):
             return None, 'suppressed'
+        pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        if any(SENSITIVE_QUERY.search(key) for key, _ in pairs):
+            return None, 'suppressed'
+        query = urlencode([(key, val) for key, val in pairs
+                           if not key.lower().startswith('utm_') and key.lower() not in TRACKING_QUERY])
         host = public_host(parsed.hostname)
         netloc = host + (f':{port}' if port is not None else '')
-        return urlunsplit((parsed.scheme, netloc, parsed.path, '', '')), 'available'
+        return urlunsplit((parsed.scheme, netloc, parsed.path, query, '')), 'available'
     except (ValueError, UnicodeError):
         return None, 'invalid'
 

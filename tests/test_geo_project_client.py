@@ -488,7 +488,7 @@ def test_only_closed_shanghai_weeks_are_accepted(env, week):
 
 
 @pytest.mark.parametrize('url,state', [('https://example.com/a#x', 'available'), ('javascript:x', 'invalid'),
-    ('https://user:pass@example.com/a', 'suppressed'), ('https://example.com/a?x=1', 'suppressed'),
+    ('https://user:pass@example.com/a', 'suppressed'), ('https://example.com/a?x=1', 'available'),
     ('http://127.0.0.1/a', 'suppressed'), ('https://foo.internal/x', 'suppressed'),
     ('http://2130706433/a', 'suppressed'), ('https://example.com\\@localhost/', 'invalid')])
 def test_public_links_never_expose_auth_or_private_targets(url, state):
@@ -679,3 +679,61 @@ def test_read_source_failure_is_sanitized_and_rolled_back():
     assert error.value.status_code == 503
     assert 'SYNTHETIC_PRIVATE' not in str(error.value.detail)
     session.rollback.assert_awaited_once()
+
+
+@pytest.mark.parametrize('url,expected', [
+    ('https://example.com/a?utm_source=fixture&utm_medium=test#part', 'https://example.com/a'),
+    ('https://example.com/a?id=123&utm_source=fixture&gclid=tracking', 'https://example.com/a?id=123'),
+    ('https://example.com/a?id=123', 'https://example.com/a?id=123'),
+    ('http://example.com/a?id=1&id=2&empty=', 'http://example.com/a?id=1&id=2&empty='),
+    ('https://example.com/a?UTM_Source=x&FBCLID=y&MSCLKID=z&spm=a&dclid=b&yclid=c&_ga=d&_gl=e', 'https://example.com/a'),
+    ('https://example.com/a?%75tm_source=x&id=123', 'https://example.com/a?id=123'),
+    ('https://example.com/a?monkey=1&keyboard=2&zipcode=3', 'https://example.com/a?monkey=1&keyboard=2&zipcode=3'),
+])
+def test_public_link_query_keeps_document_parameters_and_removes_tracking(url, expected):
+    assert safe_url(url) == (expected, 'available')
+
+
+@pytest.mark.parametrize('key', ['token', 'access_token', 'key', 'apikey', 'secret', 'password',
+    'sig', 'signature', 'auth', 'session', 'code', 'ToKeN', '%74oken', 'api_key', 'X-Amz-Signature',
+    'client_secret', 'refresh_token', 'session[id]', 'utm_token', 'authorization', 'accessToken'])
+def test_credential_query_suppresses_the_whole_link_even_with_tracking(key):
+    assert safe_url(f'https://example.com/a?id=123&utm_source=fixture&{key}=SYNTHETIC_URL_CREDENTIAL') == (None, 'suppressed')
+    assert safe_url(f'https://example.com/a?{key}') == (None, 'suppressed')
+
+
+@pytest.mark.parametrize('url', ['data:text/html,fixture', 'file:///fixture', 'https://@example.com/a',
+    'http://[::1]/', 'http://0x7f000001/', 'http://0177.0.0.1/', 'http://0x7f.0.0.1/',
+    'http://host.localdomain/', 'http://host.corp/', 'http://host.lan/', 'http://host.home/',
+    'http://host.test/', 'http://host.invalid/', 'https://example.com:8443/a', 'http://intranet/'])
+def test_query_support_does_not_open_unsafe_targets(url):
+    assert safe_url(url)[0] is None
+
+
+def test_citation_and_publication_query_projection_exposes_only_public_domain_when_suppressed(env):
+    row = add_answers(env, 1)[0]
+    row.cited_urls = ['https://p1.example.com/a?utm_source=fixture&id=123',
+        'https://p1.example.com/a?token=SYNTHETIC_URL_CREDENTIAL',
+        'https://synthetic:fixture@p1.example.com/a', 'http://127.0.0.1/a']
+    env.save(row)
+    citations = get(env, '/answers/1').json()['data']['citations']
+    assert citations[0] == {'url': 'https://p1.example.com/a?id=123', 'domain': 'p1.example.com',
+                            'url_state': 'available', 'is_own_domain': True}
+    assert citations[1] == {'url': None, 'domain': 'p1.example.com', 'url_state': 'suppressed', 'is_own_domain': True}
+    assert citations[2] == citations[1]
+    assert citations[3]['domain'] is None
+    assert 'SYNTHETIC_URL_CREDENTIAL' not in json.dumps(citations)
+    publication = env.session.get(Publication, 1)
+    publication.published_url = 'https://p1.example.com/post?id=123&utm_source=fixture'
+    env.save(publication)
+    result = get(env, '/deliveries', task_id=1).json()['data']
+    assert result['items'][0]['published_url'] == 'https://p1.example.com/post?id=123'
+    assert result['counts']['published_records'] == 1
+    publication.published_url = 'https://p1.example.com/post?token=SYNTHETIC_URL_CREDENTIAL'
+    env.save(publication)
+    result = get(env, '/deliveries', task_id=1).json()['data']
+    assert result['items'][0]['published_url'] is None
+    assert result['items'][0]['domain'] == 'p1.example.com'
+    assert result['items'][0]['url_state'] == 'suppressed'
+    assert result['counts']['published_records'] == 0
+    assert 'SYNTHETIC_URL_CREDENTIAL' not in json.dumps(result)

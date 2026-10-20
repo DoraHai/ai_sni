@@ -36,3 +36,20 @@ py ops/run_geo_client_checks.py
 
 前端 PR 独立基于 codex/production-sem，并按同一 CONTRACT.md 构造请求。
 后端 PR 基于 codex/production-geo；两者无需相互合并，也不依赖 SEO 草稿 #768。
+
+
+## phaseLINK：公开引用和发布链接参数
+
+普通公开 http(s) 链接允许 query，保留业务/文档参数、重复键和空值；剔除 fragment。
+跟踪参数按大小写不敏感移除：utm_*、gclid、dclid、fbclid、msclkid、spm、yclid、_ga、_gl。
+先对 URL 解码后的全部键检查凭据名（大小写不敏感）：token、access_token、accessToken、key、apikey、
+api_key、secret、password、passwd、pwd、sig、signature、auth、authorization、session、sessionid、session_id、
+code、credential、credentials、jwt，以及由非字母数字分隔的复合键，例如 X-Amz-Signature/client_secret。
+命中时整条链接抑制，不能删除凭据键继续开放。跟踪参数中的 utm_token 也会抑制。
+继续拒绝 userinfo、非 http(s)、IP（含非标准 IPv4）、单标签和内网域、非 80/443 端口、控制字符和反斜线。
+公开主机只做确定性语法校验，不访问 DNS 或目标网页。
+
+F.citations[] 与 L 的 publication 行新增 `domain:string|null`，只返回经过公开域名校验的主机名。
+被抑制时 `url/published_url=null`、`url_state=suppressed`，前端仅显示不可点击的 domain；
+内网/IP/非法协议或无法安全解析时 domain=null，不提供原始 URL 备用字段。is_own_domain 的分类保持不变。
+原生发布计数仍要求 published 且安全 URL，现在普通 query 也可符合安全 URL 条件。
