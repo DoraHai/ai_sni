@@ -345,13 +345,18 @@ def test_single_question_observations_and_attention_are_consistent(env, mention)
 
 @pytest.mark.parametrize('resource', ['questions', 'answers', 'content', 'variants', 'deliveries'])
 def test_keyset_pages_watermarks_and_cursor_scope(env, resource):
-    add_answers(env)
+    answers = add_answers(env)
+    if resource == 'answers':
+        answers[0].captured_at = NOW + timedelta(microseconds=1)
+        env.save(answers[0])
     suffix = '/content/1/variants' if resource == 'variants' else '/' + resource
     if resource == 'variants':
         env.save(*[Variant(id=10+i, task_id=1, article_version_id=1, title='v', channel='website', body_markdown='full') for i in range(3)])
     response = get(env, suffix, limit=1)
     assert response.status_code == 200, response.text
     data = response.json()['data']
+    if resource == 'answers':
+        assert data['items'][0]['id'] == 1  # +1 microsecond sorts before whole seconds.
     total, cursor = data['pagination']['total_count'], data['pagination']['next_cursor']
     assert cursor and data['pagination']['has_more']
     seen = [json.dumps(data['items'][0], sort_keys=True)]
@@ -580,6 +585,8 @@ def test_domain_citations_use_exact_or_subdomain_and_safe_link_projection(env):
     result = get(env, '/answers/1').json()['data']
     assert [r['url_state'] for r in result['citations']] == ['available', 'suppressed', 'suppressed', 'invalid']
     assert all(r['url'] is None for r in result['citations'][1:])
+    assert result['citations'][1]['is_own_domain'] is True
+    assert result['citations'][2]['is_own_domain'] is False
 
 
 def test_content_filters_are_literal_and_do_not_guess_unknown_review(env):

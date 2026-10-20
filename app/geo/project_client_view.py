@@ -11,7 +11,7 @@ from app.geo.content.time_windows import TENANT_TZ, shanghai_day_bounds_utc_naiv
 from app.geo.integration_metrics import (
     MENTIONS, RATE, SCORE, build_weekly_snapshot, domain, patrol_evidence_reasons, verified_patrol_rows,
 )
-from app.geo.project_client_protocol import digest, path, safe_url
+from app.geo.project_client_protocol import digest, path, public_host, safe_url
 from app.geo.read_model import MINIMUM, insufficient, iso, period_context
 
 METRICS = (MENTIONS, RATE, SCORE)
@@ -33,6 +33,12 @@ def parsed_time(value):
         except (ValueError, TypeError):
             pass
     return None
+
+
+def timestamp_order(value):
+    # Fixed fractional precision preserves chronological order at whole-second
+    # boundaries ("...00Z" otherwise sorts after "...00.000001Z").
+    return to_utc_naive(parsed_time(value)).isoformat(timespec='microseconds')
 
 
 def week_rows(rows, end):
@@ -228,12 +234,15 @@ def answer_row(row, records, end, weekly):
             'metric_adoption': adoption, 'detail_path': link(records, f'/answers/{row.id}', end=end)}
     citations, seen = [], set()
     for url in row.cited_urls or []:
-        safe, state = safe_url(url)
         normalized = str(url or '').strip()
         if normalized in seen:
             continue
         seen.add(normalized)
-        host = domain(safe)
+        safe, state = safe_url(normalized)
+        # Ownership is a host classification, independent of clickability.
+        # A suppressed query must not turn a valid own-domain citation into an
+        # apparent foreign citation; the original URL is never serialized.
+        host = public_host(domain(normalized))
         citations.append({'url': safe, 'url_state': state, 'is_own_domain': bool(host and any(
             host == own or host.endswith('.' + own) for own in records.own_domains))})
     return item, {'item': item, 'raw_text': text, 'citations': citations,

@@ -105,7 +105,7 @@ async def project_response(resource, request, ctx, session):
                         and (not eligibility or f['eligibility'] == 'all' or qualified == (f['eligibility'] == 'qualified')))
             selected = [r for r in rows if matches(r)]
             items = [view.answer_row(r, records, end, weekly)[0] for r in selected]
-            data = {**page(items, lambda a: (a['captured_at'], a['id']), mark), 'filters': f}
+            data = {**page(items, lambda a: (view.timestamp_order(a['captured_at']), a['id']), mark), 'filters': f}
             resource_basis = view.basis(records, end=end, rows=selected, unknown_rows=[r for r in unknown if matches(r, False)])
     elif resource == 'content':
         mark = watermarks(task=max(records.tasks, default=0))
