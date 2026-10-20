@@ -1,5 +1,6 @@
 // GEO has an independently verified project scope; an SEO site ID conveys no authority.
 import {visibilityAdvisor} from './search-visibility-client.mjs';
+import {geoClientRoute,geoClientQuery} from './geo-client-routes.mjs';
 export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscribeSession,logout,redirectToLogin}){
   let revision=0,identity=null,fingerprint=null;const listeners=new Set(),pending=new Set();
   const key=s=>JSON.stringify(s?[s.token,s.userId,s.tenantId,s.projectId,s.revision]:null);
@@ -22,9 +23,11 @@ export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscrib
     const visibility=url.pathname.match(/^\/api\/v1\/geo\/projects\/([1-9]\d*)\/search-visibility(?:\/(config|run)|\/runs\/([1-9]\d*)(\/csv)?)?$/);
     const visibilityAllowed=visibility&&Number(visibility[1])===s.projectId&&(
       method==='GET'&&visibility[2]!=='run'||method==='PUT'&&visibility[2]==='config'||method==='POST'&&visibility[2]==='run');
-    const allowed=preflight?method==='GET'&&readRoutes.has(url.pathname):identity&&(visibilityAllowed||(list&&['GET','POST'].includes(method))||(aiRead&&method==='GET')||((act||ai)&&method==='POST'));
+    const clientRoute=geoClientRoute(url.pathname);
+    const clientAllowed=clientRoute&&method==='GET'&&geoClientQuery(url,clientRoute,s);
+    const allowed=preflight?method==='GET'&&readRoutes.has(url.pathname):identity&&(clientAllowed||visibilityAllowed||(list&&['GET','POST'].includes(method))||(aiRead&&method==='GET')||((act||ai)&&method==='POST'));
     if(!allowed)fail('ROUTE_DENIED');
-    const keys=visibility?['tenant_id']:preflight?(url.pathname.endsWith('/projects')?['tenant_id']:[]):method==='GET'?['tenant_id','project_id',...(list?['before_id']:[])]:[];
+    const keys=clientRoute?clientRoute.keys:visibility?['tenant_id']:preflight?(url.pathname.endsWith('/projects')?['tenant_id']:[]):method==='GET'?['tenant_id','project_id',...(list?['before_id']:[])]:[];
     for(const name of url.searchParams.keys())if(!keys.includes(name)||url.searchParams.getAll(name).length!==1)fail('QUERY_DENIED');
     if(keys.includes('tenant_id')&&url.searchParams.get('tenant_id')!==String(s.tenantId))fail('SCOPE_MISMATCH');
     if(keys.includes('project_id')&&url.searchParams.get('project_id')!==String(s.projectId))fail('SCOPE_MISMATCH');
