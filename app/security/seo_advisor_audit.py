@@ -11,6 +11,10 @@ if not logger.handlers:
 
 def record(request, ctx, result, *, evidence=None):
     path, object_ids = request.url.path, dict(request.path_params)
+    if '/distribution/v2/' in path:
+        from app.distribution_inbox_protocol import audit_endpoint
+        path = audit_endpoint(request.method, path)
+        object_ids, evidence = {}, None
     if path.startswith('/api/v1/seo/distribution/v1/'):
         path = getattr(request.scope.get('route'), 'path', '/api/v1/seo/distribution/v1')
         object_ids = {}  # Registry UUIDs already have safe business-ledger audit.

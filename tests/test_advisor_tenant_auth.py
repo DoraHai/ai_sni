@@ -269,7 +269,7 @@ def test_http_identity_empty_idor_duplicates_module_and_writes(local_db):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize('revision', ['0108_advisor_account_links', '0109_advisor_tenant_grants'])
+@pytest.mark.parametrize('revision', ['0108_advisor_account_links', '0109_advisor_tenant_grants', '0110_distribution_inbox'])
 def test_old_and_new_revision_keep_all_existing_health_structure_checks(revision):
     from app import seo_main
     from test_seo_deploy_isolation import _HealthEngine
@@ -289,7 +289,8 @@ def test_old_and_new_revision_keep_all_existing_health_structure_checks(revision
         assert all(m.await_count == 1 for m in mocks)
 
 
-def test_0109_health_rejects_missing_grant_shape():
+@pytest.mark.parametrize('revision', ['0109_advisor_tenant_grants', '0110_distribution_inbox'])
+def test_0109_health_rejects_missing_grant_shape(revision):
     from app import seo_main
     from test_seo_deploy_isolation import _HealthEngine, _HealthConnection
     original = _HealthConnection.execute
@@ -297,7 +298,7 @@ def test_0109_health_rejects_missing_grant_shape():
         if 'advisor_tenant_grants' in str(statement) and 'pg_attribute' in str(statement):
             return []
         return await original(self, statement, parameters)
-    with (patch.object(seo_main,'engine',_HealthEngine(['0109_advisor_tenant_grants'])),
+    with (patch.object(seo_main,'engine',_HealthEngine([revision])),
           patch.object(_HealthConnection,'execute',missing_columns),
           patch.object(seo_main,'_check_content_message_structure',AsyncMock())):
         response=Response()

@@ -95,11 +95,29 @@ async def enforce_advisor_request(request, ctx, session):
     route = (request.method, request.url.path)
     if route in SESSION_ROUTES:
         return
+    from app.distribution_inbox_protocol import match_inbox_identity_route, valid_inbox_identity_request
+    if match_inbox_identity_route(*route):
+        if ctx.scope_kind != 'advisor_identity' or not valid_inbox_identity_request(request):
+            reject(403, 'INBOX_FORBIDDEN')
+        # Exact identity paths only. Their handlers must additionally depend on
+        # require_inbox_identity; no tenant/module grant is inferred here.
+        return
     if ctx.scope_kind != "advisor_tenant":
         if not ctx.advisor_tenant_ids:
             reject(403, "ADVISOR_NO_TENANT")
         reject(409, "ADVISOR_TENANT_SELECTION_REQUIRED")
     ctx.ensure_tenant(ctx.tenant_id)
+    from app.distribution_inbox_protocol import match_inbox_business_route
+    if match_inbox_business_route(request.method, request.url.path, 'seo'):
+        # These exact routes have their own receipt/owner -> grant -> scope
+        # transaction guard, including scope-less records. Do not interpret a
+        # receipt UUID as a native article grant or require a fabricated site.
+        from app.config import get_settings
+        from app.security.auth import enforce_scoped_request
+        if request.method == 'POST' and not get_settings().advisor_scoped_content_writes_enabled:
+            reject(403, 'ADVISOR_HIGH_RISK_WRITES_DISABLED')
+        await enforce_scoped_request(request, ctx)
+        return
     rule = None
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
         from app.config import get_settings

@@ -79,6 +79,20 @@ export const session = {
   get modules() { return state.modules },
   get tenantListRevision() { return state.tenantListRevision },
   get authRevision() { return state.authRevision },
+  get inboxIdentity() {
+    const claims = advisorClaims(state.token)
+    if (!state.token || !state.user?.id) return null
+    if (!claims || claims.scope_kind === 'advisor_identity') {
+      return { token: state.token, revision: state.authRevision, scopeKind: claims?.scope_kind, userId: state.user.id }
+    }
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(advisorIdentityKey) || 'null')
+      const identity = advisorClaims(saved?.token)
+      if (identity?.scope_kind !== 'advisor_identity' || String(identity.sub) !== String(state.user.id)
+          || !(identity.exp * 1000 > Date.now())) return null
+      return { token: saved.token, revision: state.authRevision, scopeKind: 'advisor_identity', userId: state.user.id }
+    } catch { return null }
+  },
   get isAdvisorSession() { return isAdvisor(state.token, state.user) },
   get advisorScope() { return advisorClaims(state.token)?.scope_kind ?? null },
 
