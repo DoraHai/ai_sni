@@ -108,6 +108,12 @@ test(
                 ready: scenario === 'ready-zero',
               }),
             );
+            // Exercise the browser's independent guard against a malformed available link.
+            if (resource === 'answers/5') {
+              data.data.citations[0].url += '&utm_source=fixture';
+              data.data.citations.push({url: 'https://example.com/a?token=SYNTHETIC_URL_CREDENTIAL',
+                domain: 'example.com', url_state: 'available', is_own_domain: true});
+            }
             if (scenario === 'empty') {
               if (data.scope) {
                 data.scope.binding_state = 'unbound';
@@ -282,6 +288,12 @@ test(
               document.querySelector('.geo-prose')?.textContent.includes('合成回答完整原文'),
             );
             assert.equal(await p.$('.geo-workspace script'), null);
+            const citationLinks = await p.$$eval('.geo-workspace a', (nodes) => nodes.map((node) => node.href));
+            assert.deepEqual(citationLinks, ['https://example.com/evidence?id=123']);
+            assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /docs.example.com（链接未开放）/);
+            assert(!(await p.$eval('.geo-workspace', (e) => e.innerHTML)).includes('SYNTHETIC_URL_CREDENTIAL'));
+            assert(!(await p.$eval('.geo-workspace', (e) => e.innerHTML)).includes('utm_source'));
+
             assert.equal(await p.evaluate(() => globalThis.bad), undefined);
             await p.setViewport({width: 390, height: 844});
             assert.equal(

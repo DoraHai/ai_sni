@@ -112,26 +112,31 @@ export function geoTime(value) {
     }).format(new Date(value)) + '（上海时间）'
   );
 }
+const sensitiveQuery = /(?:^|[^a-z0-9])(?:token|access_token|accesstoken|key|apikey|api_key|secret|password|passwd|pwd|sig|signature|auth|authorization|session|sessionid|session_id|code|credential|credentials|jwt)(?:$|[^a-z0-9])/i;
+const trackingQuery = new Set(['gclid', 'dclid', 'fbclid', 'msclkid', 'spm', 'yclid', '_ga', '_gl']);
+const publicDomain = (value) => {
+  if (typeof value !== 'string') return '';
+  const h = value.toLowerCase().replace(/\.+$/, '');
+  if (h.length > 253 || !h.includes('.') || /^(?:[0-9]+|0x[0-9a-f]+)$/.test(h.split('.').at(-1)) ||
+      /(?:^|\.)(?:localhost|local|internal|test|invalid|lan|home|localdomain|intranet|corp|private|onion)$/.test(h)) return '';
+  return h.split('.').every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) ? h : '';
+};
+const domainOnly = (value, title) => esc(publicDomain(value) || title) + '（链接未开放）';
 export function geoSafeLink(value, title = '查看公开链接') {
   try {
+    if (typeof value !== 'string' || !/^https?:\/\//i.test(value) || /[\x00-\x20\x7f\\]/.test(value)) return domainOnly('', title);
     const u = new URL(value);
-    const h = u.hostname.toLowerCase().replace(/\.$/, '');
-    if (
-      !['http:', 'https:'].includes(u.protocol) ||
-      u.username ||
-      u.password ||
-      u.search ||
-      !h.includes('.') ||
-      /^[\d.]+$/.test(h) ||
-      h.includes(':') ||
-      /(?:^|\.)(?:localhost|local|internal|test|invalid|lan|home|localdomain)$/.test(h) ||
-      (u.port && !['80', '443'].includes(u.port))
-    )
-      return esc(title) + '（链接未开放）';
+    const h = publicDomain(u.hostname);
+    if (!['http:', 'https:'].includes(u.protocol)) return domainOnly('', title);
+    if (u.username || u.password || value.match(/^https?:\/\/([^/?#]*)/i)[1].includes('@') || !h || (u.port && !['80', '443'].includes(u.port)) ||
+        [...u.searchParams.keys()].some((key) => sensitiveQuery.test(key))) return domainOnly(h, title);
+    for (const key of [...u.searchParams.keys()])
+      if (key.toLowerCase().startsWith('utm_') || trackingQuery.has(key.toLowerCase())) u.searchParams.delete(key);
+    u.hostname = h;
     u.hash = '';
     return `<a href="${esc(u.href)}" target="_blank" rel="noopener noreferrer">${esc(title)}</a>`;
   } catch {
-    return esc(title) + '（链接未开放）';
+    return domainOnly('', title);
   }
 }
 const button = (text, resource, params = {}) =>
@@ -236,7 +241,7 @@ function delivery(r) {
     variant = button('渠道稿', 'content/' + r.task_id + '/variants/' + r.variant_id);
   if (r.record_type === 'receipt')
     return `<h3>原生投递回执 · ${esc(r.title)}</h3><p>渠道：${channel(r.channel)}</p><p>${esc(label(r.state))}；${esc(geoTime(r.updated_at))}</p><p>${r.reason_code ? esc(geoReason(r.reason_code)) : ''} 回执不等于原生发布登记或页面核验。</p>${task}${variant}`;
-  return `<h3>原生发布登记 · ${esc(r.title)}</h3><p>渠道：${channel(r.channel)}</p><p>${esc(label(r.stored_status))}；${esc(geoTime(r.published_at))}；${r.is_current_master ? '当前母稿' : '历史母稿'}</p><p>${r.url_state === 'available' ? geoSafeLink(r.published_url) : '发布链接不可用'}</p><p>存量页面核验：${r.verification?.evidence_valid === true ? '已有保存的匹配证据' : '尚无有效匹配证据'}；${esc(r.verification?.state === 'pending' ? '待页面核验' : label(r.verification?.state))}；保存核验时间 ${esc(geoTime(r.verification?.checked_at))}；${esc(reasonText(r.verification?.reason_codes))}。不代表正式客户验收。</p>${task}${variant}${button('关联母稿', 'content/' + r.task_id + '/articles/' + r.article_id)}`;
+  return `<h3>原生发布登记 · ${esc(r.title)}</h3><p>渠道：${channel(r.channel)}</p><p>${esc(label(r.stored_status))}；${esc(geoTime(r.published_at))}；${r.is_current_master ? '当前母稿' : '历史母稿'}</p><p>${r.url_state === 'available' ? geoSafeLink(r.published_url) : domainOnly(r.domain, '发布链接')}</p><p>存量页面核验：${r.verification?.evidence_valid === true ? '已有保存的匹配证据' : '尚无有效匹配证据'}；${esc(r.verification?.state === 'pending' ? '待页面核验' : label(r.verification?.state))}；保存核验时间 ${esc(geoTime(r.verification?.checked_at))}；${esc(reasonText(r.verification?.reason_codes))}。不代表正式客户验收。</p>${task}${variant}${button('关联母稿', 'content/' + r.task_id + '/articles/' + r.article_id)}`;
 }
 export function geoResource(resource, value) {
   const d = value.data;
@@ -258,7 +263,7 @@ export function geoResource(resource, value) {
     return `<h2>${esc(q.question)}</h2><p>${geoObservation(q.observation)}。这是观测次数，未提供正式问题级百分比。</p>${(d.by_engine || []).map((e) => `<p>${esc(e.engine_key)}：${geoObservation(e.observation)} ${button('回答证据', 'answers', {question_id: q.id, engine_key: e.engine_key})}</p>`).join('')}<p>本周已存回答 ${count(d.evidence?.answer_count)}；不合格回答 ${count(d.evidence?.excluded_answer_count)}；未知时间 ${count(d.evidence?.unknown_time_count)}（当前项目历史中的本问题）。</p>${button('查看全部回答', 'answers', {question_id: q.id})}${button('相关内容', 'content', {question_id: q.id})}${geoBasis(value)}`;
   }
   if (/^answers\//.test(resource))
-    return `<h2>单条回答证据</h2>${answerRow(d.item)}<p>历史模型信息${d.comparison_metadata?.complete ? '齐备' : '不完整'}；${esc(reasonText(d.comparison_metadata?.reason_codes))}。</p><pre class="geo-prose">${esc(d.raw_text)}</pre><h3>保存引用</h3><ul>${(d.citations || []).map((c) => `<li>${c.url_state === 'available' ? geoSafeLink(c.url) : '引用链接未开放'}；${c.is_own_domain ? '项目自有域' : '非项目自有域'}</li>`).join('')}</ul>${geoBasis(value)}`;
+    return `<h2>单条回答证据</h2>${answerRow(d.item)}<p>历史模型信息${d.comparison_metadata?.complete ? '齐备' : '不完整'}；${esc(reasonText(d.comparison_metadata?.reason_codes))}。</p><pre class="geo-prose">${esc(d.raw_text)}</pre><h3>保存引用</h3><ul>${(d.citations || []).map((c) => `<li>${c.url_state === 'available' ? geoSafeLink(c.url) : domainOnly(c.domain, '引用链接')}；${c.is_own_domain ? '项目自有域' : '非项目自有域'}</li>`).join('')}</ul>${geoBasis(value)}`;
   if (/^content\/\d+\/variants\/\d+$/.test(resource))
     return `<h2>渠道稿 · ${esc(d.variant.title)}</h2><p>渠道：${channel(d.variant.channel)}</p><p>母稿版本 ${count(d.variant.article_version_no)}；${d.variant.is_current_master ? '基于当前母稿' : '基于历史母稿'}；${esc(label(d.variant.stored_status))}</p><pre class="geo-prose">${esc(d.body_markdown)}</pre>${button('关联母稿', `content/${d.variant.task_id}/articles/${d.variant.article_id}`)}${button('交付记录', 'deliveries', {task_id: d.variant.task_id})}${geoBasis(value)}`;
   if (/^content\/\d+\/articles\//.test(resource))

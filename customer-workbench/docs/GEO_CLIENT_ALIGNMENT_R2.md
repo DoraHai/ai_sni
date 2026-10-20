@@ -1,6 +1,6 @@
 # FE–BE 字段对照 r2
 
-日期：2026-10-20；窗口：phaseFE2。后端只读基准为 Draft PR #782 的 `e83206965178e1869cc35fbaabb6d2973def465d`，通过 `gh pr view` 与 `phaseBE/wt` HEAD 双重确认。前端为 Draft PR #781 原 head `95df41e8` 加本轮修订。未合并分支，未修改后端。
+日期：2026-10-20；窗口：phaseFE2 / phaseLINK。原 r2 基准 e8320696；phaseLINK 后端只读基准更新为 Draft PR #782 的 `66be297c2134e8eda39bebd0ec2455d718f8e7dc`，通过 `gh pr view` 与 `phaseBE/wt` HEAD 双重确认。前端在 Draft PR #781 的 bb3a7e5a 后追加本轮链接修复。两分支分别提交，未合并分支；契约变更详见 [CONTRACT-ISSUES.md](CONTRACT-ISSUES.md)。
 
 核对来源：后端 `app/geo/project_client_protocol.py`（路由、参数、游标）、`project_read_routes.py`（A–L）、`project_client_view.py`（全部白名单投影）、`project_client_store.py`（读取预算），以及 `read_model.period_context`；前端 `geo-client-routes.mjs`、`geo-project-client.mjs`（校验）、`geo-project-panel.mjs`（请求/分页）和 `geo-project-view.mjs`（渲染）。下表记录实际实现，不把前端的结构检查描述成全字段 JSON Schema 校验。
 
@@ -46,7 +46,7 @@
 | C `P/questions` | W+Q；status=all/active/inactive/archived（默认all）；is_brand_probe?=true/false；attention=all/needs_attention（默认all）；q? | items=Question[]，pagination；filters={status:S,is_brand_probe:B?,attention:S,q:S?} | 校验标准页；显示问题/状态/品牌题/Observation/关注原因；ID→D，后端筛选参数原样转交 | 一致；q Unicode 上限已修复 |
 | D `P/questions/{question_id}` | W | question=Question；by_engine=Engine[]（无 qualified_question_count）；evidence={answer_count,excluded_answer_count,unknown_time_count:N,unknown_time_scope:current_project_history}；answers_path/content_path:S | 核验 question.id 等于路径 ID、by_engine 数组；展示 X/Y、各引擎、本周去重回答数和当前问题历史未知时间数；重构 E/G 请求，G 不带 week_end | 一致；无周回答仍为200/0次 |
 | E `P/answers` | W+Q；question_id?:ID；engine_key?:1..64 `[A-Za-z0-9_.-]`；source_kind?=real/manual/simulated/unknown；eligibility=all/qualified/excluded（默认all） | items=Answer[]，pagination；filters={question_id:ID?,engine_key:S?,source_kind:S?,eligibility:S} | 标准页；显示来源/历史提问和模型/单条资格/周成员/采纳情况/节选；回答ID→F，不用 rows.length 计算指标 | 一致；周内 captured_at DESC（微秒）、id DESC 由服务端完成 |
-| F `P/answers/{answer_id}` | W | item=Answer；raw_text:S；citations=[{url:S?,url_state:available/suppressed/invalid,is_own_domain:B}]；comparison_metadata={complete:B,reason_codes:S[],model_identity_basis:recorded_request_model_alias或null,exact_model_revision_known:false} | 核验 item.id、完整 raw_text 字符串、citations 数组；纯文本全文、三态提及、来源和资格、模型缺失原因、自有域标签；被抑制 URL 不点击 | 一致；周外/无时间 detail 正常200，状态及采纳不冒充周内 |
+| F `P/answers/{answer_id}` | W | item=Answer；raw_text:S；citations=[{url:S?,domain:S?,url_state:available/suppressed/invalid,is_own_domain:B}]；comparison_metadata={complete:B,reason_codes:S[],model_identity_basis:recorded_request_model_alias或null,exact_model_revision_known:false} | 核验 item.id、完整 raw_text 字符串、citations 数组；纯文本全文、三态提及、来源和资格、模型缺失原因、自有域标签；被抑制 URL 不点击 | 一致；周外/无时间 detail 正常200，状态及采纳不冒充周内 |
 | G `P/content` | Q；question_id?:ID；review_status?=none/pending/approved/rejected/unknown；include_archived=true/false（默认false）；q? | items=Content[]，pagination；filters={question_id:ID?,review_status:S?,include_archived:B,q:S?} | 标准页；状态、Review、latest_master、渠道稿/发布计数和H入口。后端按question过滤，不对已加载页假筛选 | 一致；补齐 facts_bound/needs_fix/adapting 标签；q Unicode 同步 |
 | H `P/content/{task_id}` | 无 | task=Content；master=Article?；variants_path/deliveries_path:S；receipt_summary={succeeded,failed,unknown,sending,other:N} | 核验 task.id；master=null 或 task_id 同父task；展示确认覆盖/全文/回执分类；重构I/L，确认不等于发布 | 一致 |
 | I `P/content/{task_id}/variants` | Q | items=Variant[]；pagination | 标准页；展示渠道、母稿版本、是否当前母稿、状态；ID→J；不重排 ID DESC | 一致；实际两份渠道稿limit=1验证分页 |
@@ -71,12 +71,14 @@
 | Publication | record_type=publication；id/task_id/variant_id/article_id:ID；article_version_no:N；is_current_master:B；title/channel:S；publish_mode=manual_export/api/browser/unknown；stored_status=pending/published/failed/unknown；published_url:S?；url_state=available/suppressed/invalid/missing；published_at/updated_at:T?；verification={state:pending/healthy/unverified/unhealthy/unknown,checked_at:T?,evidence_valid:B,reason_codes:S[]}；task_path/variant_path/article_path:S | 只有available的公开URL才再经前端链接策略；展示核验证据/时间/原因，pending明确“待页面核验”；不把publish_mode、published或健康状态单项升级为验收 |
 | Receipt | record_type=receipt；receipt_id:S（不透明摘要）；task_id/variant_id:ID；article_id:ID?；article_version_no:N?；is_current_master:B；title/channel:S；state=sending/succeeded/failed/unknown；updated_at:T?；reason_code:S?；display_text:S；task_path/variant_path:S | 仅展示安全状态/原因和task/variant入口；不沿空或未知article读取；成功回执不等于发布；不解析receipt_id |
 
-URL 规则双方一致：仅公开 http(s)、无userinfo/query/IP/内部域、端口限80/443、剔除fragment；后端带query引用返回url=null/url_state=suppressed，但仍按原host标记is_own_domain，前端直接采用该标记。`geoSafeLink` 对少量主机名继续更保守（例如localdomain），不放宽后端。正文按纯文本转义，不执行HTML或自动取图。
+URL 规则双方一致：仅公开 http(s)、无 userinfo/IP/内部域、端口限 80/443、剔除 fragment。保留普通 query、重复键和空值；移除大小写不敏感的 utm_*、gclid、dclid、fbclid、msclkid、spm、yclid、_ga、_gl。先检查全部 URL 解码后的参数名，凭据名 token/access_token/accessToken/key/apikey/api_key/secret/password/passwd/pwd/sig/signature/auth/authorization/session/sessionid/session_id/code/credential/credentials/jwt 及非字母数字边界的复合名命中即整条抑制；不删除凭据键后继续开放。F 引用与 L publication 新增 domain:S?，只含安全公开域名；抑制时 url/published_url=null，前端只显示不可点击域名，无原始 URL 备用字段。内网/IP/非法协议 domain=null。is_own_domain 继续按原 host 分类。两端内网域后缀已统一，含 localdomain/intranet/corp/private/onion；不访问 DNS/网页。正文按纯文本转义，不执行 HTML 或自动取图。
 
 ## 证据与处理记录
 
-1. 后端实际响应快照：前端仓库 `customer-workbench/tests/geo-be-response-snapshot.json`，45例，包含全部12路由、五类limit=1分页与末页、筛选空页、完整周不足/合格真0、单回答null时间、400/404/503。通过后端现有 `tests/test_geo_project_client.py` 的内存 SQLite/TestClient 导出；依赖使用合成 Settings.model_construct，禁外部socket/asyncpg连接，未启动应用/调度器，未读取dotenv。导出脚本只放TEMP，后端工作区保持原状。
+1. 后端实际响应快照：前端仓库 `customer-workbench/tests/geo-be-response-snapshot.json`，49例，包含全部12路由、五类limit=1分页与末页、筛选空页、完整周不足/合格真0、单回答null时间、400/404/503。通过后端现有 `tests/test_geo_project_client.py` 的内存 SQLite/TestClient 导出；依赖使用合成 Settings.model_construct，禁外部socket/asyncpg连接，未启动应用/调度器，未读取dotenv。导出脚本只放TEMP，本轮新增 4 例 query 引用/发布投影，原 45 例保留；evaluated_at 固定为合成时间以减少无关 diff。
 2. `geo-project-client.test.mjs` 逐例把实际后端响应送入客户端校验和视图渲染；全部成功响应被接受，失败映射安全错误。另测100/101个非BMP字符搜索、损坏JSON/非对象参数、恶意executions_path、503隔离、状态文案和晚到/换周分页。
 3. 新浏览器场景：A–L全部503但executions正常，首页和详情可见错误、重读按钮、进度/计划仍可读；原站内、官网知识建设、搜索面板保留；手机无横向溢出。损坏data-params有role=alert且不发请求。
 4. 发现并修复的前端差异：q字符计数、三种合法内容状态标签、verification.pending文案；手写fixture补message、filters及G–L可空basis时间字段。分页合并口径用注释明确。格式化为独立提交47dae092，7文件的esbuild压缩输出逐字相同。
-5. 本轮未发现需要修改后端或契约的阻断字段差异；未改后端、CONTRACT或新增契约问题。周选择继续依赖服务端语义校验，UI可见提示已有；完整Tab键盘ARIA增强属于后续，不在本轮承诺。没有真实账号/生产接口联调、隔离PostgreSQL或部署验收；这些证据不得由合成快照替代。
+5. 原 r2 未修改后端或契约；本次 phaseLINK 已获授权替换 query 策略，修改后端安全 URL 投影并新增域名字段，已同步 CONTRACT 与契约变更记录。周选择继续依赖服务端语义校验，UI可见提示已有；完整Tab键盘ARIA增强属于后续，不在本轮承诺。没有真实账号/生产接口联调、隔离PostgreSQL或部署验收；这些证据不得由合成快照替代。
+
+6. phaseLINK 新增同键大小写/编码/空值/重复参数、跟踪移除、敏感整链抑制、域名展示、IP/内网/凭据/协议及 XSS 测试；构建后的浏览器验证 ?id=123 可点击、utm 移除、故意标 available 的 token 链接仍被前端屏蔽，原站内/搜索可见度与 SEO 入口回归通过。

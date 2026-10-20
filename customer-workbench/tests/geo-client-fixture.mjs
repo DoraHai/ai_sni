@@ -146,7 +146,8 @@ export const publication = {
   channel: 'website',
   publish_mode: 'manual_export',
   stored_status: 'published',
-  published_url: 'https://example.com/article',
+  published_url: 'https://example.com/article?id=123',
+  domain: 'example.com',
   url_state: 'available',
   published_at: '2026-10-16T00:00:00Z',
   updated_at: '2026-10-16T00:00:00Z',
@@ -322,7 +323,8 @@ export function geoFixture(resource, {more = false, ready = false} = {}) {
       raw_text:
         '合成回答完整原文\n<script>window.bad=true</script>\n![图片](https://outside.invalid/pixel)',
       citations: [
-        {url: 'https://example.com/evidence', url_state: 'available', is_own_domain: true},
+        {url: 'https://example.com/evidence?id=123', domain: 'example.com', url_state: 'available', is_own_domain: true},
+        {url: null, domain: 'docs.example.com', url_state: 'suppressed', is_own_domain: true},
       ],
       comparison_metadata: {
         complete: true,

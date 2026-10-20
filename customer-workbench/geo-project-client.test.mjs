@@ -225,7 +225,7 @@ test('null metrics, qualified true zero, observation fractions, confirmations an
   assert.match(home, /月度计划/);
   assert.match(home, /上海时区已结束完整周/);
 });
-test('content and citation links reject scripts, signed/query URLs, local hosts and embedded credentials', () => {
+test('content and citation links reject scripts, credential URLs, local hosts and embedded credentials', () => {
   for (const url of [
     'javascript:alert(1)',
     'data:text/html,test',
@@ -405,12 +405,13 @@ test('week change resets selections, history and cursors and rejects an old page
   panel.dispose();
 });
 
-test('actual BE e8320696 synthetic A–L HTTP snapshots pass validation and render safely', async () => {
+test('actual BE 66be297c synthetic A–L HTTP snapshots pass validation and render safely', async () => {
   const {readFileSync} = await import('node:fs');
   const snapshot = JSON.parse(
     readFileSync(new URL('./tests/geo-be-response-snapshot.json', import.meta.url), 'utf8'),
   );
-  assert.equal(snapshot.backend_head, 'e83206965178e1869cc35fbaabb6d2973def465d');
+  assert.equal(snapshot.backend_head, '66be297c2134e8eda39bebd0ec2455d718f8e7dc');
+  assert.equal(snapshot.cases.length, 49);
   const seen = new Set();
   for (const item of snapshot.cases) {
     const client = createGeoProjectClient({
@@ -432,6 +433,25 @@ test('actual BE e8320696 synthetic A–L HTTP snapshots pass validation and rend
         : geoResource(item.resource, value);
     assert.equal(typeof html, 'string');
     assert(!html.includes('undefined'), item.resource);
+    if (item.scenario) {
+      assert(!html.includes('SYNTHETIC_URL_CREDENTIAL'));
+      assert(!html.includes('utm_source'));
+      if (item.scenario === 'public_and_suppressed_query_citations') {
+        assert.equal(value.data.citations[0].url, 'https://p1.example.com/a?id=123');
+        assert.equal(value.data.citations[2].url, null);
+        assert.equal(value.data.citations[2].domain, 'p1.example.com');
+        assert.match(html, /p1.example.com（链接未开放）/);
+        assert.match(html, /href="https:\/\/p1.example.com\/a\?id=123"/);
+      } else if (item.scenario === 'credential_query_publication') {
+        assert.equal(value.data.counts.published_records, 0);
+        assert.equal(value.data.items[0].published_url, null);
+        assert.match(html, /p1.example.com（链接未开放）/);
+        assert(!html.includes('href='));
+      } else {
+        assert.equal(value.data.counts.published_records, 1);
+        assert.match(html, /href="https:\/\/p1.example.com\/post\?id=123"/);
+      }
+    }
     if (value.data.pagination)
       assert.equal(value.data.pagination.returned_count, value.data.items.length);
     if (value.basis.period === null) assert.equal(value.basis.unknown_time_count, null);
@@ -574,4 +594,53 @@ test('search length counts Unicode characters like the BE query validator', asyn
     assert.equal(calls.length, before);
   }
   host.dispose();
+});
+
+
+test('public citation links preserve ordinary query and strip tracking parameters', () => {
+  for (const [url, expected] of [
+    ['https://example.com/a?utm_source=fixture&utm_medium=test#part', 'https://example.com/a'],
+    ['https://example.com/a?id=123&utm_source=fixture&gclid=tracking', 'https://example.com/a?id=123'],
+    ['https://example.com/a?id=123', 'https://example.com/a?id=123'],
+    ['http://example.com/a?id=1&id=2&empty=', 'http://example.com/a?id=1&amp;id=2&amp;empty='],
+    ['https://example.com/a?UTM_Source=x&FBCLID=y&MSCLKID=z&spm=a&dclid=b&yclid=c&_ga=d&_gl=e', 'https://example.com/a'],
+    ['https://example.com/a?%75tm_source=x&id=123', 'https://example.com/a?id=123'],
+    ['https://example.com/a?monkey=1&keyboard=2&zipcode=3', 'https://example.com/a?monkey=1&amp;keyboard=2&amp;zipcode=3'],
+  ]) {
+    assert(geoSafeLink(url).includes(`href="${expected}"`), url);
+    assert.match(geoSafeLink(url), /rel="noopener noreferrer"/);
+  }
+  assert(!geoSafeLink('https://example.com/a?id=123&label=%22%3E%3Cimg%20src=x%20onerror=fixture%3E', '<img src=x onerror=fixture>').includes('<img'));
+});
+
+test('credential query links show only domain, including encoded, mixed case and empty keys', () => {
+  for (const key of ['token', 'access_token', 'key', 'apikey', 'secret', 'password', 'sig', 'signature',
+    'auth', 'session', 'code', 'ToKeN', '%74oken', 'api_key', 'X-Amz-Signature', 'client_secret',
+    'refresh_token', 'session[id]', 'utm_token', 'authorization', 'accessToken']) {
+    assert.equal(geoSafeLink(`https://example.com/a?id=123&utm_source=fixture&${key}=SYNTHETIC_URL_CREDENTIAL`), 'example.com（链接未开放）');
+    assert.equal(geoSafeLink(`https://example.com/a?${key}`), 'example.com（链接未开放）');
+  }
+  assert.equal(geoSafeLink('https://synthetic:fixture@example.com/a'), 'example.com（链接未开放）');
+  for (const url of ['https://@example.com/a', 'http://[::1]/', 'http://0x7f000001/', 'http://0177.0.0.1/',
+    'http://0x7f.0.0.1/', 'http://host.localdomain/', 'http://host.corp/', 'http://host.lan/', 'http://host.home/',
+    'http://host.test/', 'http://host.invalid/', 'https://example.com:8443/a', 'https:example.com/a',
+    'https://example.com\\@localhost/', 'https://example.com/\nfixture']) assert(!geoSafeLink(url).includes('href='), url);
+});
+
+test('suppressed citation and publication render validated domain without URL or HTML fallback', () => {
+  const answer = structuredClone(geoFixture('answers/5'));
+  answer.data.citations = [{url: null, domain: 'example.com', url_state: 'suppressed', is_own_domain: false}];
+  let html = geoResource('answers/5', answer);
+  assert.match(html, /example.com（链接未开放）/);
+  assert(!html.includes('href='));
+  answer.data.citations[0].domain = '<img src=x onerror=fixture>';
+  html = geoResource('answers/5', answer);
+  assert(!html.includes('<img'));
+  assert(!html.includes('onerror'));
+  const deliveries = structuredClone(geoFixture('deliveries'));
+  const publication = deliveries.data.items.find((item) => item.record_type === 'publication');
+  publication.url_state = 'suppressed';
+  publication.published_url = null;
+  publication.domain = 'example.com';
+  assert.match(geoResource('deliveries', deliveries), /example.com（链接未开放）/);
 });
