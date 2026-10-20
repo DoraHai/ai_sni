@@ -125,10 +125,12 @@ const domainOnly = (value, title) => esc(publicDomain(value) || title) + '（链
 export function geoSafeLink(value, title = '查看公开链接') {
   try {
     if (typeof value !== 'string' || !/^https?:\/\//i.test(value) || /[\x00-\x20\x7f\\]/.test(value)) return domainOnly('', title);
+    const authority = value.match(/^https?:\/\/([^/?#]+)/i)?.[1];
+    if (!authority || authority.includes('%')) return domainOnly('', title);
     const u = new URL(value);
     const h = publicDomain(u.hostname);
     if (!['http:', 'https:'].includes(u.protocol)) return domainOnly('', title);
-    if (u.username || u.password || value.match(/^https?:\/\/([^/?#]*)/i)[1].includes('@') || !h || (u.port && !['80', '443'].includes(u.port)) ||
+    if (u.username || u.password || authority.includes('@') || !h || (u.port && !['80', '443'].includes(u.port)) ||
         [...u.searchParams.keys()].some((key) => sensitiveQuery.test(key))) return domainOnly(h, title);
     for (const key of [...u.searchParams.keys()])
       if (key.toLowerCase().startsWith('utm_') || trackingQuery.has(key.toLowerCase())) u.searchParams.delete(key);

@@ -623,7 +623,7 @@ test('credential query links show only domain, including encoded, mixed case and
   assert.equal(geoSafeLink('https://synthetic:fixture@example.com/a'), 'example.com（链接未开放）');
   for (const url of ['https://@example.com/a', 'http://[::1]/', 'http://0x7f000001/', 'http://0177.0.0.1/',
     'http://0x7f.0.0.1/', 'http://host.localdomain/', 'http://host.corp/', 'http://host.lan/', 'http://host.home/',
-    'http://host.test/', 'http://host.invalid/', 'https://example.com:8443/a', 'https:example.com/a',
+    'http://host.test/', 'http://host.invalid/', 'https://example.com:8443/a', 'https:example.com/a', 'https:///example.com/a', 'https://%65xample.com/a',
     'https://example.com\\@localhost/', 'https://example.com/\nfixture']) assert(!geoSafeLink(url).includes('href='), url);
 });
 
