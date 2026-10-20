@@ -20,6 +20,11 @@ test('production entry uses dedicated login and rejects ambiguous or unauthorize
     assert.equal(new URL(page.url()).pathname,'/customer-workbench/');assert(!await page.$('a[href="/workspace/cockpit"]'));
     await page.evaluate(()=>sessionStorage.setItem('sem_auth_v1',JSON.stringify({version:1,token:'fixture-customer',user:{id:12,tenant_id:1,display_name:'客户',permissions:{'seo.content':'view','seo.site':'view'}}})));
     await page.goto(origin+entry);await page.waitForSelector('.summary-grid');assert.match(await page.$eval('#identity',e=>e.textContent),/站点9/);
+    // GEO's added navigation must not replace the SEO workspace or enable SEM.
+    assert.equal(await page.$('.geo-tabs'),null);
+    assert.match(await page.$eval('[data-module="sem"]',e=>e.textContent),/SEM.*未开通/);
+    assert.equal(await page.$eval('[data-module="sem"]',e=>e.disabled),true);
+    for(const name of ['首页','内容','SEO工作','进度','站内优化','数据','服务计划','交付记录'])assert(await page.$(`.navigation [data-page="${name}"]`),name);
     for(const query of ['?tenant_id=1','?tenant_id=1&tenant_id=2&site_id=9','?tenant_id=1&site_id=9&site_id=19','?tenant_id=1&site_id=0']){
       const before=fixture.state.calls.length;await page.goto(origin+'/customer-workbench/'+query);await page.waitForFunction(()=>document.body.textContent.includes('工作空间链接不完整'));
       assert.equal(fixture.state.calls.length,before,'Invalid candidate scope sends no business requests');assert(await page.$('[data-entry=choose]'));
