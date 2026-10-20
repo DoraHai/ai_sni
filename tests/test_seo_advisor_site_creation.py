@@ -244,13 +244,14 @@ def test_site_creation_customer_and_superadmin_still_refresh(superadmin):
     assert len(session.new) == 1 and isinstance(session.new[0], SeoSite)
 
 
-def test_site_creation_duplicate_domain_keeps_409_and_rollback():
+def test_site_creation_duplicate_domain_keeps_409_and_rollback(caplog):
     session = session_for_create()
     session.commit.side_effect = IntegrityError('fixture', {}, Exception('unique constraint'))
     with pytest.raises(HTTPException) as error:
         asyncio.run(create_seo_site(SeoSiteCreate(**BODY), actor(), session))
     assert error.value.status_code == 409
     session.rollback.assert_awaited_once()
+    assert not [r for r in caplog.records if 'SEO_ACTION_AUDIT ' in r.message]
 
 
 def test_site_creation_still_rejects_bad_domains():

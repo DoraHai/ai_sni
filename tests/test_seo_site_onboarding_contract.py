@@ -233,3 +233,79 @@ def test_postgres_canonical_create_conflict_rollback_and_readback_contract():
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.skipif(not os.getenv("SEO_USAGE_TEST_DATABASE_URL"),
+                    reason="requires isolated PostgreSQL")
+def test_postgres_advisor_concurrent_creation_is_atomic_and_private(monkeypatch, caplog):
+    """Real PostgreSQL keys/FKs/transactions, including simultaneous retries."""
+    from app.config import get_settings
+    from app.models.advisor_tenant_grant import AdvisorTenantGrant
+    from app.models.role import Role
+    from app.models.seo import SeoSiteAdvisorAssignment
+    from app.models.user import User
+    from app.security.advisor_tenant_auth import enforce_advisor_request
+    from app.security.seo_advisor_reads import install_query_scope
+    from test_seo_advisor_site_creation import actor, request, BODY
+
+    settings = get_settings().model_copy(update={'advisor_scoped_content_writes_enabled': True})
+    monkeypatch.setattr('app.config.get_settings', lambda: settings)
+
+    async def scenario():
+        schema = 'seo_advisor_onboarding_' + uuid4().hex
+        engine = create_async_engine(os.environ['SEO_USAGE_TEST_DATABASE_URL'],
+            connect_args={'server_settings': {'search_path': schema}})
+        metadata = MetaData()
+        for model in (Tenant, TenantModule, SeoSite, Role, User,
+                      AdvisorTenantGrant, SeoSiteAdvisorAssignment):
+            model.__table__.to_metadata(metadata)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        permissions = {'seo.assets': 'edit', 'seo.site': 'edit', 'seo.content': 'edit'}
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+                await conn.run_sync(metadata.create_all)
+            async with sessions() as session:
+                session.add_all([Tenant(id=4, name='fixture'),
+                    Role(id=1, name='advisor', is_system=False, permissions=permissions)])
+                await session.commit()
+                session.add_all([TenantModule(id=44, tenant_id=4, module_code='seo', status='active'),
+                    User(id=7, username='fixture-advisor', password_hash='unused', role_id=1,
+                         tenant_id=4, is_active=True)])
+                await session.commit()
+                session.add(AdvisorTenantGrant(id=10, user_id=7, tenant_id=4,
+                                               granted_by=7, grant_source='admin'))
+                await session.commit()
+
+            async def attempt(domain):
+                async with sessions() as session:
+                    ctx = actor()
+                    body = BODY | {'domain': domain}
+                    await enforce_advisor_request(request(body), ctx, session)
+                    try:
+                        return await create_seo_site(SeoSiteCreate(**body), ctx, session)
+                    except HTTPException as exc:
+                        assert exc.status_code == 409
+                        return None
+
+            results = await asyncio.gather(attempt('https://www.concurrent.example.test/'),
+                                            attempt('CONCURRENT.EXAMPLE.TEST'))
+            created = [row for row in results if row is not None]
+            assert len(created) == 1
+            async with sessions() as session:
+                assert await session.scalar(select(func.count()).select_from(SeoSite)) == 1
+                assert await session.scalar(select(func.count()).select_from(SeoSiteAdvisorAssignment)) == 1
+                assignment = await session.scalar(select(SeoSiteAdvisorAssignment))
+                assert (assignment.site_id, assignment.advisor_user_id, assignment.assigned_by,
+                        assignment.active) == (created[0]['id'], 7, 7, True)
+                assert created[0]['created_at']
+                for ctx, expected in ((actor(), [created[0]['id']]), (actor(user_id=8), [])):
+                    install_query_scope(session, ctx)
+                    assert [s['id'] for s in (await list_seo_sites(4, ctx, session))['sites']] == expected
+            assert len([r for r in caplog.records if 'SEO_ACTION_AUDIT ' in r.message]) == 1
+        finally:
+            async with engine.begin() as conn:
+                await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            await engine.dispose()
+
+    asyncio.run(scenario())
