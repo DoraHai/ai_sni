@@ -27,6 +27,7 @@ test(
         'not-open',
         'empty',
         'partial-failure',
+        'read-unavailable',
       ]) {
         const p = await browser.newPage(),
           errors = [],
@@ -85,6 +86,16 @@ test(
             const resource = url.pathname.endsWith('/executions')
               ? 'executions'
               : url.pathname.split('/client/')[1];
+            if (scenario === 'read-unavailable' && resource !== 'executions')
+              return send(
+                {
+                  detail: {
+                    code: 'GEO_CLIENT_READ_UNAVAILABLE',
+                    message: 'INTERNAL_MUST_NOT_RENDER',
+                  },
+                },
+                503,
+              );
             if (scenario === 'partial-failure' && ['overview', 'content'].includes(resource))
               return send({detail: 'INTERNAL_MUST_NOT_RENDER'}, 503);
             if (resource === 'questions' && url.searchParams.has('cursor'))
@@ -142,7 +153,8 @@ test(
         await p.waitForFunction(
           () =>
             document.querySelector('[data-geo="tab"][data-tab="data"]') ||
-            document.querySelector('.geo-workspace')?.textContent.includes('暂未开放'),
+            document.querySelector('.geo-workspace')?.textContent.includes('暂未开放') ||
+            document.querySelector('.geo-workspace')?.textContent.includes('读取暂不可用'),
         );
         if (scenario === 'not-open') {
           assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /暂未开放/);
@@ -168,13 +180,49 @@ test(
               await p.$eval('.geo-workspace', (e) => e.textContent),
               /最近已加载 1 项服务任务/,
             );
+            assert.match(
+              await p.$eval('.geo-workspace', (e) => e.textContent),
+              /数据量较大或读取暂不可用/,
+            );
           }
           const home = await p.$eval('.geo-workspace', (e) => e.textContent);
           assert(!home.includes('INTERNAL_MUST_NOT_RENDER'));
           if (scenario === 'ready-zero') assert.match(home, /0%/);
           else assert(!home.includes('0%'));
+          if (scenario === 'read-unavailable') {
+            assert.match(home, /数据量较大或读取暂不可用/);
+            assert.match(await p.$eval('#page', (e) => e.textContent), /GEO 官网与知识建设/);
+            assert(await p.$('.sv-card'));
+            assert(await p.$('[data-action=onsite-refresh]'));
+            await p.click('[data-tab=progress]');
+            assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /项目进度/);
+            await p.click('[data-tab=plan]');
+            assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /服务计划/);
+            await p.click('[data-tab=home]');
+            await p.click('[data-resource=content]');
+            await p.waitForFunction(() =>
+              document.querySelector('.geo-workspace')?.textContent.includes('读取暂不可用'),
+            );
+            assert(await p.$('[data-geo=retry]'));
+            await p.setViewport({width: 390, height: 844});
+            assert.equal(
+              await p.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+              false,
+            );
+            await p.screenshot({
+              path: path.join(shots, 'read-unavailable-mobile.png'),
+              fullPage: true,
+            });
+          }
           if (scenario === 'insufficient') {
             await p.screenshot({path: path.join(shots, 'home-desktop.png'), fullPage: true});
+            const beforeBroken = calls.length;
+            await p.$eval('[data-resource=content]', (element) => {
+              element.dataset.params = '{broken';
+            });
+            await p.click('[data-resource=content]');
+            assert.match(await p.$eval('[role=alert]', (e) => e.textContent), /操作参数无法读取/);
+            assert.equal(calls.length, beforeBroken);
             await p.click('[data-tab=progress]');
             await p.waitForFunction(() =>
               document.querySelector('.geo-workspace')?.textContent.includes('仅最近 20 项'),

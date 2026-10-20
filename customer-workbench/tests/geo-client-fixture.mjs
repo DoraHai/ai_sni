@@ -16,6 +16,7 @@ export function weekly(ready = false) {
     week_end: period.week_end,
     period,
     sample_status: ready ? 'ready' : 'insufficient',
+    message: ready ? null : '检测数据还不够',
     qualified_counts: {samples: ready ? 8 : 1, questions: ready ? 3 : 1, engines: ready ? 2 : 1},
     minimum_counts: {samples: 8, questions: 3, engines: 2},
     reason_codes: ready
@@ -206,8 +207,12 @@ export function envelope(data, resource = 'overview') {
       source_counts: /^(overview|visibility|questions|answers)/.test(resource)
         ? {real: 1, manual: 0, simulated: 0, unknown: 0}
         : null,
-      unknown_time_count: 0,
-      unknown_time_scope: 'current_project_history',
+      unknown_time_count: /^(overview|visibility|questions|answers)/.test(resource) ? 0 : null,
+      unknown_time_scope: /^(overview|visibility|questions|answers)/.test(resource)
+        ? /^answers\//.test(resource)
+          ? 'single_answer'
+          : 'current_project_history'
+        : null,
       exclusion_counts: [],
       note_codes: [],
     },
@@ -350,5 +355,12 @@ export function geoFixture(resource, {more = false, ready = false} = {}) {
       },
     };
   else throw Error('Unknown synthetic resource: ' + resource);
+  const filters = {
+    questions: {status: 'all', is_brand_probe: null, attention: 'all', q: null},
+    answers: {question_id: null, engine_key: null, source_kind: null, eligibility: 'all'},
+    content: {question_id: null, review_status: null, include_archived: false, q: null},
+    deliveries: {task_id: null, record_type: 'all'},
+  };
+  if (filters[resource]) data.filters = filters[resource];
   return envelope(data, resource);
 }

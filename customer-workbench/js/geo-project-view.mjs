@@ -19,6 +19,9 @@ const labels = {
   approved: '已确认，发布状态请查看交付记录',
   rejected: '客户要求修改',
   draft: '草稿',
+  facts_bound: '已关联事实',
+  needs_fix: '待修改',
+  adapting: '渠道适配中',
   exported: '已导出',
   published: '已登记发布',
   failed: '失败',
@@ -142,6 +145,8 @@ export const geoStatus = (slot) =>
         GEO_CURSOR_INVALID: '分页已失效，请重新读取。',
         GEO_INVALID_WEEK: '请选择上海时区已结束完整周的周一。',
         GEO_RESPONSE_INVALID: '数据范围或格式无法核验，请重新读取。',
+        GEO_READ_UNAVAILABLE: '数据量较大或读取暂不可用，请稍后再试。',
+        GEO_ACTION_INVALID: '操作参数无法读取，请重新读取页面后再试。',
       }[slot?.error] || '读取失败，请重新读取。';
 export function geoBasis(value) {
   if (!value?.basis) return '';
@@ -196,7 +201,7 @@ export function geoHome(slots) {
   const monitor = v
     ? `${v.weekly?.period?.start || ''} 至 ${v.weekly?.period?.end || ''}：${v.monitoring.active_nonbrand_question_count === 0 ? '当前项目尚无归属监测问题' : v.monitoring.attention_question_count > 0 ? '本周正式统计窗口内有 ' + count(v.monitoring.attention_question_count) + ' 个问题建议查看观测证据' : '该周无上述规则命中的关注问题'}${v.weekly?.sample_status === 'insufficient' ? '；检测数据还不够' : ''}`
     : '监测关注项' + (slots.overview?.error === 'GEO_NOT_OPEN' ? '暂未开放' : '读取失败');
-  return `<h2>本期要点</h2><ul class="geo-highlights"><li>${esc(pending)} ${button('查看', 'content', {review_status: 'pending'})} ${button('问这项工作', 'content', {review_status: 'pending'})}</li><li>${esc(geoServiceLine(x))} <button data-geo="tab" data-tab="progress">查看</button> <button data-geo="tab" data-tab="plan">问这项工作</button></li><li>${esc(monitor)} ${button('查看', 'questions', {attention: 'needs_attention'})} ${button('问这项工作', 'questions', {attention: 'needs_attention'})}</li></ul><p>“问这项工作”定位到已保存证据与说明。客户确认后仍需安排发布。</p><h2>GEO 优化概览</h2>${v ? `${a.scope.binding_state === 'unbound' ? '<p>当前项目尚未关联业务</p>' : ''}<p>当前内容库存：${count(v.content.active_task_count)} 项任务，${count(v.content.task_count_with_master)} 项已有母稿，${count(v.content.variant_count)} 份渠道稿，${count(v.content.native_published_record_count)} 条原生发布登记。</p>` : `<p>${geoStatus(slots.overview)}</p>`}${geoBasis(a)}${weeklyCard}${button('查看 AI 数据', 'visibility')}<p>站内任务：月度计划，与 AI 正式周指标周期不同。</p>`;
+  return `<h2>本期要点</h2><ul class="geo-highlights"><li>${esc(pending)} ${button('查看', 'content', {review_status: 'pending'})} ${button('问这项工作', 'content', {review_status: 'pending'})}</li><li>${esc(x ? geoServiceLine(x) : geoStatus(slots.executions))} <button data-geo="tab" data-tab="progress">查看</button> <button data-geo="tab" data-tab="plan">问这项工作</button></li><li>${esc(monitor)} ${button('查看', 'questions', {attention: 'needs_attention'})} ${button('问这项工作', 'questions', {attention: 'needs_attention'})}</li></ul><p>“问这项工作”定位到已保存证据与说明。客户确认后仍需安排发布。</p><h2>GEO 优化概览</h2>${v ? `${a.scope.binding_state === 'unbound' ? '<p>当前项目尚未关联业务</p>' : ''}<p>当前内容库存：${count(v.content.active_task_count)} 项任务，${count(v.content.task_count_with_master)} 项已有母稿，${count(v.content.variant_count)} 份渠道稿，${count(v.content.native_published_record_count)} 条原生发布登记。</p>` : `<p>${geoStatus(slots.overview)}</p>`}${geoBasis(a)}${weeklyCard}${slots.visibility?.error ? `<p role="status">AI 指标：${geoStatus(slots.visibility)}</p>` : ''}${button('查看 AI 数据', 'visibility')}<p>站内任务：月度计划，与 AI 正式周指标周期不同。</p>`;
 }
 export function geoExecutions(value, plan = false) {
   if (plan) {
@@ -231,7 +236,7 @@ function delivery(r) {
     variant = button('渠道稿', 'content/' + r.task_id + '/variants/' + r.variant_id);
   if (r.record_type === 'receipt')
     return `<h3>原生投递回执 · ${esc(r.title)}</h3><p>渠道：${channel(r.channel)}</p><p>${esc(label(r.state))}；${esc(geoTime(r.updated_at))}</p><p>${r.reason_code ? esc(geoReason(r.reason_code)) : ''} 回执不等于原生发布登记或页面核验。</p>${task}${variant}`;
-  return `<h3>原生发布登记 · ${esc(r.title)}</h3><p>渠道：${channel(r.channel)}</p><p>${esc(label(r.stored_status))}；${esc(geoTime(r.published_at))}；${r.is_current_master ? '当前母稿' : '历史母稿'}</p><p>${r.url_state === 'available' ? geoSafeLink(r.published_url) : '发布链接不可用'}</p><p>存量页面核验：${r.verification?.evidence_valid === true ? '已有保存的匹配证据' : '尚无有效匹配证据'}；${esc(label(r.verification?.state))}；保存核验时间 ${esc(geoTime(r.verification?.checked_at))}；${esc(reasonText(r.verification?.reason_codes))}。不代表正式客户验收。</p>${task}${variant}${button('关联母稿', 'content/' + r.task_id + '/articles/' + r.article_id)}`;
+  return `<h3>原生发布登记 · ${esc(r.title)}</h3><p>渠道：${channel(r.channel)}</p><p>${esc(label(r.stored_status))}；${esc(geoTime(r.published_at))}；${r.is_current_master ? '当前母稿' : '历史母稿'}</p><p>${r.url_state === 'available' ? geoSafeLink(r.published_url) : '发布链接不可用'}</p><p>存量页面核验：${r.verification?.evidence_valid === true ? '已有保存的匹配证据' : '尚无有效匹配证据'}；${esc(r.verification?.state === 'pending' ? '待页面核验' : label(r.verification?.state))}；保存核验时间 ${esc(geoTime(r.verification?.checked_at))}；${esc(reasonText(r.verification?.reason_codes))}。不代表正式客户验收。</p>${task}${variant}${button('关联母稿', 'content/' + r.task_id + '/articles/' + r.article_id)}`;
 }
 export function geoResource(resource, value) {
   const d = value.data;

@@ -1,0 +1,4624 @@
+{
+  "backend_head": "e83206965178e1869cc35fbaabb6d2973def465d",
+  "source": "Synthetic in-memory SQLite HTTP fixture from tests/test_geo_project_client.py; no application startup or external access",
+  "cases": [
+    {
+      "resource": "overview",
+      "params": {
+        "week_end": "2026-10-19"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.065793Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": null,
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 0,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "project": {
+            "id": 1,
+            "name": "Project 1",
+            "brand_name": null,
+            "canonical_domain": "p1.example.com"
+          },
+          "content": {
+            "time_basis": "current_inventory",
+            "active_task_count": 3,
+            "pending_review_count": 0,
+            "approved_current_master_count": 3,
+            "task_count_with_master": 3,
+            "variant_count": 3,
+            "native_published_record_count": 3
+          },
+          "monitoring": {
+            "time_basis": "closed_week",
+            "active_nonbrand_question_count": 3,
+            "attention_question_count": 3,
+            "no_real_observation_question_count": 3,
+            "some_nonmention_question_count": 0,
+            "observed_question_count": 0,
+            "saved_answer_count": 0,
+            "qualified_answer_count": 0,
+            "latest_answer_at": null
+          },
+          "weekly": {
+            "week_end": "2026-10-19",
+            "period": {
+              "timezone": "Asia/Shanghai",
+              "start": "2026-10-12T00:00:00+08:00",
+              "end": "2026-10-19T00:00:00+08:00",
+              "closed": true
+            },
+            "sample_status": "insufficient",
+            "message": "检测数据还不够",
+            "qualified_counts": {
+              "samples": 0,
+              "questions": 0,
+              "engines": 0
+            },
+            "minimum_counts": {
+              "samples": 8,
+              "questions": 3,
+              "engines": 2
+            },
+            "reason_codes": [
+              "insufficient_samples",
+              "insufficient_questions",
+              "insufficient_engines"
+            ],
+            "own_domain_configured": true,
+            "own_domains": [
+              "docs.p1.example.com",
+              "p1.example.com"
+            ],
+            "qualified_mention_count": 0,
+            "qualified_own_domain_citation_count": 0,
+            "metrics": [
+              {
+                "key": "geo.visibility.ai_mention_count_7d",
+                "unit": "count",
+                "value": null,
+                "status": "insufficient",
+                "reason_codes": [
+                  "insufficient_samples",
+                  "insufficient_questions",
+                  "insufficient_engines"
+                ],
+                "trend_7d": null
+              },
+              {
+                "key": "geo.visibility.ai_mention_rate_7d",
+                "unit": "percent",
+                "value": null,
+                "status": "insufficient",
+                "reason_codes": [
+                  "insufficient_samples",
+                  "insufficient_questions",
+                  "insufficient_engines"
+                ],
+                "trend_7d": null
+              },
+              {
+                "key": "geo.visibility.ai_visibility_score",
+                "unit": "score",
+                "value": null,
+                "status": "insufficient",
+                "reason_codes": [
+                  "insufficient_samples",
+                  "insufficient_questions",
+                  "insufficient_engines"
+                ],
+                "trend_7d": null
+              }
+            ]
+          },
+          "links": {
+            "pending_content_path": "/api/v1/geo/projects/1/client/content?tenant_id=101&review_status=pending",
+            "questions_path": "/api/v1/geo/projects/1/client/questions?tenant_id=101&week_end=2026-10-19",
+            "attention_questions_path": "/api/v1/geo/projects/1/client/questions?tenant_id=101&week_end=2026-10-19&attention=needs_attention",
+            "visibility_path": "/api/v1/geo/projects/1/client/visibility?tenant_id=101&week_end=2026-10-19",
+            "deliveries_path": "/api/v1/geo/projects/1/client/deliveries?tenant_id=101",
+            "executions_path": "/api/v1/geo/projects/1/executions?tenant_id=101"
+          }
+        }
+      }
+    },
+    {
+      "resource": "visibility",
+      "params": {
+        "week_end": "2026-10-19"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.072909Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": null,
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 0,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "current": {
+            "week_end": "2026-10-19",
+            "period": {
+              "timezone": "Asia/Shanghai",
+              "start": "2026-10-12T00:00:00+08:00",
+              "end": "2026-10-19T00:00:00+08:00",
+              "closed": true
+            },
+            "sample_status": "insufficient",
+            "message": "检测数据还不够",
+            "qualified_counts": {
+              "samples": 0,
+              "questions": 0,
+              "engines": 0
+            },
+            "minimum_counts": {
+              "samples": 8,
+              "questions": 3,
+              "engines": 2
+            },
+            "reason_codes": [
+              "insufficient_samples",
+              "insufficient_questions",
+              "insufficient_engines"
+            ],
+            "own_domain_configured": true,
+            "own_domains": [
+              "docs.p1.example.com",
+              "p1.example.com"
+            ],
+            "qualified_mention_count": 0,
+            "qualified_own_domain_citation_count": 0,
+            "metrics": [
+              {
+                "key": "geo.visibility.ai_mention_count_7d",
+                "unit": "count",
+                "value": null,
+                "status": "insufficient",
+                "reason_codes": [
+                  "insufficient_samples",
+                  "insufficient_questions",
+                  "insufficient_engines"
+                ],
+                "trend_7d": null
+              },
+              {
+                "key": "geo.visibility.ai_mention_rate_7d",
+                "unit": "percent",
+                "value": null,
+                "status": "insufficient",
+                "reason_codes": [
+                  "insufficient_samples",
+                  "insufficient_questions",
+                  "insufficient_engines"
+                ],
+                "trend_7d": null
+              },
+              {
+                "key": "geo.visibility.ai_visibility_score",
+                "unit": "score",
+                "value": null,
+                "status": "insufficient",
+                "reason_codes": [
+                  "insufficient_samples",
+                  "insufficient_questions",
+                  "insufficient_engines"
+                ],
+                "trend_7d": null
+              }
+            ]
+          },
+          "previous": {
+            "week_end": "2026-10-12",
+            "period": {
+              "timezone": "Asia/Shanghai",
+              "start": "2026-10-05T00:00:00+08:00",
+              "end": "2026-10-12T00:00:00+08:00",
+              "closed": true
+            },
+            "sample_status": "insufficient",
+            "message": "检测数据还不够",
+            "qualified_counts": {
+              "samples": 0,
+              "questions": 0,
+              "engines": 0
+            },
+            "minimum_counts": {
+              "samples": 8,
+              "questions": 3,
+              "engines": 2
+            },
+            "reason_codes": [
+              "insufficient_samples",
+              "insufficient_questions",
+              "insufficient_engines"
+            ],
+            "own_domain_configured": true,
+            "own_domains": [
+              "docs.p1.example.com",
+              "p1.example.com"
+            ],
+            "qualified_mention_count": 0,
+            "qualified_own_domain_citation_count": 0,
+            "metrics": [
+              {
+                "key": "geo.visibility.ai_mention_count_7d",
+                "unit": "count",
+                "value": null,
+                "status": "insufficient",
+                "reason_codes": [
+                  "insufficient_samples",
+                  "insufficient_questions",
+                  "insufficient_engines"
+                ],
+                "trend_7d": null
+              },
+              {
+                "key": "geo.visibility.ai_mention_rate_7d",
+                "unit": "percent",
+                "value": null,
+                "status": "insufficient",
+                "reason_codes": [
+                  "insufficient_samples",
+                  "insufficient_questions",
+                  "insufficient_engines"
+                ],
+                "trend_7d": null
+              },
+              {
+                "key": "geo.visibility.ai_visibility_score",
+                "unit": "score",
+                "value": null,
+                "status": "insufficient",
+                "reason_codes": [
+                  "insufficient_samples",
+                  "insufficient_questions",
+                  "insufficient_engines"
+                ],
+                "trend_7d": null
+              }
+            ]
+          },
+          "comparison": {
+            "comparable": false,
+            "checks": {
+              "current_week_sufficient": false,
+              "previous_week_sufficient": false,
+              "same_cohort": true,
+              "same_historical_questions": true,
+              "complete_model_metadata": false,
+              "same_model_distribution": true,
+              "same_sample_distribution": true
+            },
+            "reason_codes": [
+              "current_week_insufficient",
+              "previous_week_insufficient",
+              "model_metadata_missing"
+            ]
+          },
+          "engines": [],
+          "definitions": {
+            "mention_count": "合格回答中提及品牌的条数，每条最多计一次。",
+            "mention_rate": "品牌提及条数除以合格回答数乘 100。",
+            "visibility_score": "50 ×（品牌提及条数 + 项目自有域引用回答数）÷ 合格回答数。",
+            "qualification": "上海时区已结束完整周，真实非点名 v2 采样且判读和巡检证据通过；至少 8 条、3 题、2 引擎。",
+            "ownership_basis": "按当前项目业务归属和当前认可域名重算已有记录。"
+          }
+        }
+      }
+    },
+    {
+      "resource": "overview",
+      "params": {
+        "week_end": "2026-10-19"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.088595Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 8,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "project": {
+            "id": 1,
+            "name": "Project 1",
+            "brand_name": null,
+            "canonical_domain": "p1.example.com"
+          },
+          "content": {
+            "time_basis": "current_inventory",
+            "active_task_count": 3,
+            "pending_review_count": 0,
+            "approved_current_master_count": 3,
+            "task_count_with_master": 3,
+            "variant_count": 4,
+            "native_published_record_count": 3
+          },
+          "monitoring": {
+            "time_basis": "closed_week",
+            "active_nonbrand_question_count": 3,
+            "attention_question_count": 3,
+            "no_real_observation_question_count": 0,
+            "some_nonmention_question_count": 3,
+            "observed_question_count": 3,
+            "saved_answer_count": 8,
+            "qualified_answer_count": 8,
+            "latest_answer_at": "2026-10-14T05:00:00Z"
+          },
+          "weekly": {
+            "week_end": "2026-10-19",
+            "period": {
+              "timezone": "Asia/Shanghai",
+              "start": "2026-10-12T00:00:00+08:00",
+              "end": "2026-10-19T00:00:00+08:00",
+              "closed": true
+            },
+            "sample_status": "ready",
+            "message": null,
+            "qualified_counts": {
+              "samples": 8,
+              "questions": 3,
+              "engines": 2
+            },
+            "minimum_counts": {
+              "samples": 8,
+              "questions": 3,
+              "engines": 2
+            },
+            "reason_codes": [],
+            "own_domain_configured": true,
+            "own_domains": [
+              "docs.p1.example.com",
+              "p1.example.com"
+            ],
+            "qualified_mention_count": 0,
+            "qualified_own_domain_citation_count": 0,
+            "metrics": [
+              {
+                "key": "geo.visibility.ai_mention_count_7d",
+                "unit": "count",
+                "value": 0,
+                "status": "available",
+                "reason_codes": [],
+                "trend_7d": null
+              },
+              {
+                "key": "geo.visibility.ai_mention_rate_7d",
+                "unit": "percent",
+                "value": 0.0,
+                "status": "available",
+                "reason_codes": [],
+                "trend_7d": null
+              },
+              {
+                "key": "geo.visibility.ai_visibility_score",
+                "unit": "score",
+                "value": 0.0,
+                "status": "available",
+                "reason_codes": [],
+                "trend_7d": null
+              }
+            ]
+          },
+          "links": {
+            "pending_content_path": "/api/v1/geo/projects/1/client/content?tenant_id=101&review_status=pending",
+            "questions_path": "/api/v1/geo/projects/1/client/questions?tenant_id=101&week_end=2026-10-19",
+            "attention_questions_path": "/api/v1/geo/projects/1/client/questions?tenant_id=101&week_end=2026-10-19&attention=needs_attention",
+            "visibility_path": "/api/v1/geo/projects/1/client/visibility?tenant_id=101&week_end=2026-10-19",
+            "deliveries_path": "/api/v1/geo/projects/1/client/deliveries?tenant_id=101",
+            "executions_path": "/api/v1/geo/projects/1/executions?tenant_id=101"
+          }
+        }
+      }
+    },
+    {
+      "resource": "visibility",
+      "params": {
+        "week_end": "2026-10-19"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.095665Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 8,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "current": {
+            "week_end": "2026-10-19",
+            "period": {
+              "timezone": "Asia/Shanghai",
+              "start": "2026-10-12T00:00:00+08:00",
+              "end": "2026-10-19T00:00:00+08:00",
+              "closed": true
+            },
+            "sample_status": "ready",
+            "message": null,
+            "qualified_counts": {
+              "samples": 8,
+              "questions": 3,
+              "engines": 2
+            },
+            "minimum_counts": {
+              "samples": 8,
+              "questions": 3,
+              "engines": 2
+            },
+            "reason_codes": [],
+            "own_domain_configured": true,
+            "own_domains": [
+              "docs.p1.example.com",
+              "p1.example.com"
+            ],
+            "qualified_mention_count": 0,
+            "qualified_own_domain_citation_count": 0,
+            "metrics": [
+              {
+                "key": "geo.visibility.ai_mention_count_7d",
+                "unit": "count",
+                "value": 0,
+                "status": "available",
+                "reason_codes": [],
+                "trend_7d": null
+              },
+              {
+                "key": "geo.visibility.ai_mention_rate_7d",
+                "unit": "percent",
+                "value": 0.0,
+                "status": "available",
+                "reason_codes": [],
+                "trend_7d": null
+              },
+              {
+                "key": "geo.visibility.ai_visibility_score",
+                "unit": "score",
+                "value": 0.0,
+                "status": "available",
+                "reason_codes": [],
+                "trend_7d": null
+              }
+            ]
+          },
+          "previous": {
+            "week_end": "2026-10-12",
+            "period": {
+              "timezone": "Asia/Shanghai",
+              "start": "2026-10-05T00:00:00+08:00",
+              "end": "2026-10-12T00:00:00+08:00",
+              "closed": true
+            },
+            "sample_status": "insufficient",
+            "message": "检测数据还不够",
+            "qualified_counts": {
+              "samples": 0,
+              "questions": 0,
+              "engines": 0
+            },
+            "minimum_counts": {
+              "samples": 8,
+              "questions": 3,
+              "engines": 2
+            },
+            "reason_codes": [
+              "insufficient_samples",
+              "insufficient_questions",
+              "insufficient_engines"
+            ],
+            "own_domain_configured": true,
+            "own_domains": [
+              "docs.p1.example.com",
+              "p1.example.com"
+            ],
+            "qualified_mention_count": 0,
+            "qualified_own_domain_citation_count": 0,
+            "metrics": [
+              {
+                "key": "geo.visibility.ai_mention_count_7d",
+                "unit": "count",
+                "value": null,
+                "status": "insufficient",
+                "reason_codes": [
+                  "insufficient_samples",
+                  "insufficient_questions",
+                  "insufficient_engines"
+                ],
+                "trend_7d": null
+              },
+              {
+                "key": "geo.visibility.ai_mention_rate_7d",
+                "unit": "percent",
+                "value": null,
+                "status": "insufficient",
+                "reason_codes": [
+                  "insufficient_samples",
+                  "insufficient_questions",
+                  "insufficient_engines"
+                ],
+                "trend_7d": null
+              },
+              {
+                "key": "geo.visibility.ai_visibility_score",
+                "unit": "score",
+                "value": null,
+                "status": "insufficient",
+                "reason_codes": [
+                  "insufficient_samples",
+                  "insufficient_questions",
+                  "insufficient_engines"
+                ],
+                "trend_7d": null
+              }
+            ]
+          },
+          "comparison": {
+            "comparable": false,
+            "checks": {
+              "current_week_sufficient": true,
+              "previous_week_sufficient": false,
+              "same_cohort": false,
+              "same_historical_questions": false,
+              "complete_model_metadata": false,
+              "same_model_distribution": false,
+              "same_sample_distribution": false
+            },
+            "reason_codes": [
+              "previous_week_insufficient",
+              "cohort_changed",
+              "question_changed",
+              "model_metadata_missing",
+              "model_distribution_changed",
+              "sample_distribution_changed"
+            ]
+          },
+          "engines": [
+            {
+              "engine_key": "e0",
+              "observation": {
+                "mentioned": 0,
+                "total": 4,
+                "status": "observed",
+                "display_text": "观测中提及 0/4 次",
+                "basis_code": "saved_real_analyzed_answers",
+                "official_question_rate": null
+              },
+              "qualified_sample_count": 4,
+              "qualified_question_count": 3
+            },
+            {
+              "engine_key": "e1",
+              "observation": {
+                "mentioned": 0,
+                "total": 4,
+                "status": "observed",
+                "display_text": "观测中提及 0/4 次",
+                "basis_code": "saved_real_analyzed_answers",
+                "official_question_rate": null
+              },
+              "qualified_sample_count": 4,
+              "qualified_question_count": 3
+            }
+          ],
+          "definitions": {
+            "mention_count": "合格回答中提及品牌的条数，每条最多计一次。",
+            "mention_rate": "品牌提及条数除以合格回答数乘 100。",
+            "visibility_score": "50 ×（品牌提及条数 + 项目自有域引用回答数）÷ 合格回答数。",
+            "qualification": "上海时区已结束完整周，真实非点名 v2 采样且判读和巡检证据通过；至少 8 条、3 题、2 引擎。",
+            "ownership_basis": "按当前项目业务归属和当前认可域名重算已有记录。"
+          }
+        }
+      }
+    },
+    {
+      "resource": "questions",
+      "params": {
+        "week_end": "2026-10-19"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.102587Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 8,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 3,
+              "question": "Question 3",
+              "status": "active",
+              "is_brand_probe": false,
+              "business": {
+                "id": 11,
+                "name": "Business 11"
+              },
+              "unit": {
+                "id": 11,
+                "name": "Unit 11"
+              },
+              "observation": {
+                "mentioned": 0,
+                "total": 2,
+                "status": "observed",
+                "display_text": "观测中提及 0/2 次",
+                "basis_code": "saved_real_analyzed_answers",
+                "official_question_rate": null
+              },
+              "qualified_sample_count": 2,
+              "latest_answer_at": "2026-10-14T05:00:00Z",
+              "attention_reason_codes": [
+                "not_mentioned_in_some_observations"
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/questions/3?tenant_id=101&week_end=2026-10-19"
+            },
+            {
+              "id": 2,
+              "question": "Question 2",
+              "status": "active",
+              "is_brand_probe": false,
+              "business": {
+                "id": 11,
+                "name": "Business 11"
+              },
+              "unit": {
+                "id": 11,
+                "name": "Unit 11"
+              },
+              "observation": {
+                "mentioned": 0,
+                "total": 3,
+                "status": "observed",
+                "display_text": "观测中提及 0/3 次",
+                "basis_code": "saved_real_analyzed_answers",
+                "official_question_rate": null
+              },
+              "qualified_sample_count": 3,
+              "latest_answer_at": "2026-10-14T05:00:00Z",
+              "attention_reason_codes": [
+                "not_mentioned_in_some_observations"
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/questions/2?tenant_id=101&week_end=2026-10-19"
+            },
+            {
+              "id": 1,
+              "question": "Question 1",
+              "status": "active",
+              "is_brand_probe": false,
+              "business": {
+                "id": 11,
+                "name": "Business 11"
+              },
+              "unit": {
+                "id": 11,
+                "name": "Unit 11"
+              },
+              "observation": {
+                "mentioned": 0,
+                "total": 3,
+                "status": "observed",
+                "display_text": "观测中提及 0/3 次",
+                "basis_code": "saved_real_analyzed_answers",
+                "official_question_rate": null
+              },
+              "qualified_sample_count": 3,
+              "latest_answer_at": "2026-10-14T05:00:00Z",
+              "attention_reason_codes": [
+                "not_mentioned_in_some_observations"
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/questions/1?tenant_id=101&week_end=2026-10-19"
+            }
+          ],
+          "pagination": {
+            "limit": 20,
+            "returned_count": 3,
+            "total_count": 3,
+            "has_more": false,
+            "next_cursor": null,
+            "truncated": false
+          },
+          "filters": {
+            "attention": "all",
+            "is_brand_probe": null,
+            "q": null,
+            "status": "all"
+          }
+        }
+      }
+    },
+    {
+      "resource": "questions/1",
+      "params": {
+        "week_end": "2026-10-19"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.109224Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 3,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "question": {
+            "id": 1,
+            "question": "Question 1",
+            "status": "active",
+            "is_brand_probe": false,
+            "business": {
+              "id": 11,
+              "name": "Business 11"
+            },
+            "unit": {
+              "id": 11,
+              "name": "Unit 11"
+            },
+            "observation": {
+              "mentioned": 0,
+              "total": 3,
+              "status": "observed",
+              "display_text": "观测中提及 0/3 次",
+              "basis_code": "saved_real_analyzed_answers",
+              "official_question_rate": null
+            },
+            "qualified_sample_count": 3,
+            "latest_answer_at": "2026-10-14T05:00:00Z",
+            "attention_reason_codes": [
+              "not_mentioned_in_some_observations"
+            ],
+            "detail_path": "/api/v1/geo/projects/1/client/questions/1?tenant_id=101&week_end=2026-10-19"
+          },
+          "by_engine": [
+            {
+              "engine_key": "e0",
+              "observation": {
+                "mentioned": 0,
+                "total": 2,
+                "status": "observed",
+                "display_text": "观测中提及 0/2 次",
+                "basis_code": "saved_real_analyzed_answers",
+                "official_question_rate": null
+              },
+              "qualified_sample_count": 2
+            },
+            {
+              "engine_key": "e1",
+              "observation": {
+                "mentioned": 0,
+                "total": 1,
+                "status": "observed",
+                "display_text": "观测中提及 0/1 次",
+                "basis_code": "saved_real_analyzed_answers",
+                "official_question_rate": null
+              },
+              "qualified_sample_count": 1
+            }
+          ],
+          "evidence": {
+            "answer_count": 3,
+            "excluded_answer_count": 0,
+            "unknown_time_count": 0,
+            "unknown_time_scope": "current_project_history"
+          },
+          "answers_path": "/api/v1/geo/projects/1/client/answers?tenant_id=101&week_end=2026-10-19&question_id=1",
+          "content_path": "/api/v1/geo/projects/1/client/content?tenant_id=101&question_id=1"
+        }
+      }
+    },
+    {
+      "resource": "answers",
+      "params": {
+        "week_end": "2026-10-19"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.117134Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 8,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 8,
+              "question_id": 2,
+              "question": {
+                "historical_text": "Historical 2",
+                "current_text": "Question 2",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e1",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "included",
+                  "reason_codes": []
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/8?tenant_id=101&week_end=2026-10-19"
+            },
+            {
+              "id": 7,
+              "question_id": 1,
+              "question": {
+                "historical_text": "Historical 1",
+                "current_text": "Question 1",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e0",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "included",
+                  "reason_codes": []
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/7?tenant_id=101&week_end=2026-10-19"
+            },
+            {
+              "id": 6,
+              "question_id": 3,
+              "question": {
+                "historical_text": "Historical 3",
+                "current_text": "Question 3",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e1",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "included",
+                  "reason_codes": []
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/6?tenant_id=101&week_end=2026-10-19"
+            },
+            {
+              "id": 5,
+              "question_id": 2,
+              "question": {
+                "historical_text": "Historical 2",
+                "current_text": "Question 2",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e0",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "included",
+                  "reason_codes": []
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/5?tenant_id=101&week_end=2026-10-19"
+            },
+            {
+              "id": 4,
+              "question_id": 1,
+              "question": {
+                "historical_text": "Historical 1",
+                "current_text": "Question 1",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e1",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "included",
+                  "reason_codes": []
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/4?tenant_id=101&week_end=2026-10-19"
+            },
+            {
+              "id": 3,
+              "question_id": 3,
+              "question": {
+                "historical_text": "Historical 3",
+                "current_text": "Question 3",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e0",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "included",
+                  "reason_codes": []
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/3?tenant_id=101&week_end=2026-10-19"
+            },
+            {
+              "id": 2,
+              "question_id": 2,
+              "question": {
+                "historical_text": "Historical 2",
+                "current_text": "Question 2",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e1",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "included",
+                  "reason_codes": []
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/2?tenant_id=101&week_end=2026-10-19"
+            },
+            {
+              "id": 1,
+              "question_id": 1,
+              "question": {
+                "historical_text": "Historical 1",
+                "current_text": "Question 1",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e0",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "included",
+                  "reason_codes": []
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/1?tenant_id=101&week_end=2026-10-19"
+            }
+          ],
+          "pagination": {
+            "limit": 20,
+            "returned_count": 8,
+            "total_count": 8,
+            "has_more": false,
+            "next_cursor": null,
+            "truncated": false
+          },
+          "filters": {
+            "eligibility": "all",
+            "engine_key": null,
+            "question_id": null,
+            "source_kind": null
+          }
+        }
+      }
+    },
+    {
+      "resource": "answers/1",
+      "params": {
+        "week_end": "2026-10-19"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.125592Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 1,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "single_answer",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "item": {
+            "id": 1,
+            "question_id": 1,
+            "question": {
+              "historical_text": "Historical 1",
+              "current_text": "Question 1",
+              "historical_text_source": "patrol_item"
+            },
+            "engine": {
+              "key": "e0",
+              "provider": "provider",
+              "model": "model",
+              "model_revision": null,
+              "metadata_source": "patrol_item"
+            },
+            "captured_at": "2026-10-14T05:00:00Z",
+            "captured_at_local": "2026-10-14T13:00:00+08:00",
+            "time_basis": "stored_utc",
+            "source": {
+              "kind": "real",
+              "sampling_method": "unprimed_json_v2",
+              "analysis_status": "completed",
+              "verified_server_record": true
+            },
+            "answer_excerpt": "Saved answer",
+            "excerpt_truncated": false,
+            "mentions_brand": false,
+            "sample_eligibility": {
+              "eligible": true,
+              "reason_codes": []
+            },
+            "week_membership": {
+              "within_window": true,
+              "included_in_cohort": true,
+              "reason_codes": []
+            },
+            "metric_adoption": [
+              {
+                "key": "geo.visibility.ai_mention_count_7d",
+                "status": "included",
+                "reason_codes": []
+              },
+              {
+                "key": "geo.visibility.ai_mention_rate_7d",
+                "status": "included",
+                "reason_codes": []
+              },
+              {
+                "key": "geo.visibility.ai_visibility_score",
+                "status": "included",
+                "reason_codes": []
+              }
+            ],
+            "detail_path": "/api/v1/geo/projects/1/client/answers/1?tenant_id=101&week_end=2026-10-19"
+          },
+          "raw_text": "Saved answer",
+          "citations": [],
+          "comparison_metadata": {
+            "complete": true,
+            "reason_codes": [],
+            "model_identity_basis": "recorded_request_model_alias",
+            "exact_model_revision_known": false
+          }
+        }
+      }
+    },
+    {
+      "resource": "content",
+      "params": {},
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.132611Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 3,
+              "title": "Task 3",
+              "question_id": 3,
+              "question": "Question 3",
+              "stored_status": "ready",
+              "pipeline_step": "adapt",
+              "review": {
+                "status": "approved",
+                "reviewed_at": "2026-10-14T05:00:00Z",
+                "covers_current_master": true,
+                "display_text": "已确认，发布状态请查看交付记录"
+              },
+              "latest_master": {
+                "id": 3,
+                "version_no": 1,
+                "title": "Master 3",
+                "created_at": "2026-10-13T05:00:00Z"
+              },
+              "variant_count": 1,
+              "published_record_count": 1,
+              "updated_at": "2026-10-14T05:00:00Z",
+              "detail_path": "/api/v1/geo/projects/1/client/content/3?tenant_id=101"
+            },
+            {
+              "id": 2,
+              "title": "Task 2",
+              "question_id": 2,
+              "question": "Question 2",
+              "stored_status": "ready",
+              "pipeline_step": "adapt",
+              "review": {
+                "status": "approved",
+                "reviewed_at": "2026-10-14T05:00:00Z",
+                "covers_current_master": true,
+                "display_text": "已确认，发布状态请查看交付记录"
+              },
+              "latest_master": {
+                "id": 2,
+                "version_no": 1,
+                "title": "Master 2",
+                "created_at": "2026-10-13T05:00:00Z"
+              },
+              "variant_count": 1,
+              "published_record_count": 1,
+              "updated_at": "2026-10-14T05:00:00Z",
+              "detail_path": "/api/v1/geo/projects/1/client/content/2?tenant_id=101"
+            },
+            {
+              "id": 1,
+              "title": "Task 1",
+              "question_id": 1,
+              "question": "Question 1",
+              "stored_status": "ready",
+              "pipeline_step": "adapt",
+              "review": {
+                "status": "approved",
+                "reviewed_at": "2026-10-14T05:00:00Z",
+                "covers_current_master": true,
+                "display_text": "已确认，发布状态请查看交付记录"
+              },
+              "latest_master": {
+                "id": 1,
+                "version_no": 1,
+                "title": "Master 1",
+                "created_at": "2026-10-13T05:00:00Z"
+              },
+              "variant_count": 2,
+              "published_record_count": 1,
+              "updated_at": "2026-10-14T05:00:00Z",
+              "detail_path": "/api/v1/geo/projects/1/client/content/1?tenant_id=101"
+            }
+          ],
+          "pagination": {
+            "limit": 20,
+            "returned_count": 3,
+            "total_count": 3,
+            "has_more": false,
+            "next_cursor": null,
+            "truncated": false
+          },
+          "filters": {
+            "include_archived": false,
+            "q": null,
+            "question_id": null,
+            "review_status": null
+          }
+        }
+      }
+    },
+    {
+      "resource": "content/1",
+      "params": {},
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.139309Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "task": {
+            "id": 1,
+            "title": "Task 1",
+            "question_id": 1,
+            "question": "Question 1",
+            "stored_status": "ready",
+            "pipeline_step": "adapt",
+            "review": {
+              "status": "approved",
+              "reviewed_at": "2026-10-14T05:00:00Z",
+              "covers_current_master": true,
+              "display_text": "已确认，发布状态请查看交付记录"
+            },
+            "latest_master": {
+              "id": 1,
+              "version_no": 1,
+              "title": "Master 1",
+              "created_at": "2026-10-13T05:00:00Z"
+            },
+            "variant_count": 2,
+            "published_record_count": 1,
+            "updated_at": "2026-10-14T05:00:00Z",
+            "detail_path": "/api/v1/geo/projects/1/client/content/1?tenant_id=101"
+          },
+          "master": {
+            "id": 1,
+            "task_id": 1,
+            "version_no": 1,
+            "kind": "master",
+            "title": "Master 1",
+            "body_markdown": "Full master 1",
+            "created_at": "2026-10-13T05:00:00Z"
+          },
+          "variants_path": "/api/v1/geo/projects/1/client/content/1/variants?tenant_id=101",
+          "deliveries_path": "/api/v1/geo/projects/1/client/deliveries?tenant_id=101&task_id=1",
+          "receipt_summary": {
+            "succeeded": 1,
+            "failed": 0,
+            "unknown": 0,
+            "sending": 0,
+            "other": 0
+          }
+        }
+      }
+    },
+    {
+      "resource": "content/1/variants",
+      "params": {},
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.146207Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 12,
+              "task_id": 1,
+              "article_id": 1,
+              "article_version_no": 1,
+              "channel": "website",
+              "title": "Second synthetic variant",
+              "stored_status": "draft",
+              "created_at": "2026-10-14T05:00:00Z",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "is_current_master": true,
+              "detail_path": "/api/v1/geo/projects/1/client/content/1/variants/12?tenant_id=101"
+            },
+            {
+              "id": 1,
+              "task_id": 1,
+              "article_id": 1,
+              "article_version_no": 1,
+              "channel": "website",
+              "title": "Variant 1",
+              "stored_status": "draft",
+              "created_at": "2026-10-14T05:00:00Z",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "is_current_master": true,
+              "detail_path": "/api/v1/geo/projects/1/client/content/1/variants/1?tenant_id=101"
+            }
+          ],
+          "pagination": {
+            "limit": 20,
+            "returned_count": 2,
+            "total_count": 2,
+            "has_more": false,
+            "next_cursor": null,
+            "truncated": false
+          }
+        }
+      }
+    },
+    {
+      "resource": "content/1/variants/1",
+      "params": {},
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.152784Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "variant": {
+            "id": 1,
+            "task_id": 1,
+            "article_id": 1,
+            "article_version_no": 1,
+            "channel": "website",
+            "title": "Variant 1",
+            "stored_status": "draft",
+            "created_at": "2026-10-14T05:00:00Z",
+            "updated_at": "2026-10-14T05:00:00Z",
+            "is_current_master": true,
+            "detail_path": "/api/v1/geo/projects/1/client/content/1/variants/1?tenant_id=101"
+          },
+          "body_markdown": "Full variant 1",
+          "article_path": "/api/v1/geo/projects/1/client/content/1/articles/1?tenant_id=101",
+          "deliveries_path": "/api/v1/geo/projects/1/client/deliveries?tenant_id=101&task_id=1"
+        }
+      }
+    },
+    {
+      "resource": "content/1/articles/1",
+      "params": {},
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.159867Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-13T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "article": {
+            "id": 1,
+            "task_id": 1,
+            "version_no": 1,
+            "kind": "master",
+            "title": "Master 1",
+            "body_markdown": "Full master 1",
+            "created_at": "2026-10-13T05:00:00Z"
+          },
+          "is_current_master": true
+        }
+      }
+    },
+    {
+      "resource": "deliveries",
+      "params": {},
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.166908Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "record_type": "publication",
+              "id": 3,
+              "task_id": 3,
+              "variant_id": 3,
+              "article_id": 3,
+              "article_version_no": 1,
+              "is_current_master": true,
+              "title": "Variant 3",
+              "channel": "website",
+              "publish_mode": "manual_export",
+              "stored_status": "published",
+              "published_url": "https://p1.example.com/post/3",
+              "url_state": "available",
+              "published_at": "2026-10-14T05:00:00Z",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "verification": {
+                "state": "pending",
+                "checked_at": null,
+                "evidence_valid": false,
+                "reason_codes": []
+              },
+              "task_path": "/api/v1/geo/projects/1/client/content/3?tenant_id=101",
+              "variant_path": "/api/v1/geo/projects/1/client/content/3/variants/3?tenant_id=101",
+              "article_path": "/api/v1/geo/projects/1/client/content/3/articles/3?tenant_id=101"
+            },
+            {
+              "record_type": "publication",
+              "id": 2,
+              "task_id": 2,
+              "variant_id": 2,
+              "article_id": 2,
+              "article_version_no": 1,
+              "is_current_master": true,
+              "title": "Variant 2",
+              "channel": "website",
+              "publish_mode": "manual_export",
+              "stored_status": "published",
+              "published_url": "https://p1.example.com/post/2",
+              "url_state": "available",
+              "published_at": "2026-10-14T05:00:00Z",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "verification": {
+                "state": "pending",
+                "checked_at": null,
+                "evidence_valid": false,
+                "reason_codes": []
+              },
+              "task_path": "/api/v1/geo/projects/1/client/content/2?tenant_id=101",
+              "variant_path": "/api/v1/geo/projects/1/client/content/2/variants/2?tenant_id=101",
+              "article_path": "/api/v1/geo/projects/1/client/content/2/articles/2?tenant_id=101"
+            },
+            {
+              "record_type": "publication",
+              "id": 1,
+              "task_id": 1,
+              "variant_id": 1,
+              "article_id": 1,
+              "article_version_no": 1,
+              "is_current_master": true,
+              "title": "Variant 1",
+              "channel": "website",
+              "publish_mode": "manual_export",
+              "stored_status": "published",
+              "published_url": "https://p1.example.com/post/1",
+              "url_state": "available",
+              "published_at": "2026-10-14T05:00:00Z",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "verification": {
+                "state": "pending",
+                "checked_at": null,
+                "evidence_valid": false,
+                "reason_codes": []
+              },
+              "task_path": "/api/v1/geo/projects/1/client/content/1?tenant_id=101",
+              "variant_path": "/api/v1/geo/projects/1/client/content/1/variants/1?tenant_id=101",
+              "article_path": "/api/v1/geo/projects/1/client/content/1/articles/1?tenant_id=101"
+            },
+            {
+              "record_type": "receipt",
+              "receipt_id": "cde73b217af582579d07706c7fe66a6018d0cc02ced0dabb73b9f95a053b76b3",
+              "task_id": 3,
+              "variant_id": 3,
+              "article_id": 3,
+              "article_version_no": 1,
+              "is_current_master": true,
+              "title": "Variant 3",
+              "channel": "website",
+              "state": "succeeded",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "reason_code": null,
+              "display_text": "已有投递成功回执，发布登记与页面核验请分别查看",
+              "task_path": "/api/v1/geo/projects/1/client/content/3?tenant_id=101",
+              "variant_path": "/api/v1/geo/projects/1/client/content/3/variants/3?tenant_id=101"
+            },
+            {
+              "record_type": "receipt",
+              "receipt_id": "cc0a1ba9391172287c27b15acb44d234bde92ebabcf2a2c8861f9508a4b17d8f",
+              "task_id": 2,
+              "variant_id": 2,
+              "article_id": 2,
+              "article_version_no": 1,
+              "is_current_master": true,
+              "title": "Variant 2",
+              "channel": "website",
+              "state": "succeeded",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "reason_code": null,
+              "display_text": "已有投递成功回执，发布登记与页面核验请分别查看",
+              "task_path": "/api/v1/geo/projects/1/client/content/2?tenant_id=101",
+              "variant_path": "/api/v1/geo/projects/1/client/content/2/variants/2?tenant_id=101"
+            },
+            {
+              "record_type": "receipt",
+              "receipt_id": "514244cf012a001fe2e157468f124cf004914e338f95dc19cb925f82e876c9f8",
+              "task_id": 1,
+              "variant_id": 1,
+              "article_id": 1,
+              "article_version_no": 1,
+              "is_current_master": true,
+              "title": "Variant 1",
+              "channel": "website",
+              "state": "succeeded",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "reason_code": null,
+              "display_text": "已有投递成功回执，发布登记与页面核验请分别查看",
+              "task_path": "/api/v1/geo/projects/1/client/content/1?tenant_id=101",
+              "variant_path": "/api/v1/geo/projects/1/client/content/1/variants/1?tenant_id=101"
+            }
+          ],
+          "pagination": {
+            "limit": 20,
+            "returned_count": 6,
+            "total_count": 6,
+            "has_more": false,
+            "next_cursor": null,
+            "truncated": false
+          },
+          "filters": {
+            "record_type": "all",
+            "task_id": null
+          },
+          "counts": {
+            "publication_records": 3,
+            "receipt_records": 3,
+            "published_records": 3,
+            "stored_verified_publications": 0
+          }
+        }
+      }
+    },
+    {
+      "resource": "questions",
+      "params": {
+        "week_end": "2026-10-19",
+        "limit": 1
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.173875Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 8,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 3,
+              "question": "Question 3",
+              "status": "active",
+              "is_brand_probe": false,
+              "business": {
+                "id": 11,
+                "name": "Business 11"
+              },
+              "unit": {
+                "id": 11,
+                "name": "Unit 11"
+              },
+              "observation": {
+                "mentioned": 0,
+                "total": 2,
+                "status": "observed",
+                "display_text": "观测中提及 0/2 次",
+                "basis_code": "saved_real_analyzed_answers",
+                "official_question_rate": null
+              },
+              "qualified_sample_count": 2,
+              "latest_answer_at": "2026-10-14T05:00:00Z",
+              "attention_reason_codes": [
+                "not_mentioned_in_some_observations"
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/questions/3?tenant_id=101&week_end=2026-10-19"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 3,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiMmRiNmY3NGU4MzM0Y2IwNTU5Y2QyYTk2YjA3ZDYxMWMxNThjMDg3ZWRiMzc2MTk0NmJhNGI3NTJmMWRhZmU5YiIsImxhc3QiOlszXSwic2NvcGUiOiJmZGU1OTAwN2ExNGU4Y2UxN2RhZWVjNDIxOWYyZTk2Mzg5MWYzYTE2N2M3YTQ4NTliY2RkYTZkMTE4MWU0YzA1IiwidiI6MSwid2F0ZXJtYXJrcyI6eyJxdWVzdGlvbiI6M30sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.4c73c1f95364a774b157e6c9b34d69fd08b0959ba027cb83eabaaec7ee5877bd",
+            "truncated": true
+          },
+          "filters": {
+            "attention": "all",
+            "is_brand_probe": null,
+            "q": null,
+            "status": "all"
+          }
+        }
+      }
+    },
+    {
+      "resource": "questions",
+      "params": {
+        "week_end": "2026-10-19",
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiMmRiNmY3NGU4MzM0Y2IwNTU5Y2QyYTk2YjA3ZDYxMWMxNThjMDg3ZWRiMzc2MTk0NmJhNGI3NTJmMWRhZmU5YiIsImxhc3QiOlszXSwic2NvcGUiOiJmZGU1OTAwN2ExNGU4Y2UxN2RhZWVjNDIxOWYyZTk2Mzg5MWYzYTE2N2M3YTQ4NTliY2RkYTZkMTE4MWU0YzA1IiwidiI6MSwid2F0ZXJtYXJrcyI6eyJxdWVzdGlvbiI6M30sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.4c73c1f95364a774b157e6c9b34d69fd08b0959ba027cb83eabaaec7ee5877bd"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.180445Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 8,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 2,
+              "question": "Question 2",
+              "status": "active",
+              "is_brand_probe": false,
+              "business": {
+                "id": 11,
+                "name": "Business 11"
+              },
+              "unit": {
+                "id": 11,
+                "name": "Unit 11"
+              },
+              "observation": {
+                "mentioned": 0,
+                "total": 3,
+                "status": "observed",
+                "display_text": "观测中提及 0/3 次",
+                "basis_code": "saved_real_analyzed_answers",
+                "official_question_rate": null
+              },
+              "qualified_sample_count": 3,
+              "latest_answer_at": "2026-10-14T05:00:00Z",
+              "attention_reason_codes": [
+                "not_mentioned_in_some_observations"
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/questions/2?tenant_id=101&week_end=2026-10-19"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 3,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiMmRiNmY3NGU4MzM0Y2IwNTU5Y2QyYTk2YjA3ZDYxMWMxNThjMDg3ZWRiMzc2MTk0NmJhNGI3NTJmMWRhZmU5YiIsImxhc3QiOlsyXSwic2NvcGUiOiJmZGU1OTAwN2ExNGU4Y2UxN2RhZWVjNDIxOWYyZTk2Mzg5MWYzYTE2N2M3YTQ4NTliY2RkYTZkMTE4MWU0YzA1IiwidiI6MSwid2F0ZXJtYXJrcyI6eyJxdWVzdGlvbiI6M30sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.8035ccb122ad90709bcdf2a300280d392933a1143d8cc5cbce3118ab97e17544",
+            "truncated": true
+          },
+          "filters": {
+            "attention": "all",
+            "is_brand_probe": null,
+            "q": null,
+            "status": "all"
+          }
+        }
+      }
+    },
+    {
+      "resource": "questions",
+      "params": {
+        "week_end": "2026-10-19",
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiMmRiNmY3NGU4MzM0Y2IwNTU5Y2QyYTk2YjA3ZDYxMWMxNThjMDg3ZWRiMzc2MTk0NmJhNGI3NTJmMWRhZmU5YiIsImxhc3QiOlsyXSwic2NvcGUiOiJmZGU1OTAwN2ExNGU4Y2UxN2RhZWVjNDIxOWYyZTk2Mzg5MWYzYTE2N2M3YTQ4NTliY2RkYTZkMTE4MWU0YzA1IiwidiI6MSwid2F0ZXJtYXJrcyI6eyJxdWVzdGlvbiI6M30sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.8035ccb122ad90709bcdf2a300280d392933a1143d8cc5cbce3118ab97e17544"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.187283Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 8,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 1,
+              "question": "Question 1",
+              "status": "active",
+              "is_brand_probe": false,
+              "business": {
+                "id": 11,
+                "name": "Business 11"
+              },
+              "unit": {
+                "id": 11,
+                "name": "Unit 11"
+              },
+              "observation": {
+                "mentioned": 0,
+                "total": 3,
+                "status": "observed",
+                "display_text": "观测中提及 0/3 次",
+                "basis_code": "saved_real_analyzed_answers",
+                "official_question_rate": null
+              },
+              "qualified_sample_count": 3,
+              "latest_answer_at": "2026-10-14T05:00:00Z",
+              "attention_reason_codes": [
+                "not_mentioned_in_some_observations"
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/questions/1?tenant_id=101&week_end=2026-10-19"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 3,
+            "has_more": false,
+            "next_cursor": null,
+            "truncated": false
+          },
+          "filters": {
+            "attention": "all",
+            "is_brand_probe": null,
+            "q": null,
+            "status": "all"
+          }
+        }
+      }
+    },
+    {
+      "resource": "answers",
+      "params": {
+        "week_end": "2026-10-19",
+        "limit": 1
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.195009Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 8,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 8,
+              "question_id": 2,
+              "question": {
+                "historical_text": "Historical 2",
+                "current_text": "Question 2",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e1",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "included",
+                  "reason_codes": []
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/8?tenant_id=101&week_end=2026-10-19"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 8,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiN2VmNzc0NGIyN2Y4NWNiNGM0NGJkMDM2ZmVjZDVkNDdmZmFlYzEyMzZkNjA1Y2MxNGU0ODc5NzVlODc1ZjcyNCIsImxhc3QiOlsiMjAyNi0xMC0xNFQwNTowMDowMC4wMDAwMDAiLDhdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7ImFuc3dlciI6OH0sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.4eb0bff9f00d6491205d4ed92737a7b6c38988a5b91edced348c957effc5b7a4",
+            "truncated": true
+          },
+          "filters": {
+            "eligibility": "all",
+            "engine_key": null,
+            "question_id": null,
+            "source_kind": null
+          }
+        }
+      }
+    },
+    {
+      "resource": "answers",
+      "params": {
+        "week_end": "2026-10-19",
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiN2VmNzc0NGIyN2Y4NWNiNGM0NGJkMDM2ZmVjZDVkNDdmZmFlYzEyMzZkNjA1Y2MxNGU0ODc5NzVlODc1ZjcyNCIsImxhc3QiOlsiMjAyNi0xMC0xNFQwNTowMDowMC4wMDAwMDAiLDhdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7ImFuc3dlciI6OH0sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.4eb0bff9f00d6491205d4ed92737a7b6c38988a5b91edced348c957effc5b7a4"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.204994Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 8,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 7,
+              "question_id": 1,
+              "question": {
+                "historical_text": "Historical 1",
+                "current_text": "Question 1",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e0",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "included",
+                  "reason_codes": []
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/7?tenant_id=101&week_end=2026-10-19"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 8,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiN2VmNzc0NGIyN2Y4NWNiNGM0NGJkMDM2ZmVjZDVkNDdmZmFlYzEyMzZkNjA1Y2MxNGU0ODc5NzVlODc1ZjcyNCIsImxhc3QiOlsiMjAyNi0xMC0xNFQwNTowMDowMC4wMDAwMDAiLDddLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7ImFuc3dlciI6OH0sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.e5863370a3ebf69716742ed944a2d0915966ca19f549b2a9b179075e8c5b8bde",
+            "truncated": true
+          },
+          "filters": {
+            "eligibility": "all",
+            "engine_key": null,
+            "question_id": null,
+            "source_kind": null
+          }
+        }
+      }
+    },
+    {
+      "resource": "answers",
+      "params": {
+        "week_end": "2026-10-19",
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiN2VmNzc0NGIyN2Y4NWNiNGM0NGJkMDM2ZmVjZDVkNDdmZmFlYzEyMzZkNjA1Y2MxNGU0ODc5NzVlODc1ZjcyNCIsImxhc3QiOlsiMjAyNi0xMC0xNFQwNTowMDowMC4wMDAwMDAiLDddLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7ImFuc3dlciI6OH0sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.e5863370a3ebf69716742ed944a2d0915966ca19f549b2a9b179075e8c5b8bde"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.212946Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 8,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 6,
+              "question_id": 3,
+              "question": {
+                "historical_text": "Historical 3",
+                "current_text": "Question 3",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e1",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "included",
+                  "reason_codes": []
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/6?tenant_id=101&week_end=2026-10-19"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 8,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiN2VmNzc0NGIyN2Y4NWNiNGM0NGJkMDM2ZmVjZDVkNDdmZmFlYzEyMzZkNjA1Y2MxNGU0ODc5NzVlODc1ZjcyNCIsImxhc3QiOlsiMjAyNi0xMC0xNFQwNTowMDowMC4wMDAwMDAiLDZdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7ImFuc3dlciI6OH0sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.f6cb16c0449f75110d83a2ad59b701d4788e8c456418525462f61ed640b40f01",
+            "truncated": true
+          },
+          "filters": {
+            "eligibility": "all",
+            "engine_key": null,
+            "question_id": null,
+            "source_kind": null
+          }
+        }
+      }
+    },
+    {
+      "resource": "answers",
+      "params": {
+        "week_end": "2026-10-19",
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiN2VmNzc0NGIyN2Y4NWNiNGM0NGJkMDM2ZmVjZDVkNDdmZmFlYzEyMzZkNjA1Y2MxNGU0ODc5NzVlODc1ZjcyNCIsImxhc3QiOlsiMjAyNi0xMC0xNFQwNTowMDowMC4wMDAwMDAiLDZdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7ImFuc3dlciI6OH0sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.f6cb16c0449f75110d83a2ad59b701d4788e8c456418525462f61ed640b40f01"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.220912Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 8,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 5,
+              "question_id": 2,
+              "question": {
+                "historical_text": "Historical 2",
+                "current_text": "Question 2",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e0",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "included",
+                  "reason_codes": []
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/5?tenant_id=101&week_end=2026-10-19"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 8,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiN2VmNzc0NGIyN2Y4NWNiNGM0NGJkMDM2ZmVjZDVkNDdmZmFlYzEyMzZkNjA1Y2MxNGU0ODc5NzVlODc1ZjcyNCIsImxhc3QiOlsiMjAyNi0xMC0xNFQwNTowMDowMC4wMDAwMDAiLDVdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7ImFuc3dlciI6OH0sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.a35b2e04d14d2b0159d22872c73bfe6faafb0ca461709953305d01f65bb6bac2",
+            "truncated": true
+          },
+          "filters": {
+            "eligibility": "all",
+            "engine_key": null,
+            "question_id": null,
+            "source_kind": null
+          }
+        }
+      }
+    },
+    {
+      "resource": "answers",
+      "params": {
+        "week_end": "2026-10-19",
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiN2VmNzc0NGIyN2Y4NWNiNGM0NGJkMDM2ZmVjZDVkNDdmZmFlYzEyMzZkNjA1Y2MxNGU0ODc5NzVlODc1ZjcyNCIsImxhc3QiOlsiMjAyNi0xMC0xNFQwNTowMDowMC4wMDAwMDAiLDVdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7ImFuc3dlciI6OH0sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.a35b2e04d14d2b0159d22872c73bfe6faafb0ca461709953305d01f65bb6bac2"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.228775Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 8,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 4,
+              "question_id": 1,
+              "question": {
+                "historical_text": "Historical 1",
+                "current_text": "Question 1",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e1",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "included",
+                  "reason_codes": []
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/4?tenant_id=101&week_end=2026-10-19"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 8,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiN2VmNzc0NGIyN2Y4NWNiNGM0NGJkMDM2ZmVjZDVkNDdmZmFlYzEyMzZkNjA1Y2MxNGU0ODc5NzVlODc1ZjcyNCIsImxhc3QiOlsiMjAyNi0xMC0xNFQwNTowMDowMC4wMDAwMDAiLDRdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7ImFuc3dlciI6OH0sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.702033208066e83e1b2c380eb25b54fbe269bb20ee4d11c04ee6509ea3a098d0",
+            "truncated": true
+          },
+          "filters": {
+            "eligibility": "all",
+            "engine_key": null,
+            "question_id": null,
+            "source_kind": null
+          }
+        }
+      }
+    },
+    {
+      "resource": "answers",
+      "params": {
+        "week_end": "2026-10-19",
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiN2VmNzc0NGIyN2Y4NWNiNGM0NGJkMDM2ZmVjZDVkNDdmZmFlYzEyMzZkNjA1Y2MxNGU0ODc5NzVlODc1ZjcyNCIsImxhc3QiOlsiMjAyNi0xMC0xNFQwNTowMDowMC4wMDAwMDAiLDRdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7ImFuc3dlciI6OH0sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.702033208066e83e1b2c380eb25b54fbe269bb20ee4d11c04ee6509ea3a098d0"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.237128Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 8,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 3,
+              "question_id": 3,
+              "question": {
+                "historical_text": "Historical 3",
+                "current_text": "Question 3",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e0",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "included",
+                  "reason_codes": []
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/3?tenant_id=101&week_end=2026-10-19"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 8,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiN2VmNzc0NGIyN2Y4NWNiNGM0NGJkMDM2ZmVjZDVkNDdmZmFlYzEyMzZkNjA1Y2MxNGU0ODc5NzVlODc1ZjcyNCIsImxhc3QiOlsiMjAyNi0xMC0xNFQwNTowMDowMC4wMDAwMDAiLDNdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7ImFuc3dlciI6OH0sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.cc202c47023e937332a9882c30316f93a5362e5cae6b97d126e10b7e11f98883",
+            "truncated": true
+          },
+          "filters": {
+            "eligibility": "all",
+            "engine_key": null,
+            "question_id": null,
+            "source_kind": null
+          }
+        }
+      }
+    },
+    {
+      "resource": "answers",
+      "params": {
+        "week_end": "2026-10-19",
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiN2VmNzc0NGIyN2Y4NWNiNGM0NGJkMDM2ZmVjZDVkNDdmZmFlYzEyMzZkNjA1Y2MxNGU0ODc5NzVlODc1ZjcyNCIsImxhc3QiOlsiMjAyNi0xMC0xNFQwNTowMDowMC4wMDAwMDAiLDNdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7ImFuc3dlciI6OH0sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.cc202c47023e937332a9882c30316f93a5362e5cae6b97d126e10b7e11f98883"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.245019Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 8,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 2,
+              "question_id": 2,
+              "question": {
+                "historical_text": "Historical 2",
+                "current_text": "Question 2",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e1",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "included",
+                  "reason_codes": []
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/2?tenant_id=101&week_end=2026-10-19"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 8,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiN2VmNzc0NGIyN2Y4NWNiNGM0NGJkMDM2ZmVjZDVkNDdmZmFlYzEyMzZkNjA1Y2MxNGU0ODc5NzVlODc1ZjcyNCIsImxhc3QiOlsiMjAyNi0xMC0xNFQwNTowMDowMC4wMDAwMDAiLDJdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7ImFuc3dlciI6OH0sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.d9db147ad9f5303ab791d5ddc3156709bfdaa86498c30e9063b84e8b7ed4f03b",
+            "truncated": true
+          },
+          "filters": {
+            "eligibility": "all",
+            "engine_key": null,
+            "question_id": null,
+            "source_kind": null
+          }
+        }
+      }
+    },
+    {
+      "resource": "answers",
+      "params": {
+        "week_end": "2026-10-19",
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiN2VmNzc0NGIyN2Y4NWNiNGM0NGJkMDM2ZmVjZDVkNDdmZmFlYzEyMzZkNjA1Y2MxNGU0ODc5NzVlODc1ZjcyNCIsImxhc3QiOlsiMjAyNi0xMC0xNFQwNTowMDowMC4wMDAwMDAiLDJdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7ImFuc3dlciI6OH0sIndlZWtfZW5kIjoiMjAyNi0xMC0xOSJ9.d9db147ad9f5303ab791d5ddc3156709bfdaa86498c30e9063b84e8b7ed4f03b"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.252852Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 8,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 1,
+              "question_id": 1,
+              "question": {
+                "historical_text": "Historical 1",
+                "current_text": "Question 1",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e0",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "included",
+                  "reason_codes": []
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "included",
+                  "reason_codes": []
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/1?tenant_id=101&week_end=2026-10-19"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 8,
+            "has_more": false,
+            "next_cursor": null,
+            "truncated": false
+          },
+          "filters": {
+            "eligibility": "all",
+            "engine_key": null,
+            "question_id": null,
+            "source_kind": null
+          }
+        }
+      }
+    },
+    {
+      "resource": "content",
+      "params": {
+        "limit": 1
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.259978Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 3,
+              "title": "Task 3",
+              "question_id": 3,
+              "question": "Question 3",
+              "stored_status": "ready",
+              "pipeline_step": "adapt",
+              "review": {
+                "status": "approved",
+                "reviewed_at": "2026-10-14T05:00:00Z",
+                "covers_current_master": true,
+                "display_text": "已确认，发布状态请查看交付记录"
+              },
+              "latest_master": {
+                "id": 3,
+                "version_no": 1,
+                "title": "Master 3",
+                "created_at": "2026-10-13T05:00:00Z"
+              },
+              "variant_count": 1,
+              "published_record_count": 1,
+              "updated_at": "2026-10-14T05:00:00Z",
+              "detail_path": "/api/v1/geo/projects/1/client/content/3?tenant_id=101"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 3,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiMTRlZjU3ZWRlNWUwNmE3Yzg1ZTJjYmJkMTY1YWI5ZjEwZjUyZjY2NDM3Njk2NWIzY2Y5ZTA4ZGU5YjY0MmM5MyIsImxhc3QiOlszXSwic2NvcGUiOiJmZGU1OTAwN2ExNGU4Y2UxN2RhZWVjNDIxOWYyZTk2Mzg5MWYzYTE2N2M3YTQ4NTliY2RkYTZkMTE4MWU0YzA1IiwidiI6MSwid2F0ZXJtYXJrcyI6eyJ0YXNrIjozfSwid2Vla19lbmQiOm51bGx9.2b587083ea7ab49e7c505a397a8c2f02fcedbf0d4378878b38cb16a38b8c59db",
+            "truncated": true
+          },
+          "filters": {
+            "include_archived": false,
+            "q": null,
+            "question_id": null,
+            "review_status": null
+          }
+        }
+      }
+    },
+    {
+      "resource": "content",
+      "params": {
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiMTRlZjU3ZWRlNWUwNmE3Yzg1ZTJjYmJkMTY1YWI5ZjEwZjUyZjY2NDM3Njk2NWIzY2Y5ZTA4ZGU5YjY0MmM5MyIsImxhc3QiOlszXSwic2NvcGUiOiJmZGU1OTAwN2ExNGU4Y2UxN2RhZWVjNDIxOWYyZTk2Mzg5MWYzYTE2N2M3YTQ4NTliY2RkYTZkMTE4MWU0YzA1IiwidiI6MSwid2F0ZXJtYXJrcyI6eyJ0YXNrIjozfSwid2Vla19lbmQiOm51bGx9.2b587083ea7ab49e7c505a397a8c2f02fcedbf0d4378878b38cb16a38b8c59db"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.266921Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 2,
+              "title": "Task 2",
+              "question_id": 2,
+              "question": "Question 2",
+              "stored_status": "ready",
+              "pipeline_step": "adapt",
+              "review": {
+                "status": "approved",
+                "reviewed_at": "2026-10-14T05:00:00Z",
+                "covers_current_master": true,
+                "display_text": "已确认，发布状态请查看交付记录"
+              },
+              "latest_master": {
+                "id": 2,
+                "version_no": 1,
+                "title": "Master 2",
+                "created_at": "2026-10-13T05:00:00Z"
+              },
+              "variant_count": 1,
+              "published_record_count": 1,
+              "updated_at": "2026-10-14T05:00:00Z",
+              "detail_path": "/api/v1/geo/projects/1/client/content/2?tenant_id=101"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 3,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiMTRlZjU3ZWRlNWUwNmE3Yzg1ZTJjYmJkMTY1YWI5ZjEwZjUyZjY2NDM3Njk2NWIzY2Y5ZTA4ZGU5YjY0MmM5MyIsImxhc3QiOlsyXSwic2NvcGUiOiJmZGU1OTAwN2ExNGU4Y2UxN2RhZWVjNDIxOWYyZTk2Mzg5MWYzYTE2N2M3YTQ4NTliY2RkYTZkMTE4MWU0YzA1IiwidiI6MSwid2F0ZXJtYXJrcyI6eyJ0YXNrIjozfSwid2Vla19lbmQiOm51bGx9.932b17a7df199d4733fcbd6b137468be5744fe0e09c173f1e7a796b55e295f2a",
+            "truncated": true
+          },
+          "filters": {
+            "include_archived": false,
+            "q": null,
+            "question_id": null,
+            "review_status": null
+          }
+        }
+      }
+    },
+    {
+      "resource": "content",
+      "params": {
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiMTRlZjU3ZWRlNWUwNmE3Yzg1ZTJjYmJkMTY1YWI5ZjEwZjUyZjY2NDM3Njk2NWIzY2Y5ZTA4ZGU5YjY0MmM5MyIsImxhc3QiOlsyXSwic2NvcGUiOiJmZGU1OTAwN2ExNGU4Y2UxN2RhZWVjNDIxOWYyZTk2Mzg5MWYzYTE2N2M3YTQ4NTliY2RkYTZkMTE4MWU0YzA1IiwidiI6MSwid2F0ZXJtYXJrcyI6eyJ0YXNrIjozfSwid2Vla19lbmQiOm51bGx9.932b17a7df199d4733fcbd6b137468be5744fe0e09c173f1e7a796b55e295f2a"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.273868Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 1,
+              "title": "Task 1",
+              "question_id": 1,
+              "question": "Question 1",
+              "stored_status": "ready",
+              "pipeline_step": "adapt",
+              "review": {
+                "status": "approved",
+                "reviewed_at": "2026-10-14T05:00:00Z",
+                "covers_current_master": true,
+                "display_text": "已确认，发布状态请查看交付记录"
+              },
+              "latest_master": {
+                "id": 1,
+                "version_no": 1,
+                "title": "Master 1",
+                "created_at": "2026-10-13T05:00:00Z"
+              },
+              "variant_count": 2,
+              "published_record_count": 1,
+              "updated_at": "2026-10-14T05:00:00Z",
+              "detail_path": "/api/v1/geo/projects/1/client/content/1?tenant_id=101"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 3,
+            "has_more": false,
+            "next_cursor": null,
+            "truncated": false
+          },
+          "filters": {
+            "include_archived": false,
+            "q": null,
+            "question_id": null,
+            "review_status": null
+          }
+        }
+      }
+    },
+    {
+      "resource": "content/1/variants",
+      "params": {
+        "limit": 1
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.280527Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 12,
+              "task_id": 1,
+              "article_id": 1,
+              "article_version_no": 1,
+              "channel": "website",
+              "title": "Second synthetic variant",
+              "stored_status": "draft",
+              "created_at": "2026-10-14T05:00:00Z",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "is_current_master": true,
+              "detail_path": "/api/v1/geo/projects/1/client/content/1/variants/12?tenant_id=101"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 2,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiZmRkZDYyZDM2NGNkN2Q1Y2M3ZDM5MjIxMmYyYWExNmIxMTViNTgxMWIzYTk0YWZmMDY0ZmEwMmVmMmYwNWJlOCIsImxhc3QiOlsxMl0sInNjb3BlIjoiZmRlNTkwMDdhMTRlOGNlMTdkYWVlYzQyMTlmMmU5NjM4OTFmM2ExNjdjN2E0ODU5YmNkZGE2ZDExODFlNGMwNSIsInYiOjEsIndhdGVybWFya3MiOnsidmFyaWFudCI6MTJ9LCJ3ZWVrX2VuZCI6bnVsbH0.6cedde711de8f5a2d70b4ea11730f8c985ad0dfce998217dd07486ee18a8c910",
+            "truncated": true
+          }
+        }
+      }
+    },
+    {
+      "resource": "content/1/variants",
+      "params": {
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiZmRkZDYyZDM2NGNkN2Q1Y2M3ZDM5MjIxMmYyYWExNmIxMTViNTgxMWIzYTk0YWZmMDY0ZmEwMmVmMmYwNWJlOCIsImxhc3QiOlsxMl0sInNjb3BlIjoiZmRlNTkwMDdhMTRlOGNlMTdkYWVlYzQyMTlmMmU5NjM4OTFmM2ExNjdjN2E0ODU5YmNkZGE2ZDExODFlNGMwNSIsInYiOjEsIndhdGVybWFya3MiOnsidmFyaWFudCI6MTJ9LCJ3ZWVrX2VuZCI6bnVsbH0.6cedde711de8f5a2d70b4ea11730f8c985ad0dfce998217dd07486ee18a8c910"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.286872Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 1,
+              "task_id": 1,
+              "article_id": 1,
+              "article_version_no": 1,
+              "channel": "website",
+              "title": "Variant 1",
+              "stored_status": "draft",
+              "created_at": "2026-10-14T05:00:00Z",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "is_current_master": true,
+              "detail_path": "/api/v1/geo/projects/1/client/content/1/variants/1?tenant_id=101"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 2,
+            "has_more": false,
+            "next_cursor": null,
+            "truncated": false
+          }
+        }
+      }
+    },
+    {
+      "resource": "deliveries",
+      "params": {
+        "limit": 1
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.294249Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "record_type": "publication",
+              "id": 3,
+              "task_id": 3,
+              "variant_id": 3,
+              "article_id": 3,
+              "article_version_no": 1,
+              "is_current_master": true,
+              "title": "Variant 3",
+              "channel": "website",
+              "publish_mode": "manual_export",
+              "stored_status": "published",
+              "published_url": "https://p1.example.com/post/3",
+              "url_state": "available",
+              "published_at": "2026-10-14T05:00:00Z",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "verification": {
+                "state": "pending",
+                "checked_at": null,
+                "evidence_valid": false,
+                "reason_codes": []
+              },
+              "task_path": "/api/v1/geo/projects/1/client/content/3?tenant_id=101",
+              "variant_path": "/api/v1/geo/projects/1/client/content/3/variants/3?tenant_id=101",
+              "article_path": "/api/v1/geo/projects/1/client/content/3/articles/3?tenant_id=101"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 6,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiNWUyNGYyMmZmOGFkMzg3YmU0YjFhZjczMTA0YmZkNzMyYTAxOTQ3OTM2NWNhMjQ3NDI4MzQ2Zjc2Njg1MThkYiIsImxhc3QiOlsxLDMsIiJdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7InB1YmxpY2F0aW9uIjozLCJ2YXJpYW50IjoxMn0sIndlZWtfZW5kIjpudWxsfQ.05baa2b5607b95daf7d8996e818be961bec3c39b0fc59768943637ba10e0ce68",
+            "truncated": true
+          },
+          "filters": {
+            "record_type": "all",
+            "task_id": null
+          },
+          "counts": {
+            "publication_records": 3,
+            "receipt_records": 3,
+            "published_records": 3,
+            "stored_verified_publications": 0
+          }
+        }
+      }
+    },
+    {
+      "resource": "deliveries",
+      "params": {
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiNWUyNGYyMmZmOGFkMzg3YmU0YjFhZjczMTA0YmZkNzMyYTAxOTQ3OTM2NWNhMjQ3NDI4MzQ2Zjc2Njg1MThkYiIsImxhc3QiOlsxLDMsIiJdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7InB1YmxpY2F0aW9uIjozLCJ2YXJpYW50IjoxMn0sIndlZWtfZW5kIjpudWxsfQ.05baa2b5607b95daf7d8996e818be961bec3c39b0fc59768943637ba10e0ce68"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.301284Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "record_type": "publication",
+              "id": 2,
+              "task_id": 2,
+              "variant_id": 2,
+              "article_id": 2,
+              "article_version_no": 1,
+              "is_current_master": true,
+              "title": "Variant 2",
+              "channel": "website",
+              "publish_mode": "manual_export",
+              "stored_status": "published",
+              "published_url": "https://p1.example.com/post/2",
+              "url_state": "available",
+              "published_at": "2026-10-14T05:00:00Z",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "verification": {
+                "state": "pending",
+                "checked_at": null,
+                "evidence_valid": false,
+                "reason_codes": []
+              },
+              "task_path": "/api/v1/geo/projects/1/client/content/2?tenant_id=101",
+              "variant_path": "/api/v1/geo/projects/1/client/content/2/variants/2?tenant_id=101",
+              "article_path": "/api/v1/geo/projects/1/client/content/2/articles/2?tenant_id=101"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 6,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiNWUyNGYyMmZmOGFkMzg3YmU0YjFhZjczMTA0YmZkNzMyYTAxOTQ3OTM2NWNhMjQ3NDI4MzQ2Zjc2Njg1MThkYiIsImxhc3QiOlsxLDIsIiJdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7InB1YmxpY2F0aW9uIjozLCJ2YXJpYW50IjoxMn0sIndlZWtfZW5kIjpudWxsfQ.2fa7b41e1723e5b7596db119954bdba23732b3dab9a924b1fb44fe7951775a9e",
+            "truncated": true
+          },
+          "filters": {
+            "record_type": "all",
+            "task_id": null
+          },
+          "counts": {
+            "publication_records": 3,
+            "receipt_records": 3,
+            "published_records": 3,
+            "stored_verified_publications": 0
+          }
+        }
+      }
+    },
+    {
+      "resource": "deliveries",
+      "params": {
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiNWUyNGYyMmZmOGFkMzg3YmU0YjFhZjczMTA0YmZkNzMyYTAxOTQ3OTM2NWNhMjQ3NDI4MzQ2Zjc2Njg1MThkYiIsImxhc3QiOlsxLDIsIiJdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7InB1YmxpY2F0aW9uIjozLCJ2YXJpYW50IjoxMn0sIndlZWtfZW5kIjpudWxsfQ.2fa7b41e1723e5b7596db119954bdba23732b3dab9a924b1fb44fe7951775a9e"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.308540Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "record_type": "publication",
+              "id": 1,
+              "task_id": 1,
+              "variant_id": 1,
+              "article_id": 1,
+              "article_version_no": 1,
+              "is_current_master": true,
+              "title": "Variant 1",
+              "channel": "website",
+              "publish_mode": "manual_export",
+              "stored_status": "published",
+              "published_url": "https://p1.example.com/post/1",
+              "url_state": "available",
+              "published_at": "2026-10-14T05:00:00Z",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "verification": {
+                "state": "pending",
+                "checked_at": null,
+                "evidence_valid": false,
+                "reason_codes": []
+              },
+              "task_path": "/api/v1/geo/projects/1/client/content/1?tenant_id=101",
+              "variant_path": "/api/v1/geo/projects/1/client/content/1/variants/1?tenant_id=101",
+              "article_path": "/api/v1/geo/projects/1/client/content/1/articles/1?tenant_id=101"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 6,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiNWUyNGYyMmZmOGFkMzg3YmU0YjFhZjczMTA0YmZkNzMyYTAxOTQ3OTM2NWNhMjQ3NDI4MzQ2Zjc2Njg1MThkYiIsImxhc3QiOlsxLDEsIiJdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7InB1YmxpY2F0aW9uIjozLCJ2YXJpYW50IjoxMn0sIndlZWtfZW5kIjpudWxsfQ.f727b6ee5cf299930e9d3c1d769a8ae237b1950b56c8722fd778cf6af4ea71b1",
+            "truncated": true
+          },
+          "filters": {
+            "record_type": "all",
+            "task_id": null
+          },
+          "counts": {
+            "publication_records": 3,
+            "receipt_records": 3,
+            "published_records": 3,
+            "stored_verified_publications": 0
+          }
+        }
+      }
+    },
+    {
+      "resource": "deliveries",
+      "params": {
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiNWUyNGYyMmZmOGFkMzg3YmU0YjFhZjczMTA0YmZkNzMyYTAxOTQ3OTM2NWNhMjQ3NDI4MzQ2Zjc2Njg1MThkYiIsImxhc3QiOlsxLDEsIiJdLCJzY29wZSI6ImZkZTU5MDA3YTE0ZThjZTE3ZGFlZWM0MjE5ZjJlOTYzODkxZjNhMTY3YzdhNDg1OWJjZGRhNmQxMTgxZTRjMDUiLCJ2IjoxLCJ3YXRlcm1hcmtzIjp7InB1YmxpY2F0aW9uIjozLCJ2YXJpYW50IjoxMn0sIndlZWtfZW5kIjpudWxsfQ.f727b6ee5cf299930e9d3c1d769a8ae237b1950b56c8722fd778cf6af4ea71b1"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.315588Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "record_type": "receipt",
+              "receipt_id": "cde73b217af582579d07706c7fe66a6018d0cc02ced0dabb73b9f95a053b76b3",
+              "task_id": 3,
+              "variant_id": 3,
+              "article_id": 3,
+              "article_version_no": 1,
+              "is_current_master": true,
+              "title": "Variant 3",
+              "channel": "website",
+              "state": "succeeded",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "reason_code": null,
+              "display_text": "已有投递成功回执，发布登记与页面核验请分别查看",
+              "task_path": "/api/v1/geo/projects/1/client/content/3?tenant_id=101",
+              "variant_path": "/api/v1/geo/projects/1/client/content/3/variants/3?tenant_id=101"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 6,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiNWUyNGYyMmZmOGFkMzg3YmU0YjFhZjczMTA0YmZkNzMyYTAxOTQ3OTM2NWNhMjQ3NDI4MzQ2Zjc2Njg1MThkYiIsImxhc3QiOlswLDMsImNkZTczYjIxN2FmNTgyNTc5ZDA3NzA2YzdmZTY2YTYwMThkMGNjMDJjZWQwZGFiYjczYjlmOTVhMDUzYjc2YjMiXSwic2NvcGUiOiJmZGU1OTAwN2ExNGU4Y2UxN2RhZWVjNDIxOWYyZTk2Mzg5MWYzYTE2N2M3YTQ4NTliY2RkYTZkMTE4MWU0YzA1IiwidiI6MSwid2F0ZXJtYXJrcyI6eyJwdWJsaWNhdGlvbiI6MywidmFyaWFudCI6MTJ9LCJ3ZWVrX2VuZCI6bnVsbH0.5baae41352e07bad096c4497a2306e5e1f0d3766146fea2cd3d5a109685193bc",
+            "truncated": true
+          },
+          "filters": {
+            "record_type": "all",
+            "task_id": null
+          },
+          "counts": {
+            "publication_records": 3,
+            "receipt_records": 3,
+            "published_records": 3,
+            "stored_verified_publications": 0
+          }
+        }
+      }
+    },
+    {
+      "resource": "deliveries",
+      "params": {
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiNWUyNGYyMmZmOGFkMzg3YmU0YjFhZjczMTA0YmZkNzMyYTAxOTQ3OTM2NWNhMjQ3NDI4MzQ2Zjc2Njg1MThkYiIsImxhc3QiOlswLDMsImNkZTczYjIxN2FmNTgyNTc5ZDA3NzA2YzdmZTY2YTYwMThkMGNjMDJjZWQwZGFiYjczYjlmOTVhMDUzYjc2YjMiXSwic2NvcGUiOiJmZGU1OTAwN2ExNGU4Y2UxN2RhZWVjNDIxOWYyZTk2Mzg5MWYzYTE2N2M3YTQ4NTliY2RkYTZkMTE4MWU0YzA1IiwidiI6MSwid2F0ZXJtYXJrcyI6eyJwdWJsaWNhdGlvbiI6MywidmFyaWFudCI6MTJ9LCJ3ZWVrX2VuZCI6bnVsbH0.5baae41352e07bad096c4497a2306e5e1f0d3766146fea2cd3d5a109685193bc"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.322789Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "record_type": "receipt",
+              "receipt_id": "cc0a1ba9391172287c27b15acb44d234bde92ebabcf2a2c8861f9508a4b17d8f",
+              "task_id": 2,
+              "variant_id": 2,
+              "article_id": 2,
+              "article_version_no": 1,
+              "is_current_master": true,
+              "title": "Variant 2",
+              "channel": "website",
+              "state": "succeeded",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "reason_code": null,
+              "display_text": "已有投递成功回执，发布登记与页面核验请分别查看",
+              "task_path": "/api/v1/geo/projects/1/client/content/2?tenant_id=101",
+              "variant_path": "/api/v1/geo/projects/1/client/content/2/variants/2?tenant_id=101"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 6,
+            "has_more": true,
+            "next_cursor": "eyJjb250ZXh0IjoiNWUyNGYyMmZmOGFkMzg3YmU0YjFhZjczMTA0YmZkNzMyYTAxOTQ3OTM2NWNhMjQ3NDI4MzQ2Zjc2Njg1MThkYiIsImxhc3QiOlswLDIsImNjMGExYmE5MzkxMTcyMjg3YzI3YjE1YWNiNDRkMjM0YmRlOTJlYmFiY2YyYTJjODg2MWY5NTA4YTRiMTdkOGYiXSwic2NvcGUiOiJmZGU1OTAwN2ExNGU4Y2UxN2RhZWVjNDIxOWYyZTk2Mzg5MWYzYTE2N2M3YTQ4NTliY2RkYTZkMTE4MWU0YzA1IiwidiI6MSwid2F0ZXJtYXJrcyI6eyJwdWJsaWNhdGlvbiI6MywidmFyaWFudCI6MTJ9LCJ3ZWVrX2VuZCI6bnVsbH0.efdd45829721da4e3af1eda5be960edda1b46755d40df4bd4edf8797342d3bbd",
+            "truncated": true
+          },
+          "filters": {
+            "record_type": "all",
+            "task_id": null
+          },
+          "counts": {
+            "publication_records": 3,
+            "receipt_records": 3,
+            "published_records": 3,
+            "stored_verified_publications": 0
+          }
+        }
+      }
+    },
+    {
+      "resource": "deliveries",
+      "params": {
+        "limit": 1,
+        "cursor": "eyJjb250ZXh0IjoiNWUyNGYyMmZmOGFkMzg3YmU0YjFhZjczMTA0YmZkNzMyYTAxOTQ3OTM2NWNhMjQ3NDI4MzQ2Zjc2Njg1MThkYiIsImxhc3QiOlswLDIsImNjMGExYmE5MzkxMTcyMjg3YzI3YjE1YWNiNDRkMjM0YmRlOTJlYmFiY2YyYTJjODg2MWY5NTA4YTRiMTdkOGYiXSwic2NvcGUiOiJmZGU1OTAwN2ExNGU4Y2UxN2RhZWVjNDIxOWYyZTk2Mzg5MWYzYTE2N2M3YTQ4NTliY2RkYTZkMTE4MWU0YzA1IiwidiI6MSwid2F0ZXJtYXJrcyI6eyJwdWJsaWNhdGlvbiI6MywidmFyaWFudCI6MTJ9LCJ3ZWVrX2VuZCI6bnVsbH0.efdd45829721da4e3af1eda5be960edda1b46755d40df4bd4edf8797342d3bbd"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.330346Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "record_type": "receipt",
+              "receipt_id": "514244cf012a001fe2e157468f124cf004914e338f95dc19cb925f82e876c9f8",
+              "task_id": 1,
+              "variant_id": 1,
+              "article_id": 1,
+              "article_version_no": 1,
+              "is_current_master": true,
+              "title": "Variant 1",
+              "channel": "website",
+              "state": "succeeded",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "reason_code": null,
+              "display_text": "已有投递成功回执，发布登记与页面核验请分别查看",
+              "task_path": "/api/v1/geo/projects/1/client/content/1?tenant_id=101",
+              "variant_path": "/api/v1/geo/projects/1/client/content/1/variants/1?tenant_id=101"
+            }
+          ],
+          "pagination": {
+            "limit": 1,
+            "returned_count": 1,
+            "total_count": 6,
+            "has_more": false,
+            "next_cursor": null,
+            "truncated": false
+          },
+          "filters": {
+            "record_type": "all",
+            "task_id": null
+          },
+          "counts": {
+            "publication_records": 3,
+            "receipt_records": 3,
+            "published_records": 3,
+            "stored_verified_publications": 0
+          }
+        }
+      }
+    },
+    {
+      "resource": "answers/1",
+      "params": {
+        "week_end": "2026-10-19"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.339750Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": null,
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 0,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 1,
+          "unknown_time_scope": "single_answer",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "item": {
+            "id": 1,
+            "question_id": 1,
+            "question": {
+              "historical_text": "Historical 1",
+              "current_text": "Question 1",
+              "historical_text_source": "patrol_item"
+            },
+            "engine": {
+              "key": "e0",
+              "provider": "provider",
+              "model": "model",
+              "model_revision": null,
+              "metadata_source": "patrol_item"
+            },
+            "captured_at": null,
+            "captured_at_local": null,
+            "time_basis": "unknown",
+            "source": {
+              "kind": "real",
+              "sampling_method": "unprimed_json_v2",
+              "analysis_status": "completed",
+              "verified_server_record": false
+            },
+            "answer_excerpt": "Saved answer",
+            "excerpt_truncated": false,
+            "mentions_brand": false,
+            "sample_eligibility": {
+              "eligible": false,
+              "reason_codes": [
+                "capture_outside_patrol",
+                "unknown_capture_time"
+              ]
+            },
+            "week_membership": {
+              "within_window": false,
+              "included_in_cohort": false,
+              "reason_codes": [
+                "capture_outside_patrol",
+                "unknown_capture_time"
+              ]
+            },
+            "metric_adoption": [
+              {
+                "key": "geo.visibility.ai_mention_count_7d",
+                "status": "excluded",
+                "reason_codes": [
+                  "capture_outside_patrol",
+                  "unknown_capture_time"
+                ]
+              },
+              {
+                "key": "geo.visibility.ai_mention_rate_7d",
+                "status": "excluded",
+                "reason_codes": [
+                  "capture_outside_patrol",
+                  "unknown_capture_time"
+                ]
+              },
+              {
+                "key": "geo.visibility.ai_visibility_score",
+                "status": "excluded",
+                "reason_codes": [
+                  "capture_outside_patrol",
+                  "unknown_capture_time"
+                ]
+              }
+            ],
+            "detail_path": "/api/v1/geo/projects/1/client/answers/1?tenant_id=101&week_end=2026-10-19"
+          },
+          "raw_text": "Saved answer",
+          "citations": [],
+          "comparison_metadata": {
+            "complete": true,
+            "reason_codes": [],
+            "model_identity_basis": "recorded_request_model_alias",
+            "exact_model_revision_known": false
+          }
+        }
+      }
+    },
+    {
+      "resource": "answers",
+      "params": {
+        "week_end": "2026-10-19",
+        "question_id": 1,
+        "engine_key": "e0",
+        "source_kind": "real",
+        "eligibility": "qualified"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.347214Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 1,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 1,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "id": 7,
+              "question_id": 1,
+              "question": {
+                "historical_text": "Historical 1",
+                "current_text": "Question 1",
+                "historical_text_source": "patrol_item"
+              },
+              "engine": {
+                "key": "e0",
+                "provider": "provider",
+                "model": "model",
+                "model_revision": null,
+                "metadata_source": "patrol_item"
+              },
+              "captured_at": "2026-10-14T05:00:00Z",
+              "captured_at_local": "2026-10-14T13:00:00+08:00",
+              "time_basis": "stored_utc",
+              "source": {
+                "kind": "real",
+                "sampling_method": "unprimed_json_v2",
+                "analysis_status": "completed",
+                "verified_server_record": true
+              },
+              "answer_excerpt": "Saved answer",
+              "excerpt_truncated": false,
+              "mentions_brand": false,
+              "sample_eligibility": {
+                "eligible": true,
+                "reason_codes": []
+              },
+              "week_membership": {
+                "within_window": true,
+                "included_in_cohort": true,
+                "reason_codes": []
+              },
+              "metric_adoption": [
+                {
+                  "key": "geo.visibility.ai_mention_count_7d",
+                  "status": "unavailable",
+                  "reason_codes": [
+                    "insufficient_samples"
+                  ]
+                },
+                {
+                  "key": "geo.visibility.ai_mention_rate_7d",
+                  "status": "unavailable",
+                  "reason_codes": [
+                    "insufficient_samples"
+                  ]
+                },
+                {
+                  "key": "geo.visibility.ai_visibility_score",
+                  "status": "unavailable",
+                  "reason_codes": [
+                    "insufficient_samples"
+                  ]
+                }
+              ],
+              "detail_path": "/api/v1/geo/projects/1/client/answers/7?tenant_id=101&week_end=2026-10-19"
+            }
+          ],
+          "pagination": {
+            "limit": 20,
+            "returned_count": 1,
+            "total_count": 1,
+            "has_more": false,
+            "next_cursor": null,
+            "truncated": false
+          },
+          "filters": {
+            "eligibility": "qualified",
+            "engine_key": "e0",
+            "question_id": 1,
+            "source_kind": "real"
+          }
+        }
+      }
+    },
+    {
+      "resource": "questions",
+      "params": {
+        "week_end": "2026-10-19",
+        "status": "inactive",
+        "is_brand_probe": "false",
+        "attention": "needs_attention",
+        "q": "No match"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.353854Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": null,
+          "period": {
+            "timezone": "Asia/Shanghai",
+            "start": "2026-10-12T00:00:00+08:00",
+            "end": "2026-10-19T00:00:00+08:00",
+            "closed": true,
+            "week_end": "2026-10-19"
+          },
+          "source_counts": {
+            "real": 0,
+            "manual": 0,
+            "simulated": 0,
+            "unknown": 0
+          },
+          "unknown_time_count": 0,
+          "unknown_time_scope": "current_project_history",
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [],
+          "pagination": {
+            "limit": 20,
+            "returned_count": 0,
+            "total_count": 0,
+            "has_more": false,
+            "next_cursor": null,
+            "truncated": false
+          },
+          "filters": {
+            "attention": "needs_attention",
+            "is_brand_probe": false,
+            "q": "No match",
+            "status": "inactive"
+          }
+        }
+      }
+    },
+    {
+      "resource": "content",
+      "params": {
+        "question_id": 1,
+        "review_status": "pending",
+        "include_archived": "true",
+        "q": "No match"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.360814Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": null,
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [],
+          "pagination": {
+            "limit": 20,
+            "returned_count": 0,
+            "total_count": 0,
+            "has_more": false,
+            "next_cursor": null,
+            "truncated": false
+          },
+          "filters": {
+            "include_archived": true,
+            "q": "No match",
+            "question_id": 1,
+            "review_status": "pending"
+          }
+        }
+      }
+    },
+    {
+      "resource": "deliveries",
+      "params": {
+        "task_id": 1,
+        "record_type": "receipt"
+      },
+      "status": 200,
+      "body": {
+        "schema_version": "geo.client.v1",
+        "tenant_id": 101,
+        "project_id": 1,
+        "evaluated_at": "2026-10-20T11:21:55.367812Z",
+        "read_only": true,
+        "scope": {
+          "ownership_basis": "current_project_binding",
+          "binding_revision": 1,
+          "binding_state": "bound",
+          "business_count": 1,
+          "question_count": 3
+        },
+        "basis": {
+          "kind": "saved_records",
+          "aggregation_complete": true,
+          "last_data_at": "2026-10-14T05:00:00Z",
+          "period": null,
+          "source_counts": null,
+          "unknown_time_count": null,
+          "unknown_time_scope": null,
+          "exclusion_counts": [],
+          "note_codes": []
+        },
+        "data": {
+          "items": [
+            {
+              "record_type": "receipt",
+              "receipt_id": "514244cf012a001fe2e157468f124cf004914e338f95dc19cb925f82e876c9f8",
+              "task_id": 1,
+              "variant_id": 1,
+              "article_id": 1,
+              "article_version_no": 1,
+              "is_current_master": true,
+              "title": "Variant 1",
+              "channel": "website",
+              "state": "succeeded",
+              "updated_at": "2026-10-14T05:00:00Z",
+              "reason_code": null,
+              "display_text": "已有投递成功回执，发布登记与页面核验请分别查看",
+              "task_path": "/api/v1/geo/projects/1/client/content/1?tenant_id=101",
+              "variant_path": "/api/v1/geo/projects/1/client/content/1/variants/1?tenant_id=101"
+            }
+          ],
+          "pagination": {
+            "limit": 20,
+            "returned_count": 1,
+            "total_count": 1,
+            "has_more": false,
+            "next_cursor": null,
+            "truncated": false
+          },
+          "filters": {
+            "record_type": "receipt",
+            "task_id": 1
+          },
+          "counts": {
+            "publication_records": 0,
+            "receipt_records": 1,
+            "published_records": 0,
+            "stored_verified_publications": 0
+          }
+        }
+      }
+    },
+    {
+      "resource": "answers/999999",
+      "params": {
+        "week_end": "2026-10-19"
+      },
+      "status": 404,
+      "body": {
+        "detail": {
+          "code": "GEO_CLIENT_NOT_FOUND",
+          "message": "项目或记录不存在"
+        }
+      }
+    },
+    {
+      "resource": "overview",
+      "params": {
+        "week_end": "2026-10-20"
+      },
+      "status": 400,
+      "body": {
+        "detail": {
+          "code": "GEO_CLIENT_INVALID_WEEK",
+          "message": "请选择上海时区已结束的完整周"
+        }
+      }
+    },
+    {
+      "resource": "questions",
+      "params": {
+        "week_end": "2026-10-19",
+        "cursor": "broken"
+      },
+      "status": 400,
+      "body": {
+        "detail": {
+          "code": "GEO_CLIENT_INVALID_CURSOR",
+          "message": "分页游标无效，请重新查询"
+        }
+      }
+    },
+    {
+      "resource": "overview",
+      "params": {
+        "week_end": "2026-10-19"
+      },
+      "status": 503,
+      "body": {
+        "detail": {
+          "code": "GEO_CLIENT_READ_UNAVAILABLE",
+          "message": "当前数据量超出读取预算，请稍后重试"
+        }
+      }
+    }
+  ]
+}

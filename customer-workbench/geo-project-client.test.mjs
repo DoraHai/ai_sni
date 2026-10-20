@@ -172,7 +172,7 @@ test('404/405/409/503 and arbitrary error bodies become only safe error codes', 
     [404, 'GEO_NOT_OPEN'],
     [405, 'GEO_NOT_OPEN'],
     [409, 'GEO_SCOPE_CHANGED'],
-    [503, 'GEO_READ_FAILED'],
+    [503, 'GEO_READ_UNAVAILABLE'],
   ]) {
     const client = createGeoProjectClient({
       getContext: () => context,
@@ -403,4 +403,175 @@ test('week change resets selections, history and cursors and rejects an old page
   assert(!node.innerHTML.includes('OLD_LATE_PAGE'));
   assert(!node.innerHTML.includes('原周首屏问题'));
   panel.dispose();
+});
+
+test('actual BE e8320696 synthetic A–L HTTP snapshots pass validation and render safely', async () => {
+  const {readFileSync} = await import('node:fs');
+  const snapshot = JSON.parse(
+    readFileSync(new URL('./tests/geo-be-response-snapshot.json', import.meta.url), 'utf8'),
+  );
+  assert.equal(snapshot.backend_head, 'e83206965178e1869cc35fbaabb6d2973def465d');
+  const seen = new Set();
+  for (const item of snapshot.cases) {
+    const client = createGeoProjectClient({
+      getContext: () => ({...context, tenantId: 101, projectId: 1}),
+      transport: async () => response(item.body, item.status),
+    });
+    if (item.status !== 200) {
+      const code =
+        {404: 'GEO_NOT_OPEN', 503: 'GEO_READ_UNAVAILABLE'}[item.status] ||
+        (item.params.cursor ? 'GEO_CURSOR_INVALID' : 'GEO_INVALID_WEEK');
+      await assert.rejects(client.read(item.resource, item.params), (error) => error.code === code);
+      continue;
+    }
+    const value = await client.read(item.resource, item.params);
+    seen.add(item.resource);
+    const html =
+      item.resource === 'overview'
+        ? geoHome({overview: {value}})
+        : geoResource(item.resource, value);
+    assert.equal(typeof html, 'string');
+    assert(!html.includes('undefined'), item.resource);
+    if (value.data.pagination)
+      assert.equal(value.data.pagination.returned_count, value.data.items.length);
+    if (value.basis.period === null) assert.equal(value.basis.unknown_time_count, null);
+    if (item.resource === 'visibility') {
+      assert.match(
+        html,
+        value.data.current.sample_status === 'insufficient' ? /检测数据还不够/ : />0%/,
+      );
+    }
+    if (item.resource === 'answers/1' && value.data.item.captured_at === null) {
+      assert.match(html, /采样时间未知/);
+      assert.equal(value.basis.unknown_time_scope, 'single_answer');
+    }
+  }
+  assert.equal(seen.size, 12);
+});
+
+test('503 stays visible on home and detail while progress and other tabs remain usable', async () => {
+  const node = {innerHTML: ''};
+  const calls = [];
+  const panel = createGeoProjectPanel({
+    host: {
+      getContext: () => context,
+      transport: async (path) => {
+        const resource = path.includes('/client/')
+          ? path.split('/client/')[1].split('?')[0]
+          : 'executions';
+        calls.push(path);
+        if (['overview', 'visibility', 'content/7'].includes(resource))
+          return response(
+            {detail: {code: 'GEO_CLIENT_READ_UNAVAILABLE', message: 'PRIVATE_ERROR'}},
+            503,
+          );
+        return response(geoFixture(resource));
+      },
+    },
+  });
+  const click = (dataset) => node.onclick({target: {closest: () => ({dataset})}});
+  panel.renderInto(node);
+  await panel.refresh();
+  assert.match(node.innerHTML, /数据量较大或读取暂不可用，请稍后再试/);
+  assert.match(node.innerHTML, /最近已加载 1 项服务任务/);
+  assert(!node.innerHTML.includes('PRIVATE_ERROR'));
+  await click({geo: 'read', resource: 'content/7'});
+  assert.match(node.innerHTML, /数据量较大或读取暂不可用/);
+  await click({geo: 'tab', tab: 'deliveries'});
+  assert.match(node.innerHTML, /原生投递回执/);
+  await click({geo: 'tab', tab: 'progress'});
+  assert.match(node.innerHTML, /项目进度/);
+  await click({geo: 'tab', tab: 'plan'});
+  assert.match(node.innerHTML, /服务计划/);
+  assert.equal(calls.filter((path) => path.includes('/executions?tenant_id=1')).length, 1);
+  panel.dispose();
+});
+
+test('broken button params show an alert without transport and clear on next valid navigation', async () => {
+  const node = {innerHTML: ''};
+  let calls = 0;
+  const panel = createGeoProjectPanel({
+    host: {
+      getContext: () => context,
+      transport: async (path) => {
+        calls++;
+        const resource = path.includes('/client/')
+          ? path.split('/client/')[1].split('?')[0]
+          : 'executions';
+        return response(geoFixture(resource));
+      },
+    },
+  });
+  const click = (dataset) => node.onclick({target: {closest: () => ({dataset})}});
+  panel.renderInto(node);
+  await panel.refresh();
+  const before = calls;
+  for (const params of ['{broken', 'null', '[]', '42', '"text"']) {
+    await click({geo: 'read', resource: 'content', params});
+    assert.match(node.innerHTML, /role="alert"/);
+    assert.match(node.innerHTML, /操作参数无法读取/);
+    assert.equal(calls, before);
+  }
+  await click({geo: 'tab', tab: 'progress'});
+  assert(!node.innerHTML.includes('操作参数无法读取'));
+  panel.reset();
+  assert(!node.innerHTML.includes('role="alert"'));
+  panel.dispose();
+});
+
+test('content status and pending page verification use distinct customer labels', () => {
+  for (const [state, label] of [
+    ['facts_bound', '已关联事实'],
+    ['needs_fix', '待修改'],
+    ['adapting', '渠道适配中'],
+  ]) {
+    const value = structuredClone(geoFixture('content'));
+    value.data.items[0].stored_status = state;
+    assert(geoResource('content', value).includes(label));
+  }
+  const html = geoResource('deliveries', geoFixture('deliveries'));
+  assert.match(html, /待页面核验/);
+  assert(!html.includes('待客户确认'));
+});
+
+test('overview executions link is ignored even when it points outside the allowlist', async () => {
+  const node = {innerHTML: ''},
+    calls = [];
+  const panel = createGeoProjectPanel({
+    host: {
+      getContext: () => context,
+      transport: async (path) => {
+        calls.push(path);
+        const resource = path.includes('/client/')
+          ? path.split('/client/')[1].split('?')[0]
+          : 'executions';
+        const value = structuredClone(geoFixture(resource));
+        if (resource === 'overview')
+          value.data.links.executions_path = 'https://outside.invalid/forbidden';
+        return response(value);
+      },
+    },
+  });
+  panel.renderInto(node);
+  await panel.refresh();
+  assert(calls.includes('/api/v1/geo/projects/10/executions?tenant_id=1'));
+  assert(calls.every((path) => path.startsWith('/api/v1/geo/projects/10/')));
+  assert(!node.innerHTML.includes('outside.invalid'));
+  panel.dispose();
+});
+
+test('search length counts Unicode characters like the BE query validator', async () => {
+  const {host, calls} = await hostFixture();
+  for (const resource of ['questions', 'content']) {
+    await host.transport(
+      base + resource + '?tenant_id=1&q=' + encodeURIComponent('😀'.repeat(100)),
+    );
+    const before = calls.length;
+    await assert.rejects(
+      host.transport(base + resource + '?tenant_id=1&q=' + encodeURIComponent('😀'.repeat(101))),
+      /DENIED/,
+    );
+    assert.equal(calls.length, before);
+  }
+  host.dispose();
 });

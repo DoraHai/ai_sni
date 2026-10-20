@@ -39,7 +39,9 @@ export function createGeoProjectClient({transport, getContext}) {
                   : params.week_end
                     ? 'GEO_INVALID_WEEK'
                     : 'GEO_READ_FAILED'
-                : 'GEO_READ_FAILED',
+                : response.status === 503
+                  ? 'GEO_READ_UNAVAILABLE'
+                  : 'GEO_READ_FAILED',
           response.status,
         );
       const value = await response.json();

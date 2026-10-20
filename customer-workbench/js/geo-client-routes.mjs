@@ -50,7 +50,7 @@ export function geoClientQuery(url, route, context) {
     if (['tenant_id', 'question_id', 'task_id'].includes(key) && !geoPositive(value)) return false;
     if (key === 'limit' && (!geoPositive(value) || Number(value) > 100)) return false;
     if (key === 'cursor' && (!value.trim() || value.length > 4096)) return false;
-    if (key === 'q' && (!value.trim() || value.trim().length > 100)) return false;
+    if (key === 'q' && (!value.trim() || Array.from(value.trim()).length > 100)) return false;
     if (key === 'engine_key' && !/^[A-Za-z0-9_.-]{1,64}$/.test(value)) return false;
     if (key === 'week_end' && !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
     if (enums[key] && !enums[key].includes(value)) return false;

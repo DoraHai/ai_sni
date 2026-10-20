@@ -11,7 +11,8 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
     week = null,
     requestedWeek = null,
     active = null,
-    history = [];
+    history = [],
+    actionError = null;
   const available = (key) => !!slots[key]?.value;
   function tabs() {
     return geoTabs.filter(
@@ -60,7 +61,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       )
       .join(
         '',
-      )}</nav><section class="page-card geo-workspace">${tab === 'home' ? '<button data-geo="refresh">重新读取概览</button>' : ''}${weekForm}${history.length ? '<button data-geo="back">返回上一层</button>' : ''}${body}${slot?.value && slot.loading ? '<p role="status">正在读取下一页…</p>' : ''}${slot?.value && slot.error ? `<p role="status">${geoStatus(slot)}</p><button data-geo="retry">重新读取</button>` : ''}</section>`;
+      )}</nav><section class="page-card geo-workspace">${tab === 'home' ? '<button data-geo="refresh">重新读取概览</button>' : ''}${weekForm}${actionError ? `<p role="alert">${geoStatus({error: actionError})}</p>` : ''}${history.length ? '<button data-geo="back">返回上一层</button>' : ''}${body}${slot?.value && slot.loading ? '<p role="status">正在读取下一页…</p>' : ''}${slot?.value && slot.error ? `<p role="status">${geoStatus(slot)}</p><button data-geo="retry">重新读取</button>` : ''}</section>`;
   }
   const weekly = (resource) =>
     ['overview', 'visibility', 'questions', 'answers'].includes(resource.split('/')[0]);
@@ -93,6 +94,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
     const stamp = ++epoch;
     client.invalidate();
     slots = {};
+    actionError = null;
     active = null;
     history = [];
     week = requestedWeek;
@@ -115,6 +117,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
     epoch++;
     client.invalidate();
     slots = {};
+    actionError = null;
     active = null;
     history = [];
     week = null;
@@ -170,6 +173,8 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       const value = await client.read(target.resource, {...target.params, cursor: p.next_cursor});
       if (disposed || stamp !== epoch || active !== target) return;
       const items = [...slot.value.data.items, ...value.data.items];
+      // Items accumulate across pages; pagination describes the last server page.
+      // Display uses items.length and total_count, never returned_count as a total.
       slot.value = {...value, data: {...value.data, items}};
     } catch (e) {
       if (disposed || stamp !== epoch || active !== target) return;
@@ -188,13 +193,18 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
   async function click(event) {
     const el = event.target.closest('[data-geo]');
     if (!el || el.disabled || !canNavigate()) return;
+    actionError = null;
     const action = el.dataset.geo;
     if (action === 'tab') await selectTab(el.dataset.tab);
     if (action === 'read') {
       let params = {};
       try {
         params = JSON.parse(el.dataset.params || '{}');
+        if (!params || typeof params !== 'object' || Array.isArray(params))
+          throw Error('GEO_ACTION_INVALID');
       } catch {
+        actionError = 'GEO_ACTION_INVALID';
+        paint();
         return;
       }
       await open(el.dataset.resource, params, tab === 'work');
@@ -216,6 +226,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
     if (!event.target.matches('[data-geo-week]')) return;
     event.preventDefault();
     if (!canNavigate()) return;
+    actionError = null;
     requestedWeek = event.target.elements.week_end.value;
     await refresh();
   }
