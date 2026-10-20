@@ -79,3 +79,50 @@ test('panel pins server week, hides empty tabs and clears immediately on reset i
   delay=true;const pending=panel.refresh();await Promise.resolve();panel.reset();held.forEach(fn=>fn());await pending;
   assert(!node.innerHTML.includes('合成内容任务'));assert(!node.innerHTML.includes('当前归属问题 3'));panel.dispose();
 });
+test('malformed lists/details fail closed, unknown metadata is omitted and incomparable trends stay hidden',async()=>{
+  for(const [resource,mutate] of [['questions',v=>delete v.data.pagination],['content/7',v=>v.data.master.task_id=8],['content/7/variants/11',v=>v.data.variant.id=12],['answers/5',v=>v.data.item.id=6]]){
+    const value=structuredClone(geoFixture(resource));mutate(value);
+    const client=createGeoProjectClient({getContext:()=>context,transport:async()=>response(value)});
+    await assert.rejects(client.read(resource),/RESPONSE_INVALID/);
+  }
+  const value=structuredClone(geoFixture('visibility',{ready:true}));value.data.definitions.internal='DO_NOT_DISPLAY_INTERNAL';
+  value.data.current.metrics[1].trend_7d={direction:'up',change_abs:99,change_pct:100};
+  const html=geoResource('visibility',value);assert(!html.includes('DO_NOT_DISPLAY'));assert(!html.includes('较上周增加'));
+  const ex=geoFixture('executions');ex.items=Array.from({length:20},(_,i)=>({...ex.items[0],id:i+1}));ex.prompts=Array.from({length:200},(_,i)=>({id:i+1,question:'合成问题 '+i}));
+  const progress=geoExecutions(ex);assert.match(progress,/最近已加载 20 项/);assert.match(progress,/非完整项目总量/);assert.match(progress,/最多 200 个问题/);assert(!progress.includes('100%'));
+  const unavailable=geoHome({overview:{error:'GEO_NOT_OPEN'},visibility:{error:'GEO_NOT_OPEN'},executions:{error:'GEO_NOT_OPEN'}});assert.match(unavailable,/暂未开放/);assert(!unavailable.includes('0%'));
+});
+test('pagination scope change discards old list/cursor, retries first page, and cross-tab history restores evidence tab',async()=>{
+  const node={innerHTML:''},calls=[];let questionReads=0;
+  const panel=createGeoProjectPanel({host:{getContext:()=>context,transport:async path=>{
+    const u=new URL(path,'https://fixture.test'),r=u.pathname.endsWith('executions')?'executions':u.pathname.split('/client/')[1];calls.push({resource:r,params:u.searchParams});
+    if(r==='questions'&&u.searchParams.has('cursor'))return response({},409);
+    const value=structuredClone(geoFixture(r,{more:r==='questions'}));
+    if(r==='questions'){value.data.items[0].question=++questionReads===1?'旧列表已清除':'新范围首屏';}
+    return response(value);
+  }}});
+  const click=dataset=>node.onclick({target:{closest:()=>({dataset})}});
+  panel.renderInto(node);await panel.refresh();await click({geo:'tab',tab:'data'});await click({geo:'read',resource:'questions'});
+  await click({geo:'more'});assert.match(node.innerHTML,/新范围首屏/);assert(!node.innerHTML.includes('旧列表已清除'));
+  const last=calls.at(-1);assert.equal(last.resource,'questions');assert.equal(last.params.has('cursor'),false);
+  await click({geo:'read',resource:'questions/3'});await click({geo:'read',resource:'content',params:'{"question_id":3}'});
+  assert.equal(panel.getTab(),'content');assert.equal(calls.at(-1).params.has('week_end'),false);assert.equal(calls.at(-1).params.get('question_id'),'3');
+  await click({geo:'back'});assert.equal(panel.getTab(),'data');assert.match(node.innerHTML,/本周已存回答/);panel.dispose();
+});
+test('week change resets selections, history and cursors and rejects an old page delivered after new week',async()=>{
+  const node={innerHTML:''};let release;
+  const panel=createGeoProjectPanel({host:{getContext:()=>context,transport:async path=>{
+    const u=new URL(path,'https://fixture.test'),r=u.pathname.endsWith('executions')?'executions':u.pathname.split('/client/')[1];
+    if(u.searchParams.has('cursor'))return new Promise(resolve=>release=()=>{const v=structuredClone(geoFixture('questions'));v.data.items[0].question='OLD_LATE_PAGE';resolve(response(v));});
+    const value=structuredClone(geoFixture(r,{more:r==='questions'})),week=u.searchParams.get('week_end');
+    if(value.basis?.period&&week){value.basis.period.week_end=week;value.basis.period.end=week+'T00:00:00+08:00';}
+    if(r==='questions')value.data.items[0].question=week==='2026-10-12'?'新周首屏问题':'原周首屏问题';
+    return response(value);
+  }}});
+  const click=dataset=>node.onclick({target:{closest:()=>({dataset})}});
+  panel.renderInto(node);await panel.refresh();await click({geo:'tab',tab:'data'});await click({geo:'read',resource:'questions'});
+  const pending=click({geo:'more'});await Promise.resolve();
+  await node.onsubmit({preventDefault(){},target:{matches:()=>true,elements:{week_end:{value:'2026-10-12'}}}});
+  release();await pending;await click({geo:'read',resource:'questions'});
+  assert.match(node.innerHTML,/新周首屏问题/);assert(!node.innerHTML.includes('OLD_LATE_PAGE'));assert(!node.innerHTML.includes('原周首屏问题'));panel.dispose();
+});

@@ -5,7 +5,7 @@ export function createGeoProjectPanel({host,onNavigate=()=>{},canNavigate=()=>tr
   const client=createGeoProjectClient({transport:host.transport,getContext:host.getContext});
   let node=null,epoch=0,disposed=false,tab='home',slots={},week=null,requestedWeek=null,active=null,history=[];
   const available=key=>!!slots[key]?.value;
-  function tabs(){return geoTabs.filter(([key])=>key===tab||['home','onsite'].includes(key)||key==='work'&&(slots.questions?.value?.data.items.length>0||slots.content?.value?.data.items.length>0)||key==='content'&&slots.content?.value?.data.items.length>0||key==='deliveries'&&slots.deliveries?.value?.data.items.length>0||['progress','plan'].includes(key)&&available('executions')||key==='data'&&available('visibility'));}
+  function tabs(){return geoTabs.filter(([key])=>key===tab||['home','onsite'].includes(key)||key==='work'&&(slots.questions?.value?.data.items.length>0||slots.content?.value?.data.items.length>0)||key==='content'&&slots.content?.value?.data.items.length>0||key==='deliveries'&&slots.deliveries?.value?.data.items.length>0||['progress','plan'].includes(key)&&available('executions')||key==='data'&&(available('visibility')||slots.questions?.value?.data.items.length>0));}
   function paint(){
     if(!node)return;
     const slot=active?.slot;
@@ -38,7 +38,7 @@ export function createGeoProjectPanel({host,onNavigate=()=>{},canNavigate=()=>tr
   }
   function reset(){epoch++;client.invalidate();slots={};active=null;history=[];week=null;requestedWeek=null;tab='home';paint();}
   async function open(resource,params={},keepTab=false){
-    if(active)history.push({resource:active.resource,params:active.params,slot:active.slot});
+    if(active)history.push({tab,resource:active.resource,params:active.params,slot:active.slot});
     const next=resource.startsWith('content')?'content':resource==='deliveries'?'deliveries':'data';
     if(!keepTab&&tab!==next){tab=next;onNavigate(tab);}
     const target={resource,params:paramsFor(resource,params),slot:null};active=target;paint();
@@ -68,7 +68,7 @@ export function createGeoProjectPanel({host,onNavigate=()=>{},canNavigate=()=>tr
     const action=el.dataset.geo;
     if(action==='tab')await selectTab(el.dataset.tab);
     if(action==='read'){let params={};try{params=JSON.parse(el.dataset.params||'{}');}catch{return;}await open(el.dataset.resource,params,tab==='work');}
-    if(action==='back'){active=history.pop()||null;paint();}
+    if(action==='back'){active=history.pop()||null;if(active?.tab&&tab!==active.tab){tab=active.tab;onNavigate(tab);}paint();}
     if(action==='refresh')await refresh();
     if(action==='refresh-executions')await readSlot('executions');
     if(action==='retry'&&active)await readSlot(active.resource,active.params,active);
