@@ -33,10 +33,10 @@ async function save(){
     else created=await createSeoSite({tenant_id:scope.tenantId,name:form.name,domain:form.domain})
     if(!sameScope())return
     visible.value=false
-    ElMessage.success(created&&session.isAdvisorSession?'网站已添加，请由超管分配网站后使用':'SEO 网站已保存')
+    ElMessage.success(created&&session.isAdvisorSession?'网站已添加，已自动分配给你':'SEO 网站已保存')
     await load()
     if(!sameScope())return
-    if(created?.id&&!session.isAdvisorSession)currentSeoSiteId.value=created.id
+    if(created?.id)currentSeoSiteId.value=created.id
     notifySeoSitesChanged()
   }catch(e){if(sameScope())ElMessage.error(e.message)}
   finally{saving.value=false}

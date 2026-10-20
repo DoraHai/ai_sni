@@ -33,4 +33,5 @@ async def check_scope(session, ctx, request, body, *, lock=False):
         ).with_for_update(read=True).execution_options(populate_existing=True))
         if module is None or not module_is_available(module):
             raise HTTPException(403, {"code": "ADVISOR_OBJECT_UNAVAILABLE"})
-    # No assignment is created: granting site permissions remains admin-only.
+    # Admission grants no existing site access. The handler may assign only
+    # its newly inserted site to the authenticated creator in that transaction.
