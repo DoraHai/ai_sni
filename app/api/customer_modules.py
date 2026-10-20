@@ -25,6 +25,7 @@ from app.models.seo import (
     SeoRankSnapshot,
     SeoSerpResult,
     SeoSitePage,
+    SeoSiteAdvisorAssignment,
 )
 from app.module_scope import (
     MODULE_CODES,
@@ -323,13 +324,36 @@ async def create_seo_site(
         default_url=default_url,
     )
     session.add(row)
+    assignment = None
     try:
+        if ctx.is_advisor:
+            # The site is new: its unique tenant/domain insert must succeed
+            # before assigning it. A duplicate request never reaches this step
+            # and cannot claim an existing site or duplicate its assignment.
+            await session.flush()
+            assignment = SeoSiteAdvisorAssignment(
+                tenant_id=row.tenant_id,
+                site_id=row.id,
+                advisor_user_id=ctx.user_id,
+                active=True,
+                assigned_by=ctx.user_id,
+            )
+            session.add(assignment)
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(409, "该客户已经维护了这个 SEO 网站") from exc
-    # New sites have no admin-issued advisor assignment yet. The request's
-    # assignment filter intentionally hides them from subsequent advisor reads.
+    except Exception:
+        # Includes a rejected commit-time grant check or assignment insert.
+        await session.rollback()
+        raise
+    if assignment is not None:
+        from app.security.advisor_write_commit import record_seo_action
+        # Use the existing metadata-only operation log after a successful
+        # commit; failed transactions must never emit a successful assignment.
+        record_seo_action(ctx, row.tenant_id, "POST", "/api/v1/seo/sites",
+                          assignment.__tablename__, [assignment.id])
+    # Avoid an unnecessary filtered reload in the advisor request session.
     if not getattr(ctx, "is_advisor", False):
         await session.refresh(row)
     return _site_payload(row)

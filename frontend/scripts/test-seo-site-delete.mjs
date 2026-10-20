@@ -60,12 +60,12 @@ test('advisor sees add button and missing customer disables it with guidance',()
  const f=createFixture();f.state.currentTenantId.value=null;f.state.open()
  assert.equal(f.state.visible.value,false);assert.match(f.messages[0],/先.*选择客户/)
 })
-test('creation sends only captured tenant name and domain and does not grant or select unassigned site',async()=>{
+test('creation sends only captured tenant name and domain and selects the server-assigned site',async()=>{
  const f=createFixture();f.state.open();Object.assign(f.state.form,{name:'官网',domain:'example.test'})
  await f.state.save()
  assert.deepEqual(f.writes,[{tenant_id:4,name:'官网',domain:'example.test'}])
- assert.equal(f.state.currentSeoSiteId.value,10);assert.equal(f.state.refreshed,true)
- assert.match(f.messages[0],/超管分配/)
+ assert.equal(f.state.currentSeoSiteId.value,101);assert.equal(f.state.refreshed,true)
+ assert.match(f.messages[0],/已自动分配给你/)
 })
 test('switching customer or account after opening cannot create in the new scope',async()=>{
  for(const change of [s=>s.currentTenantId.value=5,s=>s.session.user.id=8]){
