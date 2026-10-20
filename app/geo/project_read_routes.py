@@ -118,7 +118,8 @@ async def project_response(resource, request, ctx, session):
         data = {**page(items, lambda t: (t['id'],), mark), 'filters': f}
         ids = {i['id'] for i in items}
         resource_basis = view.basis(records, last_data_at=view.latest_time(
-            t.updated_at or t.created_at for t in records.tasks.values() if t.id in ids))
+            [at for t in records.tasks.values() if t.id in ids for at in (t.updated_at, t.created_at)]
+            + [view.current_master(records, ident).created_at for ident in ids if view.current_master(records, ident)]))
     elif resource == 'task':
         task = records.tasks[params['task_id']]
         master = view.current_master(records, task.id)
@@ -131,7 +132,8 @@ async def project_response(resource, request, ctx, session):
         data = {'task': view.task_row(task, records), 'master': view.article_row(master) if master else None,
                 'variants_path': view.link(records, f'/content/{task.id}/variants'),
                 'deliveries_path': view.link(records, '/deliveries', task_id=task.id), 'receipt_summary': summary}
-        resource_basis = view.basis(records, last_data_at=view.latest_time([task.updated_at or task.created_at]))
+        resource_basis = view.basis(records, last_data_at=view.latest_time(
+            [task.updated_at, task.created_at, master.created_at if master else None]))
     elif resource in {'variants', 'variant', 'article'}:
         task_id = params['task_id']
         if resource == 'article':
@@ -144,13 +146,13 @@ async def project_response(resource, request, ctx, session):
             data = {'variant': view.variant_row(variant, records), 'body_markdown': variant.body_markdown or '',
                     'article_path': view.link(records, f'/content/{task_id}/articles/{variant.article_version_id}'),
                     'deliveries_path': view.link(records, '/deliveries', task_id=task_id)}
-            times = [variant.updated_at or variant.created_at]
+            times = [variant.updated_at, variant.created_at]
         else:
             selected = [v for v in records.variants.values() if v.task_id == task_id]
             mark = watermarks(variant=max((v.id for v in selected), default=0))
             selected = [v for v in selected if v.id <= mark['variant']]
             data = page([view.variant_row(v, records) for v in selected], lambda v: (v['id'],), mark)
-            times = [v.updated_at or v.created_at for v in selected]
+            times = [at for v in selected for at in (v.updated_at, v.created_at)]
         resource_basis = view.basis(records, last_data_at=view.latest_time(times))
     elif resource == 'deliveries':
         f = filters_for(resource, params)
@@ -171,7 +173,7 @@ async def project_response(resource, request, ctx, session):
                            'published_records': sum(p['stored_status'] == 'published' and p['url_state'] == 'available' for p in pub_rows),
                            'stored_verified_publications': sum(p['stored_status'] == 'published' and p['url_state'] == 'available'
                                                               and p['verification']['evidence_valid'] for p in pub_rows)}}
-        times = [view.parsed_time(r.get('published_at')) or view.parsed_time(r.get('updated_at')) for r in items]
+        times = [view.parsed_time(r.get(field)) for r in items for field in ('published_at', 'updated_at')]
         resource_basis = view.basis(records, last_data_at=view.latest_time(times))
     elif resource == 'overview':
         tasks = [view.task_row(t, records) for t in records.tasks.values() if t.status not in {'archived', 'cancelled'}]

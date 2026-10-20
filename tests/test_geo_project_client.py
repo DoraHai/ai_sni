@@ -429,6 +429,9 @@ def test_review_receipt_publication_and_verification_remain_distinct(env):
     assert not task['task']['review']['covers_current_master']
     assert task['receipt_summary']['succeeded'] == 1
     assert task['master']['id'] == 10
+    expected_time = view.iso(NOW+timedelta(days=1))
+    assert get(env, '/content/1').json()['basis']['last_data_at'] == expected_time
+    assert get(env, '/content', question_id=1).json()['basis']['last_data_at'] == expected_time
     delivery = get(env, '/deliveries', task_id=1).json()['data']
     assert delivery['counts'] == {'publication_records': 1, 'receipt_records': 1, 'published_records': 1, 'stored_verified_publications': 0}
     assert delivery['items'][0]['verification']['reason_codes'] == ['historical_article']
@@ -444,9 +447,13 @@ def test_verification_uses_saved_fingerprint_and_timestamp(env):
         'state': 'healthy', 'expected_fingerprint': _variant_fingerprint(variant), 'article_id': 1,
         'checked_at': '2026-10-15T10:00:00Z'}}}
     env.save(variant)
+    publication = env.session.get(Publication, 1)
+    publication.updated_at = NOW+timedelta(days=1)
+    env.save(publication)
     rows = get(env, '/deliveries', task_id=1).json()['data']
     assert rows['counts']['stored_verified_publications'] == 1
     assert rows['items'][0]['verification']['evidence_valid']
+    assert get(env, '/deliveries', task_id=1).json()['basis']['last_data_at'] == view.iso(publication.updated_at)
     state = deepcopy(variant.adapt_meta)
     state['publication_monitor']['1']['article_id'] = 4
     variant.adapt_meta = state
