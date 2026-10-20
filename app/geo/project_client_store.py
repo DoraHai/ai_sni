@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import timedelta
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 from sqlalchemy import and_, or_, select, text
@@ -58,6 +59,7 @@ class ProjectRecords:
     prompts: dict = field(default_factory=dict)
     answers: list = field(default_factory=list)
     runs: dict = field(default_factory=dict)
+    cells: dict = field(default_factory=dict)
     own_domains: list = field(default_factory=list)
     tasks: dict = field(default_factory=dict)
     articles: dict = field(default_factory=dict)
@@ -156,7 +158,22 @@ async def load_answers(session, records, params, *, answer_id=None):
     # cell is inspected by the pure evidence checks; no tenant-wide run summaries.
     runs = await bounded(session, Run, [Run.tenant_id == tid, Run.id.in_({r.patrol_run_id for r in records.answers if r.patrol_run_id})],
                          ['id', 'tenant_id', 'status', 'started_at', 'finished_at', 'items'])
-    records.runs = {r.id: r for r in runs}
+    records.runs = {}
+    answer_ids = {r.id for r in records.answers}
+    if sum(len(r.items or []) for r in runs) > ROW_BUDGET:
+        fail(503, 'READ_UNAVAILABLE', '当前证据量超出读取预算，请稍后重试')
+    for run in runs:
+        # Retain only authorized snapshot cells; mixed-project patrols cannot
+        # contribute another project's metadata, even in intermediate views.
+        cells = [c for c in (run.items or []) if isinstance(c, dict) and c.get('snapshot_id') in answer_ids]
+        records.runs[run.id] = SimpleNamespace(id=run.id, tenant_id=run.tenant_id, status=run.status,
+            started_at=run.started_at, finished_at=run.finished_at, items=cells)
+        for cell in cells:
+            key = (run.id, cell['snapshot_id'])
+            if key in records.cells:
+                records.cells[key] = None  # Ambiguous duplicate evidence fails closed.
+            else:
+                records.cells[key] = cell
     channels = await bounded(session, Channel, [Channel.tenant_id == tid, Channel.enabled.is_(True),
                              Channel.channel_type.in_(['website', 'docs'])], ['id', 'base_url'])
     from app.geo.integration_metrics import domain
@@ -180,8 +197,15 @@ async def load_content(session, records, params):
     variants = await bounded(session, Variant, [Variant.task_id.in_(records.tasks), Variant.article_version_id.in_(records.articles)],
         ['id', 'task_id', 'article_version_id', 'channel', 'title', 'status', 'body_markdown', 'adapt_meta', 'created_at', 'updated_at'])
     records.variants = {v.id: v for v in variants if records.articles[v.article_version_id].task_id == v.task_id}
+    receipt_count = 0
+    for variant in records.variants.values():
+        meta = variant.adapt_meta if isinstance(variant.adapt_meta, dict) else {}
+        entries = meta.get('push_deliveries')
+        receipt_count += len(entries) if isinstance(entries, dict) else 0
+    if receipt_count > ROW_BUDGET:
+        fail(503, 'READ_UNAVAILABLE', '当前回执量超出读取预算，请稍后重试')
     records.publications = await bounded(session, Publication, [Publication.variant_id.in_(records.variants)],
-        ['id', 'variant_id', 'channel', 'publish_mode', 'published_url', 'published_at', 'updated_at', 'status'])
+        ['id', 'variant_id', 'channel', 'publish_mode', 'published_url', 'canonical_url', 'published_at', 'updated_at', 'status'])
 
 
 def require_object(rows, ident):

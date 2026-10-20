@@ -18,7 +18,7 @@ METRICS = (MENTIONS, RATE, SCORE)
 
 
 def enum(value, allowed):
-    return value if value in allowed else 'unknown'
+    return value if isinstance(value, str) and value in allowed else 'unknown'
 
 
 def latest_time(values):
@@ -52,6 +52,8 @@ def period(end, *, include_week=False):
 
 def evidence(row, records):
     run = records.runs.get(row.patrol_run_id)
+    if records.cells:
+        return run, records.cells.get((row.patrol_run_id, row.id))
     cells = (run.items or []) if run else []
     matches = [c for c in cells if isinstance(c, dict) and c.get('snapshot_id') == row.id]
     cell = matches[0] if len(matches) == 1 else None
@@ -95,13 +97,12 @@ def weekly_data(records, end):
     for row in records.answers:
         if qualification(row, records):
             continue
-        run, cell = evidence(row, records)
         copy = SimpleNamespace(**{key: getattr(row, key) for key in (
             'id', 'tenant_id', 'prompt_id', 'engine', 'captured_at', 'sample_mode', 'simulated', 'note',
             'citation_accuracy', 'raw_text', 'mentions_brand', 'cited_urls', 'competitors', 'patrol_run_id')})
-        # Reuse the exact historical evidence binding and weekly math.
-        verified_patrol_rows([copy], [run])
         candidates.append(copy)
+    # Reuse the exact historical evidence binding and weekly math in one pass.
+    candidates = verified_patrol_rows(candidates, list(records.runs.values()))
     current = build_weekly_snapshot(candidates, records.own_domains, end)
     previous = build_weekly_snapshot(candidates, records.own_domains, end-timedelta(days=7))
     context = period_context(records.project.tenant_id, end, current, previous)
@@ -228,9 +229,10 @@ def answer_row(row, records, end, weekly):
     citations, seen = [], set()
     for url in row.cited_urls or []:
         safe, state = safe_url(url)
-        if (safe, state) in seen:
+        normalized = str(url or '').strip()
+        if normalized in seen:
             continue
-        seen.add((safe, state))
+        seen.add(normalized)
         host = domain(safe)
         citations.append({'url': safe, 'url_state': state, 'is_own_domain': bool(host and any(
             host == own or host.endswith('.' + own) for own in records.own_domains))})
@@ -307,10 +309,11 @@ def receipt_rows(records, variants):
             reason = None
             if not valid:
                 reason = 'article_reference_invalid'
-            elif entry.get('state') not in {'sending', 'succeeded', 'failed', 'unknown'}:
+            elif not isinstance(entry.get('state'), str) or entry.get('state') not in {'sending', 'succeeded', 'failed', 'unknown'}:
                 reason = 'unrecognized_receipt_state'
             elif state in {'failed', 'unknown'}:
-                reason = entry.get('reason') if entry.get('reason') in {'timeout', 'authorization_failed', 'quota_exceeded'} else 'execution_failed'
+                reason = entry.get('reason') if isinstance(entry.get('reason'), str) and entry['reason'] in {
+                    'timeout', 'authorization_failed', 'quota_exceeded'} else 'execution_failed'
             rows.append({'record_type': 'receipt', 'receipt_id': digest([variant.id, str(key)]),
                          'task_id': variant.task_id, 'variant_id': variant.id, 'article_id': article.id if valid else None,
                          'article_version_no': article.version_no if valid else None,
@@ -330,8 +333,20 @@ def publication_rows(records, publications):
     for task in records.tasks.values():
         articles = [a for a in records.articles.values() if a.task_id == task.id]
         variants = [v for v in records.variants.values() if v.task_id == task.id]
+        safe_variants = []
+        for variant in variants:
+            meta = variant.adapt_meta if isinstance(variant.adapt_meta, dict) else {}
+            states = meta.get('publication_monitor')
+            states = states if isinstance(states, dict) else {}
+            safe_states = {key: {field: state.get(field) for field in (
+                'state', 'expected_fingerprint', 'article_id', 'checked_at')}
+                for key, state in states.items() if isinstance(state, dict)}
+            safe_variants.append(SimpleNamespace(id=variant.id, task_id=variant.task_id,
+                article_version_id=variant.article_version_id, channel=variant.channel,
+                title=variant.title, body_markdown=variant.body_markdown,
+                adapt_meta={'publication_monitor': safe_states}))
         # The H3/H4 pure summary validates the fingerprint, version and checked_at.
-        summary = build_h3_h4_summary(task, articles, variants, publications)
+        summary = build_h3_h4_summary(task, articles, safe_variants, publications)
         monitor.update({item['publication_ref']['id']: item for item in summary['h4']['monitoring']})
     for publication in publications:
         variant = records.variants[publication.variant_id]
@@ -343,8 +358,9 @@ def publication_rows(records, publications):
         saved = saved.get(str(publication.id)) if isinstance(saved, dict) else None
         saved = saved if isinstance(saved, dict) else {}
         raw_state = saved.get('state', 'pending')
-        state = raw_state if raw_state in {'healthy', 'pending', 'unverified'} else 'unhealthy' if raw_state in {
-            'unreachable', 'mismatch', 'version_changed', 'unhealthy'} else 'unknown'
+        state = enum(raw_state, {'healthy', 'pending', 'unverified', 'unreachable', 'mismatch', 'version_changed', 'unhealthy'})
+        if state in {'unreachable', 'mismatch', 'version_changed'}:
+            state = 'unhealthy'
         checked_at = iso(parsed_time(saved.get('checked_at')))
         item = monitor.get(publication.id)
         valid = bool(item and item['evidence_valid'] and current)

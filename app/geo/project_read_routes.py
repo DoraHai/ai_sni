@@ -92,6 +92,7 @@ async def project_response(resource, request, ctx, session):
             row = require_object({r.id: r for r in records.answers}, params['answer_id'])
             _, data = view.answer_row(row, records, end, weekly)
             resource_basis = view.basis(records, end=end, rows=view.week_rows([row], end), unknown_rows=[row], single=True)
+            resource_basis['last_data_at'] = view.iso(row.captured_at)
         else:
             f = filters_for(resource, params)
             mark = watermarks(answer=max((r.id for r in records.answers), default=0))
@@ -126,7 +127,7 @@ async def project_response(resource, request, ctx, session):
         for variant in variants:
             for _, entry in view.delivery_entries(variant):
                 state = entry.get('state')
-                summary[state if state in summary and state != 'other' else 'other'] += 1
+                summary[state if isinstance(state, str) and state in summary and state != 'other' else 'other'] += 1
         data = {'task': view.task_row(task, records), 'master': view.article_row(master) if master else None,
                 'variants_path': view.link(records, f'/content/{task.id}/variants'),
                 'deliveries_path': view.link(records, '/deliveries', task_id=task.id), 'receipt_summary': summary}
