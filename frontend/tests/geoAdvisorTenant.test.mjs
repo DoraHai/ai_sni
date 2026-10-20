@@ -359,7 +359,8 @@ test('login and advisor selection revalidate routes after publishing the complet
 test('Vue entry gates business pages behind bootstrap and renders the customer button', () => {
   const app = readFileSync(new URL('../geo-frontend/src/App.vue', import.meta.url), 'utf8')
   assert.match(app, /await bootstrapGeoSession/)
-  assert.match(app, /<template v-if="!guidance">/)
+  assert.match(app, /<router-view v-if="inboxRoute"/)
+  assert.match(app, /<template v-else-if="!guidance">/)
   assert.match(app, /router-view v-if="ready"/)
   assert.match(app, /:href="GEO_ADVISOR_SELECT_URL"/)
   assert.match(app, /去选择客户/)

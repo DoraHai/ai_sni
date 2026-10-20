@@ -14,6 +14,7 @@ const geoMeta = (title, extra = {}) => ({
 })
 
 const routes = [
+  { path: '/distribution-inbox', component: () => import('../../src/views/geo/GeoInboxView.vue'), meta: { title: '多号通回传', inboxIdentity: true, bare: true } },
   { path: '/', redirect: GEO_WORKBENCH_START },
   {
     path: '/geo',
@@ -22,6 +23,7 @@ const routes = [
     meta: geoMeta('GEO 工作台', { bare: true }),
     children: [
       { path: 'projects', component: () => import('../../src/views/geo/GeoProjectsView.vue'), meta: geoMeta('项目管理', { perm: 'geo.assets' }) },
+      { path: 'external-publications', component: () => import('../../src/views/geo/GeoExternalPublicationsView.vue'), meta: geoMeta('外部发布记录') },
       { path: 'demo', redirect: GEO_DEMO_HOME },
       { path: 'demo/overview', component: () => import('../../src/views/geo/GeoDemoView.vue'), meta: geoMeta('GEO 演示总览') },
       { path: 'demo/questions', component: () => import('../../src/views/geo/GeoDemoView.vue'), meta: geoMeta('演示问题监测') },

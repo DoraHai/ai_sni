@@ -1,5 +1,6 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { fetchMe } from '../../src/api/auth'
 import client from '../../src/api/client'
 import { fetchGeoTenants } from '../../src/api/geo'
@@ -8,6 +9,9 @@ import { bootstrapGeoSession, GEO_ADVISOR_SELECT_URL } from '../../src/utils/geo
 
 const ready = ref(false)
 const guidance = ref(null)
+const route = useRoute()
+const inboxRoute = computed(() => route.meta.inboxIdentity === true)
+watch(inboxRoute, (value, old) => { if (old && !value) { ready.value = false; void bootstrapSession() } })
 
 async function bootstrapSession() {
   try {
@@ -31,11 +35,12 @@ async function bootstrapSession() {
   }
 }
 
-onMounted(bootstrapSession)
+onMounted(() => { if (!inboxRoute.value) void bootstrapSession() })
 </script>
 
 <template>
-  <template v-if="!guidance">
+  <router-view v-if="inboxRoute" />
+  <template v-else-if="!guidance">
     <router-view v-if="ready" />
     <div v-else class="geo-boot" role="status" aria-live="polite" aria-label="GEO 工作台加载中">
       <div class="geo-boot__panel">
@@ -49,6 +54,7 @@ onMounted(bootstrapSession)
     <div class="geo-boot__panel">
       <div class="geo-boot__title">GEO 增长</div>
       <p>{{ guidance.message }}</p>
+      <router-link to="/distribution-inbox">多号通回传</router-link>
       <el-button v-if="guidance.selectCustomer" tag="a" :href="GEO_ADVISOR_SELECT_URL" type="primary">去选择客户</el-button>
     </div>
   </div>
