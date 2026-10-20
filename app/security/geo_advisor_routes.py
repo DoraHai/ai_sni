@@ -9,7 +9,9 @@ STATIC_ROUTES = frozenset({
     "/api/v1/geo/content-brief-catalog", "/api/v1/geo/channel-profiles",
     "/api/v1/geo/metric-dictionary",
 })
-READ_ROUTES = frozenset({
+from app.geo.project_client_protocol import CLIENT_TEMPLATES
+
+READ_ROUTES = CLIENT_TEMPLATES | frozenset({
     '/api/v1/geo/distribution/v1/settings',
     '/api/v1/geo/distribution/v1/tasks/{taskId}',
     '/api/v1/geo/content-health',

@@ -18,6 +18,11 @@ from app.security.auth import AuthContext, require_scoped_auth
 # module, so the independent service does not import the broad app.api package.
 geo_projects_router = APIRouter(tags=["GEO 项目"])
 
+# Keep the client GETs outside the legacy router's execution/demo dependencies.
+# They establish their own read-only transaction and live project authorization.
+from app.geo.project_read_routes import router as client_read_router
+geo_projects_router.include_router(client_read_router)
+
 
 def _canonical_domain(value: str) -> tuple[str, str]:
     raw = str(value or "").strip()
