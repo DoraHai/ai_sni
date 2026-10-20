@@ -136,6 +136,16 @@ async def guard_request(session, ctx, request, claims):
         keys = {'geo.assets', 'geo.content'}  # Exact reviewed GEO read matrix above.
     if keys is None or not (ctx.can_edit(*keys) if edit else ctx.can_view(*keys)):
         deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "当前角色无权访问此功能")
+    from app.geo.project_client_protocol import CLIENT_TEMPLATES
+    if template in CLIENT_TEMPLATES:
+        # A–L resolve all parents (including article/variant without tenant_id)
+        # through the same current project chain in a READ ONLY transaction.
+        # Generic legacy object checks cannot authorize these nested objects.
+        if not (ctx.can_view('geo.assets') and ctx.can_view('geo.content')):
+            deny(403, 'GEO_CLIENT_FORBIDDEN', '需要项目与内容查看权限')
+        request.scope['geo_advisor_delivery'] = (ctx.user_id, dict(claims), ctx.tenant_id,
+                                                frozenset({'geo.assets', 'geo.content'}))
+        return
     await check_objects(session, ctx, request)
     from app.security.advisor_read_scope import bind_read_scope, check_read_references
     await bind_read_scope(session, ctx, request)
