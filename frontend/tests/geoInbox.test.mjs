@@ -120,4 +120,8 @@ test('identity route is outside business shell and bootstrap, with plain-text an
   assert.ok(!view.includes('v-html'))
   assert.match(view,/rel="noopener noreferrer"/); assert.match(view,/暂无可标注的客户，请联系超管授权/)
   assert.match(view,/safeLink\(row.publicUrl\)/)
+  assert.equal(view.split('不选网站的话，这条回传不会出现在网站的发布记录里。').length - 1, 2)
+  assert.equal(view.split('不选项目的话，这条回传不会出现在项目的发布记录里。').length - 1, 2)
+  const publications=read('../src/views/geo/GeoExternalPublicationsView.vue')
+  assert.match(publications, /<p v-else-if="!items.length">暂无当前范围内的外部回传记录<br \/>\s*<span>没选项目的回传不会出现在这里，请到多号通回传收件箱补选项目。<\/span>/)
 })

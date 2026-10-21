@@ -37,7 +37,9 @@ function safeLink(value) {
     <router-link to="/distribution-inbox">多号通回传：待标客户、改标或撤销</router-link>
     <p>收到回传与操作人报告结果分别展示。未关联稿件不核验正文；这些记录不计入原生稿件验收。</p>
     <p v-if="error" role="alert">{{ error }}</p><p v-if="loading" role="status">正在读取</p>
-    <p v-else-if="!items.length">暂无当前范围内的外部回传记录</p>
+    <p v-else-if="!items.length">暂无当前范围内的外部回传记录<br />
+      <span>没选项目的回传不会出现在这里，请到多号通回传收件箱补选项目。</span>
+    </p>
     <article v-for="row in items" :key="row.id">
       <h2>{{ row.title || '未提供标题' }} <small>外部回传</small></h2>
       <p>{{ row.platform }} · 发布账号：{{ row.publishedAccount || '未提供' }} · {{ results[row.result] || '结果未知' }}</p>
