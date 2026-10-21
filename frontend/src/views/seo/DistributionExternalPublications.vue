@@ -29,7 +29,9 @@ const results = { success: '操作人报告成功', failed: '失败', risk_contr
     <h2>外部回传记录</h2>
     <p>收到回传与页面正文核验分别展示；这些记录不计入稿件验收。</p>
     <p v-if="error" role="alert">{{ error }}</p>
-    <p v-else-if="!items.length">暂无外部回传记录</p>
+    <p v-else-if="!items.length">暂无外部回传记录<br />
+      <span>没选网站的回传不会出现在这里，请到多号通回传收件箱补选网站。</span>
+    </p>
     <article v-for="row in items" :key="row.id">
       <p>外部回传 · {{ row.platform }} · {{ row.title || '未提供标题' }} · 发布账号：{{ row.publishedAccount || '未提供' }}</p>
       <a v-if="row.publicUrl" :href="row.publicUrl" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">{{ row.publicUrl }}</a>
