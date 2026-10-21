@@ -73,4 +73,6 @@ test('unified route is outside the SEO business shell and external records are m
   const distribution=await readFile(new URL('../src/views/seo/SeoDistributionView.vue',import.meta.url),'utf8')
   assert(distribution.includes('<DistributionExternalPublications :tenant-id="currentTenantId" :scope-id="siteId"'))
   assert(distribution.includes('旧版稿件派发（0.3.5 / 0.3.6 兼容区）'))
+  const external=await readFile(new URL('../src/views/seo/DistributionExternalPublications.vue',import.meta.url),'utf8')
+  assert.match(external, /<p v-else-if="!items.length">暂无外部回传记录<br \/>\s*<span>没选网站的回传不会出现在这里，请到多号通回传收件箱补选网站。<\/span>/)
 })

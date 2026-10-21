@@ -49,6 +49,7 @@ test('rendered inbox has only three sections, zero-grant guidance and safe plain
     const link = view.element.querySelector('a')
     assert.equal(link.rel, 'noopener noreferrer'); assert.equal(link.getAttribute('referrerpolicy'), 'no-referrer')
     assert(view.element.textContent.includes('页面尚未核验'))
+    assert(view.element.querySelector('details').textContent.includes('不选网站的话，这条回传不会出现在网站的发布记录里。'))
     assert(view.element.querySelector('details') && !view.element.querySelector('details').open)
     await click(view.element, '生成配对码')
     assert.equal(view.calls[0], 'pair')
@@ -67,6 +68,8 @@ test('dual module customers require an explicit module and label uses the chosen
     assert(button.disabled)
     const module = view.element.querySelectorAll('article select')[1]
     module.value = 'geo'; module.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await flush()
+    assert(view.element.querySelector('details').textContent.includes('不选项目的话，这条回传不会出现在项目的发布记录里。'))
+    assert(!view.element.querySelector('details').textContent.includes('不选网站的话'))
     assert(!button.disabled)
     button.click(); await flush()
     assert.deepEqual(view.calls[0].slice(0,5), ['label','geo',42,id,{ expectedRevision: 0, targetTenant: 42, scopeId: null }])

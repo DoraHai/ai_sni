@@ -84,6 +84,7 @@ onBeforeUnmount(model.clear)
           <p>外部回传 · 已标客户；改标请先撤销，再选择新客户或模块。</p>
           <details><summary>修改网站或项目、关联稿件、发布账号</summary>
             <select :value="scopeId[row.id] ?? row.assignment.scopeId ?? ''" :disabled="state.busy" @change="scopeId[row.id] = $event.target.value; articleId[row.id] = ''"><option value="">范围待补</option><option v-for="scope in scopesFor(row)" :key="scope.id" :value="scope.id">{{ scope.name }}</option></select>
+            <p>{{ row.assignment.module === 'geo' ? '不选项目的话，这条回传不会出现在项目的发布记录里。' : '不选网站的话，这条回传不会出现在网站的发布记录里。' }}</p>
             <select :value="articleId[row.id] ?? row.assignment.articleId ?? ''" :disabled="state.busy" @change="articleId[row.id] = $event.target.value"><option value="">未关联稿件</option><option v-for="article in articlesFor(row)" :key="article.id" :value="article.id">{{ article.title }}</option></select>
             <input :value="publishedAccount[row.id] ?? row.assignment.publishedAccount ?? ''" maxlength="60" placeholder="发布账号（留空恢复上报值）" @input="publishedAccount[row.id] = $event.target.value" />
             <button :disabled="state.busy" @click="update(row)">保存标注修改</button>
@@ -102,6 +103,7 @@ onBeforeUnmount(model.clear)
             <select v-model="scopeId[row.id]" :disabled="state.busy" @change="articleId[row.id] = ''"><option value="">范围待补</option>
               <option v-for="scope in (targetFor(row)?.scopes || []).filter(s => s.module === moduleId[row.id])" :key="scope.id" :value="scope.id">{{ scope.name }}</option>
             </select>
+            <p>{{ moduleId[row.id] === 'geo' ? '不选项目的话，这条回传不会出现在项目的发布记录里。' : '不选网站的话，这条回传不会出现在网站的发布记录里。' }}</p>
             <label>关联稿件 <select v-model="articleId[row.id]" :disabled="state.busy"><option value="">未关联稿件</option><option v-for="article in articlesFor(row)" :key="article.id" :value="article.id">{{ article.title }}</option></select></label>
             <input v-model="publishedAccount[row.id]" maxlength="60" placeholder="发布账号（可留空）" />
             <p>未关联稿件，不核验正文，不计入稿件验收。</p>
