@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 from fastapi import HTTPException
@@ -14,13 +14,13 @@ from app.database import async_session_factory
 from app.geo.demo_tenant import GeoDemoBindingUnavailable
 from app.geo.project_scope import binding
 from app.geo.project_client_protocol import digest, fail, public_host
-from app.geo.content.time_windows import shanghai_day_bounds_utc_naive
+from app.geo.content.time_windows import shanghai_day_bounds_utc_naive, to_utc_naive
 from app.geo.tenant_scope import ensure_geo_entitlement
 from app.models import (
     GeoProject, GeoOptimizationBusiness as Business, GeoOptimizationUnit as Unit,
     GeoPrompt as Prompt, GeoAnswerSnapshot as Answer, GeoVisibilityPatrolRun as Run,
     GeoPublishingChannel as Channel, GeoContentTask as Task, GeoArticleVersion as Article,
-    GeoChannelVariant as Variant, GeoPublication as Publication,
+    GeoChannelVariant as Variant, GeoPublication as Publication, GeoActionTicket,
 )
 from app.module_scope import ensure_module_access
 
@@ -65,6 +65,7 @@ class ProjectRecords:
     articles: dict = field(default_factory=dict)
     variants: dict = field(default_factory=dict)
     publications: list = field(default_factory=list)
+    recommendations: list = field(default_factory=list)
 
     @property
     def fingerprint(self):
@@ -135,7 +136,7 @@ async def authorize(session, ctx, params, request=None):
             fail(404, 'NOT_FOUND', '项目或记录不存在')
         if request is not None:
             request.scope['geo_advisor_read_projects'] = (frozenset({pid}), frozenset(records.businesses))
-    units = await bounded(session, Unit, [Unit.tenant_id == tid, Unit.business_id.in_(records.businesses)], ['id', 'business_id', 'name'])
+    units = await bounded(session, Unit, [Unit.tenant_id == tid, Unit.business_id.in_(records.businesses)], ['id', 'business_id', 'name', 'keyword'])
     records.units = {u.id: u for u in units}
     prompts = await bounded(session, Prompt, [Prompt.tenant_id == tid, Prompt.unit_id.in_(records.units)],
                             ['id', 'unit_id', 'question', 'status', 'is_brand_probe'])
@@ -153,10 +154,13 @@ async def load_answers(session, records, params, *, answer_id=None):
                   or_(window, Answer.captured_at.is_(None), Answer.id == answer_id if answer_id else False)]
     records.answers = await bounded(session, Answer, conditions,
         ['id', 'tenant_id', 'prompt_id', 'engine', 'captured_at', 'sample_mode', 'simulated', 'note',
-         'citation_accuracy', 'raw_text', 'mentions_brand', 'cited_urls', 'competitors', 'patrol_run_id'])
+         'citation_accuracy', 'raw_text', 'mentions_brand', 'cited_urls', 'competitors', 'patrol_run_id',
+         'brand_position', 'sentiment'])
     # A mixed-project run is never serialized. Only the bound snapshot's matching
     # cell is inspected by the pure evidence checks; no tenant-wide run summaries.
-    runs = await bounded(session, Run, [Run.tenant_id == tid, Run.id.in_({r.patrol_run_id for r in records.answers if r.patrol_run_id})],
+    runs = await bounded(session, Run, [Run.tenant_id == tid, or_(
+        Run.id.in_({r.patrol_run_id for r in records.answers if r.patrol_run_id}),
+        and_(Run.started_at >= start, Run.started_at < stop))],
                          ['id', 'tenant_id', 'status', 'started_at', 'finished_at', 'items'])
     records.runs = {}
     answer_ids = {r.id for r in records.answers}
@@ -165,10 +169,13 @@ async def load_answers(session, records, params, *, answer_id=None):
     for run in runs:
         # Retain only authorized snapshot cells; mixed-project patrols cannot
         # contribute another project's metadata, even in intermediate views.
-        cells = [c for c in (run.items or []) if isinstance(c, dict) and c.get('snapshot_id') in answer_ids]
+        cells = [c for c in (run.items or []) if isinstance(c, dict) and c.get('prompt_id') in records.prompts
+                 and (c.get('snapshot_id') in answer_ids or c.get('snapshot_id') is None)]
         records.runs[run.id] = SimpleNamespace(id=run.id, tenant_id=run.tenant_id, status=run.status,
             started_at=run.started_at, finished_at=run.finished_at, items=cells)
         for cell in cells:
+            if cell.get('snapshot_id') is None:
+                continue
             key = (run.id, cell['snapshot_id'])
             if key in records.cells:
                 records.cells[key] = None  # Ambiguous duplicate evidence fails closed.
@@ -189,14 +196,35 @@ async def load_content(session, records, params):
         Prompt.tenant_id == tid, Unit.tenant_id == tid, Unit.business_id.in_(records.businesses)).subquery()
     tasks = await bounded(session, Task, [Task.tenant_id == tid, Task.prompt_id.in_(records.prompts),
         or_(Task.business_id.is_(None), Task.business_id == select(chain.c.business_id).where(chain.c.id == Task.prompt_id).scalar_subquery())],
-        ['id', 'prompt_id', 'business_id', 'title', 'status', 'pipeline_step', 'review_status', 'reviewed_at', 'created_at', 'updated_at'])
+        ['id', 'prompt_id', 'business_id', 'title', 'status', 'pipeline_step', 'review_status', 'reviewed_at', 'created_at', 'updated_at', 'rule_result'])
     records.tasks = {t.id: t for t in tasks}
     articles = await bounded(session, Article, [Article.task_id.in_(records.tasks), Article.kind == 'master'],
         ['id', 'task_id', 'version_no', 'kind', 'title', 'body_markdown', 'created_at'])
     records.articles = {a.id: a for a in articles}
+    # Customer confirmation is not the internal content check. Require the
+    # saved rule result to cover the exact current master before any delivery
+    # projection (including downloads) can expose its title or body.
+    from app.geo.project_client_view import current_master
+    checked = {}
+    for task in tasks:
+        master = current_master(records, task.id)
+        result = task.rule_result if isinstance(task.rule_result, dict) else {}
+        try:
+            # Existing internal rule checks persist naive UTC ISO timestamps.
+            checked_at = datetime.fromisoformat(result.get('checked_at', '').replace('Z', '+00:00'))
+        except (ValueError, TypeError, AttributeError):
+            checked_at = None
+        if (master and result.get('ready') is True and type(result.get('article_id')) is int
+                and result['article_id'] == master.id and checked_at and master.created_at
+                and to_utc_naive(checked_at) >= to_utc_naive(master.created_at)):
+            checked[task.id] = (master.id, to_utc_naive(checked_at))
+    records.tasks = {t.id: t for t in tasks if t.id in checked}
+    records.articles = {a.id: a for a in articles if a.task_id in checked and a.id == checked[a.task_id][0]}
     variants = await bounded(session, Variant, [Variant.task_id.in_(records.tasks), Variant.article_version_id.in_(records.articles)],
         ['id', 'task_id', 'article_version_id', 'channel', 'title', 'status', 'body_markdown', 'adapt_meta', 'created_at', 'updated_at'])
-    records.variants = {v.id: v for v in variants if records.articles[v.article_version_id].task_id == v.task_id}
+    records.variants = {v.id: v for v in variants if records.articles[v.article_version_id].task_id == v.task_id
+        and v.created_at and to_utc_naive(v.created_at) <= checked[v.task_id][1]
+        and not (isinstance(v.adapt_meta, dict) and v.adapt_meta.get('publishable') is False)}
     receipt_count = 0
     for variant in records.variants.values():
         meta = variant.adapt_meta if isinstance(variant.adapt_meta, dict) else {}
@@ -206,6 +234,14 @@ async def load_content(session, records, params):
         fail(503, 'READ_UNAVAILABLE', '当前回执量超出读取预算，请稍后重试')
     records.publications = await bounded(session, Publication, [Publication.variant_id.in_(records.variants)],
         ['id', 'variant_id', 'channel', 'publish_mode', 'published_url', 'canonical_url', 'published_at', 'updated_at', 'status'])
+
+
+async def load_recommendations(session, records, params):
+    records.recommendations = await bounded(session, GeoActionTicket, [
+        GeoActionTicket.tenant_id == params['tenant_id'],
+        GeoActionTicket.advice_code.startswith('onsite:v1:'),
+        GeoActionTicket.progress['onsite']['project_id'].as_integer() == params['project_id']],
+        ['id', 'title', 'status', 'progress'])
 
 
 def require_object(rows, ident):

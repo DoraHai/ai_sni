@@ -183,7 +183,7 @@ class ExecutePatrolRunTests(unittest.IsolatedAsyncioTestCase):
             status="pending",
             trigger="manual",
             auto_persist=True,
-            prefer_real=True,
+            prefer_real=False,
             prompt_limit=5,
             engine_keys=["deepseek"],
             summary=None,

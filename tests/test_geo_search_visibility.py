@@ -449,7 +449,9 @@ def test_article_union_scoped_dedup_and_cap():
     session = AsyncMock()
     session.scalars.side_effect = [["https://media.example/article?id=1", "https://media.example/article?id=1#duplicate"],
                                   ["https://media.example/placement", "https://zhuanlan.zhihu.com/p/1"]]
-    result = run(sv.article_urls(session, 7, config))
+    current_project = project(tenant_id=7)
+    with patch('app.geo.project_scope.project_scope', AsyncMock(return_value=(current_project, [11]))):
+        result = run(sv.article_urls(session, current_project, config))
     assert len(result) == 4
     assert "https://media.example/article?id=2" in result
     assert "geo_content_tasks.tenant_id" in str(session.scalars.await_args_list[0].args[0])

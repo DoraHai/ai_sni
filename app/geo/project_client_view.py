@@ -189,7 +189,8 @@ def question_row(prompt, records, end, rows):
     return {'id': prompt.id, 'question': prompt.question or '',
             'status': 'inactive' if prompt.status in {'inactive', 'paused'} else enum(prompt.status, {'active', 'archived'}),
             'is_brand_probe': bool(prompt.is_brand_probe), 'business': {'id': business.id, 'name': business.name or ''},
-            'unit': {'id': unit.id, 'name': unit.name or ''}, 'observation': observed,
+            'unit': {'id': unit.id, 'name': unit.name or '', 'keyword': unit.keyword,
+                     'display_name': unit.keyword or unit.name or ''}, 'observation': observed,
             'qualified_sample_count': sum(not qualification(r, records) for r in selected),
             'latest_answer_at': latest_time(r.captured_at for r in selected), 'attention_reason_codes': reasons,
             'detail_path': link(records, f'/questions/{prompt.id}', end=end)}

@@ -154,9 +154,9 @@ def test_shared_trend_contract(value,previous,expected):
 @pytest.mark.parametrize('tamper',[None,'raw','mention','urls','competitors','time','run','mode'])
 def test_metric_source_requires_matching_server_patrol(tamper):
     from app.geo.integration_metrics import verified_patrol_rows
-    row=NS(id=1,patrol_run_id=2,prompt_id=3,engine='a',captured_at=datetime(2026,8,27,12),
+    row=NS(id=1,patrol_run_id=2,prompt_id=3,engine='deepseek',captured_at=datetime(2026,8,27,12),
            raw_text='Original answer',mentions_brand=True,cited_urls=[],competitors=['Rival'])
-    cell=dict(snapshot_id=1,prompt_id=3,engine='a',ok=True,sample_mode='openai_compat',simulated=False,
+    cell=dict(snapshot_id=1,prompt_id=3,engine='deepseek',provider='deepseek',model='deepseek-test',ok=True,sample_mode='openai_compat',simulated=False,
               sampling_method='unprimed_json_v2',analysis_status='completed',raw_text='Original answer',
               suggested_mentions_brand=True,competitors=['Rival'])
     run=NS(id=2,status='completed',started_at=datetime(2026,8,27,11),finished_at=datetime(2026,8,27,13),items=[cell])
@@ -246,9 +246,11 @@ def test_openapi_documents_shared_shapes():
 def test_database_loader_filters_server_source_and_scopes_every_query():
     from app.geo.integration_metrics import load_weekly_snapshot
     rows=samples(27,mention=True)
-    for row in rows:
+    for i, row in enumerate(rows):
+        row.engine = ('doubao', 'deepseek')[i % 2]
         row.raw_text='Original';row.cited_urls=[];row.patrol_run_id=2
     cells=[dict(snapshot_id=row.id,prompt_id=row.prompt_id,engine=row.engine,ok=True,sample_mode='openai_compat',
+        provider=row.engine,model=row.engine+'-test',
         simulated=False,sampling_method='unprimed_json_v2',analysis_status='completed',raw_text='Original',
         suggested_mentions_brand=True,competitors=row.competitors) for row in rows]
     run=NS(id=2,status='completed',started_at=datetime(2026,8,26),finished_at=datetime(2026,8,28),items=cells)

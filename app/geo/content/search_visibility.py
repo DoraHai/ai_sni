@@ -19,14 +19,14 @@ from zoneinfo import ZoneInfo
 import httpx
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
-from sqlalchemy import select, text
+from sqlalchemy import select, text, or_
 
 from app.config import get_settings
 from app.database import async_session_factory, engine
 from app.geo.audit import safe_fetch
 from app.models import (
     GeoAsyncJob, GeoChannelVariant, GeoContentTask, GeoMediaPlacement,
-    GeoProject, GeoPublication, Tenant, TenantModule,
+    GeoProject, GeoPublication, Tenant, TenantModule, GeoPrompt, GeoOptimizationUnit,
 )
 from app.module_scope import module_is_available
 
@@ -444,18 +444,31 @@ async def collect(client: SearchClient, articles: list[str]):
         await client.checkpoint()
 
 
-async def article_urls(session, tenant_id: int, config: VisibilityConfig) -> list[str]:
+async def article_urls(session, project: GeoProject, config: VisibilityConfig) -> list[str]:
+    from app.geo.project_scope import project_scope
+    _, business_ids = await project_scope(session, project.tenant_id, project.id)
+    tenant_id = project.tenant_id
     publications = await session.scalars(
         select(GeoPublication.published_url)
         .join(GeoChannelVariant, GeoChannelVariant.id == GeoPublication.variant_id)
         .join(GeoContentTask, GeoContentTask.id == GeoChannelVariant.task_id)
-        .where(GeoContentTask.tenant_id == tenant_id, GeoPublication.published_url.is_not(None))
+        .join(GeoPrompt, GeoPrompt.id == GeoContentTask.prompt_id)
+        .join(GeoOptimizationUnit, GeoOptimizationUnit.id == GeoPrompt.unit_id)
+        .where(GeoContentTask.tenant_id == tenant_id, GeoPrompt.tenant_id == tenant_id,
+               GeoOptimizationUnit.tenant_id == tenant_id, GeoOptimizationUnit.business_id.in_(business_ids),
+               or_(GeoContentTask.business_id.is_(None), GeoContentTask.business_id == GeoOptimizationUnit.business_id),
+               GeoPublication.published_url.is_not(None))
         .order_by(GeoPublication.id.desc()).limit(100)
     )
-    placements = await session.scalars(select(GeoMediaPlacement.published_url).where(
-        GeoMediaPlacement.tenant_id == tenant_id, GeoMediaPlacement.published_url.is_not(None)
+    placements = await session.scalars(select(GeoMediaPlacement.published_url)
+        .join(GeoPrompt, GeoPrompt.id == GeoMediaPlacement.related_prompt_id)
+        .join(GeoOptimizationUnit, GeoOptimizationUnit.id == GeoPrompt.unit_id).where(
+        GeoMediaPlacement.tenant_id == tenant_id, GeoPrompt.tenant_id == tenant_id,
+        GeoOptimizationUnit.tenant_id == tenant_id, GeoOptimizationUnit.business_id.in_(business_ids),
+        GeoMediaPlacement.published_url.is_not(None)
     ).order_by(GeoMediaPlacement.id.desc()).limit(100))
     out, seen = [], set()
+    # Explicit extras live in this project's config, rather than tenant inventory.
     for url in [*publications, *placements, *config.extra_article_urls]:
         try:
             key = canonical_url(url)
@@ -493,7 +506,7 @@ async def create_run(session, project: GeoProject, config: VisibilityConfig, *, 
         raise StopRun("每个项目每天最多立即运行一次")
     if trigger == "schedule" and any(r.status == "succeeded" and r.created_at >= week_start() for r in rows):
         return None
-    articles = await article_urls(session, project.tenant_id, config)
+    articles = await article_urls(session, project, config)
     row = GeoAsyncJob(tenant_id=project.tenant_id, kind=KIND, status="pending", ref_type="geo_project",
                       ref_id=project.id, created_by=actor, created_at=now_utc(),
                       request_meta={"config": config.model_dump(), "trigger": trigger, "article_urls": articles},
