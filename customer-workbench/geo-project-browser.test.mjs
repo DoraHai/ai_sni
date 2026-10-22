@@ -278,7 +278,7 @@ test(
             assert.equal(await p.$('[data-geo=more]'), null);
             await p.click('[data-resource="questions/3"]');
             await p.waitForFunction(() =>
-              document.querySelector('.geo-workspace')?.textContent.includes('本周已存回答'),
+              document.querySelector('.geo-workspace')?.textContent.includes('本统计周期已存回答'),
             );
             await p.click('[data-resource=answers][data-params*="question_id"]');
             await p.waitForSelector('[data-resource="answers/5"]');

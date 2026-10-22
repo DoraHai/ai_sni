@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {startFixtureServer} from './tests/fixture-server.mjs';
-import {geoFixture, question, envelope, page as listPage} from './tests/geo-client-fixture.mjs';
+import {geoFixture, question, openWeekProgress, envelope, page as listPage} from './tests/geo-client-fixture.mjs';
 import {geoEngines} from './js/geo-project-insights.mjs';
 
 test('built insights: full server filters, six engines, citations, suggestions, binary downloads and permission cleanup', {timeout: 90000}, async () => {
@@ -14,7 +14,7 @@ test('built insights: full server filters, six engines, citations, suggestions, 
   const shots = await fs.mkdtemp(path.join(os.tmpdir(), 'geo-insights-'));
   const p = await browser.newPage(), calls = [], errors = [], external = [];
   const origin = 'https://geo-client.test';
-  let unavailable = false, denied = false;
+  let unavailable = false, denied = false, legacy = false, openCount = 26;
   try {
     p.on('pageerror', (e) => errors.push(e.message));
     await p.evaluateOnNewDocument(() => sessionStorage.setItem('sem_auth_v1', JSON.stringify({version: 1, token: 'synthetic-only', user: {id: 7, tenant_id: 1, permissions: {'geo.assets': 'edit', 'geo.content': 'edit'}}})));
@@ -42,14 +42,22 @@ test('built insights: full server filters, six engines, citations, suggestions, 
         if (r === 'questions') {
           const q = {...question, id: u.searchParams.has('cursor') ? 4 : 3, question: u.searchParams.has('cursor') ? '末页问题' : '合成问题：设备如何选型？',
             unit: {id: 4, name: '内部单元名', keyword: '设备选型', display_name: '设备选型'},
-            by_engine: geoEngines.map(([engine_key, label], i) => ({engine_key, label, mentioned: i < 3 ? 1 : null, total: i < 3 ? 2 : null,
-              percentage: i < 3 ? 50 : null, status: ['small_sample', 'small_sample', 'small_sample', 'not_tested', 'not_configured', 'failed'][i],
-              small_sample: i < 3, last_sample_at: i < 3 ? '2026-10-15T02:00:00Z' : null}))};
+            by_engine: geoEngines.map(([engine_key, label], i) => ({engine_key, label, mentioned: i < 2 ? 0 : i === 2 ? 1 : null, total: i < 2 ? 0 : i === 2 ? 2 : null,
+              percentage: i === 2 ? 50 : null, status: ['tested_excluded', 'tested_excluded', 'small_sample', 'not_tested', 'not_configured', 'failed'][i],
+              excluded_reason_codes: i === 0 ? ['engine_source_untrusted', 'analysis_incomplete'] : i === 1 ? ['snapshot_unavailable'] : [],
+              small_sample: i === 2, last_sample_at: i < 3 ? '2026-10-15T02:00:00Z' : null}))};
           const v = envelope({...listPage([q], !u.searchParams.has('cursor')), options: {businesses: [{id: 2, name: '设备业务'}], units: [{id: 4, business_id: 2, name: '内部单元名', display_name: '设备选型'}]}}, 'questions');
           v.data.pagination.total_count = 2;
+          if (!legacy) v.data.open_week_progress = {...openWeekProgress, detected_answer_count: openCount};
+          else delete q.open_week_detected_count;
           return send(v);
         }
-        return send(geoFixture(r, {ready: true}));
+        const v = structuredClone(geoFixture(r, {ready: true}));
+        if (v.data?.open_week_progress) {
+          if (legacy) delete v.data.open_week_progress;
+          else v.data.open_week_progress.detected_answer_count = openCount;
+        }
+        return send(v);
       }
       if (u.pathname.startsWith('/api/')) return send({}, 404);
       const r = await fetch(fixture.origin + u.pathname + u.search);
@@ -62,8 +70,15 @@ test('built insights: full server filters, six engines, citations, suggestions, 
     await p.waitForFunction(() => document.querySelector('[data-tab=onsite]')?.getAttribute('aria-current') === 'page');
     assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /完善 FAQ/);
     assert.equal(await p.$('[data-action^="onsite-"], [data-sv=run], [data-sv=config]'), null);
+    await p.click('[data-tab=home]');
+    await p.waitForFunction(() => document.querySelector('.geo-open-week')?.textContent.includes('26'));
+    let text = await p.$eval('.geo-workspace', (e) => e.textContent);
+    assert.match(text, /统计周期：2026-10-12 至 2026-10-18（北京时间）/);
+    assert(!text.includes('右端不含') && !text.includes('2026-10-12T'));
+    await p.screenshot({path: path.join(shots, 'home-open-week-desktop.png'), fullPage: true});
     await p.click('[data-tab=data]');
     await p.waitForFunction(() => document.querySelector('.geo-summary')?.textContent.includes('1.5'));
+    assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /本周（未结束）已检测 26 条，下周一计入正式指标/);
     await p.click('[data-resource=questions]');
     await p.waitForSelector('[data-geo-questions]');
     await p.select('[name=business_id]', '2');
@@ -78,6 +93,11 @@ test('built insights: full server filters, six engines, citations, suggestions, 
     assert.equal(paged.params.week_end, '2026-10-19');
     assert.equal(await p.$('[data-geo=more]'), null);
     assert.deepEqual(await p.$eval('.geo-matrix', (matrix) => [...matrix.querySelectorAll('section b')].map((n) => n.textContent)), ['豆包', 'DeepSeek', '千问', '元宝', '文心', 'Kimi']);
+    text = await p.$eval('.geo-workspace', (e) => e.textContent);
+    for (const line of ['本周（未结束）已检测 26 条，下周一计入正式指标', '本周（未结束）已检测 4 条，下周一计入',
+      '已检测，未计入', '平台来源未核实；回答判读未完成', '回答记录不可读', '样本时间：2026年10月15日 10:00']) assert(text.includes(line), line);
+    const excludedText = await p.$eval('.geo-matrix', (e) => [...e.querySelectorAll('section')].filter((s) => s.textContent.includes('已检测，未计入')).map((s) => s.textContent).join(''));
+    assert(!excludedText.includes('0/0') && !excludedText.includes('%'));
     await p.screenshot({path: path.join(shots, 'data-matrix-desktop.png'), fullPage: true});
     const cdp = await p.createCDPSession();
     await cdp.send('Browser.setDownloadBehavior', {behavior: 'allow', downloadPath: shots});
@@ -107,6 +127,20 @@ test('built insights: full server filters, six engines, citations, suggestions, 
     await p.click('[data-tab=onsite]');
     await p.waitForFunction(() => document.querySelector('.geo-workspace')?.textContent.includes('完善 FAQ'));
     await p.screenshot({path: path.join(shots, 'onsite-suggestions.png'), fullPage: true});
+    openCount = 0;
+    await p.click('[data-tab=home]'); await p.click('[data-geo=refresh]');
+    await p.waitForNetworkIdle({idleTime: 200});
+    assert.match(await p.$eval('.geo-open-week', (e) => e.textContent), /本周（未结束）暂未检测/);
+    legacy = true;
+    await p.click('[data-geo=refresh]');
+    await p.waitForNetworkIdle({idleTime: 200});
+    assert.equal(await p.$('.geo-open-week'), null);
+    await p.click('[data-tab=data]');
+    assert.match(await p.$eval('.geo-summary', (e) => e.textContent), /1.5/);
+    await p.click('[data-resource=questions]');
+    await p.waitForNetworkIdle({idleTime: 200});
+    assert.equal(await p.$('.geo-question-open-week'), null);
+    assert.equal(await p.$('.geo-open-week'), null);
     unavailable = true;
     await p.click('[data-tab=home]'); await p.click('[data-geo=refresh]');
     await p.waitForFunction(() => document.querySelector('[data-geo=refresh]') && document.querySelector('[data-tab=plan]'));
