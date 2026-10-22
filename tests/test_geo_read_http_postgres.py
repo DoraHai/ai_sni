@@ -223,21 +223,23 @@ def test_nonempty_answer_http_pagination_history_and_qualification():
     async def run():
         async with environment() as (client, engine, tables, _identity):
             captured = datetime(2026, 8, 27, 2)
-            rows = [dict(id=i, tenant_id=1, prompt_id=(i-1) % 3+1, engine=str(i % 2),
+            rows = [dict(id=i, tenant_id=1, prompt_id=(i-1) % 3+1, engine=('doubao', 'deepseek')[i % 2],
                          captured_at=captured, sample_mode='openai_compat', simulated=False,
                          note='method=unprimed_json_v2 analysis=completed', citation_accuracy='unknown',
                          raw_text=f'Synthetic answer {i}', mentions_brand=True, cited_urls=[],
-                         competitors=[], patrol_run_id=31) for i in range(1, 13)]
+                         competitors=[], patrol_run_id=31) for i in range(1, 14)]
             # Seven valid current-week rows, with exclusions and an outside-window row.
             rows[7].update(sample_mode='mock_persona', simulated=True)
             rows[8].update(sample_mode='manual')
             rows[9].update(sample_mode='unknown', note=None)
             rows[10].update(captured_at=datetime(2026, 8, 30, 16))  # Shanghai Monday exactly.
             rows[11].update(captured_at=None)  # Defensive legacy-null support only.
+            rows[12].update(engine='doubao')  # Historical shared-model misattribution stays excluded.
             cells = [dict(snapshot_id=r['id'], prompt_id=r['prompt_id'], engine=r['engine'], ok=True,
                           sample_mode=r['sample_mode'], simulated=r['simulated'], sampling_method='unprimed_json_v2',
                           analysis_status='completed', raw_text=r['raw_text'], suggested_mentions_brand=True,
-                          competitors=[], provider='historical-provider', model='historical-model',
+                          competitors=[], provider=r['engine'] if r['id'] != 13 else 'deepseek',
+                          model=r['engine']+'-historical' if r['id'] != 13 else 'deepseek-chat',
                           prompt_question=f'Historical question {r["prompt_id"]}') for r in rows]
             async with engine.begin() as conn:
                 await conn.execute(tables['tenants'].insert(), [{'id': 1, 'name': 'fixture'}, {'id': 2, 'name': 'other'}])
@@ -250,7 +252,7 @@ def test_nonempty_answer_http_pagination_history_and_qualification():
                     id=31, tenant_id=1, status='completed', started_at=datetime(2026, 8, 26),
                     finished_at=datetime(2026, 9, 1), items=cells))
                 await conn.execute(tables['geo_tracking_engines'].insert().values(
-                    id=1, tenant_id=1, engine_key='1', model='current-model', display_name='Current engine'))
+                    id=1, tenant_id=1, engine_key='deepseek', model='deepseek-current', display_name='Current engine'))
                 await conn.execute(tables['geo_answer_snapshots'].insert(), rows)
                 # Both foreign customer and corrupt cross-customer prompt join must be excluded.
                 await conn.execute(tables['geo_answer_snapshots'].insert(), [
@@ -277,11 +279,11 @@ def test_nonempty_answer_http_pagination_history_and_qualification():
                 cursor = page['pagination']['next_cursor']
                 page_count += 1
                 assert page_count <= 5
-            assert [r['ref']['id'] for r in items] == [11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 12]
+            assert [r['ref']['id'] for r in items] == [13, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 12]
             by_id = {r['ref']['id']: r for r in items}
             good = by_id[1]
-            assert good['engine']['model'] == 'historical-model'
-            assert good['engine']['provider'] == 'historical-provider'
+            assert good['engine']['model'] == 'deepseek-historical'
+            assert good['engine']['provider'] == 'deepseek'
             assert good['question']['historical_text'] == 'Historical question 1'
             assert good['question']['current_text'] == 'Edited question 1'
             assert good['captured_at'] == '2026-08-27T02:00:00Z'
@@ -297,7 +299,11 @@ def test_nonempty_answer_http_pagination_history_and_qualification():
             assert not by_id[11]['week_membership']['within_window']
             assert by_id[11]['metric_adoption'][0]['reasons'][0]['scope'] == 'window'
             assert by_id[12]['captured_at'] is None
-            for change in [{'tenant_id': 2}, {'engine_key': '0'}, {'limit': 4}, {'source_kind': 'real'}]:
+            assert by_id[13]['sample_eligibility']['eligible'] is False
+            assert all(m['status'] == 'excluded' for m in by_id[13]['metric_adoption'])
+            assert 'engine_source_untrusted' in [
+                reason['code'] for reason in by_id[13]['sample_eligibility']['reasons']]
+            for change in [{'tenant_id': 2}, {'engine_key': 'doubao'}, {'limit': 4}, {'source_kind': 'real'}]:
                 response = await client.get(path, params={**params, **change, 'cursor': first['pagination']['next_cursor']})
                 assert response.status_code == 400
             simulated = await client.get(path, params={**params, 'source_kind': 'simulated'})
