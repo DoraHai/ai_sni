@@ -40,12 +40,13 @@ test('built insights: full server filters, six engines, citations, suggestions, 
           headers: {'cache-control': 'private, no-store', 'content-disposition': 'attachment'},
           body: Buffer.from(r.endsWith('.pdf') ? '%PDF-synthetic-report' : 'PK-synthetic-workbook')});
         if (r === 'questions') {
-          const q = {...question, question: u.searchParams.has('cursor') ? '末页问题' : '合成问题：设备如何选型？',
+          const q = {...question, id: u.searchParams.has('cursor') ? 4 : 3, question: u.searchParams.has('cursor') ? '末页问题' : '合成问题：设备如何选型？',
             unit: {id: 4, name: '内部单元名', keyword: '设备选型', display_name: '设备选型'},
             by_engine: geoEngines.map(([engine_key, label], i) => ({engine_key, label, mentioned: i < 3 ? 1 : null, total: i < 3 ? 2 : null,
               percentage: i < 3 ? 50 : null, status: ['small_sample', 'small_sample', 'small_sample', 'not_tested', 'not_configured', 'failed'][i],
               small_sample: i < 3, last_sample_at: i < 3 ? '2026-10-15T02:00:00Z' : null}))};
           const v = envelope({...listPage([q], !u.searchParams.has('cursor')), options: {businesses: [{id: 2, name: '设备业务'}], units: [{id: 4, business_id: 2, name: '内部单元名', display_name: '设备选型'}]}}, 'questions');
+          v.data.pagination.total_count = 2;
           return send(v);
         }
         return send(geoFixture(r, {ready: true}));
