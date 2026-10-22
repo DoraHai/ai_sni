@@ -64,7 +64,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       ? '<button data-geo="read" data-resource="article-citations">已发布文章引用率</button><button data-geo="read" data-resource="deliveries">发布登记与投递回执</button>' : '';
     const weekForm =
       tab === 'data'
-        ? `<form data-geo-week><label>完整周结束日（上海周一） <input name="week_end" type="date" value="${esc(week || '')}" required></label><button>查看该周</button></form><p>正式指标来自已保存检测结果，历史按当前项目归属重算。</p><button data-geo="read" data-resource="visibility">AI 可见度概览</button><button data-geo="read" data-resource="questions">问题监测</button><button data-geo="read" data-resource="answers">回答证据</button><button data-geo="download" data-format="pdf" ${downloading ? 'disabled' : ''}>下载 PDF 报告</button><button data-geo="download" data-format="xlsx" ${downloading ? 'disabled' : ''}>下载 Excel 报告</button>${downloading ? '<p role="status">正在读取报告…</p>' : ''}`
+        ? `<form data-geo-week><label>统计周期结束后的周一（北京时间） <input name="week_end" type="date" value="${esc(week || '')}" required></label><button>查看该周</button></form><p>正式指标来自已保存检测结果，历史按当前项目归属重算。</p><button data-geo="read" data-resource="visibility">AI 可见度概览</button><button data-geo="read" data-resource="questions">问题监测</button><button data-geo="read" data-resource="answers">回答证据</button><button data-geo="download" data-format="pdf" ${downloading ? 'disabled' : ''}>下载 PDF 报告</button><button data-geo="download" data-format="xlsx" ${downloading ? 'disabled' : ''}>下载 Excel 报告</button>${downloading ? '<p role="status">正在读取报告…</p>' : ''}`
         : '';
     node.innerHTML = `<nav class="geo-tabs" aria-label="GEO 工作台">${tabs()
       .map(

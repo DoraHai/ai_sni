@@ -1,4 +1,5 @@
 import {escapeText as esc} from './customer-display.mjs';
+import {geoPeriod, geoOpenWeekProgress, geoQuestionOpenWeek} from './geo-project-display.mjs';
 
 export const geoEngines = [
   ['doubao', '豆包'], ['deepseek', 'DeepSeek'], ['qwen', '千问'],
@@ -9,18 +10,31 @@ export const geoModelNote = '<p class="geo-footnote">模型 API 观测。元宝�
 const integer = (n) => Number.isSafeInteger(n) && n >= 0 ? String(n) : '暂无';
 const number = (n) => typeof n === 'number' && Number.isFinite(n) ? n.toFixed(1).replace(/\.0$/, '') : '暂无';
 const percent = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 100 ? number(n) + '%' : '暂无';
-const states = {not_tested: '未检测', not_configured: '未配置', failed: '检测失败',
+const states = {not_tested: '未检测', not_configured: '未配置', failed: '检测失败', tested_excluded: '已检测，未计入',
   no_publications: '暂无发布文章', insufficient_evidence: '引用证据不足'};
 const state = (key) => states[key] || '暂无';
 const read = (name, resource, params = {}) => `<button data-geo="read" data-resource="${esc(resource)}" data-params="${esc(JSON.stringify(params))}">${esc(name)}</button>`;
 const notes = (rows) => (Array.isArray(rows) ? rows : []).map((text) => `<p class="geo-footnote">${esc(text)}</p>`).join('');
+const excludedReasons = {
+  engine_source_untrusted: '平台来源未核实', analysis_incomplete: '回答判读未完成',
+  unsupported_sampling_method: '采样方式不符合正式口径', simulated_sample: '模拟样本',
+  manual_sample: '人工登记样本', unknown_source: '来源未知', missing_server_evidence: '缺少巡检记录',
+  snapshot_patrol_mismatch: '回答与巡检记录不一致', patrol_not_completed: '巡检未完成',
+  capture_outside_patrol: '采样时间不在巡检内', brand_probe: '品牌点名题', citation_inaccurate: '引用不准确',
+  unknown_capture_time: '采样时间未知', snapshot_unavailable: '回答记录不可读',
+};
+export const geoExcludedReason = (code) => Object.hasOwn(excludedReasons, code)
+  ? excludedReasons[code] : '不符合正式统计条件';
 export function geoMatrix(question, time) {
-  return `<div class="geo-matrix" aria-label="六家模型提及率">${geoEngines.map(([key, name]) => {
+  return `${geoQuestionOpenWeek(question.open_week_detected_count)}<div class="geo-matrix" aria-label="六家模型提及率">${geoEngines.map(([key, name]) => {
     const cell = question.by_engine?.find((row) => row.engine_key === key);
     const valid = cell && ['observed', 'small_sample'].includes(cell.status) &&
       Number.isSafeInteger(cell.total) && cell.total > 0 && Number.isSafeInteger(cell.mentioned) &&
       cell.mentioned >= 0 && cell.mentioned <= cell.total;
-    return `<section><b>${name}</b><p>${valid ? `${cell.mentioned}/${cell.total} · ${percent(cell.percentage)}` : state(cell?.status)}</p><small>样本时间：${esc(cell?.last_sample_at ? time(cell.last_sample_at) : '暂无')}</small>${valid && (cell.small_sample || cell.total < 3) ? '<p class="geo-footnote">小样本，结果仅供参考</p>' : ''}${read('回答依据', 'answers', {question_id: question.id, engine_key: key})}</section>`;
+    const reasons = cell?.status === 'tested_excluded'
+      ? `<p class="geo-footnote">${esc((Array.isArray(cell.excluded_reason_codes) && cell.excluded_reason_codes.length
+        ? cell.excluded_reason_codes : ['unknown']).map(geoExcludedReason).join('；'))}</p>` : '';
+    return `<section><b>${name}</b><p>${valid ? `${cell.mentioned}/${cell.total} · ${percent(cell.percentage)}` : state(cell?.status)}</p>${reasons}<small>样本时间：${esc(cell?.last_sample_at ? time(cell.last_sample_at) : '暂无')}</small>${valid && (cell.small_sample || cell.total < 3) ? '<p class="geo-footnote">小样本，结果仅供参考</p>' : ''}${read('回答依据', 'answers', {question_id: question.id, engine_key: key})}</section>`;
   }).join('')}</div>${geoModelNote}`;
 }
 export function geoQuestionFilters(data, params = {}) {
@@ -41,7 +55,7 @@ export function geoInsightResource(resource, value, {time, link, basis}) {
   const d = value.data;
   if (resource === 'summary') {
     const ready = d.sample_status === 'ready';
-    return `<h2>品牌表现汇总</h2><p>同一项目、同一完整周的合格回答。${ready ? '' : '合格样本不足，四项指标暂无。'}样本 ${integer(d.qualified_counts.samples)} / 问题 ${integer(d.qualified_counts.questions)} / 引擎 ${integer(d.qualified_counts.engines)}；最低要求 ${integer(d.minimum_counts.samples)} 条回答、${integer(d.minimum_counts.questions)} 题、${integer(d.minimum_counts.engines)} 个引擎。</p>${cards(d.metrics, ready)}<details><summary>分平台汇总与样本</summary>${geoEngines.map(([key, name]) => `<h3>${name}</h3>${cards(d.by_engine.find((e) => e.engine_key === key)?.metrics, ready)}`).join('')}</details>${geoModelNote}${notes(d.footnotes)}${basis(value)}`;
+    return `<h2>品牌表现汇总</h2>${geoOpenWeekProgress(d.open_week_progress)}<p>${esc(geoPeriod(d.period || value.basis?.period))}</p><p>同一项目、同一完整周的合格回答。${ready ? '' : '合格样本不足，四项指标暂无。'}样本 ${integer(d.qualified_counts.samples)} / 问题 ${integer(d.qualified_counts.questions)} / 引擎 ${integer(d.qualified_counts.engines)}；最低要求 ${integer(d.minimum_counts.samples)} 条回答、${integer(d.minimum_counts.questions)} 题、${integer(d.minimum_counts.engines)} 个引擎。</p>${cards(d.metrics, ready)}<details><summary>分平台汇总与样本</summary>${geoEngines.map(([key, name]) => `<h3>${name}</h3>${cards(d.by_engine.find((e) => e.engine_key === key)?.metrics, ready)}`).join('')}</details>${geoModelNote}${notes(d.footnotes)}${basis(value)}`;
   }
   if (resource === 'article-citations') {
     const c = d.coverage;
