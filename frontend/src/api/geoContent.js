@@ -793,6 +793,38 @@ export function putVisibilityPatrolSettings(body) {
   return client.put('/api/v1/geo/visibility-patrol/settings', body)
 }
 
+export function fetchPatrolSelfService(tenantId, signal) {
+  return client.get('/api/v1/geo/visibility-patrol/self-service', { params: { tenant_id: tenantId }, signal })
+}
+
+export function putPatrolSelfService({ tenant_id, enabled, expected_revision }) {
+  return client.put('/api/v1/geo/visibility-patrol/self-service', { tenant_id, enabled, expected_revision })
+}
+
+export function listPatrolSettingHistory(tenantId, page = 1, signal) {
+  return client.get('/api/v1/geo/visibility-patrol/self-service/history', {
+    params: { tenant_id: tenantId, page, page_size: 20 }, signal,
+  })
+}
+
+export function listPatrolAdminSettings(params, signal) {
+  return client.get('/api/v1/geo/visibility-patrol/admin-settings', { params, signal })
+}
+
+export function patrolAdminAction({ tenant_id, action, expected_revision, reason }) {
+  return client.post('/api/v1/geo/visibility-patrol/self-service/admin-action', { tenant_id, action, expected_revision, reason })
+}
+
+export function putPatrolManualLimit({ tenant_id, manual_daily_limit, expected_revision, reason }) {
+  return client.put('/api/v1/geo/visibility-patrol/manual-limit', { tenant_id, manual_daily_limit, expected_revision, reason })
+}
+
+export function listPatrolManualLimitHistory(tenantId, page = 1, signal) {
+  return client.get('/api/v1/geo/visibility-patrol/manual-limit/history', {
+    params: { tenant_id: tenantId, page, page_size: 20 }, signal,
+  })
+}
+
 export function listVisibilityPatrolRuns(tenantId, limit = 20) {
   return client.get('/api/v1/geo/visibility-patrol/runs', {
     params: { tenant_id: tenantId, limit },
