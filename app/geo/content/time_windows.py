@@ -47,6 +47,14 @@ def shanghai_day_bounds_utc_naive(day: date) -> Tuple[datetime, datetime]:
     return start_utc, end_utc
 
 
+def open_week_window(now: datetime | None = None) -> tuple[date, datetime, datetime]:
+    """Current Shanghai Monday and [Monday midnight, now), independent of report week."""
+    stop = to_utc_naive(now) if now is not None else now_utc_naive()
+    today = shanghai_day_of_utc_naive(stop)
+    week_start = today - timedelta(days=today.weekday())
+    return week_start, shanghai_day_bounds_utc_naive(week_start)[0], stop
+
+
 def default_observation_window(
     *, days: int = 14, end: date | None = None
 ) -> tuple[date, date]:

@@ -187,6 +187,7 @@ def question_row(prompt, records, end, rows):
     unit = records.units[prompt.unit_id]
     business = records.businesses[unit.business_id]
     return {'id': prompt.id, 'question': prompt.question or '',
+            'open_week_detected_count': records.open_week_counts.get(prompt.id, 0),
             'status': 'inactive' if prompt.status in {'inactive', 'paused'} else enum(prompt.status, {'active', 'archived'}),
             'is_brand_probe': bool(prompt.is_brand_probe), 'business': {'id': business.id, 'name': business.name or ''},
             'unit': {'id': unit.id, 'name': unit.name or '', 'keyword': unit.keyword,

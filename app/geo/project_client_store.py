@@ -14,7 +14,7 @@ from app.database import async_session_factory
 from app.geo.demo_tenant import GeoDemoBindingUnavailable
 from app.geo.project_scope import binding
 from app.geo.project_client_protocol import digest, fail, public_host
-from app.geo.content.time_windows import shanghai_day_bounds_utc_naive, to_utc_naive
+from app.geo.content.time_windows import open_week_window, shanghai_day_bounds_utc_naive, to_utc_naive
 from app.geo.tenant_scope import ensure_geo_entitlement
 from app.models import (
     GeoProject, GeoOptimizationBusiness as Business, GeoOptimizationUnit as Unit,
@@ -66,6 +66,8 @@ class ProjectRecords:
     variants: dict = field(default_factory=dict)
     publications: list = field(default_factory=list)
     recommendations: list = field(default_factory=list)
+    open_week_progress: dict = field(default_factory=dict)
+    open_week_counts: dict = field(default_factory=dict)
 
     @property
     def fingerprint(self):
@@ -163,14 +165,24 @@ async def load_answers(session, records, params, *, answer_id=None):
         and_(Run.started_at >= start, Run.started_at < stop))],
                          ['id', 'tenant_id', 'status', 'started_at', 'finished_at', 'items'])
     records.runs = {}
-    answer_ids = {r.id for r in records.answers}
+    answers = {r.id: r for r in records.answers}
     if sum(len(r.items or []) for r in runs) > ROW_BUDGET:
         fail(503, 'READ_UNAVAILABLE', '当前证据量超出读取预算，请稍后重试')
     for run in runs:
-        # Retain only authorized snapshot cells; mixed-project patrols cannot
-        # contribute another project's metadata, even in intermediate views.
-        cells = [c for c in (run.items or []) if isinstance(c, dict) and c.get('prompt_id') in records.prompts
-                 and (c.get('snapshot_id') in answer_ids or c.get('snapshot_id') is None)]
+        # Keep cells only for authorized prompts. Unavailable snapshots retain
+        # attempt metadata only, without foreign answer text or model metadata.
+        cells = []
+        for cell in run.items or []:
+            if not isinstance(cell, dict) or cell.get('prompt_id') not in records.prompts:
+                continue
+            answer = answers.get(cell.get('snapshot_id'))
+            if cell.get('snapshot_id') is not None and (answer is None
+                    or answer.prompt_id != cell['prompt_id'] or answer.engine != cell.get('engine')):
+                # Keep only attempt metadata for unavailable/mismatched snapshots.
+                # Never expose or inspect a foreign snapshot's text or identity metadata.
+                cells.append({k: cell.get(k) for k in ('prompt_id', 'engine', 'ok', 'snapshot_id', 'skipped_reason')})
+            else:
+                cells.append(cell)
         records.runs[run.id] = SimpleNamespace(id=run.id, tenant_id=run.tenant_id, status=run.status,
             started_at=run.started_at, finished_at=run.finished_at, items=cells)
         for cell in cells:
@@ -187,6 +199,25 @@ async def load_answers(session, records, params, *, answer_id=None):
     canonical = public_host(records.project.canonical_domain)
     records.own_domains = sorted({host for c in channels if canonical and (host := public_host(domain(c.base_url)))
                                   and (host == canonical or host.endswith('.' + canonical))})
+
+
+async def load_open_week_progress(session, records, params):
+    """One bounded SELECT over the current project's prompts; never enters weekly answers."""
+    from app.geo.content.sample_provenance import sample_provenance
+    week_start, start, stop = open_week_window()
+    records.open_week_counts = {}
+    prompts = [p.id for p in records.prompts.values() if not p.is_brand_probe]
+    if prompts:
+        rows = await bounded(session, Answer, [Answer.tenant_id == params['tenant_id'],
+            Answer.prompt_id.in_(prompts), Answer.captured_at >= start, Answer.captured_at < stop],
+            ['id', 'prompt_id', 'sample_mode', 'simulated', 'note'])
+        for row in rows:
+            if sample_provenance(row)['sample_kind'] == 'real':
+                records.open_week_counts[row.prompt_id] = records.open_week_counts.get(row.prompt_id, 0) + 1
+    records.open_week_progress = {'week_start': str(week_start),
+        'next_count_date': str(week_start + timedelta(days=7)),
+        'detected_answer_count': sum(records.open_week_counts.values()),
+        'basis_code': 'saved_real_api_answers_open_week'}
 
 
 async def load_content(session, records, params):

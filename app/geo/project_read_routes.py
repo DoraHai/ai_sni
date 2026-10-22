@@ -9,7 +9,8 @@ from app.geo.project_client_protocol import (
     PREFIX, QUERY, ROUTES, WEEKLY, fail, paginate, parameters,
 )
 from app.geo.project_client_store import (
-    authorize, client_read_session, load_answers, load_content, load_recommendations, require_object,
+    authorize, client_read_session, load_answers, load_content, load_open_week_progress,
+    load_recommendations, require_object,
 )
 from app.security.auth import AuthContext, require_scoped_auth
 
@@ -33,6 +34,8 @@ async def project_response(resource, request, ctx, session):
         require_object(records.prompts, params['question_id'])
     if resource in WEEKLY:
         await load_answers(session, records, params, answer_id=params.get('answer_id'))
+    if resource in {'overview', 'visibility', 'summary', 'questions', 'question'}:
+        await load_open_week_progress(session, records, params)
     if resource in {'overview', 'content', 'task', 'variants', 'variant', 'article', 'deliveries',
                     'article_citations', 'report_pdf', 'report_xlsx'}:
         await load_content(session, records, params)
@@ -248,6 +251,8 @@ async def project_response(resource, request, ctx, session):
                           'visibility_path': view.link(records, '/visibility', end=end),
                           'deliveries_path': view.link(records, '/deliveries'),
                           'executions_path': f"/api/v1/geo/projects/{records.project.id}/executions?tenant_id={records.project.tenant_id}"}}
+    if resource in {'overview', 'visibility', 'summary', 'questions', 'question'}:
+        data['open_week_progress'] = records.open_week_progress
     return view.envelope(records, params, data, resource_basis)
 
 

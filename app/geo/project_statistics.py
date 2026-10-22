@@ -54,24 +54,33 @@ def question_cells(prompt_id, records, end, qualified=None):
         selected = [r for r in rows if r.prompt_id == prompt_id and r.engine == engine]
         x, y = sum(r.mentions_brand is True for r in selected), len(selected)
         state = 'small_sample' if 0 < y < 3 else 'observed' if y else 'not_tested'
+        excluded = []
+        last_sample_at = view.latest_time(r.captured_at for r in selected)
         if not y:
             from datetime import timedelta
             start = shanghai_day_bounds_utc_naive(end - timedelta(days=7))[0]
             stop = shanghai_day_bounds_utc_naive(end)[0]
-            attempts = [(view.iso(run.finished_at or run.started_at), c) for run in records.runs.values()
+            attempts = [(to_utc_naive(run.finished_at or run.started_at), run.id, c) for run in records.runs.values()
                         if run.started_at and start <= to_utc_naive(run.started_at) < stop
                         for c in run.items or [] if c.get('prompt_id') == prompt_id and c.get('engine') == engine]
             if attempts:
-                _, cell = max(attempts, key=lambda pair: pair[0] or '')
+                _, _, cell = max(attempts, key=lambda attempt: attempt[:2])
                 reason = str(cell.get('skipped_reason') or '')
                 if reason in {'skipped:real_only_no_platform_key', 'skipped:prefer_real_no_platform_key',
                               'skipped:dashscope_only_for_deepseek'}:
                     state = 'not_configured'
                 elif not cell.get('ok'):
                     state = 'failed'
+                elif cell.get('ok') is True and cell.get('snapshot_id') is not None:
+                    answer = next((r for r in records.answers if r.id == cell['snapshot_id']
+                                   and r.prompt_id == prompt_id and r.engine == engine), None)
+                    excluded = view.qualification(answer, records) if answer else ['snapshot_unavailable']
+                    if excluded:
+                        state = 'tested_excluded'
+                        last_sample_at = view.iso(answer.captured_at) if answer else None
         results.append({'engine_key': engine, 'label': label, 'mentioned': x if y else None,
                         'total': y or None, 'percentage': round(100*x/y, 4) if y else None,
-                        'last_sample_at': view.latest_time(r.captured_at for r in selected),
+                        'last_sample_at': last_sample_at, 'excluded_reason_codes': list(dict.fromkeys(excluded)),
                         'status': state, 'small_sample': 0 < y < 3})
     return results
 
