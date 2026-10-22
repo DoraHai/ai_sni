@@ -299,6 +299,10 @@ def test_export_escapes_formulas_html_and_unreviewed_recommendations(env):
     ('doubao', 'doubao', 'ep-synthetic', True), ('qwen', 'qwen', 'qwen-plus', True),
     ('qwen', 'dashscope', 'deepseek-v3', False), ('deepseek', 'dashscope:deepseek', 'deepseek-v3', True),
     ('deepseek', 'dashscope', 'deepseek-v3', True), ('hunyuan', 'hunyuan', 'hunyuan-turbos', True),
+    ('hunyuan', 'hunyuan', 'hy4-preview', True), ('hunyuan', 'hunyuan', 'HY4-Preview', True),
+    ('hunyuan', 'hunyuan', 'hy4', False), ('hunyuan', 'hunyuan', 'hy3-preview', False),
+    ('deepseek', 'deepseek', 'hy4-preview', False), ('qwen', 'qwen', 'hy4-preview', False),
+    ('hunyuan', 'openai', 'hy4-preview', False),
     ('doubao', None, None, False), ('other', 'other', 'model', False)])
 def test_identity(engine, provider, model, valid):
     assert trusted_engine_source(engine, provider, model) is valid
