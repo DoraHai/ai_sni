@@ -1,4 +1,5 @@
 <script setup>
+import GeoProjectEvidence from '../../components/GeoProjectEvidence.vue'
 import { session } from '../../store/session'
 import { advisorClaims } from '../../utils/geoAdvisorTenant.js'
 import GeoGenerationEvidence from '../../components/GeoGenerationEvidence.vue'
@@ -3111,6 +3112,7 @@ onMounted(load)
 
 <template>
   <div v-loading="loading" class="ed-shell" aria-label="在线编辑器" :class="{ focus: focusMode, 'check-open': showCheckDrawer && !focusMode }">
+    <details><summary>查看本文章的项目引用证据</summary><GeoProjectEvidence mode="articles" :task-id="taskId" /></details>
     <header class="ed-top">
       <button type="button" class="ed-back" @click="router.push('/geo/tasks')">← GEO 文章</button>
       <div class="ed-ident">

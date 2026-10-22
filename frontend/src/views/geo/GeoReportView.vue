@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
+import GeoProjectEvidence from '../../components/GeoProjectEvidence.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { fetchGeoProjects } from '../../api/geoProjects'
 import {
@@ -129,7 +130,9 @@ onMounted(async () => { await loadChoices(); await loadData() })
 </script>
 
 <template>
-  <GeoWorkbenchPage title="GEO 报告" sub="已存回答样本与发布链接；无样本显示无数据" :loading="busy">
+  <GeoWorkbenchPage title="GEO 报告" sub="项目完整周口径；四项汇总、六家问题矩阵、文章引用与站内建议" :show-period="false">
+    <GeoProjectEvidence />
+    <details><summary>历史观测、报告模板与发布链接登记</summary>
     <div class="geo-report">
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
       <div class="report-controls">
@@ -152,6 +155,7 @@ onMounted(async () => { await loadChoices(); await loadData() })
       </section>
       <section class="report-card"><h2>报告模板</h2><p v-if="!projectId">选择项目后可调整章节。</p><template v-else><div v-for="(item, index) in sections" :key="item.key" class="section-row"><el-checkbox v-model="item.visible">显示</el-checkbox><el-input v-model="item.title" maxlength="60" /><el-button size="small" :disabled="index === 0" @click="move(index, -1)">上移</el-button><el-button size="small" :disabled="index === sections.length - 1" @click="move(index, 1)">下移</el-button></div><el-button type="primary" @click="saveTemplate()">保存模板</el-button><el-button @click="saveTemplate(true)">恢复默认</el-button></template></section>
     </div>
+    </details>
     <el-dialog v-model="importOpen" title="批量上传发布链接" width="80%"><p>支持 UTF-8 CSV、XLSX 或粘贴表格。列：task_id 或 task_title、channel、url、published_at（可选）。最多 500 行、2 MB。</p>
       <input type="file" accept=".csv,.xlsx,.tsv" @change="file = $event.target.files?.[0] || null; preview = []" />
       <el-input v-model="pasted" type="textarea" :rows="5" placeholder="task_id,channel,url,published_at" @input="preview = []" />

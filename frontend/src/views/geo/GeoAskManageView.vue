@@ -25,6 +25,7 @@ import {
   importGeoPromptsCsv,
 } from '../../api/geoContent'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
+import GeoProjectEvidence from '../../components/GeoProjectEvidence.vue'
 import GeoAdvisorProjectPicker from '../../components/GeoAdvisorProjectPicker.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
@@ -862,6 +863,10 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
     sub="维护 AI 监控的业务、关键词和提问，追踪大模型中的回答表现"
     :loading="loading"
   >
+    <details class="all-project-questions" open>
+      <summary>全部问题（项目筛选与国内六家提及率）</summary>
+      <GeoProjectEvidence mode="questions" />
+    </details>
     <div class="prompt-page">
       <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 

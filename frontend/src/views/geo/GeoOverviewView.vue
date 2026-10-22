@@ -24,6 +24,7 @@ import {
   fetchVisibilityPatrolOpsStatus,
 } from '../../api/geoContent'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
+import GeoProjectEvidence from '../../components/GeoProjectEvidence.vue'
 import { diagnoseEmptyMonitoring } from '../../utils/geoEmptyReason'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
@@ -487,19 +488,6 @@ async function loadDailySlice() {
   try {
     let data = await listGeoDailyMetrics(tenantId.value, dailyQueryParams())
     let items = data.items || []
-    // 窗口内无聚合行：静默补算（客户不看到「重算」按钮）
-    if (!items.length) {
-      try {
-        await rebuildGeoDailyMetrics(tenantId.value, {
-          dateFrom: obsStart.value,
-          dateTo: obsEnd.value,
-        })
-        data = await listGeoDailyMetrics(tenantId.value, dailyQueryParams())
-        items = data.items || []
-      } catch {
-        /* 补算失败仍展示空态 */
-      }
-    }
     dailySeries.value = items
     dailyLatest.value = items.length ? items[items.length - 1] : null
     citationNote.value = data.citation_stat_note || ''
@@ -1018,36 +1006,7 @@ onMounted(load)
       <span class="gd-engines-meta">最后巡检：{{ lastPatrolLabel }}</span>
     </div>
 
-    <div class="gd-kpis">
-      <div class="gd-card gd-stat">
-        <div class="label">AI 可见度得分</div>
-        <div class="value">{{ fmtPct(visScore) }}</div>
-        <div class="delta" :class="kpiDelta(visDelta).tone">
-          {{ kpiDelta(visDelta).label || (visScoreFromSnaps ? '加权提及+顺位' : '按提及率') }}
-        </div>
-      </div>
-      <div class="gd-card gd-stat">
-        <div class="label">品牌提及次数</div>
-        <div class="value">{{ fmtInt(mentionCount) }}</div>
-        <div class="delta" :class="kpiDelta(mentionCountDelta).tone">
-          {{ kpiDelta(mentionCountDelta).label || '观察期内快照' }}
-        </div>
-      </div>
-      <div class="gd-card gd-stat">
-        <div class="label">平均推荐顺位</div>
-        <div class="value">{{ avgRank != null ? Number(avgRank).toFixed(1) : '—' }}</div>
-        <div class="delta" :class="kpiDelta(avgRankDelta, { rank: true }).tone">
-          {{ kpiDelta(avgRankDelta, { rank: true }).label || '首位=1 · 备选=2 · 提及=3' }}
-        </div>
-      </div>
-      <div class="gd-card gd-stat">
-        <div class="label">正向评价信号</div>
-        <div class="value">{{ fmtPct(positiveShare) }}</div>
-        <div class="delta" :class="kpiDelta(positiveDelta, { pp: true }).tone">
-          {{ kpiDelta(positiveDelta, { pp: true }).label || '已标注情感占比' }}
-        </div>
-      </div>
-    </div>
+    <GeoProjectEvidence mode="summary" />
 
     <div class="gd-mid">
       <div class="gd-card">
