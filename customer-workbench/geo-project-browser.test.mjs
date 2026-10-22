@@ -163,6 +163,7 @@ test(
         if (scenario === 'not-open') {
           assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /暂未开放/);
           assert.equal(await p.$('[data-tab=content]'), null);
+          assert(await p.$('[data-tab=deliveries]'));
           assert.equal(await p.$('[data-action^="onsite-"]'), null);
           assert(await p.$('.sv-card'));
         } else {

@@ -20,12 +20,11 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
     return geoTabs.filter(
       ([key]) =>
         key === tab ||
-        ['home', 'onsite', 'data'].includes(key) ||
+        ['home', 'onsite', 'data', 'deliveries'].includes(key) ||
         (key === 'work' &&
           (slots.questions?.value?.data.items.length > 0 ||
             slots.content?.value?.data.items.length > 0)) ||
         (key === 'content' && slots.content?.value?.data.items.length > 0) ||
-        (key === 'deliveries' && (available('article-citations') || slots.deliveries?.value?.data.items.length > 0)) ||
         (['progress', 'plan'].includes(key) && available('executions')) ||
         (key === 'data' &&
           (available('visibility') || slots.questions?.value?.data.items.length > 0)),
