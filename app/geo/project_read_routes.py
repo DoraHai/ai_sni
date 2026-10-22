@@ -4,11 +4,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request, Response
 
 from app.geo import project_client_view as view
+from app.geo import project_statistics as statistics
 from app.geo.project_client_protocol import (
     PREFIX, QUERY, ROUTES, WEEKLY, fail, paginate, parameters,
 )
 from app.geo.project_client_store import (
-    authorize, client_read_session, load_answers, load_content, require_object,
+    authorize, client_read_session, load_answers, load_content, load_recommendations, require_object,
 )
 from app.security.auth import AuthContext, require_scoped_auth
 
@@ -22,6 +23,9 @@ def filters_for(resource, params):
 async def project_response(resource, request, ctx, session):
     params, decoded, context = await parameters(request, resource)
     records = await authorize(session, ctx, params, request)
+    for key, collection in (('business_id', records.businesses), ('unit_id', records.units)):
+        if params.get(key) is not None:
+            require_object(collection, params[key])
     if decoded and decoded['scope'] != records.fingerprint:
         fail(409, 'SCOPE_CHANGED', '项目归属已改变，请刷新列表')
     end = params.get('week_end')
@@ -29,8 +33,11 @@ async def project_response(resource, request, ctx, session):
         require_object(records.prompts, params['question_id'])
     if resource in WEEKLY:
         await load_answers(session, records, params, answer_id=params.get('answer_id'))
-    if resource in {'overview', 'content', 'task', 'variants', 'variant', 'article', 'deliveries'}:
+    if resource in {'overview', 'content', 'task', 'variants', 'variant', 'article', 'deliveries',
+                    'article_citations', 'report_pdf', 'report_xlsx'}:
         await load_content(session, records, params)
+    if resource in {'recommendations', 'report_pdf', 'report_xlsx'}:
+        await load_recommendations(session, records, params)
     if params.get('task_id') is not None:
         require_object(records.tasks, params['task_id'])
     if resource in {'variant', 'article'}:
@@ -57,7 +64,41 @@ async def project_response(resource, request, ctx, session):
             fail(400, 'INVALID_CURSOR', '分页游标无效，请重新查询')
         return saved
 
-    if resource == 'visibility':
+    if resource in {'report_pdf', 'report_xlsx'}:
+        from app.geo.report_export import build_project_xlsx, build_project_report_html
+        from app.geo.report_pdf import render_report_pdf
+        from urllib.parse import quote
+        payload = {'project': {'id': records.project.id, 'name': records.project.name or ''},
+                   'summary': statistics.summary(records, end),
+                   'questions': [dict(view.question_row(p, records, end, rows),
+                       by_engine=statistics.question_cells(p.id, records, end)) for p in records.prompts.values()],
+                   'citations': statistics.article_citations(records, end),
+                   'recommendations': statistics.recommendations(records), 'basis': resource_basis}
+        if resource == 'report_xlsx':
+            try:
+                content = build_project_xlsx(payload)
+            except ValueError:
+                fail(413, 'READ_UNAVAILABLE', '报告超过导出预算，请缩小项目范围')
+            media = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            extension = 'xlsx'
+        else:
+            content = await render_report_pdf(build_project_report_html(payload))
+            media, extension = 'application/pdf', 'pdf'
+        filename = quote(f'GEO-项目{records.project.id}-{end}.{extension}')
+        return Response(content, media_type=media, headers={'Cache-Control': 'private, no-store',
+            'Content-Disposition': f"attachment; filename*=UTF-8''{filename}"})
+    if resource == 'summary':
+        data = statistics.summary(records, end)
+    elif resource == 'article_citations':
+        citations = statistics.article_citations(records, end)
+        mark = watermarks(publication=max((r['id'] for r in citations['items']), default=0))
+        data = {**citations, **page([r for r in citations['items'] if r['id'] <= mark['publication']], lambda r: (r['id'],), mark)}
+    elif resource == 'recommendations':
+        items = statistics.recommendations(records)
+        mark = watermarks(task=max((r['id'] for r in items), default=0))
+        data = {**page([r for r in items if r['id'] <= mark['task']], lambda r: (r['id'],), mark),
+                'structure_scan_status': 'unverified_project_ownership'}
+    elif resource == 'visibility':
         data = weekly
     elif resource in {'questions', 'question'}:
         selected = list(records.prompts.values())
@@ -67,13 +108,18 @@ async def project_response(resource, request, ctx, session):
             mark = watermarks(question=max(records.prompts, default=0))
             selected = [p for p in selected if p.id <= mark['question']]
         projected = [view.question_row(p, records, end, rows) for p in selected]
+        qualified = statistics.cohort(records, end)
+        for item in projected:
+            item['by_engine'] = statistics.question_cells(item['id'], records, end, qualified)
         if resource == 'questions':
             f = filters_for(resource, params)
             projected = [p for p in projected if (f['status'] == 'all' or p['status'] == f['status'])
                          and (f['is_brand_probe'] is None or p['is_brand_probe'] == f['is_brand_probe'])
                          and (f['attention'] == 'all' or p['attention_reason_codes'])
+                         and (f['business_id'] is None or p['business']['id'] == f['business_id'])
+                         and (f['unit_id'] is None or p['unit']['id'] == f['unit_id'])
                          and (f['q'] is None or f['q'].casefold() in p['question'].casefold())]
-            data = {**page(projected, lambda p: (p['id'],), mark), 'filters': f}
+            data = {**page(projected, lambda p: (p['id'],), mark), 'filters': f, 'options': statistics.options(records)}
         else:
             question = projected[0]
             selected_rows = [r for r in rows if r.prompt_id == params['question_id']]

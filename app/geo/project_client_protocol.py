@@ -23,12 +23,16 @@ ROUTES = {
     'variants': '/content/{task_id}/variants',
     'variant': '/content/{task_id}/variants/{variant_id}',
     'article': '/content/{task_id}/articles/{article_id}', 'deliveries': '/deliveries',
+    'summary': '/summary', 'article_citations': '/article-citations',
+    'recommendations': '/recommendations',
+    'report_pdf': '/reports/export.pdf', 'report_xlsx': '/reports/export.xlsx',
 }
 CLIENT_TEMPLATES = frozenset(PREFIX + suffix for suffix in ROUTES.values())
-PAGED = {'questions', 'answers', 'content', 'variants', 'deliveries'}
-WEEKLY = {'overview', 'visibility', 'questions', 'question', 'answers', 'answer'}
+PAGED = {'questions', 'answers', 'content', 'variants', 'deliveries', 'article_citations', 'recommendations'}
+WEEKLY = {'overview', 'visibility', 'questions', 'question', 'answers', 'answer',
+          'summary', 'article_citations', 'report_pdf', 'report_xlsx'}
 QUERY = {
-    'questions': {'status', 'is_brand_probe', 'attention', 'q'},
+    'questions': {'status', 'is_brand_probe', 'attention', 'q', 'business_id', 'unit_id'},
     'answers': {'question_id', 'engine_key', 'source_kind', 'eligibility'},
     'content': {'question_id', 'review_status', 'include_archived', 'q'},
     'deliveries': {'task_id', 'record_type'},
@@ -91,7 +95,7 @@ async def parameters(request, resource):
         fail(422, 'INVALID_QUERY', '必须指定客户')
     out = {'tenant_id': positive(raw['tenant_id'])}
     out.update({k: positive(v) for k, v in request.path_params.items()})
-    for key in ('question_id', 'task_id'):
+    for key in ('question_id', 'task_id', 'business_id', 'unit_id'):
         if key in QUERY.get(resource, set()):
             out[key] = positive(raw[key]) if key in raw else None
     enums = {

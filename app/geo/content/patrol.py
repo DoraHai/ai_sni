@@ -16,7 +16,6 @@ from app.geo.tenant16_demo import DEMO_TENANT_ID
 from app.geo.tenant_scope import GeoEntitlementUnavailable, ensure_geo_entitlement
 from app.geo.content.probe import (
     SAMPLE_MODE_REAL,
-    dashscope_usable_for_engine,
     resolve_batch_engines,
     resolve_engine_llm,
     run_probe_draft,
@@ -773,21 +772,12 @@ async def execute_patrol_run(
                         items.append(cell)
                         continue
                     if row.prefer_real and sample_mode != SAMPLE_MODE_REAL:
-                        # Platform engine credentials are resolved above. The shared
-                        # capability LLM may only become a real DeepSeek sample.
-                        if tenant_llm and tenant_llm.get("api_key") and dashscope_usable_for_engine(
-                            engine,
-                            base_url=str(tenant_llm.get("base_url") or ""),
-                            provider=str(tenant_llm.get("provider") or ""),
-                            source=str(tenant_llm.get("source") or ""),
-                        ):
-                            llm = {
-                                **tenant_llm,
-                                "provider": tenant_llm.get("provider") or "dashscope",
-                                "source": f"tenant_prefer_real:{engine}",
-                            }
-                            sample_mode = SAMPLE_MODE_REAL
-                            fallback_reason = None
+                        # Shared persona credentials cannot become platform evidence.
+                        cell["skipped_reason"] = "skipped:prefer_real_no_platform_key"
+                        cell["error"] = cell["skipped_reason"]
+                        summary["cells_fail"] = int(summary.get("cells_fail") or 0) + 1
+                        items.append(cell)
+                        continue
                     if not llm or not llm.get("api_key"):
                         raise ValueError("平台尚未配置该 AI 引擎")
 

@@ -22,6 +22,100 @@ SECTION_DEFAULTS = [
 ]
 SOURCE_NAMES = {"real": "真实引擎采样", "manual": "人工录入", "simulated": "模拟/演示", "unknown": "来源未知"}
 
+PROJECT_METRICS = (
+    ('brand_mention_rate', '品牌提及率', '%'),
+    ('brand_mention_answer_count', '品牌提及回答数', ''),
+    ('average_recommendation_position', '平均推荐位置（首选=1、备选=2、顺带=3）', ''),
+    ('brand_positive_rate', '品牌正向评价率', '%'),
+)
+PROJECT_STATUS = {'observed': '已检测', 'no_publications': '暂无发布文章',
+                  'not_tested': '未检测', 'insufficient_evidence': '引用证据不足',
+                  'ready': '充足', 'insufficient': '样本不足'}
+
+
+def project_report_sections(data):
+    """Shared rows keep PDF and Excel on the exact same read-only projection."""
+    summary = data['summary']
+    sections = [('四项汇总', ['平台', '指标', '值', '单位'], [
+        [label, title, metrics[key], unit]
+        for label, metrics in [('总体', summary['metrics'])] + [(r['label'], r['metrics']) for r in summary['by_engine']]
+        for key, title, unit in PROJECT_METRICS])]
+    sections.append(('标注依据', ['平台', '合格回答', '提及回答', '有效位置数', '首选', '备选', '顺带', '已标注情感数'], [
+        [label, m['sample_count'], m['mention_count'], m['valid_position_count'],
+         m['position_distribution']['first'], m['position_distribution']['alternative'],
+         m['position_distribution']['mentioned'], m['annotated_mention_count']]
+        for label, m in [('总体', summary['metrics'])] + [(r['label'], r['metrics']) for r in summary['by_engine']]]))
+    sections.append(('问题矩阵', ['问题ID', '业务', '关键词', '问题', '平台', '提及X', '合格Y', '百分比', '状态', '样本时间'], [
+        [q['id'], q['business']['name'], q['unit']['display_name'], q['question'], c['label'],
+         c['mentioned'], c['total'], c['percentage'], {'small_sample': '小样本', 'observed': '已检测',
+         'not_tested': '未检测', 'not_configured': '未配置', 'failed': '失败'}.get(c['status'], '暂无'), c['last_sample_at']]
+        for q in data['questions'] for c in q['by_engine']]))
+    coverage = data['citations']['coverage']
+    sections.append(('文章覆盖', ['被引H', '已发布U', '百分比', '状态'], [[coverage['cited_articles'],
+        coverage['published_articles'], coverage['percentage'], PROJECT_STATUS[coverage['status']]]]))
+    sections.append(('文章引用', ['发布ID', '任务ID', '文章ID', '标题', 'URL', '发布时间', '引用x', '合格y', '百分比', '状态'], [
+        [a['id'], a['task_id'], a['article_id'], a['title'], a['url'], a['published_at'],
+         a['mentioned'], a['total'], a['percentage'], PROJECT_STATUS[a['status']]] for a in data['citations']['items']]))
+    sections.append(('引用依据', ['发布ID', '回答ID', '问题ID', '平台key', '回答时间', '证据路径'], [
+        [a['id'], e['answer_id'], e['question_id'], e['engine_key'], e['captured_at'], e['answer_path']]
+        for a in data['citations']['items'] for e in a['evidence']]))
+    sections.append(('站内建议', ['任务ID', '标题', '阶段', '下一步', '检查时间', '建议', '说明', '优先级', '状态'], [
+        [r['id'], r['title'], r['phase'], r['next_action'], r['checked_at'], item.get('title'),
+         item.get('description'), item.get('priority'), item.get('status')]
+        for r in data['recommendations'] for item in r['recommendations'] or [{}]]))
+    sections.append(('口径与缺数', ['说明'], [[line] for line in [
+        '项目：' + str(data['project']['id']) + ' ' + data['project']['name'],
+        '上海完整周：' + summary['period']['start'] + ' 至 ' + summary['period']['end'] + '（右端不含）',
+        '汇总样本状态：' + PROJECT_STATUS[summary['sample_status']],
+        '正式汇总至少8条回答、3题、2引擎；问题格少于3条为小样本；暂无表示缺数，不是0。',
+        '提及率=M/N×100；正向率=正向/提及且情感已标注回答×100；位置只对提及且有效位置求均值。',
+        '结构扫描：无法确认项目归属，未提供。',
+        '证据最新时间：' + str(data['basis']['last_data_at'] or '暂无'),
+        *summary['footnotes'],
+        *[f"排除原因 {r['code']}：{r['count']}" for r in data['basis']['exclusion_counts']],
+    ]]))
+    return sections
+
+
+def build_project_xlsx(data):
+    sections = project_report_sections(data)
+    if sum(len(rows) for _, _, rows in sections) > 250000:
+        raise ValueError('导出明细超过25万行，请缩小项目范围')
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    for title, headers, rows in sections:
+        ws = workbook.create_sheet(title)
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill('solid', fgColor='245277')
+        for row in rows:
+            ws.append([safe_cell('暂无' if value is None else value) for value in row])
+        ws.freeze_panes = 'A2'
+        ws.auto_filter.ref = ws.dimensions
+        for column in ws.columns:
+            ws.column_dimensions[column[0].column_letter].width = min(65, max(14, max(len(str(c.value or '')) for c in column) + 2))
+            for cell in column:
+                cell.alignment = Alignment(wrap_text=True, vertical='top')
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def build_project_report_html(data):
+    html = ['<!doctype html><html lang="zh-CN"><meta charset="utf-8"><style>'
+            '@page{size:A4}body{font:12px "Microsoft YaHei","Noto Sans CJK SC",sans-serif;color:#172b3a}'
+            'table{border-collapse:collapse;width:100%;font-size:10px;table-layout:fixed}'
+            'td,th{border:1px solid #ccd8e0;padding:5px;overflow-wrap:anywhere}th{background:#edf3f7}'
+            'thead{display:table-header-group}tr{break-inside:avoid}h2{margin-top:22px;break-after:avoid}</style><body><h1>GEO 项目报告</h1>']
+    for title, headers, rows in project_report_sections(data):
+        if title == '问题矩阵' and len(data['questions']) > 100:
+            rows = rows[:600]
+            html.append('<p>问题矩阵超过100题，PDF仅展示前100题；完整明细请下载Excel。</p>')
+        html.append('<h2>' + escape(title) + '</h2>')
+        html.append(_table(headers, [['暂无' if v is None else v for v in row] for row in rows]) if rows else '<p>暂无</p>')
+    return ''.join(html) + '</body></html>'
+
 
 def report_template(profile: dict | None) -> list[dict]:
     raw = (profile or {}).get("geo_report_template")

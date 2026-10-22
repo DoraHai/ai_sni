@@ -22,7 +22,7 @@ from app.geo.project_read_routes import router
 from app.models import (GeoProject, GeoOptimizationBusiness as Business, GeoOptimizationUnit as Unit,
     GeoPrompt as Prompt, GeoAnswerSnapshot as Answer, GeoVisibilityPatrolRun as Run,
     GeoPublishingChannel as Channel, GeoContentTask as Task, GeoArticleVersion as Article,
-    GeoChannelVariant as Variant, GeoPublication as Publication)
+    GeoChannelVariant as Variant, GeoPublication as Publication, GeoActionTicket)
 from app.security.auth import AuthContext, require_scoped_auth
 from app.security.advisor_scope import AdvisorScope
 
@@ -52,7 +52,7 @@ class SelectOnly:
 @pytest.fixture
 def env(monkeypatch):
     engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
-    models = (GeoProject, Business, Unit, Prompt, Answer, Run, Channel, Task, Article, Variant, Publication)
+    models = (GeoProject, Business, Unit, Prompt, Answer, Run, Channel, Task, Article, Variant, Publication, GeoActionTicket)
     from app.database import Base
     metadata = MetaData()
     for table in Base.metadata.tables.values():
@@ -77,7 +77,8 @@ def env(monkeypatch):
         session.add(Task(id=qid, tenant_id=tid, prompt_id=qid, business_id=None, title=f'Task {qid}',
             status='ready', pipeline_step='adapt', review_status='approved', reviewed_at=NOW,
             brief={'private': 'SYNTHETIC_PRIVATE'}, review_note='SYNTHETIC_PRIVATE',
-            created_at=NOW, updated_at=NOW))
+            created_at=NOW, updated_at=NOW,
+            rule_result={'ready': True, 'article_id': qid, 'checked_at': NOW.isoformat()}))
         session.add(Article(id=qid, task_id=qid, version_no=1, kind='master', title=f'Master {qid}',
             body_markdown=f'Full master {qid}', created_at=NOW-timedelta(days=1), generation_meta={'private': 'SYNTHETIC_PRIVATE'}))
         session.add(Variant(id=qid, task_id=qid, article_version_id=qid, title=f'Variant {qid}',
@@ -137,13 +138,13 @@ def add_answers(env, count=8, *, previous=False, simulated=False, mention=True, 
     captured = NOW - timedelta(days=7 if previous else 0)
     run_id = 100 if previous else 99
     for i in range(count):
-        row = Answer(id=offset+i+1, tenant_id=101, prompt_id=i % questions+1, engine=f'e{i % engines}',
+        row = Answer(id=offset+i+1, tenant_id=101, prompt_id=i % questions+1, engine=('doubao', 'deepseek', 'qwen')[i % engines],
             captured_at=captured, sample_mode='mock_persona' if simulated else 'openai_compat', simulated=simulated,
             note='method=unprimed_json_v2 analysis=completed', citation_accuracy='unknown', raw_text='Saved answer',
             mentions_brand=mention, competitors=[], cited_urls=[], patrol_run_id=run_id)
         rows.append(row)
         cells.append({'snapshot_id': row.id, 'prompt_id': row.prompt_id, 'engine': row.engine,
-            'prompt_question': f'Historical {row.prompt_id}', 'provider': 'provider', 'model': 'model',
+            'prompt_question': f'Historical {row.prompt_id}', 'provider': row.engine, 'model': row.engine + '-test',
             'ok': True, 'sample_mode': row.sample_mode, 'simulated': simulated, 'sampling_method': 'unprimed_json_v2',
             'analysis_status': 'completed', 'raw_text': row.raw_text, 'suggested_mentions_brand': mention, 'competitors': []})
     env.save(*rows, Run(id=run_id, tenant_id=101, status='completed', started_at=captured-timedelta(hours=1),
@@ -159,7 +160,7 @@ def all_paths(project=1):
 def test_all_twelve_routes_are_get_only_and_mounted_in_projects():
     from app.geo.project_routes import geo_projects_router
     for routes in (router.routes, [r for r in geo_projects_router.routes if r.path in CLIENT_TEMPLATES]):
-        assert len(routes) == 12
+        assert len(routes) == 17
         assert {r.path for r in routes} == CLIENT_TEMPLATES
         assert all(r.methods == {'GET'} for r in routes)
 
@@ -308,7 +309,7 @@ def test_project_domains_and_missing_domain_only_disable_score(env):
 
 
 @pytest.mark.parametrize('change,reason', [('question', 'question_changed'), ('model', 'model_distribution_changed'),
-    ('missing_model', 'model_metadata_missing'), ('engine', 'cohort_changed'), ('distribution', 'sample_distribution_changed')])
+    ('missing_model', 'sample_distribution_changed'), ('engine', 'cohort_changed'), ('distribution', 'sample_distribution_changed')])
 def test_comparison_uses_historical_metadata_and_full_distributions(env, change, reason):
     add_answers(env)
     rows = add_answers(env, previous=True)
@@ -316,10 +317,11 @@ def test_comparison_uses_historical_metadata_and_full_distributions(env, change,
     run = env.session.get(Run, 100)
     cells = deepcopy(run.items)
     if change == 'question': cells[0]['prompt_question'] = 'Edited historical question'
-    if change == 'model': cells[0]['model'] = 'other'
+    if change == 'model': cells[0]['model'] = rows[0].engine + '-other'
     if change == 'missing_model': cells[0].pop('model')
     if change == 'engine':
-        rows[0].engine = cells[0]['engine'] = 'different'
+        rows[0].engine = cells[0]['engine'] = 'qwen'
+        cells[0].update(provider='qwen', model='qwen-test')
     if change == 'distribution':
         rows[0].prompt_id = cells[0]['prompt_id'] = 2
         cells[0]['prompt_question'] = 'Historical 2'
@@ -351,7 +353,8 @@ def test_keyset_pages_watermarks_and_cursor_scope(env, resource):
         env.save(answers[0])
     suffix = '/content/1/variants' if resource == 'variants' else '/' + resource
     if resource == 'variants':
-        env.save(*[Variant(id=10+i, task_id=1, article_version_id=1, title='v', channel='website', body_markdown='full') for i in range(3)])
+        env.save(*[Variant(id=10+i, task_id=1, article_version_id=1, title='v', channel='website', body_markdown='full',
+                          created_at=NOW, updated_at=NOW) for i in range(3)])
     response = get(env, suffix, limit=1)
     assert response.status_code == 200, response.text
     data = response.json()['data']
@@ -424,18 +427,11 @@ def test_unknown_times_and_historical_details_are_not_put_in_week(env):
 def test_review_receipt_publication_and_verification_remain_distinct(env):
     env.save(Article(id=10, task_id=1, version_no=2, kind='master', title='New master', body_markdown='Full new master',
                      created_at=NOW+timedelta(days=1)))
-    task = get(env, '/content/1').json()['data']
-    assert task['task']['review']['status'] == 'approved'
-    assert not task['task']['review']['covers_current_master']
-    assert task['receipt_summary']['succeeded'] == 1
-    assert task['master']['id'] == 10
-    expected_time = view.iso(NOW+timedelta(days=1))
-    assert get(env, '/content/1').json()['basis']['last_data_at'] == expected_time
-    assert get(env, '/content', question_id=1).json()['basis']['last_data_at'] == expected_time
-    delivery = get(env, '/deliveries', task_id=1).json()['data']
-    assert delivery['counts'] == {'publication_records': 1, 'receipt_records': 1, 'published_records': 1, 'stored_verified_publications': 0}
-    assert delivery['items'][0]['verification']['reason_codes'] == ['historical_article']
-    assert get(env, '/content/1/articles/1').json()['data']['is_current_master'] is False
+    # A customer-approved old master cannot authorize a new unchecked draft.
+    assert get(env, '/content/1').status_code == 404
+    assert get(env, '/content', question_id=1).json()['data']['items'] == []
+    assert get(env, '/deliveries', task_id=1).status_code == 404
+    assert get(env, '/content/1/articles/1').status_code == 404
     assert get(env, '/content/1/articles/4').status_code == 404
     assert get(env, '/content/1/variants/4').status_code == 404
 
@@ -465,7 +461,7 @@ def test_verification_uses_saved_fingerprint_and_timestamp(env):
 
 @pytest.mark.parametrize('suffix,query', [('/questions', {'status': 'bad'}), ('/content', {'q': '  '}),
     ('/answers', {'engine_key': 'bad/key'}), ('/content', {'include_archived': '1'}),
-    ('/answers', {'limit': 101}), ('/questions', {'business_id': 22}), ('/answers', {'question_id': 0}),
+    ('/answers', {'limit': 101}), ('/questions', {'business_id': 0}), ('/answers', {'question_id': 0}),
     ('/questions', {'limit': 0}), ('/deliveries', {'record_type': 'external'}), ('/overview', {'q': 'x'})])
 def test_query_contract_is_strict(env, suffix, query):
     assert get(env, suffix, **query).status_code == 422

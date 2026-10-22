@@ -13,7 +13,7 @@ from app.geo.demo_read_session import tenant_read_session
 
 
 def fixture(count=7):
-    rows = [NS(id=i+1, tenant_id=1, prompt_id=i%3+1, engine=str(i%2), captured_at=datetime(2026,8,27),
+    rows = [NS(id=i+1, tenant_id=1, prompt_id=i%3+1, engine=('doubao', 'deepseek')[i%2], captured_at=datetime(2026,8,27),
                sample_mode='openai_compat', simulated=False, note='method=unprimed_json_v2 analysis=completed',
                citation_accuracy='unknown', raw_text='sample answer', mentions_brand=True, cited_urls=[], competitors=[],
                patrol_run_id=31) for i in range(count)]
@@ -21,7 +21,7 @@ def fixture(count=7):
              items=[dict(snapshot_id=r.id, prompt_id=r.prompt_id, engine=r.engine, ok=True,
                          sample_mode=r.sample_mode, simulated=False, sampling_method='unprimed_json_v2', analysis_status='completed',
                          raw_text=r.raw_text, suggested_mentions_brand=r.mentions_brand, competitors=[],
-                         provider='historical-provider', model='historical-model', prompt_question='Historical question') for r in rows])
+                         provider=r.engine, model=r.engine+'-historical', prompt_question='Historical question') for r in rows])
     verified_patrol_rows(rows, [run])
     current = build_weekly_snapshot(rows, ['example.com'], date(2026,8,31))
     previous = build_weekly_snapshot([], ['example.com'], date(2026,8,24))
@@ -38,7 +38,7 @@ def test_eligible_row_remains_eligible_when_week_insufficient():
     assert result['metric_adoption'][0]['reasons'][0]['scope'] == 'week'
     assert result['question']['historical_text'] == 'Historical question'
     assert result['question']['current_text'] == 'Edited question'
-    assert result['engine']['model'] == 'historical-model'
+    assert result['engine']['model'] == 'doubao-historical'
     assert result['captured_at'].endswith('Z')
     assert result['captured_at_local'].endswith('+08:00')
 
@@ -57,16 +57,16 @@ def test_bad_samples_never_adopted(mutation):
     assert all(r['status'] == 'excluded' for r in result['metric_adoption'])
 
 
-def test_outside_week_is_not_intrinsically_invalid_and_missing_model_is_not_row_rejection():
+def test_missing_model_fails_closed_even_outside_week():
     rows, run, context = fixture(8)
     rows[0].captured_at = datetime(2026,8,31)
     run.finished_at = datetime(2026,9,1)
     run.items[0]['model'] = None
     result = answer_payload(rows[0], NS(question='q', is_brand_probe=False), run, context)
-    assert result['sample_eligibility']['eligible']
+    assert not result['sample_eligibility']['eligible']
     assert not result['week_membership']['within_window']
     assert not result['comparison_metadata']['complete']
-    assert result['metric_adoption'][0]['reasons'][0]['code'] == 'outside_selected_week'
+    assert 'engine_source_untrusted' in [r['code'] for r in result['metric_adoption'][0]['reasons']]
 
 
 def test_signed_cursor_rejects_tampering():

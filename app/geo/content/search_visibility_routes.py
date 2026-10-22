@@ -46,8 +46,11 @@ async def get_config(project_id: int, tenant_id: int = Query(...),
                      session: AsyncSession = Depends(get_session)):
     require_advisor(ctx)
     project, config = await load_project(session, ctx, tenant_id, project_id)
+    from app.geo.project_scope import project_scope
+    _, business_ids = await project_scope(session, tenant_id, project_id)
     query = select(GeoOptimizationUnit.keyword).where(
         GeoOptimizationUnit.tenant_id == tenant_id, GeoOptimizationUnit.status == "active",
+        GeoOptimizationUnit.business_id.in_(business_ids),
         GeoOptimizationUnit.keyword.is_not(None),
     ).order_by(GeoOptimizationUnit.sort_order, GeoOptimizationUnit.id).limit(100)
     from app.security.advisor_write_reads import filter_query
@@ -55,7 +58,7 @@ async def get_config(project_id: int, tenant_id: int = Query(...),
     keywords = await session.scalars(query)
     suggested = list(dict.fromkeys(k.strip() for k in keywords if k and 0 < len(k.strip()) <= 128))[:20]
     return {**access_state(config, ctx), "config": config.model_dump(), "notice": NOTICE,
-            "suggested_core_terms": suggested, "suggested_core_terms_scope": "assigned_projects" if getattr(ctx, "advisor_scope", None) is not None else "tenant"}
+            "suggested_core_terms": suggested, "suggested_core_terms_scope": "project"}
 
 
 @router.put("/projects/{project_id}/search-visibility/config")

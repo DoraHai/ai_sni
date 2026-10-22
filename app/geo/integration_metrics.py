@@ -122,6 +122,9 @@ def patrol_evidence_reasons(row, run, cell):
             or sorted(normalize_competitors(cell.get('competitors'))) != sorted(normalize_competitors(row.competitors))
             or sorted(normalize_cited_urls(extract_cited_urls_from_text(row.raw_text or ''))) != sorted(normalize_cited_urls(row.cited_urls))):
         return ['snapshot_patrol_mismatch']
+    from app.geo.content.engine_identity import trusted_engine_source
+    if not trusted_engine_source(row.engine, cell.get('provider'), cell.get('model')):
+        return ['engine_source_untrusted']
     return []
 
 
