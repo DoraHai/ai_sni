@@ -33,6 +33,12 @@ PROJECT_STATUS = {'observed': '已检测', 'no_publications': '暂无发布文�
                   'ready': '充足', 'insufficient': '样本不足'}
 
 
+def project_period_label(period):
+    start, end = (datetime.fromisoformat(period[key].replace('Z', '+00:00'))
+                  .astimezone(ZoneInfo('Asia/Shanghai')).date() for key in ('start', 'end'))
+    return f'{start} 至 {end - timedelta(days=1)}'
+
+
 def project_report_sections(data):
     """Shared rows keep PDF and Excel on the exact same read-only projection."""
     summary = data['summary']
@@ -48,7 +54,8 @@ def project_report_sections(data):
     sections.append(('问题矩阵', ['问题ID', '业务', '关键词', '问题', '平台', '提及X', '合格Y', '百分比', '状态', '样本时间'], [
         [q['id'], q['business']['name'], q['unit']['display_name'], q['question'], c['label'],
          c['mentioned'], c['total'], c['percentage'], {'small_sample': '小样本', 'observed': '已检测',
-         'not_tested': '未检测', 'not_configured': '未配置', 'failed': '失败'}.get(c['status'], '暂无'), c['last_sample_at']]
+         'not_tested': '未检测', 'not_configured': '未配置', 'failed': '失败',
+         'tested_excluded': '已检测，未计入'}.get(c['status'], '暂无'), c['last_sample_at']]
         for q in data['questions'] for c in q['by_engine']]))
     coverage = data['citations']['coverage']
     sections.append(('文章覆盖', ['被引H', '已发布U', '百分比', '状态'], [[coverage['cited_articles'],
@@ -65,7 +72,7 @@ def project_report_sections(data):
         for r in data['recommendations'] for item in r['recommendations'] or [{}]]))
     sections.append(('口径与缺数', ['说明'], [[line] for line in [
         '项目：' + str(data['project']['id']) + ' ' + data['project']['name'],
-        '上海完整周：' + summary['period']['start'] + ' 至 ' + summary['period']['end'] + '（右端不含）',
+        '统计周期：' + project_period_label(summary['period']) + '（北京时间）',
         '汇总样本状态：' + PROJECT_STATUS[summary['sample_status']],
         '正式汇总至少8条回答、3题、2引擎；问题格少于3条为小样本；暂无表示缺数，不是0。',
         '提及率=M/N×100；正向率=正向/提及且情感已标注回答×100；位置只对提及且有效位置求均值。',

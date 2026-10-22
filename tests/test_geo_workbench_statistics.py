@@ -1,7 +1,7 @@
 """Real HTTP/SQL projections over two synthetic tenants; all external I/O mocked."""
 import asyncio
 from copy import deepcopy
-from datetime import timedelta
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, MagicMock
@@ -12,6 +12,194 @@ from openpyxl import load_workbook
 from test_geo_project_client import env, get, add_answers, NOW, WEEK, Answer, Run, Publication, Unit
 from app.geo.content.engine_identity import trusted_engine_source
 from app.models import GeoActionTicket
+
+
+def test_open_week_progress_is_project_scoped_real_only_and_separate_from_closed_week(env):
+    from test_geo_project_client import Prompt
+    from app.geo.content import time_windows
+    now = datetime(2026, 10, 22, 4)
+    start = datetime(2026, 10, 18, 16)
+    env.monkeypatch.setattr(time_windows, 'now_utc_naive', lambda: now)
+    add_answers(env)
+    probe = env.session.get(Prompt, 3)
+    probe.is_brand_probe = True
+    rows = []
+    cases = [
+        (1, 101, start, 'openai_compat', False, ''),
+        (1, 101, now-timedelta(minutes=1), 'openai_compat', False, 'analysis=needs_review'),
+        (2, 101, now-timedelta(minutes=1), 'openai_compat', False, ''),
+        (2, 101, now-timedelta(minutes=1), 'unknown', False, '真采样'),
+        (3, 101, start, 'openai_compat', False, ''),  # brand probe
+        (1, 202, start, 'openai_compat', False, ''),  # mismatched tenant on authorized prompt
+        (4, 101, start, 'openai_compat', False, ''),  # another project
+        (5, 202, start, 'openai_compat', False, ''),
+        (6, 101, start, 'openai_compat', False, ''),  # unbound prompt
+        (7, 202, start, 'openai_compat', False, ''),  # foreign tenant on bound unit
+        (1, 101, start, 'openai_compat', True, ''),
+        (1, 101, start, 'mock_persona', False, ''),
+        (1, 101, start, 'manual', False, 'openai_compat'),
+        (1, 101, start, 'unknown', False, ''),
+        (1, 101, start-timedelta(microseconds=1), 'openai_compat', False, ''),
+        (1, 101, now, 'openai_compat', False, ''),
+        (1, 101, now+timedelta(hours=1), 'openai_compat', False, ''),
+        (1, 101, None, 'openai_compat', False, ''),
+    ]
+    for i, (pid, tid, captured, mode, simulated, note) in enumerate(cases, 201):
+        rows.append(Answer(id=i, tenant_id=tid, prompt_id=pid, engine='doubao',
+            captured_at=captured, sample_mode=mode, simulated=simulated, note=note, raw_text='Synthetic'))
+    env.save(probe, *rows)
+    expected = {'week_start': '2026-10-19', 'next_count_date': '2026-10-26',
+                'detected_answer_count': 4, 'basis_code': 'saved_real_api_answers_open_week'}
+    for suffix in ('/overview', '/visibility', '/summary', '/questions', '/questions/1'):
+        for week in (WEEK, '2026-10-12'):
+            response = get(env, suffix, week_end=week)
+            assert response.status_code == 200, response.text
+            assert response.json()['data']['open_week_progress'] == expected
+    questions = get(env, '/questions').json()['data']['items']
+    assert {q['id']: q['open_week_detected_count'] for q in questions} == {1: 2, 2: 2, 3: 0}
+    assert get(env, '/questions/1').json()['data']['question']['open_week_detected_count'] == 2
+    assert get(env, '/summary', project=2, week_end=WEEK).json()['data']['open_week_progress']['detected_answer_count'] == 1
+    assert get(env, '/summary', project=3, tenant=202, week_end=WEEK).status_code == 403
+    env.ctx.is_superadmin = True
+    env.ctx.tenant_id = None
+    assert get(env, '/summary', project=3, tenant=202, week_end=WEEK).json()['data']['open_week_progress']['detected_answer_count'] == 1
+    # No current-week rows enter historical basis, counts or matrix observations.
+    result = get(env, '/overview').json()
+    assert result['basis']['source_counts']['real'] == 9  # eight fixtures plus just-before-Monday boundary
+    assert result['data']['monitoring']['saved_answer_count'] == 9
+    assert get(env, '/summary', week_end=WEEK).json()['data']['qualified_counts']['samples'] == 6
+    assert {q['id']: q['observation']['total'] for q in questions} == {1: 3, 2: 3, 3: 2}
+
+
+@pytest.mark.parametrize('project', [1, 4])
+def test_open_week_zero_always_present_for_empty_or_unbound_project(env, project):
+    for suffix in ('/overview', '/visibility', '/summary', '/questions'):
+        result = get(env, suffix, project=project, week_end=WEEK)
+        assert result.status_code == 200
+        assert result.json()['data']['open_week_progress']['detected_answer_count'] == 0
+    if project == 1:
+        data = get(env, '/questions/1').json()['data']
+        assert data['open_week_progress']['detected_answer_count'] == data['question']['open_week_detected_count'] == 0
+
+
+@pytest.mark.parametrize('now,week', [
+    (datetime(2026, 10, 18, 15, 59, 59), date(2026, 10, 12)),
+    (datetime(2026, 10, 18, 16), date(2026, 10, 19)),
+    (datetime(2027, 1, 1, tzinfo=timezone.utc), date(2026, 12, 28)),
+])
+def test_open_week_uses_shanghai_monday_across_utc_and_year_boundaries(now, week):
+    from app.geo.content.time_windows import open_week_window, to_utc_naive
+    actual, start, stop = open_week_window(now)
+    assert actual == week and stop == to_utc_naive(now)
+    assert start == datetime.combine(week, datetime.min.time()) - timedelta(hours=8)
+
+
+def test_open_week_query_is_bounded_and_never_falls_back_to_customer(env):
+    from app.geo import project_client_store as store
+    env.monkeypatch.setattr(store, 'ROW_BUDGET', 4)
+    env.monkeypatch.setattr(store, 'open_week_window', lambda: (date(2026, 10, 19),
+        datetime(2026, 10, 18, 16), datetime(2026, 10, 22, 4)))
+    env.save(*[Answer(id=201+i, tenant_id=101, prompt_id=1, engine='doubao',
+        captured_at=datetime(2026, 10, 20), sample_mode='openai_compat', simulated=False, raw_text='Synthetic')
+        for i in range(5)])
+    result = get(env, '/summary', week_end=WEEK)
+    assert result.status_code == 503
+    assert result.json()['detail']['code'] == 'GEO_CLIENT_READ_UNAVAILABLE'
+    assert get(env, '/summary', project=2, week_end=WEEK).json()['data']['open_week_progress']['detected_answer_count'] == 0
+
+
+@pytest.mark.parametrize('reason', ['engine_source_untrusted', 'analysis_incomplete'])
+def test_matrix_tested_excluded_reports_real_reason_and_capture_time(env, reason):
+    row = add_answers(env, 1)[0]
+    run = env.session.get(Run, 99)
+    cells = deepcopy(run.items)
+    if reason == 'engine_source_untrusted':
+        cells[0].update(provider='deepseek', model='deepseek-chat')
+    else:
+        row.note = 'method=unprimed_json_v2 analysis=needs_review'
+        cells[0]['analysis_status'] = 'needs_review'
+    run.items = cells
+    env.save(row, run)
+    for suffix in ('/questions', '/questions/1'):
+        data = get(env, suffix).json()['data']
+        question = next(q for q in data['items'] if q['id'] == 1) if suffix == '/questions' else data['question']
+        cell = question['by_engine'][0]
+        assert cell['status'] == 'tested_excluded'
+        assert reason in cell['excluded_reason_codes']
+        assert len(cell['excluded_reason_codes']) == len(set(cell['excluded_reason_codes']))
+        assert cell['last_sample_at'] == '2026-10-14T05:00:00Z'
+        assert cell['percentage'] is None and cell['total'] is None and cell['mentioned'] is None
+        assert all(c['excluded_reason_codes'] == [] for c in question['by_engine'][1:])
+    workbook = load_workbook(BytesIO(get(env, '/reports/export.xlsx', week_end=WEEK).content))
+    assert workbook['问题矩阵']['I2'].value == '已检测，未计入'
+    # Inspect the actual scoped PDF HTML before replacing browser rendering.
+    html = []
+    async def render(content):
+        html.append(content)
+        return b'%PDF-synthetic'
+    env.monkeypatch.setattr('app.geo.report_pdf.render_report_pdf', render)
+    assert get(env, '/reports/export.pdf', week_end=WEEK).status_code == 200
+    assert '已检测，未计入' in html[0]
+
+
+def test_matrix_unavailable_snapshot_is_scoped_and_latest_attempt_wins(env):
+    env.save(Run(id=80, tenant_id=101, status='completed', started_at=NOW, finished_at=NOW,
+        items=[{'prompt_id': 1, 'engine': 'doubao', 'ok': True, 'snapshot_id': 9999,
+                'raw_text': 'FOREIGN_SNAPSHOT_TEXT'},
+               {'prompt_id': 4, 'engine': 'qwen', 'ok': True, 'snapshot_id': 9998}]))
+    result = get(env, '/questions/1')
+    cell = result.json()['data']['question']['by_engine'][0]
+    assert cell['status'] == 'tested_excluded' and cell['excluded_reason_codes'] == ['snapshot_unavailable']
+    assert cell['last_sample_at'] is None and 'FOREIGN_SNAPSHOT_TEXT' not in result.text
+    assert get(env, '/questions/1', week_end='2026-10-12').json()['data']['question']['by_engine'][0]['status'] == 'not_tested'
+    env.save(Run(id=81, tenant_id=101, status='completed', started_at=NOW+timedelta(hours=1),
+        finished_at=NOW+timedelta(hours=1), items=[{'prompt_id': 1, 'engine': 'doubao', 'ok': False}]))
+    cell = get(env, '/questions/1').json()['data']['question']['by_engine'][0]
+    assert cell['status'] == 'failed' and cell['excluded_reason_codes'] == []
+    env.save(Run(id=82, tenant_id=101, status='completed', started_at=NOW+timedelta(hours=1),
+        finished_at=NOW+timedelta(hours=1, microseconds=1), items=[
+            {'prompt_id': 1, 'engine': 'doubao', 'ok': True, 'snapshot_id': 9999}]))
+    cell = get(env, '/questions/1').json()['data']['question']['by_engine'][0]
+    assert cell['status'] == 'tested_excluded' and cell['excluded_reason_codes'] == ['snapshot_unavailable']
+
+
+def test_qualified_matrix_keeps_observed_and_small_sample_despite_latest_excluded_attempt(env):
+    rows = add_answers(env, count=8, engines=1, questions=1)
+    run = env.session.get(Run, 99)
+    cells = deepcopy(run.items)
+    cells[-1].update(provider='deepseek', model='deepseek-chat')
+    run.items = cells
+    env.save(run)
+    cell = get(env, '/questions/1').json()['data']['question']['by_engine'][0]
+    assert cell['status'] == 'observed' and cell['total'] == 7 and cell['excluded_reason_codes'] == []
+    for row in rows[:5]:
+        row.note = 'method=unprimed_json_v2 analysis=needs_review'
+    env.save(*rows[:5])
+    cell = get(env, '/questions/1').json()['data']['question']['by_engine'][0]
+    assert cell['status'] == 'small_sample' and cell['total'] == 2 and cell['excluded_reason_codes'] == []
+
+
+@pytest.mark.parametrize('start,end,label', [
+    ('2026-10-12T00:00:00+08:00', '2026-10-19T00:00:00+08:00', '2026-10-12 至 2026-10-18'),
+    ('2026-12-27T16:00:00Z', '2027-01-03T16:00:00Z', '2026-12-28 至 2027-01-03'),
+    ('2026-09-27T16:00:00Z', '2026-10-04T16:00:00Z', '2026-09-28 至 2026-10-04'),
+])
+def test_project_report_period_is_inclusive_shanghai_dates(start, end, label):
+    from app.geo.report_export import project_period_label
+    assert project_period_label({'start': start, 'end': end}) == label
+
+
+def test_project_report_html_and_xlsx_use_friendly_closed_week_dates(env):
+    html = []
+    async def render(content):
+        html.append(content)
+        return b'%PDF-synthetic'
+    env.monkeypatch.setattr('app.geo.report_pdf.render_report_pdf', render)
+    assert get(env, '/reports/export.pdf', week_end=WEEK).status_code == 200
+    label = '统计周期：2026-10-12 至 2026-10-18（北京时间）'
+    assert label in html[0] and '右端不含' not in html[0]
+    workbook = load_workbook(BytesIO(get(env, '/reports/export.xlsx', week_end=WEEK).content))
+    assert label in [r[0] for r in workbook['口径与缺数'].values]
 
 
 @pytest.mark.parametrize('mutation', ['missing', 'failed', 'wrong_article', 'stale', 'edited_variant'])
