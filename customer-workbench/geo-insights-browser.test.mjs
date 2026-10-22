@@ -56,9 +56,11 @@ test('built insights: full server filters, six engines, citations, suggestions, 
       return req.respond({status: r.status, contentType: r.headers.get('content-type'), body: Buffer.from(await r.arrayBuffer())});
     });
     await p.setViewport({width: 1500, height: 1050});
-    await p.goto(origin + '/customer-workbench/?module=geo&tenant_id=1&project_id=10');
+    await p.goto(origin + '/customer-workbench/?module=geo&tenant_id=1&project_id=10&onsite_task_id=21');
     await p.waitForSelector('[data-tab=plan]');
     await p.waitForNetworkIdle({idleTime: 200});
+    await p.waitForFunction(() => document.querySelector('[data-tab=onsite]')?.getAttribute('aria-current') === 'page');
+    assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /完善 FAQ/);
     assert.equal(await p.$('[data-action^="onsite-"], [data-sv=run], [data-sv=config]'), null);
     await p.click('[data-tab=data]');
     await p.waitForFunction(() => document.querySelector('.geo-summary')?.textContent.includes('1.5'));

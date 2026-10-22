@@ -12,7 +12,7 @@ const ready=()=>({state:'ready',latest:{id:30,status:'succeeded',created_at:'202
   {kind:'article',url:'https://media.example.org/article',title:'示例制造技术文章',alive:true},
 ]}},weeks:Array.from({length:8},(_,i)=>({week:new Date(Date.UTC(2026,7,24+i*7)).toISOString().slice(0,10),status:'succeeded',summary:{brand_hit:1,core_hit:i%4}}))});
 const base='/api/v1/geo/projects/10/search-visibility';
-test('built GEO feature: role hints, hidden customers, save/run/CSV and desktop/mobile layout',{timeout:120000},async()=>{
+test('built customer GEO: all roles stay read-only, hidden results, CSV and desktop/mobile layout',{timeout:120000},async()=>{
   const fixture=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true,args:['--no-sandbox']});
   const shots=process.env.GEO_VISIBILITY_SHOTS;
   if(shots)await fs.mkdir(shots,{recursive:true});
@@ -53,7 +53,7 @@ test('built GEO feature: role hints, hidden customers, save/run/CSV and desktop/
       await page.goto('https://visibility.test/customer-workbench/?module=geo&tenant_id=1&project_id=10');
       await page.waitForFunction(()=>document.body.textContent.includes('示例制造 / 中文官网项目'));
       if(scenario==='customer-closed'){
-        await page.waitForFunction(()=>document.querySelector('.onsite-list')||document.body.textContent.includes('GEO 官网'));
+        await page.waitForSelector('[data-geo-workspace]');
         assert.equal(await page.$('.sv-card'),null);
         const hidden=await page.$eval('[data-search-visibility]',e=>e.innerHTML);assert.equal(hidden,'');
         assert.doesNotMatch(await page.$eval('body',e=>e.textContent),/DeepSeek 搜索可见度|想开通请联系你的顾问|每周核对这个项目/);
@@ -61,27 +61,15 @@ test('built GEO feature: role hints, hidden customers, save/run/CSV and desktop/
       }else{
         await page.waitForSelector('.sv-card');
         if(notEnabled){
-          const expected=customer?'想开通请联系你的顾问':scenario.endsWith('-off')?'还没开启':'项目已开启';
+          const expected='想开通请联系你的顾问';
           await page.waitForFunction(expected=>document.querySelector('.sv-card')?.textContent.includes(expected),{},expected);
           const text=await page.$eval('.sv-card',e=>e.textContent);
           assert.doesNotMatch(text,/not_enabled|customer_visible|api_key|[A-Z][A-Z0-9]*_[A-Z_]+|HTTP|待启用/);
-          if(!customer&&scenario.endsWith('-off'))assert.match(text,/项目设置.*每周核对这个项目.*保存项目设置.*每周一北京时间早上 6 点/);
-          if(!customer&&scenario.endsWith('-service'))assert.match(text,admin?/超管联系技术人员在服务器上配置搜索服务/:/需要超管处理，请联系超管/);
-          if(admin)assert.equal(await page.$eval('.sv-card a',e=>e.getAttribute('href')),'/customer-workbench/?console=platform&page=costs');
-          else assert.equal(await page.$('.sv-card a'),null);
-          if(!customer){
-            await page.click('[data-sv=config]');
-            assert.equal(await page.$eval('[data-sv-field=customer_visible]',e=>e.checked),false);
-            assert.match(await page.$eval('.sv-form',e=>e.textContent),/前 4 周先由顾问核对/);
-            await page.click('[data-sv-field=enabled]');
-            await page.click('[data-sv=config]');
-            assert((await page.$eval('.sv-empty',e=>e.textContent)).includes(expected),'unsaved checkbox must not change the diagnosis');
-            assert(!calls.some(c=>c.method!=='GET'),'hint and settings inspection must remain read only');
-          }
+          assert.equal(await page.$('.sv-card a'),null);
         }
         else if(scenario==='empty')await page.waitForFunction(()=>document.querySelector('.sv-card')?.textContent.includes('还没有检查记录'));
         else await page.waitForSelector('.sv-metrics');
-        if(customer){assert(!calls.some(c=>c.path.endsWith('/config')));assert.equal(await page.$('[data-sv=config]'),null);assert.equal(await page.$('[data-sv=run]'),null);}
+        assert(!calls.some(c=>c.path.endsWith('/config')));assert.equal(await page.$('[data-sv=config]'),null);assert.equal(await page.$('[data-sv=run]'),null);
       }
       for(const [name,width,height] of [['desktop',1440,900],['mobile',390,844]]){
         await page.setViewport({width,height});
@@ -89,14 +77,14 @@ test('built GEO feature: role hints, hidden customers, save/run/CSV and desktop/
         if(shots)await page.screenshot({path:path.join(shots,`${scenario}-${name}.png`),fullPage:false});
       }
       if(scenario==='advisor'){
-        await page.click('[data-sv=config]');await page.waitForSelector('[data-sv-field=enabled]');
-        assert.equal(await page.$eval('[data-sv-field=customer_visible]',e=>e.checked),false);
-        if(shots)for(const [name,width,height] of [['desktop',1440,900],['mobile',390,844]]){await page.setViewport({width,height});await page.$eval('.sv-form',e=>e.scrollIntoView());await page.screenshot({path:path.join(shots,`config-${name}.png`)});}
-        await page.click('.sv-form button[type=submit]');await page.waitForFunction(()=>document.querySelector('.sv-feedback')?.textContent.includes('已保存'));
-        await page.click('[data-sv=config]');await page.click('[data-sv=run]');await page.waitForFunction(()=>document.body.textContent.includes('已排队'));
-        assert.equal(runs,1);await page.waitForFunction(()=>document.querySelector('.sv-muted')?.textContent.includes('最近检查')&&!document.querySelector('[data-sv=csv]')?.disabled,{timeout:10000});
-        await page.click('[data-sv=csv]');await page.waitForFunction(()=>!document.querySelector('[data-sv=csv]')?.disabled);assert.equal(csv,1);
+        await page.click('[data-sv=csv]');
+        await page.waitForFunction(()=>!document.querySelector('[data-sv=csv]')?.disabled);
+        assert.equal(csv,1);
       }
+      assert.equal(runs,0);
+      assert(calls.every(c=>c.method==='GET'));
+      assert.equal(await page.$('[data-action^="onsite-"], [data-sv=config], [data-sv=run]'),null);
+      assert.doesNotMatch(await page.$eval('body',e=>e.textContent),/余额不足|查看平台成本与用量/);
       assert.deepEqual(errors,[]);await page.close();
     }
   }finally{await browser.close();await fixture.close();}

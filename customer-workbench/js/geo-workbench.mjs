@@ -2,7 +2,7 @@ import {escapeText as esc} from './customer-display.mjs';
 import {createSearchVisibilityPanel} from './search-visibility-panel.mjs';
 import {createGeoProjectPanel} from './geo-project-panel.mjs';
 
-export function mountGeoWorkbench({root, host, logout, selectSpaceHref = '/customer-workbench/'}) {
+export function mountGeoWorkbench({root, host, logout, initialOnsiteTaskId = null, selectSpaceHref = '/customer-workbench/'}) {
   root.classList.add('customer-connected');
   let identity = null, busy = false, message = '', epoch = 0;
   const project = createGeoProjectPanel({host, onNavigate: () => render()});
@@ -27,6 +27,8 @@ export function mountGeoWorkbench({root, host, logout, selectSpaceHref = '/custo
       if (!identity) throw Error('GEO_IDENTITY_UNAVAILABLE');
       message = ''; render();
       await Promise.allSettled([project.refresh(), visibility.refresh()]);
+      if (stamp === epoch && Number.isSafeInteger(initialOnsiteTaskId) && initialOnsiteTaskId > 0)
+        await project.showOnsite();
     } catch {
       if (stamp === epoch) { identity = null; message = '暂无数据，请重新核验客户与项目。'; }
     } finally { if (stamp === epoch) { busy = false; render(); } }

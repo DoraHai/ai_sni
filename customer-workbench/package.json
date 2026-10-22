@@ -29,7 +29,7 @@
     "pretest:ui17": "npm run build",
     "test:ui17": "node --test ui17-entry.test.mjs ui15-entry.test.mjs host-session-adapter.test.mjs",
     "test:geo-client": "npm run build && node --test geo-project-client.test.mjs geo-insights.test.mjs geo-project-browser.test.mjs geo-insights-browser.test.mjs",
-    "test:onsite": "npm run build && node --test geo-project-browser.test.mjs onsite-client.test.mjs onsite-ai.test.mjs onsite-browser.test.mjs"
+    "test:onsite": "npm run build && node --test geo-project-client.test.mjs geo-insights.test.mjs geo-project-browser.test.mjs geo-insights-browser.test.mjs onsite-client.test.mjs onsite-ai.test.mjs onsite-browser.test.mjs"
   },
   "devDependencies": {
     "esbuild": "0.25.12",

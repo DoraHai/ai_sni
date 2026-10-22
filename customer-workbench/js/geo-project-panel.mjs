@@ -304,6 +304,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
   return {
     refresh,
     reset,
+    showOnsite: () => selectTab('onsite'),
     getTab: () => tab,
     renderInto(element) {
       node = element;
