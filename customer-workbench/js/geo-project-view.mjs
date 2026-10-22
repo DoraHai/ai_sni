@@ -265,7 +265,7 @@ export function geoResource(resource, value) {
       )}</details><h3>按引擎查看观测</h3>${(d.engines || []).map((e) => `<article class="geo-row"><b>${esc(geoEngineName(e.engine_key))}</b><p>${geoObservation(e.observation)}；合格样本 ${count(e.qualified_sample_count)} 条。</p>${button('回答证据', 'answers', {engine_key: e.engine_key})}</article>`).join('') || '<p>暂无引擎观测。</p>'}${button('问题监测', 'questions')}${geoModelNote}${geoBasis(value)}`;
   if (/^questions\//.test(resource)) {
     const q = d.question;
-    return `<h2>${esc(q.question)}</h2><p>本期已存合格回答提及率，单格少于 3 条提示小样本。</p>${geoMatrix({...q, by_engine: q.by_engine || d.by_engine}, geoTime)}<p>本周已存回答 ${count(d.evidence?.answer_count)}；不合格回答 ${count(d.evidence?.excluded_answer_count)}；未知时间 ${count(d.evidence?.unknown_time_count)}（当前项目历史中的本问题）。</p>${button('查看全部回答', 'answers', {question_id: q.id})}${button('相关内容', 'content', {question_id: q.id})}${geoBasis(value)}`;
+    return `<h2>${esc(q.question)}</h2><p>本期已存合格回答提及率，单格少于 3 条提示小样本。</p>${geoMatrix(q, geoTime)}<p>本周已存回答 ${count(d.evidence?.answer_count)}；不合格回答 ${count(d.evidence?.excluded_answer_count)}；未知时间 ${count(d.evidence?.unknown_time_count)}（当前项目历史中的本问题）。</p>${button('查看全部回答', 'answers', {question_id: q.id})}${button('相关内容', 'content', {question_id: q.id})}${geoBasis(value)}`;
   }
   if (/^answers\//.test(resource))
     return `<h2>单条回答证据</h2>${answerRow(d.item)}<p>历史模型信息${d.comparison_metadata?.complete ? '齐备' : '不完整'}；${esc(reasonText(d.comparison_metadata?.reason_codes))}。</p><pre class="geo-prose">${esc(d.raw_text)}</pre><h3>保存引用</h3><ul>${(d.citations || []).map((c) => `<li>${c.url_state === 'available' ? geoSafeLink(c.url) : domainOnly(c.domain, '引用链接')}；${c.is_own_domain ? '项目自有域' : '非项目自有域'}</li>`).join('')}</ul>${geoBasis(value)}`;

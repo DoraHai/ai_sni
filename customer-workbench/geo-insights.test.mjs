@@ -66,6 +66,18 @@ test('article evidence is generated from authorized answer ID; links and suggest
   assert(!geoResource('article-citations', v).includes('0%'));
   assert.match(geoResource('recommendations', geoFixture('recommendations')), /建议与依据：已有检查记录缺少 FAQ 结构/);
 });
+test('question detail uses only the new qualified matrix and ignores the preserved legacy engine observations', () => {
+  const v = structuredClone(geoFixture('questions/3'));
+  v.data.question.by_engine = [{engine_key: 'doubao', mentioned: 1, total: 2, percentage: 50, status: 'small_sample'}];
+  v.data.by_engine = [{engine_key: 'doubao', mentioned: 99, total: 99, percentage: 100, status: 'observed', observation: {mentioned: 99, total: 99, status: 'observed'}}];
+  let html = geoResource('questions/3', v);
+  assert.match(html, /1\/2 · 50%/);
+  assert(!html.includes('99/99') && !html.includes('100%'));
+  delete v.data.question.by_engine;
+  html = geoResource('questions/3', v);
+  assert(!html.includes('100%'));
+  assert.match(html, /暂无/);
+});
 test('binary reports validate type and recheck context after bytes finish, without trusting filenames', async () => {
   let ctx = {...context}, release;
   const c = createGeoProjectClient({getContext: () => ctx, transport: async () => ({ok: true,
