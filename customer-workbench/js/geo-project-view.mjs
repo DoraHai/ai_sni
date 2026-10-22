@@ -1,3 +1,4 @@
+import {geoMatrix, geoQuestionFilters, geoInsightResource, geoEngineName, geoModelNote} from './geo-project-insights.mjs';
 import {escapeText as esc} from './customer-display.mjs';
 export const geoTabs = [
   ['home', '首页'],
@@ -147,14 +148,14 @@ export const geoStatus = (slot) =>
   slot?.loading
     ? '正在读取…'
     : {
-        GEO_NOT_OPEN: '暂未开放',
+        GEO_NOT_OPEN: '暂无数据（接口暂未开放）',
         GEO_SCOPE_CHANGED: '项目范围已变化，请重新读取。',
         GEO_CURSOR_INVALID: '分页已失效，请重新读取。',
         GEO_INVALID_WEEK: '请选择上海时区已结束完整周的周一。',
         GEO_RESPONSE_INVALID: '数据范围或格式无法核验，请重新读取。',
         GEO_READ_UNAVAILABLE: '数据量较大或读取暂不可用，请稍后再试。',
         GEO_ACTION_INVALID: '操作参数无法读取，请重新读取页面后再试。',
-      }[slot?.error] || '读取失败，请重新读取。';
+      }[slot?.error] || '暂无数据，读取失败，请重新读取。';
 export function geoBasis(value) {
   if (!value?.basis) return '';
   const {basis: b, scope: s} = value,
@@ -228,7 +229,7 @@ const article = (a) =>
     ? `<h3>${esc(a.title)} · 母稿版本 ${count(a.version_no)}</h3><p>保存于 ${esc(geoTime(a.created_at))}</p><pre class="geo-prose">${esc(a.body_markdown)}</pre>`
     : '<p>尚无已保存母稿。</p>';
 function answerRow(r) {
-  return `<h3>${esc(r.question?.historical_text || r.question?.current_text)}</h3><p>${esc(r.engine?.key)} / ${esc(r.engine?.provider || '供应商未知')} / ${esc(r.engine?.model || '模型未知')}；精确模型版本未知</p><p>${esc(geoTime(r.captured_at))}；${esc(label(r.source?.kind))}；${esc(label(r.source?.analysis_status))}；品牌提及：${r.mentions_brand === true ? '是' : r.mentions_brand === false ? '否' : '未知'}</p><p>单条资格：${r.sample_eligibility?.eligible === true ? '符合来源与证据要求' : '未通过'}；${esc(reasonText(r.sample_eligibility?.reason_codes))}。${r.week_membership?.within_window === true ? '在所选周内' : '不在所选周内'}；${esc(reasonText(r.week_membership?.reason_codes))}。</p><ul>${(
+  return `${r.engine?.key === 'hunyuan' ? geoModelNote : ''}` + `<h3>${esc(r.question?.historical_text || r.question?.current_text)}</h3><p>${esc(geoEngineName(r.engine?.key))} / ${esc(r.engine?.provider || '供应商未知')} / ${esc(r.engine?.model || '模型未知')}；精确模型版本未知</p><p>${esc(geoTime(r.captured_at))}；${esc(label(r.source?.kind))}；${esc(label(r.source?.analysis_status))}；品牌提及：${r.mentions_brand === true ? '是' : r.mentions_brand === false ? '否' : '未知'}</p><p>单条资格：${r.sample_eligibility?.eligible === true ? '符合来源与证据要求' : '未通过'}；${esc(reasonText(r.sample_eligibility?.reason_codes))}。${r.week_membership?.within_window === true ? '在所选周内' : '不在所选周内'}；${esc(reasonText(r.week_membership?.reason_codes))}。</p><ul>${(
     r.metric_adoption || []
   )
     .filter((m) => metricNames[m.key])
@@ -247,6 +248,8 @@ function delivery(r) {
 }
 export function geoResource(resource, value) {
   const d = value.data;
+  const insight = geoInsightResource(resource, value, {time: geoTime, link: geoSafeLink, basis: geoBasis});
+  if (insight !== null) return insight;
   if (resource === 'visibility')
     return `<h2>AI 可见度</h2>${geoWeekly(d.current, d.comparison?.comparable === true)}<p>两周${d.comparison?.comparable === true ? '满足可比较条件' : '不可比较，不展示增长趋势'}：${esc(reasonText(d.comparison?.reason_codes))}</p><details><summary>指标说明</summary>${[
       'mention_count',
@@ -259,10 +262,10 @@ export function geoResource(resource, value) {
       .map((t) => `<p>${esc(t)}</p>`)
       .join(
         '',
-      )}</details><h3>按引擎查看观测</h3>${(d.engines || []).map((e) => `<article class="geo-row"><b>${esc(e.engine_key)}</b><p>${geoObservation(e.observation)}；合格样本 ${count(e.qualified_sample_count)} 条。</p>${button('回答证据', 'answers', {engine_key: e.engine_key})}</article>`).join('') || '<p>暂无引擎观测。</p>'}${button('问题监测', 'questions')}${geoBasis(value)}`;
+      )}</details><h3>按引擎查看观测</h3>${(d.engines || []).map((e) => `<article class="geo-row"><b>${esc(geoEngineName(e.engine_key))}</b><p>${geoObservation(e.observation)}；合格样本 ${count(e.qualified_sample_count)} 条。</p>${button('回答证据', 'answers', {engine_key: e.engine_key})}</article>`).join('') || '<p>暂无引擎观测。</p>'}${button('问题监测', 'questions')}${geoModelNote}${geoBasis(value)}`;
   if (/^questions\//.test(resource)) {
     const q = d.question;
-    return `<h2>${esc(q.question)}</h2><p>${geoObservation(q.observation)}。这是观测次数，未提供正式问题级百分比。</p>${(d.by_engine || []).map((e) => `<p>${esc(e.engine_key)}：${geoObservation(e.observation)} ${button('回答证据', 'answers', {question_id: q.id, engine_key: e.engine_key})}</p>`).join('')}<p>本周已存回答 ${count(d.evidence?.answer_count)}；不合格回答 ${count(d.evidence?.excluded_answer_count)}；未知时间 ${count(d.evidence?.unknown_time_count)}（当前项目历史中的本问题）。</p>${button('查看全部回答', 'answers', {question_id: q.id})}${button('相关内容', 'content', {question_id: q.id})}${geoBasis(value)}`;
+    return `<h2>${esc(q.question)}</h2><p>本期已存合格回答提及率，单格少于 3 条提示小样本。</p>${geoMatrix(q, geoTime)}<p>本周已存回答 ${count(d.evidence?.answer_count)}；不合格回答 ${count(d.evidence?.excluded_answer_count)}；未知时间 ${count(d.evidence?.unknown_time_count)}（当前项目历史中的本问题）。</p>${button('查看全部回答', 'answers', {question_id: q.id})}${button('相关内容', 'content', {question_id: q.id})}${geoBasis(value)}`;
   }
   if (/^answers\//.test(resource))
     return `<h2>单条回答证据</h2>${answerRow(d.item)}<p>历史模型信息${d.comparison_metadata?.complete ? '齐备' : '不完整'}；${esc(reasonText(d.comparison_metadata?.reason_codes))}。</p><pre class="geo-prose">${esc(d.raw_text)}</pre><h3>保存引用</h3><ul>${(d.citations || []).map((c) => `<li>${c.url_state === 'available' ? geoSafeLink(c.url) : domainOnly(c.domain, '引用链接')}；${c.is_own_domain ? '项目自有域' : '非项目自有域'}</li>`).join('')}</ul>${geoBasis(value)}`;
@@ -282,5 +285,5 @@ export function geoResource(resource, value) {
           : resource === 'deliveries'
             ? '原生交付记录'
             : '渠道稿';
-  return `<h2>${kind}</h2>${resource === 'deliveries' ? `<p>发布登记、投递回执、客户确认、页面核验分别展示。原生已登记发布 ${count(d.counts?.published_records)} 条；已有存量匹配证据 ${count(d.counts?.stored_verified_publications)} 条。</p>` : ''}${resource === 'questions' ? '<p>按真实可判读观测显示次数，不提供正式问题级百分比。</p>' : ''}${(d.items || []).map((r) => `<article class="geo-row">${resource === 'questions' ? `<h3>${esc(r.question)}</h3><p>${esc(label(r.status))}${r.is_brand_probe ? ' · 品牌点名题' : ''}；${geoObservation(r.observation)}</p><p>${esc(reasonText(r.attention_reason_codes))}</p>${button('查看问题', 'questions/' + r.id)}` : resource === 'answers' ? `${answerRow(r)}<p>${esc(r.answer_excerpt)}${r.excerpt_truncated ? '（节选，查看完整原文）' : ''}</p>${button('回答原文', 'answers/' + r.id)}` : resource === 'content' ? `<h3>${esc(r.title)}</h3><p>${esc(label(r.stored_status))}；${esc(review(r.review))}；当前母稿 ${r.latest_master ? '版本 ' + count(r.latest_master.version_no) : '尚无'}；渠道稿 ${count(r.variant_count)} 份；原生发布登记 ${count(r.published_record_count)} 条。</p>${button('查看稿件', 'content/' + r.id)}` : resource === 'deliveries' ? delivery(r) : `<h3>${esc(r.title)}</h3><p>渠道：${channel(r.channel)}</p><p>母稿版本 ${count(r.article_version_no)}；${r.is_current_master ? '当前母稿' : '历史母稿'}；${esc(label(r.stored_status))}</p>${button('查看渠道稿', resource + '/' + r.id)}`}</article>`).join('') || '<p>当前范围暂无已保存记录。</p>'}<p>当前已加载 ${(d.items || []).length} 条 / 本次查询范围共 ${count(d.pagination?.total_count)} 条。</p>${d.pagination?.has_more ? '<p>仅展示已加载部分，继续加载。</p><button data-geo="more">继续加载</button>' : ''}${geoBasis(value)}`;
+  return `<h2>${kind}</h2>${resource === 'deliveries' ? `<p>发布登记、投递回执、客户确认、页面核验分别展示。原生已登记发布 ${count(d.counts?.published_records)} 条；已有存量匹配证据 ${count(d.counts?.stored_verified_publications)} 条。</p>` : ''}${resource === 'questions' ? geoQuestionFilters(d) + '<p>本期已存合格回答提及率，按服务端查询全部问题；单格少于 3 条为小样本。</p>' : ''}${(d.items || []).map((r) => `<article class="geo-row">${resource === 'questions' ? `<h3>${esc(r.question)}</h3><p>${esc(label(r.status))}${r.is_brand_probe ? ' · 品牌点名题' : ''}；${r.by_engine ? '本期模型提及明细见下方' : geoObservation(r.observation)}</p><p>${esc(reasonText(r.attention_reason_codes))}</p><p>业务：${esc(r.business?.name || '暂无')}；关键词：${esc(r.unit?.display_name || r.unit?.keyword || r.unit?.name || '暂无')}</p>${geoMatrix(r, geoTime)}${button('查看问题', 'questions/' + r.id)}` : resource === 'answers' ? `${answerRow(r)}<p>${esc(r.answer_excerpt)}${r.excerpt_truncated ? '（节选，查看完整原文）' : ''}</p>${button('回答原文', 'answers/' + r.id)}` : resource === 'content' ? `<h3>${esc(r.title)}</h3><p>${esc(label(r.stored_status))}；${esc(review(r.review))}；当前母稿 ${r.latest_master ? '版本 ' + count(r.latest_master.version_no) : '尚无'}；渠道稿 ${count(r.variant_count)} 份；原生发布登记 ${count(r.published_record_count)} 条。</p>${button('查看稿件', 'content/' + r.id)}` : resource === 'deliveries' ? delivery(r) : `<h3>${esc(r.title)}</h3><p>渠道：${channel(r.channel)}</p><p>母稿版本 ${count(r.article_version_no)}；${r.is_current_master ? '当前母稿' : '历史母稿'}；${esc(label(r.stored_status))}</p>${button('查看渠道稿', resource + '/' + r.id)}`}</article>`).join('') || '<p>当前范围暂无已保存记录。</p>'}<p>当前已加载 ${(d.items || []).length} 条 / 本次查询范围共 ${count(d.pagination?.total_count)} 条。</p>${d.pagination?.has_more ? '<p>仅展示已加载部分，继续加载。</p><button data-geo="more">继续加载</button>' : ''}${geoBasis(value)}`;
 }

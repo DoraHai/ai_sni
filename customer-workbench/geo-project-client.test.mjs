@@ -29,12 +29,13 @@ const resources = [
   'content/7/articles/9',
   'deliveries',
 ];
-async function hostFixture() {
+async function hostFixture({readOnly = false} = {}) {
   const calls = [];
   let session = {token: 'synthetic', userId: 7, tenantId: 1, projectId: 10, revision: 1};
   let notify;
   const user = {id: 7, tenant_id: 1, permissions: {'geo.assets': 'view', 'geo.content': 'view'}};
   const host = createGeoHostAdapter({
+    readOnly,
     origin: 'https://fixture.test',
     getSession: () => session,
     subscribeSession: (fn) => {
@@ -97,7 +98,7 @@ test('A–L and executions are exact GET routes; all invalid scope/query/body/wr
   for (const query of [
     'tenant_id=2',
     'tenant_id=1&tenant_id=1',
-    'tenant_id=1&business_id=1',
+    'tenant_id=1&business_id=0',
     'tenant_id=1&project_id=10',
     'tenant_id=1&limit=101',
     'tenant_id=1&limit=0',
@@ -116,6 +117,23 @@ test('A–L and executions are exact GET routes; all invalid scope/query/body/wr
     );
   assert.equal(calls.length, accepted);
   assert(calls.every((c) => c.options.method === 'GET'));
+  host.dispose();
+});
+
+test('production customer host mode rejects legacy mutations and unreviewed onsite/config reads before transport', async () => {
+  const {host, calls} = await hostFixture({readOnly: true});
+  await host.transport(base + 'summary?tenant_id=1');
+  const accepted = calls.length;
+  for (const [path, method] of [
+    ['/api/v1/geo/workbench/onsite-tasks?tenant_id=1&project_id=10', 'GET'],
+    ['/api/v1/geo/workbench/onsite-tasks', 'POST'],
+    ['/api/v1/geo/workbench/onsite-tasks/7/actions', 'POST'],
+    ['/api/v1/geo/workbench/onsite-tasks/7/ai-proposal', 'POST'],
+    ['/api/v1/geo/projects/10/search-visibility/config?tenant_id=1', 'GET'],
+    ['/api/v1/geo/projects/10/search-visibility/config?tenant_id=1', 'PUT'],
+    ['/api/v1/geo/projects/10/search-visibility/run?tenant_id=1', 'POST'],
+  ]) await assert.rejects(host.transport(path, {method}), /DENIED/);
+  assert.equal(calls.length, accepted);
   host.dispose();
 });
 test('project client checks all response scopes, closed weeks, pagination, and executions project', async () => {

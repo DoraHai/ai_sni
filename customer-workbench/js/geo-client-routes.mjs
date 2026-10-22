@@ -4,7 +4,11 @@ const weekly = ['week_end'],
 const routes = [
   [/^overview$/, weekly],
   [/^visibility$/, weekly],
-  [/^questions$/, [...weekly, ...page, 'status', 'is_brand_probe', 'attention', 'q']],
+  [/^summary$/, weekly],
+  [/^article-citations$/, [...weekly, ...page]],
+  [/^recommendations$/, page],
+  [/^reports\/export\.(?:pdf|xlsx)$/, weekly],
+  [/^questions$/, [...weekly, ...page, 'business_id', 'unit_id', 'status', 'is_brand_probe', 'attention', 'q']],
   [/^questions\/([1-9]\d*)$/, weekly],
   [/^answers$/, [...weekly, ...page, 'question_id', 'engine_key', 'source_kind', 'eligibility']],
   [/^answers\/([1-9]\d*)$/, weekly],
@@ -47,7 +51,7 @@ export function geoClientQuery(url, route, context) {
   };
   for (const [key, value] of url.searchParams) {
     if (!route.keys.includes(key) || url.searchParams.getAll(key).length !== 1) return false;
-    if (['tenant_id', 'question_id', 'task_id'].includes(key) && !geoPositive(value)) return false;
+    if (['tenant_id', 'question_id', 'task_id', 'business_id', 'unit_id'].includes(key) && !geoPositive(value)) return false;
     if (key === 'limit' && (!geoPositive(value) || Number(value) > 100)) return false;
     if (key === 'cursor' && (!value.trim() || value.length > 4096)) return false;
     if (key === 'q' && (!value.trim() || Array.from(value.trim()).length > 100)) return false;

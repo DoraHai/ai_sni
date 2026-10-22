@@ -1,7 +1,7 @@
 // GEO has an independently verified project scope; an SEO site ID conveys no authority.
 import {visibilityAdvisor} from './search-visibility-client.mjs';
 import {geoClientRoute,geoClientQuery} from './geo-client-routes.mjs';
-export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscribeSession,logout,redirectToLogin}){
+export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscribeSession,logout,redirectToLogin,readOnly=false}){
   let revision=0,identity=null,fingerprint=null;const listeners=new Set(),pending=new Set();
   const key=s=>JSON.stringify(s?[s.token,s.userId,s.tenantId,s.projectId,s.revision]:null);
   const fail=(code,status)=>{throw Object.assign(Error(code),{code,status});};
@@ -25,6 +25,7 @@ export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscrib
       method==='GET'&&visibility[2]!=='run'||method==='PUT'&&visibility[2]==='config'||method==='POST'&&visibility[2]==='run');
     const clientRoute=geoClientRoute(url.pathname);
     const clientAllowed=clientRoute&&method==='GET'&&geoClientQuery(url,clientRoute,s);
+    if(readOnly&&!preflight&&(!clientAllowed&&!(visibility&&method==='GET'&&!visibility[2])))fail('ROUTE_DENIED');
     const allowed=preflight?method==='GET'&&readRoutes.has(url.pathname):identity&&(clientAllowed||visibilityAllowed||(list&&['GET','POST'].includes(method))||(aiRead&&method==='GET')||((act||ai)&&method==='POST'));
     if(!allowed)fail('ROUTE_DENIED');
     const keys=clientRoute?clientRoute.keys:visibility?['tenant_id']:preflight?(url.pathname.endsWith('/projects')?['tenant_id']:[]):method==='GET'?['tenant_id','project_id',...(list?['before_id']:[])]:[];
