@@ -123,6 +123,13 @@
 .geo-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .geo-metrics article,.geo-row{border:1px solid #dce5e3;border-radius:10px;padding:16px;margin:12px 0;overflow-wrap:anywhere}
 .geo-metrics strong{font-size:24px;color:#174a47}
+.geo-summary{grid-template-columns:repeat(4,minmax(0,1fr))}
+.geo-matrix{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.geo-matrix section{padding:12px;background:#f4f8f7;border:1px solid #dce5e3;border-radius:8px;min-width:0;overflow-wrap:anywhere}
+.geo-matrix small,.geo-footnote{color:#526963;font-size:13px;line-height:1.6}
+.geo-workspace select,.geo-workspace input{max-width:100%;min-width:0}
+@media(max-width:1000px){.geo-matrix{grid-template-columns:repeat(3,minmax(0,1fr))}.geo-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.geo-matrix{grid-template-columns:repeat(2,minmax(0,1fr))}.geo-summary{grid-template-columns:1fr}}
 .geo-prose{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;font:inherit;line-height:1.8;padding:16px;background:#f7f9f8;max-width:100%}
 .geo-basis{margin:16px 0;padding:12px;background:#f7f9f8;border-radius:8px;overflow-wrap:anywhere}
 .geo-workspace form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}

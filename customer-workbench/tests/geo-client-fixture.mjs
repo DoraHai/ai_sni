@@ -204,7 +204,7 @@ export function envelope(data, resource = 'overview') {
       kind: 'saved_records',
       aggregation_complete: true,
       last_data_at: '2026-10-15T02:00:00Z',
-      period: /^(overview|visibility|questions|answers)/.test(resource) ? period : null,
+      period: /^(overview|visibility|questions|answers|summary|article-citations)/.test(resource) ? period : null,
       source_counts: /^(overview|visibility|questions|answers)/.test(resource)
         ? {real: 1, manual: 0, simulated: 0, unknown: 0}
         : null,
@@ -356,6 +356,29 @@ export function geoFixture(resource, {more = false, ready = false} = {}) {
         stored_verified_publications: 0,
       },
     };
+  else if (resource === 'summary') data = {
+    period, sample_status: ready ? 'ready' : 'insufficient',
+    qualified_counts: {samples: ready ? 8 : 2, questions: ready ? 3 : 1, engines: ready ? 2 : 1},
+    minimum_counts: {samples: 8, questions: 3, engines: 2},
+    metrics: {
+      brand_mention_rate: ready ? 50 : null, brand_mention_answer_count: ready ? 4 : null,
+      average_recommendation_position: ready ? 1.5 : null, valid_position_count: 2,
+      position_distribution: {first: 1, alternative: 1, mentioned: 0},
+      brand_positive_rate: ready ? 50 : null, annotated_mention_count: 2, mention_count: 4,
+      sample_count: ready ? 8 : 2,
+    }, by_engine: [], footnotes: [],
+  };
+  else if (resource === 'article-citations') data = {
+    ...page([{id: 13, task_id: 7, article_id: 9, title: '合成文章引用', url: 'https://example.com/post?id=1',
+      published_at: '2026-10-13T00:00:00Z', mentioned: 1, total: 2, percentage: 50, status: 'observed',
+      evidence: [{answer_id: 5, question_id: 3, engine_key: 'hunyuan', captured_at: '2026-10-15T02:00:00Z', answer_path: '/must-not-follow'}]}], more),
+    coverage: {cited_articles: 1, published_articles: 2, percentage: 50, status: 'observed'}, footnotes: [],
+  };
+  else if (resource === 'recommendations') data = {
+    ...page([{id: 21, title: '合成站内建议', phase: 'doing', next_action: '核实 FAQ', checked_at: '2026-10-15T02:00:00Z', status: 'doing',
+      recommendations: [{title: '完善 FAQ', description: '已有检查记录缺少 FAQ 结构', priority: 'high', status: 'open'}]}], more),
+    structure_scan_status: 'unverified_project_ownership',
+  };
   else throw Error('Unknown synthetic resource: ' + resource);
   const filters = {
     questions: {status: 'all', is_brand_probe: null, attention: 'all', q: null},

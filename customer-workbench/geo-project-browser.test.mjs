@@ -171,7 +171,7 @@ test(
           await p.waitForFunction(() => document.querySelector('[data-tab=plan]'));
           if (scenario === 'empty') {
             assert.equal(await p.$('[data-tab=content]'), null);
-            assert.equal(await p.$('[data-tab=deliveries]'), null);
+            assert(await p.$('[data-tab=deliveries]')); // Empty citation results still expose the read-only entry.
             assert.match(
               await p.$eval('.geo-workspace', (e) => e.textContent),
               /当前项目尚未关联业务/,

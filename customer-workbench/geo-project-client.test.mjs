@@ -97,7 +97,7 @@ test('A–L and executions are exact GET routes; all invalid scope/query/body/wr
   for (const query of [
     'tenant_id=2',
     'tenant_id=1&tenant_id=1',
-    'tenant_id=1&business_id=1',
+    'tenant_id=1&business_id=0',
     'tenant_id=1&project_id=10',
     'tenant_id=1&limit=101',
     'tenant_id=1&limit=0',

@@ -33,7 +33,7 @@ export function createGeoProjectClient({transport, getContext}) {
             ? 'GEO_NOT_OPEN'
             : response.status === 409
               ? 'GEO_SCOPE_CHANGED'
-              : response.status === 400
+              : [400, 422].includes(response.status)
                 ? params.cursor
                   ? 'GEO_CURSOR_INVALID'
                   : params.week_end
@@ -44,6 +44,16 @@ export function createGeoProjectClient({transport, getContext}) {
                   : 'GEO_READ_FAILED',
           response.status,
         );
+      if (/^reports\/export\.(pdf|xlsx)$/.test(resource)) {
+        const format = resource.endsWith('.pdf') ? 'pdf' : 'xlsx';
+        const type = format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        if (response.headers?.get('content-type')?.split(';')[0].trim() !== type)
+          fail('GEO_RESPONSE_INVALID');
+        const bytes = await response.arrayBuffer();
+        current();
+        if (!bytes.byteLength) fail('GEO_RESPONSE_INVALID');
+        return {bytes, type, filename: `GEO-${context.projectId}-${params.week_end || 'closed-week'}.${format}`};
+      }
       const value = await response.json();
       current();
       if (resource === 'executions') {
@@ -72,7 +82,7 @@ export function createGeoProjectClient({transport, getContext}) {
           value.basis.kind !== 'saved_records'
         )
           fail('GEO_RESPONSE_INVALID');
-        if (['overview', 'visibility', 'questions', 'answers'].includes(resource.split('/')[0])) {
+        if (['overview', 'visibility', 'questions', 'answers', 'summary', 'article-citations'].includes(resource.split('/')[0])) {
           const week = value.basis.period?.week_end;
           if (
             !/^\d{4}-\d{2}-\d{2}$/.test(week || '') ||
@@ -130,7 +140,7 @@ export function createGeoProjectClient({transport, getContext}) {
             fail('GEO_RESPONSE_INVALID');
         }
         const list =
-          ['questions', 'answers', 'content', 'deliveries'].includes(resource) ||
+          ['questions', 'answers', 'content', 'deliveries', 'article-citations', 'recommendations'].includes(resource) ||
           /^content\/\d+\/variants$/.test(resource);
         if (list) {
           const p = data.pagination;
@@ -148,6 +158,13 @@ export function createGeoProjectClient({transport, getContext}) {
           )
             fail('GEO_RESPONSE_INVALID');
         }
+        if (resource === 'summary' && (!object(data.metrics) || !object(data.qualified_counts) ||
+            !object(data.minimum_counts) || !['ready', 'insufficient'].includes(data.sample_status) ||
+            !Array.isArray(data.by_engine) || !Array.isArray(data.footnotes))) fail('GEO_RESPONSE_INVALID');
+        if (resource === 'article-citations' && (!object(data.coverage) || !Array.isArray(data.footnotes) ||
+            data.items.some((row) => !Array.isArray(row.evidence)))) fail('GEO_RESPONSE_INVALID');
+        if (resource === 'recommendations' && data.items.some((row) => !Array.isArray(row.recommendations)))
+          fail('GEO_RESPONSE_INVALID');
       }
       return value;
     },
