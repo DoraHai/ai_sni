@@ -21,12 +21,12 @@ const Component = (await import('data:text/javascript;base64,'+Buffer.from(code)
 const id = '11111111-1111-4111-8111-111111111111'
 const flush = async () => { await new Promise(r => setTimeout(r, 0)); await nextTick() }
 
-function mount(targets = []) {
+function mount(targets = [], assignment = null) {
   const calls = []
   const api = {
     receipts: async () => ({ items: [{ id, revision: 0, platform: '新平台', title: '<img src=x onerror=alert(1)>',
       reportedAccount: '<script>unsafe</script>', result: 'success', publicUrl: 'https://example.invalid/article',
-      occurredAt: '2026-10-19T11:00:00.000Z', receivedAt: '2026-10-19T11:01:00.000Z' }] }),
+      occurredAt: '2026-10-19T11:00:00.000Z', receivedAt: '2026-10-19T11:01:00.000Z', assignment }] }),
     devices: async () => ({ items: [{ id, revision: 0, label: '合成电脑', state: 'active' }] }), count: async () => ({ count: 1 }),
     createPairing: async () => { calls.push('pair'); return { pairingCode: 'DHT2-'+'a'.repeat(32) } },
     revoke: async () => calls.push('revoke'), label: async (...args) => calls.push(['label',...args]),
@@ -37,6 +37,11 @@ function mount(targets = []) {
   return { element, calls, close: () => { app.unmount(); element.remove() } }
 }
 const click = async (element, label) => { [...element.querySelectorAll('button')].find(b => b.textContent === label).click(); await flush() }
+const select = async (element, value) => {
+  element.value = String(value)
+  element.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+  await flush()
+}
 
 test('rendered inbox has only three sections, zero-grant guidance and safe plain text links', async () => {
   const view = mount(); await flush()
@@ -73,5 +78,111 @@ test('dual module customers require an explicit module and label uses the chosen
     assert(!button.disabled)
     button.click(); await flush()
     assert.deepEqual(view.calls[0].slice(0,5), ['label','geo',42,id,{ expectedRevision: 0, targetTenant: 42, scopeId: null }])
+  } finally { view.close() }
+})
+
+const targets = [{ tenantId: 42, name: '合成客户', modules: ['seo', 'geo'], scopes: [
+  { id: 7, module: 'seo', name: '合成网站' }, { id: 7, module: 'geo', name: '合成项目' },
+] }]
+for (const { module, scopeId, expected, missing } of [
+  { module: 'seo', scopeId: 7, expected: '合成客户 · SEO · 合成网站', missing: false },
+  { module: 'geo', scopeId: 7, expected: '合成客户 · GEO · 合成项目', missing: false },
+  { module: 'seo', scopeId: null, expected: '合成客户 · SEO · 网站待补', missing: true },
+  { module: 'geo', scopeId: null, expected: '合成客户 · GEO · 项目待补', missing: true },
+  { module: 'seo', scopeId: 99, expected: '合成客户 · SEO · 网站 #99', missing: false },
+  { module: 'geo', scopeId: 99, expected: '合成客户 · GEO · 项目 #99', missing: false },
+]) {
+  test(`assigned card shows ${expected} outside collapsed details`, async () => {
+    const view = mount(targets, { tenantId: 42, module, scopeId }); await flush()
+    try {
+      const summary = view.element.querySelector('.assignment-target')
+      assert.equal(summary.textContent, expected)
+      assert.equal(summary.querySelectorAll('.assignment-scope-missing').length, Number(missing))
+      assert.equal(summary.closest('details'), null)
+      assert.equal(view.element.querySelector('details').open, false)
+      assert.equal(view.calls.length, 0)
+    } finally { view.close() }
+  })
+}
+
+test('assigned card falls back for missing customer and scope names and hides inaccessible assignments', async () => {
+  for (const [available, assignment, expected] of [
+    [[], { tenantId: 88, module: 'seo', scopeId: 9 }, '客户 #88 · SEO · 网站 #9'],
+    [[], { tenantId: 88, module: 'geo', scopeId: 9 }, '客户 #88 · GEO · 项目 #9'],
+    [[{ tenantId: 88, modules: ['seo'], scopes: [{ id: 9, module: 'seo' }] }], { tenantId: 88, module: 'seo', scopeId: 9 }, '客户 #88 · SEO · 网站 #9'],
+    [targets, { hidden: true }, null],
+  ]) {
+    const view = mount(available, assignment); await flush()
+    try {
+      assert.equal(view.element.querySelector('.assignment-target')?.textContent ?? null, expected)
+      if (!expected) assert(view.element.textContent.includes('客户归属不可查看'))
+    } finally { view.close() }
+  }
+})
+
+for (const module of ['seo', 'geo']) {
+  test(`only ${module} scope is selected with the single module and sent on label`, async () => {
+    const view = mount([{ tenantId: 42, name: '合成客户', modules: [module], scopes: [
+      { id: 7, module, name: '唯一范围' }, { id: 8, module: module === 'seo' ? 'geo' : 'seo', name: '其他模块范围' },
+    ] }]); await flush()
+    try {
+      await select(view.element.querySelector('article select'), 42)
+      assert.equal(view.element.querySelector('details select').value, '7')
+      await click(view.element, '标注客户')
+      assert.deepEqual(view.calls[0].slice(0, 5), ['label', module, 42, id, { expectedRevision: 0, targetTenant: 42, scopeId: 7 }])
+    } finally { view.close() }
+  })
+}
+
+test('multiple scopes keep the empty default and label sends no scope', async () => {
+  const view = mount([{ tenantId: 42, name: '合成客户', modules: ['seo'], scopes: [
+    { id: 7, module: 'seo', name: '网站一' }, { id: 8, module: 'seo', name: '网站二' },
+  ] }]); await flush()
+  try {
+    await select(view.element.querySelector('article select'), 42)
+    const scope = view.element.querySelector('details select')
+    assert.equal(scope.value, '')
+    assert.equal(scope.selectedOptions[0].textContent, '范围待补')
+    await click(view.element, '标注客户')
+    assert.equal(view.calls[0][4].scopeId, null)
+  } finally { view.close() }
+})
+
+test('customer and module switches recompute the scope and clear stale article choices', async () => {
+  const view = mount([
+    { tenantId: 42, name: '客户一', modules: ['seo', 'geo'], scopes: [
+      { id: 7, module: 'seo', name: '网站一', articles: [{ id: 3, title: '合成稿件', version: 1, digest: 'synthetic' }] },
+      { id: 8, module: 'geo', name: '项目一' },
+    ] },
+    { tenantId: 43, name: '客户二', modules: ['seo'], scopes: [{ id: 9, module: 'seo', name: '网站二' }] },
+    { tenantId: 44, name: '客户三', modules: ['seo'], scopes: [] },
+    { tenantId: 45, name: '客户四', modules: ['seo'], scopes: [
+      { id: 10, module: 'seo', name: '网站三' }, { id: 11, module: 'seo', name: '网站四' },
+    ] },
+  ]); await flush()
+  const tenant = () => view.element.querySelector('article select')
+  const scope = () => view.element.querySelector('details select')
+  const article = () => view.element.querySelectorAll('details select')[1]
+  const module = () => view.element.querySelectorAll('article select')[1]
+  try {
+    await select(tenant(), 42)
+    assert.equal(scope().value, '')
+    await select(module(), 'seo'); assert.equal(scope().value, '7')
+    await select(article(), 3)
+    await select(module(), 'geo')
+    assert.equal(scope().value, '8'); assert.equal(article().value, '')
+    await click(view.element, '标注客户')
+    assert.equal(view.calls[0][4].scopeId, 8); assert(!Object.hasOwn(view.calls[0][4], 'articleId'))
+    await select(module(), ''); assert.equal(scope().value, '')
+    await select(module(), 'seo'); await select(article(), 3)
+    await select(tenant(), 43)
+    assert.equal(scope().value, '9'); assert.equal(article().value, '')
+    await click(view.element, '标注客户')
+    assert.equal(view.calls[1][2], 43); assert.equal(view.calls[1][4].scopeId, 9)
+    assert(!Object.hasOwn(view.calls[1][4], 'articleId'))
+    await select(tenant(), 45); assert.equal(scope().value, '')
+    await select(tenant(), 43); assert.equal(scope().value, '9')
+    await select(tenant(), 44); assert.equal(scope().value, '')
+    await select(tenant(), ''); assert.equal(scope().value, '')
   } finally { view.close() }
 })
