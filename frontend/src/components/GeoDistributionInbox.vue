@@ -24,12 +24,25 @@ function targetFor(row) { return props.targets.find(t => t.tenantId === Number(t
 function targetChanged(row) {
   const target = targetFor(row)
   moduleId.value[row.id] = target?.modules?.length === 1 ? target.modules[0] : ''
-  scopeId.value[row.id] = ''
+  moduleChanged(row)
+}
+function moduleChanged(row) {
+  const scopes = scopesFor(row)
+  scopeId.value[row.id] = scopes.length === 1 ? scopes[0].id : ''
   articleId.value[row.id] = ''
 }
 function scopesFor(row) {
   const target = row.assignment && !row.assignment.hidden ? props.targets.find(t => t.tenantId === row.assignment.tenantId) : targetFor(row)
   return (target?.scopes || []).filter(s => s.module === (row.assignment?.module || moduleId.value[row.id]))
+}
+function assignmentText(row) {
+  const assignment = row.assignment
+  if (!assignment || assignment.hidden) return ''
+  const target = props.targets.find(t => Number(t.tenantId) === Number(assignment.tenantId))
+  const kind = assignment.module === 'geo' ? '项目' : '网站'
+  const scope = (target?.scopes || []).find(s => s.module === assignment.module && Number(s.id) === Number(assignment.scopeId))
+  const scopeName = assignment.scopeId ? scope?.name || `${kind} #${assignment.scopeId}` : `${kind}待补`
+  return `${target?.name || `客户 #${assignment.tenantId}`} · ${assignment.module.toUpperCase()} · ${scopeName}`
 }
 function articlesFor(row) { return scopesFor(row).find(s => s.id === Number(scopeId.value[row.id] ?? row.assignment?.scopeId))?.articles || [] }
 function label(row) {
@@ -81,6 +94,7 @@ onBeforeUnmount(model.clear)
         <p v-if="row.duplicate">自己的收件箱中有相同链接，请核对</p>
         <p v-if="row.assignment?.hidden">客户归属不可查看</p>
         <template v-else-if="row.assignment">
+          <p class="assignment-target" :class="{ 'scope-missing': !row.assignment.scopeId }">{{ assignmentText(row) }}</p>
           <p>外部回传 · 已标客户；改标请先撤销，再选择新客户或模块。</p>
           <details><summary>修改网站或项目、关联稿件、发布账号</summary>
             <select :value="scopeId[row.id] ?? row.assignment.scopeId ?? ''" :disabled="state.busy" @change="scopeId[row.id] = $event.target.value; articleId[row.id] = ''"><option value="">范围待补</option><option v-for="scope in scopesFor(row)" :key="scope.id" :value="scope.id">{{ scope.name }}</option></select>
@@ -97,7 +111,7 @@ onBeforeUnmount(model.clear)
             <option v-for="target in targets" :key="target.tenantId" :value="target.tenantId">{{ target.name }}</option>
           </select></label>
           <label v-if="targetFor(row)?.modules.length > 1">模块
-            <select v-model="moduleId[row.id]" :disabled="state.busy"><option value="">请选择 SEO/GEO</option><option v-for="module in targetFor(row).modules" :key="module" :value="module">{{ module.toUpperCase() }}</option></select>
+            <select v-model="moduleId[row.id]" :disabled="state.busy" @change="moduleChanged(row)"><option value="">请选择 SEO/GEO</option><option v-for="module in targetFor(row).modules" :key="module" :value="module">{{ module.toUpperCase() }}</option></select>
           </label>
           <details><summary>网站或项目（可稍后补）</summary>
             <select v-model="scopeId[row.id]" :disabled="state.busy" @change="articleId[row.id] = ''"><option value="">范围待补</option>
@@ -130,6 +144,8 @@ onBeforeUnmount(model.clear)
 .inbox { max-width: 1000px; margin: auto; padding: 24px; color: #172b45; }
 section { margin: 24px 0; padding: 20px; border: 1px solid #dbe3ef; border-radius: 12px; background: #fff; }
 article { padding: 16px 0; border-top: 1px solid #dbe3ef; overflow-wrap: anywhere; }
+.assignment-target { font-weight: 600; }
+.scope-missing { color: #9a3412; background: #fff7ed; padding: 8px 12px; border-radius: 6px; }
 button, select { padding: 8px 12px; margin: 4px 12px 4px 0; }
 code { font-size: 1.1em; overflow-wrap: anywhere; }
 [role=alert] { color: #a12828; }
