@@ -5360,7 +5360,6 @@ async def create_visibility_patrol_run(
     from app.config import get_settings
     from app.geo.content.patrol import (
         count_patrol_runs_today,
-        patrol_quota_message,
         patrol_run_payload,
         run_patrol_in_background,
     )

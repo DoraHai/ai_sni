@@ -526,7 +526,9 @@ async def execute_patrol_run(
         return row
     async def check_advisor(*, lock=False):
         if getattr(row, 'trigger', None) == 'schedule':
-            mode = await session.scalar(select(GeoVisibilityPatrolSettings.schedule_mode).where(
+            from sqlalchemy import case
+            mode = await session.scalar(select(case((GeoVisibilityPatrolSettings.admin_locked.is_(True), 'daily_self_service'),
+                else_=GeoVisibilityPatrolSettings.schedule_mode)).where(
                 GeoVisibilityPatrolSettings.tenant_id == row.tenant_id).execution_options(advisor_scope_control=True))
             if mode == 'daily_self_service':
                 raise AdvisorVisibilityUnavailable('旧定时已停用')
@@ -549,7 +551,7 @@ async def execute_patrol_run(
         await check_advisor()
         return result
 
-    from app.geo.content.autopatrol import is_auto, ENGINES
+    from app.geo.content.autopatrol import is_auto, ENGINES, engine_states_query
     from app.geo.content.visibility_budget import VisibilityBudgetExhausted, VisibilityBudgetUnavailable
     automatic = is_auto(row)
     auto_metadata = (row.summary or {}).get('self_service') if automatic else None
@@ -623,7 +625,7 @@ async def execute_patrol_run(
         tenant_llm = None if automatic else await resolve_llm_credentials(session, row.tenant_id)
         engine_rows = list(
             await session.scalars(
-                select(GeoTrackingEngine)
+                (engine_states_query([row.tenant_id]) if automatic else select(GeoTrackingEngine))
                 .where(GeoTrackingEngine.tenant_id == row.tenant_id)
                 .order_by(GeoTrackingEngine.sort_order, GeoTrackingEngine.id)
             )
@@ -801,7 +803,7 @@ async def execute_patrol_run(
                     try:
                         from app.geo.content.ai_settings import ensure_ai_setting, get_ai_setting_row
 
-                        ai_row = await (get_ai_setting_row(session, row.tenant_id)
+                        ai_row = None if automatic else await (get_ai_setting_row(session, row.tenant_id)
                             if advisor_prompt_ids is not None else ensure_ai_setting(session, row.tenant_id))
                         stance = (
                             getattr(ai_row, "monitoring_stance", None) or "hybrid"

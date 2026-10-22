@@ -100,7 +100,7 @@ async def enqueue_day(session, tenant_id, *, now=None):
         saved = (st.owner_scope or {}).get("fingerprint", {})
         if fingerprint.get("projects") != saved.get("projects"):
             raise AdvisorVisibilityUnavailable("authorization_changed")
-        engines = list(await session.scalars(select(GeoTrackingEngine).where(GeoTrackingEngine.tenant_id == tenant_id)))
+        engines = list(await session.scalars(policy.engine_states_query([tenant_id])))
         statuses = policy.platforms(engines)
         keys = [p["engine_key"] for p in statuses if p["status"] == "available"]
         if not keys:

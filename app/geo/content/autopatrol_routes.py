@@ -84,7 +84,7 @@ async def put_self_service(req: Toggle, request: Request, ctx=Depends(require_sc
         from app.config import get_settings
         if len(scope['prompt_ids']) * len(service.ENGINES) > get_settings().geo_patrol_max_cells_per_run:
             deny(409, 'CELL_LIMIT', '当前单轮上限不足以覆盖问题和六家平台，请由管理员核对')
-        engines = list(await session.scalars(select(GeoTrackingEngine).where(GeoTrackingEngine.tenant_id == req.tenant_id)))
+        engines = list(await session.scalars(service.engine_states_query([req.tenant_id])))
         if not any(p["status"] == "available" for p in service.platforms(engines)):
             deny(409, "NO_PLATFORMS", "六家国内平台均不可用，请等待平台配置")
         from app.geo.tenant_scope import ensure_geo_entitlement
@@ -183,7 +183,7 @@ async def admin_settings(page: int = Query(1, ge=1), page_size: int = Query(20, 
     total = await session.scalar(select(func.count()).select_from(query.subquery()))
     rows = (await session.execute(query.order_by(Tenant.id).offset((page - 1) * page_size).limit(page_size))).all()
     ids = [t.id for t, _ in rows]
-    engines = list(await session.scalars(select(GeoTrackingEngine).where(GeoTrackingEngine.tenant_id.in_(ids))))
+    engines = list(await session.scalars(service.engine_states_query(ids)))
     lasts = {r.tenant_id: r for r in await session.scalars(select(Run).where(Run.tenant_id.in_(ids), Run.auto_day.is_not(None))
         .distinct(Run.tenant_id).order_by(Run.tenant_id, Run.id.desc()))}
     inflight = set(await session.scalars(select(Run.tenant_id).where(Run.tenant_id.in_(ids), Run.status.in_(("pending", "running")))))

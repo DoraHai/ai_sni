@@ -177,7 +177,7 @@ def test_bj_estimate_and_classification_projection():
 def test_auto_executor_uses_frozen_questions_real_six_and_rechecks_response(tmp_path, monkeypatch, revoke):
     async def run():
         import app.ai.deepseek as provider
-        from app.geo.content import patrol, daily_metrics, visibility_budget
+        from app.geo.content import patrol, daily_metrics, visibility_budget, ai_settings
         from app.models import GeoAnswerSnapshot
         async with sandbox(tmp_path, monkeypatch) as env:
             opened = await toggle(env, True)
@@ -188,6 +188,8 @@ def test_auto_executor_uses_frozen_questions_real_six_and_rechecks_response(tmp_
                 ident = row.id
                 await session.commit()
             monkeypatch.setattr(patrol, 'ensure_geo_entitlement', AsyncMock())
+            tenant_ai_read = AsyncMock(side_effect=AssertionError('automatic must not read tenant AI settings'))
+            monkeypatch.setattr(ai_settings, 'get_ai_setting_row', tenant_ai_read)
             monkeypatch.setattr(daily_metrics, 'safe_rebuild_day', AsyncMock())
             attempts = AsyncMock(return_value=1)
             monkeypatch.setattr(visibility_budget, 'claim_visibility_attempt', attempts)
@@ -205,6 +207,7 @@ def test_auto_executor_uses_frozen_questions_real_six_and_rechecks_response(tmp_
             async with env.factory() as session:
                 worker = session
                 row = await patrol.execute_patrol_run(session, ident, tenant_id=10, execution_protocol=patrol.PATROL_EXECUTION_PROTOCOL)
+                tenant_ai_read.assert_not_awaited()
                 if revoke:
                     assert row.status == 'failed' and row.error == 'authorization_changed'
                     assert len(calls) == 1
@@ -340,4 +343,32 @@ def test_administrator_deletion_preserves_shared_manual_quota(tmp_path, monkeypa
             assert response.status_code == 200, response.text
             async with env.factory() as session:
                 assert (await service.manual_quota(session, 10))['used'] == 1
+    asyncio.run(run())
+
+
+def test_self_service_engine_queries_exclude_legacy_credentials():
+    sql = str(service.engine_states_query([10]).compile(compile_kwargs={'literal_binds': True}))
+    assert 'api_key_encrypted' not in sql and 'api_base_url' not in sql
+    assert 'geo_tracking_engines.enabled' in sql and 'geo_tracking_engines.tenant_id IN (10)' in sql
+
+
+@pytest.mark.parametrize('mode,locked', [('daily_self_service', False), ('legacy', True)])
+def test_legacy_worker_stops_before_call_after_switch_or_admin_lock(tmp_path, monkeypatch, mode, locked):
+    async def run():
+        from app.geo.content import patrol
+        async with sandbox(tmp_path, monkeypatch) as env:
+            async with env.factory() as session:
+                st = await session.get(Settings, 10)
+                st.schedule_mode, st.admin_locked = mode, locked
+                row = Run(tenant_id=10, trigger='schedule', status='pending', engine_keys=['deepseek'])
+                session.add(row)
+                await session.commit()
+                ident = row.id
+            monkeypatch.setattr(patrol, 'ensure_geo_entitlement', AsyncMock())
+            probe = AsyncMock(side_effect=AssertionError('old automatic must not execute'))
+            monkeypatch.setattr(patrol, 'run_probe_draft', probe)
+            async with env.factory() as session:
+                row = await patrol.execute_patrol_run(session, ident, tenant_id=10)
+                assert row.status == 'failed' and row.error == '旧定时已停用'
+            probe.assert_not_awaited()
     asyncio.run(run())

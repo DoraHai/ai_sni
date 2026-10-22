@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from sqlalchemy import func, or_, select
+from sqlalchemy.orm import load_only
 
 from app.models import GeoProject, GeoPrompt, GeoTrackingEngine, GeoVisibilityPatrolRun, GeoVisibilityPatrolSettings, Tenant, User
 from app.models.geo_visibility_patrol import GeoVisibilityPatrolSettingEvent as Event
@@ -15,6 +16,13 @@ MODE = "daily_self_service"
 ENGINES = ("doubao", "deepseek", "qwen", "hunyuan", "wenxin", "kimi")
 LABELS = ("豆包", "DeepSeek", "千问", "元宝（混元 API）", "文心", "Kimi")
 BJ = ZoneInfo("Asia/Shanghai")
+
+
+def engine_states_query(tenant_ids):
+    # Self-service must not load legacy tenant credential columns, even unused.
+    return select(GeoTrackingEngine).where(GeoTrackingEngine.tenant_id.in_(tenant_ids)).options(load_only(
+        GeoTrackingEngine.id, GeoTrackingEngine.tenant_id, GeoTrackingEngine.engine_key,
+        GeoTrackingEngine.enabled, GeoTrackingEngine.sort_order, raiseload=True))
 
 
 def utcnow():
@@ -190,7 +198,7 @@ async def state_payload(session, tenant_id, ctx, *, row=None, bundle=None):
     """Shared view. Admin pagination may supply batched reference data."""
     if bundle is None:
         row = row or await session.get(GeoVisibilityPatrolSettings, tenant_id)
-        engines = list(await session.scalars(select(GeoTrackingEngine).where(GeoTrackingEngine.tenant_id == tenant_id)))
+        engines = list(await session.scalars(engine_states_query([tenant_id])))
         last = await session.scalar(select(GeoVisibilityPatrolRun).where(GeoVisibilityPatrolRun.tenant_id == tenant_id,
             GeoVisibilityPatrolRun.auto_day.is_not(None)).order_by(GeoVisibilityPatrolRun.id.desc()).limit(1))
         inflight = bool(await session.scalar(select(GeoVisibilityPatrolRun.id).where(GeoVisibilityPatrolRun.tenant_id == tenant_id,
