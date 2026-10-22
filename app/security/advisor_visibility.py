@@ -25,16 +25,22 @@ async def check_visibility_execution(session, run, prompt_ids, *, lock=False):
     message = '顾问授权、项目分配或检测范围已变化，请重新发起检测'
     try:
         auth = (run.summary or {}).get('advisor_visibility_auth')
+        from app.geo.content.autopatrol import is_auto
+        persistent = is_auto(run)
         if (not isinstance(auth, dict) or type(auth.get('user_id')) is not int
                 or auth['user_id'] != run.created_by or auth.get('tenant_id') != run.tenant_id
-                or type(auth.get('grant_id')) is not int or type(auth.get('auth_exp')) is not int
-                or auth['auth_exp'] <= datetime.now(timezone.utc).timestamp()
+                or type(auth.get('grant_id')) is not int
+                or (not persistent and (type(auth.get('auth_exp')) is not int
+                    or auth['auth_exp'] <= datetime.now(timezone.utc).timestamp()))
                 or not get_settings().advisor_scoped_content_writes_enabled):
             raise AdvisorVisibilityUnavailable(message)
         # Match the HTTP admission/commit lock order: tenant -> user -> role.
         # Starting a worker with the reverse order can deadlock a new request.
         if lock:
             await session.scalar(select(Tenant.id).where(Tenant.id == run.tenant_id).with_for_update())
+        if persistent:
+            from app.geo.content.autopatrol_queue import validate_delegate
+            await validate_delegate(session, run)
         user_query = select(User).options(load_only(
             User.id, User.role_id, User.tenant_id, User.is_active, User.locked_until
         )).where(User.id == run.created_by).execution_options(populate_existing=True)
@@ -141,11 +147,5 @@ async def check_visibility_scope(session, ctx, request, *, lock=True):
 
 async def check_visibility_quota(session, ctx):
     # Caller retains the tenant row lock until the pending run is committed.
-    from app.config import get_settings
-    from app.geo.content.patrol import count_patrol_runs_today
-
-    limit = 10
-    used = await count_patrol_runs_today(session, ctx.tenant_id, created_by=ctx.user_id)
-    if used >= limit:
-        deny(429, "ADVISOR_VISIBILITY_DAILY_LIMIT",
-             f"今天这个客户的 AI 可见度手动检测已用完 10 次（{used}/{limit}），明天再试；失败且无结果会退回次数")
+    from app.geo.content.autopatrol import check_manual_quota
+    await check_manual_quota(session, ctx.tenant_id)

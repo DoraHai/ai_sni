@@ -111,6 +111,8 @@ READ_ROUTES = CLIENT_TEMPLATES | frozenset({
     '/api/v1/geo/visibility-patrol/runs',
     '/api/v1/geo/visibility-patrol/runs/{run_id}',
     '/api/v1/geo/visibility-patrol/settings',
+    '/api/v1/geo/visibility-patrol/self-service',
+    '/api/v1/geo/visibility-patrol/self-service/history',
     '/api/v1/geo/visibility-period-diff',
     '/api/v1/geo/weekly-insights',
     '/api/v1/geo/workbench/advisor-tasks',

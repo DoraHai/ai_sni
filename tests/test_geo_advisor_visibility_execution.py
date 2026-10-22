@@ -16,6 +16,8 @@ from test_geo_advisor_visibility import visibility_sandbox
 
 def worker_stubs(monkeypatch):
     from app.geo.content import ai_settings, daily_metrics, patrol
+    from app.geo.content import visibility_budget
+    monkeypatch.setattr(visibility_budget, 'claim_visibility_attempt', AsyncMock(return_value=1))
     monkeypatch.setattr(ai_settings, 'resolve_llm_credentials', AsyncMock(return_value={}))
     monkeypatch.setattr(ai_settings, 'ensure_ai_setting', AsyncMock(side_effect=AssertionError('advisor worker must not create model settings')))
     monkeypatch.setattr(ai_settings, 'get_ai_setting_row', AsyncMock(return_value=SimpleNamespace(monitoring_stance='hybrid')))

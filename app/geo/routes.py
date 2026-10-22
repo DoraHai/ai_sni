@@ -1205,3 +1205,5 @@ router.include_router(onsite_router)
 from app.geo.content.search_visibility_routes import router as search_visibility_router  # noqa: E402
 
 router.include_router(search_visibility_router)
+from app.geo.content.autopatrol_routes import router as autopatrol_router
+router.include_router(autopatrol_router)

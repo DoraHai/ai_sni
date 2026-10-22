@@ -1,0 +1,122 @@
+"""Native PostgreSQL races; only explicitly allowed loopback CI schemas."""
+import asyncio
+from datetime import datetime, timedelta, timezone
+import os
+from unittest.mock import AsyncMock
+
+import pytest
+from sqlalchemy import func, select
+
+from app.geo.content import autopatrol as service, autopatrol_queue as queue, patrol, visibility_budget as budget
+from app.models import GeoVisibilityPatrolRun as Run
+from app.models.geo_visibility_patrol import GeoVisibilityPatrolDailyBudget as Budget
+from test_geo_autopatrol import sandbox, toggle
+
+pytestmark = pytest.mark.skipif(not os.getenv('GEO_TEST_POSTGRES_URL'), reason='requires dedicated loopback PostgreSQL')
+
+
+def test_two_producers_claim_once_and_disable_reenable_does_not_reset(tmp_path, monkeypatch):
+    async def run():
+        async with sandbox(tmp_path, monkeypatch, 'postgres') as env:
+            opened = await toggle(env, True)
+            assert opened.status_code == 200, opened.text
+            now = datetime.now(service.BJ).replace(hour=11, minute=5, second=0)
+            async def produce():
+                async with env.factory() as session:
+                    row = await queue.enqueue_day(session, 10, now=now)
+                    await session.commit()
+                    return row.id if row else None
+            results = await asyncio.gather(produce(), produce())
+            assert sum(result is not None for result in results) == 1
+            async with env.factory() as session:
+                row = await session.scalar(select(Run))
+                row.status = 'failed'
+                await session.commit()
+            closed = await toggle(env, False, opened.json()['revision'])
+            reopened = await toggle(env, True, closed.json()['revision'])
+            assert reopened.status_code == 200, reopened.text
+            assert await produce() is None
+            async with env.factory() as session:
+                assert await session.scalar(select(func.count()).select_from(Run)) == 1
+    asyncio.run(run())
+
+
+def test_budget_atomic_limit_and_midnight_follow_request_day(tmp_path, monkeypatch):
+    async def run():
+        async with sandbox(tmp_path, monkeypatch, 'postgres') as env:
+            before = datetime(2026, 10, 22, 15, 59, 59, tzinfo=timezone.utc)
+            after = before + timedelta(seconds=2)
+            async with env.factory() as session:
+                session.add(Budget(budget_day=before.astimezone(service.BJ).date(), attempts=35995))
+                await session.commit()
+            async def claim():
+                try:
+                    return await budget.claim_visibility_attempt(now=before, sessions=env.factory)
+                except budget.VisibilityBudgetExhausted:
+                    return None
+            results = await asyncio.gather(*(claim() for _ in range(12)))
+            assert sum(n is not None for n in results) == 5
+            assert max(n for n in results if n) == budget.MAX_VISIBILITY_ATTEMPTS_PER_BJ_DAY == 36000
+            assert await budget.claim_visibility_attempt(now=after, sessions=env.factory) == 1
+            async with env.factory() as session:
+                assert await session.scalar(select(func.sum(Budget.attempts))) == 36001
+    asyncio.run(run())
+
+
+def test_global_slot_locks_bound_all_consumers_to_two(tmp_path, monkeypatch):
+    async def run():
+        async with sandbox(tmp_path, monkeypatch, 'postgres') as env:
+            async with env.factory() as session:
+                for tid in (10, 20, 30):
+                    session.add(Run(tenant_id=tid, status='pending', trigger='self_service', auto_day=datetime.now(service.BJ).date(),
+                        summary={'self_service': {'mode': service.MODE}}))
+                await session.commit()
+            active, maximum, calls = 0, 0, []
+            async def execute(session, ident, **kwargs):
+                nonlocal active, maximum
+                row = await session.get(Run, ident)
+                assert row.status == 'pending'
+                row.status = 'running'
+                await session.commit()
+                active += 1
+                maximum = max(maximum, active)
+                calls.append(ident)
+                await asyncio.sleep(0.1)
+                active -= 1
+                row.status = 'completed'
+                await session.commit()
+            monkeypatch.setattr(patrol, 'execute_patrol_run', execute)
+            await asyncio.gather(*(queue.consume_slot(i % 2) for i in range(6)))
+            assert maximum == 2 and len(calls) == len(set(calls)) == 2
+            await queue.consume_queue()
+            assert len(calls) == len(set(calls)) == 3
+    asyncio.run(run())
+
+
+def test_restart_never_replays_started_run_and_preserves_today_pending(tmp_path, monkeypatch):
+    async def run():
+        async with sandbox(tmp_path, monkeypatch, 'postgres') as env:
+            today = datetime.now(service.BJ).date()
+            async with env.factory() as session:
+                rows = [Run(tenant_id=10, trigger='self_service', auto_day=day, status=status,
+                    summary={'self_service': {'mode': service.MODE}, 'execution_protocol': patrol.PATROL_EXECUTION_PROTOCOL},
+                    created_at=datetime.utcnow() - timedelta(hours=3)) for day, status in
+                    [(today - timedelta(days=2), 'running'), (today - timedelta(days=1), 'pending'), (today, 'pending')]]
+                session.add_all(rows)
+                await session.commit()
+                ids = [r.id for r in rows]
+            await patrol.recover_patrol_runs_on_startup()
+            async with env.factory() as session:
+                stored = [await session.get(Run, ident) for ident in ids]
+                assert [r.status for r in stored] == ['failed', 'cancelled', 'pending']
+                assert all(r.auto_day for r in stored)
+            seen = []
+            async def execute(session, ident, **kwargs):
+                seen.append(ident)
+                row = await session.get(Run, ident)
+                row.status = 'completed'
+                await session.commit()
+            monkeypatch.setattr(patrol, 'execute_patrol_run', execute)
+            await queue.consume_queue()
+            assert seen == [ids[-1]]
+    asyncio.run(run())

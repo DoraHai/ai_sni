@@ -158,6 +158,7 @@ async def chat_json(
     base_url: str | None = None,
     model: str | None = None,
     temperature: float | None = None,
+    max_tokens: int | None = None,
 ) -> dict:
     """调 OpenAI 兼容 /chat/completions，强制 JSON 输出。失败抛 DeepSeekError。"""
     key, url_base, mdl = _resolve_creds(api_key=api_key, base_url=base_url, model=model)
@@ -179,6 +180,8 @@ async def chat_json(
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
+    if max_tokens is not None:
+        payload['max_tokens'] = max(1, min(int(max_tokens), 4096))
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await metered_request(client, "post", url, api_key=key, model=mdl,
