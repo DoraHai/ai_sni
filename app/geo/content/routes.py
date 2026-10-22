@@ -5352,7 +5352,8 @@ async def create_visibility_patrol_run(
     """启动一次全自动巡检：多机会词 × 启用引擎探测，默认自动落库快照。
 
     真采样凭证仅来自服务器环境；未配置的引擎回退为明确标记的人设模拟。
-    产品化配额：GEO_PATROL_MAX_RUNS_PER_DAY 限制单租户自然日启动次数。
+    手动配额：按客户数据库 manual_daily_limit、北京时间自然日共享计数；
+    手动轮次触发独立外层保护时返回 TENANT_MANUAL_SAFETY_LIMIT。
 
     异步执行使用 Starlette BackgroundTasks（请求返回后再跑），避免 asyncio.create_task
     被 GC/连接结束取消，导致状态永久 pending。

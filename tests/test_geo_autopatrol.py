@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select, func
 
 from app.geo.content import autopatrol as service, autopatrol_queue as queue
@@ -294,16 +295,79 @@ def test_hy4_identity_fix_is_narrow():
     assert not trusted_engine_source('wenxin', 'hunyuan', 'hy4-preview')
 
 
-def test_automatic_does_not_consume_manual_outer_protection(tmp_path, monkeypatch):
+@pytest.mark.parametrize('trigger', ['automatic', 'self_service', 'schedule'])
+def test_automatic_does_not_consume_manual_outer_protection(tmp_path, monkeypatch, trigger):
     async def run():
         from app.config import get_settings
         async with sandbox(tmp_path, monkeypatch) as env:
             monkeypatch.setattr(get_settings(), 'geo_patrol_max_runs_per_day', 1)
             async with env.factory() as session:
-                session.add(Run(tenant_id=10, trigger='self_service', status='failed', auto_day=datetime.now(service.BJ).date()))
+                session.add(Run(tenant_id=10, trigger=trigger, status='completed',
+                    auto_day=datetime.now(service.BJ).date() if trigger == 'self_service' else None))
                 await session.commit()
+                assert (await service.manual_quota(session, 10))['used'] == 0
             response = await env.request('POST', '/visibility-patrol/runs', body={'tenant_id': 10})
             assert response.status_code == 200, response.text
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('detail,expected', [
+    ({'code': 'ADVISOR_VISIBILITY_NO_PROMPTS'}, 'no_prompts'),
+    ({'code': 'ADVISOR_ASSIGNMENT_REQUIRED'}, 'authorization_changed'),
+    ({'code': 'ADVISOR_NO_TENANT'}, 'authorization_changed'),
+    ({'code': 'ADVISOR_TENANT_SELECTION_REQUIRED'}, 'authorization_changed'),
+    ({'code': 'ADVISOR_TENANT_NOT_GRANTED'}, 'authorization_changed'),
+    ({'code': 'ADVISOR_GRANTS_UNAVAILABLE'}, 'authorization_changed'),
+    ({'code': 'ADVISOR_VISIBILITY_NO_ENGINES'}, 'no_platforms'),
+    ({'code': 'geo_not_available'}, 'geo_unavailable'),
+    ({'code': 'FUTURE_ERROR', 'message': 'internal details'}, 'blocked'),
+    ({'code': ['malformed']}, 'blocked'),
+    ('unstructured detail', 'blocked'),
+    (None, 'blocked'),
+])
+def test_visibility_http_blocked_reason(detail, expected):
+    assert service.visibility_http_blocked_reason(HTTPException(409, detail)) == expected
+
+
+def test_enqueue_archived_prompts_reports_no_prompts(tmp_path, monkeypatch):
+    async def run():
+        from sqlalchemy import update
+        async with sandbox(tmp_path, monkeypatch) as env:
+            assert (await toggle(env, True)).status_code == 200
+            async with env.factory() as session:
+                await session.execute(update(GeoPrompt).where(GeoPrompt.tenant_id == 10).values(status='archived'))
+                await session.commit()
+            async with env.factory() as session:
+                now = datetime.now(service.BJ).replace(hour=11, minute=5, second=0)
+                assert await queue.enqueue_day(session, 10, now=now) is None
+                await session.commit()
+            async with env.factory() as session:
+                assert (await session.get(Settings, 10)).blocked_reason == 'no_prompts'
+                assert await session.scalar(select(func.count()).select_from(Run)) == 0
+            response = await env.request('GET', PATH)
+            assert response.status_code == 200, response.text
+            assert response.json()['blocked_reason'] == 'no_prompts'
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('detail,expected', [
+    ({'code': 'ADVISOR_ASSIGNMENT_REQUIRED'}, 'authorization_changed'),
+    ({'code': 'ADVISOR_TENANT_NOT_GRANTED'}, 'authorization_changed'),
+    ({'code': 'UNRECOGNIZED'}, 'blocked'),
+])
+def test_enqueue_maps_http_scope_failure(tmp_path, monkeypatch, detail, expected):
+    async def run():
+        from app.security import advisor_visibility
+        async with sandbox(tmp_path, monkeypatch) as env:
+            assert (await toggle(env, True)).status_code == 200
+            monkeypatch.setattr(advisor_visibility, 'check_visibility_scope', AsyncMock(side_effect=HTTPException(403, detail)))
+            async with env.factory() as session:
+                now = datetime.now(service.BJ).replace(hour=11, minute=5, second=0)
+                assert await queue.enqueue_day(session, 10, now=now) is None
+                await session.commit()
+            async with env.factory() as session:
+                assert (await session.get(Settings, 10)).blocked_reason == expected
+                assert await session.scalar(select(func.count()).select_from(Run)) == 0
     asyncio.run(run())
 
 

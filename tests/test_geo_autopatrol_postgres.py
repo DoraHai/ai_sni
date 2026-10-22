@@ -8,12 +8,42 @@ import pytest
 from sqlalchemy import func, select
 
 from app.geo.content import autopatrol as service, autopatrol_queue as queue, patrol, visibility_budget as budget
-from app.models import GeoVisibilityPatrolRun as Run
+from app.models import GeoVisibilityPatrolRun as Run, GeoVisibilityPatrolSettings as Settings
 from app.models.geo_visibility_patrol import GeoVisibilityPatrolDailyBudget as Budget
 from test_geo_autopatrol import sandbox, toggle
 from test_advisor_scoped_writes import fixture_token
 
 pytestmark = pytest.mark.skipif(not os.getenv('GEO_TEST_POSTGRES_URL'), reason='requires dedicated loopback PostgreSQL')
+
+
+def test_manual_outer_limit_does_not_block_daily_automatic_claim(tmp_path, monkeypatch):
+    async def run():
+        from app.config import get_settings
+        async with sandbox(tmp_path, monkeypatch, 'postgres') as env:
+            monkeypatch.setattr(get_settings(), 'geo_patrol_max_runs_per_day', 1)
+            assert (await toggle(env, True)).status_code == 200
+            async with env.factory() as session:
+                (await session.get(Settings, 10)).manual_daily_limit = 100
+                session.add(Run(tenant_id=10, trigger='manual', status='completed',
+                    summary={'advisor_quota_state': 'consumed'}))
+                await session.commit()
+                assert (await service.manual_quota(session, 10)) == {'used': 1, 'limit': 100}
+            # The same persisted manual count fills the manual path's outer guard.
+            response = await env.request('POST', '/visibility-patrol/runs', body={'tenant_id': 10})
+            assert response.status_code == 429, response.text
+            assert response.json()['detail']['code'] == 'TENANT_MANUAL_SAFETY_LIMIT'
+            now = datetime.now(service.BJ).replace(hour=11, minute=5, second=0)
+            async with env.factory() as session:
+                row = await queue.enqueue_day(session, 10, now=now)
+                assert row is not None and row.auto_day == now.date() and row.trigger == 'self_service'
+                await session.commit()
+            async with env.factory() as session:
+                assert (await session.get(Settings, 10)).blocked_reason is None
+                assert (await service.manual_quota(session, 10)) == {'used': 1, 'limit': 100}
+                assert await queue.enqueue_day(session, 10, now=now) is None
+                assert await session.scalar(select(func.count()).select_from(Run).where(
+                    Run.tenant_id == 10, Run.auto_day == now.date())) == 1
+    asyncio.run(run())
 
 
 def test_two_producers_claim_once_and_disable_reenable_does_not_reset(tmp_path, monkeypatch):

@@ -74,6 +74,23 @@ async def check_manual_quota(session, tenant_id):
     return quota
 
 
+def visibility_http_blocked_reason(exc):
+    """Project known HTTP codes to safe UI reasons; never expose raw details."""
+    code = exc.detail.get("code") if isinstance(exc.detail, dict) else None
+    if not isinstance(code, str):
+        return "blocked"
+    return {
+        "ADVISOR_VISIBILITY_NO_PROMPTS": "no_prompts",
+        "ADVISOR_VISIBILITY_NO_ENGINES": "no_platforms",
+        "ADVISOR_ASSIGNMENT_REQUIRED": "authorization_changed",
+        "ADVISOR_NO_TENANT": "authorization_changed",
+        "ADVISOR_TENANT_SELECTION_REQUIRED": "authorization_changed",
+        "ADVISOR_TENANT_NOT_GRANTED": "authorization_changed",
+        "ADVISOR_GRANTS_UNAVAILABLE": "authorization_changed",
+        "geo_not_available": "geo_unavailable",
+    }.get(code, "blocked")
+
+
 def snapshot(settings):
     return {"enabled": bool(settings.self_service_enabled), "admin_locked": bool(settings.admin_locked),
             "schedule_mode": settings.schedule_mode, "owner_user_id": settings.owner_user_id,
@@ -241,7 +258,7 @@ async def state_payload(session, tenant_id, ctx, *, row=None, bundle=None):
                     and exc.detail.get('code') == 'ADVISOR_ASSIGNMENT_REQUIRED'):
                 raise
             coverage["project_ids"] = scope["project_ids"]
-            blocked = "no_prompts"
+            blocked = visibility_http_blocked_reason(exc)
         if not toggle:
             blocked = "write_disabled"
     elif row and row.owner_scope:

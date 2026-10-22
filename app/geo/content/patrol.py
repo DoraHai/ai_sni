@@ -371,7 +371,7 @@ async def count_patrol_runs_today(session: AsyncSession, tenant_id: int, *, crea
 def patrol_quota_message(*, used: int, limit: int) -> str:
     return (
         f"今日巡检次数已达上限（{used}/{limit}）。"
-        f"请明日再试，或调高环境变量 GEO_PATROL_MAX_RUNS_PER_DAY。"
+        "请明日再试，或请管理员核对客户额度及巡检外层保护。"
     )
 
 

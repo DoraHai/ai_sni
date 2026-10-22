@@ -58,7 +58,7 @@ async def enqueue_day(session, tenant_id, *, now=None):
     from app.models.advisor_tenant_grant import AdvisorTenantGrant
     from app.security.auth import AuthContext
     from app.geo.content.engine_providers import resolve_platform_engine_credentials
-    from app.geo.tenant_scope import ensure_geo_entitlement, GeoEntitlementUnavailable
+    from app.geo.tenant_scope import ensure_geo_entitlement
     now = (now or datetime.now(policy.BJ)).astimezone(policy.BJ)
     if not (time(8 + tenant_id % 4, 5) <= now.time().replace(tzinfo=None) <= time(11, 5, 59)):
         return None
@@ -107,16 +107,13 @@ async def enqueue_day(session, tenant_id, *, now=None):
             st.blocked_reason = "no_platforms"
             return None
         from app.config import get_settings
-        from app.geo.content.patrol import count_patrol_runs_today
         max_cells = int(get_settings().geo_patrol_max_cells_per_run)
         if len(prompt_ids) * len(policy.ENGINES) > max_cells:
             st.blocked_reason = "cell_limit"
             return None
-        used = await count_patrol_runs_today(session, tenant_id, classified=True)
-        outer = max(1, min(int(get_settings().geo_patrol_max_runs_per_day or 24), 500))
-        if used >= outer:
-            st.blocked_reason = "tenant_run_limit"
-            return None
+        # tenant_run_limit protects manual/contract_retest requests only, using
+        # policy.manual_quota at their entry points. Exhausting that allowance
+        # must not block the independent daily automatic claim.
         models = {key: {k: resolve_platform_engine_credentials(key).get(k) for k in ("provider", "model")} for key in keys}
         probe.engine_keys = keys
         probe.summary = {"advisor_visibility_prompt_ids": prompt_ids,
@@ -124,8 +121,11 @@ async def enqueue_day(session, tenant_id, *, now=None):
             "self_service": {"mode": policy.MODE, "revision": st.revision, "scope": st.owner_scope,
                 "fingerprint": fingerprint, "models": models, "platforms": statuses}}
         await check_visibility_execution(session, probe, prompt_ids, lock=True)
-    except (AdvisorVisibilityUnavailable, HTTPException, GeoEntitlementUnavailable):
+    except AdvisorVisibilityUnavailable:
         st.blocked_reason = "authorization_changed"
+        return None
+    except HTTPException as exc:
+        st.blocked_reason = policy.visibility_http_blocked_reason(exc)
         return None
     run = Run(tenant_id=tenant_id, created_by=st.owner_user_id, auto_day=now.date(),
         trigger="self_service", status="pending", auto_persist=True, prefer_real=True,

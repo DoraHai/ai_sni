@@ -14,6 +14,8 @@ manual_daily_limit 存数据库、默认10、范围0–100。顾问共用客户�
 
 测试使用合成账号、虚拟供应商和自有临时SQLite/CI loopback PostgreSQL随机schema。数据库测试覆盖两个生产者同日竞争、跨日预算并发、两个执行槽、重启不重放；不使用单进程mock证明数据库互斥。现场平台可用性、真实数据和运行角色权限均未核验，部署前需单独审核；权限不足不得上线。
 
-保留既有客户级日巡检外层保护（代码默认24）：自助安排按分类后的有效巡检轮次计数，排除其他操作预约空行，触发时标记 tenant_run_limit；手动/精确复测的外层保护只数客户共享手动轮次，自动不占手动。它与36000次平台请求闸不同。单格探测/搜索等 reservation_only 操作保留既有顾问级独立10次预约规则，不占本次客户轮次额度。
+保留手动/精确复测的客户级日外层保护（代码默认24）：统一由 manual_quota/manual_condition 统计客户共享手动轮次，排除自动、self_service、schedule 和其他操作预约空行；触发时返回 TENANT_MANUAL_SAFETY_LIMIT，tenant_run_limit 只表示这一手动外层保护。即使手动外层已满，自助队列仍可安排当日唯一自动轮次，不再用手动额度拦截自动。它与36000次平台请求闸不同。未迁移客户的 legacy 调度保持既有日上限。单格探测/搜索等 reservation_only 操作保留既有顾问级独立10次预约规则，不占本次客户轮次额度。
+
+调度及顾问状态将 HTTP detail.code 映射为安全 blocked_reason：无有效问题为 no_prompts，项目分配/客户授权变化为 authorization_changed，GEO 不可用为 geo_unavailable，未知错误为 blocked（界面通用阻塞文案），不回显原始错误详情。
 
 自动路径的引擎查询只加载 id/tenant_id/key/enabled/sort_order，并禁止隐式读取其余字段；不读取旧租户加密凭证列或租户 AI 设置。平台凭证只由既有平台解析器提供。
