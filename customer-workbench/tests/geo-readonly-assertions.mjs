@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 
 // Check the rendered built app, including associated and accessible control labels.
 export async function assertNoPatrolControls(page) {
-  const controls = await page.$$eval('#app button, #app input, #app select, #app textarea, #app a, #app [role="switch"]', (nodes) =>
+  const controls = await page.$$eval('#app button, #app input, #app select, #app textarea, #app a, #app [role="switch"], #app [role="button"], #app [data-resource], #app [data-params]', (nodes) =>
     nodes.map((node) => [node.textContent, node.getAttribute('aria-label'), node.name, node.id,
       node.getAttribute('href'), ...Object.values(node.dataset),
       ...Array.from(node.labels || [], (label) => label.textContent)].filter(Boolean).join(' ')));

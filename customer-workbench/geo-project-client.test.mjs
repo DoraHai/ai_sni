@@ -191,7 +191,7 @@ test('project client cannot turn autopatrol paths or method parameters into cust
     calls.push({path, options});
     return response(geoFixture('summary'));
   }});
-  for (const resource of patrolControls) {
+  for (const resource of [...patrolControls, 'visibility-patrol/runs']) {
     for (const candidate of [resource, '../' + resource, '../../' + resource, '/api/v1/geo/' + resource])
       await assert.rejects(client.read(candidate), {code: 'GEO_ROUTE_DENIED'});
   }
