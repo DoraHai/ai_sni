@@ -38,7 +38,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       tab === 'home'
         ? geoHome(slots)
         : tab === 'onsite'
-          ? `<h2>站内优化</h2><p>月度站内计划与原有任务操作见下方。</p>${active?.slot?.value ? geoResource('recommendations', active.slot.value) : `<p>${geoStatus(active?.slot)}</p><button data-geo="retry">重新读取建议</button>`}`
+          ? `<h2>站内优化</h2><p>仅展示本项目已审核的站内建议与进度。</p>${active?.slot?.value ? geoResource('recommendations', active.slot.value) : `<p>${geoStatus(active?.slot)}</p><button data-geo="retry">重新读取建议</button>`}`
           : tab === 'progress' || tab === 'plan'
             ? slots.executions?.value
               ? geoExecutions(slots.executions.value, tab === 'plan')
@@ -50,7 +50,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
               : '<p>暂未开放</p>';
     if (tab === 'work')
       body =
-        '<h2>GEO工作</h2><p>项目问题与内容任务；官网与知识建设见下方。</p><button data-geo="read" data-resource="questions">项目问题</button><button data-geo="read" data-resource="content">内容任务</button>' +
+        '<h2>GEO工作</h2><p>查看项目问题与已交付内容；官网建议见站内优化标签。</p><button data-geo="read" data-resource="questions">项目问题</button><button data-geo="read" data-resource="content">内容任务</button>' +
         body;
     if (active?.resource === 'questions' && active.slot?.value) {
       // Keep the selected filters even when an older backend omits data.filters.

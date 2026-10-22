@@ -24,7 +24,7 @@ if((consoleValues.length===1&&consoleValues[0]==='advisor')||session.isAdvisorSe
   const projectId=scope.projectId;
   if(!session.user?.tenant_id||session.user.tenant_id===tenantId||session.isAdvisorSession&&session.tenantId===tenantId)session.setTenant(tenantId);
   const bridge=existingSessionBridge({session,watch,getSiteId:()=>session.tenantId===tenantId?projectId:null});
-  const host=createGeoHostAdapter({origin:location.origin,fetchImpl:advisorFetch,getSession:()=>{const s=bridge.getSession();return s?{...s,projectId:s.siteId}:null;},subscribeSession:bridge.subscribeSession,
+  const host=createGeoHostAdapter({origin:location.origin,readOnly:true,fetchImpl:advisorFetch,getSession:()=>{const s=bridge.getSession();return s?{...s,projectId:s.siteId}:null;},subscribeSession:bridge.subscribeSession,
     logout:()=>session.logout(),redirectToLogin:()=>location.assign(geoWorkbenchPath(tenantId,projectId)+(scope.onsiteTaskId?'&onsite_task_id='+scope.onsiteTaskId:'')+'&login=1')});
   mounted=mountGeoWorkbench({root:document.querySelector('#app'),host,selectSpaceHref:workspaceSelectionPath(session),initialOnsiteTaskId:scope.onsiteTaskId,logout:()=>{session.logout();location.assign(geoWorkbenchPath()+'&login=1');}});
 }else if(!session.token||scope.invalid||scope.login||!tenantId||!siteId){

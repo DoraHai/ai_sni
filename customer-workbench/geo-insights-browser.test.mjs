@@ -17,7 +17,7 @@ test('built insights: full server filters, six engines, citations, suggestions, 
   let unavailable = false, denied = false;
   try {
     p.on('pageerror', (e) => errors.push(e.message));
-    await p.evaluateOnNewDocument(() => sessionStorage.setItem('sem_auth_v1', JSON.stringify({version: 1, token: 'synthetic-only', user: {id: 7, tenant_id: 1, permissions: {'geo.assets': 'view', 'geo.content': 'view'}}})));
+    await p.evaluateOnNewDocument(() => sessionStorage.setItem('sem_auth_v1', JSON.stringify({version: 1, token: 'synthetic-only', user: {id: 7, tenant_id: 1, permissions: {'geo.assets': 'edit', 'geo.content': 'edit'}}})));
     await p.setRequestInterception(true);
     p.on('request', async (req) => {
       const u = new URL(req.url());
@@ -25,7 +25,7 @@ test('built insights: full server filters, six engines, citations, suggestions, 
       if (u.origin !== origin) { external.push(u.origin); return req.abort(); }
       const send = (data, status = 200) => req.respond({status, contentType: 'application/json', body: JSON.stringify(data)});
       if (u.pathname.startsWith('/api/')) calls.push({method: req.method(), path: u.pathname, params: Object.fromEntries(u.searchParams)});
-      if (u.pathname === '/api/v1/auth/me') return send({user: {id: 7, tenant_id: 1, permissions: {'geo.assets': 'view', 'geo.content': 'view'}}});
+      if (u.pathname === '/api/v1/auth/me') return send({user: {id: 7, tenant_id: 1, permissions: {'geo.assets': 'edit', 'geo.content': 'edit'}}});
       if (u.pathname === '/api/v1/auth/modules') return send({tenant_id: 1, modules: [{module_code: 'geo', available: true}]});
       if (u.pathname === '/api/v1/geo/tenants') return send({tenants: [{id: 1, name: '合成客户'}]});
       if (u.pathname === '/api/v1/geo/projects') return send({projects: [{id: 10, tenant_id: 1, name: '合成项目', status: 'active'}]});
@@ -58,6 +58,8 @@ test('built insights: full server filters, six engines, citations, suggestions, 
     await p.setViewport({width: 1500, height: 1050});
     await p.goto(origin + '/customer-workbench/?module=geo&tenant_id=1&project_id=10');
     await p.waitForSelector('[data-tab=plan]');
+    await p.waitForNetworkIdle({idleTime: 200});
+    assert.equal(await p.$('[data-action^="onsite-"], [data-sv=run], [data-sv=config]'), null);
     await p.click('[data-tab=data]');
     await p.waitForFunction(() => document.querySelector('.geo-summary')?.textContent.includes('1.5'));
     await p.click('[data-resource=questions]');

@@ -153,9 +153,7 @@ test(
         });
         await p.setViewport({width: 1440, height: 1000});
         await p.goto(origin + '/customer-workbench/?module=geo&tenant_id=1&project_id=10');
-        await p.waitForFunction(
-          () => document.querySelector('[data-action=onsite-refresh]')?.disabled === false,
-        );
+        await p.waitForSelector('[data-geo-workspace]');
         await p.waitForFunction(
           () =>
             document.querySelector('[data-geo="tab"][data-tab="data"]') ||
@@ -165,7 +163,7 @@ test(
         if (scenario === 'not-open') {
           assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /暂未开放/);
           assert.equal(await p.$('[data-tab=content]'), null);
-          assert.match(await p.$eval('#page', (e) => e.textContent), /GEO 官网与知识建设/);
+          assert.equal(await p.$('[data-action^="onsite-"]'), null);
           assert(await p.$('.sv-card'));
         } else {
           await p.waitForFunction(() => document.querySelector('[data-tab=plan]'));
@@ -197,9 +195,9 @@ test(
           else assert(!home.includes('0%'));
           if (scenario === 'read-unavailable') {
             assert.match(home, /数据量较大或读取暂不可用/);
-            assert.match(await p.$eval('#page', (e) => e.textContent), /GEO 官网与知识建设/);
+            assert.equal(await p.$('[data-action^="onsite-"]'), null);
             assert(await p.$('.sv-card'));
-            assert(await p.$('[data-action=onsite-refresh]'));
+            assert.equal(await p.$('[data-sv=run]'), null);
             await p.click('[data-tab=progress]');
             assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /项目进度/);
             await p.click('[data-tab=plan]');
@@ -302,7 +300,8 @@ test(
             );
             await p.screenshot({path: path.join(shots, 'answer-mobile.png'), fullPage: true});
             await p.click('[data-tab=onsite]');
-            assert.equal(await p.$eval('#page', (e) => e.hidden), false);
+            await p.waitForFunction(() => document.querySelector('.geo-workspace')?.textContent.includes('站内 GEO 建议'));
+            assert.equal(await p.$('[data-action^="onsite-"]'), null);
           }
         }
         assert.deepEqual(errors, []);

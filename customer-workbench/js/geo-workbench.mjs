@@ -1,60 +1,50 @@
-import {createOnsiteClient,onsiteTaskId} from './onsite-client.mjs';
-import {createOnsiteAiPoller} from './onsite-ai-poller.mjs';
-
-import {onsiteView,onsiteCreateInput,onsiteActionInput,onsiteProposalMode} from './onsite-view.mjs';
-import {createInputProtection} from './input-protection.mjs';
 import {escapeText as esc} from './customer-display.mjs';
-import {customerOnsiteSummary} from './customer-onsite-summary.mjs';
 import {createSearchVisibilityPanel} from './search-visibility-panel.mjs';
 import {createGeoProjectPanel} from './geo-project-panel.mjs';
-export function mountGeoWorkbench({root,host,logout,initialOnsiteTaskId=null,selectSpaceHref='/customer-workbench/'}){
-  root.classList.add('customer-connected');let identity=null,data=null,selected=null,busy=false,message='',epoch=0,before=null;
-  const protection=createInputProtection(root);
-  const project=createGeoProjectPanel({host,canNavigate:()=>!busy&&protection.leave(false),onNavigate:()=>{selected=null;render();}});
-  const visibility=createSearchVisibilityPanel({host,getUser:()=>identity?.user});
-  const client=createOnsiteClient({transport:host.transport,getContext:host.getContext,module:'geo'});
-  const poller=createOnsiteAiPoller({getTask:()=>selected,getContext:host.getContext,
-    canRead:()=>!busy&&!!identity&&!protection.capture()&&!root.querySelector('#input-recovery')&&document.visibilityState!=='hidden',
-    read:(taskId,requestId)=>client.readAi(taskId,requestId),
-    apply:row=>{client.adopt(row);selected=row;if(data)data={...data,items:data.items.map(t=>t.id===row.id?row:t)};render();},
-    onError:()=>{message='自动更新已暂停，请刷新任务核对。系统不会重发 AI 请求。';render();}});
 
-  function render(){
-    protection.setContext('geo-onsite:'+String(selected?.id||'list'));
-    root.innerHTML=`<header><b>G-SNIPERS</b><span>客户工作台 · GEO</span><small>${identity?esc(identity.tenant.name+' / '+identity.project.name):'正在核验客户与项目'}</small><a href="${esc(selectSpaceHref)}">选择工作空间</a><button data-action="logout">退出登录</button></header><main class="connected-main"><p role="status">${esc(message)}</p><section id="page" class="page-card">${identity?(selected?'':customerOnsiteSummary(data,{module:'geo'}))+onsiteView(data,selected,busy,'geo'):`<h2>GEO 官网与知识建设</h2><button data-action="connect" ${busy?'disabled':''}>重新核验</button><a href="/customer-workbench/?module=geo">重新选择 GEO 项目</a>`}</section></main>`;
-    if(identity){
-      const workspace=document.createElement('div');workspace.dataset.geoWorkspace='';root.querySelector('main').insertBefore(workspace,root.querySelector('#page'));project.renderInto(workspace);
-      const tab=project.getTab();root.querySelector('#page').hidden=!['home','onsite','work'].includes(tab);
-      const container=document.createElement('div');container.dataset.searchVisibility='';container.hidden=!['home','data'].includes(tab);root.querySelector('main').insertBefore(container,root.querySelector('#page'));visibility.renderInto(container);
+export function mountGeoWorkbench({root, host, logout, selectSpaceHref = '/customer-workbench/'}) {
+  root.classList.add('customer-connected');
+  let identity = null, busy = false, message = '', epoch = 0;
+  const project = createGeoProjectPanel({host, onNavigate: () => render()});
+  // This customer surface stays read-only even when an advisor has edit permissions.
+  const visibility = createSearchVisibilityPanel({host, getUser: () => null});
+  function render() {
+    root.innerHTML = `<header><b>G-SNIPERS</b><span>客户工作台 · GEO</span><small>${identity ? esc(identity.tenant.name + ' / ' + identity.project.name) : '正在核验客户与项目'}</small><a href="${esc(selectSpaceHref)}">选择工作空间</a><button data-action="logout">退出登录</button></header><main class="connected-main"><p role="status">${esc(message)}</p>${identity ? '<div data-geo-workspace></div><div data-search-visibility></div>' : `<section class="page-card"><h2>GEO 项目交付</h2><button data-action="connect" ${busy ? 'disabled' : ''}>重新核验</button><a href="/customer-workbench/?module=geo">重新选择 GEO 项目</a></section>`}</main>`;
+    if (identity) {
+      project.renderInto(root.querySelector('[data-geo-workspace]'));
+      const container = root.querySelector('[data-search-visibility]');
+      container.hidden = !['home', 'data'].includes(project.getTab());
+      visibility.renderInto(container);
     }
-    protection.render();poller.sync();
   }
-  async function run(fn){const input=protection.capture(),stamp=++epoch;busy=true;message='正在处理…';render();
-    try{await fn(()=>stamp===epoch);if(stamp===epoch)message='';}
-    catch(e){if(stamp===epoch){data=null;selected=null;client.invalidate();protection.recover(input);message=e.code==='onsite_client_upgrade_required'?'工作台版本已更新，请刷新页面后再生成方案。':e.code==='WRITE_OUTCOME_UNKNOWN'?'操作结果未知，请先刷新核对。不会自动重试。':e.code==='PERMISSION_DENIED'?'权限已变化，请重新核验客户与项目。':e.message;}}
-    finally{if(stamp===epoch){busy=false;render();}}
+  async function connect() {
+    const stamp = ++epoch;
+    project.reset(); visibility.reset(); identity = null; busy = true; message = '正在核验…'; render();
+    try {
+      const result = await host.initialize();
+      if (stamp !== epoch) return;
+      identity = result.identity;
+      if (!identity) throw Error('GEO_IDENTITY_UNAVAILABLE');
+      message = ''; render();
+      await Promise.allSettled([project.refresh(), visibility.refresh()]);
+    } catch {
+      if (stamp === epoch) { identity = null; message = '暂无数据，请重新核验客户与项目。'; }
+    } finally { if (stamp === epoch) { busy = false; render(); } }
   }
-  async function connect(){project.reset();visibility.reset();identity=null;data=null;selected=null;client.invalidate();protection.clear();await run(async current=>{
-    const result=await host.initialize();if(current()){identity=result.identity;void visibility.refresh();void project.refresh();const focus=initialOnsiteTaskId??onsiteTaskId(globalThis.location?.search||'');
-      before=focus?focus+1:null;const value=await client.list(before);if(current()){data=value;
-        if(focus){selected=value.items.find(t=>t.id===focus)||null;if(!selected)throw Error('所选任务不可用，请顾问核对当前客户与项目。');}
-      }
-    }
-  });}
-  const unsubscribe=host.subscribe(()=>{epoch++;project.reset();visibility.reset();identity=null;data=null;selected=null;client.invalidate();protection.clear();busy=false;message='身份或客户范围已变化，旧数据已清除。';render();});
-  async function click(event){
-    const el=event.target.closest('[data-action]');if(!el||el.disabled)return;const a=el.dataset.action;
-    if(a==='logout'){logout();return;}if(a==='connect'){await connect();return;}
-    if(a==='restore-input'){protection.restore();return;}if(a==='discard-input'){protection.discardRecovery();render();return;}
-    if(!a.startsWith('onsite-'))return;
-    const action=a.slice(7);
-    if(['select','refresh','next','latest'].includes(action)&&!protection.leave(action==='refresh'))return;
-    if(action==='select'){selected=data?.items.find(t=>t.id===Number(el.dataset.id))||null;render();return;}
-    if(['refresh','next','latest'].includes(action)){if(action==='next')before=Number(el.dataset.before);if(action==='latest')before=null;await run(async current=>{const result=await client.list(before);if(current()){data=result;selected=null;}});return;}
-    let input;try{input=action==='create'?onsiteCreateInput(root,'geo'):onsiteActionInput(root,selected,action);}catch(e){message=e.message;render();return;}
-    await run(async current=>{const result=action==='create'?await client.create(input):action==='ai-proposal'?await client.propose(selected.id,onsiteProposalMode(selected)):await client.act(selected.id,action,input);if(current()){selected=result;protection.saved();if(action==='create')before=null;const list=await client.list(before);if(current()){data=list;selected=list.items.find(t=>t.id===result.id)||null;}}});
+  const unsubscribe = host.subscribe(() => {
+    epoch++; project.reset(); visibility.reset(); identity = null; busy = false;
+    message = '身份或客户范围已变化，旧数据已清除。'; render();
+  });
+  function click(event) {
+    const element = event.target.closest('[data-action]');
+    if (!element || element.disabled) return;
+    if (element.dataset.action === 'logout') logout();
+    if (element.dataset.action === 'connect') void connect();
   }
-  root.addEventListener('click',click);void connect();
-  return {dispose(){project.dispose();visibility.dispose();poller.dispose();epoch++;unsubscribe();client.invalidate();protection.dispose();host.dispose();root.removeEventListener('click',click);root.replaceChildren();}};
+  root.addEventListener('click', click);
+  void connect();
+  return {dispose() {
+    epoch++; unsubscribe(); project.dispose(); visibility.dispose(); host.dispose();
+    root.removeEventListener('click', click); root.replaceChildren();
+  }};
 }
-

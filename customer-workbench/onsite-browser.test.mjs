@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import puppeteer from 'puppeteer-core';
 import {startFixtureServer} from './tests/fixture-server.mjs';
 const edge=process.env.EDGE_BINARY||'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
-for(const module of ['seo','geo']){
+// GEO customer workbench now has a read-only delivery surface, covered by geo-insights-browser.
+for(const module of ['seo']){
  test(module+' onsite workbench safely drafts AI proposals, opens exact task links and completes human steps',async()=>{
   const f=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true,args:['--no-sandbox']});
   const origin='https://onsite.test',errors=[],writes=[];let aiReads=0;
