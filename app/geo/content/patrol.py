@@ -102,7 +102,8 @@ async def mark_patrol_run_failed(
         return None
     if row.status not in only_if_status:
         return row
-    row.status = "failed"
+    from app.geo.content.autopatrol import is_auto
+    row.status = "cancelled" if row.status == "pending" and is_auto(row) and error == "expired_queue_day" else "failed"
     row.error = (error or "未知错误")[:2000]
     row.finished_at = datetime.utcnow()
     if row.summary is None:
@@ -113,7 +114,7 @@ async def mark_patrol_run_failed(
     settle_patrol_quota(row)
     await session.commit()
     await session.refresh(row)
-    logger.warning("patrol run %s marked failed: %s", run_id, row.error)
+    logger.warning("patrol run %s marked %s: %s", run_id, row.status, row.error)
     return row
 
 

@@ -11,6 +11,7 @@ from app.geo.content import autopatrol as service, autopatrol_queue as queue, pa
 from app.models import GeoVisibilityPatrolRun as Run
 from app.models.geo_visibility_patrol import GeoVisibilityPatrolDailyBudget as Budget
 from test_geo_autopatrol import sandbox, toggle
+from test_advisor_scoped_writes import fixture_token
 
 pytestmark = pytest.mark.skipif(not os.getenv('GEO_TEST_POSTGRES_URL'), reason='requires dedicated loopback PostgreSQL')
 
@@ -119,4 +120,44 @@ def test_restart_never_replays_started_run_and_preserves_today_pending(tmp_path,
             monkeypatch.setattr(patrol, 'execute_patrol_run', execute)
             await queue.consume_queue()
             assert seen == [ids[-1]]
+    asyncio.run(run())
+
+
+def test_periodic_recovery_cancels_expired_pending_without_releasing_claim(tmp_path, monkeypatch):
+    async def run():
+        async with sandbox(tmp_path, monkeypatch, 'postgres') as env:
+            yesterday = datetime.now(service.BJ).date() - timedelta(days=1)
+            async with env.factory() as session:
+                row = Run(tenant_id=10, trigger='self_service', auto_day=yesterday, status='pending',
+                    created_at=datetime.utcnow() - timedelta(hours=3), summary={'self_service': {'mode': service.MODE}})
+                session.add(row)
+                await session.commit()
+                row = await patrol.reconcile_stale_patrol_run(session, row)
+                assert row.status == 'cancelled' and row.error == 'expired_queue_day'
+                assert row.auto_day == yesterday
+                assert await session.scalar(select(func.count()).select_from(Run).where(Run.auto_day == yesterday)) == 1
+    asyncio.run(run())
+
+
+def test_admin_list_uses_native_distinct_on_for_each_customer_latest_run(tmp_path, monkeypatch):
+    async def run():
+        async with sandbox(tmp_path, monkeypatch, 'postgres') as env:
+            today = datetime.now(service.BJ).date()
+            async with env.factory() as session:
+                first = Run(tenant_id=10, trigger='self_service', auto_day=today, status='completed', items=[{'engine': 'deepseek', 'ok': True}])
+                older = Run(tenant_id=20, trigger='self_service', auto_day=today - timedelta(days=1), status='completed', items=[{'engine': 'deepseek', 'ok': True}])
+                latest = Run(tenant_id=20, trigger='self_service', auto_day=today, status='completed', items=[{'engine': 'wenxin', 'ok': False}])
+                session.add_all([first, older, latest])
+                await session.commit()
+                expected = {10: first.id, 20: latest.id}
+            response = await env.request('GET', '/visibility-patrol/admin-settings', auth=fixture_token(uid=2, native=True))
+            assert response.status_code == 200, response.text
+            items = {item['tenant_id']: item for item in response.json()['items']}
+            assert response.json()['total'] == 3
+            assert {tid: items[tid]['last_run']['id'] for tid in expected} == expected
+            assert items[10]['last_run']['success'] == 1 and items[20]['last_run']['failed'] == 1
+            assert items[30]['last_run'] is None
+            filtered = await env.request('GET', '/visibility-patrol/admin-settings', params={'search': 'tenant 20', 'page_size': 1}, auth=fixture_token(uid=2, native=True))
+            assert filtered.status_code == 200 and filtered.json()['total'] == 1
+            assert filtered.json()['items'][0]['tenant_id'] == 20
     asyncio.run(run())
