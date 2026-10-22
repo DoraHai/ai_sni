@@ -10,7 +10,7 @@ def trusted_engine_source(engine, provider, model):
         return False
     prefixes = {
         'deepseek': ('deepseek',), 'qwen': ('qwen', 'qwq'),
-        'doubao': ('doubao', 'ep-'), 'hunyuan': ('hunyuan',),
+        'doubao': ('doubao', 'ep-'), 'hunyuan': ('hunyuan', 'hy4-'),
         'wenxin': ('ernie',), 'kimi': ('kimi', 'moonshot'),
         'chatgpt': ('gpt-', 'chatgpt-', 'o1', 'o3', 'o4'),
         'perplexity': ('sonar',),
