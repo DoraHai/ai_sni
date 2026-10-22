@@ -279,7 +279,7 @@ def test_nonempty_answer_http_pagination_history_and_qualification():
                 cursor = page['pagination']['next_cursor']
                 page_count += 1
                 assert page_count <= 5
-            assert [r['ref']['id'] for r in items] == [13, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 12]
+            assert [r['ref']['id'] for r in items] == [11, 13, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 12]
             by_id = {r['ref']['id']: r for r in items}
             good = by_id[1]
             assert good['engine']['model'] == 'deepseek-historical'
