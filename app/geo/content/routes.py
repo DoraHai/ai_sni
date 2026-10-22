@@ -5374,13 +5374,11 @@ async def create_visibility_patrol_run(
         await ensure_geo_entitlement(session, req.tenant_id)
         from app.security.advisor_scope import deny
         from app.security.advisor_write_routes import VISIBILITY_RUN_RULE, check_write_fields
-        from app.security.advisor_visibility import check_visibility_quota
         check_write_fields(VISIBILITY_RUN_RULE, req.model_dump(exclude_unset=True))
         binding = session.info.get("advisor_scoped_write")
         if binding is None or binding[0] is not ctx or binding[3] != VISIBILITY_RUN_RULE:
             deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "缺少顾问手动检测的授权范围")
         advisor_prompt_ids = binding[1].state.advisor_visibility_prompt_ids
-        await check_visibility_quota(session, ctx)
         from app.models import GeoTrackingEngine
         engine_keys = list(await session.scalars(select(GeoTrackingEngine.engine_key).where(
             GeoTrackingEngine.tenant_id == req.tenant_id, GeoTrackingEngine.enabled.is_(True),
@@ -5398,12 +5396,12 @@ async def create_visibility_patrol_run(
     day_limit = int(getattr(get_settings(), "geo_patrol_max_runs_per_day", 24) or 24)
     day_limit = max(1, min(day_limit, 500))
     from app.geo.content.autopatrol import check_manual_quota
-    await check_manual_quota(session, req.tenant_id)
-    used = await count_patrol_runs_today(session, req.tenant_id, classified=True)
+    manual = await check_manual_quota(session, req.tenant_id)
+    used = manual['used']
     if used >= day_limit:
         raise HTTPException(
             429,
-            patrol_quota_message(used=used, limit=day_limit),
+            {'code': 'TENANT_MANUAL_SAFETY_LIMIT', 'message': f'客户手动检测触发外层保护 {used}/{day_limit}；客户设置额度 {manual["limit"]}，请由管理员核对'},
         )
     run = GeoVisibilityPatrolRun(
         tenant_id=req.tenant_id,

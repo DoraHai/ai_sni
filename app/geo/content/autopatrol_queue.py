@@ -26,6 +26,8 @@ async def claim_legacy_day(session, tenant_id, *, now=None):
         Run.created_at >= start, Run.created_at < end).order_by(Run.id).limit(1))
     if legacy:
         legacy.auto_day = today
+        if legacy.status == 'pending':
+            legacy.status, legacy.error, legacy.finished_at = 'cancelled', 'legacy_schedule_replaced', policy.utcnow()
         await session.flush()
 
 
@@ -108,12 +110,12 @@ async def enqueue_day(session, tenant_id, *, now=None):
         from app.geo.content.patrol import count_patrol_runs_today
         max_cells = int(get_settings().geo_patrol_max_cells_per_run)
         if len(prompt_ids) * len(policy.ENGINES) > max_cells:
-            st.blocked_reason = "no_prompts"
+            st.blocked_reason = "cell_limit"
             return None
         used = await count_patrol_runs_today(session, tenant_id, classified=True)
         outer = max(1, min(int(get_settings().geo_patrol_max_runs_per_day or 24), 500))
         if used >= outer:
-            st.blocked_reason = "daily_budget_exhausted"
+            st.blocked_reason = "tenant_run_limit"
             return None
         models = {key: {k: resolve_platform_engine_credentials(key).get(k) for k in ("provider", "model")} for key in keys}
         probe.engine_keys = keys

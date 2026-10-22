@@ -134,6 +134,7 @@ def test_scheduler_reloads_settings_after_tenant_lock_and_fails_closed_when_disa
         commit=AsyncMock(),
     )
     with (
+        patch('app.geo.content.autopatrol_queue.scan_self_service_days', AsyncMock()),
         patch(
             "app.database.async_session_factory",
             return_value=Context(),

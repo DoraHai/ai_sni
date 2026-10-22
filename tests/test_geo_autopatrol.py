@@ -289,3 +289,55 @@ def test_hy4_identity_fix_is_narrow():
     assert not trusted_engine_source('hunyuan', 'dashscope', 'hy4-preview')
     assert not trusted_engine_source('hunyuan', 'hunyuan', 'hy4evil')
     assert not trusted_engine_source('wenxin', 'hunyuan', 'hy4-preview')
+
+
+def test_automatic_does_not_consume_manual_outer_protection(tmp_path, monkeypatch):
+    async def run():
+        from app.config import get_settings
+        async with sandbox(tmp_path, monkeypatch) as env:
+            monkeypatch.setattr(get_settings(), 'geo_patrol_max_runs_per_day', 1)
+            async with env.factory() as session:
+                session.add(Run(tenant_id=10, trigger='self_service', status='failed', auto_day=datetime.now(service.BJ).date()))
+                await session.commit()
+            response = await env.request('POST', '/visibility-patrol/runs', body={'tenant_id': 10})
+            assert response.status_code == 200, response.text
+    asyncio.run(run())
+
+
+def test_switch_cancels_unstarted_legacy_and_audits_original_schedule(tmp_path, monkeypatch):
+    async def run():
+        async with sandbox(tmp_path, monkeypatch) as env:
+            async with env.factory() as session:
+                st = await session.get(Settings, 10)
+                st.enabled, st.interval_hours = True, 6
+                row = Run(tenant_id=10, trigger='schedule', status='pending')
+                session.add(row)
+                await session.commit()
+                ident = row.id
+            opened = await toggle(env, True)
+            assert opened.status_code == 200, opened.text
+            async with env.factory() as session:
+                row = await session.get(Run, ident)
+                assert row.status == 'cancelled' and row.auto_day == datetime.now(service.BJ).date()
+                event = await session.scalar(select(Event).where(Event.action == 'migrate'))
+                assert event.before['legacy_schedule']['enabled'] is True
+                assert event.before['legacy_schedule']['interval_hours'] == 6
+                assert event.after['legacy_schedule']['enabled'] is False
+    asyncio.run(run())
+
+
+def test_administrator_deletion_preserves_shared_manual_quota(tmp_path, monkeypatch):
+    async def run():
+        async with sandbox(tmp_path, monkeypatch) as env:
+            async with env.factory() as session:
+                row = Run(tenant_id=10, trigger='manual', status='completed', created_by=2,
+                    auto_persist=False, items=[{'prompt_id': 10, 'ok': True}], summary={'advisor_quota_state': 'consumed'})
+                session.add(row)
+                await session.commit()
+                ident = row.id
+                assert (await service.manual_quota(session, 10))['used'] == 1
+            response = await env.request('DELETE', '/visibility-patrol/runs/' + str(ident), auth=fixture_token(uid=2, native=True))
+            assert response.status_code == 200, response.text
+            async with env.factory() as session:
+                assert (await service.manual_quota(session, 10))['used'] == 1
+    asyncio.run(run())

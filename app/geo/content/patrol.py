@@ -358,7 +358,9 @@ async def count_patrol_runs_today(session: AsyncSession, tenant_id: int, *, crea
     if created_by is not None:
         query = query.where(GeoVisibilityPatrolRun.created_by == created_by)
     if classified:
-        query = query.where(func.coalesce(GeoVisibilityPatrolRun.summary['reservation_only'].as_boolean(), False).is_(False))
+        from sqlalchemy import or_
+        query = query.where(or_(func.coalesce(GeoVisibilityPatrolRun.summary['reservation_only'].as_boolean(), False).is_(False),
+            GeoVisibilityPatrolRun.summary['manual_visibility'].as_boolean().is_(True)))
     if exclude_auto:
         query = query.where(GeoVisibilityPatrolRun.auto_day.is_(None))
     n = await session.scalar(query.execution_options(advisor_scope_control=True))
@@ -523,6 +525,11 @@ async def execute_patrol_run(
         await session.commit()
         return row
     async def check_advisor(*, lock=False):
+        if getattr(row, 'trigger', None) == 'schedule':
+            mode = await session.scalar(select(GeoVisibilityPatrolSettings.schedule_mode).where(
+                GeoVisibilityPatrolSettings.tenant_id == row.tenant_id).execution_options(advisor_scope_control=True))
+            if mode == 'daily_self_service':
+                raise AdvisorVisibilityUnavailable('旧定时已停用')
         if advisor_prompt_ids is not None:
             await check_visibility_execution(session, row, advisor_prompt_ids, lock=lock)
 
@@ -543,7 +550,7 @@ async def execute_patrol_run(
         return result
 
     from app.geo.content.autopatrol import is_auto, ENGINES
-    from app.geo.content.visibility_budget import VisibilityBudgetExhausted, VisibilityBudgetUnavailable, budgeted_chat
+    from app.geo.content.visibility_budget import VisibilityBudgetExhausted, VisibilityBudgetUnavailable
     automatic = is_auto(row)
     auto_metadata = (row.summary or {}).get('self_service') if automatic else None
     try:
@@ -842,7 +849,7 @@ async def execute_patrol_run(
                             brand_names=cell_names,
                             engine=engine,
                             llm=llm,
-                            chat_json=guarded_chat_json if advisor_prompt_ids is not None else budgeted_chat(chat_json, real=sample_mode == SAMPLE_MODE_REAL),
+                            chat_json=guarded_chat_json if advisor_prompt_ids is not None or sample_mode == SAMPLE_MODE_REAL else chat_json,
                             sample_mode=sample_mode,
                             fallback_reason=fallback_reason,
                         )

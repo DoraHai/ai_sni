@@ -6,6 +6,14 @@ from sqlalchemy import select
 
 async def detach_run_evidence(session, ctx, run):
     if getattr(ctx, 'advisor_scope', None) is None:
+        # Administrator deletion cannot reset the customer's shared manual count.
+        if run.trigger in {'manual', 'contract_retest'}:
+            from app.models import GeoVisibilityPatrolRun
+            from app.security.advisor_quota import STATE
+            session.add(GeoVisibilityPatrolRun(tenant_id=run.tenant_id, status='completed', trigger='quota_history',
+                auto_persist=False, prefer_real=True, prompt_limit=1, created_by=run.created_by, created_at=run.created_at,
+                summary={'reservation_only': True, 'manual_visibility': True, 'deleted_run_id': run.id,
+                    **({STATE: run.summary[STATE]} if STATE in (run.summary or {}) else {})}))
         return
     from app.models import GeoActionTicket, GeoAnswerSnapshot, GeoVisibilityPatrolRun
     from app.security.advisor_quota import STATE

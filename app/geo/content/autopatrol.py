@@ -63,12 +63,16 @@ async def check_manual_quota(session, tenant_id):
     quota = await manual_quota(session, tenant_id)
     if quota["used"] >= quota["limit"]:
         deny(429, "ADVISOR_VISIBILITY_DAILY_LIMIT", f"今日该客户手动检测已用 {quota['used']}/{quota['limit']}，所有顾问共享；失败且无结果会退回次数")
+    return quota
 
 
 def snapshot(settings):
     return {"enabled": bool(settings.self_service_enabled), "admin_locked": bool(settings.admin_locked),
             "schedule_mode": settings.schedule_mode, "owner_user_id": settings.owner_user_id,
-            "manual_daily_limit": settings.manual_daily_limit}
+            "manual_daily_limit": settings.manual_daily_limit,
+            "legacy_schedule": {"enabled": bool(settings.enabled), "window_start_hour": settings.window_start_hour,
+                "window_end_hour": settings.window_end_hour, "interval_hours": settings.interval_hours,
+                "prompt_limit": settings.prompt_limit, "engine_keys": settings.engine_keys}}
 
 
 def audit(session, settings, ctx, action, before, reason=None, *, quota=False):
@@ -190,12 +194,16 @@ async def state_payload(session, tenant_id, ctx, *, row=None, bundle=None):
         last = await session.scalar(select(GeoVisibilityPatrolRun).where(GeoVisibilityPatrolRun.tenant_id == tenant_id,
             GeoVisibilityPatrolRun.auto_day.is_not(None)).order_by(GeoVisibilityPatrolRun.id.desc()).limit(1))
         inflight = bool(await session.scalar(select(GeoVisibilityPatrolRun.id).where(GeoVisibilityPatrolRun.tenant_id == tenant_id,
-            GeoVisibilityPatrolRun.status.in_(("pending", "running"))).limit(1)))
+            GeoVisibilityPatrolRun.status.in_(("pending", "running"))).limit(1).execution_options(advisor_scope_control=True)))
+        claimed_today = bool(await session.scalar(select(GeoVisibilityPatrolRun.id).where(
+            GeoVisibilityPatrolRun.tenant_id == tenant_id, GeoVisibilityPatrolRun.auto_day == datetime.now(BJ).date())
+            .execution_options(advisor_scope_control=True)))
         quota = await manual_quota(session, tenant_id)
         users = dict((await session.execute(select(User.id, User.display_name).where(User.id.in_(
             [i for i in (row.owner_user_id, row.opened_by, row.last_changed_by) if i] if row else [])))).all())
     else:
         engines, last, inflight, quota, users = bundle
+        claimed_today = bool(last and last.auto_day == datetime.now(BJ).date())
     def actor(ident):
         return {"user_id": ident, "display_name": users.get(ident) or "顾问"} if ident else None
     enabled = bool(row and row.self_service_enabled)
@@ -237,7 +245,7 @@ async def state_payload(session, tenant_id, ctx, *, row=None, bundle=None):
         "owner": actor(row.owner_user_id) if row else None, "opened_at": iso(row.opened_at) if row else None,
         "opened_by": actor(row.opened_by) if row else None, "last_changed_by": actor(row.last_changed_by) if row else None,
         "last_changed_at": iso(row.last_changed_at) if row else None, "last_run": last_run_payload(last),
-        "next_run_estimate": next_run(tenant_id, claimed=bool(last and last.auto_day == datetime.now(BJ).date())) if enabled and not locked and not blocked else None,
+        "next_run_estimate": next_run(tenant_id, claimed=claimed_today) if enabled and not locked and not blocked else None,
         "platforms": statuses, "manual_quota": quota, "manual_limit_revision": row.manual_limit_revision if row else 0,
         "can_toggle": toggle and not locked, "can_enable": can_enable,
         "blocked_reason": blocked, "revision": row.revision if row else 0, "coverage": coverage, "in_flight": inflight}
