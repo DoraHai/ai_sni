@@ -27,7 +27,7 @@ onBeforeUnmount(controller.dispose)
       <template v-if="data">
         <div class="patrol-line toggle-line"><b>每天自动检测一次</b><el-switch :model-value="data.enabled" :disabled="state.busy || state.loading || !toggleAllowed(data)" :loading="state.busy" aria-label="每天自动检测一次" @change="controller.toggle" /><span class="gd-badge" :class="data.enabled ? 'green' : 'amber'">{{ patrolStatus(data) }}</span></div>
         <el-alert v-if="data.admin_locked" type="warning" :closable="false" :title="`管理锁：${data.lock_reason || '管理员已锁定'}（最近变更：${beijingTime(data.last_changed_at)} 北京时间）`" class="space" />
-        <p v-else-if="data.blocked_reason">{{ blockedLabel(data.blocked_reason) }}</p>
+        <el-alert v-else-if="data.blocked_reason" :title="blockedLabel(data.blocked_reason)" type="warning" :closable="false" class="space" />
         <p>覆盖：负责人负责的 {{ data.coverage?.project_ids?.length ?? '—' }} 个项目 / {{ data.coverage?.prompt_count ?? '—' }} 个有效问题（最多 {{ data.coverage?.max_prompts ?? '—' }} 题）；其他顾问负责项目不在此轮范围内。</p>
         <div class="platform-grid"><div v-for="platform in platforms" :key="platform.key" :class="['platform', { warning: platform.status !== 'available' }]"><b>{{ platform.label }}</b><span>{{ PLATFORM_STATUS[platform.status] || '状态未知' }}</span></div></div>
         <dl class="patrol-meta">
@@ -47,6 +47,7 @@ onBeforeUnmount(controller.dispose)
 </template>
 <style scoped>
 .patrol-card { margin-bottom: 12px; }
+.gd-btn:disabled { opacity: .5; cursor: not-allowed; }
 .patrol-line { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
 .toggle-line { margin:20px 0 14px; }
 .space { margin-bottom:12px; }

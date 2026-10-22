@@ -793,14 +793,14 @@ onBeforeUnmount(() => { ++collectRequest; ++collectMetaRequest; ++snapshotReques
           {{
             filterPatrolRunId
               ? `采集 #${filterPatrolRunId} 暂无关联快照`
-              : emptyReason?.title || '暂无回答快照'
+              : isAdvisor ? '当前筛选下暂无回答快照' : emptyReason?.title || '暂无回答快照'
           }}
         </div>
         <div>
           {{
             filterPatrolRunId
               ? '可能是旧任务未写关联，或当时没勾选自动落库。'
-              : emptyReason?.detail || '点「立即采集」或「登记快照」。'
+              : isAdvisor ? '请在上方检测控制卡查看状态、使用手动检测或管理每日自动检测。' : emptyReason?.detail || '点「立即采集」或「登记快照」。'
           }}
         </div>
         <div class="empty-actions">

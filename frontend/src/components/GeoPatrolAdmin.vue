@@ -1,7 +1,7 @@
 <script setup>
 import { onBeforeUnmount, reactive, ref } from 'vue'
 import { listPatrolAdminSettings, patrolAdminAction, putPatrolManualLimit } from '../api/geoContent'
-import { beijingTime, patrolError, patrolStatus, scheduleMode } from '../utils/geoAutopatrol'
+import { beijingTime, manualLimitEditable, patrolError, patrolStatus, scheduleMode } from '../utils/geoAutopatrol'
 import GeoPatrolHistory from './GeoPatrolHistory.vue'
 const emit = defineEmits(['changed'])
 const rows = ref([]), total = ref(0), page = ref(1), loading = ref(false), busy = ref(false), error = ref('')
@@ -24,8 +24,9 @@ async function load(reset = false) {
 }
 function open(row, action) {
   if (busy.value || loading.value) return
+  if (action === 'manual_limit' && !manualLimitEditable(row)) return
   dialog.value = { ...row, action }
-  reason.value = ''; dialogError.value = ''; limit.value = row.manual_quota.limit
+  reason.value = ''; dialogError.value = ''; limit.value = row.manual_quota?.limit ?? 10
 }
 function history(row, manual) {
   historyTenant.value = row.tenant_id; manualHistory.value = manual; historyOpen.value = true
@@ -75,11 +76,11 @@ onBeforeUnmount(() => { disposed = true; generation++; abort?.abort() })
         <el-table-column label="状态" min-width="180"><template #default="{ row }">{{ patrolStatus(row) }}<div v-if="row.admin_locked" class="note">{{ row.lock_reason }}</div></template></el-table-column>
         <el-table-column label="负责人" width="110"><template #default="{ row }">{{ row.owner?.display_name || '—' }}</template></el-table-column>
         <el-table-column label="下次预计（北京时间）" width="175"><template #default="{ row }">{{ row.enabled ? beijingTime(row.next_run_estimate) : '—' }}</template></el-table-column>
-        <el-table-column label="今日手动 已用/上限" width="155"><template #default="{ row }">{{ row.manual_quota.used }}/{{ row.manual_quota.limit }}</template></el-table-column>
+        <el-table-column label="今日手动 已用/上限" width="155"><template #default="{ row }">{{ row.manual_quota?.used ?? '—' }}/{{ row.manual_quota?.limit ?? '—' }}</template></el-table-column>
         <el-table-column label="操作" min-width="285"><template #default="{ row }">
           <el-button v-if="!row.admin_locked" link type="danger" :disabled="busy || loading" @click="open(row, 'force_disable')">强制关闭</el-button>
           <el-button v-else link type="primary" :disabled="busy || loading" @click="open(row, 'unlock')">解锁</el-button>
-          <el-button link type="primary" :disabled="busy || loading" @click="open(row, 'manual_limit')">每天手动检测次数</el-button>
+          <el-button link type="primary" :disabled="busy || loading || !manualLimitEditable(row)" :title="manualLimitEditable(row) ? '' : '次数信息未就绪，请刷新客户状态'" @click="open(row, 'manual_limit')">每天手动检测次数</el-button>
           <el-button link @click="history(row, false)">开关历史</el-button><el-button link @click="history(row, true)">次数修改记录</el-button>
         </template></el-table-column>
       </el-table>

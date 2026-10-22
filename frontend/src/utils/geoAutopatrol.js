@@ -52,6 +52,10 @@ export function toggleAllowed(data) {
   return !!data && !data.admin_locked && data.can_toggle === true
     && (data.enabled === true || data.can_enable === true)
 }
+export function manualLimitEditable(row) {
+  return Number.isSafeInteger(row?.manual_limit_revision) && row.manual_limit_revision >= 0
+    && Number.isInteger(row?.manual_quota?.limit) && row.manual_quota.limit >= 0 && row.manual_quota.limit <= 100
+}
 
 export function createSelfServiceController({ state, read, write }) {
   let tenantId = null, generation = 0, abort = null

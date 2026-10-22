@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
-import { beijingTime, createSelfServiceController, toggleAllowed, patrolError, patrolStatus } from '../src/utils/geoAutopatrol.js'
+import { beijingTime, createSelfServiceController, manualLimitEditable, toggleAllowed, patrolError, patrolStatus } from '../src/utils/geoAutopatrol.js'
 
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b }); return { promise, resolve, reject } }
 const status = (patch = {}) => ({ tenant_id: 7, revision: 4, enabled: false, admin_locked: false, can_toggle: true, can_enable: true, ...patch })
@@ -91,7 +91,7 @@ function adminFixture(list = async () => ({ items: [], total: 0 })) {
   const writes = [], events = [], hooks = []
   const ctx = vm.createContext({
     ref: value => ({ value }), reactive: value => value, defineEmits: () => event => events.push(event), onBeforeUnmount: fn => hooks.push(fn),
-    AbortController, listPatrolAdminSettings: list, patrolError,
+    AbortController, listPatrolAdminSettings: list, patrolError, manualLimitEditable,
     patrolAdminAction: async body => writes.push(JSON.parse(JSON.stringify(body))),
     putPatrolManualLimit: async body => writes.push(JSON.parse(JSON.stringify(body))),
   })
@@ -121,8 +121,33 @@ test('admin refuses empty reason and out-of-range limit; only explicit force/unl
   f.eval("reason.value='安全停用'"); await f.ctx.submit()
   assert.deepEqual(f.writes[0], { tenant_id: 7, action: 'force_disable', expected_revision: 4, reason: '安全停用' })
   assert.doesNotMatch(adminSource, /open\(row,\s*['"]enable['"]\)/)
-  f.eval("open({tenant_id:7,manual_quota:{limit:10}}, 'manual_limit'); reason.value='调整'; limit.value=101")
+  f.eval("open({tenant_id:7,manual_limit_revision:1,manual_quota:{limit:10}}, 'manual_limit'); reason.value='调整'; limit.value=101")
   await f.ctx.submit(); assert.equal(f.writes.length, 1)
+})
+test('missing quota or manual revision cannot open the manual-limit editor', async () => {
+  const f = adminFixture(); await f.ctx.load()
+  for (const row of [{}, { manual_quota: { limit: 10 } }, { manual_limit_revision: 0 }]) {
+    assert.equal(manualLimitEditable(row), false)
+    f.ctx.open(row, 'manual_limit')
+    assert.equal(f.eval('dialog.value'), null)
+  }
+})
+test('legacy settings refuse writes in daily mode and preserve legacy scheduling', async () => {
+  const source = readFileSync(new URL('../src/views/geo/GeoEnginesView.vue', import.meta.url), 'utf8')
+  const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import[\s\S]*?from ['"][^'"]+['"]\r?$/gm, '')
+  const calls = [], tenantId = { value: 7 }
+  const ctx = vm.createContext({
+    computed: fn => ({ get value() { return fn() } }), ref: value => ({ value }),
+    onMounted() {}, watch() {}, session: { user: { tenant_id: null }, canManage: true }, advisorClaims: () => null,
+    useGeoTenant: () => ({ tenantId }), ElMessage: { success() {}, error() {} },
+    putVisibilityPatrolSettings: async body => { calls.push(body); return body },
+  })
+  vm.runInContext(script, ctx)
+  vm.runInContext("selfService.value={schedule_mode:'daily_self_service'}", ctx)
+  await ctx.savePatrol({ enabled: true }); assert.equal(calls.length, 0)
+  vm.runInContext("selfService.value={schedule_mode:'legacy'}", ctx)
+  await ctx.savePatrol({ enabled: true, interval_hours: 6 })
+  assert.equal(calls[0].interval_hours, 6); assert.equal(calls[0].tenant_id, 7)
 })
 test('history clears customer data and aborts pending requests on close/change', async () => {
   const source = readFileSync(new URL('../src/components/GeoPatrolHistory.vue', import.meta.url), 'utf8')

@@ -261,7 +261,7 @@ onMounted(load)
       <details class="adv mb">
         <summary>平台状态与巡检设置</summary>
         <div class="adv-body">
-          <p class="hint">接口、模型与密钥由平台统一维护；客户可查看状态并设置巡检调度。</p>
+          <p class="hint">接口与模型由平台统一维护。旧定时仅供平台管理员管理；每日自助检测由负责顾问在「采集与判断」页开启。</p>
           <div class="geo-eng-grid">
             <button
               v-for="row in items"
