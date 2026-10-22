@@ -129,6 +129,7 @@ def test_tenant_lock_serializes_settings_enable_with_scheduler_decision():
                         column.type,
                         primary_key=column.primary_key,
                         nullable=column.nullable,
+                        server_default=column.server_default,
                     )
                     for column in model.__table__.columns
                 ),

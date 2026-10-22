@@ -1,6 +1,5 @@
 """DDL/graph checks plus real migrations in disposable CI PostgreSQL schemas."""
 import asyncio
-from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
 from uuid import uuid4
@@ -80,6 +79,12 @@ def test_upgrade_on_owned_postgresql_schema(incremental):
                 index = await connection.scalar(sa.text("SELECT indexdef FROM pg_indexes WHERE schemaname=:schema AND indexname='uq_geo_patrol_tenant_auto_day'"), {"schema": schema})
                 assert "UNIQUE INDEX" in index and "auto_day IS NOT NULL" in index
                 assert await connection.scalar(sa.text("SELECT count(*) FROM geo_visibility_patrol_setting_events")) == 0
+                if incremental:
+                    ident = await connection.scalar(sa.text(
+                        'INSERT INTO geo_visibility_patrol_setting_events '
+                        '(tenant_id, actor_role, action, "before", "after", revision) '
+                        "VALUES (123, 'advisor', 'enable', '{}', '{}', 1) RETURNING id"))
+                    assert ident > 0
         finally:
             # Only the randomly named schema created above is ever removed.
             async with engine.begin() as connection:
