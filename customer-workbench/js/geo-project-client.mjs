@@ -92,6 +92,9 @@ export function createGeoProjectClient({transport, getContext}) {
           )
             fail('GEO_RESPONSE_INVALID');
         }
+        // Additive display fields (open_week_progress, open_week_detected_count,
+        // tested_excluded and excluded_reason_codes) pass through for new servers.
+        // Keep the existing tenant/project/read-only checks for all server versions.
         const data = value.data,
           ids = resource.split('/'),
           object = (v) => v && typeof v === 'object' && !Array.isArray(v);

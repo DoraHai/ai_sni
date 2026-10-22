@@ -241,7 +241,7 @@ test('null metrics, qualified true zero, observation fractions, confirmations an
   assert.match(home, /当前待确认.*1 项稿件/);
   assert.match(home, /仅最近20项/);
   assert.match(home, /月度计划/);
-  assert.match(home, /上海时区已结束完整周/);
+  assert.match(home, /统计周期：2026-10-12 至 2026-10-18（北京时间）/);
 });
 test('content and citation links reject scripts, credential URLs, local hosts and embedded credentials', () => {
   for (const url of [
@@ -370,7 +370,7 @@ test('pagination scope change discards old list/cursor, retries first page, and 
   assert.equal(calls.at(-1).params.get('question_id'), '3');
   await click({geo: 'back'});
   assert.equal(panel.getTab(), 'data');
-  assert.match(node.innerHTML, /本周已存回答/);
+  assert.match(node.innerHTML, /本统计周期已存回答/);
   panel.dispose();
 });
 test('week change resets selections, history and cursors and rejects an old page delivered after new week', async () => {

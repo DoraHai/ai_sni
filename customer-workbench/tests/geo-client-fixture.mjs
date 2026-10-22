@@ -44,7 +44,12 @@ export const observation = (mentioned = 1, total = 1) => ({
   basis_code: 'saved_real_analyzed_answers',
   official_question_rate: null,
 });
+export const openWeekProgress = {
+  week_start: '2026-10-19', next_count_date: '2026-10-26', detected_answer_count: 26,
+  basis_code: 'saved_real_api_answers_open_week',
+};
 export const question = {
+  open_week_detected_count: 4,
   id: 3,
   question: '合成问题：设备如何选型？',
   status: 'active',
@@ -387,5 +392,7 @@ export function geoFixture(resource, {more = false, ready = false} = {}) {
     deliveries: {task_id: null, record_type: 'all'},
   };
   if (filters[resource]) data.filters = filters[resource];
+  if (['overview', 'visibility', 'summary', 'questions', 'questions/3'].includes(resource))
+    data.open_week_progress = {...openWeekProgress};
   return envelope(data, resource);
 }
