@@ -1,6 +1,7 @@
+import {platformTime} from './platform-display.mjs';
 import {pendingFeature,pendingBadge} from './pending-label.mjs';
 // Public parameters only. A secret is accepted once, cleared, and never hydrated.
-export function renderSystemConfig({snapshot,esc,card,table,selected}){
+export function renderSystemConfig({snapshot,esc,card,table,selected,time=platformTime}){
   const c=snapshot.controls,connections=c?.connections||[],enabled=c?.state==='enabled';
   const sourceLabel=r=>!r.registered?'尚未登记':r.source==='managed'?'超管配置':'服务器配置';
   const rows=connections.map(r=>[esc(r.module.toUpperCase()),esc(r.label),esc(sourceLabel(r)),
@@ -8,7 +9,7 @@ export function renderSystemConfig({snapshot,esc,card,table,selected}){
     esc(r.parameters?.model||'按次接口'),esc(r.parameters?.base_url||'尚未登记'),
     `<button data-pc-connection="${esc(r.id)}">查看 / 配置</button>`]);
   const chosen=connections.find(r=>r.id===selected)||connections.find(r=>r.registered&&r.supported)||connections[0];
-  const runtime=(c?.module_status||[]).flatMap(r=>(r.settings||[]).map(f=>[esc(r.module.toUpperCase()),esc(f.label),esc(typeof f.value==='boolean'?(f.value?'开启':'关闭'):String(f.value)),esc(r.seen_at||'未登记')]));
+  const runtime=(c?.module_status||[]).flatMap(r=>(r.settings||[]).map(f=>[esc(r.module.toUpperCase()),esc(f.label),esc(typeof f.value==='boolean'?(f.value?'开启':'关闭'):String(f.value)),esc(time(r.seen_at))]));
   let body='';
   if(chosen){
     const active=enabled&&chosen.registered&&chosen.supported,disabled=active?'':'disabled';

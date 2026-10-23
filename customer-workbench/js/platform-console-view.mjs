@@ -1,3 +1,4 @@
+import {platformTime,moduleAvailability,accountScope,controlConfirmation} from './platform-display.mjs';
 import {stateLabel} from '../../integrations/workbench/ui-labels.mjs';
 import {platformCard,pendingPageNotice,pendingFeature} from './pending-label.mjs';
 import {mountDistributionAdmin} from './distribution-panel.mjs';
@@ -20,7 +21,7 @@ import {visibilityServiceHelp} from './search-visibility-client.mjs';
 const tabs=[['overview','平台总览'],['customers','客户与服务'],['accounts','账号与权限'],['apis','API 与调用'],
   ['ai-governance','AI 自动化治理'],['automation-ops','自动执行运维'],['distribution','多号通分发接入'],['balances','实时余额与预警'],['costs','成本与用量'],['controls','API 与预算管理'],['config','系统配置'],['alerts','告警与处理'],['tasks','任务与调度'],['security','安全与运维'],['inventory','系统盘点']];
 const value=n=>n==null?'待接入':Number(n).toLocaleString('zh-CN');
-const time=s=>s?new Date(s).toLocaleString('zh-CN',{hour12:false}):'暂无记录';
+const time=platformTime;
 const providerLabel=p=>({chinaz:'站长之家',dataforseo:'DataForSEO',dashscope:'阿里云百炼',deepseek:'DeepSeek',baidu:'百度推广'}[p]||p||'未提供');
 const labels={active:'正常',paused:'已暂停',disabled:'已停用',expired:'已到期',open:'待处理',in_progress:'进行中',
   done:'已完成',cancelled:'已取消',pending:'待执行',running:'执行中',succeeded:'已完成',failed:'失败',refunded:'已退回',todo:'待处理',closed:'已关闭'};
@@ -77,8 +78,8 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
   function sourceNote(name){const s=source(name);return s.state!=='available'?'此数据源尚未接入，不能据此判断数量为零。':s.truncated?`显示最近 ${s.rows.length} 条，共 ${value(s.total)} 条。完整管理请进入对应页面。`:'';}
   function moduleRows(){
     return ['sem','seo','geo'].map(code=>{
-      const rows=source('tenant_modules').rows.filter(m=>m.module_code===code),active=rows.filter(m=>m.status==='active'&&(!m.expires_at||m.expires_at>=snapshot.costs.date)).length;
-      return `<div class="pc-module"><div><b>${code.toUpperCase()}</b><span>${{sem:'搜索广告服务',seo:'搜索优化服务',geo:'AI 搜索可见度服务'}[code]}</span></div><strong>${source('tenant_modules').state==='available'?value(active):'待接入'}<small> 个客户服务可用</small></strong></div>`;
+      const available=moduleAvailability(source('tenant_modules'),code,snapshot.costs.date);
+      return `<div class="pc-module"><div><b>${code.toUpperCase()}</b><span>${{sem:'搜索广告服务',seo:'搜索优化服务',geo:'AI 搜索可见度服务'}[code]}</span></div><strong>${esc(available)}<small> 个客户服务可用</small></strong></div>`;
     }).join('');
   }
   function overview(){
@@ -96,9 +97,9 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     return card('客户与服务',`<div class="pc-shortcuts">${link('新建客户 / 分配 SEM、SEO、GEO 模块','/platform/customers')}</div>${search('搜索客户或行业')}${table(['客户','服务开通','SEO 网站','GEO 项目','操作'],rows)}`,sourceNote('tenants'));
   }
   function accounts(){
-    const users=source('users').rows.filter(u=>matches(u.username+' '+(u.display_name||'')+' '+tenant(u.tenant_id))),roles=source('roles').rows;
+    const users=source('users').rows.filter(u=>matches(u.username+' '+(u.display_name||'')+' '+accountScope(u,source('roles').rows,tenant))),roles=source('roles').rows;
     return card('账号管理',`${search('搜索账号、姓名或客户')}<div class="pc-shortcuts">${link('创建 / 编辑账号','/platform/accounts')}${link('维护角色与权限','/platform/roles')}</div>${table(['账号','角色','数据范围','状态','最近登录'],users.map(u=>[
-      `<b>${esc(u.display_name||u.username)}</b><small class="pc-cell-note">${esc(u.username)}</small>`,esc(roles.find(r=>r.id===u.role_id)?.name||'未读取角色'),esc(u.tenant_id==null?'全局范围 · 受角色权限控制':tenant(u.tenant_id)),status(u.is_active?'active':'disabled'),esc(time(u.last_login_at)),
+      `<b>${esc(u.display_name||u.username)}</b><small class="pc-cell-note">${esc(u.username)}</small>`,esc(roles.find(r=>r.id===u.role_id)?.name||'未读取角色'),esc(accountScope(u,roles,tenant)),status(u.is_active?'active':'disabled'),esc(time(u.last_login_at)),
     ]))}`,sourceNote('users'))+
       advisorLinks.html()+card('角色与权限',table(['角色','授权范围','当前清单账号数'],roles.map(r=>[
         `<b>${esc(r.name)}</b><small class="pc-cell-note">${esc(roleDescription(r))}</small>`,`${Object.values(r.permissions||{}).filter(p=>p==='edit').length} 项编辑 / ${Object.values(r.permissions||{}).filter(p=>p==='view').length} 项查看`,value(source('users').rows.filter(u=>u.role_id===r.id).length),
@@ -159,7 +160,7 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
         esc(r.resource),esc(JSON.stringify(r.before_value)),esc(JSON.stringify(r.after_value))])), '显示最近 50 条记录。密钥变更仅显示来源与版本，不记录密钥内容。');
   }
   function controls(){return renderControlPanel({snapshot,esc,card,table,tenant});}
-  function config(){return renderSystemConfig({snapshot,esc,card,table,selected:connectionId});}
+  function config(){return renderSystemConfig({snapshot,esc,card,table,selected:connectionId,time});}
   function alertsPage(){return renderAlertsPanel({snapshot,selected:alertId,esc,card,table,tenant,time,users:source('users').rows})+
     renderSuppliersPanel({snapshot,selected:supplierHost,esc,card,table,time});}
   function inventoryView(){return renderReadiness({snapshot,automation:automationState,balances:balanceAlerts.data,balanceError:balanceAlerts.error,card,table})+inventoryDetails();}
@@ -417,6 +418,8 @@ export function mountPlatformConsole({root,session,fetchImpl=fetch,browser=windo
     if(event.target.matches('.pc-control-form')){
       event.preventDefault();if(saving)return;const form=event.target,started=revision;
       if(form.querySelector('button').disabled)return;
+      const confirmation=controlConfirmation(form);
+      if(confirmation&&!browser.confirm(confirmation))return;
       const payload=form.dataset.controlKind==='connection'?connectionPayload(form):controlPayload(form);saving=true;form.querySelector('button').disabled=true;
       try{
         await client.change(payload);
