@@ -34,6 +34,7 @@ SITE_DELETE_HEAD = "0107_seo_site_delete"
 ADVISOR_LINKS_HEAD = "0108_advisor_account_links"
 ADVISOR_GRANTS_HEAD = "0109_advisor_tenant_grants"
 INBOX_HEAD = "0110_distribution_inbox"
+AUTOPATROL_HEAD = "0111_geo_autopatrol"
 PORT = 8031
 
 
@@ -180,15 +181,16 @@ def graph():
     cfg = Config(str(ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(ROOT / "migrations"))
     scripts = ScriptDirectory.from_config(cfg)
-    if (scripts.get_heads() != [INBOX_HEAD] or scripts.get_revision(HEAD).down_revision != BASE
+    if (scripts.get_heads() != [AUTOPATROL_HEAD] or scripts.get_revision(HEAD).down_revision != BASE
             or scripts.get_revision(MESSAGE_HEAD).down_revision != HEAD
             or scripts.get_revision(SITE_DELETE_HEAD).down_revision != MESSAGE_HEAD
             or scripts.get_revision(ADVISOR_LINKS_HEAD).down_revision != SITE_DELETE_HEAD
             or scripts.get_revision(ADVISOR_GRANTS_HEAD).down_revision != ADVISOR_LINKS_HEAD
-            or scripts.get_revision(INBOX_HEAD).down_revision != ADVISOR_GRANTS_HEAD):
+            or scripts.get_revision(INBOX_HEAD).down_revision != ADVISOR_GRANTS_HEAD
+            or scripts.get_revision(AUTOPATROL_HEAD).down_revision != INBOX_HEAD):
         raise ValueError("Unexpected migration graph")
-    return {"head": INBOX_HEAD, "parent": ADVISOR_GRANTS_HEAD,
-            "revisions": len(list(scripts.walk_revisions(base="base", head=INBOX_HEAD)))}
+    return {"head": AUTOPATROL_HEAD, "parent": INBOX_HEAD,
+            "revisions": len(list(scripts.walk_revisions(base="base", head=AUTOPATROL_HEAD)))}
 
 
 def upgrade(target):
