@@ -48,8 +48,10 @@ async def content_confirmation_schema_ready(session) -> bool:
         raise _unavailable() from None
     if len(revisions) != 1:
         raise _unavailable()
-    if not rows and revisions[0] in _legacy_revisions():
-        return False
+    if revisions[0] in _legacy_revisions():
+        if not rows:
+            return False
+        raise _unavailable()
     columns = {(r[0], r[1]): (r[2], r[3]) for r in rows}
     for model in (SeoContentConfirmation, SeoSiteAdvisorAssignment):
         for column in model.__table__.columns:

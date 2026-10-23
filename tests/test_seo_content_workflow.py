@@ -65,7 +65,11 @@ class Adapter:
             from sqlalchemy.dialects import postgresql
             rows = []
             for model in (SeoContentConfirmation, SeoSiteAdvisorAssignment):
+                actual_columns = {r[1] for r in self.db.execute(text(
+                    f'PRAGMA table_info("{model.__tablename__}")'))}
                 for c in model.__table__.columns:
+                    if c.name not in actual_columns:
+                        continue
                     kind = c.type.compile(dialect=postgresql.dialect()).lower().replace("varchar", "character varying")
                     if kind == "timestamp": kind = "timestamp without time zone"
                     rows.append((model.__tablename__, c.name, kind, True))

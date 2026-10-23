@@ -701,7 +701,9 @@ def test_complete_capabilities_accept_shared_future_revisions(revision):
 
 def test_only_legacy_without_either_table_may_skip_confirmation():
     assert asyncio.run(ready(session_for(['0104_seo_page_ai_tdk'], []))) is False
-    assert asyncio.run(ready(session_for(['0104_seo_page_ai_tdk'], catalog()))) is True
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(ready(session_for(['0104_seo_page_ai_tdk'], catalog())))
+    assert error.value.status_code == 503
 
 
 @pytest.mark.parametrize('revisions,rows', [
