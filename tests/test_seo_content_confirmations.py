@@ -34,6 +34,272 @@ from app.seo_customer_identity import customer_account_for_tenant
 from app.security.auth import AuthContext, _required
 
 
+def _visibility_ctx(customer=True):
+    return AuthContext(7, "viewer", "品牌方客户" if customer else "顾问", 1,
+                       {"seo.content": "view" if customer else "edit"}, is_advisor=not customer,
+                       scope_kind="advisor_tenant" if not customer else None,
+                       grant_id=5 if not customer else None,
+                       advisor_tenant_ids=frozenset({1}) if not customer else frozenset())
+
+
+@pytest.mark.parametrize("state", ["planned", "drafting", "review", "archived", "cancelled", "unknown"])
+@pytest.mark.parametrize("entry", ["delivery", "review_history", "assistant", "distribution", "confirmation"])
+def test_customer_hidden_content_returns_404_before_related_reads(state, entry):
+    from app.api import seo as api, seo_workbench_assistant as assistant
+    row = _content(status=state)
+    session = AsyncMock()
+    session.get.return_value = session.scalar.return_value = row
+    ctx = _visibility_ctx()
+    with patch.object(api, "_seo_site", new=AsyncMock()):
+        with pytest.raises(HTTPException) as exc:
+            if entry == "delivery":
+                asyncio.run(api.get_content_delivery(88, 1, 9, session, ctx))
+            elif entry == "review_history":
+                asyncio.run(api.get_content_review_history(88, 1, session, ctx))
+            elif entry == "assistant":
+                asyncio.run(assistant.selected_content(session, SimpleNamespace(content_id=88, tenant_id=1, site_id=9), ctx))
+            elif entry == "confirmation":
+                req = ContentConfirmationRequest(version_count=1, payload_hash="0" * 64,
+                    decision="approve", actor_mode="customer_direct")
+                asyncio.run(api.create_content_confirmation(88, 1, req, session, ctx))
+            else:
+                asyncio.run(api._distribution_content(session, 1, 88, 9, require_operational=False, ctx=ctx))
+        assert exc.value.status_code == 404
+    session.scalars.assert_not_awaited()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("customer,state,allowed", [
+    (True, "ready", True), (True, "published", True), (True, "drafting", False),
+    (False, "drafting", True), (False, "review", True), (False, "archived", True),
+])
+def test_customer_visibility_gate_preserves_reviewed_delivery_and_internal_access(customer, state, allowed):
+    from app.seo_customer_identity import require_customer_content_visible
+    if allowed:
+        require_customer_content_visible(_visibility_ctx(customer), _content(status=state))
+    else:
+        with pytest.raises(HTTPException) as exc:
+            require_customer_content_visible(_visibility_ctx(customer), _content(status=state))
+        assert exc.value.status_code == 404
+
+
+@pytest.mark.parametrize("customer", [True, False])
+@pytest.mark.parametrize("status", [None, "drafting", "ready,drafting"])
+def test_content_list_counts_and_pagination_share_customer_visibility(customer, status):
+    from app.api import seo as api
+    session = AsyncMock()
+    seen = []
+    def inspect_query(statement):
+        compiled = statement.compile()
+        seen.append(str(statement))
+        has_visibility = ("ready", "published") in [tuple(v) for v in compiled.params.values() if isinstance(v, (tuple, list))]
+        assert has_visibility is customer
+    async def execute(statement):
+        inspect_query(statement)
+        result = MagicMock()
+        result.all.return_value = [("ready", 1)] if status != "drafting" else []
+        return result
+    async def scalar(statement):
+        inspect_query(statement)
+        return 0 if status == "drafting" else 1
+    async def scalars(statement):
+        inspect_query(statement)
+        return []
+    session.execute.side_effect = execute
+    session.scalar.side_effect = scalar
+    session.scalars.side_effect = scalars
+    with (patch.object(api, "_tenant", new=AsyncMock()),
+          patch.object(api, "_seo_site", new=AsyncMock()),
+          patch.object(api, "_content_review_user_names", new=AsyncMock(return_value={}))):
+        result = asyncio.run(api.list_content_assets(tenant_id=1, site_id=9, status=status,
+            q="", page=2, page_size=1, session=session, ctx=_visibility_ctx(customer)))
+    assert result["items"] == []
+    assert result["total"] == sum(result["status_counts"].values())
+    assert len(seen) == 3 and "LIMIT" in seen[-1] and "OFFSET" in seen[-1]
+
+
+@pytest.mark.parametrize("customer", [True, False])
+@pytest.mark.parametrize("state", ["drafting", "ready", "published"])
+def test_human_conversation_checks_parent_visibility(customer, state):
+    from app.api import seo_messages as messages
+    session = AsyncMock()
+    revisions = MagicMock()
+    revisions.scalars.return_value = [messages.SCHEMA]
+    session.execute.return_value = revisions
+    session.scalar.side_effect = [SimpleNamespace(id=7, is_active=True, tenant_id=1, display_name="账号", username="actor"), _content(status=state)]
+    session.get.return_value = SimpleNamespace(tenant_id=1)
+    session.scalars.return_value = [] if customer else [SimpleNamespace(tenant_id=1, site_id=9, active=True)]
+    with (patch.object(messages, "ensure_module_access", new=AsyncMock()),
+          patch.object(messages, "seo_site_is_operational", new=AsyncMock(return_value=True)),
+          patch.object(messages, "customer_account_for_tenant", new=AsyncMock(return_value=customer))):
+        if customer and state == "drafting":
+            with pytest.raises(HTTPException) as exc:
+                asyncio.run(messages.scope(session, _visibility_ctx(customer), 1, 9, 88))
+            assert exc.value.status_code == 404
+        else:
+            actor, operational = asyncio.run(messages.scope(session, _visibility_ctx(customer), 1, 9, 88))
+            assert actor["kind"] == ("customer" if customer else "advisor") and operational
+
+
+@pytest.mark.parametrize("customer", [True, False])
+def test_publication_groups_exclude_hidden_linked_receipts_without_changing_internal_queries(customer):
+    from app.seo_publication_groups import sources
+    for query in sources(1, 9, _visibility_ctx(customer)):
+        values = query.element.compile().params.values()
+        assert (("ready", "published") in [tuple(v) for v in values if isinstance(v, (tuple, list))]) is customer
+
+
+def test_customer_publication_capture_rejects_hidden_parent():
+    from app.api.seo_page_captures import _require_visible_capture_content
+    session = AsyncMock()
+    session.scalar.return_value = _content(status="drafting")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(_require_visible_capture_content(session, _visibility_ctx(),
+            SimpleNamespace(relation_type="publication", relation_id=12, tenant_id=1, site_id=9)))
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.parametrize("customer", [True, False])
+@pytest.mark.parametrize("entry", ["answers", "placements", "maintenance"])
+def test_qa_related_read_queries_share_visibility(customer, entry):
+    from app.api import seo_qa as qa
+    session = AsyncMock()
+    async def execute(statement):
+        values = statement.compile().params.values()
+        assert (("ready", "published") in [tuple(v) for v in values if isinstance(v, (tuple, list))]) is customer
+        return []
+    session.execute.side_effect = execute
+    with (patch.object(qa, "access", new=AsyncMock()), patch.object(qa, "record", new=AsyncMock())):
+        kwargs = dict(tenant_id=1, site_id=9, session=session, ctx=_visibility_ctx(customer))
+        if entry == "answers":
+            kwargs["question_id"] = 12
+        asyncio.run(getattr(qa, entry)(**kwargs))
+    session.execute.assert_awaited_once()
+
+
+def test_manual_completion_rejects_hidden_content_before_recording_result():
+    from app.api import seo as api
+    ctx = _visibility_ctx()
+    ctx.permissions["seo.content"] = "edit"
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(tenant_id=1, content_asset_id=88, distribution_variant_id=None)
+    req = api.DistributionManualComplete(tenant_id=1, site_id=9, page_url="https://example.com/article")
+    with (patch.object(api, "_seo_site", new=AsyncMock()),
+          patch.object(api, "_is_offline_receipt_publication", return_value=False),
+          patch.object(api, "_distribution_content", new=AsyncMock(return_value=_content(status="drafting")))):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(api.complete_manual_publication(12, req, session, ctx))
+        assert exc.value.status_code == 404
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("entry", ["receipt", "report_metrics"])
+def test_qa_receipt_and_metrics_reject_hidden_parent_before_placement_read(entry):
+    from app.api import seo_qa as qa
+    session = AsyncMock()
+    session.scalar.return_value = 88
+    req = SimpleNamespace(tenant_id=1, site_id=9)
+    parent = AsyncMock(return_value=_content(status="drafting"))
+    with (patch.object(qa, "access", new=AsyncMock()), patch.object(qa, "record", new=parent)):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(getattr(qa, entry)(12, req, _visibility_ctx(), session))
+        assert exc.value.status_code == 404
+    parent.assert_awaited_once_with(session, SeoContentAsset, 88, 1, 9, True)
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("entry", ["verify", "assistant_receipt"])
+@pytest.mark.parametrize("state", ["drafting", "review", None])
+def test_qa_verification_and_assistant_receipt_reject_hidden_or_missing_parent(entry, state):
+    from app.api import seo_qa as qa
+    session = AsyncMock()
+    session.scalar.return_value = _content(status=state) if state else None
+    placement = SimpleNamespace(answer_id=17, tenant_id=1, site_id=9)
+    with (patch.object(qa, "access", new=AsyncMock()),
+          patch.object(qa, "record", new=AsyncMock(return_value=placement)),
+          patch("app.seo_backlinks.fetch_backlink_page", new=AsyncMock()) as fetch):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(getattr(qa, entry)(12, SimpleNamespace(tenant_id=1, site_id=9), _visibility_ctx(), session))
+        assert exc.value.status_code == 404
+    fetch.assert_not_awaited()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("customer", [True, False])
+def test_monthly_report_publications_share_customer_visibility(customer):
+    from app.api import seo_monthly_report as report
+    session = AsyncMock()
+    session.get.return_value = None
+    empty = MagicMock()
+    empty.all.return_value = []
+    session.execute.return_value = session.scalars.return_value = empty
+    with (patch.object(report, "scope", new=AsyncMock(return_value=SimpleNamespace(name="站点"))),
+          patch.object(report, "get_settings", return_value=SimpleNamespace()),
+          patch.object(report, "build_report_context", return_value={}),
+          patch.object(report, "render_report_html", return_value="<html></html>"),
+          patch.object(report, "render_report_pdf", new=AsyncMock(return_value=b"%PDF-test"))):
+        response = asyncio.run(report.get_monthly_report(1, 9, "2026-09", session, _visibility_ctx(customer)))
+    values = session.execute.call_args.args[0].compile().params.values()
+    assert (("ready", "published") in [tuple(v) for v in values if isinstance(v, (tuple, list))]) is customer
+    assert response.media_type == "application/pdf"
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("customer", [True, False])
+def test_backlink_outcome_publications_share_customer_visibility(customer):
+    from app.api import seo_backlink_workflow as backlinks
+    session = AsyncMock()
+    session.scalars.return_value = []
+    with patch.object(backlinks, "scope", new=AsyncMock(return_value=SimpleNamespace(site_settings={}))):
+        response = asyncio.run(backlinks.outcomes(1, 9, _visibility_ctx(customer), session))
+    values = session.scalars.call_args.args[0].compile().params.values()
+    assert (("ready", "published") in [tuple(v) for v in values if isinstance(v, (tuple, list))]) is customer
+    assert response["items"] == []
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("customer", [True, False])
+@pytest.mark.parametrize("entry", ["queue", "discovery"])
+def test_verification_and_discovery_lists_share_customer_visibility(customer, entry):
+    from app.api import seo as api, seo_cockpit as cockpit
+    ctx = _visibility_ctx(customer)
+    ctx.permissions["seo.dashboard"] = "view"
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(tenant_id=1)
+    empty = MagicMock()
+    empty.all.return_value = []
+    session.execute.return_value = empty
+    session.scalars.return_value = []
+    with patch.object(api, "_seo_site", new=AsyncMock()):
+        if entry == "queue":
+            result = asyncio.run(cockpit.customer_verification_queue(1, 9, kind="publication_url",
+                state=None, page=1, page_size=20, ctx=ctx, session=session))
+            query = session.execute.call_args.args[0]
+            assert result["total"] == result["source_counts"]["publication_url"] == 0
+        else:
+            result = asyncio.run(api.backlink_discovery_sources(1, 9, session, ctx))
+            query = session.scalars.call_args.args[0]
+        values = query.compile().params.values()
+        assert (("ready", "published") in [tuple(v) for v in values if isinstance(v, (tuple, list))]) is customer
+    assert result["items"] == []
+    session.commit.assert_not_awaited()
+
+
+def test_backlink_discovery_rejects_hidden_publication_parent_before_fetch():
+    from app.api import seo as api
+    session = AsyncMock()
+    publication = SimpleNamespace(tenant_id=1, content_asset_id=88, status="published", page_url="https://example.com/article")
+    session.get.side_effect = [publication, _content(status="drafting")]
+    req = SimpleNamespace(tenant_id=1, site_id=9, source_url=publication.page_url, publication_id=12)
+    with (patch.object(api, "_seo_site", new=AsyncMock()),
+          patch.object(api, "discover_backlinks", new=AsyncMock()) as fetch):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(api.discover_site_backlinks(req, session, _visibility_ctx()))
+        assert exc.value.status_code == 404
+    fetch.assert_not_awaited()
+    session.commit.assert_not_awaited()
+
+
 @pytest.fixture(autouse=True)
 def installed_confirmation_schema(monkeypatch):
     # These isolated permission tests model a fully migrated database.

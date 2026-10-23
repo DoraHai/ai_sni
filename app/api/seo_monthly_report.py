@@ -20,6 +20,7 @@ from app.models.seo_site_analytics import SeoSiteAnalyticsMonthly, SeoSiteAnalyt
 from app.models.seo_monthly_report import SeoSiteReportTemplate
 from app.models.tenant import Tenant
 from app.security.auth import AuthContext
+from app.seo_customer_identity import customer_content_conditions
 from app.seo_demo_source import get_seo_session as get_session, require_seo_scoped_auth as require_scoped_auth
 from app.seo_monthly_report import (DEFAULT_REPORT_SECTIONS, MAX_APPENDIX_IMAGES,
     build_report_context, render_report_html, render_report_pdf, validate_report_sections)
@@ -89,7 +90,7 @@ async def get_monthly_report(tenant_id: PositiveInt, site_id: PositiveInt, month
     pairs = (await session.execute(select(SeoContentPublication, SeoContentAsset).join(
         SeoContentAsset, SeoContentPublication.content_asset_id == SeoContentAsset.id).where(
         SeoContentPublication.tenant_id == tenant_id, SeoContentAsset.tenant_id == tenant_id,
-        SeoContentAsset.site_id == site_id, SeoContentPublication.status == "published",
+        SeoContentAsset.site_id == site_id, *customer_content_conditions(ctx), SeoContentPublication.status == "published",
         SeoContentPublication.published_at >= start, SeoContentPublication.published_at < end,
     ).order_by(SeoContentPublication.published_at, SeoContentPublication.id))).all()
     ids = [publication.id for publication, _ in pairs]

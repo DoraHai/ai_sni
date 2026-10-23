@@ -11,7 +11,7 @@ from app.models.module_workspace import SeoSite
 from app.models.seo import SeoContentAsset, SeoSiteAdvisorAssignment
 from app.models.seo_messages import SeoContentConversation as Conversation, SeoConversationParticipant as Participant, SeoContentMessage as Message
 from app.module_scope import ensure_module_access, seo_site_is_operational
-from app.seo_customer_identity import customer_account_for_tenant
+from app.seo_customer_identity import customer_account_for_tenant, require_customer_content_visible
 
 SCHEMA = "0106_seo_content_messages"
 router = APIRouter(prefix="/workbench/content-assets/{content_id}/conversation", tags=["SEO human messages"])
@@ -62,6 +62,7 @@ async def scope(session, ctx, tenant_id, site_id, content_id, *, write=False):
         SeoContentAsset.tenant_id == tenant_id, SeoContentAsset.site_id == site_id).with_for_update(read=True))
     if not site or site.tenant_id != tenant_id or not content:
         raise error(404, "conversation_content_not_found", "当前客户网站下未找到稿件")
+    require_customer_content_visible(ctx, content)
     assignments = list(await session.scalars(select(SeoSiteAdvisorAssignment).where(
         SeoSiteAdvisorAssignment.advisor_user_id == user.id).order_by(SeoSiteAdvisorAssignment.id)
         .with_for_update(read=True)))

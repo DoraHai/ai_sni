@@ -19,6 +19,7 @@ from app.security.auth import _build_context
 from app.seo_ai_operations import SeoAiReplay, settle_seo_ai_operation, refund_failed_operation
 from app.seo_demo_source import get_seo_session, require_seo_scoped_auth
 from app.seo_workbench_limits import claim_workbench_chat
+from app.seo_customer_identity import customer_content_conditions, require_customer_content_visible
 from app.seo_workbench_privacy import redact, redact_text, BOUNDARY_REQUEST, OUT_OF_SCOPE
 
 router = APIRouter()
@@ -93,7 +94,7 @@ async def refresh_context(session, ctx, req):
     fresh = await _build_context(user, session)
     await scope(session, fresh, req.tenant_id, req.site_id)
     if req.content_id is not None:
-        await selected_content(session, req)
+        await selected_content(session, req, fresh)
     if permission_key(fresh) != permission_key(ctx):
         raise HTTPException(403, {'code': 'assistant_permissions_changed'})
     return fresh
@@ -103,11 +104,12 @@ def permission_key(ctx):
     return {key: ctx.can_view(key) for key in PERMISSIONS}
 
 
-async def selected_content(session, req):
+async def selected_content(session, req, ctx=None):
     row = await session.scalar(select(SeoContentAsset).where(SeoContentAsset.id == req.content_id,
         SeoContentAsset.tenant_id == req.tenant_id, SeoContentAsset.site_id == req.site_id))
     if not row:
         raise HTTPException(404, {'code': 'assistant_content_not_found'})
+    require_customer_content_visible(ctx, row)
     return row
 
 
@@ -119,6 +121,8 @@ async def evidence(session, ctx, req):
         if not ctx.can_view(permission):
             continue
         filters = [model.tenant_id == req.tenant_id, model.site_id == req.site_id]
+        if name == 'content':
+            filters.extend(customer_content_conditions(ctx))
         if name == 'keywords':
             filters.append(model.status == 'active')
         counts = (await session.execute(select(model.status, func.count()).where(*filters).group_by(model.status))).all()
@@ -136,7 +140,7 @@ async def evidence(session, ctx, req):
             'items': [{'id': row.id, 'title': row.title[:200], 'status': row.status,
                 **{key: str((row.params or {}).get(key) or '')[:300] for key in ('phase', 'waiting_for', 'blocker')}} for row in rows]}
     if req.content_id is not None:
-        content = await selected_content(session, req)
+        content = await selected_content(session, req, ctx)
         text = content.humanized_content or content.draft or content.source_text or ''
         result['selected_content'] = {'id': content.id, 'title': content.title[:200], 'status': content.status,
             'version': content.version_count, 'excerpt': text[:6000], 'truncated': len(text) > 6000,
@@ -154,7 +158,7 @@ async def chat(req: ChatRequest, session=Depends(get_seo_session), ctx=Depends(r
     route = _seo_draft_route({'content_ai_provider': 'deepseek', 'content_ai_model': settings.deepseek_model or 'deepseek-chat'})
     payload = {**req.model_dump(mode='json', exclude={'request_id'}), 'permissions': permission_key(ctx), 'generation_route': route}
     if req.content_id is not None:
-        await selected_content(session, req)
+        await selected_content(session, req, ctx)
     receipt, metadata = {}, {}
     try:
         receipt = await claim_workbench_chat(session, req.tenant_id, request_key=f'wb:{ctx.user_id}:{req.request_id}',

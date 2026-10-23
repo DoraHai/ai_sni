@@ -87,7 +87,10 @@ from app.module_scope import (
     seo_site_is_operational,
 )
 from app.security.auth import AuthContext
-from app.seo_customer_identity import customer_account_for_tenant
+from app.seo_customer_identity import (
+    customer_account_for_tenant, customer_content_conditions, customer_content_view,
+    require_customer_content_visible,
+)
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_distribution import (
     domestic_content_warnings,
@@ -6295,6 +6298,7 @@ async def _distribution_content(
     *,
     require_operational: bool = True,
     lock: bool = False,
+    ctx: AuthContext | None = None,
 ) -> SeoContentAsset:
     row = await session.get(SeoContentAsset, content_id, with_for_update=True, populate_existing=True) if lock else await session.get(SeoContentAsset, content_id)
     if (
@@ -6303,6 +6307,7 @@ async def _distribution_content(
         or (site_id is not None and row.site_id != site_id)
     ):
         raise HTTPException(404, "内容资产不存在")
+    require_customer_content_visible(ctx, row)
     if require_operational:
         if row.site_id is None:
             raise HTTPException(409, "内容资产尚未关联 SEO 网站")
@@ -6950,10 +6955,11 @@ async def list_content_assets(
     page: PositiveInt = 1,
     page_size: int = Query(50, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     await _tenant(session, tenant_id)
     await _seo_site(session, tenant_id, site_id)
-    base_conditions = [SeoContentAsset.tenant_id == tenant_id]
+    base_conditions = [SeoContentAsset.tenant_id == tenant_id, *customer_content_conditions(ctx)]
     if site_id is not None:
         base_conditions.append(SeoContentAsset.site_id == site_id)
     if content_id is not None:
@@ -7043,10 +7049,12 @@ async def get_content_review_history(
     content_id: PositiveInt,
     tenant_id: int,
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     row = await session.get(SeoContentAsset, content_id)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
+    require_customer_content_visible(ctx, row)
     events = list(
         await session.scalars(
             select(SeoContentReviewEvent)
@@ -7077,6 +7085,7 @@ async def get_content_delivery(
     row = await session.get(SeoContentAsset, content_id)
     if not row or row.tenant_id != tenant_id or row.site_id != site_id:
         raise HTTPException(404, "SEO 内容资产不存在")
+    require_customer_content_visible(ctx, row)
     return await _content_delivery_payload(session, row, ctx)
 
 
@@ -7100,6 +7109,7 @@ async def create_content_confirmation(
     row = await session.get(SeoContentAsset, content_id, with_for_update=True)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
+    require_customer_content_visible(ctx, row)
     if row.site_id is None:
         raise HTTPException(409, "稿件尚未关联有效站点")
     await _require_resource_operational_site(session, tenant_id, row.site_id)
@@ -7812,7 +7822,7 @@ async def export_offline_orders(
         raise HTTPException(422, "发布单中稿件不能重复")
     orders = []
     for snapshot in req.articles:
-        content = await _distribution_content(session, req.tenant_id, int(snapshot.article_id), req.site_id)
+        content = await _distribution_content(session, req.tenant_id, int(snapshot.article_id), req.site_id, ctx=ctx)
         _require_content_ready(content)
         await _require_active_content_confirmation(session, content)
         if snapshot.source_version != (content.version_count or 1) or snapshot.payload_hash != _content_confirmation_hash(content):
@@ -7854,7 +7864,7 @@ async def import_offline_receipts(
     # A consistent lock order serializes duplicate uploads and avoids cross-batch deadlocks.
     contents = {}
     for content_id in sorted({int(r.article_id) for r in receipts}):
-        contents[content_id] = await _distribution_content(session, tenant_id, content_id, site_id, lock=True)
+        contents[content_id] = await _distribution_content(session, tenant_id, content_id, site_id, lock=True, ctx=ctx)
     validated, results = [], []
     for number, receipt in enumerate(receipts, 1):
         content = contents[int(receipt.article_id)]
@@ -8099,6 +8109,7 @@ async def list_workbench_publication_page_evidence(
         SeoContentPublication.tenant_id == tenant_id,
         SeoContentAsset.tenant_id == tenant_id,
         SeoContentAsset.site_id == site_id,
+        *customer_content_conditions(ctx),
     ]
     if content_id is not None:
         conditions.append(SeoContentPublication.content_asset_id == content_id)
@@ -8273,7 +8284,7 @@ async def get_workbench_readiness(
 
     content_rows = (await session.execute(
         select(SeoContentAsset.status, func.count(), func.max(SeoContentAsset.updated_at))
-        .where(SeoContentAsset.tenant_id == tenant_id, SeoContentAsset.site_id == site_id)
+        .where(SeoContentAsset.tenant_id == tenant_id, SeoContentAsset.site_id == site_id, *customer_content_conditions(ctx))
         .group_by(SeoContentAsset.status)
     )).all()
     publication_rows = (await session.execute(
@@ -8289,7 +8300,7 @@ async def get_workbench_readiness(
         ))
         .where(
             SeoContentPublication.tenant_id == tenant_id,
-            SeoContentAsset.site_id == site_id,
+            SeoContentAsset.site_id == site_id, *customer_content_conditions(ctx),
         )
         .group_by(SeoContentPublication.status)
     )).all()
@@ -8303,7 +8314,7 @@ async def get_workbench_readiness(
             SeoContentAsset.id == SeoContentPublication.content_asset_id,
             SeoContentAsset.tenant_id == SeoContentPublication.tenant_id,
         ))
-        .where(SeoPublishAttempt.tenant_id == tenant_id, SeoContentAsset.site_id == site_id)
+        .where(SeoPublishAttempt.tenant_id == tenant_id, SeoContentAsset.site_id == site_id, *customer_content_conditions(ctx))
         .group_by(SeoPublishAttempt.status)
     )).all()
     page_rows = (await session.execute(
@@ -8342,7 +8353,7 @@ async def get_workbench_readiness(
         ))
         .where(
             SeoContentAsset.tenant_id == tenant_id,
-            SeoContentAsset.site_id == site_id,
+            SeoContentAsset.site_id == site_id, *customer_content_conditions(ctx),
             SeoContentAsset.status == "approved",
             SeoContentPublication.id.is_(None),
         )
@@ -8522,7 +8533,7 @@ async def get_workbench_service_status(
         SeoContentAsset.tenant_id == SeoContentPublication.tenant_id,
     )).where(
         SeoContentPublication.tenant_id == tenant_id,
-        SeoContentAsset.site_id == site_id,
+        SeoContentAsset.site_id == site_id, *customer_content_conditions(ctx),
     ))).one()
     capture_rows = (await session.execute(select(
         SeoPageCapture.status,
@@ -8692,6 +8703,11 @@ async def list_content_publications(
     await _tenant(session, tenant_id)
     await _seo_site(session, tenant_id, site_id)
     conditions = [SeoContentPublication.tenant_id == tenant_id]
+    visible = customer_content_conditions(ctx)
+    if visible:
+        conditions.append(SeoContentPublication.content_asset_id.in_(
+            select(SeoContentAsset.id).where(SeoContentAsset.tenant_id == tenant_id, *visible)
+        ))
     if site_id is not None:
         conditions.append(
             SeoContentPublication.content_asset_id.in_(
@@ -8795,6 +8811,7 @@ async def create_manual_publication(
     await _seo_site(session, req.tenant_id, req.site_id)
     content = await _distribution_content(
         session, req.tenant_id, req.content_id, req.site_id, lock=True,
+        ctx=ctx,
     )
     if req.source_version != (content.version_count or 1) or req.payload_hash != _content_confirmation_hash(content):
         raise _content_version_conflict(content)
@@ -8866,7 +8883,8 @@ async def adapt_content_distribution(
     ctx.ensure_tenant(req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
     content = await _distribution_content(
-        session, req.tenant_id, req.content_id, req.site_id
+        session, req.tenant_id, req.content_id, req.site_id,
+        ctx=ctx,
     )
     connection = await _distribution_connection(
         session, req.tenant_id, req.connection_id
@@ -9021,6 +9039,11 @@ async def list_distribution_variants(
     await _tenant(session, tenant_id)
     await _seo_site(session, tenant_id, site_id)
     conditions = [SeoDistributionVariant.tenant_id == tenant_id]
+    visible = customer_content_conditions(ctx)
+    if visible:
+        conditions.append(SeoDistributionVariant.content_asset_id.in_(
+            select(SeoContentAsset.id).where(SeoContentAsset.tenant_id == tenant_id, *visible)
+        ))
     if site_id is not None:
         conditions.append(
             SeoDistributionVariant.content_asset_id.in_(
@@ -9097,7 +9120,8 @@ async def save_distribution_variant(
     ctx.ensure_tenant(req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
     content = await _distribution_content(
-        session, req.tenant_id, req.content_id, req.site_id
+        session, req.tenant_id, req.content_id, req.site_id,
+        ctx=ctx,
     )
     connection = await _distribution_connection(
         session, req.tenant_id, req.connection_id
@@ -9148,7 +9172,8 @@ async def generate_distribution_variants(
                 ctx,
             )
             content = await _distribution_content(
-                session, req.tenant_id, pair.content_id, req.site_id
+                session, req.tenant_id, pair.content_id, req.site_id,
+                ctx=ctx,
             )
             connection = await _distribution_connection(
                 session, req.tenant_id, pair.connection_id
@@ -9215,7 +9240,7 @@ async def distribution_variant_history(
         raise HTTPException(404, "平台专属稿不存在")
     content = await _distribution_content(
         session, tenant_id, current.content_asset_id, site_id,
-        require_operational=False,
+        require_operational=False, ctx=ctx,
     )
     connection = await _distribution_connection(
         session, tenant_id, current.connection_id
@@ -9256,7 +9281,8 @@ async def review_distribution_variant(
     if not row or row.tenant_id != req.tenant_id:
         raise HTTPException(404, "平台专属稿不存在")
     content = await _distribution_content(
-        session, req.tenant_id, row.content_asset_id, req.site_id
+        session, req.tenant_id, row.content_asset_id, req.site_id,
+        ctx=ctx,
     )
     connection = await _distribution_connection(
         session, req.tenant_id, row.connection_id
@@ -9315,7 +9341,8 @@ async def preflight_content_distribution(
         raise HTTPException(400, "单次最多创建50个发布任务")
     contents = [
         await _distribution_content(
-            session, req.tenant_id, content_id, req.site_id
+            session, req.tenant_id, content_id, req.site_id,
+            ctx=ctx,
         )
         for content_id in req.content_ids
     ]
@@ -9453,7 +9480,8 @@ async def publish_content_distribution(
     if req.action == "publish" and not req.confirm:
         raise HTTPException(400, "正式发布需要明确确认")
     content = await _distribution_content(
-        session, req.tenant_id, req.content_id, req.site_id
+        session, req.tenant_id, req.content_id, req.site_id,
+        **({"ctx": ctx} if customer_content_view(ctx) else {}),
     )
     _require_content_ready(content)
     source_version = content.version_count or 1
@@ -9709,6 +9737,7 @@ async def complete_manual_publication(
         session, req.tenant_id, content_asset_id, req.site_id,
         require_operational=False, lock=True,
     )
+    require_customer_content_visible(ctx, content)
     if (content.version_count or 1) != row.source_version:
         raise HTTPException(409, "稿件版本已变化，不能将结果回填到旧版本")
     if req.source_version is not None and row.source_version != req.source_version:
@@ -9774,6 +9803,7 @@ async def sync_content_publication(
     content = await _distribution_content(
         session, tenant_id, row.content_asset_id, site_id,
         require_operational=False,
+        ctx=ctx,
     )
     if row.status != "publishing" or not row.connection_id:
         raise HTTPException(409, "当前任务不需要同步发布状态")
@@ -9869,7 +9899,8 @@ async def retry_content_publication(
     if not row:
         raise HTTPException(404, "发布任务不存在")
     content = await _distribution_content(
-        session, req.tenant_id, row.content_asset_id, req.site_id
+        session, req.tenant_id, row.content_asset_id, req.site_id,
+        **({"ctx": ctx} if customer_content_view(ctx) else {}),
     )
     if row.status != "failed" or not row.connection_id:
         raise HTTPException(409, "只有失败的 API 发布任务可以重试")
@@ -10030,7 +10061,7 @@ async def download_publication_materials(publication_id: int, req: DistributionM
         raise HTTPException(404, "发布任务不存在")
     content = await _distribution_content(
         session, req.tenant_id, row.content_asset_id, req.site_id,
-        require_operational=False,
+        require_operational=False, ctx=ctx,
     )
     if req.source_version != row.source_version or (content.version_count or 1) != row.source_version:
         raise HTTPException(409, "稿件版本已变化，请重新生成分发任务")
@@ -10057,7 +10088,7 @@ async def list_publish_attempts(
         raise HTTPException(404, "发布任务不存在")
     await _distribution_content(
         session, tenant_id, row.content_asset_id, site_id,
-        require_operational=False,
+        require_operational=False, ctx=ctx,
     )
     attempts = list(
         await session.scalars(
@@ -10588,12 +10619,13 @@ async def query_backlink_index(req: BacklinkScope, session: AsyncSession = Depen
 
 
 @router.get("/backlinks/discovery-sources")
-async def backlink_discovery_sources(tenant_id: int, site_id: int, session: AsyncSession = Depends(get_session)):
+async def backlink_discovery_sources(tenant_id: int, site_id: int, session: AsyncSession = Depends(get_session),
+                                     ctx: AuthContext = Depends(require_scoped_auth)):
     await _seo_site(session, tenant_id, site_id)
     rows = await session.scalars(select(SeoContentPublication).join(
         SeoContentAsset, SeoContentAsset.id == SeoContentPublication.content_asset_id
     ).where(SeoContentPublication.tenant_id == tenant_id, SeoContentAsset.tenant_id == tenant_id,
-            SeoContentAsset.site_id == site_id, SeoContentPublication.status == "published",
+            SeoContentAsset.site_id == site_id, *customer_content_conditions(ctx), SeoContentPublication.status == "published",
             SeoContentPublication.page_url.is_not(None)).order_by(SeoContentPublication.id.desc()).limit(200))
     return {"items": [{"id": row.id, "source_url": row.page_url, "platform_name": row.platform_name,
                        "discovery": row.link_discovery} for row in rows]}
@@ -10613,6 +10645,7 @@ async def discover_site_backlinks(req: BacklinkDiscovery, session: AsyncSession 
         content = await session.get(SeoContentAsset, publication.content_asset_id) if publication else None
         if not publication or publication.tenant_id != req.tenant_id or not content or content.tenant_id != req.tenant_id or content.site_id != req.site_id or publication.page_url != source or publication.status != "published":
             raise HTTPException(404, "该网站下未找到对应发布记录")
+        require_customer_content_visible(ctx, content)
     result = await discover_backlinks(session, req.tenant_id, req.site_id, source, site.canonical_domain)
     if publication:
         publication.link_discovery = result
