@@ -1,5 +1,5 @@
 """Read-only publication index. Never creates publication or verification facts."""
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import hashlib
 import json
 import re
@@ -7,10 +7,10 @@ from urllib.parse import urlsplit
 
 import jwt
 from fastapi import HTTPException
-from sqlalchemy import and_, func, literal, or_, select, union_all
+from sqlalchemy import String, and_, case, cast, func, literal, or_, select, union_all
 
 from app.models.distribution_inbox import DistributionInboxReceipt as R
-from app.models.seo import SeoContentAsset as C, SeoContentPublication as P
+from app.models.seo import SeoContentAsset as C, SeoContentPublication as P, SeoDistributionConnection as D
 
 MAX_ID = 9007199254740991
 REVISION_BUDGET = 20000
@@ -41,22 +41,31 @@ def query(request, *, customer):
     q = request.query_params
     scope_key = "site_id" if customer else "scope_id"
     allowed = {"tenant_id", scope_key, "bucket", "article_id", "limit", "cursor"}
+    if not customer:
+        allowed |= {"month", "source"}
     if (request.method != "GET" or request.url.path != path or
             request.scope.get("raw_path") != path.encode("ascii") or
             set(q) - allowed or len(q.multi_items()) != len(q) or
             "tenant_id" not in q or scope_key not in q):
         error("GROUPS_INVALID_QUERY")
     bucket = q.get("bucket", "linked")
-    if bucket not in ({"linked", "unlinked"} if customer else {"linked", "unlinked", "invalid"}):
+    if bucket not in ({"linked", "unlinked"} if customer else {"linked", "unlinked", "invalid", "records"}):
         error("GROUPS_INVALID_QUERY")
     article = positive(q["article_id"]) if "article_id" in q else None
     if article is not None and bucket != "linked":
+        error("GROUPS_INVALID_QUERY")
+    if ({"month", "source"} & set(q)) and bucket != "records":
+        error("GROUPS_INVALID_QUERY")
+    month, source = q.get("month"), q.get("source", "all")
+    if month == "9999-12":
+        error("GROUPS_INVALID_QUERY")
+    if (month is not None and not re.fullmatch(r"[1-9][0-9]{3}-(?:0[1-9]|1[0-2])", month)) or source not in {"all", "native", "external_report"}:
         error("GROUPS_INVALID_QUERY")
     cursor = q.get("cursor")
     if cursor is not None and (not cursor or len(cursor) > 4096):
         error("GROUPS_INVALID_CURSOR")
     return dict(tenant=positive(q["tenant_id"]), scope=positive(q[scope_key]),
-                bucket=bucket, article=article, limit=positive(q.get("limit", "20"), 100), cursor=cursor)
+                bucket=bucket, article=article, **({"month": month, "source": source} if bucket == "records" else {}), limit=positive(q.get("limit", "20"), 100), cursor=cursor)
 
 
 def digest(value):
@@ -87,12 +96,14 @@ def sources(tenant, scope):
     content = and_(C.tenant_id == tenant, C.site_id == scope)
     native = select(P.id.label("id"), P.content_asset_id.label("article"), P.updated_at.label("updated"),
                     C.updated_at.label("content_updated"), C.title, C.version_count,
-                    P.platform_name, P.source_version, P.page_url, P.published_at).join(C, and_(C.id == P.content_asset_id,
+                    P.platform_name, P.source_version, P.page_url, P.published_at,
+                    D.name.label("account"), P.publish_mode).outerjoin(D, and_(D.id == P.connection_id, D.tenant_id == P.tenant_id)).join(C, and_(C.id == P.content_asset_id,
                     C.tenant_id == P.tenant_id)).where(content, P.tenant_id == tenant, P.status == "published")
     receipts = select(R.id.label("id"), R.article_id.label("article"), R.revision.label("revision"),
                       R.received_at.label("received"), C.id.label("visible_article"),
                       C.updated_at.label("content_updated"), C.title.label("content_title"), C.version_count,
-                      R.platform, R.title, R.public_url, R.result, R.occurred_at, R.article_version).outerjoin(C, and_(C.id == R.article_id, content)).where(
+                      R.platform, R.title, R.public_url, R.result, R.occurred_at, R.article_version,
+                      R.published_account, R.reported_account, R.owner_user_id).outerjoin(C, and_(C.id == R.article_id, content)).where(
                           R.tenant_id == tenant, R.module == "seo", R.scope_id == scope,
                           R.state == "active", R.label_state == "active")
     return native.subquery("native"), receipts.subquery("external")
@@ -161,6 +172,8 @@ def external_dto(row, tenant, scope, *, customer, invalid=False, can_link=False)
 
 
 async def read_groups(session, ctx, args, *, customer, authorization_revision, admin=False, writes=False, secret):
+    if args["bucket"] == "records":
+        return await read_records(session, ctx, args, customer=customer, authorization_revision=authorization_revision, admin=admin, writes=writes, secret=secret)
     tenant, scope, bucket, article, limit = (args[k] for k in ("tenant", "scope", "bucket", "article", "limit"))
     n, e = sources(tenant, scope)
     data_revision, watermarks = await revision(session, n, e, customer=customer)
@@ -269,3 +282,71 @@ async def read_groups(session, ctx, args, *, customer, authorization_revision, a
             "items": items, "counts": {**counts, "loaded": len(items)},
             "next_cursor": encode_cursor(next_after, binding, rev, watermarks, secret) if more else None,
             "has_more": more, "completeness": "complete_snapshot"}
+
+
+async def read_records(session, ctx, args, *, customer, authorization_revision, admin, writes, secret):
+    """One advisor table. Exact article ID + exact nonempty URL folds a receipt into its native row."""
+    if customer:
+        error("GROUPS_FORBIDDEN", 403)
+    tenant, scope, limit = args["tenant"], args["scope"], args["limit"]
+    month, source = args.get("month"), args.get("source", "all")
+    n, e = sources(tenant, scope)
+    data_revision, watermarks = await revision(session, n, e, customer=False)
+    rev = digest([data_revision, authorization_revision])
+    binding = digest(["seo-records-v1", ctx.user_id, tenant, scope, month, source])
+    after = decode_cursor(args["cursor"], binding, rev, watermarks, secret)
+    exact = and_(e.c.visible_article.is_not(None), e.c.article == n.c.article,
+                 e.c.public_url.is_not(None), e.c.public_url != "", e.c.public_url == n.c.page_url)
+    has_receipt = select(e.c.id).where(exact).exists()
+    has_native = select(n.c.id).where(exact).exists()
+    native_rows = select(literal("native").label("source"), cast(n.c.id, String).label("source_key"),
+        n.c.article, n.c.title, n.c.platform_name.label("channel"), n.c.account,
+        n.c.page_url.label("url"), literal("published").label("status"),
+        func.coalesce(n.c.published_at, n.c.updated).label("event_at"), has_receipt.label("also_reported"),
+        literal(False).label("can_link"), literal(False).label("invalid"), n.c.publish_mode)
+    external_rows = select(literal("external_report"), e.c.id, e.c.visible_article,
+        case((and_(e.c.article.is_not(None), e.c.visible_article.is_(None)), None), else_=e.c.title),
+        e.c.platform, func.coalesce(e.c.published_account, e.c.reported_account), e.c.public_url, e.c.result,
+        func.coalesce(e.c.occurred_at, e.c.received), literal(False),
+        and_(literal(writes), or_(literal(admin), e.c.owner_user_id == ctx.user_id)),
+        and_(e.c.article.is_not(None), e.c.visible_article.is_(None)), literal(None)).where(~has_native)
+    records = union_all(native_rows, external_rows).subquery("records")
+    statement = select(records)
+    if source == "native":
+        statement = statement.where(records.c.source == "native")
+    elif source == "external_report":
+        statement = statement.where(or_(records.c.source == "external_report", records.c.also_reported.is_(True)))
+    if month:
+        year, number = map(int, month.split("-"))
+        start = datetime(year, number, 1) - timedelta(hours=8)
+        end = datetime(year + (number == 12), 1 if number == 12 else number + 1, 1) - timedelta(hours=8)
+        statement = statement.where(records.c.event_at >= start, records.c.event_at < end)
+    total = int(await session.scalar(select(func.count()).select_from(statement.subquery())) or 0)
+    if after is not None:
+        if not isinstance(after, list) or len(after) != 3 or after[1] not in {"native", "external_report"} or not isinstance(after[2], str):
+            error("GROUPS_INVALID_CURSOR")
+        try:
+            stamp = datetime.fromisoformat(after[0])
+            if stamp.tzinfo is None:
+                raise ValueError()
+        except (TypeError, ValueError):
+            error("GROUPS_INVALID_CURSOR")
+        statement = statement.where(or_(records.c.event_at < stamp,
+            and_(records.c.event_at == stamp, records.c.source < after[1]),
+            and_(records.c.event_at == stamp, records.c.source == after[1], records.c.source_key < after[2])))
+    rows = list((await session.execute(statement.order_by(records.c.event_at.desc(), records.c.source.desc(),
+        records.c.source_key.desc()).limit(limit + 1))).all())
+    more, rows = len(rows) > limit, rows[:limit]
+    items = [{**identity(tenant, scope, r.article), "key": f"native:seo:{r.source_key}" if r.source == "native" else f"external:{r.source_key}",
+        "source": r.source, "native_publication_id": int(r.source_key) if r.source == "native" else None,
+        "external_receipt_id": r.source_key if r.source == "external_report" else None,
+        "title": r.title, "channel": r.channel, "account": r.account,
+        "url": safe_url(r.url), "status": r.status, "event_at": iso(r.event_at),
+        "also_reported": bool(r.also_reported), "can_link": bool(r.can_link), "invalid": bool(r.invalid),
+        "publish_mode": r.publish_mode} for r in rows]
+    return {"schema": 1, "read_only": True, "completeness": "complete_snapshot",
+        "context": {"module": "seo", "tenant_id": tenant, "scope_id": scope, "bucket": "records",
+                    "article_id": None, "revision": rev, "month": month, "source": source},
+        "items": items, "counts": {"total": total, "loaded": len(items)}, "has_more": more,
+        "next_cursor": encode_cursor([iso(rows[-1].event_at), rows[-1].source, rows[-1].source_key],
+            binding, rev, watermarks, secret) if more else None}

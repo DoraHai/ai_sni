@@ -67,14 +67,17 @@ export function createDistributionInboxApi({ getIdentity, getBusiness, prepareBu
   return {
     publicationGroups: (module, tenant, scope, values = {}, signal) => {
       if (module !== 'seo' || !Number.isSafeInteger(tenant) || tenant < 1 || !Number.isSafeInteger(scope) || scope < 1
-          || Object.keys(values).some(key => !['bucket', 'article_id', 'limit', 'cursor'].includes(key))) throw new TypeError('INVALID_GROUPS_QUERY')
+          || Object.keys(values).some(key => !['bucket', 'article_id', 'limit', 'cursor', 'month', 'source'].includes(key))) throw new TypeError('INVALID_GROUPS_QUERY')
       const query = new URLSearchParams({ tenant_id: String(tenant), scope_id: String(scope) })
       for (const [key, value] of Object.entries(values)) {
-        if (key === 'bucket' && !['linked', 'unlinked', 'invalid'].includes(value)) throw new TypeError('INVALID_GROUPS_QUERY')
+        if (key === 'bucket' && !['linked', 'unlinked', 'invalid', 'records'].includes(value)) throw new TypeError('INVALID_GROUPS_QUERY')
         if (['article_id', 'limit'].includes(key) && (!Number.isSafeInteger(value) || value < 1 || (key === 'limit' && value > 100))) throw new TypeError('INVALID_GROUPS_QUERY')
         if (key === 'cursor' && (typeof value !== 'string' || !value || value.length > 4096)) throw new TypeError('INVALID_GROUPS_QUERY')
+        if (key === 'month' && (typeof value !== 'string' || !/^[1-9][0-9]{3}-(0[1-9]|1[0-2])$/.test(value))) throw new TypeError('INVALID_GROUPS_QUERY')
+        if (key === 'source' && !['all', 'native', 'external_report'].includes(value)) throw new TypeError('INVALID_GROUPS_QUERY')
         query.set(key, String(value))
       }
+      if ((values.month || values.source) && values.bucket !== 'records') throw new TypeError('INVALID_GROUPS_QUERY')
       if (values.article_id && values.bucket && values.bucket !== 'linked') throw new TypeError('INVALID_GROUPS_QUERY')
       return request(`/api/v1/seo/distribution/v2/publication-groups?${query}`, { business: { module, tenant }, signal })
     },

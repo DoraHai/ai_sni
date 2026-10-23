@@ -67,3 +67,34 @@ export function beijingTime(value) {
   const fields = Object.fromEntries(parts.map(part => [part.type, part.value]))
   return `${fields.year}-${fields.month}-${fields.day} ${fields.hour}:${fields.minute}`
 }
+
+
+export function publicationPlatform(value) {
+  return ({ zhihu: '知乎', toutiao: '头条', toutiaohao: '头条', baijiahao: '百家号', wechat: '微信公众号',
+    weixin: '微信公众号', wechat_mp: '微信公众号', sohu: '搜狐', sohuhao: '搜狐',
+    netease: '网易号', wangyi: '网易号', penguin: '企鹅号', qq: '企鹅号', xiaohongshu: '小红书',
+    xhs: '小红书', bilibili: '哔哩哔哩', douyin: '抖音', official: '官网', wordpress: 'WordPress' })[value] || value || '平台未记录'
+}
+export function validateRecordsPage(page, { tenant, scope, month = null, source = 'all' }) {
+  const c = page?.context
+  if (page?.schema !== 1 || page.read_only !== true || page.completeness !== 'complete_snapshot' ||
+      c?.module !== 'seo' || c.tenant_id !== tenant || c.scope_id !== scope || c.bucket !== 'records' ||
+      c.article_id !== null || c.month !== month || c.source !== source || typeof c.revision !== 'string' || !c.revision ||
+      !Array.isArray(page.items) || typeof page.has_more !== 'boolean' ||
+      (page.has_more ? typeof page.next_cursor !== 'string' || !page.next_cursor : page.next_cursor !== null) ||
+      !Number.isSafeInteger(page.counts?.total) || page.counts.total < 0 || page.counts.loaded !== page.items.length) {
+    throw new Error('发布记录读取不完整，请刷新')
+  }
+  for (const row of page.items) {
+    if (row.module !== 'seo' || row.tenant_id !== tenant || row.scope_id !== scope || row.task_id !== null ||
+        row.content_id !== row.group_article_id) throw new Error('发布记录范围不符，请刷新')
+    if (row.group_article_id !== null) safeId(row.group_article_id)
+    if (row.source === 'native') {
+      safeId(row.native_publication_id)
+      if (row.group_article_id === null || row.external_receipt_id !== null || row.key !== `native:seo:${row.native_publication_id}`) throw new Error('原生记录身份无效')
+    } else if (row.source === 'external_report') {
+      if (!uuid.test(row.external_receipt_id) || row.native_publication_id !== null || row.key !== `external:${row.external_receipt_id}`) throw new Error('外部记录身份无效')
+    } else throw new Error('发布记录来源无效')
+  }
+  return page
+}

@@ -1,4 +1,4 @@
-import { mergeRows, groupKey, safeId, validateGroupsPage } from '../../utils/articlePublicationGroups.js'
+import { mergeRows, groupKey, safeId, validateGroupsPage, validateRecordsPage } from '../../utils/articlePublicationGroups.js'
 
 export function createPublicationGroupsState(api, changed = () => {}) {
   const empty = () => ({ items: [], cursor: null, more: false, busy: false, error: '', page: 1, cursors: [null] })
@@ -77,4 +77,37 @@ export function createPublicationGroupsState(api, changed = () => {}) {
     finally { if (version === generation) { target.busy = false; changed() } }
   }
   return { state, clear, refresh, more: bucket => navigate(bucket), previous: bucket => navigate(bucket, -1), details }
+}
+
+
+export function createPublicationRecordsState(api, changed = () => {}) {
+  const state = { items: [], total: null, page: 1, more: false, busy: false, error: '', month: null, source: 'all' }
+  let context = null, generation = 0, controller = new AbortController(), cursors = [null], nextCursor = null, revision = null
+  function clear(next = context) {
+    generation++; controller.abort(); controller = new AbortController(); context = next
+    cursors = [null]; nextCursor = null; revision = null
+    Object.assign(state, { items: [], total: null, page: 1, more: false, busy: false, error: '', month: next?.month || null, source: next?.source || 'all' })
+    changed()
+  }
+  async function load(page = 1) {
+    if (!context?.tenant || !context?.scope || state.busy) return
+    const target = { tenant: safeId(context.tenant), scope: safeId(context.scope), month: state.month, source: state.source }
+    const version = generation
+    const cursor = page > state.page ? nextCursor : cursors[page - 1]
+    state.busy = true; state.error = ''; changed()
+    try {
+      const result = validateRecordsPage(await api.publicationGroups('seo', target.tenant, target.scope,
+        { bucket: 'records', limit: 20, source: target.source, ...(target.month ? { month: target.month } : {}), ...(cursor ? { cursor } : {}) }, controller.signal), target)
+      if (version !== generation) return
+      if (revision && result.context.revision !== revision) throw Object.assign(new Error('记录或权限已变化，请刷新后重新加载'), { code: 'GROUPS_REFRESH_REQUIRED' })
+      revision = result.context.revision; cursors[page - 1] = cursor; nextCursor = result.next_cursor
+      Object.assign(state, { items: result.items, total: result.counts.total, more: result.has_more, page })
+    } catch (error) {
+      if (version !== generation || error.name === 'AbortError') return
+      if (['GROUPS_REFRESH_REQUIRED', 'AUTH_CONTEXT_CHANGED'].includes(error.code) || [401,403,404,409].includes(error.status)) clear(context)
+      state.error = error.message
+    } finally { if (version === generation) { state.busy = false; changed() } }
+  }
+  async function refresh(next = context) { clear(next); await load() }
+  return { state, clear, refresh, more: () => state.more && load(state.page + 1), previous: () => state.page > 1 && load(state.page - 1) }
 }

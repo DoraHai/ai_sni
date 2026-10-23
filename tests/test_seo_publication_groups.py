@@ -18,7 +18,7 @@ from app.database import Base, get_session
 from app import seo_publication_groups as g
 from app.api import seo_publication_groups as api
 from app.models.distribution_inbox import DistributionInboxReceipt as R
-from app.models.seo import SeoContentAsset as C, SeoContentPublication as P, SeoSiteAdvisorAssignment as A
+from app.models.seo import SeoContentAsset as C, SeoContentPublication as P, SeoSiteAdvisorAssignment as A, SeoDistributionConnection as D, SeoDistributionVariant as V
 from app.security.auth import AuthContext
 from app.distribution_inbox_protocol import match_inbox_business_route
 from test_advisor_tenant_auth import LocalSession, local_db, claims, token  # noqa: F401
@@ -41,7 +41,7 @@ def receipt(number, article=None, **changes):
 @pytest.fixture
 def groups_db(local_db):
     db, adapter = local_db
-    Base.metadata.create_all(db.bind, tables=[m.__table__ for m in (C, P, R)])
+    Base.metadata.create_all(db.bind, tables=[m.__table__ for m in (C, P, R, D, V)])
     db.add(A(id=1, tenant_id=1, site_id=1, advisor_user_id=1, active=True))
     db.add_all([C(id=i, tenant_id=tid, site_id=site, title="相同标题", version_count=3, status="ready")
                 for i, tid, site in [(10, 1, 1), (11, 1, 1), (12, 1, 1), (20, 2, 2)]])
@@ -363,3 +363,70 @@ def test_fastapi_starts_snapshot_before_auth_using_same_session(groups_db, monke
     asyncio.run(run())
     assert calls[0] == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
     assert calls[3] == "AUTH"
+
+def test_single_table_exact_id_url_dedup_and_unlinked_stays_visible(groups_db):
+    result = read(groups_db, args(bucket="records", limit=20))
+    rows = result["items"]
+    assert result["counts"]["total"] == 7
+    native = next(r for r in rows if r["native_publication_id"] == 1)
+    assert native["also_reported"] is True and native["source"] == "native"
+    assert not any(r["external_receipt_id"] in {str(UUID(int=1)), str(UUID(int=2))} for r in rows)
+    # Unlinked and a different exact article remain separate even with identical titles/URLs.
+    assert any(r["external_receipt_id"] == str(UUID(int=4)) and r["group_article_id"] is None for r in rows)
+    assert any(r["external_receipt_id"] == str(UUID(int=3)) and r["group_article_id"] == 12 for r in rows)
+    assert all(r["title"] is None for r in rows if r["invalid"])
+    assert groups_db[0].get(P, 4).status == "preparing"
+
+
+def test_single_table_filters_beijing_month_and_accounts(groups_db):
+    from datetime import timedelta
+    db, _ = groups_db
+    db.add_all([receipt(30, occurred_at=datetime(2026, 9, 30, 15, 59, tzinfo=timezone.utc), reported_account="示例旧账号"),
+                receipt(31, occurred_at=datetime(2026, 9, 30, 16, 0, tzinfo=timezone.utc), reported_account="示例回传账号"),
+                receipt(32, occurred_at=datetime(2026, 10, 31, 16, 0, tzinfo=timezone.utc), published_account="示例指定账号")])
+    db.commit()
+    october = read(groups_db, args(bucket="records", month="2026-10", source="external_report"))
+    assert october["counts"]["total"] == 6  # includes native row marked also-reported
+    assert any(r["account"] == "示例回传账号" for r in october["items"])
+    assert all(r["account"] != "示例旧账号" and r["account"] != "示例指定账号" for r in october["items"])
+    native = read(groups_db, args(bucket="records", month="2026-10", source="native"))
+    assert len(native["items"]) == 3 and all(r["source"] == "native" for r in native["items"])
+    with pytest.raises(HTTPException):
+        read(groups_db, args(bucket="records", month="2026-09", source="native", cursor=read(groups_db, args(bucket="records", limit=1))["next_cursor"]))
+
+
+def test_single_table_default_twenty_descending_no_missing_rows(groups_db):
+    from datetime import timedelta
+    db, _ = groups_db
+    db.add_all([receipt(100 + i, occurred_at=STAMP + timedelta(minutes=i + 1)) for i in range(23)])
+    db.commit()
+    values = g.query(request("tenant_id=1&scope_id=1&bucket=records"), customer=False)
+    assert values["limit"] == 20
+    first = read(groups_db, values)
+    second = read(groups_db, {**values, "cursor": first["next_cursor"]})
+    assert len(first["items"]) == 20 and len(second["items"]) == 10 and not second["has_more"]
+    rows = first["items"] + second["items"]
+    assert len({r["key"] for r in rows}) == 30
+    assert [r["event_at"] for r in rows] == sorted([r["event_at"] for r in rows], reverse=True)
+    assert rows[0]["external_receipt_id"] == str(UUID(int=122))
+
+
+def test_records_query_filters_internal_only_and_select_only(groups_db):
+    for extra in ["&bucket=records&month=2026-13", "&bucket=records&source=unknown", "&month=2026-10", "&bucket=records&article_id=10"]:
+        with pytest.raises(HTTPException):
+            g.query(request("tenant_id=1&scope_id=1" + extra), customer=False)
+    with pytest.raises(HTTPException):
+        g.query(request("tenant_id=1&site_id=1&bucket=records", customer=True), customer=True)
+    db, _ = groups_db
+    before = db.execute(select(P.__table__)).all()
+    statements = []
+    def select_only(_conn, _cursor, statement, _parameters, _context, _many):
+        statements.append(statement)
+        assert statement.lstrip().upper().startswith("SELECT") and "FOR UPDATE" not in statement.upper()
+    event.listen(db.bind, "before_cursor_execute", select_only)
+    try:
+        read(groups_db, args(bucket="records"))
+        assert db.execute(select(P.__table__)).all() == before
+    finally:
+        event.remove(db.bind, "before_cursor_execute", select_only)
+    assert statements and not db.dirty and not db.new

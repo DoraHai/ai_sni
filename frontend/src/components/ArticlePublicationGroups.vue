@@ -1,54 +1,41 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { beijingTime, groupKey, reportedResult, safePublicationUrl } from '../utils/articlePublicationGroups.js'
+import { beijingTime, publicationPlatform, reportedResult, safePublicationUrl } from '../utils/articlePublicationGroups.js'
 const props = defineProps({ state: { type: Object, required: true }, scopeSelected: Boolean })
-const emit = defineEmits(['refresh', 'more', 'previous', 'details', 'link'])
-const source = ref('all')
-const groups = computed(() => props.state.buckets.linked.items.filter(row => source.value === 'all' || (source.value === 'native' ? row.native_count : row.external_count) > 0))
-const detail = row => props.state.details[groupKey(row)] || { items: [] }
-const visible = row => detail(row).items.filter(item => source.value === 'all' || item.source === source.value)
-const external = row => row.source === 'external_report'
-function toggle(event, row) { if (event.target.open) emit('details', row) }
+const emit = defineEmits(['refresh', 'more', 'previous', 'filter', 'link'])
+function filter(key, value) { emit('filter', { month: props.state.month, source: props.state.source, [key]: value || null }) }
 </script>
 <template>
-  <section class="publication-groups" aria-label="按文章查看发布记录">
-    <header class="toolbar"><div><h2>按文章查看发布记录</h2><p>原生记录与外部回传分别保留；来源条数与文章篇数不可相加。</p></div><button :disabled="state.busy || !scopeSelected" @click="emit('refresh')">{{ state.busy ? '读取中…' : '刷新记录' }}</button></header>
-    <p v-if="!scopeSelected" class="scope-prompt">请先选择网站，再查看该网站的发布记录。</p>
-    <p class="note">没选网站的回传不会出现在这里，请到多号通回传收件箱补选网站。</p>
-    <p v-if="state.error" class="error" role="alert">读取不完整：{{ state.error }}。请刷新重试；原生记录仍可从下方独立入口查看。</p>
+  <section class="publication-records-table" aria-label="统一发布记录">
+    <div class="toolbar">
+      <label>月份 <input aria-label="记录月份" type="month" :value="state.month || ''" @change="filter('month', $event.target.value)" /></label>
+      <label>来源 <select aria-label="记录来源" :value="state.source" @change="filter('source', $event.target.value)"><option value="all">全部</option><option value="native">系统发布</option><option value="external_report">多号通回传</option></select></label>
+      <button :disabled="state.busy || !scopeSelected" @click="emit('refresh')">{{ state.busy ? '读取中…' : '刷新记录' }}</button>
+    </div>
+    <p v-if="!scopeSelected" class="note">请先选择网站，再查看该网站的发布记录。</p>
+    <p class="note">没选网站的回传不会出现在这里，请到多号通回传收件箱补选网站。回传不计入原生指标或稿件验收。</p>
+    <p v-if="state.error" class="error" role="alert">读取不完整：{{ state.error }}。请刷新重试。</p>
     <p v-if="state.busy" role="status">正在读取当前范围记录…</p>
-    <template v-if="state.counts">
-      <div class="counts" aria-label="全网站范围统计"><span>原生已发布 <b>{{ state.counts.native }}</b> 条</span><span>外部回传 <b>{{ state.counts.external }}</b> 条</span><span>本范围有记录文章 <b>{{ state.counts.articles }}</b> 篇</span></div>
-      <div class="toolbar compact"><label>来源 <select v-model="source"><option value="all">全部来源</option><option value="native">系统原生</option><option value="external_report">外部回传</option></select></label><span>本页 {{ state.buckets.linked.items.length }} 篇 / 全范围 {{ state.counts.articles }} 篇；当前筛选可见 {{ groups.length }} 篇</span></div>
-      <nav class="pagination" aria-label="文章分页"><button :disabled="state.busy || state.buckets.linked.busy || state.buckets.linked.page <= 1" @click="emit('previous', 'linked')">上一页</button><span>第 {{ state.buckets.linked.page }} / {{ Math.max(1, Math.ceil(state.counts.articles / 20)) }} 页 · 共 {{ state.counts.articles }} 篇 · 每页 20 篇 · 最新在前</span><button :disabled="state.busy || state.buckets.linked.busy || !state.buckets.linked.more" @click="emit('more', 'linked')">下一页</button></nav>
-      <p v-if="!groups.length" class="empty">当前筛选暂无文章记录</p>
-      <details v-for="row in groups" :key="groupKey(row)" :data-group-id="row.group_article_id" class="article-group" @toggle="toggle($event, row)">
-        <summary><span class="article-title">#{{ row.group_article_id }} {{ row.title || '未提供标题' }}</span><span class="source-counts">系统 {{ row.native_count }} 条 / 外部回传 {{ row.external_count }} 条 · 最近记录 {{ beijingTime(row.latest_at) }}（北京时间）</span></summary>
-        <div class="article-details">
-          <p v-if="detail(row).busy" role="status">正在读取明细…</p>
-          <p v-if="detail(row).error" role="alert" class="error">读取不完整：{{ detail(row).error }} <button @click="emit('details', row, !!detail(row).loaded)">重试</button></p>
-          <p v-if="detail(row).loaded && !visible(row).length" class="empty">当前已加载明细中无此来源，可继续加载。</p>
-          <article v-for="item in visible(row)" :key="item.key" class="publication-detail">
-            <div class="detail-heading"><span class="tag" :class="{ external: external(item) }">{{ external(item) ? '外部回传' : '系统' }}</span><b>{{ item.channel || '平台未记录' }}</b><span>关联 v{{ item.article_version_no ?? '未记录' }}<template v-if="item.article_version_no && item.article_version_no !== row.current_version_no">；当前 v{{ row.current_version_no }}（历史版本）</template></span></div>
-            <a v-if="safePublicationUrl(item.url)" :href="safePublicationUrl(item.url)" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">{{ item.url }}</a><span v-else>公开链接未记录或不可打开</span>
-            <p v-if="external(item)" class="report-status">{{ reportedResult(item.status) }} · 正文暂不可核验</p><p v-else>原生状态：{{ item.status === 'published' ? '已发布' : item.status }} · 核验证据另列</p>
-            <p class="times" v-if="external(item)">报告时间：{{ beijingTime(item.reported_at) }} · 收到时间：{{ beijingTime(item.received_at) }}（北京时间）</p><p class="times" v-else>发布/登记时间：{{ beijingTime(item.published_at) }}（北京时间）</p>
-            <slot v-if="!external(item)" name="native-actions" :item="item" />
-          </article>
-          <button v-if="detail(row).more" :disabled="detail(row).busy" @click="emit('details', row, true)">继续加载该文章明细</button>
-        </div>
-      </details>
-      <p v-if="state.buckets.linked.error" role="alert" class="error">{{ state.buckets.linked.error }}</p>
-      <details class="separate-bucket" open>
-        <summary>待关联（{{ state.counts.unlinked }} 条）</summary><p>当前客户和网站内，尚未选择稿件的外部回传。</p><p v-if="!state.buckets.unlinked.items.length" class="empty">暂无待关联记录（0）</p>
-        <article v-for="item in state.buckets.unlinked.items" :key="item.key" class="publication-detail"><p><span class="tag external">外部回传</span> {{ item.channel || '平台未记录' }} · {{ item.title || '未提供标题' }}</p><a v-if="safePublicationUrl(item.url)" :href="safePublicationUrl(item.url)" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">{{ item.url }}</a><p>{{ reportedResult(item.status) }} · 未关联稿件，不核验正文</p><p class="times">报告时间：{{ beijingTime(item.reported_at) }} · 收到时间：{{ beijingTime(item.received_at) }}（北京时间）</p><button v-if="item.can_link" @click="emit('link', item)">去关联稿件</button><p v-else>请由回传所属顾问或有权管理员处理。</p></article>
-        <p v-if="state.buckets.unlinked.error" role="alert" class="error">{{ state.buckets.unlinked.error }}</p><nav class="pagination" aria-label="待关联分页"><button :disabled="state.busy || state.buckets.unlinked.busy || state.buckets.unlinked.page <= 1" @click="emit('previous', 'unlinked')">上一页</button><span>第 {{ state.buckets.unlinked.page }} / {{ Math.max(1, Math.ceil(state.counts.unlinked / 20)) }} 页 · 共 {{ state.counts.unlinked }} 条 · 每页 20 条</span><button :disabled="state.busy || state.buckets.unlinked.busy || !state.buckets.unlinked.more" @click="emit('more', 'unlinked')">下一页</button></nav>
-      </details>
-      <details class="separate-bucket"><summary>关联异常（{{ state.counts.invalid }} 条，仅内部）</summary><p>关联异常，需核对；不显示失效目标的文章标题。</p><p v-if="!state.buckets.invalid.items.length">暂无关联异常（0）</p><article v-for="item in state.buckets.invalid.items" :key="item.key" class="publication-detail"><p>外部回传 · {{ item.channel || '平台未记录' }} · 关联目标需重新核对</p><a v-if="safePublicationUrl(item.url)" :href="safePublicationUrl(item.url)" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">{{ item.url }}</a><p>{{ reportedResult(item.status) }} · 正文暂不可核验</p></article><p v-if="state.buckets.invalid.error" role="alert" class="error">{{ state.buckets.invalid.error }}</p><nav class="pagination" aria-label="关联异常分页"><button :disabled="state.busy || state.buckets.invalid.busy || state.buckets.invalid.page <= 1" @click="emit('previous', 'invalid')">上一页</button><span>第 {{ state.buckets.invalid.page }} / {{ Math.max(1, Math.ceil(state.counts.invalid / 20)) }} 页 · 共 {{ state.counts.invalid }} 条 · 每页 20 条</span><button :disabled="state.busy || state.buckets.invalid.busy || !state.buckets.invalid.more" @click="emit('more', 'invalid')">下一页</button></nav></details>
-    </template>
+    <nav class="pagination" aria-label="发布记录分页">
+      <button :disabled="state.busy || state.page <= 1" @click="emit('previous')">上一页</button>
+      <span>第 {{ state.page }} / {{ Math.max(1, Math.ceil((state.total || 0) / 20)) }} 页 · 共 {{ state.total ?? '—' }} 条 · 每页 20 条 · 最新在前</span>
+      <button :disabled="state.busy || !state.more" @click="emit('more')">下一页</button>
+    </nav>
+    <div class="table-scroll">
+      <table><thead><tr><th>文章</th><th>平台</th><th>连接</th><th>发布链接</th><th>发布依据</th><th>时间（北京时间）</th><th>操作</th></tr></thead>
+        <tbody><tr v-for="item in state.items" :key="item.key" :data-record-key="item.key">
+          <td data-label="文章"><div>{{ item.invalid ? '关联目标需重新核对' : item.title || '未提供标题' }}</div></td>
+          <td data-label="平台"><div>{{ publicationPlatform(item.channel) }}</div></td>
+          <td data-label="连接"><div>{{ item.account || (item.source === 'native' && item.publish_mode === 'manual' ? '人工登记' : '未记录账号') }}</div></td>
+          <td data-label="发布链接"><div><a v-if="safePublicationUrl(item.url)" :href="safePublicationUrl(item.url)" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">{{ item.url }}</a><span v-else>链接未记录或不可打开</span></div></td>
+          <td data-label="发布依据"><div><template v-if="item.source === 'native'">系统发布<small><slot name="native-evidence" :item="item" /></small><span v-if="item.also_reported" class="tag">也有多号通回传</span></template><template v-else><span class="tag">多号通回传</span><small>{{ reportedResult(item.status) }} · 正文暂不可核验</small></template></div></td>
+          <td data-label="时间（北京时间）" class="time"><div>{{ beijingTime(item.event_at) }}</div></td>
+          <td data-label="操作"><div><slot v-if="item.source === 'native'" name="native-actions" :item="item" /><button v-else-if="item.can_link" @click="emit('link', item)">去关联稿件</button><span v-else>—</span></div></td>
+        </tr><tr v-if="!state.items.length && !state.busy && !state.error"><td colspan="7" class="empty">当前筛选暂无发布记录</td></tr></tbody>
+      </table>
+    </div>
   </section>
 </template>
 <style scoped>
-.publication-groups{color:#23354d;overflow-wrap:anywhere}h2{font-size:18px;margin:0 0 8px}p{margin:8px 0;line-height:1.6}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px}.toolbar p,.note,.times,.compact{color:#68778c;font-size:13px}button,select{background:white;border:1px solid #cdd8e5;border-radius:6px;padding:8px 12px;font:inherit;color:#234569;cursor:pointer}button:disabled{opacity:.5;cursor:wait}button:focus-visible,summary:focus-visible,select:focus-visible{outline:3px solid #82b5ee;outline-offset:3px}.counts{display:flex;flex-wrap:wrap;gap:12px 26px;padding:16px;background:#f2f6fc;border-radius:8px;margin-bottom:16px}.counts b{color:#164a85;font-size:20px;margin:0 5px}.compact{margin-top:10px}.compact select{margin-left:8px}.article-group{border:1px solid #dbe3ed;border-radius:8px;margin:10px 0}.article-group summary{background:#f8fafc;border-radius:8px}summary{cursor:pointer;padding:15px;font-weight:600;line-height:1.7}.article-title{margin-right:16px}.source-counts{color:#62748a;font-size:13px;font-weight:normal;white-space:nowrap}.article-details{padding:0 18px 16px}.publication-detail{padding:14px 0;border-bottom:1px solid #e8edf4}.detail-heading{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:8px}.tag{background:#e8f0fb;border-radius:4px;padding:3px 8px;color:#24558d;font-size:12px;display:inline-block}.tag.external{background:#fff3df;color:#875c0a}.publication-detail a{color:#2563a1;overflow-wrap:anywhere}.report-status{color:#77582a}.empty{color:#7b8797;padding:10px 0}.error{color:#a83232;background:#fff5f5;padding:10px;border-radius:6px}.separate-bucket{border-top:1px solid #dbe3ed;margin-top:22px}.separate-bucket>p,.separate-bucket>article{margin-left:15px;margin-right:15px}.scope-prompt{background:#f2f6fc;padding:16px}@media(max-width:600px){.toolbar{align-items:flex-start;flex-direction:column;gap:10px}.counts{gap:8px;flex-direction:column}.source-counts{display:block;white-space:normal}.article-details{padding:0 12px 12px}.compact{font-size:12px}}
-.pagination{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:12px 0;color:#68778c;font-size:13px}.pagination span{flex:1;min-width:140px}.pagination button:disabled{cursor:default}
+.publication-records-table{color:#23354d;overflow-wrap:anywhere}.toolbar,.pagination{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin:14px 0}.toolbar label{display:flex;align-items:center;gap:8px}.toolbar button{margin-left:auto}.pagination span{flex:1;font-size:13px;color:#68778c}button,select,input{background:#fff;border:1px solid #cdd8e5;border-radius:6px;padding:8px 10px;font:inherit;color:#234569}button{cursor:pointer}button:disabled{opacity:.5;cursor:default}button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid #82b5ee;outline-offset:2px}.note{color:#68778c;font-size:13px;line-height:1.7}.error{color:#a83232;background:#fff5f5;padding:12px;border-radius:6px}.table-scroll{width:100%;overflow-x:auto}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px}th,td{text-align:left;padding:14px 10px;border-bottom:1px solid #e3eaf2;vertical-align:top;line-height:1.6}th{background:#f5f8fc;color:#53657e}th:nth-child(1){width:19%}th:nth-child(2){width:8%}th:nth-child(3){width:10%}th:nth-child(4){width:20%}th:nth-child(5){width:16%}th:nth-child(6){width:14%}th:nth-child(7){width:13%}a{color:#2463a6}.tag{display:inline-block;background:#fff3df;color:#875c0a;border-radius:4px;padding:2px 6px;margin:2px 0}small{display:block;color:#68778c}.empty{text-align:center;color:#7b8797}.time{font-variant-numeric:tabular-nums}
+@media(max-width:650px){.toolbar{align-items:stretch}.toolbar button{margin-left:0}.toolbar label{font-size:13px}.pagination span{min-width:140px}table,tbody,tr,td{display:block;width:auto}thead{display:none}tr{border:1px solid #dbe3ed;border-radius:8px;margin:12px 0;padding:8px}td{border:0;padding:7px 4px;display:grid;grid-template-columns:95px minmax(0,1fr);gap:8px}td:before{content:attr(data-label);font-weight:600;color:#65758b}td.empty{display:block}.table-scroll{overflow:visible}}
 </style>

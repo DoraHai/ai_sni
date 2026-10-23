@@ -102,3 +102,29 @@ test('groups API uses an exact GET with business identity and rejects unapproved
   assert.match(calls[0].path, /^\/api\/v1\/seo\/distribution\/v2\/publication-groups\?tenant_id=1&scope_id=2&/)
   for (const q of [{ site_id: 2 }, { ownerUserId: 1 }, { article_id: Number.MAX_SAFE_INTEGER + 1 }, { bucket: 'unlinked', article_id: 7 }, { limit: 101 }]) assert.throws(() => api.publicationGroups('seo', 1, 2, q))
 })
+
+test('single-table platform names, default20, server filters, paging and late responses', async () => {
+  const { publicationPlatform } = await import('../src/utils/articlePublicationGroups.js')
+  const { createPublicationRecordsState } = await import('../src/views/seo/publicationGroupsState.js')
+  assert.equal(publicationPlatform('zhihu'), '知乎')
+  assert.equal(publicationPlatform('toutiao'), '头条')
+  assert.equal(publicationPlatform('custom-platform'), 'custom-platform')
+  const calls = []
+  const recordsPage = q => page('records', [external(rid)], {
+    context: { ...identity, bucket: 'records', article_id: null, revision: 'r1', month: q.month || null, source: q.source },
+    counts: { total: 21, loaded: 1 }, has_more: !q.cursor, next_cursor: q.cursor ? null : 'next',
+  })
+  let mode = 'ok', resolveLate
+  const model = createPublicationRecordsState({ publicationGroups: async (_m, _t, _s, q) => {
+    calls.push(q)
+    if (mode === 'late') return new Promise(r => { resolveLate = () => r(recordsPage(q)) })
+    return recordsPage(q)
+  } })
+  await model.refresh({ ...target, month: '2026-10', source: 'external_report' })
+  assert.equal(model.state.total, 21); assert.equal(model.state.items.length, 1)
+  assert.deepEqual(calls[0], { bucket: 'records', limit: 20, source: 'external_report', month: '2026-10' })
+  await model.more(); assert.equal(model.state.page, 2)
+  await model.previous(); assert.equal(model.state.page, 1)
+  mode = 'late'; void model.refresh(target); model.clear(); resolveLate(); await new Promise(r => setTimeout(r, 0))
+  assert.equal(model.state.items.length, 0); assert.equal(model.state.total, null)
+})
