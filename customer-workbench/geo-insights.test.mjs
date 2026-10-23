@@ -279,6 +279,7 @@ test('filtered pagination preserves server filters to the last page, then permis
   panel.renderInto(node);
   await panel.refresh();
   await click({geo: 'tab', tab: 'data'});
+  await click({geo: 'read', resource: 'questions'});
   await node.onsubmit({preventDefault() {}, target: {matches: (selector) => selector === '[data-geo-questions]', elements: {
     business_id: {value: '2'}, unit_id: {value: '4'}, q: {value: '  设备  '},
   }}});
