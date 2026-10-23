@@ -273,9 +273,13 @@ async def reserve_quota(session, ctx, rule):
     if rule.template in SUGGESTIONS:
         await reserve_suggestion(session, ctx, SimpleNamespace(id=0))
     if rule.template in MANUAL_CHECKS:
-        from app.security.advisor_visibility import check_visibility_quota
+        from app.geo.content.autopatrol import check_manual_quota
+        from app.geo.content.patrol import count_patrol_runs_today
         from app.models import GeoVisibilityPatrolRun
-        await check_visibility_quota(session, ctx)
+        if rule.template == PREFIX + '/integration/tasks/{task_id}/retest':
+            await check_manual_quota(session, ctx.tenant_id)
+        elif await count_patrol_runs_today(session, ctx.tenant_id, created_by=ctx.user_id, exclude_auto=True) >= 10:
+            deny(429, 'ADVISOR_VISIBILITY_DAILY_LIMIT', '今日其他 AI 检测操作额度已满')
         # A terminal reservation is not an executable patrol or a new table.
         if rule.template == PREFIX + '/integration/tasks/{task_id}/retest':
             return  # Its durable patrol row is itself the reservation.

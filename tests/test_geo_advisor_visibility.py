@@ -51,7 +51,7 @@ async def visibility_sandbox(tmp_path, monkeypatch, backend='sqlite', **kwargs):
 def test_default_daily_limit_and_exact_rule():
     from types import SimpleNamespace
     from app.security.advisor_write_routes import VISIBILITY_RUN_RULE, match_write_rule
-    assert Settings.model_fields['advisor_visibility_max_runs_per_day'].default == 10
+    assert GeoVisibilityPatrolSettings.__table__.c.manual_daily_limit.default.arg == 10
     request = SimpleNamespace(method='POST', scope={'route': SimpleNamespace(path='/api/v1/geo' + PATH)})
     assert match_write_rule(request) == VISIBILITY_RUN_RULE
     request.scope = {}
@@ -171,15 +171,14 @@ def test_manual_detection_allowed_during_automatic_execution(tmp_path, monkeypat
 
 @pytest.mark.parametrize('status', ['completed', 'failed'])
 @pytest.mark.parametrize('configured_limit', [None, 2])
-def test_daily_limit_counts_attempts_and_stays_ten(tmp_path, monkeypatch, backend, status, configured_limit):
+def test_daily_limit_counts_shared_attempts_from_database(tmp_path, monkeypatch, backend, status, configured_limit):
     async def run():
         async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
-            if configured_limit is not None:
-                monkeypatch.setattr(get_settings(), 'advisor_visibility_max_runs_per_day', configured_limit)
-            limit = 10
+            limit = configured_limit if configured_limit is not None else 10
             async with env.factory() as session:
+                (await session.get(GeoVisibilityPatrolSettings, 10)).manual_daily_limit = limit
                 session.add_all([
-                    GeoVisibilityPatrolRun(tenant_id=10, created_by=1, status=status)
+                    GeoVisibilityPatrolRun(tenant_id=10, created_by=2, status=status)
                     for _ in range(limit - 1)
                 ])
                 await session.commit()
@@ -314,7 +313,6 @@ def test_postgres_two_simultaneous_requests_only_enqueue_one(tmp_path, monkeypat
     if backend != 'postgres':
         pytest.skip('real row-lock race is PostgreSQL only')
     async def run():
-        monkeypatch.setattr(get_settings(), 'advisor_visibility_max_runs_per_day', 2)
         async with visibility_sandbox(tmp_path, monkeypatch, backend) as env:
             responses = await asyncio.gather(*[
                 env.request('POST', PATH, body={'tenant_id': 10}) for _ in range(2)])

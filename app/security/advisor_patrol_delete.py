@@ -6,6 +6,14 @@ from sqlalchemy import select
 
 async def detach_run_evidence(session, ctx, run):
     if getattr(ctx, 'advisor_scope', None) is None:
+        # Administrator deletion cannot reset the customer's shared manual count.
+        if run.trigger in {'manual', 'contract_retest'}:
+            from app.models import GeoVisibilityPatrolRun
+            from app.security.advisor_quota import STATE
+            session.add(GeoVisibilityPatrolRun(tenant_id=run.tenant_id, status='completed', trigger='quota_history',
+                auto_persist=False, prefer_real=True, prompt_limit=1, created_by=run.created_by, created_at=run.created_at,
+                summary={'reservation_only': True, 'manual_visibility': True, 'deleted_run_id': run.id,
+                    **({STATE: run.summary[STATE]} if STATE in (run.summary or {}) else {})}))
         return
     from app.models import GeoActionTicket, GeoAnswerSnapshot, GeoVisibilityPatrolRun
     from app.security.advisor_quota import STATE
@@ -16,7 +24,7 @@ async def detach_run_evidence(session, ctx, run):
     session.add(GeoVisibilityPatrolRun(tenant_id=ctx.tenant_id, status='completed',
         trigger='quota_history', auto_persist=False, prefer_real=True, prompt_limit=1,
         created_by=run.created_by, created_at=run.created_at,
-        summary={'reservation_only': True, 'deleted_run_id': run.id,
+    summary={'reservation_only': True, 'deleted_run_id': run.id, 'manual_visibility': run.trigger in {'manual', 'contract_retest'},
                  **({STATE: run.summary[STATE]} if STATE in (run.summary or {}) else {})}))
     note = f'[来源巡检记录 #{run.id} 已由顾问 {ctx.user_id} 于 {stamp} 删除；样本保留]'
     # These queries use the request's project scope; no other project is updated.

@@ -162,6 +162,11 @@ async def guard_request(session, ctx, request, claims):
 
 
 async def check_scoped_write_objects(session, ctx, request, body, rule):
+    if rule.assignment == 'self_service':
+        from app.geo.content.autopatrol import advisor_scope
+        ctx.ensure_tenant(body['tenant_id'])
+        await advisor_scope(session, ctx, request, enabled=body['enabled'])
+        return
     from app.security.geo_distribution_advisor import RULES, check_objects as check_distribution
     if (rule.method, rule.template) in RULES:
         await check_distribution(session, ctx, request, body, rule)
@@ -223,6 +228,29 @@ async def guard_scoped_write(session, ctx, request, claims):
     rule = match_write_rule(request)
     if rule is None:
         deny(403, "ADVISOR_HIGH_RISK_WRITES_DISABLED", "此顾问写入入口尚未开放")
+    if rule.assignment == 'self_service':
+        from app.geo.content.autopatrol_routes import Toggle
+        from pydantic import ValidationError
+        from fastapi.exceptions import RequestValidationError
+        try:
+            body = Toggle.model_validate(await request.json()).model_dump()
+        except ValidationError as exc:
+            raise RequestValidationError(exc.errors()) from exc
+        except (ValueError, UnicodeDecodeError):
+            deny(422, 'INVALID_BODY', '请提交 JSON 对象')
+        for key, value in request.query_params.multi_items():
+            if key != 'tenant_id':
+                deny(422, 'INVALID_QUERY', '此查询字段未开放')
+            ctx.ensure_tenant(positive_id(value))
+        ctx.ensure_tenant(body['tenant_id'])
+        if not all(ctx.can_edit(key) for key in rule.edit_all):
+            deny(403, 'SELF_SERVICE_FORBIDDEN', '缺少 GEO 资产或内容编辑权限')
+        await ensure_module_access(session, ctx, ctx.tenant_id, 'geo')
+        await check_scoped_write_objects(session, ctx, request, body, rule)
+        bind_advisor_write_commit(session, ctx, request, body, rule, claims)
+        request.state.advisor_scoped_write = rule
+        request.scope['geo_advisor_delivery'] = (ctx.user_id, dict(claims), ctx.tenant_id, frozenset(rule.edit_all))
+        return
     if rule.assignment == 'operations':
         from app.security.advisor_operations import guard_scope, read_contract, reserve_quota, bind_pending_scope
         from app.security.advisor_read_scope import bind_read_scope

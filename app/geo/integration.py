@@ -372,8 +372,10 @@ async def start_retest(task_id: int, background_tasks: BackgroundTasks, tenant_i
         return {'run_id': progress['retest_runs'][period], 'already_started': True}
     plan = await prepare_retest(session, row)
     limit = max(1, min(int(get_settings().geo_patrol_max_runs_per_day or 24), 500))
-    if await count_patrol_runs_today(session, tenant_id) >= limit:
-        raise HTTPException(429, '今日巡检次数已达上限')
+    from app.geo.content.autopatrol import check_manual_quota
+    quota = await check_manual_quota(session, tenant_id)
+    if quota['used'] >= limit:
+        raise HTTPException(429, {'code': 'TENANT_MANUAL_SAFETY_LIMIT', 'message': '客户手动检测触发外层保护，请由管理员核对'})
     if await session.scalar(select(GeoVisibilityPatrolRun.id).where(
             GeoVisibilityPatrolRun.tenant_id == tenant_id,
             GeoVisibilityPatrolRun.status.in_(("pending", "running"))).limit(1)) is not None:

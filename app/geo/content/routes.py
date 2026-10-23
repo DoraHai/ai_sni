@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.security.advisor_operation_call import checked_call
+from app.geo.content.visibility_budget import budgeted_chat
 
 import json
 from datetime import date, datetime, timedelta
@@ -3860,7 +3861,7 @@ async def probe_answer_snapshot(
             brand_names=brand_names,
             engine=req.engine,
             llm=llm,
-            chat_json=chat_json,
+            chat_json=budgeted_chat(chat_json, real=sample_mode == 'openai_compat', http_error=True),
             sample_mode=sample_mode,
             fallback_reason=fallback_reason,
         )
@@ -3930,7 +3931,7 @@ async def probe_answer_snapshot_batch(
                 brand_names=brand_names,
                 engine=engine,
                 llm=llm,
-                chat_json=chat_json,
+                chat_json=budgeted_chat(chat_json, real=sample_mode == 'openai_compat', http_error=True),
                 sample_mode=sample_mode,
                 fallback_reason=fallback_reason,
             )
@@ -4892,8 +4893,9 @@ async def visibility_patrol_ops_status(
 
     ctx.ensure_tenant(tenant_id)
     settings_row = await session.get(GeoVisibilityPatrolSettings, tenant_id)
-    day_limit = int(getattr(get_settings(), "geo_patrol_max_runs_per_day", 24) or 24)
-    used = await count_patrol_runs_today(session, tenant_id)
+    from app.geo.content.autopatrol import manual_quota
+    manual = await manual_quota(session, tenant_id)
+    day_limit, used = manual['limit'], manual['used']
     engines = list(
         await session.scalars(
             select(GeoTrackingEngine)
@@ -5197,6 +5199,12 @@ async def put_visibility_patrol_settings(
     if not await lock_scheduler_tenant(session, req.tenant_id):
         raise HTTPException(404, "客户不存在")
     row = await current_patrol_settings(session, req.tenant_id)
+    if row is not None and row.admin_locked:
+        from app.security.advisor_scope import deny
+        deny(423, 'ADMIN_LOCKED', '请先通过新检测设置解除管理锁')
+    if row is not None and row.schedule_mode == 'daily_self_service':
+        from app.security.advisor_scope import deny
+        deny(409, 'LEGACY_SCHEDULE_CONFLICT', '该客户已使用顾问每日自动检测，请使用新检测设置')
     if row is None:
         row = GeoVisibilityPatrolSettings(tenant_id=req.tenant_id)
         session.add(row)
@@ -5344,7 +5352,8 @@ async def create_visibility_patrol_run(
     """启动一次全自动巡检：多机会词 × 启用引擎探测，默认自动落库快照。
 
     真采样凭证仅来自服务器环境；未配置的引擎回退为明确标记的人设模拟。
-    产品化配额：GEO_PATROL_MAX_RUNS_PER_DAY 限制单租户自然日启动次数。
+    手动配额：按客户数据库 manual_daily_limit、北京时间自然日共享计数；
+    手动轮次触发独立外层保护时返回 TENANT_MANUAL_SAFETY_LIMIT。
 
     异步执行使用 Starlette BackgroundTasks（请求返回后再跑），避免 asyncio.create_task
     被 GC/连接结束取消，导致状态永久 pending。
@@ -5352,7 +5361,6 @@ async def create_visibility_patrol_run(
     from app.config import get_settings
     from app.geo.content.patrol import (
         count_patrol_runs_today,
-        patrol_quota_message,
         patrol_run_payload,
         run_patrol_in_background,
     )
@@ -5366,13 +5374,11 @@ async def create_visibility_patrol_run(
         await ensure_geo_entitlement(session, req.tenant_id)
         from app.security.advisor_scope import deny
         from app.security.advisor_write_routes import VISIBILITY_RUN_RULE, check_write_fields
-        from app.security.advisor_visibility import check_visibility_quota
         check_write_fields(VISIBILITY_RUN_RULE, req.model_dump(exclude_unset=True))
         binding = session.info.get("advisor_scoped_write")
         if binding is None or binding[0] is not ctx or binding[3] != VISIBILITY_RUN_RULE:
             deny(403, "ADVISOR_ROUTE_UNAVAILABLE", "缺少顾问手动检测的授权范围")
         advisor_prompt_ids = binding[1].state.advisor_visibility_prompt_ids
-        await check_visibility_quota(session, ctx)
         from app.models import GeoTrackingEngine
         engine_keys = list(await session.scalars(select(GeoTrackingEngine.engine_key).where(
             GeoTrackingEngine.tenant_id == req.tenant_id, GeoTrackingEngine.enabled.is_(True),
@@ -5389,11 +5395,13 @@ async def create_visibility_patrol_run(
         raise HTTPException(409, '本周已有精确复测预约，不能追加普通巡检改变采样分布')
     day_limit = int(getattr(get_settings(), "geo_patrol_max_runs_per_day", 24) or 24)
     day_limit = max(1, min(day_limit, 500))
-    used = await count_patrol_runs_today(session, req.tenant_id)
+    from app.geo.content.autopatrol import check_manual_quota
+    manual = await check_manual_quota(session, req.tenant_id)
+    used = manual['used']
     if used >= day_limit:
         raise HTTPException(
             429,
-            patrol_quota_message(used=used, limit=day_limit),
+            {'code': 'TENANT_MANUAL_SAFETY_LIMIT', 'message': f'客户手动检测触发外层保护 {used}/{day_limit}；客户设置额度 {manual["limit"]}，请由管理员核对'},
         )
     run = GeoVisibilityPatrolRun(
         tenant_id=req.tenant_id,
@@ -5440,6 +5448,8 @@ async def delete_visibility_patrol_run(
     row = await session.get(GeoVisibilityPatrolRun, run_id)
     if row is None or row.tenant_id != tenant_id:
         raise HTTPException(404, "巡检任务不存在")
+    if getattr(row, 'auto_day', None) is not None:
+        raise HTTPException(409, '每日自动检测占位不可删除')
     if row.status in ("pending", "running"):
         raise HTTPException(
             400,
@@ -5476,6 +5486,9 @@ async def cleanup_visibility_patrol_runs(
     kept = 0
     deleted = 0
     for r in rows:
+        if getattr(r, 'auto_day', None) is not None:
+            keep_ids.add(r.id)
+            continue
         terminal = r.status in ("completed", "failed", "cancelled")
         if only_terminal and not terminal:
             continue

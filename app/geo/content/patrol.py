@@ -102,7 +102,8 @@ async def mark_patrol_run_failed(
         return None
     if row.status not in only_if_status:
         return row
-    row.status = "failed"
+    from app.geo.content.autopatrol import is_auto
+    row.status = "cancelled" if row.status == "pending" and is_auto(row) and error == "expired_queue_day" else "failed"
     row.error = (error or "未知错误")[:2000]
     row.finished_at = datetime.utcnow()
     if row.summary is None:
@@ -113,7 +114,7 @@ async def mark_patrol_run_failed(
     settle_patrol_quota(row)
     await session.commit()
     await session.refresh(row)
-    logger.warning("patrol run %s marked failed: %s", run_id, row.error)
+    logger.warning("patrol run %s marked %s: %s", run_id, row.status, row.error)
     return row
 
 
@@ -154,7 +155,12 @@ async def reconcile_stale_patrol_run(
 def patrol_stale_view(row: GeoVisibilityPatrolRun) -> tuple[bool, str | None]:
     if row.status not in ("pending", "running"):
         return False, None
-    anchor = _naive_utc(row.started_at) or _naive_utc(row.created_at)
+    from app.geo.content.autopatrol import is_auto, BJ
+    if is_auto(row) and row.status == 'pending':
+        if row.auto_day == datetime.now(BJ).date():
+            return False, None
+        return True, 'expired_queue_day'
+    anchor = _naive_utc(getattr(row, 'last_progress_at', None)) or _naive_utc(row.started_at) or _naive_utc(row.created_at)
     if anchor is None:
         return False, None
     age = (datetime.utcnow() - anchor).total_seconds()
@@ -302,6 +308,15 @@ async def recover_patrol_runs_on_startup() -> dict[str, int]:
                     )
                     stats["failed_running"] += 1
                 elif row.status == "pending":
+                    from app.geo.content.autopatrol import is_auto, BJ
+                    if is_auto(row):
+                        if row.auto_day != datetime.now(BJ).date():
+                            row.status, row.error, row.finished_at = 'cancelled', 'expired_queue_day', datetime.utcnow()
+                            await session.commit()
+                        else:
+                            await session.commit()
+                            stats['pending_deferred'] += 1
+                        continue
                     stale, reason = patrol_stale_view(row)
                     if stale:
                         await mark_patrol_run_failed(
@@ -318,7 +333,7 @@ async def recover_patrol_runs_on_startup() -> dict[str, int]:
     return stats
 
 
-async def count_patrol_runs_today(session: AsyncSession, tenant_id: int, *, created_by: int | None = None) -> int:
+async def count_patrol_runs_today(session: AsyncSession, tenant_id: int, *, created_by: int | None = None, classified: bool = False, exclude_auto: bool = False) -> int:
     """Count patrol runs created today in Asia/Shanghai for quota."""
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
@@ -343,6 +358,12 @@ async def count_patrol_runs_today(session: AsyncSession, tenant_id: int, *, crea
         ))
     if created_by is not None:
         query = query.where(GeoVisibilityPatrolRun.created_by == created_by)
+    if classified:
+        from sqlalchemy import or_
+        query = query.where(or_(func.coalesce(GeoVisibilityPatrolRun.summary['reservation_only'].as_boolean(), False).is_(False),
+            GeoVisibilityPatrolRun.summary['manual_visibility'].as_boolean().is_(True)))
+    if exclude_auto:
+        query = query.where(GeoVisibilityPatrolRun.auto_day.is_(None))
     n = await session.scalar(query.execution_options(advisor_scope_control=True))
     return int(n or 0)
 
@@ -350,7 +371,7 @@ async def count_patrol_runs_today(session: AsyncSession, tenant_id: int, *, crea
 def patrol_quota_message(*, used: int, limit: int) -> str:
     return (
         f"今日巡检次数已达上限（{used}/{limit}）。"
-        f"请明日再试，或调高环境变量 GEO_PATROL_MAX_RUNS_PER_DAY。"
+        "请明日再试，或请管理员核对客户额度及巡检外层保护。"
     )
 
 
@@ -505,15 +526,36 @@ async def execute_patrol_run(
         await session.commit()
         return row
     async def check_advisor(*, lock=False):
+        if getattr(row, 'trigger', None) == 'schedule':
+            from sqlalchemy import case
+            mode = await session.scalar(select(case((GeoVisibilityPatrolSettings.admin_locked.is_(True), 'daily_self_service'),
+                else_=GeoVisibilityPatrolSettings.schedule_mode)).where(
+                GeoVisibilityPatrolSettings.tenant_id == row.tenant_id).execution_options(advisor_scope_control=True))
+            if mode == 'daily_self_service':
+                raise AdvisorVisibilityUnavailable('旧定时已停用')
         if advisor_prompt_ids is not None:
             await check_visibility_execution(session, row, advisor_prompt_ids, lock=lock)
 
     async def guarded_chat_json(*args, **kwargs):
         await check_advisor()
-        result = await chat_json(*args, **kwargs)
+        from app.geo.content.visibility_budget import claim_visibility_attempt
+        await claim_visibility_attempt()
+        if automatic:
+            kwargs['max_tokens'] = 4096
+        try:
+            result = await chat_json(*args, **kwargs)
+        except DeepSeekError as exc:
+            cause = exc.__cause__ or exc
+            if automatic and getattr(getattr(cause, 'response', None), 'status_code', None) in (401, 403):
+                blocked_engines.add(engine)
+            raise
         await check_advisor()
         return result
 
+    from app.geo.content.autopatrol import is_auto, ENGINES, engine_states_query
+    from app.geo.content.visibility_budget import VisibilityBudgetExhausted, VisibilityBudgetUnavailable
+    automatic = is_auto(row)
+    auto_metadata = (row.summary or {}).get('self_service') if automatic else None
     try:
         await ensure_geo_entitlement(session, row.tenant_id)
         # Preserve the existing denial gate before inspecting run metadata.
@@ -522,7 +564,8 @@ async def execute_patrol_run(
         await check_advisor(lock=True)
     except (GeoEntitlementUnavailable, AdvisorVisibilityUnavailable) as exc:
         row.status = "failed"
-        row.error = str(exc)
+        row.error = ('authorization_changed' if automatic and isinstance(exc, AdvisorVisibilityUnavailable)
+                     else 'geo_unavailable' if automatic else str(exc))
         row.finished_at = datetime.utcnow()
         from app.security.advisor_quota import settle_patrol_quota
         settle_patrol_quota(row)
@@ -534,6 +577,7 @@ async def execute_patrol_run(
     advisor_prompt_ids = (row.summary or {}).get("advisor_visibility_prompt_ids")
     row.status = "running"
     row.started_at = datetime.utcnow()
+    row.last_progress_at = row.started_at
     row.error = None
     row.summary = dict(row.summary) if isinstance(row.summary, dict) else {}
     if execution_protocol == PATROL_EXECUTION_PROTOCOL:
@@ -558,6 +602,8 @@ async def execute_patrol_run(
     if advisor_prompt_ids is not None:
         summary["advisor_visibility_prompt_ids"] = advisor_prompt_ids
         summary['advisor_visibility_auth'] = advisor_auth
+    if auto_metadata:
+        summary['self_service'] = auto_metadata
 
     pending_snapshots = []
 
@@ -577,10 +623,10 @@ async def execute_patrol_run(
         tenant = await session.get(Tenant, row.tenant_id)
         if tenant is None:
             raise ValueError("租户不存在")
-        tenant_llm = await resolve_llm_credentials(session, row.tenant_id)
+        tenant_llm = None if automatic else await resolve_llm_credentials(session, row.tenant_id)
         engine_rows = list(
             await session.scalars(
-                select(GeoTrackingEngine)
+                (engine_states_query([row.tenant_id]) if automatic else select(GeoTrackingEngine))
                 .where(GeoTrackingEngine.tenant_id == row.tenant_id)
                 .order_by(GeoTrackingEngine.sort_order, GeoTrackingEngine.id)
             )
@@ -598,6 +644,8 @@ async def execute_patrol_run(
         if not enabled_keys:
             enabled_keys = [r.engine_key for r in engine_rows]
         engines = resolve_batch_engines(row.engine_keys, enabled_keys)
+        if automatic:
+            engines = list(ENGINES)
         if not engines:
             raise ValueError("没有可探测的引擎")
         summary["engines"] = len(engines)
@@ -705,6 +753,7 @@ async def execute_patrol_run(
             await session.commit()
 
         cells_planned = 0
+        blocked_engines = set()
         for prompt in prompts:
             selected_engines = engines
             if contract_plan:
@@ -739,6 +788,15 @@ async def execute_patrol_run(
                 }
                 llm: dict[str, Any] | None = None
                 try:
+                    if automatic:
+                        status = next(p['status'] for p in auto_metadata['platforms'] if p['engine_key'] == engine)
+                        if status != 'available' or engine in blocked_engines:
+                            cell['skipped_reason'] = 'skipped:' + ('auth_error' if engine in blocked_engines else status)
+                            cell['platform_status'] = 'auth_error' if engine in blocked_engines else status
+                            cell['error'] = cell['skipped_reason']
+                            summary['cells_fail'] += 1
+                            items.append(cell)
+                            continue
                     engine_row = row_by_key.get(engine)
                     # prefer_real: if engine is mock but tenant has llm, still try resolve
                     # W3: tenant monitoring_stance constrains persona fallback
@@ -746,14 +804,14 @@ async def execute_patrol_run(
                     try:
                         from app.geo.content.ai_settings import ensure_ai_setting, get_ai_setting_row
 
-                        ai_row = await (get_ai_setting_row(session, row.tenant_id)
+                        ai_row = None if automatic else await (get_ai_setting_row(session, row.tenant_id)
                             if advisor_prompt_ids is not None else ensure_ai_setting(session, row.tenant_id))
                         stance = (
                             getattr(ai_row, "monitoring_stance", None) or "hybrid"
                         )
                     except Exception:  # noqa: BLE001
                         pass
-                    if contract_plan:
+                    if contract_plan or automatic:
                         stance = "real_only"
                     llm, sample_mode, fallback_reason = resolve_engine_llm(
                         engine=engine,
@@ -794,7 +852,7 @@ async def execute_patrol_run(
                             brand_names=cell_names,
                             engine=engine,
                             llm=llm,
-                            chat_json=guarded_chat_json if advisor_prompt_ids is not None else chat_json,
+                            chat_json=guarded_chat_json if advisor_prompt_ids is not None or sample_mode == SAMPLE_MODE_REAL else chat_json,
                             sample_mode=sample_mode,
                             fallback_reason=fallback_reason,
                         )
@@ -823,6 +881,8 @@ async def execute_patrol_run(
                             "analysis_status": draft.get("analysis_status"),
                         }
                     )
+                    if automatic and engine in blocked_engines:
+                        cell['platform_status'] = 'auth_error'
                     if draft.get("sample_mode") == SAMPLE_MODE_REAL and not draft.get(
                         "simulated"
                     ):
@@ -905,13 +965,19 @@ async def execute_patrol_run(
                             await session.flush()
                             cell["snapshot_id"] = snap.id
                         summary["snapshots_created"] += 1
-                except (GeoEntitlementUnavailable, AdvisorVisibilityUnavailable):
+                except (GeoEntitlementUnavailable, AdvisorVisibilityUnavailable, VisibilityBudgetExhausted, VisibilityBudgetUnavailable):
                     raise
                 except (DeepSeekError, ValueError) as exc:
                     from app.ai.deepseek import safe_ai_error_detail, safe_ai_error_message
 
                     provider = str((llm or {}).get("provider") or engine)
                     detail = safe_ai_error_detail(exc, provider=provider)
+                    if automatic:
+                        cause = exc.__cause__ or exc
+                        response = getattr(cause, 'response', None)
+                        if getattr(response, 'status_code', None) in (401, 403):
+                            blocked_engines.add(engine)
+                            cell['platform_status'] = 'auth_error'
                     cell["ok"] = False
                     cell["error"] = safe_ai_error_message(exc, provider=provider)
                     cell["error_detail"] = detail
@@ -925,17 +991,18 @@ async def execute_patrol_run(
                     )
                 except Exception as exc:  # noqa: BLE001
                     cell["ok"] = False
-                    cell["error"] = f"unexpected: {exc}"
+                    cell["error"] = 'platform_request_failed' if automatic else f"unexpected: {exc}"
                     summary["cells_fail"] += 1
                     logger.exception("patrol cell unexpected")
                 items.append(cell)
                 # periodic commit so long runs don't hold huge txn
-                if len(items) % 5 == 0:
+                if automatic or len(items) % 5 == 0:
                     await ensure_geo_entitlement(session, row.tenant_id)
                     await check_advisor(lock=True)
                     await persist_advisor_batch()
                     row.items = list(items)
                     row.summary = dict(summary)
+                    row.last_progress_at = datetime.utcnow()
                     await session.commit()
             if summary.get("truncated"):
                 break
@@ -950,6 +1017,7 @@ async def execute_patrol_run(
         row.summary = summary
         row.status = "completed"
         row.finished_at = datetime.utcnow()
+        row.last_progress_at = row.finished_at
         from app.security.advisor_quota import settle_patrol_quota
         settle_patrol_quota(row)
         await session.commit()
@@ -982,7 +1050,10 @@ async def execute_patrol_run(
                 summary = dict(row.summary or {})
                 summary.setdefault('snapshots_created', 0)
             row.status = "failed"
-            row.error = str(exc)[:2000]
+            row.error = ('authorization_changed' if automatic and isinstance(exc, AdvisorVisibilityUnavailable) else
+                         'daily_budget_exhausted' if isinstance(exc, VisibilityBudgetExhausted) else
+                         'daily_budget_unavailable' if isinstance(exc, VisibilityBudgetUnavailable) else
+                         'self_service_failed' if automatic else str(exc)[:2000])
             row.items = items
             row.summary = summary
             row.finished_at = datetime.utcnow()

@@ -180,14 +180,14 @@ def test_patrol_history_delete_retains_answers_and_does_not_replay_deleted_run()
     ctx = SimpleNamespace(advisor_scope=object(), tenant_id=10, user_id=1)
     created = datetime(2026, 10, 18, 18)
     asyncio.run(detach_run_evidence(session, ctx, SimpleNamespace(id=10, status='completed',
-        created_by=1, created_at=created, summary={})))
+        trigger='manual', created_by=1, created_at=created, summary={})))
     assert snapshot.patrol_run_id is None and '#10' in snapshot.note and 'original note' in snapshot.note
     assert (snapshot.raw_text, snapshot.sample_mode, snapshot.simulated) == ('fixture evidence', 'openai_compat', False)
     assert ticket.progress['retest_runs'] == {'old-week': 99}
     assert ticket.progress['deleted_retest_runs']['10']['window_starts'] == ['this-week']
     counter = session.add.call_args.args[0]
     assert counter.created_at == created and counter.created_by == 1
-    assert counter.summary == {'reservation_only': True, 'deleted_run_id': 10}
+    assert counter.summary == {'reservation_only': True, 'deleted_run_id': 10, 'manual_visibility': True}
 
 
 def test_completed_delete_does_not_resolve_its_missing_target_again(monkeypatch):

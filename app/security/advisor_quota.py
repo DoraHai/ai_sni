@@ -78,7 +78,8 @@ async def settle_search_reservation(session, job):
 
 def settle_patrol_quota(row):
     summary = dict(row.summary or {})
-    if not summary.get('advisor_visibility_auth') or row.status not in {'failed', 'completed', 'cancelled'}:
+    if (getattr(row, 'trigger', 'manual' if summary.get('advisor_visibility_auth') else '') not in {'manual', 'contract_retest'} or summary.get('reservation_only')
+            or row.status not in {'failed', 'completed', 'cancelled'}):
         return
     has_result = bool(summary.get('snapshots_created') or any(
         item.get('ok') or item.get('snapshot_id') for item in row.items or []))

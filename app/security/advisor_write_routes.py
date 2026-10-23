@@ -72,6 +72,12 @@ VISIBILITY_RUN_RULE = WriteRule(
     FORBIDDEN, ("geo.assets", "geo.content"), "visibility",
 )
 
+SELF_SERVICE_RULE = WriteRule(
+    "PUT", "/api/v1/geo/visibility-patrol/self-service",
+    frozenset({"tenant_id", "enabled", "expected_revision"}),
+    FORBIDDEN - {"enabled"}, ("geo.assets", "geo.content"), "self_service",
+)
+
 
 # AI contracts stay separate from the manual field policy.
 from app.security.advisor_write_ai import rules as _ai_rules
@@ -81,6 +87,8 @@ WRITE_ROUTES.update(_ai_rules())
 def match_write_rule(request) -> WriteRule | None:
     # Never fall back to the URL or a prefix when route resolution is missing.
     key = (request.method, getattr(request.scope.get("route"), "path", None))
+    if key == (SELF_SERVICE_RULE.method, SELF_SERVICE_RULE.template):
+        return SELF_SERVICE_RULE
     if key == (VISIBILITY_RUN_RULE.method, VISIBILITY_RUN_RULE.template):
         return VISIBILITY_RUN_RULE
     from app.security.advisor_write_operations import rules

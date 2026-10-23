@@ -435,6 +435,7 @@ def test_scheduler_rechecks_entitlement_under_tenant_lock_before_creating_run():
 
         execute = AsyncMock(side_effect=AssertionError("patrol must not start"))
         with (
+            patch('app.geo.content.autopatrol_queue.scan_self_service_days', AsyncMock()),
             patch("app.database.async_session_factory", factory),
             patch.object(
                 geo_scheduler, "lock_scheduler_tenant", AsyncMock(return_value=True)

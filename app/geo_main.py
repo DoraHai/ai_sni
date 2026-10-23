@@ -88,9 +88,14 @@ async def _lifespan(_app: FastAPI):
     start_geo_scheduler()
     followup_supervisor = asyncio.create_task(supervise_geo_followups())
     stale_supervisor = asyncio.create_task(_supervise_stale_reconciliation())
+    from app.geo.content.autopatrol_queue import supervise_queue
+    patrol_supervisor = asyncio.create_task(supervise_queue())
     try:
         yield
     finally:
+        patrol_supervisor.cancel()
+        with suppress(asyncio.CancelledError):
+            await patrol_supervisor
         stale_supervisor.cancel()
         with suppress(asyncio.CancelledError):
             await stale_supervisor

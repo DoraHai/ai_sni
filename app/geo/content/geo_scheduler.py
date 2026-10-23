@@ -88,6 +88,8 @@ async def run_geo_daily_metrics_nightly() -> None:
 
 
 async def run_geo_visibility_patrols() -> None:
+    from app.geo.content.autopatrol_queue import scan_self_service_days
+    await scan_self_service_days()
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
@@ -114,7 +116,7 @@ async def run_geo_visibility_patrols() -> None:
                 await session.commit()
                 continue
             st = await current_patrol_settings(session, tenant_id)
-            if st is None or not bool(st.enabled):
+            if st is None or not bool(st.enabled) or getattr(st, 'schedule_mode', 'legacy') == 'daily_self_service':
                 await session.commit()
                 continue
             try:
@@ -278,6 +280,9 @@ def start_geo_scheduler() -> bool:
         return False
     try:
         _telemetry.attach(scheduler)
+        from app.geo.content.autopatrol_queue import consume_queue
+        scheduler.add_job(consume_queue, CronTrigger(minute='*'), id='geo_self_service_consumer',
+                          replace_existing=True, max_instances=1, coalesce=True)
         from app.geo.project_workflows import run_project_workflows
         scheduler.add_job(run_project_workflows, CronTrigger(minute="*"), id="geo_project_workflows",
                           replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=60)
