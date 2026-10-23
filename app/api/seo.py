@@ -7479,8 +7479,15 @@ async def upsert_advisor_assignment(
     advisor = await session.get(User, req.advisor_user_id)
     if advisor is None or not advisor.is_active:
         raise HTTPException(404, "顾问账号不存在或已停用")
-    if advisor.tenant_id is not None and advisor.tenant_id != req.tenant_id:
-        raise HTTPException(409, "该账号已绑定其他客户，不能分配到当前客户")
+    if advisor.tenant_id != req.tenant_id:
+        from app.models.advisor_tenant_grant import AdvisorTenantGrant
+        grant_id = await session.scalar(select(AdvisorTenantGrant.id).where(
+            AdvisorTenantGrant.user_id == advisor.id,
+            AdvisorTenantGrant.tenant_id == req.tenant_id,
+            AdvisorTenantGrant.revoked_at.is_(None),
+        ))
+        if grant_id is None:
+            raise HTTPException(409, "该账号没有当前客户的有效顾问授权")
     advisor_role = await session.get(Role, advisor.role_id)
     advisor_permissions = dict(advisor_role.permissions or {}) if advisor_role else {}
     if advisor_permissions.get("seo.content") != "edit":
