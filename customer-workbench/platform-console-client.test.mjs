@@ -201,3 +201,11 @@ test('monthly report generation time crosses the Beijing calendar boundary',()=>
   assert(html.includes('生成 '+label+' ·'));
  }
 });
+
+test('execution AI finish and history timestamps normalize backend UTC for customers',()=>{
+ for(const stamp of ['2026-10-23T16:05:00Z','2026-10-23T16:05:00','2026-10-24T00:05:00+08:00']){
+  const html=executionDetailView({id:101,action_type:'content_delivery',params:{ai_draft:{finished_at:stamp},history:[{at:stamp,phase:'awaiting_confirmation'}]},allowed_actions:{}},101,false);
+  assert.match(html,/完成时间 2026\/10\/24 00:05（北京时间）/);
+  assert.match(html,/<li>2026\/10\/24 00:05（北京时间） · 待准确版本确认/);
+ }
+});
