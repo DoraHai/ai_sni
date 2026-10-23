@@ -7051,6 +7051,7 @@ WORKBENCH_TAB_STATUSES = {
     "needs_fix": ("needs_fix",),
     "ready": ("ready", "exported"),
     "published": ("published",),
+    "cancelled": ("cancelled",),
 }
 
 
@@ -7097,7 +7098,9 @@ async def list_tasks(
     if q:
         like = f"%{q.strip()}%"
         filters.append(
-            or_(GeoContentTask.title.ilike(like), GeoContentTask.blocked_reason.ilike(like))
+            or_(GeoContentTask.title.ilike(like), GeoContentTask.blocked_reason.ilike(like),
+                GeoContentTask.prompt_id.in_(select(GeoPrompt.id).where(
+                    GeoPrompt.tenant_id == tenant_id, GeoPrompt.question.ilike(like))))
         )
     # Counts use the same tenant/business/search scope, before tab and pagination.
     status_counts = dict((await session.execute(
