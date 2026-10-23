@@ -6,7 +6,7 @@ import jwt
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import BigInteger, select
+from sqlalchemy import text, BigInteger, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -50,6 +50,13 @@ def db(tmp_path, monkeypatch):
             await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=[
                 Role.__table__, User.__table__, Tenant.__table__, TenantModule.__table__,
                 Grant.__table__, Keyword.__table__]))
+            await conn.execute(text("CREATE TABLE seo_sites (id INTEGER PRIMARY KEY, tenant_id BIGINT NOT NULL, status TEXT NOT NULL)"))
+            await conn.execute(text("""CREATE TABLE seo_site_advisor_assignments (
+                id INTEGER PRIMARY KEY, tenant_id BIGINT NOT NULL, site_id BIGINT NOT NULL,
+                advisor_user_id BIGINT NOT NULL, active BOOLEAN NOT NULL, assigned_by BIGINT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (tenant_id, site_id, advisor_user_id))"""))
         async with factory() as s:
             s.add_all([Role(id=1, name="顾问测试", is_system=False, permissions={
                 "seo.site": "edit", "seo.content": "edit", "optimize.keywords": "edit", "delivery.report": "view"}),

@@ -44,6 +44,15 @@ def test_native_concurrent_grant_saves_lock_and_reject_stale_version(monkeypatch
             async with engine.begin() as c:
                 await c.run_sync(lambda sync: Base.metadata.create_all(sync, tables=[
                     Role.__table__, User.__table__, Tenant.__table__, TenantModule.__table__, Grant.__table__]))
+                await c.execute(text("CREATE TABLE seo_sites (id BIGINT PRIMARY KEY, tenant_id BIGINT NOT NULL, status TEXT NOT NULL)"))
+                await c.execute(text("""CREATE TABLE seo_site_advisor_assignments (
+                    id BIGSERIAL PRIMARY KEY, tenant_id BIGINT NOT NULL, site_id BIGINT NOT NULL,
+                    advisor_user_id BIGINT NOT NULL, active BOOLEAN NOT NULL, assigned_by BIGINT,
+                    created_at TIMESTAMP NOT NULL DEFAULT now(), updated_at TIMESTAMP NOT NULL DEFAULT now(),
+                    UNIQUE (tenant_id, site_id, advisor_user_id))"""))
+                await c.execute(text("INSERT INTO seo_sites VALUES (201,20,'active'), (202,20,'paused')"))
+                await c.execute(text("""INSERT INTO seo_site_advisor_assignments
+                    (tenant_id,site_id,advisor_user_id,active,assigned_by) VALUES (20,201,1,false,2)"""))
             async with factory() as s:
                 s.add_all([Role(id=1, name="fixture-advisor", is_system=False, permissions={
                     "seo.site": "edit", "seo.content": "edit"}),
@@ -94,6 +103,10 @@ def test_native_concurrent_grant_saves_lock_and_reject_stale_version(monkeypatch
                 active = list((await s.scalars(select(Grant).where(Grant.revoked_at.is_(None)))).all())
                 assert len(active) == 2 and {g.tenant_id for g in active} == {10, 20}
                 assert (await s.get(User, 1)).tenant_id == 20
+                assignments = (await s.execute(text("SELECT * FROM seo_site_advisor_assignments"))).mappings().all()
+                assert len(assignments) == 1  # Existing row restored; paused site never inserted.
+                assert assignments[0]['active'] and assignments[0]['assigned_by'] == 2
+                assert assignments[0]['created_at'] and assignments[0]['updated_at']
         finally:
             await engine.dispose()
             if created:

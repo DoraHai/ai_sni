@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from pydantic import Field
-from sqlalchemy import select
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.exc import DBAPIError
 
 from app.models import Role, Tenant, TenantModule, User
@@ -83,4 +83,32 @@ async def _save_grants(session, user, ids, default_id, actor_id, rows):
                 granted_by=actor_id, grant_source="admin", granted_at=now))
     user.tenant_id = default_id
     await session.flush()
+    await _sync_seo_assignments(session, user.id,
+        added=set(ids) - active.keys(), removed=active.keys() - set(ids),
+        actor_id=actor_id, now=now.replace(tzinfo=None))
     return await read_grants(session, user.id)
+
+
+async def _sync_seo_assignments(session, user_id, *, added, removed, actor_id, now):
+    """Same caller transaction; existing grants are deliberately not backfilled.
+
+    SEM and SEO use the same DATABASE_URL and public tables. SEM has no SEO
+    assignment ORM, so use the existing 0105 table without a schema change.
+    """
+    if removed:
+        await session.execute(text("""
+            UPDATE seo_site_advisor_assignments
+            SET active = false, assigned_by = :actor_id, updated_at = :now
+            WHERE advisor_user_id = :user_id AND tenant_id IN :tenant_ids
+        """).bindparams(bindparam("tenant_ids", expanding=True)),
+            {"tenant_ids": sorted(removed), "actor_id": actor_id, "user_id": user_id, "now": now})
+    if added:
+        await session.execute(text("""
+            INSERT INTO seo_site_advisor_assignments
+                (tenant_id, site_id, advisor_user_id, active, assigned_by)
+            SELECT tenant_id, id, :user_id, true, :actor_id
+            FROM seo_sites WHERE tenant_id IN :tenant_ids AND status = 'active'
+            ON CONFLICT (tenant_id, site_id, advisor_user_id) DO UPDATE
+            SET active = true, assigned_by = :actor_id, updated_at = :now
+        """).bindparams(bindparam("tenant_ids", expanding=True)),
+            {"tenant_ids": sorted(added), "actor_id": actor_id, "user_id": user_id, "now": now})
