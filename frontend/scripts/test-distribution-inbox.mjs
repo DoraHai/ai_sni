@@ -122,7 +122,7 @@ test('identity reset clears visible records/code immediately and ignores late pa
     model.clear()
     delayed.resolve(operation === 'pair' ? { pairingCode: 'old-private-code' } : { items: [{ id: 'old-private-record' }] })
     await result
-    assert.deepEqual(model.state, { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '' })
+    assert.deepEqual(model.state, { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false })
   }
 })
 
@@ -167,4 +167,23 @@ test('repeated clicks do not create multiple pairing requests', async () => {
   const result = model.pair(); await model.pair(); assert.equal(calls, 1)
   delayed.resolve({ pairingCode: 'synthetic' }); await result
   assert.equal(model.state.busy, false)
+})
+
+test('exact receipt focus bypasses list offset; label rereads assignment and 409 requires candidate reload', async () => {
+  const { api, model } = modelFixture()
+  let saved = { id, revision: 4, assignment: { tenantId: 42, module: 'seo', scopeId: 2, articleId: null } }
+  api.receipt = async key => { assert.equal(key, id); return saved }
+  await model.focusReceipt(id)
+  assert.equal(model.state.focusedReceipt.id, id)
+  assert.equal(model.state.filter, 'active')
+  saved = { ...saved, revision: 5, assignment: { ...saved.assignment, articleId: 123 } }
+  const result = await model.label(model.state.focusedReceipt, { module: 'seo', tenantId: 42, scopeId: 2, article: { id: 123, version: 3, digest: 'synthetic-digest' } })
+  assert.equal(result.assignment.articleId, 123)
+  assert.equal(model.state.focusedReceipt.revision, 5)
+  api.label = async () => { throw Object.assign(new Error('版本已变化'), { status: 409 }) }
+  await model.label(result, { module: 'seo', tenantId: 42 })
+  assert.equal(model.state.needsTargetRefresh, true)
+  assert.equal(model.state.focusedReceipt.revision, 5)
+  model.clear()
+  assert.equal(model.state.focusedReceipt, null)
 })

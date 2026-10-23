@@ -11,6 +11,12 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    'frontend/scripts/test-seo-publication-groups.mjs',
+    'frontend/src/components/ArticlePublicationGroups.vue',
+    'frontend/src/utils/articlePublicationGroups.js',
+    'app/seo_publication_groups.py',
+    'app/api/seo_publication_groups.py',
+    'tests/test_seo_publication_groups.py',
     'migrations/versions/20261023_0111_geo_autopatrol.py',
     'tests/test_geo_autopatrol_canonical_migration.py',
     'docs/GEO_AUTOPATROL_0111.md',

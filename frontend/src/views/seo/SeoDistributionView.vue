@@ -1,6 +1,7 @@
 <script setup>
 import { publicationEvidence, channelBoundary, countPublishedListedContents } from './seoPublicationEvidence'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   downloadSeoPublicationMaterials,
@@ -47,7 +48,9 @@ const runnerFiles = import.meta.glob('./publisher-runner/*', { query: '?raw', im
 
 const loading = ref(false)
 const error = ref('')
-const activeTab = ref('channels')
+const route = useRoute()
+const activeTab = ref(route.query.view === 'records' ? 'records' : 'channels')
+watch(() => route.query.view, value => { if (value === 'records') activeTab.value = 'records' })
 const query = ref('')
 const channelFilter = ref('all')
 const materialsBusy = ref(false)
@@ -1111,18 +1114,11 @@ onMounted(loadSites)
     </template>
 
     <template v-else>
-      <DistributionExternalPublications :tenant-id="currentTenantId" :scope-id="siteId" />
-      <section class="table-panel">
-        <header><div><h2>发布成功记录</h2><p>包含人工确认和平台接口返回，均不代表页面正文、外链或搜索收录已核验。核验结果请查看问答跟进或外链模块。</p></div><div class="task-toolbar"><el-date-picker v-if="canViewCapture" v-model="exportMonth" type="month" value-format="YYYY-MM" placeholder="选择月份" /><el-button v-if="canViewCapture" :disabled="!siteId || exportBusy" @click="exportPublicationList">{{ exportBusy ? '导出中…' : '导出发布清单' }}</el-button><el-button v-if="canViewCapture" :disabled="!siteId || reportBusy" :loading="reportBusy" @click="downloadMonthlyReport">生成月报</el-button><el-button @click="selectImport">批量登记</el-button></div></header>
-        <el-table :data="published" empty-text="暂无已发布记录">
-          <el-table-column prop="content_title" label="文章" min-width="220" show-overflow-tooltip />
-          <el-table-column prop="platform_name" label="平台" width="130" />
-          <el-table-column prop="connection_name" label="连接" width="150"><template #default="scope">{{ scope.row.connection_name || (scope.row.publish_mode === 'manual' ? '人工登记' : '未关联账号') }}</template></el-table-column>
-          <el-table-column prop="page_url" label="发布链接" min-width="260" show-overflow-tooltip><template #default="scope"><a :href="scope.row.page_url" target="_blank" rel="noopener">{{ scope.row.page_url }}</a></template></el-table-column>
-          <el-table-column label="发布依据" width="200"><template #default="scope">{{ publicationEvidence(scope.row) }}</template></el-table-column>
-          <el-table-column prop="published_at" label="发布/登记时间" width="150"><template #default="scope">{{ scope.row.published_at ? date(scope.row.published_at) : '时间未记录' }}</template></el-table-column>
-          <el-table-column label="操作" width="150"><template #default="scope"><el-button link type="primary" @click="showAttempts(scope.row)">尝试记录</el-button><el-button v-if="canViewCapture" link type="primary" @click="capturePublication = scope.row; captureDialog = true">截图</el-button></template></el-table-column>
-        </el-table>
+      <section class="table-panel publication-records">
+        <header><div><h2>发布成功记录</h2><p>系统发布与多号通回传统一列示；页面正文、外链和搜索收录的核验证据分别查看。</p></div><div class="task-toolbar"><span v-if="canViewCapture">导出/月报月份</span><el-date-picker v-if="canViewCapture" v-model="exportMonth" type="month" value-format="YYYY-MM" placeholder="选择月份" /><el-button v-if="canViewCapture" :disabled="!siteId || exportBusy" @click="exportPublicationList">{{ exportBusy ? '导出中…' : '导出发布清单' }}</el-button><el-button v-if="canViewCapture" :disabled="!siteId || reportBusy" :loading="reportBusy" @click="downloadMonthlyReport">生成月报</el-button><el-button @click="selectImport">批量登记</el-button></div></header>
+        <p>导出清单、月报和原生指标继续只统计原生记录。</p>
+        <DistributionExternalPublications :tenant-id="currentTenantId" :scope-id="siteId" :native-records="published" :can-view-capture="canViewCapture" @attempts="showAttempts" @capture="capturePublication = $event; captureDialog = true" />
+
       </section>
     </template>
 
@@ -1315,4 +1311,5 @@ onMounted(loadSites)
 .variant-workbench{min-height:220px}.variant-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.variant-heading span,.variant-heading b,.variant-heading small{display:block}.variant-heading small{margin-top:4px;color:#7b8492;font-size:10.5px}.variant-columns{display:grid;grid-template-columns:1fr 1fr;gap:14px}.variant-columns>section,.variant-keywords,.variant-ai{min-width:0;padding:14px;border:1px solid #e1e6ed;border-radius:9px;background:#fafbfd}.variant-columns section>header,.variant-keywords>header,.variant-ai>header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:11px}.variant-columns header b,.variant-keywords header b,.variant-ai header b{font-size:12px}.variant-columns header span,.variant-keywords header span,.variant-ai header small{color:#818b9a;font-size:10px}.variant-source h3{margin:0 0 10px;font-size:15px}.variant-preview,.variant-editor{height:310px;overflow:auto;padding:12px;border:1px solid #dce2ea;border-radius:7px;background:#fff;color:#303846;font-size:12px;line-height:1.75}.variant-preview :deep(img),.variant-editor :deep(img){max-width:100%;height:auto}.variant-editor{outline:none}.variant-editor:focus{border-color:#409eff;box-shadow:0 0 0 1px #409eff}.variant-editor:empty::before{color:#a8abb2;content:attr(data-placeholder)}.variant-keywords,.variant-ai{display:grid;gap:10px;margin-top:14px}.keyword-check-list{display:flex;flex-wrap:wrap;gap:8px}.keyword-check-list>span{display:flex;align-items:center;gap:5px;padding:6px 8px;border-radius:7px;background:#fff}.keyword-check-list b{margin-right:2px;font-size:10.5px}.variant-ai header span,.variant-ai header b,.variant-ai header small{display:block}.variant-ai header small{margin-top:3px}.variant-ai .el-alert+.el-alert{margin-top:6px}@media(max-width:800px){.variant-columns{grid-template-columns:1fr}.variant-preview,.variant-editor{height:260px}.variant-heading{align-items:flex-start;flex-direction:column;gap:8px}}
 .variant-workbench>.el-alert{margin-bottom:14px}.variant-heading-tags{display:flex!important;align-items:center;flex-direction:row;gap:6px}.batch-variant-toolbar{display:flex;align-items:center;gap:8px;margin:10px 0;padding:9px 10px;border-radius:7px;background:#f2f6ff}.batch-variant-toolbar>span{margin-right:auto;color:#61708a;font-size:10.5px}.variant-row-actions{display:flex;align-items:center;flex-wrap:wrap;gap:3px}.table-panel td .muted-text,.table-panel td .preflight-warning{display:block;margin-top:3px}@media(max-width:800px){.batch-variant-toolbar{align-items:stretch;flex-direction:column}.batch-variant-toolbar>span{margin:0}.variant-heading-tags{flex-wrap:wrap}}
 .distribution-hero{flex-wrap:wrap}.hero-actions{flex-wrap:wrap;width:100%}.hero-actions .distribution-site-picker{flex:0 0 220px}.hero-actions .el-button{margin-left:0}
+.publication-records{padding:0 18px 18px}.publication-records>header{margin:0 -18px 16px}.publication-records>header>div:first-child{min-width:0}.publication-records .task-toolbar{flex-wrap:wrap}@media(max-width:800px){.publication-records>header{flex-direction:column;align-items:stretch;gap:12px}.publication-records .task-toolbar{width:100%}.publication-records .task-toolbar .el-button{margin-left:0}.publication-records{padding:0 12px 14px}.publication-records>header{margin:0 -12px 14px}}
 </style>

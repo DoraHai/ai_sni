@@ -117,6 +117,7 @@ test('distribution view clears old scope before export and ignores stale loads',
   const tenant=Vue.ref(1),site=Vue.ref(10),reads=[]
   const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}}
   Object.assign(bindings,{currentTenantId:tenant,siteId:site,session:Vue.reactive({user:{id:7},isLoggedIn:true,canEdit:()=>true}),
+    useRoute:()=>Vue.reactive({query:{}}),
     fetchSeoSites:async()=>({sites:[{id:10,status:'active'}]}),
     fetchSeoDistributionCatalog:async()=>({items:[]}),fetchSeoDistributionConnections:async()=>({items:[]}),
     fetchSeoContentAssets:async()=>({items:[]}),fetchSeoDistributionVariants:async()=>({items:[]}),

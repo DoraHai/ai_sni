@@ -1,42 +1,43 @@
 <script setup>
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { session, advisorClaims } from '../../store/session'
 import { createDistributionInboxApi } from '../../api/distributionInbox.js'
-const props = defineProps({ tenantId: Number, scopeId: Number })
-const items = ref([])
-const error = ref('')
-let controller
+import ArticlePublicationGroups from '../../components/ArticlePublicationGroups.vue'
+import { createPublicationRecordsState } from './publicationGroupsState.js'
+import { publicationEvidence } from './seoPublicationEvidence'
+const props = defineProps({ tenantId: Number, scopeId: Number, nativeRecords: { type: Array, default: () => [] }, canViewCapture: Boolean })
+const emit = defineEmits(['attempts', 'capture', 'read-error'])
+const router = useRouter()
+const route = useRoute()
+const element = ref(null)
+const version = ref(0)
 const api = createDistributionInboxApi({ getIdentity: () => session.inboxIdentity, getBusiness: (module, tenant) => {
   const claims = advisorClaims(session.token)
   if (claims && (claims.scope_kind !== 'advisor_tenant' || claims.tid !== tenant)) return null
   return { token: session.token, revision: session.authRevision }
 } })
-watch(() => [props.tenantId, props.scopeId, session.authRevision], async () => {
-  controller?.abort(); controller = new AbortController()
-  const signal = controller.signal
-  items.value = []; error.value = ''
-  if (!props.tenantId) return
-  try {
-    const result = await api.publications('seo', props.tenantId, props.scopeId || null, signal)
-    if (!signal.aborted) items.value = result.items
-  } catch (e) { if (!signal.aborted) error.value = e.message }
-}, { immediate: true })
-onBeforeUnmount(() => controller?.abort())
-const results = { success: '操作人报告成功', failed: '失败', risk_control: '平台风控', verification_required: '需验证', pending_review: '审核中', unknown: '结果未知' }
+const model = createPublicationRecordsState(api, () => { version.value++; emit('read-error', !!model.state.error) })
+const state = computed(() => { version.value; return { ...model.state } })
+const filters = ref({ month: null, source: 'all' })
+const native = item => props.nativeRecords.find(row => row.id === item.native_publication_id)
+const context = () => ({ tenant: props.tenantId, scope: props.scopeId, ...filters.value })
+async function refresh() { await model.refresh(context()) }
+function filter(values) { filters.value = values; void refresh() }
+function focusRefresh() { if (document.visibilityState === 'visible') void refresh() }
+function link(item) {
+  return router.push({ path: '/seo/distribution-inbox', query: { receiptId: item.external_receipt_id,
+    returnTo: 'publication-groups', tenantId: String(props.tenantId), scopeId: String(props.scopeId) } })
+}
+watch(() => [props.tenantId, props.scopeId, session.authRevision, session.token, route.query.articleId], refresh, { immediate: true })
+onMounted(() => { window.addEventListener('focus', focusRefresh); document.addEventListener('visibilitychange', focusRefresh) })
+onActivated(refresh)
+onBeforeUnmount(() => { model.clear(); window.removeEventListener('focus', focusRefresh); document.removeEventListener('visibilitychange', focusRefresh) })
 </script>
 <template>
-  <section class="external-records">
-    <h2>外部回传记录</h2>
-    <p>收到回传与页面正文核验分别展示；这些记录不计入稿件验收。</p>
-    <p v-if="error" role="alert">{{ error }}</p>
-    <p v-else-if="!items.length">暂无外部回传记录<br />
-      <span>没选网站的回传不会出现在这里，请到多号通回传收件箱补选网站。</span>
-    </p>
-    <article v-for="row in items" :key="row.id">
-      <p>外部回传 · {{ row.platform }} · {{ row.title || '未提供标题' }} · 发布账号：{{ row.publishedAccount || '未提供' }}</p>
-      <a v-if="row.publicUrl" :href="row.publicUrl" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">{{ row.publicUrl }}</a>
-      <p>已收到 · {{ results[row.result] }} · {{ row.verificationStatus === 'unlinked' ? '未关联稿件，不核验正文' : '正文暂不可核验' }} · {{ row.occurredAt }}</p>
-    </article>
-  </section>
+  <div ref="element"><ArticlePublicationGroups :state="state" :scope-selected="!!tenantId && !!scopeId" @refresh="refresh" @more="model.more" @previous="model.previous" @filter="filter" @link="link">
+    <template #native-evidence="{ item }">{{ publicationEvidence(item) }}</template>
+    <template #native-actions="{ item }"><span v-if="native(item)"><button @click="emit('attempts', native(item))">尝试记录</button><button v-if="canViewCapture" @click="emit('capture', native(item))">截图与核验证据</button></span></template>
+  </ArticlePublicationGroups></div>
 </template>
-<style scoped>.external-records { padding: 20px; margin-bottom: 16px; background: white; border: 1px solid #dbe3ef; border-radius: 12px; overflow-wrap: anywhere; } article { border-top: 1px solid #dbe3ef; padding: 10px 0; }</style>
+<style scoped>button { margin: 4px 8px; padding: 5px 8px; border: 1px solid #d1dce9; background: white; color: #225794; border-radius: 5px; cursor: pointer; }</style>
