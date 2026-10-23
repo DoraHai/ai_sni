@@ -85,17 +85,19 @@ export function createDistributionInboxApi({ getIdentity, getBusiness, fetchImpl
     },
     publicationGroups: (tenant, scopeId, params = {}, signal) => {
       if (![tenant, scopeId].every(v => Number.isSafeInteger(v) && v > 0)
-          || Object.keys(params).some(k => !['bucket', 'article_id', 'limit', 'cursor'].includes(k))) throw new TypeError('INVALID_GROUP_SCOPE')
+          || Object.keys(params).some(k => !['bucket', 'article_id', 'limit', 'cursor', 'month', 'source'].includes(k))) throw new TypeError('INVALID_GROUP_SCOPE')
       const query = new URLSearchParams({ tenant_id: tenant, scope_id: scopeId })
       for (const [key, value] of Object.entries(params)) {
         if (value == null) continue
-        if (key === 'bucket' && !['linked', 'unlinked', 'invalid'].includes(value)) throw new TypeError('INVALID_GROUP_BUCKET')
+        if (key === 'bucket' && !['linked', 'unlinked', 'invalid', 'records'].includes(value)) throw new TypeError('INVALID_GROUP_BUCKET')
+        if (key === 'month' && !/^[1-9][0-9]{3}-(0[1-9]|1[0-2])$/.test(value)) throw new TypeError('INVALID_RECORD_MONTH')
+        if (key === 'source' && !['all', 'native', 'external_report'].includes(value)) throw new TypeError('INVALID_RECORD_SOURCE')
         if (key === 'article_id' && (!Number.isSafeInteger(value) || value < 1)) throw new TypeError('INVALID_GROUP_ARTICLE')
         if (key === 'limit' && (!Number.isSafeInteger(value) || value < 1 || value > 100)) throw new TypeError('INVALID_GROUP_LIMIT')
         if (key === 'cursor' && (typeof value !== 'string' || !value || value.length > 4096)) throw new TypeError('INVALID_GROUP_CURSOR')
         query.set(key, value)
       }
-      if (params.article_id != null && params.bucket && params.bucket !== 'linked') throw new TypeError('INVALID_GROUP_BUCKET')
+      if (params.article_id != null && params.bucket && !['linked', 'records'].includes(params.bucket)) throw new TypeError('INVALID_GROUP_BUCKET')
       return request(`/api/v1/geo/distribution/v2/publication-groups?${query}`, { business: { module: 'geo', tenant }, signal })
     },
   }

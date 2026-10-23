@@ -44,7 +44,7 @@ const project = computed(() => scopeId(selected.value))
     <p v-if="loading" role="status">正在读取已授权项目…</p>
     <label v-if="projects.length > 1">所属项目 <select v-model="selected"><option :value="null">请选择项目</option><option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name }}</option></select></label>
     <ArticlePublicationGroups v-if="project" :tenant-id="tenantId" :project-id="project" :task-id="taskId" :task-title="taskTitle" :focus-article-id="scopeId(route.query.focus_article)" />
-    <div v-else-if="!loading" class="project-empty"><h2>{{ taskId ? '本任务发布记录' : '按文章查看发布记录' }}</h2><p>请先选择客户和已授权项目，再查看发布记录。</p><p>没选项目的回传不会出现在这里，请到多号通回传收件箱补选项目。</p></div>
+    <div v-else-if="!loading" class="project-empty"><h2>{{ taskId ? '本任务发布记录' : '发布记录' }}</h2><p>请先选择客户和已授权项目，再查看发布记录。</p><p>没选项目的回传不会出现在这里，请到多号通回传收件箱补选项目。</p></div>
   </section>
 </template>
 <style scoped>.project-empty{padding:24px;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:12px;color:#64748b;margin:16px 0}select{padding:8px 12px;margin:12px;border:1px solid #cbd5e1;border-radius:6px;max-width:90%}[role=alert]{color:#9f1239}</style>

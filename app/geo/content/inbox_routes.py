@@ -74,7 +74,7 @@ def request_scope(request):
         fail('INBOX_FORBIDDEN', 403)
     allowed = {'tenant_id', 'scope_id'} if request.method == 'GET' else {'tenant_id'}
     if request.method == 'GET' and request.url.path == PREFIX + '/publication-groups':
-        allowed |= {'bucket', 'article_id', 'limit', 'cursor'}
+        allowed |= {'bucket', 'article_id', 'limit', 'cursor', 'month', 'source'}
     if (len(request.query_params) != len(request.query_params.multi_items())
             or not set(request.query_params) <= allowed or 'tenant_id' not in request.query_params):
         fail()

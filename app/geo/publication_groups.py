@@ -1,5 +1,5 @@
 """SELECT-only GEO publication groups. Task identity never means version identity."""
-from datetime import date, timezone
+from datetime import date, datetime, timedelta, timezone
 import re
 
 from fastapi import HTTPException
@@ -24,24 +24,31 @@ async def parameters(request, *, client=False):
             or request.scope.get('raw_path') != path.encode('ascii', errors='replace')):
         fail(404, 'NOT_FOUND', '记录不存在')
     allowed = {'tenant_id', 'bucket', 'article_id', 'limit', 'cursor'} | (set() if client else {'scope_id'})
+    if not client:
+        allowed |= {'month', 'source'}
     pairs = request.query_params.multi_items()
     raw = dict(pairs)
     required = {'tenant_id'} | (set() if client else {'scope_id'})
     if len(pairs) != len(raw) or set(raw) - allowed or not required <= set(raw) or await request.body():
         fail(422, 'INVALID_QUERY', '不接受重复、未知参数或缺失范围及请求正文')
     bucket = raw.get('bucket', 'linked')
-    if bucket not in ({'linked', 'unlinked'} if client else {'linked', 'unlinked', 'invalid'}):
+    if bucket not in ({'linked', 'unlinked'} if client else {'linked', 'unlinked', 'invalid', 'records'}):
         fail(422, 'INVALID_QUERY', '记录分区无效')
     article = positive(raw['article_id']) if 'article_id' in raw else None
     for key in ('tenant_id', 'scope_id', 'article_id'):
         if key in raw and not re.fullmatch('[1-9][0-9]{0,15}', raw[key]):
             fail(422, 'INVALID_QUERY', 'ID 必须是有效正整数')
-    if article is not None and bucket != 'linked':
+    if article is not None and bucket not in {'linked', 'records'}:
         fail(422, 'INVALID_QUERY', '文章明细只支持已关联分区')
+    if {'month', 'source'} & set(raw) and bucket != 'records':
+        fail(422, 'INVALID_QUERY', '筛选只支持发布记录表')
+    month, source = raw.get('month'), raw.get('source', 'all')
+    if (month is not None and not re.fullmatch(r'[1-9][0-9]{3}-(0[1-9]|1[0-2])', month)) or source not in {'all', 'native', 'external_report'}:
+        fail(422, 'INVALID_QUERY', '月份或来源无效')
     limit = raw.get('limit', '20')
     if not re.fullmatch('[0-9]{1,3}', limit) or not 1 <= int(limit) <= 100:
         fail(422, 'INVALID_QUERY', '每页数量必须为 1–100')
-    return {'tenant_id': positive(raw['tenant_id']),
+    return {**({'month': month, 'source': source} if bucket == 'records' else {}), 'tenant_id': positive(raw['tenant_id']),
         'project_id': positive(request.path_params['project_id'] if client else raw['scope_id']),
         'bucket': bucket, 'article_id': article, 'limit': int(limit), 'client': client}, (
         decode_cursor(raw['cursor']) if 'cursor' in raw else None)
@@ -120,7 +127,8 @@ def queries(records, params):
         native = native.where(Variant.id.in_(records.variants), Article.id.in_(records.articles))
     receipt = select(Receipt.id, Receipt.article_id.label('task_id'), Receipt.article_version,
         Receipt.platform, Receipt.title, Receipt.public_url, Receipt.result, Receipt.received_at,
-        Receipt.occurred_at, Receipt.revision, Receipt.owner_user_id).where(
+        Receipt.occurred_at, Receipt.revision, Receipt.owner_user_id,
+        Receipt.published_account, Receipt.reported_account).where(
         Receipt.tenant_id == params['tenant_id'], Receipt.module == 'geo',
         Receipt.scope_id == params['project_id'], Receipt.state == 'active',
         Receipt.label_state == 'active', Receipt.deleted_at.is_(None))
@@ -164,6 +172,61 @@ def external(row, *, params, actor, ctx, invalid=False):
         item['can_label'] = bool(actor and (actor.admin or (row['owner_user_id'] == ctx.user_id
             and ctx.can_edit('geo.content') and get_settings().advisor_scoped_content_writes_enabled)))
     return item
+
+
+def record_page(ns, es, us, ins, records, params, actor, ctx, decoded):
+    """Display-only exact task + stored URL dedupe; native facts stay intact."""
+    items, targets = [], {}
+    for r in ns:
+        url, state = safe_url(r['published_url'])
+        item = {'source': 'native', 'source_key': f"native:geo:{r['id']}",
+            'native_publication_id': r['id'], 'external_receipt_id': None,
+            'task_id': r['task_id'], 'title': records.tasks[r['task_id']].title,
+            'channel': r['channel'], 'account': None, 'url': url, 'url_state': state,
+            'status': r['status'], 'event_at': stamp(r['published_at'] or r['updated_at']),
+            'has_external_report': False, 'external_receipt_ids': []}
+        items.append(item)
+        if r['published_url']:
+            # If native rows already repeat, preserve all native facts and attach
+            # the external annotation to one stable (lowest native ID) row only.
+            targets.setdefault((r['task_id'], r['published_url']), item)
+    for r, invalid in [(r, False) for r in es + us] + [(r, True) for r in ins]:
+        target = targets.get((r['task_id'], r['public_url'])) if not invalid and r['task_id'] is not None else None
+        if target is not None:
+            target['has_external_report'] = True
+            target['external_receipt_ids'].append(r['id'])
+            continue
+        item = external(r, params=params, actor=actor, ctx=ctx, invalid=invalid)
+        item.update(title=r['title'], account=r['published_account'] or r['reported_account'],
+            event_at=stamp(r['occurred_at'] or r['received_at']),
+            has_external_report=True, external_receipt_ids=[r['id']], association_invalid=invalid)
+        items.append(item)
+    def key(item):
+        at = datetime.fromisoformat(item['event_at']) if item['event_at'] else None
+        return (-(at.timestamp()) if at else 253402300800, item['source_key'])
+    filtered = []
+    for item in items:
+        if params['article_id'] is not None and item['task_id'] != params['article_id']:
+            continue
+        if params['source'] == 'native' and item['source'] != 'native':
+            continue
+        if params['source'] == 'external_report' and not item['has_external_report']:
+            continue
+        if params['month']:
+            at = datetime.fromisoformat(item['event_at']) if item['event_at'] else None
+            if at is None or at.astimezone(timezone(timedelta(hours=8))).strftime('%Y-%m') != params['month']:
+                continue
+        filtered.append(item)
+    filtered.sort(key=key)
+    total = len(filtered)
+    if decoded:
+        last = decoded['last']
+        if len(last) != 2 or type(last[0]) not in {int, float} or not isinstance(last[1], str):
+            fail(400, 'INVALID_CURSOR', '分页游标无效')
+        filtered = [item for item in filtered if key(item) > tuple(last)]
+    more = len(filtered) > params['limit']
+    selected = filtered[:params['limit']]
+    return selected, more, list(key(selected[-1])) if selected else [], total
 
 
 async def response(request, ctx, session, *, client=False):
@@ -213,7 +276,10 @@ async def response(request, ctx, session, *, client=False):
     if not client:
         counts['invalid_records'] = len(ins)
     bucket, limit = params['bucket'], params['limit']
-    if bucket == 'linked' and aid is None:
+    if bucket == 'records':
+        items, more, last, total = record_page(ns, es, us, ins, records, params, actor, ctx, decoded)
+        counts['filtered_records'] = total
+    elif bucket == 'linked' and aid is None:
         events = union_all(select(nsub.c.task_id,
             func.coalesce(nsub.c.published_at, nsub.c.updated_at).label('event_at')),
             select(esub.c.task_id, func.coalesce(esub.c.occurred_at, esub.c.received_at).label('event_at'))).subquery()
@@ -289,6 +355,7 @@ async def response(request, ctx, session, *, client=False):
         'watermarks': marks, 'last': last}) if more else None
     return {'schema': 1, 'read_only': True,
         'context': {'module': 'geo', 'tenant_id': params['tenant_id'], 'scope_id': params['project_id'],
+            **({'month': params['month'], 'source': params['source']} if bucket == 'records' else {}),
             'bucket': bucket, 'article_id': aid, 'audience': 'client' if client else 'internal'},
         'items': items, 'counts': {**counts, 'loaded_items': len(items)},
         'next_cursor': cursor, 'has_more': more,

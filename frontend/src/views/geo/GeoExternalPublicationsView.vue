@@ -5,8 +5,8 @@ import GeoPublicationGroupsContext from '../../components/GeoPublicationGroupsCo
 
 <template>
   <main class="geo-publications-page">
-    <header><div><p class="eyebrow">GEO · 项目交付</p><h1>发布记录 · 外部回传</h1></div><router-link to="/distribution-inbox">多号通回传收件箱</router-link></header>
-    <p>按文章查看系统原生登记与外部回传，也可按来源筛选。原生监测和多号通投递回执仍保留各自入口。</p>
+    <header><div><p class="eyebrow">GEO · 项目交付</p><h1>发布记录</h1></div><router-link to="/distribution-inbox">多号通回传收件箱</router-link></header>
+    <p>系统发布与多号通回传统一显示，可按月份和来源筛选。原生监测和多号通投递回执仍保留各自入口。</p>
     <GeoPublicationGroupsContext :tenant-id="session.tenantId" />
   </main>
 </template>

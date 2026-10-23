@@ -67,6 +67,43 @@ def snapshot(data):
         for m in (Task, Article, Variant, Publication, Receipt)}
 
 
+def test_flat_records_exact_dedupe_unlinked_filters_twenty_descending(data):
+    row = data.session.get(Publication, 1)
+    row.published_url = 'https://example.com/shared'
+    data.save(row)
+    before = snapshot(data)
+    body = internal(data, bucket='records').json()
+    assert body['counts']['native_records'] == 4
+    native = next(r for r in body['items'] if r['native_publication_id'] == 1)
+    assert native['has_external_report'] and len(native['external_receipt_ids']) == 2
+    assert not any(r['external_receipt_id'] in {str(UUID(int=1)), str(UUID(int=2))} for r in body['items'])
+    unlinked = next(r for r in body['items'] if r['external_receipt_id'] == str(UUID(int=3)))
+    assert unlinked['title'] == '公开回传标题' and unlinked['account'] == 'PRIVATE_ACCOUNT'
+    assert snapshot(data) == before
+    assert client(data, bucket='records').status_code == 422
+    for i in range(20, 43):
+        row = receipt(i)
+        row.public_url = f'https://example.com/unlinked/{i}'
+        row.occurred_at = NOW + timedelta(minutes=i)
+        data.save(row)
+    first = internal(data, bucket='records', source='external_report').json()
+    assert len(first['items']) == 20 and first['has_more']
+    assert first['items'][0]['external_receipt_id'] == str(UUID(int=42))
+    second = internal(data, bucket='records', source='external_report', cursor=first['next_cursor']).json()
+    assert not {r['source_key'] for r in first['items']} & {r['source_key'] for r in second['items']}
+    native_only = internal(data, bucket='records', source='native').json()
+    assert len(native_only['items']) == 4 and all(r['source'] == 'native' for r in native_only['items'])
+    # Beijing month boundary: October 31 16:00 UTC is November in Shanghai.
+    boundary = receipt(90)
+    boundary.occurred_at = NOW.replace(month=10, day=31, hour=16, minute=0, second=0, microsecond=0)
+    data.save(boundary)
+    november = internal(data, bucket='records', month='2026-11').json()
+    assert [r['external_receipt_id'] for r in november['items']] == [str(UUID(int=90))]
+    assert internal(data, bucket='records', month='2026-13').status_code == 422
+    assert internal(data, bucket='records', source='invalid').status_code == 422
+    assert internal(data, bucket='records', source='native', cursor=first['next_cursor']).status_code == 400
+
+
 def test_sources_preserve_native_counts_and_original_delivery_exports(data):
     before = snapshot(data)
     deliveries = get(data, '/deliveries').json()['data']
