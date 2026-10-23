@@ -262,3 +262,23 @@ def test_unlinked_tied_times_have_stable_uuid_pages_and_safe_urls(data):
     row.public_url = 'javascript:alert(1)'; data.save(row)
     assert client(data, bucket='unlinked').json()['items'][0]['url'] is None
     assert client(data, bucket='linked', cursor=first['next_cursor'], limit=100).status_code == 400
+
+
+def test_default_twenty_latest_first_and_stable_pages(data):
+    for i in range(100, 123):
+        data.save(Task(id=i, tenant_id=101, prompt_id=1, business_id=11,
+            title='同名文章', status='ready', updated_at=NOW),
+            receipt(i, article_id=i, article_version=1))
+        row = data.session.get(Receipt, str(UUID(int=i)))
+        # Lower IDs are newer: sorting by task ID would fail this assertion.
+        row.occurred_at = NOW + timedelta(minutes=200-i)
+        data.save(row)
+    first = internal(data).json()
+    assert len(first['items']) == 20 and first['has_more']
+    assert [r['task_id'] for r in first['items']] == list(range(100, 120))
+    second = internal(data, cursor=first['next_cursor']).json()
+    assert [r['task_id'] for r in second['items'][:3]] == [120, 121, 122]
+    assert len({r['task_id'] for r in first['items'] + second['items']}) == 26
+    row = data.session.get(Receipt, str(UUID(int=1)))
+    row.occurred_at = NOW + timedelta(days=1); data.save(row)
+    assert internal(data, article_id=1).json()['items'][0]['external_receipt_id'] == row.id

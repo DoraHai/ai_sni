@@ -78,8 +78,30 @@ test('list and article details paginate independently while keeping global count
   assert.equal(state.state.details[1].length, 2)
   assert.equal(state.state.counts.native_records, 2)
   assert.equal(state.state.counts.article_groups, 1)
-  assert.deepEqual(calls.at(-2), { bucket: 'linked', article_id: 1, cursor: 'cursor-signed' })
-  assert.deepEqual(calls.at(-1), { bucket: 'linked', cursor: 'cursor-signed' })
+  assert.deepEqual(calls.at(-2), { bucket: 'linked', article_id: 1, limit: 20, cursor: 'cursor-signed' })
+  assert.deepEqual(calls.at(-1), { bucket: 'linked', limit: 20, cursor: 'cursor-signed' })
+})
+
+test('Shanghai times have exact date format including midnight', () => {
+  assert.equal(publicationTime('2026-10-23T02:45:00Z'), '2026-10-23 10:45')
+  assert.equal(publicationTime('2026-10-22T16:00:00Z'), '2026-10-23 00:00')
+})
+
+test('twenty per page replaces rows and previous rereads its original cursor', async () => {
+  const calls = []
+  const model = createPublicationGroupsState({ publicationGroups: async (tid, pid, params) => {
+    calls.push(params)
+    return page(params, params.bucket === 'linked' ? [{ ...group, group_article_id: params.cursor ? 2 : 1, task_id: params.cursor ? 2 : 1 }] : [], !params.cursor)
+  } })
+  await model.refresh(ctx)
+  assert.equal(calls[0].limit, 20)
+  await model.list('linked', true)
+  assert.equal(model.state.pages.linked, 2)
+  assert.deepEqual(model.state.groups.map(g => g.task_id), [2])
+  await model.list('linked', 'previous')
+  assert.deepEqual(calls.at(-1), { bucket: 'linked', limit: 20 })
+  assert.equal(model.state.pages.linked, 1)
+  assert.deepEqual(model.state.groups.map(g => g.task_id), [1])
 })
 
 test('late response after scope/identity clear cannot restore records', async () => {
@@ -96,7 +118,7 @@ test('task-only reads always include article and project, with no tenant-wide fe
   const calls = []
   const model = createPublicationGroupsState(api((...args) => calls.push(args)))
   await model.refresh({ ...ctx, taskId: 1 })
-  assert.deepEqual(calls, [[101, 1, { bucket: 'linked', article_id: 1 }]])
+  assert.deepEqual(calls, [[101, 1, { bucket: 'linked', article_id: 1, limit: 20 }]])
   await model.refresh({ ...ctx, projectId: null, taskId: 1 })
   assert.equal(calls.length, 1); assert.deepEqual(model.state.groups, [])
 })

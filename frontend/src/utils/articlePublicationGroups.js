@@ -20,9 +20,12 @@ export function safePublicationLink(value) {
 export function publicationTime(value) {
   if (!value || !/(?:Z|[+-]\d\d:\d\d)$/.test(value)) return '未提供'
   const time = new Date(value)
-  return Number.isNaN(time.valueOf()) ? '未提供' : new Intl.DateTimeFormat('zh-CN', {
+  if (Number.isNaN(time.valueOf())) return '未提供'
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('zh-CN', {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-  }).format(time)
+    hourCycle: 'h23',
+  }).formatToParts(time).map(p => [p.type, p.value]))
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`
 }
 export function reportedResult(value) {
   return '操作人报告' + ({ success: '成功', failed: '失败', risk_control: '平台风控', verification_required: '需验证', pending_review: '审核中', unknown: '结果未知' }[value] || '结果未知')
@@ -66,13 +69,13 @@ export function validateGroupPage(data, context, params) {
 
 export function createPublicationGroupsState(api, changed = () => {}) {
   const state = { groups: [], details: {}, unlinked: [], invalid: [], counts: null, cursors: {},
-    loading: {}, error: '', revision: null }
+    pages: {}, pageStarts: {}, loading: {}, error: '', revision: null }
   let context = null, epoch = 0, controller = new AbortController()
   const notify = () => changed(state)
   function clear() {
     epoch++; controller.abort(); controller = new AbortController()
     Object.assign(state, { groups: [], details: {}, unlinked: [], invalid: [], counts: null,
-      cursors: {}, loading: {}, error: '', revision: null })
+      cursors: {}, pages: {}, pageStarts: {}, loading: {}, error: '', revision: null })
     notify()
   }
   async function read(key, params, apply) {
@@ -95,14 +98,21 @@ export function createPublicationGroupsState(api, changed = () => {}) {
       if (epoch === current) { state.loading = { ...state.loading, [key]: false }; notify() }
     }
   }
-  const detail = (articleId, more = false) => read(`detail:${articleId}`, { bucket: 'linked', article_id: articleId,
+  const detail = (articleId, more = false) => read(`detail:${articleId}`, { bucket: 'linked', article_id: articleId, limit: 20,
     ...(more ? { cursor: state.cursors[`detail:${articleId}`] } : {}) }, rows => {
     state.details = { ...state.details, [articleId]: mergeRows(more ? state.details[articleId] || [] : [], rows, r => r.source_key) }
   })
-  function list(bucket = 'linked', more = false) {
-    return read(bucket, { bucket, ...(more ? { cursor: state.cursors[bucket] } : {}) }, rows => {
-      if (bucket === 'linked') state.groups = mergeRows(more ? state.groups : [], rows, r => groupKey(context, r.group_article_id))
-      else state[bucket] = mergeRows(more ? state[bucket] : [], rows, r => r.source_key)
+  function list(bucket = 'linked', direction = false) {
+    const current = state.pages[bucket] || 1
+    const next = direction === true ? current + 1 : direction === 'previous' ? current - 1 : 1
+    if (next < 1 || (direction === true && !state.cursors[bucket])) return
+    const starts = state.pageStarts[bucket] || [null]
+    const cursor = direction === true ? state.cursors[bucket] : starts[next - 1]
+    return read(bucket, { bucket, limit: 20, ...(cursor ? { cursor } : {}) }, rows => {
+      state.pages = { ...state.pages, [bucket]: next }
+      state.pageStarts = { ...state.pageStarts, [bucket]: [...starts.slice(0, next - 1), cursor || null] }
+      if (bucket === 'linked') state.groups = mergeRows([], rows, r => groupKey(context, r.group_article_id))
+      else state[bucket] = mergeRows([], rows, r => r.source_key)
     })
   }
   return { state, clear, list, detail,

@@ -3,7 +3,7 @@ from datetime import date, timezone
 import re
 
 from fastapi import HTTPException
-from sqlalchemy import and_, func, or_, select, union
+from sqlalchemy import and_, func, or_, select, union, union_all
 
 from app.geo.project_client_protocol import digest, encode_cursor, decode_cursor, fail, positive, safe_url
 from app.geo.project_client_store import bounded, authorize, load_content
@@ -38,7 +38,7 @@ async def parameters(request, *, client=False):
             fail(422, 'INVALID_QUERY', 'ID 必须是有效正整数')
     if article is not None and bucket != 'linked':
         fail(422, 'INVALID_QUERY', '文章明细只支持已关联分区')
-    limit = raw.get('limit', '50')
+    limit = raw.get('limit', '20')
     if not re.fullmatch('[0-9]{1,3}', limit) or not 1 <= int(limit) <= 100:
         fail(422, 'INVALID_QUERY', '每页数量必须为 1–100')
     return {'tenant_id': positive(raw['tenant_id']),
@@ -214,14 +214,29 @@ async def response(request, ctx, session, *, client=False):
         counts['invalid_records'] = len(ins)
     bucket, limit = params['bucket'], params['limit']
     if bucket == 'linked' and aid is None:
-        q = select(groups.c.task_id).order_by(groups.c.task_id.desc())
+        events = union_all(select(nsub.c.task_id,
+            func.coalesce(nsub.c.published_at, nsub.c.updated_at).label('event_at')),
+            select(esub.c.task_id, func.coalesce(esub.c.occurred_at, esub.c.received_at).label('event_at'))).subquery()
+        latest = select(events.c.task_id, func.max(events.c.event_at).label('latest_at')).group_by(events.c.task_id).subquery()
+        # ISO timestamps in cursors retain the exact stable SQL ordering key.
+        q = select(latest.c.task_id, latest.c.latest_at).order_by(latest.c.latest_at.desc().nulls_last(), latest.c.task_id.desc())
         if decoded:
             last = decoded['last']
-            if len(last) != 1 or type(last[0]) is not int:
+            if len(last) != 2 or type(last[1]) is not int or (last[0] is not None and not isinstance(last[0], str)):
                 fail(400, 'INVALID_CURSOR', '分页游标无效')
-            q = q.where(groups.c.task_id < last[0])
-        ids = list(await session.scalars(q.limit(limit + 1)))
-        more, ids = len(ids) > limit, ids[:limit]
+            if last[0] is None:
+                q = q.where(latest.c.latest_at.is_(None), latest.c.task_id < last[1])
+            else:
+                from datetime import datetime
+                try:
+                    at = datetime.fromisoformat(last[0])
+                except ValueError:
+                    fail(400, 'INVALID_CURSOR', '分页游标无效')
+                q = q.where(or_(latest.c.latest_at < at, latest.c.latest_at.is_(None),
+                    and_(latest.c.latest_at == at, latest.c.task_id < last[1])))
+        page = (await session.execute(q.limit(limit + 1))).all()
+        more, page = len(page) > limit, page[:limit]
+        ids = [r.task_id for r in page]
         nc = dict((await session.execute(select(nsub.c.task_id, func.count()).where(
             nsub.c.task_id.in_(ids)).group_by(nsub.c.task_id))).all())
         ec = dict((await session.execute(select(esub.c.task_id, func.count()).where(
@@ -229,34 +244,25 @@ async def response(request, ctx, session, *, client=False):
         items = [{'group_article_id': i, 'task_id': i, 'content_id': None,
             'title': records.tasks[i].title, 'native_count': nc.get(i, 0), 'external_count': ec.get(i, 0),
             'current_version_no': current_versions.get(i), 'details_loaded': False} for i in ids]
-        last = [ids[-1]] if ids else []
+        last = [page[-1].latest_at.isoformat() if page[-1].latest_at else None, ids[-1]] if ids else []
     else:
         if bucket == 'linked':
-            nq, eq = native.where(Variant.task_id == aid), linked.where(Receipt.article_id == aid)
-            if decoded:
-                saved = decoded['last']
-                if (len(saved) != 2 or type(saved[0]) is not int or saved[0] not in {0, 1}
-                        or (saved[0] == 0 and type(saved[1]) is not int)
-                        or (saved[0] == 1 and not isinstance(saved[1], str))):
-                    fail(400, 'INVALID_CURSOR', '分页游标无效')
-                if saved[0] == 0:
-                    nq = nq.where(Publication.id > saved[1])
-                else:
-                    nq = nq.where(False)
-                    eq = eq.where(Receipt.id > saved[1])
-            ordered = [(0, r['id'], r) for r in await rows(session, nq.order_by(Publication.id), limit=limit + 1)] + [
-                (1, r['id'], r) for r in await rows(session, eq.order_by(Receipt.id), limit=limit + 1)]
+            ordered = [(0, r['id'], r) for r in ns if r['task_id'] == aid] + [
+                (1, r['id'], r) for r in es if r['task_id'] == aid]
         else:
             ordered = [(0, r['id'], r) for r in (us if bucket == 'unlinked' else ins)]
         # UUID keys are never compared with native integer keys.
         def key(entry):
             rank, pk, r = entry
-            return (rank, pk) if bucket == 'linked' else (-r['received_at'].timestamp(), pk)
+            if bucket == 'linked':
+                at = (r['published_at'] or r['updated_at']) if rank == 0 else (r['occurred_at'] or r['received_at'])
+                return (-(at.replace(tzinfo=timezone.utc).timestamp() if at.tzinfo is None else at.timestamp()) if at else 253402300800, rank, str(pk))
+            return (-r['received_at'].timestamp(), pk)
         ordered.sort(key=key)
         if decoded:
             try:
                 last = decoded['last']
-                if len(last) != 2:
+                if len(last) != (3 if bucket == 'linked' else 2):
                     raise ValueError()
                 ordered = [e for e in ordered if key(e) > tuple(last)]
             except (ValueError, TypeError):
