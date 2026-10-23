@@ -11,6 +11,15 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    'migrations/versions/20261023_0111_geo_autopatrol.py',
+    'tests/test_geo_autopatrol_canonical_migration.py',
+    'docs/GEO_AUTOPATROL_0111.md',
+    'docs/migration-0111/upgrade-0111.sql',
+    'docs/migration-0111/precheck.sql',
+    'docs/migration-0111/apply-0111.psql',
+    'docs/migration-0111/verify.sql',
+    'docs/migration-0111/SUMMARY.md',
+    'docs/migration-0111/SHA256SUMS',
     'app/api/distribution_inbox.py',
     'app/distribution_inbox_service.py',
     'app/models/distribution_inbox.py',

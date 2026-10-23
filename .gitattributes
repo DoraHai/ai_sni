@@ -3,3 +3,6 @@
 /ops/platform-deploy/modules/seo-frontend text eol=lf
 /scripts/install_seo_page_capture_runtime.sh text eol=lf
 /migrations/versions/20260819_0073_geo_schema_repair.py text eol=lf
+
+# Reviewed migration package hashes are byte-stable on Windows and Linux.
+/docs/migration-0111/* text eol=lf

@@ -34,7 +34,7 @@ def test_0108_precedes_0109_and_is_directly_after_0107():
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "migrations"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["0110_distribution_inbox"]
+    assert script.get_heads() == ["0111_geo_autopatrol"]
     assert script.get_revision("0108_advisor_account_links").down_revision == "0107_seo_site_delete"
 
 
