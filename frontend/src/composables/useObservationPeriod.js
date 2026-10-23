@@ -1,6 +1,6 @@
 /**
  * GEO 全局观察期（Asia/Shanghai 日历日语义，由后端按时区切分）。
- * 顶栏与报表页共用同一份状态；localStorage 记忆天数。
+ * 各页顶栏共用状态；报告页使用本页日期范围。localStorage 记忆天数。
  */
 import { computed, reactive, watch } from 'vue'
 import { shanghaiDate, addDaysIso } from '../utils/geoDate'

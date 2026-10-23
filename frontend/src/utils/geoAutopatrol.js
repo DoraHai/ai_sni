@@ -28,7 +28,6 @@ export function manualBlockedReason(data) {
   if (data.blocked_reason) return blockedLabel(data.blocked_reason)
   if (data.in_flight) return BLOCKED.in_flight
   if (!data.coverage?.prompt_count) return BLOCKED.no_prompts
-  if (data.can_enable !== true) return '当前客户暂不可检测，请刷新状态'
   if (!(data.manual_quota?.used < data.manual_quota?.limit)) return '今日手动检测次数已用完或额度尚未就绪'
   return ''
 }

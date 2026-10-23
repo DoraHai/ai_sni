@@ -8,7 +8,9 @@ import { manualBlockedReason } from '../src/utils/geoAutopatrol.js'
 const ready = () => ({ can_enable: true, coverage: { prompt_count: 1 }, manual_quota: { used: 0, limit: 2 } })
 test('manual detection blocks missing questions, server blockers, in-flight and exhausted quota', () => {
   assert.equal(manualBlockedReason(ready()), '')
-  for (const data of [null, { ...ready(), can_enable: false }, { ...ready(), blocked_reason: 'no_prompts' },
+  // can_enable describes the automatic switch, not manual-run permission.
+  assert.equal(manualBlockedReason({ ...ready(), can_enable: false }), '')
+  for (const data of [null, { ...ready(), blocked_reason: 'no_prompts' },
     { ...ready(), coverage: { prompt_count: 0 } }, { ...ready(), in_flight: true },
     { ...ready(), manual_quota: { used: 2, limit: 2 } }, { ...ready(), blocked_reason: 'future_reason' }]) {
     assert.ok(manualBlockedReason(data))
