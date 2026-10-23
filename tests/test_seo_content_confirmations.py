@@ -708,6 +708,7 @@ def test_only_legacy_without_either_table_may_skip_confirmation():
     ([], catalog()), (['0105', '0111'], catalog()),
     (['0111_geo_autopatrol'], []), (['unknown'], []),
     (['0104_seo_page_ai_tdk'], catalog()[:1]),
+    (['0104_seo_page_ai_tdk'], [('seo_content_confirmations', None, None, True)]),
     (['0111_geo_autopatrol'], catalog()[1:]),
     (['0111_geo_autopatrol'], [r for r in catalog() if r[0] != 'seo_site_advisor_assignments']),
     (['0111_geo_autopatrol'], [(r[0], r[1], 'text', r[3]) for r in catalog()]),

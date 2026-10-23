@@ -36,13 +36,13 @@ async def content_confirmation_schema_ready(session) -> bool:
         rows = list((await session.execute(text("""
             SELECT c.relname, a.attname,
                    pg_catalog.format_type(a.atttypid, a.atttypmod) AS column_type,
-                   has_table_privilege(c.oid, 'SELECT') AS readable
+                   (c.relkind IN ('r', 'p') AND has_table_privilege(c.oid, 'SELECT')) AS readable
             FROM pg_catalog.pg_class c
             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-            JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
-            WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
-              AND c.relname IN ('seo_content_confirmations', 'seo_site_advisor_assignments')
+            LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
               AND a.attnum > 0 AND NOT a.attisdropped
+            WHERE n.nspname = 'public'
+              AND c.relname IN ('seo_content_confirmations', 'seo_site_advisor_assignments')
         """))).all())
     except SQLAlchemyError:
         raise _unavailable() from None
