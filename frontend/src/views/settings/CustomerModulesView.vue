@@ -18,8 +18,12 @@ import {
 import { fetchUsers } from '../../api/auth'
 import { session } from '../../store/session'
 import { createRequestController } from './semIdentityRepairRequests'
+import PlatformCustomerServices from './PlatformCustomerServices.vue'
 
 const router = useRouter()
+const serviceContext = ref(null)
+const canManageService = code => session.user?.tenant_id == null && !session.isAdvisorSession
+  && session.canEdit('settings.accounts') && session.canEdit(`${code}.content`)
 
 const loading = ref(false)
 const customers = ref([])
@@ -543,10 +547,12 @@ onMounted(load)
           <small class="module-expiry">{{ moduleRow(row, code)?.expires_at ? `至 ${moduleRow(row, code).expires_at}` : '无到期日' }}</small>
           <small class="connection-state">{{ connectionLabel(row.data_connections?.[code]) }}</small>
           <el-button link type="primary" @click="openModule(row, code)">配置</el-button>
+          <el-button v-if="code !== 'sem' && canManageService(code)" link type="primary" @click="serviceContext = { customer: row, kind: code === 'geo' ? 'manual' : 'seo' }">{{ code === 'geo' ? '手动检测次数设置' : 'SEO 网站分配' }}</el-button>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="100"><template #default="{ row }"><el-button link type="primary" @click="openEdit(row)">配置</el-button></template></el-table-column>
     </el-table>
+    <PlatformCustomerServices v-if="serviceContext" :customer="serviceContext.customer" :kind="serviceContext.kind" @close="serviceContext = null" />
     <el-dialog class="platform-responsive-dialog" v-model="visible" :title="editingId ? '配置客户' : '新建客户'" width="560px">
       <el-form label-width="90px">
         <el-alert
