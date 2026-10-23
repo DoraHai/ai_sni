@@ -83,5 +83,20 @@ export function createDistributionInboxApi({ getIdentity, getBusiness, fetchImpl
       if (!Number.isSafeInteger(tenant) || tenant < 1 || (scopeId != null && (!Number.isSafeInteger(scopeId) || scopeId < 1))) throw new TypeError('INVALID_BUSINESS_TARGET')
       return request(`/api/v1/geo/distribution/v2/publications?tenant_id=${tenant}${scopeId == null ? '' : `&scope_id=${scopeId}`}`, { business: { module: 'geo', tenant }, signal })
     },
+    publicationGroups: (tenant, scopeId, params = {}, signal) => {
+      if (![tenant, scopeId].every(v => Number.isSafeInteger(v) && v > 0)
+          || Object.keys(params).some(k => !['bucket', 'article_id', 'limit', 'cursor'].includes(k))) throw new TypeError('INVALID_GROUP_SCOPE')
+      const query = new URLSearchParams({ tenant_id: tenant, scope_id: scopeId })
+      for (const [key, value] of Object.entries(params)) {
+        if (value == null) continue
+        if (key === 'bucket' && !['linked', 'unlinked', 'invalid'].includes(value)) throw new TypeError('INVALID_GROUP_BUCKET')
+        if (key === 'article_id' && (!Number.isSafeInteger(value) || value < 1)) throw new TypeError('INVALID_GROUP_ARTICLE')
+        if (key === 'limit' && (!Number.isSafeInteger(value) || value < 1 || value > 100)) throw new TypeError('INVALID_GROUP_LIMIT')
+        if (key === 'cursor' && (typeof value !== 'string' || !value || value.length > 4096)) throw new TypeError('INVALID_GROUP_CURSOR')
+        query.set(key, value)
+      }
+      if (params.article_id != null && params.bucket && params.bucket !== 'linked') throw new TypeError('INVALID_GROUP_BUCKET')
+      return request(`/api/v1/geo/distribution/v2/publication-groups?${query}`, { business: { module: 'geo', tenant }, signal })
+    },
   }
 }

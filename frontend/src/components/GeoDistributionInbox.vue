@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { createInboxState } from './geoDistributionInboxState.js'
 
 // Both shells use identity APIs, with explicit business sessions only on writes.
@@ -7,10 +7,13 @@ const props = defineProps({
   api: { type: Object, required: true }, identity: { type: String, required: true },
   targets: { type: Array, default: () => [] }, // authorized {tenantId,name,modules,scopes?}
   owners: { type: Array, default: () => [] }, // only personnel administrators receive these
+  focusReceiptId: { type: String, default: '' },
 })
+const emit = defineEmits(['labelled', 'refresh-targets'])
 const revision = ref(0)
 const model = createInboxState(props.api, () => { revision.value += 1 })
 const state = computed(() => { revision.value; return { ...model.state } })
+const visibleItems = computed(() => state.value.focused ? [state.value.focused, ...state.value.items.filter(r => r.id !== state.value.focused.id)] : state.value.items)
 const targetId = ref({})
 const moduleId = ref({})
 const scopeId = ref({})
@@ -45,27 +48,40 @@ function assignmentText(row) {
   return `${target?.name || `客户 #${assignment.tenantId}`} · ${assignment.module.toUpperCase()} · ${scopeName}`
 }
 function articlesFor(row) { return scopesFor(row).find(s => s.id === Number(scopeId.value[row.id] ?? row.assignment?.scopeId))?.articles || [] }
-function label(row) {
+async function label(row) {
   const target = targetFor(row)
   const module = moduleId.value[row.id]
   if (!target || !target.modules.includes(module)) return
-  return model.label(row, { tenantId: target.tenantId, module, scopeId: Number(scopeId.value[row.id]) || null,
+  const result = await model.label(row, { tenantId: target.tenantId, module, scopeId: Number(scopeId.value[row.id]) || null,
     ...(articleId.value[row.id] ? { article: articlesFor(row).find(a => a.id === Number(articleId.value[row.id])) } : {}),
     ...(Object.hasOwn(publishedAccount.value, row.id) ? { publishedAccount: publishedAccount.value[row.id] } : {}) })
+  if (result) emit('labelled', result)
 }
-function update(row) {
+async function update(row) {
   const assignment = row.assignment
   const selectedArticle = articleId.value[row.id] === undefined ? (assignment.articleId ? { id: assignment.articleId, version: assignment.articleVersion, digest: assignment.articleDigest } : null)
     : articlesFor(row).find(a => a.id === Number(articleId.value[row.id]))
-  return model.label(row, { tenantId: assignment.tenantId, module: assignment.module,
+  const result = await model.label(row, { tenantId: assignment.tenantId, module: assignment.module,
     scopeId: Number(scopeId.value[row.id] ?? assignment.scopeId) || null, article: selectedArticle,
     publishedAccount: publishedAccount.value[row.id] ?? assignment.publishedAccount })
+  if (result) emit('labelled', result)
 }
-function reset() {
+async function reset() {
   model.clear(); targetId.value = {}; moduleId.value = {}; scopeId.value = {}; articleId.value = {}; publishedAccount.value = {}
-  if (props.identity) void model.refresh()
+  const identity = props.identity, focus = props.focusReceiptId
+  if (props.identity) {
+    await model.refresh()
+    if (identity === props.identity && focus === props.focusReceiptId && focus) await model.focus(focus)
+  }
 }
-watch(() => props.identity, reset, { immediate: true })
+watch([() => props.identity, () => props.focusReceiptId], reset, { immediate: true })
+watch(() => state.value.focused?.id, async id => {
+  if (!id) return
+  await nextTick()
+  const row = document.getElementById(`receipt-${id}`)
+  row?.querySelector('details')?.setAttribute('open', '')
+  row?.scrollIntoView({ block: 'center' }); row?.focus()
+})
 watch(() => props.targets, () => { targetId.value = {}; moduleId.value = {}; scopeId.value = {}; articleId.value = {}; publishedAccount.value = {} }, { deep: true })
 onBeforeUnmount(model.clear)
 </script>
@@ -74,6 +90,7 @@ onBeforeUnmount(model.clear)
   <main class="inbox">
     <h1>多号通回传</h1>
     <p v-if="state.error" role="alert">{{ state.error }}</p>
+    <p v-if="state.conflict" role="alert">版本或归属已变化，请重新读取候选后核对选择。<button type="button" @click="emit('refresh-targets')">重读候选稿件</button></p>
     <section aria-labelledby="pair-title">
       <h2 id="pair-title">电脑配对</h2>
       <p>不用先选客户或平台。此码需要多号通0.3.7，旧版请先升级。</p>
@@ -86,7 +103,9 @@ onBeforeUnmount(model.clear)
       <label>查看 <select :value="state.filter" :disabled="state.busy" @change="model.show($event.target.value)"><option value="pending">待标客户</option><option value="active">已标客户（可改标/撤销）</option><option value="archived">已归档</option></select></label>
       <p v-if="!targets.length">暂无可标注的客户，请联系超管授权</p>
       <p v-if="!state.items.length">暂无待标客户记录</p>
-      <article v-for="row in state.items" :key="row.id">
+      <p v-if="state.focused">已定位到指定回传，以下标记记录独立于列表分页。</p>
+      <article v-for="row in visibleItems" :key="row.id" :id="`receipt-${row.id}`" tabindex="-1" :class="{ 'focused-receipt': row.id === state.focused?.id }">
+        <strong v-if="row.id === state.focused?.id">当前定位记录</strong>
         <p>{{ row.platform }} · {{ row.title || '未提供标题' }}</p>
         <a v-if="safeLink(row.publicUrl)" :href="safeLink(row.publicUrl)" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">{{ row.publicUrl }}</a>
         <p>发布账号：{{ row.reportedAccount || '未提供' }} · {{ results[row.result] || '结果未知' }}</p>
@@ -146,6 +165,7 @@ section { margin: 24px 0; padding: 20px; border: 1px solid #dbe3ef; border-radiu
 article { padding: 16px 0; border-top: 1px solid #dbe3ef; overflow-wrap: anywhere; }
 .assignment-target { font-weight: 600; }
 .scope-missing { color: #9a3412; background: #fff7ed; padding: 8px 12px; border-radius: 6px; }
+.focused-receipt { outline: 2px solid #818cf8; outline-offset: 6px; border-radius: 6px; }
 button, select { padding: 8px 12px; margin: 4px 12px 4px 0; }
 code { font-size: 1.1em; overflow-wrap: anywhere; }
 [role=alert] { color: #a12828; }

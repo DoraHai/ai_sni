@@ -15,6 +15,8 @@ import GeoDistributionReport from '../../components/GeoDistributionReport.vue'
 import GeoReceiptImport from '../../components/GeoReceiptImport.vue'
 import GeoDeliveryRecovery from '../../components/GeoDeliveryRecovery.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
+import GeoPublicationGroupsContext from '../../components/GeoPublicationGroupsContext.vue'
+import { scopeId } from '../../utils/articlePublicationGroups.js'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { pushBlockLabels } from '../../utils/geoPushBlockers'
 import { BACKFILL_CHANNELS, backfillChannelLabel, customChannelError, isHttpsPublicationUrl } from '../../utils/geoBackfillChannels'
@@ -41,7 +43,7 @@ const CHANNEL_CN = {
   website: '官网 CMS', docs: '文档', wechat: '微信公众号', zhihu: '知乎',
   baijiahao: '百家号', toutiao: '今日头条', industry_media: '行业媒体',
 }
-const taskId = computed(() => Number(route.params.taskId || route.query.task_id || 0) || null)
+const taskId = computed(() => scopeId(route.params.taskId || route.query.task_id))
 const focusMode = computed(() => String(route.query.mode || ''))
 function channelLabel(key) { return CHANNEL_CN[key] || key || '—' }
 function pushBlockText(row) {
@@ -244,10 +246,11 @@ onMounted(load)
 <template>
   <GeoWorkbenchPage title="分发记录" sub="按任务推送渠道稿、回填发布 URL，并查看当前信源状态" :loading="loading">
     <template #actions>
-      <button class="gd-btn" type="button" @click="router.push(`/geo/tasks/${taskId}`)">返回编辑器</button>
+      <button class="gd-btn" type="button" @click="router.push({ path: `/geo/tasks/${taskId}`, query: { tenant_id: tenantId, project_id: route.query.project_id } })">返回编辑器</button>
       <button class="gd-btn" type="button" @click="load">刷新</button>
     </template>
     <div class="geo-dash">
+      <GeoPublicationGroupsContext :tenant-id="tenantId" :task-id="taskId" :task-title="task?.title" />
       <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
       <section class="gd-card mb" :class="{ focus: focusMode === 'auto' }">
         <div class="gd-hd">
