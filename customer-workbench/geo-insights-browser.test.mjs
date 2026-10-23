@@ -7,6 +7,7 @@ import path from 'node:path';
 import {startFixtureServer} from './tests/fixture-server.mjs';
 import {geoFixture, question, openWeekProgress, envelope, page as listPage} from './tests/geo-client-fixture.mjs';
 import {geoEngines} from './js/geo-project-insights.mjs';
+import {assertNoPatrolControls} from './tests/geo-readonly-assertions.mjs';
 
 test('built insights: full server filters, six engines, citations, suggestions, binary downloads and permission cleanup', {timeout: 90000}, async () => {
   const fixture = await startFixtureServer();
@@ -70,14 +71,17 @@ test('built insights: full server filters, six engines, citations, suggestions, 
     await p.waitForFunction(() => document.querySelector('[data-tab=onsite]')?.getAttribute('aria-current') === 'page');
     assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /完善 FAQ/);
     assert.equal(await p.$('[data-action^="onsite-"], [data-sv=run], [data-sv=config]'), null);
+    await assertNoPatrolControls(p);
     await p.click('[data-tab=home]');
     await p.waitForFunction(() => document.querySelector('.geo-open-week')?.textContent.includes('26'));
     let text = await p.$eval('.geo-workspace', (e) => e.textContent);
     assert.match(text, /统计周期：2026-10-12 至 2026-10-18（北京时间）/);
     assert(!text.includes('右端不含') && !text.includes('2026-10-12T'));
+    await assertNoPatrolControls(p);
     await p.screenshot({path: path.join(shots, 'home-open-week-desktop.png'), fullPage: true});
     await p.click('[data-tab=data]');
     await p.waitForFunction(() => document.querySelector('.geo-summary')?.textContent.includes('1.5'));
+    await assertNoPatrolControls(p);
     assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /本周（未结束）已检测 26 条，下周一计入正式指标/);
     await p.click('[data-resource=questions]');
     await p.waitForSelector('[data-geo-questions]');
@@ -98,6 +102,7 @@ test('built insights: full server filters, six engines, citations, suggestions, 
       '已检测，未计入', '平台来源未核实；回答判读未完成', '回答记录不可读', '样本时间：2026年10月15日 10:00']) assert(text.includes(line), line);
     const excludedText = await p.$eval('.geo-matrix', (e) => [...e.querySelectorAll('section')].filter((s) => s.textContent.includes('已检测，未计入')).map((s) => s.textContent).join(''));
     assert(!excludedText.includes('0/0') && !excludedText.includes('%'));
+    await assertNoPatrolControls(p);
     await p.screenshot({path: path.join(shots, 'data-matrix-desktop.png'), fullPage: true});
     const cdp = await p.createCDPSession();
     await cdp.send('Browser.setDownloadBehavior', {behavior: 'allow', downloadPath: shots});
@@ -121,11 +126,13 @@ test('built insights: full server filters, six engines, citations, suggestions, 
     await p.click('[data-resource=article-citations]');
     await p.waitForSelector('[data-resource="answers/5"]');
     assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /H\/U：1\/2 · 50%/);
+    await assertNoPatrolControls(p);
     await p.screenshot({path: path.join(shots, 'published-article-citations.png'), fullPage: true});
     await p.click('[data-resource="answers/5"]');
     await p.waitForSelector('.geo-prose');
     await p.click('[data-tab=onsite]');
     await p.waitForFunction(() => document.querySelector('.geo-workspace')?.textContent.includes('完善 FAQ'));
+    await assertNoPatrolControls(p);
     await p.screenshot({path: path.join(shots, 'onsite-suggestions.png'), fullPage: true});
     openCount = 0;
     await p.click('[data-tab=home]'); await p.click('[data-geo=refresh]');
@@ -135,6 +142,7 @@ test('built insights: full server filters, six engines, citations, suggestions, 
     await p.click('[data-geo=refresh]');
     await p.waitForNetworkIdle({idleTime: 200});
     assert.equal(await p.$('.geo-open-week'), null);
+    await assertNoPatrolControls(p);
     await p.click('[data-tab=data]');
     assert.match(await p.$eval('.geo-summary', (e) => e.textContent), /1.5/);
     await p.click('[data-resource=questions]');
@@ -149,6 +157,7 @@ test('built insights: full server filters, six engines, citations, suggestions, 
     await p.waitForFunction(() => document.querySelector('.geo-workspace')?.textContent.includes('暂无数据'));
     await p.click('[data-resource=questions]');
     await p.waitForFunction(() => document.querySelector('.geo-workspace')?.textContent.includes('暂无数据（接口暂未开放）'));
+    await assertNoPatrolControls(p);
     await p.screenshot({path: path.join(shots, 'api-unavailable-fallback.png'), fullPage: true});
     denied = true;
     await p.click('[data-resource=answers]');
@@ -156,6 +165,7 @@ test('built insights: full server filters, six engines, citations, suggestions, 
     assert(!(await p.$eval('#app', (e) => e.textContent)).includes('末页问题'));
     assert.deepEqual(errors, []); assert.deepEqual(external, []);
     assert(calls.every((c) => c.method === 'GET'));
+    assert(!calls.some((c) => c.path.includes('/visibility-patrol/')));
     assert(calls.filter((c) => c.path.includes('/client/')).every((c) => c.params.tenant_id === '1' && c.path.includes('/projects/10/')));
     console.log('Synthetic insights screenshots: ' + shots);
   } finally { await browser.close(); await fixture.close(); }

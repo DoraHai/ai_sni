@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {startFixtureServer} from './tests/fixture-server.mjs';
 import {geoFixture, question, page as listPage, envelope} from './tests/geo-client-fixture.mjs';
+import {assertNoPatrolControls} from './tests/geo-readonly-assertions.mjs';
 const edge =
   process.env.EDGE_BINARY || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 const origin = 'https://geo-client.test';
@@ -160,6 +161,7 @@ test(
             document.querySelector('.geo-workspace')?.textContent.includes('暂未开放') ||
             document.querySelector('.geo-workspace')?.textContent.includes('读取暂不可用'),
         );
+        await assertNoPatrolControls(p);
         if (scenario === 'not-open') {
           assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /暂未开放/);
           assert.equal(await p.$('[data-tab=content]'), null);
@@ -191,6 +193,7 @@ test(
             );
           }
           const home = await p.$eval('.geo-workspace', (e) => e.textContent);
+          await assertNoPatrolControls(p);
           assert(!home.includes('INTERNAL_MUST_NOT_RENDER'));
           if (scenario === 'ready-zero') assert.match(home, /0%/);
           else assert(!home.includes('0%'));
@@ -202,6 +205,7 @@ test(
             await p.click('[data-tab=progress]');
             assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /项目进度/);
             await p.click('[data-tab=plan]');
+            await assertNoPatrolControls(p);
             assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /服务计划/);
             await p.click('[data-tab=home]');
             await p.click('[data-resource=content]');
@@ -270,6 +274,7 @@ test(
             await p.waitForSelector('[data-resource=questions]');
             await p.click('[data-resource=questions]');
             await p.waitForSelector('[data-resource="questions/3"]');
+            await assertNoPatrolControls(p);
             assert(!(await p.$eval('.geo-workspace', (e) => e.textContent.includes('100%'))));
             await p.click('[data-geo=more]');
             await p.waitForFunction(() =>
@@ -302,12 +307,14 @@ test(
             await p.screenshot({path: path.join(shots, 'answer-mobile.png'), fullPage: true});
             await p.click('[data-tab=onsite]');
             await p.waitForFunction(() => document.querySelector('.geo-workspace')?.textContent.includes('站内 GEO 建议'));
+            await assertNoPatrolControls(p);
             assert.equal(await p.$('[data-action^="onsite-"]'), null);
           }
         }
         assert.deepEqual(errors, []);
         assert.deepEqual(external, []);
         assert(calls.every((c) => c.method === 'GET'));
+        assert(!calls.some((c) => c.path.includes('/visibility-patrol/')));
         assert(
           !calls.some((c) => c.path.includes('/integration/') || c.path.includes('assistant')),
         );

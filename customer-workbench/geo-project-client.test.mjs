@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createGeoHostAdapter} from './js/geo-host-session-adapter.mjs';
 import {createGeoProjectClient} from './js/geo-project-client.mjs';
+import {geoClientRoute} from './js/geo-client-routes.mjs';
 import {createGeoProjectPanel} from './js/geo-project-panel.mjs';
 import {
   geoHome,
@@ -29,11 +30,11 @@ const resources = [
   'content/7/articles/9',
   'deliveries',
 ];
-async function hostFixture({readOnly = false} = {}) {
+async function hostFixture({readOnly = false, permission = 'view'} = {}) {
   const calls = [];
   let session = {token: 'synthetic', userId: 7, tenantId: 1, projectId: 10, revision: 1};
   let notify;
-  const user = {id: 7, tenant_id: 1, permissions: {'geo.assets': 'view', 'geo.content': 'view'}};
+  const user = {id: 7, tenant_id: 1, permissions: {'geo.assets': permission, 'geo.content': permission}};
   const host = createGeoHostAdapter({
     readOnly,
     origin: 'https://fixture.test',
@@ -135,6 +136,70 @@ test('production customer host mode rejects legacy mutations and unreviewed onsi
   ]) await assert.rejects(host.transport(path, {method}), /DENIED/);
   assert.equal(calls.length, accepted);
   host.dispose();
+});
+
+// Autopatrol CONTRACT v1, 2026-10-22: none of these tenant-level
+// advisor/administrator endpoints belongs to the customer's project GET contract.
+const patrolControls = [
+  'visibility-patrol/self-service',
+  'visibility-patrol/self-service/history',
+  'visibility-patrol/admin-settings',
+  'visibility-patrol/self-service/admin-action',
+  'visibility-patrol/manual-limit',
+  'visibility-patrol/manual-limit/history',
+];
+
+test('customer host denies every autopatrol control/read route and method before fetch, even with edit permissions', async () => {
+  for (const readOnly of [true, false]) for (const permission of ['view', 'edit']) {
+    const {host, calls} = await hostFixture({readOnly, permission});
+    try {
+      for (const resource of [...patrolControls, 'visibility-patrol/settings', 'visibility-patrol/runs', 'tracking-engines']) {
+        for (const prefix of ['/api/v1/geo/', base]) {
+          const path = prefix + resource;
+          assert.equal(geoClientRoute(path), null, path);
+          for (const method of [undefined, 'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'TRACE', 'get', 'post']) {
+            await assert.rejects(host.transport(path + '?tenant_id=1', {method}), {code: 'ROUTE_DENIED'}, `${permission}/${readOnly}/${method}/${path}`);
+            assert.equal(calls.length, 0, 'denied requests must never reach fetch');
+          }
+          for (const suffix of ['/?tenant_id=1', '?tenant_id=1&project_id=10', '?tenant_id=1&enabled=true'])
+            await assert.rejects(host.transport(path + suffix), {code: 'ROUTE_DENIED'});
+        }
+      }
+      assert.equal(calls.length, 0);
+      // Use the same initialized adapter after all denials: results remain readable.
+      const client = createGeoProjectClient({transport: host.transport, getContext: host.getContext});
+      for (const resource of ['overview', 'summary', 'questions', 'questions/3', 'answers', 'answers/5', 'executions'])
+        assert.deepEqual(await client.read(resource), geoFixture(resource));
+      assert.equal(calls.length, 7);
+      for (const {path, options} of calls) {
+        const url = new URL(path);
+        assert.equal(options.method, 'GET');
+        assert(url.pathname.startsWith('/api/v1/geo/projects/10/'));
+        assert.equal(url.searchParams.get('tenant_id'), '1');
+      }
+      const accepted = calls.length;
+      for (const path of [base.replace('/10/', '/11/') + 'summary?tenant_id=1', base + 'summary?tenant_id=2'])
+        await assert.rejects(host.transport(path), /DENIED|MISMATCH/);
+      assert.equal(calls.length, accepted);
+    } finally { host.dispose(); }
+  }
+});
+
+test('project client cannot turn autopatrol paths or method parameters into customer requests', async () => {
+  const calls = [];
+  const client = createGeoProjectClient({getContext: () => context, transport: async (path, options) => {
+    calls.push({path, options});
+    return response(geoFixture('summary'));
+  }});
+  for (const resource of [...patrolControls, 'visibility-patrol/runs']) {
+    for (const candidate of [resource, '../' + resource, '../../' + resource, '/api/v1/geo/' + resource])
+      await assert.rejects(client.read(candidate), {code: 'GEO_ROUTE_DENIED'});
+  }
+  for (const params of [{method: 'PUT'}, {enabled: true}, {manual_daily_limit: 100}, {action: 'unlock'}])
+    await assert.rejects(client.read('summary', params), {code: 'GEO_ROUTE_DENIED'});
+  assert.equal(calls.length, 0);
+  assert.deepEqual(await client.read('summary'), geoFixture('summary'));
+  assert.deepEqual(calls, [{path: base + 'summary?tenant_id=1', options: {method: 'GET'}}]);
 });
 test('project client checks all response scopes, closed weeks, pagination, and executions project', async () => {
   const {host} = await hostFixture();
