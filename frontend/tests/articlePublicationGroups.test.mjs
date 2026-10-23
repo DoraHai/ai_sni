@@ -141,3 +141,24 @@ test('409 keeps inbox row and requires manual candidate reread; no automatic new
   await model.label({ id: rid, revision: 1 }, { module: 'geo', tenantId: 101, scopeId: 1, article: { id: 1, version: 2, digest: 'fixed' } })
   assert.equal(calls, 1); assert.equal(model.state.conflict, true); assert.equal(model.state.focused.id, rid)
 })
+
+test('successful unlabel/archive/delete remove the focused card even if list reload fails', async () => {
+  const beforeConfirm = globalThis.confirm
+  globalThis.confirm = () => true
+  try {
+    for (const action of ['unlabel', 'archive', 'remove']) {
+      let failMutation = true
+      const row = { id: rid, revision: 1, assignment: { module: 'geo', tenantId: 101 } }
+      const mutate = async () => { if (failMutation) throw Object.assign(new Error('conflict'), { status: 409 }) }
+      const model = createInboxState({ receipt: async () => row, unlabel: mutate, archive: mutate, delete: mutate,
+        receipts: async () => { throw new Error('list unavailable') }, devices: async () => ({ items: [] }), count: async () => ({ count: 0 }) })
+      await model.focus(rid)
+      await model[action](row)
+      assert.equal(model.state.focused.id, rid, `${action} failure must preserve the row`)
+      failMutation = false
+      await model[action](row)
+      assert.equal(model.state.focused, null, `${action} success must not retain old content/assignment`)
+      assert.equal(model.state.error, 'list unavailable')
+    }
+  } finally { globalThis.confirm = beforeConfirm }
+})

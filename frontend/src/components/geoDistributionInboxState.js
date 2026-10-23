@@ -47,11 +47,17 @@ export function createInboxState(api, changed = () => {}) {
     }),
     show: filter => operation(async signal => { state.filter = filter; state.offset = 0; await reload(signal) }),
     page: offset => operation(async signal => { state.offset = offset; await reload(signal) }),
-    owner: uid => operation(async signal => { state.items = []; state.devices = []; state.count = 0; state.offset = 0; state.ownerUserId = Number(uid) || null; changed(state); await reload(signal) }),
-    archive: receipt => operation(async signal => { await api.archive(receipt.id, receipt.revision, signal); await reload(signal) }),
+    owner: uid => operation(async signal => { state.focused = null; state.items = []; state.devices = []; state.count = 0; state.offset = 0; state.ownerUserId = Number(uid) || null; changed(state); await reload(signal) }),
+    archive: receipt => operation(async signal => {
+      await api.archive(receipt.id, receipt.revision, signal)
+      if (!signal.aborted && state.focused?.id === receipt.id) { state.focused = null; changed(state) }
+      await reload(signal)
+    }),
     remove: receipt => operation(async signal => {
       if (!globalThis.confirm('清理内容后仍保留回传确认记录。确认清理？')) return
-      await api.delete(receipt.id, receipt.revision, signal); await reload(signal)
+      await api.delete(receipt.id, receipt.revision, signal)
+      if (!signal.aborted && state.focused?.id === receipt.id) { state.focused = null; changed(state) }
+      await reload(signal)
     }),
     refresh: () => operation(reload),
     pair: () => operation(async signal => {
@@ -74,6 +80,7 @@ export function createInboxState(api, changed = () => {}) {
     unlabel: receipt => operation(async signal => {
       await api.unlabel(receipt.assignment.module, receipt.assignment.tenantId, receipt.id,
         { expectedRevision: receipt.revision, reason: '人工撤销归属' }, signal)
+      if (!signal.aborted && state.focused?.id === receipt.id) { state.focused = null; changed(state) }
       await reload(signal)
     }),
   }
