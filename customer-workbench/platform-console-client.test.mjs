@@ -192,6 +192,12 @@ test('known customer error codes have Chinese guidance and safe diagnostic codes
 
 import {executionDetailView} from './js/seo-execution-view.mjs';
 test('monthly report generation time crosses the Beijing calendar boundary',()=>{
- const html=executionDetailView({id:104,action_type:'monthly_report',params:{report:{month:'2026-10',generated_at:'2026-10-23T16:05:00Z',missing:[]}},allowed_actions:{}},104,false);
- assert.match(html,/生成 2026\/10\/24 00:05（北京时间）/);
+ for(const stamp of ['2026-10-23T16:05:00Z','2026-10-23T16:05:00','2026-10-24T00:05:00+08:00']){
+  const html=executionDetailView({id:104,action_type:'monthly_report',params:{report:{month:'2026-10',generated_at:stamp,missing:[]}},allowed_actions:{}},104,false);
+  assert.match(html,/生成 2026\/10\/24 00:05（北京时间）/);
+ }
+ for(const [stamp,label] of [[null,'暂无记录'],['bad','时间待核对']]){
+  const html=executionDetailView({id:104,action_type:'monthly_report',params:{report:{generated_at:stamp}},allowed_actions:{}},104,false);
+  assert(html.includes('生成 '+label+' ·'));
+ }
 });
