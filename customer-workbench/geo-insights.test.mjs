@@ -57,11 +57,12 @@ test('table retains question status, brand probe, attention and legacy observati
 });
 test('all-questions navigation exposes week controls from work and mismatched hidden keywords cannot be submitted', async () => {
   const node = {innerHTML: ''}, calls = [];
+  let missingOptions = false;
   const panel = createGeoProjectPanel({host: {getContext: () => context, transport: async (path) => {
     const u = new URL(path, 'https://fixture.test'); calls.push(u);
     const resource = u.pathname.endsWith('executions') ? 'executions' : u.pathname.split('/client/')[1];
     const v = structuredClone(geoFixture(resource));
-    if (resource === 'questions') v.data.options = {units: [{id: 5, business_id: 3}]};
+    if (resource === 'questions' && !missingOptions) v.data.options = {units: [{id: 5, business_id: 3}]};
     return response(v);
   }}});
   const click = (dataset) => node.onclick({target: {closest: () => ({dataset})}});
@@ -73,6 +74,12 @@ test('all-questions navigation exposes week controls from work and mismatched hi
     business_id: {value: '2'}, unit_id: {value: '5'}, q: {value: ''},
   }}});
   assert.equal(calls.at(-1).searchParams.get('business_id'), '2');
+  assert.equal(calls.at(-1).searchParams.has('unit_id'), false);
+  missingOptions = true;
+  await click({geo: 'read', resource: 'questions', allQuestions: 'true'});
+  await node.onsubmit({preventDefault() {}, target: {matches: () => true, elements: {
+    business_id: {value: '2'}, unit_id: {value: '5'}, q: {value: ''},
+  }}});
   assert.equal(calls.at(-1).searchParams.has('unit_id'), false);
   panel.dispose();
 });
@@ -262,7 +269,10 @@ test('filtered pagination preserves server filters to the last page, then permis
     calls.push(u);
     if (deny) return response({}, 403);
     const v = structuredClone(geoFixture(r, {more: r === 'questions' && !u.searchParams.has('cursor')}));
-    if (r === 'questions') v.data.items[0].question = u.searchParams.has('cursor') ? '最后一页' : '第一条合成问题';
+    if (r === 'questions') {
+      v.data.items[0].question = u.searchParams.has('cursor') ? '最后一页' : '第一条合成问题';
+      v.data.options = {units: [{id: 4, business_id: 2}]};
+    }
     return response(v);
   }}});
   const click = (dataset) => node.onclick({target: {closest: () => ({dataset})}});

@@ -52,8 +52,8 @@ export function geoQuestionTable(data, time, metadata = () => '') {
 export function geoQuestionFilters(data, params = {}) {
   const filters = {...data.filters, ...params};
   const units = data.options?.units;
-  if (filters.business_id && filters.unit_id && Array.isArray(units) &&
-      !units.some((u) => String(u.id) === String(filters.unit_id) && String(u.business_id) === String(filters.business_id)))
+  if (filters.business_id && filters.unit_id && (!Array.isArray(units) ||
+      !units.some((u) => String(u.id) === String(filters.unit_id) && String(u.business_id) === String(filters.business_id))))
     filters.unit_id = '';
   const option = (row, selected, name, hidden = false) => `<option value="${esc(row.id)}" ${hidden ? 'hidden' : ''} ${String(selected) === String(row.id) ? 'selected' : ''}>${esc(name)}</option>`;
   return `<form data-geo-questions><label>业务 <select name="business_id"><option value="">全部业务</option>${(data.options?.businesses || []).map((b) => option(b, filters.business_id, b.name)).join('')}</select></label><label>关键词 <select name="unit_id"><option value="">全部关键词</option>${(data.options?.units || []).map((u) => option(u, filters.unit_id, u.display_name || u.keyword || u.name, !!filters.business_id && String(u.business_id) !== String(filters.business_id))).join('')}</select></label><label>问题文字 <input name="q" maxlength="100" value="${esc(filters.q || '')}" placeholder="搜索全部问题"></label><button>筛选全部问题</button><button type="button" data-geo="clear-filters">清除筛选</button></form>`;

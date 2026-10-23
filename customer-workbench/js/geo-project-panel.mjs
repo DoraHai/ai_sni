@@ -289,8 +289,8 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       if (!canNavigate()) return;
       const params = Object.fromEntries(['business_id', 'unit_id', 'q'].map((key) => [key, form.elements[key].value.trim()]));
       const units = active?.slot?.value?.data.options?.units;
-      if (params.business_id && params.unit_id && Array.isArray(units) &&
-          !units.some((u) => String(u.id) === params.unit_id && String(u.business_id) === params.business_id))
+      if (params.business_id && params.unit_id && (!Array.isArray(units) ||
+          !units.some((u) => String(u.id) === params.unit_id && String(u.business_id) === params.business_id)))
         params.unit_id = '';
       history = [];
       active = null;
