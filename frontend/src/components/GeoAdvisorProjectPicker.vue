@@ -30,7 +30,7 @@ watch(() => props.tenantId, async (tenantId) => {
 </script>
 
 <template>
-  <label>
+  <label class="geo-project-picker">
     所属项目
     <select :value="modelValue || ''" @change="emit('update:modelValue', Number($event.target.value) || null)">
       <option value="">请选择已分配给你的项目</option>
@@ -41,3 +41,10 @@ watch(() => props.tenantId, async (tenantId) => {
   <span v-else-if="loading" role="status">正在读取已分配项目…</span>
   <span v-else-if="tenantId && !projects.length" role="status">当前客户没有分配给你的有效 GEO 项目，请让超管在「GEO → 项目管理 → 计划与待办 → 项目顾问」核对分配和项目状态。</span>
 </template>
+
+<style scoped>
+.geo-project-picker { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; color: #475569; font-size: 14px; }
+.geo-project-picker select { box-sizing: border-box; max-width: 100%; min-height: 38px; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #1e293b; font: inherit; }
+.geo-project-picker select:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
+[role=alert] { color: #9f1239; }
+</style>
