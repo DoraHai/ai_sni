@@ -9,6 +9,7 @@ from app.seo_demo_source import (
 )
 from app.models.seo import SeoBacklink, SeoContentAsset, SeoContentPublication
 from app.api.seo_cockpit import scope
+from app.seo_customer_identity import customer_content_conditions
 from app.seo_backlink_sources import candidate_url, index_status
 
 router = APIRouter()
@@ -36,7 +37,7 @@ async def outcomes(tenant_id:PositiveInt, site_id:PositiveInt, ctx=Depends(requi
     links=list(await session.scalars(select(SeoBacklink).where(SeoBacklink.tenant_id==tenant_id,SeoBacklink.site_id==site_id)))
     publications=list(await session.scalars(select(SeoContentPublication).join(SeoContentAsset,SeoContentAsset.id==SeoContentPublication.content_asset_id).where(
         SeoContentPublication.tenant_id==tenant_id,SeoContentAsset.tenant_id==tenant_id,SeoContentAsset.site_id==site_id,
-        SeoContentPublication.page_url.is_not(None)).order_by(SeoContentPublication.id.desc()).limit(200)))
+        SeoContentPublication.page_url.is_not(None), *customer_content_conditions(ctx)).order_by(SeoContentPublication.id.desc()).limit(200)))
     observations=(site.site_settings or {}).get('backlink_referrals') or {}
     items=[]
     for pub in publications:

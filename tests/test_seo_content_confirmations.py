@@ -225,6 +225,39 @@ def test_qa_verification_and_assistant_receipt_reject_hidden_or_missing_parent(e
     session.commit.assert_not_awaited()
 
 
+@pytest.mark.parametrize("customer", [True, False])
+def test_monthly_report_publications_share_customer_visibility(customer):
+    from app.api import seo_monthly_report as report
+    session = AsyncMock()
+    session.get.return_value = None
+    empty = MagicMock()
+    empty.all.return_value = []
+    session.execute.return_value = session.scalars.return_value = empty
+    with (patch.object(report, "scope", new=AsyncMock(return_value=SimpleNamespace(name="站点"))),
+          patch.object(report, "get_settings", return_value=SimpleNamespace()),
+          patch.object(report, "build_report_context", return_value={}),
+          patch.object(report, "render_report_html", return_value="<html></html>"),
+          patch.object(report, "render_report_pdf", new=AsyncMock(return_value=b"%PDF-test"))):
+        response = asyncio.run(report.get_monthly_report(1, 9, "2026-09", session, _visibility_ctx(customer)))
+    values = session.execute.call_args.args[0].compile().params.values()
+    assert (("ready", "published") in [tuple(v) for v in values if isinstance(v, (tuple, list))]) is customer
+    assert response.media_type == "application/pdf"
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("customer", [True, False])
+def test_backlink_outcome_publications_share_customer_visibility(customer):
+    from app.api import seo_backlink_workflow as backlinks
+    session = AsyncMock()
+    session.scalars.return_value = []
+    with patch.object(backlinks, "scope", new=AsyncMock(return_value=SimpleNamespace(site_settings={}))):
+        response = asyncio.run(backlinks.outcomes(1, 9, _visibility_ctx(customer), session))
+    values = session.scalars.call_args.args[0].compile().params.values()
+    assert (("ready", "published") in [tuple(v) for v in values if isinstance(v, (tuple, list))]) is customer
+    assert response["items"] == []
+    session.commit.assert_not_awaited()
+
+
 @pytest.fixture(autouse=True)
 def installed_confirmation_schema(monkeypatch):
     # These isolated permission tests model a fully migrated database.
