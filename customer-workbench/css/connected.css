@@ -133,4 +133,16 @@
 .geo-prose{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;font:inherit;line-height:1.8;padding:16px;background:#f7f9f8;max-width:100%}
 .geo-basis{margin:16px 0;padding:12px;background:#f7f9f8;border-radius:8px;overflow-wrap:anywhere}
 .geo-workspace form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.geo-question-scroll{max-width:100%;overflow-x:auto;border:1px solid #dce5e3;border-radius:8px}
+.geo-question-table{width:100%;min-width:1080px;border-collapse:collapse;table-layout:fixed;font-size:13px}
+.geo-question-table caption{text-align:left;padding:12px;background:#f4f8f7;color:#526963}
+.geo-question-table th,.geo-question-table td{padding:12px 8px;border-bottom:1px solid #dce5e3;text-align:left;vertical-align:top;overflow-wrap:anywhere}
+.geo-question-table thead th{background:#f4f8f7}
+.geo-question-table th:nth-child(3){width:240px}
+.geo-question-table tbody th{font-weight:500}
+.geo-question-table small{display:block;color:#526963;font-size:12px;line-height:1.6}
+.geo-question-table details{margin-top:8px;color:#526963;font-size:12px}
+.geo-question-table .geo-question-open-week{font-size:12px}
+.geo-table-hint{display:none}
+@media(max-width:700px){.geo-table-hint{display:block}.geo-question-table th:nth-child(3){width:210px}}
 @media(max-width:700px){.geo-metrics{grid-template-columns:1fr}.geo-tabs{gap:4px}.geo-tabs button{padding:8px}.geo-workspace{padding:14px}}

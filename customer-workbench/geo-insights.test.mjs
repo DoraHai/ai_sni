@@ -4,7 +4,7 @@ import {createGeoProjectClient} from './js/geo-project-client.mjs';
 import {createGeoProjectPanel} from './js/geo-project-panel.mjs';
 import {geoClientRoute, geoClientQuery} from './js/geo-client-routes.mjs';
 import {geoResource, geoHome, geoBasis, geoWeekly, geoTime} from './js/geo-project-view.mjs';
-import {geoMatrix, geoExcludedReason} from './js/geo-project-insights.mjs';
+import {geoMatrix, geoQuestionTable, geoQuestionFilters, geoExcludedReason} from './js/geo-project-insights.mjs';
 import {geoPeriod, geoOpenWeekProgress, geoQuestionOpenWeek} from './js/geo-project-display.mjs';
 import {geoFixture, question} from './tests/geo-client-fixture.mjs';
 
@@ -15,6 +15,34 @@ const allowed = (resource, query = '') => {
   const r = geoClientRoute(u.pathname);
   return r && geoClientQuery(u, r, context);
 };
+test('flat question rows preserve six canonical columns, observed zero, missing samples and escaped labels', () => {
+  const q = {...question, question: '<img src=x>', business: {name: '<script>bad</script>'},
+    by_engine: [
+      {engine_key: 'qwen', mentioned: 1, total: 2, percentage: 50, status: 'small_sample'},
+      {engine_key: 'hunyuan', mentioned: 0, total: 3, percentage: 0, status: 'observed'},
+      {engine_key: 'wenxin', mentioned: 0, total: 0, percentage: 0, status: 'observed'},
+    ]};
+  const html = geoQuestionTable({items: [q]}, geoTime);
+  assert.equal((html.match(/scope="col"/g) || []).length, 9);
+  assert.equal((html.match(/scope="row"/g) || []).length, 1);
+  for (const value of ['1/2 · 50%', '0/3 · 0%', '未检测', '小样本', 'data-engine="hunyuan"', 'data-resource="questions/3"'])
+    assert(html.includes(value), value);
+  assert(!html.includes('0/0') && !html.includes('<img') && !html.includes('<script>'));
+  assert.match(html, /data-engine="wenxin"><strong>未检测<\/strong>/);
+  const noSamples = geoQuestionTable({items: [{...question, by_engine: []}]}, geoTime);
+  assert.equal((noSamples.match(/<strong>未检测<\/strong>/g) || []).length, 6);
+  assert(!noSamples.includes('0%'));
+  assert.match(geoQuestionTable({items: []}, geoTime), /colspan="9"/);
+});
+test('combined filter keeps all keyword choices available when changing business and caps search at backend limit', () => {
+  const html = geoQuestionFilters({options: {businesses: [], units: [
+    {id: 4, business_id: 2, keyword: '设备'}, {id: 5, business_id: 3, keyword: '服务'},
+  ]}}, {business_id: 2, unit_id: 4, q: '<设备>'});
+  assert.match(html, /value="4"  selected/);
+  assert.match(html, /value="5" hidden/);
+  assert.match(html, /maxlength="100"/);
+  assert(!html.includes('value="<设备>"'));
+});
 test('period dates use Beijing dates and an inclusive last day across month/year and UTC boundaries', () => {
   for (const [start, end, expected] of [
     ['2026-10-12T00:00:00+08:00', '2026-10-19T00:00:00+08:00', '2026-10-12 至 2026-10-18'],

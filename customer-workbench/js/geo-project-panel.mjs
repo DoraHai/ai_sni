@@ -56,7 +56,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       body = body.replace(/<form data-geo-questions>[\s\S]*?<\/form>/,
         () => geoQuestionFilters(active.slot.value.data, active.params));
     }
-    const summary = tab === 'data'
+    const summary = tab === 'data' && active?.resource !== 'questions'
       ? slots.summary?.value ? geoResource('summary', slots.summary.value)
         : `<h2>品牌表现汇总</h2><p>${geoStatus(slots.summary)}</p><button data-geo="refresh-summary">重新读取汇总</button>`
       : '';
@@ -73,7 +73,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       )
       .join(
         '',
-      )}</nav><section class="page-card geo-workspace">${tab === 'home' ? '<button data-geo="refresh">重新读取概览</button>' : ''}${weekForm}${summary}${citations}${actionError ? `<p role="alert">${geoStatus({error: actionError})}</p>` : ''}${history.length ? '<button data-geo="back">返回上一层</button>' : ''}${body}${slot?.value && slot.loading ? '<p role="status">正在读取下一页…</p>' : ''}${slot?.value && slot.error ? `<p role="status">${geoStatus(slot)}</p><button data-geo="retry">重新读取</button>` : ''}</section>`;
+      )}<button data-geo="read" data-resource="questions" ${active?.resource === 'questions' ? 'aria-current="page"' : ''}>全部问题</button></nav><section class="page-card geo-workspace">${tab === 'home' ? '<button data-geo="refresh">重新读取概览</button>' : ''}${weekForm}${summary}${citations}${actionError ? `<p role="alert">${geoStatus({error: actionError})}</p>` : ''}${history.length ? '<button data-geo="back">返回上一层</button>' : ''}${body}${slot?.value && slot.loading ? '<p role="status">正在读取下一页…</p>' : ''}${slot?.value && slot.error ? `<p role="status">${geoStatus(slot)}</p><button data-geo="retry">重新读取</button>` : ''}</section>`;
   }
   const weekly = (resource) =>
     ['overview', 'visibility', 'questions', 'answers', 'summary', 'article-citations'].includes(resource.split('/')[0]);
