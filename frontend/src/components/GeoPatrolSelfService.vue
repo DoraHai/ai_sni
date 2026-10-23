@@ -1,7 +1,8 @@
 <script setup>
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { fetchPatrolSelfService, putPatrolSelfService } from '../api/geoContent'
-import { beijingTime, blockedLabel, createSelfServiceController, PATROL_PLATFORMS, PLATFORM_STATUS, patrolStatus, RUN_STATUS, toggleAllowed } from '../utils/geoAutopatrol'
+import { beijingTime, blockedLabel, createSelfServiceController, manualBlockedReason, PATROL_PLATFORMS, PLATFORM_STATUS, patrolStatus, RUN_STATUS, toggleAllowed } from '../utils/geoAutopatrol'
 import GeoPatrolHistory from './GeoPatrolHistory.vue'
 const props = defineProps({ tenantId: Number, collecting: Boolean })
 const emit = defineEmits(['manual'])
@@ -10,7 +11,19 @@ const historyOpen = ref(false)
 const controller = createSelfServiceController({ state, read: fetchPatrolSelfService, write: putPatrolSelfService })
 const data = computed(() => state.data)
 const platforms = computed(() => PATROL_PLATFORMS.map(([key, label]) => ({ key, label, status: data.value?.platforms?.find(p => p.engine_key === key)?.status })))
-const manualAllowed = computed(() => data.value && !state.loading && !props.collecting && data.value.manual_quota?.used < data.value.manual_quota?.limit)
+const confirming = ref(false)
+const manualReason = computed(() => manualBlockedReason(data.value))
+const manualAllowed = computed(() => !manualReason.value && !state.loading && !state.busy && !props.collecting && !confirming.value)
+async function confirmManual() {
+  if (!manualAllowed.value) return
+  const tenant = props.tenantId
+  confirming.value = true
+  try {
+    await ElMessageBox.confirm('本次会用掉 1 次手动检测次数；失败且无结果会退回次数。', '确认手动检测', { confirmButtonText: '确认检测', cancelButtonText: '取消', type: 'warning' })
+    if (tenant === props.tenantId && !manualReason.value && !state.loading && !state.busy && !props.collecting) emit('manual')
+  } catch { /* 取消不发起检测。 */ }
+  finally { confirming.value = false }
+}
 watch(() => props.tenantId, id => { historyOpen.value = false; controller.setTenant(id) }, { immediate: true, flush: 'sync' })
 watch(() => props.collecting, (now, previous) => { if (previous && !now) controller.load() })
 onBeforeUnmount(controller.dispose)
@@ -21,9 +34,10 @@ onBeforeUnmount(controller.dispose)
     <div class="gd-bd">
       <el-alert v-if="state.error" :title="state.error" type="warning" :closable="false" class="space" />
       <div class="patrol-line">
-        <button class="gd-btn primary" :disabled="!manualAllowed" @click="emit('manual')">{{ collecting ? '检测中…' : '手动检测一次' }}</button>
+        <button class="gd-btn primary" :disabled="!manualAllowed" @click="confirmManual">{{ collecting ? '检测中…' : '手动检测一次' }}</button>
         <b>今日 {{ data?.manual_quota?.used ?? '—' }}/{{ data?.manual_quota?.limit ?? '—' }}</b><span>手动次数由该客户所有顾问共用</span>
       </div>
+      <p v-if="manualReason" role="status">手动检测不可用：{{ manualReason }}</p>
       <template v-if="data">
         <div class="patrol-line toggle-line"><b>每天自动检测一次</b><el-switch :model-value="data.enabled" :disabled="state.busy || state.loading || !toggleAllowed(data)" :loading="state.busy" aria-label="每天自动检测一次" @change="controller.toggle" /><span class="gd-badge" :class="data.enabled ? 'green' : 'amber'">{{ patrolStatus(data) }}</span></div>
         <el-alert v-if="data.admin_locked" type="warning" :closable="false" :title="`管理锁：${data.lock_reason || '管理员已锁定'}（最近变更：${beijingTime(data.last_changed_at)} 北京时间）`" class="space" />

@@ -3,27 +3,10 @@
  * 顶栏与报表页共用同一份状态；localStorage 记忆天数。
  */
 import { computed, reactive, watch } from 'vue'
+import { shanghaiDate, addDaysIso } from '../utils/geoDate'
 
 const STORAGE_KEY = 'geo_observation_days'
 const ALLOWED_DAYS = [7, 14, 30, 90]
-
-function todayIso() {
-  // 前端用本地日；后端再按 Shanghai 对齐。中国用户本地≈上海。
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
-function addDaysIso(iso, delta) {
-  const d = new Date(`${iso}T12:00:00`)
-  d.setDate(d.getDate() + delta)
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
 
 function readStoredDays() {
   try {
@@ -54,7 +37,7 @@ watch(
 )
 
 export function useObservationPeriod() {
-  const end = computed(() => state.customTo || todayIso())
+  const end = computed(() => state.customTo || shanghaiDate())
   const start = computed(() => {
     if (state.customFrom) return state.customFrom
     return addDaysIso(end.value, -(Math.max(1, state.days) - 1))

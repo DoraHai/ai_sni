@@ -12,6 +12,29 @@ from openpyxl.styles import Alignment, Font, PatternFill
 
 from app.geo.content.report_data import citation_rows, local_time, provenance, trend_rows
 
+# Shared by the PDF and Excel projections; match the client-facing labels.
+PROJECT_ENGINE_LABELS = {'doubao': '豆包', 'deepseek': 'DeepSeek', 'qwen': '千问',
+                         'hunyuan': '元宝', 'wenxin': '文心', 'kimi': 'Kimi'}
+PROJECT_PHASE_LABELS = {'todo': '待开始', 'doing': '进行中', 'done': '已完成',
+                        'cancelled': '已取消', 'blocked': '受阻', 'reopened': '重新处理'}
+PROJECT_PRIORITY_LABELS = {'high': '高', 'medium': '中', 'low': '低'}
+PROJECT_RECOMMENDATION_LABELS = {'open': '待处理', 'in_progress': '进行中',
+                                 'done': '已完成', 'cancelled': '已取消'}
+
+
+def report_label(labels, value):
+    return labels.get(value, value or '暂无')
+
+
+def report_beijing_time(value):
+    if not value:
+        return '暂无'
+    try:
+        stamp = value if isinstance(value, datetime) else datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return local_time(stamp).strftime('%Y-%m-%d %H:%M:%S') + ' 北京时间'
+    except (TypeError, ValueError, AttributeError):
+        return '暂无'
+
 SECTION_DEFAULTS = [
     {"key": "overview", "title": "概览指标", "visible": True},
     {"key": "trends", "title": "各 AI 引擎提及率与趋势", "visible": True},
@@ -51,24 +74,24 @@ def project_report_sections(data):
          m['position_distribution']['first'], m['position_distribution']['alternative'],
          m['position_distribution']['mentioned'], m['annotated_mention_count']]
         for label, m in [('总体', summary['metrics'])] + [(r['label'], r['metrics']) for r in summary['by_engine']]]))
-    sections.append(('问题矩阵', ['问题ID', '业务', '关键词', '问题', '平台', '提及X', '合格Y', '百分比', '状态', '样本时间'], [
+    sections.append(('问题矩阵', ['问题ID', '业务', '关键词', '问题', '平台', '提及X', '合格Y', '百分比', '状态', '样本时间（北京时间）'], [
         [q['id'], q['business']['name'], q['unit']['display_name'], q['question'], c['label'],
          c['mentioned'], c['total'], c['percentage'], {'small_sample': '小样本', 'observed': '已检测',
          'not_tested': '未检测', 'not_configured': '未配置', 'failed': '失败',
-         'tested_excluded': '已检测，未计入'}.get(c['status'], '暂无'), c['last_sample_at']]
+         'tested_excluded': '已检测，未计入'}.get(c['status'], '暂无'), report_beijing_time(c['last_sample_at'])]
         for q in data['questions'] for c in q['by_engine']]))
     coverage = data['citations']['coverage']
     sections.append(('文章覆盖', ['被引H', '已发布U', '百分比', '状态'], [[coverage['cited_articles'],
         coverage['published_articles'], coverage['percentage'], PROJECT_STATUS[coverage['status']]]]))
-    sections.append(('文章引用', ['发布ID', '任务ID', '文章ID', '标题', 'URL', '发布时间', '引用x', '合格y', '百分比', '状态'], [
-        [a['id'], a['task_id'], a['article_id'], a['title'], a['url'], a['published_at'],
+    sections.append(('文章引用', ['发布ID', '任务ID', '文章ID', '标题', 'URL', '发布时间（北京时间）', '引用x', '合格y', '百分比', '状态'], [
+        [a['id'], a['task_id'], a['article_id'], a['title'], a['url'], report_beijing_time(a['published_at']),
          a['mentioned'], a['total'], a['percentage'], PROJECT_STATUS[a['status']]] for a in data['citations']['items']]))
-    sections.append(('引用依据', ['发布ID', '回答ID', '问题ID', '平台key', '回答时间', '证据路径'], [
-        [a['id'], e['answer_id'], e['question_id'], e['engine_key'], e['captured_at'], e['answer_path']]
+    sections.append(('引用依据', ['发布ID', '回答ID', '问题ID', '平台', '回答时间（北京时间）', '证据路径'], [
+        [a['id'], e['answer_id'], e['question_id'], report_label(PROJECT_ENGINE_LABELS, e['engine_key']), report_beijing_time(e['captured_at']), e['answer_path']]
         for a in data['citations']['items'] for e in a['evidence']]))
-    sections.append(('站内建议', ['任务ID', '标题', '阶段', '下一步', '检查时间', '建议', '说明', '优先级', '状态'], [
-        [r['id'], r['title'], r['phase'], r['next_action'], r['checked_at'], item.get('title'),
-         item.get('description'), item.get('priority'), item.get('status')]
+    sections.append(('站内建议', ['任务ID', '标题', '阶段', '下一步', '检查时间（北京时间）', '建议', '说明', '优先级', '状态'], [
+        [r['id'], r['title'], report_label(PROJECT_PHASE_LABELS, r['phase']), r['next_action'], report_beijing_time(r['checked_at']), item.get('title'),
+         item.get('description'), report_label(PROJECT_PRIORITY_LABELS, item.get('priority')), report_label(PROJECT_RECOMMENDATION_LABELS, item.get('status'))]
         for r in data['recommendations'] for item in r['recommendations'] or [{}]]))
     sections.append(('口径与缺数', ['说明'], [[line] for line in [
         '项目：' + str(data['project']['id']) + ' ' + data['project']['name'],
@@ -77,7 +100,7 @@ def project_report_sections(data):
         '正式汇总至少8条回答、3题、2引擎；问题格少于3条为小样本；暂无表示缺数，不是0。',
         '提及率=M/N×100；正向率=正向/提及且情感已标注回答×100；位置只对提及且有效位置求均值。',
         '结构扫描：无法确认项目归属，未提供。',
-        '证据最新时间：' + str(data['basis']['last_data_at'] or '暂无'),
+        '证据最新时间：' + report_beijing_time(data['basis']['last_data_at']),
         *summary['footnotes'],
         *[f"排除原因 {r['code']}：{r['count']}" for r in data['basis']['exclusion_counts']],
     ]]))

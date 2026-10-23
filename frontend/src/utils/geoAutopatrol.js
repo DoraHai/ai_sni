@@ -20,8 +20,18 @@ const BLOCKED = {
   geo_unavailable: 'GEO 服务不可用', demo_tenant: '演示客户不可开启',
   daily_budget_exhausted: '平台今日总额度已满', in_flight: '已有检测正在排队或运行',
   reserved_retest: '精确复测预约占用', write_disabled: '顾问操作暂未开放',
+  cell_limit: '检测范围超过单轮上限',
 }
 export function blockedLabel(reason) { return reason ? BLOCKED[reason] || '检测暂时受阻，请刷新状态' : '' }
+export function manualBlockedReason(data) {
+  if (!data) return '检测状态尚未就绪'
+  if (data.blocked_reason) return blockedLabel(data.blocked_reason)
+  if (data.in_flight) return BLOCKED.in_flight
+  if (!data.coverage?.prompt_count) return BLOCKED.no_prompts
+  if (data.can_enable !== true) return '当前客户暂不可检测，请刷新状态'
+  if (!(data.manual_quota?.used < data.manual_quota?.limit)) return '今日手动检测次数已用完或额度尚未就绪'
+  return ''
+}
 export function patrolError(error) {
   if (error?.status === 404) return '功能未就绪'
   if (error?.status === 409) return '状态已变更或当前操作受阻，已刷新，请核对后重试'

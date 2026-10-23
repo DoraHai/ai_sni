@@ -10,11 +10,11 @@ import {
   saveGeoReportTemplate, downloadGeoReport,
 } from '../../api/geoContent'
 import { reportParams, rateLabel, SOURCE_LABELS, safeFilename } from '../../utils/geoReport'
+import { shanghaiDate } from '../../utils/geoDate'
 
 const { tenantId } = useGeoTenant()
-const today = new Date()
-const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-const period = ref([ymd(new Date(today.getFullYear(), today.getMonth(), 1)), ymd(today)])
+const today = shanghaiDate()
+const period = ref([`${today.slice(0, 7)}-01`, today])
 const projectId = ref('')
 const businessId = ref('')
 const projects = ref([])
@@ -129,13 +129,13 @@ onMounted(async () => { await loadChoices(); await loadData() })
 </script>
 
 <template>
-  <GeoWorkbenchPage title="GEO 报告" sub="已存回答样本与发布链接；无样本显示无数据" :loading="busy">
+  <GeoWorkbenchPage title="GEO 报告" sub="已存回答样本与发布链接；无样本显示无数据；报告查询期以本页日期范围为准（北京时间）" :loading="busy" :show-period="false">
     <div class="geo-report">
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
       <div class="report-controls">
         <el-select v-model="projectId" placeholder="全部项目" clearable style="width:180px"><el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" /></el-select>
         <el-select v-model="businessId" placeholder="全部业务" clearable style="width:180px"><el-option v-for="b in scopedBusinesses" :key="b.id" :label="b.name" :value="b.id" /></el-select>
-        <el-date-picker v-model="period" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" />
+        <el-date-picker v-model="period" class="report-period" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期（北京）" end-placeholder="结束日期（北京）" />
         <el-button @click="download('xlsx')">导出 Excel</el-button>
         <el-button type="primary" @click="download('pdf')">生成 GEO 报告 (PDF)</el-button>
         <el-button @click="importOpen = true">批量上传发布链接</el-button>
@@ -164,4 +164,13 @@ onMounted(async () => { await loadChoices(); await loadData() })
 
 <style scoped>
 .geo-report { display:grid; gap:20px; }.report-controls { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:14px; }.report-card { padding:20px; background:#fff; border:1px solid #dce6eb; border-radius:12px; }.report-card h2 { margin:0 0 12px; font-size:18px; }.section-row { display:flex; align-items:center; gap:8px; margin:8px 0; }.section-row .el-input { max-width:350px; }
+.geo-report, .geo-report > *, .report-card { min-width:0; }
+.report-controls > * { max-width:100%; box-sizing:border-box; }
+.report-controls :deep(.el-button) { margin-left:0; }
+.report-card :deep(.el-table) { width:100%; }
+@media(max-width:640px) {
+  .report-card { padding:12px; }
+  .report-controls :deep(.report-period) { flex:0 0 100%; width:100%; min-width:0; }
+  .section-row { flex-wrap:wrap; }
+}
 </style>
