@@ -873,6 +873,19 @@ async def publication_draft(placement_id: int, tenant_id: PositiveInt, site_id: 
     return {'id': row.id, 'body': row.body, 'content_version': row.content_version}
 
 
+async def require_visible_placement_content(session, ctx, row):
+    if not customer_content_view(ctx):
+        return
+    content = await session.scalar(select(SeoContentAsset).join(
+        SeoQaAnswer, SeoQaAnswer.content_id == SeoContentAsset.id).where(
+        SeoQaAnswer.id == row.answer_id, SeoQaAnswer.tenant_id == row.tenant_id,
+        SeoQaAnswer.site_id == row.site_id, SeoContentAsset.tenant_id == row.tenant_id,
+        SeoContentAsset.site_id == row.site_id))
+    if content is None:
+        raise HTTPException(404, '当前网站下未找到此记录')
+    require_customer_content_visible(ctx, content)
+
+
 async def publication_context(session, placement_id, tenant_id, site_id, *, lock=False, ctx=None):
     """Load current reviewed content before its placement, preserving one lock order."""
     content_id = await session.scalar(select(SeoContentAsset.id)
@@ -897,6 +910,7 @@ async def publication_context(session, placement_id, tenant_id, site_id, *, lock
 async def verify(placement_id: int, req: Scoped, ctx=Auth, session=Db):
     site = await access(session, ctx, req.tenant_id, req.site_id, True)
     row = await record(session, SeoQaPlacement, placement_id, req.tenant_id, req.site_id, True)
+    await require_visible_placement_content(session, ctx, row)
     if not row.answer_url:
         raise HTTPException(409, '请先回填回答网址')
     last = row.observations[-1] if row.observations else None
@@ -1061,6 +1075,7 @@ async def assistant_task(placement_id: int, tenant_id: PositiveInt, site_id: Pos
 async def assistant_receipt(placement_id: int, req: AssistantReceiptInput, ctx=Auth, session=Db):
     await access(session, ctx, req.tenant_id, req.site_id, True)
     row = await record(session, SeoQaPlacement, placement_id, req.tenant_id, req.site_id)
+    await require_visible_placement_content(session, ctx, row)
     if (req.placement_id != row.id or req.platform != row.platform or
             req.question_url != row.question_url or req.content_version != row.content_version):
         raise HTTPException(409, '回执与分发记录不匹配，请核对问题和稿件版本')

@@ -208,6 +208,23 @@ def test_qa_receipt_and_metrics_reject_hidden_parent_before_placement_read(entry
     session.commit.assert_not_awaited()
 
 
+@pytest.mark.parametrize("entry", ["verify", "assistant_receipt"])
+@pytest.mark.parametrize("state", ["drafting", "review", None])
+def test_qa_verification_and_assistant_receipt_reject_hidden_or_missing_parent(entry, state):
+    from app.api import seo_qa as qa
+    session = AsyncMock()
+    session.scalar.return_value = _content(status=state) if state else None
+    placement = SimpleNamespace(answer_id=17, tenant_id=1, site_id=9)
+    with (patch.object(qa, "access", new=AsyncMock()),
+          patch.object(qa, "record", new=AsyncMock(return_value=placement)),
+          patch("app.seo_backlinks.fetch_backlink_page", new=AsyncMock()) as fetch):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(getattr(qa, entry)(12, SimpleNamespace(tenant_id=1, site_id=9), _visibility_ctx(), session))
+        assert exc.value.status_code == 404
+    fetch.assert_not_awaited()
+    session.commit.assert_not_awaited()
+
+
 @pytest.fixture(autouse=True)
 def installed_confirmation_schema(monkeypatch):
     # These isolated permission tests model a fully migrated database.
