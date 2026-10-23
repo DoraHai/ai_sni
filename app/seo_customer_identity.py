@@ -10,6 +10,27 @@ from app.models.user import User
 from app.security.auth import AuthContext
 
 
+CUSTOMER_CONTENT_STATUSES = ("ready", "published")
+
+
+def customer_content_view(ctx) -> bool:
+    """Use the authenticated role, without depending on optional workflow tables."""
+    return isinstance(ctx, AuthContext) and ctx.role_name == "品牌方客户" and not (
+        ctx.is_advisor or ctx.is_superadmin
+    )
+
+
+def customer_content_conditions(ctx):
+    from app.models.seo import SeoContentAsset
+    return [SeoContentAsset.status.in_(CUSTOMER_CONTENT_STATUSES)] if customer_content_view(ctx) else []
+
+
+def require_customer_content_visible(ctx, content) -> None:
+    from fastapi import HTTPException
+    if customer_content_view(ctx) and content.status not in CUSTOMER_CONTENT_STATUSES:
+        raise HTTPException(404, "SEO 内容资产不存在")
+
+
 def is_customer_account(ctx, user, assignments, tenant_id: int, *, role=None,
                         geo_assignment=False) -> bool:
     """A tenant-bound viewer with no internal editing, administration or advisor history."""

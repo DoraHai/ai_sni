@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.seo_customer_identity import customer_content_conditions, customer_content_view, require_customer_content_visible
+
 import asyncio
 import hashlib
 from datetime import date, datetime, time, timedelta, timezone
@@ -76,7 +78,7 @@ async def export_publication_list(tenant_id: PositiveInt, site_id: PositiveInt, 
     pairs = (await session.execute(select(SeoContentPublication, SeoContentAsset).join(
         SeoContentAsset, SeoContentPublication.content_asset_id == SeoContentAsset.id).where(
         SeoContentPublication.tenant_id == tenant_id, SeoContentAsset.tenant_id == tenant_id,
-        SeoContentAsset.site_id == site_id, SeoContentPublication.status == "published",
+        SeoContentAsset.site_id == site_id, *customer_content_conditions(ctx), SeoContentPublication.status == "published",
         SeoContentPublication.published_at >= start, SeoContentPublication.published_at < end,
     ).order_by(SeoContentPublication.published_at, SeoContentPublication.id))).all()
     publication_ids = [publication.id for publication, _ in pairs]
@@ -487,6 +489,19 @@ async def upload_page_capture(tenant_id: PositiveInt = Form(...), site_id: Posit
     return _payload(row)
 
 
+async def _require_visible_capture_content(session, ctx, capture):
+    if customer_content_view(ctx) and capture.relation_type == "publication":
+        content = await session.scalar(select(SeoContentAsset).join(
+            SeoContentPublication, SeoContentPublication.content_asset_id == SeoContentAsset.id
+        ).where(SeoContentPublication.id == capture.relation_id,
+                SeoContentPublication.tenant_id == capture.tenant_id,
+                SeoContentAsset.tenant_id == capture.tenant_id,
+                SeoContentAsset.site_id == capture.site_id))
+        if content is None:
+            raise _error(404, "capture_not_found", "?????")
+        require_customer_content_visible(ctx, content)
+
+
 @router.get("/site/page-captures/{capture_id}")
 async def get_page_capture(capture_id: PositiveInt, tenant_id: PositiveInt,
                            request: Request,
@@ -494,8 +509,10 @@ async def get_page_capture(capture_id: PositiveInt, tenant_id: PositiveInt,
                            ctx: AuthContext = Depends(require_scoped_auth)) -> dict:
     ctx.ensure_tenant(tenant_id)
     _require_capture_view(ctx)
-    return _payload(await _capture(session, tenant_id, capture_id,
-                                   allow_stale_update=_primary_source(request)))
+    row = await _capture(session, tenant_id, capture_id,
+                         allow_stale_update=_primary_source(request))
+    await _require_visible_capture_content(session, ctx, row)
+    return _payload(row)
 
 
 @router.get("/site/page-captures/{capture_id}/image")
@@ -507,6 +524,7 @@ async def get_page_capture_image(capture_id: PositiveInt, tenant_id: PositiveInt
     _require_capture_view(ctx)
     row = await _capture(session, tenant_id, capture_id,
                          allow_stale_update=_primary_source(request))
+    await _require_visible_capture_content(session, ctx, row)
     if row.status != "succeeded" or not row.storage_key:
         raise _error(404, "image_not_ready", "截图图片尚不可用")
     try:
@@ -544,6 +562,15 @@ async def list_page_captures(tenant_id: PositiveInt, site_id: PositiveInt,
         await _expire_stale(session, tenant_id, site_id)
         await session.commit()
     conditions = [SeoPageCapture.tenant_id == tenant_id, SeoPageCapture.site_id == site_id]
+    if customer_content_view(ctx):
+        visible_publications = select(SeoContentPublication.id).join(
+            SeoContentAsset, SeoContentAsset.id == SeoContentPublication.content_asset_id
+        ).where(SeoContentPublication.tenant_id == tenant_id,
+                SeoContentAsset.tenant_id == tenant_id, SeoContentAsset.site_id == site_id,
+                *customer_content_conditions(ctx))
+        from sqlalchemy import or_
+        conditions.append(or_(SeoPageCapture.relation_type != "publication",
+                              SeoPageCapture.relation_id.in_(visible_publications)))
     if relation_type is not None:
         conditions.append(SeoPageCapture.relation_type == relation_type)
     if relation_id is not None:

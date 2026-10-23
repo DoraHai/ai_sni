@@ -4,6 +4,7 @@ import hmac
 import json
 import secrets
 import time
+from app.seo_customer_identity import customer_content_conditions
 from datetime import datetime
 from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -160,7 +161,7 @@ async def publications(tenant_id:PositiveInt,site_id:PositiveInt,ctx=Depends(req
     await scope(session,ctx,tenant_id,site_id,'seo.content')
     rows=await session.scalars(select(SeoContentPublication).join(SeoContentAsset,SeoContentAsset.id==SeoContentPublication.content_asset_id).where(
         SeoContentPublication.tenant_id==tenant_id,SeoContentAsset.tenant_id==tenant_id,SeoContentAsset.site_id==site_id,
-        SeoContentPublication.platform_code.in_(video.PLATFORMS)).order_by(SeoContentPublication.id.desc()).limit(100))
+        SeoContentPublication.platform_code.in_(video.PLATFORMS), *customer_content_conditions(ctx)).order_by(SeoContentPublication.id.desc()).limit(100))
     return [publication_info(row) for row in rows]
 
 @router.post('/upload')
