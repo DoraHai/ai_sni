@@ -4,6 +4,7 @@ import {initUi10,handleUi10} from './ui10-fixture.mjs';
 import {cycleFields} from '../js/seo-cycle-config.mjs';
 import {handleUi13} from './ui13-fixture.mjs';
 import {handleUi15} from './ui15-fixture.mjs';
+import {publicationPage} from './publication-groups-fixture.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 export async function startFixtureServer(){
   const state={calls:[],forceError:null,holdNext:null,held:[],planDenied:false,contentTotals:new Map(),modules:['seo'],executions:executionFixture(),executionDenied:false,keywordLevel:'edit',
@@ -40,6 +41,10 @@ export async function startFixtureServer(){
       if(url.pathname==='/api/v1/auth/tenants'){send(200,{module:'seo',tenants:(advisor?[1,2]:[1]).map(id=>({id,name:`契约客户${id}`}))});return;}
       const tenant=Number(url.searchParams.get('tenant_id')??body?.tenant_id),site=tenant===1?9:19;
       if(![1,2].includes(tenant)||(!advisor&&tenant!==1)){send(403,{detail:'Fixture tenant denied'});return;}
+      if(url.pathname==='/api/v1/seo/workbench/publication-groups'){
+        const params=Object.fromEntries(url.searchParams);if(params.article_id)params.article_id=Number(params.article_id);
+        send(200,publicationPage('seo',params,{tenantId:tenant,siteId:site}));return;
+      }
       if(url.pathname==='/api/v1/seo/workbench/assistant/chat'&&req.method==='POST'){
         if(body.site_id!==site){send(404,{detail:{code:'assistant_site_not_found'}});return;}
         state.aiResults??=new Map();const key=String(userId)+':'+body.request_id;

@@ -1,8 +1,10 @@
+import {createPublicationGroupsPanel} from './publication-groups-panel.mjs';
 import {createGeoProjectClient} from './geo-project-client.mjs';
 import {geoTabs, geoHome, geoResource, geoExecutions, geoStatus} from './geo-project-view.mjs';
 import {escapeText as esc} from './customer-display.mjs';
 import {geoQuestionFilters} from './geo-project-insights.mjs';
 export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate = () => true}) {
+  const publicationGroups=createPublicationGroupsPanel({module:'geo',host});
   const client = createGeoProjectClient({transport: host.transport, getContext: host.getContext});
   let node = null,
     epoch = 0,
@@ -56,6 +58,10 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       body = body.replace(/<form data-geo-questions>[\s\S]*?<\/form>/,
         () => geoQuestionFilters(active.slot.value.data, active.params));
     }
+    const publicationTask=active?.resource==='deliveries'?active.params.task_id:null;
+    const contentTask=active?.resource?.match(/^content\/([1-9]\d*)(?:\/|$)/)?.[1];
+    const showPublications=active?.resource==='deliveries'||!!contentTask;
+    if(showPublications)body='<div data-publication-panel></div>'+body;
     const summary = tab === 'data'
       ? slots.summary?.value ? geoResource('summary', slots.summary.value)
         : `<h2>品牌表现汇总</h2><p>${geoStatus(slots.summary)}</p><button data-geo="refresh-summary">重新读取汇总</button>`
@@ -74,6 +80,8 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       .join(
         '',
       )}</nav><section class="page-card geo-workspace">${tab === 'home' ? '<button data-geo="refresh">重新读取概览</button>' : ''}${weekForm}${summary}${citations}${actionError ? `<p role="alert">${geoStatus({error: actionError})}</p>` : ''}${history.length ? '<button data-geo="back">返回上一层</button>' : ''}${body}${slot?.value && slot.loading ? '<p role="status">正在读取下一页…</p>' : ''}${slot?.value && slot.error ? `<p role="status">${geoStatus(slot)}</p><button data-geo="retry">重新读取</button>` : ''}</section>`;
+    const publicationNode=showPublications?node.querySelector?.('[data-publication-panel]'):null;
+    if(publicationNode)publicationGroups.renderInto(publicationNode,contentTask?Number(contentTask):publicationTask??null);
   }
   const weekly = (resource) =>
     ['overview', 'visibility', 'questions', 'answers', 'summary', 'article-citations'].includes(resource.split('/')[0]);
@@ -118,6 +126,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
     return slot;
   }
   async function refresh() {
+    publicationGroups.reset();
     const stamp = ++epoch;
     client.invalidate();
     slots = {};
@@ -141,6 +150,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       await selectTab(tab);
   }
   function reset() {
+    publicationGroups.reset();
     epoch++;
     client.invalidate();
     slots = {};
@@ -154,6 +164,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
     paint();
   }
   async function open(resource, params = {}, keepTab = false) {
+    publicationGroups.reset();
     if (active)
       history.push({tab, resource: active.resource, params: active.params, slot: active.slot});
     const next = resource.startsWith('content')
@@ -161,16 +172,17 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       : ['deliveries', 'article-citations'].includes(resource)
         ? 'deliveries'
         : resource === 'recommendations' ? 'onsite' : 'data';
+    const target = {resource, params: paramsFor(resource, params), slot: null};
+    active = target;
     if (!keepTab && tab !== next) {
       tab = next;
       onNavigate(tab);
     }
-    const target = {resource, params: paramsFor(resource, params), slot: null};
-    active = target;
     paint();
     await readSlot(resource, target.params, target);
   }
   async function selectTab(next) {
+    publicationGroups.reset();
     if (!geoTabs.some(([key]) => key === next)) return;
     tab = next;
     active = null;
@@ -245,6 +257,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       await open(el.dataset.resource, params, tab === 'work');
     }
     if (action === 'back') {
+      publicationGroups.reset();
       active = history.pop() || null;
       if (active?.tab && tab !== active.tab) {
         tab = active.tab;
@@ -323,6 +336,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       paint();
     },
     dispose() {
+      publicationGroups.dispose();
       disposed = true;
       reset();
       node = null;

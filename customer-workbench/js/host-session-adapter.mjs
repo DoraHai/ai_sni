@@ -1,6 +1,8 @@
 // UI-05 same-origin host boundary. Reuses an injected ordinary session; never reads/stores credentials.
+import {publicationGroupQuery} from './publication-groups-client.mjs';
 const positive=n=>Number.isSafeInteger(n)&&n>0;
 const routes=[
+  ['GET',/^\/api\/v1\/seo\/workbench\/publication-groups$/,['tenant_id','site_id','bucket','article_id','limit','cursor'],'publication-groups'],
   ['GET',/^\/api\/v1\/seo\/workbench\/onsite-tasks$/,['tenant_id','site_id','before_id'],'site'],
   ['GET',/^\/api\/v1\/seo\/workbench\/onsite-tasks\/[1-9]\d*\/ai-requests\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/,['tenant_id','site_id'],'site'],
   ['POST',/^\/api\/v1\/seo\/workbench\/onsite-tasks$/,[],'site',['tenant_id','site_id','request_id','work_type','month','keyword_ids','page_ids','owner_name']],
@@ -86,6 +88,11 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
     if(route[2].includes('site_id')&&url.searchParams.get('site_id')!==String(s.siteId))throw error('SCOPE_MISMATCH');
     if(url.pathname==='/api/v1/auth/tenants'&&url.searchParams.get('module')!=='seo')throw error('QUERY_DENIED');
     if(!preflight&&!authorized)throw error('NOT_CONNECTED');
+    if(route[3]==='publication-groups'){
+      const params=Object.fromEntries([...url.searchParams].filter(([k])=>!['tenant_id','site_id'].includes(k)));
+      if(!publicationGroupQuery(params))throw error('QUERY_DENIED');
+      if(!['seo.site','seo.content'].every(k=>['view','edit'].includes(authorized.user.permissions[k])))throw error('PERMISSION_DENIED',403);
+    }
     if(!preflight&&route[3]==='site'&&!['view','edit'].includes(authorized.user.permissions['seo.site']))throw error('PERMISSION_DENIED',403);
     if(!preflight&&route[3]==='keywords'&&!['view','edit'].includes(authorized.user.permissions['seo.keywords']))throw error('PERMISSION_DENIED',403);
     if(!preflight&&route[3]==='keywords'&&method==='DELETE'&&authorized.user.permissions['seo.keywords']!=='edit')throw error('PERMISSION_DENIED',403);

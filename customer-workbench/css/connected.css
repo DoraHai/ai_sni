@@ -134,3 +134,5 @@
 .geo-basis{margin:16px 0;padding:12px;background:#f7f9f8;border-radius:8px;overflow-wrap:anywhere}
 .geo-workspace form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 @media(max-width:700px){.geo-metrics{grid-template-columns:1fr}.geo-tabs{gap:4px}.geo-tabs button{padding:8px}.geo-workspace{padding:14px}}
+
+.publication-groups{min-width:0;margin:16px 0;padding:18px;border:1px solid #cbd5e1;border-radius:12px;background:#fff}.publication-groups h2{margin-top:0}.publication-counts{padding:12px 0;font-weight:600;line-height:1.8}.publication-group,.publication-source,.publication-unlinked{margin:12px 0;padding:12px;border:1px solid #e2e8f0;border-radius:8px}.publication-group>button{max-width:100%;white-space:normal;text-align:left}.publication-url,.publication-source small{overflow-wrap:anywhere;word-break:break-word}.publication-groups select{max-width:100%}.publication-groups [role=alert]{color:#9a3412;background:#fff7ed;padding:12px}@media(max-width:600px){.publication-groups{padding:10px}.publication-group,.publication-source{padding:8px}.publication-groups button{max-width:100%;white-space:normal}}

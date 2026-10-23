@@ -1,7 +1,9 @@
 // CONTRACT v1: exact project GET routes, with no tenant-only fallback.
+import {publicationGroupQuery} from './publication-groups-client.mjs';
 const weekly = ['week_end'],
   page = ['limit', 'cursor'];
 const routes = [
+  [/^publication-groups$/, [...page, 'bucket', 'article_id']],
   [/^overview$/, weekly],
   [/^visibility$/, weekly],
   [/^summary$/, weekly],
@@ -34,6 +36,7 @@ export function geoClientRoute(pathname) {
   return null;
 }
 export function geoClientQuery(url, route, context) {
+  if(url.pathname.endsWith('/client/publication-groups') && !publicationGroupQuery(Object.fromEntries([...url.searchParams].filter(([k])=>k!=='tenant_id')))) return false;
   if (
     route.projectId !== context.projectId ||
     url.searchParams.get('tenant_id') !== String(context.tenantId)

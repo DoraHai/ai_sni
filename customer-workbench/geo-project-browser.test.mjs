@@ -7,6 +7,7 @@ import path from 'node:path';
 import {startFixtureServer} from './tests/fixture-server.mjs';
 import {geoFixture, question, page as listPage, envelope} from './tests/geo-client-fixture.mjs';
 import {assertNoPatrolControls} from './tests/geo-readonly-assertions.mjs';
+import {publicationPage} from './tests/publication-groups-fixture.mjs';
 const edge =
   process.env.EDGE_BINARY || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 const origin = 'https://geo-client.test';
@@ -87,6 +88,10 @@ test(
             const resource = url.pathname.endsWith('/executions')
               ? 'executions'
               : url.pathname.split('/client/')[1];
+            if(resource==='publication-groups'){
+              const params=Object.fromEntries(url.searchParams);if(params.article_id)params.article_id=Number(params.article_id);
+              return send(publicationPage('geo',params));
+            }
             if (scenario === 'read-unavailable' && resource !== 'executions')
               return send(
                 {

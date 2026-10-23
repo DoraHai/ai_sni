@@ -8,6 +8,7 @@ import {startFixtureServer} from './tests/fixture-server.mjs';
 import {geoFixture, question, openWeekProgress, envelope, page as listPage} from './tests/geo-client-fixture.mjs';
 import {geoEngines} from './js/geo-project-insights.mjs';
 import {assertNoPatrolControls} from './tests/geo-readonly-assertions.mjs';
+import {publicationPage} from './tests/publication-groups-fixture.mjs';
 
 test('built insights: full server filters, six engines, citations, suggestions, binary downloads and permission cleanup', {timeout: 90000}, async () => {
   const fixture = await startFixtureServer();
@@ -34,6 +35,10 @@ test('built insights: full server filters, six engines, citations, suggestions, 
       if (u.pathname.endsWith('/search-visibility')) return send({state: 'ready', latest: null, weeks: []});
       if (u.pathname.includes('/client/') || u.pathname.endsWith('/executions')) {
         const r = u.pathname.endsWith('/executions') ? 'executions' : u.pathname.split('/client/')[1];
+        if(r==='publication-groups'){
+          const params=Object.fromEntries(u.searchParams);if(params.article_id)params.article_id=Number(params.article_id);
+          return send(publicationPage('geo',params));
+        }
         if (denied) return send({}, 403);
         if (unavailable && ['summary', 'questions', 'article-citations'].includes(r)) return send({}, 404);
         if (r.startsWith('reports/')) return req.respond({status: 200,

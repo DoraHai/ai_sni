@@ -59,6 +59,10 @@ jobs:
         env:
           EDGE_BINARY: /usr/bin/google-chrome
         run: npm --prefix customer-workbench run test:platform-console
+      - name: Verify read-only SEO and GEO publication groups with synthetic scopes
+        env:
+          EDGE_BINARY: /usr/bin/google-chrome
+        run: npm --prefix customer-workbench run test:publication-groups
       - name: Verify scoped keyword deletion in a browser
         env:
           EDGE_BINARY: /usr/bin/google-chrome
