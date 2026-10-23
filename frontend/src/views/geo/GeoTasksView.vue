@@ -120,6 +120,7 @@ async function load() {
     error.value = e.message || '加载失败'
     items.value = []
     total.value = 0
+    workbenchCounts.value = { all: 0, draft: 0, polish: 0, needs_fix: 0, ready: 0, published: 0, cancelled: 0 }
   } finally {
     if (generation === loadGeneration) loading.value = false
   }
@@ -413,7 +414,7 @@ onMounted(load)
 .status-summary-item.is-violet b { color:var(--violet); }.status-summary-item.is-amber b { color:#b7791f; }.status-summary-item.is-green b { color:#26866b; }
 .status-note { color:var(--muted); font-size:12px; }
 .principle-line { display:flex; align-items:center; flex-wrap:wrap; gap:9px; padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:#fbfbfd; color:#697181; font-size:12px; margin-bottom:22px; }
-.principle-label { color:var(--ink); font-weight:700; margin-right:4px; }.principle-line i { color:#b8bdc8; font-style:normal; }.text-action { margin-left:auto; border:0; background:none; color:var(--violet); font-size:12px; font-weight:650; cursor:pointer; }
+.principle-label { color:var(--ink); font-weight:700; margin-right:4px; }.principle-line i { color:#b8bdc8; font-style:normal; }
 .eyebrow { display:block; color:#a1a7b3; font-size:10px; font-weight:800; letter-spacing:.14em; margin-bottom:3px; }.workbench-bar h3 { margin:0; color:var(--ink); font-size:18px; }
 .workbench-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .workbench-bar > div:first-child { margin-right:8px; }
