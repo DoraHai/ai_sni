@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { reactive } from 'vue'
-import ElementPlus, { ElSelect, ElDialog } from 'element-plus'
+import ElementPlus, { ElSelect, ElDialog, ElMessageBox } from 'element-plus'
 import Accounts from '../src/views/settings/AccountsRolesView.vue'
 import { advisorTenantPatch, isAdvisorRole } from '../src/views/settings/advisorTenants.mjs'
 import { createUser, updateUser, fetchUsers } from '../src/api/auth'
@@ -28,7 +28,9 @@ const click = async text => {
 }
 const select = async (index, value) => { wrapper.findAllComponents(ElSelect)[index].vm.$emit('update:modelValue', value); await flushPromises() }
 beforeEach(async () => {
+  vi.restoreAllMocks()
   vi.clearAllMocks()
+  vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm')
   routeState.current = reactive({ path: '/platform/accounts' })
   wrapper = mount(Accounts, { attachTo: document.body, global: { plugins: [ElementPlus] } })
   await flushPromises()
@@ -174,4 +176,17 @@ it('discards a conflict reload after the account page unmounts', async () => {
   finishReload({ users: fixtures.users, tenant_options: fixtures.tenants })
   await flushPromises()
   expect(document.body.textContent).not.toContain('已重新加载，请核对后再保存')
+})
+
+it('lists added and removed clients and cancels without updating grants', async () => {
+  await click('编辑')
+  expect(document.body.textContent).toContain('历史记录保留（#803）')
+  await select(1, [2, 3])
+  ElMessageBox.confirm.mockRejectedValueOnce('cancel')
+  await click('保存')
+  expect(ElMessageBox.confirm).toHaveBeenCalledWith(expect.stringContaining('新增客户：客户丙；移除客户：客户甲'), '确认顾问客户绑定', expect.any(Object))
+  expect(updateUser).not.toHaveBeenCalled()
+  expect(wrapper.findAllComponents(ElDialog)[0].props('modelValue')).toBe(true)
+  await click('保存')
+  expect(updateUser).toHaveBeenCalledWith(9, expect.objectContaining({tenant_ids:[2,3], default_tenant_id:2}))
 })

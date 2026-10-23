@@ -28,7 +28,7 @@ test('server identity is checked before fetching the global snapshot',async()=>{
   await assert.rejects(client.initialize(),{code:'CONSOLE_FORBIDDEN'});
   assert.deepEqual(paths,['/api/v1/auth/me']);
 });
-test('reads only the two global preflight routes and authenticates without keys',async()=>{
+test('reads only the fixed global snapshot and account catalog routes and authenticates without keys',async()=>{
   const calls=[],s=session(admin);
   const client=createPlatformConsoleClient({session:s,fetchImpl:async(path,o)=>{calls.push({path,o});return response(path.endsWith('/me')?{user:admin}:snapshot);}});
   assert.equal((await client.initialize()).data,snapshot);
@@ -154,4 +154,44 @@ test('late or mismatched review receipts cannot be shown as a confirmed settleme
  while(!release)await new Promise(r=>setTimeout(r,1));s.token='changed';
  release({schema:1,state:'available',row:{id:event_id,review_version:1}});
  await assert.rejects(pending,{code:'CONSOLE_STALE'});
+});
+
+
+test('account catalog enriches full authorized clients and fails closed on permission changes',async()=>{
+  const snap={...snapshot,sources:{users:{rows:[{id:8,tenant_id:1}]}}};
+  let denied=false;
+  const client=createPlatformConsoleClient({session:session(admin),fetchImpl:async path=>response(path.endsWith('/me')?{user:admin}:path==='/api/v1/users'?(denied?{}:{users:[{id:8,is_advisor:true,tenant_ids:[1,2],default_tenant_id:2}]}):structuredClone(snap),denied&&path==='/api/v1/users'?403:200)});
+  const result=await client.initialize();
+  assert.deepEqual(result.data.sources.users.rows[0].tenant_ids,[1,2]);
+  assert.equal(result.data.sources.users.rows[0].default_tenant_id,2);
+  denied=true;await assert.rejects(client.initialize(),{code:'CONSOLE_FORBIDDEN'});
+});
+
+import {platformTime,moduleAvailability,accountScope} from './js/platform-display.mjs';
+import {customerErrorLabel} from './js/customer-error.mjs';
+test('trial services use expiry and truncated counts are explicitly current-list counts',()=>{
+ const source={state:'available',truncated:false,rows:[{module_code:'seo',status:'trial',expires_at:'2026-10-24'},{module_code:'seo',status:'active',expires_at:null},{module_code:'seo',status:'trial',expires_at:'2026-10-23'},{module_code:'seo',status:'disabled'}]};
+ assert.equal(moduleAvailability(source,'seo','2026-10-24'),'2');
+ assert.equal(moduleAvailability({...source,truncated:true},'seo','2026-10-24'),'当前清单 2');
+ assert.equal(moduleAvailability({...source,state:'unavailable'},'seo','2026-10-24'),'待接入');
+});
+test('account scope shows all grants and default or explicitly marks incomplete scope',()=>{
+ const tenant=id=>({1:'客户甲',2:'客户乙'}[id]||'客户 '+id),user={is_advisor:true,tenant_id:1,tenant_ids:[1,2],default_tenant_id:2};
+ assert.equal(accountScope(user,[],tenant),'客户甲、客户乙（默认：客户乙）');
+ assert.match(accountScope({...user,tenant_ids:undefined},[],tenant),/授权范围未完整读取/);
+});
+test('platform timestamps are Beijing time for zoned and backend naive UTC values',()=>{
+ for(const stamp of ['2026-10-23T16:05:00Z','2026-10-23T16:05:00','2026-10-24T00:05:00+08:00'])assert.equal(platformTime(stamp),'2026/10/24 00:05（北京时间）');
+ assert.equal(platformTime(null),'暂无记录');assert.equal(platformTime('bad'),'时间待核对');
+});
+test('known customer error codes have Chinese guidance and safe diagnostic codes',()=>{
+ assert.match(customerErrorLabel(Error('SCOPE_MISMATCH')),/超出当前客户或网站范围.*SCOPE_MISMATCH/);
+ assert.match(customerErrorLabel({code:'AUTH_EXPIRED'}),/重新登录/);
+ assert.equal(customerErrorLabel(Error('arbitrary response body')),'');
+});
+
+import {executionDetailView} from './js/seo-execution-view.mjs';
+test('monthly report generation time crosses the Beijing calendar boundary',()=>{
+ const html=executionDetailView({id:104,action_type:'monthly_report',params:{report:{month:'2026-10',generated_at:'2026-10-23T16:05:00Z',missing:[]}},allowed_actions:{}},104,false);
+ assert.match(html,/生成 2026\/10\/24 00:05（北京时间）/);
 });
