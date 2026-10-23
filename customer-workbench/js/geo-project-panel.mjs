@@ -73,7 +73,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       )
       .join(
         '',
-      )}<button data-geo="read" data-resource="questions" ${active?.resource === 'questions' ? 'aria-current="page"' : ''}>全部问题</button></nav><section class="page-card geo-workspace">${tab === 'home' ? '<button data-geo="refresh">重新读取概览</button>' : ''}${weekForm}${summary}${citations}${actionError ? `<p role="alert">${geoStatus({error: actionError})}</p>` : ''}${history.length ? '<button data-geo="back">返回上一层</button>' : ''}${body}${slot?.value && slot.loading ? '<p role="status">正在读取下一页…</p>' : ''}${slot?.value && slot.error ? `<p role="status">${geoStatus(slot)}</p><button data-geo="retry">重新读取</button>` : ''}</section>`;
+      )}<button data-geo="read" data-resource="questions" data-all-questions="true" ${active?.resource === 'questions' ? 'aria-current="page"' : ''}>全部问题</button></nav><section class="page-card geo-workspace">${tab === 'home' ? '<button data-geo="refresh">重新读取概览</button>' : ''}${weekForm}${summary}${citations}${actionError ? `<p role="alert">${geoStatus({error: actionError})}</p>` : ''}${history.length ? '<button data-geo="back">返回上一层</button>' : ''}${body}${slot?.value && slot.loading ? '<p role="status">正在读取下一页…</p>' : ''}${slot?.value && slot.error ? `<p role="status">${geoStatus(slot)}</p><button data-geo="retry">重新读取</button>` : ''}</section>`;
   }
   const weekly = (resource) =>
     ['overview', 'visibility', 'questions', 'answers', 'summary', 'article-citations'].includes(resource.split('/')[0]);
@@ -242,7 +242,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
         paint();
         return;
       }
-      await open(el.dataset.resource, params, tab === 'work');
+      await open(el.dataset.resource, params, tab === 'work' && el.dataset.allQuestions !== 'true');
     }
     if (action === 'back') {
       active = history.pop() || null;
@@ -288,6 +288,10 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       event.preventDefault();
       if (!canNavigate()) return;
       const params = Object.fromEntries(['business_id', 'unit_id', 'q'].map((key) => [key, form.elements[key].value.trim()]));
+      const units = active?.slot?.value?.data.options?.units;
+      if (params.business_id && params.unit_id && Array.isArray(units) &&
+          !units.some((u) => String(u.id) === params.unit_id && String(u.business_id) === params.business_id))
+        params.unit_id = '';
       history = [];
       active = null;
       await open('questions', params);

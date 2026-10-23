@@ -42,6 +42,39 @@ test('combined filter keeps all keyword choices available when changing business
   assert.match(html, /value="5" hidden/);
   assert.match(html, /maxlength="100"/);
   assert(!html.includes('value="<设备>"'));
+  const mismatched = geoQuestionFilters({options: {units: [{id: 5, business_id: 3, keyword: '服务'}]}},
+    {business_id: 2, unit_id: 5});
+  assert.match(mismatched, /value="5" hidden >/);
+  assert(!mismatched.includes('selected'));
+});
+test('table retains question status, brand probe, attention and legacy observation metadata', () => {
+  const v = structuredClone(geoFixture('questions'));
+  Object.assign(v.data.items[0], {status: 'inactive', is_brand_probe: true,
+    attention_reason_codes: ['no_real_observations']});
+  const html = geoResource('questions', v);
+  for (const text of ['暂停', '品牌点名题', '尚无可判读的真实观测', '观测中提及', '2026-10-12 至 2026-10-18'])
+    assert(html.includes(text), text);
+});
+test('all-questions navigation exposes week controls from work and mismatched hidden keywords cannot be submitted', async () => {
+  const node = {innerHTML: ''}, calls = [];
+  const panel = createGeoProjectPanel({host: {getContext: () => context, transport: async (path) => {
+    const u = new URL(path, 'https://fixture.test'); calls.push(u);
+    const resource = u.pathname.endsWith('executions') ? 'executions' : u.pathname.split('/client/')[1];
+    const v = structuredClone(geoFixture(resource));
+    if (resource === 'questions') v.data.options = {units: [{id: 5, business_id: 3}]};
+    return response(v);
+  }}});
+  const click = (dataset) => node.onclick({target: {closest: () => ({dataset})}});
+  panel.renderInto(node); await panel.refresh();
+  await click({geo: 'tab', tab: 'work'});
+  await click({geo: 'read', resource: 'questions', allQuestions: 'true'});
+  assert.equal(panel.getTab(), 'data'); assert.match(node.innerHTML, /data-geo-week/);
+  await node.onsubmit({preventDefault() {}, target: {matches: () => true, elements: {
+    business_id: {value: '2'}, unit_id: {value: '5'}, q: {value: ''},
+  }}});
+  assert.equal(calls.at(-1).searchParams.get('business_id'), '2');
+  assert.equal(calls.at(-1).searchParams.has('unit_id'), false);
+  panel.dispose();
 });
 test('period dates use Beijing dates and an inclusive last day across month/year and UTC boundaries', () => {
   for (const [start, end, expected] of [

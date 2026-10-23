@@ -30,7 +30,7 @@ function mentionCell(cell, time, compact = false) {
     Number.isSafeInteger(cell.total) && cell.total > 0 && Number.isSafeInteger(cell.mentioned) &&
     cell.mentioned >= 0 && cell.mentioned <= cell.total;
   const result = valid ? `${cell.mentioned}/${cell.total} · ${percent(cell.percentage)}`
-    : cell?.status === 'not_configured' || cell?.status === 'failed'
+    : compact && (cell?.status === 'not_configured' || cell?.status === 'failed')
       ? `未检测（${state(cell.status)}）` : state(Object.hasOwn(states, cell?.status) ? cell.status : 'not_tested');
   const reasons = cell?.status === 'tested_excluded'
     ? `<p class="geo-footnote">${esc((Array.isArray(cell.excluded_reason_codes) && cell.excluded_reason_codes.length
@@ -46,11 +46,15 @@ export function geoMatrix(question, time) {
     return `<section><b>${name}</b>${mentionCell(cell, time)}${read('回答依据', 'answers', {question_id: question.id, engine_key: key})}</section>`;
   }).join('')}</div>${geoModelNote}`;
 }
-export function geoQuestionTable(data, time) {
-  return `<p class="geo-table-hint">左右滑动表格可查看六家模型。</p><div class="geo-question-scroll" role="region" aria-label="全部问题及六家提及率" tabindex="0"><table class="geo-question-table"><caption>本期已存合格回答提及率 · X/Y 为提及回答数/合格回答数</caption><thead><tr><th scope="col">业务</th><th scope="col">关键词</th><th scope="col">问题</th>${geoEngines.map(([, name]) => `<th scope="col">${name}</th>`).join('')}</tr></thead><tbody>${(data.items || []).map((q) => `<tr><td>${esc(q.business?.name || '暂无')}</td><td>${esc(q.unit?.display_name || q.unit?.keyword || q.unit?.name || '暂无')}</td><th scope="row">${esc(q.question)}${geoQuestionOpenWeek(q.open_week_detected_count)}${read('查看问题', 'questions/' + q.id)}</th>${geoEngines.map(([key]) => `<td data-engine="${key}">${mentionCell(q.by_engine?.find((c) => c.engine_key === key), time, true)}</td>`).join('')}</tr>`).join('') || '<tr><td colspan="9">当前范围暂无已保存问题。</td></tr>'}</tbody></table></div>${geoModelNote}`;
+export function geoQuestionTable(data, time, metadata = () => '') {
+  return `<p class="geo-table-hint">左右滑动表格可查看六家模型。</p><div class="geo-question-scroll" role="region" aria-label="全部问题及六家提及率" tabindex="0"><table class="geo-question-table"><caption>本期已存合格回答提及率 · X/Y 为提及回答数/合格回答数</caption><thead><tr><th scope="col">业务</th><th scope="col">关键词</th><th scope="col">问题</th>${geoEngines.map(([, name]) => `<th scope="col">${name}</th>`).join('')}</tr></thead><tbody>${(data.items || []).map((q) => `<tr><td>${esc(q.business?.name || '暂无')}</td><td>${esc(q.unit?.display_name || q.unit?.keyword || q.unit?.name || '暂无')}</td><th scope="row">${esc(q.question)}${metadata(q)}${geoQuestionOpenWeek(q.open_week_detected_count)}${read('查看问题', 'questions/' + q.id)}</th>${geoEngines.map(([key]) => `<td data-engine="${key}">${mentionCell(q.by_engine?.find((c) => c.engine_key === key), time, true)}</td>`).join('')}</tr>`).join('') || '<tr><td colspan="9">当前范围暂无已保存问题。</td></tr>'}</tbody></table></div>${geoModelNote}`;
 }
 export function geoQuestionFilters(data, params = {}) {
   const filters = {...data.filters, ...params};
+  const units = data.options?.units;
+  if (filters.business_id && filters.unit_id && Array.isArray(units) &&
+      !units.some((u) => String(u.id) === String(filters.unit_id) && String(u.business_id) === String(filters.business_id)))
+    filters.unit_id = '';
   const option = (row, selected, name, hidden = false) => `<option value="${esc(row.id)}" ${hidden ? 'hidden' : ''} ${String(selected) === String(row.id) ? 'selected' : ''}>${esc(name)}</option>`;
   return `<form data-geo-questions><label>业务 <select name="business_id"><option value="">全部业务</option>${(data.options?.businesses || []).map((b) => option(b, filters.business_id, b.name)).join('')}</select></label><label>关键词 <select name="unit_id"><option value="">全部关键词</option>${(data.options?.units || []).map((u) => option(u, filters.unit_id, u.display_name || u.keyword || u.name, !!filters.business_id && String(u.business_id) !== String(filters.business_id))).join('')}</select></label><label>问题文字 <input name="q" maxlength="100" value="${esc(filters.q || '')}" placeholder="搜索全部问题"></label><button>筛选全部问题</button><button type="button" data-geo="clear-filters">清除筛选</button></form>`;
 }

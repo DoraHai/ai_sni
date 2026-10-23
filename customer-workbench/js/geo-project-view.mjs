@@ -169,6 +169,7 @@ export function geoObservation(o) {
     ? `观测中提及 ${count(o.mentioned)}/${count(o.total)} 次`
     : '尚无可判读的真实观测';
 }
+const questionMetadata = (q) => `<small>${esc(label(q.status))}${q.is_brand_probe ? ' · 品牌点名题' : ''}</small>${q.attention_reason_codes?.length ? `<small>${esc(reasonText(q.attention_reason_codes))}</small>` : ''}${!q.by_engine ? `<small>${esc(geoObservation(q.observation))}</small>` : ''}`;
 const metricNames = {
   'geo.visibility.ai_mention_count_7d': 'AI 提及回答数',
   'geo.visibility.ai_mention_rate_7d': 'AI 提及率',
@@ -277,7 +278,7 @@ export function geoResource(resource, value) {
   if (/^content\/\d+$/.test(resource))
     return `<h2>${esc(d.task.title)}</h2><p>客户确认：${esc(review(d.task.review))}；${esc(geoTime(d.task.review?.reviewed_at))}。确认不等于发布。</p>${article(d.master)}${button('渠道稿', resource + '/variants')}${button('原生交付记录', 'deliveries', {task_id: d.task.id})}<p>已保存投递回执：成功 ${count(d.receipt_summary?.succeeded)} / 处理中 ${count(d.receipt_summary?.sending)} / 失败 ${count(d.receipt_summary?.failed)} / 未知 ${count(d.receipt_summary?.unknown)} / 其他 ${count(d.receipt_summary?.other)}；不代表发布数量。</p>${geoBasis(value)}`;
   if (resource === 'questions')
-    return `<h2>全部问题</h2>${geoQuestionFilters(d)}<p>按业务与关键词组合筛选全部问题，服务端分页；单格少于 3 条为小样本。</p>${geoQuestionTable(d, geoTime)}<p>当前已加载 ${(d.items || []).length} 条 / 本次查询范围共 ${count(d.pagination?.total_count)} 条。</p>${d.pagination?.has_more ? '<p>仅展示已加载部分，继续加载。</p><button data-geo="more">继续加载</button>' : '<p>已加载本次查询的全部问题。</p>'}${geoOpenWeekProgress(d.open_week_progress)}${geoBasis(value)}`;
+    return `<h2>全部问题</h2>${geoQuestionFilters(d)}<p>${esc(geoPeriod(value.basis?.period))}。按业务与关键词组合筛选全部问题，服务端分页；单格少于 3 条为小样本。</p>${geoQuestionTable(d, geoTime, questionMetadata)}<p>当前已加载 ${(d.items || []).length} 条 / 本次查询范围共 ${count(d.pagination?.total_count)} 条。</p>${d.pagination?.has_more ? '<p>仅展示已加载部分，继续加载。</p><button data-geo="more">继续加载</button>' : '<p>已加载本次查询的全部问题。</p>'}${geoOpenWeekProgress(d.open_week_progress)}${geoBasis(value)}`;
   const kind =
     resource === 'answers'
       ? '回答证据'
