@@ -430,3 +430,25 @@ def test_records_query_filters_internal_only_and_select_only(groups_db):
     finally:
         event.remove(db.bind, "before_cursor_execute", select_only)
     assert statements and not db.dirty and not db.new
+
+
+def test_records_postgres_event_and_month_cursor_binds_are_aware_utc(groups_db):
+    from sqlalchemy.dialects import postgresql
+    expression = g._UtcNativeTime(g.func.coalesce(P.published_at, P.updated_at))
+    assert expression.type.timezone is True
+    assert "AT TIME ZONE 'UTC'" in str(expression.compile(dialect=postgresql.dialect()))
+    adapter = groups_db[1]
+    original = adapter.execute
+    statements = []
+    async def capture(statement, *a, **kw):
+        statements.append(statement)
+        return await original(statement, *a, **kw)
+    adapter.execute = capture
+    try:
+        first = read(groups_db, args(bucket="records", month="2026-10", limit=1))
+        read(groups_db, args(bucket="records", month="2026-10", limit=1, cursor=first["next_cursor"]))
+    finally:
+        adapter.execute = original
+    binds = [bind for statement in statements for bind in statement.compile(dialect=postgresql.dialect()).binds.values()
+             if isinstance(bind.value, datetime)]
+    assert binds and all(bind.type.timezone and bind.value.tzinfo is not None for bind in binds)

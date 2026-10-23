@@ -7,13 +7,32 @@ from urllib.parse import urlsplit
 
 import jwt
 from fastapi import HTTPException
-from sqlalchemy import String, and_, case, cast, func, literal, or_, select, union_all
+from sqlalchemy import DateTime, String, and_, case, cast, func, literal, or_, select, union_all
+
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.functions import FunctionElement
 
 from app.models.distribution_inbox import DistributionInboxReceipt as R
 from app.models.seo import SeoContentAsset as C, SeoContentPublication as P, SeoDistributionConnection as D
 
 MAX_ID = 9007199254740991
 REVISION_BUDGET = 20000
+
+
+class _UtcNativeTime(FunctionElement):
+    """Native columns store naive UTC; receipts and cursor binds are timestamptz."""
+    type = DateTime(timezone=True)
+    inherit_cache = True
+
+
+@compiles(_UtcNativeTime)
+def _utc_native_default(element, compiler, **kw):
+    return compiler.process(list(element.clauses)[0], **kw)
+
+
+@compiles(_UtcNativeTime, "postgresql")
+def _utc_native_postgresql(element, compiler, **kw):
+    return f"({_utc_native_default(element, compiler, **kw)} AT TIME ZONE 'UTC')"
 
 
 def error(code, status=422):
@@ -302,7 +321,7 @@ async def read_records(session, ctx, args, *, customer, authorization_revision, 
     native_rows = select(literal("native").label("source"), cast(n.c.id, String).label("source_key"),
         n.c.article, n.c.title, n.c.platform_name.label("channel"), n.c.account,
         n.c.page_url.label("url"), literal("published").label("status"),
-        func.coalesce(n.c.published_at, n.c.updated).label("event_at"), has_receipt.label("also_reported"),
+        _UtcNativeTime(func.coalesce(n.c.published_at, n.c.updated)).label("event_at"), has_receipt.label("also_reported"),
         literal(False).label("can_link"), literal(False).label("invalid"), n.c.publish_mode)
     external_rows = select(literal("external_report"), e.c.id, e.c.visible_article,
         case((and_(e.c.article.is_not(None), e.c.visible_article.is_(None)), None), else_=e.c.title),
@@ -318,8 +337,8 @@ async def read_records(session, ctx, args, *, customer, authorization_revision, 
         statement = statement.where(or_(records.c.source == "external_report", records.c.also_reported.is_(True)))
     if month:
         year, number = map(int, month.split("-"))
-        start = datetime(year, number, 1) - timedelta(hours=8)
-        end = datetime(year + (number == 12), 1 if number == 12 else number + 1, 1) - timedelta(hours=8)
+        start = datetime(year, number, 1, tzinfo=timezone.utc) - timedelta(hours=8)
+        end = datetime(year + (number == 12), 1 if number == 12 else number + 1, 1, tzinfo=timezone.utc) - timedelta(hours=8)
         statement = statement.where(records.c.event_at >= start, records.c.event_at < end)
     total = int(await session.scalar(select(func.count()).select_from(statement.subquery())) or 0)
     if after is not None:
