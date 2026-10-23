@@ -31,6 +31,66 @@ def save(client, ids, default, version=None):
     return client.patch("/api/v1/users/1", headers=admin(), json=payload)
 
 
+def test_binding_syncs_only_new_or_regranted_clients_and_unbinding_preserves_rows(db):
+    client, factory, _ = db
+    async def seed():
+        async with factory() as s:
+            await s.execute(text("""INSERT INTO seo_sites VALUES
+                (1001,10,'active'), (1002,10,'paused'), (1003,10,'active'),
+                (2001,20,'active'), (3001,30,'active'), (3002,30,'paused')"""))
+            await s.execute(text("""INSERT INTO seo_site_advisor_assignments
+                (id,tenant_id,site_id,advisor_user_id,active,assigned_by) VALUES
+                (1,10,1001,1,true,3), (2,10,1002,1,true,3),
+                (3,10,1001,3,true,3), (4,20,2001,1,true,3)"""))
+            await s.commit()
+    async def assignments():
+        async with factory() as s:
+            rows = (await s.execute(text("SELECT * FROM seo_site_advisor_assignments ORDER BY id"))).mappings().all()
+            return {r['id']: dict(r) for r in rows}
+    run(seed())
+    before = run(assignments())
+    unchanged = save(client, [10,20], 20, detail(client)['grants_version'])
+    assert unchanged.status_code == 200
+    assert run(assignments()) == before  # Repeated saves never backfill site1003.
+    removed = save(client, [20], 20, unchanged.json()['grants_version'])
+    assert removed.status_code == 200
+    rows = run(assignments())
+    assert not rows[1]['active'] and not rows[2]['active']
+    assert rows[1]['created_at'] == before[1]['created_at'] and rows[1]['assigned_by'] == 2
+    assert rows[3] == before[3] and rows[4] == before[4]
+    rebound = save(client, [10,20,30], 20, removed.json()['grants_version'])
+    assert rebound.status_code == 200
+    rows = run(assignments())
+    assert rows[1]['active'] and rows[1]['assigned_by'] == 2
+    assert not rows[2]['active']  # Paused site is not restored on rebind.
+    added = {(r['tenant_id'], r['site_id']) for i,r in rows.items() if i not in before}
+    assert added == {(10,1003), (30,3001)}
+    assert all(r['created_at'] and r['updated_at'] for r in rows.values())
+    assert rows[3] == before[3] and rows[4] == before[4]
+
+
+def test_assignment_failure_rolls_back_grant_and_default_tenant_in_same_transaction(db):
+    client, factory, _ = db
+    async def break_assignment_insert():
+        async with factory() as s:
+            await s.execute(text("INSERT INTO seo_sites VALUES (3001,30,'active')"))
+            await s.execute(text("""CREATE TRIGGER deny_assignment BEFORE INSERT
+                ON seo_site_advisor_assignments BEGIN SELECT RAISE(ABORT, 'fixture'); END"""))
+            await s.commit()
+    run(break_assignment_insert())
+    before = detail(client)
+    response = save(client, [10,20,30], 30, before['grants_version'])
+    assert response.status_code == 503
+    after = detail(client)
+    assert after['grants_version'] == before['grants_version']
+    assert after['tenant_ids'] == [10,20] and after['default_tenant_id'] == 10
+    async def counts():
+        async with factory() as s:
+            return (await s.scalar(text("SELECT count(*) FROM advisor_tenant_grants")),
+                    await s.scalar(text("SELECT count(*) FROM seo_site_advisor_assignments")))
+    assert run(counts()) == (2,0)
+
+
 def test_versions_account_list_detail_missing_stale_and_default_only(db):
     client, factory, _ = db
     expected = hashlib.sha256(b"v1|10|101,102").hexdigest()[:16]
