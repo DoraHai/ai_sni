@@ -10618,12 +10618,13 @@ async def query_backlink_index(req: BacklinkScope, session: AsyncSession = Depen
 
 
 @router.get("/backlinks/discovery-sources")
-async def backlink_discovery_sources(tenant_id: int, site_id: int, session: AsyncSession = Depends(get_session)):
+async def backlink_discovery_sources(tenant_id: int, site_id: int, session: AsyncSession = Depends(get_session),
+                                     ctx: AuthContext = Depends(require_scoped_auth)):
     await _seo_site(session, tenant_id, site_id)
     rows = await session.scalars(select(SeoContentPublication).join(
         SeoContentAsset, SeoContentAsset.id == SeoContentPublication.content_asset_id
     ).where(SeoContentPublication.tenant_id == tenant_id, SeoContentAsset.tenant_id == tenant_id,
-            SeoContentAsset.site_id == site_id, SeoContentPublication.status == "published",
+            SeoContentAsset.site_id == site_id, *customer_content_conditions(ctx), SeoContentPublication.status == "published",
             SeoContentPublication.page_url.is_not(None)).order_by(SeoContentPublication.id.desc()).limit(200))
     return {"items": [{"id": row.id, "source_url": row.page_url, "platform_name": row.platform_name,
                        "discovery": row.link_discovery} for row in rows]}
@@ -10643,6 +10644,7 @@ async def discover_site_backlinks(req: BacklinkDiscovery, session: AsyncSession 
         content = await session.get(SeoContentAsset, publication.content_asset_id) if publication else None
         if not publication or publication.tenant_id != req.tenant_id or not content or content.tenant_id != req.tenant_id or content.site_id != req.site_id or publication.page_url != source or publication.status != "published":
             raise HTTPException(404, "该网站下未找到对应发布记录")
+        require_customer_content_visible(ctx, content)
     result = await discover_backlinks(session, req.tenant_id, req.site_id, source, site.canonical_domain)
     if publication:
         publication.link_discovery = result

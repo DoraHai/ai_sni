@@ -258,6 +258,48 @@ def test_backlink_outcome_publications_share_customer_visibility(customer):
     session.commit.assert_not_awaited()
 
 
+@pytest.mark.parametrize("customer", [True, False])
+@pytest.mark.parametrize("entry", ["queue", "discovery"])
+def test_verification_and_discovery_lists_share_customer_visibility(customer, entry):
+    from app.api import seo as api, seo_cockpit as cockpit
+    ctx = _visibility_ctx(customer)
+    ctx.permissions["seo.dashboard"] = "view"
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(tenant_id=1)
+    empty = MagicMock()
+    empty.all.return_value = []
+    session.execute.return_value = empty
+    session.scalars.return_value = []
+    with patch.object(api, "_seo_site", new=AsyncMock()):
+        if entry == "queue":
+            result = asyncio.run(cockpit.customer_verification_queue(1, 9, kind="publication_url",
+                state=None, page=1, page_size=20, ctx=ctx, session=session))
+            query = session.execute.call_args.args[0]
+            assert result["total"] == result["source_counts"]["publication_url"] == 0
+        else:
+            result = asyncio.run(api.backlink_discovery_sources(1, 9, session, ctx))
+            query = session.scalars.call_args.args[0]
+        values = query.compile().params.values()
+        assert (("ready", "published") in [tuple(v) for v in values if isinstance(v, (tuple, list))]) is customer
+    assert result["items"] == []
+    session.commit.assert_not_awaited()
+
+
+def test_backlink_discovery_rejects_hidden_publication_parent_before_fetch():
+    from app.api import seo as api
+    session = AsyncMock()
+    publication = SimpleNamespace(tenant_id=1, content_asset_id=88, status="published", page_url="https://example.com/article")
+    session.get.side_effect = [publication, _content(status="drafting")]
+    req = SimpleNamespace(tenant_id=1, site_id=9, source_url=publication.page_url, publication_id=12)
+    with (patch.object(api, "_seo_site", new=AsyncMock()),
+          patch.object(api, "discover_backlinks", new=AsyncMock()) as fetch):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(api.discover_site_backlinks(req, session, _visibility_ctx()))
+        assert exc.value.status_code == 404
+    fetch.assert_not_awaited()
+    session.commit.assert_not_awaited()
+
+
 @pytest.fixture(autouse=True)
 def installed_confirmation_schema(monkeypatch):
     # These isolated permission tests model a fully migrated database.
