@@ -22,6 +22,9 @@ def filters_for(resource, params):
 
 
 async def project_response(resource, request, ctx, session):
+    if resource == 'publication_groups':
+        from app.geo.publication_groups import response
+        return await response(request, ctx, session, client=True)
     params, decoded, context = await parameters(request, resource)
     records = await authorize(session, ctx, params, request)
     for key, collection in (('business_id', records.businesses), ('unit_id', records.units)):

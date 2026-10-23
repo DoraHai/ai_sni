@@ -288,7 +288,8 @@ def valid_inbox_identity_request(request):
 
 def match_inbox_business_route(method, path, module='seo'):
     prefix = '/api/v1/' + module + '/distribution/v2/'
-    if method == 'GET' and path == prefix + 'publications':
+    if method == 'GET' and (path == prefix + 'publications' or
+            (module == 'geo' and path == prefix + 'publication-groups')):
         return True
     return method == 'POST' and re.fullmatch(prefix + 'receipts/' + UUID_PATTERN + r'/(?:label|unlabel)', path) is not None
 

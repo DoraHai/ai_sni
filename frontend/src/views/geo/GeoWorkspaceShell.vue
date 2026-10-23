@@ -126,8 +126,8 @@ onUnmounted(() => {
         <button class="geo-mobile-close" type="button" aria-label="关闭 GEO 导航" @click.stop="mobileOpen = false">×</button>
       </div>
       <nav class="geo-shell-nav">
-        <router-link v-if="canOpenInbox(session)" to="/distribution-inbox">多号通回传</router-link>
-        <router-link v-if="session.canView('geo.content')" to="/geo/external-publications">外部发布记录</router-link>
+        <router-link v-if="canOpenInbox(session)" class="geo-shell-nav-item geo-inbox-link" to="/distribution-inbox">多号通回传</router-link>
+        <router-link v-if="session.canView('geo.content')" class="geo-shell-nav-item geo-inbox-link" :class="{ active: route.path === '/geo/external-publications' }" to="/geo/external-publications">发布记录</router-link>
         <div class="geo-nav-section-title">GEO 增长工作流</div>
         <section v-for="(group, groupIndex) in visibleNavigation" :key="group.label" class="geo-nav-group">
           <button
@@ -174,8 +174,10 @@ onUnmounted(() => {
     </aside>
     <main class="geo-shell-main">
       <GeoAccountBar />
-      <div v-if="isAdvisor" style="padding: 8px 20px"><GeoAdvisorProjectPicker :key="session.token" v-model="advisorProjectId" :tenant-id="session.tenantId" /></div>
-      <div class="geo-shell-content"><router-view /></div>
+      <div class="geo-shell-content">
+        <div v-if="isAdvisor" class="geo-project-toolbar"><GeoAdvisorProjectPicker :key="session.token" v-model="advisorProjectId" :tenant-id="session.tenantId" /></div>
+        <router-view />
+      </div>
     </main>
   </div>
 </template>
@@ -426,8 +428,11 @@ onUnmounted(() => {
   flex-direction: column;
 }
 .geo-shell-content { min-height: 100%; padding: 0; }
+.geo-project-toolbar { padding: 20px 28px 0; }
+.geo-inbox-link { padding-left: 10px; text-decoration: none; }
 .geo-mobile-mask { display: none; }
 @media (max-width: 767px) {
+  .geo-project-toolbar { padding: 16px 16px 0; }
   .geo-shell,
   .geo-shell.is-rail { grid-template-columns: 1fr; }
   .geo-mobile-toggle {

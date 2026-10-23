@@ -2,6 +2,8 @@
 import { session } from '../../store/session'
 import { advisorClaims } from '../../utils/geoAdvisorTenant.js'
 import GeoGenerationEvidence from '../../components/GeoGenerationEvidence.vue'
+import GeoPublicationGroupsContext from '../../components/GeoPublicationGroupsContext.vue'
+import { scopeId } from '../../utils/articlePublicationGroups.js'
 import { articleVersionLabel, latestGenerationFailure, mergeTaskJobLists } from '../../utils/geoArticleVersion'
 import { geoSnapshotLink } from '../../utils/geoRoutes'
 /**
@@ -75,7 +77,7 @@ const route = useRoute()
 const router = useRouter()
 const { tenantId } = useGeoTenant()
 const editorSurface = getGeoPrototypeEditorSurface()
-const taskId = computed(() => Number(route.params.taskId))
+const taskId = computed(() => scopeId(route.params.taskId))
 
 function toastError(e, fallback) {
   const msg = formatGeoError(e, fallback)
@@ -2005,7 +2007,7 @@ async function exportCurrentVariant() {
 
 function goDistribution(mode) {
   if (!taskId.value) return
-  router.push({ path: `/geo/tasks/${taskId.value}/distribution`, query: { mode } })
+  router.push({ path: `/geo/tasks/${taskId.value}/distribution`, query: { mode, tenant_id: tenantId.value, project_id: route.query.project_id } })
 }
 
 async function copyCurrentDoc() {
@@ -3500,6 +3502,7 @@ onMounted(load)
       </aside>
 
       <main class="ed-center">
+        <GeoPublicationGroupsContext :tenant-id="tenantId" :task-id="taskId" :task-title="task?.title" />
         <div v-if="showGenerationStage" class="ed-gen-stage">
           <div class="ed-gen-card">
             <div class="ed-gen-hero">

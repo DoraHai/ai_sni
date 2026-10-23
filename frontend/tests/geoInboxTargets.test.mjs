@@ -25,9 +25,9 @@ function fixture(items = [], availableTargets = targets) {
     receipts: async () => ({ items }), devices: async () => ({ items: [] }), count: async () => ({ count: items.length }),
     label: async (...args) => { writes.push(args) },
   } }
-  const context = vm.createContext({ defineProps: () => props, ref, computed, watch: () => {}, onBeforeUnmount: () => {}, createInboxState })
+  const context = vm.createContext({ defineProps: () => props, defineEmits: () => () => {}, ref, computed, watch: () => {}, onBeforeUnmount: () => {}, createInboxState })
   const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
-  vm.runInContext(`${script}\nglobalThis.panel = { model, state, targetId, moduleId, scopeId, articleId, publishedAccount, results, safeLink, targetFor, targetChanged, moduleChanged, scopesFor, articlesFor, assignmentText, label, update }`, context)
+  vm.runInContext(`${script}\nglobalThis.panel = { model, state, visibleItems, targetId, moduleId, scopeId, articleId, publishedAccount, results, safeLink, targetFor, targetChanged, moduleChanged, scopesFor, articlesFor, assignmentText, label, update }`, context)
   context.panel.model.state.items = items
   return { panel: context.panel, writes, html: () => renderToString(createSSRApp({ setup: () => ({ ...props, ...context.panel }), render })) }
 }
