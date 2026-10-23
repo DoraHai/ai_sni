@@ -94,6 +94,27 @@ def test_customer_counts_hide_invalid_and_dto_is_safe(groups_db):
     assert len(invalid) == 2 and all(r["title"] is None and r["group_article_id"] is None for r in invalid)
 
 
+def test_default_twenty_articles_sorted_by_latest_time_across_sources(groups_db):
+    from datetime import timedelta
+    db, _ = groups_db
+    db.add_all([C(id=i, tenant_id=1, site_id=1, title="分页样本", status="ready") for i in range(100, 121)])
+    # Newer timestamps deliberately have smaller article IDs.
+    db.add_all([receipt(1000 + i, i, occurred_at=STAMP + timedelta(minutes=200 - i))
+                for i in range(100, 121)])
+    db.get(P, 1).published_at = STAMP + timedelta(days=1)
+    db.commit()
+    values = g.query(request(), customer=False)
+    assert values["limit"] == 20
+    first = read(groups_db, values)
+    assert [r["group_article_id"] for r in first["items"]] == [10, *range(100, 119)]
+    assert first["has_more"] and first["counts"]["articles"] == 24
+    second = read(groups_db, {**values, "cursor": first["next_cursor"]})
+    assert [r["group_article_id"] for r in second["items"]] == [119, 120, 12, 11]
+    assert not second["has_more"]
+    assert [r["latest_at"] for r in first["items"]] == sorted(
+        [r["latest_at"] for r in first["items"]], reverse=True)
+
+
 @pytest.mark.parametrize("bucket,article", [("linked", None), ("linked", 10), ("unlinked", None), ("invalid", None)])
 def test_typed_pagination_no_omissions(groups_db, bucket, article):
     values = args(bucket=bucket, article=article, limit=1)

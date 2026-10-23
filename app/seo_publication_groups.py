@@ -56,7 +56,7 @@ def query(request, *, customer):
     if cursor is not None and (not cursor or len(cursor) > 4096):
         error("GROUPS_INVALID_CURSOR")
     return dict(tenant=positive(q["tenant_id"]), scope=positive(q[scope_key]),
-                bucket=bucket, article=article, limit=positive(q.get("limit", "50"), 100), cursor=cursor)
+                bucket=bucket, article=article, limit=positive(q.get("limit", "20"), 100), cursor=cursor)
 
 
 def digest(value):
@@ -165,13 +165,16 @@ async def read_groups(session, ctx, args, *, customer, authorization_revision, a
     n, e = sources(tenant, scope)
     data_revision, watermarks = await revision(session, n, e, customer=customer)
     rev = digest([data_revision, authorization_revision])
-    binding = digest(["seo", ctx.user_id, customer, tenant, scope, bucket, article])
+    binding = digest(["seo-time-desc", ctx.user_id, customer, tenant, scope, bucket, article])
     after = decode_cursor(args["cursor"], binding, rev, watermarks, secret)
     valid = e.c.visible_article.is_not(None)
-    events = union_all(select(n.c.article.label("article"), literal(1).label("n"), literal(0).label("e")),
-                       select(e.c.article, literal(0), literal(1)).where(valid)).subquery("events")
+    events = union_all(select(n.c.article.label("article"), literal(1).label("n"), literal(0).label("e"),
+                              func.coalesce(n.c.published_at, n.c.updated).label("event_at")),
+                       select(e.c.article, literal(0), literal(1),
+                              func.coalesce(e.c.occurred_at, e.c.received)).where(valid)).subquery("events")
     grouped = select(events.c.article, func.sum(events.c.n).label("native_count"),
-                     func.sum(events.c.e).label("external_count")).group_by(events.c.article).subquery("groups")
+                     func.sum(events.c.e).label("external_count"),
+                     func.max(events.c.event_at).label("latest_at")).group_by(events.c.article).subquery("groups")
     count = lambda statement: session.scalar(statement)
     counts = {"native": int(await count(select(func.count()).select_from(n)) or 0),
               "external": int(await count(select(func.count()).select_from(e).where(
@@ -186,16 +189,25 @@ async def read_groups(session, ctx, args, *, customer, authorization_revision, a
         statement = select(grouped, C.title, C.version_count).join(C, and_(C.id == grouped.c.article,
                             C.tenant_id == tenant, C.site_id == scope))
         if after is not None:
-            if type(after) is not int or not 0 < after <= MAX_ID:
+            if (not isinstance(after, list) or len(after) != 2 or type(after[1]) is not int
+                    or not 0 < after[1] <= MAX_ID):
                 error("GROUPS_INVALID_CURSOR")
-            statement = statement.where(grouped.c.article < after)
-        rows = list((await session.execute(statement.order_by(grouped.c.article.desc()).limit(limit + 1))).all())
+            try:
+                stamp = datetime.fromisoformat(after[0])
+                if stamp.tzinfo is None:
+                    raise ValueError()
+            except (TypeError, ValueError):
+                error("GROUPS_INVALID_CURSOR")
+            statement = statement.where(or_(grouped.c.latest_at < stamp,
+                and_(grouped.c.latest_at == stamp, grouped.c.article < after[1])))
+        rows = list((await session.execute(statement.order_by(
+            grouped.c.latest_at.desc(), grouped.c.article.desc()).limit(limit + 1))).all())
         more, rows = len(rows) > limit, rows[:limit]
         items = [{**identity(tenant, scope, r.article), "title": r.title, "current_version_no": r.version_count,
                   "native_count": int(r.native_count), "external_count": int(r.external_count),
-                  "details_loaded": False} for r in rows]
+                  "latest_at": iso(r.latest_at), "details_loaded": False} for r in rows]
         if more:
-            next_after = rows[-1].article
+            next_after = [iso(rows[-1].latest_at), rows[-1].article]
     elif bucket == "linked":
         if not await session.scalar(select(C.id).where(C.id == article, C.tenant_id == tenant, C.site_id == scope)):
             error("GROUPS_NOT_FOUND", 404)

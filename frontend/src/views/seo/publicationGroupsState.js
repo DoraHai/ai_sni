@@ -1,7 +1,7 @@
 import { mergeRows, groupKey, safeId, validateGroupsPage } from '../../utils/articlePublicationGroups.js'
 
 export function createPublicationGroupsState(api, changed = () => {}) {
-  const empty = () => ({ items: [], cursor: null, more: false, busy: false, error: '' })
+  const empty = () => ({ items: [], cursor: null, more: false, busy: false, error: '', page: 1, cursors: [null] })
   const state = { buckets: { linked: empty(), unlinked: empty(), invalid: empty() }, details: {}, counts: null, revision: null, busy: false, error: '' }
   let context = null, generation = 0, controller = new AbortController()
   function clear(next = null) {
@@ -17,7 +17,7 @@ export function createPublicationGroupsState(api, changed = () => {}) {
     const target = scope()
     if (!target) return null
     const result = await api.publicationGroups('seo', target.tenant, target.scope,
-      { bucket, ...(article == null ? {} : { article_id: article }), ...(cursor ? { cursor } : {}) }, controller.signal)
+      { bucket, limit: 20, ...(article == null ? {} : { article_id: article }), ...(cursor ? { cursor } : {}) }, controller.signal)
     return validateGroupsPage(result, { ...target, bucket, article })
   }
   const fresh = page => {
@@ -46,16 +46,19 @@ export function createPublicationGroupsState(api, changed = () => {}) {
       if (version === generation && error.name !== 'AbortError') { state.error = error.message; state.counts = null }
     } finally { if (version === generation) { state.busy = false; changed() } }
   }
-  async function more(bucket) {
+  async function navigate(bucket, direction = 1) {
     const target = state.buckets[bucket]
-    if (!target || target.busy || !target.more || state.busy) return
+    if (!target || target.busy || state.busy || (direction === 1 ? !target.more : target.page <= 1)) return
+    const nextPage = target.page + direction
+    const cursor = direction === 1 ? target.cursor : target.cursors[nextPage - 1]
     const version = generation
     target.busy = true; target.error = ''; changed()
     try {
-      const page = await get(bucket, null, target.cursor)
+      const page = await get(bucket, null, cursor)
       if (version !== generation) return
       fresh(page)
-      Object.assign(target, { items: mergeRows(target.items, page.items, bucket === 'linked' ? groupKey : r => r.key), cursor: page.next_cursor, more: page.has_more })
+      target.cursors[nextPage - 1] = cursor
+      Object.assign(target, { items: page.items, cursor: page.next_cursor, more: page.has_more, page: nextPage })
     } catch (error) { if (version === generation && error.name !== 'AbortError') failure(error, target) }
     finally { if (version === generation) { target.busy = false; changed() } }
   }
@@ -73,5 +76,5 @@ export function createPublicationGroupsState(api, changed = () => {}) {
     } catch (error) { if (version === generation && error.name !== 'AbortError') failure(error, target) }
     finally { if (version === generation) { target.busy = false; changed() } }
   }
-  return { state, clear, refresh, more, details }
+  return { state, clear, refresh, more: bucket => navigate(bucket), previous: bucket => navigate(bucket, -1), details }
 }

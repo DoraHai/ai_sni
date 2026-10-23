@@ -54,7 +54,7 @@ onActivated(refresh)
 onBeforeUnmount(() => { refreshVersion++; model.clear(); window.removeEventListener('focus', focusRefresh); document.removeEventListener('visibilitychange', focusRefresh) })
 </script>
 <template>
-  <div ref="element"><ArticlePublicationGroups :state="state" :scope-selected="!!tenantId && !!scopeId" @refresh="refresh" @more="model.more" @details="model.details" @link="link">
+  <div ref="element"><ArticlePublicationGroups :state="state" :scope-selected="!!tenantId && !!scopeId" @refresh="refresh" @more="model.more" @previous="model.previous" @details="model.details" @link="link">
     <template #native-actions="{ item }"><p v-if="native(item)">{{ publicationEvidence(native(item)) }} <button @click="emit('attempts', native(item))">尝试记录</button><button v-if="canViewCapture" @click="emit('capture', native(item))">截图与核验证据</button></p></template>
   </ArticlePublicationGroups></div>
 </template>

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { groupKey, mergeRows, safePublicationUrl, validateGroupsPage, reportedResult } from '../src/utils/articlePublicationGroups.js'
+import { groupKey, mergeRows, safePublicationUrl, validateGroupsPage, reportedResult, beijingTime } from '../src/utils/articlePublicationGroups.js'
 import { createPublicationGroupsState } from '../src/views/seo/publicationGroupsState.js'
 import { createDistributionInboxApi } from '../src/api/distributionInbox.js'
 
@@ -47,16 +47,28 @@ test('article, detail and unlinked cursors stay independent and deduplicate only
       context: { ...identity, bucket: 'linked', article_id: 7, revision: 'r1' }, has_more: !q.cursor, next_cursor: q.cursor ? null : 'detail-cursor' })
     if (q.bucket === 'unlinked') return page('unlinked', [external(rid)])
     if (q.bucket === 'invalid') return page('invalid', [])
-    return page('linked', q.cursor ? [group(7), group(6)] : [group(7)], { has_more: !q.cursor, next_cursor: q.cursor ? null : 'article-cursor' })
+    return page('linked', q.cursor ? [group(6)] : [group(7)], { has_more: !q.cursor, next_cursor: q.cursor ? null : 'article-cursor' })
   } })
   await model.refresh(target)
   await model.details(group(7)); await model.more('linked'); await model.details(group(7), true)
-  assert.deepEqual(model.state.buckets.linked.items.map(r => r.group_article_id), [7, 6])
+  assert.deepEqual(model.state.buckets.linked.items.map(r => r.group_article_id), [6])
+  assert.equal(model.state.buckets.linked.page, 2)
+  await model.previous('linked')
+  assert.deepEqual(model.state.buckets.linked.items.map(r => r.group_article_id), [7])
+  assert.equal(model.state.buckets.linked.page, 1)
+  assert(calls.every(q => q.limit === 20))
   assert.equal(model.state.details[groupKey(group(7))].items.length, 2)
   assert.equal(model.state.buckets.unlinked.items.length, 1)
   assert.equal(model.state.counts.native, 2)
   assert(calls.some(q => q.cursor === 'article-cursor' && !q.article_id))
   assert(calls.some(q => q.cursor === 'detail-cursor' && q.article_id === 7))
+})
+
+test('UTC timestamps display exact Beijing minute format including midnight and invalid input', () => {
+  assert.equal(beijingTime('2026-10-23T02:45:39Z'), '2026-10-23 10:45')
+  assert.equal(beijingTime('2026-10-22T16:00:00Z'), '2026-10-23 00:00')
+  assert.equal(beijingTime(null), '未记录')
+  assert.equal(beijingTime('invalid'), '未记录')
 })
 
 test('failure is not zero; revoked/revised context clears cached records; late results are discarded', async () => {

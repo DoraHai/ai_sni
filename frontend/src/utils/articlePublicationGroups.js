@@ -60,7 +60,10 @@ export function reportedResult(status) {
 export function beijingTime(value) {
   if (!value) return '未记录'
   const time = new Date(value)
-  return Number.isNaN(time.getTime()) ? '未记录' : new Intl.DateTimeFormat('zh-CN', {
-    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(time)
+  if (Number.isNaN(time.getTime())) return '未记录'
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(time)
+  const fields = Object.fromEntries(parts.map(part => [part.type, part.value]))
+  return `${fields.year}-${fields.month}-${fields.day} ${fields.hour}:${fields.minute}`
 }
