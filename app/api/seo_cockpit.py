@@ -17,6 +17,7 @@ from app.models.seo import (
 from app.models.seo_cockpit import SeoTask,SeoImageVerification
 from app.seo_cockpit_metrics import metric_snapshot,metric_values,DEFINITIONS
 from app.seo_image_verification import prepare_image_verification_retry
+from app.seo_customer_identity import customer_content_conditions
 
 router=APIRouter()
 TASK_PERMS={'content_review':'seo.content','image_repair':'seo.site','page_remediation':'seo.site','ranking_improvement':'seo.keywords','backlink_outreach':'seo.links'}
@@ -527,7 +528,7 @@ async def customer_verification_queue(
         rows=(await session.execute(select(SeoContentPublication,SeoContentAsset.site_id).join(
             SeoContentAsset,SeoContentAsset.id==SeoContentPublication.content_asset_id).where(
             SeoContentPublication.tenant_id==tenant_id,SeoContentAsset.tenant_id==tenant_id,
-            SeoContentAsset.site_id==site_id).order_by(SeoContentPublication.id.desc()).limit(501))).all()
+            SeoContentAsset.site_id==site_id, *customer_content_conditions(ctx)).order_by(SeoContentPublication.id.desc()).limit(501))).all()
         source_counts['publication_url']=min(len(rows),500)
         if len(rows)>500:truncated_sources.append('publication_url')
         rows=rows[:500]

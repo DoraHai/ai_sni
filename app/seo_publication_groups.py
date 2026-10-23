@@ -111,8 +111,9 @@ def iso(value):
     return value.astimezone(timezone.utc).isoformat()
 
 
-def sources(tenant, scope):
-    content = and_(C.tenant_id == tenant, C.site_id == scope)
+def sources(tenant, scope, ctx=None):
+    from app.seo_customer_identity import customer_content_conditions
+    content = and_(C.tenant_id == tenant, C.site_id == scope, *customer_content_conditions(ctx))
     native = select(P.id.label("id"), P.content_asset_id.label("article"), P.updated_at.label("updated"),
                     C.updated_at.label("content_updated"), C.title, C.version_count,
                     P.platform_name, P.source_version, P.page_url, P.published_at,
@@ -194,7 +195,7 @@ async def read_groups(session, ctx, args, *, customer, authorization_revision, a
     if args["bucket"] == "records":
         return await read_records(session, ctx, args, customer=customer, authorization_revision=authorization_revision, admin=admin, writes=writes, secret=secret)
     tenant, scope, bucket, article, limit = (args[k] for k in ("tenant", "scope", "bucket", "article", "limit"))
-    n, e = sources(tenant, scope)
+    n, e = sources(tenant, scope, ctx)
     data_revision, watermarks = await revision(session, n, e, customer=customer)
     rev = digest([data_revision, authorization_revision])
     binding = digest(["seo-time-desc", ctx.user_id, customer, tenant, scope, bucket, article])
@@ -309,7 +310,7 @@ async def read_records(session, ctx, args, *, customer, authorization_revision, 
         error("GROUPS_FORBIDDEN", 403)
     tenant, scope, limit = args["tenant"], args["scope"], args["limit"]
     month, source = args.get("month"), args.get("source", "all")
-    n, e = sources(tenant, scope)
+    n, e = sources(tenant, scope, ctx)
     data_revision, watermarks = await revision(session, n, e, customer=False)
     rev = digest([data_revision, authorization_revision])
     binding = digest(["seo-records-v1", ctx.user_id, tenant, scope, month, source])

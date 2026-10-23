@@ -15,6 +15,7 @@ from app.seo_demo_source import (
     get_seo_session as get_session,
     require_seo_scoped_auth as require_scoped_auth,
 )
+from app.seo_customer_identity import customer_content_conditions, customer_content_view, require_customer_content_visible
 from app.api.seo_cockpit import scope
 from app.models.seo import SeoContentAsset, SeoSerpResult
 from app.models.seo_qa import SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement
@@ -481,7 +482,7 @@ async def batch_questions(req: BatchQuestions, ctx=Auth, session=Db):
     return {'updated': len(rows), 'ids': [row.id for row in rows], 'changes': changes}
 
 
-async def coverage_for_questions(session, tenant_id, site_id, ids):
+async def coverage_for_questions(session, tenant_id, site_id, ids, ctx=None):
     result = {key:{'answer_count':0,'reviewed_answer_count':0,'valid_answer_count':0,
                    'stale_answer_count':0,'observed_answer_count':0,'state':'unanswered'} for key in ids}
     if not ids: return result
@@ -489,7 +490,7 @@ async def coverage_for_questions(session, tenant_id, site_id, ids):
         .join(SeoContentAsset, SeoContentAsset.id == SeoQaAnswer.content_id)
         .where(SeoQaAnswer.tenant_id == tenant_id, SeoQaAnswer.site_id == site_id,
                SeoQaAnswer.question_id.in_(ids), SeoContentAsset.tenant_id == tenant_id,
-               SeoContentAsset.site_id == site_id))).all()
+               SeoContentAsset.site_id == site_id, *customer_content_conditions(ctx)))).all()
     fact_ids = {snapshot['id'] for answer, _ in rows for snapshot in answer.fact_snapshots}
     fact_map = {row.id:row for row in await session.scalars(select(SeoQaFact).where(
         SeoQaFact.tenant_id == tenant_id, SeoQaFact.site_id == site_id, SeoQaFact.id.in_(fact_ids)))} if fact_ids else {}
@@ -517,9 +518,15 @@ async def coverage_for_questions(session, tenant_id, site_id, ids):
 async def question_detail(question_id: int, tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, session=Db):
     await access(session, ctx, tenant_id, site_id)
     question = await record(session, SeoQuestion, question_id, tenant_id, site_id)
-    coverage = (await coverage_for_questions(session,tenant_id,site_id,[question_id]))[question_id]
+    coverage = (await coverage_for_questions(session,tenant_id,site_id,[question_id],ctx))[question_id]
     condition = (SeoQaPlacement.tenant_id == tenant_id, SeoQaPlacement.site_id == site_id,
                  SeoQaAnswer.tenant_id == tenant_id, SeoQaAnswer.site_id == site_id, SeoQaAnswer.question_id == question_id)
+    if customer_content_view(ctx):
+        visible_answers = select(SeoQaAnswer.id).join(SeoContentAsset, SeoContentAsset.id == SeoQaAnswer.content_id).where(
+            SeoQaAnswer.tenant_id == tenant_id, SeoQaAnswer.site_id == site_id,
+            SeoContentAsset.tenant_id == tenant_id, SeoContentAsset.site_id == site_id,
+            *customer_content_conditions(ctx))
+        condition += (SeoQaAnswer.id.in_(visible_answers),)
     query = select(SeoQaPlacement).join(SeoQaAnswer,SeoQaAnswer.id == SeoQaPlacement.answer_id).where(*condition)
     placements = list(await session.scalars(query.order_by(SeoQaPlacement.id.desc()).limit(200)))
     total = await session.scalar(select(func.count()).select_from(SeoQaPlacement)
@@ -542,7 +549,7 @@ async def planning(tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, sessi
     rows = list(await session.scalars(select(SeoQuestion).where(*conditions)
         .order_by(SeoQuestion.relevance.desc(), SeoQuestion.id.desc()).limit(500)))
     ids = [row.id for row in rows]
-    coverage = await coverage_for_questions(session,tenant_id,site_id,ids)
+    coverage = await coverage_for_questions(session,tenant_id,site_id,ids,ctx)
     items = [{**data(row), **coverage[row.id]} for row in rows]
     return {**question_plan(items), 'valid_covered_count':sum(item['valid_answer_count'] > 0 for item in items),
             'coverage_gap_count':sum(item['valid_answer_count'] == 0 for item in items),
@@ -635,7 +642,7 @@ async def answers(tenant_id: PositiveInt, site_id: PositiveInt, question_id: Pos
     await record(session, SeoQuestion, question_id, tenant_id, site_id)
     rows = await session.execute(select(SeoQaAnswer, SeoContentAsset).join(SeoContentAsset, SeoContentAsset.id == SeoQaAnswer.content_id)
         .where(SeoQaAnswer.tenant_id == tenant_id, SeoQaAnswer.site_id == site_id, SeoQaAnswer.question_id == question_id,
-               SeoContentAsset.tenant_id == tenant_id, SeoContentAsset.site_id == site_id)
+               SeoContentAsset.tenant_id == tenant_id, SeoContentAsset.site_id == site_id, *customer_content_conditions(ctx))
         .order_by(SeoQaAnswer.id.desc()).limit(100))
     result = []
     for row, content in rows:
@@ -762,7 +769,7 @@ async def placements(tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, ses
     rows = await session.execute(select(SeoQaPlacement, SeoQaAnswer, SeoContentAsset)
         .join(SeoQaAnswer, SeoQaAnswer.id == SeoQaPlacement.answer_id)
         .join(SeoContentAsset, SeoContentAsset.id == SeoQaAnswer.content_id)
-        .where(SeoQaPlacement.tenant_id == tenant_id, SeoQaPlacement.site_id == site_id)
+        .where(SeoQaPlacement.tenant_id == tenant_id, SeoQaPlacement.site_id == site_id, *customer_content_conditions(ctx))
         .order_by(SeoQaPlacement.id.desc()).limit(200))
     result = []
     for row, answer, content in rows:
@@ -836,7 +843,7 @@ async def placement_candidates(tenant_id: PositiveInt, site_id: PositiveInt, ctx
 @router.post('/placements/{placement_id}/receipt')
 async def receipt(placement_id: int, req: ReceiptInput, ctx=Auth, session=Db):
     site = await access(session, ctx, req.tenant_id, req.site_id, True)
-    row, _ = await publication_context(session, placement_id, req.tenant_id, req.site_id, lock=True)
+    row, _ = await publication_context(session, placement_id, req.tenant_id, req.site_id, lock=True, ctx=ctx)
     try:
         url = platform_url(row.platform, req.answer_url, answer=True, question_url=row.question_url, domain=site.canonical_domain)
     except ValueError as exc:
@@ -862,11 +869,24 @@ async def receipt(placement_id: int, req: ReceiptInput, ctx=Auth, session=Db):
 @router.get('/placements/{placement_id}/draft')
 async def publication_draft(placement_id: int, tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, session=Db):
     await access(session, ctx, tenant_id, site_id)
-    row, content = await publication_context(session, placement_id, tenant_id, site_id)
+    row, content = await publication_context(session, placement_id, tenant_id, site_id, ctx=ctx)
     return {'id': row.id, 'body': row.body, 'content_version': row.content_version}
 
 
-async def publication_context(session, placement_id, tenant_id, site_id, *, lock=False):
+async def require_visible_placement_content(session, ctx, row):
+    if not customer_content_view(ctx):
+        return
+    content = await session.scalar(select(SeoContentAsset).join(
+        SeoQaAnswer, SeoQaAnswer.content_id == SeoContentAsset.id).where(
+        SeoQaAnswer.id == row.answer_id, SeoQaAnswer.tenant_id == row.tenant_id,
+        SeoQaAnswer.site_id == row.site_id, SeoContentAsset.tenant_id == row.tenant_id,
+        SeoContentAsset.site_id == row.site_id))
+    if content is None:
+        raise HTTPException(404, '当前网站下未找到此记录')
+    require_customer_content_visible(ctx, content)
+
+
+async def publication_context(session, placement_id, tenant_id, site_id, *, lock=False, ctx=None):
     """Load current reviewed content before its placement, preserving one lock order."""
     content_id = await session.scalar(select(SeoContentAsset.id)
         .join(SeoQaAnswer, SeoQaAnswer.content_id == SeoContentAsset.id)
@@ -878,6 +898,7 @@ async def publication_context(session, placement_id, tenant_id, site_id, *, lock
     if content_id is None:
         raise HTTPException(404, '当前网站下未找到此记录')
     content = await record(session, SeoContentAsset, content_id, tenant_id, site_id, lock)
+    require_customer_content_visible(ctx, content)
     row = await record(session, SeoQaPlacement, placement_id, tenant_id, site_id, lock)
     if content.status not in {'ready', 'published'} or content.version_count != row.content_version:
         raise HTTPException(409, '审核稿版本已失效，请重新审核并准备分发')
@@ -889,6 +910,7 @@ async def publication_context(session, placement_id, tenant_id, site_id, *, lock
 async def verify(placement_id: int, req: Scoped, ctx=Auth, session=Db):
     site = await access(session, ctx, req.tenant_id, req.site_id, True)
     row = await record(session, SeoQaPlacement, placement_id, req.tenant_id, req.site_id, True)
+    await require_visible_placement_content(session, ctx, row)
     if not row.answer_url:
         raise HTTPException(409, '请先回填回答网址')
     last = row.observations[-1] if row.observations else None
@@ -923,7 +945,7 @@ async def verify(placement_id: int, req: Scoped, ctx=Auth, session=Db):
 @router.post('/placements/{placement_id}/metrics')
 async def report_metrics(placement_id: int, req: MetricsInput, ctx=Auth, session=Db):
     site = await access(session, ctx, req.tenant_id, req.site_id, True)
-    row, _ = await publication_context(session, placement_id, req.tenant_id, req.site_id, lock=True)
+    row, _ = await publication_context(session, placement_id, req.tenant_id, req.site_id, lock=True, ctx=ctx)
     if not row.answer_url:
         raise HTTPException(409, '请先回填回答网址并核验正文')
     try:
@@ -957,7 +979,7 @@ async def report_metrics(placement_id: int, req: MetricsInput, ctx=Auth, session
 async def maintenance(tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, session=Db):
     await access(session, ctx, tenant_id, site_id)
     rows = await session.execute(select(SeoQaAnswer, SeoContentAsset).join(SeoContentAsset, SeoContentAsset.id == SeoQaAnswer.content_id)
-        .where(SeoQaAnswer.tenant_id == tenant_id, SeoQaAnswer.site_id == site_id).order_by(SeoQaAnswer.updated_at.desc()).limit(200))
+        .where(SeoQaAnswer.tenant_id == tenant_id, SeoQaAnswer.site_id == site_id, *customer_content_conditions(ctx)).order_by(SeoQaAnswer.updated_at.desc()).limit(200))
     items = []
     for answer, content in rows:
         problems = await evidence_problems(session, answer, content)
@@ -1053,6 +1075,7 @@ async def assistant_task(placement_id: int, tenant_id: PositiveInt, site_id: Pos
 async def assistant_receipt(placement_id: int, req: AssistantReceiptInput, ctx=Auth, session=Db):
     await access(session, ctx, req.tenant_id, req.site_id, True)
     row = await record(session, SeoQaPlacement, placement_id, req.tenant_id, req.site_id)
+    await require_visible_placement_content(session, ctx, row)
     if (req.placement_id != row.id or req.platform != row.platform or
             req.question_url != row.question_url or req.content_version != row.content_version):
         raise HTTPException(409, '回执与分发记录不匹配，请核对问题和稿件版本')
@@ -1425,7 +1448,7 @@ async def batch_review(batch_id:int,tenant_id:PositiveInt,site_id:PositiveInt,ct
         .join(SeoContentAsset,SeoContentAsset.id==SeoQaAnswer.content_id)
         .join(SeoQuestion,SeoQuestion.id==SeoQaAnswer.question_id)
         .where(SeoQaAnswer.id.in_(ids),SeoQaAnswer.tenant_id==tenant_id,SeoQaAnswer.site_id==site_id,
-               SeoContentAsset.tenant_id==tenant_id,SeoContentAsset.site_id==site_id,
+               SeoContentAsset.tenant_id==tenant_id,SeoContentAsset.site_id==site_id, *customer_content_conditions(ctx),
                SeoQuestion.tenant_id==tenant_id,SeoQuestion.site_id==site_id))).all() if ids else []
     by_id={answer.id:(answer,content,question) for answer,content,question in records}
     fact_ids={f['id'] for answer,_,_ in records for f in answer.fact_snapshots}

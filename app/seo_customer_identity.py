@@ -10,6 +10,34 @@ from app.models.user import User
 from app.security.auth import AuthContext
 
 
+CUSTOMER_CONTENT_STATUSES = ("ready", "published")
+CUSTOMER_ROLE_NAME = "品牌方客户"
+
+
+def customer_content_view(ctx) -> bool:
+    """Restrict reads for the authenticated customer role; this grants no actions.
+
+    The role comes from persisted authentication, not request input. Unlike the
+    stricter confirmation/message eligibility check below, this restriction must
+    also cover customer accounts with stale assignments or unavailable workflow
+    tables. Those conditions can deny actions, never reveal undelivered content.
+    """
+    return isinstance(ctx, AuthContext) and ctx.role_name == CUSTOMER_ROLE_NAME and not (
+        ctx.is_advisor or ctx.is_superadmin
+    )
+
+
+def customer_content_conditions(ctx):
+    from app.models.seo import SeoContentAsset
+    return [SeoContentAsset.status.in_(CUSTOMER_CONTENT_STATUSES)] if customer_content_view(ctx) else []
+
+
+def require_customer_content_visible(ctx, content) -> None:
+    from fastapi import HTTPException
+    if customer_content_view(ctx) and content.status not in CUSTOMER_CONTENT_STATUSES:
+        raise HTTPException(404, "SEO 内容资产不存在")
+
+
 def is_customer_account(ctx, user, assignments, tenant_id: int, *, role=None,
                         geo_assignment=False) -> bool:
     """A tenant-bound viewer with no internal editing, administration or advisor history."""
@@ -22,7 +50,7 @@ def is_customer_account(ctx, user, assignments, tenant_id: int, *, role=None,
         and user.is_active
         and user.tenant_id == tenant_id
         and ctx.tenant_id == tenant_id
-        and role is not None and role.is_system and role.name == "品牌方客户"
+        and role is not None and role.is_system and role.name == CUSTOMER_ROLE_NAME
         and ctx.can_view("seo.content")
         and permissions.get("seo.content") in {"view", "edit"}
         and not any(level == "edit" and (key.startswith("settings.") or
@@ -47,7 +75,7 @@ async def customer_account_for_tenant(session, ctx, tenant_id: int,
     if user is None or user.tenant_id != tenant_id:
         return False
     role = await session.get(Role, user.role_id, **({"with_for_update": {"read": True}} if lock else {}))
-    if role is None or not role.is_system or role.name != "品牌方客户":
+    if role is None or not role.is_system or role.name != CUSTOMER_ROLE_NAME:
         return False
     assignment_query = select(SeoSiteAdvisorAssignment.id).where(
         SeoSiteAdvisorAssignment.advisor_user_id == actor_id)
