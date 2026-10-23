@@ -564,6 +564,7 @@ onMounted(() => {
     :loading="loading"
   >
     <template #actions>
+      <button class="gd-btn" @click="router.push('/geo/visibility/snapshots')">查看检测设置</button>
       <button type="button" class="gd-help" @click="helpOpen = true">ⓘ 可见度得分怎么算</button>
       <button class="gd-btn" @click="router.push('/geo/models')">引擎设置</button>
       <button class="gd-btn primary" :disabled="refreshing" @click="refreshDetect">

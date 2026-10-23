@@ -12,6 +12,7 @@ function fixture(advisor, reason = '') {
   const calls = [], errors = []
   const context = vm.createContext({
     isAdvisor: { value: advisor }, tenantId: { value: 10 }, collecting: { value: false },
+    collectRequest: 0,
     collectForm: { value: { engine_keys: ['kimi'], prompt_limit: 50, auto_persist: false, prefer_real: false } },
     startVisibilityPatrolRun: async (body) => {
       calls.push(JSON.parse(JSON.stringify(body)))
@@ -63,7 +64,8 @@ function buttons(advisor) {
   visit(tree)
   return found
 }
-test('advisor action slot exposes manual detection and snapshot registration', () => {
-  assert.deepEqual(buttons(true), ['刷新', '登记快照', '导出 CSV', '手动检测一次'])
+test('advisor manual detection lives in the quota control card, not duplicated in action slot', () => {
+  assert.deepEqual(buttons(true), ['刷新', '登记快照', '导出 CSV'])
   assert.ok(buttons(false).includes('登记快照'))
+  assert.match(source, /<GeoPatrolSelfService v-if="isAdvisor"[^>]+@manual="startCollect"/)
 })

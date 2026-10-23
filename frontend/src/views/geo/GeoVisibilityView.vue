@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -19,6 +19,7 @@ import {
   startVisibilityPatrolRun,
 } from '../../api/geoContent'
 import GeoVisibilityNav from '../../components/GeoVisibilityNav.vue'
+import GeoPatrolSelfService from '../../components/GeoPatrolSelfService.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import SampleCredibilityAlert from '../../components/SampleCredibilityAlert.vue'
 import { useObservationPeriod } from '../../composables/useObservationPeriod'
@@ -82,6 +83,8 @@ const patrolOps = ref(null)
 const patrolRuns = ref([])
 const evalData = ref(null)
 const collecting = ref(false)
+let collectRequest = 0
+let collectMetaRequest = 0
 const collectForm = ref({
   prefer_real: true,
   auto_persist: true,
@@ -333,10 +336,12 @@ function clearPatrolFilter() {
 }
 
 async function loadCollectMeta() {
+  const requestedTenant = tenantId.value
+  const request = ++collectMetaRequest
   try {
     const [ops, settings, runs, insights] = await Promise.all([
       fetchVisibilityPatrolOpsStatus(tenantId.value).catch(() => null),
-      fetchVisibilityPatrolSettings(tenantId.value).catch(() => null),
+      isAdvisor.value ? null : fetchVisibilityPatrolSettings(tenantId.value).catch(() => null),
       listVisibilityPatrolRuns(tenantId.value, 8).catch(() => ({ items: [] })),
       fetchGeoEvaluationInsights(tenantId.value, {
         date_from: obsStart.value,
@@ -344,6 +349,7 @@ async function loadCollectMeta() {
         days: observationDays.value,
       }).catch(() => null),
     ])
+    if (requestedTenant !== tenantId.value || request !== collectMetaRequest) return
     patrolOps.value = ops
     patrolRuns.value = runs.items || runs.runs || []
     evalData.value = insights
@@ -357,28 +363,34 @@ async function loadCollectMeta() {
       collectForm.value.engine_keys = enabledEngines.value.map((e) => e.engine_key)
     }
   } catch {
+    if (requestedTenant !== tenantId.value || request !== collectMetaRequest) return
     patrolOps.value = null
   }
 }
 
 async function startCollect() {
-  if (!tenantId.value) return
+  if (!tenantId.value || collecting.value) return
+  const requestedTenant = tenantId.value
+  const request = ++collectRequest
   collecting.value = true
   try {
-    const res = await startVisibilityPatrolRun(isAdvisor.value ? { tenant_id: tenantId.value } : {
-      tenant_id: tenantId.value,
+    const res = await startVisibilityPatrolRun(isAdvisor.value ? { tenant_id: requestedTenant } : {
+      tenant_id: requestedTenant,
       auto_persist: collectForm.value.auto_persist !== false,
       prefer_real: collectForm.value.prefer_real !== false,
       prompt_limit: collectForm.value.prompt_limit || 20,
       engine_keys: collectForm.value.engine_keys?.length ? collectForm.value.engine_keys : null,
       run_async: true,
     })
+    if (request !== collectRequest || requestedTenant !== tenantId.value) return
     const id = res.run?.id
     ElMessage.success(id ? `采集 #${id} 进行中，完成后会按提及/位置/情感判断可见度` : '采集已启动')
     if (id) {
       for (let i = 0; i < 24; i += 1) {
         await new Promise((r) => setTimeout(r, 2500))
-        const run = await getVisibilityPatrolRun(tenantId.value, id).catch(() => null)
+        if (request !== collectRequest || requestedTenant !== tenantId.value) return
+        const run = await getVisibilityPatrolRun(requestedTenant, id).catch(() => null)
+        if (request !== collectRequest || requestedTenant !== tenantId.value) return
         const st = String(run?.status || run?.run?.status || '').toLowerCase()
         if (['succeeded', 'success', 'done', 'completed', 'failed', 'error', 'cancelled'].includes(st)) {
           if (st === 'failed' || st === 'error') {
@@ -396,9 +408,10 @@ async function startCollect() {
     await loadSnapshots()
     await loadCollectMeta()
   } catch (e) {
+    if (request !== collectRequest || requestedTenant !== tenantId.value) return
     ElMessage.error(e.message || '启动失败')
   } finally {
-    collecting.value = false
+    if (request === collectRequest && requestedTenant === tenantId.value) collecting.value = false
   }
 }
 
@@ -632,17 +645,24 @@ watch(
 )
 watch(tenantId, () => {
   ++snapshotRequest
+  ++collectRequest
+  ++collectMetaRequest
+  collecting.value = false
+  patrolOps.value = null
+  patrolRuns.value = []
+  evalData.value = null
   evidenceOpen.value = false
   selectedEvidence.value = null
   snapshots.value = []
   sampleComposition.value = null
   reloadAll()
-})
+}, { flush: 'sync' })
 watch([observationDays, obsStart, obsEnd], () => {
   if (!tenantId.value) return
   loadCollectMeta().catch(() => {})
 })
 onMounted(reloadAll)
+onBeforeUnmount(() => { ++collectRequest; ++collectMetaRequest; ++snapshotRequest })
 </script>
 
 <template>
@@ -657,7 +677,7 @@ onMounted(reloadAll)
       <button type="button" class="gd-btn" :disabled="!snapshots.length" @click="exportSnapshots">
         导出 CSV
       </button>
-      <button type="button" class="gd-btn primary" :disabled="collecting" @click="startCollect">
+      <button v-if="!isAdvisor" type="button" class="gd-btn primary" :disabled="collecting" @click="startCollect">
         {{ collecting ? '采集中…' : (isAdvisor ? '手动检测一次' : '立即采集') }}
       </button>
     </template>
@@ -674,7 +694,9 @@ onMounted(reloadAll)
         :title="`待复核队列 · ${prompts.length} 条（已发布但无快照，或快照早于最近发布）`"
       />
 
-      <div class="gd-card mb">
+      <GeoPatrolSelfService v-if="isAdvisor" :tenant-id="tenantId" :collecting="collecting" @manual="startCollect" />
+
+      <div v-if="!isAdvisor" class="gd-card mb">
         <div class="gd-hd">
           <h3>自动采集</h3>
           <span class="more">
@@ -690,7 +712,6 @@ onMounted(reloadAll)
             按已启用引擎提问，自动判断提及、位置和情感。
             定时巡检（只读）：{{ patrolScheduleLabel }}。
             <template v-if="!isAdvisor">改定时请到 <router-link to="/geo/models">引擎</router-link>。</template>
-            <template v-else>手动检测会消耗 AI 额度，最多检测已分配项目的 20 个有效问题，每位顾问对每个客户每天默认 10 次。</template>
           </p>
           <div v-if="!isAdvisor" class="geo-set-row">
             <span>采集引擎</span>
@@ -772,14 +793,14 @@ onMounted(reloadAll)
           {{
             filterPatrolRunId
               ? `采集 #${filterPatrolRunId} 暂无关联快照`
-              : emptyReason?.title || '暂无回答快照'
+              : isAdvisor ? '当前筛选下暂无回答快照' : emptyReason?.title || '暂无回答快照'
           }}
         </div>
         <div>
           {{
             filterPatrolRunId
               ? '可能是旧任务未写关联，或当时没勾选自动落库。'
-              : emptyReason?.detail || '点「立即采集」或「登记快照」。'
+              : isAdvisor ? '请在上方检测控制卡查看状态、使用手动检测或管理每日自动检测。' : emptyReason?.detail || '点「立即采集」或「登记快照」。'
           }}
         </div>
         <div class="empty-actions">

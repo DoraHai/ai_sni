@@ -2,12 +2,15 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
+  fetchPatrolSelfService,
   fetchVisibilityPatrolSettings,
   listGeoTrackingEngines,
   putGeoTrackingEngines,
   putVisibilityPatrolSettings,
 } from '../../api/geoContent'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
+import GeoPatrolAdmin from '../../components/GeoPatrolAdmin.vue'
+import { patrolError, scheduleMode } from '../../utils/geoAutopatrol'
 import { engineColor } from '../../utils/geoSnapshotSummary'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { session } from '../../store/session'
@@ -20,6 +23,11 @@ import {
 
 const { tenantId } = useGeoTenant()
 const isAdvisor = computed(() => !!advisorClaims(session.token) || session.user?.is_advisor === true)
+const isPlatformAdmin = computed(() => !isAdvisor.value && !session.user?.tenant_id && session.canManage)
+const selfService = ref(null)
+const selfServiceError = ref('')
+let loadGeneration = 0
+const legacyEditable = computed(() => isPlatformAdmin.value && !loading.value && selfService.value?.schedule_mode === 'legacy')
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
@@ -71,6 +79,12 @@ function enginePayload(it, idx) {
 }
 
 async function load() {
+  const generation = ++loadGeneration
+  const requestedTenant = tenantId.value
+  selfService.value = null
+  selfServiceError.value = ''
+  patrol.value.enabled = false
+  editing.value = null
   if (!tenantId.value) {
     error.value = '请先选择已开通 GEO 的客户'
     items.value = []
@@ -80,10 +94,14 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [data, patrolRes] = await Promise.all([
-      listGeoTrackingEngines(tenantId.value, false),
-      fetchVisibilityPatrolSettings(tenantId.value).catch(() => null),
+    const [data, patrolRes, mode] = await Promise.all([
+      listGeoTrackingEngines(requestedTenant, false),
+      fetchVisibilityPatrolSettings(requestedTenant).catch(() => null),
+      isPlatformAdmin.value ? fetchPatrolSelfService(requestedTenant).catch(e => ({ loadError: patrolError(e) })) : null,
     ])
+    if (generation !== loadGeneration || requestedTenant !== tenantId.value) return
+    if (mode?.loadError) selfServiceError.value = mode.loadError
+    else selfService.value = mode
     items.value = hydrateItems(data.items)
     supportServices.value = data.support_services || []
     if (patrolRes) {
@@ -96,11 +114,12 @@ async function load() {
       }
     }
   } catch (e) {
+    if (generation !== loadGeneration || requestedTenant !== tenantId.value) return
     error.value = e.message || '加载失败'
     items.value = []
     supportServices.value = []
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) loading.value = false
   }
 }
 
@@ -149,18 +168,21 @@ async function saveTable() {
 }
 
 async function savePatrol(patch = {}) {
-  if (!tenantId.value) return
+  if (!tenantId.value || !legacyEditable.value) return
+  const requestedTenant = tenantId.value
+  const generation = loadGeneration
   const next = { ...patrol.value, ...patch }
   patrol.value = next
   try {
     const saved = await putVisibilityPatrolSettings({
-      tenant_id: tenantId.value,
+      tenant_id: requestedTenant,
       enabled: next.enabled,
       window_start_hour: next.window_start_hour,
       window_end_hour: next.window_end_hour,
       interval_hours: next.interval_hours,
       prompt_limit: next.prompt_limit,
     })
+    if (generation !== loadGeneration || requestedTenant !== tenantId.value) return
     patrol.value = {
       enabled: !!saved.enabled,
       window_start_hour: saved.window_start_hour ?? next.window_start_hour,
@@ -170,11 +192,12 @@ async function savePatrol(patch = {}) {
     }
     ElMessage.success('巡检设置已保存')
   } catch (e) {
+    if (generation !== loadGeneration || requestedTenant !== tenantId.value) return
     ElMessage.error(e.message || '保存巡检失败')
   }
 }
 
-watch(tenantId, load)
+watch(tenantId, load, { flush: 'sync' })
 onMounted(load)
 </script>
 
@@ -192,6 +215,7 @@ onMounted(load)
     </template>
     <div class="geo-dash">
       <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+      <GeoPatrolAdmin v-if="isPlatformAdmin" @changed="load" />
 
       <section class="gd-card mb">
         <div class="gd-hd">
@@ -237,7 +261,7 @@ onMounted(load)
       <details class="adv mb">
         <summary>平台状态与巡检设置</summary>
         <div class="adv-body">
-          <p class="hint">接口、模型与密钥由平台统一维护；客户可查看状态并设置巡检调度。</p>
+          <p class="hint">接口与模型由平台统一维护。旧定时仅供平台管理员管理；每日自助检测由负责顾问在「采集与判断」页开启。</p>
           <div class="geo-eng-grid">
             <button
               v-for="row in items"
@@ -259,8 +283,11 @@ onMounted(load)
             </button>
           </div>
 
-          <div v-if="!isAdvisor" class="gd-card" style="margin-top:16px">
-            <div class="gd-hd"><h3>巡检设置</h3></div>
+          <div v-if="isPlatformAdmin" class="gd-card" style="margin-top:16px">
+            <div class="gd-hd"><h3>当前客户旧巡检设置 · {{ scheduleMode(selfService?.schedule_mode) }}</h3></div>
+            <el-alert v-if="selfServiceError" :title="selfServiceError" type="warning" :closable="false" />
+            <el-alert v-if="selfService?.schedule_mode === 'daily_self_service'" title="该客户已切入每日自助检测，旧频率已停用；自动检测由负责顾问开启。" type="info" :closable="false" />
+            <fieldset :disabled="!legacyEditable" style="border:0;padding:0;margin:0" :inert="!legacyEditable">
             <div class="gd-bd" style="max-width:560px;display:flex;flex-direction:column;gap:14px">
               <div class="geo-set-row">
                 <span>巡检频率</span>
@@ -308,6 +335,7 @@ onMounted(load)
                 >{{ patrol.enabled ? '已开启' : '未开启' }}</span>
               </div>
             </div>
+            </fieldset>
           </div>
         </div>
       </details>
