@@ -63,11 +63,13 @@ export const TASK_STATUS_LABEL = {
   draft: '草稿',
   facts_bound: '已绑事实',
   editing: '写稿中',
+  adapting: '适配中',
   generating: '生成中',
   needs_fix: '待修补',
   ready: '可发布',
   exported: '已导出',
   published: '已发布',
+  cancelled: '已取消',
   archived: '已归档',
   failed: '生成失败',
 }

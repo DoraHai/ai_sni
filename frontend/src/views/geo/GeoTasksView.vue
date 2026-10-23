@@ -39,7 +39,9 @@ const form = ref({ prompt_id: null, title: '', target_channels: ['website', 'wec
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
-const workbenchCounts = ref({ all: 0, draft: 0, polish: 0, needs_fix: 0, ready: 0, published: 0 })
+const workbenchCounts = ref({ all: 0, draft: 0, polish: 0, needs_fix: 0, ready: 0, published: 0, cancelled: 0 })
+const emptyText = computed(() => workbenchTab.value || q.value.trim()
+  ? '当前筛选暂无文章' : '暂无任务 · 可创建 GEO 文章或导入已有文章')
 
 const tabs = computed(() => [
   { value: '', label: '全部', count: workbenchCounts.value.all },
@@ -48,12 +50,13 @@ const tabs = computed(() => [
   { value: 'needs_fix', label: '待修补', count: workbenchCounts.value.needs_fix },
   { value: 'ready', label: '待发布', count: workbenchCounts.value.ready },
   { value: 'published', label: '已发布', count: workbenchCounts.value.published },
+  { value: 'cancelled', label: '已取消', count: workbenchCounts.value.cancelled },
 ])
 
 const statusSummary = computed(() => [
   { label: '内容', value: workbenchCounts.value.all, tone: 'neutral' },
   { label: '草稿', value: workbenchCounts.value.draft, tone: 'muted' },
-  { label: '待优化', value: workbenchCounts.value.polish, tone: 'violet' },
+  { label: '待润色', value: workbenchCounts.value.polish, tone: 'violet' },
   { label: '待修补', value: workbenchCounts.value.needs_fix, tone: 'amber' },
   { label: '待发布', value: workbenchCounts.value.ready, tone: 'amber' },
   { label: '已发布', value: workbenchCounts.value.published, tone: 'green' },
@@ -87,9 +90,8 @@ async function load() {
   const generation = ++loadGeneration
   const owner = tenantId.value
   items.value = []
-  total.value = 0
-  workbenchCounts.value = { all: 0, draft: 0, polish: 0, needs_fix: 0, ready: 0, published: 0 }
   if (!tenantId.value) {
+    workbenchCounts.value = { all: 0, draft: 0, polish: 0, needs_fix: 0, ready: 0, published: 0, cancelled: 0 }
     loading.value = false
     error.value = '请先选择客户或配置本地 API Key'
     items.value = []
@@ -110,7 +112,7 @@ async function load() {
     items.value = data.items || []
     total.value = Number(data.total ?? items.value.length) || 0
     workbenchCounts.value = {
-      all: 0, draft: 0, polish: 0, needs_fix: 0, ready: 0, published: 0,
+      all: 0, draft: 0, polish: 0, needs_fix: 0, ready: 0, published: 0, cancelled: 0,
       ...(data.workbench_counts || {}),
     }
   } catch (e) {
@@ -118,9 +120,17 @@ async function load() {
     error.value = e.message || '加载失败'
     items.value = []
     total.value = 0
+    workbenchCounts.value = { all: 0, draft: 0, polish: 0, needs_fix: 0, ready: 0, published: 0, cancelled: 0 }
   } finally {
     if (generation === loadGeneration) loading.value = false
   }
+}
+
+function resetAndLoad() {
+  page.value = 1
+  total.value = 0
+  workbenchCounts.value = { all: 0, draft: 0, polish: 0, needs_fix: 0, ready: 0, published: 0, cancelled: 0 }
+  return load()
 }
 
 function onPageChange(p) {
@@ -136,8 +146,7 @@ function onSizeChange(s) {
 
 function setTab(value) {
   workbenchTab.value = value
-  page.value = 1
-  load()
+  resetAndLoad()
 }
 
 async function openCreate() {
@@ -240,8 +249,7 @@ async function archiveTask(row) {
 
 watch(tenantId, () => {
   evidenceContent.value = null
-  page.value = 1
-  load()
+  resetAndLoad()
 })
 onMounted(load)
 </script>
@@ -265,13 +273,12 @@ onMounted(load)
 
       <section class="status-strip" aria-label="内容状态摘要">
         <div class="status-summary"><span v-for="item in statusSummary" :key="item.label" class="status-summary-item" :class="`is-${item.tone}`"><b>{{ item.value }}</b><span>{{ item.label }}</span></span></div>
-        <span class="status-note">近 14 天 · 内容状态与 AI 引用效果持续回流</span>
+        <span class="status-note">文章为全时段 · 查询期仅作用于上方建议</span>
       </section>
 
       <section class="principle-line" aria-label="GEO 内容原则">
         <span class="principle-label">GEO 内容原则</span>
         <span>独家信息</span><i>·</i><span>事实可核验</span><i>·</i><span>明确来源</span><i>·</i><span>定义 / 对比 / FAQ</span><i>·</i><span>避免关键词堆砌</span>
-        <button type="button" class="text-action" @click="ElMessage.info('GEO 写作规范将在内容编辑器中逐步提示')">查看 GEO 写作规范 →</button>
       </section>
 
       <div class="gd-card">
@@ -291,11 +298,11 @@ onMounted(load)
             v-model="q"
             class="gd-search"
             placeholder="搜索文章或目标提问"
-            @keyup.enter="() => { page = 1; load() }"
+            @keyup.enter="resetAndLoad"
           />
         </div>
         <div class="gd-bd" style="padding:0">
-          <el-table :data="items" empty-text="暂无任务 · 可创建 GEO 文章或导入已有文章" class="task-table">
+          <el-table :data="items" :empty-text="emptyText" class="task-table">
             <el-table-column label="文章" min-width="240">
               <template #default="{ row }">
                 <div class="title-cell">{{ row.title || '—' }}</div>
@@ -400,14 +407,14 @@ onMounted(load)
 .sub { font-size: 12px; color: #94a3b8; margin-top: 3px; }
 .mb { margin-bottom: 12px; }
 .tasks-workspace { --ink: #202533; --muted: #7d8494; --line: #e8eaf0; --violet: #6d43df; }
-.status-strip { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:14px 2px 16px; border-bottom:1px solid var(--line); margin-bottom:18px; }
-.status-summary { display:flex; align-items:baseline; gap:22px; }
-.status-summary-item { display:inline-flex; align-items:baseline; gap:6px; color:var(--muted); font-size:12px; }
+.status-strip { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:20px; padding:14px 2px 16px; border-bottom:1px solid var(--line); margin-bottom:18px; }
+.status-summary { display:flex; flex-wrap:wrap; align-items:baseline; gap:12px 22px; }
+.status-summary-item { display:inline-flex; white-space:nowrap; align-items:baseline; gap:6px; color:var(--muted); font-size:12px; }
 .status-summary-item b { color:var(--ink); font-size:19px; font-weight:700; letter-spacing:-.03em; }
 .status-summary-item.is-violet b { color:var(--violet); }.status-summary-item.is-amber b { color:#b7791f; }.status-summary-item.is-green b { color:#26866b; }
 .status-note { color:var(--muted); font-size:12px; }
 .principle-line { display:flex; align-items:center; flex-wrap:wrap; gap:9px; padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:#fbfbfd; color:#697181; font-size:12px; margin-bottom:22px; }
-.principle-label { color:var(--ink); font-weight:700; margin-right:4px; }.principle-line i { color:#b8bdc8; font-style:normal; }.text-action { margin-left:auto; border:0; background:none; color:var(--violet); font-size:12px; font-weight:650; cursor:pointer; }
+.principle-label { color:var(--ink); font-weight:700; margin-right:4px; }.principle-line i { color:#b8bdc8; font-style:normal; }
 .eyebrow { display:block; color:#a1a7b3; font-size:10px; font-weight:800; letter-spacing:.14em; margin-bottom:3px; }.workbench-bar h3 { margin:0; color:var(--ink); font-size:18px; }
 .workbench-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .workbench-bar > div:first-child { margin-right:8px; }
@@ -428,6 +435,7 @@ onMounted(load)
 .task-actions { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .geo-pager { display: flex; justify-content: flex-end; padding: 12px 14px; }
 @media (max-width: 900px) {
+  .status-note { flex-basis:100%; }
   .geo-intro { grid-template-columns: 1fr; }
   .geo-flow { border-top: 1px solid #33434e; border-left: 0; }
   .gd-search { margin-left: 0; width: 100%; }
