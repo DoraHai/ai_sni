@@ -745,3 +745,34 @@ def test_public_catalog_is_explicit():
     queries = [str(c.args[0]) for c in session.execute.call_args_list]
     assert 'public.alembic_version' in queries[0]
     assert "n.nspname = 'public'" in queries[1]
+
+
+@pytest.mark.parametrize("default_tenant,grant_id,allowed", [
+    (1, None, True), (99, 10, True), (None, 10, True),
+    (99, None, False), (None, None, False),
+])
+def test_assignment_target_must_be_local_or_have_active_tenant_grant(default_tenant, grant_id, allowed):
+    from app.api.seo import AdvisorAssignmentRequest, upsert_advisor_assignment
+    from app.models.seo import SeoSiteAdvisorAssignment
+    session = AsyncMock()
+    advisor = User(id=8, username="advisor", role_id=2, tenant_id=default_tenant, is_active=True)
+    role = Role(id=2, name="advisor", permissions={"seo.content": "edit"})
+    session.get.side_effect = [advisor, role]
+    row = SeoSiteAdvisorAssignment(id=55, tenant_id=1, site_id=9, advisor_user_id=8, active=False)
+    session.scalar.side_effect = [row] if default_tenant == 1 else [grant_id, row]
+    actor = AuthContext(7, "admin", "admin", None,
+                        {"seo.content": "edit", "settings.accounts": "edit"})
+    req = AdvisorAssignmentRequest(tenant_id=1, site_id=9, advisor_user_id=8, active=True)
+    with patch("app.api.seo._seo_site", new=AsyncMock()):
+        if allowed:
+            result = asyncio.run(upsert_advisor_assignment(req, session, actor))
+            assert result["active"] and result["assigned_by"] == 7
+            session.commit.assert_awaited_once()
+        else:
+            with pytest.raises(HTTPException) as error:
+                asyncio.run(upsert_advisor_assignment(req, session, actor))
+            assert error.value.status_code == 409
+            session.commit.assert_not_awaited()
+    if default_tenant != 1:
+        statement = str(session.scalar.call_args_list[0].args[0])
+        assert "advisor_tenant_grants.revoked_at IS NULL" in statement

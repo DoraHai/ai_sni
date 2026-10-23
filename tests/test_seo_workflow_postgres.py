@@ -5,7 +5,7 @@ Only loopback / database seo_workflow_test is accepted. Each test owns one rando
 schema and drops only that schema; never falls back to application DATABASE_URL.
 """
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 import os
 from unittest.mock import AsyncMock
@@ -154,6 +154,39 @@ def test_damaged_capability_gate_fails_closed_and_legacy_false_recovers():
                 assert await flow.schema_ready(session) is False
                 await session.rollback()
                 assert await flow.schema_ready(session) is True
+    asyncio.run(scenario())
+
+
+@requires_pg
+@pytest.mark.parametrize("default_tenant,grant_state,allowed", [
+    (4, "absent", True), (99, "active", True), (None, "active", True),
+    (99, "revoked", False), (None, "absent", False),
+])
+def test_assignment_api_checks_live_grant_instead_of_default_tenant(default_tenant, grant_state, allowed):
+    from app.models.advisor_tenant_grant import AdvisorTenantGrant as Grant
+    admin = AuthContext(9, "synthetic-admin", "admin", None,
+                        {"seo.content": "edit", "settings.accounts": "edit"})
+    async def scenario():
+        async with database() as sessions:
+            async with sessions() as session:
+                await session.execute(CreateTable(Grant.__table__, include_foreign_key_constraints=[]))
+                session.add(User(id=9, username="admin", role_id=5, password_hash="unused"))
+                (await session.get(User, 7)).tenant_id = default_tenant
+                if grant_state != "absent":
+                    grant = Grant(user_id=7, tenant_id=4, granted_by=9, grant_source="admin")
+                    if grant_state == "revoked":
+                        grant.revoked_at = datetime.now(timezone.utc) + timedelta(seconds=1)
+                        grant.revoked_by, grant.revoke_reason = 9, "fixture"
+                    session.add(grant)
+                await session.commit()
+                req = api.AdvisorAssignmentRequest(tenant_id=4, site_id=2, advisor_user_id=7, active=True)
+                if allowed:
+                    result = await api.upsert_advisor_assignment(req, session, admin)
+                    assert result["active"] and result["assigned_by"] == 9
+                else:
+                    with pytest.raises(HTTPException) as error:
+                        await api.upsert_advisor_assignment(req, session, admin)
+                    assert error.value.status_code == 409
     asyncio.run(scenario())
 
 
