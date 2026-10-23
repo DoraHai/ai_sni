@@ -6737,15 +6737,8 @@ async def _validated_content_confirmation_status(session, row, latest) -> str:
 
 
 async def _content_confirmation_schema_ready(session: AsyncSession) -> bool:
-    """Enable the new gate only after the separately approved 0105 migration."""
-    result = await session.execute(text("SELECT version_num FROM alembic_version"))
-    revision = result.scalar_one_or_none()
-    if inspect.isawaitable(revision):
-        # AsyncMock-based isolated unit tests do not model the Alembic table;
-        # treating it as pre-0105 preserves the real code-first rollout path.
-        revision = await revision
-    return revision in {"0105_seo_content_confirmations", "0106_seo_content_messages", "0107_seo_site_delete",
-                        "0108_advisor_account_links", "0109_advisor_tenant_grants"}
+    from app.seo_content_confirmation_schema import content_confirmation_schema_ready
+    return await content_confirmation_schema_ready(session)
 
 
 async def _advisor_assignment(

@@ -324,6 +324,7 @@ SOURCE_ALLOWED_EXACT = {
     "app/seo_scheduler.py",
     "app/seo_service_plan.py",
     "app/seo_content_workflow.py",
+    "app/seo_content_confirmation_schema.py",
     "app/seo_content_drafting.py",
     "app/ai/deepseek.py",
     "app/seo_delivery_evidence.py",

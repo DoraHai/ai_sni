@@ -106,6 +106,14 @@ from app.security.auth import AuthContext, _required
 from app.seo_serp import SerpProviderError
 
 
+@pytest.fixture(autouse=True)
+def legacy_confirmation_schema(monkeypatch):
+    # Existing isolated publication tests explicitly model the pre-0105 rollout.
+    # Migrated-schema confirmation enforcement is covered by confirmation/PG tests.
+    monkeypatch.setattr("app.seo_content_confirmation_schema.content_confirmation_schema_ready",
+                        AsyncMock(return_value=False))
+
+
 def test_crawl_request_supports_safe_full_site_batch() -> None:
     request = SeoCrawlRequest(tenant_id=1, site_id=2, max_urls=200)
 

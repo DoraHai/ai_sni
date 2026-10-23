@@ -34,6 +34,13 @@ from app.seo_customer_identity import customer_account_for_tenant
 from app.security.auth import AuthContext, _required
 
 
+@pytest.fixture(autouse=True)
+def installed_confirmation_schema(monkeypatch):
+    # These isolated permission tests model a fully migrated database.
+    monkeypatch.setattr("app.seo_content_confirmation_schema.content_confirmation_schema_ready",
+                        AsyncMock(return_value=True))
+
+
 def _content(**overrides) -> SeoContentAsset:
     values = {
         "id": 88,
@@ -113,13 +120,14 @@ def test_message_customer_path_uses_the_same_identity_rule(revision):
         customer.assert_awaited_once_with(session, ctx, 1, lock=False)
 
 
-@pytest.mark.parametrize("revision", ["0107_seo_site_delete", "0108_advisor_account_links"])
-def test_content_confirmation_gate_accepts_reviewed_later_revisions(revision):
+def test_api_and_workflow_use_the_shared_capability_gate():
+    from app.seo_content_workflow import schema_ready
     session = AsyncMock()
-    result = MagicMock()
-    result.scalar_one_or_none.return_value = revision
-    session.execute.return_value = result
-    assert asyncio.run(_content_confirmation_schema_ready(session)) is True
+    for entry in (_content_confirmation_schema_ready, schema_ready):
+        with patch("app.seo_content_confirmation_schema.content_confirmation_schema_ready",
+                   new=AsyncMock(return_value=True)) as shared:
+            assert asyncio.run(entry(session)) is True
+            shared.assert_awaited_once_with(session)
 
 
 def test_customer_identity_fails_closed_when_geo_table_is_unavailable():
@@ -650,3 +658,90 @@ def test_delete_assignment_missing_or_outside_scope_returns_404(row):
     assert exc.value.status_code == 404
     session.delete.assert_not_awaited()
     session.commit.assert_not_awaited()
+
+
+# Shared capability gate regression tests (also run by the production baseline).
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from fastapi import HTTPException
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.models.seo import SeoContentConfirmation, SeoSiteAdvisorAssignment
+from app.seo_content_confirmation_schema import content_confirmation_schema_ready as ready
+
+
+def catalog():
+    rows = []
+    for model in (SeoContentConfirmation, SeoSiteAdvisorAssignment):
+        for col in model.__table__.columns:
+            kind = col.type.compile(dialect=postgresql.dialect()).lower().replace('varchar', 'character varying')
+            if kind == 'timestamp': kind = 'timestamp without time zone'
+            rows.append((model.__tablename__, col.name, kind, True))
+    return rows
+
+
+def session_for(revisions, rows):
+    version, columns = MagicMock(), MagicMock()
+    version.scalars.return_value = revisions
+    columns.all.return_value = rows
+    return AsyncMock(execute=AsyncMock(side_effect=[version, columns]))
+
+
+@pytest.mark.parametrize('revision', [
+    '0105_seo_content_confirmations', '0106_seo_content_messages',
+    '0107_seo_site_delete', '0108_advisor_account_links', '0109_advisor_tenant_grants',
+    '0110_distribution_inbox', '0111_geo_autopatrol', 'future_shared_revision',
+])
+def test_complete_capabilities_accept_shared_future_revisions(revision):
+    assert asyncio.run(ready(session_for([revision], catalog()))) is True
+
+
+def test_only_legacy_without_either_table_may_skip_confirmation():
+    assert asyncio.run(ready(session_for(['0104_seo_page_ai_tdk'], []))) is False
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(ready(session_for(['0104_seo_page_ai_tdk'], catalog())))
+    assert error.value.status_code == 503
+
+
+@pytest.mark.parametrize('revisions,rows', [
+    ([], catalog()), (['0105', '0111'], catalog()),
+    (['0111_geo_autopatrol'], []), (['unknown'], []),
+    (['0104_seo_page_ai_tdk'], catalog()[:1]),
+    (['0104_seo_page_ai_tdk'], [('seo_content_confirmations', None, None, True)]),
+    (['0111_geo_autopatrol'], catalog()[1:]),
+    (['0111_geo_autopatrol'], [r for r in catalog() if r[0] != 'seo_site_advisor_assignments']),
+    (['0111_geo_autopatrol'], [(r[0], r[1], 'text', r[3]) for r in catalog()]),
+    (['0111_geo_autopatrol'], [(r[0], r[1], r[2], False) for r in catalog()]),
+])
+def test_damage_unknown_incomplete_and_permissions_fail_closed(revisions, rows):
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(ready(session_for(revisions, rows)))
+    assert error.value.status_code == 503
+
+
+def test_database_errors_do_not_expose_details_or_skip_confirmation():
+    session = AsyncMock()
+    session.execute.side_effect = SQLAlchemyError('private database details')
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(ready(session))
+    assert error.value.status_code == 503
+    assert 'private' not in str(error.value.detail)
+
+
+def test_false_is_not_cached_after_a_migration():
+    session = session_for(['0104_seo_page_ai_tdk'], [])
+    later = session_for(['0111_geo_autopatrol'], catalog())
+    session.execute.side_effect = list(session.execute.side_effect) + list(later.execute.side_effect)
+    assert asyncio.run(ready(session)) is False
+    assert asyncio.run(ready(session)) is True
+
+
+def test_public_catalog_is_explicit():
+    session = session_for(['0111_geo_autopatrol'], catalog())
+    assert asyncio.run(ready(session)) is True
+    queries = [str(c.args[0]) for c in session.execute.call_args_list]
+    assert 'public.alembic_version' in queries[0]
+    assert "n.nspname = 'public'" in queries[1]
