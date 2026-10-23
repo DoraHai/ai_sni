@@ -8,7 +8,6 @@ on:
     branches-ignore:
       - codex/production-seo
       - codex/advisor-mt-seo-guard-20261018
-      - codex/dht-merge-seo-backend-20261023
 
 jobs:
   pytest:

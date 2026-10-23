@@ -65,6 +65,19 @@ export function createDistributionInboxApi({ getIdentity, getBusiness, prepareBu
     return prepareBusiness ? Promise.resolve(prepareBusiness(module, tenant, signal)).then(send) : send()
   }
   return {
+    publicationGroups: (module, tenant, scope, values = {}, signal) => {
+      if (module !== 'seo' || !Number.isSafeInteger(tenant) || tenant < 1 || !Number.isSafeInteger(scope) || scope < 1
+          || Object.keys(values).some(key => !['bucket', 'article_id', 'limit', 'cursor'].includes(key))) throw new TypeError('INVALID_GROUPS_QUERY')
+      const query = new URLSearchParams({ tenant_id: String(tenant), scope_id: String(scope) })
+      for (const [key, value] of Object.entries(values)) {
+        if (key === 'bucket' && !['linked', 'unlinked', 'invalid'].includes(value)) throw new TypeError('INVALID_GROUPS_QUERY')
+        if (['article_id', 'limit'].includes(key) && (!Number.isSafeInteger(value) || value < 1 || (key === 'limit' && value > 100))) throw new TypeError('INVALID_GROUPS_QUERY')
+        if (key === 'cursor' && (typeof value !== 'string' || !value || value.length > 4096)) throw new TypeError('INVALID_GROUPS_QUERY')
+        query.set(key, String(value))
+      }
+      if (values.article_id && values.bucket && values.bucket !== 'linked') throw new TypeError('INVALID_GROUPS_QUERY')
+      return request(`/api/v1/seo/distribution/v2/publication-groups?${query}`, { business: { module, tenant }, signal })
+    },
     publications: (module, tenant, scope, signal) => {
       if (!modules.has(module) || !Number.isSafeInteger(tenant) || tenant < 1
           || (scope != null && (!Number.isSafeInteger(scope) || scope < 1))) throw new TypeError('INVALID_BUSINESS_TARGET')

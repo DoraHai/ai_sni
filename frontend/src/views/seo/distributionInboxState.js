@@ -1,6 +1,6 @@
 // Framework-independent request lifetime and two-step relabel state.
 export function createInboxState(api, changed = () => {}) {
-  const state = { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '' }
+  const state = { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false }
   let generation = 0
   let controller = new AbortController()
 
@@ -8,7 +8,7 @@ export function createInboxState(api, changed = () => {}) {
     generation += 1
     controller.abort()
     controller = new AbortController()
-    Object.assign(state, { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '' })
+    Object.assign(state, { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false })
     changed(state)
   }
   async function operation(work) {
@@ -20,7 +20,10 @@ export function createInboxState(api, changed = () => {}) {
       if (version !== generation) return
       return result
     } catch (error) {
-      if (version === generation && error.name !== 'AbortError') state.error = error.message
+      if (version === generation && error.name !== 'AbortError') {
+        state.error = error.message
+        state.needsTargetRefresh = error.status === 409
+      }
     } finally {
       if (version === generation) { state.busy = false; changed(state) }
     }
@@ -40,6 +43,15 @@ export function createInboxState(api, changed = () => {}) {
   }
   return {
     state, clear,
+    focusReceipt: receiptId => operation(async signal => {
+      const version = generation
+      const row = await api.receipt(receiptId, signal)
+      if (version !== generation) return
+      if (row.id !== receiptId) throw new Error('回执身份不符，请刷新')
+      state.focusedReceipt = row; state.needsTargetRefresh = false
+      state.filter = 'active'; state.offset = 0
+      await reload(signal)
+    }),
     show: filter => operation(async signal => { state.filter = filter; state.offset = 0; await reload(signal) }),
     page: offset => operation(async signal => { state.offset = Math.max(0, offset); await reload(signal) }),
     search: q => operation(async signal => { state.q = q; state.offset = 0; await reload(signal) }),
@@ -62,11 +74,18 @@ export function createInboxState(api, changed = () => {}) {
     }),
     revoke: device => operation(async signal => { await api.revoke(device.id, device.revision, signal); await reload(signal) }),
     label: (receipt, target) => operation(async signal => {
+      const version = generation
       await api.label(target.module, target.tenantId, receipt.id, { expectedRevision: receipt.revision,
         targetTenant: target.tenantId, scopeId: target.scopeId || null,
         ...(target.article ? { articleId: target.article.id, articleVersion: target.article.version, articleDigest: target.article.digest } : {}),
         ...(Object.hasOwn(target, 'publishedAccount') ? { publishedAccount: target.publishedAccount || null } : {}) }, signal)
+      if (version !== generation) return
+      let saved
+      if (state.focusedReceipt?.id === receipt.id) saved = await api.receipt(receipt.id, signal)
+      if (version !== generation) return
+      if (saved) state.focusedReceipt = saved
       await reload(signal)
+      return saved
     }),
     // Each call uses the *current* business context. Never issue a new target
     // write automatically if unlabel failed or the identity changed in flight.

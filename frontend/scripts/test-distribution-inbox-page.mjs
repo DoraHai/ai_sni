@@ -6,8 +6,9 @@ import { pathToFileURL } from 'node:url'
 import { JSDOM } from 'jsdom'
 import { parse, compileScript } from '@vue/compiler-sfc'
 const dom = new JSDOM('<body></body>', { url: 'https://synthetic.invalid/' })
-for (const key of ['window','document','Node','Element','HTMLElement','SVGElement','Event','localStorage','sessionStorage']) globalThis[key]=dom.window[key]
+for (const key of ['window','document','Node','Element','HTMLElement','SVGElement','Event','localStorage','sessionStorage','history']) globalThis[key]=dom.window[key]
 const { createApp, nextTick } = await import('vue')
+const { createRouter, createMemoryHistory } = await import('vue-router')
 const { session } = await import('../src/store/session.js')
 const require = createRequire(import.meta.url)
 const uri = code => 'data:text/javascript;base64,'+Buffer.from(code).toString('base64')
@@ -16,11 +17,13 @@ async function compiled(name) {
   const source = await readFile(new URL('../src/views/seo/'+name,import.meta.url),'utf8')
   return compileScript(parse(source).descriptor,{id:name,inlineTemplate:true}).content
     .replace(/from (['"])vue\1/g,'from '+JSON.stringify(pathToFileURL(require.resolve('vue')).href))
+    .replace(/from (['"])vue-router\1/g,'from '+JSON.stringify(import.meta.resolve('vue-router')))
 }
 const child = uri((await compiled('DistributionInbox.vue')).replace("from './distributionInboxState.js'",'from '+jsurl('../src/views/seo/distributionInboxState.js')))
 const page = (await compiled('DistributionInboxPage.vue'))
   .replace("from '../../store/session'",'from '+jsurl('../src/store/session.js'))
   .replace("from '../../api/distributionInbox.js'",'from '+jsurl('../src/api/distributionInbox.js'))
+  .replace("from './seoSiteContext'",'from '+jsurl('../src/views/seo/seoSiteContext.js'))
   .replace("from './DistributionInbox.vue'",'from '+JSON.stringify(child))
 const Component = (await import(uri(page))).default
 const rid='11111111-1111-4111-8111-111111111111'
@@ -46,7 +49,9 @@ test('mounted page uses restored identity, per-target business exchange and no g
     return {ok:true,json:async()=>data}
   }
   const element=document.createElement('div');document.body.append(element)
-  const app=createApp(Component);app.mount(element)
+  const router=createRouter({history:createMemoryHistory(),routes:[{path:'/seo/distribution-inbox',component:Component}]})
+  await router.push('/seo/distribution-inbox')
+  const app=createApp(Component);app.use(router);app.mount(element)
   try{
     await flush();await flush()
     assert(calls.filter(c=>c.path.includes('/inbox/')).every(c=>c.headers.Authorization==='Bearer '+identity))
@@ -67,6 +72,35 @@ test('mounted page uses restored identity, per-target business exchange and no g
   }finally{app.unmount();element.remove();session.logout()}
 })
 
+test('focused saved receipt returns using server assignment, ignoring URL scope hints',async()=>{
+  const normal={id:7,tenant_id:4,permissions:{'seo.content':'edit','seo.site':'edit'}}
+  session.setAuth('synthetic-normal',normal,false)
+  let linked=false
+  globalThis.fetch=async(path,options)=>{
+    if(path.includes('/label?')) linked=true
+    const assignment={tenantId:4,module:'seo',scopeId:9,articleId:linked?123:null,publishedAccount:null}
+    const row={id:rid,revision:linked?1:0,platform:'other',title:'精确回执',result:'success',assignment}
+    const data=path.endsWith('/targets')?{items:[{tenantId:4,name:'示例客户甲',modules:['seo'],scopes:[{id:9,module:'seo',name:'示例网站甲',articles:[{id:123,title:'已审核稿件',version:3,digest:'digest'}]}]}]}
+      :path.endsWith('/'+rid)?row:path.endsWith('/count')?{count:0}:path.endsWith('/devices')?{items:[]}:{items:[]}
+    return {ok:true,json:async()=>data}
+  }
+  const element=document.createElement('div');document.body.append(element)
+  const router=createRouter({history:createMemoryHistory(),routes:[{path:'/seo/distribution-inbox',component:Component},{path:'/seo/distribution',component:{template:'<p>发布记录</p>'}}]})
+  await router.push(`/seo/distribution-inbox?receiptId=${rid}&returnTo=publication-groups&tenantId=999&scopeId=999`)
+  const app=createApp(Component);app.use(router);app.mount(element)
+  try{
+    await flush();await flush();await flush()
+    assert(element.querySelector('.focused'))
+    const article=element.querySelector('.focused details select:nth-of-type(2)')
+    article.value='123';article.dispatchEvent(new dom.window.Event('change',{bubbles:true}));await flush()
+    await click(element,'保存标注修改');await flush();await flush()
+    assert.equal(router.currentRoute.value.path,'/seo/distribution')
+    assert.equal(router.currentRoute.value.query.articleId,'123')
+    assert.equal(sessionStorage.getItem('seo_site_id'),'9')
+    assert.equal(session.tenantId,4)
+  }finally{app.unmount();element.remove();session.logout()}
+})
+
 test('unified route is outside the SEO business shell and external records are mounted',async()=>{
   const router=await readFile(new URL('../src/seo-router.js',import.meta.url),'utf8')
   assert(router.includes("path: '/seo/distribution-inbox', component:"))
@@ -74,5 +108,7 @@ test('unified route is outside the SEO business shell and external records are m
   assert(distribution.includes('<DistributionExternalPublications :tenant-id="currentTenantId" :scope-id="siteId"'))
   assert(distribution.includes('旧版稿件派发（0.3.5 / 0.3.6 兼容区）'))
   const external=await readFile(new URL('../src/views/seo/DistributionExternalPublications.vue',import.meta.url),'utf8')
-  assert.match(external, /<p v-else-if="!items.length">暂无外部回传记录<br \/>\s*<span>没选网站的回传不会出现在这里，请到多号通回传收件箱补选网站。<\/span>/)
+  assert(external.includes('<ArticlePublicationGroups'))
+  const groups=await readFile(new URL('../src/components/ArticlePublicationGroups.vue',import.meta.url),'utf8')
+  assert(groups.includes('没选网站的回传不会出现在这里，请到多号通回传收件箱补选网站。'))
 })

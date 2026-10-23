@@ -1,6 +1,7 @@
 <script setup>
 import { publicationEvidence, channelBoundary, countPublishedListedContents } from './seoPublicationEvidence'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   downloadSeoPublicationMaterials,
@@ -47,7 +48,10 @@ const runnerFiles = import.meta.glob('./publisher-runner/*', { query: '?raw', im
 
 const loading = ref(false)
 const error = ref('')
-const activeTab = ref('channels')
+const route = useRoute()
+const activeTab = ref(route.query.view === 'records' ? 'records' : 'channels')
+const groupsReadError = ref(false)
+watch(() => route.query.view, value => { if (value === 'records') activeTab.value = 'records' })
 const query = ref('')
 const channelFilter = ref('all')
 const materialsBusy = ref(false)
@@ -1111,9 +1115,11 @@ onMounted(loadSites)
     </template>
 
     <template v-else>
-      <DistributionExternalPublications :tenant-id="currentTenantId" :scope-id="siteId" />
       <section class="table-panel">
-        <header><div><h2>发布成功记录</h2><p>包含人工确认和平台接口返回，均不代表页面正文、外链或搜索收录已核验。核验结果请查看问答跟进或外链模块。</p></div><div class="task-toolbar"><el-date-picker v-if="canViewCapture" v-model="exportMonth" type="month" value-format="YYYY-MM" placeholder="选择月份" /><el-button v-if="canViewCapture" :disabled="!siteId || exportBusy" @click="exportPublicationList">{{ exportBusy ? '导出中…' : '导出发布清单' }}</el-button><el-button v-if="canViewCapture" :disabled="!siteId || reportBusy" :loading="reportBusy" @click="downloadMonthlyReport">生成月报</el-button><el-button @click="selectImport">批量登记</el-button></div></header>
+        <header><div><h2>发布记录</h2><p>按文章查看系统原生登记与外部回传；页面正文、外链和搜索收录的核验证据分别查看。</p></div><div class="task-toolbar"><el-date-picker v-if="canViewCapture" v-model="exportMonth" type="month" value-format="YYYY-MM" placeholder="选择月份" /><el-button v-if="canViewCapture" :disabled="!siteId || exportBusy" @click="exportPublicationList">{{ exportBusy ? '导出中…' : '导出发布清单' }}</el-button><el-button v-if="canViewCapture" :disabled="!siteId || reportBusy" :loading="reportBusy" @click="downloadMonthlyReport">生成月报</el-button><el-button @click="selectImport">批量登记</el-button></div></header>
+        <p>导出清单、月报和原生指标继续只统计原生记录。</p>
+        <DistributionExternalPublications :tenant-id="currentTenantId" :scope-id="siteId" :native-records="published" :can-view-capture="canViewCapture" @attempts="showAttempts" @capture="capturePublication = $event; captureDialog = true" @read-error="groupsReadError = $event" />
+        <details v-if="groupsReadError"><summary>独立查看原生发布记录与证据</summary>
         <el-table :data="published" empty-text="暂无已发布记录">
           <el-table-column prop="content_title" label="文章" min-width="220" show-overflow-tooltip />
           <el-table-column prop="platform_name" label="平台" width="130" />
@@ -1123,6 +1129,7 @@ onMounted(loadSites)
           <el-table-column prop="published_at" label="发布/登记时间" width="150"><template #default="scope">{{ scope.row.published_at ? date(scope.row.published_at) : '时间未记录' }}</template></el-table-column>
           <el-table-column label="操作" width="150"><template #default="scope"><el-button link type="primary" @click="showAttempts(scope.row)">尝试记录</el-button><el-button v-if="canViewCapture" link type="primary" @click="capturePublication = scope.row; captureDialog = true">截图</el-button></template></el-table-column>
         </el-table>
+        </details>
       </section>
     </template>
 

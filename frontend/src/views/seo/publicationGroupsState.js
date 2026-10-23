@@ -1,0 +1,77 @@
+import { mergeRows, groupKey, safeId, validateGroupsPage } from '../../utils/articlePublicationGroups.js'
+
+export function createPublicationGroupsState(api, changed = () => {}) {
+  const empty = () => ({ items: [], cursor: null, more: false, busy: false, error: '' })
+  const state = { buckets: { linked: empty(), unlinked: empty(), invalid: empty() }, details: {}, counts: null, revision: null, busy: false, error: '' }
+  let context = null, generation = 0, controller = new AbortController()
+  function clear(next = null) {
+    generation++; controller.abort(); controller = new AbortController(); context = next
+    Object.assign(state, { buckets: { linked: empty(), unlinked: empty(), invalid: empty() }, details: {}, counts: null, revision: null, busy: false, error: '' })
+    changed()
+  }
+  function scope() {
+    if (!context?.tenant || !context?.scope) return null
+    return { tenant: safeId(context.tenant), scope: safeId(context.scope) }
+  }
+  async function get(bucket, article = null, cursor = null) {
+    const target = scope()
+    if (!target) return null
+    const result = await api.publicationGroups('seo', target.tenant, target.scope,
+      { bucket, ...(article == null ? {} : { article_id: article }), ...(cursor ? { cursor } : {}) }, controller.signal)
+    return validateGroupsPage(result, { ...target, bucket, article })
+  }
+  const fresh = page => {
+    if (state.revision && page.context.revision !== state.revision) throw Object.assign(new Error('记录或权限已变化，请刷新后重新加载'), { code: 'GROUPS_REFRESH_REQUIRED' })
+  }
+  function failure(error, target) {
+    target.error = error.message
+    if (['GROUPS_REFRESH_REQUIRED', 'AUTH_CONTEXT_CHANGED'].includes(error.code) || [401, 403, 404, 409].includes(error.status)) {
+      clear(context); state.error = error.message
+    }
+  }
+  async function refresh(next = context) {
+    clear(next)
+    if (!scope()) return
+    const version = generation
+    state.busy = true; changed()
+    try {
+      const buckets = ['linked', 'unlinked', 'invalid']
+      const pages = await Promise.all(buckets.map(bucket => get(bucket)))
+      if (version !== generation) return
+      state.revision = pages[0].context.revision
+      for (const page of pages) fresh(page)
+      pages.forEach((page, i) => Object.assign(state.buckets[buckets[i]], { items: page.items, cursor: page.next_cursor, more: page.has_more }))
+      state.counts = pages[0].counts
+    } catch (error) {
+      if (version === generation && error.name !== 'AbortError') { state.error = error.message; state.counts = null }
+    } finally { if (version === generation) { state.busy = false; changed() } }
+  }
+  async function more(bucket) {
+    const target = state.buckets[bucket]
+    if (!target || target.busy || !target.more || state.busy) return
+    const version = generation
+    target.busy = true; target.error = ''; changed()
+    try {
+      const page = await get(bucket, null, target.cursor)
+      if (version !== generation) return
+      fresh(page)
+      Object.assign(target, { items: mergeRows(target.items, page.items, bucket === 'linked' ? groupKey : r => r.key), cursor: page.next_cursor, more: page.has_more })
+    } catch (error) { if (version === generation && error.name !== 'AbortError') failure(error, target) }
+    finally { if (version === generation) { target.busy = false; changed() } }
+  }
+  async function details(row, nextPage = false) {
+    const id = safeId(row.group_article_id), key = groupKey(row)
+    const target = state.details[key] ||= empty()
+    if (target.busy || state.busy || (nextPage ? !target.more : target.loaded)) return
+    const version = generation
+    target.busy = true; target.error = ''; changed()
+    try {
+      const page = await get('linked', id, nextPage ? target.cursor : null)
+      if (version !== generation) return
+      fresh(page)
+      Object.assign(target, { items: mergeRows(nextPage ? target.items : [], page.items, r => r.key), cursor: page.next_cursor, more: page.has_more, loaded: true })
+    } catch (error) { if (version === generation && error.name !== 'AbortError') failure(error, target) }
+    finally { if (version === generation) { target.busy = false; changed() } }
+  }
+  return { state, clear, refresh, more, details }
+}

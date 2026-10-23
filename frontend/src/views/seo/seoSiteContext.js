@@ -1,5 +1,5 @@
 import { computed, reactive, ref } from 'vue'
-import { currentTenantId } from '../../store/session'
+import { currentTenantId } from '../../store/session.js'
 
 const SITE_KEY = 'seo_site_id'
 const TENANT_KEY = 'seo_site_tenant_id'

@@ -1,10 +1,15 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { session, advisorClaims } from '../../store/session'
+import { useRoute, useRouter } from 'vue-router'
+import { session, advisorClaims, currentTenantId } from '../../store/session'
+import { currentSeoSiteId } from './seoSiteContext'
 import { createDistributionInboxApi } from '../../api/distributionInbox.js'
 import DistributionInbox from './DistributionInbox.vue'
 
 const targets = ref([])
+const route = useRoute()
+const router = useRouter()
+const receiptId = computed(() => typeof route.query.receiptId === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(route.query.receiptId) ? route.query.receiptId : '')
 const error = ref('')
 const owners = ref([])
 const identityKey = computed(() => `${session.user?.id || ''}:${session.authRevision}`)
@@ -34,17 +39,27 @@ const api = createDistributionInboxApi({ getIdentity, prepareBusiness,
     return context?.revision === session.authRevision ? context : null
   },
 })
-watch(identityKey, async () => {
+async function reloadTargets() {
   targets.value = []; owners.value = []; error.value = ''; business.clear()
   const key = identityKey.value
   try {
     const response = await api.targets()
     if (key === identityKey.value) { targets.value = response.items; owners.value = response.owners || [] }
   } catch (e) { if (key === identityKey.value) error.value = e.message }
-}, { immediate: true })
+}
+watch(identityKey, reloadTargets, { immediate: true })
+function linked(row) {
+  const assignment = row.assignment
+  if (route.query.returnTo !== 'publication-groups' || assignment?.module !== 'seo' || row.id !== receiptId.value ||
+      !Number.isSafeInteger(assignment.articleId) || !Number.isSafeInteger(assignment.scopeId) ||
+      assignment.articleId < 1 || assignment.scopeId < 1) return
+  if (currentTenantId.value !== assignment.tenantId) { error.value = '当前客户已变化，请重新选择客户后查看发布记录'; return }
+  currentSeoSiteId.value = assignment.scopeId
+  return router.push({ path: '/seo/distribution', query: { view: 'records', articleId: String(assignment.articleId) } })
+}
 </script>
 
 <template>
   <p v-if="error" role="alert">{{ error }}</p>
-  <DistributionInbox :api="api" :identity="identityKey" :targets="targets" :owners="owners" />
+  <DistributionInbox :api="api" :identity="identityKey" :targets="targets" :owners="owners" :receipt-id="receiptId" @linked="linked" @refresh-targets="reloadTargets" />
 </template>
