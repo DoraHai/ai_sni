@@ -1,5 +1,6 @@
 """DDL/graph checks plus real migrations in disposable CI PostgreSQL schemas."""
 import asyncio
+import hashlib
 from io import StringIO
 from pathlib import Path
 from uuid import uuid4
@@ -33,6 +34,8 @@ def test_migration_graph_and_additive_postgresql_ddl():
     with Operations.context(context):
         migration.module.upgrade()
     sql = output.getvalue()
+    # Frozen schema shared with canonical 0111; GEO retains only its local 0075 head.
+    assert hashlib.sha256(sql.encode()).hexdigest() == "50595a32fbd6ac223c3b053d69ef7cfb64f80f5e22cbb9e49475e67b2743a650"
     assert "WHERE auto_day IS NOT NULL" in sql
     assert "DEFAULT 'legacy'" in sql and "DEFAULT '10'" in sql
     assert not any(word in sql.upper() for word in ("DROP ", "GRANT ", "UPDATE ", "ALTER COLUMN"))
@@ -92,3 +95,48 @@ def test_upgrade_on_owned_postgresql_schema(incremental):
             await engine.dispose()
 
     asyncio.run(run())
+
+
+def test_frozen_upgrade_columns_and_indexes_match_geo_orm(monkeypatch):
+    from app.models.geo_visibility_patrol import (
+        GeoVisibilityPatrolSettings, GeoVisibilityPatrolRun,
+        GeoVisibilityPatrolSettingEvent, GeoVisibilityPatrolDailyBudget,
+    )
+    from sqlalchemy.dialects.postgresql import dialect
+    from sqlalchemy.schema import CreateIndex
+    tables = {m.__tablename__: m.__table__ for m in (
+        GeoVisibilityPatrolSettings, GeoVisibilityPatrolRun,
+        GeoVisibilityPatrolSettingEvent, GeoVisibilityPatrolDailyBudget,
+    )}
+    module = scripts().get_revision(HEAD).module
+    metadata = sa.MetaData()
+    sa.Table("tenants", metadata, sa.Column("id", sa.BigInteger(), primary_key=True))
+    actual_indexes = []
+    def default(column):
+        if column.server_default is None: return None
+        value = column.server_default.arg
+        return value if isinstance(value, str) else str(value.compile(dialect=dialect()))
+    def compare(table, column):
+        expected = tables[table].c[column.name]
+        assert str(column.type.compile(dialect=dialect())) == str(expected.type.compile(dialect=dialect()))
+        assert column.nullable == expected.nullable
+        assert column.primary_key == expected.primary_key
+        assert default(column) == default(expected)
+        assert {f.target_fullname for f in column.foreign_keys} == {f.target_fullname for f in expected.foreign_keys}
+    def add_column(table, column): compare(table, column)
+    def create_table(table, *columns):
+        assert {c.name for c in columns} == set(tables[table].c.keys())
+        for column in columns: compare(table, column)
+        sa.Table(table, metadata, *columns)
+    def create_index(name, table, columns, **options):
+        expected = next(i for i in tables[table].indexes if i.name == name)
+        actual_indexes.append(name)
+        if table not in metadata.tables:
+            sa.Table(table, metadata, *(sa.Column(c, tables[table].c[c].type) for c in columns))
+        actual = sa.Index(name, *(metadata.tables[table].c[c] for c in columns), **options)
+        assert str(CreateIndex(actual).compile(dialect=dialect())) == str(CreateIndex(expected).compile(dialect=dialect()))
+    monkeypatch.setattr(module.op, "add_column", add_column)
+    monkeypatch.setattr(module.op, "create_table", create_table)
+    monkeypatch.setattr(module.op, "create_index", create_index)
+    module.upgrade()
+    assert set(actual_indexes) == {"uq_geo_patrol_tenant_auto_day", "ix_geo_patrol_events_tenant_id"}
