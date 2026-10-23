@@ -17,17 +17,18 @@ const compiled = compileScript(parsed.descriptor, { id: 'synthetic-inbox', inlin
 const code = compiled.content
   .replace(/from (['"])vue\1/g, 'from '+JSON.stringify(pathToFileURL(require.resolve('vue')).href))
   .replace("from './distributionInboxState.js'", 'from '+JSON.stringify(new URL('../src/views/seo/distributionInboxState.js', import.meta.url).href))
+  .replace("from '../../utils/articlePublicationGroups.js'", 'from '+JSON.stringify(new URL('../src/utils/articlePublicationGroups.js', import.meta.url).href))
 const Component = (await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'))).default
 const id = '11111111-1111-4111-8111-111111111111'
 const flush = async () => { await new Promise(r => setTimeout(r, 0)); await nextTick() }
 
-function mount(targets = [], assignment = null) {
+function mount(targets = [], assignment = null, empty = false) {
   const calls = []
   const api = {
-    receipts: async () => ({ items: [{ id, revision: 0, platform: '新平台', title: '<img src=x onerror=alert(1)>',
+    receipts: async () => ({ items: empty ? [] : [{ id, revision: 0, platform: '新平台', title: '<img src=x onerror=alert(1)>',
       reportedAccount: '<script>unsafe</script>', result: 'success', publicUrl: 'https://example.invalid/article',
-      occurredAt: '2026-10-19T11:00:00.000Z', receivedAt: '2026-10-19T11:01:00.000Z', assignment }] }),
-    devices: async () => ({ items: [{ id, revision: 0, label: '合成电脑', state: 'active' }] }), count: async () => ({ count: 1 }),
+      occurredAt: '2026-10-23T16:30:00Z', receivedAt: '2026-10-23T16:31:00Z', assignment }] }),
+    devices: async () => ({ items: ['active','revoked','expired','future'].map(state => ({ id: state, revision: 0, label: '合成电脑', state })) }), count: async () => ({ count: empty ? 0 : 1 }),
     createPairing: async () => { calls.push('pair'); return { pairingCode: 'DHT2-'+'a'.repeat(32) } },
     revoke: async () => calls.push('revoke'), label: async (...args) => calls.push(['label',...args]),
     unlabel: async (...args) => calls.push(['unlabel',...args]),
@@ -42,6 +43,28 @@ const select = async (element, value) => {
   element.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
   await flush()
 }
+
+test('receipt times cross midnight in Beijing and device states use Chinese labels', async () => {
+  const view = mount(); await flush()
+  try {
+    assert(view.element.textContent.includes('操作人报告时间（北京时间）：2026-10-24 00:30'))
+    assert(view.element.textContent.includes('收到时间（北京时间）：2026-10-24 00:31'))
+    const devices = view.element.querySelector('section:last-child')
+    for (const text of ['使用中','已停用','已过期','未知状态']) assert(devices.textContent.includes(text))
+    assert.deepEqual([...devices.querySelectorAll('button')].map(b => b.disabled), [false,true,true,false])
+  } finally { view.close() }
+})
+
+test('filter switches update the section title and empty message', async () => {
+  const view = mount([], null, true); await flush()
+  try {
+    for (const [filter, label] of [['pending','待标客户'],['active','已标客户'],['archived','已归档']]) {
+      await select(view.element.querySelector('section:nth-of-type(2) select'), filter)
+      assert.equal(view.element.querySelector('#receipts-title').textContent, `${label}（0）`)
+      assert(view.element.textContent.includes(`暂无${label}记录`))
+    }
+  } finally { view.close() }
+})
 
 test('rendered inbox has only three sections, zero-grant guidance and safe plain text links', async () => {
   const view = mount(); await flush()

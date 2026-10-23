@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
+from math import ceil
 import re
+import unicodedata
 
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as SheetImage
@@ -144,7 +146,7 @@ def build_publication_list_workbook(rows: list[dict], summary: dict, template=DE
                         picture = SheetImage(BytesIO(data))
                         picture.anchor = cell.coordinate
                         detail.add_image(picture)
-                        detail.row_dimensions[row_number].height = 185
+                        detail.row_dimensions[row_number].height = max(185, detail.row_dimensions[row_number].height)
                     except Exception:
                         image_error = True
                 elif record.get("capture_kind") in {"auto", "manual"}:
@@ -155,6 +157,14 @@ def build_publication_list_workbook(rows: list[dict], summary: dict, template=DE
                 value = beijing_text(value)
             cell.value = value if key == "number" else _safe_text(value)
             cell.alignment = Alignment(vertical="center", wrap_text=key in {"title", "notes", "capture_status"})
+            if cell.alignment.wrap_text:
+                # Excel widths use Latin character units; CJK glyphs need two.
+                width = max(1, float(spec["width"]) - 2)
+                lines = sum(max(1, ceil(sum(2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+                                          for char in line) / width))
+                            for line in str(cell.value or "").split("\n"))
+                detail.row_dimensions[row_number].height = max(
+                    detail.row_dimensions[row_number].height, min(409, lines * 16 + 6))
             if kind == "link" and isinstance(value, str) and value.startswith(("https://", "http://")):
                 cell.hyperlink = value
                 cell.font = Font(color="0563C1", underline="single")
@@ -171,7 +181,7 @@ def build_publication_list_workbook(rows: list[dict], summary: dict, template=DE
     items = [("站点", summary["site"]), ("月份", summary["month"]),
              ("导出时间（北京时间）", beijing_text(summary["exported_at"])),
              ("发布总数", summary["total"]), ("截图覆盖数", covered),
-             ("截图覆盖率", covered / summary["total"] if summary["total"] else 0),
+             ("截图覆盖率", covered / summary["total"] if summary["total"] else "暂无发布记录"),
              ("自动截图数", counts["auto"]), ("人工上传数", counts["manual"]),
              ("截图失败数", counts["failed"]), ("无截图数", counts["none"])]
     items.extend((f"平台/渠道：{name}", count) for name, count in sorted(summary["platforms"].items()))

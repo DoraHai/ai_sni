@@ -17,7 +17,7 @@ let template = compileTemplate({ source: descriptor.template.content, id: 'keywo
 const flush = async () => { await new Promise(resolve => setTimeout(resolve, 0)); await Vue.nextTick() }
 async function mount(options={}) {
   const writes=[], notices=[]
-  let records=[{id:11, keyword:'测试词', status: options.status || 'active'}]
+  let records=options.records || [{id:11, keyword:'测试词', status: options.status || 'active'}]
   const bindings={computed:Vue.computed,onMounted:Vue.onMounted,reactive:Vue.reactive,ref:Vue.ref,watch:Vue.watch, useRoute:()=>({query:{}}), useRouter:()=>({push(){}}),
     currentTenantId:Vue.ref(1), siteId:Vue.ref(8),
     session:{isLoggedIn:true,canEdit:()=>options.edit!==false,user:{id:7}},
@@ -44,6 +44,18 @@ test('active and paused rows render delete, confirmed removal refreshes the list
       assert.ok(f.notices.includes('关键词已删除'))
     }finally{f.close()}
   }
+})
+
+test('archived status has its own Chinese label and exact filter, separate from paused',async()=>{
+  const f=await mount({records:['active','paused','archived'].map((status,i)=>({id:i+1,keyword:status,status}))})
+  try {
+    assert.deepEqual([...f.host.querySelectorAll('.status-pill')].map(e=>e.textContent), ['启用','暂停','已归档'])
+    for(const [label,status] of [['暂停监控','paused'],['已归档','archived'],['全部',null]]) {
+      [...f.host.querySelectorAll('.segment-tabs button')].find(b=>b.textContent===label).click(); await flush()
+      assert.deepEqual(f.state.rows.map(row=>row.status),status?[status]:['active','paused','archived'])
+    }
+    assert.equal(f.writes.length,0)
+  } finally {f.close()}
 })
 test('read-only users see no delete action and cannot invoke it',async()=>{
   const f=await mount({edit:false});try{assert.equal(f.host.querySelector('.danger'),null);await f.state.removeKeyword({id:11});assert.equal(f.writes.length,0)}finally{f.close()}

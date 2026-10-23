@@ -552,4 +552,5 @@ onMounted(loadSites)
 .status-review{background:#fff7e6;color:#b76e00}.status-ready{background:#eff4ff;color:#2563eb}
 .review-history{margin-top:4px;color:#667085;font-size:11px}.review-history summary{cursor:pointer}.review-history small{padding:2px 0 0 10px}
 .content-pagination{padding:12px 14px;display:flex;justify-content:flex-end;border-top:1px solid #e8eaf0}
+@media(max-width:700px){.content-page-head{flex-direction:column;align-items:stretch}.content-page-head>div:first-child{flex-shrink:0;width:100%;min-width:0}.page-actions{width:100%;min-width:0;flex-wrap:wrap}.page-actions .content-site-picker{width:100%}}
 </style>

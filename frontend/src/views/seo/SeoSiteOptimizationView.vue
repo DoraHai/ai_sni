@@ -55,6 +55,8 @@ const editForm = reactive({ page_type: '', target_keyword_id: null, title_sugges
 
 const canEdit = computed(() => !session.isLoggedIn || session.canEdit('seo.site'))
 const stats = computed(() => result.value.stats || {})
+const issueEmptyText = computed(() => issueResult.value.summary?.assessed_pages > 0
+  ? '最近检测没有发现站内问题' : '未检测或暂无可评估数据，请先完成页面检测')
 const emptyStateText = computed(() => Number(stats.value.total || 0) > 0 ? '没有符合当前筛选条件的页面' : '尚未导入站内页面')
 const actionScopeLabel = computed(() => selectedRows.value.length ? `已选 ${selectedRows.value.length} 条` : `当前页 ${result.value.items.length} 条`)
 function fmt(value) { return value == null ? '—' : Number(value).toLocaleString('zh-CN') }
@@ -405,7 +407,7 @@ onBeforeUnmount(() => { disposed = true; ++sitesGeneration; clearTimeout(timer) 
     <SeoSiteDiagnosticsPanel :tenant-id="Number(currentTenantId) || undefined" :site-id="Number(siteId) || undefined" :can-edit="session.isLoggedIn && session.canEdit('seo.site')" :refresh-key="diagnosticRefreshKey" />
     <section class="site-panel issue-centre">
       <header><div><span>01 / ISSUE CENTRE</span><h2>站内问题中心</h2></div><small>严重 {{ issueResult.summary?.high || 0 }} · 一般 {{ issueResult.summary?.medium || 0 }} · 影响 {{ issueResult.summary?.affected_pages || 0 }} 个页面</small></header>
-      <el-table v-loading="issueLoading" :data="issueResult.items" empty-text="最近检测没有发现站内问题">
+      <el-table v-loading="issueLoading" :data="issueResult.items" :empty-text="issueEmptyText">
         <el-table-column label="级别" width="82"><template #default="{row}"><el-tag :type="severityType(row.severity)" effect="light">{{ severityLabel(row.severity) }}</el-tag></template></el-table-column>
         <el-table-column prop="label" label="问题类型" min-width="155" />
         <el-table-column label="影响页面" width="105"><template #default="{row}"><strong>{{ row.affected_pages }}</strong> 个</template></el-table-column>
