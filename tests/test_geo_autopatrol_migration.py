@@ -98,10 +98,26 @@ def test_upgrade_on_owned_postgresql_schema(incremental):
 
 
 def test_frozen_upgrade_columns_and_indexes_match_geo_orm(monkeypatch):
-    from app.models.geo_visibility_patrol import (
-        GeoVisibilityPatrolSettings, GeoVisibilityPatrolRun,
-        GeoVisibilityPatrolSettingEvent, GeoVisibilityPatrolDailyBudget,
-    )
+    # Load the real model source with an isolated declarative registry. Importing
+    # app.models would instantiate application settings in the migration-only CI
+    # job, which deliberately has no application credentials/configuration.
+    import importlib.util
+    import sys
+    import types
+    from sqlalchemy.orm import DeclarativeBase
+    class ModelBase(DeclarativeBase):
+        pass
+    database = types.ModuleType("app.database")
+    database.Base = ModelBase
+    spec = importlib.util.spec_from_file_location("isolated_patrol_models", ROOT / "app/models/geo_visibility_patrol.py")
+    model = importlib.util.module_from_spec(spec)
+    with monkeypatch.context() as isolated:
+        isolated.setitem(sys.modules, "app.database", database)
+        spec.loader.exec_module(model)
+    GeoVisibilityPatrolSettings = model.GeoVisibilityPatrolSettings
+    GeoVisibilityPatrolRun = model.GeoVisibilityPatrolRun
+    GeoVisibilityPatrolSettingEvent = model.GeoVisibilityPatrolSettingEvent
+    GeoVisibilityPatrolDailyBudget = model.GeoVisibilityPatrolDailyBudget
     from sqlalchemy.dialects.postgresql import dialect
     from sqlalchemy.schema import CreateIndex
     tables = {m.__tablename__: m.__table__ for m in (
