@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createPublicationGroupsClient,validatePublicationPage,publicationGroupQuery,publicationGroupKey,publicationDetailKey,appendUnique} from './js/publication-groups-client.mjs';
 import {publicationLink,publicationDetailView} from './js/publication-groups-panel.mjs';
-import {publicationPage,receiptId} from './tests/publication-groups-fixture.mjs';
+import {publicationPage,receiptId,completePublicationPage} from './tests/publication-groups-fixture.mjs';
 import {geoClientRoute,geoClientQuery} from './js/geo-client-routes.mjs';
 import {createHostSessionAdapter} from './js/host-session-adapter.mjs';
 import {createGeoHostAdapter} from './js/geo-host-session-adapter.mjs';
@@ -16,7 +16,7 @@ test('external success/failure never changes native evidence totals, legacy push
   const before=JSON.stringify({deliveries,slots,seo}),views=[geoResource('deliveries',deliveries),geoHome(slots),publicationListView(seo)];
   for(const module of ['seo','geo'])for(const external_records of [0,2,200]){
     const client=createPublicationGroupsClient({module,getContext:()=>ctx,transport:async()=>{
-      const v=publicationPage(module);v.counts.external_records=external_records;return Response.json(v);
+      const v=publicationPage(module);v.counts[module==='seo'?'external':'external_records']=external_records;return Response.json(completePublicationPage(v));
     }});
     const page=await client.read();assert.equal(page.counts.native_records,2);
     assert.equal(JSON.stringify({deliveries,slots,seo}),before);
@@ -44,23 +44,31 @@ test('client only requests exact scoped GET, rejects unsafe parameters and valid
     await client.read({article_id:88});assert.equal(calls[0].options.method,'GET');assert.equal(calls[0].options.body,undefined);
     assert.equal(calls[0].path,module==='seo'?'/api/v1/seo/workbench/publication-groups?tenant_id=1&site_id=9&article_id=88':'/api/v1/geo/projects/10/client/publication-groups?tenant_id=1&article_id=88');
     for(const params of [{bucket:'invalid'},{scope_id:10},{site_id:9},{task_id:88},{article_id:9007199254740992},{article_id:'08'},{limit:101},{bucket:'unlinked',article_id:88},{cursor:''},{owner_user_id:7}])await assert.rejects(client.read(params),/PUBLICATION_QUERY_DENIED/);
-    for(const mutate of [v=>v.context.tenant_id=2,v=>v.context.scope_id=19,v=>v.context.module='unknown',v=>v.context.bucket='unlinked',v=>v.read_only=false,v=>v.completeness.complete=false,v=>v.counts.native_records=-1,v=>v.items[0].group_article_id=89,v=>v.items[0].external_receipt_id=receiptId(9)]){
+    for(const mutate of [v=>v.context.tenant_id=2,v=>v.context.scope_id=19,v=>v.context.module='unknown',v=>v.context.bucket='unlinked',v=>v.read_only=false,v=>{if(module==='seo')v.completeness='incomplete';else v.completeness.complete=false},v=>v.counts[module==='seo'?'native':'native_records']=-1,v=>v.items[0].group_article_id=89,v=>v.items[0].external_receipt_id=receiptId(9)]){
       const v=publicationPage(module,{article_id:88});mutate(v);assert.throws(()=>validatePublicationPage(v,module,ctx,{article_id:88}));
     }
     client.invalidate();
   }
 });
 test('5101 groups and 101 details paginate independently without merging same URL or title',async()=>{
-  const all=Array.from({length:5101},(_,i)=>({group_article_id:6000-i,title:'同名',native_count:1,external_count:0}));
+  const all=Array.from({length:5101},(_,i)=>({group_article_id:6000-i,title:'同名',content_id:6000-i,task_id:null,module:'seo',tenant_id:1,scope_id:9,native_count:1,external_count:0}));
   const client=createPublicationGroupsClient({module:'seo',getContext:()=>ctx,transport:async path=>{
     const p=new URL(path,'https://fixture.test').searchParams,offset=Number(p.get('cursor')||0),v=publicationPage();
-    v.items=all.slice(offset,offset+100);v.counts.article_groups=5101;v.has_more=offset+100<all.length;v.next_cursor=v.has_more?String(offset+100):null;return Response.json(v);
+    v.items=all.slice(offset,offset+100);v.counts.articles=5101;v.has_more=offset+100<all.length;v.next_cursor=v.has_more?String(offset+100):null;return Response.json(completePublicationPage(v));
   }});
   let groups=[],cursor;
   do{const page=await client.read({limit:100,...(cursor?{cursor}:{})});groups=appendUnique(groups,page.items,r=>publicationGroupKey('seo',ctx,r.group_article_id));cursor=page.next_cursor;}while(cursor);
   assert.equal(groups.length,5101);
   const row=publicationPage('geo',{article_id:88}).items[0],details=Array.from({length:101},(_,i)=>({...row,native_publication_id:i+1}));
   assert.equal(appendUnique(details.slice(0,100),details.slice(99),r=>publicationDetailKey('geo',r)).length,101);
+  const detailClient=createPublicationGroupsClient({module:'geo',getContext:()=>ctx,transport:async path=>{
+    const query=new URL(path,'https://fixture.test').searchParams,offset=Number(query.get('cursor')||0),v=publicationPage('geo',{article_id:88});
+    v.items=details.slice(offset,offset+100);v.has_more=offset+100<101;v.next_cursor=v.has_more?'100':null;
+    return Response.json(completePublicationPage(v));
+  }});
+  const first=await detailClient.read({article_id:88,limit:100});
+  const last=await detailClient.read({article_id:88,limit:100,cursor:first.next_cursor});
+  assert.equal(appendUnique(first.items,last.items,r=>publicationDetailKey('geo',r)).length,101);
 });
 test('context switch, invalidate and async JSON prevent late response from crossing permissions',async()=>{
   for(const switchContext of [true,false]){

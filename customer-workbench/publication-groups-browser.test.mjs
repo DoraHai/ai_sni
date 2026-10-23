@@ -5,14 +5,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {startFixtureServer} from './tests/fixture-server.mjs';
 import {geoFixture} from './tests/geo-client-fixture.mjs';
-import {publicationPage} from './tests/publication-groups-fixture.mjs';
+import {publicationPage,completePublicationPage} from './tests/publication-groups-fixture.mjs';
 const edge=process.env.EDGE_BINARY||'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 const origin='https://publication-workbench.test';
 const jwt=claims=>`e30.${Buffer.from(JSON.stringify({sub:'7',...claims})).toString('base64url')}.synthetic`;
 for(const module of ['seo','geo'])for(const advisor of [false,true])test(`built ${module} ${advisor?'advisor':'customer'} read-only publication groups, pagination, failure, scope and mobile`,{timeout:90000},async()=>{
   const fixture=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true,args:['--no-sandbox']});
   const calls=[],errors=[],external=[],shots=process.env.PUBLICATION_SHOTS_DIR;
-  let failed=false,revoked=false,selectionMode=false;
+  let failed=false,revoked=false,selectionMode=false,revisionChanged=false;
   try{
     const p=await browser.newPage();p.on('pageerror',e=>errors.push(e.message));await p.setViewport({width:1440,height:900});
     const user={id:advisor?7:12,tenant_id:advisor?null:1,is_advisor:advisor,display_name:advisor?'示例顾问':'示例客户甲',permissions:{'seo.site':advisor?'edit':'view','seo.content':advisor?'edit':'view','seo.keywords':advisor?'edit':'view','geo.assets':advisor?'edit':'view','geo.content':advisor?'edit':'view'}};
@@ -34,6 +34,10 @@ for(const module of ['seo','geo'])for(const advisor of [false,true])test(`built 
         if(failed)return send({detail:{code:'synthetic_unavailable'}},503);
         const params=Object.fromEntries(u.searchParams);if(params.article_id)params.article_id=Number(params.article_id);
         const value=publicationPage(module,params);
+        if(revisionChanged&&params.cursor){
+          if(module==='seo')value.context.revision='synthetic-new-revision';
+          else value.completeness.revision='synthetic-new-revision';
+        }
         if(!params.article_id&&params.bucket!=='unlinked'){
           if(!params.cursor){value.items=value.items.slice(0,1);value.has_more=true;value.next_cursor='groups-next';}
           else value.items=value.items.slice(1);
@@ -42,7 +46,7 @@ for(const module of ['seo','geo'])for(const advisor of [false,true])test(`built 
           if(!params.cursor){value.items=value.items.slice(0,3);value.has_more=true;value.next_cursor='details-next';}
           else value.items=value.items.slice(3);
         }
-        return send(value);
+        return send(completePublicationPage(value));
       }
       if(module==='geo'&&(u.pathname.includes('/client/')||u.pathname.endsWith('/executions'))){
         const resource=u.pathname.endsWith('/executions')?'executions':u.pathname.split('/client/')[1];return send(geoFixture(resource));
@@ -70,14 +74,20 @@ for(const module of ['seo','geo'])for(const advisor of [false,true])test(`built 
     await p.locator('[data-publication=detail-more]').click();await p.waitForFunction(()=>document.querySelectorAll('.publication-source').length===5);
     await p.locator('[data-publication=groups-more]').click();await p.waitForFunction(()=>document.querySelectorAll('.publication-group').length===2);
     assert.match(await p.$eval('.publication-groups',e=>e.textContent),/操作人报告失败/);
-    assert.match(await p.$eval('.publication-groups',e=>e.textContent),/关联 v2；当前 v3/);
+    if(module==='geo')assert.match(await p.$eval('.publication-groups',e=>e.textContent),/关联 v2；当前 v3/);
     const counts=await p.$eval('.publication-counts',e=>e.textContent);
-    await p.select('[data-publication-source]','external');assert.equal(await p.$eval('.publication-counts',e=>e.textContent),counts);
+    await p.select('[data-publication-source]','external_report');assert.equal(await p.$eval('.publication-counts',e=>e.textContent),counts);
     assert.equal(await p.$$eval('.publication-group .publication-source',es=>es.length),2);
     await p.select('[data-publication-source]','all');
     assert.equal(await p.$$eval('.publication-groups [data-action],.publication-groups [data-geo]',es=>es.length),0);
     const shot=async name=>{if(shots){await fs.mkdir(shots,{recursive:true});await p.screenshot({path:path.join(shots,`${module}-${advisor?'advisor':'customer'}-${name}.png`),fullPage:true});}};
     await shot('delivery-desktop');
+    await p.locator('[data-publication=refresh]').click();await ready();
+    revisionChanged=true;await p.locator('[data-publication=groups-more]').click();
+    await p.waitForFunction(()=>document.querySelector('.publication-groups')?.textContent.includes('分页已变化'));
+    assert.equal(await p.$$eval('.publication-group',es=>es.length),0);
+    assert.equal(await p.$$eval('.publication-source',es=>es.length),0);
+    revisionChanged=false;await p.locator('[data-publication=refresh]').click();await ready();
     const before=calls.filter(c=>c.path.endsWith('/publication-groups')).length;
     if(module==='seo'){
       await p.locator('[data-page="内容"]').click();await p.waitForSelector('[data-action=delivery]:not([disabled])');await p.locator('[data-action=delivery]').click();
