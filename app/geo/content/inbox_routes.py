@@ -46,6 +46,18 @@ class GeoInboxBoundaryMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        if scope['type'] == 'http' and re.match(r'/api/v1/geo/projects/[^/]+/client/publication-groups', scope.get('path', '')):
+            path = scope['path']
+            if (scope['method'] != 'GET' or not re.fullmatch(r'/api/v1/geo/projects/[1-9][0-9]*/client/publication-groups', path)
+                    or scope.get('raw_path') != path.encode('ascii', errors='replace')):
+                return await JSONResponse({'detail': {'code': 'GEO_CLIENT_NOT_FOUND', 'message': '记录不存在'}},
+                    status_code=404, headers={'Cache-Control': 'no-store'})(scope, receive, send)
+            async def no_store(message):
+                if message['type'] == 'http.response.start':
+                    message['headers'] = [(k, v) for k, v in message.get('headers', []) if k.lower() != b'cache-control']
+                    message['headers'].append((b'cache-control', b'private, no-store'))
+                await send(message)
+            return await self.app(scope, receive, no_store)
         if scope['type'] == 'http' and scope.get('path', '').startswith(PREFIX):
             path = scope['path']
             if (not match_inbox_business_route(scope['method'], path, 'geo')
@@ -61,6 +73,8 @@ def request_scope(request):
             or request.scope.get('raw_path', b'') != request.url.path.encode('ascii')):
         fail('INBOX_FORBIDDEN', 403)
     allowed = {'tenant_id', 'scope_id'} if request.method == 'GET' else {'tenant_id'}
+    if request.method == 'GET' and request.url.path == PREFIX + '/publication-groups':
+        allowed |= {'bucket', 'article_id', 'limit', 'cursor'}
     if (len(request.query_params) != len(request.query_params.multi_items())
             or not set(request.query_params) <= allowed or 'tenant_id' not in request.query_params):
         fail()
@@ -140,3 +154,12 @@ async def publications(request: Request, session=Depends(safe_session), ctx=Depe
     await service.schema_ready(session)
     result = await service.publications(session, ctx, tenant, scope)
     return respond(result)
+
+
+from app.geo.project_client_store import client_read_session
+
+
+@router.get('/publication-groups')
+async def publication_groups(request: Request, session=Depends(client_read_session), ctx=Depends(require_auth)):
+    from app.geo.publication_groups import response
+    return respond(await response(request, ctx, session))

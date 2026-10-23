@@ -25,6 +25,7 @@ ROUTES = {
     'article': '/content/{task_id}/articles/{article_id}', 'deliveries': '/deliveries',
     'summary': '/summary', 'article_citations': '/article-citations',
     'recommendations': '/recommendations',
+    'publication_groups': '/publication-groups',
     'report_pdf': '/reports/export.pdf', 'report_xlsx': '/reports/export.xlsx',
 }
 CLIENT_TEMPLATES = frozenset(PREFIX + suffix for suffix in ROUTES.values())

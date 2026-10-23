@@ -48,6 +48,10 @@ class SelectOnly:
         assert statement.is_select
         return self.session.scalar(statement)
 
+    async def execute(self, statement):
+        assert statement.is_select
+        return self.session.execute(statement)
+
 
 @pytest.fixture
 def env(monkeypatch):
@@ -160,7 +164,7 @@ def all_paths(project=1):
 def test_all_twelve_routes_are_get_only_and_mounted_in_projects():
     from app.geo.project_routes import geo_projects_router
     for routes in (router.routes, [r for r in geo_projects_router.routes if r.path in CLIENT_TEMPLATES]):
-        assert len(routes) == 17
+        assert len(routes) == 18
         assert {r.path for r in routes} == CLIENT_TEMPLATES
         assert all(r.methods == {'GET'} for r in routes)
 
