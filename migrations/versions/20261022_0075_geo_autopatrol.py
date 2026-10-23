@@ -1,5 +1,10 @@
 """Add compatible self-service patrol state, daily claims, audit and budget.
 
+Retired GEO-chain equivalent: canonical production migration is
+20261023_0111_geo_autopatrol.py (0110_distribution_inbox -> 0111_geo_autopatrol).
+Keep this revision for isolated GEO graph/CI only; never apply it to the shared
+production alembic_version. Its upgrade DDL is frozen equal to canonical 0111.
+
 Existing customers stay legacy and disabled for self-service. No grants or
 historical claims are inferred. Application rollback retains this schema.
 """
