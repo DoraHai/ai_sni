@@ -7047,7 +7047,7 @@ async def import_prompts_csv_file(
 
 WORKBENCH_TAB_STATUSES = {
     "draft": ("draft", "facts_bound", "generating", "failed"),
-    "polish": ("editing",),
+    "polish": ("editing", "adapting"),
     "needs_fix": ("needs_fix",),
     "ready": ("ready", "exported"),
     "published": ("published",),
