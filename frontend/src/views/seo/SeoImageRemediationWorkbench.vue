@@ -27,7 +27,7 @@ const eligible = computed(() => selected.value.filter(row => row.review_status =
 const aiEligible = computed(() => selected.value.filter(row => row.review_status === 'unreviewed' && row.decision === 'undecided' && !row.review?.id).slice(0, 20))
 const coverage = computed(() => {
   const total = Number(stats.value.candidate_count || 0)
-  return total ? Math.round(Number(stats.value.approved_count || 0) * 100 / total) : 0
+  return total ? `${Math.round(Number(stats.value.approved_count || 0) * 100 / total)}%` : '暂无数据'
 })
 function stateLabel(row) { return row.review_status === 'approved' ? '已审核' : row.review_status === 'draft' ? '草稿' : '未判断' }
 function decisionLabel(value) { return { undecided: '未判断', decorative: '装饰图', informative: '内容图' }[value] || value }
@@ -172,7 +172,7 @@ onBeforeUnmount(() => { disposed = true; ++generation; clearTimeout(timer) })
       <article><strong>{{ stats.page_count || 0 }}</strong><span>涉及页面</span></article>
       <article><strong>{{ stats.candidate_count || 0 }}</strong><span>Alt 待判断证据</span></article>
       <article><strong>{{ stats.unreviewed_count || 0 }}</strong><span>尚未人工判断</span></article>
-      <article><strong>{{ coverage }}%</strong><span>人工审核覆盖率</span></article>
+      <article><strong>{{ coverage }}</strong><span>人工审核覆盖率</span></article>
     </div>
     <div class="filters"><el-input v-model="filters.q" clearable placeholder="搜索页面标题或 URL"/><el-select v-model="filters.reviewState" aria-label="全站图片审核状态"><el-option label="全部审核状态" value="all"/><el-option label="未判断" value="unreviewed"/><el-option label="草稿" value="draft"/><el-option label="已审核" value="approved"/></el-select><el-select v-model="filters.decision" aria-label="全站图片用途"><el-option label="全部图片用途" value="all"/><el-option label="未判断" value="undecided"/><el-option label="装饰图" value="decorative"/><el-option label="内容图" value="informative"/></el-select><small>当前筛选 {{ result.total }} 条 · 全站草稿 {{ stats.draft_count || 0 }} · 已审核 {{ stats.approved_count || 0 }}</small></div>
     <el-table v-loading="loading" :data="result.items" empty-text="当前筛选下没有图片整改证据" @selection-change="selected = $event">

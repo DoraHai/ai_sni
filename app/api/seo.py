@@ -3726,6 +3726,7 @@ async def list_site_page_issues(
         "items": items,
         "summary": {
             "groups": len(items),
+            "assessed_pages": sum(assessment_state(row) == "assessed" for row in pages),
             "high": sum(item["severity"] == "high" for item in items),
             "medium": sum(item["severity"] == "medium" for item in items),
             "low": sum(item["severity"] == "low" for item in items),
@@ -4771,7 +4772,7 @@ async def seo_overview(
             "average_position": average_position,
             "rises": rises,
             "falls": falls,
-            "top10_rate": round(top10 / max(len(ranked), 1) * 100, 1),
+            "top10_rate": round(top10 / len(ranked) * 100, 1) if ranked else None,
             "rank_anomalies": rank_anomalies,
             "new_keywords_30d": sum(
                 bool(item.created_at and item.created_at >= new_keyword_since)

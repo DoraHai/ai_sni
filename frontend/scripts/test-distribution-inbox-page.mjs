@@ -19,7 +19,9 @@ async function compiled(name) {
     .replace(/from (['"])vue\1/g,'from '+JSON.stringify(pathToFileURL(require.resolve('vue')).href))
     .replace(/from (['"])vue-router\1/g,'from '+JSON.stringify(import.meta.resolve('vue-router')))
 }
-const child = uri((await compiled('DistributionInbox.vue')).replace("from './distributionInboxState.js'",'from '+jsurl('../src/views/seo/distributionInboxState.js')))
+const child = uri((await compiled('DistributionInbox.vue'))
+  .replace("from './distributionInboxState.js'",'from '+jsurl('../src/views/seo/distributionInboxState.js'))
+  .replace("from '../../utils/articlePublicationGroups.js'",'from '+jsurl('../src/utils/articlePublicationGroups.js')))
 const page = (await compiled('DistributionInboxPage.vue'))
   .replace("from '../../store/session'",'from '+jsurl('../src/store/session.js'))
   .replace("from '../../api/distributionInbox.js'",'from '+jsurl('../src/api/distributionInbox.js'))

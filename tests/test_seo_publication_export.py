@@ -64,3 +64,34 @@ def test_custom_template_controls_column_order_and_title():
     detail = load_workbook(BytesIO(build_publication_list_workbook(rows, summary, template)))["发布明细"]
     assert [cell.value for cell in detail[1]] == ["客户标题", "行号"]
     assert [cell.value for cell in detail[2]] == ["文章", 1]
+
+
+def test_empty_publication_coverage_is_not_a_measured_zero():
+    summary = publication_summary([], "站点", "2026-09", datetime(2026, 10, 1))
+    workbook = load_workbook(BytesIO(build_publication_list_workbook([], summary)))
+    assert workbook["汇总"]["B6"].value == "暂无发布记录"
+    rows = [{"title": "无截图发布", "capture_kind": "none"}]
+    summary = publication_summary(rows, "站点", "2026-09", datetime(2026, 10, 1))
+    workbook = load_workbook(BytesIO(build_publication_list_workbook(rows, summary)))
+    assert workbook["汇总"]["B6"].value == 0
+
+
+def test_wrapped_titles_grow_rows_and_preserve_screenshot_height():
+    source = BytesIO()
+    Image.new("RGB", (200, 240), "white").save(source, "PNG")
+    rows = [{"title": "长中文标题" * 30 + "\n第二行", "notes": "备注" * 60, "capture_kind": "none"},
+            {"title": "短标题", "image_key": "image", "capture_kind": "auto"},
+            {"title": "极长中文标题" * 100, "image_key": "image", "capture_kind": "auto"}]
+    summary = publication_summary(rows, "站点", "2026-09", datetime(2026, 10, 1))
+    workbook = load_workbook(BytesIO(build_publication_list_workbook(rows, summary, image_loader=lambda _: source.getvalue())))
+    detail = workbook["发布明细"]
+    assert detail["C2"].value == rows[0]["title"]
+    assert detail["C2"].alignment.wrap_text
+    assert detail.row_dimensions[2].height >= 150
+    assert detail.row_dimensions[3].height >= 185
+    assert detail.row_dimensions[4].height == 409
+    assert len(detail._images) == 2
+    # A narrower customer template needs more lines for the same CJK title.
+    template = ({"key": "title", "title": "标题", "width": 20, "type": "text"},)
+    narrow = load_workbook(BytesIO(build_publication_list_workbook(rows[:1], summary, template)))
+    assert narrow["发布明细"].row_dimensions[2].height > detail.row_dimensions[2].height

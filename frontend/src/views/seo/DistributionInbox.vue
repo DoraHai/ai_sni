@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { createInboxState } from './distributionInboxState.js'
+import { beijingTime } from '../../utils/articlePublicationGroups.js'
 
 // Both shells use identity APIs, with explicit business sessions only on writes.
 const props = defineProps({
@@ -13,6 +14,8 @@ const emit = defineEmits(['linked', 'refresh-targets'])
 const revision = ref(0)
 const model = createInboxState(props.api, () => { revision.value += 1 })
 const state = computed(() => { revision.value; return { ...model.state } })
+const filterLabel = computed(() => ({ pending: '待标客户', active: '已标客户', archived: '已归档' }[state.value.filter] || '回传记录'))
+const deviceStates = { active: '使用中', revoked: '已停用', expired: '已过期' }
 const rows = computed(() => state.value.focusedReceipt ? [state.value.focusedReceipt, ...state.value.items.filter(row => row.id !== state.value.focusedReceipt.id)] : state.value.items)
 const inboxElement = ref(null)
 watch(() => state.value.focusedReceipt?.id, async id => {
@@ -98,18 +101,18 @@ onBeforeUnmount(model.clear)
       <button v-if="state.pairing" :disabled="state.busy" @click="model.cancelPairing">作废配对码</button>
     </section>
     <section aria-labelledby="receipts-title">
-      <h2 id="receipts-title">待标客户（{{ state.count }}）</h2>
+      <h2 id="receipts-title">{{ filterLabel }}（{{ state.count }}）</h2>
       <label v-if="owners.length">所有者 <select :value="state.ownerUserId || ''" :disabled="state.busy" @change="model.owner($event.target.value)"><option value="">我的收件箱</option><option v-for="owner in owners" :key="owner.id" :value="owner.id">{{ owner.displayName }}{{ owner.active ? '' : '（已停用）' }}</option></select></label>
       <label>查看 <select :value="state.filter" :disabled="state.busy" @change="model.show($event.target.value)"><option value="pending">待标客户</option><option value="active">已标客户（可改标/撤销）</option><option value="archived">已归档</option></select></label>
       <input v-model="query" maxlength="100" placeholder="搜索标题、平台、账号或链接" /><button :disabled="state.busy" @click="model.search(query)">搜索</button>
       <p v-if="!targets.length">暂无可标注的客户，请联系超管授权</p>
-      <p v-if="!state.items.length">暂无待标客户记录</p>
+      <p v-if="!rows.length">暂无{{ filterLabel }}记录</p>
       <article v-for="row in rows" :key="row.id" :data-receipt-id="row.id" tabindex="-1" :class="{ focused: row.id === receiptId }">
         <p v-if="row.id === receiptId">从发布记录定位的回执，请核对后关联稿件。</p>
         <p>{{ row.platform }} · {{ row.title || '未提供标题' }}</p>
         <a v-if="row.publicUrl" :href="row.publicUrl" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">{{ row.publicUrl }}</a>
         <p>发布账号：{{ row.reportedAccount || '未提供' }} · {{ results[row.result] || '结果未知' }}</p>
-        <p>操作人报告时间：{{ row.occurredAt }} · 收到时间：{{ row.receivedAt }}</p>
+        <p>操作人报告时间（北京时间）：{{ beijingTime(row.occurredAt) }} · 收到时间（北京时间）：{{ beijingTime(row.receivedAt) }}</p>
         <p v-if="row.duplicate">自己的收件箱中有相同链接，请核对</p>
         <p v-if="row.assignment?.hidden">客户归属不可查看</p>
         <template v-else-if="row.assignment">
@@ -151,7 +154,7 @@ onBeforeUnmount(model.clear)
     <section aria-labelledby="devices-title">
       <h2 id="devices-title">设备列表</h2>
       <p>停用后停止接收后续回传，已收到的记录保留。本地移除不等于服务端停用。</p>
-      <p v-for="device in state.devices" :key="device.id">{{ device.label }} · {{ device.state }}
+      <p v-for="device in state.devices" :key="device.id">{{ device.label }} · {{ deviceStates[device.state] || '未知状态' }}
         <button :disabled="state.busy || ['revoked', 'expired'].includes(device.state)" @click="model.revoke(device)">停用</button>
       </p>
     </section>
