@@ -37,7 +37,7 @@ def migration():
 def test_single_head_and_offline_upgrade_sql():
     output = io.StringIO()
     config = Config(str(ROOT / 'alembic.ini'), stdout=output, output_buffer=output)
-    assert ScriptDirectory.from_config(config).get_heads() == ['0110_distribution_inbox']
+    assert ScriptDirectory.from_config(config).get_heads() == ['0111_geo_autopatrol']
     assert migration().down_revision == '0108_advisor_account_links'
     command.upgrade(config, '0108_advisor_account_links:' + REVISION, sql=True)
     sql = output.getvalue()

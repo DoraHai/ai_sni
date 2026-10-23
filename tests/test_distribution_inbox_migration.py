@@ -27,7 +27,7 @@ def test_unique_head_frozen_schema_and_no_existing_permissions_or_objects_modifi
     output = io.StringIO()
     config = Config(str(ROOT/'alembic.ini'), output_buffer=output)
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == [HEAD]
+    assert script.get_heads() == ['0111_geo_autopatrol']
     mod = revision()
     assert mod.down_revision == '0109_advisor_tenant_grants'
     tables = [Device.__table__,Receipt.__table__]

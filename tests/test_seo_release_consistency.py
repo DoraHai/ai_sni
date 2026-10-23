@@ -191,7 +191,7 @@ def test_seo_workflows_gate_the_sem_task_migration_contract() -> None:
         assert "tests/test_demo_tenant_binding_migration.py" in workflow
         assert "tests/test_demo_binding_no_truncate_migration.py" in workflow
         assert "tests/test_geo_review_audit_migration.py" in workflow
-        assert "0110_distribution_inbox (head)" in workflow
+        assert "0111_geo_autopatrol (head)" in workflow
         assert "tests/test_seo_messages_postgres.py" in workflow
         assert "tests/test_seo_local_acceptance.py" in workflow
         assert "tests/test_seo_content_confirmations.py" in workflow
@@ -463,7 +463,7 @@ def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
 
 def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     root = Path(__file__).parents[1]
-    expected = "0110_distribution_inbox (head)"
+    expected = "0111_geo_autopatrol (head)"
     baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
     production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
     assert expected in baseline

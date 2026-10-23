@@ -269,7 +269,7 @@ def test_http_identity_empty_idor_duplicates_module_and_writes(local_db):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize('revision', ['0108_advisor_account_links', '0109_advisor_tenant_grants', '0110_distribution_inbox'])
+@pytest.mark.parametrize('revision', ['0108_advisor_account_links', '0109_advisor_tenant_grants', '0110_distribution_inbox', '0111_geo_autopatrol'])
 def test_old_and_new_revision_keep_all_existing_health_structure_checks(revision):
     from app import seo_main
     from test_seo_deploy_isolation import _HealthEngine
@@ -289,7 +289,7 @@ def test_old_and_new_revision_keep_all_existing_health_structure_checks(revision
         assert all(m.await_count == 1 for m in mocks)
 
 
-@pytest.mark.parametrize('revision', ['0109_advisor_tenant_grants', '0110_distribution_inbox'])
+@pytest.mark.parametrize('revision', ['0109_advisor_tenant_grants', '0110_distribution_inbox', '0111_geo_autopatrol'])
 def test_0109_health_rejects_missing_grant_shape(revision):
     from app import seo_main
     from test_seo_deploy_isolation import _HealthEngine, _HealthConnection
