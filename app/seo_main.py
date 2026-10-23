@@ -561,6 +561,8 @@ from app.api.seo_distribution_report import router as seo_distribution_report_ro
 app.include_router(seo_distribution_report_router)
 from app.api.distribution_inbox import router as distribution_inbox_router
 app.include_router(distribution_inbox_router)
+from app.api.seo_publication_groups import router as seo_publication_groups_router
+app.include_router(seo_publication_groups_router)
 
 ADVISOR_GRANT_COLUMNS = {
     "id": ("bigint", True), "user_id": ("bigint", True), "tenant_id": ("bigint", True),

@@ -220,6 +220,7 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     if p in {
         "/api/v1/seo/workbench/assistant/chat",
         "/api/v1/seo/workbench/publication-page-evidence",
+        "/api/v1/seo/workbench/publication-groups",
         "/api/v1/seo/workbench/readiness",
         "/api/v1/seo/workbench/service-status",
         "/api/v1/seo/workbench/service-plan",

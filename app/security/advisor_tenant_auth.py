@@ -266,6 +266,9 @@ async def check_seo_objects(request, ctx, session):
             ctx.ensure_tenant(owner)
             continue
         table_name = owners.get(key)
+        if (key == 'article_id' and request.method == 'GET' and
+                route == '/api/v1/seo/workbench/publication-groups'):
+            table_name = 'seo_content_assets'
         if (key == "relation_id" and request.method == "GET"
                 and route == "/api/v1/seo/site/page-captures"):
             kinds = request.query_params.getlist("relation_type")

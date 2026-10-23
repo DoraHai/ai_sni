@@ -9,6 +9,7 @@ on:
     branches:
       - codex/production-seo
       - codex/advisor-mt-seo-guard-20261018
+      - codex/dht-merge-seo-backend-20261023
 
 permissions:
   contents: read
@@ -122,7 +123,7 @@ jobs:
         run: |
           expected_branch="codex/production-seo"
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            if [[ "$PR_BASE_REF" != "codex/advisor-mt-seo-guard-20261018" ]]; then
+            if [[ "$PR_BASE_REF" != "codex/advisor-mt-seo-guard-20261018" && "$PR_BASE_REF" != "codex/dht-merge-seo-backend-20261023" ]]; then
               test "$PR_BASE_REF" = "$expected_branch"
             fi
           else
@@ -175,6 +176,7 @@ jobs:
           tests/test_distribution_inbox_protocol.py
           tests/test_distribution_inbox_projection.py
           tests/test_distribution_inbox_auth.py
+          tests/test_seo_publication_groups.py
           tests/test_keyword_refresh.py
           tests/test_module_workspaces.py
           tests/test_process_lock.py

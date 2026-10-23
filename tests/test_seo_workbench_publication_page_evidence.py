@@ -670,6 +670,11 @@ def test_service_status_maps_existing_facts_without_triggering_collection(monkey
         CREATE TABLE seo_content_assets (id INTEGER, tenant_id INTEGER, site_id INTEGER);
         CREATE TABLE seo_content_publications (id INTEGER, tenant_id INTEGER, content_asset_id INTEGER, status TEXT, page_url TEXT);
         CREATE TABLE seo_page_captures (id INTEGER, tenant_id INTEGER, site_id INTEGER, relation_type TEXT, relation_id INTEGER, status TEXT);
+        CREATE TABLE distribution_inbox_receipts (id TEXT, tenant_id INTEGER, module TEXT, scope_id INTEGER, article_id INTEGER, result TEXT);
+        INSERT INTO distribution_inbox_receipts VALUES
+            ('synthetic-linked',7,'seo',9,1,'success'),
+            ('synthetic-external-only',7,'seo',9,999,'success'),
+            ('synthetic-unlinked',7,'seo',9,NULL,'success');
     ''')
     if has_publications:
         memory.executescript('''
