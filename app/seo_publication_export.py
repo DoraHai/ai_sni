@@ -189,7 +189,7 @@ def build_publication_list_workbook(rows: list[dict], summary: dict, template=DE
         info.append((_safe_text(label), value))
     info.column_dimensions["A"].width = 34
     info.column_dimensions["B"].width = 42
-    info["B6"].number_format = "0.0%"
+    info["B6"].number_format = "0.0%" if summary["total"] else "General"
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()

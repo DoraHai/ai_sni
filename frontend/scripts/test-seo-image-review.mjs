@@ -60,3 +60,53 @@ test('actual dialog binds copy and reuse to the displayed source/preview version
   assert.equal(writes[0].expected_source_version,'c'.repeat(64))
   assert.equal(writes[1].expected_reuse_version,'b'.repeat(64))
 })
+
+import { computed, reactive, ref } from 'vue'
+
+function scriptFixture(file, names, extra = {}) {
+  const source = readFileSync(new URL(`../src/views/seo/${file}.vue`, import.meta.url), 'utf8')
+  const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
+  const bindings = { computed, reactive, ref, watch(){}, onMounted(){}, onBeforeUnmount(){},
+    useRoute:()=>({query:{}}), useRouter:()=>({push(){}}), siteId:ref(1), currentTenantId:ref(1),
+    session:{isLoggedIn:true,canEdit:()=>false}, defineProps:()=>({tenantId:1,siteId:1}), ...extra }
+  return new Function(...Object.keys(bindings), `${script};return {${names}}`)(...Object.values(bindings))
+}
+
+test('image coverage distinguishes no candidates, an unreviewed sample and approved samples',()=>{
+  const f=scriptFixture('SeoImageRemediationWorkbench','result,coverage')
+  for (const [stats, expected] of [[{},'暂无数据'],[{candidate_count:0,approved_count:0},'暂无数据'],
+    [{candidate_count:2,approved_count:0},'0%'],[{candidate_count:2,approved_count:1},'50%']]) {
+    f.result.value.stats=stats; assert.equal(f.coverage.value,expected)
+  }
+})
+
+test('issue centre only claims no problems when an assessed page exists',()=>{
+  const f=scriptFixture('SeoSiteOptimizationView','issueResult,issueEmptyText')
+  for (const summary of [{},{assessed_pages:0}]) {
+    f.issueResult.value.summary=summary; assert.match(f.issueEmptyText.value,/未检测或暂无可评估数据/)
+  }
+  f.issueResult.value.summary={assessed_pages:1}
+  assert.equal(f.issueEmptyText.value,'最近检测没有发现站内问题')
+})
+
+
+test('trends render absent coverage separately from a measured zero', async () => {
+  const Vue = await import('vue')
+  const { compileTemplate } = await import('@vue/compiler-sfc')
+  const { renderToString } = await import('@vue/server-renderer')
+  const source = readFileSync(new URL('../src/views/seo/SeoTrendsView.vue', import.meta.url), 'utf8')
+  const code = compileTemplate({ source: source.match(/<template>([\s\S]*?)<\/template>/)[1], id: 'trends' }).code
+    .replace(/import \{([\s\S]*?)\} from "vue"/g, (_, names) => `const {${names.replace(/ as /g, ':')}}=Vue`)
+    .replace('export function render', 'function render')
+  const render = new Function('Vue', `${code};return render`)(Vue)
+  for (const [rate, count, expected] of [[null,0,'暂无数据'],[0,0,'覆盖率 0%'],[50,1,'覆盖率 50%']]) {
+    const state = scriptFixture('SeoTrendsView', 'loading,error,range,engine,sites,overview,keywords,stats,ranked,buckets,movers,points,printReport', { fetchSeoSites(){},fetchSeoOverview(){},fetchSeoKeywords(){} })
+    state.overview.value.stats = { top10_rate:rate,top10:count }
+    const app = Vue.createSSRApp({ setup:()=>({...state,siteId:ref(1)}),render })
+    app.directive('loading', {})
+    for (const name of ['el-select','el-option','el-alert']) app.component(name,{render(){return Vue.h('div',this.$slots.default?.())}})
+    const html = await renderToString(app)
+    assert(html.includes(expected))
+    if (rate == null) { assert(html.includes('未检测')); assert(!html.includes('覆盖率 0%')) }
+  }
+})
