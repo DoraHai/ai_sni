@@ -547,7 +547,7 @@ onMounted(load)
           <small class="module-expiry">{{ moduleRow(row, code)?.expires_at ? `至 ${moduleRow(row, code).expires_at}` : '无到期日' }}</small>
           <small class="connection-state">{{ connectionLabel(row.data_connections?.[code]) }}</small>
           <el-button link type="primary" @click="openModule(row, code)">配置</el-button>
-          <el-button v-if="code !== 'sem' && canManageService(code)" link type="primary" @click="serviceContext = { customer: row, kind: code === 'geo' ? 'manual' : 'seo' }">{{ code === 'geo' ? '手动检测次数设置' : 'SEO 网站分配' }}</el-button>
+          <el-button v-if="code !== 'sem' && canManageService(code) && moduleRow(row, code)?.available === true" link type="primary" @click="serviceContext = { customer: row, kind: code === 'geo' ? 'manual' : 'seo' }">{{ code === 'geo' ? '手动检测次数设置' : 'SEO 网站分配' }}</el-button>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="100"><template #default="{ row }"><el-button link type="primary" @click="openEdit(row)">配置</el-button></template></el-table-column>

@@ -2,7 +2,9 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import Services from '../src/views/settings/PlatformCustomerServices.vue'
+import Customers from '../src/views/settings/CustomerModulesView.vue'
 import * as api from '../src/api/platformCustomerServices'
+import { fetchCustomers } from '../src/api/moduleAssets'
 import { session } from '../src/store/session'
 
 vi.mock('../src/store/session', () => ({ session: { user: { tenant_id: null }, isAdvisorSession: false, canEdit: vi.fn(() => true) } }))
@@ -14,6 +16,8 @@ vi.mock('../src/api/auth', () => ({ fetchUsers: vi.fn(async () => ({ users: [
 ] })) }))
 vi.mock('../src/api/roles', () => ({ fetchRoles: vi.fn(async () => ({ roles: [{ id: 2, permissions: { 'seo.content': 'edit' } }] })) }))
 vi.mock('../src/api/platformCustomerServices', () => ({ fetchManualQuota: vi.fn(), saveManualQuota: vi.fn(), fetchAssignmentSites: vi.fn(), fetchSiteAssignments: vi.fn(), saveSiteAssignment: vi.fn() }))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+vi.mock('../src/api/moduleAssets', () => ({ fetchCustomers: vi.fn(), archiveSemAccount: vi.fn(), createCustomer: vi.fn(), fetchSemIdentityRepairCandidates: vi.fn(), fetchSemIdentityRepairPreview: vi.fn(), fetchSemExecutionPolicy: vi.fn(), setCustomerModule: vi.fn(), setSemExecutionPolicy: vi.fn(), updateCustomer: vi.fn() }))
 let wrapper
 async function open(kind = 'manual') {
   wrapper = mount(Services, { props: { kind, customer: { id: 1, name: '示例客户甲' } }, attachTo: document.body, global: { plugins: [ElementPlus] } })
@@ -104,4 +108,21 @@ it.each(['tenant', 'advisor', 'permissions'])('does not read or write for forbid
   if (kind === 'permissions') session.canEdit.mockReturnValue(false)
   await open(); expect(document.body.textContent).toContain('需要平台账号管理')
   expect(api.fetchManualQuota).not.toHaveBeenCalled()
+})
+
+it('shows service entries only for available modules in the actual customer table', async () => {
+  fetchCustomers.mockResolvedValue({ customers: [
+    { id: 1, name: '示例客户甲', modules: ['geo', 'seo'].map(module_code => ({ module_code, status: 'active', available: true })) },
+    { id: 2, name: '暂停客户', modules: ['geo', 'seo'].map(module_code => ({ module_code, status: 'suspended', available: false })) },
+    { id: 3, name: '过期客户', modules: ['geo', 'seo'].map(module_code => ({ module_code, status: 'active', available: false })) },
+    { id: 4, name: '未开通客户', modules: [] },
+  ] })
+  wrapper = mount(Customers, { attachTo: document.body, global: { plugins: [ElementPlus] } })
+  await flushPromises()
+  const rows = wrapper.findAll('.el-table__row')
+  expect(rows).toHaveLength(4)
+  for (const label of ['手动检测次数设置', 'SEO 网站分配']) {
+    expect(rows[0].text()).toContain(label)
+    for (const row of rows.slice(1)) expect(row.text()).not.toContain(label)
+  }
 })
