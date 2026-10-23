@@ -74,7 +74,7 @@ it('blocks incomplete quota data and shows read failure explicitly', async () =>
 })
 it('validates site/advisor, filters grants and role, confirms deactivation and preserves its row', async () => {
   await open('seo'); await click('保存变更')
-  expect(document.body.textContent).toContain('请选择启用的网站')
+  expect(document.body.textContent).toContain('请选择网站和已获该客户授权')
   await input('SEO 网站', '11')
   expect(api.fetchSiteAssignments).toHaveBeenCalledWith(1, 11)
   expect(document.querySelectorAll('[aria-label="顾问"] option')).toHaveLength(2)
@@ -93,6 +93,25 @@ it('shows SEO write failure and forces site reread before another save', async (
   expect(document.querySelector('[aria-label="顾问"]').value).toBe('')
   expect(document.querySelector('.service-panel ul')).toBeNull()
   await click('保存变更'); expect(api.saveSiteAssignment).toHaveBeenCalledTimes(1)
+})
+it('can deactivate an existing assignment on an archived site, but cannot enable it', async () => {
+  await open('seo'); await input('SEO 网站', '12'); await input('顾问', '7')
+  expect(document.body.textContent).toContain('该网站已暂停或归档')
+  expect(document.querySelector('[aria-label="分配状态"]').value).toBe('false')
+  await input('分配状态', 'true'); await click('保存变更')
+  expect(document.body.textContent).toContain('暂停或归档网站只能查看或停用已有分配')
+  expect(api.saveSiteAssignment).not.toHaveBeenCalled()
+  await input('分配状态', 'false'); await click('保存变更'); await click('确认保存')
+  expect(api.saveSiteAssignment).toHaveBeenCalledExactlyOnceWith({ tenant_id: 1, site_id: 12, advisor_user_id: 7, active: false })
+})
+it('explains assignments that the existing backend cannot update and does not create inactive rows', async () => {
+  api.fetchSiteAssignments.mockResolvedValue({ items: [{ id: 21, advisor_user_id: 9, advisor_name: '已停用顾问', active: true }] })
+  await open('seo'); await input('SEO 网站', '11')
+  expect(document.body.textContent).toContain('只读：现有保存接口要求顾问启用')
+  expect(document.querySelectorAll('[aria-label="顾问"] option')).toHaveLength(2)
+  await input('顾问', '7'); await input('分配状态', 'false'); await click('保存变更')
+  expect(document.body.textContent).toContain('该顾问暂无分配，无需停用')
+  expect(api.saveSiteAssignment).not.toHaveBeenCalled()
 })
 it('holds a single immutable request while saving', async () => {
   let resolve

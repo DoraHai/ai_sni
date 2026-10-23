@@ -21,6 +21,7 @@ const candidates = computed(() => users.value.filter(u => u.is_active
   && (u.tenant_id === props.customer.id || u.tenant_ids?.includes(props.customer.id))
   && roles.value.find(r => r.id === u.role_id)?.permissions?.['seo.content'] === 'edit'))
 const selectedAdvisor = computed(() => candidates.value.find(u => u.id === Number(advisorId.value)))
+const existingAssignment = computed(() => assignments.value.find(a => a.advisor_user_id === Number(advisorId.value)))
 const quotaReady = computed(() => Number.isInteger(quota.value?.manual_limit_revision)
   && quota.value.manual_limit_revision >= 0 && Number.isInteger(quota.value?.manual_quota?.limit))
 
@@ -45,7 +46,7 @@ async function load() {
 }
 async function selectSite() {
   const request = ++generation
-  assignments.value = []; advisorId.value = ''; active.value = true; success.value = ''; error.value = ''
+  assignments.value = []; advisorId.value = ''; active.value = selectedSite.value?.status === 'active'; success.value = ''; error.value = ''
   if (!selectedSite.value) return
   loading.value = true
   try {
@@ -56,7 +57,7 @@ async function selectSite() {
   } finally { if (request === generation) loading.value = false }
 }
 function selectAdvisor() {
-  active.value = assignments.value.find(a => a.advisor_user_id === Number(advisorId.value))?.active ?? true
+  active.value = selectedSite.value?.status === 'active' ? existingAssignment.value?.active ?? true : false
 }
 function prepare() {
   if (!allowed.value || busy.value || loading.value) return
@@ -69,7 +70,9 @@ function prepare() {
     if (!quotaReady.value) { error.value = '请重新读取次数与版本后再保存'; return }
     pending.value = { tenant_id: props.customer.id, manual_daily_limit: Number(limit.value), expected_revision: quota.value.manual_limit_revision, reason: reason.value.trim() }
   } else {
-    if (!selectedSite.value || selectedSite.value.status !== 'active' || !selectedAdvisor.value) { error.value = '请选择启用的网站和已获该客户授权的有效顾问'; return }
+    if (!selectedSite.value || !selectedAdvisor.value) { error.value = '请选择网站和已获该客户授权的有效顾问'; return }
+    if (active.value && selectedSite.value.status !== 'active') { error.value = '暂停或归档网站只能查看或停用已有分配'; return }
+    if (!active.value && !existingAssignment.value) { error.value = '该顾问暂无分配，无需停用'; return }
     pending.value = { tenant_id: props.customer.id, site_id: Number(siteId.value), advisor_user_id: Number(advisorId.value), active: active.value }
   }
   busy.value = true
@@ -113,15 +116,16 @@ onMounted(load)
           </template>
           <template v-else>
             <label>SEO 网站<select v-model="siteId" aria-label="SEO 网站" :disabled="busy || loading" @change="selectSite">
-              <option value="">请选择网站</option><option v-for="s in sites" :key="s.id" :value="s.id" :disabled="s.status !== 'active'">{{ s.name || s.domain }} · {{ s.status === 'active' ? '启用' : '不可分配' }}</option>
+              <option value="">请选择网站</option><option v-for="s in sites" :key="s.id" :value="s.id">{{ s.name || s.domain }} · {{ s.status === 'active' ? '启用' : '仅可查看或停用已有分配' }}</option>
             </select></label>
+            <p v-if="selectedSite && selectedSite.status !== 'active'">该网站已暂停或归档，仅可查看或停用已有分配。</p>
             <p v-if="!loading && !sites.length">暂无可读取的网站。</p>
             <label>顾问<select v-model="advisorId" aria-label="顾问" :disabled="busy || loading || !siteId" @change="selectAdvisor">
               <option value="">请选择顾问</option><option v-for="u in candidates" :key="u.id" :value="u.id">{{ u.display_name || u.username }}</option>
             </select></label>
             <p v-if="!loading && !candidates.length">暂无符合条件的顾问，请先在账号管理中配置授权。</p>
-            <label>分配状态<select v-model="active" aria-label="分配状态" :disabled="busy || loading"><option :value="true">启用</option><option :value="false">停用（保留记录）</option></select></label>
-            <ul v-if="assignments.length"><li v-for="a in assignments" :key="a.id">{{ a.advisor_name || `账号 #${a.advisor_user_id}` }}：{{ a.active ? '已启用' : '已停用' }}</li></ul>
+            <label>分配状态<select v-model="active" aria-label="分配状态" :disabled="busy || loading"><option :value="true" :disabled="selectedSite?.status !== 'active'">启用</option><option :value="false">停用（保留记录）</option></select></label>
+            <ul v-if="assignments.length"><li v-for="a in assignments" :key="a.id">{{ a.advisor_name || `账号 #${a.advisor_user_id}` }}：{{ a.active ? '已启用' : '已停用' }}<p v-if="!candidates.some(u => u.id === a.advisor_user_id)">只读：现有保存接口要求顾问启用、有效客户授权和 SEO 内容编辑权限；该分配暂不可修改。</p></li></ul>
           </template>
           <p v-if="error" role="alert" class="service-error">{{ error }}</p>
           <p v-if="success" role="status" class="service-success">{{ success }}</p>
