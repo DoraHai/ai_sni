@@ -7045,6 +7045,15 @@ async def import_prompts_csv_file(
     }
 
 
+WORKBENCH_TAB_STATUSES = {
+    "draft": ("draft", "facts_bound", "generating", "failed"),
+    "polish": ("editing",),
+    "needs_fix": ("needs_fix",),
+    "ready": ("ready", "exported"),
+    "published": ("published",),
+}
+
+
 @router.get("/content-tasks")
 async def list_tasks(
     tenant_id: int = Query(...),
@@ -7058,8 +7067,11 @@ async def list_tasks(
     offset: int = Query(0, ge=0),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
+    workbench_tab: str | None = Query(None),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
+    if workbench_tab and workbench_tab not in WORKBENCH_TAB_STATUSES:
+        raise HTTPException(422, "未知内容工作台标签")
     filters = [GeoContentTask.tenant_id == tenant_id]
     if getattr(ctx, "advisor_scope", None) is not None:
         from app.security.advisor_write_reads import assigned_scope
@@ -7087,6 +7099,18 @@ async def list_tasks(
         filters.append(
             or_(GeoContentTask.title.ilike(like), GeoContentTask.blocked_reason.ilike(like))
         )
+    # Counts use the same tenant/business/search scope, before tab and pagination.
+    status_counts = dict((await session.execute(
+        select(GeoContentTask.status, func.count())
+        .where(*filters).group_by(GeoContentTask.status)
+    )).all())
+    workbench_counts = {
+        "all": sum(status_counts.values()),
+        **{tab: sum(status_counts.get(state, 0) for state in states)
+           for tab, states in WORKBENCH_TAB_STATUSES.items()},
+    }
+    if workbench_tab:
+        filters.append(GeoContentTask.status.in_(WORKBENCH_TAB_STATUSES[workbench_tab]))
     total = int(
         await session.scalar(
             select(func.count()).select_from(GeoContentTask).where(*filters)
@@ -7107,6 +7131,7 @@ async def list_tasks(
         "total": total,
         "limit": limit,
         "offset": offset,
+        "workbench_counts": workbench_counts,
     }
 
 
