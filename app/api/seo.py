@@ -88,7 +88,8 @@ from app.module_scope import (
 )
 from app.security.auth import AuthContext
 from app.seo_customer_identity import (
-    customer_account_for_tenant, customer_content_conditions, require_customer_content_visible,
+    customer_account_for_tenant, customer_content_conditions, customer_content_view,
+    require_customer_content_visible,
 )
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_distribution import (
@@ -9479,7 +9480,7 @@ async def publish_content_distribution(
         raise HTTPException(400, "正式发布需要明确确认")
     content = await _distribution_content(
         session, req.tenant_id, req.content_id, req.site_id,
-        ctx=ctx,
+        **({"ctx": ctx} if customer_content_view(ctx) else {}),
     )
     _require_content_ready(content)
     source_version = content.version_count or 1
@@ -9898,7 +9899,7 @@ async def retry_content_publication(
         raise HTTPException(404, "发布任务不存在")
     content = await _distribution_content(
         session, req.tenant_id, row.content_asset_id, req.site_id,
-        ctx=ctx,
+        **({"ctx": ctx} if customer_content_view(ctx) else {}),
     )
     if row.status != "failed" or not row.connection_id:
         raise HTTPException(409, "只有失败的 API 发布任务可以重试")

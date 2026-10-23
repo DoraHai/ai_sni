@@ -497,7 +497,7 @@ async def _require_visible_capture_content(session, ctx, capture):
                 SeoContentAsset.tenant_id == capture.tenant_id,
                 SeoContentAsset.site_id == capture.site_id))
         if content is None:
-            raise _error(404, "capture_not_found", "?????")
+            raise _error(404, "capture_not_found", "截图关联稿件不存在")
         require_customer_content_visible(ctx, content)
 
 

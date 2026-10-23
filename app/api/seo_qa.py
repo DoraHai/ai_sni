@@ -843,7 +843,7 @@ async def placement_candidates(tenant_id: PositiveInt, site_id: PositiveInt, ctx
 @router.post('/placements/{placement_id}/receipt')
 async def receipt(placement_id: int, req: ReceiptInput, ctx=Auth, session=Db):
     site = await access(session, ctx, req.tenant_id, req.site_id, True)
-    row, _ = await publication_context(session, placement_id, req.tenant_id, req.site_id, lock=True)
+    row, _ = await publication_context(session, placement_id, req.tenant_id, req.site_id, lock=True, ctx=ctx)
     try:
         url = platform_url(row.platform, req.answer_url, answer=True, question_url=row.question_url, domain=site.canonical_domain)
     except ValueError as exc:
@@ -931,7 +931,7 @@ async def verify(placement_id: int, req: Scoped, ctx=Auth, session=Db):
 @router.post('/placements/{placement_id}/metrics')
 async def report_metrics(placement_id: int, req: MetricsInput, ctx=Auth, session=Db):
     site = await access(session, ctx, req.tenant_id, req.site_id, True)
-    row, _ = await publication_context(session, placement_id, req.tenant_id, req.site_id, lock=True)
+    row, _ = await publication_context(session, placement_id, req.tenant_id, req.site_id, lock=True, ctx=ctx)
     if not row.answer_url:
         raise HTTPException(409, '请先回填回答网址并核验正文')
     try:

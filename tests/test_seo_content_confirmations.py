@@ -193,6 +193,21 @@ def test_manual_completion_rejects_hidden_content_before_recording_result():
     session.commit.assert_not_awaited()
 
 
+@pytest.mark.parametrize("entry", ["receipt", "report_metrics"])
+def test_qa_receipt_and_metrics_reject_hidden_parent_before_placement_read(entry):
+    from app.api import seo_qa as qa
+    session = AsyncMock()
+    session.scalar.return_value = 88
+    req = SimpleNamespace(tenant_id=1, site_id=9)
+    parent = AsyncMock(return_value=_content(status="drafting"))
+    with (patch.object(qa, "access", new=AsyncMock()), patch.object(qa, "record", new=parent)):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(getattr(qa, entry)(12, req, _visibility_ctx(), session))
+        assert exc.value.status_code == 404
+    parent.assert_awaited_once_with(session, SeoContentAsset, 88, 1, 9, True)
+    session.commit.assert_not_awaited()
+
+
 @pytest.fixture(autouse=True)
 def installed_confirmation_schema(monkeypatch):
     # These isolated permission tests model a fully migrated database.

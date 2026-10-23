@@ -4,7 +4,7 @@ import hmac
 import json
 import secrets
 import time
-from app.seo_customer_identity import customer_content_conditions
+from app.seo_customer_identity import customer_content_conditions, require_customer_content_visible
 from datetime import datetime
 from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -174,6 +174,7 @@ async def upload(tenant_id:PositiveInt=Form(...),site_id:PositiveInt=Form(...),c
     except video.VideoError as exc:raise HTTPException(409,str(exc)) from exc
     content=await session.get(SeoContentAsset,content_id)
     if not content or content.tenant_id!=tenant_id or content.site_id!=site_id:raise HTTPException(404,'内容不存在')
+    require_customer_content_visible(ctx, content)
     if content.status not in {'ready','published'} or (content.version_count or 1)!=source_version:raise HTTPException(409,'内容必须通过审核且版本一致')
     key=hashlib.sha256(f'video:{tenant_id}:{site_id}:{connection_id}:{request_id}'.encode()).hexdigest()
     previous=await session.scalar(select(SeoContentPublication).where(SeoContentPublication.idempotency_key==key))
@@ -202,6 +203,7 @@ async def publication(req,pub_id,ctx,session,allow_inactive=False):
     if not pub or pub.tenant_id!=req.tenant_id or pub.connection_id!=row.id:raise HTTPException(404,'发布任务不存在')
     content=await session.get(SeoContentAsset,pub.content_asset_id)
     if not content or content.tenant_id!=req.tenant_id or content.site_id!=req.site_id:raise HTTPException(404,'发布任务不存在')
+    require_customer_content_visible(ctx, content)
     return row,pub,content
 
 @router.post('/publications/{publication_id}/publish')
