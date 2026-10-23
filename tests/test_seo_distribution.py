@@ -12,6 +12,14 @@ import pytest
 from fastapi import BackgroundTasks
 
 
+@pytest.fixture(autouse=True)
+def legacy_confirmation_schema(monkeypatch):
+    # Existing isolated publication tests explicitly model the pre-0105 rollout.
+    # Migrated-schema confirmation enforcement is covered by confirmation/PG tests.
+    monkeypatch.setattr("app.seo_content_confirmation_schema.content_confirmation_schema_ready",
+                        AsyncMock(return_value=False))
+
+
 def test_editor_sanitizer_layout_and_source_parity():
     from app.seo_distribution import sanitize_article_html, export_article_layout
     source = (Path(__file__).parents[1] / 'frontend/src/views/seo/seoEditorHtml.js').read_text(encoding='utf-8')

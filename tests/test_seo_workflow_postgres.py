@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select, text, func
+from sqlalchemy import select, text, func, event
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.schema import CreateTable
@@ -66,6 +66,13 @@ async def database():
     schema = "seo_workflow_test_" + uuid4().hex
     engine = create_async_engine(url, pool_size=12, max_overflow=0, connect_args={"server_settings": {
         "search_path": schema, "lock_timeout": "5000", "statement_timeout": "15000"}})
+    # Exercise the public-only production gate inside this test's owned schema.
+    # Never inspect or modify the test server's public schema.
+    @event.listens_for(engine.sync_engine, "before_cursor_execute", retval=True)
+    def isolated_catalog(_conn, _cursor, statement, parameters, _context, _many):
+        statement = statement.replace("public.alembic_version", f'"{schema}".alembic_version')
+        statement = statement.replace("n.nspname = 'public'", f"n.nspname = '{schema}'")
+        return statement, parameters
     created = False
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
@@ -108,6 +115,46 @@ async def trigger(sessions, key):
     async with sessions() as session:
         return await api.trigger_content_workflow(api.ContentWorkflowTrigger(
             tenant_id=4, site_id=2, expected_revision=1, request_id=key), session, ADVISOR)
+
+
+@requires_pg
+@pytest.mark.parametrize("revision", ["0105_seo_content_confirmations", "0110_distribution_inbox",
+    "0111_geo_autopatrol", "future_shared_revision"])
+def test_confirmation_capability_gate_uses_real_catalogs_and_exact_confirmation(revision):
+    async def scenario():
+        async with database() as sessions:
+            async with sessions() as session:
+                await session.execute(text("UPDATE alembic_version SET version_num=:v"), {"v": revision})
+                assert await api._content_confirmation_schema_ready(session)
+                assert await flow.schema_ready(session)
+                content = SeoContentAsset(id=900, tenant_id=4, site_id=2, content_type="article",
+                    title="synthetic unconfirmed", draft="synthetic", status="ready", version_count=1)
+                session.add(content)
+                await session.flush()
+                with pytest.raises(HTTPException) as error:
+                    await api._require_active_content_confirmation(session, content)
+                assert error.value.status_code == 409
+    asyncio.run(scenario())
+
+
+@requires_pg
+def test_damaged_capability_gate_fails_closed_and_legacy_false_recovers():
+    async def scenario():
+        async with database() as sessions:
+            async with sessions() as session:
+                await session.execute(text("ALTER TABLE seo_content_confirmations DROP COLUMN content_hash"))
+                with pytest.raises(HTTPException) as error:
+                    await api._content_confirmation_schema_ready(session)
+                assert error.value.status_code == 503
+                await session.rollback()
+                assert await flow.schema_ready(session)
+                await session.execute(text("DROP TABLE seo_content_confirmations"))
+                await session.execute(text("DROP TABLE seo_site_advisor_assignments"))
+                await session.execute(text("UPDATE alembic_version SET version_num='0104_seo_page_ai_tdk'"))
+                assert await flow.schema_ready(session) is False
+                await session.rollback()
+                assert await flow.schema_ready(session) is True
+    asyncio.run(scenario())
 
 
 @requires_pg
