@@ -39,12 +39,13 @@ const form = ref({ prompt_id: null, title: '', target_channels: ['website', 'wec
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
-const workbenchCounts = ref({ all: 0, draft: 0, polish: 0, ready: 0, published: 0 })
+const workbenchCounts = ref({ all: 0, draft: 0, polish: 0, needs_fix: 0, ready: 0, published: 0 })
 
 const tabs = computed(() => [
   { value: '', label: '全部', count: workbenchCounts.value.all },
   { value: 'draft', label: '草稿', count: workbenchCounts.value.draft },
   { value: 'polish', label: '待润色', count: workbenchCounts.value.polish },
+  { value: 'needs_fix', label: '待修补', count: workbenchCounts.value.needs_fix },
   { value: 'ready', label: '待发布', count: workbenchCounts.value.ready },
   { value: 'published', label: '已发布', count: workbenchCounts.value.published },
 ])
@@ -53,6 +54,7 @@ const statusSummary = computed(() => [
   { label: '内容', value: workbenchCounts.value.all, tone: 'neutral' },
   { label: '草稿', value: workbenchCounts.value.draft, tone: 'muted' },
   { label: '待优化', value: workbenchCounts.value.polish, tone: 'violet' },
+  { label: '待修补', value: workbenchCounts.value.needs_fix, tone: 'amber' },
   { label: '待发布', value: workbenchCounts.value.ready, tone: 'amber' },
   { label: '已发布', value: workbenchCounts.value.published, tone: 'green' },
 ])
@@ -86,7 +88,7 @@ async function load() {
   const owner = tenantId.value
   items.value = []
   total.value = 0
-  workbenchCounts.value = { all: 0, draft: 0, polish: 0, ready: 0, published: 0 }
+  workbenchCounts.value = { all: 0, draft: 0, polish: 0, needs_fix: 0, ready: 0, published: 0 }
   if (!tenantId.value) {
     loading.value = false
     error.value = '请先选择客户或配置本地 API Key'
@@ -108,7 +110,7 @@ async function load() {
     items.value = data.items || []
     total.value = Number(data.total ?? items.value.length) || 0
     workbenchCounts.value = {
-      all: 0, draft: 0, polish: 0, ready: 0, published: 0,
+      all: 0, draft: 0, polish: 0, needs_fix: 0, ready: 0, published: 0,
       ...(data.workbench_counts || {}),
     }
   } catch (e) {
