@@ -132,6 +132,10 @@ def test_http_legacy_patch_cannot_publish_and_draft_version_policy(store, monkey
     trigger(store)
     with store.engine.begin() as conn:
         conn.execute(text("UPDATE alembic_version SET version_num=:v"), {"v": revision})
+        if revision == "0104_seo_page_ai_tdk":
+            # A real 0104 rollout has neither confirmation capability table.
+            conn.execute(text("DROP TABLE seo_content_confirmations"))
+            conn.execute(text("DROP TABLE seo_site_advisor_assignments"))
     app = FastAPI()
     app.include_router(api.router)
     async def session_dependency():
