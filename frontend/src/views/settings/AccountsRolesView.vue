@@ -59,7 +59,7 @@ const menuGroups = computed(() => {
   for (const m of menus.value) (g[m.group] ||= []).push(m)
   return Object.entries(g).map(([group, items]) => ({ group, items }))
 })
-const fmtTime = (v) => formatUtcTimestamp(v, { fallback: '从未登录' })
+const fmtTime = (v) => v ? formatUtcTimestamp(v, { fallback: '时间待核对', timeZone: 'Asia/Shanghai' }) + '（北京时间）' : '从未登录'
 
 // ===== 账号 =====
 const userDialog = ref(false)
@@ -70,6 +70,7 @@ let userFormRevision = 0
 const multiTenantDisabled = ref(false)
 const editingAdvisor = ref(null)
 const userOriginalRoleId = ref(null)
+const originalTenantIds = ref([])
 const userFormError = ref('')
 const uform = reactive({ username: '', password: '', displayName: '', roleId: null, tenantId: null, tenantIds: [], defaultTenantId: null })
 const userIsAdvisor = computed(() => platformContext.value && (userOriginalRoleId.value === uform.roleId && editingAdvisor.value !== null
@@ -91,6 +92,7 @@ watch(() => uform.tenantIds.slice(), ids => {
 
 function openCreateUser() {
   userFormRevision++
+  originalTenantIds.value = []
   editingUserId.value = null
   editingGrantsVersion.value = null
   editingAdvisor.value = null
@@ -101,6 +103,7 @@ function openCreateUser() {
 }
 function openEditUser(row) {
   userFormRevision++
+  originalTenantIds.value = [...(row.tenant_ids || (row.tenant_id == null ? [] : [row.tenant_id]))]
   editingUserId.value = row.id
   editingGrantsVersion.value = row.grants_version ?? null
   editingAdvisor.value = typeof row.is_advisor === 'boolean' ? row.is_advisor : null
@@ -130,6 +133,19 @@ async function submitUser() {
       scope = { tenant_id: uform.tenantId ?? undefined, ...(!userIsAdvisor.value ? { clear_tenant: uform.tenantId == null } : {}) }
     }
   } catch (e) { userFormError.value = e.message; return }
+  if (platformContext.value && (userIsAdvisor.value || editingAdvisor.value === true)) {
+    const next = userIsAdvisor.value ? (scope.tenant_ids || [scope.tenant_id].filter(Boolean)) : []
+    const name = id => tenantOptions.value.find(t => t.id === id)?.name || `客户 #${id}`
+    const added = next.filter(id => !originalTenantIds.value.includes(id)).map(name).join('、') || '无'
+    const removed = originalTenantIds.value.filter(id => !next.includes(id)).map(name).join('、') || '无'
+    const submittedRevision = userFormRevision
+    savingUser.value = true
+    try {
+      await ElMessageBox.confirm(`新增客户：${added}；移除客户：${removed}。新增绑定会自动分配并启用该客户的有效 SEO 网站；解除绑定会停用相应 SEO 网站分配，历史记录保留。确认保存？`, '确认顾问客户绑定', { type: 'warning' })
+    } catch { return }
+    finally { savingUser.value = false }
+    if (submittedRevision !== userFormRevision || !userDialog.value) return
+  }
   savingUser.value = true
   const submittedUserId = editingUserId.value
   const submittedRevision = userFormRevision
@@ -425,7 +441,7 @@ onMounted(load)
           <el-select v-else v-model="uform.tenantId" :placeholder="userIsAdvisor ? '请选择客户' : '不限=全部客户（可顶栏切换）'" :clearable="!userIsAdvisor" style="width: 100%">
             <el-option v-for="t in tenantOptions" :key="t.id" :label="t.name" :value="t.id" />
           </el-select>
-          <div v-if="userIsAdvisor" class="sub">顾问只能看到勾选的客户；至少勾选 1 个客户</div>
+          <div v-if="userIsAdvisor" class="sub">顾问只能看到勾选的客户；至少勾选 1 个客户。新增绑定会自动分配并启用该客户的有效 SEO 网站；解除绑定会停用对应 SEO 网站分配，历史记录保留（#803）。保存前会列出新增和移除客户。</div>
         </el-form-item>
         <el-form-item v-if="multiAdvisor" label="默认客户" required>
           <el-select v-model="uform.defaultTenantId" placeholder="从已勾选客户中选择" style="width: 100%" aria-label="默认客户">

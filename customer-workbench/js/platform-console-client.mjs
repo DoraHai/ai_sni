@@ -9,7 +9,7 @@ export const platformConsolePath='/customer-workbench/?console=platform';
 export const isPlatformAdmin=user=>Number.isSafeInteger(user?.id)&&user.id>0&&user.tenant_id===null&&
   user.permissions?.['settings.accounts']==='edit'&&user.permissions?.['settings.customers']==='edit';
 const fail=(code,status)=>Object.assign(Error(code),{code,status});
-const routes=new Set(['/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/geo/search-visibility/usage',governanceRoute,...Object.values(automationHealthPaths)]);
+const routes=new Set(['/api/v1/users','/api/v1/auth/me','/api/v1/admin/console/snapshot','/api/v1/geo/search-visibility/usage',governanceRoute,...Object.values(automationHealthPaths)]);
 const writeRoute='/api/v1/admin/console/controls';
 const operationRoute='/api/v1/admin/console/operations';
 const usageRoute='/api/v1/admin/console/usage';
@@ -65,6 +65,16 @@ export function createPlatformConsoleClient({session,fetchImpl=fetch,onExpired=(
       refreshUser(user);identity=user;
       const data=await read('/api/v1/admin/console/snapshot');
       if(data?.schema!==1||data.mode!=='read_only_inventory'||!data.sources||!data.costs)throw fail('CONSOLE_INVALID_SNAPSHOT');
+      if(data.sources.users?.rows?.length)try{
+        const catalog=await read('/api/v1/users');
+        if(Array.isArray(catalog?.users)&&data.sources.users){
+          const byId=new Map(catalog.users.map(u=>[u.id,u]));
+          data.sources.users.rows=data.sources.users.rows.map(u=>{
+            const full=byId.get(u.id);
+            return full?{...u,is_advisor:full.is_advisor,tenant_ids:full.tenant_ids,default_tenant_id:full.default_tenant_id}:u;
+          });
+        }
+      }catch(e){if(e.status===401||e.status===403||e.code==='CONSOLE_STALE')throw e;}
       return {user,data};
     },
     async change(data){
