@@ -4,7 +4,7 @@ import {createGeoProjectClient} from './js/geo-project-client.mjs';
 import {createGeoProjectPanel} from './js/geo-project-panel.mjs';
 import {geoClientRoute, geoClientQuery} from './js/geo-client-routes.mjs';
 import {geoResource, geoHome, geoBasis, geoWeekly, geoTime} from './js/geo-project-view.mjs';
-import {geoMatrix, geoExcludedReason} from './js/geo-project-insights.mjs';
+import {geoMatrix, geoQuestionTable, geoQuestionFilters, geoExcludedReason} from './js/geo-project-insights.mjs';
 import {geoPeriod, geoOpenWeekProgress, geoQuestionOpenWeek} from './js/geo-project-display.mjs';
 import {geoFixture, question} from './tests/geo-client-fixture.mjs';
 
@@ -15,6 +15,74 @@ const allowed = (resource, query = '') => {
   const r = geoClientRoute(u.pathname);
   return r && geoClientQuery(u, r, context);
 };
+test('flat question rows preserve six canonical columns, observed zero, missing samples and escaped labels', () => {
+  const q = {...question, question: '<img src=x>', business: {name: '<script>bad</script>'},
+    by_engine: [
+      {engine_key: 'qwen', mentioned: 1, total: 2, percentage: 50, status: 'small_sample'},
+      {engine_key: 'hunyuan', mentioned: 0, total: 3, percentage: 0, status: 'observed'},
+      {engine_key: 'wenxin', mentioned: 0, total: 0, percentage: 0, status: 'observed'},
+    ]};
+  const html = geoQuestionTable({items: [q]}, geoTime);
+  assert.equal((html.match(/scope="col"/g) || []).length, 9);
+  assert.equal((html.match(/scope="row"/g) || []).length, 1);
+  for (const value of ['1/2 · 50%', '0/3 · 0%', '未检测', '小样本', 'data-engine="hunyuan"', 'data-resource="questions/3"'])
+    assert(html.includes(value), value);
+  assert(!html.includes('0/0') && !html.includes('<img') && !html.includes('<script>'));
+  assert.match(html, /data-engine="wenxin"><strong>未检测<\/strong>/);
+  const noSamples = geoQuestionTable({items: [{...question, by_engine: []}]}, geoTime);
+  assert.equal((noSamples.match(/<strong>未检测<\/strong>/g) || []).length, 6);
+  assert(!noSamples.includes('0%'));
+  assert.match(geoQuestionTable({items: []}, geoTime), /colspan="9"/);
+});
+test('combined filter keeps all keyword choices available when changing business and caps search at backend limit', () => {
+  const html = geoQuestionFilters({options: {businesses: [], units: [
+    {id: 4, business_id: 2, keyword: '设备'}, {id: 5, business_id: 3, keyword: '服务'},
+  ]}}, {business_id: 2, unit_id: 4, q: '<设备>'});
+  assert.match(html, /value="4"  selected/);
+  assert.match(html, /value="5" hidden/);
+  assert.match(html, /maxlength="100"/);
+  assert(!html.includes('value="<设备>"'));
+  const mismatched = geoQuestionFilters({options: {units: [{id: 5, business_id: 3, keyword: '服务'}]}},
+    {business_id: 2, unit_id: 5});
+  assert.match(mismatched, /value="5" hidden >/);
+  assert(!mismatched.includes('selected'));
+});
+test('table retains question status, brand probe, attention and legacy observation metadata', () => {
+  const v = structuredClone(geoFixture('questions'));
+  Object.assign(v.data.items[0], {status: 'inactive', is_brand_probe: true,
+    attention_reason_codes: ['no_real_observations']});
+  const html = geoResource('questions', v);
+  for (const text of ['暂停', '品牌点名题', '尚无可判读的真实观测', '观测中提及', '2026-10-12 至 2026-10-18'])
+    assert(html.includes(text), text);
+});
+test('all-questions navigation exposes week controls from work and mismatched hidden keywords cannot be submitted', async () => {
+  const node = {innerHTML: ''}, calls = [];
+  let missingOptions = false;
+  const panel = createGeoProjectPanel({host: {getContext: () => context, transport: async (path) => {
+    const u = new URL(path, 'https://fixture.test'); calls.push(u);
+    const resource = u.pathname.endsWith('executions') ? 'executions' : u.pathname.split('/client/')[1];
+    const v = structuredClone(geoFixture(resource));
+    if (resource === 'questions' && !missingOptions) v.data.options = {units: [{id: 5, business_id: 3}]};
+    return response(v);
+  }}});
+  const click = (dataset) => node.onclick({target: {closest: () => ({dataset})}});
+  panel.renderInto(node); await panel.refresh();
+  await click({geo: 'tab', tab: 'work'});
+  await click({geo: 'read', resource: 'questions', allQuestions: 'true'});
+  assert.equal(panel.getTab(), 'data'); assert.match(node.innerHTML, /data-geo-week/);
+  await node.onsubmit({preventDefault() {}, target: {matches: () => true, elements: {
+    business_id: {value: '2'}, unit_id: {value: '5'}, q: {value: ''},
+  }}});
+  assert.equal(calls.at(-1).searchParams.get('business_id'), '2');
+  assert.equal(calls.at(-1).searchParams.has('unit_id'), false);
+  missingOptions = true;
+  await click({geo: 'read', resource: 'questions', allQuestions: 'true'});
+  await node.onsubmit({preventDefault() {}, target: {matches: () => true, elements: {
+    business_id: {value: '2'}, unit_id: {value: '5'}, q: {value: ''},
+  }}});
+  assert.equal(calls.at(-1).searchParams.has('unit_id'), false);
+  panel.dispose();
+});
 test('period dates use Beijing dates and an inclusive last day across month/year and UTC boundaries', () => {
   for (const [start, end, expected] of [
     ['2026-10-12T00:00:00+08:00', '2026-10-19T00:00:00+08:00', '2026-10-12 至 2026-10-18'],
@@ -201,13 +269,17 @@ test('filtered pagination preserves server filters to the last page, then permis
     calls.push(u);
     if (deny) return response({}, 403);
     const v = structuredClone(geoFixture(r, {more: r === 'questions' && !u.searchParams.has('cursor')}));
-    if (r === 'questions') v.data.items[0].question = u.searchParams.has('cursor') ? '最后一页' : '第一条合成问题';
+    if (r === 'questions') {
+      v.data.items[0].question = u.searchParams.has('cursor') ? '最后一页' : '第一条合成问题';
+      v.data.options = {units: [{id: 4, business_id: 2}]};
+    }
     return response(v);
   }}});
   const click = (dataset) => node.onclick({target: {closest: () => ({dataset})}});
   panel.renderInto(node);
   await panel.refresh();
   await click({geo: 'tab', tab: 'data'});
+  await click({geo: 'read', resource: 'questions'});
   await node.onsubmit({preventDefault() {}, target: {matches: (selector) => selector === '[data-geo-questions]', elements: {
     business_id: {value: '2'}, unit_id: {value: '4'}, q: {value: '  设备  '},
   }}});

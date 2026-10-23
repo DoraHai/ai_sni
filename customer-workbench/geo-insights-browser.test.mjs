@@ -13,6 +13,8 @@ test('built insights: full server filters, six engines, citations, suggestions, 
   const fixture = await startFixtureServer();
   const browser = await puppeteer.launch({executablePath: process.env.EDGE_BINARY || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', headless: true, args: ['--no-sandbox']});
   const shots = await fs.mkdtemp(path.join(os.tmpdir(), 'geo-insights-'));
+  const feedbackShots = process.env.GEO_FEEDBACK_SHOTS || shots;
+  await fs.mkdir(feedbackShots, {recursive: true});
   const p = await browser.newPage(), calls = [], errors = [], external = [];
   const origin = 'https://geo-client.test';
   let unavailable = false, denied = false, legacy = false, openCount = 26;
@@ -28,7 +30,7 @@ test('built insights: full server filters, six engines, citations, suggestions, 
       if (u.pathname.startsWith('/api/')) calls.push({method: req.method(), path: u.pathname, params: Object.fromEntries(u.searchParams)});
       if (u.pathname === '/api/v1/auth/me') return send({user: {id: 7, tenant_id: 1, permissions: {'geo.assets': 'edit', 'geo.content': 'edit'}}});
       if (u.pathname === '/api/v1/auth/modules') return send({tenant_id: 1, modules: [{module_code: 'geo', available: true}]});
-      if (u.pathname === '/api/v1/geo/tenants') return send({tenants: [{id: 1, name: '合成客户'}]});
+      if (u.pathname === '/api/v1/geo/tenants') return send({tenants: [{id: 1, name: '示例客户甲'}]});
       if (u.pathname === '/api/v1/geo/projects') return send({projects: [{id: 10, tenant_id: 1, name: '合成项目', status: 'active'}]});
       if (u.pathname.endsWith('/onsite-tasks')) return send({module: 'geo', tenant_id: 1, scope_id: 10, can_create: false, items: [], next_before_id: null});
       if (u.pathname.endsWith('/search-visibility')) return send({state: 'ready', latest: null, weeks: []});
@@ -42,9 +44,10 @@ test('built insights: full server filters, six engines, citations, suggestions, 
           body: Buffer.from(r.endsWith('.pdf') ? '%PDF-synthetic-report' : 'PK-synthetic-workbook')});
         if (r === 'questions') {
           const q = {...question, id: u.searchParams.has('cursor') ? 4 : 3, question: u.searchParams.has('cursor') ? '末页问题' : '合成问题：设备如何选型？',
+            business: {id: 2, name: '设备业务'},
             unit: {id: 4, name: '内部单元名', keyword: '设备选型', display_name: '设备选型'},
-            by_engine: geoEngines.map(([engine_key, label], i) => ({engine_key, label, mentioned: i < 2 ? 0 : i === 2 ? 1 : null, total: i < 2 ? 0 : i === 2 ? 2 : null,
-              percentage: i === 2 ? 50 : null, status: ['tested_excluded', 'tested_excluded', 'small_sample', 'not_tested', 'not_configured', 'failed'][i],
+            by_engine: geoEngines.map(([engine_key, label], i) => ({engine_key, label, mentioned: i < 2 || i === 3 ? 0 : i === 2 ? 1 : null, total: i < 2 ? 0 : i === 2 ? 2 : i === 3 ? 3 : null,
+              percentage: i === 2 ? 50 : i === 3 ? 0 : null, status: ['tested_excluded', 'tested_excluded', 'small_sample', 'observed', 'not_tested', 'failed'][i],
               excluded_reason_codes: i === 0 ? ['engine_source_untrusted', 'analysis_incomplete'] : i === 1 ? ['snapshot_unavailable'] : [],
               small_sample: i === 2, last_sample_at: i < 3 ? '2026-10-15T02:00:00Z' : null}))};
           const v = envelope({...listPage([q], !u.searchParams.has('cursor')), options: {businesses: [{id: 2, name: '设备业务'}], units: [{id: 4, business_id: 2, name: '内部单元名', display_name: '设备选型'}]}}, 'questions');
@@ -64,7 +67,7 @@ test('built insights: full server filters, six engines, citations, suggestions, 
       const r = await fetch(fixture.origin + u.pathname + u.search);
       return req.respond({status: r.status, contentType: r.headers.get('content-type'), body: Buffer.from(await r.arrayBuffer())});
     });
-    await p.setViewport({width: 1500, height: 1050});
+    await p.setViewport({width: 1440, height: 900});
     await p.goto(origin + '/customer-workbench/?module=geo&tenant_id=1&project_id=10&onsite_task_id=21');
     await p.waitForSelector('[data-tab=plan]');
     await p.waitForNetworkIdle({idleTime: 200});
@@ -83,24 +86,40 @@ test('built insights: full server filters, six engines, citations, suggestions, 
     await p.waitForFunction(() => document.querySelector('.geo-summary')?.textContent.includes('1.5'));
     await assertNoPatrolControls(p);
     assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /本周（未结束）已检测 26 条，下周一计入正式指标/);
-    await p.click('[data-resource=questions]');
+    await p.click('.geo-tabs [data-resource=questions]');
     await p.waitForSelector('[data-geo-questions]');
     await p.select('[name=business_id]', '2');
     await p.select('[name=unit_id]', '4');
     await p.type('[name=q]', '设备');
     await p.$eval('[data-geo-questions]', (f) => f.requestSubmit());
     await p.waitForFunction(() => document.querySelector('[data-geo-questions] [name=q]')?.value === '设备' && document.querySelector('[data-geo=more]'));
+    assert.equal(await p.$$eval('.geo-question-table tbody tr', (rows) => rows.length), 1);
+    assert.match(await p.$eval('[data-engine=hunyuan]', (e) => e.textContent), /0\/3 · 0%/);
+    assert.match(await p.$eval('[data-engine=wenxin]', (e) => e.textContent), /未检测/);
+    assert.match(await p.$eval('[data-engine=qwen]', (e) => e.textContent), /1\/2 · 50%/);
+    await p.screenshot({path: path.join(feedbackShots, 'all-questions-1440x900.png')});
+    await p.setViewport({width: 390, height: 844});
+    assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    assert(await p.$eval('.geo-question-scroll', (e) => e.scrollWidth > e.clientWidth));
+    await p.evaluate(() => {
+      const scroll = document.querySelector('.geo-question-scroll');
+      scroll.scrollLeft = scroll.scrollWidth;
+      window.scrollTo(0, document.querySelector('.geo-workspace h2').getBoundingClientRect().top + scrollY - 12);
+    });
+    await p.screenshot({path: path.join(feedbackShots, 'all-questions-390x844.png')});
+    await p.setViewport({width: 1440, height: 900});
+    await p.evaluate(() => window.scrollTo(0, 0));
     await p.click('[data-geo=more]');
     await p.waitForFunction(() => document.querySelector('.geo-workspace')?.textContent.includes('末页问题'));
     const paged = calls.filter((c) => c.path.endsWith('/client/questions') && c.params.cursor).at(-1);
     assert.equal(paged.params.business_id, '2'); assert.equal(paged.params.unit_id, '4'); assert.equal(paged.params.q, '设备');
     assert.equal(paged.params.week_end, '2026-10-19');
     assert.equal(await p.$('[data-geo=more]'), null);
-    assert.deepEqual(await p.$eval('.geo-matrix', (matrix) => [...matrix.querySelectorAll('section b')].map((n) => n.textContent)), ['豆包', 'DeepSeek', '千问', '元宝', '文心', 'Kimi']);
+    assert.deepEqual(await p.$$eval('.geo-question-table thead th', (headers) => headers.slice(3).map((n) => n.textContent)), ['豆包', 'DeepSeek', '千问', '元宝', '文心', 'Kimi']);
     text = await p.$eval('.geo-workspace', (e) => e.textContent);
     for (const line of ['本周（未结束）已检测 26 条，下周一计入正式指标', '本周（未结束）已检测 4 条，下周一计入',
       '已检测，未计入', '平台来源未核实；回答判读未完成', '回答记录不可读', '样本时间：2026年10月15日 10:00']) assert(text.includes(line), line);
-    const excludedText = await p.$eval('.geo-matrix', (e) => [...e.querySelectorAll('section')].filter((s) => s.textContent.includes('已检测，未计入')).map((s) => s.textContent).join(''));
+    const excludedText = await p.$eval('.geo-question-table', (e) => [...e.querySelectorAll('td')].filter((s) => s.textContent.includes('已检测，未计入')).map((s) => s.textContent).join(''));
     assert(!excludedText.includes('0/0') && !excludedText.includes('%'));
     await assertNoPatrolControls(p);
     await p.screenshot({path: path.join(shots, 'data-matrix-desktop.png'), fullPage: true});
