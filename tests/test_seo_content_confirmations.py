@@ -43,7 +43,7 @@ def _visibility_ctx(customer=True):
 
 
 @pytest.mark.parametrize("state", ["planned", "drafting", "review", "archived", "cancelled", "unknown"])
-@pytest.mark.parametrize("entry", ["delivery", "review_history", "assistant", "distribution"])
+@pytest.mark.parametrize("entry", ["delivery", "review_history", "assistant", "distribution", "confirmation"])
 def test_customer_hidden_content_returns_404_before_related_reads(state, entry):
     from app.api import seo as api, seo_workbench_assistant as assistant
     row = _content(status=state)
@@ -58,6 +58,10 @@ def test_customer_hidden_content_returns_404_before_related_reads(state, entry):
                 asyncio.run(api.get_content_review_history(88, 1, session, ctx))
             elif entry == "assistant":
                 asyncio.run(assistant.selected_content(session, SimpleNamespace(content_id=88, tenant_id=1, site_id=9), ctx))
+            elif entry == "confirmation":
+                req = ContentConfirmationRequest(version_count=1, payload_hash="0" * 64,
+                    decision="approve", actor_mode="customer_direct")
+                asyncio.run(api.create_content_confirmation(88, 1, req, session, ctx))
             else:
                 asyncio.run(api._distribution_content(session, 1, 88, 9, require_operational=False, ctx=ctx))
         assert exc.value.status_code == 404
@@ -153,6 +157,40 @@ def test_customer_publication_capture_rejects_hidden_parent():
         asyncio.run(_require_visible_capture_content(session, _visibility_ctx(),
             SimpleNamespace(relation_type="publication", relation_id=12, tenant_id=1, site_id=9)))
     assert exc.value.status_code == 404
+
+
+@pytest.mark.parametrize("customer", [True, False])
+@pytest.mark.parametrize("entry", ["answers", "placements", "maintenance"])
+def test_qa_related_read_queries_share_visibility(customer, entry):
+    from app.api import seo_qa as qa
+    session = AsyncMock()
+    async def execute(statement):
+        values = statement.compile().params.values()
+        assert (("ready", "published") in [tuple(v) for v in values if isinstance(v, (tuple, list))]) is customer
+        return []
+    session.execute.side_effect = execute
+    with (patch.object(qa, "access", new=AsyncMock()), patch.object(qa, "record", new=AsyncMock())):
+        kwargs = dict(tenant_id=1, site_id=9, session=session, ctx=_visibility_ctx(customer))
+        if entry == "answers":
+            kwargs["question_id"] = 12
+        asyncio.run(getattr(qa, entry)(**kwargs))
+    session.execute.assert_awaited_once()
+
+
+def test_manual_completion_rejects_hidden_content_before_recording_result():
+    from app.api import seo as api
+    ctx = _visibility_ctx()
+    ctx.permissions["seo.content"] = "edit"
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(tenant_id=1, content_asset_id=88, distribution_variant_id=None)
+    req = api.DistributionManualComplete(tenant_id=1, site_id=9, page_url="https://example.com/article")
+    with (patch.object(api, "_seo_site", new=AsyncMock()),
+          patch.object(api, "_is_offline_receipt_publication", return_value=False),
+          patch.object(api, "_distribution_content", new=AsyncMock(return_value=_content(status="drafting")))):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(api.complete_manual_publication(12, req, session, ctx))
+        assert exc.value.status_code == 404
+    session.commit.assert_not_awaited()
 
 
 @pytest.fixture(autouse=True)

@@ -11,11 +11,18 @@ from app.security.auth import AuthContext
 
 
 CUSTOMER_CONTENT_STATUSES = ("ready", "published")
+CUSTOMER_ROLE_NAME = "品牌方客户"
 
 
 def customer_content_view(ctx) -> bool:
-    """Use the authenticated role, without depending on optional workflow tables."""
-    return isinstance(ctx, AuthContext) and ctx.role_name == "品牌方客户" and not (
+    """Restrict reads for the authenticated customer role; this grants no actions.
+
+    The role comes from persisted authentication, not request input. Unlike the
+    stricter confirmation/message eligibility check below, this restriction must
+    also cover customer accounts with stale assignments or unavailable workflow
+    tables. Those conditions can deny actions, never reveal undelivered content.
+    """
+    return isinstance(ctx, AuthContext) and ctx.role_name == CUSTOMER_ROLE_NAME and not (
         ctx.is_advisor or ctx.is_superadmin
     )
 
@@ -43,7 +50,7 @@ def is_customer_account(ctx, user, assignments, tenant_id: int, *, role=None,
         and user.is_active
         and user.tenant_id == tenant_id
         and ctx.tenant_id == tenant_id
-        and role is not None and role.is_system and role.name == "品牌方客户"
+        and role is not None and role.is_system and role.name == CUSTOMER_ROLE_NAME
         and ctx.can_view("seo.content")
         and permissions.get("seo.content") in {"view", "edit"}
         and not any(level == "edit" and (key.startswith("settings.") or
@@ -68,7 +75,7 @@ async def customer_account_for_tenant(session, ctx, tenant_id: int,
     if user is None or user.tenant_id != tenant_id:
         return False
     role = await session.get(Role, user.role_id, **({"with_for_update": {"read": True}} if lock else {}))
-    if role is None or not role.is_system or role.name != "品牌方客户":
+    if role is None or not role.is_system or role.name != CUSTOMER_ROLE_NAME:
         return False
     assignment_query = select(SeoSiteAdvisorAssignment.id).where(
         SeoSiteAdvisorAssignment.advisor_user_id == actor_id)

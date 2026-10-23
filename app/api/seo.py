@@ -7107,6 +7107,7 @@ async def create_content_confirmation(
     row = await session.get(SeoContentAsset, content_id, with_for_update=True)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
+    require_customer_content_visible(ctx, row)
     if row.site_id is None:
         raise HTTPException(409, "稿件尚未关联有效站点")
     await _require_resource_operational_site(session, tenant_id, row.site_id)
@@ -7819,7 +7820,7 @@ async def export_offline_orders(
         raise HTTPException(422, "发布单中稿件不能重复")
     orders = []
     for snapshot in req.articles:
-        content = await _distribution_content(session, req.tenant_id, int(snapshot.article_id), req.site_id)
+        content = await _distribution_content(session, req.tenant_id, int(snapshot.article_id), req.site_id, ctx=ctx)
         _require_content_ready(content)
         await _require_active_content_confirmation(session, content)
         if snapshot.source_version != (content.version_count or 1) or snapshot.payload_hash != _content_confirmation_hash(content):
@@ -7861,7 +7862,7 @@ async def import_offline_receipts(
     # A consistent lock order serializes duplicate uploads and avoids cross-batch deadlocks.
     contents = {}
     for content_id in sorted({int(r.article_id) for r in receipts}):
-        contents[content_id] = await _distribution_content(session, tenant_id, content_id, site_id, lock=True)
+        contents[content_id] = await _distribution_content(session, tenant_id, content_id, site_id, lock=True, ctx=ctx)
     validated, results = [], []
     for number, receipt in enumerate(receipts, 1):
         content = contents[int(receipt.article_id)]
@@ -8808,6 +8809,7 @@ async def create_manual_publication(
     await _seo_site(session, req.tenant_id, req.site_id)
     content = await _distribution_content(
         session, req.tenant_id, req.content_id, req.site_id, lock=True,
+        ctx=ctx,
     )
     if req.source_version != (content.version_count or 1) or req.payload_hash != _content_confirmation_hash(content):
         raise _content_version_conflict(content)
@@ -8879,7 +8881,8 @@ async def adapt_content_distribution(
     ctx.ensure_tenant(req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
     content = await _distribution_content(
-        session, req.tenant_id, req.content_id, req.site_id
+        session, req.tenant_id, req.content_id, req.site_id,
+        ctx=ctx,
     )
     connection = await _distribution_connection(
         session, req.tenant_id, req.connection_id
@@ -9115,7 +9118,8 @@ async def save_distribution_variant(
     ctx.ensure_tenant(req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
     content = await _distribution_content(
-        session, req.tenant_id, req.content_id, req.site_id
+        session, req.tenant_id, req.content_id, req.site_id,
+        ctx=ctx,
     )
     connection = await _distribution_connection(
         session, req.tenant_id, req.connection_id
@@ -9166,7 +9170,8 @@ async def generate_distribution_variants(
                 ctx,
             )
             content = await _distribution_content(
-                session, req.tenant_id, pair.content_id, req.site_id
+                session, req.tenant_id, pair.content_id, req.site_id,
+                ctx=ctx,
             )
             connection = await _distribution_connection(
                 session, req.tenant_id, pair.connection_id
@@ -9274,7 +9279,8 @@ async def review_distribution_variant(
     if not row or row.tenant_id != req.tenant_id:
         raise HTTPException(404, "平台专属稿不存在")
     content = await _distribution_content(
-        session, req.tenant_id, row.content_asset_id, req.site_id
+        session, req.tenant_id, row.content_asset_id, req.site_id,
+        ctx=ctx,
     )
     connection = await _distribution_connection(
         session, req.tenant_id, row.connection_id
@@ -9333,7 +9339,8 @@ async def preflight_content_distribution(
         raise HTTPException(400, "单次最多创建50个发布任务")
     contents = [
         await _distribution_content(
-            session, req.tenant_id, content_id, req.site_id
+            session, req.tenant_id, content_id, req.site_id,
+            ctx=ctx,
         )
         for content_id in req.content_ids
     ]
@@ -9471,7 +9478,8 @@ async def publish_content_distribution(
     if req.action == "publish" and not req.confirm:
         raise HTTPException(400, "正式发布需要明确确认")
     content = await _distribution_content(
-        session, req.tenant_id, req.content_id, req.site_id
+        session, req.tenant_id, req.content_id, req.site_id,
+        ctx=ctx,
     )
     _require_content_ready(content)
     source_version = content.version_count or 1
@@ -9727,6 +9735,7 @@ async def complete_manual_publication(
         session, req.tenant_id, content_asset_id, req.site_id,
         require_operational=False, lock=True,
     )
+    require_customer_content_visible(ctx, content)
     if (content.version_count or 1) != row.source_version:
         raise HTTPException(409, "稿件版本已变化，不能将结果回填到旧版本")
     if req.source_version is not None and row.source_version != req.source_version:
@@ -9792,6 +9801,7 @@ async def sync_content_publication(
     content = await _distribution_content(
         session, tenant_id, row.content_asset_id, site_id,
         require_operational=False,
+        ctx=ctx,
     )
     if row.status != "publishing" or not row.connection_id:
         raise HTTPException(409, "当前任务不需要同步发布状态")
@@ -9887,7 +9897,8 @@ async def retry_content_publication(
     if not row:
         raise HTTPException(404, "发布任务不存在")
     content = await _distribution_content(
-        session, req.tenant_id, row.content_asset_id, req.site_id
+        session, req.tenant_id, row.content_asset_id, req.site_id,
+        ctx=ctx,
     )
     if row.status != "failed" or not row.connection_id:
         raise HTTPException(409, "只有失败的 API 发布任务可以重试")
