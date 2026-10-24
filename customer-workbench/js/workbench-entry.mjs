@@ -65,7 +65,7 @@ export function mountWorkbenchEntry({root,session,search=location.search,fetchIm
     if(session.isAdvisorSession===true){navigate(workspaceSelectionPath(session));return;}
     invalidate();const g=generation;tenants=[];sites=[];tenantId=null;siteId=null;
     if(!reuseIdentity||identityCache?.key!==identityKey())identityCache=null;
-    frame('<h2>正在打开工作台</h2><p role="status">核对账号与可用工作空间…</p>');
+    frame('<h2>正在打开工作台</h2><p role="status">核对账号与可用工作空间…</p><button data-entry="retry">重新读取</button>');
     try{
       const [{user},modules]=identityCache?.values||await Promise.all([read('/api/v1/auth/me',g),read('/api/v1/auth/modules',g)]);
       if(!positive(user?.id)||user.id!==session.user?.id||!user.permissions)throw Error('账号身份未通过核验，请退出后重新登录。');
