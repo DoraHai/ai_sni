@@ -59,10 +59,9 @@ export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscrib
   async function initialize(){
     const s=sync(),r=revision;identity=null;
     async function read(path){const response=await request(path,{},true);if(!response.ok)fail('PREFLIGHT_FAILED',response.status);return response.json();}
-      const me=await read('/api/v1/auth/me'),user=s.advisor?{...me?.user,tenant_id:s.tenantId}:me?.user;
+    const [me,modules]=await Promise.all([read('/api/v1/auth/me'),read('/api/v1/auth/modules')]),user=s.advisor?{...me?.user,tenant_id:s.tenantId}:me?.user;
     if(user?.id!==s.userId||(user.tenant_id!=null&&user.tenant_id!==s.tenantId)||
       !['geo.assets','geo.content'].every(k=>['view','edit'].includes(user.permissions?.[k])))fail('PERMISSION_DENIED',403);
-    const modules=await read('/api/v1/auth/modules');
     if(modules.tenant_id!==user.tenant_id||!modules.modules?.some(m=>m.module_code==='geo'&&m.available===true))fail('MODULE_UNAVAILABLE');
     const tenants=await read('/api/v1/geo/tenants'),tenant=tenants.tenants?.find(t=>t.id===s.tenantId);
     if(!tenant||tenant.read_only===true)fail('TENANT_NOT_ALLOWED');

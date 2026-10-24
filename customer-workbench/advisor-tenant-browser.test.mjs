@@ -233,3 +233,43 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
     assert.deepEqual(errors,[]);
   }finally{await browser.close();await fixture.close();}
 });
+
+for(const count of [0,1,2])test(`advisor automatically selects only when authorized customer count is ${count}`,async()=>{
+  const fixture=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true,args:['--no-sandbox']});
+  const origin='https://advisor-single.test',calls=[],errors=[];
+  const tenants=[{id:1,name:'唯一客户'},{id:2,name:'其他客户'}].slice(0,count);
+  try{
+    const p=await browser.newPage();p.on('pageerror',e=>errors.push(e.message));
+    await p.evaluateOnNewDocument(({identity,user})=>sessionStorage.setItem('sem_auth_v1',JSON.stringify({version:1,token:identity,user})),{identity,user});
+    await p.setRequestInterception(true);
+    let releaseMe,modulesSeen=false;
+    p.on('request',async req=>{
+      const url=new URL(req.url());if(url.protocol==='data:')return req.continue();if(url.origin!==origin)return req.abort();
+      const send=(data,status=200)=>req.respond({status,contentType:'application/json',body:JSON.stringify(data)}).catch(()=>{});
+      if(url.pathname.startsWith('/api/')){
+        calls.push({path:url.pathname,method:req.method(),body:req.postData()});
+        if(url.pathname==='/api/v1/auth/tenants')return send(tenants);
+        if(url.pathname==='/api/v1/auth/select-tenant')return send({access_token:business(1),token_type:'bearer',tenant_id:1,tenant_name:tenants[0].name,expires_at:'2099-01-01T00:00:00Z'});
+        if(url.pathname==='/api/v1/auth/me'){if(!modulesSeen)await new Promise(resolve=>releaseMe=resolve);return send({user});}
+        if(url.pathname==='/api/v1/auth/modules'){modulesSeen=true;releaseMe?.();return send({tenant_id:1,modules:[{module_code:'seo',available:true}]});}
+        if(url.pathname.endsWith('/advisor-tasks'))return send({schema:1,module:'seo',items:[],next_before_id:null});
+        return send({},404);
+      }
+      try{const r=await fetch(fixture.origin+url.pathname+url.search);await req.respond({status:r.status,contentType:r.headers.get('content-type'),body:Buffer.from(await r.arrayBuffer())});}catch{await req.abort().catch(()=>{});}
+    });
+    await p.goto(origin+'/customer-workbench/?console=advisor');
+    if(count===1){
+      await p.waitForFunction(()=>document.querySelector('.advisor-tenant-picker')?.textContent.includes('当前客户：唯一客户'));
+      await p.waitForFunction(()=>document.querySelector('[role=status]')?.textContent.includes('按真实阶段'));
+      assert.deepEqual(calls.filter(c=>c.path.endsWith('/select-tenant')).map(c=>JSON.parse(c.body)),[{tenant_id:1}]);
+      assert(calls.some(c=>c.path.endsWith('/advisor-tasks')));
+      await p.click('[data-advisor=refresh]');await p.waitForNetworkIdle({idleTime:100});
+      assert.equal(calls.filter(c=>c.path.endsWith('/select-tenant')).length,1);
+    }else{
+      await p.waitForFunction(count=>document.querySelector('.advisor-tenant-picker')?.textContent.includes(count?'请先选择客户':'没有'),{},count);
+      assert(!calls.some(c=>c.method==='POST'||c.path.endsWith('/me')||c.path.endsWith('/modules')||c.path.endsWith('/advisor-tasks')));
+    }
+    const shots=process.env.FRONTEND_FIX_SHOTS_DIR;if(shots)await p.screenshot({path:path.join(shots,`advisor-customers-${count}.png`),fullPage:true});
+    assert.deepEqual(errors,[]);
+  }finally{await browser.close();await fixture.close();}
+});

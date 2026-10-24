@@ -104,7 +104,10 @@ export function mountAdvisorWorkbench({root,session,subscribeSession,fetchImpl=f
     if(multiMode){
       clearCustomer();filter=['seo','geo'].includes(entryUrl.searchParams.get('module'))?entryUrl.searchParams.get('module'):'all';message='';render();await loadTenants();
       if(disposed||!tenantOptions.length)return;
-      if(needsTenant()){tenantMessage=tenantMessage||'请先选择客户';render();return;}
+      if(needsTenant()){
+        if(tenantOptions.length===1){await switchTenant(tenantOptions[0].id);return;}
+        tenantMessage=tenantMessage||'请先选择客户';render();return;
+      }
       if(!tenantOptions.some(t=>t.id===session.tenantId)){denyTenant('ADVISOR_TENANT_NOT_GRANTED');return;}
       const requested=new URL(browser.location.href).searchParams.get('tenant_id');
       if(requested&&Number(requested)!==session.tenantId){denyTenant('ADVISOR_TENANT_NOT_GRANTED');return;}
